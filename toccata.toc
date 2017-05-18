@@ -1,0 +1,75 @@
+
+;; The specification of Toccata's syntax
+(add-ns rdr (module "reader.toc"))
+
+;; Basic file I/O
+(add-ns fio (module "file-io.toc"))
+
+;; Turns a grammar structure into a recursive descent parser
+(add-ns rd (module "recursive-descent.toc"))
+
+;; define the AST node types
+(add-ns ast (module "ast.toc"))
+
+;; the state-maybe container
+(add-ns sm (module "state-maybe.toc"))
+
+(add-ns grmr (module "grammar.toc"))
+
+;; There's a bunch of information to keep track of while compiling
+(deftype GlobalContext [target-lang fn-context debugging])
+
+;; Every function has some information that's local to it
+(deftype FunctionContext [sym-count])
+
+;; generate symbols that are available globally
+(def global-sym (sm/lift gensym))
+
+;; create a function that will turn raw text into an AST
+;; using a recursive descent parser
+(def analyze-form (rd/parser rdr/top-level))
+
+;; useful for debugging the compiler
+(def sm-space (sm/state-maybe ""))
+(defn debug [& args]
+  (comp (for [debugging (sm/get-val .debugging)]
+          (and debugging
+               (maybe (apply print-err args))))
+        sm-space))
+
+;; for when a fatal error occurs
+(defn compilation-error [& msg]
+  (map (apply debug msg)
+       (fn [_] (abort))))
+
+;; All AST nodes will implement this protocol
+(defprotocol Emitter
+  ;; 'emit-c' actually returns a function that will take a global context and
+  ;; emit the C code to stdout
+  (emit-c [ast]))
+
+(extend-type ast/inline-ast
+  Emitter
+  (emit-c [ast]
+    (for [target-lang (sm/get-val .target-lang)
+          :when (= target-lang (symbol (str (.lang ast))))]
+      (.txt ast))))
+
+(extend-type ast/main-ast
+  Emitter
+  (emit-c [ast]
+    (for [exprs (traverse (.body ast) sm/state-maybe emit-c)]
+      (map (comp ["\n#include <stdio.h>\nint main (int argc, char **argv) {"]
+                 exprs
+                 ["return(0);\n}"])
+           println))))
+
+(def global-context (GlobalContext 'C
+                                   (FunctionContext 0)
+                                   (maybe 'debugging)))
+
+(main [args]
+      (let [[_ file-name] args
+            emit-code (flat-map (analyze-form (list (fio/slurp file-name)))
+                                emit-c)]
+        (emit-code global-context)))

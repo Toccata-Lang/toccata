@@ -1,0 +1,264 @@
+
+;; This file specifies the syntax of Toccata
+;; It also contains the code to turn a Toccata program from a string
+;; to an AST
+
+;; Components to build the grammar out of
+(add-ns grmr (module "grammar.toc"))
+
+;; The different types of nodes in the AST
+(add-ns ast (module "ast.toc"))
+
+;; sometimes, we have to see what's wrong
+(defn debug [tag]
+  (grmr/ignore
+   (grmr/term-fn (fn [text]
+                   (print-err tag (subs text 0 10))
+                   (maybe (list "" text))))))
+
+
+;; we tag symbols with file/line for use later
+(defprotocol Tagged
+  (tag [s file line] s)
+  (untag [x] x))
+
+(deftype tagged-symbol [ns base sym file-name line-num]
+  Tagged
+  (tag [s file line]
+    (tagged-symbol ns base sym file line))
+  (untag [_] sym)
+
+  Stringable
+  (string-list [_]
+    (list (extract (or (map ns (fn [ns-str] (str ns-str "/" base)))
+                       (maybe (str base))))))
+
+  Hash
+  (sha1 [_] (sha1 base))
+
+  Eq
+  (=* [_ x] (=* x base)))
+
+(extend-type Symbol
+  Tagged
+  (tag [s file line]
+    (tagged-symbol "" s s file line))
+  (untag [s] s)
+
+  Eq
+  (=* [s x]
+    (symkey= s (untag x))))
+
+;; It's useful to be able to tag lists of symbols
+(extend-type List
+  Tagged
+  (tag [l file line]
+    (map l (fn [x]
+             (tag x file line)))))
+
+
+(def symbol-start
+  (grmr/rule "symbol-start"
+               (grmr/any grmr/alpha (grmr/one-of "._<>=+-*/"))))
+
+(def symbol-punct
+  (grmr/rule "symbol-punct"
+               (grmr/one-of "._<>=*/+!-?")))
+
+(def symbol-char
+  (grmr/rule "symbol-char"
+               (grmr/any grmr/alpha grmr/digit symbol-punct)))
+
+(def rest-of-symbol
+  (grmr/rule "rest-of-symbol"
+               (grmr/none-or-more symbol-char)))
+
+(def namespace-punct
+  (grmr/rule "namespace-punct"
+               (grmr/one-of "._<>=*+!-?")))
+
+(def rest-of-namespace
+  (grmr/rule "rest-of-namespace"
+               (grmr/none-or-more (grmr/any grmr/alpha
+                                                grmr/digit
+                                                namespace-punct))))
+
+(def read-namespace
+  (grmr/rule "namespace"
+               (grmr/apply-to (fn [start the-rest]
+                               (symbol (to-str (cons start the-rest))))
+                             grmr/alpha
+                             rest-of-namespace
+                             (grmr/ignore "/"))))
+
+(def read-symbol
+  (grmr/rule "tagged-symbol"
+               (grmr/apply-to (fn [file-name line-number ns start the-rest]
+                                  (let [ns-prefix ((= "" ns) ns (str ns "/"))]
+                                    (tagged-symbol ns (symbol (to-str (cons start the-rest)))
+                                                   (symbol (to-str (comp (list ns-prefix start)
+                                                                         the-rest)))
+                                                   file-name line-number)))
+                                grmr/file-name
+                                grmr/line-number
+                                (grmr/optional read-namespace)
+                                symbol-start
+                                rest-of-symbol)))
+
+(def read-string-newline
+  (grmr/rule "newline"
+               (map (grmr/all "\\" "n")
+                    (constantly "\n"))))
+
+(def read-string-tab
+  (grmr/rule "tab"
+               (map (grmr/all "\\" "t")
+                    (constantly "\t"))))
+
+(def read-string-backspace
+  (grmr/rule "backspace"
+               (map (grmr/all "\\" "b")
+                    (constantly "\b"))))
+
+(def read-string-return
+  (grmr/rule "return"
+               (map (grmr/all "\\" "r")
+                    (constantly "\r"))))
+
+(def read-string-formfeed
+  (grmr/rule "formfeed"
+               (map (grmr/all "\\" "f")
+                    (constantly "\f"))))
+
+(def read-string-doublequote
+  (grmr/rule "doublequote"
+               (map (grmr/all "\\" "\"")
+                    (constantly "\""))))
+
+(def read-string-backslash
+  (grmr/rule "backslash"
+               (map (grmr/all "\\" "\\")
+                    (constantly "\\"))))
+
+(defn string-frag-len [s]
+  (inline-C Number "
+    char *str = NULL;
+    int64_t strLen;
+    if (arg0->type == StringType) {
+      str = ((String *)arg0)->buffer;
+      strLen = ((String *)arg0)->len;
+    } else if (arg0->type == SubStringType) {
+      str = ((SubString *)arg0)->buffer;
+      strLen = ((SubString *)arg0)->len;
+    }
+    int64_t len;
+    for (len = 0; len < strLen && str[len] != 34 && str[len] != 92;)
+       len++;
+    dec_and_free(arg0, 1);
+    return(numberValue(len));
+"))
+
+(def read-string-fragment
+  (grmr/rule "read-string-fragment"
+               (grmr/term-fn (fn [text]
+                                 (string-frag-len text)))))
+
+(def read-const-string
+  (grmr/rule "string"
+             (grmr/apply-to to-str
+                            (grmr/ignore "\"")
+                            (grmr/none-or-more
+                             (grmr/any read-string-fragment
+                                       read-string-backslash
+                                       read-string-doublequote
+                                       read-string-tab
+                                       read-string-backspace
+                                       read-string-return
+                                       read-string-formfeed
+                                       read-string-newline))
+                            (grmr/ignore "\""))))
+
+(def read-sub-form
+  (grmr/recurse "form"))
+
+(def whitespace
+  (grmr/rule "whitespace"
+               (grmr/any "," " " "\t" "\r"
+                           (grmr/all "\n"
+                                       (grmr/ignore grmr/inc-line)))))
+
+(def ignore-whitespace (grmr/ignore (grmr/none-or-more whitespace)))
+
+(def read-arg
+  (grmr/rule "arg"
+             (grmr/apply-to comp
+                            ignore-whitespace
+                            read-symbol
+                            ignore-whitespace)))
+
+(def read-var-arg
+  (grmr/rule "var-arg"
+             (grmr/apply-to identity
+                            ignore-whitespace
+                            (grmr/ignore "&")
+                            read-arg)))
+
+(def read-args
+  (grmr/recursive-rule "args"
+                       (grmr/any (grmr/apply-to identity
+                                                ignore-whitespace
+                                                (grmr/ignore "[")
+                                                (grmr/apply-to ast/args
+                                                               (grmr/none-or-more (grmr/recurse "args"))
+                                                               (grmr/optional read-var-arg))
+                                                (grmr/any (grmr/ignore "]")
+                                                          (grmr/error "Missing ']'")))
+                                 read-arg)))
+
+(def read-inline
+  (grmr/rule "read-inline"
+             (grmr/apply-to identity
+                            ignore-whitespace
+                            (grmr/ignore "(")
+                            ignore-whitespace
+                            (grmr/ignore "inline")
+                            (grmr/apply-to (fn [file-name line-number lang return-type body]
+                                             (ast/inline lang return-type body "" 0))
+                                           grmr/file-name
+                                           grmr/line-number
+                                           (grmr/ignore (grmr/one-or-more whitespace))
+                                           read-symbol
+                                           (grmr/ignore (grmr/one-or-more whitespace))
+                                           (grmr/optional (grmr/apply-to identity
+                                                                         read-symbol
+                                                                         (grmr/ignore
+                                                                          (grmr/one-or-more whitespace))))
+                                           read-const-string
+                                           ignore-whitespace
+                                           (grmr/ignore ")")))))
+
+(def read-main
+  (grmr/rule "main"
+             (grmr/apply-to identity
+                            ignore-whitespace
+                            (grmr/ignore "(")
+                            ignore-whitespace
+                            (grmr/ignore "main")
+                            (grmr/any (grmr/apply-to ast/main-fn
+                                                     (grmr/ignore (grmr/one-or-more whitespace))
+                                                     read-args
+                                                     (grmr/ignore (grmr/one-or-more whitespace))
+                                                     ;; TODO: will add later
+                                                     ;; (grmr/none-or-more (grmr/any read-assert
+                                                     ;;                              read-returns))
+                                                     (grmr/any (grmr/all read-inline)
+                                                               (grmr/error "Body of 'main' fn is wrong"))
+                                                     ignore-whitespace
+                                                     (grmr/ignore ")"))
+                                      (grmr/error "'main' fn expression is wrong")))))
+
+(def top-level
+  (grmr/recursive-rule "top-level"
+                       (grmr/any read-main
+                                 read-inline
+                                 )))

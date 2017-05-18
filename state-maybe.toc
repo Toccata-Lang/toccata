@@ -1,0 +1,136 @@
+
+;; state-maybe monad with lazy comp*
+
+(defn reduce-args [[arg & args] s]
+  (flat-map (arg s)
+            (fn [[result new-s]]
+              (or (and (empty? args)
+                       (maybe [(list result) new-s]))
+                  (flat-map (reduce-args args new-s)
+                            (fn [[results final-s]]
+                              (maybe [(cons result results) final-s])))))))
+
+(defn -comp* [mv mvs s]
+  (let [x (mv s)]
+    (or (and (= nothing (empty? mvs))
+             (= nothing x)
+             (let [[mv & mvs] mvs]
+               (-comp* mv mvs s)))
+        x)))
+
+(deftype new-sm [invoke-fn]
+  Stringable
+  (string-list [_] (comp (list "<new-sm ")
+                         (string-list invoke-fn)
+                         (list ">")))
+
+  Function
+  (invoke [ev s]
+    (invoke-fn s))
+
+  Container
+  (map [_ f]
+    (new-sm (fn [s]
+              (for [[v new-s] (invoke-fn s)]
+                [(f v) new-s]))))
+  (wrap [_ v]
+    (new-sm (fn [s]
+              (maybe [v s]))))
+  (apply* [fv args]
+    (new-sm (fn [s]
+              (or (for [_ (empty? args)
+                        [f new-s] (fv s)]
+                    [(f) new-s])
+                  (for [[results s] (reduce-args args s)
+                        [f s] (fv s)]
+                    [(apply f results) s])))))
+  (flat-map [ev f]
+    (new-sm (fn [s]
+              (flat-map (invoke-fn s)
+                        (fn [[v ss]]
+                          ((f v) ss))))))
+
+  Composition
+  (zero [_] (new-sm (fn [_] nothing)))
+  (comp* [mv mvs]
+    (new-sm (fn [s]
+              (-comp* mv mvs s)))))
+
+(def state-maybe
+  (reify
+    Function
+    (invoke [_ v]
+      (new-sm (fn [s]
+                (maybe [v s]))))
+
+    Composition
+    (zero [_] (new-sm (fn [_] nothing)))))
+
+(defn lift [f]
+  (fn [& args]
+    (new-sm (fn [s]
+              (maybe [(apply f args) s])))))
+
+(defn update-state [f]
+  (new-sm (fn [s]
+            (maybe [s (f s)]))))
+
+(defn get-val
+  ([k]
+     (new-sm (fn [s]
+               (for [v (get s k)]
+                 [v s]))))
+  ([k nf]
+     (new-sm (fn [s]
+               (or (for [v (get s k)]
+                     [v s])
+                   (maybe [nf s]))))))
+
+(defn set-val [k v]
+  (new-sm (fn [s]
+            (maybe [nothing (assoc s k v)]))))
+
+(defn get-in-val
+  ([path]
+     (new-sm (fn [s]
+               (for [v (get-in s path)]
+                 [v s]))))
+  ([path nf]
+     (new-sm (fn [s]
+               (or (for [v (get-in s path)]
+                     [v s])
+                   (maybe [nf s]))))))
+
+(defn assoc-in-val [path v]
+  (new-sm (fn [s]
+            (maybe [v (assoc-in s path v)]))))
+
+(defn update-in-val [path f]
+  (new-sm (fn [s]
+            (for [old-v (get-in s path)
+                  new-s (update-in s path f)]
+              [old-v new-s]))))
+
+(defn recur-fn [f as s]
+  (let [x (f s)]
+    (or (and x (let [[v ss] (extract x)]
+                 (recur-fn f (cons v as) ss)))
+        (maybe [as s]))))
+
+(defn recur [mv]
+  (new-sm (fn [s]
+            (for [[v ss] (mv s)
+                  [vs s] (recur-fn (.invoke-fn mv) (list v) ss)]
+              [(reverse vs) s]))))
+
+(defn when [val]
+  (new-sm (fn [s]
+            (flat-map val
+                      (fn [v]
+                        (maybe [v s]))))))
+
+(defn when-not [val]
+  (new-sm (fn [s]
+            (flat-map (= nothing val)
+                      (fn [v]
+                        (maybe [v s]))))))

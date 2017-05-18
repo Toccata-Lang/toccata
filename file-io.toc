@@ -1,0 +1,199 @@
+
+(inline-C "
+
+typedef struct {
+  int open;
+  FILE *fd;} fileDescStruct;
+
+void close_file(void *ptr) {
+  fileDescStruct *fileDesc = (fileDescStruct *)ptr;
+  if (fileDesc->open)
+    fclose(fileDesc->fd);
+  free(fileDesc);
+#ifdef CHECK_MEM_LEAK
+  atomic_fetch_add(&free_count, 1);
+#endif
+}
+")
+
+(defn fopen-read [file-path]
+  (inline-C Maybe "
+// TODO: should use nullTerm probably
+   String *arg0Str = malloc_string(((String *)arg0)->len + 5);
+    if (arg0->type == StringType)
+      snprintf(arg0Str->buffer, ((String *)arg0)->len + 1, \"%s\", ((String *)arg0)->buffer);
+    else if (arg0->type == SubStringType)
+      snprintf(arg0Str->buffer, ((String *)arg0)->len + 1, \"%s\", ((SubString *)arg0)->buffer);
+    else {
+      fprintf(stderr, \"\\ninvalid type for 'fopen-read'\\n\");
+      abort();
+    }
+
+    FILE* fd = fopen(arg0Str->buffer, \"r\");
+    dec_and_free((Value *)arg0Str, 1);
+    dec_and_free((Value *)arg0, 1);
+    if (fd == NULL) {
+      return(nothing);
+    } else {
+      fseek(fd, 0, SEEK_SET);
+      fileDescStruct *fdStruct = (fileDescStruct *)my_malloc(sizeof(fileDescStruct));
+      fdStruct->fd = fd;
+      fdStruct->open = 1;
+      Value *opaque = opaqueValue(fdStruct, close_file);
+      Value *mo = maybe((List *)0, (Value *)0, opaque);
+      return(mo);
+    }
+"))
+
+(defn read* [fileDesc]
+  ;; private function. Use 'blocking-read' instead
+  (inline-C String "
+  fileDescStruct *fileDesc = (fileDescStruct *)((Opaque *)arg0)->ptr;
+  if (feof(fileDesc->fd)) {
+    dec_and_free(arg0, 1);
+    return((Value *)malloc_string(0));
+  }
+
+// TODO: Figure out how to have a new type of buffer to avoid extra copy operation
+  char buffer[5005];
+  if (feof(fileDesc->fd)) {
+    dec_and_free(arg0, 1);
+    return((Value *)malloc_string(0));
+  } else {
+    int64_t byte_count = fread(buffer, 1, 5000, fileDesc->fd);
+    String *strVal = malloc_string(byte_count);
+    strncpy(strVal->buffer, buffer, byte_count);
+    dec_and_free(arg0, 1);
+    return((Value *)strVal);
+  }
+"))
+
+(defn eof? [fileDesc]
+  (inline-C Maybe "
+  fileDescStruct *fileDesc = (fileDescStruct *)((Opaque *)arg0)->ptr;
+  if (!feof(fileDesc->fd)) {
+    return(nothing);
+  } else {
+    Value *mv = maybe((List *)0, (Value *)0, (Value *)nothing);
+    return(mv);
+  }
+"))
+
+(defn fopen-write [file-path]
+  (inline-C Maybe "
+// TODO: should use nullTerm probably
+    String *arg0Str = malloc_string(((String *)arg0)->len + 5);
+    if (arg0->type == StringType)
+      snprintf(arg0Str->buffer, ((String *)arg0)->len + 1, \"%s\", ((String *)arg0)->buffer);
+    else if (arg0->type == SubStringType)
+      snprintf(arg0Str->buffer, ((String *)arg0)->len + 1, \"%s\", ((SubString *)arg0)->buffer);
+    else {
+      fprintf(stderr, \"\\ninvalid type for 'fopen-write'\\n\");
+      abort();
+    }
+
+    FILE* fd = fopen(arg0Str->buffer, \"wb\");
+    dec_and_free((Value *)arg0Str, 1);
+    dec_and_free((Value *)arg0, 1);
+    if (fd == NULL) {
+      return(nothing);
+    } else {
+      fileDescStruct *fdStruct = (fileDescStruct *)my_malloc(sizeof(fileDescStruct));
+      fdStruct->open = 1;
+      fdStruct->fd = fd;
+      Value *opaque = opaqueValue(fdStruct, close_file);
+      Value *mo = maybe((List *)0, (Value *)0, opaque);
+      return(mo);
+    }
+"))
+
+(defn write* [file-desc str-buffer]
+  ;; private function. Use 'write' instead
+  (inline-C Number "
+  char *buffer;
+  int64_t len;
+
+  fileDescStruct *fileDesc = (fileDescStruct *)((Opaque *)arg0)->ptr;
+  if (arg1->type == StringType) {
+    buffer = ((String *)arg1)->buffer;
+    len = ((String *)arg1)->len;
+  } else if (arg1->type == SubStringType) {
+    buffer = ((SubString *)arg1)->buffer;
+    len = ((SubString *)arg1)->len;
+  } else {
+    fprintf(stderr, \"\\ninvalid type for 'write*'\\n\");
+    abort();
+  }
+  Value *result = numberValue(fwrite(buffer, 1, len, fileDesc->fd));
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(result);
+"))
+
+(defn close* [file-desc]
+  ;; private function. Use 'close' instead
+  (inline-C Number "
+  fileDescStruct *fileDesc = (fileDescStruct *)((Opaque *)arg0)->ptr;
+  fclose(fileDesc->fd);
+  dec_and_free(arg0, 1);
+  return(numberValue(1));
+"))
+
+(defprotocol FileProto
+  (write [_ str-buffer])
+  (read [_])
+  (blocking-read [_])
+  (close [_]))
+
+(deftype InputFile [file-desc path]
+  Stringable
+  (string-list [_] (list "<InputFile " path ">"))
+
+  Collection
+  (empty? [_]
+    (eof? file-desc))
+
+  Container
+  (extract [_]
+    (read* file-desc))
+
+  FileProto
+  (close [_] (close* file-desc))
+  )
+
+(deftype OutputFile [file-desc path]
+  Stringable
+  (string-list [_] (list "<OutputFile " path ">"))
+
+  FileProto
+  (write [_ str-buffer] (write* file-desc str-buffer))
+  (close [_] (close* file-desc))
+  )
+
+(defn file-out [path]
+  (map (fopen-write path)
+       (fn [file-desc]
+         (OutputFile file-desc path))))
+
+(defn file-in [path]
+  (map (fopen-read path)
+       (fn [file-desc]
+         (InputFile file-desc path))))
+
+(defn slurp [fileName]
+  (inline-C String
+   "String *arg0Str = nullTerm(arg0);
+
+    FILE *file = fopen(arg0Str->buffer, \"r\");
+    fseek(file, 0, SEEK_END);
+    int64_t buffSize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    String *strVal = malloc_string(buffSize);
+    fread(strVal->buffer, 1, buffSize, file);
+    fclose(file);
+    dec_and_free((Value *)arg0Str, 1);
+    return((Value *)strVal);\n"))
+
+
+;; (defn file-stream [file]
+;;   (st/cache (st/stream file blocking-read identity empty?)))
