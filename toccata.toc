@@ -2,19 +2,13 @@
 ;; The specification of Toccata's syntax
 (add-ns rdr (module "reader.toc"))
 
-;; Basic file I/O
-(add-ns fio (module "file-io.toc"))
-
-;; Turns a grammar structure into a recursive descent parser
-(add-ns rd (module "recursive-descent.toc"))
-
 ;; define the AST node types
 (add-ns ast (module "ast.toc"))
 
-;; the state-maybe container
-(add-ns sm (module "state-maybe.toc"))
-
 (add-ns grmr (module "grammar.toc"))
+(add-ns fio (module "file-io.toc"))
+(add-ns rd (module "recursive-descent.toc"))
+(add-ns sm (module "state-maybe.toc"))
 
 ;; There's a bunch of information to keep track of while compiling
 (deftype GlobalContext [target-lang fn-context debugging])
@@ -22,19 +16,19 @@
 ;; Every function has some information that's local to it
 (deftype FunctionContext [sym-count])
 
-;; generate symbols that are available globally
+;; generate symbols that are available globally inside the 'state-maybe' container
 (def global-sym (sm/lift gensym))
 
-;; create a function that will turn raw text into an AST
+;; create a function that will turn raw text into a list of AST's
 ;; using a recursive descent parser
-(def analyze-form (rd/parser rdr/top-level))
+(def analyze-forms (rd/parser (grmr/none-or-more rdr/top-level)))
 
 ;; useful for debugging the compiler
 (def sm-space (sm/state-maybe ""))
 (defn debug [& args]
-  (comp (for [debugging (sm/get-val .debugging)]
-          (and debugging
-               (maybe (apply print-err args))))
+  (comp (for [debugging (sm/get-val .debugging)
+              :when debugging]
+          (apply print-err args))
         sm-space))
 
 ;; for when a fatal error occurs
@@ -42,34 +36,50 @@
   (map (apply debug msg)
        (fn [_] (abort))))
 
+(deftype c-code [c-var init decl type-num refs-map]
+  Stringable
+  (string-list [_]
+    (list "<C-Code " (str c-var) ", " (str type-num) ", "
+          (str (count init)) " ," (str refs-map) ">")))
+
 ;; All AST nodes will implement this protocol
 (defprotocol Emitter
   ;; 'emit-c' actually returns a function that will take a global context and
   ;; emit the C code to stdout
   (emit-c [ast]))
 
+(defn get-type [type-symbol]
+  (sm/state-maybe 0))
+
 (extend-type ast/inline-ast
   Emitter
   (emit-c [ast]
     (for [target-lang (sm/get-val .target-lang)
-          :when (= target-lang (symbol (str (.lang ast))))]
-      (.txt ast))))
+          :when (= (.lang ast) target-lang)
+          type-num (get-type (.result-type ast))]
+      [(c-code "" [(.txt ast)] [] type-num {})])))
 
 (extend-type ast/main-ast
   Emitter
   (emit-c [ast]
     (for [exprs (traverse (.body ast) sm/state-maybe emit-c)]
-      (map (comp ["\n#include <stdio.h>\nint main (int argc, char **argv) {"]
-                 exprs
-                 ["return(0);\n}"])
-           println))))
+      (let [exprs (apply comp exprs)]
+        [(c-code "" (comp ["\nint main (int argc, char **argv) {"]
+                          (apply comp (map exprs .init))
+                          ["return(0);\n}"])
+                 [] 0 {})]))))
 
 (def global-context (GlobalContext 'C
                                    (FunctionContext 0)
                                    (maybe 'debugging)))
 
 (main [args]
-      (let [[_ file-name] args
-            emit-code (flat-map (analyze-form (list (fio/slurp file-name)))
-                                emit-c)]
-        (emit-code global-context)))
+      (let [[_ file-name] args]
+        (for [in-file (fio/file-in file-name)
+              asts (analyze-forms (cache in-file))
+              :let [emit-code (traverse asts sm/state-maybe emit-c)]
+              [emitted] (emit-code global-context)]
+          (map (flatten emitted)
+               (fn [emitted]
+                 (map (.decl emitted) println)
+                 (map (.init emitted) println))))))

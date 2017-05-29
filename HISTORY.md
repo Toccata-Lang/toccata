@@ -1,5 +1,4 @@
-Rationale
-========
+# Rationale
 
 The first (almost) usuable version of Toccata is finally nearing completion. By reading
 through the commits and the entries in this file, you should be able to watch Toccata
@@ -15,10 +14,9 @@ Happy Reading and Pull Requests welcome!
 
 Jim Duey
 
-Story
-=====
+# Story
 
-Entry 1:
+## Entry 1:
 
 In the beginning, God created the Heavens and the Earth. Gen. 1:1
 
@@ -28,8 +26,8 @@ tests. I'm using the previous version of Toccata to cross-compile this code unti
 
 Now, let us begin.
 
-The 'regression-tests' directory will contain a collection of Toccata programs that
-exercise various parts of the compiler. 'main1.toc' is the simplest program possible.
+The `regression-tests` directory will contain a collection of Toccata programs that
+exercise various parts of the compiler. `main1.toc` is the simplest program possible.
 But already, there's a ton of code required. We have to ...
     open the file
     read it
@@ -40,6 +38,19 @@ But already, there's a ton of code required. We have to ...
 If the C code has been written to a file, it can be compiled to an executable using
 LLVM or GCC.
 
-So 'toccata.toc' is what it takes to do the above steps. This is about as simple a
+So `toccata.toc` is what it takes to do the above steps. This is about as simple a
 compiler for Toccata as possible. Everything else builds from there.
+
+
+## Entry 2:
+
+When an expression is emitted, it is converted to a list of data structures. Each data structure
+has the following
+    A string that holds the C variable the result of the expression is assigned to
+    A list of strings of C code to declare static C values
+    A list of strings of C code that produces the expressions result
+    A number that signifies the type of the result of the expression
+    A hash-map of of C variables that are used in the expression to the number of times their used
+
+Also, `inline` expressions can appear at the top level of a file just like the `main` expression
 
