@@ -54,3 +54,6 @@ has the following
 
 Also, `inline` expressions can appear at the top level of a file just like the `main` expression
 
+## Entry 3:
+
+Comment blocks are AST nodes also, this allows easy literate programming and code formatting
