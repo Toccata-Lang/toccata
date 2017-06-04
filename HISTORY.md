@@ -67,3 +67,7 @@ is added to the global context so it can be looked up later.
 ## Entry 5:
 
 Now we're able to assign numbers to symbols
+
+## Entry 6:
+
+And now string literals to symbols
