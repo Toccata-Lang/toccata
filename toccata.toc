@@ -11,13 +11,29 @@
 (add-ns sm (module "state-maybe.toc"))
 
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [target-lang fn-context debugging])
+(deftype GlobalContext [target-lang              ;; language to compile to
+                        fn-context               ;; context for the fn currently being compiled
+                        modules                  ;; info for each module compiled
+                        ])
+
+;; information that must be tracked for each module
+(deftype Module [path values]
+  Stringable
+  (string-list [_] (list "<Module '" path "'>")))
 
 ;; Every function has some information that's local to it
-(deftype FunctionContext [sym-count])
+(deftype FunctionContext [sym-count]
+  Stringable
+  (string-list [_]
+    (list "<FunctionContext " (str sym-count) ">")))
+
+(defn new-module [path]
+  (comp (sm/get-in-val [.modules path])
+        (sm/assoc-in-val [.modules path]
+                         (Module path {}))))
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
-(def global-sym (sm/lift gensym))
+(def global-var (sm/lift gensym))
 
 ;; create a function that will turn raw text into a list of AST's
 ;; using a recursive descent parser
@@ -26,16 +42,14 @@
 ;; useful for debugging the compiler
 (def sm-space (sm/state-maybe ""))
 (defn debug [& args]
-  (comp (for [debugging (sm/get-val .debugging)
-              :when debugging]
-          (apply print-err args))
-        sm-space))
+  (map sm-space (fn [_] (apply print-err args))))
 
 ;; for when a fatal error occurs
 (defn compilation-error [& msg]
   (map (apply debug msg)
        (fn [_] (abort))))
 
+;; information about a compiled expression or expressions
 (deftype c-code [c-var init decl type-num refs-map]
   Stringable
   (string-list [_]
@@ -51,43 +65,76 @@
 (defn get-type [type-symbol]
   (sm/state-maybe 0))
 
-(extend-type ast/inline-ast
-  Emitter
-  (emit-c [ast]
-    (for [target-lang (sm/get-val .target-lang)
-          :when (= (.lang ast) target-lang)
-          type-num (get-type (.result-type ast))]
-      [(c-code "" [(.txt ast)] [] type-num {})])))
-
-(extend-type ast/main-ast
-  Emitter
-  (emit-c [ast]
-    (for [exprs (traverse (.body ast) sm/state-maybe emit-c)]
-      (let [exprs (apply comp exprs)]
-        [(c-code "" (comp ["\nint main (int argc, char **argv) {"]
-                          (apply comp (map exprs .init))
-                          ["return(0);\n}"])
-                 [] 0 {})]))))
+(defprotocol DefinitionProto
+  (emit-definition [_ defined-sym]))
 
 (extend-type ast/block-comment-ast
   Emitter
   (emit-c [ast]
     (sm/state-maybe [(c-code "" (comp [""]
                                       (map (.lines ast) (fn [line]
-                                                          (str "//" line))))
-                             [] 0 {})])))
+                                                          (str "//" line "\n")))
+                                      ["\n"])
+                             [] 0 {})]))
+
+  DefinitionProto
+  (emit-definition [_ _]
+    (sm/state-maybe [])))
+
+(defn lookup-module-def [sym]
+  (sm/get-in-val [.modules (.file-name sym) .values sym]))
+
+(extend-type ast/inline-ast
+  Emitter
+  (emit-c [ast]
+    (for [target-lang (sm/get-val .target-lang)
+          :when (= (.lang ast) target-lang)
+          type-num (get-type (.result-type ast))]
+      [(c-code "" [(.txt ast)] [] type-num {})]))
+
+  DefinitionProto
+  (emit-definition [ast defined-sym]
+    (for [target-lang (sm/get-val .target-lang)
+          :when (= (.lang ast) target-lang)
+          type-num (get-type (.result-type ast))
+          c-var (comp (lookup-module-def defined-sym)
+                      (global-var "var_"))
+          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] c-var)]
+      [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})])))
+
+(extend-type ast/definition-ast
+  Emitter
+  (emit-c [ast]
+    (let [defined-sym (.sym ast)]
+      (for [evalled (traverse (.value ast) sm/state-maybe
+                              (fn [ast]
+                                (emit-definition ast defined-sym)))]
+        (apply comp evalled)))))
+
+(extend-type ast/main-ast
+  Emitter
+  (emit-c [ast]
+    (for [exprs (traverse (.body ast) sm/state-maybe emit-c)]
+      (let [exprs (apply comp exprs)]
+        [(c-code "" (comp ["\nint main (int argc, char **argv) {\n"]
+                          (apply comp (map exprs .init))
+                          ["\nreturn(0);\n}\n"])
+                 [] 0 {})]))))
 
 (def global-context (GlobalContext 'C
                                    (FunctionContext 0)
-                                   (maybe 'debugging)))
+                                   {}       ;; map for module info
+                                   ))
 
 (main [args]
       (let [[_ file-name] args]
         (for [in-file (fio/file-in file-name)
               asts (analyze-forms (cache in-file))
-              :let [emit-code (traverse asts sm/state-maybe emit-c)]
-              [emitted] (emit-code global-context)]
-          (map (flatten emitted)
+              :let [emit-code (for [_ (new-module "")
+                                    emitted (traverse asts sm/state-maybe emit-c)]
+                                (flatten emitted))]
+              [emitted-exprs] (emit-code global-context)]
+          (map emitted-exprs
                (fn [emitted]
-                 (map (.decl emitted) println)
-                 (map (.init emitted) println))))))
+                 (map (.decl emitted) print)
+                 (map (.init emitted) print))))))

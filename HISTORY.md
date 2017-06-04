@@ -57,3 +57,10 @@ Also, `inline` expressions can appear at the top level of a file just like the `
 ## Entry 3:
 
 Comment blocks are AST nodes also, this allows easy literate programming and code formatting
+
+## Entry 4:
+
+Defining symbols is the next step. Toccata source files are called modules and eventually there will be
+a system for compiling multiple modules into a program. The C variable for each symbol in a module
+is added to the global context so it can be looked up later.
+
