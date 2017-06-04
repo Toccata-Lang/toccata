@@ -10,10 +10,13 @@
 (add-ns rd (module "recursive-descent.toc"))
 (add-ns sm (module "state-maybe.toc"))
 
+(def IntegerType (inline-C Number "(Value *)&(Number){NumberType, -1, NumberType};"))
+
 ;; There's a bunch of information to keep track of while compiling
 (deftype GlobalContext [target-lang              ;; language to compile to
                         fn-context               ;; context for the fn currently being compiled
                         modules                  ;; info for each module compiled
+                        numbers
                         ])
 
 ;; information that must be tracked for each module
@@ -71,10 +74,9 @@
 (extend-type ast/block-comment-ast
   Emitter
   (emit-c [ast]
-    (sm/state-maybe [(c-code "" (comp [""]
+    (sm/state-maybe [(c-code "" (comp ["\n"]
                                       (map (.lines ast) (fn [line]
-                                                          (str "//" line "\n")))
-                                      ["\n"])
+                                                          (str "//" line "\n"))))
                              [] 0 {})]))
 
   DefinitionProto
@@ -83,6 +85,30 @@
 
 (defn lookup-module-def [sym]
   (sm/get-in-val [.modules (.file-name sym) .values sym]))
+
+(defn make-static-num [num]
+  (for [num-idx (map (sm/get-val .numbers) count)
+        :let [num-sym (str "num" num-idx)
+              num-ptr (str "numPtr" num-idx)]
+        _ (sm/assoc-in-val [.numbers num]
+                           (c-code num-ptr [] [] IntegerType {}))]
+    [(c-code num-ptr
+              []
+              ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
+               "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
+              IntegerType {})]))
+
+(extend-type Number
+  Emitter
+  (emit-c [num]
+    (comp (map (sm/get-in-val [.numbers num]) list)
+          (make-static-num num)))
+
+  DefinitionProto
+  (emit-definition [num defined-sym]
+    (for [[value] (emit-c num)
+          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] (.c-var value))]
+      [value])))
 
 (extend-type ast/inline-ast
   Emitter
@@ -123,7 +149,8 @@
 
 (def global-context (GlobalContext 'C
                                    (FunctionContext 0)
-                                   {}       ;; map for module info
+                                   {}                       ;; map for module info
+                                   {}                       ;; map for const numbers
                                    ))
 
 (main [args]

@@ -64,3 +64,6 @@ Defining symbols is the next step. Toccata source files are called modules and e
 a system for compiling multiple modules into a program. The C variable for each symbol in a module
 is added to the global context so it can be looked up later.
 
+## Entry 5:
+
+Now we're able to assign numbers to symbols
