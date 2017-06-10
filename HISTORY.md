@@ -71,3 +71,7 @@ Now we're able to assign numbers to symbols
 ## Entry 6:
 
 And now string literals to symbols
+
+## Entry 7:
+
+When doing the next commit, I discovered a need to refactor some code

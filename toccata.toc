@@ -26,11 +26,11 @@
   Stringable
   (string-list [_] (list "<Module '" path "'>")))
 
-;; Every function has some information that's local to it
-(deftype FunctionContext [sym-count]
+;; Every function arity has some information that's local to it
+(deftype FunctionArityContext [syms]
   Stringable
   (string-list [_]
-    (list "<FunctionContext " (str sym-count) ">")))
+    (list "<FunctionArityContext " (str (count syms)) ">")))
 
 (defn new-module [path]
   (comp (sm/get-in-val [.modules path])
@@ -61,32 +61,44 @@
     (list "<C-Code " (str c-var) ", " (str type-num) ", "
           (str (count init)) " ," (str refs-map) ">")))
 
-;; All AST nodes will implement this protocol
 (defprotocol Emitter
-  ;; 'emit-c' actually returns a function that will take a global context and
-  ;; emit the C code to stdout
-  (emit-c [ast]))
+  ;; All AST nodes will implement this fn
+  (emit [_])
 
-(defn get-type [type-symbol]
-  (sm/state-maybe 0))
+  ;; All AST nodes that can be in the value expression of a definition implement this
+  (emit-defined-value [_ defined-sym])
 
-(defprotocol DefinitionProto
-  (emit-definition [_ defined-sym]))
+  ;; All top-level AST nodes implement this
+  (emit-definition [_]))
 
-(extend-type ast/block-comment-ast
+(extend-type List
   Emitter
-  (emit-c [ast]
-    (sm/state-maybe [(c-code "" (comp ["\n"]
-                                      (map (.lines ast) (fn [line]
-                                                          (str "//" line "\n"))))
-                             [] 0 {})]))
+  (emit [asts]
+    (traverse asts sm/state-maybe emit)))
 
-  DefinitionProto
-  (emit-definition [_ _]
-    (sm/state-maybe [])))
+(defn genlocal [pre]
+  (for [sym-count (map (sm/get-in-val [.fn-context .syms]) count)]
+    (symbol (str pre sym-count))))
 
 (defn lookup-module-def [sym]
   (sm/get-in-val [.modules (.file-name sym) .values sym]))
+
+(defn lookup-sym [sym]
+  (comp (sm/get-in-val [.fn-context .syms sym])
+        (lookup-module-def sym)))
+
+(extend-type ast/block-comment-ast
+  Emitter
+  (emit [ast]
+    (sm/state-maybe (c-code "" (comp ["\n"]
+                                     (map (.lines ast) (fn [line]
+                                                         (str "//" line "\n"))))
+                            [] 0 {})))
+  (emit-defined-value [_ _]
+    (sm/state-maybe []))
+  (emit-definition  [_]
+    (sm/state-maybe [])))
+
 
 (defn make-static-string [str-val]
   (let [str-len (count str-val)]
@@ -95,26 +107,25 @@
                 str-ptr (str "strPtr" str-idx)]
           _ (sm/assoc-in-val [.strings str-val]
                              (c-code str-ptr [] [] StringType {}))]
-      [(c-code str-ptr
-                []
-                ["struct {\nint64_t type;\n int32_t refs;\n   int64_t len;\n   Integer *hash;\n   char buffer["
-                 (inc str-len)
-                 "];\n} " str-sym " = {StringType, -1, "
-                 str-len ", 0, \"" (escape-chars str-val) "\"};\n"
-                 "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
-                StringType {})])))
+      (c-code str-ptr
+              []
+              ["struct {\nint64_t type;\n int32_t refs;\n   int64_t len;\n   Integer *hash;\n   char buffer["
+               (inc str-len)
+               "];\n} " str-sym " = {StringType, -1, "
+               str-len ", 0, \"" (escape-chars str-val) "\"};\n"
+               "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
+              StringType {}))))
 
 (extend-type String
   Emitter
-  (emit-c [str-val]
-    (comp (map (sm/get-in-val [.strings str-val]) vector)
+  (emit [str-val]
+    (comp (sm/get-in-val [.strings str-val])
           (make-static-string str-val)))
-
-  DefinitionProto
-  (emit-definition [str-val defined-sym]
-    (for [[value] (emit-c str-val)
+  (emit-defined-value [str-val defined-sym]
+    (for [value (emit str-val)
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] (.c-var value))]
       [value])))
+
 
 (defn make-static-num [num]
   (for [num-idx (map (sm/get-val .numbers) count)
@@ -122,77 +133,100 @@
               num-ptr (str "numPtr" num-idx)]
         _ (sm/assoc-in-val [.numbers num]
                            (c-code num-ptr [] [] IntegerType {}))]
-    [(c-code num-ptr
-              []
-              ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
-               "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
-              IntegerType {})]))
+    (c-code num-ptr
+            []
+            ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
+             "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
+            IntegerType {})))
 
 (extend-type Number
   Emitter
-  (emit-c [num]
-    (comp (map (sm/get-in-val [.numbers num]) list)
+  (emit [num]
+    (comp (sm/get-in-val [.numbers num])
           (make-static-num num)))
-
-  DefinitionProto
-  (emit-definition [num defined-sym]
-    (for [[value] (emit-c num)
+  (emit-defined-value [num defined-sym]
+    (for [value (emit num)
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] (.c-var value))]
       [value])))
 
+
+(extend-type rdr/tagged-symbol
+  Emitter
+  (emit [sym]
+    (lookup-sym sym)))
+
+
+(defn get-type [type-symbol]
+  (sm/state-maybe 0))
+
 (extend-type ast/inline-ast
   Emitter
-  (emit-c [ast]
+  (emit [ast]
     (for [target-lang (sm/get-val .target-lang)
           :when (= (.lang ast) target-lang)
           type-num (get-type (.result-type ast))]
-      [(c-code "" [(.txt ast)] [] type-num {})]))
-
-  DefinitionProto
-  (emit-definition [ast defined-sym]
+      (c-code "" [(.txt ast)] [] type-num {})))
+  (emit-defined-value [ast defined-sym]
     (for [target-lang (sm/get-val .target-lang)
           :when (= (.lang ast) target-lang)
           type-num (get-type (.result-type ast))
           c-var (comp (lookup-module-def defined-sym)
                       (global-var "var_"))
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] c-var)]
-      [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})])))
+      [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})]))
+  (emit-definition [ast]
+    (map (emit ast) vector)))
+
 
 (extend-type ast/definition-ast
   Emitter
-  (emit-c [ast]
+  (emit-definition [ast]
     (let [defined-sym (.sym ast)]
       (for [evalled (traverse (.value ast) sm/state-maybe
                               (fn [ast]
-                                (emit-definition ast defined-sym)))]
+                                (emit-defined-value ast defined-sym)))]
         (apply comp evalled)))))
+
 
 (extend-type ast/main-ast
   Emitter
-  (emit-c [ast]
-    (for [exprs (traverse (.body ast) sm/state-maybe emit-c)]
-      (let [exprs (apply comp exprs)]
-        [(c-code "" (comp ["\nint main (int argc, char **argv) {\n"]
-                          (apply comp (map exprs .init))
-                          ["\nreturn(0);\n}\n"])
-                 [] 0 {})]))))
+  (emit-definition [ast]
+    (for [exprs (traverse (.body ast) sm/state-maybe emit)]
+      [(c-code "" (comp ["\nint main (int argc, char **argv) {\n"]
+                         (apply comp (map exprs .init))
+                         ["\nreturn(0);\n}\n"])
+                [] 0 {})])))
 
 (def global-context (GlobalContext 'C
-                                   (FunctionContext 0)
+                                   (FunctionArityContext {})
                                    {}                       ;; map for module info
                                    {}                       ;; map for const numbers
                                    {}                       ;; map for const strings
                                    ))
+
+(defprotocol StringWriter
+  (write-str [x]
+    (print x)))
+
+(extend-type Vector
+  StringWriter
+  (write-str [v] (map v write-str)))
+
+(extend-type List
+  StringWriter
+  (write-str [l] (map l write-str)))
 
 (main [args]
       (let [[_ file-name] args]
         (for [in-file (fio/file-in file-name)
               asts (analyze-forms (cache in-file))
               :let [emit-code (for [_ (new-module "")
-                                    emitted (traverse asts sm/state-maybe emit-c)]
-                                (flatten emitted))]
+                                    emitted (traverse asts sm/state-maybe emit-definition)
+                                    mod (sm/get-in-val [.modules ""])
+                                    _ (debug 'mod mod 'vals (.values mod))]
+                                emitted)]
               [emitted-exprs] (emit-code global-context)]
-          (map emitted-exprs
+          (map (apply comp emitted-exprs)
                (fn [emitted]
-                 (map (.decl emitted) print)
-                 (map (.init emitted) print))))))
+                 (write-str (.decl emitted))
+                 (write-str (.init emitted)))))))
