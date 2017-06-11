@@ -10,15 +10,19 @@
 (add-ns rd (module "recursive-descent.toc"))
 (add-ns sm (module "state-maybe.toc"))
 
+(def UnknownType (inline-C Number "(Value *)&(Number){NumberType, -1, 0};"))
 (def IntegerType (inline-C Number "(Value *)&(Number){NumberType, -1, NumberType};"))
 (def StringType (inline-C Number "(Value *)&(Number){NumberType, -1, StringType};"))
+(def FnArityType (inline-C Number "(Value *)&(Number){NumberType, -1, FnArityType};"))
+(def FunctionType (inline-C Number "(Value *)&(Number){NumberType, -1, FunctionType};"))
 
 ;; There's a bunch of information to keep track of while compiling
 (deftype GlobalContext [target-lang              ;; language to compile to
                         fn-context               ;; context for the fn currently being compiled
                         modules                  ;; info for each module compiled
-                        numbers
-                        strings
+                        numbers                  ;; static numbers
+                        strings                  ;; static strings
+                        fns                      ;; static functions
                         ])
 
 ;; information that must be tracked for each module
@@ -59,14 +63,32 @@
   Stringable
   (string-list [_]
     (list "<C-Code " (str c-var) ", " (str type-num) ", "
-          (str (count init)) " ," (str refs-map) ">")))
+          (str (count init)) " ," (str refs-map) ">"))
+
+  Composition
+  (zero [_] (c-code "" [] [] UnknownType {}))
+  (comp* [c cs]
+    (let [[c & cs] (reverse (cons c cs))]
+      (reduce cs c
+              (fn [result expr]
+                (c-code (.c-var result)
+                        (list (.init expr) (.init result))
+                        (list (.decl expr) (.decl result))
+                        (.type-num result)
+                        (extract (or (and (empty? (.init expr))
+                                          (maybe (merge-with + (.refs-map result) (.refs-map expr))))
+                                     (maybe (assoc (merge-with + (.refs-map expr) (.refs-map result))
+                                                   (.c-var expr) 0))))))))))
+
+(def empty-c-code (c-code "" [] [] UnknownType {}))
+
 
 (defprotocol Emitter
   ;; All AST nodes will implement this fn
   (emit [_])
 
-  ;; All AST nodes that can be in the value expression of a definition implement this
-  (emit-defined-value [_ defined-sym])
+  ;; All AST nodes produce a value that can be assigned to a symbol
+  (emit-defined-value [ast defined-sym])
 
   ;; All top-level AST nodes implement this
   (emit-definition [_]))
@@ -86,6 +108,15 @@
 (defn lookup-sym [sym]
   (comp (sm/get-in-val [.fn-context .syms sym])
         (lookup-module-def sym)))
+
+;; we cache all the info about static function arities to optimize call sites
+(defn lookup-static-arity [fn-var num-params]
+  (sm/get-in-val [.fns fn-var num-params]))
+
+(defn new-static-arity [fn-var num-params arity-var type-num]
+  (sm/assoc-in-val [.fns fn-var num-params]
+                   (c-code arity-var [] [] type-num {})))
+
 
 (extend-type ast/block-comment-ast
   Emitter
@@ -188,6 +219,110 @@
         (apply comp evalled)))))
 
 
+;; optimize calls to static, fixed arity, functions
+(defn call-static-fixed [target arg-vars file-name line-number]
+  (for [arity-info (lookup-static-arity (.c-var target) (count arg-vars))
+        result-sym (genlocal "rslt")]
+    (c-code result-sym
+            ["\n// static-fixed\n// #line " (str line-number) " " "\"" file-name "\"\n"
+             "Value *" result-sym " = " (.c-var arity-info) "("
+             (interpose (cons "empty_list" (seq arg-vars)) ", ") ");\n"]
+            [] (.type-num arity-info) {})))
+
+(extend-type ast/call-ast
+  Emitter
+  (emit [ast]
+    (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)]
+      (for [target (emit (.call-target ast))
+            args (emit (.args ast))
+            call-site (call-static-fixed target (map args .c-var) file-name line-number)]
+        (comp* target (comp args [call-site]))))))
+
+
+(defprotocol GenBinding
+  (gen-binding-syms [param]
+    ;; generate bindings for symbols and tagged-symbols
+    (for [param-var (genlocal "arg")
+          :let [var-info (c-code param-var ["//" (str param) " " (str param-var) "\n"] []
+                                 UnknownType {param-var 1})]
+          _ (sm/assoc-in-val [.fn-context .syms param] var-info)]
+      var-info)))
+
+(deftype StaticArity [arity-fn-var param-count var-info])
+
+(defn reset-fn-context [arity-fn-sym num-params]
+  (for [curr-fn-context (sm/get-val .fn-context)
+        _ (sm/set-val .fn-context (FunctionArityContext {}))]
+    curr-fn-context))
+
+;; probably the most complex function in the whole compiler
+(extend-type ast/fn-arity-ast
+  Emitter
+  (emit [ast]
+    (let [params (.fixed (.params ast))
+          param-count (count params)]
+      (for [arity-fn-var (global-var "arityImpl_")
+            arity-var (global-var "fnArity_")
+            fn-context (reset-fn-context arity-fn-var param-count)
+            param-syms (traverse params sm/state-maybe gen-binding-syms)
+            body-exprs (emit (.body ast))
+            _ (sm/set-val .fn-context fn-context)]
+        (let [param-decls (map param-syms (fn [param]
+                                            (str "Value *" (.c-var param))))
+              fn-decl (cons (c-code ""
+                                    ["Value *" arity-fn-var "("
+                                     (interpose (cons "List *closures" param-decls) ", ")
+                                     ") {\n"]
+                                    [] FnArityType {})
+                            param-syms)
+              fn-expr (comp fn-decl body-exprs)
+              fn-body [(map fn-expr .decl)
+                       (map fn-expr .init)]
+              return-result "\n};\n\n"]
+          (StaticArity arity-fn-var param-count
+                       (c-code (str "&" arity-var) []
+                               [fn-body
+                                return-result "FnArity " arity-var " = {FnArityType, -1, " param-count
+                                ", (List *)0, " "0" ", " arity-fn-var "};\n"]
+                               FnArityType {})))))))
+
+
+(extend-type ast/fn-ast
+  Emitter
+  (emit [ast]
+    (let [fn-name (.fn-sym ast)]
+      (for [struct-var (global-var "fnStruct")
+            fn-var (global-var "fn")
+            arities-info (emit (.arities ast))
+            emitted-arities (traverse arities-info sm/state-maybe
+                                      (fn [static-arity]
+                                        (for [_ (new-static-arity fn-var
+                                                                  (.param-count static-arity)
+                                                                  (.arity-fn-var static-arity)
+                                                                  (.type-num (.var-info static-arity)))]
+                                          (.var-info static-arity))))]
+        (let [arity-count (count emitted-arities)
+              arity-vars (map emitted-arities .c-var)]
+          (c-code fn-var
+                  []
+                  ["\n// --------- " fn-name " --------------\n"
+                   "Value *" fn-var ";\n"
+                   (map emitted-arities .decl)
+                   "\n// --------- " fn-name " declaration --------------\n"
+                   "Function " struct-var " = {FunctionType, -1, \""
+                   fn-name "\", " arity-count ", "
+                   "{" (to-str (interpose arity-vars ", ")) "}};\n"
+                   "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]
+                  FunctionType {})))))
+
+  (emit-defined-value [fn-val defined-sym]
+    (for [value (emit fn-val)
+          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
+                             (c-code (.c-var value) [] [] (.type-num value) (.refs-map value)))]
+      [value])))
+
+
 (extend-type ast/main-ast
   Emitter
   (emit-definition [ast]
@@ -195,13 +330,14 @@
       [(c-code "" (comp ["\nint main (int argc, char **argv) {\n"]
                          (apply comp (map exprs .init))
                          ["\nreturn(0);\n}\n"])
-                [] 0 {})])))
+                (apply comp (map exprs .decl)) 0 {})])))
 
 (def global-context (GlobalContext 'C
                                    (FunctionArityContext {})
                                    {}                       ;; map for module info
                                    {}                       ;; map for const numbers
                                    {}                       ;; map for const strings
+                                   {}                       ;; map for static fns
                                    ))
 
 (defprotocol StringWriter
@@ -216,14 +352,16 @@
   StringWriter
   (write-str [l] (map l write-str)))
 
-(main [args]
-      (let [[_ file-name] args]
+(main [params]
+      (let [[_ file-name] params]
+        (println)
         (for [in-file (fio/file-in file-name)
               asts (analyze-forms (cache in-file))
               :let [emit-code (for [_ (new-module "")
                                     emitted (traverse asts sm/state-maybe emit-definition)
-                                    mod (sm/get-in-val [.modules ""])
-                                    _ (debug 'mod mod 'vals (.values mod))]
+                                    ;; mod (sm/get-in-val [.modules ""])
+                                    ;; _ (debug 'mod mod 'vals (.values mod))
+                                    ]
                                 emitted)]
               [emitted-exprs] (emit-code global-context)]
           (map (apply comp emitted-exprs)

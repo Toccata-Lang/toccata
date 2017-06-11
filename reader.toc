@@ -13,8 +13,8 @@
 (defn debug [tag]
   (grmr/ignore
    (grmr/term-fn (fn [text]
-                   (print-err tag (subs text 0 10))
-                   (maybe (list "" text))))))
+                   (print-err tag (count text) (str "\"" (subs text 0 10) "\""))
+                   0))))
 
 
 ;; we tag symbols with file/line for use later
@@ -191,8 +191,8 @@
                                          (grmr/ignore "-")
                                          (grmr/one-or-more grmr/digit)))))
 
-(def read-sub-form
-  (grmr/recurse "form"))
+(def read-sub-expr
+  (grmr/recurse "expr"))
 
 (def linear-whitespace
   (grmr/rule "linear-whitespace"
@@ -229,13 +229,13 @@
                             (grmr/ignore "&")
                             read-arg)))
 
-(def read-args
-  (grmr/recursive-rule "args"
+(def read-params
+  (grmr/recursive-rule "params"
                        (grmr/any (grmr/apply-to identity
                                                 ignore-whitespace
                                                 (grmr/ignore "[")
-                                                (grmr/apply-to ast/args
-                                                               (grmr/none-or-more (grmr/recurse "args"))
+                                                (grmr/apply-to ast/params
+                                                               (grmr/none-or-more (grmr/recurse "params"))
                                                                (grmr/optional read-var-arg))
                                                 (grmr/any (grmr/ignore "]")
                                                           (grmr/error "Missing ']'")))
@@ -277,6 +277,24 @@
                                                            (grmr/none-or-more not-eol))
                                             (grmr/ignore newline))))))
 
+(def read-call
+  (grmr/rule "call"
+             (grmr/apply-to ast/call-expr
+                            (grmr/ignore "(")
+                            (grmr/one-or-more read-sub-expr)
+                            (grmr/ignore ")"))))
+
+(def read-expr
+  (grmr/recursive-rule "expr"
+                       (grmr/apply-to identity
+                                      ignore-whitespace
+                                      (grmr/any read-integer
+                                                read-string
+                                                read-symbol
+                                                read-block-comment
+                                                read-call)
+                                      ignore-whitespace)))
+
 (def read-inline-body
   (grmr/rule "read-inline-body"
              (grmr/apply-to comp
@@ -284,14 +302,24 @@
                             (grmr/all read-inline)
                             (grmr/none-or-more read-block-comment))))
 
-(def read-form
-  (grmr/recursive-rule "form"
-                       (grmr/apply-to comp
-                                      (grmr/ignore (grmr/none-or-more whitespace))
-                                      (grmr/any read-integer
-                                                read-string
-                                                read-block-comment)
-                                      (grmr/ignore (grmr/none-or-more whitespace)))))
+(def read-single-arity
+  (grmr/rule "single-arity"
+             (grmr/apply-to (fn [params doc body]
+                              (list (ast/fn-arity params doc body)))
+                            read-params
+                            (grmr/any read-block-comment
+                                      (grmr/apply-to (fn [fn ln]
+                                                       (ast/block-comment fn ln (list "")))
+                                                     grmr/file-name
+                                                     grmr/line-number))
+                            (grmr/any read-inline-body
+                                      (grmr/one-or-more read-expr)
+                                      (grmr/error "Body of 'fn' is wrong"))
+                            ignore-whitespace)))
+
+(def read-arities
+  (grmr/rule "arities"
+             read-single-arity))
 
 (def read-main
   (grmr/rule "main"
@@ -302,12 +330,13 @@
                             (grmr/ignore "main")
                             (grmr/any (grmr/apply-to ast/main-fn
                                                      (grmr/ignore (grmr/one-or-more whitespace))
-                                                     read-args
+                                                     read-params
                                                      (grmr/ignore (grmr/one-or-more whitespace))
                                                      ;; TODO: will add later
                                                      ;; (grmr/none-or-more (grmr/any read-assert
                                                      ;;                              read-returns))
                                                      (grmr/any read-inline-body
+                                                               (grmr/one-or-more read-expr)
                                                                (grmr/error "Body of 'main' fn is wrong"))
                                                      ignore-whitespace
                                                      (grmr/ignore ")"))
@@ -316,24 +345,43 @@
 (def read-def
   (grmr/rule "def"
              (grmr/apply-to identity
+                            ignore-whitespace
                             (grmr/ignore "(")
-                            (grmr/ignore (grmr/none-or-more whitespace))
+                            ignore-whitespace
                             (grmr/ignore "def")
                             (grmr/ignore (grmr/one-or-more whitespace))
                             (grmr/any (grmr/apply-to (fn [sym pre-comment value post-comment]
-                                                       (ast/def-expr sym (comp pre-comment
-                                                                               (list value)
-                                                                               post-comment)))
+                                                       (ast/definition sym (comp pre-comment
+                                                                                 (list value)
+                                                                                 post-comment)))
                                                      read-symbol
                                                      (grmr/ignore (grmr/one-or-more whitespace))
                                                      (grmr/none-or-more read-block-comment)
                                                      (grmr/any read-inline
-                                                               read-form)
-                                                     (grmr/ignore (grmr/none-or-more whitespace))
+                                                               read-expr)
+                                                     ignore-whitespace
                                                      (grmr/none-or-more read-block-comment)
-                                                     (grmr/ignore (grmr/none-or-more whitespace))
+                                                     ignore-whitespace
                                                      (grmr/ignore ")"))
                                       (grmr/error "Invalid 'def' expression")))))
+
+(def read-defn
+  (grmr/rule "defn"
+             (grmr/apply-to identity
+                            ignore-whitespace
+                            (grmr/ignore "(")
+                            ignore-whitespace
+                            (grmr/ignore "defn")
+                            (grmr/ignore (grmr/one-or-more whitespace))
+                            (grmr/any (grmr/apply-to (fn [name arities]
+                                                       (ast/definition name
+                                                         (list (ast/fn-expr name arities))))
+                                                     read-symbol
+                                                     (grmr/ignore (grmr/one-or-more whitespace))
+                                                     read-arities
+                                                     ignore-whitespace
+                                                     (grmr/ignore ")"))
+                                      (grmr/error "Invalid 'defn' expression")))))
 
 (def bad-expr
   (grmr/rule "bad-expr"
@@ -344,5 +392,6 @@
                        (grmr/any read-main
                                  read-inline
                                  read-def
+                                 read-defn
                                  read-block-comment
                                  bad-expr)))

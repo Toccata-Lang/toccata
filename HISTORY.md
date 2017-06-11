@@ -75,3 +75,7 @@ And now string literals to symbols
 ## Entry 7:
 
 When doing the next commit, I discovered a need to refactor some code
+
+## Entry 8:
+
+And now we're finally getting somewhere. This is the first point that we can define a function and call it. Looking at this commit, you'll see the complexity start to increase. And we've just scratched the surface. This is where `core.c` makes it's appearance, which will hold all of the C code that is the foundation of Toccata. Watch it explode in successive commits.
