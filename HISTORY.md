@@ -79,3 +79,7 @@ When doing the next commit, I discovered a need to refactor some code
 ## Entry 8:
 
 And now we're finally getting somewhere. This is the first point that we can define a function and call it. Looking at this commit, you'll see the complexity start to increase. And we've just scratched the surface. This is where `core.c` makes it's appearance, which will hold all of the C code that is the foundation of Toccata. Watch it explode in successive commits.
+
+## Entry 9:
+
+Since we compile expressions that are calls to functions, we need to handle assiging the results to global static symbols. Which means we need to initialize them at run time before 'main' runs. So this commit adds that machinery. It also adds the 'core.toc' standard library.

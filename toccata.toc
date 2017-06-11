@@ -155,7 +155,7 @@
   (emit-defined-value [str-val defined-sym]
     (for [value (emit str-val)
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] (.c-var value))]
-      [value])))
+      [(assoc value .c-var "")])))
 
 
 (defn make-static-num [num]
@@ -178,7 +178,7 @@
   (emit-defined-value [num defined-sym]
     (for [value (emit num)
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] (.c-var value))]
-      [value])))
+      [(assoc value .c-var "")])))
 
 
 (extend-type rdr/tagged-symbol
@@ -197,6 +197,7 @@
           :when (= (.lang ast) target-lang)
           type-num (get-type (.result-type ast))]
       (c-code "" [(.txt ast)] [] type-num {})))
+
   (emit-defined-value [ast defined-sym]
     (for [target-lang (sm/get-val .target-lang)
           :when (= (.lang ast) target-lang)
@@ -205,8 +206,12 @@
                       (global-var "var_"))
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] c-var)]
       [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})]))
+
   (emit-definition [ast]
-    (map (emit ast) vector)))
+    (for [target-lang (sm/get-val .target-lang)
+          :when (= (.lang ast) target-lang)
+          type-num (get-type (.result-type ast))]
+      (c-code "" [] [(.txt ast)] type-num {}))))
 
 
 (extend-type ast/definition-ast
@@ -216,7 +221,7 @@
       (for [evalled (traverse (.value ast) sm/state-maybe
                               (fn [ast]
                                 (emit-defined-value ast defined-sym)))]
-        (apply comp evalled)))))
+        (flatten evalled)))))
 
 
 ;; optimize calls to static, fixed arity, functions
@@ -237,7 +242,13 @@
       (for [target (emit (.call-target ast))
             args (emit (.args ast))
             call-site (call-static-fixed target (map args .c-var) file-name line-number)]
-        (comp* target (comp args [call-site]))))))
+        (comp* target (comp args [call-site])))))
+
+  (emit-defined-value [fn-val defined-sym]
+    (for [value (emit fn-val)
+          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
+                             (c-code (.c-var value) [] [] (.type-num value) (.refs-map value)))]
+      [value])))
 
 
 (defprotocol GenBinding
@@ -256,36 +267,46 @@
         _ (sm/set-val .fn-context (FunctionArityContext {}))]
     curr-fn-context))
 
-;; probably the most complex function in the whole compiler
+(defn emit-static-arity [params body]
+  (let [param-count (count params)]
+    (for [arity-fn-var (global-var "arityImpl_")
+          arity-var (global-var "fnArity_")
+          fn-context (reset-fn-context arity-fn-var param-count)
+          param-syms (traverse params sm/state-maybe gen-binding-syms)
+          body-exprs (emit body)
+          _ (sm/set-val .fn-context fn-context)]
+      (let [param-decls (map param-syms (fn [param]
+                                          (str "Value *" (.c-var param))))
+            fn-expr (comp* (c-code "" []
+                                   ["Value *" arity-fn-var "("
+                                    (interpose (cons "List *closures" param-decls) ", ")
+                                    ") {\n"]
+                                   FnArityType {})
+                           (comp param-syms body-exprs))
+            fn-result (extract (or (and (= "" (.c-var fn-expr))
+                                        (maybe "nothing"))
+                                   (maybe (.c-var fn-expr))))]
+        (StaticArity arity-fn-var param-count
+                     (c-code (str "&" arity-var) []
+                             [(.decl fn-expr)
+                              (.init fn-expr)
+                              "\nreturn(" fn-result ");\n};\n\n"
+                              "FnArity " arity-var " = {FnArityType, -1, " param-count
+                              ", (List *)0, " "0" ", " arity-fn-var "};\n"]
+                             FnArityType {}))))))
+
+(extend-type ast/main-ast
+  Emitter
+  (emit-definition [ast]
+    (for [fn-arity (emit-static-arity (.fixed (.params ast)) (.body ast))
+          _ (new-static-arity 'main 1 (.arity-fn-var fn-arity) IntegerType)]
+      [(c-code "" [] (.decl (.var-info fn-arity)) 0 {})])))
+
+
 (extend-type ast/fn-arity-ast
   Emitter
   (emit [ast]
-    (let [params (.fixed (.params ast))
-          param-count (count params)]
-      (for [arity-fn-var (global-var "arityImpl_")
-            arity-var (global-var "fnArity_")
-            fn-context (reset-fn-context arity-fn-var param-count)
-            param-syms (traverse params sm/state-maybe gen-binding-syms)
-            body-exprs (emit (.body ast))
-            _ (sm/set-val .fn-context fn-context)]
-        (let [param-decls (map param-syms (fn [param]
-                                            (str "Value *" (.c-var param))))
-              fn-decl (cons (c-code ""
-                                    ["Value *" arity-fn-var "("
-                                     (interpose (cons "List *closures" param-decls) ", ")
-                                     ") {\n"]
-                                    [] FnArityType {})
-                            param-syms)
-              fn-expr (comp fn-decl body-exprs)
-              fn-body [(map fn-expr .decl)
-                       (map fn-expr .init)]
-              return-result "\n};\n\n"]
-          (StaticArity arity-fn-var param-count
-                       (c-code (str "&" arity-var) []
-                               [fn-body
-                                return-result "FnArity " arity-var " = {FnArityType, -1, " param-count
-                                ", (List *)0, " "0" ", " arity-fn-var "};\n"]
-                               FnArityType {})))))))
+    (emit-static-arity (.fixed (.params ast)) (.body ast))))
 
 
 (extend-type ast/fn-ast
@@ -304,8 +325,7 @@
                                           (.var-info static-arity))))]
         (let [arity-count (count emitted-arities)
               arity-vars (map emitted-arities .c-var)]
-          (c-code fn-var
-                  []
+          (c-code fn-var []
                   ["\n// --------- " fn-name " --------------\n"
                    "Value *" fn-var ";\n"
                    (map emitted-arities .decl)
@@ -320,17 +340,8 @@
     (for [value (emit fn-val)
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
                              (c-code (.c-var value) [] [] (.type-num value) (.refs-map value)))]
-      [value])))
+      [(assoc value .c-var "")])))
 
-
-(extend-type ast/main-ast
-  Emitter
-  (emit-definition [ast]
-    (for [exprs (traverse (.body ast) sm/state-maybe emit)]
-      [(c-code "" (comp ["\nint main (int argc, char **argv) {\n"]
-                         (apply comp (map exprs .init))
-                         ["\nreturn(0);\n}\n"])
-                (apply comp (map exprs .decl)) 0 {})])))
 
 (def global-context (GlobalContext 'C
                                    (FunctionArityContext {})
@@ -352,19 +363,30 @@
   StringWriter
   (write-str [l] (map l write-str)))
 
+(defn emit-main [initialization]
+  (for [main-fn (lookup-static-arity 'main 1)]
+    [(c-code "" []
+             ["\nint main (int argc, char **argv) {\n"
+              "outstream = stdout;\n"
+              initialization
+              (.c-var main-fn) "((List *)0, (Value *)0);\n"
+              "\nreturn(0);\n}\n"]
+             0 {})]))
+
 (main [params]
       (let [[_ file-name] params]
         (println)
-        (for [in-file (fio/file-in file-name)
+        (for [core-file (fio/file-in "core.toc")
+              core-asts (analyze-forms (cache core-file))
+              in-file (fio/file-in file-name)
               asts (analyze-forms (cache in-file))
               :let [emit-code (for [_ (new-module "")
+                                    emitted-core (traverse core-asts sm/state-maybe emit-definition)
                                     emitted (traverse asts sm/state-maybe emit-definition)
-                                    ;; mod (sm/get-in-val [.modules ""])
-                                    ;; _ (debug 'mod mod 'vals (.values mod))
-                                    ]
-                                emitted)]
+                                    main-fn (emit-main (map (flatten emitted) .init))]
+                                (flatten (comp emitted-core emitted [main-fn])))]
               [emitted-exprs] (emit-code global-context)]
-          (map (apply comp emitted-exprs)
-               (fn [emitted]
-                 (write-str (.decl emitted))
-                 (write-str (.init emitted)))))))
+          (let [_ (write-str "\n#include \"core.h\"\n")]
+            (map emitted-exprs
+                 (fn [emitted]
+                   (write-str (.decl emitted))))))))

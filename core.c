@@ -1,6 +1,8 @@
 
 #include "core.h"
 
+Value *nothing = (Value *)0;
+
 List *empty_list = &(List){ListType,-1,0,0,0};
 Integer trueVal = {IntegerType, -1, 1};
 Value* true = (Value *)&trueVal;
@@ -47,3 +49,16 @@ void dec_and_free(Value *v, int deltaRefs) {
   // fprintf(stderr, "malloc_count: %lld free_count: %lld\r", malloc_count, free_count);
 #endif
 };
+
+Value *pr_STAR(Value *str) {
+  if (str->type == StringType) {
+    fprintf(outstream, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
+  } else if (str->type == SubStringType) {
+    fprintf(outstream, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
+  } else {
+    fprintf(stderr, "\ninvalid type for 'pr*'\n");
+    abort();
+  }
+  dec_and_free(str, 1);
+  return(true);
+}
