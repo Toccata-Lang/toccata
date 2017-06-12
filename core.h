@@ -32,3 +32,5 @@ Value* true;
 
 void dec_and_free(Value *v, int deltaRefs);
 Value *pr_STAR(Value *);
+Value *add_ints(Value *arg0, Value *arg1);
+Value *integer_str(Value *arg0);

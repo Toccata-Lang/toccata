@@ -83,3 +83,7 @@ And now we're finally getting somewhere. This is the first point that we can def
 ## Entry 9:
 
 Since we compile expressions that are calls to functions, we need to handle assiging the results to global static symbols. Which means we need to initialize them at run time before 'main' runs. So this commit adds that machinery. It also adds the 'core.toc' standard library.
+
+## Entry 10:
+
+Now we'll add a couple of low-level functions that we can call. We'll add the functionality to allocate and free a few primitive value types.

@@ -19,6 +19,7 @@
 ;; There's a bunch of information to keep track of while compiling
 (deftype GlobalContext [target-lang              ;; language to compile to
                         fn-context               ;; context for the fn currently being compiled
+                        init-fn-context          ;; context for the initialization code
                         modules                  ;; info for each module compiled
                         numbers                  ;; static numbers
                         strings                  ;; static strings
@@ -31,10 +32,17 @@
   (string-list [_] (list "<Module '" path "'>")))
 
 ;; Every function arity has some information that's local to it
-(deftype FunctionArityContext [syms]
+(deftype FunctionArityContext [var-count syms]
   Stringable
   (string-list [_]
     (list "<FunctionArityContext " (str (count syms)) ">")))
+
+(defn reset-fn-context
+  ([] (reset-fn-context (FunctionArityContext 0 {})))
+  ([new-context]
+   (for [curr-fn-context (sm/get-val .fn-context)
+         _ (sm/set-val .fn-context new-context)]
+     curr-fn-context)))
 
 (defn new-module [path]
   (comp (sm/get-in-val [.modules path])
@@ -99,7 +107,8 @@
     (traverse asts sm/state-maybe emit)))
 
 (defn genlocal [pre]
-  (for [sym-count (map (sm/get-in-val [.fn-context .syms]) count)]
+  (for [sym-count (sm/get-in-val [.fn-context .var-count])
+        _ (sm/assoc-in-val [.fn-context .var-count] (inc sym-count))]
     (symbol (str pre sym-count))))
 
 (defn lookup-module-def [sym]
@@ -152,9 +161,11 @@
   (emit [str-val]
     (comp (sm/get-in-val [.strings str-val])
           (make-static-string str-val)))
+
   (emit-defined-value [str-val defined-sym]
     (for [value (emit str-val)
-          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] (.c-var value))]
+          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
+                             (c-code (.c-var value) [] [] (.type-num value) {}))]
       [(assoc value .c-var "")])))
 
 
@@ -184,7 +195,12 @@
 (extend-type rdr/tagged-symbol
   Emitter
   (emit [sym]
-    (lookup-sym sym)))
+    (lookup-sym sym))
+
+  (emit-defined-value [sym defined-sym]
+    (for [value (lookup-sym sym)
+          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] value)]
+      [value])))
 
 
 (defn get-type [type-symbol]
@@ -203,7 +219,7 @@
           :when (= (.lang ast) target-lang)
           type-num (get-type (.result-type ast))
           c-var (comp (lookup-module-def defined-sym)
-                      (global-var "var_"))
+                      (global-var "var"))
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] c-var)]
       [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})]))
 
@@ -245,10 +261,19 @@
         (comp* target (comp args [call-site])))))
 
   (emit-defined-value [fn-val defined-sym]
-    (for [value (emit fn-val)
+    (for [init-fn-context (sm/get-val .init-fn-context)
+          fn-context (reset-fn-context init-fn-context)
+          value (emit fn-val)
+          var (global-var "var")
+          init-fn-context (reset-fn-context fn-context)
+          _ (sm/set-val .init-fn-context init-fn-context)
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
-                             (c-code (.c-var value) [] [] (.type-num value) (.refs-map value)))]
-      [value])))
+                             (c-code var [] [] (.type-num value) (.refs-map value)))]
+      [(c-code var [(.init value)
+                    var " = " (.c-var value) ";\n"
+                    var "->refs = -1;\n"]
+               [(.decl value) "Value *" var ";\n"]
+               (.type-num value) (.refs-map value))])))
 
 
 (defprotocol GenBinding
@@ -262,16 +287,11 @@
 
 (deftype StaticArity [arity-fn-var param-count var-info])
 
-(defn reset-fn-context [arity-fn-sym num-params]
-  (for [curr-fn-context (sm/get-val .fn-context)
-        _ (sm/set-val .fn-context (FunctionArityContext {}))]
-    curr-fn-context))
-
 (defn emit-static-arity [params body]
   (let [param-count (count params)]
-    (for [arity-fn-var (global-var "arityImpl_")
-          arity-var (global-var "fnArity_")
-          fn-context (reset-fn-context arity-fn-var param-count)
+    (for [arity-fn-var (global-var "arityImpl")
+          arity-var (global-var "fnArity")
+          fn-context (reset-fn-context)
           param-syms (traverse params sm/state-maybe gen-binding-syms)
           body-exprs (emit body)
           _ (sm/set-val .fn-context fn-context)]
@@ -344,7 +364,8 @@
 
 
 (def global-context (GlobalContext 'C
-                                   (FunctionArityContext {})
+                                   (FunctionArityContext 0 {})
+                                   (FunctionArityContext 0 {})
                                    {}                       ;; map for module info
                                    {}                       ;; map for const numbers
                                    {}                       ;; map for const strings
@@ -363,13 +384,16 @@
   StringWriter
   (write-str [l] (map l write-str)))
 
-(defn emit-main [initialization]
+(defn emit-main [vals]
   (for [main-fn (lookup-static-arity 'main 1)]
     [(c-code "" []
              ["\nint main (int argc, char **argv) {\n"
               "outstream = stdout;\n"
-              initialization
-              (.c-var main-fn) "((List *)0, (Value *)0);\n"
+              (map vals .init) "\n"
+              (.c-var main-fn) "((List *)0, (Value *)0);\n\n"
+              (map vals (fn [val]
+                          [(.c-var val) "->refs = 1;\n"
+                           "dec_and_free(" (.c-var val) ", 1);\n"]))
               "\nreturn(0);\n}\n"]
              0 {})]))
 
@@ -383,7 +407,8 @@
               :let [emit-code (for [_ (new-module "")
                                     emitted-core (traverse core-asts sm/state-maybe emit-definition)
                                     emitted (traverse asts sm/state-maybe emit-definition)
-                                    main-fn (emit-main (map (flatten emitted) .init))]
+                                    main-fn (emit-main (remove (flatten emitted)
+                                                               (fn [val] (= "" (.c-var val)))))]
                                 (flatten (comp emitted-core emitted [main-fn])))]
               [emitted-exprs] (emit-code global-context)]
           (let [_ (write-str "\n#include \"core.h\"\n")]
