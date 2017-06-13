@@ -87,3 +87,7 @@ Since we compile expressions that are calls to functions, we need to handle assi
 ## Entry 10:
 
 Now we'll add a couple of low-level functions that we can call. We'll add the functionality to allocate and free a few primitive value types.
+
+## Entry 11:
+
+Add a fn to compare integers for equality. Which means we need to add the Maybe type as well. And add malloc/free for Functions and Lists.

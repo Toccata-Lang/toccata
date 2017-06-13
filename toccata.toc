@@ -13,8 +13,11 @@
 (def UnknownType (inline-C Number "(Value *)&(Number){NumberType, -1, 0};"))
 (def IntegerType (inline-C Number "(Value *)&(Number){NumberType, -1, NumberType};"))
 (def StringType (inline-C Number "(Value *)&(Number){NumberType, -1, StringType};"))
+(def SubStringType (inline-C Number "(Value *)&(Number){NumberType, -1, SubStringType};"))
 (def FnArityType (inline-C Number "(Value *)&(Number){NumberType, -1, FnArityType};"))
 (def FunctionType (inline-C Number "(Value *)&(Number){NumberType, -1, FunctionType};"))
+(def ListType (inline-C Number "(Value *)&(Number){NumberType, -1, ListType};"))
+(def MaybeType (inline-C Number "(Value *)&(Number){NumberType, -1, MaybeType};"))
 
 ;; There's a bunch of information to keep track of while compiling
 (deftype GlobalContext [target-lang              ;; language to compile to
@@ -89,6 +92,36 @@
                                                    (.c-var expr) 0))))))))))
 
 (def empty-c-code (c-code "" [] [] UnknownType {}))
+
+(defn collapse-exprs [exprs]
+  (let [[c & cs] (reverse (seq exprs))
+        c (assoc-in c [.refs-map (.c-var c)] 1)
+        cs (remove cs (fn [c] (and (empty? (.init c))
+                                   (empty? (.decl c)))))]
+    (reduce cs c
+            (fn [result expr]
+              (let [init (extract (or (and (or (= 'inline (.c-var result))
+                                               (= "" (.c-var expr)))
+                                           (maybe [(.init expr) (.init result)]))
+                                      (and (empty? (.init expr))
+                                           (maybe (.init result)))
+                                      (for [ref (get (.refs-map result) (.c-var expr))]
+                                        (list (.init expr)
+                                              "\nincRef(" (.c-var expr) ", " (str (dec ref)) ");\n"
+                                              (.init result)))
+                                      (maybe (list (.init expr)
+                                                   "\ndec_and_free(" (.c-var expr) ", 1);\n"
+                                                   (.init result)))))]
+
+                (c-code (.c-var result)
+                        init
+                        (comp (.decl expr) (.decl result))
+                        (.type-num result)
+                        (extract (or (and (empty? (.init expr))
+                                          (maybe (merge-with + (.refs-map expr) (.refs-map result))))
+                                     (maybe (assoc (merge-with + (.refs-map expr) (.refs-map result))
+                                                   (.c-var expr) 0))))))))))
+
 
 
 (defprotocol Emitter
@@ -200,7 +233,7 @@
   (emit-defined-value [sym defined-sym]
     (for [value (lookup-sym sym)
           _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] value)]
-      [value])))
+      [(assoc value .c-var "")])))
 
 
 (defn get-type [type-symbol]
@@ -295,21 +328,25 @@
           param-syms (traverse params sm/state-maybe gen-binding-syms)
           body-exprs (emit body)
           _ (sm/set-val .fn-context fn-context)]
-      (let [param-decls (map param-syms (fn [param]
+      (let [body (collapse-exprs body-exprs)
+            param-decls (map param-syms (fn [param]
                                           (str "Value *" (.c-var param))))
             fn-expr (comp* (c-code "" []
                                    ["Value *" arity-fn-var "("
                                     (interpose (cons "List *closures" param-decls) ", ")
                                     ") {\n"]
                                    FnArityType {})
-                           (comp param-syms body-exprs))
-            fn-result (extract (or (and (= "" (.c-var fn-expr))
+                           param-syms)
+            fn-result (extract (or (and (= "" (.c-var body))
                                         (maybe "nothing"))
-                                   (maybe (.c-var fn-expr))))]
+                                   (maybe (.c-var body))))]
         (StaticArity arity-fn-var param-count
-                     (c-code (str "&" arity-var) []
-                             [(.decl fn-expr)
+                     (c-code (str "&" arity-var)
+                             []
+                             [(.decl body)
+                              (.decl fn-expr)
                               (.init fn-expr)
+                              (.init body)
                               "\nreturn(" fn-result ");\n};\n\n"
                               "FnArity " arity-var " = {FnArityType, -1, " param-count
                               ", (List *)0, " "0" ", " arity-fn-var "};\n"]
@@ -390,11 +427,17 @@
              ["\nint main (int argc, char **argv) {\n"
               "outstream = stdout;\n"
               (map vals .init) "\n"
-              (.c-var main-fn) "((List *)0, (Value *)0);\n\n"
+              "Value *the_final_answer = " (.c-var main-fn) "((List *)0, (Value *)0);\n\n"
+              "#ifdef CHECK_MEM_LEAK\n"
               (map vals (fn [val]
                           [(.c-var val) "->refs = 1;\n"
-                           "dec_and_free(" (.c-var val) ", 1);\n"]))
-              "\nreturn(0);\n}\n"]
+                           "freeGlobal(" (.c-var val) ");\n"]))
+              "  dec_and_free(the_final_answer, 1);\n"
+              "  freeAll();\n"
+              "  if (malloc_count - free_count != 0)\n"
+              "     return(1);\n"
+              "#endif\n"
+              "    return(0);\n};\n"]
              0 {})]))
 
 (main [params]
