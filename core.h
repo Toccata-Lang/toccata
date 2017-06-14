@@ -38,6 +38,7 @@ void freeAll();
 void freeGlobal(Value *x);
 #endif
 void dec_and_free(Value *v, int deltaRefs);
+Value *incRef(Value *v, int deltaRefs);
 
 Value *intValue(int64_t n);
 Value *pr_STAR(Value *);

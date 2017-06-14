@@ -391,6 +391,21 @@ void dec_and_free(Value *v, int deltaRefs) {
 #endif
 };
 
+Value *incRef(Value *v, int deltaRefs) {
+  if (deltaRefs < 1)
+    return(v);
+
+  int32_t refs = atomic_load(&v->refs);
+  if (refs < -1) {
+    fprintf(stderr, "failure in incRef: %d %p\n", refs, v);
+    abort();
+  }
+
+  if (refs >= 0)
+    atomic_fetch_add(&v->refs, deltaRefs);
+  return(v);
+}
+
 #ifdef CHECK_MEM_LEAK
 void moveFreeToCentral();
 

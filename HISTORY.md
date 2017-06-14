@@ -91,3 +91,8 @@ Now we'll add a couple of low-level functions that we can call. We'll add the fu
 ## Entry 11:
 
 Add a fn to compare integers for equality. Which means we need to add the Maybe type as well. And add malloc/free for Functions and Lists.
+
+## Entry 12:
+
+Add 'let' expressions to bind values to symbols
+

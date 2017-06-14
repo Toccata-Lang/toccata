@@ -309,6 +309,50 @@
                (.type-num value) (.refs-map value))])))
 
 
+(defprotocol BindingValue
+  (bind [binding evalled]))
+
+(extend-type rdr/tagged-symbol
+  BindingValue
+  (bind [binding evalled]
+    (for [_ (sm/assoc-in-val [.fn-context .syms binding]
+                             (c-code (.c-var evalled) [] [] (.type-num evalled)
+                                     {(.c-var evalled) 1}))]
+      [evalled])))
+
+(extend-type ast/binding-ast
+  Emitter
+  (emit [ast]
+    (flat-map (emit (.val ast))
+              (fn [evalled]
+                (bind (.binding ast) evalled)))))
+
+
+(extend-type ast/let-ast
+  Emitter
+  (emit [ast]
+    (for [locals (sm/get-in-val [.fn-context .syms])
+          bindings (emit (.bindings ast))
+          body-exprs (emit (.body ast))
+          _ (sm/get-in-val [.fn-context .syms] locals)]
+      (collapse-exprs (comp (flatten bindings) body-exprs))))
+
+  (emit-defined-value [ast defined-sym]
+    (for [init-fn-context (sm/get-val .init-fn-context)
+          fn-context (reset-fn-context init-fn-context)
+          value (emit ast)
+          var (global-var "var")
+          init-fn-context (reset-fn-context fn-context)
+          _ (sm/set-val .init-fn-context init-fn-context)
+          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
+                             (c-code var [] [] (.type-num value) (.refs-map value)))]
+      [(c-code var [(.init value)
+                    var " = " (.c-var value) ";\n"
+                    var "->refs = -1;\n"]
+               [(.decl value) "Value *" var ";\n"]
+               (.type-num value) (.refs-map value))])))
+
+
 (defprotocol GenBinding
   (gen-binding-syms [param]
     ;; generate bindings for symbols and tagged-symbols
@@ -447,12 +491,13 @@
               core-asts (analyze-forms (cache core-file))
               in-file (fio/file-in file-name)
               asts (analyze-forms (cache in-file))
-              :let [emit-code (for [_ (new-module "")
-                                    emitted-core (traverse core-asts sm/state-maybe emit-definition)
-                                    emitted (traverse asts sm/state-maybe emit-definition)
-                                    main-fn (emit-main (remove (flatten emitted)
-                                                               (fn [val] (= "" (.c-var val)))))]
-                                (flatten (comp emitted-core emitted [main-fn])))]
+              :let [emit-code (comp (for [_ (new-module "")
+                                          emitted-core (traverse core-asts sm/state-maybe emit-definition)
+                                          emitted (traverse asts sm/state-maybe emit-definition)
+                                          main-fn (emit-main (remove (flatten emitted)
+                                                                     (fn [val] (= "" (.c-var val)))))]
+                                      (flatten (comp emitted-core emitted [main-fn])))
+                                    (compilation-error "Could not compile"))]
               [emitted-exprs] (emit-code global-context)]
           (let [_ (write-str "\n#include \"core.h\"\n")]
             (map emitted-exprs
