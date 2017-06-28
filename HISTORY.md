@@ -99,3 +99,7 @@ Add 'let' expressions to bind values to symbols
 ## Entry 13:
 
 Inline calls to 'list' and 'vector' so that those functions don't actually get called to create them. And test their destructuring in let and function parameters.
+
+## Entry 14:
+
+Add 'do' expressions for side-effecting code
