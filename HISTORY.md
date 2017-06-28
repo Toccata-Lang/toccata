@@ -96,3 +96,6 @@ Add a fn to compare integers for equality. Which means we need to add the Maybe 
 
 Add 'let' expressions to bind values to symbols
 
+## Entry 13:
+
+Inline calls to 'list' and 'vector' so that those functions don't actually get called to create them. And test their destructuring in let and function parameters.
