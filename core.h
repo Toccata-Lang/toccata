@@ -57,6 +57,8 @@ Value *integer_EQ(Value *arg0, Value *arg1);
 Vector *mutateVectConj(Vector *vect, Value *val);
 List *listCons(Value *x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
+Value *maybe(List *closures, Value *arg0, Value *arg1);
+int8_t isNothing(Value *v);
 
 
 void prefs(char *tag, Value *v);

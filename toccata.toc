@@ -21,13 +21,13 @@
 (def VectorType (inline-C Number "(Value *)&(Number){NumberType, -1, VectorType};"))
 
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [target-lang              ;; language to compile to
-                        fn-context               ;; context for the fn currently being compiled
-                        init-fn-context          ;; context for the initialization code
-                        modules                  ;; info for each module compiled
-                        numbers                  ;; static numbers
-                        strings                  ;; static strings
-                        fns                      ;; static functions
+(deftype GlobalContext [target-lang           ;; language to compile to
+                        fn-context            ;; context for the fn currently being compiled
+                        init-fn-context       ;; context for the initialization code
+                        modules               ;; info for each module compiled
+                        numbers               ;; static numbers
+                        strings               ;; static strings
+                        fns                   ;; static functions
                         ])
 
 ;; information that must be tracked for each module
@@ -153,7 +153,10 @@
 
 (defn lookup-sym [sym]
   (comp (sm/get-in-val [.fn-context .syms sym])
-        (lookup-module-def sym)))
+        (lookup-module-def sym)
+        (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                           (str (ast/file-name sym) ":")
+                           (ast/line-number sym))))
 
 ;; we cache all the info about static function arities to optimize call sites
 (defn lookup-static-arity [fn-var num-params]
@@ -454,6 +457,97 @@
                     var "->refs = -1;\n"]
                [(.decl value) "Value *" var ";\n"]
                (.type-num value) (.refs-map value))])))
+
+
+(extend-type ast/and-ast
+  Emitter
+  (emit [ast]
+    (for [and-result (genlocal "andRslt")
+          evalled-clauses (traverse (.clauses ast) sm/state-maybe emit)]
+      (let [clause-syms (set (map (remove evalled-clauses (fn [c]
+                                                            (empty? (.init c)))) .c-var))
+            total-refs (seq (apply merge-with + (map evalled-clauses .refs-map)))
+            total-refs (remove-keys total-refs clause-syms)
+            total-refs (filter-vals total-refs (partial < 0))
+            [clause-inits] (reduce
+                            evalled-clauses [[] total-refs]
+                            (fn [[init remaining-refs] clause]
+                              (let [clause-refs (seq (filter-vals (.refs-map clause)
+                                                                  (partial < 0)))
+                                    remaining-refs (reduce
+                                                    clause-refs
+                                                    remaining-refs
+                                                    (fn [remaining-refs [k v]]
+                                                      (extract
+                                                       (or (update-in remaining-refs [k]
+                                                                      (fn [remaining]
+                                                                        (- remaining v)))
+                                                           (maybe remaining-refs)))))]
+                                [(conj (vec init)
+                                       ["// and clause\n"
+                                        (.init clause)
+                                        and-result " = " (.c-var clause) ";\n"
+                                        "if (isNothing(" and-result ")) {\n"
+                                        (map (seq (filter-vals remaining-refs (partial < 0)))
+                                             (fn [[c-sym remaining]]
+                                               ["dec_and_free(" c-sym ", "
+                                                remaining ");\n"]))
+                                        "} "])
+                                 remaining-refs])))]
+        (c-code and-result
+                ["Value *" and-result ";\n"
+                 (interpose clause-inits ["else {\n"
+                                          "dec_and_free(" and-result ", 1);\n"])
+                 (repeat (dec (count evalled-clauses))
+                         "}\n")]
+                (map evalled-clauses .decl)
+                Maybe total-refs)))))
+
+
+(extend-type ast/or-ast
+  Emitter
+  (emit [ast]
+    (for [or-result (genlocal "orRslt")
+          evalled-clauses (traverse (.clauses ast) sm/state-maybe emit)]
+      (let [clause-syms (set (map (remove evalled-clauses (fn [c]
+                                                            (empty? (.init c)))) .c-var))
+            total-refs (seq (apply merge-with + (map evalled-clauses .refs-map)))
+            total-refs (remove-keys total-refs clause-syms)
+            total-refs (filter-vals total-refs (partial < 0))
+            [clause-inits] (reduce evalled-clauses [[] total-refs]
+                                   (fn [[init remaining-refs] clause]
+                                     (let [clause-refs (seq (filter-vals (.refs-map clause)
+                                                                         (partial < 0)))
+                                           remaining-refs (reduce
+                                                           clause-refs
+                                                           remaining-refs
+                                                           (fn [remaining-refs [k v]]
+                                                             (extract
+                                                              (or
+                                                               (update-in remaining-refs [k]
+                                                                          (fn [remaining]
+                                                                            (- remaining v)))
+                                                               (maybe remaining-refs)))))]
+                                       [(conj init
+                                              ["// or clause\n"
+                                               (.init clause)
+                                               or-result " = " (.c-var clause) ";\n"
+                                               "if (!isNothing(" or-result ")) {\n"
+                                               (map (seq (filter-vals remaining-refs
+                                                                      (partial < 0)))
+                                                    (fn [[c-sym remaining]]
+                                                      ["dec_and_free(" c-sym ", "
+                                                       remaining ");\n"]))
+                                               "} "])
+                                        remaining-refs])))]
+        (c-code or-result
+                ["Value *" or-result ";\n"
+                 (interpose clause-inits ["else {\n"
+                                          "dec_and_free(" or-result ", 1);\n"])
+                 (repeat (dec (count evalled-clauses))
+                         "}\n")]
+                (map evalled-clauses .decl)
+                Maybe total-refs)))))
 
 
 (deftype StaticArity [arity-fn-var param-count var-info])

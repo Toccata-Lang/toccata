@@ -675,7 +675,7 @@ Value *integer_str(Value *arg0) {
 }
 
 Value *integer_EQ(Value *arg0, Value *arg1) {
-  if (IntegerType != arg0->type != arg1->type) {
+  if (IntegerType != arg0->type || IntegerType != arg1->type) {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(nothing);

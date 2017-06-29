@@ -82,7 +82,7 @@ And now we're finally getting somewhere. This is the first point that we can def
 
 ## Entry 9:
 
-Since we compile expressions that are calls to functions, we need to handle assiging the results to global static symbols. Which means we need to initialize them at run time before 'main' runs. So this commit adds that machinery. It also adds the 'core.toc' standard library.
+Since we compile expressions that are calls to functions, we need to handle assiging the results to global static symbols. Which means we need to initialize them at run time before `main` runs. So this commit adds that machinery. It also adds the `core.toc` standard library.
 
 ## Entry 10:
 
@@ -94,12 +94,16 @@ Add a fn to compare integers for equality. Which means we need to add the Maybe 
 
 ## Entry 12:
 
-Add 'let' expressions to bind values to symbols
+Add `let` expressions to bind values to symbols
 
 ## Entry 13:
 
-Inline calls to 'list' and 'vector' so that those functions don't actually get called to create them. And test their destructuring in let and function parameters.
+Inline calls to `list` and `vector` so that those functions don't actually get called to create them. And test their destructuring in let and function parameters.
 
 ## Entry 14:
 
-Add 'do' expressions for side-effecting code
+Add `do` expressions for side-effecting code
+
+## Entry 15:
+
+Selecting an expression based on some condition is one of the fundamental features a language must have. So we add `and` & `or` expressions. `or` is the only expression that is lazy. Successive expressions in it's body are only executed after previous expressions evaluate to `nothing`. The first expression that evaluates to a `maybe` value produces the result of the `or` expression. Likewise, `and` is the only expression that short circuits when the first expression returns `nothing`. If all expressions return `maybe` values, the final one becomes the value the `and` expression evaluates to.
