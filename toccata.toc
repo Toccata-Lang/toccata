@@ -20,6 +20,13 @@
 (def MaybeType (inline-C Number "(Value *)&(Number){NumberType, -1, MaybeType};"))
 (def VectorType (inline-C Number "(Value *)&(Number){NumberType, -1, VectorType};"))
 
+(def sm-space (sm/state-maybe ""))
+(def sm-gensym (sm/lift gensym))
+
+;; useful for debugging the compiler
+(defn debug [& args]
+  (map sm-space (fn [_] (apply print-err args))))
+
 ;; There's a bunch of information to keep track of while compiling
 (deftype GlobalContext [target-lang           ;; language to compile to
                         fn-context            ;; context for the fn currently being compiled
@@ -28,10 +35,11 @@
                         numbers               ;; static numbers
                         strings               ;; static strings
                         fns                   ;; static functions
+                        namespaces            ;; current namespace map
                         ])
 
 ;; information that must be tracked for each module
-(deftype Module [path values]
+(deftype Module [path values protocols proto-fns]
   Stringable
   (string-list [_] (list "<Module '" path "'>")))
 
@@ -51,7 +59,76 @@
 (defn new-module [path]
   (comp (sm/get-in-val [.modules path])
         (sm/assoc-in-val [.modules path]
-                         (Module path {}))))
+                         (Module path {} {} {}))))
+
+(defn new-protocol [proto-sym]
+  (comp (for [_ (sm/get-in-val [.modules (.file-name proto-sym) .protocols proto-sym])]
+          (print-err "Duplicate protocol" (str "'" proto-sym "'") "at"
+                     (str (.file-name proto-sym) ":") (.line-num proto-sym)))
+        (sm/assoc-in-val [.modules (.file-name proto-sym) .protocols proto-sym]
+                         proto-sym)))
+
+(defn get-protocol [proto-sym]
+  (comp (for [protocol-path (sm/get-in-val [:namespaces (.ns proto-sym)])
+              result (sm/get-in-val [.modules protocol-path .protocols proto-sym])]
+          result)
+        (sm/get-in-val [.modules (.file-name proto-sym) .protocols proto-sym])
+        (sm/get-in-val [.modules 'core .protocols proto-sym])))
+
+(deftype ProtoFnInfo [fn-sym disp-sym dispatchers]
+  Stringable
+  (string-list [_] (list "<ProtoFnInfo " fn-sym ">")))
+
+(defn new-protocol-fn [fn-sym disp-sym]
+  (comp (for [_ (sm/get-in-val [.modules (.file-name fn-sym) .proto-fns fn-sym])]
+          (print-err "Duplicate protocol function" (str "'" fn-sym "'") "at"
+                     (str (.file-name fn-sym) ":") (.line-num fn-sym)))
+        (sm/assoc-in-val [.modules (.file-name fn-sym) .proto-fns fn-sym]
+                         (ProtoFnInfo fn-sym disp-sym {}))))
+
+(deftype ProtocolDispatcher [arg-count dispatch-sym impls-sym type-impls]
+  Stringable
+  (string-list [_] (list "<ProtoDispatcher " (str arg-count) ">")))
+
+(defn new-proto-dispatcher [fn-sym arg-count dispatch-sym impls-sym]
+  (sm/assoc-in-val [.modules (.file-name fn-sym) .proto-fns fn-sym .dispatchers arg-count]
+                   (ProtocolDispatcher arg-count dispatch-sym impls-sym {})))
+
+(deftype ProtoImpl [dispatch-type c-code ast]
+  Stringable
+  (string-list [_] (list "<ProtoImpl " (str dispatch-type) ">")))
+
+(defn lookup-protocol-path [fn-sym path]
+  ;; is protocol function 'fn-sym' declared in module at 'path'
+  (map (sm/get-in-val [.modules path .proto-fns fn-sym])
+       (fn [_] path)))
+
+(defprotocol FindProtoPath
+  (find-protocol-path [fn-sym]
+    (comp (for [sym-ns (sm/when (.ns fn-sym))
+                namespace (sm/get-in-val [.namespaces sym-ns])
+                path (lookup-protocol-path fn-sym namespace)]
+            path)
+          (lookup-protocol-path fn-sym (.file-name fn-sym))
+          (lookup-protocol-path fn-sym 'core))))
+
+(extend-type Symbol
+  FindProtoPath
+  (find-protocol-path [fn-sym]
+    (lookup-protocol-path fn-sym 'core)))
+
+(defn new-proto-impl [fn-name arg-count dispatch-type c-code ast]
+  (for [protocol-path (find-protocol-path fn-name)
+        _ (sm/assoc-in-val [.modules protocol-path .proto-fns fn-name
+                            .dispatchers arg-count .type-impls dispatch-type]
+                           (ProtoImpl dispatch-type c-code ast))]
+    ""))
+
+(defn get-proto-impl [fn-name arg-count type-num]
+  (for [protocol-path (find-protocol-path fn-name)
+        impl-info (sm/get-in-val [.modules protocol-path .proto-fns fn-name
+                                  .dispatchers arg-count .type-impls type-num])]
+    impl-info))
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (def global-var (sm/lift gensym))
@@ -59,11 +136,6 @@
 ;; create a function that will turn raw text into a list of AST's
 ;; using a recursive descent parser
 (def analyze-forms (rd/parser (grmr/none-or-more rdr/top-level)))
-
-;; useful for debugging the compiler
-(def sm-space (sm/state-maybe ""))
-(defn debug [& args]
-  (map sm-space (fn [_] (apply print-err args))))
 
 ;; for when a fatal error occurs
 (defn compilation-error [& msg]
@@ -556,7 +628,11 @@
     (sm/state-maybe empty-c-code)))
 
 
-(deftype StaticArity [arity-fn-var param-count var-info])
+(deftype StaticArity [arity-fn-var param-count var-info]
+  Stringable
+  (string-list [_]
+    (comp (list "<StaticArity " (str arity-fn-var) " " (str param-count) " ")
+          (string-list var-info))))
 
 (defn emit-static-arity [params body]
   (let [param-count (count params)]
@@ -596,6 +672,62 @@
     (for [fn-arity (emit-static-arity (.params ast) (.body ast))
           _ (new-static-arity 'main 1 (.arity-fn-var fn-arity) IntegerType)]
       [(c-code "" [] (.decl (.var-info fn-arity)) 0 {})])))
+
+
+(defn declare-proto-dispatch-arity [fn-name dispatch-fn-var prototype]
+  (let [num-args (count (.params prototype))]
+    (for [arity-fn-var (sm-gensym "protoDisp")
+          impls-sym (sm-gensym "protoImpls")
+          _ (new-proto-dispatcher fn-name num-args arity-fn-var impls-sym)
+          _ (new-static-arity dispatch-fn-var num-args arity-fn-var UnknownType)]
+      ["ProtoImpls " impls-sym ";\n"
+       "Value *" arity-fn-var "("
+       (interpose (conj (map (range num-args)
+                             (fn [n]
+                               (str "Value *arg" n)))
+                        "List *closures")
+                  ", ")
+       ");\n"])))
+
+(defn emit-proto-default [protocol-name fn-name prototype]
+  (comp (for [_ (sm/when-not (empty? (.default-body prototype)))
+              ;; TODO: for the moment, we're not going to compile protocol functions
+              :when nothing
+              :let [default-body (.default-body prototype)]
+              static-arity (emit-static-arity (.params prototype) default-body)
+              _ (new-proto-impl fn-name (count (.params prototype)) 0
+                                (.var-info static-arity) default-body)]
+          (.decl (.var-info static-arity)))
+
+        sm-space))
+
+(defn create-dispatcher [proto-name [fn-name arities]]
+  (for [dispatch-fn-sym (sm-gensym "dispatchFnPtr")
+        _ (sm/assoc-in-val [.modules (.file-name fn-name) .values fn-name]
+                           (c-code dispatch-fn-sym [] [] FunctionType {}))
+        _ (new-protocol-fn fn-name dispatch-fn-sym)
+        dispatch-arities (traverse arities sm/state-maybe
+                                   (partial declare-proto-dispatch-arity
+                                            fn-name dispatch-fn-sym))
+        default-fns (traverse arities sm/state-maybe
+                              (partial emit-proto-default proto-name fn-name))]
+    ["\n// proto fn for " proto-name "/" fn-name "\n"
+     "Value *" dispatch-fn-sym ";\n"
+     dispatch-arities
+     default-fns]))
+
+(extend-type ast/protocol-ast
+  Emitter
+  (emit-definition [ast]
+    (let [proto-name (.protocol-sym ast)
+          prototype-map (apply merge-with comp
+                               (map (.prototypes ast)
+                                    (fn [prototype]
+                                      {(.fn-name prototype) [prototype]})))]
+      (for [_ (new-protocol proto-name)
+            decl (traverse (seq prototype-map) sm/state-maybe
+                        (partial create-dispatcher proto-name))]
+        [(c-code "" [] decl UnknownType {})]))))
 
 
 (extend-type ast/fn-arity-ast
@@ -645,6 +777,7 @@
                                    {}                       ;; map for const numbers
                                    {}                       ;; map for const strings
                                    {}                       ;; map for static fns
+                                   {}                       ;; map for namespaces
                                    ))
 
 (defprotocol StringWriter
@@ -686,10 +819,13 @@
               in-file (fio/file-in file-name)
               asts (analyze-forms (cache in-file))
               :let [emit-code (comp (for [_ (new-module "")
-                                          emitted-core (traverse core-asts sm/state-maybe emit-definition)
-                                          emitted (traverse asts sm/state-maybe emit-definition)
+                                          emitted-core (traverse core-asts sm/state-maybe
+                                                                 emit-definition)
+                                          emitted (traverse asts sm/state-maybe
+                                                            emit-definition)
                                           main-fn (emit-main (remove (flatten emitted)
-                                                                     (fn [val] (= "" (.c-var val)))))]
+                                                                     (fn [val]
+                                                                       (= "" (.c-var val)))))]
                                       (flatten (comp emitted-core emitted [main-fn])))
                                     (compilation-error "Could not compile"))]
               [emitted-exprs] (emit-code global-context)]

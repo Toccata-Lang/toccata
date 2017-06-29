@@ -22,6 +22,10 @@ typedef struct {int64_t type; int32_t refs; Value *array[VECTOR_ARRAY_LEN];} Vec
 typedef struct {int64_t type; int32_t refs; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
 
+
+typedef struct {int64_t type; Value *implFn;} ProtoImpl;
+typedef struct {int64_t implCount; ProtoImpl impls[];} ProtoImpls;
+
 Value *nothing;
 
 #define IntegerType 1
