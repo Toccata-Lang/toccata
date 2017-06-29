@@ -107,3 +107,7 @@ Add `do` expressions for side-effecting code
 ## Entry 15:
 
 Selecting an expression based on some condition is one of the fundamental features a language must have. So we add `and` & `or` expressions. `or` is the only expression that is lazy. Successive expressions in it's body are only executed after previous expressions evaluate to `nothing`. The first expression that evaluates to a `maybe` value produces the result of the `or` expression. Likewise, `and` is the only expression that short circuits when the first expression returns `nothing`. If all expressions return `maybe` values, the final one becomes the value the `and` expression evaluates to.
+
+## Entry 16:
+
+Though they don't do anything yet, 'asset' expressions are going to play a big role later on. The compiler will use them to do all kinds of static analysis.
