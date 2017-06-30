@@ -21,6 +21,8 @@ typedef struct {int64_t type; int32_t refs; Value* value;} Maybe;
 typedef struct {int64_t type; int32_t refs; Value *array[VECTOR_ARRAY_LEN];} VectorNode;
 typedef struct {int64_t type; int32_t refs; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
+typedef struct {int64_t type; int32_t refs; Value *typeArgs; int implCount;
+                Value* impls[];} ReifiedVal;
 
 
 typedef struct {int64_t type; Value *implFn;} ProtoImpl;
@@ -58,6 +60,7 @@ Value *pr_STAR(Value *);
 Value *add_ints(Value *arg0, Value *arg1);
 Value *integer_str(Value *arg0);
 Value *integer_EQ(Value *arg0, Value *arg1);
+Value *integerValue(int64_t n);
 Vector *mutateVectConj(Vector *vect, Value *val);
 List *listCons(Value *x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);

@@ -1,31 +1,265 @@
 
+(def magic "don't ask")
+
+(defn maybe [v]
+  (inline C Maybe "
+    return(maybe((List *)0, (Value *)0, arg0));"))
+(def nothing (inline C Maybe "(Value *)&(Maybe){MaybeType, -1, 0}"))
+
+;; Internal protocol for types
+(defprotocol Type
+  (get-type [value]
+    (inline C Integer "
+    Value *numVal = integerValue(arg0->type);
+    dec_and_free(arg0, 1);
+    return(numVal);"))
+
+  (type-name [_]
+    (inline C String "
+    Value *numVal = integerValue(arg0->type);
+    dec_and_free(arg0, 1);
+    return(integer_str(arg0));"))
+
+  (type-args [x]
+    (inline C Vector "
+    Value *typeArgs = ((ReifiedVal *)arg0)->typeArgs;
+    incRef(typeArgs, 1);
+    dec_and_free(arg0, 1);
+    return(typeArgs);"))
+
+  (instance? [t x]
+    ;; test whether `x` is of type `t`
+    (returns a (instance? Maybe a)))
+
+  (same-type? [x y]
+    ;; test whether `x` and `y` are of the 'same' type. 'Sameness' could
+    ;; also mean that the types of `x` and `y` are different, but have
+    ;; been composed into a union type. (Also referred to as "sum types")
+    (returns a (instance? Maybe a)))
+
+  (make-value [_])
+  (make-value [_ _])
+  (make-value [_ _ _])
+  (make-value [_ _ _ _])
+  (make-value [_ _ _ _ _])
+  (make-value [_ _ _ _ _ _])
+  (make-value [_ _ _ _ _ _ _])
+  (make-value [_ _ _ _ _ _ _ _])
+  (make-value [_ _ _ _ _ _ _ _ _]))
+
+;; Internal protocol for implementing the hash map type
+(defprotocol HashMapNode
+  (hash-seq [m s])
+  (get* [m k v hash shift])
+  (assoc* [m k v hash shift])
+  (dissoc* [m k hash shift]))
+
 ;; The core protocols of Toccata
+;; A type does not have to implement all the protocols or even all of the
+;; protocol functions of a given protocol. In fact, most won't
 
-(defprotocol Container
-  (flat-map [mval f])
-  (flatten [mval]
-    (flat-map mval (fn [x] x)))
-  (extract [wv])
-  (extend [wv f])
-  (duplicate [wv])
-  (wrap [x v])
-  (apply* [fv args])
-  (map [v f])
-  (send* [v f-and-args]))
-
+;; For types whose values can be composed
 (defprotocol Composition
-  (zero [_])
-  (comp* [mval mvals])
-  (unit [_])
-  (dist* [mval mvals]))
+  (zero [x]
+    ;; Produce a value with same type as `x` that can be `comp`d with any value
+    ;;`y` of the same type to return `y`
+    (assert (== (comp* (zero q) (list q))
+                (comp* q (list (zero q)))
+                q)))
+  (comp* [x xs]
+    ;; Compose a number of values of the same type to produce a single value of
+    ;; that type. `xs` is a list of values of same type as `x`.
+    ;; `comp*` must be associative
+    (assert (== (comp* p (list (comp* q (list r))))
+                (comp* (comp* p (list q)) (list r))))))
 
+;; For types that contain values. Focus is on container
+(defprotocol Container
+  (flat-map [x f]
+    ;; Apply `f` to the value(s) inside `x` and then flatten one level of nesting.
+    ;; `f` must take one value and return a value of a type that's compatible with `x`
+    (assert (same-type? p (flat-map p f)))
+    (assert (== (flat-map (wrap a p) g)
+                (g p)))
+    (assert (== (flat-map (wrap a p) (fn [q]
+                                       (wrap a q)))
+                (wrap a p)))
+    (assert (== (flat-map (flat-map (wrap a p) g) h)
+                (flat-map (wrap a p) (fn [q]
+                                       (flat-map (g q) h))))))
+
+  (flatten [x]
+    ;; Given a value `x` that contains value(s) of the same type as `x`, remove
+    ;; one layer of wrapping.
+    (assert (same-type? p (flatten p)))
+    (assert (== p (flatten (wrap p p))))
+
+    ;; the default way of flattening. Requires `flat-map` to be implemented
+    ;; for `x`
+    (flat-map x (fn [y] y)))
+
+  (extend [x f]
+    ;; Create a new value of same type as `x` that will apply `f` to
+    ;; values `extract`ed from `x`.
+    (assert (same-type? p (extend p f)))
+    (assert (== (extend p extract) p))
+    (assert (== (extract (extend p g)) (g p)))
+    (assert (== (extend (extend p g) h)
+                (extend p (fn [q]
+                            (h (extend q g)))))))
+
+  (extract [x]
+    ;; Pull a value out of `x`
+    )
+
+  (duplicate [x]
+    ;; Add a layer of wrapping to `x`
+    (assert (same-type? p (duplicate p)))
+    (assert (== p (extract (duplicate p)))))
+
+  (wrap [x v]
+    ;; Create a new value of same type as `x` that contains the value `y`
+    (assert (same-type? p (wrap p q))))
+
+  (apply* [xf xs]
+    ;; Apply a function(s) in `xf` to the value(s) in each of the `xs`,
+    ;; wrapping the result in the same type as `xf`.
+    (assert (== (apply* (wrap p g) (list q))
+                (map q g))))
+
+  (map [x f]
+    ;; Create a new value of same type as `x` that contains the results of
+    ;; apply `f` to all the values contained in `x`
+    (assert (same-type? x (map x f)))
+    (assert (== (map (map p g) h)
+                (map p (comp h g)))))
+
+  (send* [x f-and-ys]
+    ;; Cause the value(s) in `x` to be updated with the results of applying the
+    ;; the first item of `f-and-ys` to each of the value(s) in `x` and the rest
+    ;; of `f-and-ys`. Should only be implemented for types that support in place
+    ;; updating.
+    ))
+
+;; For types that contain values. Focus is on the contained values.
+;; No sense of ordering for contents
 (defprotocol Collection
-  (empty? [coll])
-  (empty [coll])
-  (count [coll])
-  (conj [coll value])
-  (reduce [coll result f]))
+  (empty? [coll]
+    ;; Test whether `coll` contains any values
+    (returns a (instance? Maybe a)))
 
+  (count [coll]
+    ;; Count the number of values in `coll`
+    (returns y (instance? Integer y)))
+
+  (empty [coll]
+    ;; Create an empty collection of same type as `coll`
+    (assert (same-type? coll (empty coll)))
+    (assert (empty? (empty p))))
+
+  (conj [coll x]
+    ;; Add `x` to `coll`
+    (assert (same-type? p (conj p q))))
+
+  (fold [coll f]
+    ;; Compose all the values in `coll` to a single value using `f`
+    ;; May be parallelized. `f` must have arities for 0, 1 and 2 arguments
+    (assert (and (arity 0 f)
+                 (arity 1 f)
+                 (arity 2 f))))
+
+  (filter [coll f]
+    ;; Create a new collection of same type as `coll` with only the values
+    ;; for which `f` does not return `nothin`.
+    (assert (same-type? p (filter p g)))))
+
+;; Container types that have some sense of ordering of their contents
+(defprotocol Seqable
+  (seq [coll]
+    ;; Create a list of the contents
+    (returns a (instance? List a)))
+
+  (vec [coll]
+    ;; Create a vector of the contents
+    (returns a (instance? Vector a)))
+
+  (first [coll]
+    ;; Return the first element in the `coll` (wrapped in a `Maybe`) if `coll`
+    ;; is not empty. Returns 'nothing', if `coll` is empty.
+    (returns a (instance? Maybe a)))
+
+  (rest [coll]
+    ;; Returns a new collection with all but the first value of `coll`
+    )
+
+  (last [coll]
+    ;; Return the last element in the `coll` (wrapped in a `Maybe`) if `coll`
+    ;; is not empty. Returns 'nothing', if `coll` is empty.
+    (returns a (instance? Maybe a))
+    )
+
+  (butlast [coll]
+    ;; Returns a new collection with all but the last value of `coll`
+    )
+
+  (reduce [coll x f]
+    ;; Produce a single value of same type as `x` by calling `f` repeatedly.
+    ;; For example, if `coll` contains `p` and `q`, then: `(f (f x p) q)`
+    ;; Will be done sequentially.
+    (assert (arity 2 f)))
+
+  (reverse [coll]
+    ;; Create a new collection of same type as `coll` with the contents
+    ;; in reverse order
+    (assert (== p (reverse (reverse p)))))
+
+  (to-str [coll]
+    ;; Builds a string from the string representation of all the values in `coll`
+    (returns a (instance? String a))))
+
+;; For collections whose contents can be indexed by integers
+(defprotocol Indexed
+  (nth [coll n]
+    ;; Retrieve the `n`th value from `coll`, wrapped in a Maybe, if there are
+    ;; enough values in `coll`. Otherwise, returns `nothing`.
+    (assert (instance? Integer n))
+    (returns a (instance? Maybe a)))
+
+  (store [coll n v]
+    ;; Create a new copy of `coll` (wrapped in a Maybe)  with `v` at index `n`
+    ;; if `coll` is at least size of `n` - 1. Otherwise, return `nothing`.
+    (assert (instance? Integer n))
+    (returns a (instance? Maybe a))))
+
+;; For types that emulate a key/value store
+(defprotocol Associative
+  (assoc [m k v]
+    ;; Create a new copy of `m` that adds an association of `k` with `v`
+    )
+
+  (get [m k]
+    ;; Retrieve the value associated with `k` in `m`, wrapped in a `Maybe` if it exists.
+    ;; Otherwise, return `nothing`
+    (returns a (instance? Maybe a)))
+
+  (get [m k not-found]
+    ;; Retrieve the value associated with `k` in `m` if it exists.
+    ;; Otherwise, return `not-found`
+    )
+
+  (keys [m]
+    ;; Get a list of the keys from `m`
+    (returns a (instance? List a)))
+
+  (vals [m]
+    ;; Get a list of the vals from `m`
+    (returns a (instance? List a)))
+
+  (dissoc [m k]
+    ;; Create a new copy of `m` without the association of `k` with `v`
+    ))
+
+;; For types whose values may be invoked like functions
 (defprotocol Function
   (invoke [_])
   (invoke [_ _])
@@ -37,70 +271,31 @@
   (invoke [_ _ _ _ _ _ _ _])
   (invoke [_ _ _ _ _ _ _ _ _]))
 
-(defprotocol Type
-  (make-value [_])
-  (make-value [_ _])
-  (make-value [_ _ _])
-  (make-value [_ _ _ _])
-  (make-value [_ _ _ _ _])
-  (make-value [_ _ _ _ _ _])
-  (make-value [_ _ _ _ _ _ _])
-  (make-value [_ _ _ _ _ _ _ _])
-  (make-value [_ _ _ _ _ _ _ _ _])
-  (instance? [type val]))
-
-(defprotocol Getter
-  (type-name [_]
-    (number-str (get-type _)))
-  (type-args [x]
-    (get-type-args x)))
-
+;; For types that have some notion of equality between their values
 (defprotocol Eq
-  (=* [x y]))
+  (=* [x y]
+    ;; Compare two values for equality
+    (returns a (instance? Maybe a))))
 
+;; For types that have some notion of order of their values
 (defprotocol Ord
-  (<* [x y])
-  (range [end]))
+  (<* [x y]
+    ;; Compare two values for order
+    (returns a (instance? Maybe a))))
 
-(defprotocol Indexed
-  (nth [coll n])
-  (store [coll n v]))
+;; For types whose values can be hashed to an integer
+(defprotocol Hashable
+  (sha1 [x]
+    ;; Compute the SHA1 hash of `x`
+    (returns a (instance? Integer a))))
 
-(defprotocol Named
-  (name [value]))
-
-(defprotocol Hash
-  (sha1 [_]))
-
-(defprotocol Associative
-  (assoc [m k v])
-  (get [m k])
-  (get [m k not-found])
-  (keys [m])
-  (vals [m])
-  (dissoc [m k]))
-
-(defprotocol Traversable
-  (traverse [coll wrap f])
-  (reverse [coll])
-  (seq [coll])
-  (vec [coll])
-  (first [coll])
-  (rest [coll])
-  (last [coll])
-  (butlast [coll])
-  (filter [coll f])
-  (to-str [coll]))
-
+;; For types whose values can be converted to human-readable strings
 (defprotocol Stringable
-  (string-list [value]))
+  (string-list [x]
+    ;; Create a list of strings of that comprise the representation of `x`
+    (returns a (instance List a))))
 
-(defprotocol HashMapNode
-  (hash-seq [m s])
-  (get* [m k v hash shift])
-  (assoc* [m k v hash shift])
-  (dissoc* [m k hash shift]))
-
+;; For types that support bit level operations
 (defprotocol Bitwise
   (bit-and [n n])
   (bit-or [n n])
@@ -120,11 +315,6 @@
   ;; Send a string to the current output stream
   (assert (instance? String str))
   (inline C Integer "return(pr_STAR(arg0));"))
-
-(defn maybe [v]
-  (inline C Maybe "
-    return(maybe((List *)0, (Value *)0, arg0));"))
-(def nothing (inline C Maybe "(Value *)&(Maybe){MaybeType, -1, 0}"))
 
 (def empty-list
   (inline C List "(Value *)&(List){ListType,-1,0,0,0}"))

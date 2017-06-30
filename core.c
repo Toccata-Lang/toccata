@@ -475,9 +475,70 @@ void freeVector(Value *v) {
   freeVectors.head = v;
 }
 
+FreeValList centralFreeReified[20] = {(FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0},
+                                      (FreeValList){(Value *)0, 0}};
+__thread FreeValList freeReified[20] = {{(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0},
+                                        {(Value *)0, 0}};
+ReifiedVal *malloc_reified(int implCount) {
+  ReifiedVal *newReifiedVal;
+  if (implCount > 19) {
+    newReifiedVal = (ReifiedVal *)my_malloc(sizeof(ReifiedVal) + sizeof(Function *) * implCount);
+  } else {
+    newReifiedVal = (ReifiedVal *)freeReified[implCount].head;
+    if (newReifiedVal == (ReifiedVal *)0) {
+      newReifiedVal = (ReifiedVal *)removeFreeValue(&centralFreeReified[implCount]);
+      if (newReifiedVal == (ReifiedVal *)0) {
+        newReifiedVal = (ReifiedVal *)my_malloc(sizeof(ReifiedVal) + sizeof(Function *) * implCount);
+      }
+    } else {
+      freeReified[implCount].head = freeReified[implCount].head->next;
+    }
+  }
+  __atomic_store(&newReifiedVal->refs, &refsInit, __ATOMIC_RELAXED);
+  newReifiedVal->implCount = implCount;
+  newReifiedVal->typeArgs = (Value *)0;
+  return(newReifiedVal);
+}
+
 #define FREE_FN_COUNT 20
 freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
-				       &freeInteger,
+                                       &freeInteger,
 				       &freeString,
 				       &freeFnArity,
 				       &freeFunction,
@@ -494,6 +555,22 @@ void dec_and_free(Value *v, int deltaRefs) {
 
   if (v->type < FREE_FN_COUNT) {
     freeJmpTbl[v->type](v);
+  } else {
+    ReifiedVal *rv = (ReifiedVal *)v;
+    for (int i = 0; i < rv->implCount; i++) {
+      dec_and_free(rv->impls[i], 1);
+    }
+    if (rv->typeArgs != (Value *)0)
+      dec_and_free(rv->typeArgs, 1);
+    if (rv->implCount < 20) {
+      v->next = freeReified[rv->implCount].head;
+      freeReified[rv->implCount].head = v;
+    } else {
+#ifdef CHECK_MEM_LEAK
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
+      free(v);
+    }
   }
 #ifdef CHECK_MEM_LEAK
   // fprintf(stderr, "malloc_count: %ld free_count: %ld\r", malloc_count, free_count);
@@ -547,9 +624,9 @@ void freeAll() {
   for (int i = 0; i < 10; i++) {
     emptyFreeList(&centralFreeFunctions[i]);
   }
-  // for (int i = 0; i < 20; i++) {
-  // emptyFreeList(&centralFreeReified[i]);
-  // }
+  for (int i = 0; i < 20; i++) {
+    emptyFreeList(&centralFreeReified[i]);
+  }
   // for (int i = 0; i < 20; i++) {
   // emptyFreeList(&centralFreeBMINodes[i]);
   // }
@@ -609,9 +686,9 @@ void moveFreeToCentral() {
   // for (int i = 0; i < 20; i++) {
   // moveToCentral(&freeBMINodes[i], &centralFreeBMINodes[i]);
   // }
-  // for (int i = 0; i < 20; i++) {
-  // moveToCentral(&freeReified[i], &centralFreeReified[i]);
-  // }
+  for (int i = 0; i < 20; i++) {
+    moveToCentral(&freeReified[i], &centralFreeReified[i]);
+  }
   moveToCentral(&freeStrings, &centralFreeStrings);
   // moveToCentral(&freeArrayNodes, &centralFreeArrayNodes);
   moveToCentral(&freeSubStrings, &centralFreeSubStrings);
@@ -665,6 +742,12 @@ Value *add_ints(Value *arg0, Value *arg1) {
     return(numVal);
   }
 }
+
+Value *integerValue(int64_t n) {
+  Integer *numVal = malloc_integer();
+  numVal->numVal = n;
+  return((Value *)numVal);
+};
 
 Value *integer_str(Value *arg0) {
   String *numStr = malloc_string(10);

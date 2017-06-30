@@ -115,3 +115,7 @@ Though they don't do anything yet, 'asset' expressions are going to play a big r
 ## Entry 17:
 
 And now we're finally into the good stuff. Toccata lifts/borrows/steals the idea of `protocols` from Clojure. This commit lets protocols be defined. Almost all of the core library is implemented as protocol functions, which has some very nice properties we'll see later. In Toccata, protocol functions can specify a default impleenation that will be executed if no type-specific protocol implementation is provided.
+
+## Entry 18:
+
+The first hints of where I want to take Toccata appear in `core.toc`.
