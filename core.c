@@ -654,7 +654,6 @@ void freeAll() {
           mallocs, frees, mallocs - frees);
 // */
 }
-#endif
 
 void moveToCentral(FreeValList *freeList, FreeValList *centralList) {
   Value *tail = freeList->head;
@@ -699,6 +698,168 @@ void moveFreeToCentral() {
   moveToCentral(&freeFnArities, &centralFreeFnArities);
   // moveToCentral(&freePromises, &centralFreePromises);
   // moveToCentral(&freeFutures, &centralFreeFutures);
+}
+#endif
+
+char *extractStr(Value *v) {
+  // Should only be used to print an error meessage when calling 'abort'
+  // Leaks a String value
+  String *newStr = (String *)my_malloc(sizeof(String) + ((String *)v)->len + 5);
+  newStr->hash = (Integer *)0;
+  if (v->type == StringType)
+    snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((String *)v)->buffer);
+  else if (v->type == SubStringType)
+    snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((SubString *)v)->buffer);
+  else {
+    fprintf(stderr, "\ninvalid type for 'extractStr'\n");
+    abort();
+  }
+  return(newStr->buffer);
+}
+
+Value *findProtoImpl(int64_t type, ProtoImpls *impls) {
+  int64_t implIndex = 0;
+  Value *defaultImpl = (Value *)0;
+  while(implIndex < impls->implCount) {
+    if (impls->impls[implIndex].type == 0) {
+       defaultImpl = impls->impls[implIndex].implFn;
+    }
+
+    if (type != impls->impls[implIndex].type) {
+      implIndex++;
+    } else
+      return(impls->impls[implIndex].implFn);
+  }
+  return(defaultImpl);
+};
+
+FnArity *findFnArity(Value *fnVal, int64_t argCount) {
+  Function *fn = (Function *)fnVal;
+  int arityIndex = 0;
+  FnArity *arity = (FnArity *)fn->arities[arityIndex];
+  FnArity *variadic = (FnArity *)0;
+  while(arityIndex < fn->arityCount) {
+    arity = (FnArity *)fn->arities[arityIndex];
+    if (arity->variadic) {
+      variadic = arity;
+      arityIndex++;
+    } else if (arity->count != argCount) {
+      arityIndex++;
+    } else
+      return(arity);
+  }
+  return(variadic);
+};
+
+Value *proto1Arg(ProtoImpls *protoImpls, char *name, Value *arg0,
+                 char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 1 argument for type: %s (%ld) at %s: %ld\n",
+            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType1 *_fn = (FnType1 *)_arity->fn;
+  return(_fn(_arity->closures, arg0));
+}
+
+Value *proto2Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1,
+                 char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 2 arguments for type: %s (%ld) at %s: %ld\n",
+                    name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType2 *_fn = (FnType2 *)_arity->fn;
+  return(_fn(_arity->closures, arg0, arg1));
+}
+
+Value *proto3Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 3 arguments for type: %s (%ld) at %s: %ld\n",
+            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType3 *_fn = (FnType3 *)_arity->fn;
+  return(_fn(_arity->closures, arg0, arg1, arg2));
+}
+
+Value *proto4Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 4 arguments for type: %s (%ld) at %s: %ld\n",
+            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType4 *_fn = (FnType4 *)_arity->fn;
+  return(_fn(_arity->closures, arg0, arg1, arg2, arg3));
+}
+
+Value *proto5Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 5 arguments for type: %s (%ld) at %s: %ld\n",
+            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType5 *_fn = (FnType5 *)_arity->fn;
+  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4));
+}
+
+Value *proto6Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, Value *arg5, char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 5 arguments for type: %s (%ld) at %s: %ld\n",
+            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType6 *_fn = (FnType6 *)_arity->fn;
+  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5));
+}
+
+Value *proto7Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, Value *arg5, Value *arg6,
+                 char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 7 arguments for type: %s (%ld) at %s: %ld\n",
+            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType7 *_fn = (FnType7 *)_arity->fn;
+  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5, arg6));
+}
+
+Value *proto8Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, Value *arg5, Value *arg6, Value *arg7,
+                 char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 8 arguments for type: %s (%ld) at %s: %ld\n",
+            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType8 *_fn = (FnType8 *)_arity->fn;
+  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7));
+}
+
+Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, Value *arg5, Value *arg6, Value *arg7,
+                 Value *arg8, char *file, int64_t line) {
+  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
+  if(_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 9 arguments for type: %s (%ld) at %s: %ld\n",
+            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
+    abort();
+  }
+  FnType9 *_fn = (FnType9 *)_arity->fn;
+  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
 }
 
 int8_t isNothing(Value *v) {
@@ -769,6 +930,26 @@ Value *integer_EQ(Value *arg0, Value *arg1) {
   } else {
     dec_and_free(arg1, 1);
     return(maybe((List *)0, (Value *)0, arg0));
+  }
+}
+
+Value *isInstance(Value *arg0, Value *arg1) {
+  int64_t typeNum = ((Integer *)arg0)->numVal;
+  if (typeNum == arg1->type) {
+     dec_and_free(arg1, 1);
+     return(maybe((List *)0, (Value *)0, arg0));
+  } else if (StringType == typeNum && SubStringType == arg1->type) {
+     dec_and_free(arg1, 1);
+     return(maybe((List *)0, (Value *)0, arg0));
+  // } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
+                                        // ArrayNodeType == arg1->type ||
+                                        // HashCollisionNodeType == arg1->type)) {
+     // dec_and_free(arg1, 1);
+     // return(maybe((List *)0, (Value *)0, arg0));
+  } else {
+     dec_and_free(arg0, 1);
+     dec_and_free(arg1, 1);
+     return(nothing);
   }
 }
 
@@ -1005,5 +1186,156 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
   } else {
     fprintf(stderr, "Could not unpack value at %s %s\n", fileName, lineNum);
     abort();
+  }
+}
+
+Value *str_EQ(Value *arg0, Value *arg1) {
+  if (arg0->type == StringType &&
+      arg1->type == StringType) {
+    String *s1 = (String *)arg0;
+    String *s2 = (String *)arg1;
+    if (s1->len == s2->len && strncmp(s1->buffer,s2->buffer,s1->len) == 0) {
+      dec_and_free(arg1, 1);
+      return(maybe((List *)0, (Value *)0, arg0));
+    } else {
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(nothing);
+    }
+  } else if (arg0->type == SubStringType &&
+             arg1->type == SubStringType) {
+    SubString *s1 = (SubString *)arg0;
+    SubString *s2 = (SubString *)arg1;
+    if (s1->len == s2->len && strncmp(s1->buffer,s2->buffer,s1->len) == 0) {
+      dec_and_free(arg1, 1);
+      return(maybe((List *)0, (Value *)0, arg0));
+    } else {
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(nothing);
+    }
+  } else if (arg0->type == StringType &&
+             arg1->type == SubStringType) {
+    String *s1 = (String *)arg0;
+    SubString *s2 = (SubString *)arg1;
+    if (s1->len == s2->len && strncmp(s1->buffer,s2->buffer,s1->len) == 0) {
+      dec_and_free(arg1, 1);
+      return(maybe((List *)0, (Value *)0, arg0));
+    } else {
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(nothing);
+    }
+  } else if (arg0->type == SubStringType &&
+             arg1->type == StringType) {
+    SubString *s1 = (SubString *)arg0;
+    String *s2 = (String *)arg1;
+    if (s1->len == s2->len && strncmp(s1->buffer,s2->buffer,s1->len) == 0) {
+      dec_and_free(arg1, 1);
+      return(maybe((List *)0, (Value *)0, arg0));
+    } else {
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(nothing);
+    }
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  }
+}
+
+Value *strCount(Value *arg0) {
+   Value *numVal = integerValue(((String *)arg0)->len);
+   dec_and_free(arg0, 1);
+   return(numVal);
+}
+
+Value *strList(Value *arg0) {
+  List *result = empty_list;
+  if (arg0->type == StringType) {
+    String *s = (String *)arg0;
+    for (int64_t i = s->len - 1; i >= 0; i--) {
+      SubString *subStr = malloc_substring();
+      subStr->type = SubStringType;
+      subStr->len = 1;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + i;
+      result = listCons((Value *)subStr, result);
+    }
+    incRef(arg0, s->len);
+  } else if (arg0->type == SubStringType) {
+    SubString *s = (SubString *)arg0;
+    for (int64_t i = s->len - 1; i >= 0; i--) {
+      SubString *subStr = malloc_substring();
+      subStr->type = SubStringType;
+      subStr->len = 1;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + i;
+      result = listCons((Value *)subStr, result);
+    }
+    incRef(arg0, s->len);
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)result);
+}
+
+Value *strVect(Value *arg0) {
+  Vector *result = empty_vect;
+  if (arg0->type == StringType) {
+    String *s = (String *)arg0;
+    for (int64_t i = 0; i < s->len; i++) {
+      SubString *subStr = malloc_substring();
+      subStr->type = SubStringType;
+      subStr->len = 1;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + i;
+      result = mutateVectConj(result, (Value *)subStr);
+    }
+    incRef(arg0, s->len);
+  } else if (arg0->type == SubStringType) {
+    SubString *s = (SubString *)arg0;
+    for (int64_t i = 0; i < s->len; i++) {
+      SubString *subStr = malloc_substring();
+      subStr->type = SubStringType;
+      subStr->len = 1;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + i;
+      result = mutateVectConj(result, (Value *)subStr);
+    }
+    incRef(arg0, s->len);
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)result);
+}
+
+Value *integer_LT(Value *arg0, Value *arg1) {
+ if (((Integer *)arg0)->numVal < ((Integer *)arg1)->numVal) {
+     dec_and_free(arg1, 1);
+     return(maybe((List *)0, (Value *)0, arg0));
+  } else {
+     dec_and_free(arg0, 1);
+     dec_and_free(arg1, 1);
+     return(nothing);
+  }
+}
+
+Value *checkInstance(Value *arg0, Value *arg1) {
+  int64_t typeNum = ((Integer *)arg0)->numVal;
+  if (typeNum == arg1->type) {
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, arg0));
+  } else if (StringType == typeNum && SubStringType == arg1->type) {
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, arg0));
+  } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
+                                        ArrayNodeType == arg1->type ||
+                                        HashCollisionNodeType == arg1->type)) {
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, arg0));
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
   }
 }

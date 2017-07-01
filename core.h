@@ -28,6 +28,17 @@ typedef struct {int64_t type; int32_t refs; Value *typeArgs; int implCount;
 typedef struct {int64_t type; Value *implFn;} ProtoImpl;
 typedef struct {int64_t implCount; ProtoImpl impls[];} ProtoImpls;
 
+typedef Value *(FnType0)(List *);
+typedef Value *(FnType1)(List *, Value *);
+typedef Value *(FnType2)(List *, Value *, Value *);
+typedef Value *(FnType3)(List *, Value *, Value *, Value *);
+typedef Value *(FnType4)(List *, Value *, Value *, Value *, Value *);
+typedef Value *(FnType5)(List *, Value *, Value *, Value *, Value *, Value *);
+typedef Value *(FnType6)(List *, Value *, Value *, Value *, Value *, Value *, Value *);
+typedef Value *(FnType7)(List *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
+typedef Value *(FnType8)(List *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
+typedef Value *(FnType9)(List *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
+
 Value *nothing;
 
 #define IntegerType 1
@@ -39,6 +50,11 @@ Value *nothing;
 #define MaybeType 7
 #define VectorType 8
 #define VectorNodeType 9
+
+#define BitmapIndexedType 0
+#define ArrayNodeType 0
+#define HashCollisionNodeType 0
+#define HashMapType 0
 
 FILE *outstream;
 List *empty_list;
@@ -55,17 +71,59 @@ void freeGlobal(Value *x);
 void dec_and_free(Value *v, int deltaRefs);
 Value *incRef(Value *v, int deltaRefs);
 
+Value *proto1Arg(ProtoImpls *protoImpls, char *name, Value *arg0,
+                 char *file, int64_t line);
+Value *proto2Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1,
+                 char *file, int64_t line);
+Value *proto3Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 char *file, int64_t line);
+Value *proto4Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, char *file, int64_t line);
+Value *proto5Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, char *file, int64_t line);
+Value *proto6Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, Value *arg5, char *file, int64_t line);
+Value *proto7Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, Value *arg5, Value *arg6,
+                 char *file, int64_t line);
+Value *proto8Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, Value *arg5, Value *arg6, Value *arg7,
+                 char *file, int64_t line);
+Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
+                 Value *arg3, Value *arg4, Value *arg5, Value *arg6, Value *arg7,
+                 Value *arg8, char *file, int64_t line);
+
+Value *isInstance(Value *arg0, Value *arg1);
 Value *intValue(int64_t n);
 Value *pr_STAR(Value *);
 Value *add_ints(Value *arg0, Value *arg1);
 Value *integer_str(Value *arg0);
 Value *integer_EQ(Value *arg0, Value *arg1);
+Value *integer_LT(Value *arg0, Value *arg1);
 Value *integerValue(int64_t n);
 Vector *mutateVectConj(Vector *vect, Value *val);
 List *listCons(Value *x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
 Value *maybe(List *closures, Value *arg0, Value *arg1);
 int8_t isNothing(Value *v);
+Value *strCount(Value *arg0);
+Value *str_EQ(Value *arg0, Value *arg1);
+Value *strList(Value *arg0);
+Value *strVect(Value *arg0);
+Value *checkInstance(Value *arg0, Value *arg1);
 
 
 void prefs(char *tag, Value *v);
+
+// Value *(*assoc)(List *closures, Value *, Value *, Value *, Value *, Value *);
+// Value *(*dissoc)(List *closures, Value *, Value *, Value *, Value *);
+// Value *(*get)(List *, Value *, Value *, Value *, Value *, Value *);
+// Value *(*sha1)(List *, Value *);
+// Value *(*hashSeq)(List *, Value* n, Value *s);
+// Value *(*count)(List *, Value* n);
+// Value *(*apply)(List *closures, Value *f, Value *args);
+// Value *(*invoke0Args)(List *closures, Value *f);
+// Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
+// Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
+Value *(*type_name)(List *closures, Value *t);
+// Value *(*fn_apply)(List *closures, Value *f, Value *args);

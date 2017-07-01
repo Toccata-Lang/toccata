@@ -110,7 +110,7 @@ Selecting an expression based on some condition is one of the fundamental featur
 
 ## Entry 16:
 
-Though they don't do anything yet, 'asset' expressions are going to play a big role later on. The compiler will use them to do all kinds of static analysis.
+Though they don't do anything yet, 'assert' expressions are going to play a big role later on. The compiler will use them to do all kinds of static analysis.
 
 ## Entry 17:
 
@@ -119,3 +119,7 @@ And now we're finally into the good stuff. Toccata lifts/borrows/steals the idea
 ## Entry 18:
 
 The first hints of where I want to take Toccata appear in `core.toc`.
+
+## Entry 19:
+
+A rather large commit to enable extending types with additional protocol function implementations

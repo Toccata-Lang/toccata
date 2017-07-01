@@ -11,14 +11,29 @@
 (add-ns sm (module "state-maybe.toc"))
 
 (def UnknownType (inline-C Number "(Value *)&(Number){NumberType, -1, 0};"))
-(def IntegerType (inline-C Number "(Value *)&(Number){NumberType, -1, NumberType};"))
-(def StringType (inline-C Number "(Value *)&(Number){NumberType, -1, StringType};"))
-(def SubStringType (inline-C Number "(Value *)&(Number){NumberType, -1, SubStringType};"))
-(def FnArityType (inline-C Number "(Value *)&(Number){NumberType, -1, FnArityType};"))
-(def FunctionType (inline-C Number "(Value *)&(Number){NumberType, -1, FunctionType};"))
-(def ListType (inline-C Number "(Value *)&(Number){NumberType, -1, ListType};"))
-(def MaybeType (inline-C Number "(Value *)&(Number){NumberType, -1, MaybeType};"))
-(def VectorType (inline-C Number "(Value *)&(Number){NumberType, -1, VectorType};"))
+(def IntegerType (inline-C Number "(Value *)&(Number){NumberType, -1, 1};"))
+(def StringType (inline-C Number "(Value *)&(Number){NumberType, -1, 2};"))
+(def SubStringType (inline-C Number "(Value *)&(Number){NumberType, -1, 5};"))
+(def FnArityType (inline-C Number "(Value *)&(Number){NumberType, -1, 3};"))
+(def FunctionType (inline-C Number "(Value *)&(Number){NumberType, -1, 4};"))
+(def ListType (inline-C Number "(Value *)&(Number){NumberType, -1, 6};"))
+(def MaybeType (inline-C Number "(Value *)&(Number){NumberType, -1, 7};"))
+(def VectorType (inline-C Number "(Value *)&(Number){NumberType, -1, 8};"))
+(def VectorNodeType (inline-C Number "(Value *)&(Number){NumberType, -1, 9};"))
+
+(def core-types {'Integer IntegerType
+                 'String StringType
+                 'SubString SubStringType
+                 'FnArity FnArityType
+                 'Function FunctionType
+                 'List ListType
+                 'Maybe MaybeType
+                 'Vector VectorType
+                 })
+
+(def BitmapIndexedType (inline-C Number "(Value *)&(Number){NumberType, -1, 0};"))
+(def ArrayNodeType (inline-C Number "(Value *)&(Number){NumberType, -1, 0};"))
+(def HashCollisionNodeType (inline-C Number "(Value *)&(Number){NumberType, -1, 0};"))
 
 (def sm-space (sm/state-maybe ""))
 (def sm-gensym (sm/lift gensym))
@@ -27,24 +42,39 @@
 (defn debug [& args]
   (map sm-space (fn [_] (apply print-err args))))
 
+;; for when a fatal error occurs
+(defn compilation-error [& msg]
+  (sm/new-sm (fn [s]
+               (apply print-err msg)
+               (abort))))
+
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [target-lang           ;; language to compile to
-                        fn-context            ;; context for the fn currently being compiled
-                        init-fn-context       ;; context for the initialization code
-                        modules               ;; info for each module compiled
-                        numbers               ;; static numbers
-                        strings               ;; static strings
-                        fns                   ;; static functions
-                        namespaces            ;; current namespace map
-                        ])
+(deftype GlobalContext [target-lang fn-context init-fn-context modules numbers
+                        strings fns namespaces]
+  ;; target-lang            language to compile to
+  ;; fn-context             context for the fn currently being compiled
+  ;; init-fn-context        context for the initialization code
+  ;; modules                info for each module compiled
+  ;; numbers                static numbers
+  ;; strings                static strings
+  ;; fns                    static functions
+  ;; namespaces             current namespace map
+)
 
 ;; information that must be tracked for each module
-(deftype Module [path values protocols proto-fns]
+(deftype Module [path values protocols proto-fns types]
+  ;; path             path to file containing the modules source code
+  ;; values           map of value symbols to defined values
+  ;; protocols        set of protocol symbols
+  ;; proto-fns        map of protocol fn symbols to fn information
+  ;; types            map of type symbols to type definitions
   Stringable
   (string-list [_] (list "<Module '" path "'>")))
 
 ;; Every function arity has some information that's local to it
 (deftype FunctionArityContext [var-count syms]
+  ;; var-count     number of C variables already used in this fn
+  ;; syms          the symbols local to the function that are currently interned
   Stringable
   (string-list [_]
     (list "<FunctionArityContext " (str (count syms)) ">")))
@@ -57,22 +87,87 @@
      curr-fn-context)))
 
 (defn new-module [path]
+  ;; If a module for `path` has not been defined yet, initialize it
   (comp (sm/get-in-val [.modules path])
         (sm/assoc-in-val [.modules path]
-                         (Module path {} {} {}))))
+                         (Module path {} {} {} core-types))))
+
+;; information about a compiled expression(s)
+(deftype c-code [c-var init decl type-num refs-map]
+  Stringable
+  (string-list [_]
+    (list "<C-Code " (str c-var) ", " (str type-num) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ">"))
+
+  Composition
+  (zero [_] (c-code "" [] [] UnknownType {}))
+  (comp* [c cs]
+    (let [[c & cs] (reverse (cons c cs))]
+      (reduce cs c
+              (fn [result expr]
+                (let [refs-map (merge-with + (.refs-map expr)
+                                           (.refs-map result))
+                      refs-map ((empty? (.init expr)) refs-map (assoc refs-map
+                                                                 (.c-var expr) 0))]
+                  (c-code (.c-var result)
+                          (list (.init expr) (.init result))
+                          (list (.decl expr) (.decl result))
+                          (.type-num result)
+                          refs-map)))))))
+
+(def empty-c-code (c-code "" [] [] UnknownType {}))
+
+(defn collapse-exprs [exprs]
+  (let [[c & cs] (reverse (seq exprs))
+        c (assoc-in c [.refs-map (.c-var c)] 1)
+        cs (remove cs (fn [c] (and (empty? (.init c))
+                                   (empty? (.decl c)))))]
+    (reduce cs c
+            (fn [result expr]
+              (let [init (extract (or (and (or (= 'inline (.c-var result))
+                                               (= "" (.c-var expr))
+                                               (empty? (.init expr)))
+                                           (maybe [(.init expr) (.init result)]))
+                                      (for [ref (get (.refs-map result) (.c-var expr))
+                                            :when (< 0 ref)]
+                                        (list (.init expr)
+                                              "\nincRef(" (.c-var expr) ", "
+                                              (str (dec ref)) ");\n"
+                                              (.init result)))
+                                      (maybe (list (.init expr)
+                                                   "\ndec_and_free(" (.c-var expr) ", 1);\n"
+                                                   (.init result)))))
+                    refs-map (merge-with + (.refs-map expr)
+                                         (.refs-map result))
+                    refs-map ((empty? (.init expr)) refs-map (assoc refs-map
+                                                               (.c-var expr) 0))]
+                (c-code (.c-var result)
+                        init
+                        (comp (.decl expr) (.decl result))
+                        (.type-num result)
+                        refs-map))))))
 
 (defn new-protocol [proto-sym]
-  (comp (for [_ (sm/get-in-val [.modules (.file-name proto-sym) .protocols proto-sym])]
-          (print-err "Duplicate protocol" (str "'" proto-sym "'") "at"
-                     (str (.file-name proto-sym) ":") (.line-num proto-sym)))
-        (sm/assoc-in-val [.modules (.file-name proto-sym) .protocols proto-sym]
+  ;; Initialize a new protocol definition in a module if it does not already exist.
+  ;; Ensure all protocol symbols are unique
+  (comp (for [_ (sm/get-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym])
+              _ (compilation-error "Duplicate protocol" (str "'" proto-sym "'") "at"
+                                   (str (ast/file-name proto-sym) ":")
+                                   (ast/line-number proto-sym))]
+          "")
+        (sm/assoc-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym]
                          proto-sym)))
 
 (defn get-protocol [proto-sym]
-  (comp (for [protocol-path (sm/get-in-val [:namespaces (.ns proto-sym)])
+  ;; Look for the protocol information
+  ;; 1. using the namespace portion of the protocol symbol
+  ;; 2. using the current file name
+  ;; 3. using `'core` for protcols defined in the core
+  (comp (for [ns-sym (sm/when (.ns proto-sym))
+              protocol-path (sm/get-in-val [.namespaces ns-sym])
               result (sm/get-in-val [.modules protocol-path .protocols proto-sym])]
           result)
-        (sm/get-in-val [.modules (.file-name proto-sym) .protocols proto-sym])
+        (sm/get-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym])
         (sm/get-in-val [.modules 'core .protocols proto-sym])))
 
 (deftype ProtoFnInfo [fn-sym disp-sym dispatchers]
@@ -80,23 +175,11 @@
   (string-list [_] (list "<ProtoFnInfo " fn-sym ">")))
 
 (defn new-protocol-fn [fn-sym disp-sym]
-  (comp (for [_ (sm/get-in-val [.modules (.file-name fn-sym) .proto-fns fn-sym])]
+  (comp (for [_ (sm/get-in-val [.modules (ast/file-name fn-sym) .proto-fns fn-sym])]
           (print-err "Duplicate protocol function" (str "'" fn-sym "'") "at"
-                     (str (.file-name fn-sym) ":") (.line-num fn-sym)))
-        (sm/assoc-in-val [.modules (.file-name fn-sym) .proto-fns fn-sym]
+                     (str (ast/file-name fn-sym) ":") (ast/line-number fn-sym)))
+        (sm/assoc-in-val [.modules (ast/file-name fn-sym) .proto-fns fn-sym]
                          (ProtoFnInfo fn-sym disp-sym {}))))
-
-(deftype ProtocolDispatcher [arg-count dispatch-sym impls-sym type-impls]
-  Stringable
-  (string-list [_] (list "<ProtoDispatcher " (str arg-count) ">")))
-
-(defn new-proto-dispatcher [fn-sym arg-count dispatch-sym impls-sym]
-  (sm/assoc-in-val [.modules (.file-name fn-sym) .proto-fns fn-sym .dispatchers arg-count]
-                   (ProtocolDispatcher arg-count dispatch-sym impls-sym {})))
-
-(deftype ProtoImpl [dispatch-type c-code ast]
-  Stringable
-  (string-list [_] (list "<ProtoImpl " (str dispatch-type) ">")))
 
 (defn lookup-protocol-path [fn-sym path]
   ;; is protocol function 'fn-sym' declared in module at 'path'
@@ -109,13 +192,26 @@
                 namespace (sm/get-in-val [.namespaces sym-ns])
                 path (lookup-protocol-path fn-sym namespace)]
             path)
-          (lookup-protocol-path fn-sym (.file-name fn-sym))
+          (lookup-protocol-path fn-sym (ast/file-name fn-sym))
           (lookup-protocol-path fn-sym 'core))))
 
-(extend-type Symbol
-  FindProtoPath
-  (find-protocol-path [fn-sym]
-    (lookup-protocol-path fn-sym 'core)))
+(deftype ProtocolDispatcher [arg-count dispatch-sym impls-sym type-impls]
+  Stringable
+  (string-list [_] (list "<ProtoDispatcher " (str arg-count) ">")))
+
+(defn new-proto-dispatcher [fn-sym arg-count dispatch-sym impls-sym]
+  (sm/assoc-in-val [.modules (ast/file-name fn-sym) .proto-fns fn-sym .dispatchers arg-count]
+                   (ProtocolDispatcher arg-count dispatch-sym impls-sym {})))
+
+(defn get-protocol-dispatcher [fn-sym num-args]
+  (for [protocol-path (find-protocol-path fn-sym)
+        result (sm/get-in-val [.modules protocol-path .proto-fns fn-sym
+                               .dispatchers num-args])]
+    result))
+
+(deftype ProtoImpl [dispatch-type c-code ast]
+  Stringable
+  (string-list [_] (list "<ProtoImpl " (str dispatch-type) ">")))
 
 (defn new-proto-impl [fn-name arg-count dispatch-type c-code ast]
   (for [protocol-path (find-protocol-path fn-name)
@@ -137,77 +233,15 @@
 ;; using a recursive descent parser
 (def analyze-forms (rd/parser (grmr/none-or-more rdr/top-level)))
 
-;; for when a fatal error occurs
-(defn compilation-error [& msg]
-  (map (apply debug msg)
-       (fn [_] (abort))))
-
-;; information about a compiled expression or expressions
-(deftype c-code [c-var init decl type-num refs-map]
-  Stringable
-  (string-list [_]
-    (list "<C-Code " (str c-var) ", " (str type-num) ", "
-          (str (count init)) " ," (str refs-map) ">"))
-
-  Composition
-  (zero [_] (c-code "" [] [] UnknownType {}))
-  (comp* [c cs]
-    (let [[c & cs] (reverse (cons c cs))]
-      (reduce cs c
-              (fn [result expr]
-                (c-code (.c-var result)
-                        (list (.init expr) (.init result))
-                        (list (.decl expr) (.decl result))
-                        (.type-num result)
-                        (extract (or (and (empty? (.init expr))
-                                          (maybe (merge-with + (.refs-map result) (.refs-map expr))))
-                                     (maybe (assoc (merge-with + (.refs-map expr) (.refs-map result))
-                                                   (.c-var expr) 0))))))))))
-
-(def empty-c-code (c-code "" [] [] UnknownType {}))
-
-(defn collapse-exprs [exprs]
-  (let [[c & cs] (reverse (seq exprs))
-        c (assoc-in c [.refs-map (.c-var c)] 1)
-        cs (remove cs (fn [c] (and (empty? (.init c))
-                                   (empty? (.decl c)))))]
-    (reduce cs c
-            (fn [result expr]
-              (let [init (extract (or (and (or (= 'inline (.c-var result))
-                                               (= "" (.c-var expr)))
-                                           (maybe [(.init expr) (.init result)]))
-                                      (and (empty? (.init expr))
-                                           (maybe (.init result)))
-                                      (for [ref (get (.refs-map result) (.c-var expr))
-                                            :when (< 0 ref)]
-                                        (list (.init expr)
-                                              "\nincRef(" (.c-var expr) ", "
-                                              (str (dec ref)) ");\n"
-                                              (.init result)))
-                                      (maybe (list (.init expr)
-                                                   "\ndec_and_free(" (.c-var expr) ", 1);\n"
-                                                   (.init result)))))]
-                (c-code (.c-var result)
-                        init
-                        (comp (.decl expr) (.decl result))
-                        (.type-num result)
-                        (extract (or (and (empty? (.init expr))
-                                          (maybe (merge-with + (.refs-map expr)
-                                                             (.refs-map result))))
-                                     (maybe (assoc (merge-with + (.refs-map expr)
-                                                               (.refs-map result))
-                                                   (.c-var expr) 0))))))))))
-
-
 
 (defprotocol Emitter
-  ;; All AST nodes will implement this fn
+  ;; For AST nodes that can be embedded in other AST nodes
   (emit [_])
 
-  ;; All AST nodes produce a value that can be assigned to a symbol
+  ;; For AST nodes that can be assigned to a symbol at the top level
   (emit-defined-value [ast defined-sym])
 
-  ;; All top-level AST nodes implement this
+  ;; For AST nodes that can appear at the top level of a file
   (emit-definition [_]))
 
 (extend-type List
@@ -221,7 +255,7 @@
     (symbol (str pre sym-count))))
 
 (defn lookup-module-def [sym]
-  (sm/get-in-val [.modules (.file-name sym) .values sym]))
+  (sm/get-in-val [.modules (ast/file-name sym) .values sym]))
 
 (defn lookup-sym [sym]
   (comp (sm/get-in-val [.fn-context .syms sym])
@@ -246,10 +280,9 @@
                                      (map (.lines ast) (fn [line]
                                                          (str "//" line "\n"))))
                             [] 0 {})))
-  (emit-defined-value [_ _]
-    (sm/state-maybe []))
-  (emit-definition  [_]
-    (sm/state-maybe [])))
+
+  (emit-defined-value [_ _] (sm/state-maybe []))
+  (emit-definition [_] (sm/state-maybe [])))
 
 
 (defn make-static-string [str-val]
@@ -261,7 +294,11 @@
                              (c-code str-ptr [] [] StringType {}))]
       (c-code str-ptr
               []
-              ["struct {\nint64_t type;\n int32_t refs;\n   int64_t len;\n   Integer *hash;\n   char buffer["
+              ["struct {int64_t type;
+        int32_t refs;
+        int64_t len;
+        Integer *hash;
+        char buffer["
                (inc str-len)
                "];\n} " str-sym " = {StringType, -1, "
                str-len ", 0, \"" (escape-chars str-val) "\"};\n"
@@ -276,7 +313,7 @@
 
   (emit-defined-value [str-val defined-sym]
     (for [value (emit str-val)
-          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
                              (c-code (.c-var value) [] [] (.type-num value) {}))]
       [(assoc value .c-var "")])))
 
@@ -300,7 +337,7 @@
           (make-static-num num)))
   (emit-defined-value [num defined-sym]
     (for [value (emit num)
-          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] (.c-var value))]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym] (.c-var value))]
       [(assoc value .c-var "")])))
 
 
@@ -311,7 +348,7 @@
 
   (emit-defined-value [sym defined-sym]
     (for [value (lookup-sym sym)
-          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] value)]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym] value)]
       [(assoc value .c-var "")])))
 
 
@@ -332,7 +369,7 @@
           type-num (get-type (.result-type ast))
           c-var (comp (lookup-module-def defined-sym)
                       (global-var "var"))
-          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym] c-var)]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym] c-var)]
       [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})]))
 
   (emit-definition [ast]
@@ -358,13 +395,15 @@
         result-sym (genlocal "rslt")]
     (apply comp (comp args
                       [(c-code result-sym
-                               ["\n// call-vector\n// #line " (str (ast/line-number target)) " " "\""
+                               ["\n// call-vector\n// #line " (str (ast/line-number target))
+                                " " "\""
                                 (ast/file-name target) "\"\n"
                                 "Vector *" vect-sym " = empty_vect;\n"
                                 (map args
                                      (fn [arg]
                                        (let [arg-sym (.c-var arg)]
-                                         [vect-sym " = mutateVectConj(" vect-sym ", " arg-sym ");\n"])))
+                                         [vect-sym " = mutateVectConj(" vect-sym ", "
+                                          arg-sym ");\n"])))
                                 "Value *" result-sym " = (Value *)" vect-sym ";\n"]
                                [] VectorType {})]))))
 
@@ -374,13 +413,15 @@
         result-sym (genlocal "rslt")]
     (apply comp (comp args
                       [(c-code result-sym
-                                ["\n// call-list\n// #line " (str (ast/line-number target)) " " "\""
+                                ["\n// call-list\n// #line "
+                                 (str (ast/line-number target)) " " "\""
                                  (ast/file-name target) "\"\n"
                                  "List *" list-sym " = empty_list;\n"
                                  (map (reverse args)
                                       (fn [arg]
                                         (let [arg-sym (.c-var arg)]
-                                          [list-sym " = listCons(" "(Value *)" arg-sym ", " list-sym ");\n"])))
+                                          [list-sym " = listCons(" "(Value *)" arg-sym
+                                           ", " list-sym ");\n"])))
                                  "Value *" result-sym " = (Value *)" list-sym ";\n"]
                                 [] ListType {})]))))
 
@@ -403,7 +444,8 @@
             call-site (comp (call-vector (.call-target ast) args)
                             (call-list (.call-target ast) args)
                             (for [target (emit (.call-target ast))
-                                  call-site (call-static-fixed target (map args .c-var) file-name line-number)]
+                                  call-site (call-static-fixed target (map args .c-var)
+                                                               file-name line-number)]
                               (comp* target (comp args [call-site]))))]
         call-site)))
 
@@ -414,7 +456,7 @@
           var (global-var "var")
           init-fn-context (reset-fn-context fn-context)
           _ (sm/set-val .init-fn-context init-fn-context)
-          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
                              (c-code var [] [] (.type-num value) (.refs-map value)))]
       [(c-code var [(.init value)
                     var " = " (.c-var value) ";\n"
@@ -441,6 +483,7 @@
           :let [arg (c-code arg-var [] [] UnknownType {})]
           _ (sm/assoc-in-val [.fn-context .syms binding] arg)]
       [arg]))
+
   (bind [binding evalled]
     (for [_ (sm/assoc-in-val [.fn-context .syms binding]
                              (c-code (.c-var evalled) [] [] (.type-num evalled)
@@ -457,7 +500,8 @@
   (comp (sm/when (for [arg (first arg-syms)
                        :when (= 1 (count arg-syms))]
                    [(c-code (.c-var arg)
-                            ["Value *" (.c-var arg) " = (Value *)" list-sym ";\n" (.init arg)]
+                            ["Value *" (.c-var arg) " = (Value *)"
+                             list-sym ";\n" (.init arg)]
                             (.decl arg)
                             (.type-num arg)
                             (.refs-map arg))]))
@@ -467,16 +511,17 @@
                                                arg-sym (genlocal "arg")]
                                            (c-code arg-sym [""] [] UnknownType {}))
                                          (sm/state-maybe (assoc arg .init [""])))))
-              ;; the [""] above signal that these expressions are where these values are created
+              ;; the [""] above signals that these expressions are where these values are created
               ;; It's an ugly hack that should be represented by a type.
               destructArgs (genlocal "destArgs_")]
           (let [len-sym (gensym "len_")]
             (cons (c-code ""
                           [(map arg-syms (fn [arg] ["Value *" (.c-var arg) ";\n"]))
                            "Value **" destructArgs "[" (count arg-syms) "] = {"
-                           (interpose (map arg-syms (fn [arg] ["&" (.c-var arg)])) ", ") "};\n"
-                           "destructValue(\"" file-name "\", \"" line-num "\", (Value *)" list-sym
-                           ", " (count arg-syms) ", " destructArgs ");\n"]
+                           (interpose (map arg-syms (fn [arg] ["&" (.c-var arg)])) ", ")
+                           "};\n" "destructValue(\"" file-name "\", \"" line-num
+                           "\", (Value *)" list-sym ", " (count arg-syms) ", "
+                           destructArgs ");\n"]
                           [] UnknownType {list-sym 1})
                   arg-syms)))))
 
@@ -494,6 +539,7 @@
                                       (ast/file-name params)
                                       (ast/line-number params))]
       [(comp (apply comp args-list) (c-code arg-var [] [] UnknownType {}))]))
+
   (bind [params evalled]
     (for [arg-syms (gen-binding-syms params)
           tail (gen-binding-syms 'tail)
@@ -522,7 +568,7 @@
           var (global-var "var")
           init-fn-context (reset-fn-context fn-context)
           _ (sm/set-val .init-fn-context init-fn-context)
-          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
                              (c-code var [] [] (.type-num value) (.refs-map value)))]
       [(c-code var [(.init value)
                     var " = " (.c-var value) ";\n"
@@ -647,9 +693,11 @@
           fn-context (reset-fn-context)
           param-syms (gen-binding-syms params)
           body-exprs (emit body)
+          :let [body (collapse-exprs body-exprs)]
+          :when-not (and (empty? (.init body))
+                         (empty? (.decl body)))
           _ (sm/set-val .fn-context fn-context)]
-      (let [body (collapse-exprs body-exprs)
-            param-decls (map param-syms (fn [param]
+      (let [param-decls (map param-syms (fn [param]
                                           (str "Value *" (.c-var param))))
             fn-expr (comp* (c-code "" []
                                    ["Value *" arity-fn-var "("
@@ -696,20 +744,18 @@
        ");\n"])))
 
 (defn emit-proto-default [protocol-name fn-name prototype]
-  (comp (for [_ (sm/when-not (empty? (.default-body prototype)))
-              ;; TODO: for the moment, we're not going to compile protocol functions
-              :when nothing
-              :let [default-body (.default-body prototype)]
-              static-arity (emit-static-arity (.params prototype) default-body)
-              _ (new-proto-impl fn-name (count (.params prototype)) 0
-                                (.var-info static-arity) default-body)]
-          (.decl (.var-info static-arity)))
+  (let [default-body (.default-body prototype)]
+    (comp (for [_ (sm/when-not (empty? default-body))
+                static-arity (emit-static-arity (.params prototype) default-body)
+                _ (new-proto-impl fn-name (count (.params prototype)) 0
+                                  (.var-info static-arity) default-body)]
+            (.decl (.var-info static-arity)))
 
-        sm-space))
+          sm-space)))
 
 (defn create-dispatcher [proto-name [fn-name arities]]
   (for [dispatch-fn-sym (sm-gensym "dispatchFnPtr")
-        _ (sm/assoc-in-val [.modules (.file-name fn-name) .values fn-name]
+        _ (sm/assoc-in-val [.modules (ast/file-name fn-name) .values fn-name]
                            (c-code dispatch-fn-sym [] [] FunctionType {}))
         _ (new-protocol-fn fn-name dispatch-fn-sym)
         dispatch-arities (traverse arities sm/state-maybe
@@ -751,10 +797,11 @@
             arities-info (emit (.arities ast))
             emitted-arities (traverse arities-info sm/state-maybe
                                       (fn [static-arity]
-                                        (for [_ (new-static-arity fn-var
-                                                                  (.param-count static-arity)
-                                                                  (.arity-fn-var static-arity)
-                                                                  (.type-num (.var-info static-arity)))]
+                                        (for [_ (new-static-arity
+                                                 fn-var
+                                                 (.param-count static-arity)
+                                                 (.arity-fn-var static-arity)
+                                                 (.type-num (.var-info static-arity)))]
                                           (.var-info static-arity))))]
         (let [arity-count (count emitted-arities)
               arity-vars (map emitted-arities .c-var)]
@@ -771,10 +818,67 @@
 
   (emit-defined-value [fn-val defined-sym]
     (for [value (emit fn-val)
-          _ (sm/assoc-in-val [.modules (.file-name defined-sym) .values defined-sym]
-                             (c-code (.c-var value) [] [] (.type-num value) (.refs-map value)))]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
+                             (c-code (.c-var value) [] []
+                                     (.type-num value)
+                                     (.refs-map value)))]
       [(assoc value .c-var "")])))
 
+(defn extend-type* [ast type-num]
+  (for [_ (traverse (keys (.impls ast)) sm/state-maybe
+                    (fn [protocol-name]
+                      (comp (get-protocol protocol-name)
+                            (compilation-error "Invalid protocol:" protocol-name "in"
+                                               (str (ast/file-name fn-name) ",")
+                                               (ast/line-number protocol-name)))))
+        ext-fns (traverse (for [impl-fns (vals (.impls ast))
+                                [fn-name arities] (seq impl-fns)
+                                impl-arity arities]
+                            [fn-name impl-arity])
+                          sm/state-maybe
+                          (fn [[fn-name arity-ast]]
+                            (let [num-args (count (.params arity-ast))]
+                              (for [_ (comp (get-protocol-dispatcher fn-name num-args)
+                                            (compilation-error "Invalid protocol fn:"
+                                                               fn-name "in"
+                                                               (str (ast/file-name fn-name)
+                                                                    ",")
+                                                               (ast/line-number fn-name)))
+                                    ext-fn (emit (assoc arity-ast .param-types [type-num]))
+                                    _ (new-proto-impl fn-name num-args type-num
+                                                      (.var-info ext-fn) arity-ast)]
+                                (.var-info ext-fn)))))]
+    ext-fns))
+
+(extend-type ast/extend-ast
+  Emitter
+  (emit-definition [ast]
+    (let [type-sym (.type ast)]
+      (comp (for [type-nums (sm/when (or (and (= type-sym 'HashMap)
+                                              (maybe (list BitmapIndexedType
+                                                           ArrayNodeType
+                                                           HashCollisionNodeType)))
+                                         (and (= type-sym 'String)
+                                              (maybe (list StringType
+                                                           SubStringType)))))
+                  fns (map (traverse type-nums sm/state-maybe (partial extend-type* ast))
+                           flatten)]
+              fns)
+            (for [type-num (comp (for [ns-path (comp (for [ns-sym (sm/when (.ns (.type ast)))
+                                                           ns-path (sm/get-in-val
+                                                                    [.namespaces ns-sym])]
+                                                       ns-path)
+                                                     (sm/state-maybe (ast/file-name ast))) 
+                                       type-num (sm/get-in-val [.modules ns-path
+                                                                .types type-sym])]
+                                   type-num)
+                                 (sm/get-in-val [.modules 'core .types type-sym])
+                                 (compilation-error "Trying to extend unknown type: "
+                                                    type-sym "at"
+                                                    (str (.file-name (.type ast)) ":")
+                                                    (ast/line-number (.type ast))))
+                  fn (extend-type* ast type-num)]
+              fn)))))
 
 (def global-context (GlobalContext 'C
                                    (FunctionArityContext 0 {})
@@ -817,6 +921,83 @@
               "    return(0);\n};\n"]
              0 {})]))
 
+(defprotocol SymFileInfo
+  (symbol-file-info [_]))
+
+(extend-type rdr/tagged-symbol
+  SymFileInfo
+  (symbol-file-info [sym]
+    (sm/state-maybe [(ast/file-name sym) (ast/line-number sym)])))
+
+(defn emit-proto-dispatcher [fn-name proto-disp]
+  (let [num-args (.arg-count proto-disp)
+        args (map (range num-args) (partial str "arg"))
+        impls-sym (.impls-sym proto-disp)
+        impls (.type-impls proto-disp)
+        arity-sym (gensym "protoFnArity")
+        dispatcher (StaticArity
+                    (str "&" arity-sym) num-args
+                    (c-code (str "&" arity-sym)
+                            []
+                            ["\n// " fn-name " " num-args " args\n"
+                             "ProtoImpls " impls-sym " = {"
+                             (count impls) ", {"
+                             (rest (flat-map (vals impls)
+                                             ;; [type arity-sym fn-sym]
+                                             (fn [type-impl]
+                                               [", " "{" (.dispatch-type type-impl)
+                                                ", (Value *)" (.c-var (.c-code type-impl))
+                                                "}"])))
+                             "}};\n"
+                             "Value *" (.dispatch-sym proto-disp) "("
+                             (interpose (conj (map args (fn [arg] (str "Value *" arg)))
+                                              "List *closures")
+                                        ", ")
+                             ") {\n"
+                             "  return(proto" num-args "Arg(&" impls-sym ", \""
+                             fn-name "\", " (interpose
+                                             (comp args
+                                                   [(str "\"" (ast/file-name fn-name) "\"")
+                                                    (ast/line-number fn-name)])
+                                             ", ")
+                             "));\n}\n"
+                             "FnArity " arity-sym " = {FnArityType, -1, "
+                             num-args ", (List *)0, 0, " (.dispatch-sym proto-disp) "};\n"]
+                            FnArityType {}))]
+    (sm/state-maybe dispatcher)))
+
+(defn emit-proto-fn [proto-fn]
+  (let [fn-sym (gensym "protoFn")]
+    (for [arities (traverse (vals (.dispatchers proto-fn)) sm/state-maybe
+                            (partial emit-proto-dispatcher (.fn-sym proto-fn)))]
+      (c-code "" []
+              [(map arities (fn [arity] (.decl (.var-info arity))))
+               "Function " fn-sym " = {FunctionType, -1, \""
+               (.fn-sym proto-fn) "\", " (count arities) ", {"
+               (interpose (map arities .arity-fn-var) ", ")
+               "}};\n" "Value *" (.disp-sym proto-fn) " = (Value *)&" fn-sym ";\n\n"]
+              UnknownType {}))))
+
+(defn finalize-protocols []
+  (for [modules (map (sm/get-val .modules) vals)
+        dispatchers (traverse (for [module modules
+                                    proto-fn (vals (.proto-fns module))]
+                                proto-fn)
+                              sm/state-maybe
+                              emit-proto-fn)]
+    dispatchers))
+
+(defn get-proto-dispatch-sym [fn-name num-args]
+  (sm/get-in-val [.modules "" .proto-fns (rdr/tag fn-name "" 0)
+                  .dispatchers num-args .dispatch-sym]))
+
+(defn fixup-native-symbols []
+  (apply-to (fn [decl]
+              (c-code "" [] decl UnknownType {}))
+            (map (get-proto-dispatch-sym 'type-name 1)
+                 (fn [arity-sym]
+                   ["Value *(*type_name)(List *, Value *) = " arity-sym ";\n"]))))
+
 (main [params]
       (let [[_ file-name] params]
         (println)
@@ -831,8 +1012,11 @@
                                                             emit-definition)
                                           main-fn (emit-main (remove (flatten emitted)
                                                                      (fn [val]
-                                                                       (= "" (.c-var val)))))]
-                                      (flatten (comp emitted-core emitted [main-fn])))
+                                                                       (= "" (.c-var val)))))
+                                          dispatchers (finalize-protocols)
+                                          fixups (fixup-native-symbols)]
+                                      (flatten (comp emitted-core emitted [main-fn]
+                                                     [dispatchers] [[fixups]])))
                                     (compilation-error "Could not compile"))]
               [emitted-exprs] (emit-code global-context)]
           (let [_ (write-str "\n#include \"core.h\"\n")]
