@@ -102,7 +102,7 @@
   Composition
   (zero [_] (c-code "" [] [] UnknownType {}))
   (comp* [c cs]
-    (let [[c & cs] (reverse (cons c cs))]
+    (let [[c & cs] (reverse (cons c (seq cs)))]
       (reduce cs c
               (fn [result expr]
                 (let [refs-map (merge-with + (.refs-map expr)
@@ -435,6 +435,24 @@
              (interpose (cons "empty_list" (seq arg-vars)) ", ") ");\n"]
             [] (.type-num arity-info) {})))
 
+(defn call-static-variadic [target arg-vars file-name line-number]
+  (for [arity-info (lookup-static-arity (.c-var target) 'variadic)
+        variadic-sym (genlocal "varArgs")
+        result-sym (genlocal "rslt")]
+    (c-code result-sym
+            ["\n// static-variadic\n// #line " (str line-number) " " "\"" file-name "\"\n"
+             "List *" variadic-sym " = empty_list;\n"
+             (map (reverse arg-vars)
+                  (fn [arg-sym]
+                    (str variadic-sym " = (List *)listCons("
+                         "(Value *)" arg-sym
+                         ", " variadic-sym ");\n")))
+             "Value *" result-sym " = " (.c-var arity-info) "(empty_list, (Value *)"
+             variadic-sym ");\n"]
+            []
+            (.type-num arity-info)
+            {})))
+
 (extend-type ast/call-ast
   Emitter
   (emit [ast]
@@ -444,8 +462,12 @@
             call-site (comp (call-vector (.call-target ast) args)
                             (call-list (.call-target ast) args)
                             (for [target (emit (.call-target ast))
-                                  call-site (call-static-fixed target (map args .c-var)
-                                                               file-name line-number)]
+                                  call-site (comp (call-static-fixed target (map args .c-var)
+                                                                     file-name line-number)
+                                                  (call-static-variadic target
+                                                                        (map args .c-var)
+                                                                        file-name
+                                                                        line-number))]
                               (comp* target (comp args [call-site]))))]
         call-site)))
 
@@ -465,92 +487,107 @@
                (.type-num value) (.refs-map value))])))
 
 
+(deftype ParamBinding [vars destruct]
+  Stringable
+  (string-list [_]
+    (comp (list "<ParamBinding ")
+          (string-list vars)
+          (list ">")))
+
+  Composition
+  (comp* [x xs]
+    (let [xs (cons x xs)]
+      (ParamBinding (flat-map xs .vars) (flat-map xs .destruct)))))
+
 (defprotocol Bindings
-  (bind [binding])
-  (bind [binding evalled])
-  (gen-binding-syms [param]
+  (bind [binding]
+    (for [arg-var (genlocal "arg")
+          :let [arg (c-code arg-var [] [] UnknownType {arg-var 1})]
+          _ (sm/assoc-in-val [.fn-context .syms binding] arg)]
+      (ParamBinding [arg] [])))
+
+  (bind [binding evalled]
+    (let [evalled-ref (c-code (.c-var evalled) [] [] (.type-num evalled)
+                              {(.c-var evalled) 1})]
+      (for [_ (sm/assoc-in-val [.fn-context .syms binding]
+                               evalled-ref)]
+        (ParamBinding [evalled-ref] [evalled]))))
+  
+  (gen-binding-vars [param]
     ;; generate bindings for symbols and tagged-symbols
     (for [param-var (genlocal "arg")
           :let [var-info (c-code param-var ["//" (str param) " " (str param-var) "\n"] []
                                  UnknownType {param-var 1})]
           _ (sm/assoc-in-val [.fn-context .syms param] var-info)]
-      var-info)))
+      (ParamBinding [var-info] []))))
 
-(extend-type rdr/tagged-symbol
+
+(defn unpack-arg-list [list-sym elem-vars file-name line-num]
+  (comp (sm/when (for [arg (first elem-vars)
+                       :when (= 1 (count elem-vars))]
+                   (ParamBinding [(c-code list-sym [] [] UnknownType {})]
+                                 [(c-code (.c-var arg)
+                                          ["Value *" (.c-var arg) " = (Value *)"
+                                           list-sym ";\n" (.init arg)]
+                                          (.decl arg)
+                                          (.type-num arg)
+                                          (.refs-map arg))])))
+        (for [destructArgs (genlocal "destArgs")]
+          (let [elem-c-vars (map (flat-map elem-vars .vars) .c-var)
+                elem-count (count elem-vars)]
+            (ParamBinding [(c-code list-sym [] [] UnknownType {})]
+                          (comp [(c-code ""
+                                         [(map elem-c-vars (fn [var] ["Value *" var ";\n"]))
+                                          "Value **" destructArgs "[" elem-count "] = {"
+                                          (interpose (map elem-c-vars (fn [arg] ["&" arg])) ", ")
+                                          "};\n" "destructValue(\"" file-name "\", \"" line-num
+                                          "\", (Value *)" list-sym ", " elem-count ", "
+                                          destructArgs ");\n"]
+                                         [] UnknownType {list-sym 1})]
+                                (map elem-c-vars (fn [var] (c-code var [""] [] UnknownType {})))
+                                (flat-map elem-vars .destruct)))))))
+
+
+(extend-type ast/params-ast
   Bindings
-  (bind [binding]
-    (for [arg-var (genlocal "arg")
-          :let [arg (c-code arg-var [] [] UnknownType {})]
-          _ (sm/assoc-in-val [.fn-context .syms binding] arg)]
-      [arg]))
+  (gen-binding-vars [params]
+    (comp (for [tail (sm/when (.variadic params))
+                fixed-vars (map (traverse (.fixed params) sm/state-maybe bind) vec)
+                tail-var (bind tail)
+                param-var (genlocal "arg")
+                destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
+                                          (ast/file-name params) (ast/line-number params))]
+            destruct)
+          (map (traverse (.fixed params) sm/state-maybe bind)
+               (fn [vars]
+                 (apply comp vars)))))
 
-  (bind [binding evalled]
-    (for [_ (sm/assoc-in-val [.fn-context .syms binding]
-                             (c-code (.c-var evalled) [] [] (.type-num evalled)
-                                     {(.c-var evalled) 1}))]
-      [evalled])))
+  (bind [params]
+    (comp (flat-map (sm/when (.variadic params))
+                    (fn [_]
+                      (gen-binding-vars params)))
+          (for [fixed-vars (map (traverse (.fixed params) sm/state-maybe bind) vec)
+                tail-var (bind (symbol ".tail"))
+                param-var (genlocal "arg")
+                destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
+                                          (ast/file-name params)
+                                          (ast/line-number params))]
+            destruct)))
+
+  (bind [params evalled]
+    (for [tail (sm/when (or (.variadic params)
+                            (maybe (symbol ".tail"))))
+          fixed-vars (map (traverse (.fixed params) sm/state-maybe bind) vec)
+          tail-var (bind tail)
+          destruct (unpack-arg-list (.c-var evalled) (conj fixed-vars tail-var)
+                                    (ast/file-name params) (ast/line-number params))]
+      (assoc destruct .vars [evalled]))))
 
 (extend-type ast/binding-ast
   Emitter
   (emit [ast]
     (flat-map (emit (.val ast))
               (partial bind (.binding ast)))))
-
-(defn unpack-arg-list* [list-sym arg-syms file-name line-num]
-  (comp (sm/when (for [arg (first arg-syms)
-                       :when (= 1 (count arg-syms))]
-                   [(c-code (.c-var arg)
-                            ["Value *" (.c-var arg) " = (Value *)"
-                             list-sym ";\n" (.init arg)]
-                            (.decl arg)
-                            (.type-num arg)
-                            (.refs-map arg))]))
-        (for [arg-syms (traverse arg-syms sm/state-maybe
-                                 (fn [arg]
-                                   (comp (for [_ (sm/when (= "" (.c-var arg)))
-                                               arg-sym (genlocal "arg")]
-                                           (c-code arg-sym [""] [] UnknownType {}))
-                                         (sm/state-maybe (assoc arg .init [""])))))
-              ;; the [""] above signals that these expressions are where these values are created
-              ;; It's an ugly hack that should be represented by a type.
-              destructArgs (genlocal "destArgs_")]
-          (let [len-sym (gensym "len_")]
-            (cons (c-code ""
-                          [(map arg-syms (fn [arg] ["Value *" (.c-var arg) ";\n"]))
-                           "Value **" destructArgs "[" (count arg-syms) "] = {"
-                           (interpose (map arg-syms (fn [arg] ["&" (.c-var arg)])) ", ")
-                           "};\n" "destructValue(\"" file-name "\", \"" line-num
-                           "\", (Value *)" list-sym ", " (count arg-syms) ", "
-                           destructArgs ");\n"]
-                          [] UnknownType {list-sym 1})
-                  arg-syms)))))
-
-(extend-type ast/params-ast
-  Bindings
-  (gen-binding-syms [params]
-    (map (traverse (.fixed params) sm/state-maybe bind) (fn [xs]
-                                                          (seq (flatten xs)))))
-  (bind [params]
-    (for [arg-var (genlocal "arg")
-          arg-syms (gen-binding-syms params)
-          tail (gen-binding-syms 'tail)
-          :let [arg-syms (comp arg-syms [tail])]
-          args-list (unpack-arg-list* arg-var arg-syms
-                                      (ast/file-name params)
-                                      (ast/line-number params))]
-      [(comp (apply comp args-list) (c-code arg-var [] [] UnknownType {}))]))
-
-  (bind [params evalled]
-    (for [arg-syms (gen-binding-syms params)
-          tail (gen-binding-syms 'tail)
-          :let [arg-syms (comp arg-syms [tail])]
-          args-list (unpack-arg-list* (.c-var evalled) arg-syms
-                                      (ast/file-name params)
-                                      (ast/line-number params))
-          evalled (sm/when (or (and (empty? (.init evalled))
-                                    (maybe empty-c-code))
-                               (maybe evalled)))]
-      (cons evalled args-list))))
 
 (extend-type ast/let-ast
   Emitter
@@ -559,7 +596,9 @@
           bindings (emit (.bindings ast))
           body-exprs (emit (.body ast))
           _ (sm/get-in-val [.fn-context .syms] locals)]
-      (collapse-exprs (comp (flatten bindings) body-exprs))))
+      (collapse-exprs (comp (flatten (map bindings (fn [binding]
+                                                     (comp (.vars binding) (.destruct binding)))))
+                            body-exprs))))
 
   (emit-defined-value [ast defined-sym]
     (for [init-fn-context (sm/get-val .init-fn-context)
@@ -687,38 +726,37 @@
           (string-list var-info))))
 
 (defn emit-static-arity [params body]
-  (let [param-count (count params)]
-    (for [arity-fn-var (global-var "arityImpl")
-          arity-var (global-var "fnArity")
-          fn-context (reset-fn-context)
-          param-syms (gen-binding-syms params)
-          body-exprs (emit body)
-          :let [body (collapse-exprs body-exprs)]
-          :when-not (and (empty? (.init body))
-                         (empty? (.decl body)))
-          _ (sm/set-val .fn-context fn-context)]
-      (let [param-decls (map param-syms (fn [param]
-                                          (str "Value *" (.c-var param))))
-            fn-expr (comp* (c-code "" []
-                                   ["Value *" arity-fn-var "("
-                                    (interpose (cons "List *closures" param-decls) ", ")
-                                    ") {\n"]
-                                   FnArityType {})
-                           param-syms)
-            fn-result (extract (or (and (= "" (.c-var body))
-                                        (maybe "nothing"))
-                                   (maybe (.c-var body))))]
-        (StaticArity arity-fn-var param-count
-                     (c-code (str "&" arity-var)
-                             []
-                             [(.decl body)
-                              (.decl fn-expr)
-                              (.init fn-expr)
-                              (.init body)
-                              "\nreturn(" fn-result ");\n};\n\n"
-                              "FnArity " arity-var " = {FnArityType, -1, " param-count
-                              ", (List *)0, " "0" ", " arity-fn-var "};\n"]
-                             FnArityType {}))))))
+  (for [fn-context (reset-fn-context)
+        arity-fn-var (global-var "arityImpl")
+        arity-var (global-var "fnArity")
+        param-vars (gen-binding-vars params)
+        body-exprs (emit body)
+        :let [body (collapse-exprs (comp (.destruct param-vars) body-exprs))]
+        :when-not (and (empty? (.init body))
+                       (empty? (.decl body)))
+        _ (sm/set-val .fn-context fn-context)]
+    (let [param-decls (seq (map (.vars param-vars) (fn [param]
+                                                     (str "Value *" (.c-var param)))))
+          fn-expr (c-code "" []
+                          ["Value *" arity-fn-var "("
+                           (interpose (cons "List *closures" param-decls) ", ")
+                           ") {\n"]
+                          FnArityType {})
+          fn-result (extract (or (and (= "" (.c-var body))
+                                      (maybe "nothing"))
+                                 (maybe (.c-var body))))]
+      (StaticArity arity-fn-var ((.variadic params) 'variadic (count params))
+                   (c-code (str "&" arity-var)
+                           []
+                           [(.decl body)
+                            (.decl fn-expr)
+                            (.init fn-expr)
+                            (.init body)
+                            "\nreturn(" fn-result ");\n};\n\n"
+                            "FnArity " arity-var " = {FnArityType, -1, "
+                            (count (.vars param-vars))
+                            ", (List *)0, " "0" ", " arity-fn-var "};\n"]
+                           FnArityType {})))))
 
 (extend-type ast/main-ast
   Emitter

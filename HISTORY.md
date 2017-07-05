@@ -123,3 +123,8 @@ The first hints of where I want to take Toccata appear in `core.toc`.
 ## Entry 19:
 
 A rather large commit to enable extending types with additional protocol function implementations
+
+## Entry 20:
+
+Well that took longer than I expected. Which is a common occurance when writing a compiler. So many 'little' things lead to lots of other, bigger, things. Everything is connected and a lot has to be done before anything work. In any case, this commit adds variadic functions and fixes list/vector destructuring.
+
