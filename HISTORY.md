@@ -128,3 +128,6 @@ A rather large commit to enable extending types with additional protocol functio
 
 Well that took longer than I expected. Which is a common occurance when writing a compiler. So many 'little' things lead to lots of other, bigger, things. Everything is connected and a lot has to be done before anything work. In any case, this commit adds variadic functions and fixes list/vector destructuring.
 
+## Entry 21:
+
+Being able to create functions that close over values in their context is a key part of functional programming. This commit adds that.

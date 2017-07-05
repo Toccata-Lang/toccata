@@ -122,8 +122,14 @@ void prefs(char *tag, Value *v);
 // Value *(*hashSeq)(List *, Value* n, Value *s);
 // Value *(*count)(List *, Value* n);
 // Value *(*apply)(List *closures, Value *f, Value *args);
-// Value *(*invoke0Args)(List *closures, Value *f);
-// Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
-// Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
+Value *(*invoke0Args)(List *closures, Value *f);
+Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
+Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
 Value *(*type_name)(List *closures, Value *t);
 // Value *(*fn_apply)(List *closures, Value *f, Value *args);
+
+List *malloc_list();
+Value *vectSeq(Vector *vect, int index);
+FnArity *malloc_fnArity();
+Function *malloc_function(int arityCount);
+FnArity *findFnArity(Value *fnVal, int64_t argCount);
