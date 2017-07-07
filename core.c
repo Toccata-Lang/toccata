@@ -1339,3 +1339,136 @@ Value *checkInstance(Value *arg0, Value *arg1) {
     return(nothing);
   }
 }
+
+Value *listMap(Value *arg0, Value *arg1) {
+  // List map
+  List *l = (List *)arg0;
+  if (l->len == 0) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return((Value *)empty_list);
+  } else {
+    List *head = empty_list;
+    List *tail = empty_list;
+    FnArity *arity2;
+    if(arg1->type == FunctionType) {
+      arity2 = findFnArity(arg1, 1);
+      if(arity2 == (FnArity *)0) {
+        fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
+        abort();
+      }
+    }
+    for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
+      Value *y;
+      incRef(x, 1);
+      if(arg1->type != FunctionType) {
+        incRef(arg1, 1);
+        y = invoke1Arg(empty_list, arg1, x);
+      } else if(arity2->variadic) {
+        FnType1 *fn4 = (FnType1 *)arity2->fn;
+        List *varArgs3 = (List *)listCons(x, empty_list);
+        y = fn4(arity2->closures, (Value *)varArgs3);
+      } else {
+        FnType1 *fn4 = (FnType1 *)arity2->fn;
+        y = fn4(arity2->closures, x);
+      }
+
+      // 'y' is the value for the new list
+
+      if (head == empty_list) {
+        // if we haven't started the new list yet
+        head = malloc_list();
+        head->len = 1;
+        head->head = y;
+        head->tail = empty_list;
+        tail = head;
+      } else {
+        // otherwise, append to tail of list
+        List *new_tail = malloc_list();
+        new_tail->len = 1;
+        new_tail->head = y;
+        new_tail->tail = empty_list;
+        tail->tail = new_tail;
+        tail = new_tail;
+        head->len++;
+      }
+    }
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return((Value *)head);
+  }
+}
+
+Value *listConcat(Value *arg0) {
+  List *ls = (List *)arg0;
+
+  if (ls->len == 0) {
+    dec_and_free(arg0, 1);
+    return((Value *)empty_list);
+  }
+  else if (ls->len == 1) {
+    Value *h = ls->head;
+    incRef(h, 1);
+    dec_and_free((Value *)ls, 1);
+    return(h);
+  } else {
+    List *head = empty_list;
+    List *tail = empty_list;
+    for (; ls != (List *)0; ls = ls->tail) {
+      List *l = (List *)ls->head;
+      List *newL;
+      int discard = 0;
+      if (l != (List *)0 && l->type == VectorType) {
+        l = (List *)vectSeq((Vector *)incRef((Value *)l, 1), 0);
+        discard = 1;
+      }
+      Value *x;
+      for(; l != (List *)0 && l->head != (Value *)0; l = newL) {
+        x = l->head;
+        if (head == empty_list) {
+          // if we haven't started the new list yet
+          head = malloc_list();
+          head->len = 1;
+          head->head = x;
+          incRef(x, 1);
+          head->tail = empty_list;
+          tail = head;
+        } else {
+          // otherwise, append to tail of list
+          List *new_tail = malloc_list();
+          new_tail->len = 1;
+          new_tail->head = x;
+          incRef(x, 1);
+          new_tail->tail = empty_list;
+          tail->tail = new_tail;
+          tail = new_tail;
+          head->len++;
+        }
+        newL = l->tail;
+        if(discard) {
+          l->tail = (List *)0;
+          dec_and_free((Value *)l, 1);
+        }
+      }
+    }
+    dec_and_free(arg0, 1);
+    return((Value *)head);
+  }
+}
+
+Value *cdr(Value *arg0) {
+  List *lst = (List *)arg0;
+  if (arg0->type != ListType) {
+    fprintf(stderr, "\n*** 'cdr' requires a list\n");
+    abort();
+  } else if (lst->len == 0) {
+    dec_and_free(arg0, 1);
+    return((Value *)empty_list);
+  } else {
+    List *tail = ((List *)arg0)->tail;
+    tail->len = lst->len - 1;
+    incRef((Value *)tail, 1);
+    dec_and_free(arg0, 1);
+    return((Value *)tail);
+  }
+}

@@ -131,3 +131,13 @@ Well that took longer than I expected. Which is a common occurance when writing 
 ## Entry 21:
 
 Being able to create functions that close over values in their context is a key part of functional programming. This commit adds that.
+
+## Entry 22:
+
+And now, we can finally write ...  'println'!
+
+    (defn println [& vs]
+      (map (flat-map (interpose vs " ") string-list) pr*)
+      (pr* "\n"))
+      
+As you can see, there's quite a lot of complexity in compiling such a simple looking function. OTOH, we've come a long ways towards a powerful language. Still quite a ways to go, though.

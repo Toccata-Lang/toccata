@@ -93,26 +93,6 @@ Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg3, Value *arg4, Value *arg5, Value *arg6, Value *arg7,
                  Value *arg8, char *file, int64_t line);
 
-Value *isInstance(Value *arg0, Value *arg1);
-Value *intValue(int64_t n);
-Value *pr_STAR(Value *);
-Value *add_ints(Value *arg0, Value *arg1);
-Value *integer_str(Value *arg0);
-Value *integer_EQ(Value *arg0, Value *arg1);
-Value *integer_LT(Value *arg0, Value *arg1);
-Value *integerValue(int64_t n);
-Vector *mutateVectConj(Vector *vect, Value *val);
-List *listCons(Value *x, List *l);
-void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
-Value *maybe(List *closures, Value *arg0, Value *arg1);
-int8_t isNothing(Value *v);
-Value *strCount(Value *arg0);
-Value *str_EQ(Value *arg0, Value *arg1);
-Value *strList(Value *arg0);
-Value *strVect(Value *arg0);
-Value *checkInstance(Value *arg0, Value *arg1);
-
-
 void prefs(char *tag, Value *v);
 
 // Value *(*assoc)(List *closures, Value *, Value *, Value *, Value *, Value *);
@@ -133,3 +113,26 @@ Value *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
 Function *malloc_function(int arityCount);
 FnArity *findFnArity(Value *fnVal, int64_t argCount);
+
+
+Value *isInstance(Value *arg0, Value *arg1);
+Value *intValue(int64_t n);
+Value *pr_STAR(Value *);
+Value *add_ints(Value *arg0, Value *arg1);
+Value *integer_str(Value *arg0);
+Value *integer_EQ(Value *arg0, Value *arg1);
+Value *integer_LT(Value *arg0, Value *arg1);
+Value *integerValue(int64_t n);
+Vector *mutateVectConj(Vector *vect, Value *val);
+List *listCons(Value *x, List *l);
+void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
+Value *maybe(List *closures, Value *arg0, Value *arg1);
+int8_t isNothing(Value *v);
+Value *strCount(Value *arg0);
+Value *str_EQ(Value *arg0, Value *arg1);
+Value *strList(Value *arg0);
+Value *strVect(Value *arg0);
+Value *checkInstance(Value *arg0, Value *arg1);
+Value *listMap(Value *arg0, Value *arg1);
+Value *listConcat(Value *arg0);
+Value *cdr(Value *arg0);
