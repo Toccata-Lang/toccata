@@ -141,3 +141,7 @@ And now, we can finally write ...  'println'!
       (pr* "\n"))
       
 As you can see, there's quite a lot of complexity in compiling such a simple looking function. OTOH, we've come a long ways towards a powerful language. Still quite a ways to go, though.
+
+## Entry 23
+
+Before moving on, we need to address some long standing ugliness. One of the unique things about Toccata is that it uses reference counting for garbage colleciton. But this conflicts with my desire to have tail call optimization. A good write up is [here](http://devetc.org/code/2014/05/24/tail-recursion-objc-and-arc.html). So I came up with a way for the compiler to "precompute" how many times a value will be used in a particular scope and generate code to increment it's ref count by that much all at once. Then at each use, it's ref count is decremented. This eliminates the need to do a final decrement at the end of the current scope, thus making TCO possible. However, the original code was written using trial and error, and had tentacles all through the compiler. This refactoring cleans all that up.

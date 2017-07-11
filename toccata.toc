@@ -99,7 +99,32 @@
         (sm/assoc-in-val [.modules path]
                          (Module path {} {} {} core-types))))
 
+;; combine a sequence of expressions, adding reference increments and decrements
+;; where needed
+(defprotocol CollapseExprs
+  (collapse-expressions* [x y]))
+
 ;; information about a compiled expression(s)
+;; c-var: C variable that holds the value produced by the code
+;; init: C code that produces the value at run time
+;; decl: C code to declare anything needed
+;; type-num: the Toccata type of the value produced
+;; refs-map: map of C variables that are used in 'init' and how many times
+(deftype empty-code [c-var init decl type-num refs-map]
+  Stringable
+  (string-list [_]
+    (list "<Empty-C-Code>"))
+
+  Composition
+  (zero [c] c)
+  (comp* [_ cs]
+    (apply comp cs))
+
+  CollapseExprs
+  (collapse-expressions* [x y] y))
+
+(def empty-c-code (empty-code "" [] [] UnknownType {}))
+
 (deftype c-code [c-var init decl type-num refs-map]
   Stringable
   (string-list [_]
@@ -107,51 +132,56 @@
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ">"))
 
   Composition
-  (zero [_] (c-code "" [] [] UnknownType {}))
+  (zero [_] empty-c-code)
   (comp* [c cs]
-    (let [[c & cs] (reverse (cons c (seq cs)))]
-      (reduce cs c
-              (fn [result expr]
-                (let [refs-map (merge-with + (.refs-map expr) (.refs-map result))
-                      refs-map ((empty? (.init expr)) refs-map (assoc refs-map
-                                                                 (.c-var expr) 0))]
-                  (c-code (.c-var result)
-                          (list (.init expr) (.init result))
-                          (list (.decl expr) (.decl result))
-                          (.type-num result)
-                          refs-map)))))))
+    (reduce cs c collapse-expressions*))
 
-(def empty-c-code (c-code "" [] [] UnknownType {}))
+  CollapseExprs
+  (collapse-expressions* [x y]
+    (c-code (.c-var y)
+            (conj (.init x) (.init y))
+            (conj (.decl x) (.decl y))
+            (.type-num y)
+            (merge-with + (.refs-map x) (.refs-map y)))))
 
-(defn collapse-exprs [exprs]
-  (let [[c & cs] (reverse (seq exprs))
-        c (assoc-in c [.refs-map (.c-var c)] 1)
-        cs (remove cs (fn [c] (and (empty? (.init c))
-                                   (empty? (.decl c)))))]
-    (reduce cs c
-            (fn [result expr]
-              (let [init (extract (or (and (or (= 'inline (.c-var result))
-                                               (= "" (.c-var expr))
-                                               (empty? (.init expr)))
-                                           (maybe [(.init expr) (.init result)]))
-                                      (for [ref (get (.refs-map result) (.c-var expr))
-                                            :when (< 0 ref)]
-                                        (list (.init expr)
-                                              "\nincRef(" (.c-var expr) ", "
-                                              (str (dec ref)) ");\n"
-                                              (.init result)))
-                                      (maybe (list (.init expr)
-                                                   "\ndec_and_free(" (.c-var expr) ", 1);\n"
-                                                   (.init result)))))
-                    refs-map (merge-with + (.refs-map expr)
-                                         (.refs-map result))
-                    refs-map ((empty? (.init expr)) refs-map (assoc refs-map
-                                                               (.c-var expr) 0))]
-                (c-code (.c-var result)
-                        init
-                        (comp (.decl expr) (.decl result))
-                        (.type-num result)
-                        refs-map))))))
+;; same as 'c-code', but is the first appearance of 'c-var' in the generated code
+(deftype c-init [c-var init decl type-num refs-map]
+  Stringable
+  (string-list [_]
+    (list "<C-Init " (str c-var) ", " (str type-num) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ">"))
+
+  Composition
+  (zero [_] empty-c-code)
+  (comp* [c cs]
+    (reduce cs c (fn [result c]
+                   (c-code (.c-var c)
+                           (conj (.init result) (.init c))
+                           (conj (.decl result) (.decl c))
+                           (.type-num c)
+                           (merge-with + (.refs-map result) (.refs-map c))))))
+
+  CollapseExprs
+  (collapse-expressions* [x y]
+    (let [init (extract (or (for [refs (get-in y [.refs-map c-var])]
+                              [(.init x)
+                               ((< refs 2) "" ["\nincRef(" c-var ", " (dec refs) ");\n"])
+                               (.init y)])
+                            (maybe [(.init x)
+                                    "\ndec_and_free(" c-var ", 1);\n"
+                                    (.init y)])))
+          refs-map (merge-with + (.refs-map x) (.refs-map y))
+          refs-map (assoc refs-map c-var 0)]
+      (c-code (.c-var y)
+              init
+              (conj (.decl x) (.decl y))
+              (.type-num y)
+              refs-map))))
+
+(defn collapse-expressions [cs]
+  (extract (or (and (empty? cs) (maybe empty-c-code))
+               (maybe (let [[c & cs] (reverse cs)]
+                        (reduce cs c (fn [y x] (collapse-expressions* x y))))))))
 
 (defn new-protocol [proto-sym]
   ;; Initialize a new protocol definition in a module if it does not already exist.
@@ -215,7 +245,7 @@
                                .dispatchers num-args])]
     result))
 
-(deftype ProtoImpl [dispatch-type c-code ast]
+(deftype ProtoImpl [dispatch-type c-var ast]
   Stringable
   (string-list [_] (list "<ProtoImpl " (str dispatch-type) ">")))
 
@@ -223,7 +253,7 @@
   (for [protocol-path (find-protocol-path fn-name)
         _ (sm/assoc-in-val [.modules protocol-path .proto-fns fn-name
                             .dispatchers arg-count .type-impls dispatch-type]
-                           (ProtoImpl dispatch-type c-code ast))]
+                           (ProtoImpl dispatch-type (.c-var c-code) ast))]
     ""))
 
 (defn get-proto-impl [fn-name arg-count type-num]
@@ -265,27 +295,27 @@
 
 (defn already-closed-over [sym]
   (for [closed-over (sm/get-in-val [.fn-context .closed-over .closures])
-        closure-sym (sm/when (some closed-over (fn [[closure-sym sym-literal]]
+        closure-var (sm/when (some closed-over (fn [[closure-var sym-literal]]
                                                  (for [_ (= sym sym-literal)]
-                                                   closure-sym))))
+                                                   closure-var))))
         _ (sm/update-in-val [.fn-context .closed-over .refs-map sym] inc)]
-    closure-sym))
+    closure-var))
 
 (defn new-closure [sym]
-  (for [closure-sym (genlocal "val")
+  (for [closure-var (genlocal "val")
         _ (sm/update-in-val [.fn-context .closed-over .closures]
-                            (fn [v] (conj v [closure-sym sym])))
+                            (fn [v] (conj v [closure-var sym])))
         _ (sm/assoc-in-val [.fn-context .closed-over .refs-map sym] 1)]
-    closure-sym))
+    closure-var))
 
 (defn closed-over-sym [sym]
   (for [;; it's supposed to fail if 'sym' is not in the context
         c-sym (sm/get-in-val [.fn-context .context sym])
 
         ;; if 'sym' is in the context, it should be in .closed-over
-        closure-sym (comp (already-closed-over sym)
+        closure-var (comp (already-closed-over sym)
                           (new-closure sym))]
-    (c-code closure-sym [] [] (.type-num c-sym) {closure-sym 1})))
+    (c-code closure-var [] [] (.type-num c-sym) {closure-var 1})))
 
 (defn lookup-sym [sym]
   (comp (sm/get-in-val [.fn-context .syms sym])
@@ -321,9 +351,8 @@
     (for [str-idx (map (sm/get-val .strings) count)
           :let [str-sym (str "str" str-idx)
                 str-ptr (str "strPtr" str-idx)]
-          _ (sm/assoc-in-val [.strings str-val]
-                             (c-code str-ptr [] [] StringType {}))]
-      (c-code str-ptr
+          _ (sm/assoc-in-val [.strings str-val] (c-code str-ptr [] [] StringType {}))]
+      (c-init str-ptr
               []
               ["struct {int64_t type;
         int32_t refs;
@@ -345,7 +374,7 @@
   (emit-defined-value [str-val defined-sym]
     (for [value (emit str-val)
           _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
-                             (c-code (.c-var value) [] [] (.type-num value) {}))]
+                             (c-code (.c-var value) [] [] StringType {}))]
       [(assoc value .c-var "")])))
 
 
@@ -355,7 +384,7 @@
               num-ptr (str "numPtr" num-idx)]
         _ (sm/assoc-in-val [.numbers num]
                            (c-code num-ptr [] [] IntegerType {}))]
-    (c-code num-ptr
+    (c-init num-ptr
             []
             ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
              "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
@@ -366,9 +395,11 @@
   (emit [num]
     (comp (sm/get-in-val [.numbers num])
           (make-static-num num)))
+
   (emit-defined-value [num defined-sym]
     (for [value (emit num)
-          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym] (.c-var value))]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
+                             (c-code (.c-var value) [] [] IntegerType {}))]
       [(assoc value .c-var "")])))
 
 
@@ -400,7 +431,8 @@
           type-num (get-type (.result-type ast))
           c-var (comp (lookup-module-def defined-sym)
                       (global-var "var"))
-          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym] c-var)]
+          _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
+                             (c-code c-var [] [] type-num {}))]
       [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})]))
 
   (emit-definition [ast]
@@ -425,7 +457,7 @@
         vect-sym (genlocal "newVect")
         result-sym (genlocal "rslt")]
     (apply comp (comp args
-                      [(c-code result-sym
+                      [(c-init result-sym
                                ["\n// call-vector\n// #line " (str (ast/line-number target))
                                 " " "\""
                                 (ast/file-name target) "\"\n"
@@ -443,7 +475,7 @@
         list-sym (genlocal "newList")
         result-sym (genlocal "rslt")]
     (apply comp (comp args
-                      [(c-code result-sym
+                      [(c-init result-sym
                                 ["\n// call-list\n// #line "
                                  (str (ast/line-number target)) " " "\""
                                  (ast/file-name target) "\"\n"
@@ -460,7 +492,7 @@
 (defn call-static-fixed [target arg-vars file-name line-number]
   (for [arity-info (lookup-static-arity (.c-var target) (count arg-vars))
         result-sym (genlocal "rslt")]
-    (c-code result-sym
+    (c-init result-sym
             ["\n// static-fixed\n// #line " (str line-number) " " "\"" file-name "\"\n"
              "Value *" result-sym " = " (.c-var arity-info) "("
              (interpose (cons "empty_list" (seq arg-vars)) ", ") ");\n"]
@@ -470,7 +502,7 @@
   (for [arity-info (lookup-static-arity (.c-var target) 'variadic)
         variadic-sym (genlocal "varArgs")
         result-sym (genlocal "rslt")]
-    (c-code result-sym
+    (c-init result-sym
             ["\n// static-variadic\n// #line " (str line-number) " " "\"" file-name "\"\n"
              "List *" variadic-sym " = empty_list;\n"
              (map (reverse arg-vars)
@@ -492,7 +524,7 @@
         result-sym (genlocal "rslt")]
     (let [arg-syms (conj args (str arity-sym "->closures"))
           num-args (count args)]
-      (c-code result-sym
+      (c-init result-sym
               ["Value *" result-sym ";\n"
                "FnArity *" arity-sym " = findFnArity(" (.c-var target)
                ", " num-args ");\n"
@@ -516,7 +548,7 @@
                ");\n  abort();\n}\n"
                "dec_and_free("(.c-var target) ", 1);\n"]
               []
-              :no-type {}))))
+              UnknownType {}))))
 
 (extend-type ast/call-ast
   Emitter
@@ -537,7 +569,9 @@
                               (comp* target (comp args [call-site])))
                             (compilation-error "Could not compile call site at:"
                                                file-name line-number))]
-        call-site)))
+        (let [call-site (c-init (.c-var call-site) (.init call-site) (.decl call-site)
+                                (.type-num call-site) (.refs-map call-site))]
+          call-site))))
 
   (emit-defined-value [fn-val defined-sym]
     (for [init-fn-context (sm/get-val .init-fn-context)
@@ -547,8 +581,8 @@
           init-fn-context (reset-fn-context fn-context)
           _ (sm/set-val .init-fn-context init-fn-context)
           _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
-                             (c-code var [] [] (.type-num value) (.refs-map value)))]
-      [(c-code var [(.init value)
+                             (c-code var [] [] (.type-num value) {}))]
+      [(c-init var [(.init value)
                     var " = " (.c-var value) ";\n"
                     var "->refs = -1;\n"]
                [(.decl value) "Value *" var ";\n"]
@@ -572,40 +606,30 @@
     (for [arg-var (genlocal "arg")
           :let [arg (c-code arg-var [] [] UnknownType {arg-var 1})]
           _ (sm/assoc-in-val [.fn-context .syms binding] arg)]
-      (ParamBinding [arg] [])))
+      (ParamBinding [arg-var] [])))
 
   (bind [binding evalled]
-    (let [evalled-ref (c-code (.c-var evalled) [] [] (.type-num evalled)
-                              {(.c-var evalled) 1})]
-      (for [_ (sm/assoc-in-val [.fn-context .syms binding]
-                               evalled-ref)]
-        (ParamBinding [evalled-ref] [evalled]))))
+    (let [evalled-ref (c-code (.c-var evalled) [] [] (.type-num evalled) {(.c-var evalled) 1})]
+      (for [_ (sm/assoc-in-val [.fn-context .syms binding] evalled-ref)]
+        (ParamBinding [(.c-var evalled)] [evalled (c-init (.c-var evalled) [] []
+                                                          (.type-num evalled) {})]))))
   
   (gen-binding-vars [param]
     ;; generate bindings for symbols and tagged-symbols
-    (for [param-var (genlocal "arg")
-          :let [var-info (c-code param-var ["//" (str param) " " (str param-var) "\n"] []
-                                 UnknownType {param-var 1})]
-          _ (sm/assoc-in-val [.fn-context .syms param] var-info)]
-      (ParamBinding [var-info] []))))
+    (bind param)))
 
 
 (defn unpack-arg-list [list-sym elem-vars file-name line-num]
   (comp (sm/when (for [elem (first elem-vars)
                        :when (= 1 (count elem-vars))
-                       arg (first (.vars elem))]
-                   (let [var (.c-var arg)]
-                     (ParamBinding [(c-code list-sym [] [] UnknownType {})]
-                                   [(c-code var
-                                            ["Value *" var " = (Value *)"
-                                             list-sym ";\n" (.init arg)]
-                                            (.decl arg)
-                                            (.type-num arg)
-                                            (.refs-map arg))]))))
+                       var (first (.vars elem))]
+                   (ParamBinding [list-sym]
+                                 [(c-init var ["Value *" var " = (Value *)" list-sym ";\n"]
+                                          [] UnknownType {})])))
         (for [destructArgs (genlocal "destArgs")]
-          (let [elem-c-vars (map (flat-map elem-vars .vars) .c-var)
+          (let [elem-c-vars (flat-map elem-vars .vars)
                 elem-count (count elem-vars)]
-            (ParamBinding [(c-code list-sym [] [] UnknownType {})]
+            (ParamBinding [list-sym]
                           (comp [(c-code ""
                                          [(map elem-c-vars (fn [var] ["Value *" var ";\n"]))
                                           "Value **" destructArgs "[" elem-count "] = {"
@@ -614,7 +638,7 @@
                                           "\", (Value *)" list-sym ", " elem-count ", "
                                           destructArgs ");\n"]
                                          [] UnknownType {list-sym 1})]
-                                (map elem-c-vars (fn [var] (c-code var [""] [] UnknownType {})))
+                                (map elem-c-vars (fn [var] (c-init var [] [] UnknownType {})))
                                 (flat-map elem-vars .destruct)))))))
 
 
@@ -650,8 +674,14 @@
           fixed-vars (map (traverse (.fixed params) sm/state-maybe bind) vec)
           tail-var (bind tail)
           destruct (unpack-arg-list (.c-var evalled) (conj fixed-vars tail-var)
-                                    (ast/file-name params) (ast/line-number params))]
-      (assoc destruct .vars [evalled]))))
+                                    (ast/file-name params) (ast/line-number params))
+          destruct (sm/when (or (and (empty? (.init evalled))
+                                     (empty? (.decl evalled))
+                                     (maybe destruct))
+                                (maybe (assoc destruct .destruct
+                                              (comp [evalled] (.destruct destruct))))))]
+      (let [destruct (assoc destruct .vars [(.c-var evalled)])]
+        destruct))))
 
 (extend-type ast/binding-ast
   Emitter
@@ -666,9 +696,8 @@
           bindings (emit (.bindings ast))
           body-exprs (emit (.body ast))
           _ (sm/get-in-val [.fn-context .syms] locals)]
-      (collapse-exprs (comp (flatten (map bindings (fn [binding]
-                                                     (comp (.vars binding) (.destruct binding)))))
-                            body-exprs))))
+      (let [code (collapse-expressions (comp (flatten (map bindings .destruct)) body-exprs))]
+        (c-init (.c-var code) (.init code) (.decl code) (.type-num code) (.refs-map code)))))
 
   (emit-defined-value [ast defined-sym]
     (for [init-fn-context (sm/get-val .init-fn-context)
@@ -678,8 +707,8 @@
           init-fn-context (reset-fn-context fn-context)
           _ (sm/set-val .init-fn-context init-fn-context)
           _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
-                             (c-code var [] [] (.type-num value) (.refs-map value)))]
-      [(c-code var [(.init value)
+                             (c-code var [] [] (.type-num value) {}))]
+      [(c-init var [(.init value)
                     var " = " (.c-var value) ";\n"
                     var "->refs = -1;\n"]
                [(.decl value) "Value *" var ";\n"]
@@ -721,7 +750,7 @@
                                                 remaining ");\n"]))
                                         "} "])
                                  remaining-refs])))]
-        (c-code and-result
+        (c-init and-result
                 ["Value *" and-result ";\n"
                  (interpose clause-inits ["else {\n"
                                           "dec_and_free(" and-result ", 1);\n"])
@@ -767,7 +796,7 @@
                                                        remaining ");\n"]))
                                                "} "])
                                         remaining-refs])))]
-        (c-code or-result
+        (c-init or-result
                 ["Value *" or-result ";\n"
                  (interpose clause-inits ["else {\n"
                                           "dec_and_free(" or-result ", 1);\n"])
@@ -819,14 +848,14 @@
                          "destructValue(\"\", \"\", (Value *)closures"
                          ", " (count closures) ", " destructArgs ");\n"]
                         []
-                        :no-type {})
-                (map closures (fn [[arg]] (c-code arg [""] [] :no-type {})))))
+                        UnknownType {})
+                (map closures (fn [[arg]] (c-init arg [] [] UnknownType {})))))
         (sm/state-maybe [])))
 
 (defn closures-init [closures arity-sym]
   (for [_ (sm/when-not (empty? closures))
-        closure-syms (traverse closures sm/state-maybe (fn [[_ sym]] (lookup-sym sym)))]
-    (reduce (reverse closure-syms) empty-list
+        closure-vars (traverse closures sm/state-maybe (fn [[_ sym]] (lookup-sym sym)))]
+    (reduce (reverse closure-vars) empty-list
             (fn [closed-over sym]
               [arity-sym "->closures = listCons((Value *)"
                (.c-var sym) ", (List *)" arity-sym "->closures);\n"
@@ -839,13 +868,13 @@
         param-vars (gen-binding-vars params)
         body-exprs (emit body)
         destruct-closures (emit-closures)
-        :let [body (collapse-exprs (comp (.destruct param-vars)
-                                         destruct-closures
-                                         body-exprs))]
+        :let [body (collapse-expressions (comp (.destruct param-vars)
+                                               destruct-closures
+                                               body-exprs))]
         closures (sm/get-in-val [.fn-context .closed-over .closures])
         _ (reset-fn-context fn-context)
         :let [param-decls (seq (map (.vars param-vars) (fn [param]
-                                                         (str "Value *" (.c-var param)))))
+                                                         (str "Value *" param))))
               fn-expr (c-code "" []
                               ["Value *" arity-fn-var "("
                                (interpose (cons "List *closures" param-decls) ", ")
@@ -864,7 +893,7 @@
                                                 (cons {(.c-var var) 1} refs)))
                                  refs (apply merge-with + refs)]
                              (ClosureArity arity-fn-var ((.variadic params) 'variadic (count params))
-                                           (c-code arity-var
+                                           (c-init arity-var
                                                    ["FnArity *" arity-var " = malloc_fnArity();\n"
                                                     arity-var "->count = " arg-count ";\n"
                                                     arity-var "->variadic = "
@@ -1019,9 +1048,7 @@
   (emit-defined-value [fn-val defined-sym]
     (for [value (emit fn-val)
           _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .values defined-sym]
-                             (c-code (.c-var value) [] []
-                                     (.type-num value)
-                                     (.refs-map value)))]
+                             (c-code (.c-var value) [] [] (.type-num value) {}))]
       [(assoc value .c-var "")])))
 
 (defn extend-type* [ast type-num]
@@ -1150,7 +1177,7 @@
                                              ;; [type arity-sym fn-sym]
                                              (fn [type-impl]
                                                [", " "{" (.dispatch-type type-impl)
-                                                ", (Value *)" (.c-var (.c-code type-impl))
+                                                ", (Value *)" (.c-var type-impl)
                                                 "}"])))
                              "}};\n"
                              "Value *" (.dispatch-sym proto-disp) "("
