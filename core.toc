@@ -1,10 +1,21 @@
 
 (def magic "don't ask")
 
+(def Integer (inline C Integer "(Value *)&(Integer){IntegerType, -1, 1};"))
+
 (defn maybe [v]
+  ;; wrap `v` in a Maybe value
   (inline C Maybe "
     return(maybe((List *)0, (Value *)0, arg0));"))
 (def nothing (inline C Maybe "(Value *)&(Maybe){MaybeType, -1, 0}"))
+
+(defn cons
+  ([x]
+   (inline C List "return((Value *)listCons(arg0, empty_list));\n"))
+  ([x l]
+   (inline C List "
+   Value *listVal = (Value *)listCons(arg0, (List *)arg1);
+   return(listVal);\n")))
 
 ;; Internal protocol for types
 (defprotocol Type
@@ -73,6 +84,11 @@
     (assert (== (comp* p (list (comp* q (list r))))
                 (comp* (comp* p (list q)) (list r))))))
 
+(defn comp
+  ([x] x)
+  ([x & xs]
+   (comp* x xs)))
+
 ;; For types that contain values. Focus is on container
 (defprotocol Container
   (flat-map [x f]
@@ -140,6 +156,11 @@
     ;; of `f-and-ys`. Should only be implemented for types that support in place
     ;; updating.
     ))
+
+(defn send [v f & args]
+  ;; send a function `f` to a value `v`. `f` will be applied to the contents of
+  ;; `v` and the list of values in `args`
+  (send* v (cons f args)))
 
 ;; For types that contain values. Focus is on the contained values.
 ;; No sense of ordering for contents
@@ -217,6 +238,10 @@
     ;; Builds a string from the string representation of all the values in `coll`
     (returns a (instance? String a))))
 
+(defn second [coll]
+  ;; get the second element from the sequable `coll`
+  (first (rest coll)))
+
 ;; For collections whose contents can be indexed by integers
 (defprotocol Indexed
   (nth [coll n]
@@ -283,6 +308,16 @@
     ;; Compare two values for order
     (returns a (instance? Maybe a))))
 
+(defn <
+  ([x y] (<* x y))
+  ([v & vs]
+   (or (and (empty? vs)
+            (maybe v))
+       (let [[y] vs]
+         (apply* (maybe (fn [x _] x))
+                 (list (<* v y)
+                       (apply* < (list vs))))))))
+
 ;; For types whose values can be hashed to an integer
 (defprotocol Hashable
   (sha1 [x]
@@ -295,24 +330,20 @@
     ;; Create a list of strings of that comprise the representation of `x`
     (returns a (instance List a))))
 
-;; For types that support bit level operations
-(defprotocol Bitwise
-  (bit-and [n n])
-  (bit-or [n n])
-  (bit-xor [n n])
-  (bit-not [n]))
-
-(defn pr* [str]
-  ;; Send a string to the current output stream
-  (assert (instance? String str))
-  (inline C Integer "return(pr_STAR(arg0));"))
-
 (def empty-list (inline C List "(Value *)&(List){ListType,-1,0,0,0}"))
+
+;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
+(defn list [& l]
+  ;; construct a list of values from the arguments
+  l)
+
 (def empty-vector (inline C Vector "(Value *)&(Vector){VectorType,-1,0,5,0,0}"))
 
-(defn integer-str [n]
-  (assert (instance? Integer n))
-  (inline C String "return(integer_str(arg0));"))
+;; This is the declaration of the 'vector' function. Calls to 'vector' are inlined by the compiler
+(defn vector [& l]
+  ;; construct a vector of values from the arguments
+  (vec l))
+
 
 (extend-type Integer
   Type
@@ -321,27 +352,16 @@
   (type-name [_] "Integer")
   
   Stringable
-  (string-list [n] (list (integer-str n)))
+  (string-list [n] (inline C "return((Value *)listCons(integer_str(arg0), empty_list));\n"))
 
   Eq
   (=* [x y] (inline C Maybe "return(integer_EQ(arg0, arg1));"))
 
-  )
+  Ord
+  (<* [x y] (inline C Maybe "return(integerLT(arg0, arg1));"))
 
-(defn number= [x y]
-  (inline C Integer
-   "if (arg0->type != arg1->type) {
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-   } else if (((Integer *)arg0)->numVal != ((Integer *)arg1)->numVal) {
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-   } else {
-      dec_and_free(arg1, 1);
-      return(maybe((List *)0, (Value *)0, arg0));
-   }\n"))
+  Hashable
+  (sha1 [x] (inline C Integer "return(integerSha1(arg0));")))
 
 (extend-type String
   Type
@@ -349,19 +369,41 @@
   
   Stringable
   (string-list [s] (list s))
+
+  Eq
+  (=* [x y] (inline C "return(strEQ(arg0, arg1));"))
   )
+
+(extend-type Maybe
+  Stringable
+  (string-list [mv]
+    (extract (or (map mv (fn [v]
+                           (comp (list "<maybe ")
+                                 (string-list v)
+                                 (list ">"))))
+                 (maybe (list "<nothing>")))))
+
+  Type
+  (type-name [_] "Maybe")
+  
+  Eq
+  (=* [x y] (inline C Maybe "return(maybeEQ(arg0, arg1));"))
+
+  Container
+  (extract [mv]
+    (inline C "return(maybeExtract(arg0));"))
+
+  (wrap [_ mv]
+    (maybe mv))
+
+  (apply* [mv args]
+    (inline C Maybe "return(maybeApply(arg0, arg1));"))
+
+  (flat-map [mv f]
+    (and mv (f (extract mv)))))
 
 (defn interpose [coll sep]
   (rest (flat-map coll (fn [x] (list sep x)))))
-
-(defn cons
-  ([x]
-   (inline C List "
-  return((Value *)listCons(arg0, empty_list));\n"))
-  ([x l]
-   (inline C List "
-   Value *listVal = (Value *)listCons(arg0, (List *)arg1);
-   return(listVal);\n")))
 
 (defn list-map [l f]
   (inline C List "return(listMap(arg0, arg1));"))
@@ -369,10 +411,19 @@
 (defn list-concat [l1]
   (inline C List "return(listConcat(arg0));"))
 
+(defn list-reduce [l result f]
+  (or (flat-map (first l)
+                (fn [h]
+                  (list-reduce (rest l) (f result h) f)))
+      (maybe result)))
+
 (extend-type List
   Type
   (type-name [_] "List")
-  
+
+  Eq
+  (=* [x y] (inline C List "return(listEQ(arg0, arg1));"))
+
   Composition
   (comp* [l ls]
     (list-concat (cons l (map ls seq))))
@@ -380,15 +431,139 @@
   Container
   (map [l f]
     (list-map l f))
+
   (flat-map [l mf]
     (list-concat (list-map l mf)))
   
   Seqable
+  (reduce [l result f]
+    (extract (list-reduce l result f)))
+
+  (first [l]
+    (inline C "return(car(arg0));"))
+
   (rest [l]
     (inline C "return(cdr(arg0));"))
   )
 
+(defn fn-apply [x args]
+  (assert (instance? Function x))
+  (inline C "return(fnApply(arg0, arg1));"))
+
+(defn pr* [str]
+  ;; Send a string to the current output stream
+  (assert (instance? String str))
+  (inline C Integer "return(pr_STAR(arg0));"))
+
+(defn list*
+  ([]
+   (returns x (instance? List x))
+   empty-list)
+  ([arg]
+   (assert (instance? List arg))
+   (returns x (instance? List x))
+   arg)
+  ([arg & args]
+   (returns x (instance? List x))
+   (cons arg (fn-apply list* args))))
+
+(defn abort []
+  (inline C Maybe
+   "abort();
+    return(nothing);"))
+
+(defn print [& vs]
+  (map (flat-map (interpose vs " ") string-list) pr*))
 
 (defn println [& vs]
   (map (flat-map (interpose vs " ") string-list) pr*)
   (pr* "\n"))
+
+(defn =
+  ([v] (maybe v))
+  ([x y] (=* x y)))
+
+(defn add-numbers [x y]
+  (assert (instance Integer x))
+  (assert (instance Integer y))
+  (inline C Integer "
+    Value *numVal = integerValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(numVal);"))
+
+(defn subtract-numbers [x y]
+  (assert (instance Integer x))
+  (assert (instance Integer y))
+  (inline C Integer "
+    Value *numVal = integerValue(((Integer *)arg0)->numVal - ((Integer *)arg1)->numVal);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(numVal);"))
+
+(defn mult-numbers [x y]
+  (assert (instance Integer x))
+  (assert (instance Integer y))
+  (inline C Integer "
+    Value *numVal = integerValue(((Integer *)arg0)->numVal * ((Integer *)arg1)->numVal);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(numVal);"))
+
+(defn rem [x y]
+  (assert (instance Integer x))
+  (assert (instance Integer y))
+  (inline C Integer "
+    Value *numVal = integerValue(((Integer *)arg0)->numVal % ((Integer *)arg1)->numVal);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(numVal);"))
+
+(defn +
+  ([] 0)
+  ([x y]
+   (add-numbers x y))
+  ([& xs]
+   (reduce xs 0 add-numbers)))
+
+(defn inc [x]
+  ;; Increment an integer value by 1
+  (+ x 1))
+
+(defn -
+  ([] 0)
+  ([x] x)
+  ([x & xs] (reduce xs x subtract-numbers)))
+
+(defn dec [x]
+  ;; Deccrement an integer value by 1
+  (subtract-numbers x 1))
+
+(defn *
+  ([] 1)
+  ([x y] (mult-numbers x y))
+  ([& xs] (reduce xs 1 mult-numbers)))
+
+(defn bit-and [x y]
+  ;; Bitwise AND two integer values
+  (assert (instance Integer x))
+  (assert (instance Integer y))
+  (inline C Integer "return(bitAnd(arg0, arg1));"))
+
+(defn bit-or [x y]
+  ;; Bitwise OR two integer values
+  (assert (instance Integer x))
+  (assert (instance Integer y))
+  (inline C Integer "return(bitOr(arg0, arg1));"))
+
+;; (defn partial [f & args]
+;;   ;; paritally apply `f` to `args` creating a new function that expects more arguments
+;;   (fn [& more-args]
+;;     (apply f (comp args more-args))))
+
+(extend-type Function
+  Container
+  (apply* [f args]
+    ;; Remember, the last element of 'args' must be a list
+    ;; everything up to that must be prepended to it
+    (fn-apply f (fn-apply list* args))))

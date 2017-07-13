@@ -95,6 +95,7 @@ Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
 
 void prefs(char *tag, Value *v);
 
+Value *(*equalSTAR)(List *closures, Value *, Value *);
 // Value *(*assoc)(List *closures, Value *, Value *, Value *, Value *, Value *);
 // Value *(*dissoc)(List *closures, Value *, Value *, Value *, Value *);
 // Value *(*get)(List *, Value *, Value *, Value *, Value *, Value *);
@@ -129,10 +130,22 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
 Value *maybe(List *closures, Value *arg0, Value *arg1);
 int8_t isNothing(Value *v);
 Value *strCount(Value *arg0);
-Value *str_EQ(Value *arg0, Value *arg1);
+Value *strEQ(Value *arg0, Value *arg1);
 Value *strList(Value *arg0);
 Value *strVect(Value *arg0);
 Value *checkInstance(Value *arg0, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);
 Value *listConcat(Value *arg0);
+Value *car(Value *arg0);
 Value *cdr(Value *arg0);
+Value *integerLT(Value *arg0, Value *arg1);
+Value *integerSha1(Value *arg0);
+Value *bitAnd(Value *arg0, Value *arg1);
+Value *bitOr(Value *arg0, Value *arg1);
+Value *addIntegers(Value *arg0, Value *arg1);
+Value *listEQ(Value *arg0, Value *arg1);
+int8_t equal(Value *v1, Value *v2);
+Value *maybeExtract(Value *arg0);
+Value *fnApply(Value *arg0, Value *arg1);
+Value *maybeApply(Value *arg0, Value *arg1);
+Value *maybeEQ(Value *arg0, Value *arg1);

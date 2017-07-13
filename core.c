@@ -1189,7 +1189,7 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
   }
 }
 
-Value *str_EQ(Value *arg0, Value *arg1) {
+Value *strEQ(Value *arg0, Value *arg1) {
   if (arg0->type == StringType &&
       arg1->type == StringType) {
     String *s1 = (String *)arg0;
@@ -1456,12 +1456,21 @@ Value *listConcat(Value *arg0) {
   }
 }
 
+Value *car(Value *arg0) {
+  List *lst = (List *)arg0;
+  if (lst->len == 0) {
+    return(nothing);
+  } else {
+    Value *h = lst->head;
+    incRef(h, 1);
+    dec_and_free(arg0, 1);
+    return(maybe((List *)0, (Value *)0, h));
+  }
+}
+
 Value *cdr(Value *arg0) {
   List *lst = (List *)arg0;
-  if (arg0->type != ListType) {
-    fprintf(stderr, "\n*** 'cdr' requires a list\n");
-    abort();
-  } else if (lst->len == 0) {
+  if (lst->len == 0) {
     dec_and_free(arg0, 1);
     return((Value *)empty_list);
   } else {
@@ -1470,5 +1479,497 @@ Value *cdr(Value *arg0) {
     incRef((Value *)tail, 1);
     dec_and_free(arg0, 1);
     return((Value *)tail);
+  }
+}
+
+Value *integerLT(Value *arg0, Value *arg1) {
+  if (((Integer *)arg0)->numVal < ((Integer *)arg1)->numVal) {
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, arg0));
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  }
+}
+
+// SHA1 implementation courtesy of: Steve Reid <sreid@sea-to-sky.net>
+// and others.
+// from http://waterjuice.org/c-source-code-for-sha1/
+
+typedef struct
+{
+ uint32_t        State[5];
+ uint32_t        Count[2];
+ uint8_t         Buffer[64];
+ } Sha1Context;
+
+#define SHA1_HASH_SIZE           ( 64 / 8 )
+
+typedef struct
+{
+ uint8_t      bytes [SHA1_HASH_SIZE];
+ } SHA1_HASH;
+
+typedef union
+{
+ uint8_t     c [64];
+ uint32_t    l [16];
+ } CHAR64LONG16;
+
+#define rol(value, bits) (((value) << (bits)) | ((value) >> (32 - (bits))))
+#define blk0(i) (block->l[i] = (rol(block->l[i],24)&0xFF00FF00) |(rol(block->l[i],8)&0x00FF00FF))
+#define blk(i) (block->l[i&15] = rol(block->l[(i+13)&15]^block->l[(i+8)&15] ^block->l[(i+2)&15]^block->l[i&15],1))
+
+#define R0(v,w,x,y,z,i)  z += ((w&(x^y))^y)     + blk0(i)+ 0x5A827999 + rol(v,5); w=rol(w,30);
+#define R1(v,w,x,y,z,i)  z += ((w&(x^y))^y)     + blk(i) + 0x5A827999 + rol(v,5); w=rol(w,30);
+#define R2(v,w,x,y,z,i)  z += (w^x^y)           + blk(i) + 0x6ED9EBA1 + rol(v,5); w=rol(w,30);
+#define R3(v,w,x,y,z,i)  z += (((w|x)&y)|(w&x)) + blk(i) + 0x8F1BBCDC + rol(v,5); w=rol(w,30);
+#define R4(v,w,x,y,z,i)  z += (w^x^y)           + blk(i) + 0xCA62C1D6 + rol(v,5); w=rol(w,30);
+
+static void TransformFunction(uint32_t state[5], const uint8_t buffer[64]) {
+   uint32_t            a;
+   uint32_t            b;
+   uint32_t            c;
+   uint32_t            d;
+   uint32_t            e;
+   uint8_t             workspace[64];
+   CHAR64LONG16*       block = (CHAR64LONG16*) workspace;
+
+   memcpy( block, buffer, 64 );
+
+   // Copy context->state[] to working vars
+   a = state[0];
+   b = state[1];
+   c = state[2];
+   d = state[3];
+   e = state[4];
+
+   // 4 rounds of 20 operations each. Loop unrolled.
+   R0(a,b,c,d,e, 0); R0(e,a,b,c,d, 1); R0(d,e,a,b,c, 2); R0(c,d,e,a,b, 3);
+   R0(b,c,d,e,a, 4); R0(a,b,c,d,e, 5); R0(e,a,b,c,d, 6); R0(d,e,a,b,c, 7);
+   R0(c,d,e,a,b, 8); R0(b,c,d,e,a, 9); R0(a,b,c,d,e,10); R0(e,a,b,c,d,11);
+   R0(d,e,a,b,c,12); R0(c,d,e,a,b,13); R0(b,c,d,e,a,14); R0(a,b,c,d,e,15);
+   R1(e,a,b,c,d,16); R1(d,e,a,b,c,17); R1(c,d,e,a,b,18); R1(b,c,d,e,a,19);
+   R2(a,b,c,d,e,20); R2(e,a,b,c,d,21); R2(d,e,a,b,c,22); R2(c,d,e,a,b,23);
+   R2(b,c,d,e,a,24); R2(a,b,c,d,e,25); R2(e,a,b,c,d,26); R2(d,e,a,b,c,27);
+   R2(c,d,e,a,b,28); R2(b,c,d,e,a,29); R2(a,b,c,d,e,30); R2(e,a,b,c,d,31);
+   R2(d,e,a,b,c,32); R2(c,d,e,a,b,33); R2(b,c,d,e,a,34); R2(a,b,c,d,e,35);
+   R2(e,a,b,c,d,36); R2(d,e,a,b,c,37); R2(c,d,e,a,b,38); R2(b,c,d,e,a,39);
+   R3(a,b,c,d,e,40); R3(e,a,b,c,d,41); R3(d,e,a,b,c,42); R3(c,d,e,a,b,43);
+   R3(b,c,d,e,a,44); R3(a,b,c,d,e,45); R3(e,a,b,c,d,46); R3(d,e,a,b,c,47);
+   R3(c,d,e,a,b,48); R3(b,c,d,e,a,49); R3(a,b,c,d,e,50); R3(e,a,b,c,d,51);
+   R3(d,e,a,b,c,52); R3(c,d,e,a,b,53); R3(b,c,d,e,a,54); R3(a,b,c,d,e,55);
+   R3(e,a,b,c,d,56); R3(d,e,a,b,c,57); R3(c,d,e,a,b,58); R3(b,c,d,e,a,59);
+   R4(a,b,c,d,e,60); R4(e,a,b,c,d,61); R4(d,e,a,b,c,62); R4(c,d,e,a,b,63);
+   R4(b,c,d,e,a,64); R4(a,b,c,d,e,65); R4(e,a,b,c,d,66); R4(d,e,a,b,c,67);
+   R4(c,d,e,a,b,68); R4(b,c,d,e,a,69); R4(a,b,c,d,e,70); R4(e,a,b,c,d,71);
+   R4(d,e,a,b,c,72); R4(c,d,e,a,b,73); R4(b,c,d,e,a,74); R4(a,b,c,d,e,75);
+   R4(e,a,b,c,d,76); R4(d,e,a,b,c,77); R4(c,d,e,a,b,78); R4(b,c,d,e,a,79);
+
+   // Add the working vars back into context.state[]
+   state[0] += a;
+   state[1] += b;
+   state[2] += c;
+   state[3] += d;
+   state[4] += e;
+   }
+
+void Sha1Initialise (Sha1Context* Context) {
+   // SHA1 initialization constants
+   Context->State[0] = 0x67452301;
+   Context->State[1] = 0xEFCDAB89;
+   Context->State[2] = 0x98BADCFE;
+   Context->State[3] = 0x10325476;
+   Context->State[4] = 0xC3D2E1F0;
+   Context->Count[0] = 0;
+   Context->Count[1] = 0;
+   }
+
+void Sha1Update (Sha1Context* Context, void* Buffer, int64_t BufferSize) {
+   uint32_t    i;
+   uint32_t    j;
+
+   j = (Context->Count[0] >> 3) & 63;
+   if( (Context->Count[0] += BufferSize << 3) < (BufferSize << 3) )
+   {
+      Context->Count[1]++;
+   }
+
+   Context->Count[1] += (BufferSize >> 29);
+   if( (j + BufferSize) > 63 )
+   {
+      i = 64 - j;
+      memcpy( &Context->Buffer[j], Buffer, i );
+      TransformFunction(Context->State, Context->Buffer);
+      for( ; i + 63 < BufferSize; i += 64 )
+      {
+         TransformFunction(Context->State, (uint8_t*)Buffer + i);
+      }
+      j = 0;
+   }
+   else
+   {
+      i = 0;
+   }
+
+   memcpy( &Context->Buffer[j], &((uint8_t*)Buffer)[i], BufferSize - i );
+}
+
+void Sha1Finalise (Sha1Context* Context, SHA1_HASH* Digest) {
+   uint32_t    i;
+   uint8_t     finalcount[8];
+
+   for( i=0; i<8; i++ )
+   {
+      finalcount[i] = (unsigned char)((Context->Count[(i >= 4 ? 0 : 1)]
+         >> ((3-(i & 3)) * 8) ) & 255);  // Endian independent
+   }
+   Sha1Update( Context, (uint8_t*)"\x80", 1 );
+   while( (Context->Count[0] & 504) != 448 )
+   {
+      Sha1Update( Context, (uint8_t*)"\0", 1 );
+   }
+
+Sha1Update( Context, finalcount, 8 );  // Should cause a Sha1TransformFunction()
+   for( i=0; i<SHA1_HASH_SIZE; i++ )
+   {
+      Digest->bytes[i] = (uint8_t)((Context->State[i>>2] >> ((3-(i & 3)) * 8) ) & 255);
+   }
+}
+
+Value *integerSha1(Value *arg0) {
+  int64_t shaVal;
+  Sha1Context context;
+  Integer *numVal = (Integer *)arg0;
+
+  Sha1Initialise(&context);
+  Sha1Update(&context, (void *)&numVal->type, 8);
+  Sha1Update(&context, (void *)&numVal->numVal, 8);
+  Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
+  dec_and_free(arg0, 1);
+  return((Value *)integerValue(shaVal));
+}
+
+Value *bitAnd(Value *arg0, Value *arg1) {
+  Value *result;
+  result = integerValue(((Integer *)arg0)->numVal & ((Integer *)arg1)->numVal);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(result);
+}
+
+Value *bitOr(Value *arg0, Value *arg1) {
+  Value *result;
+  result = integerValue(((Integer *)arg0)->numVal | ((Integer *)arg1)->numVal);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(result);
+}
+
+Value *addIntegers(Value *arg0, Value *arg1) {
+  Value *numVal = integerValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(numVal);
+}
+
+Value *listEQ(Value *arg0, Value *arg1) {
+  if (arg1->type != ListType ||
+      ((List *)arg0)->len != ((List *)arg1)->len) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  } else {
+    List *l0 = (List *)arg0;
+    List *l1 = (List *)arg1;
+    for (;
+         l0 != (List *)0 && l0->head != (Value *)0 &&
+           l1 != (List *)0 && l1->head != (Value *)0;
+         l0 = l0->tail, l1 = l1->tail) {
+      incRef(l0->head, 1);
+      incRef(l1->head, 1);
+      if (!equal(l0->head, l1->head)) {
+        dec_and_free(arg0, 1);
+        dec_and_free(arg1, 1);
+        return(nothing);
+      }
+    }
+    dec_and_free(arg1, 1);
+    return(maybe(empty_list, (Value *)0, arg0));
+  }
+}
+
+int8_t equal(Value *v1, Value *v2) {
+   Value *equals = equalSTAR((List *)0, v1, v2);
+   int8_t notEquals = isNothing(equals);
+   dec_and_free(equals, 1);
+   return(!notEquals);
+}
+
+Value *maybeExtract(Value *arg0) {
+  Maybe *mValue = (Maybe *)arg0;
+  if (mValue->value == (Value *)0) {
+    fprintf(stderr, "The 'nothing' value can not be passed to 'extract'.\n");
+    abort();
+  }
+  incRef(mValue->value, 1);
+  Value *result = mValue->value;
+  dec_and_free(arg0, 1);
+  return(result);
+}
+
+Value *fnApply(Value *arg0, Value *arg1) {
+  List *argList = (List *)arg1;
+  FnArity *_arity = findFnArity(arg0, argList->len);
+
+  if (_arity == (FnArity *)0) {
+    fprintf(stderr, "\n*** no arity of '%s' found to apply to %ld args\n",
+            ((Function *)arg0)->name, argList->len);
+    abort();
+  } else if(_arity->variadic) {
+    FnType1 *_fn = (FnType1 *)_arity->fn;
+    Value *result = _fn(_arity->closures, arg1);
+    dec_and_free(arg0, 1);
+    return(result);
+  } else if (argList->len == 0) {
+    FnType0 *_fn = (FnType0 *)_arity->fn;
+    Value *result = _fn(_arity->closures);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 1) {
+    FnType1 *_fn = (FnType1 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    Value *result = _fn(_arity->closures, appArg0);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 2) {
+    FnType2 *_fn = (FnType2 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    argList = argList->tail;
+    Value *appArg1 = argList->head; incRef(appArg1, 1);
+    Value *result = _fn(_arity->closures, appArg0, appArg1);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 3) {
+    FnType3 *_fn = (FnType3 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    argList = argList->tail;
+    Value *appArg1 = argList->head; incRef(appArg1, 1);
+    argList = argList->tail;
+    Value *appArg2 = argList->head; incRef(appArg2, 1);
+    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 4) {
+    FnType4 *_fn = (FnType4 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    argList = argList->tail;
+    Value *appArg1 = argList->head; incRef(appArg1, 1);
+    argList = argList->tail;
+    Value *appArg2 = argList->head; incRef(appArg2, 1);
+    argList = argList->tail;
+    Value *appArg3 = argList->head; incRef(appArg3, 1);
+    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 5) {
+    FnType5 *_fn = (FnType5 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    argList = argList->tail;
+    Value *appArg1 = argList->head; incRef(appArg1, 1);
+    argList = argList->tail;
+    Value *appArg2 = argList->head; incRef(appArg2, 1);
+    argList = argList->tail;
+    Value *appArg3 = argList->head; incRef(appArg3, 1);
+    argList = argList->tail;
+    Value *appArg4 = argList->head; incRef(appArg4, 1);
+    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 6) {
+    FnType6 *_fn = (FnType6 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    argList = argList->tail;
+    Value *appArg1 = argList->head; incRef(appArg1, 1);
+    argList = argList->tail;
+    Value *appArg2 = argList->head; incRef(appArg2, 1);
+    argList = argList->tail;
+    Value *appArg3 = argList->head; incRef(appArg3, 1);
+    argList = argList->tail;
+    Value *appArg4 = argList->head; incRef(appArg4, 1);
+    argList = argList->tail;
+    Value *appArg5 = argList->head; incRef(appArg5, 1);
+    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 7) {
+    FnType7 *_fn = (FnType7 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    argList = argList->tail;
+    Value *appArg1 = argList->head; incRef(appArg1, 1);
+    argList = argList->tail;
+    Value *appArg2 = argList->head; incRef(appArg2, 1);
+    argList = argList->tail;
+    Value *appArg3 = argList->head; incRef(appArg3, 1);
+    argList = argList->tail;
+    Value *appArg4 = argList->head; incRef(appArg4, 1);
+    argList = argList->tail;
+    Value *appArg5 = argList->head; incRef(appArg5, 1);
+    argList = argList->tail;
+    Value *appArg6 = argList->head; incRef(appArg6, 1);
+    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 8) {
+    FnType8 *_fn = (FnType8 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    argList = argList->tail;
+    Value *appArg1 = argList->head; incRef(appArg1, 1);
+    argList = argList->tail;
+    Value *appArg2 = argList->head; incRef(appArg2, 1);
+    argList = argList->tail;
+    Value *appArg3 = argList->head; incRef(appArg3, 1);
+    argList = argList->tail;
+    Value *appArg4 = argList->head; incRef(appArg4, 1);
+    argList = argList->tail;
+    Value *appArg5 = argList->head; incRef(appArg5, 1);
+    argList = argList->tail;
+    Value *appArg6 = argList->head; incRef(appArg6, 1);
+    argList = argList->tail;
+    Value *appArg7 = argList->head; incRef(appArg7, 1);
+    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else if (argList->len == 9) {
+    FnType9 *_fn = (FnType9 *)_arity->fn;
+    Value *appArg0 = argList->head; incRef(appArg0, 1);
+    argList = argList->tail;
+    Value *appArg1 = argList->head; incRef(appArg1, 1);
+    argList = argList->tail;
+    Value *appArg2 = argList->head; incRef(appArg2, 1);
+    argList = argList->tail;
+    Value *appArg3 = argList->head; incRef(appArg3, 1);
+    argList = argList->tail;
+    Value *appArg4 = argList->head; incRef(appArg4, 1);
+    argList = argList->tail;
+    Value *appArg5 = argList->head; incRef(appArg5, 1);
+    argList = argList->tail;
+    Value *appArg6 = argList->head; incRef(appArg6, 1);
+    argList = argList->tail;
+    Value *appArg7 = argList->head; incRef(appArg7, 1);
+    argList = argList->tail;
+    Value *appArg8 = argList->head; incRef(appArg8, 1);
+    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7,
+                        appArg8);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
+  } else {
+    fprintf(outstream, "error in 'fn-apply'\n");
+    abort();
+  }
+}
+
+Value *maybeApply(Value *arg0, Value *arg1) {
+  if (isNothing(arg0)) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  } else if (((List *)arg1)->len == 0) {
+    Value *f = ((Maybe *)arg0)->value;
+    Value *rslt9;
+    FnArity *arity6 = findFnArity(f, 0);
+    if(arity6 != (FnArity *)0 && !arity6->variadic) {
+      FnType0 *fn8 = (FnType0 *)arity6->fn;
+      rslt9 = fn8(arity6->closures);
+    } else if(arity6 != (FnArity *)0 && arity6->variadic) {
+      FnType1 *fn8 = (FnType1 *)arity6->fn;
+      rslt9 = fn8(arity6->closures, (Value *)empty_list);
+    } else {
+      fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
+      abort();
+    }
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, rslt9));
+  } else {
+    List *head = empty_list;
+    List *tail;
+    for (List *l = (List *)arg1; l->head != (Value *)0; l = l->tail) {
+      if (isNothing(l->head)) {
+        dec_and_free((Value *)head, 1);
+        dec_and_free(arg0, 1);
+        dec_and_free(arg1, 1);
+        return(nothing);
+      } else {
+        Value *x = ((Maybe *)l->head)->value;
+        incRef(x, 1);
+        if (head == empty_list) {
+          // if we haven't started the new list yet
+          head = malloc_list();
+          head->len = 1;
+          head->head = x;
+          head->tail = empty_list;
+          tail = head;
+        } else {
+          // otherwise, append to tail of list
+          List *new_tail = malloc_list();
+          new_tail->len = 1;
+          new_tail->head = x;
+          new_tail->tail = empty_list;
+          tail->tail = new_tail;
+          tail = new_tail;
+          head->len++;
+        }
+      }
+    }
+
+    Value *f = ((Maybe *)arg0)->value;
+
+    incRef(f, 1);
+    Value *rslt19 = fnApply(f, (Value *)head);
+    Value *rslt20 = maybe(empty_list, (Value *)0, rslt19);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(rslt20);
+  }
+}
+
+Value *maybeEQ(Value *arg0, Value *arg1) {
+  if (arg1->type == MaybeType &&
+      ((Maybe *)arg0)->value == ((Maybe *)arg1)->value) {
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, arg0));
+  } else if (arg1->type == MaybeType &&
+             ((Maybe *)arg0)->value != (Value *)0 &&
+             ((Maybe *)arg1)->value != (Value *)0) {
+    incRef(((Maybe *)arg0)->value, 1);
+    incRef(((Maybe *)arg1)->value, 1);
+    Value *eqResult = equalSTAR((List *)0, ((Maybe *)arg0)->value, ((Maybe *)arg1)->value);
+    if (isNothing(eqResult)) {
+      dec_and_free(eqResult, 1);
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(nothing);
+    } else {
+      dec_and_free(eqResult, 1);
+      dec_and_free(arg1, 1);
+      Value *result = maybe((List *)0, (Value *)0, arg0);
+      return(result);
+    }
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
   }
 }
