@@ -2,6 +2,9 @@
 (def magic "don't ask")
 
 (def Integer (inline C Integer "(Value *)&(Integer){IntegerType, -1, 1};"))
+(def String (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringType};"))
+(def List (inline C Integer "(Value *)&(Integer){IntegerType, -1, ListType};"))
+(def Maybe (inline C Integer "(Value *)&(Integer){IntegerType, -1, MaybeType};"))
 
 (defn maybe [v]
   ;; wrap `v` in a Maybe value
@@ -238,6 +241,12 @@
     ;; Builds a string from the string representation of all the values in `coll`
     (returns a (instance? String a))))
 
+(defn str [& vs]
+  ;; Converts the list of arguments into a single string of characters. Every argument
+  ;; must implment the `string-list` protocol function.
+  (assert (returns x (instance? String s)))
+  (to-str vs))
+
 (defn second [coll]
   ;; get the second element from the sequable `coll`
   (first (rest coll)))
@@ -345,140 +354,6 @@
   (vec l))
 
 
-(extend-type Integer
-  Type
-  (instance? [type val] (inline C Maybe "return(checkInstance(arg0, arg1));"))
-  (type-args [n] (list n))
-  (type-name [_] "Integer")
-  
-  Stringable
-  (string-list [n] (inline C "return((Value *)listCons(integer_str(arg0), empty_list));\n"))
-
-  Eq
-  (=* [x y] (inline C Maybe "return(integer_EQ(arg0, arg1));"))
-
-  Ord
-  (<* [x y] (inline C Maybe "return(integerLT(arg0, arg1));"))
-
-  Hashable
-  (sha1 [x] (inline C Integer "return(integerSha1(arg0));")))
-
-(extend-type String
-  Type
-  (type-name [_] "String")
-  
-  Stringable
-  (string-list [s] (list s))
-
-  Eq
-  (=* [x y] (inline C "return(strEQ(arg0, arg1));"))
-  )
-
-(extend-type Maybe
-  Stringable
-  (string-list [mv]
-    (extract (or (map mv (fn [v]
-                           (comp (list "<maybe ")
-                                 (string-list v)
-                                 (list ">"))))
-                 (maybe (list "<nothing>")))))
-
-  Type
-  (type-name [_] "Maybe")
-  
-  Eq
-  (=* [x y] (inline C Maybe "return(maybeEQ(arg0, arg1));"))
-
-  Container
-  (extract [mv]
-    (inline C "return(maybeExtract(arg0));"))
-
-  (wrap [_ mv]
-    (maybe mv))
-
-  (apply* [mv args]
-    (inline C Maybe "return(maybeApply(arg0, arg1));"))
-
-  (flat-map [mv f]
-    (and mv (f (extract mv)))))
-
-(defn interpose [coll sep]
-  (rest (flat-map coll (fn [x] (list sep x)))))
-
-(defn list-map [l f]
-  (inline C List "return(listMap(arg0, arg1));"))
-
-(defn list-concat [l1]
-  (inline C List "return(listConcat(arg0));"))
-
-(defn list-reduce [l result f]
-  (or (flat-map (first l)
-                (fn [h]
-                  (list-reduce (rest l) (f result h) f)))
-      (maybe result)))
-
-(extend-type List
-  Type
-  (type-name [_] "List")
-
-  Eq
-  (=* [x y] (inline C List "return(listEQ(arg0, arg1));"))
-
-  Composition
-  (comp* [l ls]
-    (list-concat (cons l (map ls seq))))
-
-  Container
-  (map [l f]
-    (list-map l f))
-
-  (flat-map [l mf]
-    (list-concat (list-map l mf)))
-  
-  Seqable
-  (reduce [l result f]
-    (extract (list-reduce l result f)))
-
-  (first [l]
-    (inline C "return(car(arg0));"))
-
-  (rest [l]
-    (inline C "return(cdr(arg0));"))
-  )
-
-(defn fn-apply [x args]
-  (assert (instance? Function x))
-  (inline C "return(fnApply(arg0, arg1));"))
-
-(defn pr* [str]
-  ;; Send a string to the current output stream
-  (assert (instance? String str))
-  (inline C Integer "return(pr_STAR(arg0));"))
-
-(defn list*
-  ([]
-   (returns x (instance? List x))
-   empty-list)
-  ([arg]
-   (assert (instance? List arg))
-   (returns x (instance? List x))
-   arg)
-  ([arg & args]
-   (returns x (instance? List x))
-   (cons arg (fn-apply list* args))))
-
-(defn abort []
-  (inline C Maybe
-   "abort();
-    return(nothing);"))
-
-(defn print [& vs]
-  (map (flat-map (interpose vs " ") string-list) pr*))
-
-(defn println [& vs]
-  (map (flat-map (interpose vs " ") string-list) pr*)
-  (pr* "\n"))
-
 (defn =
   ([v] (maybe v))
   ([x y] (=* x y)))
@@ -555,6 +430,324 @@
   (assert (instance Integer x))
   (assert (instance Integer y))
   (inline C Integer "return(bitOr(arg0, arg1));"))
+
+(extend-type Integer
+  Type
+  (instance? [type val] (inline C Maybe "return(checkInstance(arg0, arg1));"))
+  (type-args [n] (list n))
+  (type-name [_] "Integer")
+  
+  Stringable
+  (string-list [n] (inline C "return((Value *)listCons(integer_str(arg0), empty_list));\n"))
+
+  Eq
+  (=* [x y] (inline C Maybe "return(integer_EQ(arg0, arg1));"))
+
+  Ord
+  (<* [x y] (inline C Maybe "return(integerLT(arg0, arg1));"))
+
+  Hashable
+  (sha1 [x] (inline C Integer "return(integerSha1(arg0));")))
+
+(defn char [n]
+  (assert (instance? Integer n))
+  (inline C String "
+  String *strVal = malloc_string(2);
+  strVal->len = 1;
+  strVal->buffer[0] = ((Integer *)arg0)->numVal;
+  strVal->buffer[1] = 0;
+  return((Value *)strVal);\n"))
+
+(defn char-code [c]
+  (assert (instance? String c))
+  (inline C Integer "
+   if (arg0->type == StringType) {
+     String *s = (String *)arg0;
+     Value *numVal = integerValue((unsigned char)s->buffer[0]);
+     dec_and_free(arg0, 1);
+     return(numVal);
+   } else if (arg0->type == SubStringType) {
+     SubString *s = (SubString *)arg0;
+     Value *numVal = integerValue((unsigned char)s->buffer[0]);
+     dec_and_free(arg0, 1);
+     return(numVal);
+   } else
+     abort();"))
+
+(defn str-malloc [len]
+  (assert (instance? Integer len))
+  (inline C String "
+  String *strVal = malloc_string(((Integer *)arg0)->numVal);
+  strVal->len = 0;
+  strVal->buffer[0] = 0;
+  dec_and_free(arg0, 1);
+  return((Value *)strVal);\n"))
+
+(defn str-append [dest src]
+  (assert (instance? String dest))
+  (inline C Maybe "
+  String *s1 = (String *)arg0;
+  if (arg1->type == StringType) {
+    String *s2 = (String *)arg1;
+    strncat(s1->buffer, s2->buffer, s2->len);
+    s1->len += s2->len;
+  } else if (arg1->type == SubStringType) {
+    SubString *s2 = (SubString *)arg1;
+    strncat(s1->buffer, s2->buffer, s2->len);
+    s1->len += s2->len;
+  }
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(nothing);"))
+
+(defn escape-chars [s]
+  (assert (instance? String s))
+  (inline C String "return(escapeChars(arg0));"))
+
+(defn subs
+  ([src index]
+   (assert (instance? String src))
+   (assert (instance? Integer index))
+   (inline C String "return(subs2(arg0, arg1));"))
+  ([src index length]
+   (assert (instance? String src))
+   (assert (instance? Integer index))
+   (assert (instance? Integer length))
+   (inline C String "return(subs3(arg0, arg1, arg2));")))
+
+(extend-type String
+  Type
+  (type-name [_] "String")
+  (type-args [s] (list s))
+  
+  Stringable
+  (string-list [s] (list s))
+
+  Composition
+  (zero [_] "")
+  
+  (comp* [s ss] (to-str (cons s ss)))
+
+  Collection
+  (count [s]
+    (inline C Integer "return(strCount(arg0));"))
+
+  (empty? [coll]
+    (= 0 (count coll)))
+
+  (empty [coll]
+    "")
+
+  Seqable
+  (seq [coll]
+    (inline C List "return(strSeq(arg0));"))
+
+  (vec [coll]
+    (inline C List "return(strVec(arg0));"))
+
+  (first [s]
+    (map (< 0 (count s))
+         (fn [_]
+           (subs s 0 1))))
+
+  (rest [s]
+    (subs s 1))
+
+  (last [s]
+    (let [n (count s)]
+      (map (< 0 n)
+           (fn [_]
+             (subs s (dec n))))))
+
+  (butlast [s]
+    (subs s 0 (dec (count s))))
+
+  (reduce [s x f]
+    (reduce (seq s) x f))
+
+  (reverse [s]
+    (to-str (reverse (seq s))))
+
+  (to-str [s]
+    s)
+
+  Eq
+  (=* [x y] (inline C Maybe "return(strEQ(arg0, arg1));"))
+
+  Indexed
+  (nth [s n]
+    (map (< n (count s))
+         (fn [_]
+           (subs s n 1))))
+  
+  Ord
+  (<* [x y] (inline C Maybe "return(strLT(arg0, arg1));"))
+
+  Hashable
+  (sha1 [s]
+    (inline C Integer "return(strSha1(arg0));"))
+  )
+
+(extend-type Maybe
+  Stringable
+  (string-list [mv]
+    (extract (or (map mv (fn [v]
+                           (comp (list "<maybe ")
+                                 (string-list v)
+                                 (list ">"))))
+                 (maybe (list "<nothing>")))))
+
+  Type
+  (type-name [_] "Maybe")
+  
+  Eq
+  (=* [x y] (inline C Maybe "return(maybeEQ(arg0, arg1));"))
+
+  Container
+  (extract [mv]
+    (inline C "return(maybeExtract(arg0));"))
+
+  (map [mv args]
+    (inline C Maybe "return(maybeMap(arg0, arg1));"))
+
+  (wrap [_ mv]
+    (maybe mv))
+
+  (apply* [mv args]
+    (inline C Maybe "return(maybeApply(arg0, arg1));"))
+
+  (flat-map [mv f]
+    (and mv (f (extract mv)))))
+
+(defn interpose [coll sep]
+  (rest (flat-map coll (fn [x] (list sep x)))))
+
+(defn list-map [l f]
+  (inline C List "return(listMap(arg0, arg1));"))
+
+(defn list-concat [l1]
+  (inline C List "return(listConcat(arg0));"))
+
+(defn list-reduce [l result f]
+  (or (flat-map (first l)
+                (fn [h]
+                  (list-reduce (rest l) (f result h) f)))
+      (maybe result)))
+
+(defn list-count [l]
+  (inline C Integer "
+   Value *numVal = integerValue(((List *)arg0)->len);
+   dec_and_free(arg0, 1);
+   return(numVal);"))
+
+(extend-type List
+  Type
+  (type-name [_] "List")
+
+  Eq
+  (=* [x y] (inline C List "return(listEQ(arg0, arg1));"))
+
+  Composition
+  (comp* [l ls]
+    (list-concat (cons l (map ls seq))))
+  
+  Collection
+  (empty? [l] (= 0 (count l)))
+  (conj [l v] (cons v l))
+  (count [l] (list-count l))
+
+  Container
+  (map [l f]
+    (list-map l f))
+
+  (flat-map [l mf]
+    (list-concat (list-map l mf)))
+  
+  Seqable
+  (reduce [l result f]
+    (extract (list-reduce l result f)))
+
+  (first [l]
+    (inline C "return(car(arg0));"))
+
+  (rest [l]
+    (inline C "return(cdr(arg0));"))
+
+  (to-str [coll]
+    (let [ss-list (flat-map coll string-list)
+          new-len (reduce ss-list 0 (fn [len s] (+ len (count s))))
+          new-str (str-malloc new-len)]
+      (map ss-list (fn [s]
+                     (str-append new-str s)))
+      new-str))
+)
+
+(defn vec= [x y n]
+  (or (= 0 n)
+      (let [n (dec n)]
+        (and (= (get x n) (get y n))
+             (vec= x y n)))))
+
+(defn vect-count [v]
+  (inline C Integer "
+   Value *result = integerValue(((Vector *)arg0)->count);
+   dec_and_free(arg0, 1);
+   return(result);"))
+
+(extend-type Vector
+  Type
+  (type-name [_] "Vector")
+
+  Collection
+  (empty [coll] empty-vector)
+
+  (count [l]
+    (vect-count l))
+  
+  Associative
+  (get [v n]
+    (inline C "return(vectorGet(arg0, arg1));"))
+
+  Eq
+  (=* [x y]
+    (assert (instance? Vector y))
+    (and (= (count x) (count y))
+         (vec= x y (count x))
+         (maybe x)))
+)
+
+(defn fn-apply [x args]
+  (assert (instance? Function x))
+  (inline C "return(fnApply(arg0, arg1));"))
+
+(defn pr* [str]
+  ;; Send a string to the current output stream
+  (assert (instance? String str))
+  (inline C Integer "return(pr_STAR(arg0));"))
+
+(defn list*
+  ([]
+   (returns x (instance? List x))
+   empty-list)
+  ([arg]
+   (assert (instance? List arg))
+   (returns x (instance? List x))
+   arg)
+  ([arg & args]
+   (returns x (instance? List x))
+   (cons arg (fn-apply list* args))))
+
+(defn abort []
+  (inline C Maybe
+   "abort();
+    return(nothing);"))
+
+(defn print [& vs]
+  (map (flat-map (interpose vs " ") string-list) pr*))
+
+(defn println [& vs]
+  (map (flat-map (interpose vs " ") string-list) pr*)
+  (pr* "\n"))
 
 ;; (defn partial [f & args]
 ;;   ;; paritally apply `f` to `args` creating a new function that expects more arguments

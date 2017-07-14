@@ -149,3 +149,7 @@ Before moving on, we need to address some long standing ugliness. One of the uni
 ## Entry 24:
 
 We now have enough of the compiler working to start to expand the core library. Our first task is to implement the core protocols and functions for the basic data types. The first one we'll tackle is `Integer` since it's the simplest. Along the way, we'll be adding bits to the compiler as needed.
+
+## Entry 25:
+
+Next up is the core functionality for the `String`. It's a more complicated because a string can be thought of as a sequence of characters, so the Sequable protocol needs to be implemented as well.

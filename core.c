@@ -373,7 +373,8 @@ Maybe *malloc_maybe() {
 
 void freeMaybe(Value *v) {
   Value *value = ((Maybe *)v)->value;
-  dec_and_free(value, 1);
+  if (value != (Value *)0)
+    dec_and_free(value, 1);
   v->next = freeMaybes.head;
   freeMaybes.head = v;
 }
@@ -755,7 +756,7 @@ Value *proto1Arg(ProtoImpls *protoImpls, char *name, Value *arg0,
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 1 argument for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 1 argument for type: %s (%ld) at %s: %ld\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -767,7 +768,7 @@ Value *proto2Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1,
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 2 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 2 arguments for type: %s (%ld) at %s: %ld\n",
                     name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -779,7 +780,7 @@ Value *proto3Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 3 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 3 arguments for type: %s (%ld) at %s: %ld\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -791,7 +792,7 @@ Value *proto4Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg3, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 4 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 4 arguments for type: %s (%ld) at %s: %ld\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -803,7 +804,7 @@ Value *proto5Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg3, Value *arg4, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 5 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 5 arguments for type: %s (%ld) at %s: %ld\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -815,7 +816,7 @@ Value *proto6Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg3, Value *arg4, Value *arg5, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 5 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 5 arguments for type: %s (%ld) at %s: %ld\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -828,7 +829,7 @@ Value *proto7Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 7 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 7 arguments for type: %s (%ld) at %s: %ld\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -841,7 +842,7 @@ Value *proto8Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 8 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 8 arguments for type: %s (%ld) at %s: %ld\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -854,7 +855,7 @@ Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg8, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implmentation of '%s' with 9 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 9 arguments for type: %s (%ld) at %s: %ld\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -1190,54 +1191,103 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
 }
 
 Value *strEQ(Value *arg0, Value *arg1) {
+  char *s1, *s2;
+  long int len;
+
+  if (arg0->type == StringType &&
+      arg1->type == StringType &&
+      ((String *)arg0)->len == ((String *)arg1)->len) {
+    s1 = ((String *)arg0)->buffer;
+    len = ((String *)arg0)->len;
+    s2 = ((String *)arg1)->buffer;
+  } else if (arg0->type == SubStringType &&
+             arg1->type == SubStringType &&
+             ((SubString *)arg0)->len == ((SubString *)arg1)->len) {
+    s1 = ((SubString *)arg0)->buffer;
+    len = ((SubString *)arg0)->len;
+    s2 = ((SubString *)arg1)->buffer;
+  } else if (arg0->type == StringType &&
+             arg1->type == SubStringType &&
+             ((String *)arg0)->len == ((SubString *)arg1)->len) {
+    s1 = ((String *)arg0)->buffer;
+    len = ((String *)arg0)->len;
+    s2 = ((SubString *)arg1)->buffer;
+  } else if (arg0->type == SubStringType &&
+             arg1->type == StringType &&
+             ((SubString *)arg0)->len == ((String *)arg1)->len) {
+    s1 = ((SubString *)arg0)->buffer;
+    len = ((SubString *)arg0)->len;
+    s2 = ((String *)arg1)->buffer;
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  }
+
+  if (strncmp(s1, s2, len) == 0) {
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, arg0));
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  }
+}
+
+Value *strLT(Value *arg0, Value *arg1) {
+  char *s1, *s2;
+  long int len, s1Len, s2Len;
+
   if (arg0->type == StringType &&
       arg1->type == StringType) {
-    String *s1 = (String *)arg0;
-    String *s2 = (String *)arg1;
-    if (s1->len == s2->len && strncmp(s1->buffer,s2->buffer,s1->len) == 0) {
-      dec_and_free(arg1, 1);
-      return(maybe((List *)0, (Value *)0, arg0));
-    } else {
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-    }
+    s1 = ((String *)arg0)->buffer;
+    s1Len = ((String *)arg0)->len;
+    s2 = ((String *)arg1)->buffer;
+    s2Len = ((String *)arg1)->len;
+    if (s1Len < s2Len)
+      len = s1Len;
+    else 
+      len = s2Len;
   } else if (arg0->type == SubStringType &&
              arg1->type == SubStringType) {
-    SubString *s1 = (SubString *)arg0;
-    SubString *s2 = (SubString *)arg1;
-    if (s1->len == s2->len && strncmp(s1->buffer,s2->buffer,s1->len) == 0) {
-      dec_and_free(arg1, 1);
-      return(maybe((List *)0, (Value *)0, arg0));
-    } else {
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-    }
+    s1 = ((SubString *)arg0)->buffer;
+    s1Len = ((SubString *)arg0)->len;
+    s2 = ((SubString *)arg1)->buffer;
+    s2Len = ((SubString *)arg1)->len;
+    if (s1Len < s2Len)
+      len = s1Len;
+    else 
+      len = s2Len;
   } else if (arg0->type == StringType &&
              arg1->type == SubStringType) {
-    String *s1 = (String *)arg0;
-    SubString *s2 = (SubString *)arg1;
-    if (s1->len == s2->len && strncmp(s1->buffer,s2->buffer,s1->len) == 0) {
-      dec_and_free(arg1, 1);
-      return(maybe((List *)0, (Value *)0, arg0));
-    } else {
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-    }
+    s1 = ((String *)arg0)->buffer;
+    s1Len = ((String *)arg0)->len;
+    s2 = ((SubString *)arg1)->buffer;
+    s2Len = ((SubString *)arg1)->len;
+    if (s1Len < s2Len)
+      len = s1Len;
+    else 
+      len = s2Len;
   } else if (arg0->type == SubStringType &&
              arg1->type == StringType) {
-    SubString *s1 = (SubString *)arg0;
-    String *s2 = (String *)arg1;
-    if (s1->len == s2->len && strncmp(s1->buffer,s2->buffer,s1->len) == 0) {
-      dec_and_free(arg1, 1);
-      return(maybe((List *)0, (Value *)0, arg0));
-    } else {
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-    }
+    s1 = ((SubString *)arg0)->buffer;
+    s1Len = ((SubString *)arg0)->len;
+    s2 = ((String *)arg1)->buffer;
+    s2Len = ((String *)arg1)->len;
+    if (s1Len < s2Len)
+      len = s1Len;
+    else 
+      len = s2Len;
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  }
+
+  int cmp = strncmp(s1, s2, len);
+  if (cmp < 0 || (cmp == 0 && s1Len < s2Len)) {
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, arg0));
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
@@ -1246,7 +1296,11 @@ Value *strEQ(Value *arg0, Value *arg1) {
 }
 
 Value *strCount(Value *arg0) {
-   Value *numVal = integerValue(((String *)arg0)->len);
+   Value *numVal;
+   if (arg0->type == StringType)
+     numVal = integerValue(((String *)arg0)->len);
+   else 
+     numVal = integerValue(((SubString *)arg0)->len);
    dec_and_free(arg0, 1);
    return(numVal);
 }
@@ -1971,5 +2025,330 @@ Value *maybeEQ(Value *arg0, Value *arg1) {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(nothing);
+  }
+}
+
+Value *maybeMap(Value *arg0, Value *arg1) {
+  Value *rslt6;
+  Maybe *mValue = (Maybe *)arg0;
+  if (mValue->value == (Value *)0) {
+    dec_and_free(arg1, 1);
+    return(arg0);
+  } else if((arg1)->type != FunctionType) {
+    incRef(arg1, 1);
+    incRef(mValue->value, 1);
+    rslt6 = invoke1Arg(empty_list, arg1, mValue->value);
+  } else {
+    FnArity *arity3 = findFnArity(arg1, 1);
+    if(arity3 != (FnArity *)0 && !arity3->variadic) {
+      FnType1 *fn5 = (FnType1 *)arity3->fn;
+      incRef(mValue->value, 1);
+      rslt6 = fn5(arity3->closures, mValue->value);
+    } else if(arity3 != (FnArity *)0 && arity3->variadic) {
+      FnType1 *fn5 = (FnType1 *)arity3->fn;
+      List *varArgs4 = empty_list;
+      incRef(mValue->value, 1);
+      varArgs4 = (List *)listCons(mValue->value, varArgs4);
+      rslt6 = fn5(arity3->closures, (Value *)varArgs4);
+    } else {
+      fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
+      abort();
+    }
+  }
+  Value *result = maybe((List *)0, (Value *)0, rslt6);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(result);
+}
+
+Value *strSha1(Value *arg0) {
+  Integer **hash;
+  char *buffer;
+  int64_t len;
+#ifdef CHECK_MEM_LEAK
+  int32_t refs;
+#endif
+  if (arg0->type == StringType) {
+    String *strVal = (String *)arg0;
+    hash = &strVal->hash;
+    buffer = strVal->buffer;
+    len = strVal->len;
+#ifdef CHECK_MEM_LEAK
+    __atomic_load(&strVal->refs, &refs, __ATOMIC_RELAXED);
+#endif
+  } else if (arg0->type == SubStringType) {
+    SubString *strVal = (SubString *)arg0;
+    hash = &strVal->hash;
+    buffer = strVal->buffer;
+    len = strVal->len;
+#ifdef CHECK_MEM_LEAK
+    __atomic_load(&strVal->refs, &refs, __ATOMIC_RELAXED);
+#endif
+  }
+
+  if (*hash != (Integer *)0) {
+    incRef((Value *)*hash, 1);
+    dec_and_free(arg0, 1);
+    return((Value *)*hash);
+  } else {
+    int64_t shaVal;
+    Sha1Context context;
+
+    Sha1Initialise(&context);
+    Sha1Update(&context, (void *)&arg0->type, 8);
+    Sha1Update(&context, buffer, len);
+    Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
+    Integer *hashVal = (Integer *)integerValue(shaVal);
+  #ifdef CHECK_MEM_LEAK
+    if (refs == -1)
+      __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
+  #endif
+    *hash = (Integer *)hashVal;
+    incRef((Value *)hashVal, 1);
+    dec_and_free(arg0, 1);
+    return((Value *)hashVal);
+  }
+}
+
+Value *escapeChars(Value *arg0) {
+  if (arg0->type == StringType) {
+    String *s = (String *)arg0;
+    String *result = malloc_string(s->len * 2);
+    char *resultBuffer = result->buffer;
+    int resultIndex = 0;
+    for(int i = 0; i < s->len; i++) {
+      if (s->buffer[i] == 10) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 110;
+      } else if (s->buffer[i] == 34) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 34;
+      } else if (s->buffer[i] == 13) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 114;
+      } else if (s->buffer[i] == 12) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 102;
+      } else if (s->buffer[i] == 8) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 98;
+      } else if (s->buffer[i] == 9) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 116;
+      } else if (s->buffer[i] == 92) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 92;
+      } else
+        resultBuffer[resultIndex++] = s->buffer[i];
+    }
+    resultBuffer[resultIndex] = 0;
+    result->len = resultIndex;
+    dec_and_free(arg0, 1);
+    return((Value *)result);
+  } else if (arg0->type == SubStringType) {
+    SubString *s = (SubString *)arg0;
+    String *result = malloc_string(s->len * 2);
+    char *resultBuffer = result->buffer;
+    int resultIndex = 0;
+    for(int i = 0; i < s->len; i++) {
+      if (s->buffer[i] == 10) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 110;
+      } else if (s->buffer[i] == 34) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 34;
+      } else if (s->buffer[i] == 13) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 114;
+      } else if (s->buffer[i] == 12) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 102;
+      } else if (s->buffer[i] == 8) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 98;
+      } else if (s->buffer[i] == 9) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 116;
+      } else if (s->buffer[i] == 92) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 92;
+      } else
+        resultBuffer[resultIndex++] = s->buffer[i];
+    }
+    resultBuffer[resultIndex] = 0;
+    result->len = resultIndex;
+    dec_and_free(arg0, 1);
+    return((Value *)result);
+  } else {
+    fprintf(stderr, "*** 'escape-chars' called with wrong type of data\n");
+    abort();
+  }
+}
+
+Value *stringValue(char *s) {
+  int64_t len = strlen(s);
+  String *strVal = malloc_string(len);
+  strncpy(strVal->buffer, s, len);
+  return((Value *)strVal);
+};
+
+Value *subs2(Value *arg0, Value *arg1) {
+  int64_t idx = ((Integer *)arg1)->numVal;
+  if (arg0->type == StringType) {
+    String *s = (String *)arg0;
+    SubString *subStr = malloc_substring();
+    subStr->type = SubStringType;
+    if (idx < s->len) {
+      subStr->len = s->len - idx;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + idx;
+    } else {
+      subStr->len = 0;
+      subStr->source = (Value *)0;
+      subStr->buffer = (char *)0;
+    }
+    dec_and_free(arg1, 1);
+    return((Value *)subStr);
+  } else if (arg0->type == SubStringType) {
+    SubString *s = (SubString *)arg0;
+    SubString *subStr = malloc_substring();
+    subStr->type = SubStringType;
+    if (idx < s->len) {
+      subStr->len = s->len - idx;
+      subStr->source = ((SubString *)arg0)->source;
+      incRef(subStr->source, 1);
+      subStr->buffer = s->buffer + idx;
+    } else {
+      subStr->len = 0;
+      subStr->source = (Value *)0;
+      subStr->buffer = (char *)0;
+    }
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return((Value *)subStr);
+  } else
+    abort();
+}
+
+Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
+  int64_t idx = ((Integer *)arg1)->numVal;
+  int64_t len = ((Integer *)arg2)->numVal;
+  if (len <= 0) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    dec_and_free(arg2, 1);
+    return(stringValue(""));
+  } else if (arg0->type == StringType) {
+    String *s = (String *)arg0;
+    SubString *subStr = malloc_substring();
+    subStr->type = SubStringType;
+    if (idx + len <= s->len) {
+      subStr->len = len;
+      subStr->source = arg0;
+      incRef(arg0, 1);
+      subStr->buffer = s->buffer + idx;
+    } else {
+      subStr->len = 0;
+      subStr->source = (Value *)0;
+      subStr->buffer = (char *)0;
+    }
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    dec_and_free(arg2, 1);
+    return((Value *)subStr);
+  } else if (arg0->type == SubStringType) {
+    SubString *s = (SubString *)arg0;
+    SubString *subStr = malloc_substring();
+    subStr->type = SubStringType;
+    if (idx + len <= s->len) {
+      subStr->len = len;
+      subStr->source = ((SubString *)arg0)->source;
+      incRef((Value *)subStr->source, 1);
+      subStr->buffer = s->buffer + idx;
+    } else {
+      subStr->len = 0;
+      subStr->source = (Value *)0;
+      subStr->buffer = (char *)0;
+    }
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    dec_and_free(arg2, 1);
+    return((Value *)subStr);
+  } else
+    abort();
+}
+
+Value *strSeq(Value *arg0) {
+  List *result = empty_list;
+  if (arg0->type == StringType) {
+    String *s = (String *)arg0;
+    for (int64_t i = s->len - 1; i >= 0; i--) {
+      SubString *subStr = malloc_substring();
+      subStr->type = SubStringType;
+      subStr->len = 1;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + i;
+      result = listCons((Value *)subStr, result);
+    }
+    incRef(arg0, s->len);
+  } else if (arg0->type == SubStringType) {
+    SubString *s = (SubString *)arg0;
+    for (int64_t i = s->len - 1; i >= 0; i--) {
+      SubString *subStr = malloc_substring();
+      subStr->type = SubStringType;
+      subStr->len = 1;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + i;
+      result = listCons((Value *)subStr, result);
+    }
+    incRef(arg0, s->len);
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)result);
+}
+
+Value *strVec(Value *arg0) {
+  Vector *result = empty_vect;
+  if (arg0->type == StringType) {
+    String *s = (String *)arg0;
+    for (int64_t i = 0; i < s->len; i++) {
+      SubString *subStr = malloc_substring();
+      subStr->type = SubStringType;
+      subStr->len = 1;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + i;
+      result = mutateVectConj(result, (Value *)subStr);
+    }
+    incRef(arg0, s->len);
+  } else if (arg0->type == SubStringType) {
+    SubString *s = (SubString *)arg0;
+    for (int64_t i = 0; i < s->len; i++) {
+      SubString *subStr = malloc_substring();
+      subStr->type = SubStringType;
+      subStr->len = 1;
+      subStr->source = arg0;
+      subStr->buffer = s->buffer + i;
+      result = mutateVectConj(result, (Value *)subStr);
+    }
+    incRef(arg0, s->len);
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)result);
+}
+
+Value *vectorGet(Value *arg0, Value *arg1) {
+  Vector *vect = (Vector *)arg0;
+  Integer *index = (Integer *)arg1;
+  if (vect->count <= index->numVal) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  } else {
+    Value *val = vectGet(vect, (unsigned)index->numVal);
+    incRef(val, 1);
+    Value *result = maybe((List *)0, (Value *)0, val);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(result);
   }
 }

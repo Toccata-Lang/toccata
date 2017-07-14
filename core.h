@@ -113,6 +113,7 @@ List *malloc_list();
 Value *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
 Function *malloc_function(int arityCount);
+String *malloc_string(int len);
 FnArity *findFnArity(Value *fnVal, int64_t argCount);
 
 
@@ -149,3 +150,12 @@ Value *maybeExtract(Value *arg0);
 Value *fnApply(Value *arg0, Value *arg1);
 Value *maybeApply(Value *arg0, Value *arg1);
 Value *maybeEQ(Value *arg0, Value *arg1);
+Value *maybeMap(Value *arg0, Value *arg1);
+Value *strSha1(Value *arg0);
+Value *escapeChars(Value *arg0);
+Value *subs2(Value *arg0, Value *arg1);
+Value *subs3(Value *arg0, Value *arg1, Value *arg2);
+Value *strSeq(Value *arg0);
+Value *strVec(Value *arg0);
+Value *strLT(Value *arg0, Value *arg1);
+Value *vectorGet(Value *arg0, Value *arg1);
