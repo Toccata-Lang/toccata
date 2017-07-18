@@ -157,3 +157,7 @@ Next up is the core functionality for the `String`. It's a more complicated beca
 ## Entry 26:
 
 Symbol literals are even simpler than strings. You create them by putting a `'` befoer a symbol. Useful as keys in hash-maps.
+
+## Entry 27:
+
+`Maybe` is the simplest type whose values can contain other values, so it's the first time we implement the very important `Container` protocol.

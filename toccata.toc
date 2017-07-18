@@ -22,6 +22,21 @@
 (def VectorNodeType (inline-C Number "(Value *)&(Number){NumberType, -1, 9};"))
 (def SymbolType (inline-C Number "(Value *)&(Number){NumberType, -1, 10};"))
 
+(def type-names {1 "Integer"
+                 2 "String"
+                 3 "SubString"
+                 4 "FnArity"
+                 5 "Function"
+                 6 "List"
+                 7 "Maybe"
+                 8 "Vector"
+                 9 "VectorNode"
+                 10 "Symbol"})
+
+(defn target-type-name [n]
+  (extract (or (get type-names n)
+               (maybe (str n)))))
+
 (def core-types {'Integer IntegerType
                  'String StringType
                  'SubString SubStringType
@@ -58,7 +73,7 @@
 
 ;; There's a bunch of information to keep track of while compiling
 (deftype GlobalContext [target-lang fn-context init-fn-context modules
-                        fns namespaces constants]
+                        fns namespaces constants reify-fn-index]
   ;; target-lang            language to compile to
   ;; fn-context             context for the fn currently being compiled
   ;; init-fn-context        context for the initialization code
@@ -123,6 +138,10 @@
   (string-list [_]
     (list "<Empty-C-Code>"))
 
+  Collection
+  (empty? [c]
+    (maybe c))
+
   Composition
   (zero [c] c)
   (comp* [_ cs]
@@ -136,7 +155,7 @@
 (deftype c-code [c-var init decl type-num refs-map]
   Stringable
   (string-list [_]
-    (list "<C-Code " (str c-var) ", " (str type-num) ", "
+    (list "<C-Code " (str c-var) ", " (target-type-name type-num) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ">"))
 
   Composition
@@ -144,11 +163,16 @@
   (comp* [c cs]
     (reduce cs c collapse-expressions*))
 
+  Collection
+  (empty? [c]
+    (and (empty? (.init c))
+         (empty? (.decl c))))
+
   CollapseExprs
   (collapse-expressions* [x y]
     (c-code (.c-var y)
-            (conj (.init x) (.init y))
-            (conj (.decl x) (.decl y))
+            (comp (.init x) (.init y))
+            (comp (.decl x) (.decl y))
             (.type-num y)
             (merge-with + (.refs-map x) (.refs-map y)))))
 
@@ -156,40 +180,47 @@
 (deftype c-init [c-var init decl type-num refs-map]
   Stringable
   (string-list [_]
-    (list "<C-Init " (str c-var) ", " (str type-num) ", "
+    (list "<C-Init " (str c-var) ", " (target-type-name type-num) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ">"))
+
+  Collection
+  (empty? [c] nothing)
 
   Composition
   (zero [_] empty-c-code)
   (comp* [c cs]
     (reduce cs c (fn [result c]
                    (c-code (.c-var c)
-                           (conj (.init result) (.init c))
-                           (conj (.decl result) (.decl c))
+                           (comp (.init result) (.init c))
+                           (comp (.decl result) (.decl c))
                            (.type-num c)
                            (merge-with + (.refs-map result) (.refs-map c))))))
 
   CollapseExprs
   (collapse-expressions* [x y]
     (let [init (extract (or (for [refs (get-in y [.refs-map c-var])]
-                              [(.init x)
-                               ((< refs 2) "" ["\nincRef(" c-var ", " (dec refs) ");\n"])
-                               (.init y)])
-                            (maybe [(.init x)
-                                    "\ndec_and_free(" c-var ", 1);\n"
-                                    (.init y)])))
+                              (comp (.init x)
+                                    [((< refs 2) "" ["\nincRef(" c-var ", " (dec refs) ");\n"])]
+                                    (.init y)))
+                            (and (= "" c-var)
+                                 (maybe (comp (.init x) (.init y))))
+                            (maybe (comp (.init x)
+                                         ["\ndec_and_free(" c-var ", 1);\n"]
+                                         (.init y)))))
           refs-map (merge-with + (.refs-map x) (.refs-map y))
           refs-map (assoc refs-map c-var 0)]
       (c-code (.c-var y)
               init
-              (conj (.decl x) (.decl y))
+              (comp (.decl x) (.decl y))
               (.type-num y)
               refs-map))))
 
 (defn collapse-expressions [cs]
   (extract (or (and (empty? cs) (maybe empty-c-code))
-               (maybe (let [[c & cs] (reverse cs)]
-                        (reduce cs c (fn [y x] (collapse-expressions* x y))))))))
+               (maybe (let [[c & cs] (reverse cs)
+                            cs (remove cs empty?)]
+                        (reduce cs c (fn [y x]
+                                       (collapse-expressions* x y))))))))
 
 (defn new-protocol [proto-sym]
   ;; Initialize a new protocol definition in a module if it does not already exist.
@@ -712,7 +743,7 @@
       (for [_ (sm/assoc-in-val [.fn-context .syms binding] evalled-ref)]
         (ParamBinding [(.c-var evalled)] [evalled (c-init (.c-var evalled) [] []
                                                           (.type-num evalled) {})]))))
-  
+
   (gen-binding-vars [param]
     ;; generate bindings for symbols and tagged-symbols
     (bind param)))
@@ -762,6 +793,151 @@
           _ (sm/assoc-in-val [.fn-context .syms] locals)]
       (let [code (collapse-expressions (comp (flatten (map bindings .destruct)) body-exprs))]
         (c-init (.c-var code) (.init code) (.decl code) (.type-num code) (.refs-map code)))))
+
+  (emit-defined-value [ast defined-sym]
+    (for [init-fn-context (sm/get-val .init-fn-context)
+          fn-context (reset-fn-context init-fn-context)
+          value (emit ast)
+          var (global-var "var")
+          init-fn-context (reset-fn-context fn-context)
+          _ (sm/set-val .init-fn-context init-fn-context)
+          _ (new-module-def defined-sym (c-code var [] [] (.type-num value) {}))]
+      [(c-init var [(.init value)
+                    var " = " (.c-var value) ";\n"
+                    var "->refs = -1;\n"]
+               [(.decl value) "Value *" var ";\n"]
+               (.type-num value) (.refs-map value))])))
+
+
+(defn static-reified-value [type-num impl-fns]
+  (for [reified-sym (sm-gensym "reifiedStatic_")
+        reified-ptr (sm-gensym "reifiedPtr_")]
+    (c-init reified-ptr
+            []
+            [(map impl-fns .decl)
+             "ReifiedVal " reified-sym " = {"
+             type-num ", -1, (Value *)0, 0, {}};\n"
+             "Value *" reified-ptr " = (Value *)&" reified-sym ";\n"]
+            type-num {})))
+
+(defn index [coll]
+  (let [coll (seq coll)]
+    (zip-lists (range (count coll)) coll)))
+
+(defn closure-reified-value [type-num impl-fns]
+  (let [inits (map impl-fns .init)]
+    (for [reified-sym (genlocal "reifiedDyn")
+          :when-not (every inits empty?)]
+      (let [impls-syms (map impl-fns .c-var)]
+        (c-code reified-sym
+                [inits
+                 ["Value *" reified-sym " = (Value *)malloc_reified("
+                  (count impls-syms) ");\n"
+                  "((ReifiedVal *)" reified-sym ")->type = " type-num ";\n"
+                  "((ReifiedVal *)" reified-sym ")->implCount = "
+                  (count impl-fns) ";\n"
+                  "((ReifiedVal *)" reified-sym ")->typeArgs = (Value *)0;\n"]
+                 (flat-map (index impls-syms)
+                           (fn [[index sym]]
+                             ["((ReifiedVal *)" reified-sym
+                              ")->impls[" index "] = (Value *)" sym ";\n"]))]
+                (map impl-fns .decl)
+                type-num
+                (apply merge-with + (map impl-fns .refs-map)))))))
+
+(defprotocol ArityType
+  (closure-arity? [_] nothing))
+
+(deftype StaticArity [arity-fn-var param-count var-info]
+  Stringable
+  (string-list [_]
+    (comp (list "<StaticArity " (str arity-fn-var) " " (str param-count) " ")
+          (string-list var-info))))
+
+(deftype ClosureArity [arity-fn-var param-count var-info]
+  Stringable
+  (string-list [_]
+    (comp (list "<ClosureArity " (str arity-fn-var) " " (str param-count) " ")
+          (string-list var-info)))
+
+  ArityType
+  (closure-arity? [arity] (maybe arity)))
+
+(defn emit-reified-fn [type-num [fn-name arity-ast]]
+  (let [fn-ptr (gensym "protoFnPtr_")
+        num-args (count (.params arity-ast))]
+    (for [_ (comp (get-protocol-dispatcher fn-name num-args)
+                  (compilation-error "Invalid protocol fn:"
+                                     (str "'" fn-name "' in")
+                                     (str (ast/file-name fn-name) ",")
+                                     (ast/line-number fn-name)))
+          evalled (comp (emit (assoc arity-ast .param-types [type-num]))
+                        (compilation-error "Could not compile protocol fn:"
+                                           (str "'" fn-name "' in")
+                                           (str (ast/file-name fn-name) ",")
+                                           (ast/line-number fn-name)))
+          :let [evalled (.var-info evalled)]
+
+          ;; is the refied fn impl a closure or not?
+          evalled (comp
+                   ;; no, it's not a closure
+                   (for [_ (sm/when (empty? (.init evalled)))
+                         _ (new-proto-impl fn-name num-args type-num evalled arity-ast)]
+                     evalled)
+
+                   ;; yes it's a closure
+                   (let [args (map (range num-args) (partial str "arg"))
+                         arg-decls (to-str (interpose (conj (map args (fn [arg] (str "Value *" arg)))
+                                                            (str "List *closures"))
+                                                      ", "))
+                         args (to-str (interpose (conj args "closures") ", "))
+                         fn-arity-sym (gensym "protoFnArity_")
+                         impl-fn-sym (gensym "protoImpl_")]
+                     (for [reify-fn-index (sm/get-val .reify-fn-index)
+                           _ (new-proto-impl fn-name num-args type-num
+                                             (c-code (str "&" fn-arity-sym) [] [] FunctionType {}) arity-ast)]
+                       (let [reified-fn (c-code "" []
+                                                ["// implementation of " fn-name "\n"
+                                                 "Value *" impl-fn-sym "(" arg-decls ") {\n"
+                                                 "FnArity *arityPtr = (FnArity *)((ReifiedVal *)arg0)->impls["
+                                                 reify-fn-index "];\n"
+                                                 "incRef(arg0, 1);\n"
+                                                 "Value *rval = ((FnType" num-args
+                                                 " *)arityPtr->fn)(arityPtr->" args ");\n"
+                                                 "dec_and_free(arg0, 1);\n"
+                                                 "return(rval);\n"
+                                                 "};\n\n"
+                                                 "FnArity " fn-arity-sym " = {FnArityType, -1, " num-args
+                                                 ", (List *)0, 0, " impl-fn-sym "};\n"
+                                                 "Function " fn-ptr " = {FunctionType, -1, \"" name
+                                                 "\", 1, {&" fn-arity-sym "}};\n\n"]
+                                                UnknownType {})]
+                         (comp reified-fn evalled)))))
+          _ (sm/update-in-val [.reify-fn-index] inc)]
+      evalled)))
+
+(extend-type ast/reify-ast
+  Emitter
+  (emit [ast]
+    (let [type-num (.type-num ast)]
+      (for [reify-fn-index (sm/get-val .reify-fn-index)
+            _ (sm/set-val .reify-fn-index 0)
+            _ (traverse (keys (.impls ast)) sm/state-maybe
+                        (fn [protocol-name]
+                          (comp (get-protocol protocol-name)
+                                (compilation-error "Invalid protocol:" protocol-name "in"
+                                                   (str (ast/file-name fn-name) ",")
+                                                   (ast/line-number protocol-name)))))
+            impl-fns (traverse (for [impl-fns (vals (.impls ast))
+                                     [fn-name arities] (seq impl-fns)
+                                     impl-arity arities]
+                                 [fn-name impl-arity])
+                               sm/state-maybe
+                               (partial emit-reified-fn type-num))
+            _ (sm/set-val .reify-fn-index reify-fn-index)
+            reified-result (comp (closure-reified-value type-num impl-fns)
+                                 (static-reified-value type-num impl-fns))]
+        reified-result)))
 
   (emit-defined-value [ast defined-sym]
     (for [init-fn-context (sm/get-val .init-fn-context)
@@ -880,24 +1056,6 @@
   (emit [ast]
     (sm/state-maybe empty-c-code)))
 
-(defprotocol ArityType
-  (closure-arity? [_] nothing))
-
-(deftype StaticArity [arity-fn-var param-count var-info]
-  Stringable
-  (string-list [_]
-    (comp (list "<StaticArity " (str arity-fn-var) " " (str param-count) " ")
-          (string-list var-info))))
-
-(deftype ClosureArity [arity-fn-var param-count var-info]
-  Stringable
-  (string-list [_]
-    (comp (list "<ClosureArity " (str arity-fn-var) " " (str param-count) " ")
-          (string-list var-info)))
-
-  ArityType
-  (closure-arity? [arity] (maybe arity)))
-
 (defn emit-closures []
   (comp (for [closures (sm/get-in-val [.fn-context .closed-over .closures])
               :when-not (empty? closures)
@@ -967,9 +1125,10 @@
                            (sm/state-maybe (ParamBinding [] [])))
           body-exprs (emit body)
           destruct-closures (emit-closures)
-          :let [body (collapse-expressions (comp (.destruct param-vars)
-                                                 destruct-closures
-                                                 body-exprs))]
+          :let [exprs (comp (.destruct param-vars)
+                            destruct-closures
+                            body-exprs)
+                body (collapse-expressions exprs)]
           closures (sm/get-in-val [.fn-context .closed-over .closures])
           _ (reset-fn-context fn-context)
           :let [param-decls (seq (map (.vars param-vars) (fn [param]
@@ -1025,7 +1184,8 @@
 (extend-type ast/main-ast
   Emitter
   (emit-definition [ast]
-    (for [fn-arity (emit-fn-arity (.params ast) (.body ast))
+    (for [;; _ (debug 'main-fn)
+          fn-arity (emit-fn-arity (.params ast) (.body ast))
           _ (new-static-arity 'main 1 (.arity-fn-var fn-arity) IntegerType)]
       [(c-code "" [] (.decl (.var-info fn-arity)) 0 {})])))
 
@@ -1176,8 +1336,7 @@
                               (for [_ (comp (get-protocol-dispatcher fn-name num-args)
                                             (compilation-error "Invalid protocol fn:"
                                                                (str "'" fn-name "' in")
-                                                               (str (ast/file-name fn-name)
-                                                                    ",")
+                                                               (str (ast/file-name fn-name) ",")
                                                                (ast/line-number fn-name)))
                                     ext-fn (comp (emit (assoc arity-ast .param-types [type-num]))
                                                  (compilation-error "Could not compile protocol fn:"
@@ -1207,7 +1366,7 @@
                                                                 ns-path (sm/get-in-val
                                                                          [.namespaces ns-sym])]
                                                             ns-path)
-                                                          (sm/state-maybe (ast/file-name ast))) 
+                                                          (sm/state-maybe (ast/file-name ast)))
                                             type-num (sm/get-in-val [.modules ns-path
                                                                      .types type-sym])]
                                         type-num)
@@ -1226,6 +1385,7 @@
                                    {}                       ;; map for static fns
                                    {}                       ;; map for namespaces
                                    (ConstantValues {} {} {})
+                                   0                        ;; reify-fn-index
                                    ))
 
 (defprotocol StringWriter

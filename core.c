@@ -2452,3 +2452,16 @@ Value *symLT(Value *arg0, Value *arg1) {
     }
   }
 }
+
+Value *maybeInvoke(Value *arg0, Value *arg1, Value *arg2) {
+  Maybe *mValue = (Maybe *)arg0;
+  if (mValue->value == (Value *)0) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(arg2);
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg2, 1);
+    return(arg1);
+  }
+}

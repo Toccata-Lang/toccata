@@ -116,6 +116,7 @@ FnArity *malloc_fnArity();
 Function *malloc_function(int arityCount);
 String *malloc_string(int len);
 FnArity *findFnArity(Value *fnVal, int64_t argCount);
+ReifiedVal *malloc_reified(int implCount);
 
 
 Value *isInstance(Value *arg0, Value *arg1);
@@ -165,3 +166,4 @@ Value *symbolSha1(Value *arg0);
 Value *symEQ(Value *arg0, Value *arg1);
 Value *symLT(Value *arg0, Value *arg1);
 Value *stringValue(char *s);
+Value *maybeInvoke(Value *arg0, Value *arg1, Value *arg2);
