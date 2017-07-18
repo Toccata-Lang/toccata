@@ -139,7 +139,7 @@ And now, we can finally write ...  'println'!
     (defn println [& vs]
       (map (flat-map (interpose vs " ") string-list) pr*)
       (pr* "\n"))
-      
+
 As you can see, there's quite a lot of complexity in compiling such a simple looking function. OTOH, we've come a long ways towards a powerful language. Still quite a ways to go, though.
 
 ## Entry 23:
@@ -153,3 +153,7 @@ We now have enough of the compiler working to start to expand the core library. 
 ## Entry 25:
 
 Next up is the core functionality for the `String`. It's a more complicated because a string can be thought of as a sequence of characters, so the Sequable protocol needs to be implemented as well.
+
+## Entry 26:
+
+Symbol literals are even simpler than strings. You create them by putting a `'` befoer a symbol. Useful as keys in hash-maps.

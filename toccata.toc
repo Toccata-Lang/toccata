@@ -20,6 +20,7 @@
 (def MaybeType (inline-C Number "(Value *)&(Number){NumberType, -1, 7};"))
 (def VectorType (inline-C Number "(Value *)&(Number){NumberType, -1, 8};"))
 (def VectorNodeType (inline-C Number "(Value *)&(Number){NumberType, -1, 9};"))
+(def SymbolType (inline-C Number "(Value *)&(Number){NumberType, -1, 10};"))
 
 (def core-types {'Integer IntegerType
                  'String StringType
@@ -29,6 +30,7 @@
                  'List ListType
                  'Maybe MaybeType
                  'Vector VectorType
+                 'Symbol SymbolType
                  })
 
 (def BitmapIndexedType (inline-C Number "(Value *)&(Number){NumberType, -1, 0};"))
@@ -48,9 +50,15 @@
                (apply print-err msg)
                (abort))))
 
+(deftype ConstantValues [numbers strings symbols]
+  ;; numbers                static numbers
+  ;; strings                static strings
+  ;; symbols                static symbols
+  )
+
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [target-lang fn-context init-fn-context modules numbers
-                        strings fns namespaces]
+(deftype GlobalContext [target-lang fn-context init-fn-context modules
+                        fns namespaces constants]
   ;; target-lang            language to compile to
   ;; fn-context             context for the fn currently being compiled
   ;; init-fn-context        context for the initialization code
@@ -356,10 +364,10 @@
 
 (defn make-static-string [str-val]
   (let [str-len (count str-val)]
-    (for [str-idx (map (sm/get-val .strings) count)
+    (for [str-idx (map (sm/get-in-val [.constants .strings]) count)
           :let [str-sym (str "str" str-idx)
                 str-ptr (str "strPtr" str-idx)]
-          _ (sm/assoc-in-val [.strings str-val] (c-code str-ptr [] [] StringType {}))]
+          _ (sm/assoc-in-val [.constants .strings str-val] (c-code str-ptr [] [] StringType {}))]
       (c-init str-ptr
               []
               ["struct {int64_t type;
@@ -376,7 +384,7 @@
 (extend-type String
   Emitter
   (emit [str-val]
-    (comp (sm/get-in-val [.strings str-val])
+    (comp (sm/get-in-val [.constants .strings str-val])
           (make-static-string str-val)))
 
   (emit-defined-value [str-val defined-sym]
@@ -386,10 +394,10 @@
 
 
 (defn make-static-num [num]
-  (for [num-idx (map (sm/get-val .numbers) count)
+  (for [num-idx (map (sm/get-in-val [.constants .numbers]) count)
         :let [num-sym (str "num" num-idx)
               num-ptr (str "numPtr" num-idx)]
-        _ (sm/assoc-in-val [.numbers num]
+        _ (sm/assoc-in-val [.constants .numbers num]
                            (c-code num-ptr [] [] IntegerType {}))]
     (c-init num-ptr
             []
@@ -400,13 +408,36 @@
 (extend-type Number
   Emitter
   (emit [num]
-    (comp (sm/get-in-val [.numbers num])
+    (comp (sm/get-in-val [.constants .numbers num])
           (make-static-num num)))
 
   (emit-defined-value [num defined-sym]
     (for [value (emit num)
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] IntegerType {}))]
       [(assoc value .c-var "")])))
+
+
+(extend-type ast/quoted-ast
+  Emitter
+  (emit [ast]
+    (let [sym (.q-val ast)]
+      (comp (sm/get-in-val [.constants .symbols sym])
+            (for [sym-idx (map (sm/get-in-val [.constants .symbols]) count)
+                  :let [sym-var (str "sym" sym-idx)
+                        sym-ptr (str "symPtr" sym-idx)]
+                  _ (sm/assoc-in-val [.constants .symbols sym]
+                                     (c-code sym-ptr [] [] SymbolType {}))]
+              (c-code sym-ptr
+                      []
+                      ["SubString " sym-var " = {SymbolType, -1, " (count (str sym))
+                       ", 0, 0, \"" sym "\"};\n"
+                       "Value *" sym-ptr " = (Value *)&" sym-var ";\n"]
+                      SymbolType {})))))
+
+  (emit-defined-value [ast defined-sym]
+    (for [quoted (emit ast)
+          _ (new-module-def defined-sym (c-code (.c-var quoted) [] [] SymbolType {}))]
+      [(assoc quoted .c-var "")])))
 
 
 (extend-type rdr/tagged-symbol
@@ -1192,10 +1223,9 @@
                                    (FunctionArityContext 0 {} {} empty-closures)
                                    (FunctionArityContext 0 {} {} empty-closures)
                                    {}                       ;; map for module info
-                                   {}                       ;; map for const numbers
-                                   {}                       ;; map for const strings
                                    {}                       ;; map for static fns
                                    {}                       ;; map for namespaces
+                                   (ConstantValues {} {} {})
                                    ))
 
 (defprotocol StringWriter

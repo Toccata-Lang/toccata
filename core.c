@@ -1,5 +1,7 @@
 
 #include <stdlib.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include "core.h"
 
 void prefs(char *tag, Value *v) {
@@ -547,7 +549,8 @@ freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
 				       &freeList,
 				       &freeMaybe,
 				       &freeVector,
-				       &freeVectorNode
+				       &freeVectorNode,
+				       &freeSubString
 };
 
 void dec_and_free(Value *v, int deltaRefs) {
@@ -651,7 +654,7 @@ void freeAll() {
   __atomic_load(&malloc_count, &mallocs, __ATOMIC_RELAXED);
   int64_t frees;
   __atomic_load(&free_count, &frees, __ATOMIC_RELAXED);
-  fprintf(stderr, "malloc count: %ld  free count: %ld  diff: %ld\n",
+  fprintf(stderr, "malloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
           mallocs, frees, mallocs - frees);
 // */
 }
@@ -661,7 +664,7 @@ void moveToCentral(FreeValList *freeList, FreeValList *centralList) {
   while (tail != (Value *)0 && tail->next != (Value *)0) {
     tail = tail->next;
   }
-  
+
   if (tail == (Value *)0)
     return;
   else {
@@ -756,7 +759,7 @@ Value *proto1Arg(ProtoImpls *protoImpls, char *name, Value *arg0,
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 1 argument for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 1 argument for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -768,7 +771,7 @@ Value *proto2Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1,
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 2 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 2 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
                     name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -780,7 +783,7 @@ Value *proto3Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 3 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 3 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -792,7 +795,7 @@ Value *proto4Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg3, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 4 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 4 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -804,7 +807,7 @@ Value *proto5Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg3, Value *arg4, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 5 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 5 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -816,7 +819,7 @@ Value *proto6Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg3, Value *arg4, Value *arg5, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 5 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 5 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -829,7 +832,7 @@ Value *proto7Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 7 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 7 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -842,7 +845,7 @@ Value *proto8Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 8 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 8 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -855,7 +858,7 @@ Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
                  Value *arg8, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 9 arguments for type: %s (%ld) at %s: %ld\n",
+    fprintf(stderr, "\n*** Could not find implementation of '%s' with 9 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
             name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
     abort();
   }
@@ -913,7 +916,7 @@ Value *integerValue(int64_t n) {
 
 Value *integer_str(Value *arg0) {
   String *numStr = malloc_string(10);
-  snprintf(numStr->buffer, 9, "%ld", ((Integer *)arg0)->numVal);
+  snprintf(numStr->buffer, 9, "%" PRId64 "", ((Integer *)arg0)->numVal);
   numStr->len = strlen(numStr->buffer);
   dec_and_free(arg0, 1);
   return((Value *)numStr);
@@ -1246,7 +1249,7 @@ Value *strLT(Value *arg0, Value *arg1) {
     s2Len = ((String *)arg1)->len;
     if (s1Len < s2Len)
       len = s1Len;
-    else 
+    else
       len = s2Len;
   } else if (arg0->type == SubStringType &&
              arg1->type == SubStringType) {
@@ -1256,7 +1259,7 @@ Value *strLT(Value *arg0, Value *arg1) {
     s2Len = ((SubString *)arg1)->len;
     if (s1Len < s2Len)
       len = s1Len;
-    else 
+    else
       len = s2Len;
   } else if (arg0->type == StringType &&
              arg1->type == SubStringType) {
@@ -1266,7 +1269,7 @@ Value *strLT(Value *arg0, Value *arg1) {
     s2Len = ((SubString *)arg1)->len;
     if (s1Len < s2Len)
       len = s1Len;
-    else 
+    else
       len = s2Len;
   } else if (arg0->type == SubStringType &&
              arg1->type == StringType) {
@@ -1276,7 +1279,7 @@ Value *strLT(Value *arg0, Value *arg1) {
     s2Len = ((String *)arg1)->len;
     if (s1Len < s2Len)
       len = s1Len;
-    else 
+    else
       len = s2Len;
   } else {
     dec_and_free(arg0, 1);
@@ -1299,7 +1302,7 @@ Value *strCount(Value *arg0) {
    Value *numVal;
    if (arg0->type == StringType)
      numVal = integerValue(((String *)arg0)->len);
-   else 
+   else
      numVal = integerValue(((SubString *)arg0)->len);
    dec_and_free(arg0, 1);
    return(numVal);
@@ -1778,7 +1781,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
   FnArity *_arity = findFnArity(arg0, argList->len);
 
   if (_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** no arity of '%s' found to apply to %ld args\n",
+    fprintf(stderr, "\n*** no arity of '%s' found to apply to %" PRId64 " args\n",
             ((Function *)arg0)->name, argList->len);
     abort();
   } else if(_arity->variadic) {
@@ -2350,5 +2353,102 @@ Value *vectorGet(Value *arg0, Value *arg1) {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
+  }
+}
+
+Value *symbol(Value *arg0) {
+  int64_t len;
+  char *buffer;
+  if (arg0->type == StringType) {
+    String *s = (String *)arg0;
+    buffer = s->buffer;
+    len = s->len;
+  } else if (arg0->type == SubStringType) {
+    SubString *s = (SubString *)arg0;
+    buffer = s->buffer;
+    len = s->len;
+  }
+
+  SubString *subStr = malloc_substring();
+  subStr->type = SymbolType;
+  subStr->len = len;
+  subStr->source = arg0;
+  subStr->hash = (Integer *)0;
+  subStr->buffer = buffer;
+  return((Value *)subStr);
+}
+
+Value *symbolSha1(Value *arg0) {
+  int64_t shaVal;
+  Sha1Context context;
+  SubString *subStrVal = (SubString *)arg0;
+
+  if (subStrVal->hash != (Integer *)0) {
+    incRef((Value *)subStrVal->hash, 1);
+    dec_and_free(arg0, 1);
+    return((Value *)subStrVal->hash);
+  }
+  else {
+    Sha1Initialise(&context);
+    Sha1Update(&context, (void *)&subStrVal->type, 8);
+    Sha1Update(&context, (void *)subStrVal->buffer, subStrVal->len);
+    Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
+    Integer *hashVal = (Integer *)integerValue(shaVal);
+#ifdef CHECK_MEM_LEAK
+    int32_t refs;
+    __atomic_load(&subStrVal->refs, &refs, __ATOMIC_RELAXED);
+    if (refs == -1)
+      __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
+#endif
+    subStrVal->hash = (Integer *)hashVal;
+    incRef((Value *)hashVal, 1);
+    dec_and_free(arg0, 1);
+    return((Value *)hashVal);
+  }
+}
+
+Value *symEQ(Value *arg0, Value *arg1) {
+  if (arg0->type != arg1->type) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  } else {
+    SubString *s1 = (SubString *)arg0;
+    SubString *s2 = (SubString *)arg1;
+    if (s1->len == s2->len &&
+	strncmp(s1->buffer, s2->buffer, s1->len) == 0) {
+      dec_and_free(arg1, 1);
+      return(maybe((List *)0, (Value *)0, arg0));
+    } else {
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(nothing);
+    }
+  }
+}
+
+Value *symLT(Value *arg0, Value *arg1) {
+  if (arg0->type != arg1->type) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  } else {
+    SubString *s0 = (SubString *)arg0;
+    SubString *s1 = (SubString *)arg1;
+    int64_t len;
+    if (s0->len < s1->len)
+      len = s0->len;
+    else
+      len = s1->len;
+
+    int cmp = strncmp(s0->buffer, s1->buffer, len);
+    if (cmp < 0 || (cmp == 0 && s0->len < s1->len)) {
+      dec_and_free(arg1, 1);
+      return(maybe((List *)0, (Value *)0, arg0));
+    } else {
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(nothing);
+    }
   }
 }

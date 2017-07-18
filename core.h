@@ -50,6 +50,7 @@ Value *nothing;
 #define MaybeType 7
 #define VectorType 8
 #define VectorNodeType 9
+#define SymbolType 10
 
 #define BitmapIndexedType 0
 #define ArrayNodeType 0
@@ -159,3 +160,8 @@ Value *strSeq(Value *arg0);
 Value *strVec(Value *arg0);
 Value *strLT(Value *arg0, Value *arg1);
 Value *vectorGet(Value *arg0, Value *arg1);
+Value *symbol(Value *arg0);
+Value *symbolSha1(Value *arg0);
+Value *symEQ(Value *arg0, Value *arg1);
+Value *symLT(Value *arg0, Value *arg1);
+Value *stringValue(char *s);
