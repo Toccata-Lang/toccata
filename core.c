@@ -2465,3 +2465,80 @@ Value *maybeInvoke(Value *arg0, Value *arg1, Value *arg2) {
     return(arg1);
   }
 }
+
+Value *listFilter(Value *arg0, Value *arg1) {
+  List *l = (List *)arg0;
+  if (l->len == 0) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return((Value *)empty_list);
+  } else {
+    List *head = empty_list;
+    List *tail = empty_list;
+    FnArity *arity2;
+    if(arg1->type == FunctionType) {
+      arity2 = findFnArity(arg1, 1);
+      if(arity2 == (FnArity *)0) {
+	fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
+	abort();
+      }
+    }
+    for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
+      Value *y;
+      incRef(x, 1);
+      if(arg1->type != FunctionType) {
+	incRef(arg1, 1);
+	y = invoke1Arg(empty_list, arg1, x);
+      } else if(arity2->variadic) {
+	FnType1 *fn4 = (FnType1 *)arity2->fn;
+	List *varArgs3 = empty_list;
+	varArgs3 = (List *)listCons(x, varArgs3);
+	y = fn4(arity2->closures, (Value *)varArgs3);
+      } else {
+	FnType1 *fn4 = (FnType1 *)arity2->fn;
+	y = fn4(arity2->closures, x);
+      }
+
+      // 'y' is the filter maybe/nothing value
+
+      if (!isNothing(y)) {
+	incRef(x, 1);
+	if (head == empty_list) {
+	  // if we haven't started the new list yet
+	  head = malloc_list();
+	  head->len = 1;
+	  head->head = x;
+	  head->tail = empty_list;
+	  tail = head;
+	} else {
+	  // otherwise, append to tail of list
+	  List *new_tail = malloc_list();
+	  new_tail->len = 1;
+	  new_tail->head = x;
+	  new_tail->tail = empty_list;
+	  tail->tail = new_tail;
+	  tail = new_tail;
+	  head->len++;
+	}
+      }
+      dec_and_free(y, 1);
+    }
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return((Value *)head);
+  }
+}
+
+List *reverseList(List *input) {
+  List *output = empty_list;
+  Value *item;
+  List *l = input;
+  while(l != (List *)0 && l->head != (Value *)0) {
+    item = l->head;
+    incRef(item, 1);
+    output = listCons(item, output);
+    l = l->tail;
+  }
+  dec_and_free((Value *)input, 1);
+  return(output);
+}
