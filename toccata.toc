@@ -24,9 +24,9 @@
 
 (def type-names {1 "Integer"
                  2 "String"
-                 3 "SubString"
-                 4 "FnArity"
-                 5 "Function"
+                 3 "FnArity"
+                 4 "Function"
+                 5 "SubString"
                  6 "List"
                  7 "Maybe"
                  8 "Vector"
@@ -171,8 +171,8 @@
   CollapseExprs
   (collapse-expressions* [x y]
     (c-code (.c-var y)
-            (comp (.init x) (.init y))
-            (comp (.decl x) (.decl y))
+            [(.init x) (.init y)]
+            [(.decl x) (.decl y)]
             (.type-num y)
             (merge-with + (.refs-map x) (.refs-map y)))))
 
@@ -191,27 +191,27 @@
   (comp* [c cs]
     (reduce cs c (fn [result c]
                    (c-code (.c-var c)
-                           (comp (.init result) (.init c))
-                           (comp (.decl result) (.decl c))
+                           [(.init result) (.init c)]
+                           [(.decl result) (.decl c)]
                            (.type-num c)
                            (merge-with + (.refs-map result) (.refs-map c))))))
 
   CollapseExprs
   (collapse-expressions* [x y]
     (let [init (extract (or (for [refs (get-in y [.refs-map c-var])]
-                              (comp (.init x)
-                                    [((< refs 2) "" ["\nincRef(" c-var ", " (dec refs) ");\n"])]
-                                    (.init y)))
+                              [(.init x)
+                               ((< refs 2) "" ["\nincRef(" c-var ", " (dec refs) ");\n"])
+                               (.init y)])
                             (and (= "" c-var)
-                                 (maybe (comp (.init x) (.init y))))
-                            (maybe (comp (.init x)
-                                         ["\ndec_and_free(" c-var ", 1);\n"]
-                                         (.init y)))))
+                                 (maybe [(.init x) (.init y)]))
+                            (maybe [(.init x)
+                                    "\ndec_and_free(" c-var ", 1);\n"
+                                    (.init y)])))
           refs-map (merge-with + (.refs-map x) (.refs-map y))
           refs-map (assoc refs-map c-var 0)]
       (c-code (.c-var y)
               init
-              (comp (.decl x) (.decl y))
+              [(.decl x) (.decl y)]
               (.type-num y)
               refs-map))))
 
@@ -286,7 +286,7 @@
 
 (deftype ProtoImpl [dispatch-type c-var ast]
   Stringable
-  (string-list [_] (list "<ProtoImpl " (str dispatch-type) ">")))
+  (string-list [_] (list "<ProtoImpl " (target-type-name dispatch-type) c-var ">")))
 
 (defn new-proto-impl [fn-name arg-count dispatch-type c-code ast]
   (for [protocol-path (find-protocol-path fn-name)
@@ -555,6 +555,59 @@
                                  "Value *" result-sym " = (Value *)" list-sym ";\n"]
                                 [] ListType {})]))))
 
+(defn dispatch-type-known [target args]
+  (let [num-args (count args)]
+    (for [dispatch-val (sm/when (first args))
+          impl-info (get-proto-impl target num-args (.type-num dispatch-val))
+          arity-info (lookup-static-arity (.c-var impl-info) num-args)
+          result-sym (genlocal "rslt")
+          return-type (sm/when (or (and (= (.type-num arity-info) UnknownType)
+                                        ;; TODO: these should be the result of
+                                        ;; asserts on the protocol fn defs
+                                        (or (= target 'map)
+                                            (= target 'comp*)
+                                            (= target 'comp)
+                                            (= target 'wrap))
+                                        (maybe (.type-num dispatch-val)))
+                                   (maybe (.type-num arity-info))))]
+      (apply comp (comp args
+                        [(c-init result-sym
+                                 ["\n// type-known for " (str target) "\n// #line "
+                                  (str (ast/line-number target)) " " "\""
+                                  (ast/file-name target) "\"\n"
+                                  "Value *" result-sym " = " (.c-var arity-info) "("
+                                  (interpose (conj (map args .c-var) "empty_list")
+                                             ", ")
+                                  ");\n"]
+                                 []
+                                 return-type {})])))))
+
+(defn dispatch-type-unknown [target args]
+  (let [num-args (count args)]
+    (for [impls-sym (map (get-protocol-dispatcher target num-args) .impls-sym)
+          result-sym (genlocal "rslt")]
+      (apply comp (comp args
+                        [(c-init result-sym
+                                 ["\n// type-unknown " (str target) "\n// #line " (str (ast/line-number target)) " " "\""
+                                  (ast/file-name target) "\"\n"
+                                  "Value *" result-sym " = proto" num-args "Arg(&"
+                                  impls-sym ", \"" (.sym target) "\", "
+                                  (interpose (comp (map args .c-var)
+                                                   [(str "\"" (.file-name target) "\"")
+                                                    (ast/line-number target)])
+                                             ", ")
+                                  ");\n"]
+                                 []
+                                 UnknownType {})])))))
+
+(defn call-proto-impl [target-ast args]
+  (for [name (sm/when (and (< 0 (count args))
+                           (instance? rdr/tagged-symbol target-ast)
+                           (maybe target-ast)))
+        call-site (comp (dispatch-type-known name args)
+                        (dispatch-type-unknown name args))]
+    call-site))
+
 ;; optimize calls to static, fixed arity, functions
 (defn call-static-fixed [target arg-vars file-name line-number]
   (for [arity-info (lookup-static-arity (.c-var target) (count arg-vars))
@@ -662,6 +715,7 @@
       (for [args (emit (.args ast))
             call-site (comp (call-vector (.call-target ast) args)
                             (call-list (.call-target ast) args)
+                            (call-proto-impl (.call-target ast) args)
                             (for [target (emit (.call-target ast))
                                   :let [arg-vars (map args .c-var)]
                                   call-site (comp (call-static-fixed target arg-vars
@@ -715,9 +769,10 @@
                        var (first (.vars elem))]
                    (ParamBinding [list-sym]
                                  [(c-init var ["Value *" var " = (Value *)" list-sym ";\n"]
-                                          [] UnknownType {})])))
+                                          [] ListType {})])))
         (for [destructArgs (genlocal "destArgs")]
           (let [elem-c-vars (flat-map elem-vars .vars)
+                tail-var (extract (last elem-c-vars))
                 elem-count (count elem-vars)]
             (ParamBinding [list-sym]
                           (comp [(c-code ""
@@ -728,7 +783,10 @@
                                           "\", (Value *)" list-sym ", " elem-count ", "
                                           destructArgs ");\n"]
                                          [] UnknownType {list-sym 1})]
-                                (map elem-c-vars (fn [var] (c-init var [] [] UnknownType {})))
+                                (map elem-c-vars (fn [var]
+                                                   (c-init var [] []
+                                                           ((= var tail-var) ListType UnknownType)
+                                                           {})))
                                 (flat-map elem-vars .destruct)))))))
 
 (defprotocol Bindings
@@ -848,10 +906,11 @@
 (defprotocol ArityType
   (closure-arity? [_] nothing))
 
-(deftype StaticArity [arity-fn-var param-count var-info]
+(deftype StaticArity [arity-fn-var param-count return-type var-info]
   Stringable
   (string-list [_]
-    (comp (list "<StaticArity " (str arity-fn-var) " " (str param-count) " ")
+    (comp (list "<StaticArity " (str arity-fn-var) " " (str param-count) " "
+                (target-type-name return-type) " ")
           (string-list var-info))))
 
 (deftype ClosureArity [arity-fn-var param-count var-info]
@@ -991,7 +1050,7 @@
                  (repeat (dec (count evalled-clauses))
                          "}\n")]
                 (map evalled-clauses .decl)
-                Maybe total-refs)))))
+                MaybeType total-refs)))))
 
 
 (extend-type ast/or-ast
@@ -1037,7 +1096,7 @@
                  (repeat (dec (count evalled-clauses))
                          "}\n")]
                 (map evalled-clauses .decl)
-                Maybe total-refs)))))
+                MaybeType total-refs)))))
 
 
 (extend-type ast/assert-ast
@@ -1092,7 +1151,19 @@
   ProducesCode
   (produces-code [ast] nothing))
 
-(defn emit-fn-arity [params body]
+(defprotocol SetType
+  (set-type [sym type-num]
+    sm-space))
+
+(extend-type rdr/tagged-symbol
+  SetType
+  (set-type [sym type-num]
+    (comp (for [sym-info (sm/get-in-val [.fn-context .syms sym])
+                _ (sm/assoc-in-val [.fn-context .syms sym .type-num] type-num)]
+            "")
+          sm-space)))
+
+(defn emit-fn-arity [params param-types body]
   (let [arity-index ((.variadic params) 'variadic (count params))]
     (for [_ (sm/when (some body produces-code))
           fn-context (reset-fn-context)
@@ -1100,6 +1171,7 @@
           param-vars (comp (for [tail (sm/when (.variadic params))
                                  fixed-vars (map (traverse (.fixed params) sm/state-maybe bind) vec)
                                  tail-var (bind tail)
+                                 _ (sm/assoc-in-val [.fn-context .syms tail .type-num] ListType)
                                  param-var (genlocal "arg")
                                  destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
                                                            (ast/file-name params)
@@ -1118,6 +1190,8 @@
                                                                           (.destruct param-vars)))))]
                              (ParamBinding (.vars param-vars) param-destruct))
                            (sm/state-maybe (ParamBinding [] [])))
+          _ (traverse (zip-lists (seq (.fixed params)) (seq param-types)) sm/state-maybe
+                      (fn [[var type-num]] (set-type var type-num)))
           body-exprs (emit body)
           destruct-closures (emit-closures)
           :let [exprs (comp (.destruct param-vars)
@@ -1161,7 +1235,7 @@
                                                       "\nreturn(" fn-result ");\n};\n"]
                                                      FnArityType refs))))
                            (for [arity-var (global-var "staticArity")]
-                             (StaticArity arity-fn-var arity-index
+                             (StaticArity arity-fn-var arity-index (.type-num body)
                                           (c-code (str "&" arity-var)
                                                   []
                                                   [(.decl body)
@@ -1180,7 +1254,8 @@
   Emitter
   (emit-definition [ast]
     (for [;; _ (debug 'main-fn)
-          fn-arity (emit-fn-arity (.params ast) (.body ast))
+          fn-arity (emit-fn-arity (.params ast) [ListType] (.body ast))
+          ;; _ (debug "=======")
           _ (new-static-arity 'main 1 (.arity-fn-var fn-arity) IntegerType)]
       [(c-code "" [] (.decl (.var-info fn-arity)) 0 {})])))
 
@@ -1203,7 +1278,7 @@
 (defn emit-proto-default [protocol-name fn-name prototype]
   (let [default-body (.default-body prototype)]
     (comp (for [_ (sm/when-not (empty? default-body))
-                static-arity (emit-fn-arity (.params prototype) default-body)
+                static-arity (emit-fn-arity (.params prototype) [] default-body)
                 _ (new-proto-impl fn-name (count (.params prototype)) 0
                                   (.var-info static-arity) default-body)]
             (.decl (.var-info static-arity)))
@@ -1242,7 +1317,7 @@
 (extend-type ast/fn-arity-ast
   Emitter
   (emit [ast]
-    (emit-fn-arity (.params ast) (.body ast))))
+    (emit-fn-arity (.params ast) (.param-types ast) (.body ast))))
 
 
 (defn static-fn [fn-sym arities]
@@ -1254,7 +1329,7 @@
                                     (for [_ (new-static-arity fn-var
                                                               (.param-count static-arity)
                                                               (.arity-fn-var static-arity)
-                                                              (.type-num (.var-info static-arity)))]
+                                                              (.return-type static-arity))]
                                       (.var-info static-arity))))]
     (let [arity-count (count emitted-arities)]
       (c-code fn-var []
@@ -1303,9 +1378,10 @@
           fn-var (global-var "fn")
           _ (new-module-def fn-sym (c-code fn-var [] [] FunctionType {}))
           arities (emit (.arities ast))
-          ;; _ (debug "------")
           fn-expr (comp (closure-fn fn-sym arities)
-                        (static-fn fn-sym arities))]
+                        (static-fn fn-sym arities))
+          ;; _ (debug "------")
+          ]
       fn-expr))
 
   (emit-defined-value [fn-val defined-sym]
@@ -1333,11 +1409,17 @@
                                                                (str "'" fn-name "' in")
                                                                (str (ast/file-name fn-name) ",")
                                                                (ast/line-number fn-name)))
+                                    ;; TODO: pre-declare all the impl fn arities
                                     ext-fn (comp (emit (assoc arity-ast .param-types [type-num]))
                                                  (compilation-error "Could not compile protocol fn:"
                                                                     (str "'" fn-name "' in")
                                                                     (str (ast/file-name fn-name) ",")
                                                                     (ast/line-number fn-name)))
+                                    _ (new-static-arity (.c-var (.var-info ext-fn))
+                                                        (.param-count ext-fn)
+                                                        (.arity-fn-var ext-fn)
+                                                        (.return-type ext-fn))
+
                                     _ (new-proto-impl fn-name num-args type-num
                                                       (.var-info ext-fn) arity-ast)]
                                 (.var-info ext-fn)))))]
@@ -1429,7 +1511,7 @@
         impls (.type-impls proto-disp)
         arity-sym (gensym "protoFnArity")
         dispatcher (StaticArity
-                    (str "&" arity-sym) num-args
+                    (str "&" arity-sym) num-args UnknownType
                     (c-code (str "&" arity-sym)
                             []
                             ["\n// " fn-name " " num-args " args\n"

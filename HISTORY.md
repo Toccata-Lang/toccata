@@ -161,3 +161,11 @@ Symbol literals are even simpler than strings. You create them by putting a `'` 
 ## Entry 27:
 
 `Maybe` is the simplest type whose values can contain other values, so it's the first time we implement the very important `Container` protocol.
+
+## Entry 28:
+
+A slightly more complicated container value is the `List` type. In addition to containing 0, 1 or more values of any type, it also has a concept of sequence. The values are stored in a certain order. (And I forgot to add this note to the previous commit. Oops :) )
+
+## Entry 29:
+
+Another container is the `Vector` type. Among other things, it adds the idea of accessing the values it contains by an integer index.

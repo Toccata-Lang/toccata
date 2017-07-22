@@ -1,7 +1,5 @@
 
 #include <stdlib.h>
-#include <stdint.h>
-#include <inttypes.h>
 #include "core.h"
 
 void prefs(char *tag, Value *v) {
@@ -1042,7 +1040,7 @@ VectorNode *pushTail(unsigned count, int level, VectorNode *parent, VectorNode *
   return(ret);
 }
 
-Vector *vectCons(Vector *vect, Value *val) {
+Vector *vectConj(Vector *vect, Value *val) {
   // if there's room in the tail
   if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
     // make a new vector and copy info over
@@ -1095,7 +1093,7 @@ Vector *vectCons(Vector *vect, Value *val) {
 Vector *mutateVectConj(Vector *vect, Value *val) {
   // if 'vect' is a static vector
   if (vect->refs == -1) {
-    Vector *result = vectCons(vect, val);
+    Vector *result = vectConj(vect, val);
     return(result);
   } else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
     // if there's room in the tail, add value to tail of vector
@@ -1137,6 +1135,58 @@ Vector *mutateVectConj(Vector *vect, Value *val) {
   }
 }
 
+VectorNode *doAssoc(int level, VectorNode *node, unsigned index, Value *val) {
+  if (level == 0) {
+    int arrayIndex = index & 0x1f;
+    VectorNode *newNode = newVectorNode(node->array, arrayIndex);
+    newNode->array[arrayIndex] = val;
+    return(newNode);
+  } else {
+    int arrayIndex = (index >> level) & 0x1f;
+    VectorNode *newNode = newVectorNode(node->array, arrayIndex);
+    newNode->array[arrayIndex] = (Value *)doAssoc(level - 5, (VectorNode *)node->array[arrayIndex],
+                                                  index, val);
+    return(newNode);
+  }
+}
+
+Value *vectStore(Vector *vect, unsigned index, Value *val) {
+  if (index < vect->count) {
+    if (index >= vect->tailOffset) {
+      unsigned newIndex = index & 0x1f;
+      Vector *ret = newVector(vect->tail, newIndex);
+      ret->tail[newIndex] = val;
+      ret->count = vect->count;
+      ret->tailOffset = vect->tailOffset;
+      ret->shift = vect->shift;
+      ret->root = vect->root;
+      if (ret->root != (VectorNode *)0) {
+// TODO: untested code path
+printf("vectStore 2\n");
+abort();
+        incRef((Value *)ret->root, 1);
+      }
+      Value *mval = maybe((List *)0, (Value *)0, (Value *)ret);
+      return(mval);
+    } else {
+      Vector *ret = newVector(vect->tail, VECTOR_ARRAY_LEN);
+      ret->count = vect->count;
+      ret->tailOffset = vect->tailOffset;
+      ret->shift = vect->shift;
+      ret->root = doAssoc(vect->shift, vect->root, index, val);
+      Value *mval = maybe((List *)0, (Value *)0, (Value *)ret);
+      return(mval);
+    }
+  } else if (index == vect->count) {
+    Value *ret = (Value *)vectConj(vect, val);
+    Value *mval = maybe((List *)0, (Value *)0, (Value *)ret);
+    return(mval);
+  } else {
+    dec_and_free(val, 1);
+    return(nothing);
+  }
+}
+
 Value *vectGet(Vector *vect, unsigned index) {
   // this fn does not dec_and_free vect on purpose
   // lets calling functions do that.
@@ -1155,6 +1205,19 @@ Value *vectSeq(Vector *vect, int index) {
   }
   dec_and_free((Value *)vect, 1);
   return((Value *)ret);
+}
+
+Value *vectorReverse(Value *arg0) {
+  Vector *v = (Vector *)arg0;
+  int i;
+  Vector *newVect = empty_vect;
+  for (i = v->count - 1; i >= 0; i--) {
+    Value *val = vectGet(v, i);
+    incRef(val, 1);
+    newVect = mutateVectConj(newVect, val);
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)newVect);
 }
 
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]) {

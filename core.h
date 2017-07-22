@@ -4,6 +4,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <sys/wait.h>
 
 extern void abort();
@@ -51,6 +52,7 @@ Value *nothing;
 #define VectorType 8
 #define VectorNodeType 9
 #define SymbolType 10
+#define TypeCount 11
 
 #define BitmapIndexedType 0
 #define ArrayNodeType 0
@@ -119,6 +121,7 @@ FnArity *findFnArity(Value *fnVal, int64_t argCount);
 ReifiedVal *malloc_reified(int implCount);
 
 
+char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);
 Value *intValue(int64_t n);
 Value *pr_STAR(Value *);
@@ -127,7 +130,10 @@ Value *integer_str(Value *arg0);
 Value *integer_EQ(Value *arg0, Value *arg1);
 Value *integer_LT(Value *arg0, Value *arg1);
 Value *integerValue(int64_t n);
+Vector *vectConj(Vector *vect, Value *val);
 Vector *mutateVectConj(Vector *vect, Value *val);
+Value *vectStore(Vector *vect, unsigned index, Value *val);
+Value *vectorReverse(Value *arg0);
 List *listCons(Value *x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
 Value *maybe(List *closures, Value *arg0, Value *arg1);
