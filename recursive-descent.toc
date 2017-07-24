@@ -3,7 +3,7 @@
 (add-ns sm (module "state-maybe.toc"))
 (add-ns fr (module "free.toc"))
 
-(deftype ParserState [input file-name line-num parser-fns]
+(deftype ParserState [curr-input input file-name line-num parser-fns]
   Stringable
   (string-list [_] (list "<ParserState>")))
 
@@ -45,33 +45,39 @@
                  (let [ln (.line-num s)]
                    (maybe [s (assoc s .line-num (inc ln))]))))))
 
-(defn reader [n s]
+(defn next-input-buffer [s]
   (let [input (.input s)]
-    (for [text (first input)
-          :let [text-length (count text)]
-          r (or (and (< n text-length)
-                     (maybe [(subs text 0 n)
-                             (assoc s .input (conj (rest input) (subs text n)))]))
-                
-                (and (= n text-length)
-                     (maybe [text (assoc s .input (rest input))]))
-                ;; (< text-length n)
-                (for [[texts final-s] (reader (- n text-length)
-                                              (assoc s .input (rest input)))]
-                  [(comp text texts) final-s]))]
-      r)))
+    (for [new-text (first input)]
+      (let [s (assoc s .curr-input new-text)]
+        (assoc s .input ((empty? new-text) empty-list (rest input)))))))
+
+(defn reader [n s]
+  (let [text (.curr-input s)
+        text-length (count text)]
+    (or (and (< n text-length)
+             (maybe [(subs text 0 n)
+                     (assoc s .curr-input (subs text n))]))
+        (and (= n text-length)
+             (or (map (next-input-buffer s)
+                      (fn [new-s]
+                        [text new-s]))
+                 (maybe [text (assoc s .curr-input "")])))
+        ;; (< text-length n)
+        (for [new-s (next-input-buffer s)
+              [texts final-s] (reader (- n text-length) new-s)]
+          [(comp text texts) final-s]))))
 
 (defn fn-reader [f s]
-  (let [input (.input s)]
-    (for [text (first input)
-          :let [length (f text)]
-          :when (< 0 length)
-          r (or (and (= length (count text))
-                     (for [[tail final-s] (fn-reader f (assoc s .input (rest input)))]
-                       [(cons text tail) final-s]))
-                (maybe [(list (subs text 0 length))
-                        (assoc s .input (conj input (subs text length)))]))]
-      r)))
+  (let [text (.curr-input s)]
+    (let [length (f text)]
+      ((= 0 length)
+       nothing
+       (or (and (= length (count text))
+                (for [new-s (next-input-buffer s)
+                      [tail final-s] (fn-reader f new-s)]
+                  [(cons text tail) final-s]))
+           (maybe [(list (subs text 0 length))
+                   (assoc s .curr-input (subs text length))]))))))
 
 (extend-type p/parser-not-char
   RecursiveDescent
@@ -212,7 +218,7 @@ return(numberValue(newlines));
 (defn parser [grammar]
   (let [grammar-parser (fr/evaluate grammar recursive-descent)]
     (fn [input]
-      (flat-map (grammar-parser (ParserState input "" 1 {}))
+      (flat-map (grammar-parser (ParserState "" input "" 1 {}))
                 first))))
 
 (defn set-file-name [file-name]

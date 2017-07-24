@@ -41,6 +41,9 @@ typedef Value *(FnType8)(List *, Value *, Value *, Value *, Value *, Value *, Va
 typedef Value *(FnType9)(List *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
 
 Value *nothing;
+int32_t refsInit;
+int32_t staticRefsInit;
+int32_t refsError;
 
 #define IntegerType 1
 #define StringType 2

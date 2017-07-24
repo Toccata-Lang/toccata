@@ -25,6 +25,8 @@
 
 ;; Internal protocol for types
 (defprotocol Type
+  (has-field [_ field] nothing)
+
   (get-type [value]
     (inline C Integer "
     Value *numVal = integerValue(arg0->type);
@@ -57,17 +59,7 @@
     ;; test whether `x` and `y` are of the 'same' type. 'Sameness' could
     ;; also mean that the types of `x` and `y` are different, but have
     ;; been composed into a union type. (Also referred to as "sum types")
-    (returns a (instance? Maybe a)))
-
-  (make-value [_])
-  (make-value [_ _])
-  (make-value [_ _ _])
-  (make-value [_ _ _ _])
-  (make-value [_ _ _ _ _])
-  (make-value [_ _ _ _ _ _])
-  (make-value [_ _ _ _ _ _ _])
-  (make-value [_ _ _ _ _ _ _ _])
-  (make-value [_ _ _ _ _ _ _ _ _]))
+    (returns a (instance? Maybe a))))
 
 ;; Internal protocol for implementing the hash map type
 (defprotocol HashMapNode
@@ -330,6 +322,38 @@
   (string-list [x]
     ;; Create a list of strings of that comprise the representation of `x`
     (returns a (instance List a))))
+
+(defn new-type-value [reified-template type-args]
+  (inline C "
+  ReifiedVal *template = (ReifiedVal *)arg0;
+  ReifiedVal *rv = malloc_reified(template->implCount);
+  int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
+  memcpy(rv, template, rvSize);
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  rv->typeArgs = arg1;
+  return((Value *)rv);"))
+
+(defn make-value [reified-template type-args]
+  (inline C "
+  ReifiedVal *template = (ReifiedVal *)arg0;
+  ReifiedVal *rv = malloc_reified(template->implCount);
+  int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
+  memcpy(rv, template, rvSize);
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  rv->typeArgs = arg1;
+  dec_and_free(arg0, 1);
+  return((Value *)rv);"))
+
+(defn identical [x y]
+  (inline C "
+  if (arg0 == arg1) {
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, arg0));
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(nothing);
+  }"))
 
 (def empty-list (inline C List "(Value *)&(List){ListType,-1,0,0,0}"))
 
@@ -956,7 +980,10 @@
     (vect-count l))
 
   (conj [vect v]
-   (inline C "return((Value *)vectConj((Vector *)arg0, arg1));"))
+   (inline C "
+  Value *result = (Value *)vectConj((Vector *)arg0, arg1);
+  dec_and_free(arg0, 1);
+  return(result);"))
 
   (filter [v f]
     (reduce v empty-vector
@@ -1004,11 +1031,15 @@
 
   (store [v n x]
     (assert (instance? Integer n))
-    (inline C "return(vectStore((Vector *)arg0, ((Integer *)arg1)->numVal, arg2));"))
+    (inline C "
+  Value *result = vectStore((Vector *)arg0, ((Integer *)arg1)->numVal, (Value *)arg2);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(result);"))
 
   Associative
   (get [v n]
-    (assert (and (instance? Number n)
+    (assert (and (instance? Integer n)
                  (<= 0 n)))
     (inline C "return(vectorGet(arg0, arg1));"))
 
@@ -1017,10 +1048,9 @@
     (and (instance? Vector y)
          (= (count x) (count y))
          (vec= x y (count x))
-         (maybe x)))
-)
+         (maybe x))))
 
-;; (defn partial [f & args]
-;;   ;; paritally apply `f` to `args` creating a new function that expects more arguments
-;;   (fn [& more-args]
-;;     (apply f (comp args more-args))))
+(defn partial [f & args]
+  ;; paritally apply `f` to `args` creating a new function that expects more arguments
+  (fn [& more-args]
+    (apply f (comp args more-args))))

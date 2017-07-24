@@ -53,7 +53,6 @@
 (def HashCollisionNodeType (inline-C Number "(Value *)&(Number){NumberType, -1, 0};"))
 
 (def sm-space (sm/state-maybe ""))
-(def sm-gensym (sm/lift gensym))
 
 ;; useful for debugging the compiler
 (defn debug [& args]
@@ -85,12 +84,13 @@
 )
 
 ;; information that must be tracked for each module
-(deftype Module [path values protocols proto-fns types]
+(deftype Module [path values protocols proto-fns types declarations]
   ;; path             path to file containing the modules source code
   ;; values           map of value symbols to defined values
   ;; protocols        set of protocol symbols
   ;; proto-fns        map of protocol fn symbols to fn information
   ;; types            map of type symbols to type definitions
+  ;; declarations     map of symbols to C vars that have not been defined
   Stringable
   (string-list [_] (list "<Module '" path "'>")))
 
@@ -120,7 +120,7 @@
   ;; If a module for `path` has not been defined yet, initialize it
   (comp (sm/get-in-val [.modules path])
         (sm/assoc-in-val [.modules path]
-                         (Module path {} {} {} core-types))))
+                         (Module path {} {} {} core-types {}))))
 
 ;; combine a sequence of expressions, adding reference increments and decrements
 ;; where needed
@@ -238,21 +238,23 @@
   ;; 1. using the namespace portion of the protocol symbol
   ;; 2. using the current file name
   ;; 3. using `'core` for protcols defined in the core
-  (comp (for [ns-sym (sm/when (.ns proto-sym))
+  (comp (for [ns-sym (sm/when (rdr/namespace proto-sym))
               protocol-path (sm/get-in-val [.namespaces ns-sym])
               result (sm/get-in-val [.modules protocol-path .protocols proto-sym])]
           result)
         (sm/get-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym])
-        (sm/get-in-val [.modules 'core .protocols proto-sym])))
+        ;; TODO: change the "" to 'core
+        (sm/get-in-val [.modules "" .protocols proto-sym])))
 
 (deftype ProtoFnInfo [fn-sym disp-sym dispatchers]
   Stringable
   (string-list [_] (list "<ProtoFnInfo " fn-sym ">")))
 
 (defn new-protocol-fn [fn-sym disp-sym]
-  (comp (for [_ (sm/get-in-val [.modules (ast/file-name fn-sym) .proto-fns fn-sym])]
-          (print-err "Duplicate protocol function" (str "'" fn-sym "'") "at"
-                     (str (ast/file-name fn-sym) ":") (ast/line-number fn-sym)))
+  (comp (for [_ (sm/get-in-val [.modules (ast/file-name fn-sym) .proto-fns fn-sym])
+              _ (compilation-error "Duplicate protocol function" (str "'" fn-sym "'") "at"
+                                   (str (ast/file-name fn-sym) ":") (ast/line-number fn-sym))]
+          "")
         (sm/assoc-in-val [.modules (ast/file-name fn-sym) .proto-fns fn-sym]
                          (ProtoFnInfo fn-sym disp-sym {}))))
 
@@ -263,12 +265,13 @@
 
 (defprotocol FindProtoPath
   (find-protocol-path [fn-sym]
-    (comp (for [sym-ns (sm/when (.ns fn-sym))
+    (comp (for [sym-ns (sm/when (rdr/namespace fn-sym))
                 namespace (sm/get-in-val [.namespaces sym-ns])
                 path (lookup-protocol-path fn-sym namespace)]
             path)
           (lookup-protocol-path fn-sym (ast/file-name fn-sym))
-          (lookup-protocol-path fn-sym 'core))))
+          ;; TODO: Change the "" to 'core
+          (lookup-protocol-path fn-sym ""))))
 
 (deftype ProtocolDispatcher [arg-count dispatch-sym impls-sym type-impls]
   Stringable
@@ -286,7 +289,7 @@
 
 (deftype ProtoImpl [dispatch-type c-var ast]
   Stringable
-  (string-list [_] (list "<ProtoImpl " (target-type-name dispatch-type) c-var ">")))
+  (string-list [_] (list "<ProtoImpl " (target-type-name dispatch-type) " " c-var ">")))
 
 (defn new-proto-impl [fn-name arg-count dispatch-type c-code ast]
   (for [protocol-path (find-protocol-path fn-name)
@@ -324,6 +327,11 @@
   (emit [asts]
     (traverse asts sm/state-maybe emit)))
 
+(extend-type Vector
+  Emitter
+  (emit [asts]
+    (traverse asts sm/state-maybe emit)))
+
 (defn genlocal [pre]
   (for [sym-count (sm/get-in-val [.fn-context .sym-count])
         _ (sm/assoc-in-val [.fn-context .sym-count] (inc sym-count))]
@@ -333,7 +341,16 @@
   (sm/get-in-val [.modules (ast/file-name sym) .values sym]))
 
 (defn new-module-def [sym value]
-  (sm/assoc-in-val [.modules (ast/file-name sym) .values sym] value))
+  (for [r (sm/assoc-in-val [.modules (ast/file-name sym) .values sym] value)
+        _ (sm/assoc-in-val [.modules (ast/file-name sym) .declarations sym] nothing)]
+    r))
+
+(defn lookup-declaration [sym]
+  (sm/get-in-val [.modules (ast/file-name sym) .declarations sym '_]))
+
+(defn lookup-core-def [sym]
+  ;; TODO: change "" to 'core
+  (sm/get-in-val [.modules "" .values sym]))
 
 (defn already-closed-over [sym]
   (for [closed-over (sm/get-in-val [.fn-context .closed-over .closures])
@@ -363,6 +380,8 @@
   (comp (sm/get-in-val [.fn-context .syms sym])
         (closed-over-sym sym)
         (lookup-module-def sym)
+        (lookup-declaration sym)
+        (lookup-core-def sym)
         (compilation-error "Undefined symbol" (str "'" sym "'") "at"
                            (str (ast/file-name sym) ":")
                            (ast/line-number sym))))
@@ -376,7 +395,8 @@
                    (c-code arity-var [] [] type-num {})))
 
 (defn lookup-core-fn-arity [sym num-args]
-  (for [fn-sym (sm/get-in-val [.modules "" .values (rdr/tag sym "" 0)])
+  ;; TODO: change to 'core
+  (for [fn-sym (sm/get-in-val [.modules "" .values sym])
         arity-sym (lookup-static-arity (.c-var fn-sym) num-args)]
     arity-sym))
 
@@ -412,6 +432,9 @@
                "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
               StringType {}))))
 
+(defn make-c-code [value]
+  (c-code (.c-var value) (.init value) (.decl value) (.type-num value) (.refs-map value)))
+
 (extend-type String
   Emitter
   (emit [str-val]
@@ -421,7 +444,7 @@
   (emit-defined-value [str-val defined-sym]
     (for [value (emit str-val)
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] StringType {}))]
-      [(assoc value .c-var "")])))
+      [(make-c-code value)])))
 
 
 (defn make-static-num [num]
@@ -445,7 +468,7 @@
   (emit-defined-value [num defined-sym]
     (for [value (emit num)
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] IntegerType {}))]
-      [(assoc value .c-var "")])))
+      [(make-c-code value)])))
 
 
 (extend-type ast/quoted-ast
@@ -468,7 +491,7 @@
   (emit-defined-value [ast defined-sym]
     (for [quoted (emit ast)
           _ (new-module-def defined-sym (c-code (.c-var quoted) [] [] SymbolType {}))]
-      [(assoc quoted .c-var "")])))
+      [(make-c-code quoted)])))
 
 
 (extend-type rdr/tagged-symbol
@@ -479,7 +502,13 @@
   (emit-defined-value [sym defined-sym]
     (for [value (lookup-sym sym)
           _ (new-module-def defined-sym value)]
-      [(assoc value .c-var "")])))
+      [(make-c-code value)])))
+
+
+(extend-type Symbol
+  Emitter
+  (emit [sym]
+    (lookup-sym sym)))
 
 
 (defn get-type [type-symbol]
@@ -497,7 +526,7 @@
     (for [target-lang (sm/get-val .target-lang)
           :when (= (.lang ast) target-lang)
           type-num (get-type (.result-type ast))
-          c-var (comp (lookup-module-def defined-sym)
+          c-var (comp (map (lookup-declaration defined-sym) .c-var)
                       (global-var "var"))
           _ (new-module-def defined-sym (c-code c-var [] [] type-num {}))]
       [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})]))
@@ -517,6 +546,18 @@
                               (fn [ast]
                                 (emit-defined-value ast defined-sym)))]
         (flatten evalled)))))
+
+(extend-type ast/declaration-ast
+  Emitter
+  (emit-definition [ast]
+    (let [sym (.sym ast)]
+      (comp (map (lookup-declaration sym) (fn [_] []))
+            (for [c-var (global-var "var")
+                  :let [c-info (c-code c-var [] [] UnknownType {})]
+                  _ (sm/assoc-in-val [.modules (ast/file-name sym) .declarations sym]
+                                     (maybe c-info))]
+              (let [c-info (assoc c-info .c-var "")]
+                [(assoc c-info .decl ["Value *" c-var ";\n"])]))))))
 
 
 (defn call-vector [target args]
@@ -707,6 +748,19 @@
                  "dec_and_free("(.c-var target) ", 1);\n}\n"]
                 [] UnknownType {})))))
 
+(defn call-invoke [target args file-name line-number]
+  (let [num-args (inc (count args))]
+    (for [invoke-info (get-proto-impl 'invoke num-args (.type-num target))
+          arity-info (lookup-static-arity (.c-var invoke-info) num-args)
+          result-sym (genlocal "rslt")]
+      (c-init result-sym
+              ["// call invoke\n// #line " line-number " \"" file-name "\"\n"
+               "Value *" result-sym " = " (.c-var arity-info) "("
+               (interpose (conj (cons (.c-var target) args) "empty_list") ", ") ");\n"]
+              []
+              (.type-num arity-info)
+              {}))))
+
 (extend-type ast/call-ast
   Emitter
   (emit [ast]
@@ -718,14 +772,11 @@
                             (call-proto-impl (.call-target ast) args)
                             (for [target (emit (.call-target ast))
                                   :let [arg-vars (map args .c-var)]
-                                  call-site (comp (call-static-fixed target arg-vars
-                                                                     file-name line-number)
-                                                  (call-static-variadic target arg-vars
-                                                                        file-name line-number)
-                                                  (call-dyn-fn-value target arg-vars
-                                                                     file-name line-number)
-                                                  (call-dyn-unknown-type target arg-vars
-                                                                         file-name line-number))]
+                                  call-site (comp (call-static-fixed target arg-vars file-name line-number)
+                                                  (call-static-variadic target arg-vars file-name line-number)
+                                                  (call-invoke target arg-vars file-name line-number)
+                                                  (call-dyn-fn-value target arg-vars file-name line-number)
+                                                  (call-dyn-unknown-type target arg-vars file-name line-number))]
                               (comp* target (comp args [call-site])))
                             (compilation-error "Could not compile call site at:"
                                                file-name line-number))]
@@ -737,7 +788,8 @@
     (for [init-fn-context (sm/get-val .init-fn-context)
           fn-context (reset-fn-context init-fn-context)
           value (emit fn-val)
-          var (global-var "var")
+          var (comp (map (lookup-declaration defined-sym) .c-var)
+                    (global-var "var"))
           init-fn-context (reset-fn-context fn-context)
           _ (sm/set-val .init-fn-context init-fn-context)
           _ (new-module-def defined-sym (c-code var [] [] (.type-num value) {}))]
@@ -814,7 +866,7 @@
                     (fn [_]
                       (gen-binding-vars params)))
           (for [fixed-vars (map (traverse (.fixed params) sm/state-maybe bind) vec)
-                tail-var (bind (symbol ".tail"))
+                tail-var (bind (symbol "#tail"))
                 param-var (genlocal "arg")
                 destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
                                           (ast/file-name params)
@@ -823,7 +875,7 @@
 
   (bind [params evalled]
     (for [tail (sm/when (or (.variadic params)
-                            (maybe (symbol ".tail"))))
+                            (maybe (symbol "#tail"))))
           fixed-vars (map (traverse (.fixed params) sm/state-maybe bind) vec)
           tail-var (bind tail)
           destruct (unpack-arg-list (.c-var evalled) (conj fixed-vars tail-var)
@@ -856,7 +908,8 @@
     (for [init-fn-context (sm/get-val .init-fn-context)
           fn-context (reset-fn-context init-fn-context)
           value (emit ast)
-          var (global-var "var")
+          var (comp (map (lookup-declaration defined-sym) .c-var)
+                    (global-var "var"))
           init-fn-context (reset-fn-context fn-context)
           _ (sm/set-val .init-fn-context init-fn-context)
           _ (new-module-def defined-sym (c-code var [] [] (.type-num value) {}))]
@@ -867,27 +920,17 @@
                (.type-num value) (.refs-map value))])))
 
 
-(defn static-reified-value [type-num impl-fns]
-  (for [reified-sym (sm-gensym "reifiedStatic_")
-        reified-ptr (sm-gensym "reifiedPtr_")]
-    (c-init reified-ptr
-            []
-            [(map impl-fns .decl)
-             "ReifiedVal " reified-sym " = {"
-             type-num ", -1, (Value *)0, 0, {}};\n"
-             "Value *" reified-ptr " = (Value *)&" reified-sym ";\n"]
-            type-num {})))
-
 (defn index [coll]
   (let [coll (seq coll)]
     (zip-lists (range (count coll)) coll)))
 
 (defn closure-reified-value [type-num impl-fns]
+  ;; TODO: change impls-fns to be a list StaticArity/ClosureArity
   (let [inits (map impl-fns .init)]
     (for [reified-sym (genlocal "reifiedDyn")
           :when-not (every inits empty?)]
       (let [impls-syms (map impl-fns .c-var)]
-        (c-code reified-sym
+        (c-init reified-sym
                 [inits
                  ["Value *" reified-sym " = (Value *)malloc_reified("
                   (count impls-syms) ");\n"
@@ -903,15 +946,33 @@
                 type-num
                 (apply merge-with + (map impl-fns .refs-map)))))))
 
+(defn static-reified-value [type-num impl-fns]
+  (for [reified-sym (global-var "reifiedStatic_")
+        reified-ptr (global-var "reifiedPtr_")]
+    (c-code reified-ptr
+            []
+            [(map impl-fns .decl)
+             "ReifiedVal " reified-sym " = {"
+             type-num ", -1, (Value *)0, 0, {}};\n"
+             "Value *" reified-ptr " = (Value *)&" reified-sym ";\n"]
+            type-num {})))
+
 (defprotocol ArityType
-  (closure-arity? [_] nothing))
+  (closure-arity? [_] nothing)
+  (reify-arity [_ dispatch-type-num arity-ast fn-name]))
 
 (deftype StaticArity [arity-fn-var param-count return-type var-info]
   Stringable
   (string-list [_]
     (comp (list "<StaticArity " (str arity-fn-var) " " (str param-count) " "
                 (target-type-name return-type) " ")
-          (string-list var-info))))
+          (string-list var-info)))
+
+  ArityType
+  (reify-arity [_ dispatch-type-num arity-ast fn-name]
+    (for [_ (new-proto-impl fn-name param-count dispatch-type-num var-info arity-ast)
+          _ (new-static-arity (.c-var var-info) param-count arity-fn-var (.type-num var-info))]
+      var-info)))
 
 (deftype ClosureArity [arity-fn-var param-count var-info]
   Stringable
@@ -920,65 +981,53 @@
           (string-list var-info)))
 
   ArityType
-  (closure-arity? [arity] (maybe arity)))
+  (closure-arity? [arity] (maybe arity))
+  (reify-arity [_ dispatch-type-num arity-ast fn-name]
+    (let [args (map (range param-count) (partial str "arg"))
+          arg-decls (to-str (interpose (conj (map args (fn [arg] (str "Value *" arg)))
+                                             (str "List *closures"))
+                                       ", "))
+          args (to-str (interpose (conj args "closures") ", "))
+          fn-arity-sym (gensym "protoFnArity_")
+          impl-fn-sym (gensym "protoImpl_")]
+      (for [reify-fn-index (sm/get-val .reify-fn-index)
+            _ (new-proto-impl fn-name param-count dispatch-type-num
+                              (c-code (str "&" fn-arity-sym) [] [] FunctionType {}) arity-ast)
+            _ (sm/update-in-val [.reify-fn-index] inc)]
+        (let [reified-fn (c-code "" []
+                                 ["// implementation of " fn-name "\n"
+                                  "Value *" impl-fn-sym "(" arg-decls ") {\n"
+                                  "FnArity *arityPtr = (FnArity *)((ReifiedVal *)arg0)->impls["
+                                  reify-fn-index "];\n"
+                                  "incRef(arg0, 1);\n"
+                                  "Value *rval = ((FnType" param-count
+                                  " *)arityPtr->fn)(arityPtr->" args ");\n"
+                                  "dec_and_free(arg0, 1);\n"
+                                  "return(rval);\n"
+                                  "};\n\n"
+                                  "FnArity " fn-arity-sym " = {FnArityType, -1, " param-count
+                                  ", (List *)0, 0, " impl-fn-sym "};\n"]
+                                 UnknownType {})]
+          (comp reified-fn var-info))))))
 
-(defn emit-reified-fn [type-num [fn-name arity-ast]]
-  (let [fn-ptr (gensym "protoFnPtr_")
-        num-args (count (.params arity-ast))]
-    (for [_ (comp (get-protocol-dispatcher fn-name num-args)
-                  (compilation-error "Invalid protocol fn:"
-                                     (str "'" fn-name "' in")
-                                     (str (ast/file-name fn-name) ",")
-                                     (ast/line-number fn-name)))
-          evalled (comp (emit (assoc arity-ast .param-types [type-num]))
-                        (compilation-error "Could not compile protocol fn:"
-                                           (str "'" fn-name "' in")
-                                           (str (ast/file-name fn-name) ",")
-                                           (ast/line-number fn-name)))
-          :let [evalled (.var-info evalled)]
-
-          ;; is the refied fn impl a closure or not?
-          evalled (comp
-                   ;; no, it's not a closure
-                   (for [_ (sm/when (empty? (.init evalled)))
-                         _ (new-proto-impl fn-name num-args type-num evalled arity-ast)]
-                     evalled)
-
-                   ;; yes it's a closure
-                   (let [args (map (range num-args) (partial str "arg"))
-                         arg-decls (to-str (interpose (conj (map args (fn [arg] (str "Value *" arg)))
-                                                            (str "List *closures"))
-                                                      ", "))
-                         args (to-str (interpose (conj args "closures") ", "))
-                         fn-arity-sym (gensym "protoFnArity_")
-                         impl-fn-sym (gensym "protoImpl_")]
-                     (for [reify-fn-index (sm/get-val .reify-fn-index)
-                           _ (new-proto-impl fn-name num-args type-num
-                                             (c-code (str "&" fn-arity-sym) [] [] FunctionType {}) arity-ast)]
-                       (let [reified-fn (c-code "" []
-                                                ["// implementation of " fn-name "\n"
-                                                 "Value *" impl-fn-sym "(" arg-decls ") {\n"
-                                                 "FnArity *arityPtr = (FnArity *)((ReifiedVal *)arg0)->impls["
-                                                 reify-fn-index "];\n"
-                                                 "incRef(arg0, 1);\n"
-                                                 "Value *rval = ((FnType" num-args
-                                                 " *)arityPtr->fn)(arityPtr->" args ");\n"
-                                                 "dec_and_free(arg0, 1);\n"
-                                                 "return(rval);\n"
-                                                 "};\n\n"
-                                                 "FnArity " fn-arity-sym " = {FnArityType, -1, " num-args
-                                                 ", (List *)0, 0, " impl-fn-sym "};\n"
-                                                 "Function " fn-ptr " = {FunctionType, -1, \"" name
-                                                 "\", 1, {&" fn-arity-sym "}};\n\n"]
-                                                UnknownType {})]
-                         (comp reified-fn evalled)))))
-          _ (sm/update-in-val [.reify-fn-index] inc)]
-      evalled)))
+(defn emit-reified-fn [reified-type-num [fn-name arity-ast]]
+  (for [_ (comp (get-protocol-dispatcher fn-name (count (.params arity-ast)))
+                (compilation-error "Invalid protocol fn:"
+                                   (str "'" fn-name "' in")
+                                   (str (ast/file-name fn-name) ",")
+                                   (ast/line-number fn-name)))
+        arity-info (comp (emit (assoc arity-ast .param-types [reified-type-num]))
+                         (compilation-error "Could not compile protocol fn:"
+                                            (str "'" fn-name "' in")
+                                            (str (ast/file-name fn-name) ",")
+                                            (ast/line-number fn-name)))
+        reified (reify-arity arity-info reified-type-num arity-ast fn-name)]
+    reified))
 
 (extend-type ast/reify-ast
   Emitter
   (emit [ast]
-    (let [type-num (.type-num ast)]
+    (let [reified-type-num (.type-num ast)]
       (for [reify-fn-index (sm/get-val .reify-fn-index)
             _ (sm/set-val .reify-fn-index 0)
             _ (traverse (keys (.impls ast)) sm/state-maybe
@@ -992,10 +1041,10 @@
                                      impl-arity arities]
                                  [fn-name impl-arity])
                                sm/state-maybe
-                               (partial emit-reified-fn type-num))
+                               (partial emit-reified-fn reified-type-num))
             _ (sm/set-val .reify-fn-index reify-fn-index)
-            reified-result (comp (closure-reified-value type-num impl-fns)
-                                 (static-reified-value type-num impl-fns))]
+            reified-result (comp (closure-reified-value reified-type-num impl-fns)
+                                 (static-reified-value reified-type-num impl-fns))]
         reified-result)))
 
   (emit-defined-value [ast defined-sym]
@@ -1004,8 +1053,14 @@
           value (emit ast)
           init-fn-context (reset-fn-context fn-context)
           _ (sm/set-val .init-fn-context init-fn-context)
+          value (comp (map (lookup-declaration defined-sym)
+                           (fn [c-info]
+                             (c-code (.c-var value) [(.init value) "\n" (.c-var c-info) " = "
+                                                     (.c-var value) ";\n"]
+                                     (.decl value) (.type-num value) (.refs-map value))))
+                      (sm/state-maybe value))
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] (.type-num value) {}))]
-      [(assoc value .c-var "")])))
+      [value])))
 
 
 (extend-type ast/and-ast
@@ -1262,8 +1317,8 @@
 
 (defn declare-proto-dispatch-arity [fn-name dispatch-fn-var prototype]
   (let [num-args (count (.params prototype))]
-    (for [arity-fn-var (sm-gensym "protoDisp")
-          impls-sym (sm-gensym "protoImpls")
+    (for [arity-fn-var (global-var "protoDisp")
+          impls-sym (global-var "protoImpls")
           _ (new-proto-dispatcher fn-name num-args arity-fn-var impls-sym)
           _ (new-static-arity dispatch-fn-var num-args arity-fn-var UnknownType)]
       ["ProtoImpls " impls-sym ";\n"
@@ -1286,7 +1341,7 @@
           sm-space)))
 
 (defn create-dispatcher [proto-name [fn-name arities]]
-  (for [dispatch-fn-sym (sm-gensym "dispatchFnPtr")
+  (for [dispatch-fn-sym (global-var "dispatchFnPtr")
         _ (sm/assoc-in-val [.modules (ast/file-name fn-name) .values fn-name]
                            (c-code dispatch-fn-sym [] [] FunctionType {}))
         _ (new-protocol-fn fn-name dispatch-fn-sym)
@@ -1375,7 +1430,8 @@
     (for [fn-sym (sm/when (or (.fn-sym ast)
                               (maybe 'anon)))
           ;; _ (debug 'fn-sym fn-sym)
-          fn-var (global-var "fn")
+          fn-var (comp (map (lookup-declaration fn-sym) .c-var)
+                       (global-var "fn"))
           _ (new-module-def fn-sym (c-code fn-var [] [] FunctionType {}))
           arities (emit (.arities ast))
           fn-expr (comp (closure-fn fn-sym arities)
@@ -1387,7 +1443,7 @@
   (emit-defined-value [fn-val defined-sym]
     (for [value (emit fn-val)
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] FunctionType {}))]
-      [(assoc value .c-var "")])))
+      [(make-c-code value)])))
 
 
 (defn extend-type* [ast type-num]
@@ -1455,6 +1511,175 @@
                   fn (extend-type* ast type-num)]
               fn)))))
 
+
+(defn declare-getters [new-type-name fields]
+  (traverse fields sm/state-maybe
+            (fn [field]
+              (let [getter-sym (symbol (str "." field))]
+                (comp (map (sm/get-in-val [.modules "" .proto-fns getter-sym]) (fn [_] []))
+                      (for [dispatch-fn-var (global-var "dispatchFnPtr")
+                            arity-fn-var1 (global-var "protoImpl")
+                            impls-sym1 (global-var "protoImpls")
+                            arity-fn-var2 (global-var "protoImpl")
+                            impls-sym2 (global-var "protoImpls")
+                            ;; TODO: change to 'core
+                            _ (new-module-def getter-sym (c-code dispatch-fn-var [] [] FunctionType {}))
+                            _ (sm/assoc-in-val [.modules "" .proto-fns getter-sym]
+                                               (ProtoFnInfo getter-sym dispatch-fn-var {}))
+                            _ (sm/assoc-in-val [.modules "" .proto-fns getter-sym]
+                                               (ProtoFnInfo getter-sym dispatch-fn-var {}))
+                            _ (sm/assoc-in-val [.modules "" .proto-fns getter-sym .dispatchers 1]
+                                               (ProtocolDispatcher 1 arity-fn-var1 impls-sym1 {}))
+                            _ (sm/assoc-in-val [.modules "" .proto-fns getter-sym .dispatchers 2]
+                                               (ProtocolDispatcher 2 arity-fn-var2 impls-sym2 {}))
+                            _ (new-static-arity dispatch-fn-var 1 arity-fn-var1 UnknownType)
+                            _ (new-static-arity dispatch-fn-var 2 arity-fn-var2 UnknownType)]
+                        ["ProtoImpls " impls-sym1 ";\n"
+                         "ProtoImpls " impls-sym2 ";\n"
+                         "Value *" dispatch-fn-var ";\n"
+                         "Value *" arity-fn-var1
+                         "(List *closures, Value *arg);\n"
+                         "Value *" arity-fn-var2
+                         "(List *closures, Value *arg1, Value *arg2);\n"]))))))
+
+(defn constructor-expr [new-type-name type-val-sym fields]
+  (ast/definition new-type-name
+    [(ast/reified (extract rdr/type-counter)
+                  {'Type
+                   [['type-name
+                     [(ast/fn-arity (ast/params ['_] nothing) ""
+                                    [(str "*" new-type-name " constructor*")])]]
+                    ['instance?
+                     [(ast/fn-arity (ast/params ['x 'y] nothing) ""
+                                    [(ast/call-ast '=*
+                                                   [(ast/call-ast 'get-type [type-val-sym])
+                                                    (ast/call-ast 'get-type ['y])])])]]]
+
+                   'Function
+                   [['invoke
+                     [(ast/fn-arity (ast/params (vec (cons '_ (seq fields))) nothing) ""
+                                    [(ast/call-ast 'new-type-value
+                                                   [type-val-sym (ast/call-ast 'vector (seq fields))])])]]]
+
+                   'Stringable
+                   [['string-list
+                     [(ast/fn-arity (ast/params ['_] nothing) ""
+                                    [(ast/call-ast 'list
+                                                   ["<TypeCon " (str new-type-name) " ["
+                                                    (to-str (interpose fields ", ")) "]>"])])]]]})]))
+
+(defn type-val-expr [type-name type-val-sym fields impls]
+  (let [x* (symbol "#x")
+        y* (symbol "#y")
+        field* (symbol "#field")]
+    (ast/definition type-val-sym
+      [(ast/reified (extract rdr/type-counter)
+                    (merge-with comp
+                                {'Type
+                                 [['type-name
+                                   [(ast/fn-arity (ast/params [x*] nothing) ""
+                                                  [(str type-name)])]]
+                                  ['has-field
+                                   [(ast/fn-arity (ast/params [x* field*] nothing) ""
+                                                  [(ast/or-ast
+                                                    (map fields (fn [field]
+                                                                  (ast/call-ast
+                                                                   'identical [(symbol (str "." field))
+                                                                               field*]))))])]]]
+
+                                 'Eq
+                                 [['=*
+                                   [(ast/fn-arity (ast/params [x* y*] nothing) ""
+                                                  [(ast/and-ast (list (ast/call-ast
+                                                                       '=* [(ast/call-ast 'get-type [x*])
+                                                                            (ast/call-ast 'get-type [y*])])
+                                                                      (ast/call-ast
+                                                                       '=* [(ast/call-ast 'type-args [x*])
+                                                                            (ast/call-ast 'type-args [y*])])))])]]]
+
+                                 'Associative
+                                 [['get
+                                   [(ast/fn-arity (ast/params [x* field*] nothing) ""
+                                                  [(ast/and-ast
+                                                     (list
+                                                      (ast/call-ast 'has-field [x* field*])
+                                                      (ast/call-ast 'maybe [(ast/call-ast field* (list x*))])))])]]
+
+                                  ['assoc
+                                   ;; TODO: check if 'field' is actually a field of type value
+                                   [(ast/fn-arity
+                                     (ast/params [x* field* 'new-value] nothing) ""
+                                     [(ast/call-ast
+                                       'extract
+                                       [(ast/or-ast
+                                         (list (ast/and-ast
+                                                (list
+                                                 (ast/call-ast 'has-field [x* field*])
+                                                 (ast/call-ast
+                                                  'maybe
+                                                  [(ast/call-ast field* (list x* 'new-value))])))
+                                               (ast/call-ast 'maybe [x*])))])])]]]}
+                                impls))])))
+
+(defn create-getters [fields]
+  (let [type-value (symbol "#value")
+        new-value (symbol "#new-value")]
+    {'Type
+     (map fields (fn [field]
+                   [(symbol (str "." field))
+                    [(ast/fn-arity (ast/params [type-value new-value] nothing) ""
+                                   [(ast/let-ast [(ast/binding (ast/params fields nothing)
+                                                    (ast/call-ast 'type-args [type-value]))
+                                                  (ast/binding field new-value)]
+                                                 [(ast/call-ast 'make-value
+                                                                [type-value (ast/call-ast 'vector fields)])])])
+                     (ast/fn-arity (ast/params [type-value] nothing) ""
+                                   [(ast/let-ast [(ast/binding (ast/params fields nothing)
+                                                    (ast/call-ast 'type-args [type-value]))]
+                                                 [field])])]]))}))
+
+(defn add-fields-destruct [arity fields]
+  (let [[type-value-parameter] (.fixed (.params arity))]
+    (assoc arity .body
+           [(ast/let-ast [(ast/binding fields (ast/call-ast 'type-args [type-value-parameter]))]
+                          (.body arity))])))
+
+(extend-type ast/type-ast
+  Emitter
+  (emit-definition [ast]
+    (let [file-name (ast/file-name ast)
+          sym (.sym ast)
+          fields (.fixed (.fields ast))
+          const-arity-index (inc (count fields))
+          impls (merge-with comp
+                            (create-getters fields)
+                            (map-vals (.impls ast)
+                                      (fn [impl-arities]
+                                        (map impl-arities
+                                             (fn [[fn-name impls]]
+                                               [fn-name (map impls (fn [impl]
+                                                                     (add-fields-destruct impl
+                                                                                          (.fields ast))))])))))]
+      (comp (for [_ (sm/get-in-val [.modules file-name .types sym])
+                  _ (compilation-error (str "Trying to re-define type name: '" sym "' in module "
+                                            file-name ", " (ast/line-number ast)))]
+              "")
+
+            (for [type-val-sym (global-var "#type-val-")
+                  type-val-decl (emit-definition (ast/declaration-ast type-val-sym))
+                  getters (declare-getters sym fields)
+
+                  type-constructor (emit-definition (constructor-expr sym type-val-sym fields))
+                  const-type-num (sm/get-in-val [.modules file-name .values sym .type-num])
+
+                  type-val-def (emit-definition (type-val-expr sym type-val-sym fields impls))
+                  type-num (sm/get-in-val [.modules file-name .values type-val-sym .type-num])
+                  _ (sm/assoc-in-val [.modules file-name .types sym] type-num)]
+              (comp type-val-decl
+                    [(c-code "" [] getters UnknownType {})]
+                    type-constructor
+                    type-val-def))))))
+
 (def global-context (GlobalContext 'C
                                    (FunctionArityContext 0 {} {} empty-closures)
                                    (FunctionArityContext 0 {} {} empty-closures)
@@ -1477,6 +1702,15 @@
   StringWriter
   (write-str [l] (map l write-str)))
 
+(defprotocol FreeGlobal
+  (free-global [_] []))
+
+(extend-type c-init
+  FreeGlobal
+  (free-global [c-info]
+    [(.c-var c-info) "->refs = 1;\n"
+     "freeGlobal(" (.c-var c-info) ");\n"]))
+
 (defn emit-main [vals]
   (for [main-fn (lookup-static-arity 'main 1)]
     [(c-code "" []
@@ -1485,9 +1719,7 @@
               (map vals .init) "\n"
               "Value *the_final_answer = " (.c-var main-fn) "((List *)empty_list, (Value *)empty_list);\n\n"
               "#ifdef CHECK_MEM_LEAK\n"
-              (map vals (fn [val]
-                          [(.c-var val) "->refs = 1;\n"
-                           "freeGlobal(" (.c-var val) ");\n"]))
+              (map vals free-global)
               "  dec_and_free(the_final_answer, 1);\n"
               "  freeAll();\n"
               "  if (malloc_count - free_count != 0)\n"
@@ -1563,8 +1795,8 @@
     dispatchers))
 
 (defn get-proto-dispatch-sym [fn-name num-args]
-  (sm/get-in-val [.modules "" .proto-fns (rdr/tag fn-name "" 0)
-                  .dispatchers num-args .dispatch-sym]))
+  ;; TODO: change to 'core
+  (sm/get-in-val [.modules "" .proto-fns fn-name .dispatchers num-args .dispatch-sym]))
 
 (defn fixup-native-symbols []
   (apply-to (fn [& decl]
@@ -1602,9 +1834,7 @@
                                                                  emit-definition)
                                           emitted (traverse asts sm/state-maybe
                                                             emit-definition)
-                                          main-fn (emit-main (remove (flatten emitted)
-                                                                     (fn [val]
-                                                                       (= "" (.c-var val)))))
+                                          main-fn (emit-main (flatten emitted))
                                           dispatchers (finalize-protocols)
                                           fixups (fixup-native-symbols)]
                                       (flatten (comp emitted-core emitted [main-fn]

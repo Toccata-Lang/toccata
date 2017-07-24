@@ -169,3 +169,8 @@ A slightly more complicated container value is the `List` type. In addition to c
 ## Entry 29:
 
 Another container is the `Vector` type. Among other things, it adds the idea of accessing the values it contains by an integer index.
+
+## Entry 30:
+
+Being able to create new datatypes by combining existing ones is a key form of abstraction. This commit adds the `deftype` form to allow this.
+
