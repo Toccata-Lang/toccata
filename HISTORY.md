@@ -174,3 +174,6 @@ Another container is the `Vector` type. Among other things, it adds the idea of 
 
 Being able to create new datatypes by combining existing ones is a key form of abstraction. This commit adds the `deftype` form to allow this.
 
+## Entry 31:
+
+Ensure the Function type performs as expected
