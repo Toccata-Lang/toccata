@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include "core.h"
 
+Integer const0 = {IntegerType, -1, 0};
+Value *const0Ptr = (Value *)&const0;
+
 void prefs(char *tag, Value *v) {
   printf("%s: %p %d\n", tag, v, v->refs);
 }
@@ -14,6 +17,14 @@ int64_t free_count = 0;
 Value *nothing = (Value *)&(Maybe){MaybeType, -1, 0};
 List *empty_list = &(List){ListType,-1,0,0,0};
 Vector *empty_vect = &(Vector){VectorType,-1,0,5,0,0};
+
+int mask(int64_t hash, int shift) {
+  return (hash >> shift) & 0x1f;
+}
+
+int bitpos(int64_t hash, int shift) {
+  return 1 << mask(hash, shift);
+}
 
 int32_t refsInit = 1;
 int32_t staticRefsInit = -1;
@@ -537,6 +548,130 @@ ReifiedVal *malloc_reified(int implCount) {
   return(newReifiedVal);
 }
 
+FreeValList centralFreeBMINodes[20] = {(FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0},
+                                               (FreeValList){(Value *)0, 0}};
+__thread FreeValList freeBMINodes[20] = {{(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0},
+                                         {(Value *)0, 0}};
+BitmapIndexedNode *malloc_bmiNode(int itemCount) {
+  int nodeSize = sizeof(BitmapIndexedNode) + sizeof(Value *) * (itemCount * 2);
+  BitmapIndexedNode *bmiNode = (BitmapIndexedNode *)freeBMINodes[itemCount].head;
+  if (bmiNode == (BitmapIndexedNode *)0) {
+    bmiNode = (BitmapIndexedNode *)my_malloc(nodeSize);
+  } else {
+    freeBMINodes[itemCount].head = freeBMINodes[itemCount].head->next;
+  }
+  bmiNode->type = BitmapIndexedType;
+  __atomic_store(&bmiNode->refs, &refsInit, __ATOMIC_RELAXED);
+  bmiNode->bitmap = 0;
+  memset(&bmiNode->array, 0, sizeof(Value *) * (itemCount * 2));
+  return(bmiNode);
+}
+
+void freeBitmapNode(Value *v) {
+  BitmapIndexedNode *node = (BitmapIndexedNode *)v;
+  int cnt = __builtin_popcount(node->bitmap);
+  for (int i = 0; i < (2 * cnt); i++) {
+    if (node->array[i] != (Value *)0) {
+      dec_and_free(node->array[i], 1);
+    }
+  }
+  v->next = freeBMINodes[cnt].head;
+  freeBMINodes[cnt].head = v;
+}
+
+HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
+  if (itemCount > 30000) {
+    fprintf(stderr, "Catastrophic failure: Too many hash collisions\n");
+    abort();
+  }
+  int nodeSize = sizeof(HashCollisionNode) + sizeof(Value *) * (itemCount * 2);
+  HashCollisionNode *collisionNode;
+  collisionNode = (HashCollisionNode *)my_malloc(nodeSize);
+  memset(collisionNode, 0, nodeSize);
+  collisionNode->type = HashCollisionNodeType;
+  collisionNode->count = itemCount * 2;
+  __atomic_store(&collisionNode->refs, &refsInit, __ATOMIC_RELAXED);
+  return(collisionNode);
+}
+
+void freeHashCollisionNode(Value *v) {
+  HashCollisionNode *node = (HashCollisionNode *)v;
+  for (int i = 0; i < node->count; i++) {
+    if (node->array[i] != (Value *)0) {
+      dec_and_free(node->array[i], 1);
+    }
+  }
+#ifdef CHECK_MEM_LEAK
+  __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
+  free(v);
+}
+
+FreeValList centralFreeArrayNodes = (FreeValList){(Value *)0, 0};
+__thread FreeValList freeArrayNodes = {(Value *)0, 0};
+ArrayNode *malloc_arrayNode() {
+  ArrayNode *arrayNode = (ArrayNode *)freeArrayNodes.head;
+  if (arrayNode == (ArrayNode *)0) {
+    arrayNode = (ArrayNode *)removeFreeValue(&centralFreeArrayNodes);
+    if (arrayNode == (ArrayNode *)0) {
+      arrayNode = (ArrayNode *)my_malloc(sizeof(ArrayNode));
+    }
+  } else {
+    freeArrayNodes.head = freeArrayNodes.head->next;
+  }
+  memset(arrayNode, 0, sizeof(ArrayNode));
+  arrayNode->type = ArrayNodeType;
+  __atomic_store(&arrayNode->refs, &refsInit, __ATOMIC_RELAXED);
+  return(arrayNode);
+}
+
+void freeArrayNode(Value *v) {
+  ArrayNode *node = (ArrayNode *)v;
+  for (int i = 0; i < 32; i++) {
+    if (node->array[i] != (Value *)0) {
+      dec_and_free(node->array[i], 1);
+    }
+  }
+  v->next = freeArrayNodes.head;
+  freeArrayNodes.head = v;
+}
+
 #define FREE_FN_COUNT 20
 freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
                                        &freeInteger,
@@ -548,8 +683,11 @@ freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
 				       &freeMaybe,
 				       &freeVector,
 				       &freeVectorNode,
-				       &freeSubString
-};
+				       &freeSubString,
+				       &freeBitmapNode,
+				       &freeArrayNode,
+				       &freeHashCollisionNode,
+				       NULL};
 
 void dec_and_free(Value *v, int deltaRefs) {
   if (decRefs(v, deltaRefs) >= -1)
@@ -629,15 +767,15 @@ void freeAll() {
   for (int i = 0; i < 20; i++) {
     emptyFreeList(&centralFreeReified[i]);
   }
-  // for (int i = 0; i < 20; i++) {
-  // emptyFreeList(&centralFreeBMINodes[i]);
-  // }
+  for (int i = 0; i < 20; i++) {
+    emptyFreeList(&centralFreeBMINodes[i]);
+  }
   // emptyFreeList(&centralFreeFutures);
   // FreeValList listHead;
   // __atomic_load((long long *)&centralFreeFutures,
   //               (long long *)&listHead, __ATOMIC_RELAXED);
   // emptyFreeList(&centralFreePromises);
-  // emptyFreeList(&centralFreeArrayNodes);
+  emptyFreeList(&centralFreeArrayNodes);
   emptyFreeList(&centralFreeSubStrings);
   emptyFreeList(&centralFreeFnArities);
   emptyFreeList(&centralFreeLists);
@@ -684,14 +822,14 @@ void moveFreeToCentral() {
   for (int i = 0; i < 10; i++) {
     moveToCentral(&freeFunctions[i], &centralFreeFunctions[i]);
   }
-  // for (int i = 0; i < 20; i++) {
-  // moveToCentral(&freeBMINodes[i], &centralFreeBMINodes[i]);
-  // }
+  for (int i = 0; i < 20; i++) {
+    moveToCentral(&freeBMINodes[i], &centralFreeBMINodes[i]);
+  }
   for (int i = 0; i < 20; i++) {
     moveToCentral(&freeReified[i], &centralFreeReified[i]);
   }
   moveToCentral(&freeStrings, &centralFreeStrings);
-  // moveToCentral(&freeArrayNodes, &centralFreeArrayNodes);
+  moveToCentral(&freeArrayNodes, &centralFreeArrayNodes);
   moveToCentral(&freeSubStrings, &centralFreeSubStrings);
   moveToCentral(&freeIntegers, &centralFreeIntegers);
   moveToCentral(&freeMaybes, &centralFreeMaybes);
@@ -2604,4 +2742,662 @@ List *reverseList(List *input) {
   }
   dec_and_free((Value *)input, 1);
   return(output);
+}
+
+// Immutable hash-map ported from Clojure
+BitmapIndexedNode emptyBMI = {BitmapIndexedType, -1, 0, 0};
+
+BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
+                                           Value *key, Value* val)
+{
+  int itemCount = __builtin_popcount(node->bitmap);
+  BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
+  newNode->bitmap = node->bitmap;
+  for (int i = 0; i < itemCount; i++) {
+    if (i == idx) {
+      newNode->array[i * 2] = key;
+      newNode->array[i * 2 + 1] = val;
+    } else {
+      if (node->array[i * 2] != (Value *)0) {
+        incRef(node->array[i * 2], 1);
+      }
+      if (node->array[i * 2 + 1] != (Value *)0) {
+        incRef(node->array[i * 2 + 1], 1);
+      }
+      newNode->array[i * 2] = node->array[i * 2];
+      newNode->array[i * 2 + 1] = node->array[i * 2 + 1];
+    }
+  }
+  return(newNode);
+}
+
+Value *createNode(int shift,
+		  int64_t key1hash, Value *key1, Value *val1,
+		  int64_t key2hash, Value *key2, Value *val2)
+{
+  if (shift > 60) {
+    fprintf(stderr, "Ran out of shift!!!!!!");
+    abort();
+  }
+  BitmapIndexedNode *newNode = malloc_bmiNode(2);
+  int key1bit = bitpos(key1hash, shift);
+  int key2bit = bitpos(key2hash, shift);
+  newNode->bitmap = key1bit | key2bit;
+  int key1idx = __builtin_popcount(newNode->bitmap & (key1bit - 1));
+  int key2idx = __builtin_popcount(newNode->bitmap & (key2bit - 1));
+  if (key1bit == key2bit) {
+    newNode->array[0] = (Value *)0;
+    newNode->array [1] = createNode(shift + 5, key1hash, key1, val1,
+				    key2hash, key2, val2);
+  } else {
+    newNode->array[key1idx * 2] = key1;
+    newNode->array[key1idx * 2 + 1] = val1;
+    newNode->array[key2idx * 2] = key2;
+    newNode->array[key2idx * 2 + 1] = val2;
+  }
+  return((Value *)newNode);
+}
+
+Value *bmiHashSeq(Value *arg0, Value *arg1) {
+  BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
+  int cnt = __builtin_popcount(node->bitmap);
+  List *seq = (List *)arg1;
+  for (int i = 0; i < cnt; i++) {
+    if (node->array[2 * i] == (Value *)0) {
+      seq = (List *)hashSeq((List *)0, incRef(node->array[2 * i + 1], 1), (Value *)seq);
+    } else {
+      List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
+      incRef(node->array[2 * i], 1);
+      incRef(node->array[2 * i + 1], 1);
+      seq = listCons((Value *)pair, seq);
+    }
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)seq);
+}
+
+Value *bmiCount(Value *arg0) {
+  BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
+  int cnt = __builtin_popcount(((BitmapIndexedNode *)arg0)->bitmap);
+  int accum = 0;
+  for(int i = 0; i < cnt; i++) {
+    if (node->array[i * 2] == (Value *)0 && node->array[i * 2 + 1] != (Value *)0) {
+      Integer *subCnt = (Integer *)count((List *)0,
+					 incRef(((BitmapIndexedNode *)arg0)->array[i * 2 + 1], 1));
+      accum += subCnt->numVal;
+      dec_and_free((Value *)subCnt, 1);
+    } else {
+      accum++;
+    }
+  }
+  dec_and_free(arg0, 1);
+  return(integerValue(accum));
+}
+
+Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4) {
+  BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
+  Value *key = arg1;
+  Value *val = arg2;
+  int64_t hash = ((Integer *)arg3)->numVal;
+  int shift = (int)((Integer *)arg4)->numVal;
+
+  int bit = bitpos(hash, shift);
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+  if (node->bitmap & bit) {
+    // if the hash position is already filled
+    Value *keyOrNull = node->array[2 * idx];
+    Value *valOrNode = node->array[2 * idx + 1];
+    if (keyOrNull == (Value *)0) {
+      // There is no key in the position, so valOrNode is
+      // pointer to a node.
+      Value *newShift = (Value *)integerValue(shift + 5);
+      Value *n = assoc((List *)0, incRef(valOrNode, 1), key, val, arg3, newShift);
+      if (n == valOrNode) {
+// TODO: untested code path
+printf("bmi assoc* 3!!\n");
+abort();
+        // the key was already associated with the value
+        // so do nothing
+        dec_and_free(n, 1);
+        return(arg0);
+      } else {
+        // clone node and add n to it
+        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, n);
+        dec_and_free(arg0, 1);
+        dec_and_free(arg4, 1);
+        return((Value *)newNode);
+      }
+    } else if (equal(incRef(key, 1), incRef(keyOrNull, 1))) {
+      // if the keyOrNull points to a value that is equal to key
+      // create new hash-map with valOrNode replaced by val
+      // clone node and add val to it
+      BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, key, val);
+      dec_and_free((Value *)node, 1);
+      dec_and_free((Value *)arg3, 1);
+      dec_and_free((Value *)arg4, 1);
+      return((Value *)newNode);
+    } else {
+      // there is already a key/val pair at the position where key
+      // would be placed. Extend tree a level
+      Value *hashValue = sha1((List *)0, incRef(keyOrNull, 1));
+      int64_t existingKeyHash = ((Integer *)hashValue)->numVal;
+      dec_and_free(hashValue, 1);
+      if (existingKeyHash == hash) {
+        // make & return HashCollisionNode
+        HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
+        newLeaf->array[0] = keyOrNull;
+        newLeaf->array[1] = valOrNode;
+        newLeaf->array[2] = key;
+        newLeaf->array[3] = val;
+        incRef((Value *)keyOrNull, 1);
+        incRef((Value *)valOrNode, 1);
+
+        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, (Value *)newLeaf);
+        dec_and_free((Value *)node, 1);
+        dec_and_free(arg3, 1);
+        dec_and_free(arg4, 1);
+        return((Value *)newNode);
+      } else {
+        Value *newLeaf = createNode(shift + 5,
+                                    existingKeyHash, incRef(keyOrNull, 1), incRef(valOrNode, 1),
+                                    hash, key, val);
+        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, newLeaf);
+        dec_and_free((Value *)node, 1);
+        dec_and_free(arg3, 1);
+        dec_and_free(arg4, 1);
+        return((Value *)newNode);
+      }
+    }
+  } else {
+    // the position in the node is empty
+    int n = __builtin_popcount(node->bitmap);
+    if (n >= 16) {
+      ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
+      int jdx = mask(hash, shift);
+      Value *newShift = (Value *)integerValue(shift + 5);
+      newNode->array[jdx] = assoc((List *)0, (Value *)&emptyBMI, key, val, arg3, incRef(newShift, 1));
+      for (int i = 0, j = 0; i < 32; i++) {
+        if ((node->bitmap >> i) & 1) {
+          if (node->array[j] == (Value *)0) {
+            newNode->array[i] = node->array[j + 1];
+            incRef(newNode->array[i], 1);
+          } else {
+            incRef(node->array[j], 2);
+            newNode->array[i] = assoc((List *)0, (Value *)&emptyBMI,
+                                      node->array[j],
+                                      incRef(node->array[j + 1], 1),
+                                      sha1((List *)0, node->array[j]),
+                                      incRef(newShift, 1));
+          }
+          j += 2;
+        }
+      }
+      dec_and_free((Value *)node, 1);
+      dec_and_free(arg4, 1);
+      dec_and_free(newShift, 1);
+      return((Value *)newNode);
+    } else {
+      int itemCount = n + 1;
+      BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
+      newNode->bitmap = node->bitmap | bit;
+      for (int i = 0; i < idx * 2; i++) {
+        if (node->array[i] != (Value *)0) {
+          incRef(node->array[i], 1);
+        }
+        newNode->array[i] = node->array[i];
+      }
+      newNode->array[2 * idx] = key;
+      newNode->array[2 * idx + 1] = val;
+      for (int i = idx * 2; i < n * 2; i++) {
+        if (node->array[i] != (Value *)0) {
+          incRef(node->array[i], 1);
+        }
+        newNode->array[i + 2] = node->array[i];
+      }
+      dec_and_free((Value *)node, 1);
+      dec_and_free(arg3, 1);
+      dec_and_free(arg4, 1);
+      return((Value *)newNode);
+    }
+  }
+}
+
+Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
+  BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
+  Value *key = arg1;
+  int64_t hash = ((Integer *)arg3)->numVal;
+  int shift = (int)((Integer *)arg4)->numVal;
+
+  int bit = bitpos(hash, shift);
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+  if (node->bitmap & bit) {
+    // if the hash position is filled
+    Value *keyOrNull = node->array[2 * idx];
+    Value *valOrNode = node->array[2 * idx + 1];
+    if (keyOrNull == (Value *)0) {
+      // There is no key in the position, so valOrNode is
+      // pointer to a node.
+      Value *newShift = (Value *)integerValue(shift + 5);
+      Value *v = get((List *)0, incRef(valOrNode, 1), key, arg2, arg3, newShift);
+      dec_and_free(arg0, 1);
+      dec_and_free(arg4, 1);
+      return(v);
+    } else {
+// breakpoint here
+      incRef(keyOrNull, 1);
+      if (equal(key, keyOrNull)) {
+        // found 'key' at this position
+        incRef(valOrNode, 1);
+        dec_and_free(arg0, 1);
+        dec_and_free(arg2, 1);
+        dec_and_free(arg3, 1);
+        dec_and_free(arg4, 1);
+        return(valOrNode);
+      } else {
+      // there's a key in this position, but doesn't equal 'key'
+        dec_and_free(arg0, 1);
+        dec_and_free(arg3, 1);
+        dec_and_free(arg4, 1);
+        return(arg2);
+      }
+    }
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    dec_and_free(arg3, 1);
+    dec_and_free(arg4, 1);
+    return(arg2);
+  }
+}
+
+Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
+  BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
+  Value *key = arg1;
+  int64_t hash = ((Integer *)arg2)->numVal;
+  int shift = (int)((Integer *)arg3)->numVal;
+
+  int bit = bitpos(hash, shift);
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+  if (node->bitmap & bit) {
+    // if the hash position is already filled
+    Value *keyOrNull = node->array[2 * idx];
+    Value *valOrNode = node->array[2 * idx + 1];
+    if (keyOrNull == (Value *)0) {
+      // There is no key in the position, so valOrNode is
+      // pointer to a node.
+      Value *newShift = (Value *)integerValue(shift + 5);
+      Value *n = dissoc((List *)0, incRef(valOrNode, 1), key, arg2, newShift);
+      if (n == valOrNode) {
+// TODO: untested code path
+printf("bmi dissoc* 3\n");
+abort();
+        // the key was not in the hash-map
+        // so do nothing
+        dec_and_free(n, 1);
+        incRef(arg0, 1);
+        return(arg0);
+      } else if (n == (Value *)0 && __builtin_popcount(node->bitmap) == 1) {
+// TODO: untested code path
+printf("bmi dissoc* 4\n");
+abort();
+        // the subtree is now empty, and this node only points to it, so propagate
+        return(n);
+      } else {
+        // clone node and add n to it
+        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, n);
+        dec_and_free(arg0, 1);
+        dec_and_free(arg3, 1);
+        return((Value *)newNode);
+      }
+    } else if (equal(key, incRef(keyOrNull, 1))) {
+      // if the keyOrNull points to a value that is equal to key
+      if (__builtin_popcount(node->bitmap) == 1) {
+        // and that is the only entry in this node
+        dec_and_free(arg0, 1);
+        dec_and_free(arg2, 1);
+        dec_and_free(arg3, 1);
+        return((Value *)&emptyBMI);
+      } else {
+        // create new hash-map with keyOrNull and valOrNode replaced by (Value *)0
+        int itemCount = __builtin_popcount(node->bitmap);
+        BitmapIndexedNode *newNode = malloc_bmiNode(itemCount - 1);
+        newNode->bitmap = node->bitmap;
+        int i, j;
+        for (i = 0, j = 0; i < itemCount; i++) {
+          if (i != idx) {
+            if (node->array[i * 2] != (Value *)0) {
+              incRef(node->array[i * 2], 1);
+            }
+            if (node->array[i * 2 + 1] != (Value *)0) {
+              incRef(node->array[i * 2 + 1], 1);
+            }
+            newNode->array[j * 2] = node->array[i * 2];
+            newNode->array[j * 2 + 1] = node->array[i * 2 + 1];
+            j++;
+          }
+        }
+        newNode->bitmap &= ~bit;
+        dec_and_free(arg0, 1);
+        dec_and_free(arg2, 1);
+        dec_and_free(arg3, 1);
+        return((Value *)newNode);
+      }
+    } else {
+// TODO: untested code path
+printf("bmi dissoc* 9\n");
+abort();
+      // there is already a key/val pair at the position where key
+      // would be. Do nothing
+      incRef(arg0, 1);
+      return(arg0);
+    }
+  } else {
+    // the position in the node is empty, do nothing
+    dec_and_free(arg1, 1);
+    dec_and_free(arg2, 1);
+    dec_and_free(arg3, 1);
+    return(arg0);
+  }
+}
+
+Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value *arg4) {
+  ArrayNode *node = (ArrayNode *)arg0;
+  Value *key = arg1;
+  Value *val = arg2;
+  int64_t hash = ((Integer *)arg3)->numVal;
+  int shift = (int)((Integer *)arg4)->numVal;
+  int idx = mask(hash, shift);
+  Value *newShift = (Value *)integerValue(shift + 5);
+  ArrayNode *newNode;
+
+  Value *subNode = node->array[idx];
+  Value *keyHash = sha1((List *)0, incRef(key, 1));
+  if (subNode == (Value *)0) {
+    newNode = (ArrayNode *)malloc_arrayNode();
+    for (int i = 0; i < 32; i++) {
+      if (node->array[i] != (Value *)0) {
+	newNode->array[i] = node->array[i];
+	incRef(newNode->array[i], 1);
+      }
+    }
+    newNode->array[idx] = assoc((List *)0, (Value *)&emptyBMI, key, val, keyHash, newShift);
+  } else {
+    Value *n = assoc((List *)0, incRef(subNode, 1), key, val, keyHash, newShift);
+    newNode = (ArrayNode *)malloc_arrayNode();
+    for (int i = 0; i < 32; i++) {
+      if (i != idx && node->array[i] != (Value *)0) {
+	newNode->array[i] = node->array[i];
+	incRef(newNode->array[i], 1);
+      }
+    }
+    newNode->array[idx] = n;
+  }
+  dec_and_free((Value *)node, 1);
+  dec_and_free(arg3, 1);
+  dec_and_free(arg4, 1);
+  return((Value *)newNode);
+}
+
+Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
+  HashCollisionNode *node = (HashCollisionNode *)arg0;
+  Value *key = arg1;
+  Value *val = arg2;
+  int64_t hash = ((Integer *)arg3)->numVal;
+  int shift = (int)((Integer *)arg4)->numVal;
+  int itemCount = node->count / 2;
+
+  if(equal(sha1((List *)0, incRef(node->array[0], 1)), incRef(arg3, 1))) {
+     HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
+     for (int i = 0; i < itemCount; i++) {
+        if (equal(incRef(node->array[2 * i], 1), incRef(key, 1))) {
+           newNode->array[2 * i] = key;
+           // incRef(key, 1);
+           newNode->array[2 * i + 1] = val;
+           newNode->count -= 2;
+        } else {
+           newNode->array[2 * i] = node->array[2 * i];
+           incRef(node->array[2 * i], 1);
+           newNode->array[2 * i + 1] = node->array[2 * i + 1];
+           incRef(node->array[2 * i + 1], 1);
+        }
+     }
+     if (newNode->count / 2 != itemCount) {
+        newNode->array[2 * itemCount] = key;
+        newNode->array[2 * itemCount + 1] = val;
+     }
+     dec_and_free(arg0, 1);
+     dec_and_free(arg3, 1);
+     dec_and_free(arg4, 1);
+     return((Value *)newNode);
+  } else {
+// TODO: untested code path
+printf("collision assoc* 5\n");
+abort();
+     BitmapIndexedNode *bmi = &emptyBMI;
+     Integer newShift = {IntegerType, -1, 0};
+
+     bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, key, val, arg3, (Value *)&newShift);
+     for (int i = 0; i < itemCount; i++) {
+// TODO: untested code path
+printf("collision assoc* 6\n");
+abort();
+        bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, node->array[2 * i], node->array[2 * i + 1],
+                                         sha1((List *)0, node->array[i]), (Value *)&newShift);
+     }
+     return((Value *)bmi);
+  }
+}
+
+Value notFound = {65000, -1};
+Value *notFoundPtr = &notFound;
+
+Value *hashMapGet(Value *arg0, Value *arg1) {
+  incRef(arg1, 1);
+  Value *hash = sha1((List *)0, arg1);
+  Value *shift = const0Ptr;
+  Value *found = get((List *)0, arg0, arg1, notFoundPtr, hash, shift);
+  if (found == notFoundPtr) {
+    return(nothing);
+  } else {
+    return(maybe((List *)0, (Value *)0, found));
+  }
+}
+
+Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
+  ArrayNode *node = (ArrayNode *)arg0;
+  Value *key = arg1;
+  Value *notFound = arg2;
+  int64_t hash = ((Integer *)arg3)->numVal;
+  int shift = (int)((Integer *)arg4)->numVal;
+  int idx = mask(hash, shift);
+  Value *newShift = (Value *)integerValue(shift + 5);
+
+  Value *subNode = node->array[idx];
+  if (subNode == (Value *)0) {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    dec_and_free(arg3, 1);
+    dec_and_free(arg4, 1);
+    dec_and_free(newShift, 1);
+    return(notFound);
+  } else {
+    dec_and_free(arg0, 1);
+    dec_and_free(arg4, 1);
+    return(get((List *)0, incRef(subNode, 1), key, notFound, arg3, newShift));
+  }
+}
+
+Value *arrayNodeCount(Value *arg0) {
+  int accum = 0;
+  for(int i = 0; i < 32; i++){
+    if (((ArrayNode *)arg0)->array[i] != (Value *)0) {
+      Integer *subCnt = (Integer *)count((List *)0, incRef(((ArrayNode *)arg0)->array[i], 1));
+      accum += subCnt->numVal;
+      dec_and_free((Value *)subCnt, 1);
+    }
+  }
+  dec_and_free(arg0, 1);
+  return(integerValue(accum));
+}
+
+Value *collisionCount(Value *arg0) {
+  Value *result = integerValue(((HashCollisionNode *) arg0)->count / 2);
+  dec_and_free(arg0, 1);
+  return(result);
+}
+
+Value *collisionSeq(Value *arg0, Value *arg1) {
+  HashCollisionNode *node = (HashCollisionNode *)arg0;
+  List *seq = (List *)arg1;
+  for (int i = 0; i < node->count / 2; i++) {
+    if (node->array[2 * i] != (Value *)0 && node->array[2 * i + 1] != (Value *)0) {
+      List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
+      incRef(node->array[2 * i], 1);
+      incRef(node->array[2 * i + 1], 1);
+      seq = listCons((Value *)pair, seq);
+    }
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)seq);
+}
+
+Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
+  HashCollisionNode *node = (HashCollisionNode *)arg0;
+  Value *key = arg1;
+  int64_t hash = ((Integer *)arg2)->numVal;
+  int shift = (int)((Integer *)arg3)->numVal;
+  HashCollisionNode *newNode;
+  int itemCount = node->count / 2;
+
+  if(itemCount == 1) {
+// TODO: untested code path
+printf("collision dissoc 1\n");
+abort();
+    if(equal(incRef(node->array[0], 1), key)) {
+// TODO: untested code path
+printf("collision dissoc 2\n");
+abort();
+      dec_and_free(arg0, 1);
+      dec_and_free(arg2, 1);
+      dec_and_free(arg3, 1);
+      return((Value *)&emptyBMI);
+    } else {
+// TODO: untested code path
+printf("collision dissoc 3\n");
+abort();
+      dec_and_free(arg2, 1);
+      dec_and_free(arg3, 1);
+      return(arg0);
+    }
+  } else {
+    int keyIdx = -1;
+    for (int i = 0; i < itemCount; keyIdx++, i++) {
+      if (equal(incRef(node->array[2 * i], 1), incRef(key, 1))) {
+// TODO: untested code path
+printf("collision dissoc 4\n");
+abort();
+        keyIdx = i;
+      }
+    }
+    if(keyIdx >= 0) {
+      newNode = malloc_hashCollisionNode(itemCount - 1);
+      for (int i = 0, j = 0; i < itemCount; i++) {
+        if (i != keyIdx) {
+          newNode->array[j * 2] = node->array[i * 2];
+          newNode->array[j * 2 + 1] = node->array[i * 2 + 1];
+          incRef(newNode->array[j * 2], 1);
+          incRef(newNode->array[j * 2 + 1], 1);
+          j++;
+        }
+      }
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      dec_and_free(arg2, 1);
+      dec_and_free(arg3, 1);
+      return((Value *)newNode);
+    }
+  }
+  return(arg0);
+}
+
+Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
+  HashCollisionNode *node = (HashCollisionNode *)arg0;
+  List *seq = (List *)arg1;
+  for (int i = 0; i < node->count / 2; i++) {
+     incRef(arg1, 1);
+     if (node->array[2 * i] != (Value *)0 && equal(arg1, incRef(node->array[2 * i], 1))) {
+        if (node->array[2 * i + 1] != (Value *)0) {
+          incRef(node->array[2 * i + 1], 1);
+          dec_and_free(arg0, 1);
+          dec_and_free(arg1, 1);
+          dec_and_free(arg2, 1);
+          dec_and_free(arg3, 1);
+          dec_and_free(arg4, 1);
+          return(node->array[2 * i + 1]);
+        } else {
+// TODO: untested code path
+printf("collision get 4\n");
+abort();
+          dec_and_free(arg0, 1);
+          dec_and_free(arg1, 1);
+          dec_and_free(arg3, 1);
+          dec_and_free(arg4, 1);
+          return(arg2);
+        }
+     }
+  }
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  dec_and_free(arg3, 1);
+  dec_and_free(arg4, 1);
+  return(arg2);
+}
+
+Value *arrayNodeSeq(Value *arg0, Value *arg1) {
+  ArrayNode *node = (ArrayNode *)arg0;
+  List *seq = (List *)arg1;
+  for (int i = 0; i < 32; i++) {
+    if (node->array[i] != (Value *)0) {
+      incRef(node->array[i], 1);
+      seq = (List *)hashSeq((List *)0, node->array[i], (Value *)seq);
+    }
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)seq);
+}
+
+Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
+  ArrayNode *node = (ArrayNode *)arg0;
+  Value *key = arg1;
+  int64_t hash = ((Integer *)arg2)->numVal;
+  int shift = (int)((Integer *)arg3)->numVal;
+  int idx = mask(hash, shift);
+  Value *newShift = (Value *)integerValue(shift + 5);
+  ArrayNode *newNode;
+
+  Value *subNode = node->array[idx];
+  if (subNode == (Value *)0) {
+// TODO: untested code path
+printf("arrayNode dissoc* 1\n");
+abort();
+    // do nothing
+    incRef(arg0, 1);
+    dec_and_free(newShift, 1);
+    return(arg0);
+  } else {
+      Value *hash = sha1((List *)0, incRef(key, 1));
+      Value *n = dissoc((List *)0, incRef(subNode, 1), key, hash, newShift);
+      newNode = (ArrayNode *)malloc_arrayNode();
+      for (int i = 0; i < 32; i++) {
+        if (i != idx && node->array[i] != (Value *)0) {
+          newNode->array[i] = node->array[i];
+          incRef(newNode->array[i], 1);
+        }
+      }
+      newNode->array[idx] = n;
+      dec_and_free(arg0, 1);
+      dec_and_free(arg2, 1);
+      dec_and_free(arg3, 1);
+  }
+  return((Value *)newNode);
 }

@@ -22,6 +22,9 @@ typedef struct {int64_t type; int32_t refs; Value* value;} Maybe;
 typedef struct {int64_t type; int32_t refs; Value *array[VECTOR_ARRAY_LEN];} VectorNode;
 typedef struct {int64_t type; int32_t refs; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
+typedef struct {int64_t type; int32_t refs; int32_t bitmap; Value *array[];} BitmapIndexedNode;
+typedef struct {int64_t type; int32_t refs; Value *array[32];} ArrayNode;
+typedef struct {int64_t type; int32_t refs; int16_t count; Value *array[];} HashCollisionNode;
 typedef struct {int64_t type; int32_t refs; Value *typeArgs; int implCount;
                 Value* impls[];} ReifiedVal;
 
@@ -55,16 +58,16 @@ int32_t refsError;
 #define VectorType 8
 #define VectorNodeType 9
 #define SymbolType 10
-#define TypeCount 11
-
-#define BitmapIndexedType 0
-#define ArrayNodeType 0
-#define HashCollisionNodeType 0
-#define HashMapType 0
+#define BitmapIndexedType 11
+#define ArrayNodeType 12
+#define HashCollisionNodeType 13
+#define HashMapType 14
+#define TypeCount 15
 
 FILE *outstream;
 List *empty_list;
 Vector *empty_vect;
+BitmapIndexedNode emptyBMI;
 
 #define CHECK_MEM_LEAK 1
 
@@ -102,12 +105,12 @@ Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
 void prefs(char *tag, Value *v);
 
 Value *(*equalSTAR)(List *closures, Value *, Value *);
-// Value *(*assoc)(List *closures, Value *, Value *, Value *, Value *, Value *);
-// Value *(*dissoc)(List *closures, Value *, Value *, Value *, Value *);
-// Value *(*get)(List *, Value *, Value *, Value *, Value *, Value *);
-// Value *(*sha1)(List *, Value *);
-// Value *(*hashSeq)(List *, Value* n, Value *s);
-// Value *(*count)(List *, Value* n);
+Value *(*assoc)(List *closures, Value *, Value *, Value *, Value *, Value *);
+Value *(*dissoc)(List *closures, Value *, Value *, Value *, Value *);
+Value *(*get)(List *, Value *, Value *, Value *, Value *, Value *);
+Value *(*sha1)(List *, Value *);
+Value *(*hashSeq)(List *, Value* n, Value *s);
+Value *(*count)(List *, Value* n);
 // Value *(*apply)(List *closures, Value *f, Value *args);
 Value *(*invoke0Args)(List *closures, Value *f);
 Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
@@ -178,3 +181,19 @@ Value *stringValue(char *s);
 Value *maybeInvoke(Value *arg0, Value *arg1, Value *arg2);
 Value *listFilter(Value *arg0, Value *arg1);
 List *reverseList(List *input);
+Value *bmiHashSeq(Value *arg0, Value *arg1);
+Value *bmiCount(Value *arg0);
+Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4);
+Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4);
+Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3);
+Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value *arg4);
+Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4);
+Value *hashMapGet(Value *arg0, Value *arg1);
+Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4);
+Value *collisionCount(Value *arg0);
+Value *arrayNodeCount(Value *arg0);
+Value *collisionSeq(Value *arg0, Value *arg1);
+Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3);
+Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4);
+Value *arrayNodeSeq(Value *arg0, Value *arg1);
+Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3);

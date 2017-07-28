@@ -8,6 +8,7 @@
 (def Symbol (inline C Integer "(Value *)&(Integer){IntegerType, -1, SymbolType};"))
 (def Vector (inline C Integer "(Value *)&(Integer){IntegerType, -1, VectorType};"))
 (def Function (inline C Integer "(Value *)&(Integer){IntegerType, -1, FunctionType};"))
+(def HashMap (inline C Integer "(Value *)&(Integer){IntegerType, -1, HashMapType};"))
 
 (defn maybe [v]
   ;; wrap `v` in a Maybe value
@@ -1051,6 +1052,9 @@
          (vec= x y (count x))
          (maybe x))))
 
+(def emptyBMI
+  (inline C BitmapIndexedNode "(Value *)&emptyBMI"))
+
 (defn identity [x] x)
 
 (defn partitioner [l part n]
@@ -1080,3 +1084,131 @@
   ;; paritally apply `f` to `args` creating a new function that expects more arguments
   (fn [& more-args]
     (apply f (comp args more-args))))
+
+(defn every [coll f]
+  (or (and (empty? coll))
+      (and (flat-map (first coll) f)
+           (every (rest coll) f))))
+
+
+(extend-type BitmapIndexedNode
+  Type
+  (type-name [_] "BitmapIndexedNode")
+
+  HashMapNode
+  (hash-seq [m s]
+    (inline C "return(bmiHashSeq(arg0, arg1));"))
+
+  (assoc* [m k v hash shift]
+    (inline C "return(bmiAssoc(arg0, arg1, arg2, arg3, arg4));"))
+
+  (dissoc* [node k hash shift]
+    (inline C "return(bmiDissoc(arg0, arg1, arg2, arg3));"))
+
+  (get* [node k v hash shift]
+    (inline C "return(bmiGet(arg0, arg1, arg2, arg3, arg4));"))
+
+  Collection
+  (count [x]
+    (inline C Integer "return(bmiCount(arg0));")))
+
+(extend-type ArrayNode
+  Type
+  (type-name [_] "ArrayNode")
+
+  Collection
+  (count [_]
+    (inline C "return(arrayNodeCount(arg0));"))
+
+  HashMapNode
+  (assoc* [m k v hash shift]
+    (inline C "return(arrayNodeAssoc(arg0, arg1, arg2, arg3, arg4));"))
+
+  (hash-seq [m s]
+    (inline C "return(arrayNodeSeq(arg0, arg1));"))
+
+  (get* [m k v hash shift]
+    (inline C "return(arrayNodeGet(arg0, arg1, arg2, arg3, arg4));"))
+
+  (dissoc* [m k hash shift]
+    (inline C "return(arrayNodeDissoc(arg0, arg1, arg2, arg3));")))
+
+(extend-type HashCollisionNode
+  Type
+  (type-name [_] "HashCollisionNode")
+
+  Collection
+  (count [_]
+    (inline C "return(collisionCount(arg0));"))
+
+  HashMapNode
+  (assoc* [node k v hash shift]
+    (inline C "return(collisionAssoc(arg0, arg1, arg2, arg3, arg4));"))
+
+  (dissoc* [node k hash shift]
+    (inline C "return(collisionDissoc(arg0, arg1, arg2, arg3));"))
+
+  (hash-seq [m s]
+    (inline C "return(collisionSeq(arg0, arg1));"))
+
+  (get* [node k v hash shift]
+    (inline C "return(collisionGet(arg0, arg1, arg2, arg3, arg4));")))
+
+(extend-type HashMap
+  Type
+  (type-name [_] "HashMap")
+
+  Composition
+  (zero [_] emptyBMI)
+  (comp* [mval mvals]
+    (reduce mvals mval
+            (fn [acc mval]
+              (reduce (seq mval) acc
+                      (fn [acc pair]
+                        (apply assoc acc pair))))))
+
+  Collection
+  (empty? [x]
+    (and (= 0 (count x))
+         (maybe emptyBMI)))
+
+  Stringable
+  (string-list [n]
+    (let [a-list (seq n)]
+      (let [kv-strs (map a-list (fn [[k v]]
+                                  (comp (string-list k) (list " ") (string-list v))))]
+        (comp (list "{")
+              (flatten (interpose kv-strs (list ", ")))
+              (list "}")))))
+
+  Seqable
+  (seq [n]
+    (hash-seq n empty-list))
+
+  Eq
+  (=* [x y]
+    (and (instance? HashMap y)
+         (every (seq x) (fn [[k v]]
+                          (flat-map (get y k)
+                                    (partial = v))))
+         (maybe x)))
+
+  Associative
+  (keys [m]
+    (map (seq m) (fn [[k v]] k)))
+  (vals [m]
+    (map (seq m) (fn [[k v]] v)))
+  (get [m k]
+    (inline C "return(hashMapGet(arg0, arg1));"))
+  (dissoc [m k]
+    (dissoc* m k (sha1 k) 0))
+  (assoc [m k v]
+    (assoc* m k v (sha1 k) 0))
+  )
+
+
+(defn hash-map [& kv-pairs]
+  (reduce (partition kv-pairs 2)
+          emptyBMI
+          (fn [m [k v]]
+            (assoc* m k v (sha1 k) 0))))

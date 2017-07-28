@@ -177,3 +177,7 @@ Being able to create new datatypes by combining existing ones is a key form of a
 ## Entry 31:
 
 Ensure the Function type performs as expected
+
+## Entry 32:
+
+One of the most-used data structures (in Clojure, at least) is the HashMap. Here's the implementation for it in Toccata.
