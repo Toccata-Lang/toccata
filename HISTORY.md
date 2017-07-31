@@ -181,3 +181,7 @@ Ensure the Function type performs as expected
 ## Entry 32:
 
 One of the most-used data structures (in Clojure, at least) is the HashMap. Here's the implementation for it in Toccata.
+
+## Entry 33:
+
+No modern programming language is complete without a concurrency story. For Toccata, that revolves around the Promise and Future datatypes. This is their story.

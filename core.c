@@ -18,6 +18,11 @@ Value *nothing = (Value *)&(Maybe){MaybeType, -1, 0};
 List *empty_list = &(List){ListType,-1,0,0,0};
 Vector *empty_vect = &(Vector){VectorType,-1,0,5,0,0};
 
+#define NUM_WORKERS 10
+pthread_t workers[NUM_WORKERS];
+int32_t runningWorkers = NUM_WORKERS;
+int8_t mainThreadDone = 0;
+
 int mask(int64_t hash, int shift) {
   return (hash >> shift) & 0x1f;
 }
@@ -672,6 +677,73 @@ void freeArrayNode(Value *v) {
   freeArrayNodes.head = v;
 }
 
+FreeValList centralFreePromises = (FreeValList){(Value *)0, 0};
+__thread FreeValList freePromises = {(Value *)0, 0};
+Promise *malloc_promise() {
+  Promise *newPromise = (Promise *)freePromises.head;
+  if (newPromise == (Promise *)0) {
+    newPromise = (Promise *)removeFreeValue(&centralFreePromises);
+    if (newPromise == (Promise *)0) {
+        newPromise = (Promise *)my_malloc(sizeof(Promise));
+    }
+  } else {
+    freePromises.head = freePromises.head->next;
+  }
+  memset(newPromise, 0, sizeof(Promise));
+  newPromise->type = PromiseType;
+  __atomic_store(&newPromise->refs, &refsInit, __ATOMIC_RELAXED);
+  newPromise->result = (Value *)0;
+  // newPromise->actions = empty_list;
+  pthread_cond_init(&newPromise->delivered, NULL);
+  pthread_mutex_init(&newPromise->access, NULL);
+  return(newPromise);
+}
+
+void freePromise(Value *v) {
+ // List *actions = ((Promise *)v)->actions;
+ Value *result = ((Promise *)v)->result;
+ // if (actions != (List *)0)
+ //   dec_and_free((Value *)actions, 1);
+ if (result != (Value *)0)
+   dec_and_free(result, 1);
+ v->next = freePromises.head;
+ freePromises.head = v;
+}
+
+FreeValList centralFreeFutures = (FreeValList){(Value *)0, 0};
+__thread FreeValList freeFutures = {(Value *)0, 0};
+Future *malloc_future(int line) {
+  Future *newFuture = (Future *)freeFutures.head;
+  if (newFuture == (Future *)0) {
+    newFuture = (Future *)removeFreeValue(&centralFreeFutures);
+    if (newFuture == (Future *)0) {
+      newFuture = (Future *)my_malloc(sizeof(Future));
+    }
+  } else {
+    freeFutures.head = freeFutures.head->next;
+  }
+  memset(newFuture, 0, sizeof(Future));
+  newFuture->type = FutureType;
+  __atomic_store(&newFuture->refs, &refsInit, __ATOMIC_RELAXED);
+  newFuture->result = (Value *)0;
+  newFuture->action = (Value *)0;
+  newFuture->errorCallback = (Value *)0;
+  pthread_cond_init(&newFuture->delivered, NULL);
+  pthread_mutex_init(&newFuture->access, NULL);
+  return(newFuture);
+}
+
+void freeFuture(Value *v) {
+  Value *action = ((Future *)v)->action;
+  Value *result = ((Future *)v)->result;
+  if (action != (Value *)0)
+    dec_and_free(action, 1);
+  if (result != (Value *)0)
+    dec_and_free(result, 1);
+  v->next = freeFutures.head;
+  freeFutures.head = v;
+}
+
 #define FREE_FN_COUNT 20
 freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
                                        &freeInteger,
@@ -687,7 +759,9 @@ freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
 				       &freeBitmapNode,
 				       &freeArrayNode,
 				       &freeHashCollisionNode,
-				       NULL};
+				       NULL,
+                                       &freePromise,
+                                       &freeFuture};
 
 void dec_and_free(Value *v, int deltaRefs) {
   if (decRefs(v, deltaRefs) >= -1)
@@ -770,11 +844,11 @@ void freeAll() {
   for (int i = 0; i < 20; i++) {
     emptyFreeList(&centralFreeBMINodes[i]);
   }
-  // emptyFreeList(&centralFreeFutures);
-  // FreeValList listHead;
-  // __atomic_load((long long *)&centralFreeFutures,
-  //               (long long *)&listHead, __ATOMIC_RELAXED);
-  // emptyFreeList(&centralFreePromises);
+  emptyFreeList(&centralFreeFutures);
+  FreeValList listHead;
+  __atomic_load((long long *)&centralFreeFutures,
+                (long long *)&listHead, __ATOMIC_RELAXED);
+  emptyFreeList(&centralFreePromises);
   emptyFreeList(&centralFreeArrayNodes);
   emptyFreeList(&centralFreeSubStrings);
   emptyFreeList(&centralFreeFnArities);
@@ -836,10 +910,217 @@ void moveFreeToCentral() {
   moveToCentral(&freeVectors, &centralFreeVectors);
   moveToCentral(&freeVectorNodes, &centralFreeVectorNodes);
   moveToCentral(&freeFnArities, &centralFreeFnArities);
-  // moveToCentral(&freePromises, &centralFreePromises);
-  // moveToCentral(&freeFutures, &centralFreeFutures);
+  moveToCentral(&freePromises, &centralFreePromises);
+  moveToCentral(&freeFutures, &centralFreeFutures);
 }
 #endif
+
+List *reverseList(List *input) {
+  List *output = empty_list;
+  Value *item;
+  List *l = input;
+  while(l != (List *)0 && l->head != (Value *)0) {
+    item = l->head;
+    incRef(item, 1);
+    output = listCons(item, output);
+    l = l->tail;
+  }
+  dec_and_free((Value *)input, 1);
+  return(output);
+}
+
+void scheduleFuture(Future *fut) {
+  List *newList = malloc_list();
+  newList->head = (Value *)fut;
+  List *input;
+  __atomic_load(&futuresQueue.input, &input, __ATOMIC_RELAXED);
+  do {
+    newList->len = input->len + 1;
+    newList->tail = input;
+  } while (!__atomic_compare_exchange(&futuresQueue.input, &input, &newList, 0,
+				      __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+
+  // It is unusual to not hold the mutex when signalling the condition. But
+  // in this case it's ok. All the threads waiting on the condition are of
+  // equal priority, so it doesn't matter which one gets the next item in
+  // the queue. See this explanation for the reasoning behind this:
+  // https://groups.google.com/forum/?hl=ky#!msg/comp.programming.threads/wEUgPq541v8/ZByyyS8acqMJ
+  pthread_cond_signal(&futuresQueue.notEmpty);
+}
+
+void waitForWorkers() {
+  pthread_cond_broadcast(&futuresQueue.notEmpty);
+  for (int8_t i = 0; i < NUM_WORKERS; i++) {
+    pthread_join(workers[i], NULL);
+  }
+  pthread_mutex_lock (&futuresQueue.mutex);
+  List *l;
+  __atomic_load(&futuresQueue.output, &l, __ATOMIC_RELAXED);
+  dec_and_free((Value *)l, 1);
+
+  __atomic_load(&futuresQueue.input, &l, __ATOMIC_RELAXED);
+  dec_and_free((Value *)l, 1);
+  pthread_mutex_unlock (&futuresQueue.mutex);
+}
+
+Value *shutDown_impl(List *closures) {
+  Value *item;
+  moveFreeToCentral();
+  pthread_exit(NULL);
+  return(nothing);
+ };
+
+FnArity shutDown_arity = {FnArityType, -1, 0, (List *)0, 0, shutDown_impl};
+Function shutDownFn = {FunctionType, -1, "shutdown-workers", 1, {&shutDown_arity}};
+Future shutDown = {FutureType, -1, (Value *)&shutDownFn, (Value *)0, (Value *)0, 0};
+
+void stopWorkers() {
+  for (int32_t i = 0; i < NUM_WORKERS; i++)
+    scheduleFuture(&shutDown);
+}
+
+Value *readFuturesQueue() {
+  List *output;
+  __atomic_load(&futuresQueue.output, &output, __ATOMIC_RELAXED);
+  while (output != (List *)0 && output->len != 0 &&
+         !__atomic_compare_exchange(&futuresQueue.output, &output, &output->tail, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+      ;
+
+  if (output != (List *)0 && output->len != 0) {
+    Value *item = output->head;
+    output->head = (Value *)0;
+    output->tail = (List *)0;
+    int32_t refs;
+    __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
+    if (refs != 1) {
+      fprintf(stderr, "error reading futures queue 1\n");
+      abort();
+    }
+    dec_and_free((Value *)output, 1);
+    return(item);
+  } else {
+    pthread_mutex_lock (&futuresQueue.mutex);
+    __atomic_load(&futuresQueue.output, &output, __ATOMIC_RELAXED);
+    while (output != (List *)0 && output->len != 0 &&
+           !__atomic_compare_exchange(&futuresQueue.output, &output, &output->tail, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+        ;
+    if (output != (List *)0 && output->len != 0) {
+      Value *item = output->head;
+      output->head = (Value *)0;
+      output->tail = (List *)0;
+      int32_t refs;
+      __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
+      if (refs != 1) {
+        fprintf(stderr, "error reading futures queue 2\n");
+        abort();
+      }
+      dec_and_free((Value *)output, 1);
+      pthread_mutex_unlock (&futuresQueue.mutex);
+      return(item);
+    } else {
+      List *input;
+      __atomic_load(&futuresQueue.input, &input, __ATOMIC_RELAXED);
+      while (!__atomic_compare_exchange(&futuresQueue.input, &input, &empty_list, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+        ;
+
+      if (input == (List *)0 || input->len == 0) {
+        int32_t numRunning = __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+        if (numRunning <= 1 && mainThreadDone) {
+          stopWorkers();
+        } else {
+          moveFreeToCentral();
+          pthread_cond_wait(&futuresQueue.notEmpty, &futuresQueue.mutex);
+          __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+        }
+        pthread_mutex_unlock (&futuresQueue.mutex);
+        return(readFuturesQueue());
+      } else {
+        output = reverseList(input);
+
+        __atomic_store(&futuresQueue.output, &output->tail, __ATOMIC_RELAXED);
+        pthread_cond_signal(&futuresQueue.notEmpty);
+        pthread_mutex_unlock (&futuresQueue.mutex);
+
+        Value *item = output->head;
+        output->head = (Value *)0;
+        output->tail = (List *)0;
+        int32_t refs;
+        __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
+        if (refs != 1) {
+          fprintf(stderr, "error reading futures queue 3\n");
+          abort();
+        }
+        dec_and_free((Value *)output, 1);
+        return(item);
+      }
+    }
+  }
+}
+
+__thread int64_t workerIndex;
+void *futuresThread(void *input) {
+  workerIndex = (int64_t)input;
+  Future *future;
+  Value *result;
+  if (workerIndex >= 0)
+    future = (Future *)readFuturesQueue();
+  while(workerIndex >= 0 && future != (Future *)0) {
+    Value *f = future->action;
+    if(f->type != FunctionType) {
+// TODO: untested code path
+printf("futuresThread 1\n");
+abort();
+      result = invoke0Args(empty_list, f);
+    } else {
+      FnArity *arity = findFnArity(f, 0);
+      if(arity != (FnArity *)0 && !arity->variadic) {
+        FnType0 *fn = (FnType0 *)arity->fn;
+        result = fn(arity->closures);
+      } else if(arity != (FnArity *)0 && arity->variadic) {
+// TODO: untested code path
+printf("futuresThread 4\n");
+abort();
+        FnType1 *fn = (FnType1 *)arity->fn;
+        result = fn(arity->closures, (Value *)empty_list);
+      } else {
+        fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
+        abort();
+      }
+    }
+    int32_t refs;
+    __atomic_load(&future->refs, &refs, __ATOMIC_RELAXED);
+    if (refs != -1) {
+      pthread_mutex_lock (&future->access);
+      future->result = result;
+      pthread_cond_signal(&future->delivered);
+      pthread_mutex_unlock (&future->access);
+    }
+    dec_and_free((Value *)future, 1);
+    if (workerIndex >= 0) {
+      future = (Future *)readFuturesQueue();
+    }
+  }
+  moveFreeToCentral();
+  __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+  return(NULL);
+}
+
+int32_t numWorkers = NUM_WORKERS;
+void startWorkers() {
+  __atomic_store(&runningWorkers, &numWorkers, __ATOMIC_RELAXED);
+  for (int64_t i = 0; i < NUM_WORKERS; i++)
+    pthread_create(&workers[i], NULL, futuresThread, (void *)i);
+}
+
+void replaceWorker() {
+  pthread_t me = pthread_self();
+  for (int64_t i = 0; i < NUM_WORKERS; i++) {
+    if (pthread_equal(workers[i], me)) {
+      pthread_create(&workers[workerIndex], NULL, futuresThread, (void *)i);
+      workerIndex = -1;
+    }
+  }
+}
 
 char *extractStr(Value *v) {
   // Should only be used to print an error meessage when calling 'abort'
@@ -2568,6 +2849,8 @@ Value *symbol(Value *arg0) {
     SubString *s = (SubString *)arg0;
     buffer = s->buffer;
     len = s->len;
+  } else if (arg0->type == SymbolType) {
+    return(arg0);
   }
 
   SubString *subStr = malloc_substring();
@@ -2728,20 +3011,6 @@ Value *listFilter(Value *arg0, Value *arg1) {
     dec_and_free(arg1, 1);
     return((Value *)head);
   }
-}
-
-List *reverseList(List *input) {
-  List *output = empty_list;
-  Value *item;
-  List *l = input;
-  while(l != (List *)0 && l->head != (Value *)0) {
-    item = l->head;
-    incRef(item, 1);
-    output = listCons(item, output);
-    l = l->tail;
-  }
-  dec_and_free((Value *)input, 1);
-  return(output);
 }
 
 // Immutable hash-map ported from Clojure
@@ -3400,4 +3669,74 @@ abort();
       dec_and_free(arg3, 1);
   }
   return((Value *)newNode);
+}
+
+Value *deliverPromise(Value *arg0, Value *arg1) {
+  Promise *p = (Promise *)arg0;
+  if (p->result == (Value *)0) {
+    pthread_mutex_lock(&p->access);
+    if (p->result == (Value *)0) {
+      p->result = arg1;
+      pthread_cond_broadcast(&p->delivered);
+    }
+    pthread_mutex_unlock(&p->access);
+  }
+  return(arg0);
+}
+
+Value *extractPromise(Value *arg0) {
+  Promise *p = (Promise *)arg0;
+  if (p->result == (Value *)0) {
+    pthread_mutex_lock (&p->access);
+    if (p->result == (Value *)0) {
+      int rw = __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+      replaceWorker();
+      pthread_cond_wait(&p->delivered, &p->access);
+      rw = __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+    }
+    pthread_mutex_unlock (&p->access);
+  }
+  Value *result = p->result;
+  incRef(result, 1);
+  dec_and_free(arg0, 1);
+  return(result);
+}
+
+Value *promiseDelivered(Value *arg0) {
+  Promise *p = (Promise *)arg0;
+  if(p->result == (Value *)0) {
+    dec_and_free(arg0, 1);
+    return(nothing);
+  } else {
+    Value *mv = maybe((List *)0, (Value *)0, p->result);
+    incRef(p->result, 1);
+    dec_and_free(arg0, 1);
+    return((Value *)mv);
+  }
+}
+
+Value *extractFuture(Value *arg0) {
+  Future *f = (Future *)arg0;
+  if (f->result == (Value *)0) {
+    pthread_mutex_lock (&f->access);
+    if (f->result == (Value *)0) {
+      __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+      replaceWorker();
+      pthread_cond_wait(&f->delivered, &f->access);
+      __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+    }
+    pthread_mutex_unlock (&f->access);
+  }
+  Value *result = f->result;
+  incRef(result, 1);
+  dec_and_free((Value *)f, 1);
+  return(result);
+}
+
+Value *makeFuture(Value *arg0) {
+  Future *f = malloc_future(__LINE__);
+  f->action = arg0;
+  incRef((Value *)f, 1);
+  scheduleFuture(f);
+  return((Value *)f);
 }

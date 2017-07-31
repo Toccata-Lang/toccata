@@ -9,6 +9,8 @@
 (def Vector (inline C Integer "(Value *)&(Integer){IntegerType, -1, VectorType};"))
 (def Function (inline C Integer "(Value *)&(Integer){IntegerType, -1, FunctionType};"))
 (def HashMap (inline C Integer "(Value *)&(Integer){IntegerType, -1, HashMapType};"))
+(def Promise (inline C Integer "(Value *)&(Integer){IntegerType, -1, PromiseType};"))
+(def Future (inline C Integer "(Value *)&(Integer){IntegerType, -1, FutureType};"))
 
 (defn maybe [v]
   ;; wrap `v` in a Maybe value
@@ -1203,12 +1205,79 @@
   (dissoc [m k]
     (dissoc* m k (sha1 k) 0))
   (assoc [m k v]
-    (assoc* m k v (sha1 k) 0))
-  )
-
+    (assoc* m k v (sha1 k) 0)))
 
 (defn hash-map [& kv-pairs]
   (reduce (partition kv-pairs 2)
           emptyBMI
           (fn [m [k v]]
             (assoc* m k v (sha1 k) 0))))
+
+
+(defn deliver [p v]
+  (inline C Promise "return(deliverPromise(arg0, arg1));"))
+
+(defn delivered [p]
+  (inline C "return(promiseDelivered(arg0));"))
+
+(extend-type Promise
+  Type
+  (type-name [_] "Promise")
+
+  Stringable
+  (string-list [p]
+    (extract (or (flat-map (delivered p)
+                           (fn [x]
+                             (flat-map (first (string-list x))
+                                       (fn [x-str]
+                                         (list "<Promise " x-str ">")))))
+                 (maybe (list "<Promise>")))))
+
+  Container
+
+  (extract [prom]
+    (inline C "return(extractPromise(arg0));")))
+  ;; (map [p f]
+  ;;   (print-err 'promise-map)
+  ;;   (abort))
+  ;; (wrap [_ v] (promise v))
+  ;; (apply* [f vs]
+  ;;   ;; TODO: wrong. This waits on 'vs' at application time
+  ;;   (promise (apply (extract f) (map vs extract))))
+  ;; (flat-map [v f]
+  ;;   ;; TODO: wrong. This waits on 'v' at application time
+  ;;   (f (extract v)))
+
+(defn promise
+  ([] (inline C Promise "return((Value *)malloc_promise());\n"))
+  ([v] (deliver (promise) v)))
+
+
+(defn future [f]
+  (inline C "return(makeFuture(arg0));"))
+
+(defn thread-id []
+  (inline C Integer "return(integerValue((int64_t)pthread_self()));"))
+
+(extend-type Future
+  Type
+  (type-name [_] "Future")
+
+  Stringable
+  (string-list [_] (list "<Future>"))
+
+  Container
+  (map [fut f]
+    (future (fn []
+              (f (extract fut)))))
+  (wrap [_ v] (future (fn [] v)))
+  (apply* [f vs]
+    (apply (extract f) (map vs extract)))
+  (flat-map [v f]
+    (f (extract v)))
+  (extract [fut]
+    (inline C "return(extractFuture(arg0));"))
+
+  (extend [fut f]
+    (future (fn []
+              (f fut)))))

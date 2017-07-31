@@ -25,6 +25,10 @@ typedef struct {int64_t type; int32_t refs; int32_t count; int8_t shift; int64_t
 typedef struct {int64_t type; int32_t refs; int32_t bitmap; Value *array[];} BitmapIndexedNode;
 typedef struct {int64_t type; int32_t refs; Value *array[32];} ArrayNode;
 typedef struct {int64_t type; int32_t refs; int16_t count; Value *array[];} HashCollisionNode;
+typedef struct {int64_t type; int32_t refs; Value *result; // List *actions;
+                pthread_cond_t delivered; pthread_mutex_t access;} Promise;
+typedef struct {int64_t type; int32_t refs; Value *action; Value* errorCallback;
+                Value *result; pthread_cond_t delivered; pthread_mutex_t access;} Future;
 typedef struct {int64_t type; int32_t refs; Value *typeArgs; int implCount;
                 Value* impls[];} ReifiedVal;
 
@@ -62,12 +66,19 @@ int32_t refsError;
 #define ArrayNodeType 12
 #define HashCollisionNodeType 13
 #define HashMapType 14
-#define TypeCount 15
+#define PromiseType 15
+#define FutureType 16
+#define TypeCount 17
 
 FILE *outstream;
 List *empty_list;
 Vector *empty_vect;
 BitmapIndexedNode emptyBMI;
+
+struct {List* input; List* output;
+        pthread_mutex_t mutex; pthread_cond_t notEmpty;} futuresQueue;
+Future shutDown;
+int8_t mainThreadDone;
 
 #define CHECK_MEM_LEAK 1
 
@@ -125,8 +136,10 @@ Function *malloc_function(int arityCount);
 String *malloc_string(int len);
 FnArity *findFnArity(Value *fnVal, int64_t argCount);
 ReifiedVal *malloc_reified(int implCount);
+Promise *malloc_promise();
 
-
+void startWorkers();
+void waitForWorkers();
 char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);
 Value *intValue(int64_t n);
@@ -197,3 +210,8 @@ Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3);
 Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4);
 Value *arrayNodeSeq(Value *arg0, Value *arg1);
 Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3);
+Value *deliverPromise(Value *arg0, Value *arg1);
+Value *extractPromise(Value *arg0);
+Value *promiseDelivered(Value *arg0);
+Value *extractFuture(Value *arg0);
+Value *makeFuture(Value *arg0);
