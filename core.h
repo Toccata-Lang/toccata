@@ -29,6 +29,9 @@ typedef struct {int64_t type; int32_t refs; Value *result; // List *actions;
                 pthread_cond_t delivered; pthread_mutex_t access;} Promise;
 typedef struct {int64_t type; int32_t refs; Value *action; Value* errorCallback;
                 Value *result; pthread_cond_t delivered; pthread_mutex_t access;} Future;
+typedef struct {int64_t type; int32_t refs;
+                Value *val; List* input; List *output;
+                pthread_mutex_t access;} Agent;
 typedef struct {int64_t type; int32_t refs; Value *typeArgs; int implCount;
                 Value* impls[];} ReifiedVal;
 
@@ -68,7 +71,8 @@ int32_t refsError;
 #define HashMapType 14
 #define PromiseType 15
 #define FutureType 16
-#define TypeCount 17
+#define AgentType 17
+#define TypeCount 18
 
 FILE *outstream;
 List *empty_list;
@@ -127,7 +131,7 @@ Value *(*invoke0Args)(List *closures, Value *f);
 Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
 Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
 Value *(*type_name)(List *closures, Value *t);
-// Value *(*fn_apply)(List *closures, Value *f, Value *args);
+Value *(*fn_apply)(List *closures, Value *f, Value *args);
 
 List *malloc_list();
 Value *vectSeq(Vector *vect, int index);
@@ -215,3 +219,6 @@ Value *extractPromise(Value *arg0);
 Value *promiseDelivered(Value *arg0);
 Value *extractFuture(Value *arg0);
 Value *makeFuture(Value *arg0);
+Value *makeAgent(Value *arg0);
+Value *extractAgent(Value *arg0);
+void scheduleAgent(Agent *agent, List *action);

@@ -744,6 +744,41 @@ void freeFuture(Value *v) {
   freeFutures.head = v;
 }
 
+void emptyAgent(Agent *agent) {
+  pthread_mutex_lock (&agent->access);
+  int32_t refs;
+  __atomic_load(&agent->output->refs, &refs, __ATOMIC_RELAXED);
+  if (refs != 1 && refs != -1) {
+    fprintf(stderr, "failure in emptyAgent()\n");
+    abort();
+  }
+  dec_and_free((Value *)agent->output, 1);
+
+  List *l;
+  __atomic_load(&agent->input, &l, __ATOMIC_RELAXED);
+  __atomic_load(&l->refs, &refs, __ATOMIC_RELAXED);
+  if (refs != 1 && refs != -1) {
+    fprintf(stderr, "failure in emptyAgent()\n");
+    abort();
+  }
+  dec_and_free((Value *)l, 1);
+  pthread_mutex_unlock (&agent->access);
+}
+
+void freeAgent(Value *v) {
+  Value *val = ((Agent *)v)->val;
+  int32_t refs;
+  __atomic_load(&val->refs, &refs, __ATOMIC_RELAXED);
+  if (val != (Value *)0) {
+    dec_and_free(val, 1);
+  }
+  emptyAgent((Agent *)v);
+#ifdef CHECK_MEM_LEAK
+  __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
+  free(v);
+}
+
 #define FREE_FN_COUNT 20
 freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
                                        &freeInteger,
@@ -761,7 +796,8 @@ freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
 				       &freeHashCollisionNode,
 				       NULL,
                                        &freePromise,
-                                       &freeFuture};
+                                       &freeFuture,
+                                       &freeAgent};
 
 void dec_and_free(Value *v, int deltaRefs) {
   if (decRefs(v, deltaRefs) >= -1)
@@ -3739,4 +3775,100 @@ Value *makeFuture(Value *arg0) {
   incRef((Value *)f, 1);
   scheduleFuture(f);
   return((Value *)f);
+}
+
+Value *makeAgent(Value *arg0) {
+  Agent *a = (Agent *)my_malloc(sizeof(Agent));
+  a->type = AgentType;
+  __atomic_store(&a->refs, &refsInit, __ATOMIC_RELAXED);
+  a->input = empty_list;
+  a->output = empty_list;
+  pthread_mutex_init(&a->access, NULL);
+  a->val = arg0;
+  return((Value *)a);
+}
+
+Value *extractAgent(Value *arg0) {
+  Value *v = ((Agent *)arg0)->val;
+  incRef(v, 1);
+  dec_and_free(arg0, 1);
+  return(v);
+}
+
+List *readAgentQueue(Agent *agent) {
+  List *output = agent->output;
+  if (output != (List *)0 && output->len != 0) {
+    // if there was an item in the queue, return it
+    Value *item = output->head;
+    agent->output = output->tail;
+    output->head = (Value *)0;
+    output->tail = (List *)0;
+    int32_t refs;
+    __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
+    if (refs != 1) {
+      fprintf(stderr, "failure in readAgentQueue()\n");
+      abort();
+    }
+    dec_and_free((Value *)output, 1);
+    return((List *)item);
+  } else {
+    // move the input list to the output
+    // atomically get the input list and reset it to empty_list
+    List *input;
+    __atomic_load(&agent->input, &input, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange(&agent->input, &input, &empty_list, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+      ;
+
+    if (input == (List *)0 || input->len == 0) {
+      // if the input was empty, return 0
+      agent->output = input;
+      return((List *)0);
+    } else {
+      // otherwise, move the input list to the output
+      agent->output = reverseList(input);
+      return(readAgentQueue(agent));
+    }
+  }
+}
+
+Value *updateAgent_impl(List *closures) {
+  Agent *agent = (Agent *)closures->head;
+  if (pthread_mutex_trylock (&agent->access) == 0) { // succeeded
+    List *action = readAgentQueue(agent);
+    while(action != (List *)0) {
+      Function *f = (Function *)action->head;
+      List *args = listCons(agent->val, action->tail);
+      incRef((Value *)action->tail, 1);
+      agent->val = fn_apply(empty_list, incRef((Value *)f, 1), (Value *)args);
+      dec_and_free((Value *)action, 1);
+      action = readAgentQueue(agent);
+    }
+    pthread_mutex_unlock (&agent->access);
+  }
+  return(nothing);
+};
+
+void scheduleAgent(Agent *agent, List *action) {
+  List *newList = malloc_list();
+  newList->head = (Value *)action;
+  List *input;
+  __atomic_load(&agent->input, &input, __ATOMIC_RELAXED);
+  do {
+    newList->len = input->len + 1;
+    newList->tail = input;
+  } while (!__atomic_compare_exchange(&agent->input, &input, &newList, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+
+  FnArity *updateAgentArity = malloc_fnArity();
+  updateAgentArity->variadic = 0;
+  updateAgentArity->fn = updateAgent_impl;
+  updateAgentArity->count = 0;
+  incRef((Value *)agent, 1);
+  updateAgentArity->closures = listCons((Value *)agent, empty_list);
+  Function *updateAgentFn = malloc_function(1);
+  updateAgentFn->name = "update-agent";
+  updateAgentFn->arityCount = 1;
+  updateAgentFn->arities[0] = updateAgentArity;
+  Future *f = malloc_future(__LINE__);
+  f->action = (Value *)updateAgentFn;
+  scheduleFuture(f);
 }

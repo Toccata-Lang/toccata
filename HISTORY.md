@@ -185,3 +185,7 @@ One of the most-used data structures (in Clojure, at least) is the HashMap. Here
 ## Entry 33:
 
 No modern programming language is complete without a concurrency story. For Toccata, that revolves around the Promise and Future datatypes. This is their story.
+
+## Entry 34:
+
+The final 'built-in' datatype also rounds out the concurrency story. This commit implements the Agent functionality.
