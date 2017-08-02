@@ -189,3 +189,7 @@ No modern programming language is complete without a concurrency story. For Tocc
 ## Entry 34:
 
 The final 'built-in' datatype also rounds out the concurrency story. This commit implements the Agent functionality.
+
+## Entry 35:
+
+Just clean up some loose ends that were dangling before proceeding

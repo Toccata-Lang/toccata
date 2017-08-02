@@ -1895,21 +1895,16 @@ Value *integer_LT(Value *arg0, Value *arg1) {
   }
 }
 
-Value *checkInstance(Value *arg0, Value *arg1) {
-  int64_t typeNum = ((Integer *)arg0)->numVal;
+Value *checkInstance(int64_t typeNum, Value *arg1) {
   if (typeNum == arg1->type) {
-    dec_and_free(arg1, 1);
-    return(maybe((List *)0, (Value *)0, arg0));
+    return(maybe((List *)0, (Value *)0, arg1));
   } else if (StringType == typeNum && SubStringType == arg1->type) {
-    dec_and_free(arg1, 1);
-    return(maybe((List *)0, (Value *)0, arg0));
+    return(maybe((List *)0, (Value *)0, arg1));
   } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
                                         ArrayNodeType == arg1->type ||
                                         HashCollisionNodeType == arg1->type)) {
-    dec_and_free(arg1, 1);
-    return(maybe((List *)0, (Value *)0, arg0));
+    return(maybe((List *)0, (Value *)0, arg1));
   } else {
-    dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(nothing);
   }

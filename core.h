@@ -165,7 +165,7 @@ Value *strCount(Value *arg0);
 Value *strEQ(Value *arg0, Value *arg1);
 Value *strList(Value *arg0);
 Value *strVect(Value *arg0);
-Value *checkInstance(Value *arg0, Value *arg1);
+Value *checkInstance(int64_t typeNum, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);
 Value *listConcat(Value *arg0);
 Value *car(Value *arg0);
