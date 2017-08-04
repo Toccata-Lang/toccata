@@ -16,34 +16,41 @@
 (extend-type Function
   RecursiveDescent
   (recursive-descent [f]
-    (sm/state-maybe (fn [& args]
-                      (apply f (remove args ignore?))))))
+    (sm/state-maybe (fn [& rules]
+                      (apply* (sm/state-maybe (fn [& parsed-values]
+                                                (apply f (remove parsed-values ignore?))))
+                              rules)))))
 
 (extend-type p/get-filename
   RecursiveDescent
   (recursive-descent [_]
-    (sm/new-sm (fn [s]
-                 (maybe [(.file-name s) s])))))
+    (sm/state-maybe
+     (sm/new-sm (fn [parser-state]
+                  (maybe [(.file-name parser-state) parser-state]))))))
 
 (extend-type p/get-linenumber
   RecursiveDescent
   (recursive-descent [_]
-    (sm/new-sm (fn [s]
-                 (maybe [(.line-num s) s])))))
+    (sm/state-maybe
+     (sm/new-sm (fn [parser-state]
+                  (maybe [(.line-num parser-state) parser-state]))))))
 
 (extend-type p/parse-error
   RecursiveDescent
   (recursive-descent [e]
-    (sm/new-sm (fn [s]
-                 (print-err (.msg e) "at" (.file-name s) (.line-num s))
-                 (abort)))))
+    (sm/state-maybe
+     (sm/new-sm (fn [parser-state]
+                  (print-err (.msg e) "at" (.file-name parser-state)
+                             (.line-num parser-state))
+                  (abort))))))
 
 (extend-type p/inc-linenumber
   RecursiveDescent
   (recursive-descent [_]
-    (sm/new-sm (fn [s]
-                 (let [ln (.line-num s)]
-                   (maybe [s (assoc s .line-num (inc ln))]))))))
+    (sm/state-maybe
+     (sm/new-sm (fn [parser-state]
+                  (let [ln (.line-num parser-state)]
+                    (maybe [parser-state (assoc parser-state .line-num (inc ln))])))))))
 
 (defn next-input-buffer [s]
   (let [input (.input s)]
@@ -82,105 +89,78 @@
 (extend-type p/parser-not-char
   RecursiveDescent
   (recursive-descent [p]
-    (sm/new-sm (fn [s]
-                 (for [[c new-s] (reader 1 s)
-                       :when-not (= (.test-c p) c)]
-                   [c new-s])))))
+    (sm/state-maybe
+     (sm/new-sm (fn [parser-state]
+                  (for [[c new-parser-state] (reader 1 parser-state)
+                        :when-not (= (.test-c p) c)]
+                    [c new-parser-state]))))))
 
 (extend-type p/parser-char-range
   RecursiveDescent
   (recursive-descent [p]
-    (sm/new-sm (fn [s]
-                 (for [[c new-s] (reader 1 s)
-                       :when (< (dec (char-code (.lower p)))
-                                (char-code c)
-                                (inc (char-code (.higher p))))]
-                   [c new-s])))))
-
-;; (extend-type String
-;;   RecursiveDescent
-;;   (recursive-descent [p]
-;;     (let [term-count (count p)]
-;;       (sm/new-sm (fn [s]
-;;                    (for [[text new-s] (reader term-count s)
-;;                          :when (= text p)]
-;;                      (list p new-s)))))))
+    (sm/state-maybe
+     (sm/new-sm (fn [parser-state]
+                  (for [[c new-parser-state] (reader 1 parser-state)
+                        :when (< (dec (char-code (.lower p)))
+                                 (char-code c)
+                                 (inc (char-code (.higher p))))]
+                    [c new-parser-state]))))))
 
 (extend-type p/parser-terminal
   RecursiveDescent
   (recursive-descent [p]
     (let [term-str (.term-str p)
           term-count (count term-str)]
-      (sm/new-sm (fn [s]
-                   (for [[text new-s] (reader term-count s)
-                         :when (= text term-str)]
-                     [term-str new-s]))))))
+      (sm/state-maybe (sm/new-sm (fn [parser-state]
+                                   (for [[text new-parser-state] (reader term-count parser-state)
+                                         :when (= text term-str)]
+                                     [term-str new-parser-state])))))))
 
-
-(defn count-newlines [s]
-  (inline-C Number "
-int newlines = 0;
-char *buffer = NULL;
-if (arg0->type == SubStringType)
-  buffer = ((SubString *)arg0)->buffer;
-else if (arg0->type == StringType)
-  buffer = ((String *)arg0)->buffer;
-else
-  abort();
-for (int i = 0; i < ((String *)arg0)->len; i++) {
-  if (buffer[i] == (char)10)
-    newlines++;
-}
-dec_and_free(arg0, 1);
-return(numberValue(newlines));
-")
-  ;; TODO: for when String reduce is fast
-  ;; (extract (reduce s (maybe 0)
-  ;;                  (fn [line-count c]
-  ;;                    (or (and (= c "\n")
-  ;;                             (map line-count inc))
-  ;;                        line-count))))
-  )
 
 (extend-type p/parser-term-fn
   RecursiveDescent
   (recursive-descent [p]
-    (sm/new-sm (fn [s]
-                 (for [[str-list new-s] (fn-reader (.f p) s)
-                       :let [line-count (reduce str-list 0 (fn [line-count s]
-                                                             (+ line-count (count-newlines s))))]]
-                   [(to-str str-list)
-                    (assoc new-s .line-num (+ line-count (.line-num s)))])))))
+    (sm/state-maybe
+     (sm/new-sm (fn [s]
+                  (for [[str-list new-s] (fn-reader (.f p) s)
+                        :let [line-count (reduce str-list 0
+                                                 (fn [line-count s]
+                                                   (reduce s line-count
+                                                           (fn [line-count c]
+                                                             (+ line-count ((= c "\n") 1 0))))))]]
+                    [(to-str str-list)
+                     (assoc new-s .line-num (+ line-count (.line-num s)))]))))))
 
 (extend-type p/repeat-rule
   RecursiveDescent
   (recursive-descent [p]
-    (flat-map (sm/recur (.rule p))
-              (fn [[head & tail]]
-                (sm/state-maybe (cons head tail))))))
+    (map (.rule p) sm/recur)))
 
 (extend-type p/none-or-more-rule
   RecursiveDescent
   (recursive-descent [p]
-    (comp (recursive-descent (p/repeat-rule (.rule p)))
-          (recursive-descent (p/parser-always empty-list)))))
+    (map (.rule p) (fn [rule]
+                     (comp (sm/recur rule)
+                           (sm/state-maybe empty-list))))))
 
 (extend-type p/ignore-rule
+  Stringable
+  (string-list [_] (list "ignored"))
   RecursiveDescent
   (recursive-descent [p]
-    (flat-map (.rule p)
-              (fn [_]
-                (sm/state-maybe (reify
-                                  Stringable
-                                  (string-list [_] (list "<Ignored>"))
+    (map (.rule p) (fn [rule]
+                     (apply-to (constantly (reify
+                                             Stringable
+                                             (string-list [_] (list "<Ignored>"))
 
-                                  Ignored
-                                  (ignore? [_] (maybe 'ignore))))))))
+                                             Ignored
+                                             (ignore? [_] (maybe 'ignore))))
+                               rule)))))
 
 (extend-type p/parser-always
   RecursiveDescent
   (recursive-descent [p]
-    (sm/state-maybe (.v p))))
+    (sm/state-maybe (sm/state-maybe (.v p)))))
 
 (extend-type p/parser-rule
   RecursiveDescent
@@ -190,35 +170,41 @@ return(numberValue(newlines));
 (extend-type p/recursive-parser-rule
   RecursiveDescent
   (recursive-descent [p]
-    (let [parser (.grammar p)
-          parser (sm/new-sm (fn [s] (parser s)))]
-      (flat-map (sm/assoc-in-val [.parser-fns (.name p)] parser)
-                (fn [_] parser)))))
+    (for [parser (map (.grammar p) sm/new-sm)
+          _ (sm/set-val (.name p) parser)]
+      parser)))
 
 (extend-type p/recursion-rule
   RecursiveDescent
   (recursive-descent [p]
-    (flatten (comp (sm/get-in-val [.parser-fns (.rule-name p)])
-                   (map (sm/state-maybe '_)
-                        (fn [_]
-                          (let [_ (print-err "Could not recurse into parser rule"
-                                             (str "'" (.rule-name p) "'"))]
-                            (abort))))))))
+    (sm/state-maybe
+     (flatten (comp (sm/get-in-val [.parser-fns (.rule-name p)])
+                    (map (sm/state-maybe '_)
+                         (fn [_]
+                           (let [_ (print-err "No parser rule defined for "
+                                              (str "'" (.rule-name p) "'"))]
+                             (abort)))))))))
 
 (extend-type p/Union
   RecursiveDescent
   (recursive-descent [u]
-    (apply comp (.rules u))))
+    (apply* (sm/state-maybe (fn [& rules]
+                              (apply comp rules)))
+            (.rules u))))
 
 (extend-type p/Cat
   RecursiveDescent
   (recursive-descent [u]
-    (apply* (recursive-descent list) (.rules u))))
+    (apply* (sm/state-maybe (fn [& rules]
+                              (apply* (sm/state-maybe (fn [& parsed-values]
+                                                        (remove parsed-values ignore?)))
+                                      rules)))
+            (.rules u))))
 
 (defn parser [grammar]
-  (let [grammar-parser (fr/evaluate grammar recursive-descent)]
+  (let [[grammar-parser rrs] (extract ((fr/evaluate grammar recursive-descent) {}))]
     (fn [input]
-      (flat-map (grammar-parser (ParserState "" input "" 1 {}))
+      (flat-map (grammar-parser (ParserState "" input "" 1 rrs))
                 first))))
 
 (defn set-file-name [file-name]

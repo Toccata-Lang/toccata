@@ -193,3 +193,7 @@ The final 'built-in' datatype also rounds out the concurrency story. This commit
 ## Entry 35:
 
 Just clean up some loose ends that were dangling before proceeding
+
+## Entry 36:
+
+Fixed a bug in the recursive descent parser code.
