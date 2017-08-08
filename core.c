@@ -1368,8 +1368,8 @@ Value *integerValue(int64_t n) {
 };
 
 Value *integer_str(Value *arg0) {
-  String *numStr = malloc_string(10);
-  snprintf(numStr->buffer, 9, "%" PRId64 "", ((Integer *)arg0)->numVal);
+  String *numStr = malloc_string(50);
+  snprintf(numStr->buffer, 40, "%" PRId64 "", ((Integer *)arg0)->numVal);
   numStr->len = strlen(numStr->buffer);
   dec_and_free(arg0, 1);
   return((Value *)numStr);

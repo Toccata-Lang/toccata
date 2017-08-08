@@ -21,6 +21,13 @@
                                              (str "\"" (subs text 0 (min 40 (count text))) "\""))
                                   0)))))
 
+(defn error [msg]
+  (grmr/apply-to (fn [file line]
+                   (print-err msg "at" file line)
+                   (abort))
+                 (grmr/get-value 'file-name)
+                 (grmr/get-value 'line-number)))
+
 
 ;; we tag symbols with file/line for use later
 (defprotocol Tagged
@@ -111,8 +118,8 @@
                                                  (symbol (to-str (comp (list ns-prefix start)
                                                                        the-rest)))
                                                  file-name line-number)))
-                                grmr/file-name
-                                grmr/line-number
+                                (grmr/get-value 'file-name)
+                                (grmr/get-value 'line-number)
                                 (grmr/optional read-namespace)
                                 symbol-start
                                 rest-of-symbol)))
@@ -176,8 +183,9 @@
 
 (def read-string-fragment
   (grmr/rule "read-string-fragment"
-               (grmr/term-fn (fn [text]
-                                 (string-frag-len text)))))
+             ;; TODO: we have to count the newlines in here
+             (grmr/term-fn (fn [text]
+                             (string-frag-len text)))))
 
 (def read-string
   (grmr/rule "string"
@@ -215,7 +223,7 @@
 (def newline
   (grmr/rule "newline"
              (grmr/apply-to identity
-                            "\n" (grmr/ignore grmr/inc-line))))
+                            "\n" (grmr/ignore (grmr/update-value 'line-number inc)))))
 
 (def ignore-newlines (grmr/ignore (grmr/none-or-more newline)))
 
@@ -251,7 +259,7 @@
                                                                 (grmr/recurse "params"))
                                                                (grmr/optional read-var-arg))
                                                 (grmr/any (grmr/ignore "]")
-                                                          (grmr/error "Missing ']'")))
+                                                          (error "Missing ']'")))
                                  read-arg)))
 
 (def read-open-paren
@@ -270,8 +278,8 @@
                             (grmr/ignore (grmr/one-or-more whitespace))
                             (grmr/apply-to (fn [file-name line-number lang return-type body]
                                              (ast/inline lang return-type body "" 0))
-                                           grmr/file-name
-                                           grmr/line-number
+                                           (grmr/get-value 'file-name)
+                                           (grmr/get-value 'line-number)
                                            read-symbol
                                            (grmr/ignore (grmr/one-or-more whitespace))
                                            (grmr/optional (grmr/apply-to identity
@@ -285,8 +293,8 @@
   (grmr/rule "block-comment"
              (grmr/apply-to ast/block-comment
                             ignore-whitespace
-                            grmr/file-name
-                            grmr/line-number
+                            (grmr/get-value 'file-name)
+                            (grmr/get-value 'line-number)
                             (grmr/one-or-more
                              (grmr/apply-to identity
                                             ignore-linear-whitespace
@@ -338,7 +346,7 @@
                                                      (grmr/ignore "]")
                                                      (grmr/one-or-more read-sub-expr)
                                                      read-close-paren)
-                                      (grmr/error "Invalid 'let' expression")))))
+                                      (error "Invalid 'let' expression")))))
 
 (def read-do
   (grmr/rule "do"
@@ -403,7 +411,7 @@
                                        (grmr/none-or-more read-sub-expr)
                                        (grmr/ignore (grmr/none-or-more whitespace))
                                        (grmr/ignore ")"))
-                                      (grmr/error "Invalid 'apply' form")))))
+                                      (error "Invalid 'apply' form")))))
 
 (def read-apply-to
   (grmr/rule "apply-to"
@@ -427,7 +435,7 @@
                                        (grmr/none-or-more read-sub-expr)
                                        (grmr/ignore (grmr/none-or-more whitespace))
                                        (grmr/ignore ")"))
-                                      (grmr/error "Invalid 'apply-to' form")))))
+                                      (error "Invalid 'apply-to' form")))))
 
 (def read-inline-body
   (grmr/rule "read-inline-body"
@@ -444,8 +452,8 @@
              (grmr/any read-block-comment
                        (grmr/apply-to (fn [fn ln]
                                         (ast/block-comment fn ln (list "")))
-                                      grmr/file-name
-                                      grmr/line-number))))
+                                      (grmr/get-value 'file-name)
+                                      (grmr/get-value 'line-number)))))
 
 (def read-single-arity
   (grmr/rule "single-arity"
@@ -455,7 +463,7 @@
                             read-fn-doc
                             (grmr/any read-inline-body
                                       (grmr/one-or-more read-sub-expr)
-                                      (grmr/error "Body of function is wrong"))
+                                      (error "Body of function is wrong"))
                             ignore-whitespace)))
 
 (def read-arities
@@ -482,7 +490,7 @@
                                                      ignore-whitespace
                                                      read-arities
                                                      read-close-paren)
-                                      (grmr/error "Invalid 'fn' expression")))))
+                                      (error "Invalid 'fn' expression")))))
 
 (def type-counter (int-generator TypeCount))
 
@@ -519,14 +527,14 @@
              (grmr/apply-to identity
                             ignore-whitespace
                             (grmr/ignore "_FILE_")
-                            grmr/file-name)))
+                            (grmr/get-value 'file-name))))
 
 (def curr-line
 (grmr/rule "_LINE_"
            (grmr/apply-to identity
                           ignore-whitespace
                           (grmr/ignore "_LINE_")
-                          grmr/line-number)))
+                          (grmr/get-value 'line-number))))
 
 (def read-vector
   (grmr/rule "vector"
@@ -534,11 +542,11 @@
                             (grmr/ignore "[")
                             (grmr/apply-to (fn [fn ln elems]
                                              (ast/call-expr (cons (tag 'vector fn ln) elems)))
-                                           grmr/file-name
-                                           grmr/line-number
+                                           (grmr/get-value 'file-name)
+                                           (grmr/get-value 'line-number)
                                            (grmr/none-or-more read-sub-expr)
                                            (grmr/any (grmr/ignore "]")
-                                                     (grmr/error "Missing \"]\""))))))
+                                                     (error "Missing \"]\""))))))
 
 (def read-hash-map
   (grmr/rule "hash-map"
@@ -547,12 +555,12 @@
                             (grmr/apply-to (fn [fn ln elems]
                                              (ast/call-expr (cons (tag 'hash-map fn ln)
                                                                   (comp* empty-list elems))))
-                                           grmr/file-name
-                                           grmr/line-number
+                                           (grmr/get-value 'file-name)
+                                           (grmr/get-value 'line-number)
                                            (grmr/none-or-more (grmr/all read-sub-expr
                                                                         read-sub-expr))
                                            (grmr/any (grmr/ignore "}")
-                                                     (grmr/error "Missing \"]\""))))))
+                                                     (error "Missing \"]\""))))))
 
 (defprotocol QuoteLiteral
   (quote-literal [quoted]
@@ -631,7 +639,7 @@
                                                 read-assert
                                                 read-returns
                                                 (grmr/all read-inline
-                                                          (grmr/error "'inline' expressions not allowed here"))
+                                                          (error "'inline' expressions not allowed here"))
                                                 read-call
                                                 read-block-comment)
                                       ignore-whitespace)))
@@ -645,9 +653,9 @@
                                                      read-params
                                                      (grmr/any read-inline-body
                                                                (grmr/one-or-more read-expr)
-                                                               (grmr/error "Body of 'main' fn is wrong"))
+                                                               (error "Body of 'main' fn is wrong"))
                                                      read-close-paren)
-                                      (grmr/error "'main' fn expression is wrong")))))
+                                      (error "'main' fn expression is wrong")))))
 
 (def read-def
   (grmr/rule "def"
@@ -670,7 +678,7 @@
                                       (grmr/apply-to ast/declare
                                                      read-symbol
                                                      read-close-paren)
-                                      (grmr/error "Invalid 'def' expression")))))
+                                      (error "Invalid 'def' expression")))))
 
 (def read-prototype
   (grmr/rule "prototype"
@@ -685,7 +693,7 @@
                                                       (grmr/any read-inline-body
                                                                 (grmr/none-or-more read-expr))
                                                       read-close-paren)
-                                       (grmr/error "Invalid prototype function"))))))
+                                       (error "Invalid prototype function"))))))
 
 (def read-defprotocol
   (grmr/rule "defprotocol"
@@ -701,7 +709,7 @@
                                                       (grmr/any read-block-comment
                                                                 read-prototype))
                                                      read-close-paren)
-                                      (grmr/error "Invalid 'defprotocol' expression")))))
+                                      (error "Invalid 'defprotocol' expression")))))
 
 (def read-defn
   (grmr/rule "defn"
@@ -717,7 +725,7 @@
                                                      (grmr/ignore (grmr/one-or-more whitespace))
                                                      read-arities
                                                      read-close-paren)
-                                      (grmr/error "Invalid 'defn' expression")))))
+                                      (error "Invalid 'defn' expression")))))
 
 (def read-extend-type
   (grmr/rule "extend-type"
@@ -732,7 +740,7 @@
                                                                     read-proto-impls
                                                                     (grmr/none-or-more read-proto-impls))
                                                      read-close-paren)
-                                      (grmr/error "Invalid 'extend-type' expression")))))
+                                      (error "Invalid 'extend-type' expression")))))
 
 (def read-deftype
   (grmr/rule "deftype"
@@ -749,12 +757,37 @@
                                                                               (grmr/none-or-more read-proto-impls))
                                                                (grmr/always {}))
                                                      read-close-paren)
-                                      (grmr/error "Invalid 'deftype' expression")))))
+                                      (error "Invalid 'deftype' expression")))))
+
+(def read-module-spec
+  (grmr/rule "module"
+             (grmr/apply-to identity
+                            read-open-paren
+                            (grmr/ignore "module")
+                            (grmr/any (grmr/apply-to ast/module
+                                                     (grmr/ignore
+                                                      (grmr/one-or-more whitespace))
+                                                     read-string
+                                                     read-close-paren)
+                                      (error "Invalid 'module' expression")))))
+
+(def read-add-ns
+  (grmr/rule "add-ns"
+             (grmr/apply-to identity
+                            read-open-paren
+                            (grmr/ignore "add-ns")
+                            (grmr/any (grmr/apply-to ast/ns-add
+                                                     (grmr/ignore
+                                                      (grmr/one-or-more whitespace))
+                                                     read-symbol
+                                                     read-module-spec
+                                                     read-close-paren)
+                                      (error "Invalid 'add-ns' expression")))))
 
 (def bad-expr
   (grmr/rule "bad-expr"
              (grmr/all ignore-whitespace "("
-                       (grmr/error "Invalid expression"))))
+                       (error "Invalid expression"))))
 
 (def top-level
   (grmr/recursive-rule "top-level"
@@ -766,4 +799,5 @@
                                  read-extend-type
                                  read-deftype
                                  read-block-comment
+                                 read-add-ns
                                  bad-expr)))

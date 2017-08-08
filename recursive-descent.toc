@@ -3,7 +3,7 @@
 (add-ns sm (module "state-maybe.toc"))
 (add-ns fr (module "free.toc"))
 
-(deftype ParserState [curr-input input file-name line-num parser-fns]
+(deftype ParserState [curr-input input parser-fns values]
   Stringable
   (string-list [_] (list "<ParserState>")))
 
@@ -13,6 +13,30 @@
 (defprotocol Ignored
   (ignore? [_] nothing))
 
+(extend-type p/get-state-value
+  RecursiveDescent
+  (recursive-descent [p]
+    (sm/state-maybe
+     (sm/new-sm (fn [parser-state]
+                  (or (map (get-in parser-state [.values (.key p)])
+                           (fn [value]
+                             [value parser-state]))
+                      (let [_ (print-err "Could not get recursive descent state value"
+                                         (str "'" (.key p) "'"))]
+                        (abort))))))))
+
+(extend-type p/update-state-value
+  RecursiveDescent
+  (recursive-descent [p]
+    (sm/state-maybe
+     (sm/new-sm (fn [parser-state]
+                  (or (for [new-state (update-in parser-state [.values (.key p)] (.f p))
+                            old-value (get-in parser-state [.values (.key p)])]
+                        [old-value new-state])
+                      (let [_ (print-err "Could not update recursive descent state value"
+                                         (str "'" (.key p) "'"))]
+                        (abort))))))))
+
 (extend-type Function
   RecursiveDescent
   (recursive-descent [f]
@@ -20,37 +44,6 @@
                       (apply* (sm/state-maybe (fn [& parsed-values]
                                                 (apply f (remove parsed-values ignore?))))
                               rules)))))
-
-(extend-type p/get-filename
-  RecursiveDescent
-  (recursive-descent [_]
-    (sm/state-maybe
-     (sm/new-sm (fn [parser-state]
-                  (maybe [(.file-name parser-state) parser-state]))))))
-
-(extend-type p/get-linenumber
-  RecursiveDescent
-  (recursive-descent [_]
-    (sm/state-maybe
-     (sm/new-sm (fn [parser-state]
-                  (maybe [(.line-num parser-state) parser-state]))))))
-
-(extend-type p/parse-error
-  RecursiveDescent
-  (recursive-descent [e]
-    (sm/state-maybe
-     (sm/new-sm (fn [parser-state]
-                  (print-err (.msg e) "at" (.file-name parser-state)
-                             (.line-num parser-state))
-                  (abort))))))
-
-(extend-type p/inc-linenumber
-  RecursiveDescent
-  (recursive-descent [_]
-    (sm/state-maybe
-     (sm/new-sm (fn [parser-state]
-                  (let [ln (.line-num parser-state)]
-                    (maybe [parser-state (assoc parser-state .line-num (inc ln))])))))))
 
 (defn next-input-buffer [s]
   (let [input (.input s)]
@@ -116,7 +109,6 @@
                                          :when (= text term-str)]
                                      [term-str new-parser-state])))))))
 
-
 (extend-type p/parser-term-fn
   RecursiveDescent
   (recursive-descent [p]
@@ -128,8 +120,7 @@
                                                    (reduce s line-count
                                                            (fn [line-count c]
                                                              (+ line-count ((= c "\n") 1 0))))))]]
-                    [(to-str str-list)
-                     (assoc new-s .line-num (+ line-count (.line-num s)))]))))))
+                    [(to-str str-list) new-s]))))))
 
 (extend-type p/repeat-rule
   RecursiveDescent
@@ -202,10 +193,11 @@
             (.rules u))))
 
 (defn parser [grammar]
-  (let [[grammar-parser rrs] (extract ((fr/evaluate grammar recursive-descent) {}))]
-    (fn [input]
-      (flat-map (grammar-parser (ParserState "" input "" 1 rrs))
-                first))))
-
-(defn set-file-name [file-name]
-  (sm/set-val .file-name file-name))
+  (let [[grammar-parser recursive-rules] (extract ((fr/evaluate grammar recursive-descent) {}))]
+    (fn
+      ([input]
+       (flat-map (grammar-parser (ParserState "" input "" recursive-rules {}))
+                 first))
+      ([values input]
+       (flat-map (grammar-parser (ParserState "" input recursive-rules values))
+                 first)))))
