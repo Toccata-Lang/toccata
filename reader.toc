@@ -599,11 +599,13 @@
                                       ignore-whitespace
                                       (grmr/any (grmr/apply-to identity
                                                                read-open-paren
-                                                               (grmr/none-or-more (grmr/recurse "quoted-value"))
+                                                               (grmr/none-or-more
+                                                                (grmr/recurse "quoted-value"))
                                                                read-close-paren)
                                                 (grmr/apply-to (partial cons 'vector)
                                                                (grmr/ignore "[")
-                                                               (grmr/one-or-more (grmr/recurse "quoted-value"))
+                                                               (grmr/one-or-more
+                                                                (grmr/recurse "quoted-value"))
                                                                (grmr/ignore "]"))
                                                 read-integer
                                                 read-string
@@ -615,6 +617,217 @@
              (grmr/apply-to quote-literal
                             (grmr/ignore "'")
                             read-quoted-value)))
+
+(defprotocol ForBinding
+  (nest-let [body bindings]
+    (ast/let-expr bindings (list body)))
+
+  (nest-when [body clause wrapper]
+    (let [fn (ast/file-name clause)
+          ln (ast/line-number clause)]
+      (ast/call-ast
+       (tag 'extract fn ln)
+       (list (ast/or-expr
+              (list (ast/and-expr (list clause
+                                        (ast/call-ast (tag 'maybe fn ln) (list body))))
+                    (ast/call-ast
+                     (tag 'maybe fn ln)
+                     (list (ast/call-ast (tag 'zero fn ln)
+                                         (list (ast/call-ast (tag 'zero fn ln)
+                                                             (list wrapper))))))))))))
+
+  (nest-when-not [body clause wrapper]
+    (let [fn (ast/file-name clause)
+          ln (ast/line-number clause)]
+      (ast/call-ast
+       (tag 'extract fn ln)
+       (list (ast/or-expr
+              (list (ast/and-expr
+                     (list clause (ast/call-ast
+                                   (tag 'maybe fn ln)
+                                   (list (ast/call-ast (tag 'zero fn ln)
+                                                       (list (ast/call-ast (tag 'zero fn ln)
+                                                                           (list wrapper))))))))
+                    (ast/call-ast
+                     (tag 'maybe fn ln)
+                     (list body))))))))
+
+  (nest-binding [body binding wrapper]
+    (ast/call-ast (tag 'flat-map (ast/file-name binding) (ast/line-number binding))
+                  (list (.val binding)
+                        (ast/fn-expr nothing
+                                     (list (ast/fn-arity (ast/params [(.binding binding)])
+                                                         ""
+                                                         (list body))))))))
+
+(extend-type ast/binding-ast
+  ForBinding
+  (nest-binding [b body wrapper]
+    (nest-binding body b wrapper)))
+
+(deftype ForLetExpr [bindings]
+  Stringable
+  (string-list [_] (comp (list "<ForLet")
+                         (string-list bindings)
+                         (list ">")))
+
+  ForBinding
+  (nest-binding [_ body wrapper]
+    (nest-let body bindings)))
+
+(def read-for-let
+  (grmr/rule "for-let"
+             (grmr/apply-to (fn [bindings]
+                              (ForLetExpr bindings))
+                            ignore-whitespace
+                            (grmr/ignore ":let")
+                            (grmr/ignore (grmr/one-or-more whitespace))
+                            (grmr/ignore "[")
+                            (grmr/one-or-more read-let-binding)
+                            (grmr/ignore "]"))))
+
+(deftype ForWhenExpr [value]
+  Stringable
+  (string-list [_] (comp (list "<ForWhen")
+                         (string-list value)
+                         (list ">")))
+
+  ForBinding
+  (nest-binding [_ body wrapper]
+    (nest-when body value wrapper)))
+
+(def read-for-when
+  (grmr/rule "for-when"
+             (grmr/apply-to (fn [clause]
+                              (ForWhenExpr clause))
+                            ignore-whitespace
+                            (grmr/ignore ":when")
+                            (grmr/ignore (grmr/one-or-more whitespace))
+                            read-sub-expr)))
+
+(deftype ForWhenNotExpr [value]
+  Stringable
+  (string-list [_] (comp (list "<ForWhenNot")
+                         (string-list value)
+                         (list ">")))
+
+  ForBinding
+  (nest-binding [_ body wrapper]
+    (nest-when-not body value wrapper)))
+
+(def read-for-when-not
+  (grmr/rule "for-when-not"
+             (grmr/apply-to (fn [clause]
+                              (ForWhenNotExpr clause))
+                            (grmr/ignore (grmr/none-or-more whitespace))
+                            (grmr/ignore ":when-not")
+                            (grmr/ignore (grmr/one-or-more whitespace))
+                            read-sub-expr)))
+
+(deftype ForResultExpr [body]
+  ForBinding
+  (nest-let [_ bindings]
+    (ForResultExpr (nest-let body bindings)))
+
+  (nest-when [_ clause wrapper]
+    (let [fn (ast/file-name clause)
+          ln (ast/line-number clause)]
+      (ast/call-ast
+       (tag 'flat-map fn ln)
+       (list (ast/call-ast
+              (tag 'extract fn ln)
+              (list (ast/or-expr
+                     (list (ast/and-expr (list clause
+                                               (ast/call-ast
+                                                (tag 'maybe fn ln)
+                                                (list (ast/call-ast (tag 'wrap fn ln)
+                                                                    (list wrapper body))))))
+                           (ast/call-ast
+                            (tag 'maybe fn ln)
+                            (list (ast/call-ast (tag 'zero fn ln)
+                                                (list (ast/call-ast (tag 'zero fn ln)
+                                                                    (list wrapper))))))))))
+             (ast/fn-expr nothing
+                          (list (ast/fn-arity
+                                 (ast/params [(symbol "#x")])
+                                 ""
+                                 (list (ast/call-ast (tag 'wrap fn ln)
+                                                     (list wrapper (symbol "#x")))))))))))
+
+  (nest-when-not [_ clause wrapper]
+    (let [fn (ast/file-name clause)
+          ln (ast/line-number clause)]
+      (ast/call-ast
+       (tag 'flat-map fn ln)
+       (list (ast/call-ast
+              (tag 'extract fn ln)
+              (list (ast/or-expr
+                     (list (ast/and-expr
+                            (list clause
+                                  (ast/call-ast
+                                   (tag 'maybe fn ln)
+                                   (list (ast/call-ast (tag 'zero fn ln) (list wrapper))))))
+                           (ast/call-ast
+                            (tag 'maybe fn ln)
+                            (list (ast/call-ast (tag 'wrap fn ln) (list wrapper body))))))))
+             (ast/fn-expr nothing
+                          (list (ast/fn-arity
+                                 (ast/params [(symbol "#x")])
+                                 ""
+                                 (list (ast/call-ast (tag 'wrap fn ln)
+                                                     (list wrapper (symbol "#x")))))))))))
+
+  (nest-binding [_ binding wrapper]
+    (let [fn (ast/file-name binding)
+          ln (ast/line-number binding)]
+      (ast/call-ast (tag 'flat-map fn ln)
+                    (list (.val binding)
+                          (ast/fn-expr nothing
+                                       (list (ast/fn-arity
+                                              (ast/params [(.binding binding)])
+                                              ""
+                                              (list (ast/call-ast (tag 'wrap fn ln)
+                                                                  (list wrapper body))))))))))
+
+  Stringable
+  (string-list [_] (comp (list "<ForResult ")
+                         (string-list body)
+                         (list ">"))))
+
+(defn nest-for-exprs [binding bindings body]
+  (let [wrapper (symbol "#wrapper")
+        wrapper-binding (ForLetExpr [(ast/binding wrapper (.val binding))])
+        bindings (reverse (comp (list wrapper-binding
+                                      (ast/binding (.binding binding) wrapper))
+                                bindings))]
+    (reduce bindings (ForResultExpr body)
+            (fn [body expr]
+              (nest-binding expr body wrapper)))))
+
+(def read-for-binding
+  (grmr/rule "for-binding"
+             (grmr/any read-for-let
+                       read-for-when
+                       read-for-when-not
+                       read-let-binding)))
+
+(def read-for
+  (grmr/rule "for"
+             (grmr/apply-to identity
+                            read-open-paren
+                            (grmr/ignore "for")
+                            (grmr/ignore (grmr/one-or-more whitespace))
+                            (grmr/any (apply-to nest-for-exprs
+                                                (grmr/ignore "[")
+                                                (grmr/any read-let-binding
+                                                          (error "Invalid 'for' bindings"))
+                                                (grmr/any (grmr/none-or-more read-for-binding)
+                                                          (error "Invalid 'for' bindings"))
+                                                (grmr/ignore "]")
+                                                (grmr/any read-sub-expr
+                                                          (error "Invalid 'for' body")))
+                                      (error "Invalid 'for' expression"))
+                            read-close-paren)))
 
 (def read-expr
   (grmr/recursive-rule "expr"
@@ -636,6 +849,7 @@
                                                 read-reify
                                                 read-vector
                                                 read-hash-map
+                                                read-for
                                                 read-assert
                                                 read-returns
                                                 (grmr/all read-inline

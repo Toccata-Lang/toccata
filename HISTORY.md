@@ -205,3 +205,7 @@ A lot of work to enable and then to impleent the ability to break source code in
 ## Entry 38:
 
 Sharing libraries for others to use is a huge part of usability. This commit allows any git repository to be imported as a Toccata dependency.
+
+## Entry 39:
+
+One of the most used special forms is 'for'.
