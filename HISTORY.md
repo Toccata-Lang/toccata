@@ -197,3 +197,7 @@ Just clean up some loose ends that were dangling before proceeding
 ## Entry 36:
 
 Fixed a bug in the recursive descent parser code.
+
+## Entry 37:
+
+A lot of work to enable and then to impleent the ability to break source code into different files and then compile them all to build an executable.
