@@ -201,3 +201,7 @@ Fixed a bug in the recursive descent parser code.
 ## Entry 37:
 
 A lot of work to enable and then to impleent the ability to break source code into different files and then compile them all to build an executable.
+
+## Entry 38:
+
+Sharing libraries for others to use is a huge part of usability. This commit allows any git repository to be imported as a Toccata dependency.

@@ -1955,21 +1955,57 @@
 (defprotocol ASTEmitter
   (send-to-emitter [ast]
     (send ast-emitter emit-ast ast))
-  (add-namespace [ast root-dir])
-  (load-module [ast root-dir]))
+  (add-namespace [ast root-dir proj-dir])
+  (load-module [ast root-dir proj-dir]))
 
 (extend-type ast/module-ast
   ASTEmitter
-  (load-module [ast root-dir]
+  (load-module [ast root-dir proj-dir]
     (let [waiter (promise)
           file-path (str root-dir (.file-path ast))]
-      (send module-compiler compile-module file-path waiter root-dir)
+      (send module-compiler compile-module file-path waiter root-dir proj-dir)
       [waiter file-path])))
+
+(extend-type ast/git-dep-ast
+  ASTEmitter
+  (load-module [ast root-dir proj-dir]
+    (let [opts (.args ast)]
+      (extract
+       (for [_ (or (empty? (filter (seq (.file-name ast)) (partial = "/")))
+                   (let [_ (print-err "For git dependencies,"
+                                      "files may only be imported from root of repository,"
+                                      (.file-name ast) "is invalid.")]
+                     (maybe (abort))))
+             checkout (or (get opts 'tag)
+                          (get opts 'sha)
+                          (get opts 'branch)
+                          (maybe "master"))
+             :let [dep-path (str proj-dir "dependencies/git/" (.repo ast) "/" checkout)]
+             _ (or (sys/access (str dep-path "/" (.file-name ast)))
+                   (and (sys/access dep-path)
+                        (let [_ (print-err "Dependency file" (.file-name ast)
+                                           "missing from repository"
+                                           (.repo ast) ":"
+                                           (ast/file-name ast) (ast/line-number ast))]
+                          (maybe (abort))))
+                   (sys/sh-proc "/usr/bin/git" (list "clone" "-b" checkout (.repo ast)
+                                                     dep-path))
+                   (maybe (abort)))
+             :let [dep-path (str dep-path "/")
+                   module-path (str dep-path (.file-name ast))]
+             _ (or (sys/access module-path)
+                   (let [_ (print-err "Dependency file" (.file-name ast) "missing from repository"
+                                      (.repo ast) ":"
+                                      (ast/file-name ast) (ast/line-number ast))]
+                     (maybe (abort))))]
+         (let [waiter (promise)]
+           (send module-compiler compile-module module-path waiter dep-path dep-path)
+           [waiter module-path]))))))
 
 (extend-type ast/add-ns-ast
   ASTEmitter
-  (add-namespace [ast root-dir]
-    (let [[waiter mod-file-name] (load-module (.mod ast) root-dir)]
+  (add-namespace [ast root-dir proj-dir]
+    (let [[waiter mod-file-name] (load-module (.mod ast) root-dir proj-dir)]
       (send ast-emitter
             (fn [context]
               (update-context context
@@ -1980,12 +2016,14 @@
 ;; create a function that will use a recursive descent parser to
 ;; turn raw text into AST's and send them to the emitter
 (def analyze-forms (rd/parser (grmr/none-or-more
-                               (grmr/any (grmr/apply-to (fn [modules]
-                                                          (map modules extract))
-                                                        (grmr/one-or-more
-                                                         (grmr/apply-to add-namespace
-                                                                        rdr/read-add-ns
-                                                                        (grmr/get-value 'root-directory))))
+                               (grmr/any
+                                (grmr/apply-to (fn [modules]
+                                                 (map modules extract))
+                                               (grmr/one-or-more
+                                                (grmr/apply-to add-namespace
+                                                               rdr/read-add-ns
+                                                               (grmr/get-value 'root-directory)
+                                                               (grmr/get-value 'project-directory))))
                                          (grmr/apply-to send-to-emitter
                                                         rdr/top-level)))))
 
@@ -1996,13 +2034,14 @@
             :let [_ (send ast-emitter new-module 'core)]
             _ (analyze-forms {'file-name 'core
                               'line-number 1
+                              'project-directory ""
                               'root-directory ""}
                              (cache file-in))]
         (assoc modules 'core 'loaded))
       (let [_ (print-err "Could not compile Toccata core")]
         (maybe (abort)))))
 
-(defn compile-module [loaded-modules file-name waiter-prom root-dir]
+(defn compile-module [loaded-modules file-name waiter-prom root-dir proj-dir]
   (let [loaded-modules (flat-map loaded-modules load-core)]
     (or (and (map (get-in loaded-modules ['_ file-name])
                   (fn [loaded]
@@ -2018,6 +2057,7 @@
                                                    :let [_ (send ast-emitter new-module file-name)]
                                                    asts (analyze-forms {'file-name file-name
                                                                         'root-directory root-dir
+                                                                        'project-directory proj-dir
                                                                         'line-number 1}
                                                                        (cache file-in))]
                                                "")
@@ -2032,7 +2072,7 @@
         (write-strings "\n#include \"core.h\"\n")
         (or (map (file-directory file-name)
                  (fn [root-dir]
-                   (send module-compiler compile-module file-name waiter root-dir)))
+                   (send module-compiler compile-module file-name waiter root-dir root-dir)))
             (let [_ (print-err "Could not find " (str "'" file-name "'"))]
               (abort)))
         (extract waiter)
