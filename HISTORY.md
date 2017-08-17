@@ -217,3 +217,7 @@ Another very useful special form is threading a value through successive functio
 ## Entry 41:
 
 Add some "nice to haves" to the core library
+
+## Entry 42:
+
+Add 'gensym' to let you generate unique symbols.

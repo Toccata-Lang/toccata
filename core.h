@@ -56,6 +56,9 @@ typedef struct {
   List *tail;
   pthread_mutex_t access;} extractCache;
 
+typedef struct {
+  int64_t sym_counter;} intGenerator;
+
 Value *nothing;
 int32_t refsInit;
 int32_t staticRefsInit;
@@ -233,3 +236,4 @@ Value *makeAgent(Value *arg0);
 Value *extractAgent(Value *arg0);
 void scheduleAgent(Agent *agent, List *action);
 void freeExtractCache(void *cachePtr);
+void freeIntGenerator(void *ptr);

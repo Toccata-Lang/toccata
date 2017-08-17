@@ -3911,3 +3911,12 @@ void freeExtractCache(void *cachePtr) {
 #endif
   }
 }
+
+void freeIntGenerator(void *ptr) {
+  if (ptr != (void *)0) {
+    free(ptr);
+#ifdef CHECK_MEM_LEAK
+    __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
+  }
+}
