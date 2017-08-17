@@ -209,3 +209,7 @@ Sharing libraries for others to use is a huge part of usability. This commit all
 ## Entry 39:
 
 One of the most used special forms is 'for'.
+
+## Entry 40:
+
+Another very useful special form is threading a value through successive function calls. Since Toccata doesn't have a macro system (yet!), a few of these useful forms have to be built into the compiler.
