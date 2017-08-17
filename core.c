@@ -779,31 +779,42 @@ void freeAgent(Value *v) {
   free(v);
 }
 
-#define FREE_FN_COUNT 20
-freeValFn freeJmpTbl[FREE_FN_COUNT] = {NULL,
-                                       &freeInteger,
-				       &freeString,
-				       &freeFnArity,
-				       &freeFunction,
-				       &freeSubString,
-				       &freeList,
-				       &freeMaybe,
-				       &freeVector,
-				       &freeVectorNode,
-				       &freeSubString,
-				       &freeBitmapNode,
-				       &freeArrayNode,
-				       &freeHashCollisionNode,
-				       NULL,
-                                       &freePromise,
-                                       &freeFuture,
-                                       &freeAgent};
+void freeOpaquePtr(Value *v) {
+  // call the destructor with the pointer
+  Opaque *opaque = (Opaque *)v;
+  if (opaque->destruct != NULL)
+    opaque->destruct(opaque->ptr);
+#ifdef CHECK_MEM_LEAK
+  __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
+  free(v);
+}
+
+freeValFn freeJmpTbl[TypeCount] = {NULL,
+				   &freeInteger,
+				   &freeString,
+				   &freeFnArity,
+				   &freeFunction,
+				   &freeSubString,
+				   &freeList,
+				   &freeMaybe,
+				   &freeVector,
+				   &freeVectorNode,
+				   &freeSubString,
+				   &freeBitmapNode,
+				   &freeArrayNode,
+				   &freeHashCollisionNode,
+				   NULL,
+				   &freePromise,
+				   &freeFuture,
+				   &freeAgent,
+				   &freeOpaquePtr};
 
 void dec_and_free(Value *v, int deltaRefs) {
   if (decRefs(v, deltaRefs) >= -1)
     return;
 
-  if (v->type < FREE_FN_COUNT) {
+  if (v->type < TypeCount) {
     freeJmpTbl[v->type](v);
   } else {
     ReifiedVal *rv = (ReifiedVal *)v;
@@ -1335,7 +1346,7 @@ Value *intValue(int64_t n) {
   return((Value *)numVal);
 };
 
-Value *pr_STAR(Value *str) {
+Value *prSTAR(Value *str) {
   int bytes;
   if (str->type == StringType) {
     bytes = fprintf(outstream, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
@@ -1343,6 +1354,20 @@ Value *pr_STAR(Value *str) {
     bytes = fprintf(outstream, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
   } else {
     fprintf(stderr, "\ninvalid type for 'pr*'\n");
+    abort();
+  }
+  dec_and_free(str, 1);
+  return(intValue(bytes));
+}
+
+Value *prErrSTAR(Value *str) {
+  int bytes;
+  if (str->type == StringType) {
+    bytes = fprintf(stderr, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
+  } else if (str->type == SubStringType) {
+    bytes = fprintf(stderr, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
+  } else {
+    fprintf(stderr, "\ninvalid type for 'pr-err*'\n");
     abort();
   }
   dec_and_free(str, 1);
@@ -2701,6 +2726,14 @@ Value *escapeChars(Value *arg0) {
   }
 }
 
+Value *opaqueValue(void *ptr, Destructor *destruct) {
+  Opaque *opVal = (Opaque *)my_malloc(sizeof(Opaque));
+  opVal->type = OpaqueType;
+  opVal->ptr = ptr;
+  opVal->destruct = destruct;
+  return((Value *)opVal);
+};
+
 Value *stringValue(char *s) {
   int64_t len = strlen(s);
   String *strVal = malloc_string(len);
@@ -3866,4 +3899,15 @@ void scheduleAgent(Agent *agent, List *action) {
   Future *f = malloc_future(__LINE__);
   f->action = (Value *)updateAgentFn;
   scheduleFuture(f);
+}
+
+void freeExtractCache(void *cachePtr) {
+  extractCache *cacheTail = (extractCache *)cachePtr;
+  if (cacheTail != (extractCache *)0) {
+    dec_and_free((Value *)cacheTail->tail, 1);
+    free(cacheTail);
+#ifdef CHECK_MEM_LEAK
+    __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
+  }
 }

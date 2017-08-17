@@ -135,7 +135,11 @@
 
 (defn pr* [str]
   (assert (instance? String str))
-  (inline C Integer "return(pr_STAR(arg0));"))
+  (inline C Integer "return(prSTAR(arg0));"))
+
+(defn pr-err* [str]
+  (assert (instance? String str))
+  (inline C Integer "return(prErrSTAR(arg0));"))
 
 (defn abort []
   (inline C Maybe
@@ -688,6 +692,11 @@
   (map (flat-map (interpose vs " ") string-list) pr*)
   (pr* "\n"))
 
+(defn print-err [& vs]
+  (pr-err* "\n*** ")
+  (map (flat-map (interpose vs " ") string-list) pr-err*)
+  (pr-err* "\n"))
+
 ;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
 (defn list [& l]
   ;; construct a list of values from the arguments
@@ -943,6 +952,38 @@
        (or (flat-map (first coll) f)
            (some (rest coll) f))))
 
+(defn pred-taker [coll pred]
+  (or (and (empty? coll)
+           (maybe empty-list))
+      (for [x (first coll)
+            :when (pred x)
+            tail (pred-taker (rest coll) pred)]
+        (cons x tail))
+      (maybe empty-list)))
+
+(defn take-while [coll pred]
+  (extract (pred-taker coll pred)))
+
+(defn taker [coll n]
+  (or (and (empty? coll)
+           (maybe empty-list))
+      (and (< 0 n)
+           (apply-to cons
+                     (first coll)
+                     (taker (rest coll) (dec n))))
+      (maybe empty-list)))
+
+(defn take [coll n]
+  (extract (taker coll n)))
+
+(defn range* [n l]
+  (or (and (= n 0) (maybe (cons 0 l)))
+      (and (< n 0) (maybe l))
+      (range* (dec n) (cons n l))))
+
+(defn range [n]
+  (extract (range* empty-list n)))
+
 (extend-type List
   Type
   (type-name [_] "List")
@@ -1151,10 +1192,9 @@
         (and bottomed-out?
              (maybe (list empty-list (reverse part))))
         (and (= (count part) n)
-             (map (partitioner l empty-list n)
-                  (fn [[partitioned remainder]]
-                    (list (cons (reverse part) partitioned)
-                          remainder))))
+             (for [[partitioned remainder] (partitioner l empty-list n)]
+               (list (cons (reverse part) partitioned)
+                     remainder)))
         (let [[head & tail] l]
           (partitioner tail (cons head part) n)))))
 
@@ -1305,6 +1345,81 @@
           (fn [m [k v]]
             (assoc* m k v (sha1 k) 0))))
 
+(defn filter-keys [m f]
+  ;; create a new hash-map from `m` that only contains key/value pairs
+  ;; where applying `f` to the key does not return `nothing`
+  (reduce (seq m) {}
+          (fn [m [k v]]
+            (extract (or (map (f k) (fn [_] (assoc m k v)))
+                         (maybe m))))))
+
+(defn remove-keys [m f]
+  ;; create a new hash-map from `m` that only contains key/value pairs
+  ;; where applying `f` to the key returns `nothing`
+  (reduce (seq m) {}
+          (fn [m [k v]]
+            (extract (or (map (f k) (fn [_] m))
+                         (maybe (assoc m k v)))))))
+
+(defn map-vals [m f]
+  ;; create a new hash-map from `m` with `f` applied to each value
+  (reduce (seq m) {}
+          (fn [m [k v]]
+            (assoc m k (f v)))))
+
+(defn get-in* [m path]
+  (or (and (empty? path)
+           (maybe m))
+      (for [k (first path)
+            sub-m (get m k)
+            v (get-in* sub-m (rest path))]
+        v)))
+
+(defn get-in [m path]
+  (and (< 0 (count path))
+       (get-in* m (seq path))))
+
+(defn update-in [m path f]
+  (or (and (empty? path)
+           (maybe m))
+      (and (= 1 (count path))
+           (for [k (first path)
+                 v (get m k)]
+             (assoc m k (f v))))
+      (for [k (first path)
+            sub-m (get m k)
+            new-m (update-in sub-m (rest path) f)]
+        (assoc m k new-m))))
+
+(defn update [m key f]
+  (for [v (get m key)]
+    (assoc m key (f v))))
+
+(defn assoc-in* [m path v]
+  (or (and (empty? path)
+           (maybe m))
+      (for [_ (= 1 (count path))
+            k (first path)]
+        (assoc m k v))
+      (for [k (first path)
+            sub-m (or (get m k)
+                      (maybe {}))
+            new-m (assoc-in* sub-m (rest path) v)]
+        (assoc m k new-m))))
+
+(defn assoc-in [m path v]
+  (extract (assoc-in* m path v)))
+
+(defn merge-with [merge-fn hm & ms]
+  (reduce ms hm
+          (fn [hm m]
+            (reduce (seq m) hm
+                    (fn [hm [k v]]
+                      (extract (or (map (get hm k)
+                                        (fn [old-v]
+                                          (assoc hm k (merge-fn old-v v))))
+                                   (maybe (assoc hm k v)))))))))
+
 
 (extend-type Promise
   Type
@@ -1390,3 +1505,168 @@
 
 (defn agent [v]
   (inline C "return(makeAgent(arg0));"))
+
+(defn create-cache []
+  ;; private function used for implementing LazyCache
+  (returns x (instance? List x))
+  (inline C "
+  extractCache *newCache = (extractCache *)my_malloc(sizeof(extractCache));
+  newCache->tail = malloc_list();
+  pthread_mutex_init(&newCache->access, NULL);
+  return((Value *)opaqueValue((void *)newCache, freeExtractCache));
+"))
+
+(defn cache-list [cache-struct]
+  (returns x (instance? List x))
+  ;; private function used for implementing LazyCache
+  (inline C "
+  extractCache *cache = (extractCache *)((Opaque *)arg0)->ptr;
+  incRef((Value *)cache->tail, 1);
+  dec_and_free(arg0, 1);
+  return((Value *)cache->tail);
+"))
+
+(defn first-cached [cache tail]
+  ;; private function used for implementing LazyCache
+  (inline C "
+  List *cache = (List *)arg0;
+  extractCache *tail = (extractCache *)((Opaque *)arg1)->ptr;
+  if (cache->head == (Value *)0) {
+    pthread_mutex_lock(&tail->access);
+    if (cache->head == (Value *)0) {
+      // leave the mutex locked and return nothing
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(nothing);
+    } else {
+// TODO: untested code path
+fprintf(stderr, \"first-cached 4\\n\");
+abort();
+      pthread_mutex_unlock(&tail->access);
+      incRef(cache->head, 1);
+      dec_and_free(arg0, 1);
+      dec_and_free(arg1, 1);
+      return(maybe((List *)0, (Value *)0, cache->head));
+    }
+  } else {
+    incRef(cache->head, 1);
+    dec_and_free(arg0, 1);
+    dec_and_free(arg1, 1);
+    return(maybe((List *)0, (Value *)0, cache->head));
+  }
+"))
+
+(defn append-to-cache-tail [tail value]
+  ;; private function used for implementing LazyCache
+  (returns x (instance? Maybe x))
+  (inline C "
+  extractCache *cacheTail = (extractCache *)((Opaque *)arg0)->ptr;
+  cacheTail->tail->head = arg1;
+  cacheTail->tail->tail = malloc_list();
+  List *original = cacheTail->tail;
+  cacheTail->tail = cacheTail->tail->tail;
+  incRef((Value *)cacheTail->tail, 1);
+  dec_and_free(arg0, 1);
+  dec_and_free((Value *)original, 1);
+  pthread_mutex_unlock(&cacheTail->access);
+  return(nothing);
+"))
+
+(defn rest-of-cache [cache]
+  ;; private function used for implementing LazyCache
+  (returns x (instance? List x))
+  (inline C "
+  List *cache = (List *)arg0;
+  Value *result;
+  result = (Value *)cache->tail;
+  incRef(result, 1);
+  dec_and_free(arg0, 1);
+  return(result);
+"))
+
+(defn remove [l f]
+  ;; remove all elements of 'l' for which 'f' returns true
+  (filter l (fn [v]
+              (= nothing (f v)))))
+
+(defn repeat [n v]
+  (map (range n) (fn [_] v)))
+
+(defn constantly [v]
+  (fn [& args] v))
+
+(def code-0 (char-code "0"))
+(def code-9 (char-code "9"))
+(defn str-to-int [int-str]
+  (reduce (take-while int-str (fn [c]
+                                (let [c (char-code c)]
+                                  (or (= code-0 c)
+                                      (= code-9 c)
+                                      (< code-0 c code-9)))))
+          0
+          (fn [n c]
+            (+ (* n 10) (- (char-code c) code-0)))))
+
+
+(deftype HashSet [set-map]
+  Function
+  (invoke [_ v]
+    (get set-map v))
+
+  Collection
+  (empty? [coll]
+    (empty? set-map))
+  (empty [coll]
+    (HashSet {}))
+  (count [coll]
+    (count set-map))
+  (conj [coll value]
+    (HashSet (assoc set-map value value)))
+  (reduce [coll result f]
+    (reduce (vals set-map) result f))
+
+  Composition
+  (zero [_]
+    (HashSet {}))
+  (comp* [mval mvals]
+    (HashSet (comp* set-map (map mvals .set-map))))
+
+  Container
+  (flat-map [mval func]
+    (HashSet (comp* {} (map (vals set-map)
+                            (fn [v]
+                              (.set-map (func v)))))))
+  (wrap [x v]
+    (HashSet {v v}))
+
+  (map [v f]
+    (HashSet (reduce (vals set-map)
+                     {}
+                     (fn [m v]
+                       (let [new-v (f v)]
+                         (assoc m new-v new-v))))))
+
+  Seqable
+  (seq [coll]
+    (vals set-map))
+
+  Stringable
+  (string-list [value]
+    (comp (list "#{")
+          (interpose (flat-map (vals set-map) string-list)
+                     " ")
+          (list "}")))
+
+  Eq
+  (=* [x y]
+    (and (=* set-map (.set-map y))
+         (maybe x))))
+
+(defn set [val-list]
+  (HashSet (reduce val-list {} (fn [m v] (assoc m v v)))))
+
+(defn hash-set [& vals]
+  (set vals))
+
+(defn disj [set val]
+  (HashSet (dissoc (.set-map set) val)))

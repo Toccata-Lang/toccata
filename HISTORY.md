@@ -213,3 +213,7 @@ One of the most used special forms is 'for'.
 ## Entry 40:
 
 Another very useful special form is threading a value through successive function calls. Since Toccata doesn't have a macro system (yet!), a few of these useful forms have to be built into the compiler.
+
+## Entry 41:
+
+Add some "nice to haves" to the core library

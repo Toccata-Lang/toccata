@@ -11,6 +11,7 @@ extern void abort();
 
 #define VECTOR_ARRAY_LEN 32
 
+typedef void (Destructor)(void *);
 typedef struct Value {int64_t type; int32_t refs; struct Value* next;} Value;
 typedef struct {int64_t type; int32_t refs; int64_t numVal;} Integer;
 typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; char buffer[0];} String;
@@ -34,6 +35,7 @@ typedef struct {int64_t type; int32_t refs;
                 pthread_mutex_t access;} Agent;
 typedef struct {int64_t type; int32_t refs; Value *typeArgs; int implCount;
                 Value* impls[];} ReifiedVal;
+typedef struct {int64_t type; int32_t refs; void *ptr; Destructor *destruct;} Opaque;
 
 
 typedef struct {int64_t type; Value *implFn;} ProtoImpl;
@@ -49,6 +51,10 @@ typedef Value *(FnType6)(List *, Value *, Value *, Value *, Value *, Value *, Va
 typedef Value *(FnType7)(List *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
 typedef Value *(FnType8)(List *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
 typedef Value *(FnType9)(List *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
+
+typedef struct {
+  List *tail;
+  pthread_mutex_t access;} extractCache;
 
 Value *nothing;
 int32_t refsInit;
@@ -72,7 +78,8 @@ int32_t refsError;
 #define PromiseType 15
 #define FutureType 16
 #define AgentType 17
-#define TypeCount 18
+#define OpaqueType 18
+#define TypeCount 19
 
 FILE *outstream;
 List *empty_list;
@@ -133,6 +140,7 @@ Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
 Value *(*type_name)(List *closures, Value *t);
 Value *(*fn_apply)(List *closures, Value *f, Value *args);
 
+Value *my_malloc(int64_t sz);
 List *malloc_list();
 Value *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
@@ -147,7 +155,8 @@ void waitForWorkers();
 char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);
 Value *intValue(int64_t n);
-Value *pr_STAR(Value *);
+Value *prSTAR(Value *);
+Value *prErrSTAR(Value *);
 Value *add_ints(Value *arg0, Value *arg1);
 Value *integer_str(Value *arg0);
 Value *integer_EQ(Value *arg0, Value *arg1);
@@ -195,6 +204,7 @@ Value *symbolSha1(Value *arg0);
 Value *symEQ(Value *arg0, Value *arg1);
 Value *symLT(Value *arg0, Value *arg1);
 Value *stringValue(char *s);
+Value *opaqueValue(void *ptr, Destructor *destruct);
 Value *maybeInvoke(Value *arg0, Value *arg1, Value *arg2);
 Value *listFilter(Value *arg0, Value *arg1);
 List *reverseList(List *input);
@@ -222,3 +232,4 @@ Value *makeFuture(Value *arg0);
 Value *makeAgent(Value *arg0);
 Value *extractAgent(Value *arg0);
 void scheduleAgent(Agent *agent, List *action);
+void freeExtractCache(void *cachePtr);
