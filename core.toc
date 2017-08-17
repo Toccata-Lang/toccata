@@ -1627,8 +1627,8 @@
   (symbol (str prefix (extract sym-counter))))
 
 
-(defn create-cache []
-  ;; private function used for implementing LazyCache
+(defn create-lazy []
+  ;; private function used for implementing LazyList
   (returns x (instance? List x))
   (inline C "
   extractCache *newCache = (extractCache *)my_malloc(sizeof(extractCache));
@@ -1637,9 +1637,9 @@
   return((Value *)opaqueValue((void *)newCache, freeExtractCache));
 "))
 
-(defn cache-list [cache-struct]
+(defn get-lazy [lazy-struct]
   (returns x (instance? List x))
-  ;; private function used for implementing LazyCache
+  ;; private function used for implementing LazyList
   (inline C "
   extractCache *cache = (extractCache *)((Opaque *)arg0)->ptr;
   incRef((Value *)cache->tail, 1);
@@ -1647,8 +1647,8 @@
   return((Value *)cache->tail);
 "))
 
-(defn first-cached [cache tail]
-  ;; private function used for implementing LazyCache
+(defn first-lazy [lazy tail]
+  ;; private function used for implementing LazyList
   (inline C "
   List *cache = (List *)arg0;
   extractCache *tail = (extractCache *)((Opaque *)arg1)->ptr;
@@ -1661,7 +1661,7 @@
       return(nothing);
     } else {
 // TODO: untested code path
-fprintf(stderr, \"first-cached 4\\n\");
+fprintf(stderr, \"first-lazy 4\\n\");
 abort();
       pthread_mutex_unlock(&tail->access);
       incRef(cache->head, 1);
@@ -1677,8 +1677,8 @@ abort();
   }
 "))
 
-(defn append-to-cache-tail [tail value]
-  ;; private function used for implementing LazyCache
+(defn append-to-lazy-tail [tail value]
+  ;; private function used for implementing LazyList
   (returns x (instance? Maybe x))
   (inline C "
   extractCache *cacheTail = (extractCache *)((Opaque *)arg0)->ptr;
@@ -1693,8 +1693,8 @@ abort();
   return(nothing);
 "))
 
-(defn rest-of-cache [cache]
-  ;; private function used for implementing LazyCache
+(defn rest-of-lazy [lazy]
+  ;; private function used for implementing LazyList
   (returns x (instance? List x))
   (inline C "
   List *cache = (List *)arg0;
@@ -1704,3 +1704,28 @@ abort();
   dec_and_free(arg0, 1);
   return(result);
 "))
+
+(deftype LazyList [container lazy tail]
+  Stringable
+  (string-list [_] (list "<LazyList>"))
+
+  Collection
+  (empty? [_] nothing)
+
+  Seqable
+  (first [c]
+    ;; 'first-lazy' leaves the mutex locked if the lazy remains empty
+    ;; after acquiring it. 'append-to-lazy' then frees it
+    (or (first-lazy lazy tail)
+        (maybe (let [v (extract container)]
+                 (append-to-lazy-tail tail v)
+                 v))))
+
+  (rest [c]
+    ;; make sure that there's at least one item in the lazy list
+    (first c)
+    (LazyList container (rest-of-lazy lazy) tail)))
+
+(defn lazy-list [container]
+  (let [lazy-struct (create-lazy)]
+    (LazyList container (get-lazy lazy-struct) lazy-struct)))

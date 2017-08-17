@@ -221,3 +221,7 @@ Add some "nice to haves" to the core library
 ## Entry 42:
 
 Add 'gensym' to let you generate unique symbols.
+
+## Entry 43:
+
+A thread-safe, lazy list implementation
