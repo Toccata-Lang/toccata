@@ -47,10 +47,10 @@ Value *my_malloc(int64_t sz) {
 typedef struct {Value *head; uintptr_t aba;} FreeValList;
 
 Value *removeFreeValue(FreeValList *freeList) {
+  Value *item = (Value *)0;
   FreeValList orig;
   __atomic_load((long long *)freeList, (long long *)&orig, __ATOMIC_RELAXED);
   FreeValList next = orig;
-  Value *item = (Value *)0;
   if (orig.head != (Value *)0) {
     do {
       item = orig.head;
@@ -693,19 +693,17 @@ Promise *malloc_promise() {
   newPromise->type = PromiseType;
   __atomic_store(&newPromise->refs, &refsInit, __ATOMIC_RELAXED);
   newPromise->result = (Value *)0;
-  // newPromise->actions = empty_list;
+  newPromise->actions = empty_list;
   pthread_cond_init(&newPromise->delivered, NULL);
   pthread_mutex_init(&newPromise->access, NULL);
   return(newPromise);
 }
 
 void freePromise(Value *v) {
- // List *actions = ((Promise *)v)->actions;
- Value *result = ((Promise *)v)->result;
- // if (actions != (List *)0)
- //   dec_and_free((Value *)actions, 1);
- if (result != (Value *)0)
-   dec_and_free(result, 1);
+ if (((Promise *)v)->actions != (List *)0)
+   dec_and_free((Value *)(((Promise *)v)->actions), 1);
+ if (((Promise *)v)->result != (Value *)0)
+   dec_and_free(((Promise *)v)->result, 1);
  v->next = freePromises.head;
  freePromises.head = v;
 }
@@ -1040,7 +1038,7 @@ Value *readFuturesQueue() {
     int32_t refs;
     __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
     if (refs != 1) {
-      fprintf(stderr, "error reading futures queue 1\n");
+      fprintf(stderr, "error reading futures queue 1 %d\n", refs);
       abort();
     }
     dec_and_free((Value *)output, 1);
@@ -1935,30 +1933,30 @@ Value *checkInstance(int64_t typeNum, Value *arg1) {
   }
 }
 
-Value *listMap(Value *arg0, Value *arg1) {
+Value *listMap(Value *arg0, Value *f) {
   // List map
   List *l = (List *)arg0;
   if (l->len == 0) {
     dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    dec_and_free(f, 1);
     return((Value *)empty_list);
   } else {
     List *head = empty_list;
     List *tail = empty_list;
     FnArity *arity2;
-    if(arg1->type == FunctionType) {
-      arity2 = findFnArity(arg1, 1);
+    if(f->type == FunctionType) {
+      arity2 = findFnArity(f, 1);
       if(arity2 == (FnArity *)0) {
-        fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
+        fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
         abort();
       }
     }
     for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
       Value *y;
       incRef(x, 1);
-      if(arg1->type != FunctionType) {
-        incRef(arg1, 1);
-        y = invoke1Arg(empty_list, arg1, x);
+      if(f->type != FunctionType) {
+        incRef(f, 1);
+        y = invoke1Arg(empty_list, f, x);
       } else if(arity2->variadic) {
         FnType1 *fn4 = (FnType1 *)arity2->fn;
         List *varArgs3 = (List *)listCons(x, empty_list);
@@ -1989,7 +1987,7 @@ Value *listMap(Value *arg0, Value *arg1) {
       }
     }
     dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    dec_and_free(f, 1);
     return((Value *)head);
   }
 }
@@ -3735,6 +3733,50 @@ abort();
   return((Value *)newNode);
 }
 
+Value *dynamicCall1Arg(Value *f, Value *arg) {
+  Value *rslt;
+  if(f->type != FunctionType) {
+    rslt = invoke1Arg(empty_list, f, arg);
+  } else {
+    FnArity *arity = findFnArity(f, 1);
+    if(arity != (FnArity *)0 && !arity->variadic) {
+      FnType1 *fn = (FnType1 *)arity->fn;
+      rslt = fn(arity->closures, arg);
+    } else if(arity != (FnArity *)0 && arity->variadic) {
+      FnType1 *fn = (FnType1 *)arity->fn;
+      List *dynArgs = empty_list;
+      dynArgs = (List *)listCons(arg, dynArgs);
+      rslt = fn(arity->closures, (Value *)dynArgs);
+    } else {
+      fprintf(stderr, "\n*** Invalid action for Promise.\n");
+      abort();
+    }
+    dec_and_free(f, 1);
+  }
+  return(rslt);
+}
+
+Value *addAction(Promise *p, Value *action) {
+  if (p->result == (Value *)0) {
+    List *newList = malloc_list();
+    newList->head = (Value *)action;
+    List *actions;
+    pthread_mutex_lock(&p->access);
+    __atomic_load(&p->actions, &actions, __ATOMIC_RELAXED);
+    do {
+      newList->len = actions->len + 1;
+      newList->tail = actions;
+    } while (!__atomic_compare_exchange(&p->actions, &actions,
+					&newList, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    pthread_mutex_unlock(&p->access);
+  } else {
+    incRef(p->result, 1);
+    Value *trash = dynamicCall1Arg(action, p->result);
+    dec_and_free(trash, 1);
+  }
+  return((Value *)p);
+}
+
 Value *deliverPromise(Value *arg0, Value *arg1) {
   Promise *p = (Promise *)arg0;
   if (p->result == (Value *)0) {
@@ -3744,6 +3786,17 @@ Value *deliverPromise(Value *arg0, Value *arg1) {
       pthread_cond_broadcast(&p->delivered);
     }
     pthread_mutex_unlock(&p->access);
+
+    // perform actions
+    List *l = p->actions;
+    if (l->len != 0) {
+      for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
+	incRef(x, 1);
+	incRef(arg1, 1);
+	Value *trash = dynamicCall1Arg(x, arg1);
+	dec_and_free(trash, 1);
+      }
+    }
   }
   return(arg0);
 }

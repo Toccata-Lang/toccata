@@ -26,7 +26,7 @@ typedef struct {int64_t type; int32_t refs; int32_t count; int8_t shift; int64_t
 typedef struct {int64_t type; int32_t refs; int32_t bitmap; Value *array[];} BitmapIndexedNode;
 typedef struct {int64_t type; int32_t refs; Value *array[32];} ArrayNode;
 typedef struct {int64_t type; int32_t refs; int16_t count; Value *array[];} HashCollisionNode;
-typedef struct {int64_t type; int32_t refs; Value *result; // List *actions;
+typedef struct {int64_t type; int32_t refs; Value *result; List *actions;
                 pthread_cond_t delivered; pthread_mutex_t access;} Promise;
 typedef struct {int64_t type; int32_t refs; Value *action; Value* errorCallback;
                 Value *result; pthread_cond_t delivered; pthread_mutex_t access;} Future;
@@ -237,3 +237,5 @@ Value *extractAgent(Value *arg0);
 void scheduleAgent(Agent *agent, List *action);
 void freeExtractCache(void *cachePtr);
 void freeIntGenerator(void *ptr);
+Value *addAction(Promise *promise, Value *action);
+Value *dynamicCall1Arg(Value *f, Value *arg);

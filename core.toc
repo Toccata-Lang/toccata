@@ -1421,6 +1421,14 @@
                                    (maybe (assoc hm k v)))))))))
 
 
+(defn add-action [p f]
+  (assert (instance? Promise p))
+  (inline C "return(addAction((Promise *)arg0, arg1));"))
+
+(defn promise
+  ([] (inline C Promise "return((Value *)malloc_promise());\n"))
+  ([v] (deliver (promise) v)))
+
 (extend-type Promise
   Type
   (type-name [_] "Promise")
@@ -1434,24 +1442,43 @@
                                          (list "<Promise " x-str ">")))))
                  (maybe (list "<Promise>")))))
 
+  Composition
+  (comp* [p ps]
+    (let [new-p (promise)
+          f (fn [x] (deliver new-p x))]
+      (map (cons p ps) (fn [p]
+                         (add-action p f)))
+      new-p))
+
   Container
-
   (extract [prom]
-    (inline C "return(extractPromise(arg0));")))
-  ;; (map [p f]
-  ;;   (print-err 'promise-map)
-  ;;   (abort))
-  ;; (wrap [_ v] (promise v))
-  ;; (apply* [f vs]
-  ;;   ;; TODO: wrong. This waits on 'vs' at application time
-  ;;   (promise (apply (extract f) (map vs extract))))
-  ;; (flat-map [v f]
-  ;;   ;; TODO: wrong. This waits on 'v' at application time
-  ;;   (f (extract v)))
+    (inline C "return(extractPromise(arg0));"))
 
-(defn promise
-  ([] (inline C Promise "return((Value *)malloc_promise());\n"))
-  ([v] (deliver (promise) v)))
+  (map [p f]
+    (let [new-p (promise)]
+      (add-action p (fn [x]
+                      (deliver new-p (f x))))
+      new-p))
+
+  (wrap [_ v] (promise v))
+
+  (apply* [p-f p-vs]
+    (let [new-p (promise)
+          p-vlist (reduce (reverse p-vs) (promise empty-list)
+                          (fn [p-list p-v]
+                            (flat-map p-list (fn [l]
+                                               (map p-v (fn [v]
+                                                          (cons v l)))))))]
+      (add-action p-vlist (fn [vs]
+                            (deliver new-p (apply (extract p-f) vs))))
+      new-p))
+
+  (flat-map [p f]
+    (let [new-p (promise)]
+      (add-action p (fn [x]
+                      (add-action (f x) (fn [y]
+                                          (deliver new-p y)))))
+      new-p)))
 
 
 (defn future [f]
