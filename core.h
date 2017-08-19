@@ -37,6 +37,8 @@ typedef struct {int64_t type; int32_t refs; Value *typeArgs; int implCount;
                 Value* impls[];} ReifiedVal;
 typedef struct {int64_t type; int32_t refs; void *ptr; Destructor *destruct;} Opaque;
 
+Integer const0;
+Value *const0Ptr;
 
 typedef struct {int64_t type; Value *implFn;} ProtoImpl;
 typedef struct {int64_t implCount; ProtoImpl impls[];} ProtoImpls;
@@ -60,10 +62,12 @@ typedef struct {
   int64_t sym_counter;} intGenerator;
 
 Value *nothing;
+Value *maybeNothing;
 int32_t refsInit;
 int32_t staticRefsInit;
 int32_t refsError;
 
+#define UnknownType 0
 #define IntegerType 1
 #define StringType 2
 #define FnArityType 3
@@ -94,6 +98,7 @@ struct {List* input; List* output;
 Future shutDown;
 int8_t mainThreadDone;
 
+int cleaningUp;
 #define CHECK_MEM_LEAK 1
 
 #ifdef CHECK_MEM_LEAK
@@ -241,3 +246,4 @@ Value *addPromiseAction(Promise *promise, Value *action);
 Value *dynamicCall1Arg(Value *f, Value *arg);
 Value *deliverFuture(Value *fut, Value *val);
 Value *addFutureAction(Future *p, Value *action);
+String *nullTerm(Value *s);

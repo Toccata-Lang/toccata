@@ -1,8 +1,7 @@
 
 (defn maybe [v]
   ;; wrap `v` in a Maybe value
-  (inline C Maybe "
-    return(maybe((List *)0, (Value *)0, arg0));"))
+  (inline C Maybe "return(maybe((List *)0, (Value *)0, arg0));"))
 
 (def nothing (inline C Maybe "(Value *)&(Maybe){MaybeType, -1, 0}"))
 
@@ -57,7 +56,7 @@
     (returns a (instance? Maybe a))))
 
 ;; Internal functions, shouldn't be used in code
-(defn new-type-value [reified-template type-args]
+(defn new-type-value [reified-template type-arg-values]
   (inline C "
   ReifiedVal *template = (ReifiedVal *)arg0;
   ReifiedVal *rv = malloc_reified(template->implCount);
@@ -67,7 +66,7 @@
   rv->typeArgs = arg1;
   return((Value *)rv);"))
 
-(defn make-value [reified-template type-args]
+(defn make-value [reified-template type-arg-values]
   (inline C "
   ReifiedVal *template = (ReifiedVal *)arg0;
   ReifiedVal *rv = malloc_reified(template->implCount);
@@ -360,7 +359,7 @@
 
     ;; the default way of flattening. Requires `flat-map` to be implemented
     ;; for `x`
-    (flat-map x (fn [y] y)))
+    )
 
   (extend [x f]
     ;; Create a new value of same type as `x` that will apply `f` to
@@ -578,6 +577,9 @@
     ;; Create a list of strings of that comprise the representation of `x`
     (returns a (instance List a))))
 
+(defn address-of [x]
+  (inline C "return(integerValue((long long)arg0));"))
+
 (defn identical [x y]
   ;; Returns a `maybe` value if and only if the `x` and `y` reside at the same address in memory
   (inline C "
@@ -668,9 +670,12 @@
    (returns x (instance? List x))
    (cons arg (fn-apply list* args))))
 
+(defn fn-name [f]
+  (inline C "return(stringValue(((Function *)arg0)->name));"))
+
 (extend-type Function
   Stringable
-  (string-list [_] (list "<Function>"))
+  (string-list [_] (list "<Function " (fn-name _) ">"))
 
   Hashable
   (sha1 [f] 0)
@@ -920,7 +925,10 @@
     m)
 
   (get [m _ not-found]
-    (or m (maybe not-found))))
+    (or m (maybe not-found)))
+
+  (assoc* [_ _ v _ _]
+    (maybe v)))
 
 (defn splitter [l n]
   (or (empty? l)
@@ -982,7 +990,7 @@
       (range* (dec n) (cons n l))))
 
 (defn range [n]
-  (extract (range* n empty-list)))
+  (extract (range* (dec n) empty-list)))
 
 (extend-type List
   Type
@@ -1212,9 +1220,10 @@
     (apply f (comp args more-args))))
 
 (defn every [coll f]
-  (or (and (empty? coll))
-      (and (flat-map (first coll) f)
-           (every (rest coll) f))))
+  (or (empty? coll)
+      (for [head (flat-map (first coll) f)
+            tail (every (rest coll) f)]
+        (conj tail head))))
 
 
 (extend-type BitmapIndexedNode
@@ -1435,12 +1444,10 @@
 
   Stringable
   (string-list [p]
-    (extract (or (flat-map (delivered p)
-                           (fn [x]
-                             (flat-map (first (string-list x))
-                                       (fn [x-str]
-                                         (list "<Promise " x-str ">")))))
-                 (maybe (list "<Promise>")))))
+    (extract (or (for [x (delivered p)
+                       x-str (first (string-list x))]
+                   (list "<Promise " x-str " " (str (address-of p)) ">"))
+                 (maybe (list "<Promise " (str (address-of p)) ">")))))
 
   Composition
   (comp* [p ps]
@@ -1501,7 +1508,7 @@
   (type-name [_] "Future")
 
   Stringable
-  (string-list [_] (list "<Future>"))
+  (string-list [_] (list "<Future " (str (address-of _)) ">"))
 
   Composition
   (comp* [p ps]
@@ -1650,8 +1657,8 @@
 (defn set [val-list]
   (HashSet (reduce val-list {} (fn [m v] (assoc m v v)))))
 
-(defn hash-set [& vals]
-  (set vals))
+(defn hash-set [& values]
+  (set values))
 
 (defn disj [set val]
   (HashSet (dissoc (.set-map set) val)))
@@ -1792,3 +1799,15 @@ abort();
 (defn lazy-list [container]
   (let [lazy-struct (create-lazy)]
     (LazyList container (get-lazy lazy-struct) lazy-struct)))
+
+(defn null-term [s]
+  (inline C String "return((Value *)nullTerm(arg0));\n"))
+
+(defn list-zipper [lists]
+  (or (some lists empty?)
+      (apply-to cons
+                (every lists first)
+                (list-zipper (map lists rest)))))
+
+(defn zip-lists [l & lists]
+  (extract (list-zipper (cons l lists))))

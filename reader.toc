@@ -183,7 +183,6 @@
 
 (def read-string-fragment
   (grmr/rule "read-string-fragment"
-             ;; TODO: we have to count the newlines in here
              (grmr/term-fn (fn [text]
                              (string-frag-len text)))))
 
@@ -292,12 +291,11 @@
 (def read-block-comment
   (grmr/rule "block-comment"
              (grmr/apply-to ast/block-comment
-                            ignore-whitespace
                             (grmr/get-value 'file-name)
                             (grmr/get-value 'line-number)
                             (grmr/one-or-more
                              (grmr/apply-to identity
-                                            ignore-linear-whitespace
+                                            ignore-whitespace
                                             (grmr/ignore (grmr/one-or-more ";"))
                                             (grmr/apply-to to-str
                                                            (grmr/none-or-more not-eol))
@@ -331,6 +329,8 @@
   (grmr/rule "let-binding"
              (grmr/apply-to ast/binding
                             ignore-whitespace
+                            (grmr/ignore (grmr/optional read-block-comment))
+                            ignore-whitespace
                             read-destructure
                             read-sub-expr)))
 
@@ -362,6 +362,7 @@
              (grmr/apply-to ast/or-expr
                             read-open-paren
                             (grmr/ignore "or")
+                            (grmr/ignore (grmr/one-or-more whitespace))
                             (grmr/one-or-more read-sub-expr)
                             read-close-paren)))
 
@@ -370,6 +371,7 @@
              (grmr/apply-to ast/and-expr
                             read-open-paren
                             (grmr/ignore "and")
+                            (grmr/ignore (grmr/one-or-more whitespace))
                             (grmr/one-or-more read-sub-expr)
                             read-close-paren)))
 
@@ -378,6 +380,7 @@
              (grmr/apply-to ast/assert-expr
                             read-open-paren
                             (grmr/ignore "assert")
+                            (grmr/ignore (grmr/one-or-more whitespace))
                             read-sub-expr
                             read-close-paren)))
 
@@ -386,7 +389,7 @@
              (grmr/apply-to ast/returns-expr
                             read-open-paren
                             (grmr/ignore "returns")
-                            ignore-whitespace
+                            (grmr/ignore (grmr/one-or-more whitespace))
                             read-symbol
                             (grmr/ignore (grmr/one-or-more whitespace))
                             read-sub-expr
@@ -508,7 +511,8 @@
                                       ignore-whitespace
                                       read-symbol
                                       (grmr/one-or-more read-implementation))
-                       read-block-comment)))
+                       (grmr/apply-to (fn [_] {})
+                                      read-block-comment))))
 
 (def read-reify
   (grmr/rule "reify"
@@ -563,8 +567,8 @@
                                                      (error "Missing \"]\""))))))
 
 (defprotocol QuoteLiteral
-  (quote-literal [quoted]
-    (ast/quoted quoted)))
+  (quote-literal [bogus]
+    (ast/quoted bogus)))
 
 (extend-type String
   QuoteLiteral
@@ -679,12 +683,14 @@
   (grmr/rule "for-let"
              (grmr/apply-to (fn [bindings]
                               (ForLetExpr bindings))
-                            ignore-whitespace
+                            (grmr/any ignore-whitespace
+                                      (grmr/ignore read-block-comment))
                             (grmr/ignore ":let")
                             (grmr/ignore (grmr/one-or-more whitespace))
                             (grmr/ignore "[")
                             (grmr/one-or-more read-let-binding)
-                            (grmr/ignore "]"))))
+                            (grmr/ignore "]")
+                            ignore-whitespace)))
 
 (deftype ForWhenExpr [value]
   Stringable
@@ -700,7 +706,8 @@
   (grmr/rule "for-when"
              (grmr/apply-to (fn [clause]
                               (ForWhenExpr clause))
-                            ignore-whitespace
+                            (grmr/any ignore-whitespace
+                                      (grmr/ignore read-block-comment))
                             (grmr/ignore ":when")
                             (grmr/ignore (grmr/one-or-more whitespace))
                             read-sub-expr)))
@@ -719,7 +726,8 @@
   (grmr/rule "for-when-not"
              (grmr/apply-to (fn [clause]
                               (ForWhenNotExpr clause))
-                            (grmr/ignore (grmr/none-or-more whitespace))
+                            (grmr/any ignore-whitespace
+                                      (grmr/ignore read-block-comment))
                             (grmr/ignore ":when-not")
                             (grmr/ignore (grmr/one-or-more whitespace))
                             read-sub-expr)))
@@ -797,6 +805,8 @@
 (defn nest-for-exprs [binding bindings body]
   (let [wrapper (symbol "#wrapper")
         wrapper-binding (ForLetExpr [(ast/binding wrapper (.val binding))])
+        bindings (remove bindings (fn [binding]
+                                    (instance? ast/block-comment-ast binding)))
         bindings (reverse (comp (list wrapper-binding
                                       (ast/binding (.binding binding) wrapper))
                                 bindings))]
@@ -809,7 +819,10 @@
              (grmr/any read-for-let
                        read-for-when
                        read-for-when-not
-                       read-let-binding)))
+                       read-let-binding
+                       (grmr/apply-to identity
+                                      read-block-comment
+                                      ignore-whitespace))))
 
 (def read-for
   (grmr/rule "for"
@@ -820,7 +833,7 @@
                             (grmr/any (apply-to nest-for-exprs
                                                 (grmr/ignore "[")
                                                 (grmr/any read-let-binding
-                                                          (error "Invalid 'for' bindings"))
+                                                          (error "Invalid initial 'for' binding"))
                                                 (grmr/any (grmr/none-or-more read-for-binding)
                                                           (error "Invalid 'for' bindings"))
                                                 (grmr/ignore "]")

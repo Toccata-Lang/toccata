@@ -4,9 +4,10 @@
 
 Integer const0 = {IntegerType, -1, 0};
 Value *const0Ptr = (Value *)&const0;
+int cleaningUp = 0;
 
 void prefs(char *tag, Value *v) {
-  printf("%s: %p %d\n", tag, v, v->refs);
+  fprintf(stderr, "%s: %p %d\n", tag, v, v->refs);
 }
 
 #ifdef CHECK_MEM_LEAK
@@ -181,7 +182,8 @@ void freeString(Value *v) {
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
       // __atomic_fetch_add(&free_strs, 1, __ATOMIC_ACQ_REL);
 #endif
-      free(v);
+      if (!cleaningUp)
+	free(v);
     }
   }
 
@@ -301,7 +303,8 @@ void freeFunction(Value *v) {
 #ifdef CHECK_MEM_LEAK
     __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-    free(v);
+    if (!cleaningUp)
+      free(v);
   }
 }
 
@@ -645,7 +648,8 @@ void freeHashCollisionNode(Value *v) {
 #ifdef CHECK_MEM_LEAK
   __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-  free(v);
+  if (!cleaningUp)
+    free(v);
 }
 
 FreeValList centralFreeArrayNodes = (FreeValList){(Value *)0, 0};
@@ -770,14 +774,15 @@ void freeAgent(Value *v) {
   Value *val = ((Agent *)v)->val;
   int32_t refs;
   __atomic_load(&val->refs, &refs, __ATOMIC_RELAXED);
+  emptyAgent((Agent *)v);
   if (val != (Value *)0) {
     dec_and_free(val, 1);
   }
-  emptyAgent((Agent *)v);
 #ifdef CHECK_MEM_LEAK
   __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-  free(v);
+  if (!cleaningUp)
+    free(v);
 }
 
 void freeOpaquePtr(Value *v) {
@@ -788,7 +793,8 @@ void freeOpaquePtr(Value *v) {
 #ifdef CHECK_MEM_LEAK
   __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-  free(v);
+  if (!cleaningUp)
+    free(v);
 }
 
 freeValFn freeJmpTbl[TypeCount] = {NULL,
@@ -831,7 +837,8 @@ void dec_and_free(Value *v, int deltaRefs) {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-      free(v);
+      if (!cleaningUp)
+	free(v);
     }
   }
 #ifdef CHECK_MEM_LEAK
@@ -868,6 +875,7 @@ void freeGlobal(Value *x) {
     return;
   x->refs = 1;
   dec_and_free(x, 1);
+  x->refs = -1;
 }
 
 void emptyFreeList(FreeValList *freeLinkedList) {
@@ -2750,6 +2758,7 @@ Value *subs2(Value *arg0, Value *arg1) {
       subStr->source = arg0;
       subStr->buffer = s->buffer + idx;
     } else {
+      dec_and_free(arg0, 1);
       subStr->len = 0;
       subStr->source = (Value *)0;
       subStr->buffer = (char *)0;
@@ -3892,7 +3901,7 @@ Value *deliverFuture(Value *fut, Value *val) {
   Future *future = (Future *)fut;
   pthread_mutex_lock (&future->access);
   future->result = val;
-  pthread_cond_signal(&future->delivered);
+  pthread_cond_broadcast(&future->delivered);
   pthread_mutex_unlock (&future->access);
 
   // perform actions
@@ -4009,7 +4018,8 @@ void freeExtractCache(void *cachePtr) {
   extractCache *cacheTail = (extractCache *)cachePtr;
   if (cacheTail != (extractCache *)0) {
     dec_and_free((Value *)cacheTail->tail, 1);
-    free(cacheTail);
+    if (!cleaningUp)
+      free(cacheTail);
 #ifdef CHECK_MEM_LEAK
     __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
@@ -4018,9 +4028,24 @@ void freeExtractCache(void *cachePtr) {
 
 void freeIntGenerator(void *ptr) {
   if (ptr != (void *)0) {
-    free(ptr);
+    if (!cleaningUp)
+      free(ptr);
 #ifdef CHECK_MEM_LEAK
     __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
   }
+}
+
+String *nullTerm(Value *s) {
+  String *arg0Str = malloc_string(((String *)s)->len);
+  if (s->type == StringType)
+    snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((String *)s)->buffer);
+  else if (s->type == SubStringType)
+    snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((SubString *)s)->buffer);
+  else {
+    fprintf(stderr, "\nNot a string.\n");
+    abort();
+  }
+  dec_and_free(s, 1);
+  return(arg0Str);
 }

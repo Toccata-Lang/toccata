@@ -233,3 +233,7 @@ Going down a rabbit trail, I implemented the core composition protocols for the 
 ## Entry 45:
 
 And doing the same for the Future data type. Async programming in Toccata is going to be awesome!
+
+## Entry 46:
+
+So close! Toccata can now compile it's compiler, which is my milestone for opening it up and letting other people get their hands on it. It's horribly slow, so the final step is to fix performance issues and clean up some TODO's.
