@@ -982,7 +982,7 @@
       (range* (dec n) (cons n l))))
 
 (defn range [n]
-  (extract (range* empty-list n)))
+  (extract (range* n empty-list)))
 
 (extend-type List
   Type
@@ -1421,9 +1421,9 @@
                                    (maybe (assoc hm k v)))))))))
 
 
-(defn add-action [p f]
+(defn add-promise-action [p f]
   (assert (instance? Promise p))
-  (inline C "return(addAction((Promise *)arg0, arg1));"))
+  (inline C "return(addPromiseAction((Promise *)arg0, arg1));"))
 
 (defn promise
   ([] (inline C Promise "return((Value *)malloc_promise());\n"))
@@ -1447,7 +1447,7 @@
     (let [new-p (promise)
           f (fn [x] (deliver new-p x))]
       (map (cons p ps) (fn [p]
-                         (add-action p f)))
+                         (add-promise-action p f)))
       new-p))
 
   Container
@@ -1456,8 +1456,8 @@
 
   (map [p f]
     (let [new-p (promise)]
-      (add-action p (fn [x]
-                      (deliver new-p (f x))))
+      (add-promise-action p (fn [x]
+                              (deliver new-p (f x))))
       new-p))
 
   (wrap [_ v] (promise v))
@@ -1469,23 +1469,32 @@
                             (flat-map p-list (fn [l]
                                                (map p-v (fn [v]
                                                           (cons v l)))))))]
-      (add-action p-vlist (fn [vs]
-                            (deliver new-p (apply (extract p-f) vs))))
+      (add-promise-action p-vlist (fn [vs]
+                                    (deliver new-p (apply (extract p-f) vs))))
       new-p))
 
   (flat-map [p f]
     (let [new-p (promise)]
-      (add-action p (fn [x]
-                      (add-action (f x) (fn [y]
-                                          (deliver new-p y)))))
+      (add-promise-action p (fn [x]
+                              (add-promise-action (f x) (fn [y]
+                                                          (deliver new-p y)))))
       new-p)))
 
 
-(defn future [f]
-  (inline C "return(makeFuture(arg0));"))
+(defn future
+  ([] (inline C "return(makeFuture((Value *)0));"))
+  ([f] (inline C "return(makeFuture(arg0));")))
 
 (defn thread-id []
   (inline C Integer "return(integerValue((int64_t)pthread_self()));"))
+
+(defn deliver-future [fut val]
+  (assert (instance? Future fut))
+  (inline C "return(deliverFuture(arg0, arg1));"))
+
+(defn add-future-action [fut f]
+  (assert (instance? Future fut))
+  (inline C "return(addFutureAction((Future *)arg0, arg1));"))
 
 (extend-type Future
   Type
@@ -1494,15 +1503,42 @@
   Stringable
   (string-list [_] (list "<Future>"))
 
+  Composition
+  (comp* [p ps]
+    (let [new-p (future)
+          f (fn [x] (deliver-future new-p x))]
+      (map (cons p ps) (fn [p]
+                         (add-future-action p f)))
+      new-p))
+
   Container
   (map [fut f]
-    (future (fn []
-              (f (extract fut)))))
-  (wrap [_ v] (future (fn [] v)))
-  (apply* [f vs]
-    (apply (extract f) (map vs extract)))
-  (flat-map [v f]
-    (f (extract v)))
+    (let [new-fut (future)]
+      (add-future-action fut (fn [x]
+                               (deliver-future new-fut (f x))))
+      new-fut))
+
+  (wrap [_ v]
+    (deliver-future (future) v))
+
+  (apply* [fut-f fut-vs]
+    (let [new-fut (future)
+          fut-vlist (reduce (reverse fut-vs) (deliver-future (future) empty-list)
+                            (fn [fut-list fut-v]
+                              (flat-map fut-list (fn [l]
+                                                   (map fut-v (fn [v]
+                                                                (cons v l)))))))]
+      (add-future-action fut-vlist (fn [vs]
+                                      (deliver-future new-fut (apply (extract fut-f) vs))))
+      new-fut))
+
+  (flat-map [fut f]
+    (let [new-fut (future)]
+      (add-future-action fut (fn [x]
+                               (add-future-action (f x) (fn [y]
+                                                          (deliver-future new-fut y)))))
+      new-fut))
+
   (extract [fut]
     (inline C "return(extractFuture(arg0));"))
 

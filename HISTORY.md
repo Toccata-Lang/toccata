@@ -229,3 +229,7 @@ A thread-safe, lazy list implementation
 ## Entry 44:
 
 Going down a rabbit trail, I implemented the core composition protocols for the Promise data type. This (along with the same for Future) will enable some awesome async programming.
+
+## Entry 45:
+
+And doing the same for the Future data type. Async programming in Toccata is going to be awesome!

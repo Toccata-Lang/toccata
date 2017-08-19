@@ -732,10 +732,13 @@ Future *malloc_future(int line) {
 }
 
 void freeFuture(Value *v) {
+  List *actions = ((Future *)v)->actions;
+  if (actions != (List *)0)
+    dec_and_free((Value *)actions, 1);
   Value *action = ((Future *)v)->action;
-  Value *result = ((Future *)v)->result;
   if (action != (Value *)0)
     dec_and_free(action, 1);
+  Value *result = ((Future *)v)->result;
   if (result != (Value *)0)
     dec_and_free(result, 1);
   v->next = freeFutures.head;
@@ -1017,7 +1020,7 @@ Value *shutDown_impl(List *closures) {
 
 FnArity shutDown_arity = {FnArityType, -1, 0, (List *)0, 0, shutDown_impl};
 Function shutDownFn = {FunctionType, -1, "shutdown-workers", 1, {&shutDown_arity}};
-Future shutDown = {FutureType, -1, (Value *)&shutDownFn, (Value *)0, (Value *)0, 0};
+Future shutDown = {FutureType, -1, (Value *)&shutDownFn, (Value *)0, (List *)0, (Value *)0, 0};
 
 void stopWorkers() {
   for (int32_t i = 0; i < NUM_WORKERS; i++)
@@ -1135,10 +1138,7 @@ abort();
     int32_t refs;
     __atomic_load(&future->refs, &refs, __ATOMIC_RELAXED);
     if (refs != -1) {
-      pthread_mutex_lock (&future->access);
-      future->result = result;
-      pthread_cond_signal(&future->delivered);
-      pthread_mutex_unlock (&future->access);
+      deliverFuture((Value *)future, result);
     }
     dec_and_free((Value *)future, 1);
     if (workerIndex >= 0) {
@@ -3756,12 +3756,12 @@ Value *dynamicCall1Arg(Value *f, Value *arg) {
   return(rslt);
 }
 
-Value *addAction(Promise *p, Value *action) {
+Value *addPromiseAction(Promise *p, Value *action) {
+  pthread_mutex_lock(&p->access);
   if (p->result == (Value *)0) {
     List *newList = malloc_list();
     newList->head = (Value *)action;
     List *actions;
-    pthread_mutex_lock(&p->access);
     __atomic_load(&p->actions, &actions, __ATOMIC_RELAXED);
     do {
       newList->len = actions->len + 1;
@@ -3770,6 +3770,7 @@ Value *addAction(Promise *p, Value *action) {
 					&newList, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
     pthread_mutex_unlock(&p->access);
   } else {
+    pthread_mutex_unlock(&p->access);
     incRef(p->result, 1);
     Value *trash = dynamicCall1Arg(action, p->result);
     dec_and_free(trash, 1);
@@ -3853,9 +3854,58 @@ Value *extractFuture(Value *arg0) {
 Value *makeFuture(Value *arg0) {
   Future *f = malloc_future(__LINE__);
   f->action = arg0;
-  incRef((Value *)f, 1);
-  scheduleFuture(f);
+  if (arg0 != (Value *)0) {
+    incRef((Value *)f, 1);
+    scheduleFuture(f);
+  }
   return((Value *)f);
+}
+
+Value *addFutureAction(Future *p, Value *action) {
+  pthread_mutex_lock(&p->access);
+  if (p->result == (Value *)0) {
+    List *newList = malloc_list();
+    newList->head = (Value *)action;
+    List *actions;
+    __atomic_load(&p->actions, &actions, __ATOMIC_RELAXED);
+    do {
+      if (actions != (List *)0) {
+	newList->len = actions->len + 1;
+	newList->tail = actions;
+      } else {
+	newList->len = 1;
+	newList->tail = empty_list;
+      }
+    } while (!__atomic_compare_exchange(&p->actions, &actions,
+					&newList, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    pthread_mutex_unlock(&p->access);
+  } else {
+    pthread_mutex_unlock(&p->access);
+    incRef(p->result, 1);
+    Value *trash = dynamicCall1Arg(action, p->result);
+    dec_and_free(trash, 1);
+  }
+  return((Value *)p);
+}
+
+Value *deliverFuture(Value *fut, Value *val) {
+  Future *future = (Future *)fut;
+  pthread_mutex_lock (&future->access);
+  future->result = val;
+  pthread_cond_signal(&future->delivered);
+  pthread_mutex_unlock (&future->access);
+
+  // perform actions
+  List *l = future->actions;
+  if (l != (List *)0 && l->len != 0) {
+    for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
+      incRef(x, 1);
+      incRef(val, 1);
+      Value *trash = dynamicCall1Arg(x, val);
+      dec_and_free(trash, 1);
+    }
+  }
+  return fut;
 }
 
 Value *makeAgent(Value *arg0) {
@@ -3951,6 +4001,7 @@ void scheduleAgent(Agent *agent, List *action) {
   updateAgentFn->arities[0] = updateAgentArity;
   Future *f = malloc_future(__LINE__);
   f->action = (Value *)updateAgentFn;
+  f->actions = empty_list;
   scheduleFuture(f);
 }
 
