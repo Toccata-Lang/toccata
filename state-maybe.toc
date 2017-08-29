@@ -1,22 +1,19 @@
 
 ;; state-maybe monad with lazy comp*
 
-(defn reduce-args [[arg & args] s]
-  (flat-map (arg s)
-            (fn [[result new-s]]
-              (or (and (empty? args)
-                       (maybe [(list result) new-s]))
-                  (flat-map (reduce-args args new-s)
-                            (fn [[results final-s]]
-                              (maybe [(cons result results) final-s])))))))
+(defn reduce-args [[arg & args] s wtf]
+  (let [x (arg s)]
+    (and x (let [[result new-s] (extract x)]
+             (or (and (=* 0 (list-count args))
+                      (maybe [(reverse (cons result wtf)) new-s]))
+                 (reduce-args args new-s (cons result wtf)))))))
 
 (defn -comp* [mv mvs s]
   (let [x (mv s)]
-    (or (and (= nothing (empty? mvs))
-             (= nothing x)
-             (let [[mv & mvs] mvs]
-               (-comp* mv mvs s)))
-        x)))
+    (or (and (empty? mvs) x)
+        x
+        (let [mv (first mvs)]
+          (and mv (-comp* (extract mv) (rest mvs) s))))))
 
 (deftype new-sm [invoke-fn]
   Stringable
@@ -31,24 +28,29 @@
   Container
   (map [_ f]
     (new-sm (fn [s]
-              (for [[v new-s] (invoke-fn s)]
-                [(f v) new-s]))))
+              (let [x (invoke-fn s)]
+                (and x (let [[v new-s] (extract x)]
+                         (maybe [(f v) new-s])))))))
   (wrap [_ v]
     (new-sm (fn [s]
               (maybe [v s]))))
   (apply* [fv args]
-    (new-sm (fn [s]
-              (or (for [_ (empty? args)
-                        [f new-s] (fv s)]
-                    [(f) new-s])
-                  (for [[results s] (reduce-args args s)
-                        [f s] (fv s)]
-                    [(apply f results) s])))))
+    (extract (or (and (empty? args)
+                      (maybe (new-sm (fn [s]
+                                       (let [x (fv s)]
+                                         (and x (let [[f new-s] (extract x)]
+                                                  (maybe [(f) new-s]))))))))
+                 (maybe (new-sm (fn [s]
+                                  (let [x (reduce-args args s empty-list)]
+                                    (and x (let [[results s] (extract x)
+                                                 y (fv s)]
+                                             (and y (let [[f s] (extract y)]
+                                                      (maybe [(apply f results) s]))))))))))))
   (flat-map [ev f]
     (new-sm (fn [s]
-              (flat-map (invoke-fn s)
-                        (fn [[v ss]]
-                          ((f v) ss))))))
+              (let [x (invoke-fn s)]
+                (and x (let [[v ss] (extract x)]
+                         ((f v) ss)))))))
 
   Composition
   (zero [_] (new-sm (fn [_] nothing)))
@@ -78,12 +80,14 @@
 (defn get-val
   ([k]
      (new-sm (fn [s]
-               (for [v (get s k)]
-                 [v s]))))
+               (let [x (get s k)]
+                 (and x (let [v (extract x)]
+                          (maybe [v s])))))))
   ([k nf]
      (new-sm (fn [s]
-               (or (for [v (get s k)]
-                     [v s])
+               (or (let [x (get s k)]
+                     (and x (let [v (extract x)]
+                              (maybe [v s]))))
                    (maybe [nf s]))))))
 
 (defn set-val [k v]
@@ -93,12 +97,14 @@
 (defn get-in-val
   ([path]
      (new-sm (fn [s]
-               (for [v (get-in s path)]
-                 [v s]))))
+               (let [x (get-in s path)]
+                 (and x (let [v (extract x)]
+                          (maybe [v s])))))))
   ([path nf]
      (new-sm (fn [s]
-               (or (for [v (get-in s path)]
-                     [v s])
+               (or (let [x (get-in s path)]
+                     (and x (let [v (extract x)]
+                              (maybe [v s]))))
                    (maybe [nf s]))))))
 
 (defn assoc-in-val [path v]
@@ -107,36 +113,41 @@
 
 (defn update-val [key f]
   (new-sm (fn [s]
-            (for [old-v (get s key)
-                  new-s (update-in s [key] f)]
-              [old-v new-s]))))
+            (let [x (get s key)]
+              (and x (let [old-v (extract x)
+                           y (update-in s [key] f)]
+                       (and y (let [new-s (extract y)]
+                                (maybe [old-v new-s])))))))))
 
 (defn update-in-val [path f]
   (new-sm (fn [s]
-            (for [old-v (get-in s path)
-                  new-s (update-in s path f)]
-              [old-v new-s]))))
+            (let [x (get-in s path)]
+              (and x (let [old-v (extract x)
+                           y (update-in s path f)]
+                       (and y (let [new-s (extract y)]
+                                (maybe [old-v new-s])))))))))
 
 (defn recur-fn [f as s]
   (let [x (f s)]
-    (or (and x (let [[v ss] (extract x)]
-                 (recur-fn f (cons v as) ss)))
-        (maybe [as s]))))
+    (or (and (= nothing x)
+             (maybe [as s]))
+        (let [[v ss] (extract x)]
+          (recur-fn f (cons v as) ss)))))
 
 (defn recur [mv]
   (new-sm (fn [s]
-            (for [[v ss] (mv s)
-                  [vs s] (recur-fn (.invoke-fn mv) (list v) ss)]
-              [(reverse vs) s]))))
+            (let [x (mv s)]
+              (and x (let [[v ss] (extract x)
+                           y (recur-fn (.invoke-fn mv) (list v) ss)]
+                       (and y (let [[vs s] (extract y)]
+                                (maybe [(reverse vs) s])))))))))
 
 (defn when [val]
   (new-sm (fn [s]
-            (flat-map val
-                      (fn [v]
-                        (maybe [v s]))))))
+            (and val (let [v (extract val)]
+                       (maybe [v s]))))))
 
 (defn when-not [val]
   (new-sm (fn [s]
-            (flat-map (= nothing val)
-                      (fn [v]
-                        (maybe [v s]))))))
+            (and (= nothing val)
+                 (maybe [nothing s])))))

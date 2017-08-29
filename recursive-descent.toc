@@ -48,20 +48,20 @@
 (defn next-input-buffer [s]
   (let [input (.input s)]
     (for [new-text (first input)]
-      (let [s (assoc s .curr-input new-text)]
-        (assoc s .input ((empty? new-text) empty-list (rest input)))))))
+      (let [s (.curr-input s new-text)]
+        (.input s ((empty? new-text) empty-list (rest input)))))))
 
 (defn reader [n s]
   (let [text (.curr-input s)
         text-length (count text)]
     (or (and (< n text-length)
              (maybe [(subs text 0 n)
-                     (assoc s .curr-input (subs text n))]))
+                     (.curr-input s (subs text n))]))
         (and (= n text-length)
              (or (map (next-input-buffer s)
                       (fn [new-s]
                         [text new-s]))
-                 (maybe [text (assoc s .curr-input "")])))
+                 (maybe [text (.curr-input s "")])))
         ;; (< text-length n)
         (for [new-s (next-input-buffer s)
               [texts final-s] (reader (- n text-length) new-s)]
@@ -77,7 +77,7 @@
                       [tail final-s] (fn-reader f new-s)]
                   [(cons text tail) final-s]))
            (maybe [(list (subs text 0 length))
-                   (assoc s .curr-input (subs text length))]))))))
+                   (.curr-input s (subs text length))]))))))
 
 (extend-type p/parser-not-char
   RecursiveDescent
@@ -120,9 +120,9 @@
                                                    (reduce s line-count
                                                            (fn [line-count c]
                                                              (+ line-count ((= c "\n") 1 0))))))]
-                        ;; TODO: Imperfect solution
-                        new-s (update-in new-s [.values 'line-number]
-                                         (fn [lc] (+ lc line-count)))]
+                        new-s (or (update-in new-s [.values 'line-number]
+                                             (fn [lc] (+ lc line-count)))
+                                  (assoc-in new-s [.values 'line-number] line-count))]
                     [(to-str str-list) new-s]))))))
 
 (extend-type p/repeat-rule
@@ -172,12 +172,12 @@
   RecursiveDescent
   (recursive-descent [p]
     (sm/state-maybe
-     (flatten (comp (sm/get-in-val [.parser-fns (.rule-name p)])
-                    (map (sm/state-maybe '_)
-                         (fn [_]
-                           (let [_ (print-err "No parser rule defined for "
-                                              (str "'" (.rule-name p) "'"))]
-                             (abort)))))))))
+     (sm/new-sm (fn [s]
+                  (let [y (get-in s [.parser-fns (.rule-name p)])]
+                    (extract (or (and y (maybe ((extract y) s)))
+                                 (let [_ (print-err "No parser rule defined for "
+                                                    (str "'" (.rule-name p) "'"))]
+                                   (abort))))))))))
 
 (extend-type p/Union
   RecursiveDescent
@@ -195,12 +195,28 @@
                                       rules)))
             (.rules u))))
 
+(defprotocol WrapInput
+  (wrap-input [_]))
+
+(extend-type LazyList
+  WrapInput
+  (wrap-input [x] x))
+
+(extend-type List
+  WrapInput
+  (wrap-input [x] x))
+
+(extend-type String
+  WrapInput
+  (wrap-input [x] (list x)))
+
+
 (defn parser [grammar]
   (let [[grammar-parser recursive-rules] (extract ((fr/evaluate grammar recursive-descent) {}))]
     (fn
       ([input]
-       (flat-map (grammar-parser (ParserState "" input "" recursive-rules {}))
+       (flat-map (grammar-parser (ParserState "" (wrap-input input) recursive-rules {}))
                  first))
       ([values input]
-       (flat-map (grammar-parser (ParserState "" input recursive-rules values))
+       (flat-map (grammar-parser (ParserState "" (wrap-input input) recursive-rules values))
                  first)))))

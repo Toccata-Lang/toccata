@@ -1,4 +1,6 @@
 
+#define CHECK_MEM_LEAK 1
+
 #include <sys/types.h>
 #include <stdio.h>
 #include <string.h>
@@ -99,7 +101,6 @@ Future shutDown;
 int8_t mainThreadDone;
 
 int cleaningUp;
-#define CHECK_MEM_LEAK 1
 
 #ifdef CHECK_MEM_LEAK
 int64_t malloc_count;
@@ -159,6 +160,7 @@ ReifiedVal *malloc_reified(int implCount);
 Promise *malloc_promise();
 
 void startWorkers();
+void replaceWorker();
 void waitForWorkers();
 char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);
@@ -204,6 +206,7 @@ Value *escapeChars(Value *arg0);
 Value *subs2(Value *arg0, Value *arg1);
 Value *subs3(Value *arg0, Value *arg1, Value *arg2);
 Value *strSeq(Value *arg0);
+Value *strReduce(Value *s0, Value *x1, Value *f2);
 Value *strVec(Value *arg0);
 Value *strLT(Value *arg0, Value *arg1);
 Value *vectorGet(Value *arg0, Value *arg1);

@@ -355,8 +355,16 @@ void freeList(Value *v) {
   l->tail = (List *)0;
   v->next = freeLists.head;
   freeLists.head = v;
-  if (tail != (List *)0)
-    dec_and_free((Value *)tail, 1);
+  if (tail != (List *)0) {
+    int32_t refs;
+    __atomic_load(&tail->refs, &refs, __ATOMIC_RELAXED);
+    if (refs == 1) {
+      freeList((Value *)tail);
+      __atomic_store(&tail->refs, &refsError, __ATOMIC_RELAXED);
+    } else {
+      decRefs((Value *)tail, 1);
+    }
+  }
 }
 
 FreeValList centralFreeMaybes = (FreeValList){(Value *)0, 0};
@@ -484,19 +492,26 @@ Vector *malloc_vector() {
 
 void freeVector(Value *v) {
   Value *root = (Value *)((Vector *)v)->root;
-  if (root != (Value *)0)
-    dec_and_free(root, 1);
-  for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
-    if (((Vector *)v)->tail[i] != (Value *)0) {
-      dec_and_free(((Vector *)v)->tail[i], 1);
+  if (root != (Value *)0) {
+    int32_t refs;
+    __atomic_load(&root->refs, &refs, __ATOMIC_RELAXED);
+    if (refs == 1) {
+      freeVectorNode((Value *)root);
+      decRefs((Value *)root, 1);
+    } else {
+      dec_and_free((Value *)root, 1);
     }
+  }
+  for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
+    if (((Vector *)v)->tail[i] != (Value *)0)
+      dec_and_free(((Vector *)v)->tail[i], 1);
   }
   v->next = freeVectors.head;
   freeVectors.head = v;
 }
 
 FreeValList centralFreeReified[20] = {(FreeValList){(Value *)0, 0},
-                                      (FreeValList){(Value *)0, 0},
+				      (FreeValList){(Value *)0, 0},
                                       (FreeValList){(Value *)0, 0},
                                       (FreeValList){(Value *)0, 0},
                                       (FreeValList){(Value *)0, 0},
@@ -1021,7 +1036,9 @@ void waitForWorkers() {
 
 Value *shutDown_impl(List *closures) {
   Value *item;
+#ifdef CHECK_MEM_LEAK
   moveFreeToCentral();
+#endif
   pthread_exit(NULL);
   return(nothing);
  };
@@ -1084,7 +1101,9 @@ Value *readFuturesQueue() {
         if (numRunning <= 1 && mainThreadDone) {
           stopWorkers();
         } else {
-          moveFreeToCentral();
+#ifdef CHECK_MEM_LEAK
+	  moveFreeToCentral();
+#endif
           pthread_cond_wait(&futuresQueue.notEmpty, &futuresQueue.mutex);
           __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
         }
@@ -1153,7 +1172,9 @@ abort();
       future = (Future *)readFuturesQueue();
     }
   }
+#ifdef CHECK_MEM_LEAK
   moveFreeToCentral();
+#endif
   __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
   return(NULL);
 }
@@ -1237,8 +1258,7 @@ Value *proto1Arg(ProtoImpls *protoImpls, char *name, Value *arg0,
   return(_fn(_arity->closures, arg0));
 }
 
-Value *proto2Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1,
-                 char *file, int64_t line) {
+Value *proto2Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, char *file, int64_t line) {
   FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
   if(_arity == (FnArity *)0) {
     fprintf(stderr, "\n*** Could not find implementation of '%s' with 2 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
@@ -2860,6 +2880,55 @@ Value *strSeq(Value *arg0) {
     incRef(arg0, s->len);
   }
   dec_and_free(arg0, 1);
+  return((Value *)result);
+}
+
+Value *dynamicCall2Arg(Value *f, Value *arg0, Value *arg1) {
+  Value *rslt;
+  if(f->type != FunctionType) {
+    rslt = invoke2Args(empty_list, f, arg0, arg1);
+  } else {
+    FnArity *arity = findFnArity(f, 2);
+    if(arity != (FnArity *)0 && !arity->variadic) {
+      FnType2 *fn = (FnType2 *)arity->fn;
+      rslt = fn(arity->closures, arg0, arg1);
+    } else if(arity != (FnArity *)0 && arity->variadic) {
+      FnType1 *fn = (FnType1 *)arity->fn;
+      List *dynArgs = empty_list;
+      dynArgs = (List *)listCons(arg1, dynArgs);
+      dynArgs = (List *)listCons(arg0, dynArgs);
+      rslt = fn(arity->closures, (Value *)dynArgs);
+    } else {
+      fprintf(stderr, "\n*** Invalid function for string reduction.\n");
+      abort();
+    }
+    dec_and_free(f, 1);
+  }
+  return(rslt);
+}
+
+Value *strReduce(Value *s0, Value *x1, Value *f2) {
+  int64_t len = ((String *)s0)->len;
+  Value *result = x1;
+
+  char *buffer;
+  if (s0->type == StringType)
+    buffer = ((String *)s0)->buffer;
+  else if (s0->type == SubStringType)
+    buffer = ((SubString *)s0)->buffer;
+
+  incRef(f2, len);
+  for (int64_t i = 0; i < len; i++) {
+    SubString *subStr = malloc_substring();
+    subStr->type = SubStringType;
+    subStr->len = 1;
+    subStr->source = s0;
+    subStr->buffer = buffer + i;
+    prefs("before", result);
+    result = dynamicCall2Arg(f2, result, (Value *)subStr);
+    prefs("after", result);
+  }
+  dec_and_free(s0, 1);
   return((Value *)result);
 }
 

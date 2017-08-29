@@ -1,7 +1,11 @@
 
+(def empty-list (inline C List "(Value *)&(List){ListType,-1,0,0,0}"))
+
+(def empty-vector (inline C Vector "(Value *)&(Vector){VectorType,-1,0,5,0,0}"))
+
 (defn maybe [v]
   ;; wrap `v` in a Maybe value
-  (inline C Maybe "return(maybe((List *)0, (Value *)0, arg0));"))
+  (inline C Maybe "return(maybe((List *)0, (Value *)0, v_0));"))
 
 (def nothing (inline C Maybe "(Value *)&(Maybe){MaybeType, -1, 0}"))
 
@@ -12,6 +16,19 @@
   (assoc* [m k v hash shift])
   (dissoc* [m k hash shift]))
 
+(defn reified-type-args [x]
+  ;; Return the values for all the fields of `x` in a vector
+  (inline C Vector "
+    if (x_0->type < TypeCount) {
+       fprintf(stderr, \"'type-args' undefined for %s (%\" PRId64 \")\\n\",
+               extractStr(type_name(empty_list, x_0)), x_0->type);
+       abort();
+    }
+    Value *typeArgs = ((ReifiedVal *)x_0)->typeArgs;
+    incRef(typeArgs, 1);
+    dec_and_free(x_0, 1);
+    return(typeArgs);"))
+
 ;; Internal protocol for types.
 (defprotocol Type
   (has-field [_ field]
@@ -21,29 +38,19 @@
   (get-type [value]
     ;; Return the Integer representing the type of `value`
     (inline C Integer "
-    Value *numVal = integerValue(arg0->type);
-    dec_and_free(arg0, 1);
+    Value *numVal = integerValue(value_0->type);
+    dec_and_free(value_0, 1);
     return(numVal);"))
 
   (type-name [value]
     ;; Return the string of the name of the type of `value`
     (inline C String "
-    Value *numVal = integerValue(arg0->type);
-    dec_and_free(arg0, 1);
+    Value *numVal = integerValue(value_0->type);
+    dec_and_free(value_0, 1);
     return(integer_str(numVal));"))
 
   (type-args [x]
-    ;; Return the values for all the fields of `x` in a vector
-    (inline C Vector "
-    if (arg0->type < TypeCount) {
-       fprintf(stderr, \"'type-args' undefined for %s (%\" PRId64 \")\\n\",
-               extractStr(type_name(empty_list, arg0)), arg0->type);
-       abort();
-    }
-    Value *typeArgs = ((ReifiedVal *)arg0)->typeArgs;
-    incRef(typeArgs, 1);
-    dec_and_free(arg0, 1);
-    return(typeArgs);"))
+    (reified-type-args x))
 
   (instance? [t x]
     ;; test whether `x` is of type `t`
@@ -58,87 +65,87 @@
 ;; Internal functions, shouldn't be used in code
 (defn new-type-value [reified-template type-arg-values]
   (inline C "
-  ReifiedVal *template = (ReifiedVal *)arg0;
+  ReifiedVal *template = (ReifiedVal *)reified_template_0;
   ReifiedVal *rv = malloc_reified(template->implCount);
   int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
   memcpy(rv, template, rvSize);
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  rv->typeArgs = arg1;
+  rv->typeArgs = type_arg_values_1;
   return((Value *)rv);"))
 
 (defn make-value [reified-template type-arg-values]
   (inline C "
-  ReifiedVal *template = (ReifiedVal *)arg0;
+  ReifiedVal *template = (ReifiedVal *)reified_template_0;
   ReifiedVal *rv = malloc_reified(template->implCount);
   int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
   memcpy(rv, template, rvSize);
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  rv->typeArgs = arg1;
-  dec_and_free(arg0, 1);
+  rv->typeArgs = type_arg_values_1;
+  dec_and_free(reified_template_0, 1);
   return((Value *)rv);"))
 
 (defn list-count [l]
   (inline C Integer "
-   Value *numVal = integerValue(((List *)arg0)->len);
-   dec_and_free(arg0, 1);
+   Value *numVal = integerValue(((List *)l_0)->len);
+   dec_and_free(l_0, 1);
    return(numVal);"))
 
 (defn mutate-vect-conj [v x]
   (assert (instance? Vector v))
-  (inline C "return((Value *)mutateVectConj((Vector *)arg0, arg1));"))
+  (inline C "return((Value *)mutateVectConj((Vector *)v_0, x_1));"))
 
 (defn list-map [l f]
-  (inline C List "return(listMap(arg0, arg1));"))
+  (inline C List "return(listMap(l_0, f_1));"))
 
-(defn list-concat [l1]
-  (inline C List "return(listConcat(arg0));"))
+(defn list-concat [l]
+  (inline C List "return(listConcat(l_0));"))
 
 (defn add-numbers [x y]
   (assert (instance Integer x))
   (assert (instance Integer y))
   (inline C Integer "
-    Value *numVal = integerValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    Value *numVal = integerValue(((Integer *)x_0)->numVal + ((Integer *)y_1)->numVal);
+    dec_and_free(x_0, 1);
+    dec_and_free(y_1, 1);
     return(numVal);"))
 
 (defn str-malloc [len]
   (assert (instance? Integer len))
   (inline C String "
-  String *strVal = malloc_string(((Integer *)arg0)->numVal);
+  String *strVal = malloc_string(((Integer *)len_0)->numVal);
   strVal->len = 0;
   strVal->buffer[0] = 0;
-  dec_and_free(arg0, 1);
+  dec_and_free(len_0, 1);
   return((Value *)strVal);\n"))
 
 (defn str-append [dest src]
   (assert (instance? String dest))
   (inline C Maybe "
-  String *s1 = (String *)arg0;
-  if (arg1->type == StringType) {
-    String *s2 = (String *)arg1;
-    strncat(s1->buffer, s2->buffer, s2->len);
-    s1->len += s2->len;
-  } else if (arg1->type == SubStringType) {
-    SubString *s2 = (SubString *)arg1;
-    strncat(s1->buffer, s2->buffer, s2->len);
-    s1->len += s2->len;
+  String *s_1 = (String *)dest_0;
+  if (src_1->type == StringType) {
+    String *s2 = (String *)src_1;
+    strncat(s_1->buffer, s2->buffer, s2->len);
+    s_1->len += s2->len;
+  } else if (src_1->type == SubStringType) {
+    SubString *s2 = (SubString *)src_1;
+    strncat(s_1->buffer, s2->buffer, s2->len);
+    s_1->len += s2->len;
   }
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
+  dec_and_free(dest_0, 1);
+  dec_and_free(src_1, 1);
   return(nothing);"))
 
 (defn fn-apply [x args]
   (assert (instance? Function x))
-  (inline C "return(fnApply(arg0, arg1));"))
+  (inline C "return(fnApply(x_0, args_1));"))
 
 (defn pr* [str]
   (assert (instance? String str))
-  (inline C Integer "return(prSTAR(arg0));"))
+  (inline C Integer "return(prSTAR(str_0));"))
 
 (defn pr-err* [str]
   (assert (instance? String str))
-  (inline C Integer "return(prErrSTAR(arg0));"))
+  (inline C Integer "return(prErrSTAR(str_0));"))
 
 (defn abort []
   (inline C Maybe
@@ -149,37 +156,37 @@
   (assert (instance Integer x))
   (assert (instance Integer y))
   (inline C Integer "
-    Value *numVal = integerValue(((Integer *)arg0)->numVal - ((Integer *)arg1)->numVal);
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    Value *numVal = integerValue(((Integer *)x_0)->numVal - ((Integer *)y_1)->numVal);
+    dec_and_free(x_0, 1);
+    dec_and_free(y_1, 1);
     return(numVal);"))
 
 (defn mult-numbers [x y]
   (assert (instance Integer x))
   (assert (instance Integer y))
   (inline C Integer "
-    Value *numVal = integerValue(((Integer *)arg0)->numVal * ((Integer *)arg1)->numVal);
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    Value *numVal = integerValue(((Integer *)x_0)->numVal * ((Integer *)y_1)->numVal);
+    dec_and_free(x_0, 1);
+    dec_and_free(y_1, 1);
     return(numVal);"))
 
 (defn rem [x y]
   (assert (instance Integer x))
   (assert (instance Integer y))
   (inline C Integer "
-    Value *numVal = integerValue(((Integer *)arg0)->numVal % ((Integer *)arg1)->numVal);
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    Value *numVal = integerValue(((Integer *)x_0)->numVal % ((Integer *)y_1)->numVal);
+    dec_and_free(x_0, 1);
+    dec_and_free(y_1, 1);
     return(numVal);"))
 
 (defn escape-chars [s]
   (assert (instance? String s))
-  (inline C String "return(escapeChars(arg0));"))
+  (inline C String "return(escapeChars(s_0));"))
 
 (defn vect-count [v]
   (inline C Integer "
-   Value *result = integerValue(((Vector *)arg0)->count);
-   dec_and_free(arg0, 1);
+   Value *result = integerValue(((Vector *)v_0)->count);
+   dec_and_free(v_0, 1);
    return(result);"))
 
 (def emptyBMI
@@ -191,80 +198,80 @@
 (def Integer
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(IntegerType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(IntegerType, x_1));"))))
 
 (def String
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(StringType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(StringType, x_1));"))))
 
 (def List
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(ListType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(ListType, x_1));"))))
 
 (def Maybe
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(MaybeType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(MaybeType, x_1));"))))
 
 (def Symbol
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(SymbolType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(SymbolType, x_1));"))))
 
 (def Vector
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(VectorType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(VectorType, x_1));"))))
 
 (def Function
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(FunctionType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(FunctionType, x_1));"))))
 
 (def HashMap
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(HashMapType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(HashMapType, x_1));"))))
 
 (def Promise
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(PromiseType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(PromiseType, x_1));"))))
 
 (def Future
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(FutureType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(FutureType, x_1));"))))
 
 (def Agent
   (reify
     Type
-    (instance? [_ _]
-      (inline C Maybe "return(checkInstance(AgentType, arg1));"))))
+    (instance? [_ x]
+      (inline C Maybe "return(checkInstance(AgentType, x_1));"))))
 
 (defn bit-and [x y]
   ;; Bitwise AND two integer values
   (assert (instance Integer x))
   (assert (instance Integer y))
-  (inline C Integer "return(bitAnd(arg0, arg1));"))
+  (inline C Integer "return(bitAnd(x_0, y_1));"))
 
 (defn bit-or [x y]
   ;; Bitwise OR two integer values
   (assert (instance Integer x))
   (assert (instance Integer y))
-  (inline C Integer "return(bitOr(arg0, arg1));"))
+  (inline C Integer "return(bitOr(x_0, y_1));"))
 
 (defn char [n]
   ;; Convert an integer to a one-character string
@@ -272,7 +279,7 @@
   (inline C String "
   String *strVal = malloc_string(2);
   strVal->len = 1;
-  strVal->buffer[0] = ((Integer *)arg0)->numVal;
+  strVal->buffer[0] = ((Integer *)n_0)->numVal;
   strVal->buffer[1] = 0;
   return((Value *)strVal);\n"))
 
@@ -280,15 +287,15 @@
   ;; Convert the first character of a string to an integer
   (assert (instance? String c))
   (inline C Integer "
-   if (arg0->type == StringType) {
-     String *s = (String *)arg0;
+   if (c_0->type == StringType) {
+     String *s = (String *)c_0;
      Value *numVal = integerValue((unsigned char)s->buffer[0]);
-     dec_and_free(arg0, 1);
+     dec_and_free(c_0, 1);
      return(numVal);
-   } else if (arg0->type == SubStringType) {
-     SubString *s = (SubString *)arg0;
+   } else if (c_0->type == SubStringType) {
+     SubString *s = (SubString *)c_0;
      Value *numVal = integerValue((unsigned char)s->buffer[0]);
-     dec_and_free(arg0, 1);
+     dec_and_free(c_0, 1);
      return(numVal);
    } else
      abort();"))
@@ -298,26 +305,26 @@
   ([src index]
    (assert (instance? String src))
    (assert (instance? Integer index))
-   (inline C String "return(subs2(arg0, arg1));"))
+   (inline C String "return(subs2(src_0, index_1));"))
   ([src index length]
    (assert (instance? String src))
    (assert (instance? Integer index))
    (assert (instance? Integer length))
-   (inline C String "return(subs3(arg0, arg1, arg2));")))
+   (inline C String "return(subs3(src_0, index_1, length_2));")))
 
 (defn symbol [sym-str]
   ;; Convert a string to a symbol
   (assert (instance? String sym-str))
-  (inline C Symbol "return(symbol(arg0));"))
+  (inline C Symbol "return(symbol(sym_str_0));"))
 
 (defn deliver [p v]
   ;; Deliver value `v` to any thread waiting on promise `p`. Any thread that
   ;; calls `extract` on `p` after this will return with `v` immediately without waiting
-  (inline C Promise "return(deliverPromise(arg0, arg1));"))
+  (inline C Promise "return(deliverPromise(p_0, v_1));"))
 
 (defn delivered [p]
   ;; Test whether a value has been delivered for promise `p`
-  (inline C "return(promiseDelivered(arg0));"))
+  (inline C "return(promiseDelivered(p_0));"))
 
 
 ;; The core protocols of Toccata
@@ -418,7 +425,7 @@
 (defn cons [x l]
   ;; Add a value `x` to the head of list `l`
   (inline C List "
-   Value *listVal = (Value *)listCons(arg0, (List *)arg1);
+   Value *listVal = (Value *)listCons(x_0, (List *)l_1);
    return(listVal);\n"))
 
 (defn send [v f & args]
@@ -488,6 +495,11 @@
     ;; Returns a new collection with all but the last value of `coll`
     )
 
+  (split [coll n]
+    ;; divides a sequence into to parts with at most 'n' elements being in the first part
+    )
+  (split [coll n prefix])
+
   (reduce [coll x f]
     ;; Produce a single value of same type as `x` by calling `f` repeatedly.
     ;; For example, if `coll` contains `p` and `q`, then: `(f (f x p) q)`
@@ -502,6 +514,16 @@
   (to-str [coll]
     ;; Builds a string from the string representation of all the values in `coll`
     (returns a (instance? String a))))
+
+(defn drop [coll n]
+  (assert (instance? List l))
+  ;; Drop `n` elements from the front of list `l`
+  (let [[_ tail] (split coll n)]
+    tail))
+
+(defn take [coll n]
+  (let [[prefix _] (split coll n)]
+    prefix))
 
 (defn second [coll]
   ;; get the second element from the sequable `coll`
@@ -577,50 +599,65 @@
     ;; Create a list of strings of that comprise the representation of `x`
     (returns a (instance List a))))
 
+;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
+(defn list [& l]
+  ;; construct a list of values from the arguments
+  l)
+
+;; This is the declaration of the 'vector' function. Calls to 'vector' are inlined by the compiler
+(defn vector [& l]
+  ;; construct a vector of values from the arguments
+  (vec l))
+
 (defn address-of [x]
-  (inline C "return(integerValue((long long)arg0));"))
+  (inline C "return(integerValue((long long)x_0));"))
 
 (defn identical [x y]
   ;; Returns a `maybe` value if and only if the `x` and `y` reside at the same address in memory
   (inline C "
-  if (arg0 == arg1) {
-    dec_and_free(arg1, 1);
-    return(maybe((List *)0, (Value *)0, arg0));
+  if (x_0 == y_1) {
+    dec_and_free(y_1, 1);
+    return(maybe((List *)0, (Value *)0, x_0));
   } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    dec_and_free(x_0, 1);
+    dec_and_free(y_1, 1);
     return(nothing);
   }"))
 
-(def empty-list (inline C List "(Value *)&(List){ListType,-1,0,0,0}"))
-
-(def empty-vector (inline C Vector "(Value *)&(Vector){VectorType,-1,0,5,0,0}"))
-
 (extend-type Integer
   Eq
-  (=* [x y] (inline C Maybe "return(integer_EQ(arg0, arg1));")))
+  (=* [x y] (inline C Maybe "return(integer_EQ(x_0, y_1));")))
 
 (extend-type Maybe
   Container
   (extract [mv]
-    (inline C "return(maybeExtract(arg0));"))
+    (inline C "return(maybeExtract(mv_0));"))
 
+  Composition
   (zero [mv] nothing))
 
 (extend-type List
   Seqable
   (first [l]
-    (inline C "return(car(arg0));"))
+    (inline C "return(car(l_0));"))
 
   (rest [l]
-    (inline C "return(cdr(arg0));")))
+    (inline C "return(cdr(l_0));")))
+
+;; TODO: remove these when 'asserts' are used to eliminate dynamic protocol dispatch
+(defn cdr [l]
+  (inline C "return(cdr(l_0));"))
+
+(defn mxt [mv]
+  (inline C "return(maybeExtract(mv_0));"))
 
 (defn list-reduce [l result f]
   (assert (instance? List l))
-  (or (flat-map (first l)
-                (fn [h]
-                  (list-reduce (rest l) (f result h) f)))
-      (maybe result)))
+  (let [h (first l)]
+    ;; not the preferred way to write this, but this is tail recursive for perf
+    (or (and (=* nothing h)
+             (maybe result))
+        (list-reduce (cdr l) (f result (mxt h)) f))))
 
 (extend-type List
   Container
@@ -671,7 +708,7 @@
    (cons arg (fn-apply list* args))))
 
 (defn fn-name [f]
-  (inline C "return(stringValue(((Function *)arg0)->name));"))
+  (inline C "return(stringValue(((Function *)f_0)->name));"))
 
 (extend-type Function
   Stringable
@@ -701,16 +738,6 @@
   (pr-err* "\n*** ")
   (map (flat-map (interpose vs " ") string-list) pr-err*)
   (pr-err* "\n"))
-
-;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
-(defn list [& l]
-  ;; construct a list of values from the arguments
-  l)
-
-;; This is the declaration of the 'vector' function. Calls to 'vector' are inlined by the compiler
-(defn vector [& l]
-  ;; construct a vector of values from the arguments
-  (vec l))
 
 (defn str [& vs]
   ;; Converts the list of arguments into a single string of characters. Every argument
@@ -777,13 +804,13 @@
   (type-name [_] "Integer")
 
   Stringable
-  (string-list [n] (inline C "return((Value *)listCons(integer_str(arg0), empty_list));\n"))
+  (string-list [n] (inline C "return((Value *)listCons(integer_str(n_0), empty_list));\n"))
 
   Ord
-  (<* [x y] (inline C Maybe "return(integerLT(arg0, arg1));"))
+  (<* [x y] (inline C Maybe "return(integerLT(x_0, y_1));"))
 
   Hashable
-  (sha1 [x] (inline C Integer "return(integerSha1(arg0));")))
+  (sha1 [x] (inline C Integer "return(integerSha1(x_0));")))
 
 (extend-type String
   Type
@@ -800,7 +827,7 @@
 
   Collection
   (count [s]
-    (inline C Integer "return(strCount(arg0));"))
+    (inline C Integer "return(strCount(s_0));"))
 
   (empty? [coll]
     (= 0 (count coll)))
@@ -810,10 +837,10 @@
 
   Seqable
   (seq [coll]
-    (inline C List "return(strSeq(arg0));"))
+    (inline C List "return(strSeq(coll_0));"))
 
   (vec [coll]
-    (inline C List "return(strVec(arg0));"))
+    (inline C List "return(strVec(coll_0));"))
 
   (first [s]
     (map (< 0 (count s))
@@ -834,6 +861,7 @@
 
   (reduce [s x f]
     ;; TODO: make this a native function
+    ;; (inline C "return(strReduce(s_0, x_1, f_2));")
     (reduce (seq s) x f))
 
   (reverse [s]
@@ -843,7 +871,7 @@
     s)
 
   Eq
-  (=* [x y] (inline C Maybe "return(strEQ(arg0, arg1));"))
+  (=* [x y] (inline C Maybe "return(strEQ(x_0, y_1));"))
 
   Indexed
   (nth [s n]
@@ -852,11 +880,11 @@
            (subs s n 1))))
 
   Ord
-  (<* [x y] (inline C Maybe "return(strLT(arg0, arg1));"))
+  (<* [x y] (inline C Maybe "return(strLT(x_0, y_1));"))
 
   Hashable
   (sha1 [s]
-    (inline C Integer "return(strSha1(arg0));"))
+    (inline C Integer "return(strSha1(s_0));"))
   )
 
 
@@ -867,19 +895,19 @@
 
   Stringable
   (string-list [v] (inline C List "
-  Value *strVal = stringValue(((SubString *)arg0)->buffer);
-  dec_and_free(arg0, 1);
+  Value *strVal = stringValue(((SubString *)v_0)->buffer);
+  dec_and_free(v_0, 1);
   return((Value *)listCons(strVal, empty_list));"))
 
   Eq
-  (=* [x y] (inline C Maybe "return(symEQ(arg0, arg1));"))
+  (=* [x y] (inline C Maybe "return(symEQ(x_0, y_1));"))
 
   Ord
-  (<* [x y] (inline C Maybe "return(symLT(arg0, arg1));"))
+  (<* [x y] (inline C Maybe "return(symLT(x_0, y_1));"))
 
   Hashable
   (sha1 [s]
-    (inline C "return(symbolSha1(arg0));")))
+    (inline C "return(symbolSha1(s_0));")))
 
 
 (extend-type Maybe
@@ -899,23 +927,23 @@
                  (maybe (list "<nothing>")))))
 
   Function
-  (invoke [m t f] (inline C "return(maybeInvoke(arg0, arg1, arg2));"))
+  (invoke [m t f] (inline C "return(maybeInvoke(m_0, t_1, f_2));"))
 
   Eq
-  (=* [x y] (inline C Maybe "return(maybeEQ(arg0, arg1));"))
+  (=* [x y] (inline C Maybe "return(maybeEQ(x_0, y_1));"))
 
   Container
   (extract [mv]
-    (inline C "return(maybeExtract(arg0));"))
+    (inline C "return(maybeExtract(mv_0));"))
 
   (map [mv args]
-    (inline C Maybe "return(maybeMap(arg0, arg1));"))
+    (inline C Maybe "return(maybeMap(mv_0, args_1));"))
 
   (wrap [_ mv]
     (maybe mv))
 
   (apply* [mv args]
-    (inline C Maybe "return(maybeApply(arg0, arg1));"))
+    (inline C Maybe "return(maybeApply(mv_0, args_1));"))
 
   (flat-map [mv f]
     (and mv (f (extract mv))))
@@ -929,31 +957,6 @@
 
   (assoc* [_ _ v _ _]
     (maybe v)))
-
-(defn splitter [l n]
-  (or (empty? l)
-      (and (< 0 n)
-           (apply-to (fn [head [prefix suffix]]
-                       (list (cons head prefix) suffix))
-                     (first l)
-                     (splitter (rest l) (dec n))))
-      (maybe (list empty-list l))))
-
-(defn split [l n]
-  (assert (instance? List l))
-  ;; Split a list `l` at the `n`th element
-  (extract (splitter l n)))
-
-(defn dropper [coll n]
-  (or (empty? coll)
-      (and (< 0 n)
-           (dropper (rest coll) (dec n)))
-      (maybe coll)))
-
-(defn drop [coll n]
-  (assert (instance? List l))
-  ;; Drop `n` elements from the front of list `l`
-  (extract (dropper coll n)))
 
 (defn some [coll f]
   (and (< 0 (count coll))
@@ -971,18 +974,6 @@
 
 (defn take-while [coll pred]
   (extract (pred-taker coll pred)))
-
-(defn taker [coll n]
-  (or (and (empty? coll)
-           (maybe empty-list))
-      (and (< 0 n)
-           (apply-to cons
-                     (first coll)
-                     (taker (rest coll) (dec n))))
-      (maybe empty-list)))
-
-(defn take [coll n]
-  (extract (taker coll n)))
 
 (defn range* [n l]
   (or (and (= n 0) (maybe (cons 0 l)))
@@ -1004,7 +995,7 @@
           (list ")")))
 
   Eq
-  (=* [x y] (inline C List "return(listEQ(arg0, arg1));"))
+  (=* [x y] (inline C List "return(listEQ(x_0, y_1));"))
 
   Composition
   (zero [_] empty-list)
@@ -1028,7 +1019,7 @@
   (conj [l v] (cons v l))
 
   (filter [coll f]
-    (inline C "return(listFilter(arg0, arg1));"))
+    (inline C "return(listFilter(coll_0, f_1));"))
 
   Seqable
   (seq [l] l)
@@ -1037,10 +1028,20 @@
     (nth coll (dec (count coll))))
 
   (butlast [coll]
-    (extract (flat-map (splitter coll (dec (count coll)))
+    (extract (flat-map (split coll (dec (count coll)) empty-list)
                        first)))
   (reverse [l]
-    (inline C List "return((Value *)reverseList((List *)arg0));"))
+    (inline C List "return((Value *)reverseList((List *)l_0));"))
+
+  (split [l n prefix]
+    (or (and (or (empty? l)
+                 (= 0 n))
+             (maybe [(reverse prefix) l]))
+        (let [[head & tail] l]
+          (split tail (dec n) (cons head prefix)))))
+
+  (split [l n]
+    (extract (split l n empty-list)))
 
   Indexed
   (nth [coll n]
@@ -1123,8 +1124,8 @@
 
   (conj [vect v]
    (inline C "
-  Value *result = (Value *)vectConj((Vector *)arg0, arg1);
-  dec_and_free(arg0, 1);
+  Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
+  dec_and_free(vect_0, 1);
   return(result);"))
 
   (filter [v f]
@@ -1135,7 +1136,7 @@
 
   Seqable
   (seq [v]
-    (inline C List "return(vectSeq((Vector *)arg0, 0));\n"))
+    (inline C List "return(vectSeq((Vector *)v_0, 0));\n"))
 
   (vec [v] v)
 
@@ -1153,7 +1154,7 @@
     (subvec v 0 (dec (count v))))
 
   (reverse [v]
-    (inline C "return(vectorReverse(arg0));"))
+    (inline C "return(vectorReverse(v_0));"))
 
   (reduce [v result f]
     (extract (vect-reduce v 0 result f)))
@@ -1174,16 +1175,16 @@
   (store [v n x]
     (assert (instance? Integer n))
     (inline C "
-  Value *result = vectStore((Vector *)arg0, ((Integer *)arg1)->numVal, (Value *)arg2);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
+  Value *result = vectStore((Vector *)v_0, ((Integer *)n_1)->numVal, (Value *)x_2);
+  dec_and_free(v_0, 1);
+  dec_and_free(n_1, 1);
   return(result);"))
 
   Associative
   (get [v n]
     (assert (and (instance? Integer n)
                  (<= 0 n)))
-    (inline C "return(vectorGet(arg0, arg1));"))
+    (inline C "return(vectorGet(v_0, n_1));"))
 
   Eq
   (=* [x y]
@@ -1192,32 +1193,36 @@
          (vec= x y (count x))
          (maybe x))))
 
-(defn partitioner [l part n]
-  (let [bottomed-out? (empty? l)]
-    (or (and bottomed-out?
-             (= n (count part))
-             (maybe (list (list (reverse part)) empty-list)))
-        (and bottomed-out?
-             (maybe (list empty-list (reverse part))))
-        (and (= (count part) n)
-             (for [[partitioned remainder] (partitioner l empty-list n)]
-               (list (cons (reverse part) partitioned)
-                     remainder)))
-        (let [[head & tail] l]
-          (partitioner tail (cons head part) n)))))
+(defn partitioner [coll n]
+  (reduce coll (maybe [empty-list empty-list])
+          (fn [accum x]
+            (flat-map accum
+                      (fn [[result part]]
+                        (let [part (cons x part)]
+                          (or (and (= n (count part))
+                                   (maybe [(cons (reverse part) result) empty-list]))
+                              (maybe [result part]))))))))
 
 (defn partition [coll n]
-  (let [[partitioned] (extract (partitioner coll empty-list n))]
-    partitioned))
+  (let [[partitioned] (extract (partitioner coll n))]
+    (reverse partitioned)))
 
 (defn partition-all [coll n]
-  (let [[partitioned remainder] (extract (partitioner coll empty-list n))]
-    (comp partitioned (list remainder))))
+  (let [[partitioned remainder] (extract (partitioner coll n))]
+    (reverse (cons remainder partitioned))))
 
 (defn partial [f & args]
   ;; paritally apply `f` to `args` creating a new function that expects more arguments
   (fn [& more-args]
     (apply f (comp args more-args))))
+
+;; (defn every
+;;   ([coll f] (extract (every coll f (empty coll))))
+;;   ([coll f prefix]
+;;    (or (and (empty? coll)
+;;             (maybe (reverse prefix)))
+;;        (let [head (flat-map (first coll) f)]
+;;          (every (rest coll) f (conj prefix head))))))
 
 (defn every [coll f]
   (or (empty? coll)
@@ -1232,73 +1237,75 @@
 
   HashMapNode
   (hash-seq [m s]
-    (inline C "return(bmiHashSeq(arg0, arg1));"))
+    (inline C "return(bmiHashSeq(m_0, s_1));"))
 
   (assoc* [m k v hash shift]
-    (inline C "return(bmiAssoc(arg0, arg1, arg2, arg3, arg4));"))
+    (inline C "return(bmiAssoc(m_0, k_1, v_2, hash_3, shift_4));"))
 
   (dissoc* [node k hash shift]
-    (inline C "return(bmiDissoc(arg0, arg1, arg2, arg3));"))
+    (inline C "return(bmiDissoc(node_0, k_1, hash_2, shift_3));"))
 
   (get* [node k v hash shift]
-    (inline C "return(bmiGet(arg0, arg1, arg2, arg3, arg4));"))
+    (inline C "return(bmiGet(node_0, k_1, v_2, hash_3, shift_4));"))
 
   Collection
   (count [x]
-    (inline C Integer "return(bmiCount(arg0));")))
+    (inline C Integer "return(bmiCount(x_0));")))
 
 (extend-type ArrayNode
   Type
   (type-name [_] "ArrayNode")
 
   Collection
-  (count [_]
-    (inline C "return(arrayNodeCount(arg0));"))
+  (count [x]
+    (inline C "return(arrayNodeCount(x_0));"))
 
   HashMapNode
   (assoc* [m k v hash shift]
-    (inline C "return(arrayNodeAssoc(arg0, arg1, arg2, arg3, arg4));"))
+    (inline C "return(arrayNodeAssoc(m_0, k_1, v_2, hash_3, shift_4));"))
 
   (hash-seq [m s]
-    (inline C "return(arrayNodeSeq(arg0, arg1));"))
+    (inline C "return(arrayNodeSeq(m_0, s_1));"))
 
   (get* [m k v hash shift]
-    (inline C "return(arrayNodeGet(arg0, arg1, arg2, arg3, arg4));"))
+    (inline C "return(arrayNodeGet(m_0, k_1, v_2, hash_3, shift_4));"))
 
   (dissoc* [m k hash shift]
-    (inline C "return(arrayNodeDissoc(arg0, arg1, arg2, arg3));")))
+    (inline C "return(arrayNodeDissoc(m_0, k_1, hash_2, shift_3));")))
 
 (extend-type HashCollisionNode
   Type
   (type-name [_] "HashCollisionNode")
 
   Collection
-  (count [_]
-    (inline C "return(collisionCount(arg0));"))
+  (count [x]
+    (inline C "return(collisionCount(x_0));"))
 
   HashMapNode
   (assoc* [node k v hash shift]
-    (inline C "return(collisionAssoc(arg0, arg1, arg2, arg3, arg4));"))
+    (inline C "return(collisionAssoc(node_0, k_1, v_2, hash_3, shift_4));"))
 
   (dissoc* [node k hash shift]
-    (inline C "return(collisionDissoc(arg0, arg1, arg2, arg3));"))
+    (inline C "return(collisionDissoc(node_0, k_1, hash_2, shift_3));"))
 
   (hash-seq [m s]
-    (inline C "return(collisionSeq(arg0, arg1));"))
+    (inline C "return(collisionSeq(m_0, s_1));"))
 
   (get* [node k v hash shift]
-    (inline C "return(collisionGet(arg0, arg1, arg2, arg3, arg4));")))
+    (inline C "return(collisionGet(node_0, k_1, v_2, hash_3, shift_4));")))
 
 (defn dissoc [m & ks]
   ;; Create a new copy of `m` without the associations of `ks`
   (reduce ks m (fn [m k]
                  (dissoc* m k (sha1 k) 0))))
 
-(defn assoc [m & kv-pairs]
+(defn assoc
   ;; Create a new copy of `m` that adds an association for all the key/value pairs
   ;; ex. (assoc {'a 1} 'b 2 'c 3 'd 4)
-  (reduce (partition kv-pairs 2) m (fn [m [k v]]
-                                     (assoc* m k v (sha1 k) 0))))
+  ([m k v] (assoc* m k v (sha1 k) 0))
+  ([m & kv-pairs]
+   (reduce (partition kv-pairs 2) m (fn [m [k v]]
+                                      (assoc* m k v (sha1 k) 0)))))
 
 (extend-type HashMap
   Type
@@ -1345,7 +1352,7 @@
   (vals [m]
     (map (seq m) (fn [[k v]] v)))
   (get [m k]
-    (inline C "return(hashMapGet(arg0, arg1));")))
+    (inline C "return(hashMapGet(m_0, k_1));")))
 
 (defn hash-map [& kv-pairs]
   ;; create a hash-map from a number of key/value pairs
@@ -1432,7 +1439,7 @@
 
 (defn add-promise-action [p f]
   (assert (instance? Promise p))
-  (inline C "return(addPromiseAction((Promise *)arg0, arg1));"))
+  (inline C "return(addPromiseAction((Promise *)p_0, f_1));"))
 
 (defn promise
   ([] (inline C Promise "return((Value *)malloc_promise());\n"))
@@ -1459,7 +1466,7 @@
 
   Container
   (extract [prom]
-    (inline C "return(extractPromise(arg0));"))
+    (inline C "return(extractPromise(prom_0));"))
 
   (map [p f]
     (let [new-p (promise)]
@@ -1490,18 +1497,18 @@
 
 (defn future
   ([] (inline C "return(makeFuture((Value *)0));"))
-  ([f] (inline C "return(makeFuture(arg0));")))
+  ([f] (inline C "return(makeFuture(f_0));")))
 
 (defn thread-id []
   (inline C Integer "return(integerValue((int64_t)pthread_self()));"))
 
 (defn deliver-future [fut val]
   (assert (instance? Future fut))
-  (inline C "return(deliverFuture(arg0, arg1));"))
+  (inline C "return(deliverFuture(fut_0, val_1));"))
 
 (defn add-future-action [fut f]
   (assert (instance? Future fut))
-  (inline C "return(addFutureAction((Future *)arg0, arg1));"))
+  (inline C "return(addFutureAction((Future *)fut_0, f_1));"))
 
 (extend-type Future
   Type
@@ -1547,7 +1554,7 @@
       new-fut))
 
   (extract [fut]
-    (inline C "return(extractFuture(arg0));"))
+    (inline C "return(extractFuture(fut_0));"))
 
   (extend [fut f]
     (future (fn []
@@ -1567,14 +1574,14 @@
   Container
   (send* [agt f-and-args]
     (inline C Agent "
-  scheduleAgent((Agent *)arg0, (List *)arg1);
-  return(arg0);"))
+  scheduleAgent((Agent *)agt_0, (List *)f_and_args_1);
+  return(agt_0);"))
 
   (extract [agt]
-    (inline C "return(extractAgent(arg0));")))
+    (inline C "return(extractAgent(agt_0));")))
 
 (defn agent [v]
-  (inline C "return(makeAgent(arg0));"))
+  (inline C "return(makeAgent(v_0));"))
 
 (defn remove [l f]
   ;; remove all elements of 'l' for which 'f' returns true
@@ -1585,7 +1592,17 @@
   (map (range n) (fn [_] v)))
 
 (defn constantly [v]
-  (fn [& args] v))
+  (fn
+    ([] v)
+    ([_ _] v)
+    ([_ _ _] v)
+    ([_ _ _ _] v)
+    ([_ _ _ _ _] v)
+    ([_ _ _ _ _ _] v)
+    ([_ _ _ _ _ _ _] v)
+    ([_ _ _ _ _ _ _ _] v)
+    ([_ _ _ _ _ _ _ _ _] v)
+    ([& args] v)))
 
 (def code-0 (char-code "0"))
 (def code-9 (char-code "9"))
@@ -1666,20 +1683,20 @@
 
 (defn integer-gen [x]
   (inline C "
-  if (arg0->type != IntegerType) {
+  if (x_0->type != IntegerType) {
     fprintf(stderr, \"Invalid argument passed to 'integer-gen'\\n\");
     abort();
   }
   intGenerator *intGen = (intGenerator *)my_malloc(sizeof(intGenerator));
-  intGen->sym_counter = ((Integer *)arg0)->numVal;
-  dec_and_free(arg0, 1);
+  intGen->sym_counter = ((Integer *)x_0)->numVal;
+  dec_and_free(x_0, 1);
   return((Value *)opaqueValue((void *)intGen, freeIntGenerator));
 "))
 
 (defn new-int [gen]
   (inline C Integer "
-  intGenerator *gen = (intGenerator *)((Opaque *)arg0)->ptr;
-  dec_and_free(arg0, 1);
+  intGenerator *gen = (intGenerator *)((Opaque *)gen_0)->ptr;
+  dec_and_free(gen_0, 1);
   return(integerValue(gen->sym_counter++));
 "))
 
@@ -1711,23 +1728,23 @@
   (returns x (instance? List x))
   ;; private function used for implementing LazyList
   (inline C "
-  extractCache *cache = (extractCache *)((Opaque *)arg0)->ptr;
+  extractCache *cache = (extractCache *)((Opaque *)lazy_struct_0)->ptr;
   incRef((Value *)cache->tail, 1);
-  dec_and_free(arg0, 1);
+  dec_and_free(lazy_struct_0, 1);
   return((Value *)cache->tail);
 "))
 
 (defn first-lazy [lazy tail]
   ;; private function used for implementing LazyList
   (inline C "
-  List *cache = (List *)arg0;
-  extractCache *tail = (extractCache *)((Opaque *)arg1)->ptr;
+  List *cache = (List *)lazy_0;
+  extractCache *tail = (extractCache *)((Opaque *)tail_1)->ptr;
   if (cache->head == (Value *)0) {
     pthread_mutex_lock(&tail->access);
     if (cache->head == (Value *)0) {
       // leave the mutex locked and return nothing
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
+      dec_and_free(lazy_0, 1);
+      dec_and_free(tail_1, 1);
       return(nothing);
     } else {
 // TODO: untested code path
@@ -1735,14 +1752,14 @@ fprintf(stderr, \"first-lazy 4\\n\");
 abort();
       pthread_mutex_unlock(&tail->access);
       incRef(cache->head, 1);
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
+      dec_and_free(lazy_0, 1);
+      dec_and_free(tail_1, 1);
       return(maybe((List *)0, (Value *)0, cache->head));
     }
   } else {
     incRef(cache->head, 1);
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    dec_and_free(lazy_0, 1);
+    dec_and_free(tail_1, 1);
     return(maybe((List *)0, (Value *)0, cache->head));
   }
 "))
@@ -1751,13 +1768,13 @@ abort();
   ;; private function used for implementing LazyList
   (returns x (instance? Maybe x))
   (inline C "
-  extractCache *cacheTail = (extractCache *)((Opaque *)arg0)->ptr;
-  cacheTail->tail->head = arg1;
+  extractCache *cacheTail = (extractCache *)((Opaque *)tail_0)->ptr;
+  cacheTail->tail->head = value_1;
   cacheTail->tail->tail = malloc_list();
   List *original = cacheTail->tail;
   cacheTail->tail = cacheTail->tail->tail;
   incRef((Value *)cacheTail->tail, 1);
-  dec_and_free(arg0, 1);
+  dec_and_free(tail_0, 1);
   dec_and_free((Value *)original, 1);
   pthread_mutex_unlock(&cacheTail->access);
   return(nothing);
@@ -1767,11 +1784,11 @@ abort();
   ;; private function used for implementing LazyList
   (returns x (instance? List x))
   (inline C "
-  List *cache = (List *)arg0;
+  List *cache = (List *)lazy_0;
   Value *result;
   result = (Value *)cache->tail;
   incRef(result, 1);
-  dec_and_free(arg0, 1);
+  dec_and_free(lazy_0, 1);
   return(result);
 "))
 
@@ -1801,7 +1818,7 @@ abort();
     (LazyList container (get-lazy lazy-struct) lazy-struct)))
 
 (defn null-term [s]
-  (inline C String "return((Value *)nullTerm(arg0));\n"))
+  (inline C String "return((Value *)nullTerm(s_0));\n"))
 
 (defn list-zipper [lists]
   (or (some lists empty?)
