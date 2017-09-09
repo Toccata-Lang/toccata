@@ -244,8 +244,8 @@ And we finally have a compiler that will compile itself with not-too-bad perform
 
 To use it, compile toccata.c with
 
-    clang -g -O1 -fno-objc-arc -std=c99 -c core.c
-    clang -g -O1 -fno-objc-arc -o toccata -std=c99 core.o toccata.c -lpthread
+    clang -g -O3 -fno-objc-arc -std=c99 -c core.c
+    clang -g -O3 -fno-objc-arc -o toccata -std=c99 core.o toccata.c -lpthread
 
 You can leave off the `-fno-objc-arg` if you're on Linux
 
