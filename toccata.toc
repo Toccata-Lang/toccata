@@ -806,7 +806,8 @@
           result-sym (genlocal "rslt")]
       (apply comp (comp args
                         [(c-init result-sym
-                                 ["\n// type-unknown " (str target) "\n// #line " (str (ast/line-number target)) " " "\""
+                                 ["\n// type-unknown " (str target) "\n// #line "
+                                  (str (ast/line-number target)) " " "\""
                                   (ast/file-name target) "\"\n"
                                   "Value *" result-sym " = proto" num-args "Arg(&"
                                   impls-sym ", \"" (.sym target) "\", "
@@ -939,6 +940,71 @@
               (.type-num arity-info)
               {}))))
 
+(deftype ParamBinding [vars destruct]
+  Stringable
+  (string-list [_]
+    (comp (list "<ParamBinding ")
+          (string-list vars)
+          (list " ")
+          (string-list destruct)
+          (list ">")))
+
+  Composition
+  (comp* [x xs]
+    (let [xs (cons x xs)]
+      (ParamBinding (flat-map xs .vars) (flat-map xs .destruct)))))
+
+
+(defprotocol Bindings
+  (bind [binding]
+    (for [arg-var (genlocal binding "arg")
+          :let [arg (c-code arg-var [] [] UnknownType {arg-var 1})]
+          _ (comp (redef-proto-fn-error binding)
+                  (sm/assoc-in-val [.fn-context .syms binding] arg))]
+      (ParamBinding [arg-var] [])))
+
+  (bind [binding evalled]
+    (let [evalled-ref (c-code (.c-var evalled) [] [] (.type-num evalled) {(.c-var evalled) 1})]
+      (for [_ (comp (redef-proto-fn-error binding)
+                    (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
+        (ParamBinding [(.c-var evalled)] [evalled (c-init (.c-var evalled) [] []
+                                                          (.type-num evalled) {})])))))
+
+(defn inline-proto-call [ast]
+  (let [target-ast (.call-target ast)
+        args (filter (.args ast) produces-code)
+        num-args (count args)
+        file-name (ast/file-name ast)
+        line-number (ast/line-number ast)]
+    (flat-map (sm/when (and (< 0 num-args)
+                            (instance? rdr/tagged-symbol target-ast)
+                            (maybe target-ast)))
+              ;; TODO: clean this up when not tired
+              (fn [name]
+                (for [_ (sm/when (or (= 'apply* name)
+                                     (= 'wrap name)))
+                      [dispatch-val & args] (emit args)
+                      result (comp (for [impl-info (get-proto-impl name num-args (.type-num dispatch-val))
+                                         :let [impl-ast (.ast impl-info)]
+                                         locals (sm/get-in-val [.fn-context .syms])
+                                         bindings (traverse (zip-lists (.fixed (.params impl-ast))
+                                                                       (cons dispatch-val args))
+                                                            (fn [[param arg]]
+                                                              (bind param arg)))
+                                         body-exprs (emit (.body impl-ast))
+                                         body-exprs (emit (.body impl-ast))
+                                         _ (sm/assoc-in-val [.fn-context .syms] locals)]
+                                     (let [code (collapse-expressions (cons dispatch-val (comp args body-exprs)))]
+                                       (c-init (.c-var code)
+                                               ["// inline " name " " file-name " " line-number "\n"
+                                                (.init code)]
+                                               (.decl code)
+                                               (.type-num code) (.refs-map code))))
+                                   (call-proto-impl name (cons dispatch-val args))
+                                   (compilation-error "Could not compile call to 'wrap' at:"
+                                                      file-name line-number))]
+                  result)))))
+
 (extend-type ast/call-ast
   Emitter
   (emit [ast]
@@ -947,31 +1013,35 @@
           ast (extract (update-in ast [.call-target]
                                   (fn [target-ast]
                                     ((instance? Symbol target-ast) (rdr/tag target-ast "" 0) target-ast))))]
-      (for [args (-> (.args ast)
-                     (filter produces-code)
-                     emit)
-            call-site (comp (call-vector (.call-target ast) args)
-                            (call-list (.call-target ast) args)
-                            (call-proto-impl (.call-target ast) args)
-                            (for [target (emit (.call-target ast))
-                                  :let [arg-vars (map args .c-var)]
-                                  call-site (comp (eliminate-tail-recursion ast target arg-vars
-                                                                            file-name line-number)
-                                                  (call-static-fixed target arg-vars
+      (comp (map (inline-proto-call ast)
+                 (fn [call-site]
+                   (c-init (.c-var call-site) (.init call-site) (.decl call-site)
+                           (.type-num call-site) (.refs-map call-site))))
+            (for [args (-> (.args ast)
+                           (filter produces-code)
+                           emit)
+                  call-site (comp (call-vector (.call-target ast) args)
+                                  (call-list (.call-target ast) args)
+                                  (call-proto-impl (.call-target ast) args)
+                                  (for [target (emit (.call-target ast))
+                                        :let [arg-vars (map args .c-var)]
+                                        call-site (comp (eliminate-tail-recursion ast target arg-vars
+                                                                                  file-name line-number)
+                                                        (call-static-fixed target arg-vars
+                                                                           file-name line-number)
+                                                        (call-static-variadic target arg-vars
+                                                                              file-name line-number)
+                                                        (call-invoke target arg-vars
                                                                      file-name line-number)
-                                                  (call-static-variadic target arg-vars
-                                                                        file-name line-number)
-                                                  (call-invoke target arg-vars
-                                                               file-name line-number)
-                                                  (call-dyn-fn-value target arg-vars
-                                                                     file-name line-number)
-                                                  (call-dyn-unknown-type target arg-vars
-                                                                         file-name line-number))]
-                              (comp* target (comp args [call-site])))
-                            (compilation-error "Could not compile call site at:"
-                                               file-name line-number))]
-        (c-init (.c-var call-site) (.init call-site) (.decl call-site)
-                (.type-num call-site) (.refs-map call-site)))))
+                                                        (call-dyn-fn-value target arg-vars
+                                                                           file-name line-number)
+                                                        (call-dyn-unknown-type target arg-vars
+                                                                               file-name line-number))]
+                                    (comp* target (comp args [call-site])))
+                                  (compilation-error "Could not compile call site at:"
+                                                     file-name line-number))]
+              (c-init (.c-var call-site) (.init call-site) (.decl call-site)
+                      (.type-num call-site) (.refs-map call-site))))))
 
   (emit-defined-value [fn-val defined-sym]
     (for [init-fn-context (sm/get-in-val [.init .fn-context])
@@ -989,21 +1059,6 @@
                (.type-num value) (.refs-map value))]))
 
   (tail-call [ast params] (TailExpr ast params)))
-
-
-(deftype ParamBinding [vars destruct]
-  Stringable
-  (string-list [_]
-    (comp (list "<ParamBinding ")
-          (string-list vars)
-          (list " ")
-          (string-list destruct)
-          (list ">")))
-
-  Composition
-  (comp* [x xs]
-    (let [xs (cons x xs)]
-      (ParamBinding (flat-map xs .vars) (flat-map xs .destruct)))))
 
 
 (defn unpack-arg-list [list-sym elem-vars file-name line-num]
@@ -1031,21 +1086,6 @@
                                                            ((= var tail-var) ListType UnknownType)
                                                            {})))
                                 (flat-map elem-vars .destruct)))))))
-
-(defprotocol Bindings
-  (bind [binding]
-    (for [arg-var (genlocal binding "arg")
-          :let [arg (c-code arg-var [] [] UnknownType {arg-var 1})]
-          _ (comp (redef-proto-fn-error binding)
-                  (sm/assoc-in-val [.fn-context .syms binding] arg))]
-      (ParamBinding [arg-var] [])))
-
-  (bind [binding evalled]
-    (let [evalled-ref (c-code (.c-var evalled) [] [] (.type-num evalled) {(.c-var evalled) 1})]
-      (for [_ (comp (redef-proto-fn-error binding)
-                    (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
-        (ParamBinding [(.c-var evalled)] [evalled (c-init (.c-var evalled) [] []
-                                                          (.type-num evalled) {})])))))
 
 
 (extend-type ast/params-ast
@@ -1089,7 +1129,7 @@
           bindings (emit (.bindings ast))
           body-exprs (emit (.body ast))
           _ (sm/assoc-in-val [.fn-context .syms] locals)]
-      (let [code (collapse-expressions (comp (flatten (map bindings .destruct)) body-exprs))]
+      (let [code (collapse-expressions (comp (flat-map bindings .destruct) body-exprs))]
         (c-init (.c-var code) (.init code) (.decl code) (.type-num code) (.refs-map code)))))
 
   (emit-defined-value [ast defined-sym]
