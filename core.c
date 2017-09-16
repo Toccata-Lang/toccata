@@ -3882,7 +3882,7 @@ Value *deliverPromise(Value *arg0, Value *arg1) {
 
 Value *extractPromise(Value *arg0) {
   Promise *p = (Promise *)arg0;
-  if (p->result == (Value *)0) {
+  while (p->result == (Value *)0) {
     pthread_mutex_lock (&p->access);
     if (p->result == (Value *)0) {
       int rw = __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
@@ -3913,7 +3913,7 @@ Value *promiseDelivered(Value *arg0) {
 
 Value *extractFuture(Value *arg0) {
   Future *f = (Future *)arg0;
-  if (f->result == (Value *)0) {
+  while (f->result == (Value *)0) {
     pthread_mutex_lock (&f->access);
     if (f->result == (Value *)0) {
       __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
