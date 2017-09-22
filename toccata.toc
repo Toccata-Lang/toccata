@@ -146,6 +146,43 @@
          _ (sm/set-val .fn-context new-fn-context)]
      curr-fn-context)))
 
+(defprotocol Emitter
+  ;; For AST nodes that can be embedded in other AST nodes
+  (emit [_])
+
+  ;; For AST nodes that can be assigned to a symbol at the top level
+  (emit-defined-value [ast defined-sym])
+
+  ;; For AST nodes that can appear at the top level of a file
+  (emit-definition [_])
+
+  ;; Mark this AST node as the final (or tail) expression in a function body
+  (tail-call [_ params])
+
+  ;; Does 'ast' produce any executable code when emitted?
+  (produces-code? [ast] (maybe ast))
+
+  ;; Emit a call expression if the call target is a tagged-symbol. Otherwise, fail
+  (emit-call-expr [target-ast args]
+    (zero sm/state-maybe))
+
+  ;; replace all occurances of the keys in 'subs' with their associated values
+  (replace-syms [ast subs])
+
+  ;; prepend "#" to all the bound variables in the AST
+  (replace-bound-vars [ast subs]
+    ast)
+
+  ;; expand 'target-ast' so that it's component asts are inlined
+  (inline-expr [target-ast arg-asts]
+    (zero sm/state-maybe))
+
+  ;; generate a new local C var for a symbol
+  (bind [binding])
+
+  ;; bind the symbol 'binding' to the results of 'evalled'
+  (bind [binding evalled]))
+
 ;; combine a sequence of expressions, adding reference increments and decrements
 ;; where needed
 (defprotocol CollapseExprs
@@ -172,7 +209,11 @@
     (apply comp cs))
 
   CollapseExprs
-  (collapse-expressions* [x y] y))
+  (collapse-expressions* [x y] y)
+
+  Emitter
+  (emit [x]
+    (sm/state-maybe x)))
 
 (def empty-c-code (empty-code "" [] [] UnknownType {}))
 
@@ -198,7 +239,11 @@
             [(.init x) (.init y)]
             [(.decl x) (.decl y)]
             (.type-num y)
-            (merge-with + (.refs-map x) (.refs-map y)))))
+            (merge-with + (.refs-map x) (.refs-map y))))
+
+  Emitter
+  (emit [x]
+    (sm/state-maybe x)))
 
 ;; same as 'c-code', but is the first appearance of 'c-var' in the generated code
 (deftype c-init [c-var init decl type-num refs-map]
@@ -237,7 +282,11 @@
               init
               [(.decl x) (.decl y)]
               (.type-num y)
-              refs-map))))
+              refs-map)))
+
+  Emitter
+  (emit [x]
+    (sm/state-maybe x)))
 
 (defn collapse-expressions [cs]
   (extract (or (and (empty? cs) (maybe empty-c-code))
@@ -266,8 +315,7 @@
 (defn get-protocol [proto-sym]
   ;; Look for the protocol information
   ;; 1. using the namespace portion of the protocol symbol
-  ;; 2. using the current file name
-  ;; 3. using `'core` for protcols defined in the core
+  ;; 2. using `'core` for protcols defined in the core
   (comp (for [protocol-path (sym-ns-path proto-sym)
               proto-info (sm/get-in-val [.modules protocol-path .protocols proto-sym])]
           proto-info)
@@ -290,13 +338,12 @@
   (map (sm/get-in-val [.modules path .proto-fns fn-sym])
        (fn [_] path)))
 
-(defprotocol FindProtoPath
-  (find-protocol-path [fn-sym]
-    (comp (for [namespace (sym-ns-path fn-sym)
-                path (lookup-protocol-path fn-sym namespace)]
-            path)
-          (lookup-protocol-path fn-sym (ast/file-name fn-sym))
-          (lookup-protocol-path fn-sym 'core))))
+(defn find-protocol-path [fn-sym]
+  (comp (for [namespace (sym-ns-path fn-sym)
+              path (lookup-protocol-path fn-sym namespace)]
+          path)
+        (lookup-protocol-path fn-sym (ast/file-name fn-sym))
+        (lookup-protocol-path fn-sym 'core)))
 
 (deftype ProtocolDispatcher [arg-count dispatch-sym impls-sym type-impls]
   Stringable
@@ -308,8 +355,7 @@
 
 (defn get-protocol-dispatcher [fn-sym num-args]
   (for [protocol-path (find-protocol-path fn-sym)
-        result (sm/get-in-val [.modules protocol-path .proto-fns fn-sym
-                               .dispatchers num-args])]
+        result (sm/get-in-val [.modules protocol-path .proto-fns fn-sym .dispatchers num-args])]
     result))
 
 (deftype ProtoImpl [dispatch-type c-var ast]
@@ -329,77 +375,6 @@
                                   .dispatchers arg-count .type-impls type-num])]
     impl-info))
 
-
-(defprotocol Emitter
-  ;; For AST nodes that can be embedded in other AST nodes
-  (emit [_])
-
-  ;; For AST nodes that can be assigned to a symbol at the top level
-  (emit-defined-value [ast defined-sym])
-
-  ;; For AST nodes that can appear at the top level of a file
-  (emit-definition [_])
-
-  ;; Mark this AST node as the final (or tail) expression in a function body
-  (tail-call [_ params])
-
-  ;; Emit the code to eliminate a tail recursive call
-  (eliminate-tail-recursion [ast target arg-vars file-name line-number]
-    (zero sm/state-maybe)))
-
-(defn traverse [asts f]
-  (reduce (reverse asts) (sm/state-maybe empty-list)
-            (fn [l ast]
-              (flat-map (f ast)
-                        (fn [emitted]
-                          (map l (fn [x]
-                                   (cons emitted x))))))))
-
-(defprotocol ProducesCode
-  (produces-code [ast] (maybe ast)))
-
-(extend-type ast/assert-ast
-  ProducesCode
-  (produces-code [ast] nothing))
-
-(extend-type ast/returns-ast
-  ProducesCode
-  (produces-code [ast] nothing))
-
-(extend-type ast/block-comment-ast
-  ProducesCode
-  (produces-code [ast] nothing))
-
-(extend-type List
-  Emitter
-  (emit [asts]
-    (traverse asts emit))
-
-  (tail-call [asts args]
-    (let [asts (-> asts
-                   (filter produces-code)
-                   reverse)]
-      (extract (or (empty? asts)
-                   (let [[tail & init] asts]
-                     (-> (tail-call tail args)
-                         (cons init)
-                         reverse
-                         maybe)))))))
-
-(extend-type Vector
-  Emitter
-  (emit [asts]
-    (traverse asts emit))
-
-  (tail-call [asts params]
-    (let [asts (-> asts
-                   (filter produces-code)
-                   reverse)]
-      (extract (or (empty? asts)
-                 (flat-map (last asts)
-                           (fn [tail]
-                             (store asts (dec (count asts))
-                                    (tail-call tail params)))))))))
 
 (def C-var-punct (grmr/any (grmr/apply-fn (constantly "_STAR_")
                                           (grmr/ignore "*"))
@@ -446,6 +421,67 @@
                           (maybe pre)))]
      (symbol (str pre sym-count)))))
 
+(defn redef-proto-fn-error [sym]
+  (for [path (find-protocol-path sym)
+        _ (compilation-error "Redefining" (str "'" sym "'") "at"
+                             (str (ast/file-name sym) ":") (ast/line-number sym)
+                             "which is a protocol function in" path)]
+    ""))
+
+(deftype ParamBinding [vars destruct]
+  Stringable
+  (string-list [_]
+    (comp (list "<ParamBinding ")
+          (string-list vars)
+          (list " ")
+          (string-list destruct)
+          (list ">")))
+
+  Composition
+  (comp* [x xs]
+    (let [xs (cons x xs)]
+      (ParamBinding (flat-map xs .vars) (flat-map xs .destruct)))))
+
+
+(defn traverse [asts f]
+  (reduce (reverse asts) (sm/state-maybe empty-list)
+            (fn [l ast]
+              (flat-map (f ast)
+                        (fn [emitted]
+                          (map l (fn [x]
+                                   (cons emitted x))))))))
+
+(extend-type List
+  Emitter
+  (emit [asts]
+    (traverse asts emit))
+
+  (tail-call [asts args]
+    (let [asts (-> asts
+                   (filter produces-code?)
+                   reverse)]
+      (extract (or (empty? asts)
+                   (let [[tail & init] asts]
+                     (-> (tail-call tail args)
+                         (cons init)
+                         reverse
+                         maybe)))))))
+
+(extend-type Vector
+  Emitter
+  (emit [asts]
+    (traverse asts emit))
+
+  (tail-call [asts params]
+    (let [asts (-> asts
+                   (filter produces-code?)
+                   reverse)]
+      (extract (or (empty? asts)
+                 (flat-map (last asts)
+                           (fn [tail]
+                             (store asts (dec (count asts))
+                                    (tail-call tail params)))))))))
+
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn global-var
   ([pre] (sm/state-maybe (gensym pre)))
@@ -462,13 +498,6 @@
                 var (sm/get-in-val [.modules ns-file .values (.base sym)])]
             var)
           (sm/get-in-val [.modules sym-file .values sym]))))
-
-(defn redef-proto-fn-error [sym]
-  (for [path (find-protocol-path sym)
-        _ (compilation-error "Redefining" (str "'" sym "'") "at"
-                             (str (ast/file-name sym) ":") (ast/line-number sym)
-                             "which is a protocol function in" path)]
-    ""))
 
 (defn new-module-def [sym value]
   (comp (redef-proto-fn-error sym)
@@ -534,6 +563,8 @@
 
 (extend-type ast/block-comment-ast
   Emitter
+  (produces-code? [ast] nothing)
+
   (emit [ast]
     (sm/state-maybe (c-code "" (comp ["\n"]
                                      (map (.lines ast) (fn [line]
@@ -583,7 +614,7 @@
                   target (emit (.call-target ast))
                   arity-info (sm/get-in-val [.fn-context .recurse (.c-var target) (count (.args ast))])
                   args (-> (.args ast)
-                           (filter produces-code)
+                           (filter produces-code?)
                            emit)]
               (collapse-expressions (comp args [(c-init ""
                                                         ["\n// recursive-fixed\n// #line " (str line-number)
@@ -626,6 +657,12 @@
 
 (extend-type Integer
   Emitter
+  (replace-syms [ast _]
+    (sm/state-maybe ast))
+
+  (replace-bound-vars [ast _]
+    ast)
+
   (emit [num]
     (comp (sm/get-in-val [.constants .numbers num])
           (make-static-num num)))
@@ -640,6 +677,12 @@
 
 (extend-type ast/quoted-ast
   Emitter
+  (replace-syms [ast _]
+    (sm/state-maybe ast))
+
+  (replace-bound-vars [ast _]
+    ast)
+
   (emit [ast]
     (let [sym (.q-val ast)]
       (comp (sm/get-in-val [.constants .symbols sym])
@@ -661,80 +704,6 @@
       [(make-c-code quoted)]))
 
   (tail-call [ast params] (TailExpr ast params)))
-
-
-(extend-type rdr/tagged-symbol
-  Emitter
-  (emit [sym]
-    (lookup-sym sym))
-
-  (emit-defined-value [sym defined-sym]
-    (for [value (lookup-sym sym)
-          _ (new-module-def defined-sym value)]
-      [(make-c-code value)]))
-
-   (tail-call [ast params] (TailExpr ast params)))
-
-
-(extend-type Symbol
-  Emitter
-  (emit [sym]
-    (lookup-sym sym)))
-
-
-(defn get-type-number [type-symbol]
-  (comp (for [type-symbol (sm/when type-symbol)
-              ns-path (sym-ns-path type-symbol)
-              type-num (comp (sm/get-in-val [.modules ns-path .types type-symbol])
-                             (sm/get-in-val [.modules 'core .types type-symbol]))]
-          type-num)
-        (sm/state-maybe 0)))
-
-(extend-type ast/inline-ast
-  Emitter
-  (emit [ast]
-    (for [target-lang (sm/get-val .target-lang)
-          :when (= (.lang ast) target-lang)
-          type-num (get-type-number (.result-type ast))]
-      (c-code "" [(.txt ast)] [] type-num {})))
-
-  (emit-defined-value [ast defined-sym]
-    (for [target-lang (sm/get-val .target-lang)
-          :when (= (.lang ast) target-lang)
-          type-num (get-type-number (.result-type ast))
-          c-var (comp (map (lookup-declaration defined-sym) .c-var)
-                      (global-var defined-sym "var"))
-          _ (new-module-def defined-sym (c-code c-var [] [] type-num {}))]
-      [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})]))
-
-  (emit-definition [ast]
-    (for [target-lang (sm/get-val .target-lang)
-          :when (= (.lang ast) target-lang)
-          type-num (get-type-number (.result-type ast))]
-      [(c-code "" [] [(.txt ast)] type-num {})]))
-
-  (tail-call [ast params] ast))
-
-
-(extend-type ast/definition-ast
-  Emitter
-  (emit-definition [ast]
-    (let [defined-sym (.sym ast)]
-      (for [evalled (traverse (.value ast) (fn [ast]
-                                             (emit-defined-value ast defined-sym)))]
-        (flatten evalled)))))
-
-(extend-type ast/declaration-ast
-  Emitter
-  (emit-definition [ast]
-    (let [sym (.sym ast)]
-      (comp (map (lookup-declaration sym) (fn [_] []))
-            (for [c-var (global-var sym "var")
-                  :let [c-info (c-code c-var [] [] UnknownType {})]
-                  _ (sm/assoc-in-val [.modules (ast/file-name sym) .declarations sym]
-                                     (maybe c-info))]
-              (let [c-info (.c-var c-info "")]
-                [(.decl c-info ["Value *" c-var ";\n"])]))))))
 
 
 (defn call-vector [target args]
@@ -819,13 +788,195 @@
                                  []
                                  UnknownType {})])))))
 
-(defn call-proto-impl [target-ast args]
-  (for [name (sm/when (and (< 0 (count args))
-                           (instance? rdr/tagged-symbol target-ast)
-                           (maybe target-ast)))
+(defn call-proto-impl [name args]
+  (for [_ (sm/when (< 0 (count args)))
         call-info (comp (dispatch-type-known name args)
                         (dispatch-type-unknown name args))]
     call-info))
+    ;; TODO: this causes a memory incRef error
+    ;; (let [_ (print-err 'call-info (.init call-info))]
+    ;;   call-info)
+
+(defn inline-wrap-and-apply* [name args]
+  (let [num-args (count args)]
+    (for [_ (sm/when (and (< 0 num-args)
+                          (or (= 'wrap name)
+                              ;; TODO: this might work someday
+                              ;; (= 'apply* name)
+                              )))
+          :let [[dispatch-ast & arg-asts] args]
+          dispatch-val (emit dispatch-ast)
+          impl-ast (map (get-proto-impl name num-args (.type-num dispatch-val))
+                        .ast)
+          expr (-> impl-ast
+                   (replace-bound-vars {})
+                   (inline-expr (cons dispatch-val arg-asts)))]
+      expr)))
+
+
+(defn inline-flat-map [name args]
+  (let [num-args (count args)]
+    (for [_ (sm/when (and (= 2 num-args)
+                          (or (= 'flat-map name)
+                              ;; TODO: this might work someday
+                              ;; (= 'map name)
+                              )))
+          :let [[dispatch-ast f-ast] args]
+          dispatch-val (emit dispatch-ast)
+          impl-ast (map (get-proto-impl name num-args (.type-num dispatch-val))
+                        .ast)
+          :let [impl-ast (replace-bound-vars impl-ast {})
+                [dispatch-sym f-sym] (.fixed (.params impl-ast))]
+          body-exprs (traverse (.body impl-ast)
+                               (fn [ast]
+                                 (replace-syms ast {f-sym f-ast})))]
+      (ast/let-ast (list (ast/binding dispatch-sym dispatch-val))
+                   body-exprs))))
+
+(extend-type rdr/tagged-symbol
+  Emitter
+  (bind [binding]
+    (for [arg-var (genlocal binding "arg")
+          :let [arg (c-code arg-var [] [] UnknownType {arg-var 1})]
+          _ (comp (redef-proto-fn-error binding)
+                  (sm/assoc-in-val [.fn-context .syms binding] arg))]
+      (ParamBinding [arg-var] [])))
+
+  (bind [binding evalled]
+    (let [evalled-ref (c-code (.c-var evalled) [] [] (.type-num evalled) {(.c-var evalled) 1})]
+      ;; TODO: as horrible as it looks
+      (comp (for [_ (sm/when (empty? (.init evalled)))
+                  _ (comp (redef-proto-fn-error binding)
+                          (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
+              (ParamBinding [(.c-var evalled)] [evalled]))
+            (for [_ (comp (redef-proto-fn-error binding)
+                          (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
+              (ParamBinding [(.c-var evalled)] [evalled (c-init (.c-var evalled) [] []
+                                                                (.type-num evalled) {})])))))
+
+  (emit [sym]
+    (lookup-sym sym))
+
+  (emit-defined-value [sym defined-sym]
+    (for [value (lookup-sym sym)
+          _ (new-module-def defined-sym value)]
+      [(make-c-code value)]))
+
+  (tail-call [ast params] (TailExpr ast params))
+
+  (emit-call-expr [target-ast args]
+    (comp (call-vector target-ast args)
+          (call-list target-ast args)
+          (call-proto-impl target-ast args)))
+
+  (replace-syms [ast subs]
+    (sm/state-maybe (get subs ast ast)))
+
+  (inline-expr [name arg-asts]
+    (let [args (filter arg-asts produces-code?)]
+      (comp (inline-wrap-and-apply* name args)
+            (inline-flat-map name args))))
+
+  (replace-bound-vars [ast subs]
+    (get subs ast ast)))
+
+
+(extend-type Symbol
+  Emitter
+  (bind [binding]
+    (for [arg-var (genlocal binding "arg")
+          :let [arg (c-code arg-var [] [] UnknownType {arg-var 1})]
+          _ (comp (redef-proto-fn-error binding)
+                  (sm/assoc-in-val [.fn-context .syms binding] arg))]
+      (ParamBinding [arg-var] [])))
+
+  (bind [binding evalled]
+    (let [evalled-ref (c-code (.c-var evalled) [] [] (.type-num evalled) {(.c-var evalled) 1})]
+      ;; TODO: as horrible as it looks
+      (comp (for [_ (sm/when (empty? (.init evalled)))
+                  _ (comp (redef-proto-fn-error binding)
+                          (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
+              (ParamBinding [(.c-var evalled)] [evalled]))
+            (for [_ (comp (redef-proto-fn-error binding)
+                          (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
+              (ParamBinding [(.c-var evalled)] [evalled (c-init (.c-var evalled) [] []
+                                                                (.type-num evalled) {})])))))
+
+  (emit [sym]
+    (lookup-sym sym))
+
+  (replace-syms [ast subs]
+    (sm/state-maybe (get subs ast ast)))
+
+  (inline-expr [name arg-asts]
+    (let [args (filter arg-asts produces-code?)]
+      (comp (inline-wrap-and-apply* name args)
+            (inline-flat-map name args))))
+
+  (replace-bound-vars [ast subs]
+    (get subs ast ast)))
+
+
+(defn get-type-number [type-symbol]
+  (comp (for [type-symbol (sm/when type-symbol)
+              ns-path (sym-ns-path type-symbol)
+              type-num (comp (sm/get-in-val [.modules ns-path .types type-symbol])
+                             (sm/get-in-val [.modules 'core .types type-symbol]))]
+          type-num)
+        (sm/state-maybe 0)))
+
+(extend-type ast/inline-ast
+  Emitter
+  (emit [ast]
+    (for [target-lang (sm/get-val .target-lang)
+          :when (= (.lang ast) target-lang)
+          type-num (get-type-number (.result-type ast))]
+      (c-code "" [(.txt ast)] [] type-num {})))
+
+  (emit-defined-value [ast defined-sym]
+    (for [target-lang (sm/get-val .target-lang)
+          :when (= (.lang ast) target-lang)
+          type-num (get-type-number (.result-type ast))
+          c-var (comp (map (lookup-declaration defined-sym) .c-var)
+                      (global-var defined-sym "var"))
+          _ (new-module-def defined-sym (c-code c-var [] [] type-num {}))]
+      [(c-code "" [] ["Value *" c-var " = " (.txt ast) ";\n"] type-num {})]))
+
+  (emit-definition [ast]
+    (for [target-lang (sm/get-val .target-lang)
+          :when (= (.lang ast) target-lang)
+          type-num (get-type-number (.result-type ast))]
+      [(c-code "" [] [(.txt ast)] type-num {})]))
+
+  (tail-call [ast params] ast)
+
+  (replace-syms [ast _]
+    (sm/state-maybe ast))
+
+  (replace-bound-vars [ast _]
+    ast))
+
+
+(extend-type ast/definition-ast
+  Emitter
+  (emit-definition [ast]
+    (let [defined-sym (.sym ast)]
+      (for [evalled (traverse (.value ast) (fn [ast]
+                                             (emit-defined-value ast defined-sym)))]
+        (flatten evalled)))))
+
+(extend-type ast/declaration-ast
+  Emitter
+  (emit-definition [ast]
+    (let [sym (.sym ast)]
+      (comp (map (lookup-declaration sym) (fn [_] []))
+            (for [c-var (global-var sym "var")
+                  :let [c-info (c-code c-var [] [] UnknownType {})]
+                  _ (sm/assoc-in-val [.modules (ast/file-name sym) .declarations sym]
+                                     (maybe c-info))]
+              (let [c-info (.c-var c-info "")]
+                [(.decl c-info ["Value *" c-var ";\n"])]))))))
+
 
 ;; optimize calls to static, fixed arity, functions
 (defn call-static-fixed [target arg-vars file-name line-number]
@@ -940,69 +1091,21 @@
               (.type-num arity-info)
               {}))))
 
-(deftype ParamBinding [vars destruct]
-  Stringable
-  (string-list [_]
-    (comp (list "<ParamBinding ")
-          (string-list vars)
-          (list " ")
-          (string-list destruct)
-          (list ">")))
+(defn update-last [asts f]
+  (extract (or (empty? asts)
+               (let [[tail & init] (-> asts
+                                       (filter produces-code?)
+                                       reverse)]
+                 (-> (f tail)
+                     (cons init)
+                     reverse
+                     maybe)))))
 
-  Composition
-  (comp* [x xs]
-    (let [xs (cons x xs)]
-      (ParamBinding (flat-map xs .vars) (flat-map xs .destruct)))))
+(defn make-bindings [params args]
+  (map (zip-lists (seq params) (seq args))
+       (fn [[param val]]
+         (ast/binding-ast param val))))
 
-
-(defprotocol Bindings
-  (bind [binding]
-    (for [arg-var (genlocal binding "arg")
-          :let [arg (c-code arg-var [] [] UnknownType {arg-var 1})]
-          _ (comp (redef-proto-fn-error binding)
-                  (sm/assoc-in-val [.fn-context .syms binding] arg))]
-      (ParamBinding [arg-var] [])))
-
-  (bind [binding evalled]
-    (let [evalled-ref (c-code (.c-var evalled) [] [] (.type-num evalled) {(.c-var evalled) 1})]
-      (for [_ (comp (redef-proto-fn-error binding)
-                    (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
-        (ParamBinding [(.c-var evalled)] [evalled (c-init (.c-var evalled) [] []
-                                                          (.type-num evalled) {})])))))
-
-(defn inline-proto-call [ast]
-  (let [target-ast (.call-target ast)
-        args (filter (.args ast) produces-code)
-        num-args (count args)
-        file-name (ast/file-name ast)
-        line-number (ast/line-number ast)]
-    (flat-map (sm/when (and (< 0 num-args)
-                            (instance? rdr/tagged-symbol target-ast)
-                            (maybe target-ast)))
-              ;; TODO: clean this up when not tired
-              (fn [name]
-                (for [_ (sm/when (or (= 'apply* name)
-                                     (= 'wrap name)))
-                      [dispatch-val & args] (emit args)
-                      result (comp (for [impl-info (get-proto-impl name num-args (.type-num dispatch-val))
-                                         :let [impl-ast (.ast impl-info)]
-                                         locals (sm/get-in-val [.fn-context .syms])
-                                         bindings (traverse (zip-lists (.fixed (.params impl-ast))
-                                                                       (cons dispatch-val args))
-                                                            (fn [[param arg]]
-                                                              (bind param arg)))
-                                         body-exprs (emit (.body impl-ast))
-                                         _ (sm/assoc-in-val [.fn-context .syms] locals)]
-                                     (let [code (collapse-expressions (cons dispatch-val (comp args body-exprs)))]
-                                       (c-init (.c-var code)
-                                               ["// inline " name " " file-name " " line-number "\n"
-                                                (.init code)]
-                                               (.decl code)
-                                               (.type-num code) (.refs-map code))))
-                                   (call-proto-impl name (cons dispatch-val args))
-                                   (compilation-error "Could not compile call to 'wrap' at:"
-                                                      file-name line-number))]
-                  result)))))
 
 (extend-type ast/call-ast
   Emitter
@@ -1012,21 +1115,17 @@
           ast (extract (update-in ast [.call-target]
                                   (fn [target-ast]
                                     ((instance? Symbol target-ast) (rdr/tag target-ast "" 0) target-ast))))]
-      (comp (map (inline-proto-call ast)
-                 (fn [call-site]
-                   (c-init (.c-var call-site) (.init call-site) (.decl call-site)
-                           (.type-num call-site) (.refs-map call-site))))
+      (comp (for [new-ast (inline-expr (.call-target ast) (.args ast))
+                  call-site (emit new-ast)]
+              (c-init (.c-var call-site) (.init call-site) (.decl call-site)
+                      (.type-num call-site) (.refs-map call-site)))
             (for [args (-> (.args ast)
-                           (filter produces-code)
+                           (filter produces-code?)
                            emit)
-                  call-site (comp (call-vector (.call-target ast) args)
-                                  (call-list (.call-target ast) args)
-                                  (call-proto-impl (.call-target ast) args)
+                  call-site (comp (emit-call-expr (.call-target ast) args)
                                   (for [target (emit (.call-target ast))
                                         :let [arg-vars (map args .c-var)]
-                                        call-site (comp (eliminate-tail-recursion ast target arg-vars
-                                                                                  file-name line-number)
-                                                        (call-static-fixed target arg-vars
+                                        call-site (comp (call-static-fixed target arg-vars
                                                                            file-name line-number)
                                                         (call-static-variadic target arg-vars
                                                                               file-name line-number)
@@ -1036,7 +1135,7 @@
                                                                            file-name line-number)
                                                         (call-dyn-unknown-type target arg-vars
                                                                                file-name line-number))]
-                                    (comp* target (comp args [call-site])))
+                                    (comp* empty-c-code (comp args [target call-site])))
                                   (compilation-error "Could not compile call site at:"
                                                      file-name line-number))]
               (c-init (.c-var call-site) (.init call-site) (.decl call-site)
@@ -1056,9 +1155,29 @@
                     var "->refs = -1;\n"]
                [(.decl value) "Value *" var ";\n"]
                (.type-num value) (.refs-map value))]))
+  
+  (tail-call [ast params] (TailExpr ast params))
 
-  (tail-call [ast params] (TailExpr ast params)))
+  (replace-syms [ast subs]
+    (for [target (replace-syms (.call-target ast) subs)
+          args (traverse (.args ast) (fn [ast]
+                                       (replace-syms ast subs)))]
+      (ast/call-ast target args)))
 
+  (inline-expr [ast arg-asts]
+    ;; TODO: remove the hard-coded check for 'new-sm
+    (comp (for [_ (sm/when (= 'new-sm (.call-target ast)))
+                f-ast (sm/when (first (.args ast)))
+                new-ast (inline-expr f-ast arg-asts)]
+            new-ast)
+          (for [new-call-target (inline-expr (.call-target ast) (.args ast))
+                new-ast (inline-expr new-call-target arg-asts)]
+            new-ast)))
+  
+  (replace-bound-vars [ast subs]
+    (ast/call-ast (replace-bound-vars (.call-target ast) subs)
+                  (map (.args ast) (fn [ast]
+                                     (replace-bound-vars ast subs))))))
 
 (defn unpack-arg-list [list-sym elem-vars file-name line-num]
   (comp (sm/when (for [elem (first elem-vars)
@@ -1087,8 +1206,17 @@
                                 (flat-map elem-vars .destruct)))))))
 
 
+(defprotocol AllSyms
+  (all-symbols [ast] (list ast)))
+
 (extend-type ast/params-ast
-  Bindings
+  AllSyms
+  (all-symbols [params]
+    (comp (flat-map (.fixed params) all-symbols)
+          (extract (or (map (.variadic params) all-symbols)
+                       (maybe empty-list)))))
+
+  Emitter
   (bind [params]
     (for [tail (sm/when (or (.variadic params)
                             (maybe (symbol "#tail"))))
@@ -1112,8 +1240,14 @@
                                      (maybe destruct))
                                 (maybe (.destruct destruct
                                                   (comp [evalled] (.destruct destruct))))))]
-      (let [destruct (.vars destruct [(.c-var evalled)])]
-        destruct))))
+      (.vars destruct [(.c-var evalled)])))
+
+  (replace-bound-vars [ast subs]
+    (let [new-fixed (map (.fixed ast) (fn [param]
+                                        (replace-bound-vars param subs)))]
+      (ast/params-ast new-fixed (map (.variadic ast) (fn [v]
+                                                       (replace-bound-vars v subs)))))))
+
 
 (extend-type ast/binding-ast
   Emitter
@@ -1149,7 +1283,52 @@
   (tail-call [ast params]
     (.body ast (-> ast
                    .body
-                   (tail-call params)))))
+                   (tail-call params))))
+
+  (replace-syms [ast subs]
+    (let [f (fn recur [bindings new-bindings subs]
+              (comp (for [binding-ast (sm/when (first bindings))
+                          :let [new-subs (reduce (all-symbols (.binding binding-ast))
+                                                 subs (fn [subs sym]
+                                                        ;; TODO: 'dissoc' doesn't work here
+                                                        (assoc subs sym sym)))]
+                          new-val (replace-syms (.val binding-ast) subs)
+                          new-bindings (recur (rest bindings) new-bindings new-subs)]
+                      (conj new-bindings (.val binding-ast new-val)))
+                    (sm/state-maybe new-bindings)))]
+      ;; TODO: how does this even compile. Oh, that's why. Crap
+      (for [new-bindings (recur (.bindings ast) [] subs)
+            new-body (traverse (.body ast) (fn [ast]
+                                             (replace-syms ast subs)))]
+        (ast/let-ast (seq new-bindings) new-body))))
+
+  (inline-expr [ast arg-asts]
+    (let [unique-syms (map arg-asts (fn [_] (gensym "#arg")))]
+      (-> ast
+          (.bindings (comp (make-bindings unique-syms arg-asts)
+                           (.bindings ast)))
+          (.body (update-last (.body ast) (fn [ast]
+                                            (ast/call-ast ast unique-syms))))
+          (sm/state-maybe))))
+
+  (replace-bound-vars [ast subs]
+    (let [f (fn recur [bindings new-bindings subs]
+              (extract
+               (or (for [binding-ast (first bindings)]
+                     (let [new-val (replace-bound-vars (.val binding-ast) subs)
+                           new-subs (reduce (all-symbols (.binding binding-ast))
+                                            subs (fn [new-subs sym]
+                                                   (assoc new-subs sym (symbol (str "#" sym)))))
+                           [new-bindings new-subs] (recur (rest bindings) new-bindings new-subs)]
+                       [(conj new-bindings
+                              (ast/binding-ast (replace-bound-vars (.binding binding-ast) new-subs)
+                                               new-val))
+                        new-subs]))
+                   (maybe [new-bindings subs]))))]
+      (let [[new-bindings new-subs] (f (.bindings ast) empty-list subs)
+            new-body (map (.body ast) (fn [ast]
+                                        (replace-bound-vars ast new-subs)))]
+        (ast/let-ast (seq new-bindings) new-body)))))
 
 
 (defn index [coll]
@@ -1248,7 +1427,7 @@
                                    (str "'" fn-name "' in")
                                    (str (ast/file-name fn-name) ",")
                                    (ast/line-number fn-name)))
-        arity-info (comp (emit (.param-types arity-ast [reified-type-num]))
+        arity-info (comp (emit arity-ast)
                          (compilation-error "Could not compile protocol fn:"
                                             (str "'" fn-name "' in")
                                             (str (ast/file-name fn-name) ",")
@@ -1322,7 +1501,7 @@
 
 (defn emit-cond-expr [result-var clauses cond-test tail-return]
     (for [evalled-clauses (-> clauses
-                              (filter produces-code)
+                              (filter produces-code?)
                               emit)
           last-clause (sm/when (last evalled-clauses))]
       (let [clause-vars (-> evalled-clauses
@@ -1339,7 +1518,7 @@
             last-init ((= "" (.c-var last-clause))
                        (.init last-clause)
                        [(.init last-clause)
-                                             result-var " = " (.c-var last-clause) ";\n"])
+                        result-var " = " (.c-var last-clause) ";\n"])
             clause-inits (conj clause-inits last-init)]
         (c-init result-var
                 ["Value *" result-var ";\n"
@@ -1376,7 +1555,17 @@
     (let [[last-clause & clauses] (reverse (seq (.clauses ast)))]
       (TailAnd (-> (tail-call last-clause params)
                    (cons clauses)
-                   reverse)))))
+                   reverse))))
+
+  (replace-syms [ast subs]
+    (for [new-clauses (traverse (.clauses ast)
+                                (fn [ast]
+                                  (replace-syms ast subs)))]
+      (.clauses ast new-clauses)))
+
+  (replace-bound-vars [ast subs]
+    (ast/and-ast (map (.clauses ast) (fn [ast]
+                                       (replace-bound-vars ast subs))))))
 
 (deftype TailOr [clauses]
   Stringable
@@ -1401,11 +1590,23 @@
     (let [[last-clause & clauses] (reverse (seq (.clauses ast)))]
       (TailOr (-> (tail-call last-clause params)
                   (cons clauses)
-                  reverse)))))
+                  reverse))))
+
+  (replace-syms [ast subs]
+    (for [new-clauses (traverse (.clauses ast)
+                                (fn [ast]
+                                  (replace-syms ast subs)))]
+      (.clauses ast new-clauses)))
+
+  (replace-bound-vars [ast subs]
+    (ast/and-ast (map (.clauses ast) (fn [ast]
+                                       (replace-bound-vars ast subs)))))) 
 
 
 (extend-type ast/assert-ast
   Emitter
+  (produces-code? [ast] nothing)
+
   (emit [ast]
     (sm/state-maybe empty-c-code))
 
@@ -1414,6 +1615,8 @@
 
 (extend-type ast/returns-ast
   Emitter
+  (produces-code? [ast] nothing)
+
   (emit [ast]
     (sm/state-maybe empty-c-code))
 
@@ -1457,7 +1660,7 @@
 ;; TODO: revisit this, (obviously)
 (defn emit-fn-arity [fn-sym fn-var params param-types body]
   (let [arity-index ((.variadic params) 'variadic (count params))]
-    (for [_ (sm/when (some body produces-code))
+    (for [_ (sm/when (some body produces-code?))
           fn-context (reset-fn-context)
           arity-fn-var (global-var fn-sym "arityImpl")
           ;; TODO: make this UnknownType be IgnoreType
@@ -1617,7 +1820,28 @@
 (extend-type ast/fn-arity-ast
   Emitter
   (emit [ast]
-    (emit-fn-arity (.fn-sym ast) (.fn-var ast) (.params ast) (.param-types ast) (.body ast))))
+    (emit-fn-arity (.fn-sym ast) (.fn-var ast) (.params ast) (.param-types ast) (.body ast)))
+
+  (inline-expr [ast arg-asts]
+    (sm/state-maybe (ast/let-ast (make-bindings (.fixed (.params ast)) arg-asts)
+                                 (.body ast))))
+
+  (replace-syms [ast subs]
+    (let [subs (reduce (all-symbols (.params ast)) subs
+                       (fn [subs sym]
+                         (assoc subs sym sym)))]
+      (for [new-body (traverse (.body ast) (fn [ast]
+                                             (replace-syms ast subs)))]
+        (.body ast new-body))))
+
+  (replace-bound-vars [ast subs]
+    (let [subs (reduce (all-symbols (.params ast)) subs
+                       (fn [subs sym]
+                         (assoc subs sym (symbol (str "#" sym)))))]
+      (-> ast
+          (.params (replace-bound-vars (.params ast) subs))
+          (.body (map (.body ast) (fn [ast]
+                                    (replace-bound-vars ast subs))))))))
 
 
 (defn static-fn [fn-sym fn-var arities]
@@ -1690,7 +1914,25 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] FunctionType {}))]
       [(make-c-code value)]))
 
-  (tail-call [x params] (TailExpr x params)))
+  (tail-call [x params] (TailExpr x params))
+
+  (inline-expr [ast arg-asts]
+    (for [arity (sm/when (-> (.arities ast)
+                             (filter (fn [arity]
+                                       (= (count arg-asts) (count (.params arity)))))
+                             first))
+          expr (inline-expr arity arg-asts)]
+      expr))
+
+  (replace-syms [ast subs]
+    (for [new-arities (traverse (.arities ast)
+                                (fn [arity]
+                                  (replace-syms arity subs)))]
+      (.arities ast new-arities)))
+
+  (replace-bound-vars [ast subs]
+    (.arities ast (map (.arities ast) (fn [arity]
+                                        (replace-bound-vars arity subs))))))
 
 
 ;; TODO: revisit this
@@ -1812,7 +2054,7 @@
 
                    'Stringable
                    [['string-list
-                     [(ast/fn-arity (ast/params ['_]) ""
+                     [(ast/fn-arity (ast/params ['z]) ""
                                     [(ast/call-ast 'list
                                                    ["<TypeCon " (str new-type-name) " ["
                                                     (to-str (interpose fields ", ")) "]>"])])]]]})]))
@@ -1926,11 +2168,11 @@
                   _ (compilation-error (str "Trying to re-define type name: '" sym "' in module "
                                             file-name ", " (ast/line-number ast)))]
               "")
-
+            
             (for [type-val-sym (global-var "#type-val-")
                   :let [type-val-sym (rdr/tag type-val-sym
-                                              (ast/file-name ast)
-                                              (ast/line-number ast))]
+                                              (ast/file-name sym)
+                                              (ast/line-number sym))]
                   type-val-decl (emit-definition (ast/declaration-ast type-val-sym))
                   getters (declare-getters sym fields)
 
@@ -1940,7 +2182,8 @@
                   type-val-def (emit-definition (type-val-expr sym type-val-sym fields impls))
                   type-num (sm/get-in-val [.modules file-name .values type-val-sym .type-num])
                   constructor-arity (get-proto-impl 'invoke const-arity-index const-type-num)
-                  _ (sm/assoc-in-val [.fns (.c-var constructor-arity) const-arity-index .type-num] type-num)
+                  _ (sm/assoc-in-val [.fns (.c-var constructor-arity) const-arity-index .type-num]
+                                     type-num)
                   _ (sm/assoc-in-val [.modules file-name .types sym] type-num)]
               (comp type-val-decl
                     [(c-code "" [] (flatten getters) UnknownType {})]
@@ -2034,14 +2277,6 @@
                     "   return(1);\n"
                     "#endif\n"
                     "  return(0);\n};\n"])))
-
-(defprotocol SymFileInfo
-  (symbol-file-info [_]))
-
-(extend-type rdr/tagged-symbol
-  SymFileInfo
-  (symbol-file-info [sym]
-    (sm/state-maybe [(ast/file-name sym) (ast/line-number sym)])))
 
 (defn emit-proto-dispatcher [fn-name proto-disp]
   (let [num-args (.arg-count proto-disp)

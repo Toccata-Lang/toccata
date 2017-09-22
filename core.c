@@ -3392,7 +3392,6 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
       dec_and_free(arg4, 1);
       return(v);
     } else {
-// breakpoint here
       incRef(keyOrNull, 1);
       if (equal(key, keyOrNull)) {
         // found 'key' at this position
