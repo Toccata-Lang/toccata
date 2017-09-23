@@ -7,6 +7,8 @@
 (add-ns grmr (module "grammar.toc"))
 (add-ns rdr (module "reader.toc"))
 
+(def line-sep " ")
+
 (def UnknownType (inline C Integer "(Value *)&(Integer){IntegerType, -1, UnknownType};"))
 (def IntegerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IntegerType};"))
 (def StringType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringType};"))
@@ -477,10 +479,10 @@
                    (filter produces-code?)
                    reverse)]
       (extract (or (empty? asts)
-                 (flat-map (last asts)
-                           (fn [tail]
-                             (store asts (dec (count asts))
-                                    (tail-call tail params)))))))))
+                   (flat-map (last asts)
+                             (fn [tail]
+                               (store asts (dec (count asts))
+                                      (tail-call tail params)))))))))
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn global-var
@@ -617,7 +619,7 @@
                            (filter produces-code?)
                            emit)]
               (collapse-expressions (comp args [(c-init ""
-                                                        ["\n// recursive-fixed\n// #line " (str line-number)
+                                                        ["\n// recursive-fixed\n#line " (str line-number)
                                                          " " "\"" file-name "\"\n"
                                                          (map (zip-lists params (map args .c-var))
                                                               (fn [[param arg]]
@@ -712,16 +714,16 @@
         result-sym (genlocal "rslt")]
     (apply comp (comp args
                       [(c-init result-sym
-                               ["\n// call-vector\n// #line " (str (ast/line-number target))
+                               ["\n// call-vector\n#line " (str (ast/line-number target))
                                 " " "\""
                                 (ast/file-name target) "\"\n"
-                                "Vector *" vect-sym " = empty_vect;\n"
+                                "Vector *" vect-sym " = empty_vect;" line-sep
                                 (map args
                                      (fn [arg]
                                        (let [arg-sym (.c-var arg)]
                                          [vect-sym " = mutateVectConj(" vect-sym ", "
-                                          arg-sym ");\n"])))
-                                "Value *" result-sym " = (Value *)" vect-sym ";\n"]
+                                          arg-sym ");" line-sep])))
+                                "Value *" result-sym " = (Value *)" vect-sym ";" line-sep]
                                [] VectorType {})]))))
 
 (defn call-list [target args]
@@ -730,16 +732,16 @@
         result-sym (genlocal "rslt")]
     (apply comp (comp args
                       [(c-init result-sym
-                                ["\n// call-list\n// #line "
+                                ["\n// call-list\n#line "
                                  (str (ast/line-number target)) " " "\""
                                  (ast/file-name target) "\"\n"
-                                 "List *" list-sym " = empty_list;\n"
+                                 "List *" list-sym " = empty_list;" line-sep
                                  (map (reverse args)
                                       (fn [arg]
                                         (let [arg-sym (.c-var arg)]
                                           [list-sym " = listCons(" "(Value *)" arg-sym
-                                           ", " list-sym ");\n"])))
-                                 "Value *" result-sym " = (Value *)" list-sym ";\n"]
+                                           ", " list-sym ");" line-sep])))
+                                 "Value *" result-sym " = (Value *)" list-sym ";" line-sep]
                                 [] ListType {})]))))
 
 (defn dispatch-type-known [target args]
@@ -759,7 +761,7 @@
                                    (maybe (.type-num arity-info))))]
       (apply comp (comp args
                         [(c-init result-sym
-                                 ["\n// type-known for " (str target) "\n// #line "
+                                 ["\n// type-known for " (str target) "\n#line "
                                   (str (ast/line-number target)) " " "\""
                                   (ast/file-name target) "\"\n"
                                   "Value *" result-sym " = " (.c-var arity-info) "("
@@ -775,7 +777,7 @@
           result-sym (genlocal "rslt")]
       (apply comp (comp args
                         [(c-init result-sym
-                                 ["\n// type-unknown " (str target) "\n// #line "
+                                 ["\n// type-unknown " (str target) "\n#line "
                                   (str (ast/line-number target)) " " "\""
                                   (ast/file-name target) "\"\n"
                                   "Value *" result-sym " = proto" num-args "Arg(&"
@@ -792,10 +794,11 @@
   (for [_ (sm/when (< 0 (count args)))
         call-info (comp (dispatch-type-known name args)
                         (dispatch-type-unknown name args))]
-    call-info))
-    ;; TODO: this causes a memory incRef error
-    ;; (let [_ (print-err 'call-info (.init call-info))]
-    ;;   call-info)
+    call-info
+))
+  ;; TODO: incRef failure
+    ;; (let [_ (.init call-info)]
+    ;;   call-info))
 
 (defn inline-wrap-and-apply* [name args]
   (let [num-args (count args)]
@@ -983,7 +986,7 @@
   (for [arity-info (lookup-static-arity (.c-var target) (count arg-vars))
         result-sym (genlocal "rslt")]
     (c-init result-sym
-            ["\n// static-fixed\n// #line " (str line-number) " " "\"" file-name "\"\n"
+            ["\n// static-fixed\n#line " (str line-number) " " "\"" file-name "\"\n"
              "Value *" result-sym " = " (.c-var arity-info) "("
              (interpose (cons "empty_list" (seq arg-vars)) ", ") ");\n"]
             [] (.type-num arity-info) {})))
@@ -993,7 +996,7 @@
         variadic-sym (genlocal "varArgs")
         result-sym (genlocal "rslt")]
     (c-init result-sym
-            ["\n// static-variadic\n// #line " (str line-number) " " "\"" file-name "\"\n"
+            ["\n// static-variadic\n#line " (str line-number) " " "\"" file-name "\"\n"
              "List *" variadic-sym " = empty_list;\n"
              (map (reverse arg-vars)
                   (fn [arg-sym]
@@ -1021,7 +1024,7 @@
                "if(" arity-sym " != (FnArity *)0 && !" arity-sym "->variadic) { "
                "FnType" num-args " *" fn-var " = (FnType" num-args " *)"
                arity-sym "->fn;\n"
-               "\n// #line " line-number " " "\"" file-name "\"\n"
+               "\n#line " line-number " " "\"" file-name "\"\n"
                result-sym " = " fn-var "(" (to-str (interpose arg-syms ", ")) ");\n"
                "} else if(" arity-sym " != (FnArity *)0 && " arity-sym "->variadic) { "
                "FnType1 *" fn-var " = (FnType1 *)" arity-sym "->fn;\n"
@@ -1030,7 +1033,7 @@
                     (fn [arg-sym]
                       (str variadic-sym " = (List *)listCons("
                            arg-sym ", " variadic-sym ");\n")))
-               "\n// dynamic fn type\n// #line " line-number " " "\"" file-name "\"\n"
+               "\n// dynamic fn type\n#line " line-number " " "\"" file-name "\"\n"
                result-sym " = " fn-var "(" (str arity-sym) "->closures, (Value *)"
                variadic-sym ");\n"
                "} else {\nfprintf(stderr, \"\\n*** no arity found for '%s' at: %s, %d.\\n\", "
@@ -1050,7 +1053,7 @@
       (let [arg-syms (conj args (str arity-sym "->closures"))]
         (c-init result-sym
                 ["\n// dynamic unknown type"
-                 "\n// #line " (str line-number) " " "\""
+                 "\n#line " (str line-number) " " "\""
                  file-name "\"\n"
                  "Value *" result-sym ";\n"
                  "if((" (.c-var target) ")->type != FunctionType) {\n"
@@ -1084,7 +1087,7 @@
           arity-info (lookup-static-arity (.c-var invoke-info) num-args)
           result-sym (genlocal "rslt")]
       (c-init result-sym
-              ["// call invoke\n// #line " line-number " \"" file-name "\"\n"
+              ["// call invoke\n#line " line-number " \"" file-name "\"\n"
                "Value *" result-sym " = " (.c-var arity-info) "("
                (interpose (conj (cons (.c-var target) args) "empty_list") ", ") ");\n"]
               []
