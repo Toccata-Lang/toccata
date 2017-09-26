@@ -597,7 +597,14 @@
 (defprotocol Stringable
   (string-list [x]
     ;; Create a list of strings of that comprise the representation of `x`
-    (returns a (instance List a))))
+    (returns a (instance? List a)))
+
+  (show* [x indent]
+    ;; Create a string list to show the value `x`
+    (returns a (instance? List a))))
+
+(defn show [x]
+  (show* x ""))
 
 ;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
 (defn list [& l]
@@ -711,9 +718,14 @@
   (inline C "return(stringValue(((Function *)f_0)->name));"))
 
 (extend-type Function
-  Stringable
+  Type
   (type-name [_] "Function")
+
+  Stringable
   (string-list [_] (list "<Function " (fn-name _) ">"))
+
+  (show* [x _]
+    (string-list x))
 
   Hashable
   (sha1 [f] 0)
@@ -807,6 +819,9 @@
   Stringable
   (string-list [n] (inline C "return((Value *)listCons(integer_str(n_0), empty_list));\n"))
 
+  (show* [x indent]
+    (string-list x))
+
   Ord
   (<* [x y] (inline C Maybe "return(integerLT(x_0, y_1));"))
 
@@ -820,6 +835,9 @@
 
   Stringable
   (string-list [s] (list s))
+
+  (show* [s indent]
+    (list* "\"" s (list "\"")))
 
   Composition
   (zero [_] "")
@@ -900,6 +918,9 @@
   dec_and_free(v_0, 1);
   return((Value *)listCons(strVal, empty_list));"))
 
+  (show* [x indent]
+    (cons "'" (string-list x)))
+
   Eq
   (=* [x y] (inline C Maybe "return(symEQ(x_0, y_1));"))
 
@@ -928,6 +949,13 @@
                            (comp (list "<maybe ")
                                  (string-list v)
                                  (list ">"))))
+                 (maybe (list "<nothing>")))))
+
+  (show* [x indent]
+    (extract (or (map x (fn [v]
+                          (comp (list "<maybe ")
+                                (show* v (comp indent "       "))
+                                (list ">"))))
                  (maybe (list "<nothing>")))))
 
   Function
@@ -997,6 +1025,15 @@
     (comp (list "(")
           (flat-map (interpose l ", ") string-list)
           (list ")")))
+  
+  (show* [x indent]
+    (extract (or (map (empty? x) string-list)
+                 (let [[h & tail] x]
+                   (maybe (comp (cons "(" (show* h (comp indent " ")))
+                                (flat-map tail (fn [x]
+                                                 (list* ",\n" indent " "
+                                                        (show* x (comp indent " ")))))
+                                (list ")")))))))
 
   Eq
   (=* [x y] (inline C List "return(listEQ(x_0, y_1));"))
@@ -1091,6 +1128,15 @@
     (comp (list "[")
           (interpose (map (seq v) str) ", ")
           (list "]")))
+
+  (show* [x indent]
+    (extract (or (map (empty? x) string-list)
+                 (let [[h & tail] (seq x)]
+                   (maybe (comp (cons "[" (show* h (comp indent " ")))
+                                (flat-map tail (fn [x]
+                                                 (list* ",\n" indent " "
+                                                        (show* x (comp indent " ")))))
+                                (list "]")))))))
 
   Composition
   (zero [_] empty-vector)
@@ -1309,6 +1355,14 @@
    (reduce (partition kv-pairs 2) m (fn [m [k v]]
                                       (assoc* m k v (sha1 k) 0)))))
 
+(defn spaces [n]
+  (to-str (map (range n) (fn [_] " "))))
+
+(defn show-kv [[k v] indent]
+  (let [k-str (apply str (show* k indent))]
+    (comp (list k-str " ")
+          (show* v (comp indent (spaces (+ 2 (count k-str))))))))
+
 (extend-type HashMap
   Type
   (type-name [_] "HashMap")
@@ -1335,6 +1389,15 @@
         (comp (list "{")
               (flatten (interpose kv-strs (list ", ")))
               (list "}")))))
+  
+  (show* [m indent]
+    (extract (or (map (empty? m) string-list)
+                 (let [[h & tail] (seq m)]
+                   (maybe (comp (cons "{" (show-kv h indent))
+                                (flat-map tail (fn [kv]
+                                                 (list* ",\n" indent " "
+                                                        (show-kv kv indent))))
+                                (list "}")))))))
 
   Seqable
   (seq [n]
@@ -1457,9 +1520,15 @@
   Stringable
   (string-list [p]
     (extract (or (for [x (delivered p)
-                       x-str (first (string-list x))]
+                       x-str (to-str (string-list x))]
                    (list "<Promise " x-str " " (str (address-of p)) ">"))
                  (maybe (list "<Promise " (str (address-of p)) ">")))))
+
+  (show* [p indent]
+    (extract (or (for [x (delivered p)]
+                   (comp (list* "<Promise " (show* x (comp indent "         ")))
+                         (list ">")))
+                 (maybe (list "<Promise>")))))
 
   Composition
   (comp* [p ps]
@@ -1522,6 +1591,9 @@
   Stringable
   (string-list [_] (list "<Future " (str (address-of _)) ">"))
 
+  (show* [p indent]
+    (string-list p))
+
   Composition
   (comp* [p ps]
     (let [new-p (future)
@@ -1575,6 +1647,9 @@
     (comp (list "<Agent ")
           (string-list (extract a))
           (list ">")))
+
+  (show* [a indent]
+    (comp (cons "<Agent " (show* (extract a) (comp indent "<      ")))))
 
   Container
   (send* [agt f-and-args]

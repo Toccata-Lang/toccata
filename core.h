@@ -147,6 +147,7 @@ Value *(*invoke0Args)(List *closures, Value *f);
 Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
 Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
 Value *(*type_name)(List *closures, Value *t);
+Value *(*showFn)(List *closures, Value *t);
 Value *(*fn_apply)(List *closures, Value *f, Value *args);
 
 Value *my_malloc(int64_t sz);
@@ -250,3 +251,4 @@ Value *dynamicCall1Arg(Value *f, Value *arg);
 Value *deliverFuture(Value *fut, Value *val);
 Value *addFutureAction(Future *p, Value *action);
 String *nullTerm(Value *s);
+void show(Value *v);

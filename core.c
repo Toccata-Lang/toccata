@@ -4117,3 +4117,21 @@ String *nullTerm(Value *s) {
   dec_and_free(s, 1);
   return(arg0Str);
 }
+
+void show(Value *v) {
+  if (v->refs == refsError) {
+    fprintf(stderr, "has been freed\n");
+    return;
+  }
+  incRef(v, 1);
+  List *strings = (List *)showFn(empty_list, v);
+  List *l = strings;
+  for (Value *h = l->head; l != (List *)0 && h != (Value *)0; h = l->head) {
+    incRef(h, 1);
+    prErrSTAR(h);
+    l = l->tail;
+  }
+  fprintf(stderr, "\n");
+  dec_and_free((Value *)strings, 1);
+  return;
+}
