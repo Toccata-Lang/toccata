@@ -7,11 +7,11 @@
 (add-ns grmr (module "grammar.toc"))
 (add-ns rdr (module "reader.toc"))
 
-(def line-sep " ")
+(def line-sep "\n")
 
 (defn line-macro [ast marker]
   (sm/when (or (= "" (ast/file-name ast))
-               (maybe ["\n" marker "\n#line "
+               (maybe ["\n" marker "\n// #line "
                        (str (ast/line-number ast)) " " "\""
                        (ast/file-name ast) "\"\n"]))))
 
@@ -58,8 +58,8 @@
                  OpaqueType "Opaque"})
 
 (defn target-type-name [n]
-  (extract (or (get type-names n)
-               (maybe (str n)))))
+  (either (get type-names n)
+          (str n)))
 
 (def core-types {'Integer IntegerType
                  'String StringType
@@ -275,15 +275,15 @@
 
   CollapseExprs
   (collapse-expressions* [x y]
-    (let [init (extract (or (for [refs (get-in y [.refs-map c-var])]
+    (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(.init x)
                                ((< refs 2) "" [line-sep "incRef(" c-var ", " (dec refs) ");" line-sep])
                                (.init y)])
                             (and (= "" c-var)
-                                 (maybe [(.init x) (.init y)]))
-                            (maybe [(.init x)
-                                    line-sep "dec_and_free(" c-var ", 1);" line-sep
-                                    (.init y)])))
+                                 (maybe [(.init x) (.init y)])))
+                       [(.init x)
+                        line-sep "dec_and_free(" c-var ", 1);" line-sep
+                        (.init y)])
           refs-map (merge-with + (.refs-map x) (.refs-map y))
           refs-map (assoc refs-map c-var 0)]
       (c-code (.c-var y)
@@ -297,11 +297,11 @@
     (sm/state-maybe x)))
 
 (defn collapse-expressions [cs]
-  (extract (or (and (empty? cs) (maybe empty-c-code))
-               (maybe (let [[c & cs] (reverse cs)
-                            cs (remove cs empty?)]
-                        (reduce cs c (fn [y x]
-                                       (collapse-expressions* x y))))))))
+  (either (and (empty? cs) (maybe empty-c-code))
+          (let [[c & cs] (reverse cs)
+                cs (remove cs empty?)]
+            (reduce cs c (fn [y x]
+                           (collapse-expressions* x y))))))
 
 (defn sym-ns-path [sym]
   (comp (for [ns-sym (sm/when (rdr/namespace sym))
@@ -470,12 +470,11 @@
     (let [asts (-> asts
                    (filter produces-code?)
                    reverse)]
-      (extract (or (empty? asts)
-                   (let [[tail & init] asts]
-                     (-> (tail-call tail args)
-                         (cons init)
-                         reverse
-                         maybe)))))))
+      (either (empty? asts)
+              (let [[tail & init] asts]
+                (-> (tail-call tail args)
+                    (cons init)
+                    reverse))))))
 
 (extend-type Vector
   Emitter
@@ -799,9 +798,7 @@
   (let [num-args (count args)]
     (for [_ (sm/when (and (< 0 num-args)
                           (or (= 'wrap name)
-                              ;; TODO: this might work someday
-                              ;; (= 'apply* name)
-                              )))
+                              (= 'apply* name))))
           :let [[dispatch-ast & arg-asts] args]
           dispatch-val (emit dispatch-ast)
           impl-ast (map (get-proto-impl name num-args (.type-num dispatch-val))
@@ -816,9 +813,7 @@
   (let [num-args (count args)]
     (for [_ (sm/when (and (= 2 num-args)
                           (or (= 'flat-map name)
-                              ;; TODO: this might work someday
-                              ;; (= 'map name)
-                              )))
+                              (= 'map name))))
           :let [[dispatch-ast f-ast] args]
           dispatch-val (emit dispatch-ast)
           impl-ast (map (get-proto-impl name num-args (.type-num dispatch-val))
@@ -850,11 +845,11 @@
                                     {(.c-var evalled) 1})]
           _ (comp (redef-proto-fn-error binding)
                   (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
-      (extract (or (and (empty? (.init evalled))
-                        (maybe (ParamBinding [(.c-var evalled)] [evalled])))
-                   (maybe (ParamBinding [(.c-var evalled)]
-                                        [evalled (c-init (.c-var evalled) [] []
-                                                         (.type-num evalled) {})]))))))
+      (either (and (empty? (.init evalled))
+                   (maybe (ParamBinding [(.c-var evalled)] [evalled])))
+              (ParamBinding [(.c-var evalled)]
+                            [evalled (c-init (.c-var evalled) [] []
+                                             (.type-num evalled) {})]))))
 
   (emit [sym]
     (lookup-sym sym))
@@ -902,11 +897,11 @@
                                     {(.c-var evalled) 1})]
           _ (comp (redef-proto-fn-error binding)
                   (sm/assoc-in-val [.fn-context .syms binding] evalled-ref))]
-      (extract (or (and (empty? (.init evalled))
-                        (maybe (ParamBinding [(.c-var evalled)] [evalled])))
-                   (maybe (ParamBinding [(.c-var evalled)]
-                                        [evalled (c-init (.c-var evalled) [] []
-                                                         (.type-num evalled) {})]))))))
+      (either (and (empty? (.init evalled))
+                   (maybe (ParamBinding [(.c-var evalled)] [evalled])))
+              (ParamBinding [(.c-var evalled)]
+                            [evalled (c-init (.c-var evalled) [] []
+                                             (.type-num evalled) {})]))))
 
   (emit [sym]
     (lookup-sym sym))
@@ -1096,14 +1091,13 @@
               {}))))
 
 (defn update-last [asts f]
-  (extract (or (empty? asts)
-               (let [[tail & init] (-> asts
-                                       (filter produces-code?)
-                                       reverse)]
-                 (-> (f tail)
-                     (cons init)
-                     reverse
-                     maybe)))))
+  (either (empty? asts)
+          (let [[tail & init] (-> asts
+                                  (filter produces-code?)
+                                  reverse)]
+            (-> (f tail)
+                (cons init)
+                reverse))))
 
 (defn make-bindings [params args]
   (map (zip-lists (seq params) (seq args))
@@ -1214,8 +1208,8 @@
   AllSyms
   (all-symbols [params]
     (comp (flat-map (.fixed params) all-symbols)
-          (extract (or (map (.variadic params) all-symbols)
-                       (maybe empty-list)))))
+          (either (map (.variadic params) all-symbols)
+                  empty-list)))
 
   Emitter
   (bind [params]
@@ -1311,18 +1305,18 @@
 
   (replace-bound-vars [ast subs]
     (let [f (fn recur [bindings new-bindings subs]
-              (extract
-               (or (for [binding-ast (first bindings)]
-                     (let [new-val (replace-bound-vars (.val binding-ast) subs)
-                           new-subs (reduce (all-symbols (.binding binding-ast))
-                                            subs (fn [new-subs sym]
-                                                   (assoc new-subs sym (symbol (str "#" sym)))))
-                           [new-bindings new-subs] (recur (rest bindings) new-bindings new-subs)]
-                       [(conj new-bindings
-                              (ast/binding-ast (replace-bound-vars (.binding binding-ast) new-subs)
-                                               new-val))
-                        new-subs]))
-                   (maybe [new-bindings subs]))))]
+              (either (for [binding-ast (first bindings)]
+                        (let [new-val (replace-bound-vars (.val binding-ast) subs)
+                              new-subs (reduce (all-symbols (.binding binding-ast))
+                                               subs (fn [new-subs sym]
+                                                      (assoc new-subs sym (symbol (str "#" sym)))))
+                              [new-bindings new-subs] (recur (rest bindings) new-bindings new-subs)]
+                          [(conj new-bindings
+                                 (ast/binding-ast (replace-bound-vars (.binding binding-ast)
+                                                                      new-subs)
+                                                  new-val))
+                           new-subs]))
+                      [new-bindings subs]))]
       (let [[new-bindings new-subs] (f (.bindings ast) empty-list subs)
             new-body (map (.body ast) (fn [ast]
                                         (replace-bound-vars ast new-subs)))]
@@ -1479,13 +1473,13 @@
 (defn filter-vals [m f]
   (reduce (seq m) {}
           (fn [m [k v]]
-            (extract (or (map (f v) (fn [_] (assoc m k v)))
-                         (maybe m))))))
+            (either (map (f v) (fn [_] (assoc m k v)))
+                    m))))
 
 (defn decrement-refs [refs-map [var var-refs]]
-  (extract (or (update-in refs-map [var] (fn [refs]
-                                              (- refs var-refs)))
-               (maybe refs-map))))
+  (either (update-in refs-map [var] (fn [refs]
+                                      (- refs var-refs)))
+          refs-map))
 
 (defn cond-clause-init [cond-test expr-result [init refs-map] clause]
   (let [refs-map (-> (.refs-map clause)
@@ -1600,8 +1594,77 @@
       (.clauses ast new-clauses)))
 
   (replace-bound-vars [ast subs]
-    (ast/and-ast (map (.clauses ast) (fn [ast]
-                                       (replace-bound-vars ast subs)))))) 
+    (ast/or-ast (map (.clauses ast) (fn [ast]
+                                      (replace-bound-vars ast subs)))))) 
+
+(deftype TailEither [clause alt]
+  Emitter
+  (emit [ast]
+    (for [cond-val (emit (.clause ast))
+          alt-val (emit (.alt ast))]
+      (let [cond-rslt (.c-var cond-val)
+            refs-map (-> (merge-with + (.refs-map cond-val)
+                                     (.refs-map alt-val))
+                         (filter-vals (partial < 0)))]
+        (c-code ""
+                [(.init cond-val)
+                 "if (!isNothing(" cond-rslt ")) {" line-sep
+                 (-> (.refs-map alt-val)
+                     (filter-vals (partial < 0))
+                     seq
+                     (map (fn [[var refs]]
+                            ["dec_and_free(" var ", " refs ");" line-sep])))
+                 "return(maybeExtract(" cond-rslt "));" line-sep
+                 "} else {" line-sep
+                 "dec_and_free(" cond-rslt ", 1);" line-sep
+                 (.init alt-val)
+                 "return(" (.c-var alt-val) ");" line-sep
+                 "}" line-sep]
+                (comp (.decl cond-val) (.decl alt-val))
+                ;; TODO: type and refs-map need thought
+                UnknownType
+                refs-map)))))
+
+(extend-type ast/either-ast
+  Emitter
+  (emit [ast]
+    (for [result-var (genlocal "eitherRslt")
+          cond-val (emit (.clause ast))
+          alt-val (emit (.alt ast))]
+      (let [cond-rslt (.c-var cond-val)
+            refs-map (-> (merge-with + (.refs-map cond-val)
+                                     (.refs-map alt-val))
+                         (filter-vals (partial < 0)))]
+        (c-init result-var
+                [(.init cond-val)
+                 "Value *" result-var ";" line-sep
+                 "if (!isNothing(" cond-rslt ")) {" line-sep
+                 (-> (.refs-map alt-val)
+                     (filter-vals (partial < 0))
+                     seq
+                     (map (fn [[var refs]]
+                            ["dec_and_free(" var ", " refs ");" line-sep])))
+                 result-var " = maybeExtract(" cond-rslt ");" line-sep
+                 "} else {" line-sep
+                 "dec_and_free(" cond-rslt ", 1);" line-sep
+                 (.init alt-val)
+                 result-var " = " (.c-var alt-val) ";" line-sep
+                 "}" line-sep]
+                (comp (.decl cond-val) (.decl alt-val))
+                ;; TODO: type and refs-map need thought
+                UnknownType
+                refs-map))))
+
+  (tail-call [ast params]
+    (TailEither (.clause ast) (.alt ast)))
+
+  (replace-syms [ast subs]
+    (ast/either-ast (replace-syms (.clause ast) subs)
+                    (replace-syms (.alt ast) subs)))
+
+  (replace-bound-vars [ast subs]
+    (ast/either-ast (replace-bound-vars (.clause ast) subs)
+                    (replace-bound-vars (.alt ast) subs)))) 
 
 
 (extend-type ast/assert-ast
@@ -1710,9 +1773,9 @@
                                  (interpose (cons "List *closures" param-decls) ", ")
                                  ") {\n"]
                                 FnArityType {})
-                fn-result (extract (or (and (= "" (.c-var body))
-                                            (maybe "nothing"))
-                                       (maybe (.c-var body))))
+                fn-result (either (and (= "" (.c-var body))
+                                       (maybe "nothing"))
+                                  (.c-var body))
                 arg-count (count (.vars param-vars))]
           arity-info (comp (for [arity-var (genlocal "dynArity")
                                  closed-over (closures-init closures arity-var)

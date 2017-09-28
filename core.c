@@ -4119,6 +4119,10 @@ String *nullTerm(Value *s) {
 }
 
 void show(Value *v) {
+  if (v == (Value *)0) {
+    fprintf(stderr, "Null\n");
+    return;
+  }
   if (v->refs == refsError) {
     fprintf(stderr, "has been freed\n");
     return;

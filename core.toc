@@ -662,9 +662,9 @@
   (assert (instance? List l))
   (let [h (first l)]
     ;; not the preferred way to write this, but this is tail recursive for perf
-    (or (and (=* nothing h)
-             (maybe result))
-        (list-reduce (cdr l) (f result (mxt h)) f))))
+    (either (and (=* nothing h)
+                 (maybe result))
+            (list-reduce (cdr l) (f result (mxt h)) f))))
 
 (extend-type List
   Container
@@ -673,7 +673,7 @@
 
   Seqable
   (reduce [l result f]
-    (extract (list-reduce l result f))))
+    (list-reduce l result f)))
 
 (defn +
   ([] 0)
@@ -935,28 +935,31 @@
 (defn maybe-apply [mv args]
   (inline C Maybe "return(maybeApply(mv_0, args_1));"))
 
+(defn maybe-map [mv f]
+  (inline C Maybe "return(maybeMap(mv_0, f_1));"))
+
 (extend-type Maybe
   Type
   (type-args [v]
-    (extract (or (map v list)
-                 (maybe empty-list))))
+    (either (map v list)
+            empty-list))
 
   (type-name [_] "Maybe")
 
   Stringable
   (string-list [mv]
-    (extract (or (map mv (fn [v]
-                           (comp (list "<maybe ")
-                                 (string-list v)
-                                 (list ">"))))
-                 (maybe (list "<nothing>")))))
+    (either (map mv (fn [v]
+                  (comp (list "<maybe ")
+                        (string-list v)
+                        (list ">"))))
+            (list "<nothing>")))
 
   (show* [x indent]
-    (extract (or (map x (fn [v]
-                          (comp (list "<maybe ")
-                                (show* v (comp indent "       "))
-                                (list ">"))))
-                 (maybe (list "<nothing>")))))
+    (either (map x (fn [v]
+                 (comp (list "<maybe ")
+                       (show* v (comp indent "       "))
+                       (list ">"))))
+            (list "<nothing>")))
 
   Function
   (invoke [m t f] (inline C "return(maybeInvoke(m_0, t_1, f_2));"))
@@ -968,8 +971,8 @@
   (extract [mv]
     (inline C "return(maybeExtract(mv_0));"))
 
-  (map [mv args]
-    (inline C Maybe "return(maybeMap(mv_0, args_1));"))
+  (map [mv f]
+    (maybe-map mv f))
 
   (wrap [_ mv]
     (maybe mv))
@@ -996,24 +999,23 @@
            (some (rest coll) f))))
 
 (defn pred-taker [coll pred]
-  (or (and (empty? coll)
-           (maybe empty-list))
-      (for [x (first coll)
-            :when (pred x)
-            tail (pred-taker (rest coll) pred)]
-        (cons x tail))
-      (maybe empty-list)))
+  (either (or (and (empty? coll)
+                   (maybe empty-list))
+              (for [x (first coll)
+                    :when (pred x)]
+                (cons x (pred-taker (rest coll) pred))))
+          empty-list))
 
 (defn take-while [coll pred]
-  (extract (pred-taker coll pred)))
+  (pred-taker coll pred))
 
 (defn range* [n l]
-  (or (and (= n 0) (maybe (cons 0 l)))
-      (and (< n 0) (maybe l))
-      (range* (dec n) (cons n l))))
+  (either (or (and (= n 0) (maybe (cons 0 l)))
+              (and (< n 0) (maybe l)))
+          (range* (dec n) (cons n l))))
 
 (defn range [n]
-  (extract (range* (dec n) empty-list)))
+  (range* (dec n) empty-list))
 
 (extend-type List
   Type
@@ -1027,13 +1029,13 @@
           (list ")")))
   
   (show* [x indent]
-    (extract (or (map (empty? x) string-list)
-                 (let [[h & tail] x]
-                   (maybe (comp (cons "(" (show* h (comp indent " ")))
-                                (flat-map tail (fn [x]
-                                                 (list* ",\n" indent " "
-                                                        (show* x (comp indent " ")))))
-                                (list ")")))))))
+    (either (map (empty? x) string-list)
+            (let [[h & tail] x]
+              (comp (cons "(" (show* h (comp indent " ")))
+                    (flat-map tail (fn [x]
+                                     (list* ",\n" indent " "
+                                            (show* x (comp indent " ")))))
+                    (list ")")))))
 
   Eq
   (=* [x y] (inline C List "return(listEQ(x_0, y_1));"))
@@ -1069,20 +1071,21 @@
     (nth coll (dec (count coll))))
 
   (butlast [coll]
-    (extract (flat-map (split coll (dec (count coll)) empty-list)
-                       first)))
+    (let [[r _] (split coll (dec (count coll)))]
+      r))
+
   (reverse [l]
     (inline C List "return((Value *)reverseList((List *)l_0));"))
 
   (split [l n prefix]
-    (or (and (or (empty? l)
-                 (= 0 n))
-             (maybe [(reverse prefix) l]))
-        (let [[head & tail] l]
-          (split tail (dec n) (cons head prefix)))))
+    (either (and (or (empty? l)
+                     (= 0 n))
+                 (maybe [(reverse prefix) l]))
+            (let [[head & tail] l]
+              (split tail (dec n) (cons head prefix)))))
 
   (split [l n]
-    (extract (split l n empty-list)))
+    (split l n empty-list))
 
   Indexed
   (nth [coll n]
@@ -1096,27 +1099,27 @@
              (vec= x y n)))))
 
 (defn subvec* [v curr-index max-index result]
-  (or (and (<= curr-index max-index)
-           (flat-map (get v curr-index)
-                     (fn [x]
-                       (subvec* v (inc curr-index) max-index (mutate-vect-conj result x)))))
-      (maybe result)))
+  (either (and (<= curr-index max-index)
+               (map (get v curr-index)
+                    (fn [x]
+                      (subvec* v (inc curr-index) max-index (mutate-vect-conj result x)))))
+          result))
 
 (defn subvec
   ;; Extract a smaller vector from a larger one
   ([v start]
    (assert (instance? Integer start))
-   (extract (subvec* v start (count v) empty-vector)))
+   (subvec* v start (count v) empty-vector))
   ([v start len]
    (assert (instance? Integer start))
    (assert (instance? Integer len))
-   (extract (subvec* v start (dec (+ start len)) empty-vector))))
+   (subvec* v start (dec (+ start len)) empty-vector)))
 
 (defn vect-reduce [v n result f]
-  (or (flat-map (get v n)
-                (fn [x]
-                  (vect-reduce v (inc n) (f result x) f)))
-      (maybe result)))
+  (either (map (get v n)
+               (fn [x]
+                 (vect-reduce v (inc n) (f result x) f)))
+          result))
 
 (extend-type Vector
   Type
@@ -1130,13 +1133,13 @@
           (list "]")))
 
   (show* [x indent]
-    (extract (or (map (empty? x) string-list)
-                 (let [[h & tail] (seq x)]
-                   (maybe (comp (cons "[" (show* h (comp indent " ")))
-                                (flat-map tail (fn [x]
-                                                 (list* ",\n" indent " "
-                                                        (show* x (comp indent " ")))))
-                                (list "]")))))))
+    (either (map (empty? x) string-list)
+            (let [[h & tail] (seq x)]
+              (comp (cons "[" (show* h (comp indent " ")))
+                    (flat-map tail (fn [x]
+                                     (list* ",\n" indent " "
+                                            (show* x (comp indent " ")))))
+                    (list "]")))))
 
   Composition
   (zero [_] empty-vector)
@@ -1179,8 +1182,8 @@
   (filter [v f]
     (reduce v empty-vector
             (fn [result x]
-              (extract (or (and (f x) (maybe (mutate-vect-conj result x)))
-                           (maybe result))))))
+              (either (and (f x) (maybe (mutate-vect-conj result x)))
+                      result))))
 
   Seqable
   (seq [v]
@@ -1205,7 +1208,7 @@
     (inline C "return(vectorReverse(v_0));"))
 
   (reduce [v result f]
-    (extract (vect-reduce v 0 result f)))
+    (vect-reduce v 0 result f))
 
   (to-str [coll]
     (let [ss-list (cons "" (flat-map (seq coll) string-list))
@@ -1242,35 +1245,25 @@
          (maybe x))))
 
 (defn partitioner [coll n]
-  (reduce coll (maybe [empty-list empty-list])
-          (fn [accum x]
-            (flat-map accum
-                      (fn [[result part]]
-                        (let [part (cons x part)]
-                          (or (and (= n (count part))
-                                   (maybe [(cons (reverse part) result) empty-list]))
-                              (maybe [result part]))))))))
+  (reduce coll [empty-list empty-list]
+          (fn [[result part] x]
+            (let [part (cons x part)]
+              (either (and (= n (count part))
+                           (maybe [(cons (reverse part) result) empty-list]))
+                      [result part])))))
 
 (defn partition [coll n]
-  (let [[partitioned] (extract (partitioner coll n))]
+  (let [[partitioned] (partitioner coll n)]
     (reverse partitioned)))
 
 (defn partition-all [coll n]
-  (let [[partitioned remainder] (extract (partitioner coll n))]
+  (let [[partitioned remainder] (partitioner coll n)]
     (reverse (cons remainder partitioned))))
 
 (defn partial [f & args]
   ;; paritally apply `f` to `args` creating a new function that expects more arguments
   (fn [& more-args]
     (apply f (comp args more-args))))
-
-;; (defn every
-;;   ([coll f] (extract (every coll f (empty coll))))
-;;   ([coll f prefix]
-;;    (or (and (empty? coll)
-;;             (maybe (reverse prefix)))
-;;        (let [head (flat-map (first coll) f)]
-;;          (every (rest coll) f (conj prefix head))))))
 
 (defn every [coll f]
   (or (empty? coll)
@@ -1391,13 +1384,13 @@
               (list "}")))))
   
   (show* [m indent]
-    (extract (or (map (empty? m) string-list)
-                 (let [[h & tail] (seq m)]
-                   (maybe (comp (cons "{" (show-kv h indent))
-                                (flat-map tail (fn [kv]
-                                                 (list* ",\n" indent " "
-                                                        (show-kv kv indent))))
-                                (list "}")))))))
+    (either (map (empty? m) string-list)
+            (let [[h & tail] (seq m)]
+              (comp (cons "{" (show-kv h indent))
+                    (flat-map tail (fn [kv]
+                                     (list* ",\n" indent " "
+                                            (show-kv kv indent))))
+                    (list "}")))))
 
   Seqable
   (seq [n]
@@ -1419,8 +1412,8 @@
   (get [m k]
     (inline C "return(hashMapGet(m_0, k_1));"))
   (get [m k not-found]
-    (extract (or (get m k)
-                 (maybe not-found)))))
+    (either (get m k)
+            not-found)))
 
 (defn hash-map [& kv-pairs]
   ;; create a hash-map from a number of key/value pairs
@@ -1434,16 +1427,16 @@
   ;; where applying `f` to the key does not return `nothing`
   (reduce (seq m) {}
           (fn [m [k v]]
-            (extract (or (map (f k) (fn [_] (assoc m k v)))
-                         (maybe m))))))
+            (either (map (f k) (fn [_] (assoc m k v)))
+                    m))))
 
 (defn remove-keys [m f]
   ;; create a new hash-map from `m` that only contains key/value pairs
   ;; where applying `f` to the key returns `nothing`
   (reduce (seq m) {}
           (fn [m [k v]]
-            (extract (or (map (f k) (fn [_] m))
-                         (maybe (assoc m k v)))))))
+            (either (map (f k) (fn [_] m))
+                    (assoc m k v)))))
 
 (defn map-vals [m f]
   ;; create a new hash-map from `m` with `f` applied to each value
@@ -1499,10 +1492,10 @@
           (fn [hm m]
             (reduce (seq m) hm
                     (fn [hm [k v]]
-                      (extract (or (map (get hm k)
-                                        (fn [old-v]
-                                          (assoc hm k (merge-fn old-v v))))
-                                   (maybe (assoc hm k v)))))))))
+                      (either (map (get hm k)
+                                   (fn [old-v]
+                                     (assoc hm k (merge-fn old-v v))))
+                              (assoc hm k v)))))))
 
 
 (defn add-promise-action [p f]
@@ -1519,16 +1512,16 @@
 
   Stringable
   (string-list [p]
-    (extract (or (for [x (delivered p)
-                       x-str (to-str (string-list x))]
-                   (list "<Promise " x-str " " (str (address-of p)) ">"))
-                 (maybe (list "<Promise " (str (address-of p)) ">")))))
+    (either (for [x (delivered p)
+                  x-str (to-str (string-list x))]
+              (list "<Promise " x-str " " (str (address-of p)) ">"))
+            (list "<Promise " (str (address-of p)) ">")))
 
   (show* [p indent]
-    (extract (or (for [x (delivered p)]
-                   (comp (list* "<Promise " (show* x (comp indent "         ")))
-                         (list ">")))
-                 (maybe (list "<Promise>")))))
+    (either (for [x (delivered p)]
+              (comp (list* "<Promise " (show* x (comp indent "         ")))
+                    (list ">")))
+            (list "<Promise>")))
 
   Composition
   (comp* [p ps]
@@ -1901,11 +1894,11 @@ abort();
 (defn null-term [s]
   (inline C String "return((Value *)nullTerm(s_0));\n"))
 
-(defn list-zipper [lists]
-  (or (some lists empty?)
-      (apply-to cons
-                (every lists first)
-                (list-zipper (map lists rest)))))
+(defn list-zipper [lists zipped]
+  (either (map (every lists first)
+               (fn [firsts]
+                 (list-zipper (map lists rest) (cons firsts zipped))))
+          (reverse zipped)))
 
 (defn zip-lists [l & lists]
-  (extract (list-zipper (cons l lists))))
+  (list-zipper (cons l lists) empty-list))
