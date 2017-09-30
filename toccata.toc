@@ -7,11 +7,11 @@
 (add-ns grmr (module "grammar.toc"))
 (add-ns rdr (module "reader.toc"))
 
-(def line-sep "\n")
+(def line-sep " ")
 
 (defn line-macro [ast marker]
   (sm/when (or (= "" (ast/file-name ast))
-               (maybe ["\n" marker "\n// #line "
+               (maybe ["\n" marker "\n#line "
                        (str (ast/line-number ast)) " " "\""
                        (ast/file-name ast) "\"\n"]))))
 
@@ -2533,38 +2533,48 @@
 (extend-type ast/git-dep-ast
   ASTEmitter
   (load-module [ast root-dir proj-dir]
-    (let [opts (.args ast)]
-      (extract
-       (for [_ (or (empty? (filter (seq (.file ast)) (partial = "/")))
-                   (let [_ (print-err "For git dependencies,"
-                                      "files may only be imported from root of repository,"
-                                      (.file ast) "is invalid.")]
-                     (maybe (abort))))
-             checkout (or (get opts 'tag)
-                          (get opts 'sha)
-                          (get opts 'branch)
-                          (maybe "master"))
-             :let [dep-path (str proj-dir "dependencies/git/" (.repo ast) "/" checkout)]
-             _ (or (sys/access (str dep-path "/" (.file ast)))
-                   (and (sys/access dep-path)
-                        (let [_ (print-err "Dependency file" (.file ast)
-                                           "missing from repository"
-                                           (.repo ast) ":"
-                                           (ast/file-name ast) (ast/line-number ast))]
-                          (maybe (abort))))
-                   (sys/sh-proc "/usr/bin/git" (list "clone" "-b" checkout (.repo ast)
-                                                     dep-path))
-                   (maybe (abort)))
-             :let [dep-path (str dep-path "/")
-                   module-path (str dep-path (.file ast))]
-             _ (or (sys/access module-path)
-                   (let [_ (print-err "Dependency file" (.file ast) "missing from repository"
-                                      (.repo ast) ":"
-                                      (ast/file-name ast) (ast/line-number ast))]
-                     (maybe (abort))))]
-         (let [waiter (promise)]
-           (send module-compiler compile-module module-path waiter dep-path proj-dir)
-           [waiter module-path]))))))
+    (or (-> (.file ast)
+            seq 
+            (filter (partial = "/"))
+            empty?)
+        (do
+          (print-err "For git dependencies,"
+                     "files may only be imported from root of repository,"
+                     (.file ast) "is invalid.")
+          (abort)))
+
+    (let [opts (.args ast) 
+          checkout (either (or (get opts 'tag)
+                               (get opts 'branch))
+                           "master")
+          dep-path (str proj-dir "dependencies/git/" (.repo ast) "/" checkout)
+          module-path (str dep-path "/" (.file ast))
+          waiter (promise)]
+      (or (sys/access module-path)
+          (and (sys/access dep-path)
+               (do
+                 (print-err "Dependency file" (.file ast) "missing from repository"
+                            (.repo ast) ":" (ast/file-name ast) (ast/line-number ast))
+                 (abort)))
+          (and (sys/sh-proc "/usr/bin/git" (list "clone" "--branch" checkout (.repo ast) dep-path))
+               (or (map (get opts 'sha)
+                        (fn [sha]
+                          (sys/sh-proc "/usr/bin/git" (list "-C" dep-path "checkout" sha))))
+                   (maybe 'never-mind)))
+          (do
+            (print-err "Cloning git dependency" (.repo ast) "failed.")
+            (abort)))
+
+      (or (sys/access module-path)
+          (do
+            (print-err "Dependency file" (.file ast) "missing from repository"
+                       (.repo ast) ":"
+                       (ast/file-name ast) (ast/line-number ast))
+            (abort)))
+
+      (send module-compiler compile-module module-path waiter (str dep-path "/") proj-dir)
+
+      [waiter module-path])))
 
 (extend-type ast/add-ns-ast
   ASTEmitter
