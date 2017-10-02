@@ -24,10 +24,10 @@
 (def line-sep " ")
 
 (defn line-macro [ast marker]
-  (sm/when (or (= "" (ast/file-name ast))
-               (maybe ["\n" marker "\n#line "
-                       (str (ast/line-number ast)) " " "\""
-                       (ast/file-name ast) "\"\n"]))))
+  (sm/state-maybe (either (= "" (ast/file-name ast))
+                          ["\n" marker "\n#line "
+                           (str (ast/line-number ast)) " " "\""
+                           (ast/file-name ast) "\"\n"])))
 
 (def UnknownType (inline C Integer "(Value *)&(Integer){IntegerType, -1, UnknownType};"))
 (def IntegerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IntegerType};"))
@@ -438,12 +438,12 @@
    (for [sym-count (sm/get-in-val [.fn-context .sym-count])
          _ (sm/assoc-in-val [.fn-context .sym-count] (inc sym-count))]
      (symbol (str pre sym-count))))
-  ([sym pre]
+  ([sym arg-name]
    (for [sym-count (sm/get-in-val [.fn-context .sym-count])
-         _ (sm/assoc-in-val [.fn-context .sym-count] (inc sym-count))
-         pre (sm/when (or (check-C-var (str sym "_"))
-                          (maybe pre)))]
-     (symbol (str pre sym-count)))))
+         _ (sm/assoc-in-val [.fn-context .sym-count] (inc sym-count))]
+     (symbol (str (either (check-C-var (str sym "_"))
+                          arg-name)
+                  sym-count)))))
 
 (defn redef-proto-fn-error [sym]
   (for [path (find-protocol-path sym)
@@ -507,11 +507,10 @@
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn global-var
-  ([pre] (sm/state-maybe (gensym pre)))
-  ([sym pre]
-   (for [pre (sm/when (or (check-C-var (str sym "_"))
-                          (maybe pre)))]
-     (gensym pre))))
+  ([arg-name] (sm/state-maybe (gensym arg-name)))
+  ([sym arg-name]
+   (sm/state-maybe (gensym (either (check-C-var (str sym "_"))
+                                   arg-name)))))
 
 
 (defn lookup-module-def [sym]
@@ -765,25 +764,34 @@
     (for [dispatch-val (sm/when (first args))
           impl-info (get-proto-impl target num-args (.type-num dispatch-val))
           arity-info (lookup-static-arity (.c-var impl-info) num-args)
-          result-sym (genlocal "rslt")
-          return-type (sm/when (or (and (= (.type-num arity-info) UnknownType)
-                                        ;; TODO: these should be the result of
-                                        ;; asserts on the protocol fn defs
-                                        (or (= target 'map)
-                                            (= target 'comp*)
-                                            (= target 'comp)
-                                            (= target 'wrap))
-                                        (maybe (.type-num dispatch-val)))
-                                   (maybe (.type-num arity-info))))
+          result-sym (genlocal "rslt") 
           line (line-macro target (str "// type-known for " target))]
-      (apply comp (comp args
-                        [(c-init result-sym
-                                 [line "Value *" result-sym " = " (.c-var arity-info) "("
-                                  (interpose (conj (map args .c-var) "empty_list")
-                                             ", ")
-                                  ");" line-sep]
-                                 []
-                                 return-type {})])))))
+      (let [return-type (either (or (and (= (.type-num arity-info) UnknownType)
+                                         ;; TODO: these should be the result of
+                                         ;; asserts on the protocol fn defs
+                                         (or (= target 'map)
+                                             (= target 'rest))
+                                         (maybe (.type-num dispatch-val)))
+                                    ;; TODO: totally speculative
+                                    (and (or (= target 'first)
+                                             (= target 'last)
+                                             (= target 'nth)
+                                             (= target 'store)
+                                             (= target 'get)
+                                             (= target '=*)
+                                             (= target '<*)
+                                             (= target 'empty?)
+                                             (= target 'instance?))
+                                         (maybe MaybeType)))
+                                (.type-num arity-info))]
+        (apply comp (comp args
+                          [(c-init result-sym
+                                   [line "Value *" result-sym " = " (.c-var arity-info) "("
+                                    (interpose (conj (map args .c-var) "empty_list")
+                                               ", ")
+                                    ");" line-sep]
+                                   []
+                                   return-type {})]))))))
 
 (defn dispatch-type-unknown [target args]
   (let [num-args (count args)]
@@ -1227,10 +1235,9 @@
 
   Emitter
   (bind [params]
-    (for [tail (sm/when (or (.variadic params)
-                            (maybe (symbol "#tail"))))
-          fixed-vars (map (traverse (.fixed params) bind) vec)
-          tail-var (bind tail)
+    (for [fixed-vars (map (traverse (.fixed params) bind) vec)
+          tail-var (bind (either (.variadic params)
+                                 (symbol "#tail")))
           param-var (genlocal "arg")
           destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
                                     (ast/file-name params)
@@ -1238,18 +1245,17 @@
       destruct))
 
   (bind [params evalled]
-    (for [tail (sm/when (or (.variadic params)
-                            (maybe (symbol "#tail"))))
-          fixed-vars (map (traverse (.fixed params) bind) vec)
-          tail-var (bind tail)
+    (for [fixed-vars (map (traverse (.fixed params) bind) vec)
+          tail-var (bind (either (.variadic params)
+                                 (symbol "#tail")))
           destruct (unpack-arg-list (.c-var evalled) (conj fixed-vars tail-var)
-                                    (ast/file-name params) (ast/line-number params))
-          destruct (sm/when (or (and (empty? (.init evalled))
-                                     (empty? (.decl evalled))
-                                     (maybe destruct))
-                                (maybe (.destruct destruct
-                                                  (comp [evalled] (.destruct destruct))))))]
-      (.vars destruct [(.c-var evalled)])))
+                                    (ast/file-name params) (ast/line-number params))]
+      (.vars (either (and (empty? (.init evalled))
+                          (empty? (.decl evalled))
+                          (maybe destruct))
+                     (.destruct destruct
+                                (comp [evalled] (.destruct destruct))))
+             [(.c-var evalled)])))
 
   (replace-bound-vars [ast subs]
     (let [new-fixed (map (.fixed ast) (fn [param]
@@ -1754,17 +1760,17 @@
                                                            (ast/line-number params))]
                              destruct)
                            (for [vars (traverse (.fixed params) bind)
-                                 :when-not (empty? vars)
-                                 :let [inline-body? (some body (partial instance? ast/inline-ast))
-                                       param-vars (apply comp vars)]
-                                 param-destruct (sm/when (or (and inline-body? (maybe []))
-                                                             (maybe (comp (map (.vars param-vars)
-                                                                               (fn [var]
-                                                                                 (c-init var [] []
-                                                                                         UnknownType
-                                                                                         {})))
-                                                                          (.destruct param-vars)))))]
-                             (ParamBinding (.vars param-vars) param-destruct))
+                                 :when-not (empty? vars)]
+                             (let [inline-body? (some body (partial instance? ast/inline-ast))
+                                   param-vars (apply comp vars)
+                                   param-destruct (either (and inline-body? (maybe []))
+                                                          (comp (map (.vars param-vars)
+                                                                     (fn [var]
+                                                                       (c-init var [] []
+                                                                               UnknownType
+                                                                               {})))
+                                                                (.destruct param-vars)))]
+                               (ParamBinding (.vars param-vars) param-destruct)))
                            (sm/state-maybe (ParamBinding [] [])))
           _ (traverse (zip-lists (seq (.fixed params)) (seq param-types))
                       (fn [[var type-num]] (set-type var type-num)))
@@ -2009,16 +2015,20 @@
                                         (replace-bound-vars arity subs))))))
 
 
+(defn validate-protocol-names [ast]
+  (traverse (keys (.impls ast))
+            (fn [protocol-name]
+              (comp (get-protocol protocol-name)
+                    (compilation-error "Invalid protocol:" protocol-name "in"
+                                       (str (ast/file-name ast) ",")
+                                       (ast/line-number protocol-name))))))
+
 ;; TODO: revisit this
 (defn extend-type* [ast type-num]
-  (for [_ (traverse (keys (.impls ast))
-                    (fn [protocol-name]
-                      (comp (get-protocol protocol-name)
-                            (compilation-error "Invalid protocol:" protocol-name "in"
-                                               (str (ast/file-name ast) ",")
-                                               (ast/line-number protocol-name)))))
-        type-str (comp (map (sm/get-in-val [.constants .type-names type-num]) (fn [type]
-                                                                                (str type "_")))
+  (for [_ (validate-protocol-names ast)
+        type-str (comp (map (sm/get-in-val [.constants .type-names type-num])
+                            (fn [type]
+                              (str type "_")))
                        (sm/state-maybe ""))
         ext-fns (traverse (for [impl-fns (vals (.impls ast))
                                 [fn-name arities] (seq impl-fns)
@@ -2527,7 +2537,7 @@
            (subs real-path 0 path-len)))))
 
 (def compile-module)
-(def module-compiler (agent (maybe {})))
+(def module-compiler (agent {}))
 
 (defprotocol ASTEmitter
   (send-to-emitter [ast]
@@ -2556,22 +2566,22 @@
                            (get opts 'branch))
                        "master")
         dep-path (str proj-dir "dependencies/git/" (.repo ast) "/" checkout)]
-    (or (and (sys/sh-proc "/usr/bin/git" (list "clone" "--branch" branch
-                                               (.repo ast) dep-path))
-             (or (flat-map (get opts 'sha)
-                           (fn [sha]
-                             ;; working with the OS. Give it a chance to catch up
-                             (sys/sleep 3)
-                             (or (sys/sh-proc "/usr/bin/git"
-                                              (list "-C" dep-path "checkout" sha))
-                                 (do
-                                   (print-err "Failed checkout of" sha "in" dep-path)
-                                   (abort)))
-                             (sys/sleep 3)))
-                 (maybe (sys/sleep 3))))
-        (do
-          (print-err "Cloning git dependency" (.repo ast) "failed.")
-          (abort)))
+    (either (and (sys/sh-proc "/usr/bin/git" (list "clone" "--branch" branch
+                                                   (.repo ast) dep-path))
+                 (or (flat-map (get opts 'sha)
+                               (fn [sha]
+                                 ;; working with the OS. Give it a chance to catch up
+                                 (sys/sleep 3)
+                                 (or (sys/sh-proc "/usr/bin/git"
+                                                  (list "-C" dep-path "checkout" sha))
+                                     (do
+                                       (print-err "Failed checkout of" sha "in" dep-path)
+                                       (abort)))
+                                 (sys/sleep 3)))
+                     (maybe (sys/sleep 3))))
+            (do
+              (print-err "Cloning git dependency" (.repo ast) "failed.")
+              (abort)))
     dep-path))
 
 (defn clone-repo [cloned ast waiter root-dir proj-dir]
@@ -2654,43 +2664,48 @@
 (def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
                                     (fn [toc-dir]
                                       (str toc-dir "/core.toc")))
-                               (let [_ (print-err "Could not read envirnonment variable TOCCATA_DIR")]
+                               (do
+                                 (print-err "Could not read envirnonment variable"
+                                            "TOCCATA_DIR")
                                  (abort)))))
 
 (defn load-core [modules]
-  (or (and (get modules 'core)
-           (maybe modules))
-      (for [file-in (fio/file-in path-to-core)
-            :let [_ (send ast-emitter new-module 'core)]
-            _ (analyze-forms {'file-name 'core
-                              'line-number 1
-                              'project-directory ""
-                              'root-directory ""}
-                             (lazy-list file-in))]
-        (assoc modules 'core 'loaded))
-      (let [_ (print-err "Could not compile Toccata core. Is the $TOCCATA_DIR environment variable set correctly?")]
-        (maybe (abort)))))
+  (either (or (and (get modules 'core)
+                   (maybe modules))
+              (for [file-in (fio/file-in path-to-core)
+                    :let [_ (send ast-emitter new-module 'core)]
+                    _ (analyze-forms {'file-name 'core
+                                      'line-number 1
+                                      'project-directory ""
+                                      'root-directory ""}
+                                     (lazy-list file-in))]
+                (assoc modules 'core 'loaded)))
+          (do
+            (print-err "Could not compile Toccata core."
+                       "Is the $TOCCATA_DIR environment variable set correctly?")
+            (abort))))
 
 (defn compile-module [loaded-modules file-name waiter-prom root-dir proj-dir]
-  (let [loaded-modules (flat-map loaded-modules load-core)]
-    (or (and (map (get-in loaded-modules ['_ file-name])
-                  (fn [loaded]
-                    (map loaded (fn [_]
-                                  (deliver waiter-prom file-name)))))
-             loaded-modules)
-        (assoc-in loaded-modules ['_ file-name]
-                  (future (fn []
-                            (let [loaded (or (for [file-in (fio/file-in file-name)
-                                                   :let [_ (send ast-emitter new-module file-name)]
-                                                   asts (analyze-forms {'file-name file-name
-                                                                        'root-directory root-dir
-                                                                        'project-directory proj-dir
-                                                                        'line-number 1}
-                                                                       (lazy-list file-in))]
-                                               "")
-                                             (let [_ (print-err "Could not compile" file-name)]
-                                               (maybe (abort))))]
-                              (deliver waiter-prom file-name))))))))
+  (let [loaded-modules (load-core loaded-modules)]
+    (either (map (get loaded-modules file-name)
+                 (fn [loaded]
+                   (map loaded (fn [_]
+                                 (deliver waiter-prom file-name)))
+                   loaded-modules))
+            (assoc loaded-modules file-name
+                   (future (fn []
+                             (either (flat-map (fio/file-in file-name)
+                                               (fn [file-in]
+                                                 (send ast-emitter new-module file-name)
+                                                 (analyze-forms {'file-name file-name
+                                                                 'root-directory root-dir
+                                                                 'project-directory proj-dir
+                                                                 'line-number 1}
+                                                                (lazy-list file-in))))
+                                     (do
+                                       (print-err "Could not compile" file-name)
+                                       (abort)))
+                             (deliver waiter-prom file-name)))))))
 
 
 (main [params]
@@ -2700,7 +2715,8 @@
                  (fn [root-dir]
                    (write-strings "\n#include <stdlib.h>\n#include \"core.h\"\n")
                    (send module-compiler compile-module file-name waiter root-dir root-dir)))
-            (let [_ (print-err "Could not find " (str "'" file-name "'"))]
+            (do
+              (print-err "Could not find " (str "'" file-name "'"))
               (abort)))
         (extract waiter)
         (send ast-emitter emit-main)
