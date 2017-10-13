@@ -1,0 +1,1 @@
+docker build -t toccata-devenv -f Development.docker ../..
