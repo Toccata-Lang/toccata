@@ -634,7 +634,7 @@
                                 (or (instance? Symbol (.call-target ast))
                                     (instance? rdr/tagged-symbol (.call-target ast)))))
                 target (emit (.call-target ast))
-                arity-info (sm/get-in-val [.fn-context .recurse (.c-var target) (count (.args ast))])
+                _ (sm/get-in-val [.fn-context .recurse (.c-var target) (count (.args ast))])
                 args (-> (.args ast)
                          (filter produces-code?)
                          emit)
@@ -644,7 +644,8 @@
                                                        (map (zip-lists params (map args .c-var))
                                                             (fn [[param arg]]
                                                               [param " = " arg ";" line-sep]))]
-                                                      [] (.type-num arity-info)
+                                                      ;; TODO: change UnknownType to IgnoreType
+                                                      [] UnknownType
                                                       (reduce (map args .c-var) {}
                                                               (fn [m arg]
                                                                 (assoc m arg 1))))])))
@@ -1464,147 +1465,141 @@
                                  UnknownType {})]
           (comp reified-fn var-info))))))
 
-(defn emit-closures []
-  (comp (for [closures (sm/get-in-val [.fn-context .closed-over .closures])
-              :when-not (empty? closures)
-              :let [closures (comp (reverse closures) [["closuresTail" ""]])]
-              destructArgs (genlocal "destArgs")]
-          (cons (c-code ""
-                        [(map closures (fn [[arg]] ["Value *" arg ";" line-sep]))
-                         "incRef((Value *)closures, 1);" line-sep
-                         "Value **" destructArgs "[" (count closures) "] = {"
-                         (interpose (map closures (fn [[arg]] ["&" arg])) ", ") "};" line-sep
-                         "destructValue(\"\", \"\", (Value *)closures"
-                         ", " (count closures) ", " destructArgs ");" line-sep]
-                        []
-                        UnknownType {})
-                (map closures (fn [[arg]] (c-init arg [] [] UnknownType {})))))
-        (sm/state-maybe [])))
-
-(defn closures-init [closures arity-sym]
-  (for [_ (sm/when-not (empty? closures))
-        closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
-    (map closure-vars
-         (fn [closure]
-           (c-code arity-sym
-                   [arity-sym "->closures = listCons((Value *)"
-                    (.c-var closure) ", (List *)" arity-sym "->closures);" line-sep]
-                   []
-                   ListType
-                   {(.c-var closure) 1})))))
-
 (defn set-type [sym type-num]
   (comp (for [sym-info (sm/get-in-val [.fn-context .syms sym])
               _ (sm/assoc-in-val [.fn-context .syms sym .type-num] type-num)]
           "")
         sm-space))
 
-;; TODO: revisit this, (obviously)
+(defn bind-params [params fn-var arity-fn-var body]
+  (comp (for [tail (sm/when (.variadic params))
+              _ (sm/assoc-in-val [.fn-context .syms tail .type-num] ListType)
+              fixed-vars (map (traverse (.fixed params) bind) vec)
+              tail-var (bind tail)
+              param-var (genlocal "arg")
+              destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
+                                        (ast/file-name params)
+                                        (ast/line-number params))]
+          destruct)
+        (for [vars (traverse (.fixed params) bind)
+              :when-not (empty? vars)
+              _ (sm/assoc-in-val [.fn-context .recurse fn-var (count params)] arity-fn-var)]
+          (let [[var & vars] vars
+                param-vars (comp* var vars)
+                param-destruct (either (and (some body (partial instance? ast/inline-ast))
+                                            (maybe []))
+                                       (comp (map (.vars param-vars)
+                                                  (fn [var]
+                                                    (c-init var [] [] UnknownType {})))
+                                             (.destruct param-vars)))]
+            (ParamBinding (.vars param-vars) param-destruct)))
+        (for [_ (sm/assoc-in-val [.fn-context .recurse fn-var 0] arity-fn-var)]
+          (ParamBinding [] []))))
+
+(defn emit-closure-arity [fn-sym fn-context arity-fn-var params param-vars body-exprs]
+  (for [closures (sm/get-in-val [.fn-context .closed-over .closures])
+        :when-not (empty? closures)
+        destArgs (genlocal "destArgs")
+        _ (reset-fn-context fn-context)
+        arity-var (genlocal fn-sym "dynArity")
+        closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
+    (let [closures (-> closures
+                       (map (fn [[arg]] arg))
+                       (seq)
+                       (conj "closuresTail")
+                       (reverse))
+          closure-count (count closures)
+          destruct-closures (cons (c-code ""
+                                          [(map closures (fn [arg] ["Value *" arg ";" line-sep]))
+                                           "incRef((Value *)closures, 1);" line-sep
+                                           "Value **" destArgs "[" closure-count "] = {"
+                                           (interpose (map closures (fn [arg] ["&" arg])) ", ")
+                                           "};" line-sep
+                                           "destructValue(\"\", \"\", (Value *)closures"
+                                           ", " closure-count ", " destArgs ");" line-sep]
+                                          []
+                                          UnknownType {})
+                                  (map closures (fn [arg] (c-init arg [] [] UnknownType {}))))
+          body (collapse-expressions (comp (.destruct param-vars)
+                                           destruct-closures
+                                           body-exprs))
+          arity-decl [(.decl body)
+                      "Value *" arity-fn-var "("
+                      (-> (.vars param-vars)
+                          (map (fn [param] (str "Value *" param)))
+                          (seq)
+                          (conj "List *closures")
+                          (interpose ", "))
+                      ") {\nwhile (1) {\n"
+                      (.init body)
+                      line-sep "};};\n"]
+          arity-init ["FnArity *" arity-var
+                      " = malloc_fnArity();" line-sep
+
+                      arity-var "->count = " (count (.vars param-vars))
+                      ";" line-sep
+                      arity-var "->variadic = "
+                      ((.variadic params) "1" "0") ";" line-sep
+                      arity-var "->fn = " arity-fn-var ";" line-sep
+                      arity-var "->closures = empty_list;" line-sep]]
+      (ClosureArity arity-fn-var params
+                    (comp* (c-init arity-var arity-init arity-decl FnArityType {})
+                           (map closure-vars (fn [closure]
+                                               (c-code arity-var
+                                                       [arity-var "->closures = listCons((Value *)"
+                                                        (.c-var closure) ", (List *)" arity-var
+                                                        "->closures);" line-sep]
+                                                       [] ListType {(.c-var closure) 1}))))))))
+
+(defn emit-static-arity [fn-sym fn-context arity-fn-var params param-vars param-types body-exprs]
+  (let [arity-index ((.variadic params) 'variadic (count params))]
+    (for [_ (reset-fn-context fn-context)
+          arity-var (comp (for [dispatch-type (sm/when (first param-types))
+                                proto-impl (get-proto-impl fn-sym arity-index dispatch-type)]
+                            (.c-var proto-impl))
+                          (global-var fn-sym "staticArity"))]
+      (let [body (collapse-expressions (comp (.destruct param-vars) body-exprs))
+            arity-decl [(.decl body)
+                        "Value *" arity-fn-var "("
+                        (-> (.vars param-vars)
+                            (map (fn [param] (str "Value *" param)))
+                            (seq)
+                            (conj "List *closures")
+                            (interpose ", "))
+                        ") {\nwhile (1) {\n"
+                        (.init body)
+                        line-sep "};};\n"]]
+        (StaticArity arity-fn-var arity-index (.type-num body)
+                     (c-code (str "&" arity-var) []
+                             [arity-decl
+                              "FnArity " arity-var " = {FnArityType, -1, "
+                              (count (.vars param-vars))
+                              ", (List *)0, " ((.variadic params) "1" "0")
+                              ", " arity-fn-var "};" line-sep]
+                             FnArityType {}))))))
+
 (defn emit-fn-arity
   ([fn-sym fn-var params param-types body]
    (flat-map (global-var fn-sym "arityImpl")
              (fn [arity-fn-var]
                (emit-fn-arity fn-sym fn-var params param-types body arity-fn-var))))
   ([fn-sym fn-var params param-types body arity-fn-var]
-   (let [arity-index ((.variadic params) 'variadic (count params))]
-     (for [_ (sm/when (some body produces-code?))
-           fn-context (reset-fn-context)
-           _ (comp (sm/get-in-val [.fn-context .syms fn-sym])
-                   (sm/assoc-in-val [.fn-context .syms fn-sym]
-                                    (c-code fn-var [] [] FunctionType {})))
-           _ (comp (sm/when (= 'variadic arity-index))
-                   ;; TODO: make this UnknownType be IgnoreType
-                   (sm/assoc-in-val [.fn-context .recurse fn-var arity-index]
-                                    (c-code arity-fn-var [] [] UnknownType {})))
-           param-vars (comp (for [tail (sm/when (.variadic params))
-                                  fixed-vars (map (traverse (.fixed params) bind) vec)
-                                  tail-var (bind tail)
-                                  _ (sm/assoc-in-val [.fn-context .syms tail .type-num] ListType)
-                                  param-var (genlocal "arg")
-                                  destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
-                                                            (ast/file-name params)
-                                                            (ast/line-number params))]
-                              destruct)
-                            (for [vars (traverse (.fixed params) bind)
-                                  :when-not (empty? vars)]
-                              (let [inline-body? (some body (partial instance? ast/inline-ast))
-                                    param-vars (apply comp vars)
-                                    param-destruct (either (and inline-body? (maybe []))
-                                                           (comp (map (.vars param-vars)
-                                                                      (fn [var]
-                                                                        (c-init var [] []
-                                                                                UnknownType
-                                                                                {})))
-                                                                 (.destruct param-vars)))]
-                                (ParamBinding (.vars param-vars) param-destruct)))
-                            (sm/state-maybe (ParamBinding [] [])))
-           _ (traverse (zip-lists (seq (.fixed params)) (seq param-types))
-                       (fn [[var type-num]] (set-type var type-num)))
-           body-exprs (-> body
-                          (tail-call (.vars param-vars))
-                          emit)
-           destruct-closures (emit-closures)
-           :let [exprs (comp (.destruct param-vars)
-                             destruct-closures
-                             body-exprs)
-                 body (collapse-expressions exprs)]
-           closures (sm/get-in-val [.fn-context .closed-over .closures])
-           _ (reset-fn-context fn-context)
-           :let [param-decls (seq (map (.vars param-vars) (fn [param]
-                                                            (str "Value *" param))))
-                 fn-expr (c-code "" []
-                                 ["Value *" arity-fn-var "("
-                                  (interpose (cons "List *closures" param-decls) ", ")
-                                  ") {\n"]
-                                 FnArityType {})
-                 fn-result (either (and (= "" (.c-var body))
-                                        (maybe "nothing"))
-                                   (.c-var body))
-                 arg-count (count (.vars param-vars))]
-           arity-info (comp (for [arity-var (genlocal fn-sym "dynArity")
-                                  closed-over (closures-init closures arity-var)
-                                  closure-vars (traverse closures
-                                                         (fn [[_ sym]]
-                                                           (lookup-sym sym)))]
-                              (ClosureArity arity-fn-var params
-                                            (comp* (c-init arity-var
-                                                           ["FnArity *" arity-var
-                                                            " = malloc_fnArity();" line-sep
-
-                                                            arity-var "->count = " arg-count ";" line-sep
-                                                            arity-var "->variadic = "
-                                                            ((.variadic params) "1" "0") ";" line-sep
-                                                            arity-var "->fn = " arity-fn-var ";" line-sep
-                                                            arity-var "->closures = empty_list;" line-sep]
-                                                           [(.decl body)
-                                                            (.decl fn-expr)
-                                                            (.init fn-expr)
-                                                            "while (1) {\n"
-                                                            (.init body)
-                                                            line-sep "};};\n"]
-                                                           FnArityType {})
-                                                   closed-over)))
-                            (for [arity-var (comp (for [dispatch-type (sm/when (first param-types))
-                                                        proto-impl (get-proto-impl fn-sym
-                                                                                   arity-index
-                                                                                   dispatch-type)]
-                                                    (.c-var proto-impl))
-                                                  (global-var fn-sym "staticArity"))]
-                              (StaticArity arity-fn-var arity-index (.type-num body)
-                                           (c-code (str "&" arity-var)
-                                                   []
-                                                   [(.decl body)
-                                                    (.decl fn-expr)
-                                                    (.init fn-expr)
-                                                    " while (1) {\n"
-                                                    (.init body)
-                                                    line-sep "};};"
-                                                    "\nFnArity " arity-var " = {FnArityType, -1, "
-                                                    arg-count
-                                                    ", (List *)0, " ((.variadic params) "1" "0")
-                                                    ", " arity-fn-var "};" line-sep]
-                                                   FnArityType {}))))]
-       arity-info))))
+   (for [_ (sm/when (some body produces-code?))
+         fn-context (reset-fn-context)
+         _ (comp (sm/get-in-val [.fn-context .syms fn-sym])
+                 (sm/assoc-in-val [.fn-context .syms fn-sym]
+                                  (c-code fn-var [] [] FunctionType {})))
+         param-vars (bind-params params fn-var arity-fn-var body)
+         _ (traverse (zip-lists (seq (.fixed params)) (seq param-types))
+                     (fn [[var type-num]] (set-type var type-num)))
+         body-exprs (-> body
+                        (tail-call (.vars param-vars))
+                        emit)
+         arity-info (comp (emit-closure-arity fn-sym fn-context arity-fn-var params
+                                              param-vars body-exprs)
+                          (emit-static-arity fn-sym fn-context arity-fn-var params
+                                             param-vars param-types body-exprs))]
+     arity-info)))
 
 (defn validate-protocol-names [ast]
   (traverse (keys (.impls ast))
