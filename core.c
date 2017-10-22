@@ -2031,7 +2031,11 @@ Value *listConcat(Value *arg0) {
     Value *h = ls->head;
     incRef(h, 1);
     dec_and_free((Value *)ls, 1);
-    return(h);
+    if (h != (Value *)0 && h->type == VectorType) {
+       return(vectSeq((Vector *)h, 0));
+    } else {
+      return(h);
+    }
   } else {
     List *head = empty_list;
     List *tail = empty_list;
