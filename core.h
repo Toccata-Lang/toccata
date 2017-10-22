@@ -69,6 +69,7 @@ int32_t refsInit;
 int32_t staticRefsInit;
 int32_t refsError;
 
+#define IgnoreType -1
 #define UnknownType 0
 #define IntegerType 1
 #define StringType 2
