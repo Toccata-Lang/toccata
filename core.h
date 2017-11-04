@@ -1,6 +1,4 @@
 
-// #define CHECK_MEM_LEAK 1
-
 #include <sys/types.h>
 #include <stdio.h>
 #include <string.h>
@@ -103,12 +101,11 @@ int8_t mainThreadDone;
 
 int cleaningUp;
 
-#ifdef CHECK_MEM_LEAK
 int64_t malloc_count;
 int64_t free_count;
+void cleanupMemory(Value *the_final_answer, Value *maybeNothing, List *argList);
 void freeAll();
 void freeGlobal(Value *x);
-#endif
 void dec_and_free(Value *v, int deltaRefs);
 Value *incRef(Value *v, int deltaRefs);
 
@@ -253,3 +250,4 @@ Value *deliverFuture(Value *fut, Value *val);
 Value *addFutureAction(Future *p, Value *action);
 String *nullTerm(Value *s);
 void show(Value *v);
+int sameType(int32_t x, int32_t y);

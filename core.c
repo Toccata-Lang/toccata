@@ -10,10 +10,8 @@ void prefs(char *tag, Value *v) {
   fprintf(stderr, "%s: %p %d\n", tag, v, v->refs);
 }
 
-#ifdef CHECK_MEM_LEAK
 int64_t malloc_count = 0;
 int64_t free_count = 0;
-#endif
 
 Value *nothing = (Value *)&(Maybe){MaybeType, -1, 0};
 List *empty_list = &(List){ListType,-1,0,0,0};
@@ -43,6 +41,18 @@ Value *my_malloc(int64_t sz) {
   if (sz > sizeof(Value))
     __atomic_store(&val->refs, &refsInit, __ATOMIC_RELAXED);
   return(val);
+}
+
+void cleanupMemory (Value *the_final_answer, Value *maybeNothing, List *argList) {
+#ifdef CHECK_MEM_LEAK
+  cleaningUp = 1;
+  mainThreadDone = 1;
+  waitForWorkers();
+  dec_and_free(the_final_answer, 1);
+  freeGlobal((Value *)argList);
+  freeGlobal(maybeNothing);
+  freeAll();
+#endif
 }
 
 typedef struct {Value *head; uintptr_t aba;} FreeValList;
@@ -882,7 +892,6 @@ Value *incRef(Value *v, int deltaRefs) {
   return(v);
 }
 
-#ifdef CHECK_MEM_LEAK
 void moveFreeToCentral();
 
 void freeGlobal(Value *x) {
@@ -984,7 +993,6 @@ void moveFreeToCentral() {
   moveToCentral(&freePromises, &centralFreePromises);
   moveToCentral(&freeFutures, &centralFreeFutures);
 }
-#endif
 
 List *reverseList(List *input) {
   List *output = empty_list;
@@ -1378,9 +1386,6 @@ Value *prSTAR(Value *str) {
     bytes = fprintf(outstream, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
   } else if (str->type == SubStringType) {
     bytes = fprintf(outstream, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
-  } else {
-    fprintf(stderr, "\ninvalid type for 'pr*'\n");
-    abort();
   }
   dec_and_free(str, 1);
   return(intValue(bytes));
@@ -1392,24 +1397,16 @@ Value *prErrSTAR(Value *str) {
     bytes = fprintf(stderr, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
   } else if (str->type == SubStringType) {
     bytes = fprintf(stderr, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
-  } else {
-    fprintf(stderr, "\ninvalid type for 'pr-err*'\n");
-    abort();
   }
   dec_and_free(str, 1);
   return(intValue(bytes));
 }
 
 Value *add_ints(Value *arg0, Value *arg1) {
-  if (arg0->type != arg1->type) {
-    fprintf(stderr, "\ninvalid types for 'add-numbers'\n");
-    abort();
-  } else {
-    Value *numVal = intValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(numVal);
-  }
+  Value *numVal = intValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(numVal);
 }
 
 Value *integerValue(int64_t n) {
@@ -1462,10 +1459,6 @@ Value *isInstance(Value *arg0, Value *arg1) {
 }
 
 List *listCons(Value *x, List *l) {
-  if (l->type != ListType) {
-    fprintf(stderr, "'cons' requires a list\n");
-    abort();
-  }
   List *newList = malloc_list();
   newList->len = l->len + 1;
   newList->head = (Value *)x;
@@ -2750,10 +2743,8 @@ Value *escapeChars(Value *arg0) {
     result->len = resultIndex;
     dec_and_free(arg0, 1);
     return((Value *)result);
-  } else {
-    fprintf(stderr, "*** 'escape-chars' called with wrong type of data\n");
-    abort();
   }
+  return(arg0);
 }
 
 Value *opaqueValue(void *ptr, Destructor *destruct) {
@@ -2806,8 +2797,8 @@ Value *subs2(Value *arg0, Value *arg1) {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return((Value *)subStr);
-  } else
-    abort();
+  }
+  return(arg0);
 }
 
 Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
@@ -2854,8 +2845,8 @@ Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
     dec_and_free(arg1, 1);
     dec_and_free(arg2, 1);
     return((Value *)subStr);
-  } else
-    abort();
+  }
+  return(arg0);
 }
 
 Value *strSeq(Value *arg0) {
@@ -4114,10 +4105,6 @@ String *nullTerm(Value *s) {
     snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((String *)s)->buffer);
   else if (s->type == SubStringType)
     snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((SubString *)s)->buffer);
-  else {
-    fprintf(stderr, "\nNot a string.\n");
-    abort();
-  }
   dec_and_free(s, 1);
   return(arg0Str);
 }
@@ -4142,4 +4129,21 @@ void show(Value *v) {
   fprintf(stderr, "\n");
   dec_and_free((Value *)strings, 1);
   return;
+}
+
+int sameType(int32_t x, int32_t y) {
+  if (x == y ||
+      (x == StringType && y == SubStringType) ||
+      (x == HashMapType && y == BitmapIndexedType) ||
+      (x == HashMapType && y == ArrayNodeType) ||
+      (x == HashMapType && y == HashCollisionNodeType) ||
+      (y == StringType && x == SubStringType) ||
+      (y == HashMapType && x == BitmapIndexedType) ||
+      (y == HashMapType && x == ArrayNodeType) ||
+      (y == HashMapType && x == HashCollisionNodeType))
+    {
+      return(1);
+    } else {
+      return(0);
+  }
 }
