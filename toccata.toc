@@ -147,8 +147,10 @@
 (deftype Closures [closures refs-map])
 (def empty-closures (Closures empty-list {}))
 
+(deftype TypeConstraint [type-num path])
+
 ;; Every function arity has some information that's local to it
-(deftype FunctionArityContext [recurse sym-count syms context closed-over]
+(deftype FunctionArityContext [recurse sym-count syms context closed-over constraints]
   ;; recurse       info to detect recursive calls
   ;; sym-count     number of C variables already used in this fn
   ;; syms          the symbols local to the function that are currently interned
@@ -162,7 +164,7 @@
   ([]
    (for [curr-fn-context (sm/get-val .fn-context)
          :let [new-context (comp (.context curr-fn-context) (.syms curr-fn-context))]
-         _ (sm/set-val .fn-context (FunctionArityContext {} 0 {} new-context empty-closures))]
+         _ (sm/set-val .fn-context (FunctionArityContext {} 0 {} new-context empty-closures {}))]
      curr-fn-context))
   ([new-fn-context]
    (for [curr-fn-context (sm/get-val .fn-context)
@@ -186,7 +188,7 @@
     )
 
   ;; Mark this AST node as the final (or tail) expression in a function body
-  (tail-call [_ params return-asserts])
+  (tail-call [_ params return-constraints])
 
   ;; Does 'ast' produce any executable code when emitted?
   (produces-code? [ast]
@@ -383,14 +385,14 @@
         (lookup-protocol-path fn-sym 'core)))
 
 (deftype ProtocolDispatcher [arg-count dispatch-sym impls-sym return-type
-                             return-asserts type-impls]
+                             return-constraints type-impls]
   Stringable
   (string-list [_] (list "<ProtoDispatcher " (str arg-count) " " (str return-type) ">")))
 
-(defn new-proto-dispatcher [fn-sym arg-count dispatch-sym impls-sym return-type return-asserts]
+(defn new-proto-dispatcher [fn-sym arg-count dispatch-sym impls-sym return-type return-constraints]
   (sm/assoc-in-val [.modules (ast/file-name fn-sym) .proto-fns fn-sym .dispatchers arg-count]
                    (ProtocolDispatcher arg-count dispatch-sym impls-sym
-                                       return-type return-asserts {})))
+                                       return-type return-constraints {})))
 
 (defn get-protocol-dispatcher [fn-sym num-args]
   (for [protocol-path (find-protocol-path fn-sym)
@@ -497,13 +499,13 @@
   (emit [asts]
     (traverse asts emit))
 
-  (tail-call [asts args return-asserts]
+  (tail-call [asts args return-constraints]
     (let [asts (-> asts
                    (filter produces-code?)
                    reverse)]
       (either (empty? asts)
               (let [[tail & init] asts]
-                (-> (tail-call tail args return-asserts)
+                (-> (tail-call tail args return-constraints)
                     (cons init)
                     reverse))))))
 
@@ -512,7 +514,7 @@
   (emit [asts]
     (traverse asts emit))
 
-  (tail-call [asts params return-asserts]
+  (tail-call [asts params return-constraints]
     (let [asts (-> asts
                    (filter produces-code?)
                    reverse)]
@@ -520,7 +522,7 @@
                    (flat-map (last asts)
                              (fn [tail]
                                (store asts (dec (count asts))
-                                      (tail-call tail params return-asserts)))))))))
+                                      (tail-call tail params return-constraints)))))))))
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn global-var
@@ -614,7 +616,7 @@
   (emit-defined-value [_ _] (sm/state-maybe []))
   (emit-definition [_] (sm/state-maybe []))
 
-  (tail-call [ast params return-asserts] ast))
+  (tail-call [ast params return-constraints] ast))
 
 
 (defn make-static-string [str-val]
@@ -639,18 +641,6 @@
 (defn make-c-code [value]
   (c-code (.c-var value) (.init value) (.decl value) (.type-num value) (.refs-map value)))
 
-(defn asserted-type-of-sym [sym assert]
-  (for [_ (instance? ast/call-ast assert)
-        _ (= (.call-target assert) 'instance?)
-        assert-var (second (.args assert))
-        _ (= sym assert-var)
-        type-sym (first (.args assert))]
-    type-sym))
-
-(defn assert-return-type [expr]
-  (and (instance? ast/result-ast expr)
-       (asserted-type-of-sym (.sym expr) (.assertion expr))))
-
 (defn get-type-number [type-symbol]
   (comp (for [type-symbol (sm/when type-symbol)
               ns-path (sym-ns-path type-symbol)
@@ -658,6 +648,56 @@
                              (sm/get-in-val [.modules 'core .types type-symbol]))]
           type-num)
         (sm/state-maybe UnknownType)))
+
+(defprotocol Assertion
+  (return-constraint? [_] nothing)
+  (assert-type [_] nothing)
+  (assert-return-type [_] nothing))
+
+(extend-type ast/assert-ast
+  Emitter
+  (produces-code? [ast] (produces-code? (.assertion ast)))
+
+  (emit [ast]
+    (sm/state-maybe empty-c-code))
+
+  (tail-call [ast params return-constraints] ast))
+
+(extend-type ast/type-assertion
+  Emitter
+  (emit [ast]
+    (for [type-num (get-type-number (maybe (.type-sym ast)))
+          var (lookup-sym (.sym ast))]
+      (c-code "" ["if (" (.c-var var) "->type != " type-num ") {" line-sep
+                  "fprintf(stderr, \"Wrong type of result returned at %s, line %d\\n\", \""
+                  (ast/file-name ast) "\"," (ast/line-number ast)
+                  ");" line-sep
+                  "fprintf(stderr, \"Expected %s, got %s\\n\", \""
+                  (str (.type-sym ast)) "\", extractStr(type_name(empty_list, " (.c-var var)
+                  ")));" line-sep
+                  "abort();" line-sep
+                  "}" line-sep]
+              [] UnknownType {})))
+
+  Assertion
+  (assert-type [ast] (maybe (.type-sym ast))))
+
+(extend-type ast/result-ast
+  Assertion
+  (return-constraint? [ast] (maybe ast))
+
+  (assert-return-type [ast]
+    (for [type-sym (assert-type (.assertion ast))
+          _ (= (.sym ast) (.sym (.assertion ast)))]
+      type-sym))
+
+  Emitter
+  (produces-code? [ast] nothing)
+
+  (emit [ast]
+    (sm/state-maybe empty-c-code))
+
+  (tail-call [ast params return-constraints] ast))
 
 (def string-types {StringType StringType
                    SubStringType SubStringType})
@@ -673,32 +713,44 @@
       (and (get hash-map-types x)
            (get hash-map-types y))))
 
-(defn emit-tail-expr [ast file-name line-number return-asserts expr]
-  (comp (for [return-type (get-type-number (some return-asserts assert-return-type))
+(defn emit-return-constraints [expr return-constraints]
+  (traverse return-constraints
+            (fn [constraint]
+              (for [locals (sm/get-in-val [.fn-context .syms])
+                    _ (sm/assoc-in-val [.fn-context .syms (.sym constraint)] expr)
+                    const-expr (emit (.assertion constraint))
+                    _ (sm/assoc-in-val [.fn-context .syms] locals)]
+                const-expr))))
+
+(defn emit-tail-expr [ast file-name line-number return-constraints expr]
+  (comp (for [return-type (get-type-number (some return-constraints assert-return-type))
               :when (or (= return-type UnknownType)
-                        (is-same-type return-type (.type-num expr)))]
+                        (is-same-type return-type (.type-num expr)))
+              return-assertions (emit-return-constraints expr (remove return-constraints
+                                                                      assert-return-type))]
+          (collapse-expressions (comp [expr]
+                                      return-assertions
+                                      [(c-code ""
+                                               ["return(" (.c-var expr) ");" line-sep]
+                                               [] (.type-num expr) {(.c-var expr) 1})])))
+        (for [return-type (get-type-number (some return-constraints assert-return-type))
+              _ (sm/when (= UnknownType (.type-num expr)))
+              return-assertions (emit-return-constraints expr return-constraints)]
           (do
-            ;; TODO: add the code to test the remaining assertions
-            (collapse-expressions [expr
-                                   (c-code ""
-                                           ["return(" (.c-var expr) ");" line-sep]
-                                           [] (.type-num expr) {(.c-var expr) 1})])))
-        (for [return-type (get-type-number (some return-asserts assert-return-type))
-              _ (sm/when (= UnknownType (.type-num expr)))]
-          (do
-            ;; (print-err 'check (some return-asserts assert-return-type) return-type
+            ;; (print-err 'check (some return-constraints assert-return-type) return-type
             ;;            (ast/file-name ast) (ast/line-number ast))
-            (collapse-expressions [(.type-num expr return-type)
-                                   (c-code ""
-                                           ["return(" (.c-var expr) ");" line-sep]
-                                           [] return-type {(.c-var expr) 1})])))
+            (collapse-expressions (comp [(.type-num expr return-type)]
+                                        return-assertions
+                                        [(c-code ""
+                                                 ["return(" (.c-var expr) ");" line-sep]
+                                                 [] return-type {(.c-var expr) 1})]))))
         (sm/new-sm (fn [s]
                      (print-err "Return value fails return assertion:"
-                                (ast/file-name return-asserts)
-                                (ast/line-number return-asserts))
+                                (ast/file-name return-constraints)
+                                (ast/line-number return-constraints))
                      nothing))))
 
-(deftype TailExpr [ast params return-asserts]
+(deftype TailExpr [ast params return-constraints]
   Stringable
   (string-list [expr]
     (comp (list "<TailExpr ") (string-list ast) (list ">")))
@@ -729,7 +781,7 @@
                              ast
                              (ast/file-name ast)
                              (ast/line-number ast)
-                             return-asserts)))))
+                             return-constraints)))))
 
 (extend-type String
   Emitter
@@ -742,7 +794,7 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] StringType {}))]
       [(make-c-code value)]))
 
-  (tail-call [x params return-asserts] (TailExpr x params return-asserts)))
+  (tail-call [x params return-constraints] (TailExpr x params return-constraints)))
 
 
 (defn make-static-num [num]
@@ -774,7 +826,7 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] IntegerType {}))]
       [(make-c-code value)]))
 
-  (tail-call [x params return-asserts] (TailExpr x params return-asserts)))
+  (tail-call [x params return-constraints] (TailExpr x params return-constraints)))
 
 
 (extend-type ast/quoted-ast
@@ -805,7 +857,7 @@
           _ (new-module-def defined-sym (c-code (.c-var quoted) [] [] SymbolType {}))]
       [(make-c-code quoted)]))
 
-  (tail-call [ast params return-asserts] (TailExpr ast params return-asserts)))
+  (tail-call [ast params return-constraints] (TailExpr ast params return-constraints)))
 
 
 (defn call-vector [target args]
@@ -954,7 +1006,7 @@
           _ (new-module-def defined-sym value)]
       [(make-c-code value)]))
 
-  (tail-call [ast params return-asserts] (TailExpr ast params return-asserts))
+  (tail-call [ast params return-constraints] (TailExpr ast params return-constraints))
 
   (emit-call-expr [target-ast args]
     (comp (call-vector target-ast args)
@@ -1036,7 +1088,7 @@
           type-num (get-type-number (.result-type ast))]
       [(c-code "" [] [(.txt ast)] type-num {})]))
 
-  (tail-call [ast params return-asserts] ast)
+  (tail-call [ast params return-constraints] ast)
 
   (replace-syms [ast _]
     (sm/state-maybe ast))
@@ -1264,7 +1316,7 @@
                [(.decl value) "Value *" var ";\n"]
                (.type-num value) (.refs-map value))]))
   
-  (tail-call [ast params return-asserts] (TailExpr ast params return-asserts))
+  (tail-call [ast params return-constraints] (TailExpr ast params return-constraints))
 
   (replace-syms [ast subs]
     (for [target (replace-syms (.call-target ast) subs)
@@ -1388,10 +1440,10 @@
                [(.decl value) "Value *" var ";\n"]
                (.type-num value) (.refs-map value))]))
 
-  (tail-call [ast params return-asserts]
+  (tail-call [ast params return-constraints]
     (.body ast (-> ast
                    .body
-                   (tail-call params return-asserts))))
+                   (tail-call params return-constraints))))
 
   (replace-syms [ast subs]
     (let [f (fn recur [bindings new-bindings subs]
@@ -1667,14 +1719,14 @@
   ([fn-sym fn-var params param-types body arity-fn-var]
    (either (and (empty? (filter body produces-code?))
                 (maybe (zero sm/state-maybe)))
-           (let [return-asserts (filter body (partial instance? ast/result-ast)) 
+           (let [return-constraints (filter body return-constraint?) 
                  body (remove body assert-return-type)]
              (for [fn-context (reset-fn-context)
-                   _ (comp (check-result-assertions return-asserts)
+                   _ (comp (check-result-assertions return-constraints)
                            (compilation-error "Conflicting result assertions in:"
                                               fn-sym "at:" (ast/file-name body)
                                               (ast/line-number body)
-                                              (to-str (flat-map return-asserts
+                                              (to-str (flat-map return-constraints
                                                                 (fn [a]
                                                                   ["\n" (ast/file-name a)
                                                                    " " (ast/line-number a)])))))
@@ -1688,7 +1740,7 @@
                    _ (traverse (zip-lists (seq (.fixed params)) (seq param-types))
                                (fn [[var type-num]] (set-type var type-num)))
                    body-exprs (-> body
-                                  (tail-call (.vars param-vars) return-asserts)
+                                  (tail-call (.vars param-vars) return-constraints)
                                   emit)
                    arity-info (comp (emit-closure-arity fn-sym fn-context arity-fn-var params
                                                         param-vars body-exprs)
@@ -1738,7 +1790,7 @@
           ext-fn (comp (emit-fn-arity (str type-str fn-name) (.fn-var arity-ast)
                                       (.params arity-ast) [type-num]
                                       (comp (.body arity-ast)
-                                            (.return-asserts dispatcher-info))
+                                            (.return-constraints dispatcher-info))
                                       arity-var)
                        (compilation-error "Could not compile protocol fn:"
                                           (str "'" fn-name "' in")
@@ -1791,7 +1843,7 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] (.type-num value) {}))]
       [value]))
 
-  (tail-call [ast params return-asserts] (TailExpr ast params return-asserts)))
+  (tail-call [ast params return-constraints] (TailExpr ast params return-constraints)))
 
 
 (defn filter-vals [m f]
@@ -1870,9 +1922,9 @@
           expr (emit-cond-expr result-var (.clauses ast) "if (isNothing(" "")]
       expr))
 
-  (tail-call [ast params return-asserts]
+  (tail-call [ast params return-constraints]
     (let [[last-clause & clauses] (reverse (seq (.clauses ast)))]
-      (TailAnd (-> (tail-call last-clause params return-asserts)
+      (TailAnd (-> (tail-call last-clause params return-constraints)
                    (cons clauses)
                    reverse))))
 
@@ -1905,9 +1957,9 @@
               (fn [result-var]
                 (emit-cond-expr result-var (.clauses ast) "if (!isNothing(" line-sep))))
 
-  (tail-call [ast params return-asserts]
+  (tail-call [ast params return-constraints]
     (let [[last-clause & clauses] (reverse (seq (.clauses ast)))]
-      (TailOr (-> (tail-call last-clause params return-asserts)
+      (TailOr (-> (tail-call last-clause params return-constraints)
                   (cons clauses)
                   reverse))))
 
@@ -1981,7 +2033,7 @@
                 UnknownType
                 refs-map))))
 
-  (tail-call [ast params return-asserts]
+  (tail-call [ast params return-constraints]
     (TailEither (.clause ast) (.alt ast)))
 
   (replace-syms [ast subs]
@@ -1992,25 +2044,6 @@
     (ast/either-ast (replace-bound-vars (.clause ast) subs)
                     (replace-bound-vars (.alt ast) subs)))) 
 
-
-(extend-type ast/assert-ast
-  Emitter
-  (produces-code? [ast] nothing)
-
-  (emit [ast]
-    (sm/state-maybe empty-c-code))
-
-  (tail-call [ast params return-asserts] ast))
-
-
-(extend-type ast/result-ast
-  Emitter
-  (produces-code? [ast] nothing)
-
-  (emit [ast]
-    (sm/state-maybe empty-c-code))
-
-  (tail-call [ast params return-asserts] ast))
 
 (extend-type ast/main-ast
   Emitter
@@ -2027,14 +2060,14 @@
         type-symbol (-> prototype
                         .default-body
                         (some assert-return-type))
-        return-asserts (-> prototype
-                           .default-body
-                           (filter (partial instance? ast/result-ast)))]
+        return-constraints (-> prototype
+                               .default-body
+                               (filter return-constraint?))]
     (for [arity-fn-var (global-var fn-name "protoDisp")
           impls-sym (global-var (str fn-name "_Implementations") "protoImpls")
           return-type (get-type-number type-symbol)
           _ (new-proto-dispatcher fn-name num-args arity-fn-var impls-sym
-                                  return-type return-asserts)
+                                  return-type return-constraints)
           _ (new-static-arity dispatch-fn-var num-args arity-fn-var return-type)]
       ["ProtoImpls " impls-sym ";\n"
        "Value *" arity-fn-var "("
@@ -2181,7 +2214,7 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] FunctionType {}))]
       [(make-c-code value)]))
 
-  (tail-call [x params return-asserts] (TailExpr x params return-asserts))
+  (tail-call [x params return-constraints] (TailExpr x params return-constraints))
 
   (inline-expr [ast arg-asts]
     (for [arity (sm/when (-> (.arities ast)
@@ -2386,9 +2419,9 @@
                      [fn-name (map impls
                                    (fn [arity]
                                      (let [[type-value-parameter] (.fixed (.params arity))
-                                           return-asserts (filter (.body arity)
-                                                                  (partial instance? ast/result-ast)) 
-                                           new-body (comp return-asserts
+                                           return-constraints (filter (.body arity)
+                                                                      return-constraint?) 
+                                           new-body (comp return-constraints
                                                           [(ast/let-ast [(ast/binding (.fields ast)
                                                                            (ast/call-ast
                                                                             reified-type-args-sym
@@ -2435,14 +2468,16 @@
                     type-val-def))))))
 
 (def global-context (GlobalContext 'C
-                                   (FunctionArityContext {} 0 {} {} empty-closures)
-                                   (RuntimeInit (FunctionArityContext {} 0 {} {} empty-closures)
+                                   (FunctionArityContext {} 0 {} {}
+                                                         empty-closures {})
+                                   (RuntimeInit (FunctionArityContext {} 0 {} {}
+                                                                      empty-closures {})
                                                 [])
                                    {}                       ;; map for module info
                                    {}                       ;; map for static fns
                                    {}                       ;; map for namespaces
                                    (ConstantValues {} {} {} type-names)
-                                   0                        ;; reify-fn-index
+                                   0                        ;; reify-fn-index 
                                    ))
 
 (def string-writer (agent ""))
