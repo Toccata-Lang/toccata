@@ -737,6 +737,7 @@
               _ (sm/when (= UnknownType (.type-num expr)))
               return-assertions (emit-return-constraints expr return-constraints)]
           (do
+            ;; TODO: periodically enable this to check on things
             ;; (print-err 'check (some return-constraints assert-return-type) return-type
             ;;            (ast/file-name ast) (ast/line-number ast))
             (collapse-expressions (comp [(.type-num expr return-type)]
@@ -794,7 +795,8 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] StringType {}))]
       [(make-c-code value)]))
 
-  (tail-call [x params return-constraints] (TailExpr x params return-constraints)))
+  (tail-call [x params return-constraints]
+    (TailExpr x params return-constraints)))
 
 
 (defn make-static-num [num]
@@ -826,7 +828,8 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] IntegerType {}))]
       [(make-c-code value)]))
 
-  (tail-call [x params return-constraints] (TailExpr x params return-constraints)))
+  (tail-call [x params return-constraints]
+    (TailExpr x params return-constraints)))
 
 
 (extend-type ast/quoted-ast
@@ -857,7 +860,8 @@
           _ (new-module-def defined-sym (c-code (.c-var quoted) [] [] SymbolType {}))]
       [(make-c-code quoted)]))
 
-  (tail-call [ast params return-constraints] (TailExpr ast params return-constraints)))
+  (tail-call [ast params return-constraints]
+    (TailExpr ast params return-constraints)))
 
 
 (defn call-vector [target args]
@@ -1006,7 +1010,8 @@
           _ (new-module-def defined-sym value)]
       [(make-c-code value)]))
 
-  (tail-call [ast params return-constraints] (TailExpr ast params return-constraints))
+  (tail-call [ast params return-constraints]
+    (TailExpr ast params return-constraints))
 
   (emit-call-expr [target-ast args]
     (comp (call-vector target-ast args)
@@ -1088,7 +1093,9 @@
           type-num (get-type-number (.result-type ast))]
       [(c-code "" [] [(.txt ast)] type-num {})]))
 
-  (tail-call [ast params return-constraints] ast)
+  (tail-call [ast params return-constraints]
+    ;; TODO: statically verify the return type, if possible
+    ast)
 
   (replace-syms [ast _]
     (sm/state-maybe ast))
@@ -1316,7 +1323,8 @@
                [(.decl value) "Value *" var ";\n"]
                (.type-num value) (.refs-map value))]))
   
-  (tail-call [ast params return-constraints] (TailExpr ast params return-constraints))
+  (tail-call [ast params return-constraints]
+    (TailExpr ast params return-constraints))
 
   (replace-syms [ast subs]
     (for [target (replace-syms (.call-target ast) subs)
@@ -1843,7 +1851,8 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] (.type-num value) {}))]
       [value]))
 
-  (tail-call [ast params return-constraints] (TailExpr ast params return-constraints)))
+  (tail-call [ast params return-constraints]
+    (TailExpr ast params return-constraints)))
 
 
 (defn filter-vals [m f]
@@ -1973,7 +1982,7 @@
     (ast/or-ast (map (.clauses ast) (fn [ast]
                                       (replace-bound-vars ast subs)))))) 
 
-(deftype TailEither [clause alt]
+(deftype TailEither [clause alt return-constraints]
   Stringable
   (string-list [expr]
     (comp (list "<TailEither ") (list ">")))
@@ -1981,7 +1990,15 @@
   Emitter
   (emit [ast]
     (for [cond-val (emit (.clause ast))
-          alt-val (emit (.alt ast))]
+          alt-val (emit (.alt ast))
+          alt-var (emit-tail-expr (.clause ast)
+                                  (ast/file-name ast)
+                                  (ast/line-number ast)
+                                  return-constraints
+                                  alt-val)
+          result-var (genlocal "rslt")
+          cond-check (emit-return-constraints (c-code result-var [] [] UnknownType {})
+                                              return-constraints)]
       (let [cond-rslt (.c-var cond-val)
             refs-map (-> (merge-with + (.refs-map cond-val)
                                      (.refs-map alt-val))
@@ -1994,7 +2011,9 @@
                      seq
                      (map (fn [[var refs]]
                             ["dec_and_free(" var ", " refs ");" line-sep])))
-                 "return(maybeExtract(" cond-rslt "));" line-sep
+                 "Value *" result-var " = maybeExtract(" cond-rslt ");" line-sep
+                 (map cond-check .init)
+                 "return(" result-var ");" line-sep
                  "} else {" line-sep
                  "dec_and_free(" cond-rslt ", 1);" line-sep
                  (.init alt-val)
@@ -2034,7 +2053,7 @@
                 refs-map))))
 
   (tail-call [ast params return-constraints]
-    (TailEither (.clause ast) (.alt ast)))
+    (TailEither (.clause ast) (.alt ast) return-constraints))
 
   (replace-syms [ast subs]
     (ast/either-ast (replace-syms (.clause ast) subs)
@@ -2214,7 +2233,8 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] [] FunctionType {}))]
       [(make-c-code value)]))
 
-  (tail-call [x params return-constraints] (TailExpr x params return-constraints))
+  (tail-call [x params return-constraints]
+    (TailExpr x params return-constraints))
 
   (inline-expr [ast arg-asts]
     (for [arity (sm/when (-> (.arities ast)
