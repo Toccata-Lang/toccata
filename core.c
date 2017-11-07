@@ -1151,7 +1151,7 @@ void *futuresThread(void *input) {
     Value *f = future->action;
     if(f->type != FunctionType) {
 // TODO: untested code path
-printf("futuresThread 1\n");
+fprintf(stderr, "futuresThread 1\n");
 abort();
       result = invoke0Args(empty_list, f);
     } else {
@@ -1161,7 +1161,7 @@ abort();
         result = fn(arity->closures);
       } else if(arity != (FnArity *)0 && arity->variadic) {
 // TODO: untested code path
-printf("futuresThread 4\n");
+fprintf(stderr, "futuresThread 4\n");
 abort();
         FnType1 *fn = (FnType1 *)arity->fn;
         result = fn(arity->closures, (Value *)empty_list);
@@ -1364,8 +1364,13 @@ Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
   return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
 }
 
-int8_t isNothing(Value *v) {
-  return(v->type == MaybeType && ((Maybe *)v)->value == (Value *)0);
+int8_t isNothing(Value *v, char *fileName, int lineNumber) {
+  if (v->type != MaybeType) {
+    fprintf(stderr, "\n*** Invalid type. Expected 'Maybe', got '%s' at %s: %d\n",
+            extractStr(type_name(empty_list, v)), fileName, lineNumber);
+    abort();
+  }
+  return(((Maybe *)v)->value == (Value *)0);
 }
 
 Value *maybe(List *closures, Value *arg0, Value *arg1) {
@@ -1661,7 +1666,7 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
       ret->root = vect->root;
       if (ret->root != (VectorNode *)0) {
 // TODO: untested code path
-printf("vectStore 2\n");
+fprintf(stderr, "vectStore 2\n");
 abort();
         incRef((Value *)ret->root, 1);
       }
@@ -2320,7 +2325,7 @@ Value *listEQ(Value *arg0, Value *arg1) {
 
 int8_t equal(Value *v1, Value *v2) {
    Value *equals = equalSTAR((List *)0, v1, v2);
-   int8_t notEquals = isNothing(equals);
+   int8_t notEquals = isNothing(equals, "", 0);
    dec_and_free(equals, 1);
    return(!notEquals);
 }
@@ -2499,7 +2504,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
 }
 
 Value *maybeApply(Value *arg0, Value *arg1) {
-  if (isNothing(arg0)) {
+  if (isNothing(arg0, "", 0)) {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(nothing);
@@ -2524,7 +2529,7 @@ Value *maybeApply(Value *arg0, Value *arg1) {
     List *head = empty_list;
     List *tail;
     for (List *l = (List *)arg1; l->head != (Value *)0; l = l->tail) {
-      if (isNothing(l->head)) {
+      if (isNothing(l->head, "", 0)) {
         dec_and_free((Value *)head, 1);
         dec_and_free(arg0, 1);
         dec_and_free(arg1, 1);
@@ -2574,7 +2579,7 @@ Value *maybeEQ(Value *arg0, Value *arg1) {
     incRef(((Maybe *)arg0)->value, 1);
     incRef(((Maybe *)arg1)->value, 1);
     Value *eqResult = equalSTAR((List *)0, ((Maybe *)arg0)->value, ((Maybe *)arg1)->value);
-    if (isNothing(eqResult)) {
+    if (isNothing(eqResult, "", 0)) {
       dec_and_free(eqResult, 1);
       dec_and_free(arg0, 1);
       dec_and_free(arg1, 1);
@@ -3120,7 +3125,7 @@ Value *listFilter(Value *arg0, Value *arg1) {
 
       // 'y' is the filter maybe/nothing value
 
-      if (!isNothing(y)) {
+      if (!isNothing(y, "", 0)) {
 	incRef(x, 1);
 	if (head == empty_list) {
 	  // if we haven't started the new list yet
@@ -3258,7 +3263,7 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
       Value *n = assoc((List *)0, incRef(valOrNode, 1), key, val, arg3, newShift);
       if (n == valOrNode) {
 // TODO: untested code path
-printf("bmi assoc* 3!!\n");
+fprintf(stderr, "bmi assoc* 3!!\n");
 abort();
         // the key was already associated with the value
         // so do nothing
@@ -3432,7 +3437,7 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
       Value *n = dissoc((List *)0, incRef(valOrNode, 1), key, arg2, newShift);
       if (n == valOrNode) {
 // TODO: untested code path
-printf("bmi dissoc* 3\n");
+fprintf(stderr, "bmi dissoc* 3\n");
 abort();
         // the key was not in the hash-map
         // so do nothing
@@ -3441,7 +3446,7 @@ abort();
         return(arg0);
       } else if (n == (Value *)0 && __builtin_popcount(node->bitmap) == 1) {
 // TODO: untested code path
-printf("bmi dissoc* 4\n");
+fprintf(stderr, "bmi dissoc* 4\n");
 abort();
         // the subtree is now empty, and this node only points to it, so propagate
         return(n);
@@ -3486,12 +3491,8 @@ abort();
         return((Value *)newNode);
       }
     } else {
-// TODO: untested code path
-printf("bmi dissoc* 9\n");
-abort();
       // there is already a key/val pair at the position where key
       // would be. Do nothing
-      incRef(arg0, 1);
       return(arg0);
     }
   } else {
@@ -3574,7 +3575,7 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
      return((Value *)newNode);
   } else {
 // TODO: untested code path
-printf("collision assoc* 5\n");
+fprintf(stderr, "collision assoc* 5\n");
 abort();
      BitmapIndexedNode *bmi = &emptyBMI;
      Integer newShift = {IntegerType, -1, 0};
@@ -3582,7 +3583,7 @@ abort();
      bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, key, val, arg3, (Value *)&newShift);
      for (int i = 0; i < itemCount; i++) {
 // TODO: untested code path
-printf("collision assoc* 6\n");
+fprintf(stderr, "collision assoc* 6\n");
 abort();
         bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, node->array[2 * i], node->array[2 * i + 1],
                                          sha1((List *)0, node->array[i]), (Value *)&newShift);
@@ -3674,11 +3675,11 @@ Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
 
   if(itemCount == 1) {
 // TODO: untested code path
-printf("collision dissoc 1\n");
+fprintf(stderr, "collision dissoc 1\n");
 abort();
     if(equal(incRef(node->array[0], 1), key)) {
 // TODO: untested code path
-printf("collision dissoc 2\n");
+fprintf(stderr, "collision dissoc 2\n");
 abort();
       dec_and_free(arg0, 1);
       dec_and_free(arg2, 1);
@@ -3686,7 +3687,7 @@ abort();
       return((Value *)&emptyBMI);
     } else {
 // TODO: untested code path
-printf("collision dissoc 3\n");
+fprintf(stderr, "collision dissoc 3\n");
 abort();
       dec_and_free(arg2, 1);
       dec_and_free(arg3, 1);
@@ -3697,7 +3698,7 @@ abort();
     for (int i = 0; i < itemCount; keyIdx++, i++) {
       if (equal(incRef(node->array[2 * i], 1), incRef(key, 1))) {
 // TODO: untested code path
-printf("collision dissoc 4\n");
+fprintf(stderr, "collision dissoc 4\n");
 abort();
         keyIdx = i;
       }
@@ -3739,7 +3740,7 @@ Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *a
           return(node->array[2 * i + 1]);
         } else {
 // TODO: untested code path
-printf("collision get 4\n");
+fprintf(stderr, "collision get 4\n");
 abort();
           dec_and_free(arg0, 1);
           dec_and_free(arg1, 1);
@@ -3781,7 +3782,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
   Value *subNode = node->array[idx];
   if (subNode == (Value *)0) {
 // TODO: untested code path
-printf("arrayNode dissoc* 1\n");
+fprintf(stderr, "arrayNode dissoc* 1\n");
 abort();
     // do nothing
     incRef(arg0, 1);

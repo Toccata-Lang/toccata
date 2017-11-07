@@ -178,7 +178,7 @@ Value *vectorReverse(Value *arg0);
 List *listCons(Value *x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
 Value *maybe(List *closures, Value *arg0, Value *arg1);
-int8_t isNothing(Value *v);
+int8_t isNothing(Value *v, char *fileName, int lineNumber);
 Value *strCount(Value *arg0);
 Value *strEQ(Value *arg0, Value *arg1);
 Value *strList(Value *arg0);

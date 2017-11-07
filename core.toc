@@ -13,8 +13,7 @@
 (defprotocol HashMapNode
   (hash-seq [m s]
     (assert-result l (instance? List l)))
-  (get* [m k v hash shift]
-    (assert-result v (instance? Maybe v)))
+  (get* [m k v hash shift])
   (assoc* [m k v hash shift])
   (dissoc* [m k hash shift]
     (assert-result m (instance? HashMap m))))
@@ -590,6 +589,7 @@
     ;; Otherwise, return `nothing`
     (assert-result a (instance? Maybe a)))
 
+  ;; TODO: Remove this arity. Should use 'either' instead
   (get [m k not-found]
     ;; Retrieve the value associated with `k` in `m` if it exists.
     ;; Otherwise, return `not-found`
@@ -634,21 +634,12 @@
     (assert-result a (instance? List a)))
 
   (show* [x indent]
+    (assert (instance? String indent))
     ;; Create a string list to show the value `x`
     (assert-result a (instance? List a))))
 
 (defn show [x]
   (show* x ""))
-
-;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
-(defn list [& l]
-  ;; construct a list of values from the arguments
-  l)
-
-;; This is the declaration of the 'vector' function. Calls to 'vector' are inlined by the compiler
-(defn vector [& l]
-  ;; construct a vector of values from the arguments
-  (vec l))
 
 (defn address-of [x]
   (inline C Integer "return(integerValue((long long)x_0));"))
@@ -665,6 +656,15 @@
     return(nothing);
   }"))
 
+(defn fn-name [f]
+  (assert (instance? Function f))
+  (inline C String "return(stringValue(((Function *)f_0)->name));"))
+
+(extend-type String
+  Collection
+  (count [s]
+    (inline C Integer "return(strCount(s_0));")))
+
 (extend-type Integer
   Eq
   (=* [x y] (inline C Maybe "return(integer_EQ(x_0, y_1));")))
@@ -672,6 +672,10 @@
 (defn maybe-map [mv f]
   (assert (instance? Maybe mv))
   (inline C Maybe "return(maybeMap(mv_0, f_1));"))
+
+(defn maybe-apply [mv args]
+  (assert (instance? Maybe mv))
+  (inline C Maybe "return(maybeApply(mv_0, args_1));"))
 
 (extend-type Maybe
   Container
@@ -681,11 +685,85 @@
   (extract [mv]
     (inline C "return(maybeExtract(mv_0));"))
 
+  (extract [mv]
+    (inline C "return(maybeExtract(mv_0));"))
+
+  (wrap [_ mv]
+    (maybe mv))
+
+  (apply* [mv args]
+    (maybe-apply mv args))
+
+  (flat-map [mv f]
+    (and mv (f (extract mv))))
+
   Composition
-  (zero [mv] nothing))
+  (zero [mv] nothing)
+
+  Function
+  (invoke [m t f] (inline C "return(maybeInvoke(m_0, t_1, f_2));"))
+
+  Eq
+  (=* [x y] (inline C Maybe "return(maybeEQ(x_0, y_1));"))
+
+  Associative
+  (get [m _]
+    m)
+
+  (get [m _ not-found]
+    (either m not-found))
+
+  (assoc [_ _ v]
+    (maybe v)))
+
+;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
+(defn list [& l]
+  ;; construct a list of values from the arguments
+  l)
 
 (extend-type List
+  Collection
+  (count [l] (list-count l))
+
+  (empty? [l]
+    (and (=* 0 (count l))
+         (maybe empty-list)))
+
+  (empty [_] empty-list)
+
+  (conj [l v] (cons v l))
+
+  (filter [coll f]
+    (inline C List "return(listFilter(coll_0, f_1));"))
+
+  Container
+  (map [l f]
+    (list-map l f))
+
+  (wrap [x v]
+    (list v))
+
+  (flatten [ls]
+    (list-concat ls))
+
+  (flat-map [l mf]
+    (list-concat (list-map l mf)))
+
+  Composition
+  (zero [_] empty-list)
+
+  (comp* [l ls]
+    (list-concat (cons l (map (seq ls) seq))))
+
+  Eq
+  (=* [x y] (inline C List "return(listEQ(x_0, y_1));"))
+
   Seqable
+  (seq [l] l)
+
+  (reverse [l]
+    (inline C List "return((Value *)reverseList((List *)l_0));"))
+
   (first [l]
     (inline C Maybe "return(car(l_0));"))
 
@@ -698,42 +776,6 @@
                (maybe result))
           (list-reduce (rest l) (f result (extract (first l))) f)))
 
-(extend-type List
-  Container
-  (flat-map [l mf]
-    (list-concat (list-map l mf)))
-
-  Seqable
-  (reduce [l result f]
-    (list-reduce l result f)))
-
-(defn +
-  ([] 0)
-  ([x y]
-   (add-numbers x y))
-  ([& xs]
-   (reduce xs 0 add-numbers)))
-
-(extend-type List
-  Collection
-  (empty? [l]
-    (and (=* 0 (count l))
-         (maybe empty-list)))
-
-  (count [l] (list-count l))
-
-  Seqable
-  (vec [l]
-    (reduce l empty-vector mutate-vect-conj))
-
-  (to-str [coll]
-    (let [ss-list (cons "" (flat-map coll string-list))
-          new-len (reduce ss-list 0 (fn [len s] (+ len (count s))))
-          new-str (str-malloc new-len)]
-      (map ss-list (fn [s]
-                     (str-append new-str s)))
-      new-str)))
-
 (defn list*
   ([] empty-list)
   ([arg]
@@ -743,9 +785,37 @@
    (assert-result x (instance? List x))
    (cons arg (fn-apply list* args))))
 
-(defn fn-name [f]
-  (assert (instance? Function f))
-  (inline C String "return(stringValue(((Function *)f_0)->name));"))
+(extend-type List
+  Seqable
+  (vec [l]
+    (reduce l empty-vector mutate-vect-conj))
+
+  (reduce [l result f]
+    (list-reduce l result f)))
+
+;; This is the declaration of the 'vector' function. Calls to 'vector' are inlined by the compiler
+(defn vector [& l]
+  ;; construct a vector of values from the arguments
+  (vec l))
+
+(defn +
+  ([] 0)
+  ([x y]
+   (add-numbers x y))
+  ([& xs]
+   (reduce xs 0 add-numbers)))
+
+(extend-type List
+  Seqable
+  (to-str [coll]
+    (let [ss-list (cons "" (flat-map coll string-list))
+          new-len (reduce ss-list 0 (fn [len s]
+                                      (assert (instance? String s))
+                                      (+ len (count s))))
+          new-str (str-malloc new-len)]
+      (map ss-list (fn [s]
+                     (str-append new-str s)))
+      new-str)))
 
 (extend-type Function
   Type
@@ -867,6 +937,35 @@
   Hashable
   (sha1 [x] (inline C Integer "return(integerSha1(x_0));")))
 
+(extend-type Vector
+  Associative
+  (get [v n]
+    (assert (instance? Integer n))
+    ;; (assert (<= 0 n))
+    (inline C Maybe "return(vectorGet(v_0, n_1));"))
+
+  Collection
+  (empty? [v]
+    (and (= 0 (count v))
+         (maybe empty-vector)))
+
+  (empty [coll] empty-vector)
+
+  (count [l]
+    (vect-count l))
+
+  (conj [vect v]
+   (inline C Vector "
+  Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
+  dec_and_free(vect_0, 1);
+  return(result);"))
+
+  (conj [vect v]
+   (inline C Vector "
+  Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
+  dec_and_free(vect_0, 1);
+  return(result);")))
+
 (extend-type String
   Type
   (type-name [_] "String")
@@ -881,12 +980,10 @@
   Composition
   (zero [_] "")
 
-  (comp* [s ss] (to-str (cons s ss)))
+  (comp* [s ss]
+    (to-str (cons s ss)))
 
   Collection
-  (count [s]
-    (inline C Integer "return(strCount(s_0));"))
-
   (empty? [coll]
     (= 0 (count coll)))
 
@@ -926,8 +1023,10 @@
     (to-str (reverse (seq s))))
 
   (split-with [s pred prefix]
+    (assert (instance? Vector prefix))
     (or (flat-map (first s) (fn [head]
                               (and (pred head)
+                                   ;; TODO: make this call to split-with type-known
                                    (split-with (rest s) pred (conj prefix head)))))
         (maybe [(to-str prefix) s])))
 
@@ -979,11 +1078,6 @@
   (sha1 [s]
     (inline C Integer "return(symbolSha1(s_0));")))
 
-
-(defn maybe-apply [mv args]
-  (assert (instance? Maybe mv))
-  (inline C Maybe "return(maybeApply(mv_0, args_1));"))
-
 (extend-type Maybe
   Type
   (type-args [v]
@@ -1005,36 +1099,7 @@
                  (comp (list "<maybe ")
                        (show* v (comp indent "       "))
                        (list ">"))))
-            (list "<nothing>")))
-
-  Function
-  (invoke [m t f] (inline C "return(maybeInvoke(m_0, t_1, f_2));"))
-
-  Eq
-  (=* [x y] (inline C Maybe "return(maybeEQ(x_0, y_1));"))
-
-  Container
-  (extract [mv]
-    (inline C "return(maybeExtract(mv_0));"))
-
-  (wrap [_ mv]
-    (maybe mv))
-
-  (apply* [mv args]
-    (maybe-apply mv args))
-
-  (flat-map [mv f]
-    (and mv (f (extract mv))))
-
-  Associative
-  (get [m _]
-    m)
-
-  (get [m _ not-found]
-    (either m not-found))
-
-  (assoc [_ _ v]
-    (maybe v)))
+            (list "<nothing>"))))
 
 (defn some [coll f]
   (and (< 0 (count coll))
@@ -1042,11 +1107,15 @@
            (some (rest coll) f))))
 
 (defn range* [n l]
+  (assert (instance? Integer n))
+  (assert (instance? List l))
+  (assert-result new-l (instance? List new-l))
   (either (or (and (= n 0) (maybe (cons 0 l)))
               (and (< n 0) (maybe l)))
           (range* (dec n) (cons n l))))
 
 (defn range [n]
+  ;; TODO: it seems the return type doesn't flow through. Crap
   (range* (dec n) empty-list))
 
 (defn apply-to-vectors [f vects arg-vects]
@@ -1074,28 +1143,14 @@
   (show* [x indent]
     (either (map (empty? x) string-list)
             (let [[h & tail] x]
+              ;; (assert (instance? List tail))
               (comp (cons "(" (show* h (comp indent " ")))
                     (flat-map tail (fn [x]
                                      (list* ",\n" indent " "
                                             (show* x (comp indent " ")))))
                     (list ")")))))
 
-  Eq
-  (=* [x y] (inline C List "return(listEQ(x_0, y_1));"))
-
-  Composition
-  (zero [_] empty-list)
-
-  (comp* [l ls]
-    (list-concat (cons l (map ls seq))))
-
   Container
-  (map [l f]
-    (list-map l f))
-
-  (wrap [x v]
-    (list v))
-
   (apply* [mf vects]
     (either (or (empty? mf)
                 (map (empty? vects) seq))
@@ -1103,20 +1158,7 @@
                   [vect & vects] vects]
               (seq (apply-to-vectors f vects (map vect vector))))))
 
-  (flatten [ls]
-    (list-concat ls))
-
-  Collection
-  (empty [_] empty-list)
-
-  (conj [l v] (cons v l))
-
-  (filter [coll f]
-    (inline C List "return(listFilter(coll_0, f_1));"))
-
   Seqable
-  (seq [l] l)
-
   (last [coll]
     (nth coll (dec (count coll))))
 
@@ -1124,10 +1166,8 @@
     (let [[r _] (split coll (dec (count coll)))]
       r))
 
-  (reverse [l]
-    (inline C List "return((Value *)reverseList((List *)l_0));"))
-
   (split [l n prefix]
+    (assert (instance? List prefix))
     (either (and (or (empty? l)
                      (= 0 n))
                  (maybe [(reverse prefix) l]))
@@ -1138,6 +1178,7 @@
     (split l n empty-list))
 
   (split-with [l pred prefix]
+    (assert (instance? List prefix))
     (or (flat-map (first l) (fn [head]
                               (and (pred head)
                                    (split-with (rest l) pred (cons head prefix)))))
@@ -1154,7 +1195,6 @@
 
 (defn vec= [x y n]
   (assert (instance? Vector x))
-  (assert (instance? Vector y))
   (assert (instance? Integer n))
   (or (= 0 n)
       (let [n (dec n)]
@@ -1175,6 +1215,7 @@
 (defn subvec
   ;; Extract a smaller vector from a larger one
   ([v start]
+   ;; TODO: make sure the call to 'count' is type-known
    (subvec* v start (count v) empty-vector))
   ([v start len]
    (subvec* v start (dec (+ start len)) empty-vector)))
@@ -1236,21 +1277,6 @@
     (vec (apply comp (seq v))))
 
   Collection
-  (empty? [v]
-    (and (= 0 (count v))
-         (maybe empty-vector)))
-
-  (empty [coll] empty-vector)
-
-  (count [l]
-    (vect-count l))
-
-  (conj [vect v]
-   (inline C Vector "
-  Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
-  dec_and_free(vect_0, 1);
-  return(result);"))
-
   (filter [v f]
     (reduce v empty-vector
             (fn [result x]
@@ -1283,6 +1309,7 @@
     (vect-reduce v 0 result f))
 
   (split-with [v pred prefix]
+    (assert (instance? Vector prefix))
     (or (flat-map (first v) (fn [head]
                               (and (pred head)
                                    (split-with (rest v) pred (conj prefix head)))))
@@ -1302,31 +1329,25 @@
 
   Indexed
   (nth [v n]
-    (assert (instance? Integer n))
     (get v n))
 
   (store [v n x]
-    (assert (instance? Integer n))
     (inline C Maybe "
   Value *result = vectStore((Vector *)v_0, ((Integer *)n_1)->numVal, (Value *)x_2);
   dec_and_free(v_0, 1);
   dec_and_free(n_1, 1);
   return(result);"))
 
-  Associative
-  (get [v n]
-    (assert (instance? Integer n))
-    ;; (assert (<= 0 n))
-    (inline C Maybe "return(vectorGet(v_0, n_1));"))
-
   Eq
   (=* [x y]
+    ;; TODO: handle conditional type-asserts
     (and (instance? Vector y)
          (= (count x) (count y))
          (vec= x y (count x))
          (maybe x))))
 
 (defn partitioner [coll n]
+  (assert (instance? List coll))
   (assert (instance? Integer n))
   (reduce coll [empty-list empty-list]
           (fn [[result part] x]
@@ -1370,7 +1391,7 @@
     (inline C HashMap "return(bmiDissoc(node_0, k_1, hash_2, shift_3));"))
 
   (get* [node k v hash shift]
-    (inline C Maybe "return(bmiGet(node_0, k_1, v_2, hash_3, shift_4));"))
+    (inline C "return(bmiGet(node_0, k_1, v_2, hash_3, shift_4));"))
 
   Collection
   (count [x]
@@ -1392,7 +1413,7 @@
     (inline C List "return(arrayNodeSeq(m_0, s_1));"))
 
   (get* [m k v hash shift]
-    (inline C Maybe "return(arrayNodeGet(m_0, k_1, v_2, hash_3, shift_4));"))
+    (inline C "return(arrayNodeGet(m_0, k_1, v_2, hash_3, shift_4));"))
 
   (dissoc* [m k hash shift]
     (inline C HashMap "return(arrayNodeDissoc(m_0, k_1, hash_2, shift_3));")))
@@ -1416,7 +1437,7 @@
     (inline C List "return(collisionSeq(m_0, s_1));"))
 
   (get* [node k v hash shift]
-    (inline C Maybe "return(collisionGet(node_0, k_1, v_2, hash_3, shift_4));")))
+    (inline C "return(collisionGet(node_0, k_1, v_2, hash_3, shift_4));")))
 
 (defn dissoc [m & ks]
   ;; Create a new copy of `m` without the associations of `ks`
@@ -1531,6 +1552,7 @@
             (assoc m k (f v)))))
 
 (defn get-in* [m path]
+  (assert (instance? List path))
   (or (and (empty? path)
            (maybe m))
       (for [k (first path)
@@ -1559,6 +1581,7 @@
     (assoc m key (f v))))
 
 (defn assoc-in* [m path v]
+  (assert (instance? List path))
   (or (and (empty? path)
            (maybe m))
       (for [_ (= 1 (count path))
@@ -1571,7 +1594,7 @@
         (assoc m k new-m))))
 
 (defn assoc-in [m path v]
-  (extract (assoc-in* m path v)))
+  (extract (assoc-in* m (seq path) v)))
 
 (defn merge-with [merge-fn hm & ms]
   (reduce ms hm
@@ -1781,6 +1804,8 @@
 
 
 (deftype HashSet [set-map]
+  (assert (instance? HashMap set-map))
+
   Function
   (invoke [_ v]
     (get set-map v))
@@ -1820,6 +1845,7 @@
 
   Seqable
   (seq [coll]
+    ;; TODO: this call to 'vals' should be type-known
     (vals set-map))
 
   Stringable
@@ -1831,7 +1857,8 @@
 
   Eq
   (=* [x y]
-    (and (=* set-map (.set-map y))
+    (and (instance? HashSet y)
+         (=* set-map (.set-map y))
          (maybe x))))
 
 (defn set [val-list]
@@ -1841,6 +1868,7 @@
   (set values))
 
 (defn disj [set val]
+  (assert (instance? HashSet set))
   (HashSet (dissoc (.set-map set) val)))
 
 
@@ -1875,6 +1903,7 @@
 
 (defn gensym [prefix]
   (assert (instance? String prefix))
+  ;; TODO: make sure the call to 'extract' is type-known
   (symbol (str prefix (extract sym-counter))))
 
 
@@ -1898,6 +1927,7 @@
 "))
 
 (defn first-lazy [lazy tail]
+  (assert (instance? List lazy))
   ;; private function used for implementing LazyList
   (inline C Maybe "
   List *cache = (List *)lazy_0;
@@ -1943,6 +1973,7 @@ abort();
 "))
 
 (defn rest-of-lazy [lazy]
+  (assert (instance? List lazy))
   ;; private function used for implementing LazyList
   (inline C List "
   List *cache = (List *)lazy_0;
