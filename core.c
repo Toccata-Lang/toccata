@@ -1365,12 +1365,7 @@ Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
 }
 
 int8_t isNothing(Value *v, char *fileName, int lineNumber) {
-  if (v->type != MaybeType) {
-    fprintf(stderr, "\n*** Invalid type. Expected 'Maybe', got '%s' at %s: %d\n",
-            extractStr(type_name(empty_list, v)), fileName, lineNumber);
-    abort();
-  }
-  return(((Maybe *)v)->value == (Value *)0);
+  return(v->type == MaybeType && ((Maybe *)v)->value == (Value *)0);
 }
 
 Value *maybe(List *closures, Value *arg0, Value *arg1) {
@@ -1665,9 +1660,6 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
       ret->shift = vect->shift;
       ret->root = vect->root;
       if (ret->root != (VectorNode *)0) {
-// TODO: untested code path
-fprintf(stderr, "vectStore 2\n");
-abort();
         incRef((Value *)ret->root, 1);
       }
       Value *mval = maybe((List *)0, (Value *)0, (Value *)ret);

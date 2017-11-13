@@ -13,10 +13,10 @@
 (defprotocol HashMapNode
   (hash-seq [m s]
     (assert-result l (instance? List l)))
-  (get* [m k v hash shift])
+  (get* [m k v hash shift]
+    (assert-result x (instance? Maybe x)))
   (assoc* [m k v hash shift])
-  (dissoc* [m k hash shift]
-    (assert-result m (instance? HashMap m))))
+  (dissoc* [m k hash shift]))
 
 (defn reified-type-args [x]
   ;; Return the values for all the fields of `x` in a vector
@@ -30,6 +30,13 @@
     incRef(typeArgs, 1);
     dec_and_free(x_0, 1);
     return(typeArgs);"))
+
+(defn reified-get-type [value]
+  ;; Return the Integer representing the type of `value`
+  (inline C Integer "
+    Value *numVal = integerValue(value_0->type);
+    dec_and_free(value_0, 1);
+    return(numVal);"))
 
 ;; Internal protocol for types.
 (defprotocol Type
@@ -52,6 +59,7 @@
     return(integer_str(numVal));"))
 
   (type-args [x]
+    (assert-result z (instance? Vector z))
     (reified-type-args x))
   
   (instance? [t x]
@@ -779,11 +787,16 @@
 (defn list*
   ([] empty-list)
   ([arg]
-   (assert (instance? List arg))
-   arg)
+   ;; TODO: remove call to 'sea', restore assertion
+   ;; (assert (instance? List arg))
+   (seq arg))
   ([arg & args]
-   (assert-result x (instance? List x))
-   (cons arg (fn-apply list* args))))
+   ;; TODO: rewrite to use 'reverse/reduce'
+   ;; (let [[arg-seq & args] (reverse (cons arg args))]
+   ;;   (reduce args (seq arg-seq)
+   ;;           (fn [args arg]
+   ;;             (cons arg args))))
+   (cons arg (seq (fn-apply list* args)))))
 
 (extend-type List
   Seqable
@@ -832,9 +845,10 @@
 
   Container
   (apply* [f args]
-    ;; Remember, the last element of 'args' must be a list
+    ;; Remember, the last element of 'args' must be a sequence
     ;; everything up to that must be prepended to it
-    (fn-apply f (fn-apply list* args))))
+    ;; TODO: figure out how to remove 'seq'
+    (fn-apply f (seq (fn-apply list* args)))))
 
 (defn interpose [coll sep]
   ;; build list by inserting `sep` between each of the elements of `coll`
@@ -922,7 +936,7 @@
 
 (extend-type Integer
   Type
-  (type-args [n] (list n))
+  (type-args [n] [n])
   (type-name [_] "Integer")
 
   Stringable
@@ -955,21 +969,33 @@
     (vect-count l))
 
   (conj [vect v]
-   (inline C Vector "
+    (inline C Vector "
   Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
   dec_and_free(vect_0, 1);
   return(result);"))
 
   (conj [vect v]
-   (inline C Vector "
+    (inline C Vector "
   Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
   dec_and_free(vect_0, 1);
-  return(result);")))
+  return(result);"))
+
+  Seqable
+  (seq [v]
+    (inline C List "return(vectSeq((Vector *)v_0, 0));\n"))
+
+  (to-str [coll]
+    (let [ss-list (cons "" (flat-map (seq coll) string-list))
+          new-len (reduce ss-list 0 (fn [len s] (+ len (count s))))
+          new-str (str-malloc new-len)]
+      (map ss-list (fn [s]
+                     (str-append new-str s)))
+      new-str)))
 
 (extend-type String
   Type
   (type-name [_] "String")
-  (type-args [s] (list s))
+  (type-args [s] [s])
 
   Stringable
   (string-list [s] (list s))
@@ -985,7 +1011,8 @@
 
   Collection
   (empty? [coll]
-    (= 0 (count coll)))
+    (and (= 0 (count coll))
+         (maybe "")))
 
   (empty [coll]
     "")
@@ -1057,7 +1084,7 @@
 (extend-type Symbol
   Type
   (type-name [_] "Symbol")
-  (type-args [s] (list s))
+  (type-args [s] [s])
 
   Stringable
   (string-list [v] (inline C List "
@@ -1081,8 +1108,8 @@
 (extend-type Maybe
   Type
   (type-args [v]
-    (either (map v list)
-            empty-list))
+    (either (map v vector)
+            empty-vector))
 
   (type-name [_] "Maybe")
 
@@ -1115,7 +1142,6 @@
           (range* (dec n) (cons n l))))
 
 (defn range [n]
-  ;; TODO: it seems the return type doesn't flow through. Crap
   (range* (dec n) empty-list))
 
 (defn apply-to-vectors [f vects arg-vects]
@@ -1132,7 +1158,7 @@
 (extend-type List
   Type
   (type-name [_] "List")
-  (type-args [l] l)
+  (type-args [l] (vec l))
 
   Stringable
   (string-list [l]
@@ -1215,7 +1241,6 @@
 (defn subvec
   ;; Extract a smaller vector from a larger one
   ([v start]
-   ;; TODO: make sure the call to 'count' is type-known
    (subvec* v start (count v) empty-vector))
   ([v start len]
    (subvec* v start (dec (+ start len)) empty-vector)))
@@ -1230,7 +1255,7 @@
 (extend-type Vector
   Type
   (type-name [_] "Vector")
-  (type-args [v] (seq v))
+  (type-args [v] v)
 
   Stringable
   (string-list [v]
@@ -1284,9 +1309,6 @@
                       result))))
 
   Seqable
-  (seq [v]
-    (inline C List "return(vectSeq((Vector *)v_0, 0));\n"))
-
   (vec [v] v)
 
   (first [v]
@@ -1318,14 +1340,6 @@
   (split-with [v pred]
     (either (split-with v pred [])
             [[] v]))
-
-  (to-str [coll]
-    (let [ss-list (cons "" (flat-map (seq coll) string-list))
-          new-len (reduce ss-list 0 (fn [len s] (+ len (count s))))
-          new-str (str-malloc new-len)]
-      (map ss-list (fn [s]
-                     (str-append new-str s)))
-      new-str))
 
   Indexed
   (nth [v n]
@@ -1379,7 +1393,7 @@
 (extend-type BitmapIndexedNode
   Type
   (type-name [_] "BitmapIndexedNode")
-
+  
   HashMapNode
   (hash-seq [m s]
     (inline C List "return(bmiHashSeq(m_0, s_1));"))
@@ -1621,9 +1635,9 @@
 
   Stringable
   (string-list [p]
-    (either (for [x (delivered p)
-                  x-str (to-str (string-list x))]
-              (list "<Promise " x-str " " (str (address-of p)) ">"))
+    (either (map (delivered p) (fn [x]
+                                 (list "<Promise " (to-str (string-list x)) " "
+                                       (str (address-of p)) ">")))
             (list "<Promise " (str (address-of p)) ">")))
 
   (show* [p indent]
@@ -1778,6 +1792,7 @@
 (defn constantly [v]
   (fn
     ([] v)
+    ([_] v)
     ([_ _] v)
     ([_ _ _] v)
     ([_ _ _ _] v)
@@ -1806,13 +1821,21 @@
 (deftype HashSet [set-map]
   (assert (instance? HashMap set-map))
 
+  Stringable
+  (string-list [_]
+    (comp (list "#{")
+          (interpose (flat-map (vals set-map) string-list)
+                     " ")
+          (list "}")))
+
   Function
   (invoke [_ v]
     (get set-map v))
 
   Collection
   (empty? [coll]
-    (empty? set-map))
+    (and (empty? set-map)
+         (maybe coll)))
   (empty [coll]
     (HashSet {}))
   (count [coll]
@@ -1845,15 +1868,7 @@
 
   Seqable
   (seq [coll]
-    ;; TODO: this call to 'vals' should be type-known
     (vals set-map))
-
-  Stringable
-  (string-list [value]
-    (comp (list "#{")
-          (interpose (flat-map (vals set-map) string-list)
-                     " ")
-          (list "}")))
 
   Eq
   (=* [x y]
