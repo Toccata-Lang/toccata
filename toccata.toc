@@ -29,11 +29,11 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "\n")
+(def line-sep "")
 
 (defn line-macro [ast marker]
   (sm/state-maybe (either (= "" (ast/file-name ast))
-                          ["\n" marker "\n// #line "
+                          ["\n" marker "\n#line "
                            (str (ast/line-number ast)) " " "\""
                            (either (and (= 'core (ast/file-name ast))
                                         (maybe path-to-core))
@@ -560,7 +560,7 @@
                                C-var-punct)))
 
 (def C-var (grmr/apply-fn (fn [start remaining]
-                            (apply str start remaining))
+                            (apply str start (seq remaining)))
                           (grmr/any grmr/alpha
                                     (map (grmr/ignore "#") (fn [] ""))
                                     (map (grmr/ignore "-") (fn [] "_MINUS_"))
@@ -971,7 +971,7 @@
                                             [(str file-name ":") line-number]))))
           constraint-type (get-asserted-type (.type-sym ast)
                                              (ast/file-name ast) (ast/line-number ast))
-          ;; TODO: check if 'var' is for a parameter or not
+          line (line-macro ast "")
           expr (comp (for [_ (sm/when-not (= UnknownType (.type-num var)))
                            type-sym (sm/get-in-val [.constants .type-names (.type-num var)]
                                                    (.type-num var))
@@ -989,7 +989,8 @@
                      (for [_ (sm/get-in-val [.fn-context .params (.c-var var)])]
                        empty-c-code)
                      (sm/state-maybe (c-code ""
-                                             ["if (!sameType(" (.c-var var) "->type, "
+                                             [line
+                                              "if (!sameType(" (.c-var var) "->type, "
                                               constraint-type ")) {" line-sep
                                               line-sep
                                               "fprintf(stderr, \"Invalid type of value for "
@@ -1969,9 +1970,8 @@
       var-info)))
 
 (deftype ClosureArity [arity-fn-var params var-info]
-  ;; (assert (instance? String arity-fn-var))
-  ;; TODO: this one doesn't seem to get checked
-  ;; (assert (instance? Symbol params))
+  (assert (instance? String arity-fn-var))
+  (assert (instance? ast/params-ast params))
   (assert (instance? c-code var-info))
 
   Stringable
@@ -2123,14 +2123,18 @@
     ;; TODO: what about constraints for the variadic vars
     (for [param-constraints (traverse (.fixed params) get-param-constraints)
           _ (reset-fn-context)
-          line (line-macro fn-sym (str "//creating " fn-sym))
           check-params (traverse (for [[constraints arg var] (zip-lists param-constraints
                                                                         (.fixed params)
                                                                         (.destruct param-vars))
                                        constraint constraints]
                                    [constraint arg var])
                                  (fn [[constraint arg var]]
-                                   (check-assertion constraint arg var file-name line-number)))
+                                   (either (and (= 0 (ast/line-number constraint))
+                                                (maybe (check-assertion constraint arg var
+                                                                        file-name line-number)))
+                                           (check-assertion constraint arg var
+                                                            (ast/file-name constraint)
+                                                            (ast/line-number constraint)))))
           _ (reset-fn-context fn-context)
           checking-fn-var (global-var fn-sym "paramChecker")
           arity-var (comp (for [dispatch-type (sm/when (first param-types))
@@ -2138,7 +2142,8 @@
                             (.c-var proto-impl))
                           (global-var fn-sym "staticArity"))]
       (let [;; TODO: handle variadic fns properly
-            fn-var (either (and (.variadic params)
+            fn-var (either (and (or (every param-constraints empty?)
+                                    (.variadic params))
                                 (maybe arity-fn-var))
                            checking-fn-var)
             body (collapse-expressions (comp (.destruct param-vars) body-exprs))
@@ -2153,7 +2158,8 @@
                         (.init body)
                         line-sep "};};\n"]
             ;; TODO: handle variadic fns properly
-            checking-fn (either (and (.variadic params)
+            checking-fn (either (and (or (every param-constraints empty?)
+                                         (.variadic params))
                                      (maybe []))
                                 ["Value *" checking-fn-var "("
                                  (-> (.vars param-vars)
@@ -2164,7 +2170,6 @@
                                  ") {\n"
                                  ;; "fprintf(stderr, \"Checking params for " (str fn-sym)
                                  ;; " " (ast/file-name fn-sym) " " (ast/line-number fn-sym) "\\n\");\n"
-                                 line
                                  (map check-params .init)
                                  "return(" arity-fn-var "("
                                  (-> (.vars param-vars)
@@ -2208,11 +2213,13 @@
    ;; (assert (instance? String fn-var))
    (flat-map (global-var fn-sym "arityImpl")
              (fn [arity-fn-var]
-               (emit-fn-arity fn-sym fn-var params param-types body arity-fn-var))))
+               (emit-fn-arity fn-sym fn-var params param-types body
+                              (str arity-fn-var)))))
 
   ([fn-sym fn-var params param-types body arity-fn-var]
    ;; TODO: this should be redundant
    ;; (assert (instance? String fn-var))
+   (assert (instance? String arity-fn-var))
 
    (either (and (empty? (filter body produces-code?))
                 (maybe (zero sm/state-maybe)))
@@ -2260,15 +2267,14 @@
                            (ast/line-number fn-name))))
 
 (deftype ProtoImplDeclaration [fn-name arity-ast arity-impl-var c-decl]
-  ;; (assert (instance? String arity-impl-var))
+  (assert (instance? String arity-impl-var))
   (assert (instance? ast/fn-arity-ast arity-ast))
-  (assert (instance? Vector c-decl))
-)
+  (assert (instance? Vector c-decl)))
 
 (defn declare-impl [type-str type-num [fn-name arity-ast]]
   (let [num-args (count (.params arity-ast))]
     (for [impl-fn-var (global-var fn-name "staticArity")
-          arity-impl-var (global-var (str type-str fn-name) "arityImpl")
+          arity-impl-var (map (global-var (str type-str fn-name) "arityImpl") str)
           dispatcher-info (validate-proto-fn-name fn-name num-args)
           _ (new-proto-impl fn-name num-args type-num
                             (c-code impl-fn-var [] [] (.return-type dispatcher-info) {})
@@ -2645,19 +2651,17 @@
           fn-context (reset-fn-context)
           _ (bind-params params "" "")
           _ (emit assertions)
-          ;; TODO
-          ;; constraints (sm/get-in-val [.fn-context .expr-context .onstraints] {})
-          :let [constraints {}]
+          constraints (traverse (.fixed params)
+                                (fn [sym]
+                                  (for [var (map (lookup-sym sym) .c-var)
+                                        cs (sm/get-in-val [.fn-context .constraints var] [])]
+                                    cs)))
           _ (reset-fn-context curr-context)
           arity-fn-var (global-var fn-name "protoDisp")
           impls-sym (global-var (str fn-name "_Implementations") "protoImpls")
           return-type (get-type-number type-symbol)
           _ (new-proto-dispatcher fn-name num-args arity-fn-var impls-sym
-                                  return-type return-constraints
-                                  (map (.fixed params)
-                                       (fn [sym]
-                                         (either (get constraints sym)
-                                                 []))))
+                                  return-type return-constraints constraints)
           _ (new-static-arity dispatch-fn-var num-args arity-fn-var return-type)]
       ["ProtoImpls " impls-sym ";\n"
        "Value *" arity-fn-var "("
