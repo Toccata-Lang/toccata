@@ -29,11 +29,11 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "\n")
+(def line-sep "")
 
 (defn line-macro [ast marker]
   (sm/state-maybe (either (= "" (ast/file-name ast))
-                          ["\n" marker "\n// #line "
+                          ["\n" marker "\n#line "
                            (str (ast/line-number ast)) " " "\""
                            (either (and (= 'core (ast/file-name ast))
                                         (maybe path-to-core))
@@ -66,9 +66,9 @@
 
 (def type-names {IntegerType "Integer"
                  StringType "String"
+                 SubStringType "String"
                  FnArityType "FnArity"
                  FunctionType "Function"
-                 SubStringType "SubString"
                  ListType "List"
                  MaybeType "Maybe"
                  VectorType "Vector"
@@ -87,24 +87,23 @@
   (either (get type-names n)
           (str n)))
 
-(def core-types {'Integer IntegerType
-                 'String StringType
-                 'SubString SubStringType
-                 'FnArity FnArityType
-                 'Function FunctionType
-                 'List ListType
-                 'Maybe MaybeType
-                 'Vector VectorType
-                 'Symbol SymbolType
-                 'BitmapIndexedNode BitmapIndexedType
-                 'ArrayNode ArrayNodeType
-                 'HashCollisionNode HashCollisionNodeType
-                 'HashMap HashMapType
-                 'Promise PromiseType
-                 'Future FutureType
-                 'Agent AgentType
-                 'Opaque OpaqueType
-                 'TypeCount TypeCount})
+(def core-types {'Integer #{IntegerType}
+                 'String #{StringType SubStringType}
+                 'FnArity #{FnArityType}
+                 'Function #{FunctionType}
+                 'List #{ListType}
+                 'Maybe #{MaybeType}
+                 'Vector #{VectorType}
+                 'Symbol #{SymbolType}
+                 'BitmapIndexedNode #{BitmapIndexedType}
+                 'ArrayNode #{ArrayNodeType}
+                 'HashCollisionNode #{HashCollisionNodeType}
+                 'HashMap #{ArrayNodeType BitmapIndexedType HashCollisionNodeType}
+                 'Promise #{PromiseType}
+                 'Future #{FutureType}
+                 'Agent #{AgentType}
+                 'Opaque #{OpaqueType}
+                 'TypeCount #{TypeCount}})
 
 (def sm-space (sm/state-maybe ""))
 
@@ -740,13 +739,47 @@
 (defn make-c-code [value]
   (c-code (.c-var value) (.init value) (.decl value) (.type-num value) (.refs-map value)))
 
+(defn get-type-numbers [type-symbol]
+  (comp (for [type-symbol (sm/when type-symbol)
+              ns-path (sym-ns-path type-symbol)
+              type-nums (comp (sm/get-in-val [.modules ns-path .types type-symbol])
+                              (sm/get-in-val [.modules 'core .types type-symbol]))]
+          type-nums)
+        (sm/state-maybe #{})))
+
 (defn get-type-number [type-symbol]
   (comp (for [type-symbol (sm/when type-symbol)
               ns-path (sym-ns-path type-symbol)
-              type-num (comp (sm/get-in-val [.modules ns-path .types type-symbol])
-                             (sm/get-in-val [.modules 'core .types type-symbol]))]
-          type-num)
+              type-nums (comp (sm/get-in-val [.modules ns-path .types type-symbol])
+                              (sm/get-in-val [.modules 'core .types type-symbol]))]
+          (either (and (= 1 (count type-nums))
+                       (first (seq type-nums)))
+                  UnknownType))
         (sm/state-maybe UnknownType)))
+
+(defn get-asserted-types [type-symbol file-name line-number]
+  (comp (for [ns-path (sym-ns-path type-symbol)
+              type-nums (comp (sm/get-in-val [.modules ns-path .types type-symbol])
+                              (sm/get-in-val [.modules 'core .types type-symbol]))]
+          type-nums)
+        (compilation-error "Unknown type"
+                           (str "'" type-symbol "'")
+                           "in assertion at"
+                           (str file-name ":")
+                           line-number)))
+
+(defn get-asserted-type [type-symbol file-name line-number]
+  (comp (for [ns-path (sym-ns-path type-symbol)
+              type-nums (comp (sm/get-in-val [.modules ns-path .types type-symbol])
+                              (sm/get-in-val [.modules 'core .types type-symbol]))]
+          (either (and (= 1 (count type-nums))
+                       (first (seq type-nums)))
+                  UnknownType))
+        (compilation-error "Unknown type"
+                           (str "'" type-symbol "'")
+                           "in assertion at"
+                           (str file-name ":")
+                           line-number)))
 
 (defn set-type [sym type-num]
   (comp (for [_ (sm/get-in-val [.fn-context .syms sym])
@@ -805,37 +838,6 @@
 
   (tail-call [ast params return-constraints] ast))
 
-(def string-types {StringType StringType
-                   SubStringType SubStringType})
-(def hash-map-types {BitmapIndexedType BitmapIndexedType
-                     ArrayNodeType ArrayNodeType
-                     HashCollisionNodeType HashCollisionNodeType
-                     HashMapType HashMapType})
-
-(defn satisfies-type-constraint [constraint type-num]
-  (assert (instance? Integer constraint))
-  (assert (instance? Integer type-num))
-  (inline C Maybe "
-   if (sameType(((Integer *)constraint_0)->numVal, ((Integer *)type_num_1)->numVal)) {
-     dec_and_free(type_num_1, 1);
-     return(maybe((List *)0, (Value *)0, constraint_0));
-   } else {
-     dec_and_free(constraint_0, 1);
-     dec_and_free(type_num_1, 1);
-     return(nothing);
-   }\n"))
-
-(defn get-asserted-type [type-symbol file-name line-number]
-  (comp (for [ns-path (sym-ns-path type-symbol)
-              type-num (comp (sm/get-in-val [.modules ns-path .types type-symbol])
-                             (sm/get-in-val [.modules 'core .types type-symbol]))]
-          type-num)
-        (compilation-error "Unknown type"
-                           (str "'" type-symbol "'")
-                           "in assertion at"
-                           (str file-name ":")
-                           line-number)))
-
 (defn type-conflict [type1 type2]
   (flat-map (sm/state-maybe '_)
             (fn [_]
@@ -873,10 +875,13 @@
                                       (.sym ast)))))
 
   (emit [ast]
-    (for [type-num (get-asserted-type (.type-sym ast) (ast/file-name ast) (ast/line-number ast))
+    (for [type-nums (get-asserted-types (.type-sym ast) (ast/file-name ast) (ast/line-number ast))
           var (lookup-sym (.sym ast))]
       (c-code ""
-              ["if (!sameType(" (.c-var var) "->type, " type-num ")) {" line-sep
+              ["switch (" (.c-var var) "->type) {"
+               (map (seq type-nums) (fn [type-num]
+                                      ["case " type-num ": " line-sep]))
+               "break;" line-sep " default: " line-sep
                "fprintf(stderr, \"Wrong type of result returned at %s, line %d\\n\", \""
                (ast/file-name ast) "\"," (ast/line-number ast)
                ");" line-sep
@@ -911,23 +916,34 @@
                                           (str (ast/file-name ast) ":")
                                           (str (ast/line-number ast) ".")
                                           "Symbol" (str "'" sym "' not found.")))
-             constraint-type (get-asserted-type (.type-sym ast)
-                                                (ast/file-name ast) (ast/line-number ast))
+             asserted (get-asserted-types (.type-sym ast)
+                                          (ast/file-name ast) (ast/line-number ast))
              constraints (sm/get-in-val [.fn-context .constraints var] [])
-             _ (comp (for [_ (sm/when-not (some constraints assert-type))
+             :let [type-constraint (some constraints assert-type)]
+             _ (comp (for [_ (sm/when-not type-constraint)
                            _ (sm/assoc-in-val [.fn-context .constraints var]
                                               (conj constraints ast))
-                           _ (set-type sym constraint-type)]
+                           asserted-type (get-asserted-type (.type-sym ast)
+                                                            (ast/file-name ast)
+                                                            (ast/line-number ast))
+                           _ (set-type sym asserted-type)]
                        '_)
-                     (for [type-num (get-type-number (some constraints assert-type))
-                           _ (either (map (satisfies-type-constraint type-num constraint-type)
-                                          sm/state-maybe)
-                                     (-> constraints
-                                         (filter assert-type)
-                                         first
-                                         extract
-                                         (type-conflict ast)))]
-                       '_))]
+                     (for [type-nums (get-type-numbers type-constraint)
+                           _ (comp (sm/when (subset asserted type-nums))
+                                   (for [_ (sm/when (subset type-nums asserted))
+                                         _ (sm/assoc-in-val [.fn-context .constraints var]
+                                                            (map constraints
+                                                                 (fn [c]
+                                                                   (either (and (assert-type c)
+                                                                                (maybe ast))
+                                                                           c))))]
+                                     '_)
+                                   (-> constraints
+                                       (filter assert-type)
+                                       first
+                                       extract
+                                       (type-conflict ast)))]
+                           '_))]
          empty-c-code)
        (for [_ (sm/when (or (instance? Symbol sym)
                             (instance? rdr/tagged-symbol sym)))
@@ -941,14 +957,13 @@
                                (.sym arg)
                                (.path (conj (.path ast)
                                             [(str file-name ":") line-number]))))
-          constraint-type (get-asserted-type (.type-sym ast)
-                                             (ast/file-name ast) (ast/line-number ast))
+          type-nums (get-asserted-types (.type-sym ast)
+                                        (ast/file-name ast) (ast/line-number ast))
           line (line-macro ast "")
           expr (comp (for [_ (sm/when-not (= UnknownType (.type-num var)))
                            type-sym (sm/get-in-val [.constants .type-names (.type-num var)]
                                                    (.type-num var))
-                           _ (comp (sm/when (satisfies-type-constraint constraint-type
-                                                                       (.type-num var)))
+                           _ (comp (sm/when (type-nums (.type-num var)))
                                    (apply compilation-error
                                           "Failed type assertion at"
                                           (str file-name ":") (str line-number ".")
@@ -962,9 +977,11 @@
                        empty-c-code)
                      (sm/state-maybe (c-code ""
                                              [line
-                                              "if (!sameType(" (.c-var var) "->type, "
-                                              constraint-type ")) {" line-sep
-                                              line-sep
+                                              "switch (" (.c-var var) "->type) {"
+                                              (map (seq type-nums) (fn [type-num]
+                                                                     ["case " type-num ": "
+                                                                      line-sep]))
+                                              "break;" line-sep " default: " line-sep
                                               "fprintf(stderr, \"Invalid type of value for "
                                               "parameter '" (.sym ast) "' at %s, line %d\\n\", \""
                                               file-name "\"," line-number
@@ -975,7 +992,7 @@
                                               (.c-var var) ")));" line-sep
                                               "abort();" line-sep
                                               "}" line-sep]
-                                             [] constraint-type {})))]
+                                             [] (.type-num var) {})))]
       expr)))
 
 (extend-type ast/result-ast
@@ -1005,33 +1022,40 @@
                 const-expr))))
 
 (defn emit-tail-expr [ast file-name line-number return-constraints expr]
-  (comp (for [return-type (get-type-number (some return-constraints assert-return-type))
-              :when (or (= return-type UnknownType)
-                        (satisfies-type-constraint return-type (.type-num expr)))
-              return-assertions (emit-return-constraints expr (remove return-constraints
-                                                                      assert-return-type))]
-          (collapse-expressions (comp [expr]
-                                      return-assertions
-                                      [(c-code ""
-                                               ["return(" (.c-var expr) ");" line-sep]
-                                               [] (.type-num expr) {(.c-var expr) 1})])))
-        (for [return-type (get-type-number (some return-constraints assert-return-type))
-              _ (sm/when (= UnknownType (.type-num expr)))
-              return-assertions (emit-return-constraints expr return-constraints)]
-          (do
-            ;; TODO: periodically enable this to check on things
-            ;; (print-err 'check (some return-constraints assert-return-type) return-type
-            ;;            (ast/file-name ast) (ast/line-number ast))
-            (collapse-expressions (comp [(.type-num expr return-type)]
-                                        return-assertions
-                                        [(c-code ""
-                                                 ["return(" (.c-var expr) ");" line-sep]
-                                                 [] return-type {(.c-var expr) 1})]))))
-        (sm/new-sm (fn [s]
-                     (print-err "Return value fails return assertion:"
-                                (ast/file-name return-constraints)
-                                (ast/line-number return-constraints))
-                     nothing))))
+  (flat-map (get-type-numbers (some return-constraints assert-return-type))
+            (fn [return-types]
+              (comp (for [_ (sm/when (or (empty? return-types)
+                                         (return-types (.type-num expr))))
+                          return-assertions (emit-return-constraints expr
+                                                                     (remove return-constraints
+                                                                             assert-return-type))]
+                      (collapse-expressions (comp [expr]
+                                                  return-assertions
+                                                  [(c-code ""
+                                                           ["return(" (.c-var expr) ");" line-sep]
+                                                           [] (.type-num expr)
+                                                           {(.c-var expr) 1})])))
+                    (for [_ (sm/when (= UnknownType (.type-num expr)))
+                          return-assertions (emit-return-constraints expr return-constraints)]
+                      (let [return-type (either (and (= 1 (count return-types))
+                                                     (first (seq return-types)))
+                                                UnknownType)]
+                        ;; TODO: periodically enable this to check on things
+                        ;; (print-err 'check (some return-constraints assert-return-type) return-type
+                        ;;            (ast/file-name ast) (ast/line-number ast))
+                        (collapse-expressions (comp [(.type-num expr return-type)]
+                                                    return-assertions
+                                                    [(c-code ""
+                                                             ["return(" (.c-var expr) ");" line-sep]
+                                                             [] return-type
+                                                             {(.c-var expr) 1})]))))
+                    (sm/new-sm (fn [s]
+                                 (or (and (= "" (ast/file-name return-constraints))
+                                          (maybe (print-err "Return value fails return assertion")))
+                                     (maybe (print-err "Return value fails return assertion:"
+                                                       (ast/file-name return-constraints)
+                                                       (ast/line-number return-constraints))))
+                                 nothing))))))
 
 (deftype TailExpr [ast params return-constraints]
   ;; (assert (instance? ast/ASTNode ast))
@@ -2172,20 +2196,6 @@
                                FnArityType {})
                        param-constraints))))))
 
-(defn check-result-assertions [result-asserts]
-  (let [asserted-return-types (reduce result-asserts []
-                                      (fn [asserted-types assertion]
-                                        (either (map (assert-return-type assertion)
-                                                     (fn [type-sym]
-                                                       (conj asserted-types (maybe type-sym))))
-                                                asserted-types)))]
-    (for [asserted-type-nums (traverse asserted-return-types get-type-number)
-          _ (sm/when (or (< (count asserted-type-nums) 2)
-                         (flat-map (first asserted-type-nums)
-                                   (fn [type-num]
-                                     (=* type-num asserted-type-nums)))))]
-      "")))
-
 (defn emit-fn-arity
   ([fn-sym fn-var params param-types body]
    ;; TODO: this should be redundant
@@ -2202,9 +2212,16 @@
 
    (either (and (empty? (filter body produces-code?))
                 (maybe (zero sm/state-maybe)))
-           (let [return-constraints (filter body return-assertion?)]
+           (let [return-constraints (filter body return-assertion?)
+                 return-types (reduce body empty-list
+                                      (fn [asserted-types assertion]
+                                        (either (map (assert-return-type assertion)
+                                                     (fn [type-sym]
+                                                       (conj asserted-types type-sym)))
+                                                asserted-types)))]
              (for [fn-context (reset-fn-context)
-                   _ (comp (check-result-assertions return-constraints)
+                   _ (comp (sm/when (or (empty? return-types)
+                                        (apply = return-types)))
                            (compilation-error "Conflicting result assertions in:"
                                               fn-sym "at:" (ast/file-name body)
                                               (ast/line-number body)
@@ -2819,21 +2836,11 @@
   Emitter
   (emit-definition [ast]
     (let [type-sym (.type ast)]
-      (comp (for [type-nums (sm/when (or (and (= type-sym 'HashMap)
-                                              (maybe (list BitmapIndexedType
-                                                           ArrayNodeType
-                                                           HashCollisionNodeType)))
-                                         (and (= type-sym 'String)
-                                              (maybe (list StringType
-                                                           SubStringType)))))
-                  fns (map (traverse type-nums (partial extend-type* ast))
+      (comp (for [ns-path (sym-ns-path (.type ast))
+                  type-nums (get-type-numbers (maybe type-sym))
+                  fns (map (traverse (seq type-nums) (partial extend-type* ast))
                            flatten)]
               fns)
-            (for [ns-path (sym-ns-path (.type ast))
-                  type-num (comp (sm/get-in-val [.modules ns-path .types type-sym])
-                                 (sm/get-in-val [.modules 'core .types type-sym]))
-                  fn (extend-type* ast type-num)]
-              fn)
             (compilation-error "Trying to extend unknown type: "
                                type-sym "at"
                                (str (ast/file-name (.type ast)) ":")
@@ -3087,7 +3094,7 @@
                                               (ast/file-name sym)
                                               (ast/line-number sym))
                         type-num (extract rdr/type-counter)]
-                  _ (sm/assoc-in-val [.modules file-name .types sym] type-num)
+                  _ (sm/assoc-in-val [.modules file-name .types sym] #{type-num})
                   _ (sm/assoc-in-val [.constants .type-names type-num] sym)
                   type-val-decl (emit-definition (ast/declaration-ast type-val-sym))
                   getters (declare-getters sym fields)
