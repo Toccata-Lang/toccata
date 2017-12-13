@@ -70,7 +70,7 @@ int32_t refsError;
 #define IgnoreType -1
 #define UnknownType 0
 #define IntegerType 1
-#define StringType 2
+#define StringBufferType 2
 #define FnArityType 3
 #define FunctionType 4
 #define SubStringType 5
@@ -250,4 +250,3 @@ Value *deliverFuture(Value *fut, Value *val);
 Value *addFutureAction(Future *p, Value *action);
 String *nullTerm(Value *s);
 void show(Value *v);
-int sameType(int32_t x, int32_t y);

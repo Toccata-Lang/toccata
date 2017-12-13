@@ -163,7 +163,7 @@ String *malloc_string(int len) {
         str = (String *)my_malloc(sizeof(String) + STRING_RECYCLE_LEN + 4);
         memset(str->buffer, 0, STRING_RECYCLE_LEN);
         str->hash = (Integer *)0;
-        str->type = StringType;
+        str->type = StringBufferType;
         str->len = len;
       }
     } else {
@@ -172,7 +172,7 @@ String *malloc_string(int len) {
   }
   __atomic_store(&str->refs, &refsInit, __ATOMIC_RELAXED);
   str->hash = (Integer *)0;
-  str->type = StringType;
+  str->type = StringBufferType;
   str->len = len;
   return(str);
 }
@@ -1209,7 +1209,7 @@ char *extractStr(Value *v) {
   // Leaks a String value
   String *newStr = (String *)my_malloc(sizeof(String) + ((String *)v)->len + 5);
   newStr->hash = (Integer *)0;
-  if (v->type == StringType)
+  if (v->type == StringBufferType)
     snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((String *)v)->buffer);
   else if (v->type == SubStringType)
     snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((SubString *)v)->buffer);
@@ -1382,7 +1382,7 @@ Value *intValue(int64_t n) {
 
 Value *prSTAR(Value *str) {
   int bytes;
-  if (str->type == StringType) {
+  if (str->type == StringBufferType) {
     bytes = fprintf(outstream, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
   } else if (str->type == SubStringType) {
     bytes = fprintf(outstream, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
@@ -1393,7 +1393,7 @@ Value *prSTAR(Value *str) {
 
 Value *prErrSTAR(Value *str) {
   int bytes;
-  if (str->type == StringType) {
+  if (str->type == StringBufferType) {
     bytes = fprintf(stderr, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
   } else if (str->type == SubStringType) {
     bytes = fprintf(stderr, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
@@ -1443,7 +1443,7 @@ Value *isInstance(Value *arg0, Value *arg1) {
   if (typeNum == arg1->type) {
      dec_and_free(arg1, 1);
      return(maybe((List *)0, (Value *)0, arg0));
-  } else if (StringType == typeNum && SubStringType == arg1->type) {
+  } else if (StringBufferType == typeNum && SubStringType == arg1->type) {
      dec_and_free(arg1, 1);
      return(maybe((List *)0, (Value *)0, arg0));
   // } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
@@ -1756,8 +1756,8 @@ Value *strEQ(Value *arg0, Value *arg1) {
   char *s1, *s2;
   long int len;
 
-  if (arg0->type == StringType &&
-      arg1->type == StringType &&
+  if (arg0->type == StringBufferType &&
+      arg1->type == StringBufferType &&
       ((String *)arg0)->len == ((String *)arg1)->len) {
     s1 = ((String *)arg0)->buffer;
     len = ((String *)arg0)->len;
@@ -1768,14 +1768,14 @@ Value *strEQ(Value *arg0, Value *arg1) {
     s1 = ((SubString *)arg0)->buffer;
     len = ((SubString *)arg0)->len;
     s2 = ((SubString *)arg1)->buffer;
-  } else if (arg0->type == StringType &&
+  } else if (arg0->type == StringBufferType &&
              arg1->type == SubStringType &&
              ((String *)arg0)->len == ((SubString *)arg1)->len) {
     s1 = ((String *)arg0)->buffer;
     len = ((String *)arg0)->len;
     s2 = ((SubString *)arg1)->buffer;
   } else if (arg0->type == SubStringType &&
-             arg1->type == StringType &&
+             arg1->type == StringBufferType &&
              ((SubString *)arg0)->len == ((String *)arg1)->len) {
     s1 = ((SubString *)arg0)->buffer;
     len = ((SubString *)arg0)->len;
@@ -1800,8 +1800,8 @@ Value *strLT(Value *arg0, Value *arg1) {
   char *s1, *s2;
   long int len, s1Len, s2Len;
 
-  if (arg0->type == StringType &&
-      arg1->type == StringType) {
+  if (arg0->type == StringBufferType &&
+      arg1->type == StringBufferType) {
     s1 = ((String *)arg0)->buffer;
     s1Len = ((String *)arg0)->len;
     s2 = ((String *)arg1)->buffer;
@@ -1820,7 +1820,7 @@ Value *strLT(Value *arg0, Value *arg1) {
       len = s1Len;
     else
       len = s2Len;
-  } else if (arg0->type == StringType &&
+  } else if (arg0->type == StringBufferType &&
              arg1->type == SubStringType) {
     s1 = ((String *)arg0)->buffer;
     s1Len = ((String *)arg0)->len;
@@ -1831,7 +1831,7 @@ Value *strLT(Value *arg0, Value *arg1) {
     else
       len = s2Len;
   } else if (arg0->type == SubStringType &&
-             arg1->type == StringType) {
+             arg1->type == StringBufferType) {
     s1 = ((SubString *)arg0)->buffer;
     s1Len = ((SubString *)arg0)->len;
     s2 = ((String *)arg1)->buffer;
@@ -1859,7 +1859,7 @@ Value *strLT(Value *arg0, Value *arg1) {
 
 Value *strCount(Value *arg0) {
    Value *numVal;
-   if (arg0->type == StringType)
+   if (arg0->type == StringBufferType)
      numVal = integerValue(((String *)arg0)->len);
    else
      numVal = integerValue(((SubString *)arg0)->len);
@@ -1869,7 +1869,7 @@ Value *strCount(Value *arg0) {
 
 Value *strList(Value *arg0) {
   List *result = empty_list;
-  if (arg0->type == StringType) {
+  if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
     for (int64_t i = s->len - 1; i >= 0; i--) {
       SubString *subStr = malloc_substring();
@@ -1898,7 +1898,7 @@ Value *strList(Value *arg0) {
 
 Value *strVect(Value *arg0) {
   Vector *result = empty_vect;
-  if (arg0->type == StringType) {
+  if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
     for (int64_t i = 0; i < s->len; i++) {
       SubString *subStr = malloc_substring();
@@ -1939,7 +1939,7 @@ Value *integer_LT(Value *arg0, Value *arg1) {
 Value *checkInstance(int64_t typeNum, Value *arg1) {
   if (typeNum == arg1->type) {
     return(maybe((List *)0, (Value *)0, arg1));
-  } else if (StringType == typeNum && SubStringType == arg1->type) {
+  } else if (StringBufferType == typeNum && SubStringType == arg1->type) {
     return(maybe((List *)0, (Value *)0, arg1));
   } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
                                         ArrayNodeType == arg1->type ||
@@ -2629,7 +2629,7 @@ Value *strSha1(Value *arg0) {
 #ifdef CHECK_MEM_LEAK
   int32_t refs;
 #endif
-  if (arg0->type == StringType) {
+  if (arg0->type == StringBufferType) {
     String *strVal = (String *)arg0;
     hash = &strVal->hash;
     buffer = strVal->buffer;
@@ -2672,7 +2672,7 @@ Value *strSha1(Value *arg0) {
 }
 
 Value *escapeChars(Value *arg0) {
-  if (arg0->type == StringType) {
+  if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
     String *result = malloc_string(s->len * 2);
     char *resultBuffer = result->buffer;
@@ -2761,7 +2761,7 @@ Value *stringValue(char *s) {
 
 Value *subs2(Value *arg0, Value *arg1) {
   int64_t idx = ((Integer *)arg1)->numVal;
-  if (arg0->type == StringType) {
+  if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
     SubString *subStr = malloc_substring();
     subStr->type = SubStringType;
@@ -2806,7 +2806,7 @@ Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
     dec_and_free(arg1, 1);
     dec_and_free(arg2, 1);
     return(stringValue(""));
-  } else if (arg0->type == StringType) {
+  } else if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
     SubString *subStr = malloc_substring();
     subStr->type = SubStringType;
@@ -2848,7 +2848,7 @@ Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
 
 Value *strSeq(Value *arg0) {
   List *result = empty_list;
-  if (arg0->type == StringType) {
+  if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
     for (int64_t i = s->len - 1; i >= 0; i--) {
       SubString *subStr = malloc_substring();
@@ -2904,7 +2904,7 @@ Value *strReduce(Value *s0, Value *x1, Value *f2) {
   Value *result = x1;
 
   char *buffer;
-  if (s0->type == StringType)
+  if (s0->type == StringBufferType)
     buffer = ((String *)s0)->buffer;
   else if (s0->type == SubStringType)
     buffer = ((SubString *)s0)->buffer;
@@ -2926,7 +2926,7 @@ Value *strReduce(Value *s0, Value *x1, Value *f2) {
 
 Value *strVec(Value *arg0) {
   Vector *result = empty_vect;
-  if (arg0->type == StringType) {
+  if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
     for (int64_t i = 0; i < s->len; i++) {
       SubString *subStr = malloc_substring();
@@ -2973,7 +2973,7 @@ Value *vectorGet(Value *arg0, Value *arg1) {
 Value *symbol(Value *arg0) {
   int64_t len;
   char *buffer;
-  if (arg0->type == StringType) {
+  if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
     buffer = s->buffer;
     len = s->len;
@@ -4094,7 +4094,7 @@ void freeIntGenerator(void *ptr) {
 
 String *nullTerm(Value *s) {
   String *arg0Str = malloc_string(((String *)s)->len);
-  if (s->type == StringType)
+  if (s->type == StringBufferType)
     snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((String *)s)->buffer);
   else if (s->type == SubStringType)
     snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((SubString *)s)->buffer);
@@ -4122,21 +4122,4 @@ void show(Value *v) {
   fprintf(stderr, "\n");
   dec_and_free((Value *)strings, 1);
   return;
-}
-
-int sameType(int32_t x, int32_t y) {
-  if (x == y ||
-      (x == StringType && y == SubStringType) ||
-      (x == HashMapType && y == BitmapIndexedType) ||
-      (x == HashMapType && y == ArrayNodeType) ||
-      (x == HashMapType && y == HashCollisionNodeType) ||
-      (y == StringType && x == SubStringType) ||
-      (y == HashMapType && x == BitmapIndexedType) ||
-      (y == HashMapType && x == ArrayNodeType) ||
-      (y == HashMapType && x == HashCollisionNodeType))
-    {
-      return(1);
-    } else {
-      return(0);
-  }
 }

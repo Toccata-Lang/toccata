@@ -1,7 +1,7 @@
 
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "0e6a4fb"))
+                            :sha "aa51aff"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "ecde30b"))
@@ -10,16 +10,16 @@
                              :sha "1616a3a"))
 (add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
                             "system.toc"
-                            :sha "956a8bb"))
+                            :sha "28f53b9"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
                            :sha "b41dd1d"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
-                            :sha "e67c808"))
+                            :sha "e7a489b"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "4f6b41b"))
+                            :sha "5cb99a5"))
 
 (def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
                                     (fn [toc-dir]
@@ -43,7 +43,7 @@
 (def IgnoreType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IgnoreType};"))
 (def UnknownType (inline C Integer "(Value *)&(Integer){IntegerType, -1, UnknownType};"))
 (def IntegerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IntegerType};"))
-(def StringType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringType};"))
+(def StringBufferType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringBufferType};"))
 (def SubStringType (inline C Integer "(Value *)&(Integer){IntegerType, -1, SubStringType};"))
 (def FnArityType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FnArityType};"))
 (def FunctionType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FunctionType};"))
@@ -64,7 +64,7 @@
 (def TypeCount (inline C Integer "(Value *)&(Integer){IntegerType, -1, TypeCount};"))
 
 (def type-names {IntegerType "Integer"
-                 StringType "String"
+                 StringBufferType "String"
                  SubStringType "String"
                  FnArityType "FnArity"
                  FunctionType "Function"
@@ -86,7 +86,8 @@
           (str n)))
 
 (def core-types {'Integer #{IntegerType}
-                 'String #{StringType SubStringType}
+                 'StringBuffer #{StringBufferType}
+                 'SubString #{SubStringType}
                  'FnArity #{FnArityType}
                  'Function #{FunctionType}
                  'List #{ListType}
@@ -720,7 +721,7 @@
     (for [str-idx (map (sm/get-in-val [.constants .strings]) count)
           :let [str-sym (str "str" str-idx)
                 str-ptr (str "strPtr" str-idx)]
-          _ (sm/assoc-in-val [.constants .strings str-val] (c-code str-ptr [] [] StringType {}))]
+          _ (sm/assoc-in-val [.constants .strings str-val] (c-code str-ptr [] [] StringBufferType {}))]
       (c-init str-ptr
               []
               ["struct {int64_t type;
@@ -729,10 +730,10 @@
         Integer *hash;
         char buffer["
                (inc str-len)
-               "];\n} " str-sym " = {StringType, -1, "
+               "];\n} " str-sym " = {StringBufferType, -1, "
                str-len ", 0, \"" (escape-chars str-val) "\"};\n"
                "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
-              StringType {}))))
+              StringBufferType {}))))
 
 (defn make-c-code [value]
   (c-code (.c-var value) (.init value) (.decl value) (.type-num value) (.refs-map value)))
@@ -1120,7 +1121,7 @@
 
   (emit-defined-value [str-val defined-sym]
     (for [value (emit str-val)
-          _ (new-module-def defined-sym (c-code (.c-var value) [] [] StringType {}))]
+          _ (new-module-def defined-sym (c-code (.c-var value) [] [] StringBufferType {}))]
       [(make-c-code value)]))
 
   (tail-call [x params return-constraints]
@@ -1485,9 +1486,9 @@
   Emitter
   (emit-definition [ast]
     (let [defined-sym (.sym ast)]
-      (for [evalled (traverse (.value ast) (fn [ast]
-                                             (emit-defined-value ast defined-sym)))]
-        (flatten evalled)))))
+      (map (traverse (.value-exprs ast) (fn [ast]
+                                          (emit-defined-value ast defined-sym)))
+           flatten))))
 
 (extend-type ast/declaration-ast
   Emitter
@@ -1725,14 +1726,13 @@
   (emit-defined-value [fn-val defined-sym]
     (comp (for [[type-sym type-syms] (sm/when (and (= (.call-target fn-val) 'comp*)
                                                    (maybe (.args fn-val))))
-                type-nums (get-asserted-types type-sym
-                                              (ast/file-name defined-sym)
-                                              (ast/line-number defined-sym))
+                type-nums (get-type-numbers (maybe type-sym))
+                :when-not (empty? type-nums)
                 other-type-nums (traverse (.args type-syms)
                                           (fn [sym]
-                                            (get-asserted-types sym
-                                                                (ast/file-name defined-sym)
-                                                                (ast/line-number defined-sym))))
+                                            (for [type-nums (get-type-numbers (maybe sym))
+                                                  _ (sm/when-not (empty? type-nums))]
+                                              type-nums)))
                 :let [all-type-nums (comp* type-nums other-type-nums)]
                 _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
                                    all-type-nums)
