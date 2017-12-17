@@ -4,7 +4,7 @@
                             :sha "aa51aff"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "ecde30b"))
+                           :sha "e140def"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "1616a3a"))
@@ -13,7 +13,7 @@
                             :sha "28f53b9"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "b41dd1d"))
+                           :sha "ecde30b"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "e7a489b"))
@@ -35,13 +35,14 @@
 (def line-sep "")
 
 (defn line-macro [ast marker]
-  (sm/state-maybe (either (= "" (ast/file-name ast))
-                          ["\n" marker "\n#line "
-                           (str (ast/line-number ast)) " " "\""
-                           (either (and (= 'core (ast/file-name ast))
-                                        (maybe path-to-core))
-                                   (ast/file-name ast))
-                           "\"\n"])))
+  (let [file-name (ast/file-name ast)]
+    (sm/state-maybe (either (= "" file-name)
+                            ["\n" marker "\n#line "
+                             (str (ast/line-number ast)) " " "\""
+                             (either (and (= 'core file-name)
+                                          (maybe path-to-core))
+                                     file-name)
+                             "\"\n"]))))
 
 (def IgnoreType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IgnoreType};"))
 (def UnknownType (inline C Integer "(Value *)&(Integer){IntegerType, -1, UnknownType};"))
@@ -1075,14 +1076,13 @@
                                                        (ast/line-number return-constraints))))
                                  nothing))))))
 
-(deftype TailExpr [ast params return-constraints]
-  ;; (assert (instance? ast/ASTNode ast))
+(deftype TailCall [ast params return-constraints]
   (assert (instance? Vector params))
   (assert (instance? Sequence return-constraints))
 
   Stringable
   (string-list [expr]
-    (comp (list "<TailExpr ") (string-list ast) " " (string-list return-constraints) " "
+    (comp (list "<TailCall ") (string-list ast) " " (string-list return-constraints) " "
           (list ">")))
 
   ast/FileLineInfo
@@ -1131,7 +1131,7 @@
       [(make-c-code value)]))
 
   (tail-call [x params return-constraints]
-    (TailExpr x params return-constraints)))
+    (TailCall x params return-constraints)))
 
 
 (defn make-static-num [num]
@@ -1164,7 +1164,7 @@
       [(make-c-code value)]))
 
   (tail-call [x params return-constraints]
-    (TailExpr x params return-constraints)))
+    (TailCall x params return-constraints)))
 
 
 (extend-type ast/quoted-ast
@@ -1196,7 +1196,7 @@
       [(make-c-code quoted)]))
 
   (tail-call [ast params return-constraints]
-    (TailExpr ast params return-constraints)))
+    (TailCall ast params return-constraints)))
 
 
 (defn call-vector [target args]
@@ -1328,8 +1328,6 @@
     (for [_ (sm/when (and (= 2 num-args)
                           (or (= name 'flat-map)
                               (= name 'map))))
-          ;; TODO: remove this
-          :when nothing
           :let [[dispatch-ast f-ast] args]
           dispatch-val (emit dispatch-ast)
           impl-ast (map (get-proto-impl name num-args (.type-num dispatch-val))
@@ -1384,7 +1382,7 @@
       [(make-c-code value)]))
 
   (tail-call [ast params return-constraints]
-    (TailExpr ast params return-constraints))
+    (TailCall ast params return-constraints))
 
   (emit-call-expr [target-ast args call-expr-ast]
     (comp (call-vector target-ast args)
@@ -1772,7 +1770,7 @@
                      (.type-num value) (.refs-map value))])))
   
   (tail-call [ast params return-constraints]
-    (TailExpr ast params return-constraints))
+    (TailCall ast params return-constraints))
 
   (replace-syms [ast subs]
     (for [target (replace-syms (.call-target ast) subs)
@@ -2102,66 +2100,84 @@
           (ParamBinding [] []))))
 
 (defn emit-closure-arity [fn-sym fn-context arity-fn-var params param-vars body-exprs]
-  (for [closures (sm/get-in-val [.fn-context .closed-over .closures])
-        :when-not (empty? closures)
-        destArgs (genlocal "destArgs")
-        new-constraints (sm/get-in-val [.fn-context .constraints])
-        _ (reset-fn-context fn-context)
-        arity-var (genlocal fn-sym "dynArity")
-        _ (traverse closures
-                    (fn [[var sym]]
-                      (traverse (either (get new-constraints var)
-                                        [])
-                                (fn [constraint]
-                                  (add-assertion (.sym constraint sym))))))
-        closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
-    (let [closures (-> closures
-                       (map (fn [[arg]] arg))
-                       (seq)
-                       (conj "closuresTail")
-                       (reverse))
-          closure-count (count closures)
-          destruct-closures (cons (c-code ""
-                                          [(map closures (fn [arg] ["Value *" arg ";" line-sep]))
-                                           "incRef((Value *)closures, 1);" line-sep
-                                           "Value **" destArgs "[" closure-count "] = {"
-                                           (interpose (map closures (fn [arg] ["&" arg])) ", ")
-                                           "};" line-sep
-                                           "destructValue(\"\", \"\", (Value *)closures"
-                                           ", " closure-count ", " destArgs ");" line-sep]
-                                          []
-                                          UnknownType {})
-                                  (map closures (fn [arg] (c-init arg [] [] UnknownType {}))))
-          body (collapse-expressions (comp (.destruct param-vars)
-                                           destruct-closures
-                                           body-exprs))
-          arity-decl [(.decl body)
-                      "Value *" arity-fn-var "("
-                      (-> (.vars param-vars)
-                          (map (fn [param] (str "Value *" param)))
-                          (seq)
-                          (conj "List *closures")
-                          (interpose ", "))
-                      ") {\nwhile (1) {\n"
-                      (.init body)
-                      line-sep "};};\n"]
-          arity-init ["FnArity *" arity-var
-                      " = malloc_fnArity();" line-sep
+  (let [file-name (ast/file-name fn-sym)
+        line-number (ast/line-number fn-sym)]
+    (for [closures (sm/get-in-val [.fn-context .closed-over .closures])
+          :when-not (empty? closures)
+          destArgs (genlocal "destArgs")
+          new-constraints (sm/get-in-val [.fn-context .constraints])
+          param-constraints (traverse (.fixed params) get-param-constraints)
+          _ (reset-fn-context)
+          check-params (traverse (for [[constraints arg var] (zip-lists param-constraints
+                                                                        (.fixed params)
+                                                                        (.destruct param-vars))
+                                       constraint constraints]
+                                   [constraint arg var])
+                                 (fn [[constraint arg var]]
+                                   (either (and (= 0 (ast/line-number constraint))
+                                                (maybe (check-assertion constraint arg var
+                                                                        file-name line-number)))
+                                           (check-assertion constraint arg var
+                                                            (ast/file-name constraint)
+                                                            (ast/line-number constraint)))))
+          _ (reset-fn-context fn-context)
+          arity-var (genlocal fn-sym "dynArity")
+          _ (traverse closures
+                      (fn [[var sym]]
+                        (traverse (either (get new-constraints var)
+                                          [])
+                                  (fn [constraint]
+                                    (add-assertion (.sym constraint sym))))))
+          closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
+      (let [closures (-> closures
+                         (map (fn [[arg]] arg))
+                         (seq)
+                         (conj "closuresTail")
+                         (reverse))
+            closure-count (count closures)
+            destruct-closures (cons (c-code ""
+                                            [(map closures (fn [arg] ["Value *" arg ";" line-sep]))
+                                             "incRef((Value *)closures, 1);" line-sep
+                                             "Value **" destArgs "[" closure-count "] = {"
+                                             (interpose (map closures (fn [arg] ["&" arg])) ", ")
+                                             "};" line-sep
+                                             "destructValue(\"\", \"\", (Value *)closures"
+                                             ", " closure-count ", " destArgs ");" line-sep]
+                                            []
+                                            UnknownType {})
+                                    (map closures (fn [arg] (c-init arg [] [] UnknownType {}))))
+            body (collapse-expressions (comp (.destruct param-vars)
+                                             destruct-closures
+                                             body-exprs))
+            arity-decl [(.decl body)
+                        "Value *" arity-fn-var "("
+                        (-> (.vars param-vars)
+                            (map (fn [param] (str "Value *" param)))
+                            (seq)
+                            (conj "List *closures")
+                            (interpose ", "))
+                        ") { // lookee here\n" 
+                        (map check-params .init)
+                        "\nwhile (1) {\n"
+                        (.init body)
+                        line-sep "};};\n"]
+            arity-init ["FnArity *" arity-var
+                        " = malloc_fnArity();" line-sep
 
-                      arity-var "->count = " (count (.vars param-vars))
-                      ";" line-sep
-                      arity-var "->variadic = "
-                      ((.variadic params) "1" "0") ";" line-sep
-                      arity-var "->fn = " arity-fn-var ";" line-sep
-                      arity-var "->closures = empty_list;" line-sep]]
-      (ClosureArity arity-fn-var params
-                    (comp* (c-init arity-var arity-init arity-decl FnArityType {})
-                           (map closure-vars (fn [closure]
-                                               (c-code arity-var
-                                                       [arity-var "->closures = listCons((Value *)"
-                                                        (.c-var closure) ", (List *)" arity-var
-                                                        "->closures);" line-sep]
-                                                       [] ListType {(.c-var closure) 1}))))))))
+                        arity-var "->count = " (count (.vars param-vars))
+                        ";" line-sep
+                        arity-var "->variadic = "
+                        ((.variadic params) "1" "0") ";" line-sep
+                        arity-var "->fn = " arity-fn-var ";" line-sep
+                        arity-var "->closures = empty_list;" line-sep]]
+        (ClosureArity arity-fn-var params
+                      (comp* (c-init arity-var arity-init arity-decl FnArityType {})
+                             (map closure-vars (fn [closure]
+                                                 (c-code arity-var
+                                                         [arity-var "->closures = listCons((Value *)"
+                                                          (.c-var closure) ", (List *)" arity-var
+                                                          "->closures);" line-sep]
+                                                         [] ListType {(.c-var closure) 1})))))))))
 
 (defn emit-static-arity [fn-sym fn-context arity-fn-var params param-vars param-types body-exprs]
   ;; TODO: remove the 'param-types' parameter
@@ -2404,7 +2420,7 @@
       [value]))
 
   (tail-call [ast params return-constraints]
-    (TailExpr ast params return-constraints)))
+    (TailCall ast params return-constraints)))
 
 
 (defn filter-vals [m f]
@@ -2493,7 +2509,7 @@
                 MaybeType refs-map))))
 
 (deftype TailAnd [clauses]
-  (assert (instance? Sequence clauses))
+  (assert (instance? List clauses))
 
   Stringable
   (string-list [expr]
@@ -2530,7 +2546,7 @@
     (for [new-clauses (traverse (.clauses ast)
                                 (fn [ast]
                                   (replace-syms ast subs)))]
-      (.clauses ast new-clauses)))
+      (.clauses ast (vec new-clauses))))
 
   (replace-bound-vars [ast subs]
     (ast/and-ast (map (.clauses ast) (fn [ast]
@@ -2555,6 +2571,10 @@
           expr (emit-cond-expr result-var (.clauses ast) "if (!isNothing("
                                (str "return(" result-var ");" line-sep))]
       expr)))
+
+(def TailExpr (comp TailCall
+                    TailAnd
+                    TailOr))
 
 (extend-type ast/or-ast
   Emitter
@@ -2582,8 +2602,6 @@
                                       (replace-bound-vars ast subs)))))) 
 
 (deftype TailEither [clause alt return-constraints]
-  ;; (assert (instance? ast/ASTNode clause))
-  ;; (assert (instance? ast/ASTNode alt))
   (assert (instance? Sequence return-constraints))
 
   Stringable
@@ -2861,7 +2879,7 @@
       [(make-c-code value)]))
 
   (tail-call [x params return-constraints]
-    (TailExpr x params return-constraints))
+    (TailCall x params return-constraints))
 
   (inline-expr [ast arg-asts]
     (for [arity (sm/when (-> (.arities ast)
@@ -2875,7 +2893,7 @@
     (for [new-arities (traverse (.arities ast)
                                 (fn [arity]
                                   (replace-syms arity subs)))]
-      (.arities ast new-arities)))
+      (.arities ast (vec new-arities))))
 
   (replace-bound-vars [ast subs]
     (.arities ast (map (.arities ast) (fn [arity]
@@ -2897,7 +2915,7 @@
 
 
 (deftype sym-type-ast [sym type-num]
-  ;; (assert (instance? Symbol sym))
+  (assert (instance? Tagged sym))
   (assert (instance? Integer type-num))
 
   Stringable
@@ -2914,8 +2932,7 @@
     (set-type sym type-num)))
 
 (deftype expr-type-ast [type-sym ast]
-  ;; (assert (instance? ast/call-ast ast))
-  ;; (assert (instance? Symbol type-sym))
+  (assert (instance? Tagged type-sym))
 
   Stringable
   (string-list [_]
@@ -3618,16 +3635,16 @@
         (send ast-emitter emit-main)
         (send ast-emitter finalize-protocols)
         (send ast-emitter fixup-native-symbols)
-        (send ast-emitter (fn [ctxt]
-                            (print-err
-                             "\n" 'static-fixed (get-in ctxt ['_ .other 'static-fixed-sites])
-                             "\n" 'static-variadic (get-in ctxt ['_ .other 'static-variadic-sites])
-                             "\n" 'invoke (get-in ctxt ['_ .other 'invoke-sites])
-                             "\n" 'dyn-fn (get-in ctxt ['_ .other 'dyn-fn-sites])
-                             "\n" 'dyn-unknown (get-in ctxt ['_ .other 'dyn-unknown-sites])
-                             "\n" 'type-known (get-in ctxt ['_ .other 'type-known-sites])
-                             "\n" 'type-unknown (get-in ctxt ['_ .other 'type-unknown-sites])
-                             "\n")))
+        ;; (send ast-emitter (fn [ctxt]
+        ;;                     (print-err
+        ;;                      "\n" 'static-fixed (get-in ctxt ['_ .other 'static-fixed-sites])
+        ;;                      "\n" 'static-variadic (get-in ctxt ['_ .other 'static-variadic-sites])
+        ;;                      "\n" 'invoke (get-in ctxt ['_ .other 'invoke-sites])
+        ;;                      "\n" 'dyn-fn (get-in ctxt ['_ .other 'dyn-fn-sites])
+        ;;                      "\n" 'dyn-unknown (get-in ctxt ['_ .other 'dyn-unknown-sites])
+        ;;                      "\n" 'type-known (get-in ctxt ['_ .other 'type-known-sites])
+        ;;                      "\n" 'type-unknown (get-in ctxt ['_ .other 'type-unknown-sites])
+        ;;                      "\n")))
         ;; wait for agents to clear their queues
         (let [waiter (promise)]
           (send ast-emitter (fn [_]

@@ -1685,7 +1685,7 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
 
 Value *vectGet(Vector *vect, unsigned index) {
   // this fn does not dec_and_free vect on purpose
-  // lets calling functions do that.
+  // it lets calling functions do that.
   Value **array = arrayFor(vect, index);
   return(array[index & 0x1f]);
 }
