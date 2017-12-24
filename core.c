@@ -4123,3 +4123,10 @@ void show(Value *v) {
   dec_and_free((Value *)strings, 1);
   return;
 }
+
+int64_t countSeq(Value *seq) {
+  Integer *len = (Integer *)count(empty_list, seq);
+  int64_t result = len->numVal;
+  dec_and_free((Value *)len, 1);
+  return(result);
+}

@@ -169,7 +169,8 @@
 
 ;; combine a sequence of expressions, adding reference increments and decrements
 ;; where needed
-(defprotocol CollapseExprs
+(defprotocol C-Code
+  (static-len [_] nothing)
   (collapse-expressions* [x y]))
 
 ;; information about a compiled expression(s)
@@ -198,7 +199,7 @@
   (comp* [_ cs]
     (apply comp cs))
 
-  CollapseExprs
+  C-Code
   (collapse-expressions* [x y] y)
 
   Emitter
@@ -229,7 +230,7 @@
     (and (empty? (.init c))
          (empty? (.decl c))))
 
-  CollapseExprs
+  C-Code
   (collapse-expressions* [x y]
     (c-code (.c-var y)
             [(.init x) (.init y)]
@@ -261,13 +262,13 @@
   (zero [_] empty-c-code)
   (comp* [c cs]
     (reduce cs c (fn [result c]
-                   (c-code (.c-var c)
+                   (c-init (.c-var c)
                            [(.init result) (.init c)]
                            [(.decl result) (.decl c)]
                            (.type-num c)
                            (merge-with + (.refs-map result) (.refs-map c))))))
 
-  CollapseExprs
+  C-Code
   (collapse-expressions* [x y]
     (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(.init x)
@@ -290,9 +291,115 @@
   (emit [x]
     (sm/state-maybe x)))
 
-(def C-code (comp empty-code
+(deftype list-c-code [c-var init decl type-num refs-map len]
+  (assert (instance? ast/SymbolOrString c-var))
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? Integer type-num))
+  (assert (instance? HashMap refs-map))
+
+  Stringable
+  (string-list [_]
+    (list "<C-List " (str c-var) ", " (target-type-name type-num) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ">"))
+
+  Collection
+  (empty? [c] nothing)
+
+  Composition
+  (zero [_] empty-c-code)
+
+  (comp* [c cs]
+    (reduce cs c (fn [result c]
+                   (list-c-code (.c-var c)
+                                [(.init result) (.init c)]
+                                [(.decl result) (.decl c)]
+                                (.type-num c)
+                                (merge-with + (.refs-map result) (.refs-map c))
+                                len))))
+
+  C-Code
+  (collapse-expressions* [x y]
+    (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
+                              [(.init x)
+                               ((< refs 2) "" [line-sep "incRef(" c-var ", " (dec refs) ");"
+                                               line-sep])
+                               (.init y)])
+                            (and (= "" c-var)
+                                 (maybe [(.init x) (.init y)])))
+                       [(.init x)
+                        line-sep "dec_and_free(" c-var ", 1);" line-sep
+                        (.init y)])
+          refs-map (merge-with + (.refs-map x) (.refs-map y))
+          refs-map (assoc refs-map c-var 0)]
+      (c-code (.c-var y)
+              init
+              [(.decl x) (.decl y)]
+              (.type-num y)
+              refs-map)))
+
+  (static-len [_] (maybe len))
+
+  Emitter
+  (emit [x]
+    (sm/state-maybe x)))
+
+(deftype vector-c-code [c-var init decl type-num refs-map len]
+  (assert (instance? ast/SymbolOrString c-var))
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? Integer type-num))
+  (assert (instance? HashMap refs-map))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Vector " (str c-var) ", " (target-type-name type-num) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ">"))
+
+  Collection
+  (empty? [c] nothing)
+
+  Composition
+  (zero [_] empty-c-code)
+  (comp* [c cs]
+    (reduce cs c (fn [result c]
+                   (vector-c-code (.c-var c)
+                                  [(.init result) (.init c)]
+                                  [(.decl result) (.decl c)]
+                                  (.type-num c)
+                                  (merge-with + (.refs-map result) (.refs-map c))
+                                  len))))
+
+  C-Code
+  (collapse-expressions* [x y]
+    (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
+                              [(.init x)
+                               ((< refs 2) "" [line-sep "incRef(" c-var ", " (dec refs) ");"
+                                               line-sep])
+                               (.init y)])
+                            (and (= "" c-var)
+                                 (maybe [(.init x) (.init y)])))
+                       [(.init x)
+                        line-sep "dec_and_free(" c-var ", 1);" line-sep
+                        (.init y)])
+          refs-map (merge-with + (.refs-map x) (.refs-map y))
+          refs-map (assoc refs-map c-var 0)]
+      (c-code (.c-var y)
+              init
+              [(.decl x) (.decl y)]
+              (.type-num y)
+              refs-map)))
+  (static-len [_] (maybe len))
+
+  Emitter
+  (emit [x]
+    (sm/state-maybe x)))
+
+(def C-expr (comp empty-code
                   c-code
-                  c-init))
+                  c-init
+                  list-c-code
+                  vector-c-code))
 
 (defn collapse-expressions [cs]
   (either (and (empty? cs) (maybe empty-c-code))
@@ -683,7 +790,7 @@
                            (ast/line-number sym))))
 
 (deftype StaticArityInfo [c-info param-constraints]
-  (assert (instance? C-code c-info))
+  (assert (instance? C-expr c-info))
   (assert (instance? Sequence param-constraints)))
 
 ;; we cache all the info about static function arities to optimize call sites
@@ -798,21 +905,36 @@
 (defprotocol Assertion
   (get-param-constraints [_]
     (assert-result x (instance? sm/new-sm x)))
+
   (assertion? [ast]
     (assert-result x (instance? Maybe x))
     nothing)
+
   (return-assertion? [ast]
     (assert-result x (instance? Maybe x))
     nothing)
-  (format-path [ast])
+
   (add-assertion [ast]
     (assert-result x (instance? sm/new-sm x)))
+
   (check-assertion [ast arg var file-name line-number]
     (assert-result x (instance? sm/new-sm x)))
-  (to-assertion [ast param])
+
+  (to-assertion [ast sym]
+    (ast/assert-ast (-> ast
+                        (.sym sym)
+                        (.path (rest (.path ast))))))
+
+  (format-path [ast]
+    (either (empty? (.path ast))
+            (map (.path ast)
+                 (fn [[file line]]
+                   (str file " " line)))))
+
   (assert-type [ast]
     (assert-result x (instance? Maybe x))
     nothing)
+
   (assert-return-type [ast]
     (assert-result x (instance? Maybe x))
     nothing))
@@ -905,17 +1027,6 @@
               [] UnknownType {})))
 
   Assertion
-  (to-assertion [ast sym]
-    (ast/assert-ast (->ast
-                     (.sym sym)
-                     (.path (rest (.path ast))))))
-
-  (format-path [ast]
-    (either (empty? (.path ast))
-            (map (.path ast)
-                 (fn [[file line]]
-                   (str file " " line)))))
-
   (assert-type [ast] (maybe (.type-sym ast)))
 
   (add-assertion [ast]
@@ -1012,6 +1123,97 @@
                                                 "abort();" line-sep
                                                 "}" line-sep]
                                                [] (.type-num var) {})))]
+        expr))))
+
+(extend-type ast/min-count-assertion
+  Emitter
+  (replace-bound-vars [ast subs]
+    (.sym ast (either (get subs (.sym ast))
+                      (.sym ast))))
+
+  (replace-syms [ast subs]
+    (sm/state-maybe (.sym ast (either (get subs (.sym ast))
+                                      (.sym ast)))))
+
+  (emit [ast]
+    (for [var (lookup-sym (.sym ast))
+          _ (debug 'min-count ast)]
+      (c-code ""
+              ["if (count(empty_list, " (.c-var var) ") < " (str (.len ast)) ") {" line-sep
+               "fprintf(stderr, \"Sequence too short at %s, line %d\\n\", \""
+               (ast/file-name ast) "\"," (ast/line-number ast)
+               ");" line-sep
+               "fprintf(stderr, \"Needed %d, got %d\\n\", \""
+               (str (.len ast)) "\", ((Integer *)count(empty_list, " (.c-var var)
+               "))->numVal);" line-sep
+               "abort();" line-sep
+               "}" line-sep]
+              [] UnknownType {})))
+
+  Assertion
+  (add-assertion [ast]
+    (let [sym (.sym ast)
+          file-name (ast/file-name ast)
+          file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (comp
+       (for [_ (sm/when (or (instance? Symbol sym)
+                            (instance? rdr/tagged-symbol sym)))
+             var (comp (map (lookup-sym sym) .c-var)
+                       (compilation-error "Invalid Minimum Count assertion at"
+                                          (str file-name ":")
+                                          (str (ast/line-number ast) ".")
+                                          "Symbol" (str "'" sym "' not found.")))
+             constraints (sm/get-in-val [.fn-context .constraints var] [])
+             ;; TODO: check to see if other min-count assertion is already here
+             _ (sm/assoc-in-val [.fn-context .constraints var]
+                                (conj constraints ast))]
+         empty-c-code)
+       (for [_ (sm/when (or (instance? Symbol sym)
+                            (instance? rdr/tagged-symbol sym)))
+             _ (debug "Could not assert minimum count for" (str "'" sym "'") "at"
+                      (str file-name ":") (ast/line-number ast))]
+         empty-c-code)
+       (sm/state-maybe empty-c-code))))
+
+  (check-assertion [ast arg var file-name line-number]
+    (let [file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (for [_ (add-assertion (-> ast
+                                 (.sym arg)
+                                 (.path (conj (.path ast)
+                                              [(str file-name ":") line-number]))))
+            line (line-macro ast "")
+            len-var (genlocal "len")
+            ;; TODO: see if the assertion can be checked statically
+            expr (comp
+                  (for [var-len (sm/when (static-len var))
+                        _ (comp (sm/when (<= (.len ast) var-len))
+                                (apply compilation-error
+                                            "Too few elements in sequence at"
+                                            (str file-name ":") (str line-number ".")
+                                            "\nNeeded at least" (.len ast) "got" var-len
+                                            (-> "\nAssertion from" 
+                                                (cons (format-path ast))
+                                                (interpose "\n"))))]
+                    empty-c-code)
+                  (for [_ (debug "drop dynamic check" file-name line-number)
+                        r (sm/state-maybe
+                           (c-code ""
+                                   [line
+                                    "if (countSeq(incRef(" (.c-var var) ", 1)) < "
+                                    (str (.len ast)) ") {" line-sep
+                                    "fprintf(stderr, \"Sequence too short at %s, line %d\\n\", \""
+                                    file-name "\"," line-number ");" line-sep
+                                    "fprintf(stderr, \"Needed " (str (.len ast))
+                                    ", got %\" PRId64 \"\\n\", countSeq(incRef("
+                                    (.c-var var) ", 1)));"
+                                    line-sep "abort();" line-sep
+                                    "}" line-sep]
+                                   [] (.type-num var) {}))]
+                    r))]
         expr))))
 
 (extend-type ast/result-ast
@@ -1204,33 +1406,35 @@
         vect-sym (genlocal "newVect")
         result-sym (genlocal "rslt")
         line (line-macro target "// call-vector")]
-    (apply comp (comp args
-                      [(c-init result-sym
-                               [line
-                                "Vector *" vect-sym " = empty_vect;" line-sep
-                                (map args
-                                     (fn [arg]
-                                       (let [arg-sym (.c-var arg)]
-                                         [vect-sym " = mutateVectConj(" vect-sym ", "
-                                          arg-sym ");" line-sep])))
-                                "Value *" result-sym " = (Value *)" vect-sym ";" line-sep]
-                               [] VectorType {})]))))
+    (comp* (vector-c-code "" [] [] VectorType {} (count args))
+           (comp args
+                 [(vector-c-code result-sym
+                                 [line
+                                  "Vector *" vect-sym " = empty_vect;" line-sep
+                                  (map args
+                                       (fn [arg]
+                                         (let [arg-sym (.c-var arg)]
+                                           [vect-sym " = mutateVectConj(" vect-sym ", "
+                                            arg-sym ");" line-sep])))
+                                  "Value *" result-sym " = (Value *)" vect-sym ";" line-sep]
+                                 [] VectorType {} (count args))]))))
 
 (defn call-list [target args]
   (for [_ (sm/when (= target 'list))
         line (line-macro target "// call-list")
         list-sym (genlocal "newList")
         result-sym (genlocal "rslt")]
-    (apply comp (comp args
-                      [(c-init result-sym
-                                [line "List *" list-sym " = empty_list;" line-sep
-                                 (map (reverse args)
-                                      (fn [arg]
-                                        (let [arg-sym (.c-var arg)]
-                                          [list-sym " = listCons(" "(Value *)" arg-sym
-                                           ", " list-sym ");" line-sep])))
-                                 "Value *" result-sym " = (Value *)" list-sym ";" line-sep]
-                                [] ListType {})]))))
+    (comp* (list-c-code "" [] [] ListType {} (count args))
+           (comp args
+                 [(list-c-code result-sym
+                               [line "List *" list-sym " = empty_list;" line-sep
+                                (map (reverse args)
+                                     (fn [arg]
+                                       (let [arg-sym (.c-var arg)]
+                                         [list-sym " = listCons(" "(Value *)" arg-sym
+                                          ", " list-sym ");" line-sep])))
+                                "Value *" result-sym " = (Value *)" list-sym ";" line-sep]
+                               [] ListType {} (count args))]))))
 
 (defn dispatch-type-known [target args ast]
   (let [num-args (count args)]
@@ -1259,15 +1463,16 @@
                                              (= target 'assoc*))
                                          (maybe (.type-num dispatch-val))))
                                 (.type-num arity-info))]
-        (apply comp (comp args
-                          exprs
-                          [(c-init result-sym
-                                   [line "Value *" result-sym " = " (.c-var arity-info) "("
-                                    (interpose (conj (map args .c-var) "empty_list")
-                                               ", ")
-                                    ");" line-sep]
-                                   []
-                                   return-type {})]))))))
+        (comp* (c-init "" [] [] UnknownType {})
+               (comp args
+                     exprs
+                     [(c-init result-sym
+                              [line "Value *" result-sym " = " (.c-var arity-info) "("
+                               (interpose (conj (map args .c-var) "empty_list")
+                                          ", ")
+                               ");" line-sep]
+                              []
+                              return-type {})]))))))
 
 (defn dispatch-type-unknown [target args ast]
   (let [num-args (count args)]
@@ -1289,18 +1494,19 @@
           line (comp (map (sm/when (or (= (ast/file-name target) 'core)))
                           (fn [_] ""))
                      (line-macro target (str "// type-unknown " target)))]
-      (apply comp (comp args
-                        [(c-init result-sym
-                                 [line "Value *" result-sym " = proto" num-args "Arg(&"
-                                  (.impls-sym impls-info)
-                                  ", \"" (.sym target) "\", "
-                                  (interpose (comp (map args .c-var)
-                                                   [(str "\"" (.file-name target) "\"")
-                                                    (ast/line-number target)])
-                                             ", ")
-                                  ");" line-sep]
-                                 []
-                                 (.return-type impls-info) {})])))))
+      (comp* (c-init "" [] [] UnknownType {})
+             (comp args
+                   [(c-init result-sym
+                            [line "Value *" result-sym " = proto" num-args "Arg(&"
+                             (.impls-sym impls-info)
+                             ", \"" (.sym target) "\", "
+                             (interpose (comp (map args .c-var)
+                                              [(str "\"" (.file-name target) "\"")
+                                               (ast/line-number target)])
+                                        ", ")
+                             ");" line-sep]
+                            []
+                            (.return-type impls-info) {})])))))
 
 (defn call-proto-impl [name args ast]
   (for [_ (sm/when (< 0 (count args)))
@@ -1712,6 +1918,7 @@
             (for [args (-> (.args ast)
                            (filter produces-code?)
                            emit)
+                  ;; TODO: turn into a 'flat-map'
                   call-site (comp (emit-call-expr (.call-target ast) args ast)
                                   (for [target (emit (.call-target ast))
                                         :let [arg-vars (map args .c-var)]
@@ -1721,11 +1928,11 @@
                                                    (call-invoke target args ast)
                                                    (call-dyn-fn-value target arg-vars ast)
                                                    (call-dyn-unknown-type target arg-vars ast))]
-                                    (comp* empty-c-code (comp args [target call-site])))
+                                    (comp* (c-init "" [] [] UnknownType {})
+                                           (comp args [target call-site])))
                                   (compilation-error "Could not compile call site at:"
                                                      file-name line-number))]
-              (c-init (.c-var call-site) (.init call-site) (.decl call-site)
-                      (.type-num call-site) (.refs-map call-site))))))
+              call-site))))
 
   (emit-defined-value [fn-val defined-sym]
     (comp (for [[type-sym type-syms] (sm/when (and (= (.call-target fn-val) 'comp*)
@@ -1999,7 +2206,7 @@
   (assert (instance? String arity-fn-var))
   ;; (assert (instance? (Integer or 'variadic) param-count))
   (assert (instance? Integer return-type))
-  (assert (instance? C-code var-info))
+  (assert (instance? C-expr var-info))
   (assert (instance? Sequence param-constraints))
 
   Stringable
@@ -2018,7 +2225,7 @@
 (deftype ClosureArity [arity-fn-var params var-info]
   (assert (instance? String arity-fn-var))
   (assert (instance? ast/params-ast params))
-  (assert (instance? c-code var-info))
+  (assert (instance? C-expr var-info))
 
   Stringable
   (string-list [_]

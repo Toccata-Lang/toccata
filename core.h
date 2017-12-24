@@ -250,3 +250,4 @@ Value *deliverFuture(Value *fut, Value *val);
 Value *addFutureAction(Future *p, Value *action);
 String *nullTerm(Value *s);
 void show(Value *v);
+int64_t countSeq(Value *seq);
