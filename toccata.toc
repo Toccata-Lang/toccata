@@ -1,7 +1,7 @@
 
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "57e84e7"))
+                            :sha "fb242d4"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "882b014"))
@@ -1120,6 +1120,9 @@
                                                 (str (.type-sym ast))
                                                 "\", extractStr(type_name(empty_list, "
                                                 (.c-var var) ")));" line-sep
+                                                "fprintf(stderr, \"From: \\n"
+                                                (interpose (format-path ast) "\\n")
+                                                "\\n\");" line-sep
                                                 "abort();" line-sep
                                                 "}" line-sep]
                                                [] (.type-num var) {})))]
@@ -1157,25 +1160,24 @@
           file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
                             file-name)]
-      (comp
-       (for [_ (sm/when (or (instance? Symbol sym)
-                            (instance? rdr/tagged-symbol sym)))
-             var (comp (map (lookup-sym sym) .c-var)
-                       (compilation-error "Invalid Minimum Count assertion at"
-                                          (str file-name ":")
-                                          (str (ast/line-number ast) ".")
-                                          "Symbol" (str "'" sym "' not found.")))
-             constraints (sm/get-in-val [.fn-context .constraints var] [])
-             ;; TODO: check to see if other min-count assertion is already here
-             _ (sm/assoc-in-val [.fn-context .constraints var]
-                                (conj constraints ast))]
-         empty-c-code)
-       (for [_ (sm/when (or (instance? Symbol sym)
-                            (instance? rdr/tagged-symbol sym)))
-             _ (debug "Could not assert minimum count for" (str "'" sym "'") "at"
-                      (str file-name ":") (ast/line-number ast))]
-         empty-c-code)
-       (sm/state-maybe empty-c-code))))
+      (comp (for [_ (sm/when (or (instance? Symbol sym)
+                                 (instance? rdr/tagged-symbol sym)))
+                  var (comp (map (lookup-sym sym) .c-var)
+                            (compilation-error "Invalid Minimum Count assertion at"
+                                               (str file-name ":")
+                                               (str (ast/line-number ast) ".")
+                                               "Symbol" (str "'" sym "' not found.")))
+                  constraints (sm/get-in-val [.fn-context .constraints var] [])
+                  ;; TODO: check to see if other min-count assertion is already here
+                  _ (sm/assoc-in-val [.fn-context .constraints var]
+                                     (conj constraints ast))]
+              empty-c-code)
+            (for [_ (sm/when (or (instance? Symbol sym)
+                                 (instance? rdr/tagged-symbol sym)))
+                  _ (debug "Could not assert minimum count for" (str "'" sym "'") "at"
+                           (str file-name ":") (ast/line-number ast))]
+              empty-c-code)
+            (sm/state-maybe empty-c-code))))
 
   (check-assertion [ast arg var file-name line-number]
     (let [file-name (either (and (= file-name 'core)
@@ -1187,33 +1189,32 @@
                                               [(str file-name ":") line-number]))))
             line (line-macro ast "")
             len-var (genlocal "len")
-            ;; TODO: see if the assertion can be checked statically
-            expr (comp
-                  (for [var-len (sm/when (static-len var))
-                        _ (comp (sm/when (<= (.len ast) var-len))
-                                (apply compilation-error
+            expr (comp (for [var-len (sm/when (static-len var))
+                             _ (comp (sm/when (<= (.len ast) var-len))
+                                     (apply compilation-error
                                             "Too few elements in sequence at"
                                             (str file-name ":") (str line-number ".")
                                             "\nNeeded at least" (.len ast) "got" var-len
                                             (-> "\nAssertion from" 
                                                 (cons (format-path ast))
                                                 (interpose "\n"))))]
-                    empty-c-code)
-                  (for [_ (debug "drop dynamic check" file-name line-number)
-                        r (sm/state-maybe
-                           (c-code ""
-                                   [line
-                                    "if (countSeq(incRef(" (.c-var var) ", 1)) < "
-                                    (str (.len ast)) ") {" line-sep
-                                    "fprintf(stderr, \"Sequence too short at %s, line %d\\n\", \""
-                                    file-name "\"," line-number ");" line-sep
-                                    "fprintf(stderr, \"Needed " (str (.len ast))
-                                    ", got %\" PRId64 \"\\n\", countSeq(incRef("
-                                    (.c-var var) ", 1)));"
-                                    line-sep "abort();" line-sep
-                                    "}" line-sep]
-                                   [] (.type-num var) {}))]
-                    r))]
+                         empty-c-code)
+                       (sm/state-maybe
+                        (c-code ""
+                                [line
+                                 "if (countSeq(incRef(" (.c-var var) ", 1)) < "
+                                 (str (.len ast)) ") {" line-sep
+                                 "fprintf(stderr, \"Sequence too short at %s, line %d\\n\", \""
+                                 file-name "\"," line-number ");" line-sep
+                                 "fprintf(stderr, \"Needed " (str (.len ast))
+                                 ", got %\" PRId64 \"\\n\", countSeq(incRef("
+                                 (.c-var var) ", 1)));"
+                                 "fprintf(stderr, \"From: \\n"
+                                 (interpose (format-path ast) "\\n")
+                                 "\\n\");" line-sep
+                                 line-sep "abort();" line-sep
+                                 "}" line-sep]
+                                [] (.type-num var) {})))]
         expr))))
 
 (extend-type ast/result-ast
@@ -2079,8 +2080,9 @@
 (extend-type ast/binding-ast
   Emitter
   (emit [ast]
-    (flat-map (emit (.val ast))
-              (partial bind (.binding ast)))))
+    (for [val-var (emit (.val ast))
+          bound-var (bind (.binding ast) val-var)]
+      bound-var)))
 
 (defn merge-constraints [c1 c2]
   (comp c1 c2))
@@ -2204,6 +2206,7 @@
 
 (deftype StaticArity [arity-fn-var param-count return-type var-info param-constraints]
   (assert (instance? String arity-fn-var))
+  ;; TODO
   ;; (assert (instance? (Integer or 'variadic) param-count))
   (assert (instance? Integer return-type))
   (assert (instance? C-expr var-info))
