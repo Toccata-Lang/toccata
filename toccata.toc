@@ -167,10 +167,50 @@
   (bind [binding evalled]
     (assert-result x (instance? sm/new-sm x))))
 
+(defprotocol Assertion
+  (get-param-constraints [_]
+    (assert-result x (instance? sm/new-sm x)))
+
+  (assertion? [ast]
+    (assert-result x (instance? Maybe x))
+    nothing)
+
+  (return-assertion? [ast]
+    (assert-result x (instance? Maybe x))
+    nothing)
+
+  (add-assertion [ast]
+    (assert-result x (instance? sm/new-sm x)))
+
+  (check-assertion [ast arg var file-name line-number]
+    (assert-result x (instance? sm/new-sm x)))
+
+  (to-assertion [ast sym]
+    (ast/assert-ast (-> ast
+                        (.sym sym)
+                        (.path (rest (.path ast))))))
+
+  (format-path [ast]
+    (either (empty? (.path ast))
+            (map (.path ast)
+                 (fn [[file line]]
+                   (str file " " line)))))
+
+  (assert-type [ast]
+    (assert-result x (instance? Maybe x))
+    nothing)
+
+  (assert-return-type [ast]
+    (assert-result x (instance? Maybe x))
+    nothing))
+
 ;; combine a sequence of expressions, adding reference increments and decrements
 ;; where needed
 (defprotocol C-Code
+  (check-seq-asserts [var assertions arg file-name line-number])
+
   (static-len [_] nothing)
+
   (collapse-expressions* [x y]))
 
 ;; information about a compiled expression(s)
@@ -200,6 +240,9 @@
     (apply comp cs))
 
   C-Code
+  (check-seq-asserts [var assertions arg file-name line-number]
+    (sm/state-maybe var))
+
   (collapse-expressions* [x y] y)
 
   Emitter
@@ -231,6 +274,20 @@
          (empty? (.decl c))))
 
   C-Code
+  (check-seq-asserts [var assertions arg file-name line-number]
+    ;; TODO: this will be needed later
+    ;; (sm/state-maybe (.init var [init
+    ;;                             "if (((Integer *)count(empty_list, " (.c-var var) "))->numVal < "
+    ;;                             (str (count assertions)) ") {" line-sep
+    ;;                             "fprintf(stderr, \"Insufficient values at %s, line %d\\n\", \""
+    ;;                             file-name "\"," line-number ");" line-sep
+    ;;                             "fprintf(stderr, \"Needed " (str (count assertions))
+    ;;                             ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, "
+    ;;                             (.c-var var) "))->numVal);" line-sep
+    ;;                             "abort();" line-sep
+    ;;                             "}" line-sep]))
+    (sm/state-maybe empty-c-code))
+
   (collapse-expressions* [x y]
     (c-code (.c-var y)
             [(.init x) (.init y)]
@@ -269,6 +326,20 @@
                            (merge-with + (.refs-map result) (.refs-map c))))))
 
   C-Code
+  (check-seq-asserts [var assertions arg file-name line-number]
+    ;; TODO: this will be needed later
+    ;; (sm/state-maybe (.init var [init
+    ;;                             "if (((Integer *)count(empty_list, " (.c-var var) "))->numVal < "
+    ;;                             (str (count assertions)) ") {" line-sep
+    ;;                             "fprintf(stderr, \"Insufficient values at %s, line %d\\n\", \""
+    ;;                             file-name "\"," line-number ");" line-sep
+    ;;                             "fprintf(stderr, \"Needed " (str (count assertions))
+    ;;                             ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, "
+    ;;                             (.c-var var) "))->numVal);" line-sep
+    ;;                             "abort();" line-sep
+    ;;                             "}" line-sep]))
+    (sm/state-maybe empty-c-code))
+
   (collapse-expressions* [x y]
     (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(.init x)
@@ -319,6 +390,9 @@
                                 len))))
 
   C-Code
+  (check-seq-asserts [var assertions arg file-name line-number]
+    (sm/state-maybe empty-c-code))
+
   (collapse-expressions* [x y]
     (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(.init x)
@@ -353,7 +427,7 @@
 
   Stringable
   (string-list [_]
-    (list "<C-Vector " (str c-var) ", " (target-type-name type-num) ", "
+    (list "<C-Vector " (str c-var) ", len: " (str len) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ">"))
 
   Collection
@@ -371,6 +445,9 @@
                                   len))))
 
   C-Code
+  (check-seq-asserts [var assertions arg file-name line-number]
+    (sm/state-maybe empty-c-code))
+
   (collapse-expressions* [x y]
     (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(.init x)
@@ -712,6 +789,11 @@
                     reverse))))))
 
 (extend-type Vector
+  Assertion
+  (check-assertion [assertions arg var file-name line-number]
+    (assert (instance? C-expr var))
+    (check-seq-asserts var assertions arg file-name line-number))
+
   Emitter
   (emit [asts]
     (traverse asts emit))
@@ -902,43 +984,6 @@
 
 ;; TODO: line numbering starts to go wrong here
 
-(defprotocol Assertion
-  (get-param-constraints [_]
-    (assert-result x (instance? sm/new-sm x)))
-
-  (assertion? [ast]
-    (assert-result x (instance? Maybe x))
-    nothing)
-
-  (return-assertion? [ast]
-    (assert-result x (instance? Maybe x))
-    nothing)
-
-  (add-assertion [ast]
-    (assert-result x (instance? sm/new-sm x)))
-
-  (check-assertion [ast arg var file-name line-number]
-    (assert-result x (instance? sm/new-sm x)))
-
-  (to-assertion [ast sym]
-    (ast/assert-ast (-> ast
-                        (.sym sym)
-                        (.path (rest (.path ast))))))
-
-  (format-path [ast]
-    (either (empty? (.path ast))
-            (map (.path ast)
-                 (fn [[file line]]
-                   (str file " " line)))))
-
-  (assert-type [ast]
-    (assert-result x (instance? Maybe x))
-    nothing)
-
-  (assert-return-type [ast]
-    (assert-result x (instance? Maybe x))
-    nothing))
-
 (extend-type ast/assert-ast
   Assertion
   (assertion? [ast]
@@ -1080,6 +1125,7 @@
        (sm/state-maybe empty-c-code))))
 
   (check-assertion [ast arg var file-name line-number]
+    (assert (instance? C-expr var))
     (let [file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
                             file-name)]
@@ -1128,6 +1174,13 @@
                                                [] (.type-num var) {})))]
         expr))))
 
+(defn add-min-count-assert [ast var]
+  (for [constraints (sm/get-in-val [.fn-context .constraints var] [])
+        ;; TODO: check to see if other min-count assertion is already here
+        _ (sm/assoc-in-val [.fn-context .constraints var]
+                           (conj constraints ast))]
+    '_))
+
 (extend-type ast/min-count-assertion
   Emitter
   (replace-bound-vars [ast subs]
@@ -1142,13 +1195,13 @@
     (for [var (lookup-sym (.sym ast))
           _ (debug 'min-count ast)]
       (c-code ""
-              ["if (count(empty_list, " (.c-var var) ") < " (str (.len ast)) ") {" line-sep
-               "fprintf(stderr, \"Sequence too short at %s, line %d\\n\", \""
-               (ast/file-name ast) "\"," (ast/line-number ast)
-               ");" line-sep
-               "fprintf(stderr, \"Needed %d, got %d\\n\", \""
-               (str (.len ast)) "\", ((Integer *)count(empty_list, " (.c-var var)
-               "))->numVal);" line-sep
+              ["if (((Integer *)count(empty_list, " (.c-var var) "))->numVal < "
+               (str (.len ast)) ") {" line-sep
+               "fprintf(stderr, \"Insufficient values at %s, line %d\\n\", \""
+               (ast/file-name ast) "\"," (ast/line-number ast) ");" line-sep
+               "fprintf(stderr, \"Needed " (str (.len ast))
+               ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, "
+               (.c-var var) "))->numVal);" line-sep
                "abort();" line-sep
                "}" line-sep]
               [] UnknownType {})))
@@ -1167,10 +1220,7 @@
                                                (str file-name ":")
                                                (str (ast/line-number ast) ".")
                                                "Symbol" (str "'" sym "' not found.")))
-                  constraints (sm/get-in-val [.fn-context .constraints var] [])
-                  ;; TODO: check to see if other min-count assertion is already here
-                  _ (sm/assoc-in-val [.fn-context .constraints var]
-                                     (conj constraints ast))]
+                  _ (add-min-count-assert ast var)]
               empty-c-code)
             (for [_ (sm/when (or (instance? Symbol sym)
                                  (instance? rdr/tagged-symbol sym)))
@@ -1180,13 +1230,14 @@
             (sm/state-maybe empty-c-code))))
 
   (check-assertion [ast arg var file-name line-number]
+    (assert (instance? C-expr var))
     (let [file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
                             file-name)]
-      (for [_ (add-assertion (-> ast
-                                 (.sym arg)
-                                 (.path (conj (.path ast)
-                                              [(str file-name ":") line-number]))))
+      (for [_ (add-min-count-assert (-> ast
+                                        (.path (conj (.path ast)
+                                                     [(str file-name ":") line-number])))
+                                    (.c-var var))
             line (line-macro ast "")
             len-var (genlocal "len")
             expr (comp (for [var-len (sm/when (static-len var))
@@ -2001,31 +2052,38 @@
                   (map (.args ast) (fn [ast]
                                      (replace-bound-vars ast subs))))))
 
-(defn unpack-arg-list [list-sym elem-vars file-name line-num]
-  (comp (sm/when (for [elem (first elem-vars)
-                       :when (= 1 (count elem-vars))
-                       var (first (.vars elem))]
-                   (ParamBinding [list-sym]
-                                 [(c-init var ["Value *" var " = (Value *)" list-sym ";" line-sep]
-                                          [] ListType {})])))
-        (for [destructArgs (genlocal "destArgs")]
-          (let [elem-c-vars (flat-map elem-vars .vars)
-                tail-var (extract (last elem-c-vars))
-                elem-count (count elem-vars)]
-            (ParamBinding [list-sym]
-                          (comp [(c-code ""
-                                         [(map elem-c-vars (fn [var] ["Value *" var ";" line-sep]))
-                                          "Value **" destructArgs "[" elem-count "] = {"
-                                          (interpose (map elem-c-vars (fn [arg] ["&" arg])) ", ")
-                                          "};" line-sep "destructValue(\"" file-name "\", \"" line-num
-                                          "\", (Value *)" list-sym ", " elem-count ", "
-                                          destructArgs ");" line-sep]
-                                         [] UnknownType {list-sym 1})]
-                                (map elem-c-vars (fn [var]
-                                                   (c-init var [] []
-                                                           ((= var tail-var) ListType UnknownType)
-                                                           {})))
-                                (flat-map elem-vars .destruct)))))))
+(defn unpack-arg-list [list-var elem-vars file-name line-num]
+  (let [elem-count (count elem-vars)]
+    (comp (sm/when (for [elem (first elem-vars)
+                         :when (= 1 (count elem-vars))
+                         var (first (.vars elem))]
+                     (ParamBinding [(.c-var list-var)]
+                                   [(c-init var ["Value *" var " = (Value *)" (.c-var list-var) ";" line-sep]
+                                            [] ListType {})])))
+          (for [dest-args (genlocal "destArgs")
+                ;; TODO: put this back in
+                ;; check-expr (check-assertion (ast/min-count-assertion '_ (dec elem-count)
+                ;;                                                      (list [file-name line-num]))
+                ;;                             '_ list-var file-name line-num)
+]
+            (let [elem-c-vars (flat-map elem-vars .vars)
+                  tail-var (extract (last elem-c-vars))]
+              (ParamBinding [(.c-var list-var)]
+                            (comp [;; check-expr
+                                   (c-code ""
+                                           [(map elem-c-vars (fn [var]
+                                                               ["Value *" var ";" line-sep]))
+                                            "Value **" dest-args "[" elem-count "] = {"
+                                            (interpose (map elem-c-vars (fn [arg] ["&" arg])) ", ")
+                                            "};" line-sep "destructValue(\"" file-name "\", \"" line-num
+                                            "\", (Value *)" (.c-var list-var) ", " elem-count ", "
+                                            dest-args ");" line-sep]
+                                           [] UnknownType {(.c-var list-var) 1})]
+                                  (map elem-c-vars (fn [var]
+                                                     (c-init var [] []
+                                                             ((= var tail-var) ListType UnknownType)
+                                                             {})))
+                                  (flat-map elem-vars .destruct))))))))
 
 (defprotocol AllSyms
   (all-symbols [ast]
@@ -2035,8 +2093,7 @@
 (extend-type ast/params-ast
   Assertion
   (get-param-constraints [params]
-    ;; TODO: flesh out
-    (sm/state-maybe []))
+    (traverse (.fixed params) get-param-constraints))
 
   AllSyms
   (all-symbols [params]
@@ -2050,7 +2107,8 @@
           tail-var (bind (either (.variadic params)
                                  (rdr/tag "#tail")))
           param-var (genlocal "arg")
-          destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
+          destruct (unpack-arg-list (c-code param-var [] [] UnknownType {})
+                                    (conj fixed-vars tail-var)
                                     (ast/file-name params)
                                     (ast/line-number params))]
       destruct))
@@ -2060,7 +2118,7 @@
                            (rdr/tag "#tail"))]
       (for [fixed-vars (map (traverse (.fixed params) bind) vec)
             tail-var (bind tail-sym)
-            destruct (unpack-arg-list (.c-var evalled) (conj fixed-vars tail-var)
+            destruct (unpack-arg-list evalled (conj fixed-vars tail-var)
                                       (ast/file-name params) (ast/line-number params))
             _ (set-type tail-sym ListType)]
         (either (and (empty? (.init evalled))
@@ -2283,7 +2341,8 @@
                                                   (assoc params (.c-var var) 1)))))
               _ (sm/assoc-in-val [.fn-context .syms tail .type-num] ListType)
               param-var (genlocal "arg")
-              destruct (unpack-arg-list param-var (conj fixed-vars tail-var)
+              destruct (unpack-arg-list (c-code param-var [] [] UnknownType {})
+                                        (conj fixed-vars tail-var)
                                         (ast/file-name params)
                                         (ast/line-number params))]
           destruct)
@@ -2316,7 +2375,8 @@
           :when-not (empty? closures)
           destArgs (genlocal "destArgs")
           new-constraints (sm/get-in-val [.fn-context .constraints])
-          param-constraints (traverse (.fixed params) get-param-constraints)
+          ;; TODO: what about constraints for the variadic vars
+          param-constraints (get-param-constraints params)
           _ (reset-fn-context)
           check-params (traverse (for [[constraints arg var] (zip-lists param-constraints
                                                                         (.fixed params)
@@ -2395,7 +2455,7 @@
         file-name (ast/file-name fn-sym)
         line-number (ast/line-number fn-sym)]
     ;; TODO: what about constraints for the variadic vars
-    (for [param-constraints (traverse (.fixed params) get-param-constraints)
+    (for [param-constraints (get-param-constraints params)
           _ (reset-fn-context)
           check-params (traverse (for [[constraints arg var] (zip-lists param-constraints
                                                                         (.fixed params)
