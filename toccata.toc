@@ -167,6 +167,25 @@
   (bind [binding evalled]
     (assert-result x (instance? sm/new-sm x))))
 
+(defprotocol Constraint
+  (update-path [constraint file-name line-number]
+    (.path constraint (cons [(str file-name ":") line-number] (.path constraint))))
+
+  (update-sym [constraint new-sym]
+    (assert (instance? Tagged new-sym)))
+
+  (check-constraint [constraint arg var file-name line-number]
+    ;; Check that a symbol (arg) and it's compiled expression (var) do not contradict
+    ;; a constraint (constraint). And that the constraint does not conflict with an earlier one
+    ;; Adds code to check at runtime if cannot rule out conflict
+    (assert-result x (instance? sm/new-sm x)))
+
+  (to-assertion [ast sym])
+  
+  (conflict [new-constraint old-constraint file-name line-number])
+
+  (restrict [new-constraint old-constraint]))
+
 (defprotocol Assertion
   (get-param-constraints [_]
     (assert-result x (instance? sm/new-sm x)))
@@ -181,14 +200,6 @@
 
   (add-assertion [ast]
     (assert-result x (instance? sm/new-sm x)))
-
-  (check-assertion [ast arg var file-name line-number]
-    (assert-result x (instance? sm/new-sm x)))
-
-  (to-assertion [ast sym]
-    (ast/assert-ast (-> ast
-                        (.sym sym)
-                        (.path (rest (.path ast))))))
 
   (format-path [ast]
     (either (empty? (.path ast))
@@ -207,7 +218,7 @@
 ;; combine a sequence of expressions, adding reference increments and decrements
 ;; where needed
 (defprotocol C-Code
-  (check-seq-asserts [var assertions arg file-name line-number])
+  (check-seq-constraints [var assertions arg file-name line-number])
 
   (static-len [_] nothing)
 
@@ -240,7 +251,7 @@
     (apply comp cs))
 
   C-Code
-  (check-seq-asserts [var assertions arg file-name line-number]
+  (check-seq-constraints [var _ _ _ _]
     (sm/state-maybe var))
 
   (collapse-expressions* [x y] y)
@@ -274,7 +285,7 @@
          (empty? (.decl c))))
 
   C-Code
-  (check-seq-asserts [var assertions arg file-name line-number]
+  (check-seq-constraints [var constraints arg file-name line-number]
     ;; TODO: this will be needed later
     ;; (sm/state-maybe (.init var [init
     ;;                             "if (((Integer *)count(empty_list, " (.c-var var) "))->numVal < "
@@ -326,7 +337,7 @@
                            (merge-with + (.refs-map result) (.refs-map c))))))
 
   C-Code
-  (check-seq-asserts [var assertions arg file-name line-number]
+  (check-seq-constraints [var constraints arg file-name line-number]
     ;; TODO: this will be needed later
     ;; (sm/state-maybe (.init var [init
     ;;                             "if (((Integer *)count(empty_list, " (.c-var var) "))->numVal < "
@@ -390,7 +401,7 @@
                                 len))))
 
   C-Code
-  (check-seq-asserts [var assertions arg file-name line-number]
+  (check-seq-constraints [a _ _ _ _]
     (sm/state-maybe empty-c-code))
 
   (collapse-expressions* [x y]
@@ -445,7 +456,7 @@
                                   len))))
 
   C-Code
-  (check-seq-asserts [var assertions arg file-name line-number]
+  (check-seq-constraints [a _ _ _ _]
     (sm/state-maybe empty-c-code))
 
   (collapse-expressions* [x y]
@@ -518,6 +529,7 @@
   ;; closed-over   symbols that this function closes over
   (assert (instance? Closures closed-over))
   ;; constraints   constraints on C variables 
+  (assert (instance? HashMap constraints))
   (assert (instance? HashMap context-syms))
 
   Stringable
@@ -571,17 +583,14 @@
   Stringable
   (string-list [_] (list "<GlobalContext>")))
 
-(deftype TypeConstraint [type-num path]
-  (assert (instance? Integer type-num))
-  (assert (instance? Vector path)))
-
 (defn reset-fn-context
   ([]
    (for [curr-fn-context (sm/get-val .fn-context)
          :let [new-context (comp (-> curr-fn-context .context-syms)
                                  (-> curr-fn-context .syms))]
          _ (sm/set-val .fn-context (FunctionArityContext {} 0 {} new-context
-                                                         empty-closures {} []))]
+                                                         empty-closures {}
+                                                         []))]
      curr-fn-context))
   ([new-fn-context]
    (for [curr-fn-context (sm/get-val .fn-context)
@@ -789,11 +798,6 @@
                     reverse))))))
 
 (extend-type Vector
-  Assertion
-  (check-assertion [assertions arg var file-name line-number]
-    (assert (instance? C-expr var))
-    (check-seq-asserts var assertions arg file-name line-number))
-
   Emitter
   (emit [asts]
     (traverse asts emit))
@@ -1010,38 +1014,188 @@
                                  (maybe "$TOCCATA_DIR/core.toc"))
                             file-name)]
       (add-assertion (.path assertion (conj (.path assertion)
-                                            [(str file-name ":")
-                                             (ast/line-number ast)])))))
+                                            [(str file-name ":") (ast/line-number ast)])))))
 
   (tail-call [ast params return-constraints] ast))
 
-(defn type-conflict [type1 type2]
-  (flat-map (sm/state-maybe '_)
-            (fn [_]
-              (let [path1 (cons (str "'" (.type-sym type1) "' from:")
-                                (format-path type1))
-                    path2 (cons (str "'" (.type-sym type2)  "' from:")
-                                (format-path type2))
-                    max-path (either (> (count path1) (count path2))
-                                     (count path2))
-                    path1 (either (map (< (count path1) max-path)
-                                       (fn [_]
-                                         (comp path1 (repeat (- max-path (count path1)) ""))))
-                                  path1)
-                    path2 (either (map (< (count path2) max-path)
-                                       (fn [_]
-                                         (comp path2 (repeat (- max-path (count path2)) ""))))
-                                  path2)
-                    max-width (reduce path1 0 (fn [max s]
-                                                (either (> max (count s))
-                                                        (count s))))]
-                (apply compilation-error "Conflicting assertions at"
-                       (str (ast/file-name (.sym type2)) ":")
-                       (ast/line-number (.sym type2))
-                       "\n"
-                       (map (zip-lists path1 path2)
-                            (fn [[x y]]
-                              (str x (spaces (- max-width (count x))) "   " y "\n"))))))))
+(deftype ConstraintSet [l]
+  (assert (instance? List l))
+  
+  Stringable
+  (string-list [_] (list "<ConstraintSet " (str l) ">"))
+  
+  Collection
+  (count [_] (count l))
+
+  (empty? [_] (empty? l))
+
+  (conj [_ v]
+    (ConstraintSet (reduce l (list v) (fn [new-l old-v]
+                                        (either (and (= v old-v)
+                                                     (maybe new-l))
+                                                (conj new-l old-v))))))
+  
+  Seqable
+  (seq [_] l)
+
+  Assertion
+  (check-constraint [constraints arg var file-name line-number]
+    (assert (instance? C-expr var))
+    (check-seq-constraints var l arg file-name line-number)))
+
+(def empty-constraints (ConstraintSet empty-list))
+
+(defn add-constraint
+  ([new-constraint sym]
+   (let [file-name (ast/file-name sym)
+         file-name (either (and (= file-name 'core)
+                                (maybe "$TOCCATA_DIR/core.toc"))
+                           file-name)
+         line-number (ast/line-number sym)]
+     (for [expr (comp (lookup-sym sym)
+                      (compilation-error "Invalid assertion at"
+                                         (str file-name ":") (str line-number ".")
+                                         "Symbol" (str "'" sym "' not found.")))
+           _ (add-constraint new-constraint sym expr file-name line-number)]
+       empty-c-code)))
+  ([new-constraint arg expr file-name line-number]
+   (let [var (.c-var expr)
+         sym (either (and (or (instance? Symbol arg)
+                              (instance? rdr/tagged-symbol arg))
+                          (maybe arg))
+                     "")]
+     ;; TODO: how to set type in a generic 'add-constraint'
+     ;; asserted-type (get-asserted-type type-sym file-name line-number)
+     ;; Only set the type of the var if there is one and only one
+     ;; asserted type number
+     ;; _ (set-type sym asserted-type)
+     (comp (for [constraints (sm/get-in-val [.fn-context .constraints var] empty-constraints)
+                 new (sm/when (every (seq constraints)
+                                     (fn [old-constraint]
+                                       (or (conflict new-constraint old-constraint
+                                                     file-name line-number)
+                                           (restrict new-constraint old-constraint)
+                                           (maybe old-constraint)))))
+                 _ (sm/assoc-in-val [.fn-context .constraints var]
+                                    (either (map (= new (seq constraints))
+                                                 (fn [old]
+                                                   (ConstraintSet (conj old new-constraint))))
+                                            new))]
+             empty-c-code)
+           ;; TODO: just in case something slips through during development
+           (for [_ (debug "Could not add constraint for" (str "'" sym "'") "at"
+                          (str file-name ":") line-number)
+                 _ (debug new-constraint)]
+             empty-c-code)
+           (sm/state-maybe empty-c-code)))))
+
+(deftype TypeConstraint [type-nums path type-sym constrained-symbol]
+  (assert (instance? HashSet type-nums))
+  (assert (instance? List path))
+  
+  Stringable
+  (string-list [_]
+    (list "<TypeConstraint " (str type-sym) " " (str path) " " (str constrained-symbol) ">"))
+  
+  Ord
+  (<* [x y]
+    (and (instance? TypeConstraint y)
+         (subset (.type-nums y) type-nums)))
+
+  ;; TODO: should be Constraint eventually
+  Assertion
+  (to-assertion [constraint sym]
+    (ast/assert-ast (ast/type-assertion type-sym sym (rest path))))
+
+  (assert-type [constraint]
+    (maybe constraint))
+
+  ;; TODO: remove 'update-sym' to trigger bad free
+  Constraint
+  (update-sym [_ new-sym]
+    (TypeConstraint type-nums path type-sym new-sym))
+
+  (restrict [new-constraint old-constraint]
+    (and (instance? TypeConstraint old-constraint)
+         (maybe (.type-nums old-constraint
+                            (intersection type-nums (.type-nums old-constraint))))))
+
+  (conflict [type1 type2 file-name line-number]
+    (and (empty? (intersection type-nums (.type-nums type2)))
+         (let [path1 (cons (str "'" type-sym "' from:") (format-path type1))
+               path2 (cons (str "'" (.type-sym type2)  "' from:") (format-path type2))
+               max-path (either (> (count path1) (count path2))
+                                (count path2))
+               path1 (either (map (< (count path1) max-path)
+                                  (fn [_]
+                                    (comp path1 (repeat (- max-path (count path1)) ""))))
+                             path1)
+               path2 (either (map (< (count path2) max-path)
+                                  (fn [_]
+                                    (comp path2 (repeat (- max-path (count path2)) ""))))
+                             path2)
+               max-width (reduce path1 0 (fn [max s]
+                                           (either (> max (count s))
+                                                   (count s))))]
+           (apply print-err "Conflicting assertions at"
+                  (str file-name ":") line-number "\n"
+                  (map (zip-lists path1 path2)
+                       (fn [[x y]]
+                         (str x (spaces (- max-width (count x))) "   " y "\n"))))
+           (maybe (abort)))))
+
+  (check-constraint [constraint arg expr file-name line-number]
+    (assert (instance? C-expr expr))
+    (let [file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)
+          formatted-path (either (empty? path)
+                                 (map path
+                                      (fn [[file line]]
+                                        (str file " " line))))
+          sym-location (either (and (= "" file-name)
+                                    (maybe "'"))
+                               (str "' at " file-name ", line " line-number))]
+      (for [line (line-macro arg "")
+            _ (add-constraint (update-path constraint file-name line-number)
+                              arg expr file-name line-number)
+            expr (comp (for [_ (sm/when-not (= UnknownType (.type-num expr)))
+                             bad-type-sym (sm/get-in-val [.constants .type-names (.type-num expr)]
+                                                         (.type-num expr))
+                             _ (comp (sm/when (type-nums (.type-num expr)))
+                                     (apply compilation-error
+                                            "Failed type assertion at"
+                                            (str file-name ":") (str line-number ".")
+                                            "\nExpected" (str "'" type-sym "', got")
+                                            (str "'" bad-type-sym "'.")
+                                            "\nAssertion from\n" 
+                                            (interpose formatted-path "\n")))]
+                         empty-c-code)
+                       (for [_ (sm/get-in-val [.fn-context .params (.c-var expr)])]
+                         empty-c-code)
+                       (sm/state-maybe (c-code ""
+                                               [line
+                                                "switch (" (.c-var expr) "->type) {"
+                                                (map (seq type-nums) (fn [type-num]
+                                                                       ["case " type-num ": "
+                                                                        line-sep]))
+                                                "break;" line-sep " default:\n"
+                                                "#ifndef EMBEDDED\n"
+                                                "fprintf(stderr, \"Invalid type of value for "
+                                                "parameter '" constrained-symbol
+                                                sym-location "\\n\");\n"
+                                                "fprintf(stderr, \"Needed %s, got %s\\n\", \""
+                                                (str type-sym)
+                                                "\", extractStr(type_name(empty_list, "
+                                                (.c-var expr) ")));" line-sep
+                                                "fprintf(stderr, \"From: \\n"
+                                                (interpose formatted-path "\\n")
+                                                "\\n\");\n"
+                                                "#endif\n"
+                                                "abort();" line-sep
+                                                "}" line-sep]
+                                               [] (.type-num expr) {})))]
+        expr))))
 
 (extend-type ast/type-assertion
   Emitter
@@ -1070,207 +1224,23 @@
                "abort();" line-sep
                "}" line-sep]
               [] UnknownType {})))
-
+  
   Assertion
-  (assert-type [ast] (maybe (.type-sym ast)))
+  (assert-type [ast]
+    (maybe (.type-sym ast)))
 
   (add-assertion [ast]
-    (let [sym (.sym ast)
-          file-name (ast/file-name ast)
-          file-name (either (and (= file-name 'core)
-                                 (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
-      (comp
-       (for [_ (sm/when (or (instance? Symbol sym)
-                            (instance? rdr/tagged-symbol sym)))
-             var (comp (map (lookup-sym sym) .c-var)
-                       (compilation-error "Invalid type assertion at"
-                                          (str file-name ":")
-                                          (str (ast/line-number ast) ".")
-                                          "Symbol" (str "'" sym "' not found.")))
-             asserted (get-asserted-types (.type-sym ast)
-                                          file-name (ast/line-number ast))
-             constraints (sm/get-in-val [.fn-context .constraints var] [])
-             :let [type-constraint (some constraints assert-type)]
-             _ (comp (for [_ (sm/when-not type-constraint)
-                           _ (sm/assoc-in-val [.fn-context .constraints var]
-                                              (conj constraints ast))
-                           asserted-type (get-asserted-type (.type-sym ast)
-                                                            file-name
-                                                            (ast/line-number ast))
-                           _ (set-type sym asserted-type)]
-                       '_)
-                     (for [type-nums (get-type-numbers type-constraint)
-                           _ (comp (sm/when (subset asserted type-nums))
-                                   (for [_ (sm/when (subset type-nums asserted))
-                                         _ (sm/assoc-in-val [.fn-context .constraints var]
-                                                            (map constraints
-                                                                 (fn [c]
-                                                                   (either (and (assert-type c)
-                                                                                (maybe ast))
-                                                                           c))))]
-                                     '_)
-                                   (-> constraints
-                                       (filter assert-type)
-                                       first
-                                       extract
-                                       (type-conflict ast)))]
-                       '_))]
-         empty-c-code)
-       (for [_ (sm/when (or (instance? Symbol sym)
-                            (instance? rdr/tagged-symbol sym)))
-             _ (debug "Could not assert type for" (str "'" sym "'") "at"
-                      (str file-name ":") (ast/line-number ast))]
-         empty-c-code)
-       (sm/state-maybe empty-c-code))))
-
-  (check-assertion [ast arg var file-name line-number]
-    (assert (instance? C-expr var))
-    (let [file-name (either (and (= file-name 'core)
-                                 (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
-      (for [_ (add-assertion (-> ast
-                                 (.sym arg)
-                                 (.path (conj (.path ast)
-                                              [(str file-name ":") line-number]))))
-            type-nums (get-asserted-types (.type-sym ast)
-                                          (ast/file-name ast) (ast/line-number ast))
-            line (line-macro ast "")
-            expr (comp (for [_ (sm/when-not (= UnknownType (.type-num var)))
-                             type-sym (sm/get-in-val [.constants .type-names (.type-num var)]
-                                                     (.type-num var))
-                             _ (comp (sm/when (type-nums (.type-num var)))
-                                     (apply compilation-error
-                                            "Failed type assertion at"
-                                            (str file-name ":") (str line-number ".")
-                                            "\nExpected" (str "'" (.type-sym ast) "', got")
-                                            (str "'" type-sym "'.")
-                                            (-> "\nAssertion from" 
-                                                (cons (format-path ast))
-                                                (interpose "\n"))))]
-                         empty-c-code)
-                       (for [_ (sm/get-in-val [.fn-context .params (.c-var var)])]
-                         empty-c-code)
-                       (sm/state-maybe (c-code ""
-                                               [line
-                                                "switch (" (.c-var var) "->type) {"
-                                                (map (seq type-nums) (fn [type-num]
-                                                                       ["case " type-num ": "
-                                                                        line-sep]))
-                                                "break;" line-sep " default:\n"
-                                                "#ifndef EMBEDDED\n"
-                                                "fprintf(stderr, \"Invalid type of value for "
-                                                "parameter '" (.sym ast) "' at %s, line %d\\n\", \""
-                                                file-name "\"," line-number
-                                                ");\n"
-                                                "fprintf(stderr, \"Needed %s, got %s\\n\", \""
-                                                (str (.type-sym ast))
-                                                "\", extractStr(type_name(empty_list, "
-                                                (.c-var var) ")));" line-sep
-                                                "fprintf(stderr, \"From: \\n"
-                                                (interpose (format-path ast) "\\n")
-                                                "\\n\");\n"
-                                                "#endif\n"
-                                                "abort();" line-sep
-                                                "}" line-sep]
-                                               [] (.type-num var) {})))]
-        expr))))
+    (flat-map (get-asserted-types (.type-sym ast) (ast/file-name ast) (ast/line-number ast))
+              (fn [asserted] 
+                (add-constraint (TypeConstraint asserted (.path ast) (.type-sym ast) (.sym ast))
+                                (.sym ast))))))
 
 (defn add-min-count-assert [ast var]
-  (for [constraints (sm/get-in-val [.fn-context .constraints var] [])
+  (for [constraints (sm/get-in-val [.fn-context .constraints var] empty-constraints)
         ;; TODO: check to see if other min-count assertion is already here
         _ (sm/assoc-in-val [.fn-context .constraints var]
                            (conj constraints ast))]
     '_))
-
-(extend-type ast/min-count-assertion
-  Emitter
-  (replace-bound-vars [ast subs]
-    (.sym ast (either (get subs (.sym ast))
-                      (.sym ast))))
-
-  (replace-syms [ast subs]
-    (sm/state-maybe (.sym ast (either (get subs (.sym ast))
-                                      (.sym ast)))))
-
-  (emit [ast]
-    (for [var (lookup-sym (.sym ast))
-          _ (debug 'min-count ast)]
-      (c-code ""
-              ["if (((Integer *)count(empty_list, " (.c-var var) "))->numVal < "
-               (str (.len ast)) ") {" line-sep
-               "fprintf(stderr, \"Insufficient values at %s, line %d\\n\", \""
-               (ast/file-name ast) "\"," (ast/line-number ast) ");" line-sep
-               "fprintf(stderr, \"Needed " (str (.len ast))
-               ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, "
-               (.c-var var) "))->numVal);" line-sep
-               "abort();" line-sep
-               "}" line-sep]
-              [] UnknownType {})))
-
-  Assertion
-  (add-assertion [ast]
-    (let [sym (.sym ast)
-          file-name (ast/file-name ast)
-          file-name (either (and (= file-name 'core)
-                                 (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
-      (comp (for [_ (sm/when (or (instance? Symbol sym)
-                                 (instance? rdr/tagged-symbol sym)))
-                  var (comp (map (lookup-sym sym) .c-var)
-                            (compilation-error "Invalid Minimum Count assertion at"
-                                               (str file-name ":")
-                                               (str (ast/line-number ast) ".")
-                                               "Symbol" (str "'" sym "' not found.")))
-                  _ (add-min-count-assert ast var)]
-              empty-c-code)
-            (for [_ (sm/when (or (instance? Symbol sym)
-                                 (instance? rdr/tagged-symbol sym)))
-                  _ (debug "Could not assert minimum count for" (str "'" sym "'") "at"
-                           (str file-name ":") (ast/line-number ast))]
-              empty-c-code)
-            (sm/state-maybe empty-c-code))))
-
-  (check-assertion [ast arg var file-name line-number]
-    (assert (instance? C-expr var))
-    (let [file-name (either (and (= file-name 'core)
-                                 (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
-      (for [_ (add-min-count-assert (-> ast
-                                        (.path (conj (.path ast)
-                                                     [(str file-name ":") line-number])))
-                                    (.c-var var))
-            line (line-macro ast "")
-            len-var (genlocal "len")
-            expr (comp (for [var-len (sm/when (static-len var))
-                             _ (comp (sm/when (<= (.len ast) var-len))
-                                     (apply compilation-error
-                                            "Too few elements in sequence at"
-                                            (str file-name ":") (str line-number ".")
-                                            "\nNeeded at least" (.len ast) "got" var-len
-                                            (-> "\nAssertion from" 
-                                                (cons (format-path ast))
-                                                (interpose "\n"))))]
-                         empty-c-code)
-                       (sm/state-maybe
-                        (c-code ""
-                                [line
-                                 "if (countSeq(incRef(" (.c-var var) ", 1)) < "
-                                 (str (.len ast)) ") {\n"
-                                 "#ifndef EMBEDDED\n"
-                                 "fprintf(stderr, \"Sequence too short at %s, line %d\\n\", \""
-                                 file-name "\"," line-number ");\n"
-                                 "fprintf(stderr, \"Needed " (str (.len ast))
-                                 ", got %\" PRId64 \"\\n\", countSeq(incRef("
-                                 (.c-var var) ", 1)));"
-                                 "fprintf(stderr, \"From: \\n"
-                                 (interpose (format-path ast) "\\n")
-                                 "\\n\");\n"
-                                 "#endif\n"
-                                 "abort();" line-sep
-                                 "}" line-sep]
-                                [] (.type-num var) {})))]
-        expr))))
 
 (extend-type ast/result-ast
   Assertion
@@ -1501,10 +1471,10 @@
           exprs (traverse (for [[var arg constraints] (zip-lists (seq args)
                                                                  (.args ast)
                                                                  (seq constraints))
-                                constraint constraints]
+                                constraint (seq constraints)]
                             [constraint arg var])
                           (fn [[constraint arg var]]
-                            (check-assertion constraint arg var
+                            (check-constraint constraint arg var
                                              (ast/file-name ast)
                                              (ast/line-number ast))))
           _ (comp (sm/update-in-val [.other 'type-known-sites] inc)
@@ -1537,10 +1507,10 @@
           exprs (traverse (for [[var arg constraints] (zip-lists (seq args)
                                                                  (.args ast)
                                                                  (seq constraints))
-                                constraint constraints]
+                                constraint (seq constraints)]
                             [constraint arg var])
                           (fn [[constraint arg var]]
-                            (check-assertion constraint arg var
+                            (check-constraint constraint arg var
                                              (ast/file-name ast)
                                              (ast/line-number ast))))
           _ (comp (sm/when (or (= (ast/file-name target) 'core)))
@@ -1605,9 +1575,10 @@
 (extend-type rdr/tagged-symbol
   Assertion
   (get-param-constraints [sym]
-    (flat-map (lookup-sym sym)
-              (fn [c-info]
-                (sm/get-in-val [.fn-context .constraints (.c-var c-info)] []))))
+    (for [c-info (lookup-sym sym)
+          constraints (sm/get-in-val [.fn-context .constraints (.c-var c-info)] empty-constraints)]
+      (ConstraintSet (map (.l constraints) (fn [constraint]
+                                             (update-sym constraint sym))))))
 
   Emitter
   (bind [binding]
@@ -1666,9 +1637,10 @@
 (extend-type Symbol
   Assertion
   (get-param-constraints [sym]
-    (flat-map (lookup-sym sym)
-              (fn [c-info]
-                (sm/get-in-val [.fn-context .constraints (.c-var c-info)] []))))
+    (for [c-info (lookup-sym sym)
+          constraints (sm/get-in-val [.fn-context .constraints (.c-var c-info)] empty-constraints)]
+      (ConstraintSet (map (.l constraints) (fn [constraint]
+                                           (update-sym constraint sym))))))
 
   Emitter
   (bind [binding]
@@ -1779,12 +1751,12 @@
         exprs (traverse (for [[var arg constraints] (zip-lists (seq arg-vars)
                                                                (seq (.args ast))
                                                                (seq constraints))
-                              constraint constraints]
+                              constraint (seq constraints)]
                           [constraint arg var])
                         (fn [[constraint arg var]]
-                          (check-assertion constraint arg var
-                                           (ast/file-name ast)
-                                           (ast/line-number ast))))
+                          (check-constraint constraint arg var
+                                            (ast/file-name ast)
+                                            (ast/line-number ast))))
         result-sym (genlocal "rslt")
         line (line-macro ast "// static-fixed")]
     (c-init result-sym
@@ -1924,10 +1896,10 @@
           exprs (traverse (for [[var arg constraints] (zip-lists (seq arg-vars)
                                                                  (.args ast)
                                                                  (rest (seq constraints)))
-                                constraint constraints]
+                                constraint (seq constraints)]
                             [constraint arg var])
                           (fn [[constraint arg var]]
-                            (check-assertion constraint arg var
+                            (check-constraint constraint arg var
                                              (ast/file-name ast)
                                              (ast/line-number ast))))
           result-sym (genlocal "rslt")
@@ -2385,23 +2357,18 @@
           check-params (traverse (for [[constraints arg var] (zip-lists param-constraints
                                                                         (.fixed params)
                                                                         (.destruct param-vars))
-                                       constraint constraints]
+                                       constraint (seq constraints)]
                                    [constraint arg var])
                                  (fn [[constraint arg var]]
-                                   (either (and (= 0 (ast/line-number constraint))
-                                                (maybe (check-assertion constraint arg var
-                                                                        file-name line-number)))
-                                           (check-assertion constraint arg var
-                                                            (ast/file-name constraint)
-                                                            (ast/line-number constraint)))))
+                                   (check-constraint constraint arg var file-name line-number)))
           _ (reset-fn-context fn-context)
           arity-var (genlocal fn-sym "dynArity")
           _ (traverse closures
                       (fn [[var sym]]
-                        (traverse (either (get new-constraints var)
-                                          [])
+                        (traverse (seq (either (get new-constraints var)
+                                               empty-constraints))
                                   (fn [constraint]
-                                    (add-assertion (.sym constraint sym))))))
+                                    (add-constraint constraint sym)))))
           closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
       (let [closures (-> closures
                          (map (fn [[arg]] arg))
@@ -2464,15 +2431,10 @@
           check-params (traverse (for [[constraints arg var] (zip-lists param-constraints
                                                                         (.fixed params)
                                                                         (.destruct param-vars))
-                                       constraint constraints]
+                                       constraint (seq constraints)]
                                    [constraint arg var])
                                  (fn [[constraint arg var]]
-                                   (either (and (= 0 (ast/line-number constraint))
-                                                (maybe (check-assertion constraint arg var
-                                                                        file-name line-number)))
-                                           (check-assertion constraint arg var
-                                                            (ast/file-name constraint)
-                                                            (ast/line-number constraint)))))
+                                   (check-constraint constraint arg var file-name line-number)))
           _ (reset-fn-context fn-context)
           checking-fn-var (global-var fn-sym "paramChecker")
           arity-var (comp (for [dispatch-type (sm/when (first param-types))
@@ -2635,7 +2597,7 @@
           :let [param-constraints (.param-constraints dispatcher-info)
                 assertions (for [[param constraints] (zip-lists (.fixed params)
                                                                 param-constraints)
-                                 constraint constraints]
+                                 constraint (seq constraints)]
                              (to-assertion constraint param))]
           ext-fn (comp (emit-fn-arity (rdr/tag (str type-str fn-name))
                                       (.fn-var arity-ast)
@@ -2725,38 +2687,66 @@
                                   ["dec_and_free(" c-sym ", " remaining ");" line-sep]))])
      refs-map]))
 
-(defn emit-cond-expr [result-var clauses cond-test tail-return]
+;; TODO move this to Emitter
+(defprotocol EmitCond
+  (emit-cond-clause [clause]
+    (let [file-name (ast/file-name clause)
+          file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (map (emit clause)
+           (fn [expr]
+             (either (and (or (= (.type-num expr) MaybeType)
+                              (= "" (.c-var expr)))
+                          (maybe expr))
+                     (.init expr [(.init expr)
+                                  "if (" (.c-var expr) "->type != MaybeType) {" line-sep
+                                  "fprintf(stderr, \"Wrong type of result returned at %s, line %d\\n\", \""
+                                  file-name "\","
+                                  (ast/line-number clause)
+                                  ");" line-sep
+                                  "fprintf(stderr, \"Expected Maybe, got %s\\n\", extractStr(type_name(empty_list, "
+                                  (.c-var expr) ")));" line-sep
+                                  "abort();" line-sep
+                                  "}" line-sep])))))))
+
+(extend-type rdr/tagged-symbol
+  EmitCond
+  (emit-cond-clause [clause]
+    (let [file-name (ast/file-name clause)
+          file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (for [_ (add-constraint (TypeConstraint #{MaybeType}
+                                              (list [(str file-name ":")
+                                                     (ast/line-number clause)])
+                                              'Maybe
+                                              clause)
+                              clause)
+            expr (emit clause)]
+        expr))))
+
+(extend-type Symbol
+  EmitCond
+  (emit-cond-clause [clause]
+    (let [file-name (ast/file-name clause)
+          file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (for [_ (add-constraint (TypeConstraint #{MaybeType}
+                                              (list [(str file-name ":")
+                                                     (ast/line-number clause)])
+                                              'Maybe
+                                              clause)
+                              clause)
+            expr (emit clause)]
+        expr))))
+
+(defn emit-and-expr [result-var clauses tail-return]
+  (let [cond-test "if (isNothing("]
     (for [evalled-clauses (-> clauses
                               (filter produces-code?)
-                              (traverse
-                               (fn [clause]
-                                 (let [file-name (ast/file-name clause)
-                                       file-name (either (and (= file-name 'core)
-                                                              (maybe "$TOCCATA_DIR/core.toc"))
-                                                         file-name)]
-                                   (comp (for [_ (sm/when (or (instance? Symbol clause)
-                                                              (instance? rdr/tagged-symbol clause)))
-                                               _ (add-assertion (ast/type-assertion
-                                                                 'Maybe clause
-                                                                 (list [(str file-name ":")
-                                                                        (ast/line-number clause)])))
-                                               expr (emit clause)]
-                                           expr)
-                                         (map (emit clause)
-                                              (fn [expr]
-                                                (either (and (or (= (.type-num expr) MaybeType)
-                                                                 (= "" (.c-var expr)))
-                                                             (maybe expr))
-                                                        (.init expr [(.init expr)
-                                                                     "if (" (.c-var expr) "->type != MaybeType) {" line-sep
-                                                                     "fprintf(stderr, \"Wrong type of result returned at %s, line %d\\n\", \""
-                                                                     file-name "\","
-                                                                     (ast/line-number clause)
-                                                                     ");" line-sep
-                                                                     "fprintf(stderr, \"Expected Maybe, got %s\\n\", extractStr(type_name(empty_list, "
-                                                                     (.c-var expr) ")));" line-sep
-                                                                     "abort();" line-sep
-                                                                     "}" line-sep])))))))))
+                              (traverse emit-cond-clause))
           last-clause (sm/when (last evalled-clauses))]
       (let [clause-vars (-> evalled-clauses
                             (remove (fn [c] (empty? (.init c))))
@@ -2767,6 +2757,40 @@
                          (remove-keys clause-vars)
                          (filter-vals (partial < 0)))
             [clause-inits] (-> (butlast evalled-clauses)
+                               (reduce [[] refs-map]
+                                       (partial cond-clause-init cond-test result-var)))
+            last-init ((= "" (.c-var last-clause))
+                       (.init last-clause)
+                       [(.init last-clause)
+                        result-var " = " (.c-var last-clause) ";" line-sep])
+            clause-inits (conj clause-inits last-init)]
+        (c-init result-var
+                ["Value *" result-var ";" line-sep
+                 (interpose clause-inits [tail-return "} else {" line-sep
+                                          "dec_and_free(" result-var ", 1);" line-sep])
+                 (-> evalled-clauses
+                     count
+                     dec
+                     (repeat (str "}" line-sep)))]
+                (map evalled-clauses .decl)
+                MaybeType refs-map)))))
+
+(defn emit-cond-expr [result-var clauses cond-test tail-return]
+    (for [evalled-clauses (-> clauses
+                              (filter produces-code?)
+                              reverse
+                              (traverse emit-cond-clause))
+          last-clause (sm/when (first evalled-clauses))]
+      (let [clause-vars (-> evalled-clauses
+                            (remove (fn [c] (empty? (.init c))))
+                            (map .c-var)
+                            set)
+            refs-maps (map evalled-clauses .refs-map)
+            refs-map (-> (apply merge-with + refs-maps)
+                         (remove-keys clause-vars)
+                         (filter-vals (partial < 0)))
+            [clause-inits] (-> (rest evalled-clauses)
+                               reverse
                                (reduce [[] refs-map]
                                        (partial cond-clause-init cond-test result-var)))
             last-init ((= "" (.c-var last-clause))
@@ -2801,8 +2825,7 @@
   Emitter
   (emit [ast]
     (for [result-var (genlocal "andRslt")
-          expr (emit-cond-expr result-var (.clauses ast) "if (isNothing("
-                               (str "return(nothing);" line-sep))]
+          expr (emit-and-expr result-var (.clauses ast) (str "return(nothing);" line-sep))]
       expr)))
 
 
@@ -2810,7 +2833,7 @@
   Emitter
   (emit [ast]
     (for [result-var (genlocal "andRslt")
-          expr (emit-cond-expr result-var (.clauses ast) "if (isNothing(" "")]
+          expr (emit-and-expr result-var (.clauses ast) "")]
       expr))
 
   (tail-call [ast params return-constraints]
@@ -2998,7 +3021,7 @@
           constraints (traverse (.fixed params)
                                 (fn [sym]
                                   (for [var (map (lookup-sym sym) .c-var)
-                                        cs (sm/get-in-val [.fn-context .constraints var] [])]
+                                        cs (sm/get-in-val [.fn-context .constraints var] empty-constraints)]
                                     cs)))
           _ (reset-fn-context curr-context)
           arity-fn-var (global-var fn-name "protoDisp")
@@ -3929,4 +3952,3 @@
                               (send string-writer (fn [_]
                                                     (deliver waiter 'x)))))
           (extract waiter))))
-
