@@ -2112,13 +2112,6 @@ Value *integerLT(Value *arg0, Value *arg1) {
 // and others.
 // from http://waterjuice.org/c-source-code-for-sha1/
 
-typedef struct
-{
- uint32_t        State[5];
- uint32_t        Count[2];
- uint8_t         Buffer[64];
- } Sha1Context;
-
 #define SHA1_HASH_SIZE           ( 64 / 8 )
 
 typedef struct
@@ -2251,6 +2244,30 @@ Sha1Update( Context, finalcount, 8 );  // Should cause a Sha1TransformFunction()
    {
       Digest->bytes[i] = (uint8_t)((Context->State[i>>2] >> ((3-(i & 3)) * 8) ) & 255);
    }
+}
+
+void free_sha1(void *ptr) {
+#ifdef CHECK_MEM_LEAK
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      // __atomic_fetch_add(&free_strs, 1, __ATOMIC_ACQ_REL);
+#endif
+  free(ptr);
+}
+
+Value *malloc_sha1() {
+  Sha1Context *ctxt = (Sha1Context *)malloc(sizeof(Sha1Context));
+  Sha1Initialise(ctxt);
+#ifdef CHECK_MEM_LEAK
+  __atomic_fetch_add(&malloc_count, 1, __ATOMIC_ACQ_REL);
+#endif
+  return(opaqueValue(ctxt, free_sha1));
+}
+
+Value *finalize_sha1(Value *ctxt) {
+  int64_t shaVal;
+  Sha1Finalise(((Opaque *)ctxt)->ptr, (SHA1_HASH *)&shaVal);
+  dec_and_free(ctxt, 1);
+  return((Value *)integerValue(shaVal));
 }
 
 Value *integerSha1(Value *arg0) {
@@ -2622,6 +2639,24 @@ Value *maybeMap(Value *arg0, Value *arg1) {
   return(result);
 }
 
+void strSha1Update(Sha1Context *ctxt, Value *arg0) {
+  char *buffer;
+  int64_t len;
+  if (arg0->type == StringBufferType) {
+    String *strVal = (String *)arg0;
+    buffer = strVal->buffer;
+    len = strVal->len;
+  } else if (arg0->type == SubStringType) {
+    SubString *strVal = (SubString *)arg0;
+    buffer = strVal->buffer;
+    len = strVal->len;
+  }
+
+  Sha1Update(ctxt, (void *)&arg0->type, 8);
+  Sha1Update(ctxt, buffer, len);
+  return;
+}
+
 Value *strSha1(Value *arg0) {
   Integer **hash;
   char *buffer;
@@ -2660,6 +2695,7 @@ Value *strSha1(Value *arg0) {
     Sha1Update(&context, buffer, len);
     Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
     Integer *hashVal = (Integer *)integerValue(shaVal);
+  // TODO: I'm not sure why I do this
   #ifdef CHECK_MEM_LEAK
     if (refs == -1)
       __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);

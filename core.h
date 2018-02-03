@@ -11,6 +11,13 @@ extern void abort();
 
 #define VECTOR_ARRAY_LEN 32
 
+typedef struct
+{
+ uint32_t        State[5];
+ uint32_t        Count[2];
+ uint8_t         Buffer[64];
+ } Sha1Context;
+
 typedef void (Destructor)(void *);
 typedef struct Value {int64_t type; int32_t refs; struct Value* next;} Value;
 typedef struct {int64_t type; int32_t refs; int64_t numVal;} Integer;
@@ -251,3 +258,7 @@ Value *addFutureAction(Future *p, Value *action);
 String *nullTerm(Value *s);
 void show(Value *v);
 int64_t countSeq(Value *seq);
+Value *malloc_sha1();
+Value *finalize_sha1(Value *ctxt);
+void Sha1Update (Sha1Context* Context, void* Buffer, int64_t BufferSize);
+void strSha1Update(Sha1Context *ctxt, Value *arg0);

@@ -498,6 +498,7 @@
 
 ;; For types whose values can be hashed to an integer
 (defprotocol Hashable
+  (sha1-update [x context])
   (sha1 [x]
     ;; Compute the SHA1 hash of `x`
     (assert-result a (instance? Integer a))))
@@ -549,6 +550,12 @@
   (=* [x y]
     ;; Compare two values for equality
     (assert-result a (instance? Maybe a))))
+
+(defn sha1-init []
+  (inline C Opaque "return(malloc_sha1());"))
+
+(defn sha1-finalize [ctxt]
+  (inline C Integer "return(finalize_sha1(ctxt_0));"))
 
 (defn address-of [x]
   (inline C Integer "return(integerValue((long long)x_0));"))
@@ -884,6 +891,7 @@
   (show* [x _]
     (string-list x))
 
+  ;; TODO: this doesn't make any sense, remove
   Hashable
   (sha1 [f] 0)
   
@@ -959,7 +967,16 @@
   (<* [x y] (inline C Maybe "return(integerLT(x_0, y_1));"))
 
   Hashable
-  (sha1 [x] (inline C Integer "return(integerSha1(x_0));")))
+  (sha1-update [x ctxt]
+    (inline C Integer "
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->type, 8);
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->numVal, 8);
+  dec_and_free(x_0, 1);
+  return(ctxt_1);
+"))
+
+  (sha1 [x]
+    (inline C Integer "return(integerSha1(x_0));")))
 
 (extend-type Vector
   Associative
@@ -1087,6 +1104,13 @@
   (<* [x y] (inline C Maybe "return(strLT(x_0, y_1));"))
 
   Hashable
+  (sha1-update [x ctxt]
+    (inline C Integer "
+  strSha1Update(((Opaque *)ctxt_1)->ptr, x_0);
+  dec_and_free(x_0, 1);
+  return(ctxt_1);
+"))
+
   (sha1 [s]
     (inline C Integer "return(strSha1(s_0));")))
 
@@ -1112,8 +1136,24 @@
   (<* [x y] (inline C Maybe "return(symLT(x_0, y_1));"))
 
   Hashable
+  (sha1-update [x ctxt]
+    (inline C Integer "
+  SubString *subStrVal = (SubString *)x_0;
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->type, 8);
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)subStrVal->buffer, subStrVal->len);
+  dec_and_free(x_0, 1);
+  return(ctxt_1);
+"))
+
   (sha1 [s]
     (inline C Integer "return(symbolSha1(s_0));")))
+
+(defn sha1-update-type [x ctxt]
+  (inline C Integer "
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->type, 8);
+  dec_and_free(x_0, 1);
+  return(ctxt_1);
+"))
 
 (extend-type Maybe
   Type
@@ -1122,6 +1162,18 @@
             empty-vector))
 
   (type-name [_] "Maybe")
+  
+  Hashable
+  (sha1-update [x ctxt]
+    (sha1-update-type x ctxt)
+    (either (map x (fn [v]
+                     (sha1-update v ctxt)))
+            ctxt))
+  
+  (sha1 [x]
+    (let [ctxt (sha1-init)]
+      (sha1-update x ctxt)
+      (sha1-finalize ctxt)))
 
   Stringable
   (string-list [mv]
@@ -1179,6 +1231,20 @@
                                      (list* ",\n" indent " "
                                             (show* x (comp indent " ")))))
                     (list ")")))))
+
+  Hashable
+  (sha1-update [l ctxt]
+    (sha1-update-type l ctxt)
+    (reduce l ctxt (fn [ctxt x]
+                     (sha1-update x ctxt))))
+  
+  (sha1 [l]
+    ;; TODO: cache the hash in the struct
+    (let [ctxt (sha1-init)]
+      (sha1-update-type l ctxt)
+      (reduce l ctxt (fn [ctxt x]
+                       (sha1-update x ctxt)))
+      (sha1-finalize ctxt)))
 
   Container
   (apply* [mf vects]
@@ -1283,6 +1349,20 @@
                                      (list* ",\n" indent " "
                                             (show* x (comp indent " ")))))
                     (list "]")))))
+
+  Hashable
+  (sha1-update [x ctxt]
+    (sha1-update-type x ctxt)
+    (reduce x ctxt (fn [ctxt x]
+                     (sha1-update x ctxt))))
+  
+  (sha1 [v]
+    ;; TODO: cache the hash in the struct
+    (let [ctxt (sha1-init)]
+      (sha1-update-type v ctxt)
+      (reduce v ctxt (fn [ctxt x]
+                       (sha1-update x ctxt)))
+      (sha1-finalize ctxt)))
 
   Composition
   (zero [_] empty-vector)
@@ -1520,6 +1600,9 @@
                                      (list* ",\n" indent " "
                                             (show-kv kv indent))))
                     (list "}")))))
+  
+;; Hashable
+;; TODO: sort the contents of the hash-map by key value hash before reducing over the seq
 
   Seqable
   (seq [n]
@@ -1779,6 +1862,16 @@
   (show* [a indent]
     (comp (cons "<Agent " (show* (extract a) (comp indent "<      ")))))
 
+  Hashable
+  (sha1-update [x ctxt]
+    (sha1-update-type x ctxt)
+    (sha1-update (extract x) ctxt))
+  
+  (sha1 [x]
+    (let [ctxt (sha1-init)]
+      (sha1-update x ctxt)
+      (sha1-finalize ctxt)))
+
   Container
   (send* [agt f-and-args]
     (inline C Agent "
@@ -1843,6 +1936,9 @@
           (interpose (flat-map (vals set-map) string-list)
                      " ")
           (list "}")))
+
+;; Hashable
+;; TODO: sort the contents of the hash-map by key value hash before reducing over the seq
 
   Function
   (invoke [_ v]
