@@ -783,6 +783,11 @@
                                    (cons emitted x))))))))
 
 (extend-type List
+  Assertion
+  (check-constraint [constraints arg var file-name line-number]
+    (assert (instance? C-expr var))
+    (check-seq-constraints var constraints arg file-name line-number))
+
   Emitter
   (emit [asts]
     (traverse asts emit))
@@ -809,6 +814,12 @@
                              (fn [tail]
                                (store asts (dec (count asts))
                                       (tail-call tail params return-constraints)))))))))
+
+(extend-type HashSet
+  Assertion
+  (check-constraint [constraints arg var file-name line-number]
+    (assert (instance? C-expr var))
+    (check-seq-constraints var (seq constraints) arg file-name line-number)))
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn global-var
@@ -1019,33 +1030,6 @@
 
   (tail-call [ast params return-constraints] ast))
 
-(deftype ConstraintSet [l]
-  (assert (instance? List l))
-  
-  Stringable
-  (string-list [_] (list "<ConstraintSet " (str l) ">"))
-  
-  Collection
-  (count [_] (count l))
-
-  (empty? [_] (empty? l))
-
-  (conj [_ v]
-    (ConstraintSet (reduce l (list v) (fn [new-l old-v]
-                                        (either (and (= v old-v)
-                                                     (maybe new-l))
-                                                (conj new-l old-v))))))
-  
-  Seqable
-  (seq [_] l)
-
-  Assertion
-  (check-constraint [constraints arg var file-name line-number]
-    (assert (instance? C-expr var))
-    (check-seq-constraints var l arg file-name line-number)))
-
-(def empty-constraints (ConstraintSet empty-list))
-
 (defn add-constraint
   ([new-constraint sym]
    (let [file-name (ast/file-name sym)
@@ -1070,7 +1054,7 @@
      ;; Only set the type of the var if there is one and only one
      ;; asserted type number
      ;; _ (set-type sym asserted-type)
-     (comp (for [constraints (sm/get-in-val [.fn-context .constraints var] empty-constraints)
+     (comp (for [constraints (sm/get-in-val [.fn-context .constraints var] #{})
                  new (sm/when (every (seq constraints)
                                      (fn [old-constraint]
                                        (or (conflict new-constraint old-constraint
@@ -1080,7 +1064,7 @@
                  _ (sm/assoc-in-val [.fn-context .constraints var]
                                     (either (map (= new (seq constraints))
                                                  (fn [old]
-                                                   (ConstraintSet (conj old new-constraint))))
+                                                   (conj old new-constraint)))
                                             new))]
              empty-c-code)
            ;; TODO: just in case something slips through during development
@@ -1227,7 +1211,7 @@
                                 (.sym ast))))))
 
 (defn add-min-count-assert [ast var]
-  (for [constraints (sm/get-in-val [.fn-context .constraints var] empty-constraints)
+  (for [constraints (sm/get-in-val [.fn-context .constraints var] #{})
         ;; TODO: check to see if other min-count assertion is already here
         _ (sm/assoc-in-val [.fn-context .constraints var]
                            (conj constraints ast))]
@@ -1567,9 +1551,9 @@
   Assertion
   (get-param-constraints [sym]
     (for [c-info (lookup-sym sym)
-          constraints (sm/get-in-val [.fn-context .constraints (.c-var c-info)] empty-constraints)]
-      (ConstraintSet (map (.l constraints) (fn [constraint]
-                                             (update-sym constraint sym))))))
+          constraints (sm/get-in-val [.fn-context .constraints (.c-var c-info)] #{})]
+      (map constraints (fn [constraint]
+                         (update-sym constraint sym)))))
 
   Emitter
   (bind [binding]
@@ -1629,9 +1613,9 @@
   Assertion
   (get-param-constraints [sym]
     (for [c-info (lookup-sym sym)
-          constraints (sm/get-in-val [.fn-context .constraints (.c-var c-info)] empty-constraints)]
-      (ConstraintSet (map (.l constraints) (fn [constraint]
-                                           (update-sym constraint sym))))))
+          constraints (sm/get-in-val [.fn-context .constraints (.c-var c-info)] #{})]
+      (map constraints (fn [constraint]
+                         (update-sym constraint sym)))))
 
   Emitter
   (bind [binding]
@@ -2363,7 +2347,7 @@
           _ (traverse closures
                       (fn [[var sym]]
                         (traverse (seq (either (get new-constraints var)
-                                               empty-constraints))
+                                               #{}))
                                   (fn [constraint]
                                     (add-constraint constraint sym)))))
           closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
@@ -3022,8 +3006,7 @@
           constraints (traverse (.fixed params)
                                 (fn [sym]
                                   (for [var (map (lookup-sym sym) .c-var)
-                                        cs (sm/get-in-val [.fn-context .constraints var]
-                                                          empty-constraints)]
+                                        cs (sm/get-in-val [.fn-context .constraints var] #{})]
                                     cs)))
           _ (reset-fn-context curr-context)
           arity-fn-var (global-var fn-name "protoDisp")
