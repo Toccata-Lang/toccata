@@ -174,6 +174,8 @@
   (update-sym [constraint new-sym]
     (assert (instance? Tagged new-sym)))
 
+  (runtime-check [constraint var file-name line-number])
+
   (check-constraint [constraint arg var file-name line-number]
     ;; Check that a symbol (arg) and it's compiled expression (var) do not contradict
     ;; a constraint (constraint). And that the constraint does not conflict with an earlier one
@@ -1138,57 +1140,55 @@
                          (str x (spaces (- max-width (count x))) "   " y "\n"))))
            (maybe (abort)))))
 
-  (check-constraint [constraint arg expr file-name line-number]
-    (assert (instance? C-expr expr))
+  (runtime-check [constraint var file-name line-number]
     (let [file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
                             file-name)
-          formatted-path (either (empty? path)
-                                 (map path
-                                      (fn [[file line]]
-                                        (str file " " line))))
           sym-location (either (= "" file-name)
                                (str " at " file-name ", line " line-number))]
-      (for [line (line-macro arg "")
-            _ (add-constraint (update-path constraint file-name line-number)
-                              arg expr file-name line-number)
-            expr (comp (for [_ (sm/when-not (= UnknownType (.type-num expr)))
-                             bad-type-sym (sm/get-in-val [.constants .type-names (.type-num expr)]
-                                                         (.type-num expr))
-                             _ (comp (sm/when (type-nums (.type-num expr)))
-                                     (apply compilation-error
-                                            "Failed type assertion at"
-                                            (str file-name ":") (str line-number ".")
-                                            "\nExpected" (str "'" type-sym "', got")
-                                            (str "'" bad-type-sym "'.")
-                                            "\nAssertion from\n" 
-                                            (interpose formatted-path "\n")))]
-                         empty-c-code)
-                       (for [_ (sm/get-in-val [.fn-context .params (.c-var expr)])]
-                         empty-c-code)
-                       (sm/state-maybe (c-code ""
-                                               [line
-                                                "switch (" (.c-var expr) "->type) {"
-                                                (map (seq type-nums) (fn [type-num]
-                                                                       ["case " type-num ": "
-                                                                        line-sep]))
-                                                "break;" line-sep " default:\n"
-                                                "#ifndef EMBEDDED\n"
-                                                "fprintf(stderr, \"Invalid type of value for "
-                                                "parameter '" constrained-symbol "'"
-                                                sym-location "\\n\");\n"
-                                                "fprintf(stderr, \"Needed %s, got %s\\n\", \""
-                                                (str type-sym)
-                                                "\", extractStr(type_name(empty_list, "
-                                                (.c-var expr) ")));" line-sep
-                                                "fprintf(stderr, \"From: \\n"
-                                                (interpose formatted-path "\\n")
-                                                "\\n\");\n"
-                                                "#endif\n"
-                                                "abort();" line-sep
-                                                "}" line-sep]
-                                               [] (.type-num expr) {})))]
-        expr))))
+      ["switch (" var "->type) {" line-sep
+       (map (seq type-nums) (fn [type-num]
+                              ["case " type-num ": " line-sep]))
+       "break;" line-sep " default:\n"
+       "#ifndef EMBEDDED\n"
+       "fprintf(stderr, \"Invalid type of value for "
+       "parameter '" constrained-symbol "'" sym-location "\\n\");\n"
+       "fprintf(stderr, \"Needed %s, got %s\\n\", \""
+       (str type-sym)
+       "\", extractStr(type_name(empty_list, "
+       var ")));" line-sep
+       "fprintf(stderr, \"From: \\n"
+       (interpose (format-path constraint) "\\n")
+       "\\n\");\n"
+       "#endif\n"
+       "abort();" line-sep
+       "}" line-sep]))
+
+  (check-constraint [constraint arg expr file-name line-number]
+    (assert (instance? C-expr expr))
+    (for [line (line-macro arg "")
+          _ (add-constraint (update-path constraint file-name line-number)
+                            arg expr file-name line-number)
+          expr (comp (for [_ (sm/when-not (or (= UnknownType (.type-num expr))
+                                              (= IgnoreType (.type-num expr))))
+                           bad-type-sym (sm/get-in-val [.constants .type-names (.type-num expr)]
+                                                       (.type-num expr))
+                           _ (comp (sm/when (type-nums (.type-num expr)))
+                                   (apply compilation-error
+                                          "Failed type assertion at"
+                                          (str file-name ":") (str line-number ".")
+                                          "\nExpected" (str "'" type-sym "', got")
+                                          (str "'" bad-type-sym "'.")
+                                          "\nAssertion from\n" 
+                                          (interpose (format-path constraint) "\n")))]
+                       empty-c-code)
+                     (for [_ (sm/get-in-val [.fn-context .params (.c-var expr)])]
+                       empty-c-code)
+                     (sm/state-maybe (c-code ""
+                                             [line (runtime-check constraint (.c-var expr)
+                                                                  file-name line-number)]
+                                             [] (.type-num expr) {})))]
+      expr)))
 
 (extend-type ast/type-assertion
   Emitter
