@@ -3466,7 +3466,7 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
       if (n == valOrNode) {
 // TODO: untested code path
 fprintf(stderr, "bmi dissoc* 3\n");
-abort();
+// abort();
         // the key was not in the hash-map
         // so do nothing
         dec_and_free(n, 1);

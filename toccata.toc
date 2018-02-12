@@ -181,7 +181,7 @@
     (assert-result x (instance? sm/new-sm x)))
 
   (to-assertion [ast sym])
-  
+
   (conflict [new-constraint old-constraint file-name line-number])
 
   (restrict [new-constraint old-constraint]))
@@ -354,7 +354,7 @@
   (collapse-expressions* [x y]
     (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(.init x)
-                               ((< refs 2) "" [line-sep "incRef(" c-var ", " (dec refs) ");" line-sep])
+                               ((< refs 2) "" ["incRef(" c-var ", " (dec refs) ");" line-sep])
                                (.init y)])
                             (and (= "" c-var)
                                  (maybe [(.init x) (.init y)])))
@@ -407,8 +407,7 @@
   (collapse-expressions* [x y]
     (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(.init x)
-                               ((< refs 2) "" [line-sep "incRef(" c-var ", " (dec refs) ");"
-                                               line-sep])
+                               ((< refs 2) "" ["incRef(" c-var ", " (dec refs) ");" line-sep])
                                (.init y)])
                             (and (= "" c-var)
                                  (maybe [(.init x) (.init y)])))
@@ -462,8 +461,7 @@
   (collapse-expressions* [x y]
     (let [init (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(.init x)
-                               ((< refs 2) "" [line-sep "incRef(" c-var ", " (dec refs) ");"
-                                               line-sep])
+                               ((< refs 2) "" ["incRef(" c-var ", " (dec refs) ");" line-sep])
                                (.init y)])
                             (and (= "" c-var)
                                  (maybe [(.init x) (.init y)])))
@@ -530,7 +528,8 @@
   (assert (instance? Closures closed-over))
   ;; constraints   constraints on C variables 
   (assert (instance? HashMap constraints))
-  (assert (instance? HashMap context-syms))
+  ;; params        parameters passed to the function arity
+  (assert (instance? HashMap params))
 
   Stringable
   (string-list [_]
@@ -589,8 +588,7 @@
          :let [new-context (comp (-> curr-fn-context .context-syms)
                                  (-> curr-fn-context .syms))]
          _ (sm/set-val .fn-context (FunctionArityContext {} 0 {} new-context
-                                                         empty-closures {}
-                                                         []))]
+                                                         empty-closures {} {}))]
      curr-fn-context))
   ([new-fn-context]
    (for [curr-fn-context (sm/get-val .fn-context)
@@ -1055,14 +1053,15 @@
      ;; asserted type number
      ;; _ (set-type sym asserted-type)
      (comp (for [constraints (sm/get-in-val [.fn-context .constraints var] #{})
-                 new (sm/when (every (seq constraints)
-                                     (fn [old-constraint]
-                                       (or (conflict new-constraint old-constraint
-                                                     file-name line-number)
-                                           (restrict new-constraint old-constraint)
-                                           (maybe old-constraint)))))
+                 new (sm/when (map (every (seq constraints)
+                                          (fn [old-constraint]
+                                            (or (conflict new-constraint old-constraint
+                                                          file-name line-number)
+                                                (restrict new-constraint old-constraint)
+                                                (maybe old-constraint))))
+                                   set))
                  _ (sm/assoc-in-val [.fn-context .constraints var]
-                                    (either (map (= new (seq constraints))
+                                    (either (map (= new constraints)
                                                  (fn [old]
                                                    (conj old new-constraint)))
                                             new))]
@@ -1077,11 +1076,30 @@
 (deftype TypeConstraint [type-nums path type-sym constrained-symbol]
   (assert (instance? HashSet type-nums))
   (assert (instance? List path))
-  
+  (assert (instance? Maybe constrained-symbol))
+
+  Eq
+  (=* [x y]
+    (and (instance? TypeConstraint y)
+         (= type-nums (.type-nums y))
+         (maybe x)))
+
+  Hashable
+  (sha1-update [s ctxt]
+    (sha1-update-type s ctxt)
+    (sha1-update type-nums ctxt))
+
+  (sha1 [s]
+    (let [ctxt (sha1-init)]
+      (sha1-update-type s ctxt)
+      (sha1-update type-nums ctxt)
+      (sha1-finalize ctxt)))
+
   Stringable
   (string-list [_]
-    (list "<TypeConstraint " (str type-sym) " " (str path) " " (str constrained-symbol) ">"))
-  
+    (list "<TypeConstraint " (str type-sym) " " (str type-nums)
+          " " (str constrained-symbol) ">"))
+
   ;; TODO: should be Constraint eventually
   Assertion
   (to-assertion [constraint sym]
@@ -1089,11 +1107,11 @@
 
   Constraint
   (update-sym [_ new-sym]
-    (TypeConstraint type-nums path type-sym new-sym))
+    (TypeConstraint type-nums path type-sym (maybe new-sym)))
 
   (restrict [new-constraint old-constraint]
     (and (instance? TypeConstraint old-constraint)
-         (maybe (.type-nums old-constraint
+         (maybe (.type-nums new-constraint
                             (intersection type-nums (.type-nums old-constraint))))))
 
   (conflict [type1 type2 file-name line-number]
@@ -1199,7 +1217,7 @@
                "abort();" line-sep
                "}" line-sep]
               [] UnknownType {})))
-  
+
   Assertion
   (assert-type [ast]
     (maybe (.type-sym ast)))
@@ -1207,7 +1225,8 @@
   (add-assertion [ast]
     (flat-map (get-asserted-types (.type-sym ast) (ast/file-name ast) (ast/line-number ast))
               (fn [asserted] 
-                (add-constraint (TypeConstraint asserted (.path ast) (.type-sym ast) (.sym ast))
+                (add-constraint (TypeConstraint asserted (.path ast) (.type-sym ast)
+                                                (maybe (.sym ast)))
                                 (.sym ast))))))
 
 (defn add-min-count-assert [ast var]
@@ -1984,7 +2003,7 @@
                           var "->refs = -1;" line-sep "\n#\n"]
                      [(.decl value) "Value *" var ";\n"]
                      (.type-num value) (.refs-map value))])))
-  
+
   (tail-call [ast params return-constraints]
     (TailCall ast params return-constraints))
 
@@ -2003,7 +2022,7 @@
           (for [new-call-target (inline-expr (.call-target ast) (.args ast))
                 new-ast (inline-expr new-call-target arg-asts)]
             new-ast)))
-  
+
   (replace-bound-vars [ast subs]
     (ast/call-ast (replace-bound-vars (.call-target ast) subs)
                   (map (.args ast) (fn [ast]
@@ -2486,11 +2505,11 @@
   ([fn-sym fn-var params param-types body arity-fn-var]
    ;; TODO: this should be redundant
    ;; (assert (instance? String fn-var))
-   
+
    ;; TODO: find some way to say "not empty"
    ;; (assert (first body))
    (assert (instance? String arity-fn-var))
-   
+
    (either (and (empty? (filter body produces-code?))
                 (maybe (zero sm/state-maybe)))
            (let [return-constraints (filter body return-assertion?)
@@ -2706,7 +2725,7 @@
                                               (list [(str file-name ":")
                                                      (ast/line-number clause)])
                                               'Maybe
-                                              clause)
+                                              (maybe clause))
                               clause)
             expr (emit clause)]
         expr))))
@@ -2722,7 +2741,7 @@
                                               (list [(str file-name ":")
                                                      (ast/line-number clause)])
                                               'Maybe
-                                              clause)
+                                              (maybe clause))
                               clause)
             expr (emit clause)]
         expr))))
@@ -2892,7 +2911,7 @@
   Stringable
   (string-list [expr]
     (comp (list "<TailEither ") (list ">")))
-  
+
   ast/FileLineInfo
   (ast/file-name [_]
     (ast/file-name clause))
@@ -2921,8 +2940,7 @@
                          (filter-vals (partial < 0)))]
         (c-code ""
                 [(.init cond-val)
-                 "if (!isNothing(" cond-rslt ",\"" (ast/file-name ast) "\"," (ast/line-number ast)
-                 ")) {" line-sep
+                 "if (!isNothing(" cond-rslt ",\"\",0)) {" line-sep
                  (-> (.refs-map alt-val)
                      (filter-vals (partial < 0))
                      seq
@@ -2953,8 +2971,7 @@
         (c-init result-var
                 [(.init cond-val)
                  "Value *" result-var ";" line-sep
-                 "if (!isNothing(" cond-rslt ",\"" (ast/file-name ast) "\"," (ast/line-number ast)
-                 ")) {" line-sep
+                 "if (!isNothing(" cond-rslt ",\"\",0)) {" line-sep
                  (-> (.refs-map alt-val)
                      (filter-vals (partial < 0))
                      seq
@@ -3462,7 +3479,7 @@
                   _ (compilation-error (str "Trying to re-define type name: '" sym "' in module "
                                             file-name ", " (ast/line-number ast)))]
               "")
-            
+
             (for [type-val-sym (global-var "#type-val-")
                   :let [type-val-sym (rdr/tag type-val-sym
                                               (ast/file-name sym)
@@ -3501,9 +3518,9 @@
                     type-constructor
                     type-val-def))))))
 
-(def global-context (GlobalContext (FunctionArityContext {} 0 {} {} empty-closures {} [])
+(def global-context (GlobalContext (FunctionArityContext {} 0 {} {} empty-closures {} {})
                                    (RuntimeInit (FunctionArityContext
-                                                 {} 0 {} {} empty-closures {} [])
+                                                 {} 0 {} {} empty-closures {} {})
                                                 [])
                                    {}                       ;; map for module info
                                    {}                       ;; map for static fns
