@@ -167,27 +167,6 @@
   (bind [binding evalled]
     (assert-result x (instance? sm/new-sm x))))
 
-(defprotocol Constraint
-  (update-path [constraint file-name line-number]
-    (.path constraint (cons [(str file-name ":") line-number] (.path constraint))))
-
-  (update-sym [constraint new-sym]
-    (assert (instance? Tagged new-sym)))
-
-  (runtime-check [constraint var file-name line-number])
-
-  (check-constraint [constraint arg var file-name line-number]
-    ;; Check that a symbol (arg) and it's compiled expression (var) do not contradict
-    ;; a constraint (constraint). And that the constraint does not conflict with an earlier one
-    ;; Adds code to check at runtime if cannot rule out conflict
-    (assert-result x (instance? sm/new-sm x)))
-
-  (to-assertion [ast sym])
-
-  (conflict [new-constraint old-constraint file-name line-number])
-
-  (restrict [new-constraint old-constraint]))
-
 (defprotocol Assertion
   (get-param-constraints [_]
     (assert-result x (instance? sm/new-sm x)))
@@ -488,6 +467,30 @@
                   c-init
                   list-c-code
                   vector-c-code))
+
+(defprotocol Constraint
+  (update-path [constraint file-name line-number]
+    (.path constraint (cons [(str file-name ":") line-number] (.path constraint))))
+
+  (update-sym [constraint new-sym]
+    (assert (instance? Tagged new-sym)))
+
+  (runtime-check [constraint var file-name line-number])
+  
+  (static-check [constraint expr file-name line-number])
+
+  (check-constraint [constraint ast expr file-name line-number]
+    ;; Check that a ast and it's compiled expression do not contradict
+    ;; a constraint (constraint). And that the constraint does not conflict with an earlier one
+    ;; Adds code to check at runtime if cannot rule out conflict
+    (assert (instance? C-expr expr))
+    (assert-result x (instance? sm/new-sm x)))
+
+  (to-assertion [ast sym])
+
+  (conflict [new-constraint old-constraint file-name line-number])
+
+  (restrict [new-constraint old-constraint]))
 
 (defn collapse-expressions [cs]
   (either (and (empty? cs) (maybe empty-c-code))
@@ -806,9 +809,8 @@
 
 (extend-type List
   Assertion
-  (check-constraint [constraints arg var file-name line-number]
-    (assert (instance? C-expr var))
-    (check-seq-constraints var constraints arg file-name line-number))
+  (check-constraint [constraints ast expr file-name line-number]
+    (check-seq-constraints expr constraints ast file-name line-number))
 
   Emitter
   (emit [asts]
@@ -839,9 +841,8 @@
 
 (extend-type HashSet
   Assertion
-  (check-constraint [constraints arg var file-name line-number]
-    (assert (instance? C-expr var))
-    (check-seq-constraints var (seq constraints) arg file-name line-number)))
+  (check-constraint [constraints ast expr file-name line-number]
+    (check-seq-constraints expr (seq constraints) ast file-name line-number)))
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn global-var
@@ -1052,50 +1053,50 @@
 
   (tail-call [ast params return-constraints] ast))
 
-(defn add-constraint
-  ([new-constraint sym]
-   (let [file-name (ast/file-name sym)
-         file-name (either (and (= file-name 'core)
-                                (maybe "$TOCCATA_DIR/core.toc"))
-                           file-name)
-         line-number (ast/line-number sym)]
-     (for [expr (comp (lookup-sym sym)
-                      (compilation-error "Invalid assertion at"
-                                         (str file-name ":") (str line-number ".")
-                                         "Symbol" (str "'" sym "' not found.")))
-           _ (add-constraint new-constraint sym expr file-name line-number)]
-       empty-c-code)))
-  ([new-constraint arg expr file-name line-number]
-   (let [var (.c-var expr)
-         sym (either (and (or (instance? Symbol arg)
-                              (instance? rdr/tagged-symbol arg))
-                          (maybe arg))
-                     "")]
-     ;; TODO: how to set type in a generic 'add-constraint'
-     ;; asserted-type (get-asserted-type type-sym file-name line-number)
-     ;; Only set the type of the var if there is one and only one
-     ;; asserted type number
-     ;; _ (set-type sym asserted-type)
-     (comp (for [constraints (sm/get-in-val [.fn-context .constraints var] #{})
-                 new (sm/when (map (every (seq constraints)
-                                          (fn [old-constraint]
-                                            (or (conflict new-constraint old-constraint
-                                                          file-name line-number)
-                                                (restrict new-constraint old-constraint)
-                                                (maybe old-constraint))))
-                                   set))
-                 _ (sm/assoc-in-val [.fn-context .constraints var]
-                                    (either (map (= new constraints)
-                                                 (fn [old]
-                                                   (conj old new-constraint)))
-                                            new))]
-             empty-c-code)
-           ;; TODO: just in case something slips through during development
-           (for [_ (debug "Could not add constraint for" (str "'" sym "'") "at"
-                          (str file-name ":") line-number)
-                 _ (debug new-constraint)]
-             empty-c-code)
-           (sm/state-maybe empty-c-code)))))
+(defn add-constraint [new-constraint arg expr file-name line-number]
+  (let [var (.c-var expr)
+        sym (either (and (or (instance? Symbol arg)
+                             (instance? rdr/tagged-symbol arg))
+                         (maybe arg))
+                    "")]
+    ;; TODO: how to set type in a generic 'add-constraint'
+    ;; asserted-type (get-asserted-type type-sym file-name line-number)
+    ;; Only set the type of the var if there is one and only one
+    ;; asserted type number
+    ;; _ (set-type sym asserted-type)
+    (comp (for [constraints (sm/get-in-val [.fn-context .constraints var] #{})
+                new (sm/when (map (every (seq constraints)
+                                         (fn [old-constraint]
+                                           (or (conflict new-constraint old-constraint
+                                                         file-name line-number)
+                                               (restrict new-constraint old-constraint)
+                                               (maybe old-constraint))))
+                                  set))
+                _ (sm/assoc-in-val [.fn-context .constraints var]
+                                   (either (map (= new constraints)
+                                                (fn [old]
+                                                  (conj old new-constraint)))
+                                           new))]
+            empty-c-code)
+          ;; TODO: just in case something slips through during development
+          (for [_ (debug "Could not add constraint for" (str "'" sym "'") "at"
+                         (str file-name ":") line-number)
+                _ (debug new-constraint)]
+            empty-c-code)
+          (sm/state-maybe empty-c-code))))
+
+(defn constrain-symbol [new-constraint sym]
+  (let [file-name (ast/file-name sym)
+        file-name (either (and (= file-name 'core)
+                               (maybe "$TOCCATA_DIR/core.toc"))
+                          file-name)
+        line-number (ast/line-number sym)]
+    (for [expr (comp (lookup-sym sym)
+                     (compilation-error "Invalid assertion at"
+                                        (str file-name ":") (str line-number ".")
+                                        "Symbol" (str "'" sym "' not found.")))
+          _ (add-constraint new-constraint sym expr file-name line-number)]
+      empty-c-code)))
 
 (deftype TypeConstraint [type-nums path type-sym constrained-symbol]
   (assert (instance? HashSet type-nums))
@@ -1185,23 +1186,35 @@
        "#endif\n"
        "abort();" line-sep
        "}" line-sep]))
+  
+  (static-check [constraint expr file-name line-number]
+    (for [_ (sm/when-not (or (= UnknownType (.type-num expr))
+                             (= IgnoreType (.type-num expr))))
+          bad-type-sym (sm/get-in-val [.constants .type-names (.type-num expr)]
+                                      (.type-num expr))
+          _ (comp (sm/when (type-nums (.type-num expr)))
+                  (apply compilation-error
+                         "Failed type assertion at"
+                         (str file-name ":") (str line-number ".")
+                         "\nExpected" (str "'" type-sym "', got")
+                         (str "'" bad-type-sym "'.")
+                         "\nAssertion from\n" 
+                         (interpose (format-path constraint) "\n")))]
+      empty-c-code)))
 
+(def Constraints (comp TypeConstraint))
+
+(extend-type Constraints
+  Constraint
   (check-constraint [constraint ast expr file-name line-number]
+    ;; Check that a ast and it's compiled expression do not contradict
+    ;; a constraint (constraint). And that the constraint does not conflict with an earlier one
+    ;; Adds code to check at runtime if cannot rule out conflict
     (assert (instance? C-expr expr))
+    (assert-result x (instance? sm/new-sm x))
+
     (for [line (line-macro ast "")
-          expr (comp (for [_ (sm/when-not (or (= UnknownType (.type-num expr))
-                                              (= IgnoreType (.type-num expr))))
-                           bad-type-sym (sm/get-in-val [.constants .type-names (.type-num expr)]
-                                                       (.type-num expr))
-                           _ (comp (sm/when (type-nums (.type-num expr)))
-                                   (apply compilation-error
-                                          "Failed type assertion at"
-                                          (str file-name ":") (str line-number ".")
-                                          "\nExpected" (str "'" type-sym "', got")
-                                          (str "'" bad-type-sym "'.")
-                                          "\nAssertion from\n" 
-                                          (interpose (format-path constraint) "\n")))]
-                       empty-c-code)
+          expr (comp (static-check constraint expr file-name line-number)
                      (for [_ (sm/when (instance? Tagged ast))
                            _ (add-constraint (update-path constraint file-name line-number)
                                              ast expr file-name line-number)]
@@ -1252,9 +1265,9 @@
   (add-assertion [ast]
     (flat-map (get-asserted-types (.type-sym ast) (ast/file-name ast) (ast/line-number ast))
               (fn [asserted] 
-                (add-constraint (TypeConstraint asserted (.path ast) (.type-sym ast)
-                                                (maybe (.sym ast)))
-                                (.sym ast))))))
+                (constrain-symbol (TypeConstraint asserted (.path ast) (.type-sym ast)
+                                                  (maybe (.sym ast)))
+                                  (.sym ast))))))
 
 (defn add-min-count-assert [ast var]
   (for [constraints (sm/get-in-val [.fn-context .constraints var] #{})
@@ -2404,7 +2417,7 @@
                         (traverse (seq (either (get new-constraints var)
                                                #{}))
                                   (fn [constraint]
-                                    (add-constraint constraint sym)))))
+                                    (constrain-symbol constraint sym)))))
           closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
       (let [closures (-> closures
                          (map (fn [[arg]] arg))
@@ -2762,12 +2775,12 @@
           file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
                             file-name)]
-      (for [_ (add-constraint (TypeConstraint #{MaybeType}
-                                              (list [(str file-name ":")
-                                                     (ast/line-number clause)])
-                                              'Maybe
-                                              (maybe clause))
-                              clause)
+      (for [_ (constrain-symbol (TypeConstraint #{MaybeType}
+                                                (list [(str file-name ":")
+                                                       (ast/line-number clause)])
+                                                'Maybe
+                                                (maybe clause))
+                                clause)
             expr (emit clause)]
         expr))))
 
@@ -2778,12 +2791,12 @@
           file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
                             file-name)]
-      (for [_ (add-constraint (TypeConstraint #{MaybeType}
-                                              (list [(str file-name ":")
-                                                     (ast/line-number clause)])
-                                              'Maybe
-                                              (maybe clause))
-                              clause)
+      (for [_ (constrain-symbol (TypeConstraint #{MaybeType}
+                                                (list [(str file-name ":")
+                                                       (ast/line-number clause)])
+                                                'Maybe
+                                                (maybe clause))
+                                clause)
             expr (emit clause)]
         expr))))
 
