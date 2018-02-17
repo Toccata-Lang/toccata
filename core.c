@@ -3470,7 +3470,6 @@ fprintf(stderr, "bmi dissoc* 3\n");
         // the key was not in the hash-map
         // so do nothing
         dec_and_free(n, 1);
-        incRef(arg0, 1);
         return(arg0);
       } else if (n == (Value *)0 && __builtin_popcount(node->bitmap) == 1) {
 // TODO: untested code path
@@ -3811,7 +3810,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
   if (subNode == (Value *)0) {
 // TODO: untested code path
 fprintf(stderr, "arrayNode dissoc* 1\n");
-abort();
+// abort();
     // do nothing
     incRef(arg0, 1);
     dec_and_free(newShift, 1);
