@@ -3290,11 +3290,9 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
       Value *newShift = (Value *)integerValue(shift + 5);
       Value *n = assoc((List *)0, incRef(valOrNode, 1), key, val, arg3, newShift);
       if (n == valOrNode) {
-// TODO: untested code path
-fprintf(stderr, "bmi assoc* 3!!\n");
-abort();
         // the key was already associated with the value
         // so do nothing
+        dec_and_free(arg4, 1);
         dec_and_free(n, 1);
         return(arg0);
       } else {
@@ -3305,14 +3303,22 @@ abort();
         return((Value *)newNode);
       }
     } else if (equal(incRef(key, 1), incRef(keyOrNull, 1))) {
-      // if the keyOrNull points to a value that is equal to key
-      // create new hash-map with valOrNode replaced by val
-      // clone node and add val to it
-      BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, key, val);
-      dec_and_free((Value *)node, 1);
-      dec_and_free((Value *)arg3, 1);
-      dec_and_free((Value *)arg4, 1);
-      return((Value *)newNode);
+      if (equal(incRef(val, 1), incRef(valOrNode, 1))) {
+        dec_and_free(arg1, 1);
+        dec_and_free(arg2, 1);
+        dec_and_free(arg3, 1);
+        dec_and_free(arg4, 1);
+        return(arg0);
+      } else {
+        // if the keyOrNull points to a value that is equal to key
+        // create new hash-map with valOrNode replaced by val
+        // clone node and add val to it
+        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, key, val);
+        dec_and_free((Value *)node, 1);
+        dec_and_free((Value *)arg3, 1);
+        dec_and_free((Value *)arg4, 1);
+        return((Value *)newNode);
+      }
     } else {
       // there is already a key/val pair at the position where key
       // would be placed. Extend tree a level
@@ -3329,7 +3335,8 @@ abort();
         incRef((Value *)keyOrNull, 1);
         incRef((Value *)valOrNode, 1);
 
-        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, (Value *)newLeaf);
+        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0,
+                                                             (Value *)newLeaf);
         dec_and_free((Value *)node, 1);
         dec_and_free(arg3, 1);
         dec_and_free(arg4, 1);
@@ -3464,18 +3471,15 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
       Value *newShift = (Value *)integerValue(shift + 5);
       Value *n = dissoc((List *)0, incRef(valOrNode, 1), key, arg2, newShift);
       if (n == valOrNode) {
-// TODO: untested code path
-fprintf(stderr, "bmi dissoc* 3\n");
-// abort();
         // the key was not in the hash-map
         // so do nothing
         dec_and_free(n, 1);
+        dec_and_free(arg3, 1);
         return(arg0);
-      } else if (n == (Value *)0 && __builtin_popcount(node->bitmap) == 1) {
-// TODO: untested code path
-fprintf(stderr, "bmi dissoc* 4\n");
-abort();
+      } else if (n == (Value *)&emptyBMI && __builtin_popcount(node->bitmap) == 1) {
         // the subtree is now empty, and this node only points to it, so propagate
+        dec_and_free(arg0, 1);
+        dec_and_free(arg3, 1);
         return(n);
       } else {
         // clone node and add n to it
@@ -3520,6 +3524,7 @@ abort();
     } else {
       // there is already a key/val pair at the position where key
       // would be. Do nothing
+      dec_and_free(arg3, 1);
       return(arg0);
     }
   } else {
@@ -3808,11 +3813,10 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
 
   Value *subNode = node->array[idx];
   if (subNode == (Value *)0) {
-// TODO: untested code path
-fprintf(stderr, "arrayNode dissoc* 1\n");
-// abort();
     // do nothing
-    incRef(arg0, 1);
+    dec_and_free(arg1, 1);
+    dec_and_free(arg2, 1);
+    dec_and_free(arg3, 1);
     dec_and_free(newShift, 1);
     return(arg0);
   } else {
