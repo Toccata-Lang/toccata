@@ -4169,3 +4169,15 @@ int64_t countSeq(Value *seq) {
   dec_and_free((Value *)len, 1);
   return(result);
 }
+
+Value *reifiedTypeArgs(Value *x) {
+  if (x->type < TypeCount) {
+    fprintf(stderr, "'type-args' undefined for %s (%" PRId64 ")\n",
+            extractStr(type_name(empty_list, x)), x->type);
+    abort();
+  }
+  Value *typeArgs = ((ReifiedVal *)x)->typeArgs;
+  incRef(typeArgs, 1);
+  dec_and_free(x, 1);
+  return(typeArgs);
+}

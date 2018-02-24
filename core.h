@@ -262,3 +262,4 @@ Value *malloc_sha1();
 Value *finalize_sha1(Value *ctxt);
 void Sha1Update (Sha1Context* Context, void* Buffer, int64_t BufferSize);
 void strSha1Update(Sha1Context *ctxt, Value *arg0);
+Value *reifiedTypeArgs(Value *x);
