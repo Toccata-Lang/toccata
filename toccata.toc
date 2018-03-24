@@ -737,6 +737,22 @@
                          dispatcher (get (.dispatchers proto-fn) num-args)]
                      [dispatcher s])))))
 
+(defn get-proto-impls-sym [fn-sym num-args]
+  (sm/new-sm (fn [s]
+               (assert (instance? GlobalContext s))
+               (or (let [namespace (either (extract-sym-path s fn-sym)
+                                           (ast/file-name fn-sym))]
+                     (for [module (get (.modules s) namespace)
+                           proto-fn (get (.proto-fns module) fn-sym)
+                           dispatcher (get (.dispatchers proto-fn) num-args)
+                           impls-sym (get dispatcher .impls-sym)]
+                       [impls-sym s]))
+                   (for [module (get (.modules s) 'core)
+                         proto-fn (get (.proto-fns module) fn-sym)
+                         dispatcher (get (.dispatchers proto-fn) num-args)
+                         impls-sym (get dispatcher .impls-sym)]
+                     [impls-sym s])))))
+
 (deftype ProtoImpl [dispatch-type c-var ast]
   (assert (instance? Integer dispatch-type))
   (assert (instance? ast/SymbolOrString c-var))
@@ -2143,13 +2159,15 @@
 (def nth-sym (rdr/tag 'nth))
 
 (defn call-dyn-unknown-type [target args ast]
-  (let [num-args (count args)]
+  (let [num-args (count args)
+        num-invoke-args (inc num-args)]
     (for [arity-sym (genlocal "arity")
           variadic-sym (genlocal "dynArgs")
           fn-sym (genlocal "fn")
           result-sym (genlocal "rslt")
-          invoke-arity-sym (map (lookup-core-fn-arity invoke-sym (inc num-args))
+          invoke-arity-sym (map (lookup-core-fn-arity invoke-sym num-invoke-args)
                                 .c-var)
+          impls-sym (get-proto-impls-sym invoke-sym num-invoke-args)
           ;; _ (comp (sm/update-in-val [.other 'dyn-unknown-sites] inc)
           ;;         (sm/assoc-in-val [.other 'dyn-unknown-sites] 1))
           line (line-macro ast "// dynamic unknown type")]
@@ -2157,8 +2175,20 @@
         (c-init result-sym
                 [line "Value *" result-sym ";" line-sep
                  "if((" (.c-var target) ")->type != FunctionType) {" line-sep
+                 "FnArity *_arity = (FnArity *)findProtoImpl(" (.c-var target)
+                 "->type, &" impls-sym ");" line-sep
+                 "if(_arity == (FnArity *)0) {" line-sep
+                 "fprintf(stderr, \"\\n*** No implementation of 'invoke' with "
+                 (str num-invoke-args) " arguments for type: %s (%\" PRId64 \") at "
+                 (ast/file-name ast) ": " (str (ast/line-number ast)) "\\n\"," line-sep
+                 "extractStr(type_name(empty_list, " (.c-var target) ")), " (.c-var target)
+                 "->type);" line-sep
+                 "abort();" line-sep
+                 "}" line-sep
+                 "FnType" num-invoke-args " *_fn = (FnType" num-invoke-args
+                 " *)_arity->fn;" line-sep
 
-                 result-sym " = " invoke-arity-sym "(empty_list, "
+                 result-sym " = _fn(_arity->closures, "
                  (to-str (interpose (conj args (.c-var target)) ", "))
                  ");" line-sep "} else {" line-sep
 

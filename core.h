@@ -165,6 +165,7 @@ FnArity *findFnArity(Value *fnVal, int64_t argCount);
 ReifiedVal *malloc_reified(int implCount);
 Promise *malloc_promise();
 
+Value *findProtoImpl(int64_t type, ProtoImpls *impls);
 void startWorkers();
 void replaceWorker();
 void waitForWorkers();
