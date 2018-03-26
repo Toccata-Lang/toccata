@@ -201,8 +201,6 @@
 (defprotocol C-Code
   (check-seq-constraints [var assertions arg file-name line-number])
 
-  (static-len [_] nothing)
-
   (collapse-expressions* [x y]))
 
 ;; information about a compiled expression(s)
@@ -403,8 +401,6 @@
               (.type-num y)
               refs-map)))
 
-  (static-len [_] (maybe len))
-
   Emitter
   (emit [x]
     (sm/state-maybe x)))
@@ -456,7 +452,6 @@
               [(.decl x) (.decl y)]
               (.type-num y)
               refs-map)))
-  (static-len [_] (maybe len))
 
   Emitter
   (emit [x]
@@ -1352,7 +1347,9 @@
                             (intersection type-nums (.type-nums old-constraint))))))
 
   (conflict [type1 type2 file-name line-number]
-    (and (empty? (intersection type-nums (.type-nums type2)))
+    (and (flat-map (get type2 .type-nums)
+                   (fn [other-type-nums]
+                     (empty? (intersection type-nums other-type-nums))))
          (conflicting-assertions (cons (str "'" type-sym "' from:") (format-path type1))
                                  (cons (str "'" (.type-sym type2)  "' from:") (format-path type2))
                                  file-name line-number)))
@@ -1454,23 +1451,19 @@
        "}" line-sep]))
 
   (static-check [constraint expr file-name line-number]
-    (for [expr-count (sm/when (static-len expr))
-          _ (comp (sm/when (<= min-count expr-count))
-                  (apply compilation-error
-                         "Failed minimum count assertion at"
-                         (str file-name ":") (str line-number ".")
-                         "\nNeeded" min-count "elements, got" expr-count
-                         "\nAssertion from\n"
-                         (interpose (format-path constraint) "\n")))]
+    (for [constraints (get-constraints (.c-var expr))
+          :when (every (seq constraints)
+                       (fn [expr-constraint]
+                         (conflict constraint expr-constraint file-name line-number)))]
       empty-c-code)))
 
-(deftype LengthConstraint [length path constrained-symbol]
+(deftype StaticLengthConstraint [length path constrained-symbol]
   (assert (instance? List path))
   (assert (instance? Maybe constrained-symbol))
 
   Eq
   (=* [x y]
-    (and (instance? LengthConstraint y)
+    (and (instance? StaticLengthConstraint y)
          (= length (.length y))
          (maybe x)))
 
@@ -1487,7 +1480,7 @@
 
   Stringable
   (string-list [_]
-    (list "<LengthConstraint " (str length) " " (str constrained-symbol) ">"))
+    (list "<StaticLengthConstraint " (str length) " " (str constrained-symbol) ">"))
 
   ;; TODO: should be Constraint eventually
   Assertion
@@ -1496,7 +1489,7 @@
 
   Constraint
   (update-sym [_ new-sym]
-    (LengthConstraint length path (maybe new-sym)))
+    (StaticLengthConstraint length path (maybe new-sym)))
 
   (restrict [new-constraint old-constraint]
     nothing)
@@ -1515,15 +1508,7 @@
     [])
 
   (static-check [constraint expr file-name line-number]
-    (for [expr-count (sm/when (static-len expr))
-          _ (comp (sm/when (= length expr-count))
-                  (apply compilation-error
-                         "Failed count assertion at"
-                         (str file-name ":") (str line-number ".")
-                         "\nNeeded" length "elements, got" expr-count
-                         "\nAssertion from\n"
-                         (interpose (format-path constraint) "\n")))]
-      empty-c-code)))
+    (zero sm/state-maybe)))
 
 (extend-type MinCountConstraint
   Constraint
@@ -1536,20 +1521,25 @@
                                              file-name line-number))))))
 
 (def Constraints (comp TypeConstraint
-                       LengthConstraint
+                       StaticLengthConstraint
                        MinCountConstraint))
 
 (extend-type Constraints
   Constraint
   (check-constraint [constraint ast expr file-name line-number]
-    ;; Check that a ast and it's compiled expression do not contradict
+    ;; Check that an ast and it's compiled expression do not contradict
     ;; a constraint (constraint). And that the constraint does not conflict with an earlier one
     ;; Adds code to check at runtime if cannot rule out conflict
     (assert (instance? C-expr expr))
     (assert-result x (instance? sm/new-sm x))
 
     (for [line (line-macro ast "")
-          expr (comp (static-check constraint expr file-name line-number)
+          expr (comp (for [params get-params
+                           :when (get params (.c-var expr))
+                           _ (add-constraint (update-path constraint file-name line-number)
+                                             ast expr file-name line-number)]
+                       empty-c-code)
+                     (static-check constraint expr file-name line-number)
                      (for [_ (sm/when (instance? Tagged ast))
                            _ (add-constraint (update-path constraint file-name line-number)
                                              ast expr file-name line-number)]
@@ -1557,9 +1547,6 @@
                                [line (runtime-check constraint (.c-var expr)
                                                     file-name line-number)]
                                [] (.type-num expr) {}))
-                     (for [params get-params
-                           :when (get params (.c-var expr))]
-                       empty-c-code)
                      (sm/state-maybe (c-code ""
                                              [line (runtime-check constraint (.c-var expr)
                                                                   file-name line-number)]
@@ -1812,9 +1799,12 @@
   (for [_ (sm/when (= target 'vector))
         vect-sym (genlocal "newVect")
         result-sym (genlocal "rslt")
-        _ (check-constraint (LengthConstraint (count args) empty-list nothing)
-                            '_ (c-code result-sym [] [] UnknownType {})
-                            (ast/file-name target) (ast/line-number target))
+        _ (add-constraint (StaticLengthConstraint (count args)
+                                                  (list [(ast/file-name target)
+                                                         (ast/line-number target)])
+                                                  nothing)
+                          '_ (c-code result-sym [] [] UnknownType {})
+                          (ast/file-name target) (ast/line-number target))
         line (line-macro target "// call-vector")]
     (comp* (vector-c-code "" [] [] VectorType {} (count args))
            (comp args
@@ -1834,9 +1824,12 @@
         line (line-macro target "// call-list")
         list-sym (genlocal "newList")
         result-sym (genlocal "rslt")
-        _ (check-constraint (LengthConstraint (count args) empty-list nothing)
-                            '_ (c-code result-sym [] [] UnknownType {})
-                            (ast/file-name target) (ast/line-number target))]
+        _ (add-constraint (StaticLengthConstraint (count args)
+                                                  (list [(ast/file-name target)
+                                                         (ast/line-number target)])
+                                                  nothing)
+                          '_ (c-code result-sym [] [] UnknownType {})
+                          (ast/file-name target) (ast/line-number target))]
     (comp* (list-c-code "" [] [] ListType {} (count args))
            (comp args
                  [(list-c-code result-sym
