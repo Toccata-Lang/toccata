@@ -32,12 +32,12 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "")
+(def line-sep "\n")
 
 (defn line-macro [ast marker]
   (let [file-name (ast/file-name ast)]
     (sm/state-maybe (either (= "" file-name)
-                            ["\n" marker "\n#line "
+                            ["\n" marker "\n// #line "
                              (str (ast/line-number ast)) " " "\""
                              (either (and (= 'core file-name)
                                           (maybe path-to-core))
@@ -1448,14 +1448,7 @@
        "\\n\");"
        "\n#endif\n"
        "abort();" line-sep
-       "}" line-sep]))
-
-  (static-check [constraint expr file-name line-number]
-    (for [constraints (get-constraints (.c-var expr))
-          :when (every (seq constraints)
-                       (fn [expr-constraint]
-                         (conflict constraint expr-constraint file-name line-number)))]
-      empty-c-code)))
+       "}" line-sep])))
 
 (deftype StaticLengthConstraint [length path constrained-symbol]
   (assert (instance? List path))
@@ -1512,6 +1505,14 @@
 
 (extend-type MinCountConstraint
   Constraint
+  (static-check [constraint expr file-name line-number]
+    (for [constraints (get-constraints (.c-var expr))
+          :when (some (seq constraints)
+                      (fn [expr-constraint]
+                        (flat-map (get expr-constraint .length)
+                                  (partial <= (.min-count constraint)))))]
+      empty-c-code))
+
   (conflict [type1 type2 file-name line-number]
     (flat-map (get type2 .length)
               (fn [len]
@@ -1533,25 +1534,27 @@
     (assert (instance? C-expr expr))
     (assert-result x (instance? sm/new-sm x))
 
-    (for [line (line-macro ast "")
-          expr (comp (for [params get-params
-                           :when (get params (.c-var expr))
-                           _ (add-constraint (update-path constraint file-name line-number)
-                                             ast expr file-name line-number)]
-                       empty-c-code)
-                     (static-check constraint expr file-name line-number)
-                     (for [_ (sm/when (instance? Tagged ast))
-                           _ (add-constraint (update-path constraint file-name line-number)
-                                             ast expr file-name line-number)]
-                       (c-code ""
-                               [line (runtime-check constraint (.c-var expr)
-                                                    file-name line-number)]
-                               [] (.type-num expr) {}))
-                     (sm/state-maybe (c-code ""
-                                             [line (runtime-check constraint (.c-var expr)
-                                                                  file-name line-number)]
-                                             [] (.type-num expr) {})))]
-      expr)))
+    (comp (for [params get-params
+                :when (get params (.c-var expr))
+                _ (add-constraint (update-path constraint file-name line-number)
+                                  ast expr file-name line-number)]
+            empty-c-code)
+          (static-check constraint expr file-name line-number)
+          (for [_ (sm/when (instance? Tagged ast))
+                _ (add-constraint (update-path constraint file-name line-number)
+                                  ast expr file-name line-number)
+                line (line-macro ast "")]
+            (c-code ""
+                    [line
+                     (runtime-check constraint (.c-var expr) file-name line-number)]
+                    [] (.type-num expr) {}))
+          (flat-map (line-macro ast "")
+                    (fn [line]
+                      (sm/state-maybe (c-code ""
+                                              [line
+                                               (runtime-check constraint (.c-var expr)
+                                                              file-name line-number)]
+                                              [] (.type-num expr) {})))))))
 
 (extend-type ast/type-assertion
   Emitter
@@ -2149,25 +2152,32 @@
              (interpose (cons "empty_list" (seq (map arg-vars .c-var))) ", ") ");" line-sep]
             [] (.type-num arity-info) {})))
 
-(defn call-static-variadic [target arg-vars ast]
-  (for [arity-info (lookup-static-arity (.c-var target) 'variadic)
-        ;; _ (comp (sm/update-in-val [.other 'static-variadic-sites] inc)
-        ;;         (sm/assoc-in-val [.other 'static-variadic-sites] 1))
-        variadic-sym (genlocal "varArgs")
-        result-sym (genlocal "rslt")
-        line (line-macro ast "// static-variadic")]
-    (c-init result-sym
-            [line "List *" variadic-sym " = empty_list;" line-sep
-             (map (reverse arg-vars)
-                  (fn [arg-sym]
-                    (str variadic-sym " = (List *)listCons("
-                         "(Value *)" arg-sym
-                         ", " variadic-sym ");" line-sep)))
-             "Value *" result-sym " = " (.c-var arity-info) "(empty_list, (Value *)"
-             variadic-sym ");" line-sep]
-            []
-            (.type-num arity-info)
-            {})))
+(defn call-static-variadic [target args ast]
+  (let [file-name (ast/file-name ast)
+        line-number (ast/line-number ast)]
+    (for [arity-info (lookup-static-arity (.c-var target) 'variadic)
+          constraints (lookup-static-constraints (.c-var target) 'variadic)
+          ;; _ (comp (sm/update-in-val [.other 'static-variadic-sites] inc)
+          ;;         (sm/assoc-in-val [.other 'static-variadic-sites] 1))
+          args-list (call-list (rdr/tag 'list file-name line-number)
+                               (map args (fn [arg]
+                                           (.init arg []))))
+          args-cs (get-constraints (.c-var args-list))
+          check-exprs (traverse (flat-map constraints seq)
+                                (fn [constraint]
+                                  (check-constraint constraint '_ args-list
+                                                    file-name line-number)))
+          result-sym (genlocal "rslt")
+          line (line-macro ast "// static-variadic")]
+      (c-init result-sym
+              [(.init args-list)
+               (map check-exprs .init)
+               line
+               "Value *" result-sym " = " (.c-var arity-info) "(empty_list, (Value *)"
+               (.c-var args-list) ");" line-sep]
+              []
+              (.type-num arity-info)
+              {}))))
 
 (defn call-dyn-fn-value [target args ast]
   (for [arity-sym (genlocal "arity")
@@ -2353,13 +2363,13 @@
                   ;; TODO: turn into a 'flat-map'
                   call-site (comp (emit-call-expr (.call-target ast) args ast)
                                   (for [target (emit (.call-target ast))
-                                        :let [arg-vars (map args .c-var)]
                                         call-site (comp
                                                    (call-static-fixed target args ast)
-                                                   (call-static-variadic target arg-vars ast)
+                                                   (call-static-variadic target args ast)
                                                    (call-invoke target args ast)
-                                                   (call-dyn-fn-value target arg-vars ast)
-                                                   (call-dyn-unknown-type target arg-vars ast))]
+                                                   (call-dyn-fn-value target (map args .c-var) ast)
+                                                   (call-dyn-unknown-type target (map args .c-var)
+                                                                          ast))]
                                     (comp* (c-init "" [] [] UnknownType {})
                                            (comp args [target call-site])))
                                   (compilation-error "Could not compile call site at:"
@@ -2877,10 +2887,10 @@
                                 proto-impl (get-proto-impl fn-sym arity-index dispatch-type)]
                             (.c-var proto-impl))
                           (global-var fn-sym "staticArity"))]
-      (let [;; TODO: handle variadic fns properly
-            fn-var (either (and (or (every param-constraints empty?)
-                                    (.variadic params))
-                                (maybe arity-fn-var))
+      (let [fn-var (either (or (and (.variadic params)
+                                    (maybe checking-fn-var))
+                               (and (every param-constraints empty?)
+                                       (maybe arity-fn-var)))
                            checking-fn-var)
             body (collapse-expressions (comp (.destruct param-vars) body-exprs))
             arity-decl [(.decl body)
@@ -2893,10 +2903,25 @@
                         ") {\nwhile (1) {\n"
                         (.init body)
                         line-sep "};};\n"]
-            ;; TODO: handle variadic fns properly
-            checking-fn (either (and (or (every param-constraints empty?)
-                                         (.variadic params))
-                                     (maybe []))
+            checking-fn (either (or (and (.variadic params)
+                                         (maybe ["Value *" checking-fn-var
+                                                 "(List *closures, Value *args) {\n"
+                                                 "if (countSeq(incRef(args, 1)) < "
+                                                 (str (count params)) ") {"
+                                                 "\n#ifndef EMBEDDED\n"
+                                                 "fprintf(stderr, \"Insufficient variadic args for "
+                                                 (str "'" fn-sym "'") " at " file-name " line:"
+                                                 (str line-number) "\\n\");\n"
+                                                 "fprintf(stderr, \"Needed " (str (count params))
+                                                 ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, args))->numVal);\n"
+                                                 "#endif\n"
+                                                 "abort();" line-sep
+                                                 "}" line-sep
+                                                 ;; (map check-params .init)
+                                                 "return(" arity-fn-var
+                                                 "(closures, args));\n};\n"]))
+                                    (and (every param-constraints empty?)
+                                         (maybe [])))
                                 ["Value *" checking-fn-var "("
                                  (-> (.vars param-vars)
                                      (map (fn [param] (str "Value *" param)))
@@ -2904,8 +2929,6 @@
                                      (conj "List *closures")
                                      (interpose ", "))
                                  ") {\n"
-                                 ;; "fprintf(stderr, \"Checking params for " (str fn-sym)
-                                 ;; " " (ast/file-name fn-sym) " " (ast/line-number fn-sym) "\\n\");\n"
                                  (map check-params .init)
                                  "return(" arity-fn-var "("
                                  (-> (.vars param-vars)
@@ -2918,16 +2941,21 @@
           ;; (and (= UnknownType (.type-num body))
           ;;      (maybe (print-err 'unknown-return-type fn-sym
           ;;                        (ast/file-name body-exprs) (ast/line-number body-exprs))))
-          (StaticArity arity-fn-var arity-index (.type-num body)
-                       (c-code (str "&" arity-var) []
-                               [arity-decl
-                                checking-fn
-                                "FnArity " arity-var " = {FnArityType, -1, "
-                                (count (.vars param-vars))
-                                ", (List *)0, " ((.variadic params) "1" "0")
-                                ", " fn-var "};" line-sep]
-                               FnArityType {})
-                       param-constraints))))))
+          (let [param-constraints (either (and (.variadic params)
+                                       (maybe [#{(MinCountConstraint (count params)
+                                                                     (list [file-name line-number])
+                                                                     nothing)}]))
+                                          param-constraints)]
+            (StaticArity arity-fn-var arity-index (.type-num body)
+                         (c-code (str "&" arity-var) []
+                                 [arity-decl
+                                  checking-fn
+                                  "FnArity " arity-var " = {FnArityType, -1, "
+                                  (count (.vars param-vars))
+                                  ", (List *)0, " ((.variadic params) "1" "0")
+                                  ", " fn-var "};" line-sep]
+                                 FnArityType {})
+                         param-constraints)))))))
 
 (defn emit-fn-arity
   ([fn-sym fn-var params param-types body]
