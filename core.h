@@ -19,6 +19,7 @@ typedef struct
  } Sha1Context;
 
 typedef void (Destructor)(void *);
+// TODO: add hash cache and meta data. And update 'make-static-*' as well
 typedef struct Value {int64_t type; int32_t refs; struct Value* next;} Value;
 typedef struct {int64_t type; int32_t refs; int64_t numVal;} Integer;
 typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; char buffer[0];} String;
