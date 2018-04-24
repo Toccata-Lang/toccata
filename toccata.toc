@@ -166,13 +166,16 @@
 
   ;; bind the symbol 'binding' to the results of 'evalled'
   (bind [binding evalled]
+    (assert-result x (instance? sm/new-sm x)))
+
+  ;; unpack the 'list-var' and bind the items to the 'elem-vars'
+  (bind-list [list-var params-ast])
+
+  ;; get the constraints for a symbol or params-ast
+  (get-param-constraints [_]
     (assert-result x (instance? sm/new-sm x))))
 
 (defprotocol Assertion
-  ;; TODO: really doesn't belong here
-  (get-param-constraints [_]
-    (assert-result x (instance? sm/new-sm x)))
-
   (assertion? [ast]
     (assert-result x (instance? Maybe x))
     nothing)
@@ -379,17 +382,13 @@
                   c-init
                   seq-c-code))
 
+(defn format-path [ast]
+  (either (empty? (.path ast))
+          (map (.path ast)
+               (fn [[file line]]
+                 (str file " " line)))))
+
 (defprotocol Constraint
-  ;; TODO: so bogus
-  (to-assertion [ast sym])
-
-  ;; TODO: could probably just be a function
-  (format-path [ast]
-    (either (empty? (.path ast))
-            (map (.path ast)
-                 (fn [[file line]]
-                   (str file " " line)))))
-
   (update-path [constraint file-name line-number]
     (.path constraint (cons [(str file-name ":") line-number] (.path constraint))))
 
@@ -397,12 +396,13 @@
     (assert (instance? Tagged new-sym)))
 
   (runtime-check [constraint var file-name line-number]
+    ;; generated code must preserve ref counts
     (assert (instance? C-expr var)))
 
   (static-check [constraint expr file-name line-number])
 
   (check-constraint [constraint ast expr file-name line-number]
-    ;; Check that a ast and it's compiled expression do not contradict
+    ;; Check that an ast and it's compiled expression do not contradict
     ;; a constraint (constraint). And that the constraint does not conflict with an earlier one
     ;; Adds code to check at runtime if cannot rule out conflict
     (assert (instance? C-expr expr))
@@ -1238,10 +1238,16 @@
     (list "<TypeConstraint " (str type-sym) " " (str type-nums)
           " " (str constrained-symbol) ">"))
 
-  ;; TODO: should be Constraint eventually, but really just needs to be removed
-  Assertion
-  (to-assertion [constraint sym]
-    (ast/assert-ast (ast/type-assertion type-sym sym (rest path))))
+  Emitter
+  (emit [constraint]
+    (comp (for [sym (sm/when constrained-symbol)
+                _ (comp (sm/when-not (= 1 (count type-nums)))
+                        (for [type-num (sm/when (first (seq type-nums)))
+                              _ (set-type sym type-num)]
+                          '_))
+                r (constrain-symbol constraint sym)]
+            r)
+          (sm/state-maybe empty-c-code)))
 
   Constraint
   (update-sym [_ new-sym]
@@ -1325,10 +1331,12 @@
   (string-list [_]
     (list "<MinCountConstraint " (str min-count) " " (str constrained-symbol) ">"))
 
-  ;; TODO: should be Constraint eventually, but really just needs to be removed
-  Assertion
-  (to-assertion [constraint sym]
-    (ast/assert-ast (ast/min-count-assertion sym min-count (rest path))))
+  Emitter
+  (emit [constraint]
+    (comp (for [sym (sm/when constrained-symbol)
+                r (constrain-symbol constraint sym)]
+            r)
+          (sm/state-maybe empty-c-code)))
 
   Constraint
   (update-sym [_ new-sym]
@@ -1382,11 +1390,6 @@
   Stringable
   (string-list [_]
     (list "<StaticLengthConstraint " (str length) " " (str constrained-symbol) ">"))
-
-  ;; TODO: should be Constraint eventually, but really just needs to be removed
-  Assertion
-  (to-assertion [constraint sym]
-    (ast/assert-ast (ast/length-assertion sym length (rest path))))
 
   Constraint
   (update-sym [_ new-sym]
@@ -1474,10 +1477,12 @@
   (string-list [_]
     (list "<ItemsConstraint " (str items-constraints) " " (str constrained-symbol) ">"))
 
-  ;; TODO: should be Constraint eventually, but really just needs to be removed
-  ;; Assertion
-  ;; (to-assertion [constraint sym]
-  ;;   (ast/assert-ast (ast/length-assertion sym length (rest path))))
+  Emitter
+  (emit [constraint]
+    (comp (for [sym (sm/when constrained-symbol)
+                r (constrain-symbol constraint sym)]
+            r)
+          (sm/state-maybe empty-c-code)))
 
   Constraint
   (update-sym [_ new-sym]
@@ -1488,12 +1493,12 @@
     ;; (print-err 'items-constraint-restrict new-constraint old-constraint)
     nothing)
 
-  (conflict [type1 type2 file-name line-number]
-    (flat-map (get type2 .length)
+  (conflict [constraint1 constraint2 file-name line-number]
+    (flat-map (get constraint2 .length)
               (fn [len]
                 (and (< len (count items-constraints))
-                     (conflicting-assertions (cons "Actual length from:" (format-path type2))
-                                             (cons "Min length from:" (format-path type1))
+                     (conflicting-assertions (cons "Actual length from:" (format-path constraint2))
+                                             (cons "Min length from:" (format-path constraint1))
                                              file-name line-number)))))
 
   (runtime-check [constraint var file-name line-number]
@@ -1532,9 +1537,9 @@
 (def empty-items-constraint (ItemsConstraint empty-list empty-list nothing))
 
 (def Constraints (comp TypeConstraint
-                       ItemsConstraint
+                       MinCountConstraint
                        StaticLengthConstraint
-                       MinCountConstraint))
+                       ItemsConstraint))
 
 ;; This has to be here because it calls 'add-constraint'
 (extend-type Constraints
@@ -1971,14 +1976,13 @@
                    (vec body-exprs)))))
 
 (extend-type rdr/tagged-symbol
-  Assertion
+  Emitter
   (get-param-constraints [sym]
     (for [c-info (lookup-sym sym)
           constraints (get-constraints (.c-var c-info))]
       (map constraints (fn [constraint]
                          (update-sym constraint sym)))))
 
-  Emitter
   (bind [binding]
     (for [arg-var (genlocal binding "arg")
           :let [arg-var (str arg-var)
@@ -2035,14 +2039,13 @@
 
 
 (extend-type Symbol
-  Assertion
+  Emitter
   (get-param-constraints [sym]
     (for [c-info (lookup-sym sym)
           constraints (get-constraints (.c-var c-info))]
       (map constraints (fn [constraint]
                          (update-sym constraint sym)))))
 
-  Emitter
   (bind [binding]
     (for [arg-var (genlocal binding "arg")
           :let [arg-var (str arg-var)
@@ -2512,6 +2515,12 @@
                   [])))
 
   Emitter
+  (get-param-constraints [params]
+    (map (traverse (.fixed params) get-param-constraints)
+         (fn [items-constraints]
+           #{(TypeConstraint #{ListType VectorType} empty-list 'Sequence nothing)
+             (ItemsConstraint items-constraints empty-list nothing)})))
+
   (emit [params]
     ;; Doesn't actually emit anything, just collects all the sub-vars
     (for [local-var (genlocal "seq")
@@ -3087,6 +3096,13 @@
                                         ", ")
                              ");\n"]))))
 
+(defn update-param-constraint [constraint sym]
+  (assert (instance? Constraints constraint))
+  (-> constraint
+      (.path (conj (.path constraint)
+                   [(str (ast/file-name sym) ":") (ast/line-number sym)]))
+      (.constrained-symbol (maybe sym))))
+
 (defn emit-impl [type-str type-num impl-decl]
   (assert (instance? ProtoImplDeclaration impl-decl))
   (let [[fn-name arity-ast arity-var] (type-args impl-decl)
@@ -3096,14 +3112,14 @@
           ;; _ (debug 'fn-name type-str fn-name
           ;;          (ast/file-name fn-name) (ast/line-number fn-name))
           :let [param-constraints (.param-constraints dispatcher-info)
-                assertions (for [[param constraints] (zip-lists (.fixed params)
-                                                                param-constraints)
-                                 constraint (seq constraints)]
-                             (to-assertion constraint param))]
+                constraints (for [[param constraints] (zip-lists (.fixed params)
+                                                                 param-constraints)
+                                  constraint (seq constraints)]
+                              (update-param-constraint constraint param))]
           ext-fn (comp (emit-fn-arity (rdr/tag (str type-str fn-name))
                                       (.fn-var arity-ast)
                                       params 
-                                      (comp assertions
+                                      (comp constraints
                                             (.return-constraints dispatcher-info)
                                             (.body arity-ast))
                                       arity-var)
@@ -4269,6 +4285,10 @@
             (map (get-proto-dispatch-sym (rdr/tag 'count) 1)
                  (fn [arity-sym]
                    ["Value *(*count)(List *, Value*) = " arity-sym ";\n"]))
+
+            (map (get-proto-dispatch-sym (rdr/tag 'seq) 1)
+                 (fn [arity-sym]
+                   ["Value *(*seq)(List *, Value*) = " arity-sym ";\n"]))
 
             (map (get-proto-dispatch-sym (rdr/tag 'sha1) 1)
                  (fn [arity-sym]
