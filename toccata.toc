@@ -2466,48 +2466,98 @@
                   (map (.args ast) (fn [ast]
                                      (replace-bound-vars ast subs))))))
 
-(defn unpack-arg-list [list-var elem-vars file-name line-num]
-  (let [elem-count (count elem-vars)]
-    (comp (sm/when (for [elem (first elem-vars)
-                         :when (= 1 (count elem-vars))
-                         var (first (.vars elem))]
-                     (ParamBinding [(.c-var list-var)]
-                                   [(c-init var ["Value *" var " = (Value *)" (.c-var list-var) ";" line-sep]
-                                            [] ListType {})])))
-          (for [dest-args (genlocal "destArgs")
-                check-expr (check-constraint (MinCountConstraint (dec elem-count)
-                                                                 (list [file-name line-num])
-                                                                 nothing)
-                                            '_ list-var file-name line-num)
-                :let [elem-c-vars (flat-map elem-vars .vars)
-                      tail-var (extract (last elem-c-vars))
-                      elem-exprs (map elem-c-vars (fn [var]
-                                                    (c-init var [] []
-                                                            ((= var tail-var) ListType UnknownType)
-                                                            {})))]
-                _ (traverse elem-exprs (fn [expr]
-                                         (set-sym (.c-var expr) expr)))]
-            (ParamBinding [(.c-var list-var)]
-                          (comp [check-expr
-                                 (c-code ""
-                                         (destruct-seq (.c-var list-var) elem-c-vars
-                                                       dest-args file-name line-num)
-                                         [] UnknownType {(.c-var list-var) 1})]
-                                elem-exprs
-                                (flat-map elem-vars .destruct)))))))
-
 (defprotocol AllSyms
   (all-symbols [ast]
     (assert-result l (instance? Vector l))
     [ast]))
 
-(extend-type ast/params-ast
-  Assertion
-  (get-param-constraints [params]
-    (map (traverse (.fixed params) get-param-constraints)
-         (fn [items-constraints]
-           #{(ItemsConstraint items-constraints empty-list nothing)})))
+(extend-type C-expr
+  Emitter
+  (bind-list [list-var params]
+    (let [file-name (ast/file-name params)
+          line-num (ast/line-number params)
+          fixed-count (count (.fixed params))
+          tail-sym (either (.variadic params)
+                           (rdr/tag "#tail"))]
+      (for [tail-binding (bind tail-sym)
+            _ (set-type tail-sym ListType)
+            _ (comp (sm/when (empty? (.init list-var)))
+                    (set-sym (.c-var list-var) list-var))
+            :let [tail-var (-> tail-binding .vars first extract)]
+            r (comp (sm/when (and (= 0 fixed-count)
+                                  (maybe (ParamBinding [(.c-var list-var)]
+                                                       [list-var
+                                                        (c-init tail-var ["Value *" tail-var " = seq(empty_list, "
+                                                                          (.c-var list-var) ");" line-sep]
+                                                                [] ListType {(.c-var list-var) 1})]))))
+                    (for [dest-args (genlocal "destArgs")
+                          fixed-bindings (map (traverse (.fixed params) bind) vec)
+                          check-expr (check-constraint (MinCountConstraint fixed-count
+                                                                           (list [file-name line-num])
+                                                                           nothing)
+                                                       '_ list-var file-name line-num)
+                          :let [fixed-vars (flat-map fixed-bindings .vars)
+                                fixed-exprs (map fixed-vars (fn [var]
+                                                              (c-init var [] [] UnknownType {})))
+                                tail-expr (c-init tail-var [] [] ListType {})]
+                          _ (traverse fixed-exprs (fn [expr]
+                                                    (set-sym (.c-var expr) expr)))
+                          _ (set-sym tail-var tail-expr)]
+                      (ParamBinding [(.c-var list-var)]
+                                    (comp [list-var
+                                           check-expr
+                                           (c-code ""
+                                                   (destruct-seq (.c-var list-var)
+                                                                 (conj fixed-vars tail-var)
+                                                                 dest-args file-name line-num)
+                                                   [] UnknownType {(.c-var list-var) 1})]
+                                          (conj fixed-exprs tail-expr)
+                                          (flat-map fixed-bindings .destruct)
+                                          (.destruct tail-binding)))))]
+        r))))
 
+(extend-type seq-c-code
+  Emitter
+  (bind-list [list-var params]
+    (let [file-name (ast/file-name params)
+          line-num (ast/line-number params)
+          fixed-count (count (.fixed params))
+          tail-sym (either (.variadic params)
+                           (rdr/tag "#tail"))]
+      (for [_ (comp (flat-map (sm/when (< (count (.items list-var)) fixed-count))
+                              (fn [_]
+                                (compilation-error "Insufficient elements in destructured list at"
+                                                   (str file-name ":") line-num
+                                                   "\nNeeded" fixed-count ", got" (count (.items list-var))
+                                                   ".")))
+                    sm-space)
+            tail-binding (bind tail-sym)
+            :let [tail-var (-> tail-binding .vars first extract)
+                  [fixed-items tail-items] (split (.items list-var) fixed-count)]
+            fixed-bindings (traverse (zip-lists (.fixed params) fixed-items)
+                                     (fn [[param item]]
+                                       (bind param item)))
+            list-sym (genlocal "newList")]
+        (comp* (ParamBinding [tail-var]
+                             [(seq-c-code tail-var
+                                          [(map tail-items .init)
+                                           "List *" list-sym " = empty_list;" line-sep
+                                           (map (reverse tail-items)
+                                                (fn [item]
+                                                  (let [item-sym (.c-var item)]
+                                                    [list-sym " = listCons(" "(Value *)" item-sym
+                                                     ", " list-sym ");" line-sep])))
+                                           "Value *" tail-var " = (Value *)" list-sym ";" line-sep]
+                                          (map tail-items .decl)
+                                          ListType
+                                          (reduce tail-items {}
+                                                  (fn [refs item]
+                                                    (assoc refs (.c-var item) 1)))
+                                          tail-items
+                                          (drop (.item-asts list-var) fixed-count))])
+               fixed-bindings)))))
+
+(extend-type ast/params-ast
   AllSyms
   (all-symbols [params]
     (comp (flat-map (.fixed params) all-symbols)
@@ -2534,32 +2584,12 @@
                                       (rdr/tag "#tail")))))))
 
   (bind [params]
-    (for [fixed-vars (map (traverse (.fixed params) bind) vec)
-          tail-var (bind (either (.variadic params)
-                                 (rdr/tag "#tail")))
-          param-var (genlocal "arg")
-          destruct (unpack-arg-list (c-code param-var [] [] UnknownType {})
-                                    (conj fixed-vars tail-var)
-                                    (ast/file-name params)
-                                    (ast/line-number params))]
+    (for [param-var (genlocal "arg")
+          destruct (bind-list (c-code param-var [] [] UnknownType {}) params)]
       destruct))
 
   (bind [params evalled]
-    (let [tail-sym (either (.variadic params)
-                           (rdr/tag "#tail"))]
-      (for [fixed-vars (map (traverse (.fixed params) bind) vec)
-            tail-var (bind tail-sym)
-            destruct (unpack-arg-list evalled (conj fixed-vars tail-var)
-                                      (ast/file-name params) (ast/line-number params))
-            _ (comp (sm/when (empty? (.init evalled)))
-                    (set-sym (.c-var evalled) evalled))
-            _ (set-type tail-sym ListType)]
-        (either (and (empty? (.init evalled))
-                     (empty? (.decl evalled))
-                     (maybe (.vars destruct [(.c-var evalled)])))
-                (-> destruct
-                    (.vars [(.c-var evalled)])
-                    (.destruct (comp [evalled] (.destruct destruct))))))))
+    (bind-list evalled params))
 
   (replace-bound-vars [ast subs]
     (let [new-fixed (map (.fixed ast) (fn [param]
@@ -2787,22 +2817,18 @@
           (comp reified-fn var-info))))))
 
 (defn bind-params [params fn-var arity-fn-var]
-  (comp (for [tail (sm/when (.variadic params))
+  (assert (instance? ast/params-ast params))
+
+  (comp (for [_ (sm/when (.variadic params))
               non-params get-syms
-              fixed-vars (map (traverse (.fixed params) bind) vec)
-              tail-var (bind tail)
               syms get-syms
               _ (set-params (-> (keys non-params)
                                 (reduce syms dissoc)
                                 (seq)
                                 (reduce {} (fn [params [_ var]]
                                              (assoc params (.c-var var) 1)))))
-              _ (sm/assoc-in-val [.fn-context .syms tail .type-num] ListType)
               param-var (genlocal "arg")
-              destruct (unpack-arg-list (c-code param-var [] [] UnknownType {})
-                                        (conj fixed-vars tail-var)
-                                        (ast/file-name params)
-                                        (ast/line-number params))]
+              destruct (bind-list (c-code param-var [] [] UnknownType {}) params)]
           destruct)
         (for [non-params get-syms
               vars (traverse (.fixed params) bind)
@@ -2846,7 +2872,10 @@
                                   (fn [constraint]
                                     (constrain-symbol constraint sym)))))
           closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
-      (let [param-constraints (-> (either (-> param-constraints seq first)
+      (let [param-constraints (-> (either (-> param-constraints
+                                              seq
+                                              (filter (partial instance? ItemsConstraint))
+                                              first)
                                           empty-items-constraint)
                                   (update-path file-name line-number))
             check-params (either (and (.variadic params)
@@ -2919,7 +2948,10 @@
         line-number (ast/line-number fn-sym)]
     (for [param-constraints (get-param-constraints params)
           params-var (emit params)
-          :let [param-constraints (-> (either (-> param-constraints seq first)
+          :let [param-constraints (-> (either (-> param-constraints
+                                                  seq
+                                                  (filter (partial instance? ItemsConstraint))
+                                                  first)
                                               empty-items-constraint)
                                       (update-path file-name line-number))]
           _ (reset-fn-context fn-context)
