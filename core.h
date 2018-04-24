@@ -153,6 +153,7 @@ Value *(*invoke0Args)(List *closures, Value *f);
 Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
 Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
 Value *(*type_name)(List *closures, Value *t);
+Value *(*seq)(List *closures, Value *t);
 Value *(*showFn)(List *closures, Value *t);
 Value *(*fn_apply)(List *closures, Value *f, Value *args);
 
