@@ -169,7 +169,8 @@
     (assert-result x (instance? sm/new-sm x)))
 
   ;; unpack the 'list-var' and bind the items to the 'elem-vars'
-  (bind-list [list-var params-ast])
+  (bind-list [list-var params]
+    (assert (instance? ast/params-ast params)))
 
   ;; get the constraints for a symbol or params-ast
   (get-param-constraints [_]
@@ -1490,21 +1491,25 @@
 
   (restrict [new-constraint old-constraint]
     ;; TODO: implement
-    ;; (print-err 'items-constraint-restrict new-constraint old-constraint)
+    ;; (print-err 'icr new-constraint "\n" old-constraint)
     nothing)
 
   (conflict [constraint1 constraint2 file-name line-number]
-    (flat-map (get constraint2 .length)
-              (fn [len]
-                (and (< len (count items-constraints))
-                     (conflicting-assertions (cons "Actual length from:" (format-path constraint2))
-                                             (cons "Min length from:" (format-path constraint1))
-                                             file-name line-number)))))
+    (or (-> (TypeConstraint #{ListType VectorType} path 'Sequence constrained-symbol)
+            (conflict constraint2 file-name line-number))
+        (flat-map (get constraint2 .length)
+                  (fn [len]
+                    (and (< len (count items-constraints))
+                         (conflicting-assertions (cons "Actual length from:" (format-path constraint2))
+                                                 (cons "Min length from:" (format-path constraint1))
+                                                 file-name line-number))))))
 
   (runtime-check [constraint var file-name line-number]
     (either (and (empty? items-constraints)
                  (maybe []))
-            ["if (1) {\n // TODO: I'm sure this is awful\n"
+            [(-> (TypeConstraint #{ListType VectorType} path 'Sequence constrained-symbol)
+                 (runtime-check var file-name line-number))
+             "if (1) {\n // TODO: I'm sure this is awful\n"
              (let [items (map (range (inc (count items-constraints)))
                               (partial str (.c-var var) "_"))]
                ["incRef(" (.c-var var) ", 1);" line-sep
@@ -1519,7 +1524,10 @@
              "}" line-sep]))
 
   (static-check [constraint expr file-name line-number]
-    (for [constraints (get-constraints (.c-var expr))
+    (for [_ (-> (TypeConstraint #{ListType VectorType} path 'Sequence constrained-symbol)
+                (update-path file-name line-number)
+                (static-check expr file-name line-number))
+          constraints (get-constraints (.c-var expr))
           :let [_ (some (seq constraints)
                         (fn [expr-constraint]
                           (conflict constraint expr-constraint file-name line-number)))]
@@ -1553,8 +1561,9 @@
 
     (comp (for [params get-params
                 :when (get params (.c-var expr))
-                _ (add-constraint (update-path constraint file-name line-number)
-                                  ast (.c-var expr) file-name line-number)]
+                _ (-> constraint
+                      (update-path file-name line-number)
+                      (add-constraint ast (.c-var expr) file-name line-number))]
             empty-c-code)
           (static-check constraint expr file-name line-number)
           (for [_ (sm/when (instance? Tagged ast))
@@ -2566,10 +2575,13 @@
 
   Emitter
   (get-param-constraints [params]
-    (map (traverse (.fixed params) get-param-constraints)
-         (fn [items-constraints]
-           #{(TypeConstraint #{ListType VectorType} empty-list 'Sequence nothing)
-             (ItemsConstraint items-constraints empty-list nothing)})))
+    (let [file-name (ast/file-name params)
+          file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (map (traverse (.fixed params) get-param-constraints)
+           (fn [items-constraints]
+             #{(ItemsConstraint items-constraints empty-list nothing)}))))
 
   (emit [params]
     ;; Doesn't actually emit anything, just collects all the sub-vars
@@ -2945,15 +2957,25 @@
   ;; TODO: works but seriously needs refactoring
   (let [arity-index ((.variadic params) 'variadic (count params))
         file-name (ast/file-name fn-sym)
+        file-name (either (and (= file-name 'core)
+                               (maybe "$TOCCATA_DIR/core.toc"))
+                          file-name)
         line-number (ast/line-number fn-sym)]
-    (for [param-constraints (get-param-constraints params)
+    (for [param-constraints (map (get-param-constraints params)
+                                 (fn [param-constraints]
+                                   (either (-> param-constraints
+                                               seq
+                                               (filter (partial instance? ItemsConstraint))
+                                               first)
+                                           empty-items-constraint)))
           params-var (emit params)
-          :let [param-constraints (-> (either (-> param-constraints
-                                                  seq
-                                                  (filter (partial instance? ItemsConstraint))
-                                                  first)
-                                              empty-items-constraint)
-                                      (update-path file-name line-number))]
+          :let [param-constraints (.items-constraints param-constraints
+                                                      (map (.items-constraints param-constraints)
+                                                           (fn [constraints]
+                                                             (map constraints
+                                                                  (fn [constraint]
+                                                                    (update-path constraint
+                                                                                 file-name line-number))))))]
           _ (reset-fn-context fn-context)
           checking-fn-var (global-var fn-sym "paramChecker")
           arity-var (global-var fn-sym "staticArity")
