@@ -390,15 +390,17 @@
                  (str file " " line)))))
 
 (defprotocol Constraint
+  (constrain-symbol [new-constraint sym])
+
   (update-path [constraint file-name line-number]
     (.path constraint (cons [(str file-name ":") line-number] (.path constraint))))
 
   (update-sym [constraint new-sym]
     (assert (instance? Tagged new-sym)))
 
-  (runtime-check [constraint var file-name line-number]
+  (runtime-check [constraint expr file-name line-number]
     ;; generated code must preserve ref counts
-    (assert (instance? C-expr var)))
+    (assert (instance? C-expr expr)))
 
   (static-check [constraint expr file-name line-number])
 
@@ -411,7 +413,11 @@
 
   (conflict [new-constraint old-constraint file-name line-number])
 
-  (restrict [new-constraint old-constraint]))
+  (restrict [new-constraint old-constraint]
+    ;; a new-constraint restricts an old-constraint iff the properties of the new one
+    ;; can be totally satisfied by the restricted old constraint
+    ;; actually, the two constraints must be of the same type
+    ))
 
 (deftype Closures [closures refs-map constraints]
   (assert (instance? Vector closures))
@@ -866,23 +872,10 @@
                                   (assert (instance? GlobalContext s))
                                   (maybe [(.constraints (.fn-context s)) s]))))
 
-(defn get-constraints [var]
-  (flat-map get-all-constraints (fn [constraints]
-                                  (sm/when (or (get constraints var)
-                                               (maybe #{}))))))
-
 (defn set-all-constraints [constraints]
   (sm/new-sm (fn [s]
                (assert (instance? GlobalContext s))
                (maybe [s (.fn-context s (.constraints (.fn-context s) constraints))]))))
-
-(defn set-constraints [var constraint-set]
-  (sm/new-sm (fn [s]
-               (assert (instance? GlobalContext s))
-               (let [ctxt (.fn-context s)
-                     constraints (.constraints ctxt)]
-                 (maybe [s (.fn-context s (.constraints ctxt (assoc constraints
-                                                               var constraint-set)))])))))
 
 (def get-params (sm/new-sm (fn [s]
                            (assert (instance? GlobalContext s))
@@ -1145,52 +1138,6 @@
 
   (tail-call [ast params return-constraints] ast))
 
-(defn add-constraint [new-constraint arg var file-name line-number]
-  (assert (instance? Tagged var))
-  (assert (instance? Integer line-number))
-
-  (let [sym (either (and (or (instance? Symbol arg)
-                             (instance? rdr/tagged-symbol arg))
-                         (maybe arg))
-                    "")]
-    ;; TODO: how to set type in a generic 'add-constraint'
-    ;; asserted-type (get-asserted-type type-sym file-name line-number)
-    ;; Only set the type of the var if there is one and only one
-    ;; asserted type number
-    ;; _ (set-type sym asserted-type)
-    (comp (for [constraints (get-constraints var)
-                new (sm/when (map (every (seq constraints)
-                                         (fn [old-constraint]
-                                           (or (conflict new-constraint old-constraint
-                                                         file-name line-number)
-                                               (restrict new-constraint old-constraint)
-                                               (maybe old-constraint))))
-                                  set))
-                _ (set-constraints var (either (map (= new constraints)
-                                                    (fn [old]
-                                                      (conj old new-constraint)))
-                                               new))]
-            empty-c-code)
-          ;; TODO: just in case something slips through during development
-          (for [_ (debug "Could not add constraint for" (str "'" sym "'") "at"
-                         (str file-name ":") line-number)
-                _ (debug new-constraint)]
-            empty-c-code)
-          (sm/state-maybe empty-c-code))))
-
-(defn constrain-symbol [new-constraint sym]
-  (let [file-name (ast/file-name sym)
-        file-name (either (and (= file-name 'core)
-                               (maybe "$TOCCATA_DIR/core.toc"))
-                          file-name)
-        line-number (ast/line-number sym)]
-    (for [expr (comp (lookup-sym sym)
-                     (compilation-error "Invalid assertion at"
-                                        (str file-name ":") (str line-number ".")
-                                        "Symbol" (str "'" sym "' not found.")))
-          _ (add-constraint new-constraint sym (.c-var expr) file-name line-number)]
-      empty-c-code)))
-
 (defn conflicting-assertions [path1 path2 file-name line-number]
   (let [max-path (either (> (count path1) (count path2))
                          (count path2))
@@ -1251,24 +1198,18 @@
           (sm/state-maybe empty-c-code)))
 
   Constraint
+  (restrict [new-constraint old-constraint]
+    (map (and (instance? TypeConstraint old-constraint)
+              (get old-constraint .type-nums))
+         (fn [old-type-nums]
+           ;; TODO: append new type-sym to existing
+           (.type-nums new-constraint (intersection (.type-nums new-constraint) old-type-nums)))))
+
   (update-sym [_ new-sym]
     (TypeConstraint type-nums path type-sym (maybe new-sym)))
 
-  (restrict [new-constraint old-constraint]
-    (and (instance? TypeConstraint old-constraint)
-         (maybe (.type-nums new-constraint
-                            (intersection type-nums (.type-nums old-constraint))))))
-
-  (conflict [type1 type2 file-name line-number]
-    (and (flat-map (get type2 .type-nums)
-                   (fn [other-type-nums]
-                     (empty? (intersection type-nums other-type-nums))))
-         (conflicting-assertions (cons (str "'" type-sym "' from:") (format-path type1))
-                                 (cons (str "'" (.type-sym type2)  "' from:") (format-path type2))
-                                 file-name line-number)))
-
-  (runtime-check [constraint var file-name line-number]
-    (let [var (.c-var var)
+  (runtime-check [constraint expr file-name line-number]
+    (let [var (.c-var expr)
           file-name (either (and (= file-name 'core)
                                         (maybe "$TOCCATA_DIR/core.toc"))
                                    file-name)
@@ -1348,8 +1289,8 @@
          (< (.min-count old-constraint) min-count)
          (maybe new-constraint)))
 
-  (runtime-check [constraint var file-name line-number]
-    (let [var (.c-var var)
+  (runtime-check [constraint expr file-name line-number]
+    (let [var (.c-var expr)
           file-name (either (and (= file-name 'core)
                                         (maybe "$TOCCATA_DIR/core.toc"))
                                    file-name)
@@ -1409,31 +1350,11 @@
         ;; TODO: add max-count
         ))
 
-  (runtime-check [constraint var file-name line-number]
+  (runtime-check [constraint expr file-name line-number]
     [])
 
   (static-check [constraint expr file-name line-number]
     (zero sm/state-maybe)))
-
-(extend-type MinCountConstraint
-  Constraint
-  (static-check [constraint expr file-name line-number]
-    ;; TODO: add static strings
-    (for [constraints (get-constraints (.c-var expr))
-          :when (some (seq constraints)
-                      (fn [expr-constraint]
-                        (or (flat-map (get expr-constraint .length)
-                                      (partial <= (.min-count constraint)))
-                            (conflict constraint expr-constraint file-name line-number))))]
-      empty-c-code))
-
-  (conflict [type1 type2 file-name line-number]
-    (flat-map (get type2 .length)
-              (fn [len]
-                (and (< len (.min-count type1))
-                     (conflicting-assertions (cons "Actual length from:" (format-path type2))
-                                             (cons "Min length from:" (format-path type1))
-                                             file-name line-number))))))
 
 (defn destruct-seq [seq-c-var elem-c-vars dest-args file-name line-num]
   (assert (instance? Tagged seq-c-var))
@@ -1490,9 +1411,15 @@
     (ItemsConstraint items-constraints path (maybe new-sym)))
 
   (restrict [new-constraint old-constraint]
-    ;; TODO: implement
-    ;; (print-err 'icr new-constraint "\n" old-constraint)
-    nothing)
+    (map (get old-constraint .items-constraints)
+         (fn [old-items]
+           (let [paired (zip-lists items-constraints old-items)
+                 num-paired (count paired)
+                 remaining (comp (drop items-constraints num-paired)
+                                 (drop old-items num-paired))]
+             (.items-constraints new-constraint
+                                 (comp (map paired comp)
+                                       remaining))))))
 
   (conflict [constraint1 constraint2 file-name line-number]
     (or (-> (TypeConstraint #{ListType VectorType} path 'Sequence constrained-symbol)
@@ -1501,8 +1428,8 @@
              (fn [items2]
                (map (zip-lists items-constraints items2)
                     (fn [[item1 item2]]
-                      (for [item-cons1 (set item1)
-                            item-cons2 (set item2)]
+                      (for [item-cons1 (seq item1)
+                            item-cons2 (seq item2)]
                         (conflict item-cons1 item-cons2 file-name line-number))))))
         (flat-map (get constraint2 .length)
                   (fn [len]
@@ -1511,16 +1438,17 @@
                                                  (cons "Min length from:" (format-path constraint1))
                                                  file-name line-number))))))
 
-  (runtime-check [constraint var file-name line-number]
+  (runtime-check [constraint expr file-name line-number]
     (either (and (empty? items-constraints)
                  (maybe []))
             [(-> (TypeConstraint #{ListType VectorType} path 'Sequence constrained-symbol)
-                 (runtime-check var file-name line-number))
+                 (runtime-check expr file-name line-number))
              "if (1) {\n // TODO: I'm sure this is awful\n"
-             (let [items (map (range (inc (count items-constraints)))
-                              (partial str (.c-var var) "_"))]
-               ["incRef(" (.c-var var) ", 1);" line-sep
-                (destruct-seq (.c-var var) items (str (.c-var var) "_args")
+             (let [var (.c-var expr)
+                   items (map (range (inc (count items-constraints)))
+                              (partial str var "_"))]
+               ["incRef(" var ", 1);" line-sep
+                (destruct-seq var items (str var "_args")
                               file-name line-number)
                 (for [[constraints item] (zip-lists items-constraints items)
                       constraint (seq constraints)]
@@ -1528,24 +1456,7 @@
                                  file-name line-number))
                 (map items (fn [item]
                              (str "dec_and_free(" item ", 1);" line-sep)))])
-             "}" line-sep]))
-
-  (static-check [constraint expr file-name line-number]
-    (for [_ (-> (TypeConstraint #{ListType VectorType} path 'Sequence constrained-symbol)
-                (update-path file-name line-number)
-                (static-check expr file-name line-number))
-          constraints (get-constraints (.c-var expr))
-          :let [_ (some (seq constraints)
-                        (fn [expr-constraint]
-                          (conflict constraint expr-constraint file-name line-number)))]
-          items (sm/when (get expr .items))
-          item-asts (sm/when (get expr .item-asts))
-          _ (traverse (for [[constraints var] (zip-lists items-constraints items)
-                            constraint (seq constraints)]
-                        [constraint var])
-                      (fn [[constraint var]]
-                        (static-check constraint var file-name line-number)))]
-      empty-c-code)))
+             "}" line-sep])))
 
 (def empty-items-constraint (ItemsConstraint empty-list empty-list nothing))
 
@@ -1554,9 +1465,117 @@
                        StaticLengthConstraint
                        ItemsConstraint))
 
+(deftype ConstraintSet [constraints]
+  Stringable
+  (string-list [_] (list "<ConstraintSet " (str constraints) ">"))
+
+  Seqable
+  (seq [_]
+    ;; TODO: see if this can be eliminated
+    (seq constraints))
+
+  Container
+  (map [_ f]
+    (ConstraintSet (map constraints f)))
+
+  Composition
+  (comp* [x xs]
+    (let [cs (for [c-set xs
+                  c (seq c-set)]
+               c)]
+      (reduce cs x conj)))
+
+  Collection
+  (empty? [_]
+    (empty? constraints))
+
+  (conj [_ c]
+    (assert (instance? Constraints c))
+
+    (let [new (set (map (seq constraints)
+                        (fn [old-c]
+                          (either (restrict old-c c)
+                                  old-c))))]
+      (ConstraintSet (either (map (= new constraints)
+                                  (fn [old]
+                                    (conj old c)))
+                             new)))))
+
+(def empty-constraint-set (ConstraintSet #{}))
+
+
+;; possible conflict
+;;                          TypeConstraint MinCountConstraint StaticLengthConstraint ItemsConstraint
+;; TypeConstraint                x                                                          x        |
+;; MinCountConstraint                                                    x                           |
+;; StaticLengthConstraint                          x                                                 |
+;; ItemsConstraint               x                                                          x        |
+
+;; possible restrict
+;;                          TypeConstraint MinCountConstraint StaticLengthConstraint ItemsConstraint
+;; TypeConstraint                x                                                          x        |
+;; MinCountConstraint                              x                                        x        |
+;; StaticLengthConstraint                                                                            |
+;; ItemsConstraint               x                 x                                        x        |
+
+
+(defn get-constraints [var]
+  (flat-map get-all-constraints (fn [constraints]
+                                  (sm/when (or (get constraints var)
+                                               (maybe empty-constraint-set))))))
+
+(defn set-constraints [var constraint-set]
+  (assert (instance? ConstraintSet constraint-set))
+
+  (sm/new-sm (fn [s]
+               (assert (instance? GlobalContext s))
+               (let [ctxt (.fn-context s)
+                     constraints (.constraints ctxt)]
+                 (maybe [s (.fn-context s (.constraints ctxt (assoc constraints
+                                                               var constraint-set)))])))))
+
+(defn add-constraint [new-constraint arg var file-name line-number]
+  (assert (instance? Constraints new-constraint))
+  (assert (instance? Tagged var))
+  (assert (instance? Integer line-number))
+
+  (let [sym (either (and (or (instance? Symbol arg)
+                             (instance? rdr/tagged-symbol arg))
+                         (maybe arg))
+                    "")]
+    ;; TODO: how to set type in a generic 'add-constraint'
+    ;; asserted-type (get-asserted-type type-sym file-name line-number)
+    ;; Only set the type of the var if there is one and only one
+    ;; asserted type number
+    ;; _ (set-type sym asserted-type)
+    (comp (for [constraints (get-constraints var)
+                :let [_ (map constraints (fn [old-c]
+                                           (conflict new-constraint old-c file-name line-number)))]
+                _ (set-constraints var (conj constraints new-constraint))]
+            empty-c-code)
+          ;; TODO: just in case something slips through during development
+          (for [_ (debug "Could not add constraint for" (str "'" sym "'") "at"
+                         (str file-name ":") line-number)
+                _ (debug new-constraint)]
+            empty-c-code)
+          (sm/state-maybe empty-c-code))))
+
 ;; This has to be here because it calls 'add-constraint'
 (extend-type Constraints
   Constraint
+  (constrain-symbol [new-constraint sym]
+    (let [file-name (ast/file-name sym)
+          file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)
+          line-number (ast/line-number sym)]
+      (for [expr (comp (lookup-sym sym)
+                       (compilation-error "Invalid assertion at"
+                                          (str file-name ":") (str line-number ".")
+                                          "Symbol" (str "'" sym "' not found.")))
+            _ (add-constraint new-constraint sym (.c-var expr) file-name line-number)]
+        empty-c-code)))
+
   (check-constraint [constraint ast expr file-name line-number]
     ;; Check that an ast and it's compiled expression do not contradict
     ;; a constraint (constraint). And that the constraint does not conflict with an earlier one
@@ -1585,6 +1604,61 @@
                          [line
                           (runtime-check constraint expr file-name line-number)]
                          [] (.type-num expr) {}))))))
+
+(extend-type ItemsConstraint
+  Constraint
+  (static-check [constraint expr file-name line-number]
+    (for [_ (-> (TypeConstraint #{ListType VectorType} (.path constraint)
+                                'Sequence (.constrained-symbol constraint))
+                (update-path file-name line-number)
+                (static-check expr file-name line-number))
+          constraints (get-constraints (.c-var expr))
+          :let [_ (some (seq constraints)
+                        (fn [expr-constraint]
+                          (conflict constraint expr-constraint file-name line-number)))]
+          items (sm/when (get expr .items))
+          item-asts (sm/when (get expr .item-asts))
+          _ (traverse (for [[constraints var] (zip-lists (.items-constraints constraint) items)
+                            constraint (seq constraints)]
+                        [constraint var])
+                      (fn [[constraint var]]
+                        (static-check constraint var file-name line-number)))]
+      empty-c-code)))
+
+(extend-type TypeConstraint
+  Constraint
+  (conflict [constraint1 constraint2 file-name line-number]
+    (let [constraint2 (either (and (instance? ItemsConstraint constraint2)
+                                   (maybe (TypeConstraint #{ListType VectorType}
+                                                          (.path constraint2) 'Sequence
+                                                          (.constrained-symbol constraint2))))
+                              constraint2)]
+      (and (flat-map (get constraint2 .type-nums)
+                     (fn [other-type-nums]
+                       (empty? (intersection (.type-nums constraint1) other-type-nums))))
+           (conflicting-assertions (cons (str "'" (.type-sym constraint1) "' from:") (format-path constraint1))
+                                   (cons (str "'" (.type-sym constraint2)  "' from:") (format-path constraint2))
+                                   file-name line-number)))))
+
+(extend-type MinCountConstraint
+  Constraint
+  (static-check [constraint expr file-name line-number]
+    ;; TODO: add static strings
+    (for [constraints (get-constraints (.c-var expr))
+          :when (some (seq constraints)
+                      (fn [expr-constraint]
+                        (or (flat-map (get expr-constraint .length)
+                                      (partial <= (.min-count constraint)))
+                            (conflict constraint expr-constraint file-name line-number))))]
+      empty-c-code))
+
+  (conflict [type1 type2 file-name line-number]
+    (flat-map (get type2 .length)
+              (fn [len]
+                (and (< len (.min-count type1))
+                     (conflicting-assertions (cons "Actual length from:" (format-path type2))
+                                             (cons "Min length from:" (format-path type1))
+                                             file-name line-number))))))
 
 (extend-type ast/min-count-assertion
   Assertion
@@ -2885,7 +2959,7 @@
           _ (traverse closures
                       (fn [[var sym]]
                         (traverse (seq (either (get new-constraints var)
-                                               #{}))
+                                               empty-constraint-set))
                                   (fn [constraint]
                                     (constrain-symbol constraint sym)))))
           closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
@@ -3334,7 +3408,8 @@
           (fn [diff [var constraints]]
             (either (flat-map (get old var)
                               (fn [old-constraints]
-                                (let [constraint-diff (difference constraints old-constraints)]
+                                (let [constraint-diff (difference (.constraints constraints)
+                                                                  (.constraints old-constraints))]
                                   (or (and (empty? constraint-diff)
                                            (maybe diff))
                                       (maybe (assoc diff var constraint-diff))))))
@@ -3345,7 +3420,8 @@
           (fn [inter [var a-consts]]
             (either (flat-map (get b var)
                               (fn [b-consts]
-                                (let [ab-consts (intersection a-consts b-consts)]
+                                (let [ab-consts (intersection (.constraints a-consts)
+                                                              (.constraints b-consts))]
                                   (or (and (empty? ab-consts)
                                            (maybe inter))
                                       (maybe (assoc inter var ab-consts))))))
@@ -3387,7 +3463,8 @@
                                           [expr (diff-constraints new-constraints
                                                                   curr-constraints)]))))
         :let [[[first-clause first-constraints] & evalled-clauses] evalled-clauses]
-        _ (set-all-constraints (merge-with union initial-constraints
+        _ (set-all-constraints (merge-with comp
+                                           initial-constraints
                                            first-constraints))]
     (let [evalled-clauses (map evalled-clauses
                                (fn [[expr constraints]]
