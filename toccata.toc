@@ -393,7 +393,13 @@
   (constrain-symbol [new-constraint sym])
 
   (update-path [constraint file-name line-number]
-    (.path constraint (cons [(str file-name ":") line-number] (.path constraint))))
+    (let [file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (either (and (= "" file-name)
+                   (maybe constraint))
+              (.path constraint (cons [(str file-name ":") line-number]
+                                      (.path constraint))))))
 
   (update-sym [constraint new-sym]
     (assert (instance? Tagged new-sym)))
@@ -1128,13 +1134,9 @@
     nothing)
 
   (emit [ast]
-    (let [assertion (.assertion ast)
-          file-name (ast/file-name ast)
-          file-name (either (and (= file-name 'core)
-                                 (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
-      (add-assertion (.path assertion (conj (.path assertion)
-                                            [(str file-name ":") (ast/line-number ast)])))))
+    (-> (.assertion ast) 
+        (update-path (ast/file-name ast) (ast/line-number ast))
+        add-assertion))
 
   (tail-call [ast params return-constraints] ast))
 
@@ -1202,8 +1204,11 @@
     (map (and (instance? TypeConstraint old-constraint)
               (get old-constraint .type-nums))
          (fn [old-type-nums]
-           ;; TODO: append new type-sym to existing
-           (.type-nums new-constraint (intersection (.type-nums new-constraint) old-type-nums)))))
+           (-> new-constraint 
+               (.constrained-symbol (map (.constrained-symbol old-constraint)
+                                         (fn [old-sym]
+                                           (str old-sym "/" constrained-symbol))))
+               (.type-nums (intersection (.type-nums new-constraint) old-type-nums))))))
 
   (update-sym [_ new-sym]
     (TypeConstraint type-nums path type-sym (maybe new-sym)))
@@ -1211,8 +1216,8 @@
   (runtime-check [constraint expr file-name line-number]
     (let [var (.c-var expr)
           file-name (either (and (= file-name 'core)
-                                        (maybe "$TOCCATA_DIR/core.toc"))
-                                   file-name)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)
           sym-location (either (= "" file-name)
                                (str " at " file-name ", line " line-number))]
       ["switch (" var "->type) {" line-sep
@@ -1407,6 +1412,21 @@
           (sm/state-maybe empty-c-code)))
 
   Constraint
+  (update-path [constraint file-name line-number]
+    (let [file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (ItemsConstraint (map items-constraints
+                            (fn [constraints]
+                              (map constraints
+                                   (fn [constraint]
+                                     (update-path constraint
+                                                  file-name line-number)))))
+                       (either (and (= "" file-name)
+                                    (maybe path))
+                               (cons [(str file-name ":") line-number] path))
+                       constrained-symbol)))
+
   (update-sym [_ new-sym]
     (ItemsConstraint items-constraints path (maybe new-sym)))
 
@@ -1439,24 +1459,27 @@
                                                  file-name line-number))))))
 
   (runtime-check [constraint expr file-name line-number]
-    (either (and (empty? items-constraints)
-                 (maybe []))
-            [(-> (TypeConstraint #{ListType VectorType} path 'Sequence constrained-symbol)
-                 (runtime-check expr file-name line-number))
-             "if (1) {\n // TODO: I'm sure this is awful\n"
-             (let [var (.c-var expr)
-                   items (map (range (inc (count items-constraints)))
-                              (partial str var "_"))]
-               ["incRef(" var ", 1);" line-sep
-                (destruct-seq var items (str var "_args")
-                              file-name line-number)
-                (for [[constraints item] (zip-lists items-constraints items)
-                      constraint (seq constraints)]
-                  (runtime-check constraint (c-code item [] [] UnknownType {})
-                                 file-name line-number))
-                (map items (fn [item]
-                             (str "dec_and_free(" item ", 1);" line-sep)))])
-             "}" line-sep])))
+    (let [file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (either (and (empty? items-constraints)
+                   (maybe []))
+              [(-> (TypeConstraint #{ListType VectorType} path 'Sequence constrained-symbol)
+                   (runtime-check expr file-name line-number))
+               "if (1) {\n // TODO: I'm sure this is awful\n"
+               (let [var (.c-var expr)
+                     items (map (range (inc (count items-constraints)))
+                                (partial str var "_"))]
+                 ["incRef(" var ", 1);" line-sep
+                  (destruct-seq var items (str var "_args")
+                                file-name line-number)
+                  (for [[constraints item] (zip-lists items-constraints items)
+                        constraint (seq constraints)]
+                    (runtime-check constraint (c-code item [] [] UnknownType {})
+                                   file-name line-number))
+                  (map items (fn [item]
+                               (str "dec_and_free(" item ", 1);" line-sep)))])
+               "}" line-sep]))))
 
 (def empty-items-constraint (ItemsConstraint empty-list empty-list nothing))
 
@@ -1471,7 +1494,6 @@
 
   Seqable
   (seq [_]
-    ;; TODO: see if this can be eliminated
     (seq constraints))
 
   Container
@@ -1548,17 +1570,11 @@
     ;; Only set the type of the var if there is one and only one
     ;; asserted type number
     ;; _ (set-type sym asserted-type)
-    (comp (for [constraints (get-constraints var)
-                :let [_ (map constraints (fn [old-c]
-                                           (conflict new-constraint old-c file-name line-number)))]
-                _ (set-constraints var (conj constraints new-constraint))]
-            empty-c-code)
-          ;; TODO: just in case something slips through during development
-          (for [_ (debug "Could not add constraint for" (str "'" sym "'") "at"
-                         (str file-name ":") line-number)
-                _ (debug new-constraint)]
-            empty-c-code)
-          (sm/state-maybe empty-c-code))))
+    (for [constraints (get-constraints var)
+          :let [_ (map constraints (fn [old-c]
+                                     (conflict new-constraint old-c file-name line-number)))]
+          _ (set-constraints var (conj constraints new-constraint))]
+      empty-c-code)))
 
 ;; This has to be here because it calls 'add-constraint'
 (extend-type Constraints
@@ -2654,13 +2670,9 @@
 
   Emitter
   (get-param-constraints [params]
-    (let [file-name (ast/file-name params)
-          file-name (either (and (= file-name 'core)
-                                 (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
-      (map (traverse (.fixed params) get-param-constraints)
-           (fn [items-constraints]
-             #{(ItemsConstraint items-constraints empty-list nothing)}))))
+    (map (traverse (.fixed params) get-param-constraints)
+         (fn [items-constraints]
+           #{(ItemsConstraint items-constraints empty-list nothing)})))
 
   (emit [params]
     ;; Doesn't actually emit anything, just collects all the sub-vars
@@ -2844,8 +2856,6 @@
 
 (deftype StaticArity [arity-fn-var param-count return-type var-info param-constraints]
   (assert (instance? String arity-fn-var))
-  ;; TODO
-  ;; (assert (instance? (Integer or 'variadic) param-count))
   (assert (instance? Integer return-type))
   (assert (instance? C-expr var-info))
   (assert (instance? ItemsConstraint param-constraints))
@@ -2907,6 +2917,196 @@
                                  UnknownType {})]
           (comp reified-fn var-info))))))
 
+(defn checking-fn [fn-sym params param-vars param-constraints arity-fn-var checking-fn-var]
+  (let [file-name (ast/file-name fn-sym)
+        line-number (ast/line-number fn-sym)
+        constraints-list (.items-constraints param-constraints)]
+    (for [params-var (emit params) 
+          dest-args (genlocal "destArgs")]
+      (either (or (and (.variadic params)
+                       (maybe ["Value *" checking-fn-var
+                               "(List *closures, Value *args) {\n"
+                               "if (countSeq(incRef(args, 1)) < "
+                               (str (count params)) ") {"
+                               "\n#ifndef EMBEDDED\n"
+                               "fprintf(stderr, \"Insufficient variadic args for "
+                               (str "'" fn-sym "'") " at "
+                               (either (and (= file-name 'core)
+                                            (maybe "$TOCCATA_DIR/core.toc"))
+                                       file-name)
+                               " line:" (str line-number) "\\n\");\n"
+                               "fprintf(stderr, \"Needed " (str (count params))
+                               ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, args))->numVal);\n"
+                               "#endif\n"
+                               "abort();" line-sep
+                               "}" line-sep
+                               (destruct-seq 'args (.vars param-vars)
+                                             dest-args file-name line-number)
+                               (for [[consts c-var var] (zip-lists constraints-list
+                                                                   (.vars param-vars)
+                                                                   (.items params-var))
+                                     constraint (seq consts)]
+                                 (runtime-check constraint (.c-var var c-var) file-name line-number))
+                               "return(" arity-fn-var
+                               "(closures, args));\n};\n"]))
+                  (and (every constraints-list empty?)
+                       (maybe [])))
+              ["Value *" checking-fn-var "("
+               (-> (.vars param-vars)
+                   (map (fn [param] (str "Value *" param)))
+                   (seq)
+                   (conj "List *closures")
+                   (interpose ", "))
+               ") {\n"
+               (for [[consts var] (zip-lists constraints-list
+                                             (.vars param-vars))
+                     constraint (seq consts)]
+                 (runtime-check constraint (c-code var [] [] UnknownType {}) file-name line-number))
+               "return(" arity-fn-var "("
+               (-> (.vars param-vars)
+                   (seq)
+                   (conj "closures")
+                   (interpose ", "))
+               "));\n};\n"]))))
+
+(defn destruct-closures [closures]
+  (for [destArgs (genlocal "destArgs")]
+    (let [closures (-> closures
+                       (map (fn [[arg]] arg))
+                       (seq)
+                       (conj "closuresTail")
+                       (reverse))
+          closure-count (count closures)]
+      (cons (c-code ""
+                    [(map closures (fn [arg] ["Value *" arg ";" line-sep]))
+                     "incRef((Value *)closures, 1);" line-sep
+                     "Value **" destArgs "[" closure-count "] = {"
+                     (interpose (map closures (fn [arg] ["&" arg])) ", ")
+                     "};" line-sep
+                     "destructValue(\"\", \"\", (Value *)closures"
+                     ", " closure-count ", " destArgs ");" line-sep]
+                    []
+                    UnknownType {})
+            (map closures (fn [arg] (c-init arg [] [] UnknownType {})))))))
+
+(defn emit-closure-arity [fn-sym fn-context arity-fn-var params param-vars body-exprs]
+  (for [closures (sm/new-sm (fn [s]
+                              (assert (instance? GlobalContext s))
+                              (let [closures (-> s .fn-context .closed-over .closures)]
+                                (and (first closures)
+                                     (maybe (vector closures s))))))
+        closures-destruct (destruct-closures closures)
+        new-constraints get-all-constraints
+        param-constraints (get-param-constraints params)
+        _ (reset-fn-context fn-context)
+        arity-var (genlocal fn-sym "dynArity")
+        _ (traverse closures
+                    (fn [[var sym]]
+                      (traverse (seq (either (get new-constraints var)
+                                             empty-constraint-set))
+                                (fn [constraint]
+                                  (constrain-symbol constraint sym)))))
+        closure-vars (traverse closures (fn [[_ sym]]
+                                          (for [closure (lookup-sym sym)]
+                                            (c-code arity-var
+                                                    [arity-var "->closures = listCons((Value *)"
+                                                     (.c-var closure) ", (List *)" arity-var
+                                                     "->closures);" line-sep]
+                                                    [] ListType {(.c-var closure) 1}))))]
+    (let [file-name (ast/file-name fn-sym)
+          line-number (ast/line-number fn-sym)
+          param-constraints (either (-> param-constraints
+                                        seq
+                                        (filter (partial instance? ItemsConstraint))
+                                        first)
+                                    empty-items-constraint)
+          param-constraints (update-path param-constraints file-name line-number)
+          check-params (either (and (.variadic params)
+                                    (-> param-vars
+                                        .vars
+                                        first
+                                        (map (fn [c-var]
+                                               (runtime-check param-constraints
+                                                              (c-code c-var [] [] UnknownType {})
+                                                              file-name line-number)))))
+                               (for [[consts var] (zip-lists (.items-constraints param-constraints)
+                                                             (.vars param-vars))
+                                     constraint (seq consts)]
+                                 (runtime-check constraint (c-code var [] [] UnknownType {})
+                                                file-name line-number)))
+          body (collapse-expressions (comp (.destruct param-vars)
+                                           closures-destruct
+                                           body-exprs))
+          arity-decl [(.decl body)
+                      "Value *" arity-fn-var "("
+                      (-> (.vars param-vars)
+                          (map (fn [param] (str "Value *" param)))
+                          (seq)
+                          (conj "List *closures")
+                          (interpose ", "))
+                      ") {\n"
+                      check-params
+                      "\nwhile (1) {\n"
+                      (.init body)
+                      line-sep "};};\n"]
+          arity-init ["FnArity *" arity-var
+                      " = malloc_fnArity();" line-sep
+                      arity-var "->count = " (count (.vars param-vars))
+                      ";" line-sep
+                      arity-var "->variadic = "
+                      ((.variadic params) "1" "0") ";" line-sep
+                      arity-var "->fn = " arity-fn-var ";" line-sep
+                      arity-var "->closures = empty_list;" line-sep]]
+      (ClosureArity arity-fn-var params
+                    (comp* (c-init arity-var arity-init arity-decl FnArityType {})
+                           closure-vars)))))
+
+(defn emit-static-arity [fn-sym fn-context arity-fn-var params param-vars body-exprs]
+  (for [param-constraints (map (get-param-constraints params)
+                               (fn [param-constraints]
+                                 (either (-> param-constraints
+                                             seq
+                                             (filter (partial instance? ItemsConstraint))
+                                             first)
+                                         empty-items-constraint)))
+        checking-fn-var (global-var fn-sym "paramChecker")
+        arity-var (global-var fn-sym "staticArity")
+        checker-fn (checking-fn fn-sym params param-vars param-constraints
+                                arity-fn-var checking-fn-var)
+        _ (reset-fn-context fn-context)]
+    (let [body (collapse-expressions (comp (.destruct param-vars) body-exprs))
+          fn-var (either (or (and (.variadic params)
+                                  (maybe checking-fn-var))
+                             (and (every (.items-constraints param-constraints) empty?)
+                                  (maybe arity-fn-var)))
+                         checking-fn-var)]
+      (do
+        ;; TODO: use this to eliminate unknown return type values
+        ;; (and (= UnknownType result-type)
+        ;;      (maybe (print-err 'unknown-return-type fn-sym
+        ;;                        (ast/file-name body-exprs) (ast/line-number body-exprs))))
+        (StaticArity arity-fn-var ((.variadic params) 'variadic (count params))
+                     (.type-num body)
+                     (c-code (str "&" arity-var) []
+                             [(.decl body)
+                              "Value *" arity-fn-var "("
+                              (-> (.vars param-vars)
+                                  (map (fn [param] (str "Value *" param)))
+                                  (seq)
+                                  (conj "List *closures")
+                                  (interpose ", "))
+                              ") {\nwhile (1) {\n"
+                              (.init body)
+                              line-sep "};};\n"
+                              checker-fn
+                              "FnArity " arity-var " = {FnArityType, -1, "
+                              (count (.vars param-vars))
+                              ", (List *)0, " ((.variadic params) "1" "0")
+                              ", " fn-var "};" line-sep]
+                             FnArityType {})
+                     (update-path param-constraints
+                                  (ast/file-name fn-sym) (ast/line-number fn-sym)))))))
+
 (defn bind-params [params fn-var arity-fn-var]
   (assert (instance? ast/params-ast params))
 
@@ -2941,202 +3141,6 @@
         (for [_ (sm/assoc-in-val [.fn-context .recurse fn-var 0] arity-fn-var)
               _ (set-params {})]
           (ParamBinding [] []))))
-
-(defn emit-closure-arity [fn-sym fn-context arity-fn-var params param-vars body-exprs]
-  ;; TODO: works but seriously needs refactoring
-  (let [file-name (ast/file-name fn-sym)
-        line-number (ast/line-number fn-sym)]
-    (for [closures (sm/new-sm (fn [s]
-                                (assert (instance? GlobalContext s))
-                                (let [closures (-> s .fn-context .closed-over .closures)]
-                                  (and (first closures)
-                                       (maybe (vector closures s))))))
-          destArgs (genlocal "destArgs")
-          new-constraints get-all-constraints
-          param-constraints (get-param-constraints params)
-          _ (reset-fn-context fn-context)
-          arity-var (genlocal fn-sym "dynArity")
-          _ (traverse closures
-                      (fn [[var sym]]
-                        (traverse (seq (either (get new-constraints var)
-                                               empty-constraint-set))
-                                  (fn [constraint]
-                                    (constrain-symbol constraint sym)))))
-          closure-vars (traverse closures (fn [[_ sym]] (lookup-sym sym)))]
-      (let [param-constraints (-> (either (-> param-constraints
-                                              seq
-                                              (filter (partial instance? ItemsConstraint))
-                                              first)
-                                          empty-items-constraint)
-                                  (update-path file-name line-number))
-            check-params (either (and (.variadic params)
-                                      (-> param-vars
-                                          .vars
-                                          first
-                                          (map (fn [c-var]
-                                                 (runtime-check param-constraints
-                                                                (c-code c-var [] [] UnknownType {})
-                                                                file-name line-number)))))
-                                 (for [[consts var] (zip-lists (.items-constraints param-constraints)
-                                                               (.vars param-vars))
-                                       constraint (seq consts)]
-                                   (runtime-check constraint (c-code var [] [] UnknownType {})
-                                                  file-name line-number)))
-            closures (-> closures
-                         (map (fn [[arg]] arg))
-                         (seq)
-                         (conj "closuresTail")
-                         (reverse))
-            closure-count (count closures)
-            destruct-closures (cons (c-code ""
-                                            [(map closures (fn [arg] ["Value *" arg ";" line-sep]))
-                                             "incRef((Value *)closures, 1);" line-sep
-                                             "Value **" destArgs "[" closure-count "] = {"
-                                             (interpose (map closures (fn [arg] ["&" arg])) ", ")
-                                             "};" line-sep
-                                             "destructValue(\"\", \"\", (Value *)closures"
-                                             ", " closure-count ", " destArgs ");" line-sep]
-                                            []
-                                            UnknownType {})
-                                    (map closures (fn [arg] (c-init arg [] [] UnknownType {}))))
-            body (collapse-expressions (comp (.destruct param-vars)
-                                             destruct-closures
-                                             body-exprs))
-            arity-decl [(.decl body)
-                        "Value *" arity-fn-var "("
-                        (-> (.vars param-vars)
-                            (map (fn [param] (str "Value *" param)))
-                            (seq)
-                            (conj "List *closures")
-                            (interpose ", "))
-                        ") {\n"
-                        check-params
-                        "\nwhile (1) {\n"
-                        (.init body)
-                        line-sep "};};\n"]
-            arity-init ["FnArity *" arity-var
-                        " = malloc_fnArity();" line-sep
-
-                        arity-var "->count = " (count (.vars param-vars))
-                        ";" line-sep
-                        arity-var "->variadic = "
-                        ((.variadic params) "1" "0") ";" line-sep
-                        arity-var "->fn = " arity-fn-var ";" line-sep
-                        arity-var "->closures = empty_list;" line-sep]]
-        (ClosureArity arity-fn-var params
-                      (comp* (c-init arity-var arity-init arity-decl FnArityType {})
-                             (map closure-vars (fn [closure]
-                                                 (c-code arity-var
-                                                         [arity-var "->closures = listCons((Value *)"
-                                                          (.c-var closure) ", (List *)" arity-var
-                                                          "->closures);" line-sep]
-                                                         [] ListType {(.c-var closure) 1})))))))))
-
-(defn emit-static-arity [fn-sym fn-context arity-fn-var params param-vars body-exprs]
-  ;; TODO: works but seriously needs refactoring
-  (let [arity-index ((.variadic params) 'variadic (count params))
-        file-name (ast/file-name fn-sym)
-        file-name (either (and (= file-name 'core)
-                               (maybe "$TOCCATA_DIR/core.toc"))
-                          file-name)
-        line-number (ast/line-number fn-sym)]
-    (for [param-constraints (map (get-param-constraints params)
-                                 (fn [param-constraints]
-                                   (either (-> param-constraints
-                                               seq
-                                               (filter (partial instance? ItemsConstraint))
-                                               first)
-                                           empty-items-constraint)))
-          params-var (emit params)
-          :let [param-constraints (.items-constraints param-constraints
-                                                      (map (.items-constraints param-constraints)
-                                                           (fn [constraints]
-                                                             (map constraints
-                                                                  (fn [constraint]
-                                                                    (update-path constraint
-                                                                                 file-name line-number))))))]
-          _ (reset-fn-context fn-context)
-          checking-fn-var (global-var fn-sym "paramChecker")
-          arity-var (global-var fn-sym "staticArity")
-          dest-args (genlocal "destArgs")]
-      (let [check-params (either (and (.variadic params)
-                                      (maybe (for [[consts c-var var] (zip-lists (.items-constraints param-constraints)
-                                                                                 (.vars param-vars)
-                                                                                 (.items params-var))
-                                                   constraint (seq consts)]
-                                               (runtime-check constraint (.c-var var c-var)
-                                                              file-name line-number))))
-                                 (for [[consts var] (zip-lists (.items-constraints param-constraints)
-                                                               (.vars param-vars))
-                                       constraint (seq consts)]
-                                   (runtime-check constraint (c-code var [] [] UnknownType {})
-                                                  file-name line-number)))
-            fn-var (either (or (and (.variadic params)
-                                    (maybe checking-fn-var))
-                               (and (every (.items-constraints param-constraints) empty?)
-                                    (maybe arity-fn-var)))
-                           checking-fn-var)
-            body (collapse-expressions (comp (.destruct param-vars) body-exprs))
-            arity-decl [(.decl body)
-                        "Value *" arity-fn-var "("
-                        (-> (.vars param-vars)
-                            (map (fn [param] (str "Value *" param)))
-                            (seq)
-                            (conj "List *closures")
-                            (interpose ", "))
-                        ") {\nwhile (1) {\n"
-                        (.init body)
-                        line-sep "};};\n"]
-            checking-fn (either (or (and (.variadic params)
-                                         (maybe ["Value *" checking-fn-var
-                                                 "(List *closures, Value *args) {\n"
-                                                 "if (countSeq(incRef(args, 1)) < "
-                                                 (str (count params)) ") {"
-                                                 "\n#ifndef EMBEDDED\n"
-                                                 "fprintf(stderr, \"Insufficient variadic args for "
-                                                 (str "'" fn-sym "'") " at " file-name " line:"
-                                                 (str line-number) "\\n\");\n"
-                                                 "fprintf(stderr, \"Needed " (str (count params))
-                                                 ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, args))->numVal);\n"
-                                                 "#endif\n"
-                                                 "abort();" line-sep
-                                                 "}" line-sep
-                                                 (destruct-seq 'args (.vars param-vars)
-                                                               dest-args file-name line-number)
-                                                 check-params
-                                                 "return(" arity-fn-var
-                                                 "(closures, args));\n};\n"]))
-                                    (and (every (.items-constraints param-constraints) empty?)
-                                         (maybe [])))
-                                ["Value *" checking-fn-var "("
-                                 (-> (.vars param-vars)
-                                     (map (fn [param] (str "Value *" param)))
-                                     (seq)
-                                     (conj "List *closures")
-                                     (interpose ", "))
-                                 ") {\n"
-                                 check-params
-                                 "return(" arity-fn-var "("
-                                 (-> (.vars param-vars)
-                                     (seq)
-                                     (conj "closures")
-                                     (interpose ", "))
-                                 "));\n};\n"])]
-        (do
-          ;; TODO: use this to eliminate unknown return type values
-          ;; (and (= UnknownType (.type-num body))
-          ;;      (maybe (print-err 'unknown-return-type fn-sym
-          ;;                        (ast/file-name body-exprs) (ast/line-number body-exprs))))
-          (StaticArity arity-fn-var arity-index (.type-num body)
-                       (c-code (str "&" arity-var) []
-                               [arity-decl
-                                checking-fn
-                                "FnArity " arity-var " = {FnArityType, -1, "
-                                (count (.vars param-vars))
-                                ", (List *)0, " ((.variadic params) "1" "0")
-                                ", " fn-var "};" line-sep]
-                               FnArityType {})
-                       param-constraints))))))
 
 (defn emit-fn-arity
   ([fn-sym fn-var params body]
@@ -3558,9 +3562,10 @@
 (extend-type ast/or-ast
   Emitter
   (emit [ast]
-    (flat-map (genlocal "orRslt")
-              (fn [result-var]
-                (emit-cond-expr "if (!isNothing(" result-var (.clauses ast) line-sep))))
+    (let [clauses (.clauses ast)]
+      (flat-map (genlocal "orRslt")
+                (fn [result-var]
+                  (emit-cond-expr "if (!isNothing(" result-var clauses line-sep)))))
 
   (tail-call [ast params return-constraints]
     (let [clauses (.clauses ast)]
@@ -3718,7 +3723,6 @@
 
 (defn emit-proto-default [protocol-name fn-name prototype]
   (let [default-body (.default-body prototype)]
-    ;; TODO: remove 'when-not'
     (comp (for [_ (sm/when-not (empty? default-body))
                 static-arity (emit-fn-arity (rdr/tag (str "Default_" fn-name)) ""
                                             (.params prototype) default-body)
@@ -4158,7 +4162,10 @@
           const-arity-index (inc (count fields))]
       (comp (for [_ (sm/get-in-val [.modules file-name .types sym])
                   _ (compilation-error (str "Trying to re-define type name: '" sym "' in module "
-                                            file-name ", " (ast/line-number ast)))]
+                                            (either (and (= file-name 'core)
+                                                         (maybe "$TOCCATA_DIR/core.toc"))
+                                                    file-name)
+                                            ", " (ast/line-number ast)))]
               "")
 
             (for [type-val-sym (global-var "#type-val-")
