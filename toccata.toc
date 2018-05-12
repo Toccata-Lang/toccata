@@ -193,14 +193,27 @@
     (assert-result x (instance? Maybe x))
     nothing))
 
-(defn format-path* [ast]
-  (either (empty? (.path ast))
-          (map (.path ast)
-               (fn [[file line]]
-                 (str file " " line)))))
+(defn format-path* [path desired-len]
+  (either (empty? path)
+          (let [path (map path
+                          (fn [[file line]]
+                            (str file ": " line)))
+                max-width (reduce path 0 (fn [max s]
+                                           (let [n (count s)]
+                                             (either (> max n)
+                                                     n))))
+                path (either (and (< (count path) desired-len)
+                                  (maybe (comp path (repeat (- desired-len (count path))
+                                                            (spaces max-width)))))
+                             path)]
+            (map path
+                 (fn [x]
+                   (str x (spaces (- max-width (count x)))))))))
 
 (defprotocol Constraint
-  (format-path [x])
+  (format-path [x n])
+  (update-var [constraint new-var])
+  (intersect [c1 c2])
 
   (update-path [constraint file-name line-number]
     (let [file-name (either (and (= file-name 'core)
@@ -212,10 +225,7 @@
                                       (.path constraint))))))
 
   (update-sym [constraint new-sym]
-    (assert (instance? Tagged new-sym)))
-
-  (comp-to-type-constraint [x tc])
-  )
+    (assert (instance? Tagged new-sym))))
 
   ;; (constrain-symbol [new-constraint sym])
 
@@ -242,39 +252,44 @@
   ;;   ;; actually, the two constraints must be of the same type
   ;;   )
 
-(deftype NoValues [path constrained-symbol]
+;; TODO: this could be a 'reify' expression
+(deftype NoValues [constraints]
   Stringable
   (string-list [_]
     (list "<NoValues>"))
 
   Constraint
-  (comp-to-type-constraint [nv-type _]
-    nv-type)
+  (update-path [x _ _] x)
+  (update-path [x _ _] x)
+  (intersect [nv _] nv)
 
   Eq
   (=* [x y]
-    (and (instance? NoValues y)
-         (maybe x)))
+    (and (=* (get-type x) (get-type y))
+         (or (and (< (count (.constraints x)) (count (.constraints y)))
+                  (maybe y))
+             (maybe x))))
 
   Composition
   (comp* [nv-type _]
     nv-type))
 
-(def bottom-type (NoValues empty-list nothing))
+(def bottom-type (NoValues []))
 
-(deftype AllValues [path constrained-symbol]
+(deftype AllValues []
   Stringable
   (string-list [_]
     (list "<AllValues>"))
 
   Eq
   (=* [x y]
-    (and (instance? NoValues y)
+    (and (=* (get-type x) (get-type y))
          (maybe x)))
 
   Constraint
-  (comp-to-type-constraint [_ y]
-    y)
+  (update-path [x _ _] x)
+  (update-path [x _ _] x)
+  (intersect [_ c] c)
 
   Composition
   (comp* [av-type constraints]
@@ -283,79 +298,99 @@
                    (comp* constraint (rest constraints))))
             av-type))
 
-  Seqable
-  (seq [av-type]
-    (list av-type)))
 
-(def top-type (AllValues empty-list nothing))
+  Emitter
+  (emit [constraint]
+    (sm/state-maybe [])))
 
-(deftype TypeConstraint [type-nums path type-sym constrained-symbol]
+(def top-type (AllValues))
+
+(deftype MultiConstraint [constraints]
+  (assert (instance? Vector constraints))
+
+  Stringable
+  (string-list [_] (list "<MultiConstraint " (str constraints) ">"))
+
+  Eq
+  (=* [x y]
+    (and (=* (get-type x) (get-type y))
+         (= constraints (.constraints y))
+         (maybe x)))
+
+  Collection
+  (conj [mc c]
+    (either (or (= bottom-type c)
+                (and (some constraints (partial = c))
+                     (maybe mc)))
+            (MultiConstraint (conj constraints c))))
+
+  Constraint
+  (format-path [_ n]
+    (let [max-len (reduce (map constraints (fn [c] (count (.path c)))) n
+                          (fn [max-len path-len]
+                            (either (> max-len path-len)
+                                    path-len)))
+          paths (map constraints (fn [c]
+                                   (format-path c max-len)))]
+      (-> paths
+          (list-zipper empty-list)
+          (map (fn [strs]
+                 (str (to-str (interpose strs "    "))
+                      "\n"))))))
+
+  (update-sym [mc sym]
+    (.constraints mc (map constraints (fn [c]
+                                        (update-sym c sym)))))
+
+  (update-var [mc var]
+    (.constraints mc (map constraints (fn [c]
+                                        (update-var c var)))))
+
+  (update-path [mc file-name line-number]
+    (.constraints mc (map (.constraints mc)
+                          (fn [c]
+                            (update-path c file-name line-number)))))
+
+  (intersect [mc c]
+    (either (or (and (instance? MultiConstraint c)
+                     (maybe (reduce (.constraints c) mc
+                                    (fn [cs new-c]
+                                      (either (= cs bottom-type)
+                                              (intersect new-c cs))))))
+                ;; TODO: this should be able to be replaced with 'conj'
+                (= bottom-type (intersect c mc))
+                (and (some constraints (partial = c))
+                     (maybe mc)))
+            (MultiConstraint (conj constraints c)))))
+
+(deftype TypeConstraint [type-maps path type-sym sym var]
   (assert (instance? Tagged type-sym))
-  (assert (instance? HashMap type-nums))
+  (assert (instance? HashMap type-maps))
   (assert (instance? List path))
-  (assert (instance? Maybe constrained-symbol))
+  (assert (instance? Maybe sym))
 
   Stringable
   (string-list [_]
-    (list "<TypeConstraint " (str type-sym) " " (str type-nums)
-          " " (str constrained-symbol) ">"))
+    (list "<TypeConstraint " (str type-sym) " " (str type-maps)
+          " " (str sym) ">"))
 
   Eq
   (=* [x y]
     (and (instance? TypeConstraint y)
-         (= type-nums (.type-nums y))
+         (= type-maps (.type-maps y))
          (maybe x)))
 
-  Hashable
-  (sha1-update [s ctxt]
-    (sha1-update-type s ctxt)
-    (sha1-update (keys type-nums) ctxt))
-
-  (sha1 [s]
-    (let [ctxt (sha1-init)]
-      (sha1-update-type s ctxt)
-      (sha1-update type-nums ctxt)
-      (sha1-finalize ctxt)))
-
   Constraint
-  (format-path [x]
-    (cons (str "'" (either (for [type-map (get core-types type-sym)
-                                 type-num (first (keys type-map))
-                                 nom (get type-names type-num)]
-                             nom)
-                           type-sym)
-               "' from:")
-          (format-path* x)))
+  (format-path [x desired-len]
+    (format-path* (cons [(str "'" type-sym "' From") ""]
+                        path)
+                  desired-len))
 
-  (comp-to-type-constraint [x y]
-    (assert (instance?  TypeConstraint y))
+  (update-sym [tc sym]
+    (.sym tc (maybe sym)))
 
-    (let [types-map (select-keys type-nums (keys (.type-nums y)))]
-      (either (and (empty? types-map)
-                   (maybe bottom-type))
-              (TypeConstraint types-map
-                              empty-list
-                              (either (= (.type-sym x) (.type-sym y))
-                                      (symbol (str (.type-sym x) "/"
-                                                   (.type-sym y))))
-                              nothing))))
-
-  Composition
-  (comp* [tc cs]
-    (reduce cs tc
-            (fn [x y]
-              (comp-to-type-constraint y x))))
-
-  Emitter
-  (emit [constraint]
-    (comp ;; (for [sym (sm/when constrained-symbol)
-     ;;       _ (comp (sm/when-not (= 1 (count type-nums)))
-     ;;               (for [type-num (sm/when (first (seq type-nums)))
-     ;;                     _ (set-type sym type-num)]
-     ;;                 '_))
-     ;;       r (constrain-symbol constraint sym)]
-     ;;   r)
-     (sm/state-maybe [])))
+  (update-var [tc var]
+    (.var tc var))
   )
 
   ;; Constraint
@@ -409,105 +444,86 @@
   ;;                        (interpose (format-path constraint) "\n")))]
   ;;     empty-c-code))
 
-;; (deftype MinCountConstraint [min-count path constrained-symbol]
-;;   (assert (instance? List path))
-;;   (assert (instance? Maybe constrained-symbol))
+(deftype MinCountConstraint [min-count path sym var]
+  (assert (instance? List path))
+  (assert (instance? Maybe sym))
 
-;;   Eq
-;;   (=* [x y]
-;;     (and (instance? MinCountConstraint y)
-;;          (= min-count (.min-count y))
-;;          (maybe x)))
+  Eq
+  (=* [x y]
+    (and (instance? MinCountConstraint y)
+         (= min-count (.min-count y))
+         (maybe x)))
 
-;;   Hashable
-;;   (sha1-update [s ctxt]
-;;     (sha1-update-type s ctxt)
-;;     (sha1-update min-count ctxt))
+  Stringable
+  (string-list [_]
+    (list "<MinCountConstraint " (str min-count) " " (str sym)
+          "\n" (to-str (interpose (seq path) "\n")) ">"))
 
-;;   (sha1 [s]
-;;     (let [ctxt (sha1-init)]
-;;       (sha1-update-type s ctxt)
-;;       (sha1-update min-count ctxt)
-;;       (sha1-finalize ctxt)))
+  Constraint
+  (format-path [x desired-len]
+    (format-path* (cons [(str "Min Length From") ""]
+                        path)
+                  desired-len))
 
-;;   Stringable
-;;   (string-list [_]
-;;     (list "<MinCountConstraint " (str min-count) " " (str constrained-symbol) ">"))
+  (update-sym [tc sym]
+    (.sym tc (maybe sym)))
 
-;;   Emitter
-;;   (emit [constraint]
-;;     (comp ;; (for [sym (sm/when constrained-symbol)
-;;           ;;       r (constrain-symbol constraint sym)]
-;;           ;;   r)
-;;           (sm/state-maybe empty-c-code)))
+  (update-var [tc var]
+    (.var tc var))
+  )
 
-;;   Constraint
-;;   (restrict [new-constraint old-constraint]
-;;     (and (instance? MinCountConstraint old-constraint)
-;;          (< (.min-count old-constraint) min-count)
-;;          (maybe new-constraint)))
+  ;; Constraint
+  ;; (restrict [new-constraint old-constraint]
+  ;;   (and (instance? MinCountConstraint old-constraint)
+  ;;        (< (.min-count old-constraint) min-count)
+  ;;        (maybe new-constraint)))
 
-;;   (runtime-check [constraint expr file-name line-number]
-;;     (let [var (.c-var expr)
-;;           file-name (either (and (= file-name 'core)
-;;                                         (maybe "$TOCCATA_DIR/core.toc"))
-;;                                    file-name)
-;;           sym-location (either (= "" file-name)
-;;                                (str " at " file-name ", line " line-number))]
-;;       ["if (countSeq(incRef(" var ", 1)) < " (str min-count) ") {"
-;;        "\n#ifndef EMBEDDED\n"
-;;        "fprintf(stderr, \"Insufficient values" sym-location "\\n\");\n"
-;;        "fprintf(stderr, \"Needed " (str min-count)
-;;        ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, " var "))->numVal);" line-sep
-;;        "fprintf(stderr, \"From: \\n"
-;;        (interpose (format-path constraint) "\\n")
-;;        "\\n\");"
-;;        "\n#endif\n"
-;;        "abort();" line-sep
-;;        "}\n"])))
+  ;; (runtime-check [constraint expr file-name line-number]
+  ;;   (let [var (.c-var expr)
+  ;;         file-name (either (and (= file-name 'core)
+  ;;                                       (maybe "$TOCCATA_DIR/core.toc"))
+  ;;                                  file-name)
+  ;;         sym-location (either (= "" file-name)
+  ;;                              (str " at " file-name ", line " line-number))]
+  ;;     ["if (countSeq(incRef(" var ", 1)) < " (str min-count) ") {"
+  ;;      "\n#ifndef EMBEDDED\n"
+  ;;      "fprintf(stderr, \"Insufficient values" sym-location "\\n\");\n"
+  ;;      "fprintf(stderr, \"Needed " (str min-count)
+  ;;      ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, " var "))->numVal);" line-sep
+  ;;      "fprintf(stderr, \"From: \\n"
+  ;;      (interpose (format-path constraint) "\\n")
+  ;;      "\\n\");"
+  ;;      "\n#endif\n"
+  ;;      "abort();" line-sep
+  ;;      "}\n"]))
 
-;; (deftype StaticLengthConstraint [length path constrained-symbol]
-;;   (assert (instance? List path))
-;;   (assert (instance? Maybe constrained-symbol))
+(deftype StaticLengthConstraint [length path sym var]
+  (assert (instance? Integer length))
+  (assert (instance? List path))
+  (assert (instance? Maybe sym))
 
-;;   Eq
-;;   (=* [x y]
-;;     (and (instance? StaticLengthConstraint y)
-;;          (= length (.length y))
-;;          (maybe x)))
+  Eq
+  (=* [x y]
+    (and (instance? StaticLengthConstraint y)
+         (= length (.length y))
+         (maybe x)))
 
-;;   Hashable
-;;   (sha1-update [s ctxt]
-;;     (sha1-update-type s ctxt)
-;;     (sha1-update length ctxt))
+  Stringable
+  (string-list [_]
+    (list "<StaticLengthConstraint " (str length) " " (str sym) "\n"
+          (to-str (interpose (seq path) "\n")) ">"))
 
-;;   (sha1 [s]
-;;     (let [ctxt (sha1-init)]
-;;       (sha1-update-type s ctxt)
-;;       (sha1-update length ctxt)
-;;       (sha1-finalize ctxt)))
+  Constraint
+  (format-path [x desired-len]
+    (format-path* (cons [(str "Length from") ""]
+                        path)
+                  desired-len))
 
-;;   Stringable
-;;   (string-list [_]
-;;     (list "<StaticLengthConstraint " (str length) " " (str constrained-symbol) ">"))
+  (update-sym [tc sym]
+    (.sym tc (maybe sym)))
 
-;;   Constraint
-;;   (restrict [new-constraint old-constraint]
-;;     nothing)
-
-;;   (conflict [type1 type2 file-name line-number]
-;;     (sm/state-maybe (flat-map (get type2 .min-count)
-;;                               (fn [min-count]
-;;                                 (and (< length min-count)
-;;                                      (conflicting-assertions (cons "Actual length from:" (format-path type1))
-;;                                                              (cons "Min length from:" (format-path type2))
-;;                                                              file-name line-number))))))
-
-;;   (runtime-check [constraint expr file-name line-number]
-;;     [])
-
-;;   (static-check [constraint expr file-name line-number]
-;;     (zero sm/state-maybe)))
+  (update-var [tc var]
+    (.var tc var)))
 
 (defn destruct-seq [seq-c-var elem-c-vars dest-args file-name line-num]
   (assert (instance? Tagged seq-c-var))
@@ -522,10 +538,10 @@
      "\", (Value *)" seq-c-var ", " elem-count ", "
      dest-args ");" line-sep]))
 
-(deftype ItemsConstraint [items-constraints path constrained-symbol]
+(deftype ItemsConstraint [items-constraints path sym var]
   (assert (instance? List items-constraints))
   (assert (instance? List path))
-  (assert (instance? Maybe constrained-symbol))
+  (assert (instance? Maybe sym))
 
   Container
   (empty? [_]
@@ -537,62 +553,34 @@
          (= items-constraints (.items-constraints y))
          (maybe x)))
 
-  Hashable
-  (sha1-update [s ctxt]
-    (sha1-update-type s ctxt)
-    (sha1-update items-constraints ctxt))
-
-  (sha1 [s]
-    (let [ctxt (sha1-init)]
-      (sha1-update-type s ctxt)
-      (sha1-update items-constraints ctxt)
-      (sha1-finalize ctxt)))
-
   Stringable
   (string-list [_]
-    (list "<ItemsConstraint " (str items-constraints) " " (str constrained-symbol) ">"))
-
-  Composition
-  (comp* [tc cs]
-    ;; TODO: implement this now
-    tc) 
+    (list "<ItemsConstraint " (str items-constraints) " " (str sym) ">"))
 
   Emitter
   (emit [constraint]
-    (comp ;; (for [sym (sm/when constrained-symbol)
-          ;;       r (constrain-symbol constraint sym)]
-          ;;   r)
-          (sm/state-maybe [])))
+    (sm/state-maybe []))
 
   Constraint
-  (update-sym [_ sym]
-    (ItemsConstraint items-constraints path (maybe sym)))
+  (format-path [x desired-len]
+    (format-path* (cons ["Sequence from" ""] path)
+                  desired-len))
 
   (update-path [constraint file-name line-number]
-    ;; (let [file-name (either (and (= file-name 'core)
-    ;;                              (maybe "$TOCCATA_DIR/core.toc"))
-    ;;                         file-name)]
-    ;;   (ItemsConstraint (map items-constraints
-    ;;                         (fn [constraints]
-    ;;                           (map constraints
-    ;;                                (fn [constraint]
-    ;;                                  (update-path constraint
-    ;;                                               file-name line-number)))))
-    ;;                    (either (and (= "" file-name)
-    ;;                                 (maybe path))
-    ;;                            (cons [(str file-name ":") line-number] path))
-    ;;                    constrained-symbol))
-    constraint
-    )
+    (let [file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)]
+      (ItemsConstraint (map items-constraints
+                            (fn [constraints]
+                              (update-path constraints file-name line-number)))
+                       (cons [file-name line-number] path)
+                       sym var)))
 
-  (comp-to-type-constraint [x y]
-    (assert (instance?  TypeConstraint y))
+  (update-sym [ic sym]
+    (.sym ic (maybe sym)))
 
-    (let [types-map (select-keys (.type-nums y) [VectorType ListType])]
-      (either (and (empty? types-map)
-                   (maybe bottom-type))
-              x)))
-  )
+  (update-var [ic var]
+    (.var ic var)))
 
   ;; (restrict [new-constraint old-constraint]
   ;;   (map (get old-constraint .items-constraints)
@@ -648,7 +636,7 @@
   ;;                              (str "dec_and_free(" item ", 1);" line-sep)))])
   ;;              "}" line-sep])))
 
-(def empty-items-constraint (ItemsConstraint empty-list empty-list nothing))
+(def empty-items-constraint (ItemsConstraint empty-list empty-list nothing ""))
 
 ;; (deftype FieldConstraint [field path constrained-symbol]
 ;;   (assert (instance? Tagged field))
@@ -709,55 +697,144 @@
 ;;   (runtime-check [constraint expr file-name line-number]
 ;;     []))
 
-(deftype ConstraintSet [constraints]
-  Stringable
-  (string-list [_] (list "<ConstraintSet " (str constraints) ">"))
-
-  Constraint
-  (update-sym [_ sym]
-    (ConstraintSet (map constraints (fn [c]
-                                      (update-sym c sym)))))
-
-  Seqable
-  (seq [_]
-    (seq constraints))
-
-  ;; Container
-  ;; (map [_ f]
-  ;;   (ConstraintSet (map constraints f)))
-
-  Composition
-  (comp* [x xs]
-    ;; (let [cs (for [c-set xs
-    ;;               c (seq c-set)]
-    ;;            c)]
-    ;;   (reduce cs x conj))
-    top-type
-    )
-
-  Collection
-  (empty? [_]
-    (empty? constraints))
-
-  ;; (conj [_ c]
-  ;;   ;; (assert (instance? Constraints c))
-
-  ;;   (let [new (set (map (seq constraints)
-  ;;                       (fn [old-c]
-  ;;                         (either (restrict old-c c)
-  ;;                                 old-c))))]
-  ;;     (ConstraintSet (either (map (= new constraints)
-  ;;                                 (fn [old]
-  ;;                                   (conj old c)))
-  ;;                            new))))
-  )
-
-(def empty-constraint-set (ConstraintSet #{}))
-
 (def Constraints (comp AllValues
-                       TypeConstraint
                        NoValues
-                       ConstraintSet))
+                       TypeConstraint
+                       StaticLengthConstraint
+                       ItemsConstraint
+                       MinCountConstraint
+                       MultiConstraint))
+
+(extend-type Constraints
+  Constraint
+  (update-sym [c new-sym]
+    (.sym c (maybe new-sym)))
+  
+  Composition
+  (comp* [mc cs]
+    (reduce cs mc intersect)))
+
+(extend-type MultiConstraint
+  Constraint
+  (update-sym [mc sym]
+    (.constraints mc (map (.constraints mc)
+                          (fn [c]
+                            (update-sym c sym)))))
+
+  (update-var [mc var]
+    (.constraints mc (map (.constraints mc)
+                          (fn [c]
+                            (update-var c var)))))
+
+  (update-path [mc file-name line-number]
+    (.constraints mc (map (.constraints mc)
+                          (fn [c]
+                            (update-path c file-name line-number))))))
+
+(defn merge-type-maps [type-map constraint]
+  (either (or (= {} type-map)
+              (and (instance? ItemsConstraint constraint)
+                   (maybe (select-keys type-map [ListType VectorType])))
+              (and (instance? TypeConstraint constraint)
+                   (maybe (select-keys type-map (keys (.type-maps constraint))))))
+          type-map))
+
+(defn filter-type-constraints [constraints]
+  (filter constraints (fn [constraint]
+                        (or (instance? ItemsConstraint constraint)
+                            (instance? TypeConstraint constraint)))))
+
+(extend-type TypeConstraint
+  Constraint
+  (intersect [tc c]
+    (either (or (= tc c)
+                (= c bottom-type)
+                (and (= c top-type) (maybe tc))
+                (and (instance? MultiConstraint c)
+                     (or (= bottom-type (reduce (.constraints c) tc
+                                                (fn [x y]
+                                                  (either (= bottom-type (intersect x y))
+                                                          x))))
+                         (maybe (conj c tc))))
+                (and (instance? ItemsConstraint c)
+                     (let [types-map (select-keys (.type-maps tc) [ListType VectorType])]
+                       (and (empty? types-map)
+                            (maybe (NoValues [tc c])))))
+                (and (instance? TypeConstraint c)
+                     (let [types-map (select-keys (.type-maps tc) (keys (.type-maps c)))]
+                       (and (empty? types-map)
+                            (maybe (NoValues [tc c]))))))
+            (MultiConstraint [tc (update-var c (.var tc))]))))
+
+(extend-type ItemsConstraint
+  Constraint
+  (intersect [ic c]
+    (either (or (= ic c)
+                (= c bottom-type)
+                (and (= c top-type) (maybe ic))
+                (and (instance? MultiConstraint c)
+                     (or (= bottom-type (reduce (.constraints c) ic
+                                                (fn [x y]
+                                                  (either (= bottom-type (intersect x y))
+                                                          x))))
+                         ;; TODO: check if a combination of all TypeConstraints and ItemsConstraints
+                         ;; from 'c' have an empty intersection with 'ic'
+                         (maybe (conj c ic))))
+                (and (instance? TypeConstraint c)
+                     (let [types-map (select-keys (.type-maps c) [ListType VectorType])]
+                       (and (empty? types-map)
+                            (maybe (NoValues [ic c])))))
+                (and (instance? StaticLengthConstraint c)
+                     (< (.length c) (count (.items-constraints ic)))
+                     (maybe (NoValues [ic c])))
+                (and (instance? ItemsConstraint c)
+                     (= bottom-type
+                        (reduce (zip-lists (.items-constraints ic) (.items-constraints c))
+                                top-type
+                                (fn [final-c [c1 c2]]
+                                  (either (= bottom-type final-c)
+                                          (intersect c1 c2)))))))
+            (MultiConstraint [ic (update-var c (.var ic))]))))
+
+(extend-type MinCountConstraint
+  Constraint
+  (intersect [mcc c]
+    (either (or (= mcc c)
+                (= c bottom-type)
+                (and (= c top-type) (maybe mcc))
+                (and (instance? MultiConstraint c)
+                     (or (= bottom-type (reduce (.constraints c) mcc
+                                                (fn [x y]
+                                                  (either (= bottom-type (intersect x y))
+                                                          x))))
+                         (maybe (conj c mcc))))
+                (and (instance? StaticLengthConstraint c)
+                     (< (.length c) (.min-count mcc))
+                     (maybe (NoValues [mcc c]))))
+            (MultiConstraint [mcc (update-var c (.var mcc))]))))
+
+(extend-type StaticLengthConstraint
+  Constraint
+  (intersect [slc c]
+    (either (or (= slc c)
+                (= c bottom-type)
+                (and (= c top-type) (maybe slc))
+                (and (instance? MultiConstraint c)
+                     (or (= bottom-type (reduce (.constraints c) slc
+                                                (fn [x y]
+                                                  (either (= bottom-type (intersect x y))
+                                                          x))))
+                         (maybe (conj c slc))))
+                (and (instance? MinCountConstraint c)
+                     (< (.length slc) (.min-count c))
+                     (do
+                       (print-err 'slc slc)
+                       (print-err 'c c)
+                       (maybe (NoValues [slc c]))))
+                (and (instance? ItemsConstraint c)
+                     (< (.length slc) (count (.items-constraints c)))
+                     (maybe (NoValues [slc c]))))
+            (MultiConstraint [slc (update-var c (.var slc))]))))
 
 
 (defprotocol C-Code
@@ -806,6 +883,35 @@
 
 (def empty-c-code (empty-code "" [] [] UnknownType {} {}))
 
+(defn conflicting-assertions [constraints file-name line-number]
+  (apply print-err "Conflicting assertions"
+         (either (= "" file-name)
+                 (str " at " file-name ": " line-number))
+         "\n"
+         (format-path (MultiConstraint constraints) 0))
+  (abort))
+
+(defn compose-constraints [file-name line-number x y]
+  (let [z (comp* x [y])]
+    (and (= bottom-type z)
+         (let [constraints (either (and (< 1 (count (.constraints z)))
+                                        (maybe (.constraints z)))
+                                   [x y])]
+           (maybe (conflicting-assertions constraints file-name line-number))))
+    z))
+
+;; TODO: don't really need this
+(defn merge-cm [merge-fn m1 m2]
+  (reduce (seq m2) m1
+          (fn [fm [k v]]
+            (either (map (get fm k)
+                         (fn [old-v]
+                           (let [new-v (merge-fn old-v v)]
+                             (-> fm
+                                 (dissoc k)
+                                 (assoc k new-v)))))
+                    (assoc fm k v)))))
+
 (deftype c-code [c-var init decl type-num refs-map constraints]
   (assert (instance? ast/SymbolOrString c-var))
   (assert (instance? Sequence init))
@@ -833,7 +939,7 @@
 
   C-Code
   (collapse-expressions* [x y]
-    (let [constraints-map (merge-with comp constraints (.constraints y))]
+    (let [constraints-map (merge-cm comp constraints (.constraints y))]
       (c-code (.c-var y)
               [init (.init y)]
               [decl (.decl y)]
@@ -844,34 +950,6 @@
   Emitter
   (emit [x]
     (sm/state-maybe x)))
-
-(defn conflicting-assertions [const1 const2 file-name line-number]
-  (let [max-path (either (> (count const1) (count const2))
-                         (count const2))
-        const1 (either (map (< (count const1) max-path)
-                           (fn [_]
-                             (comp const1 (repeat (- max-path (count const1)) ""))))
-                      const1)
-        const2 (either (map (< (count const2) max-path)
-                           (fn [_]
-                             (comp const2 (repeat (- max-path (count const2)) ""))))
-                      const2)
-        max-width (reduce const1 0 (fn [max s]
-                                    (either (> max (count s))
-                                            (count s))))]
-    (apply print-err "Conflicting assertions at"
-           (str file-name ":") line-number "\n"
-           (map (zip-lists const1 const2)
-                (fn [[x y]]
-                  (str x (spaces (- max-width (count x))) "   " y "\n"))))
-    (maybe (abort))))
-
-(defn compose-constraints [file-name line-number x y]
- (let [z (comp* x [y])]
-   (and (= bottom-type z)
-        (maybe (conflicting-assertions (format-path x) (format-path y)
-                                       file-name line-number)))
-   z))
 
 ;; same as 'c-code', but is the first appearance of 'c-var' in the generated code
 (deftype c-init [c-var init decl type-num refs-map constraints file-name line-number]
@@ -901,8 +979,8 @@
                            [(.decl result) (.decl c)]
                            (.type-num c)
                            (merge-with + (.refs-map result) (.refs-map c))
-                           (merge-with (partial compose-constraints file-name line-number)
-                                       (.constraints result) (.constraints c))
+                           (merge-cm (partial compose-constraints file-name line-number)
+                                     (.constraints result) (.constraints c))
                            file-name line-number))))
 
   C-Code
@@ -919,8 +997,8 @@
                         (.init y)])
           refs-map (merge-with + refs-map (.refs-map y))
           refs-map (assoc refs-map c-var 0)
-          constraints-map (merge-with (partial compose-constraints file-name line-number)
-                                      constraints (.constraints y))]
+          constraints-map (merge-cm (partial compose-constraints file-name line-number)
+                                    constraints (.constraints y))]
       (c-code (.c-var y)
               init
               [decl (.decl y)]
@@ -1498,6 +1576,14 @@
                                 (ast/line-number sym))
                      (abort)))))))))
 
+(extend-type TypeConstraint
+  Emitter
+  (emit [constraint]
+    (comp (for [sym (sm/when (.sym constraint))
+                sym-info (lookup-sym sym)]
+            (c-code (.c-var sym-info) [] [] UnknownType {} {(.c-var sym-info) constraint}))
+          (sm/state-maybe []))))
+
 (deftype StaticArityInfo [c-info param-constraints]
   (assert (instance? C-expr c-info))
   ;; TODO: re-arrange to make this work
@@ -1560,7 +1646,7 @@
           _ (sm/assoc-in-val [.constants .strings str-val]
                              (c-code str-ptr [] [] StringBufferType {}
                                      {str-ptr (TypeConstraint {StringBufferType #{}} empty-list
-                                                              'String nothing)}))]
+                                                              'String nothing str-ptr)}))]
       (c-init str-ptr
               []
               ["struct {int64_t type;
@@ -1573,7 +1659,7 @@
                str-len ", 0, \"" (escape-chars str-val) "\"};\n"
                "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
               StringBufferType {}
-              {str-ptr (TypeConstraint {StringBufferType #{}} empty-list 'String nothing)}
+              {str-ptr (TypeConstraint {StringBufferType #{}} empty-list 'String nothing str-ptr)}
               "" 0))))
 
 (defn make-c-code [value]
@@ -1608,7 +1694,7 @@
                             (maybe top-type))
                        (-> type-info
                            (TypeConstraint empty-list (either sym (symbol "<unknown>"))
-                                           nothing)
+                                           nothing "")
                            (update-path file-name line-number)))))
         (sm/state-maybe top-type)))
 
@@ -1690,7 +1776,7 @@
 (defn get-constraints [var]
   (flat-map get-all-constraints (fn [constraints]
                                   (sm/when (or (get constraints var)
-                                               (maybe empty-constraint-set))))))
+                                               (maybe top-type))))))
 
 (defn set-constraints [var constraint-set]
   ;; (assert (instance? ConstraintSet constraint-set))
@@ -1723,12 +1809,6 @@
 ;;           _ (set-constraints var (conj constraints new-constraint))]
 ;;       empty-c-code)))
 
-(extend-type Constraints
-  Constraint
-  (update-sym [c new-sym]
-    (.constrained-symbol c (maybe new-sym)))
-  )
-  
   ;; (constrain-symbol [new-constraint sym]
   ;;   (let [file-name (ast/file-name sym)
   ;;         file-name (either (and (= file-name 'core)
@@ -1831,6 +1911,14 @@
 ;;                                                              (cons "Min length from:" (format-path type1))
 ;;                                                              file-name line-number)))))))
 
+(extend-type NoValues
+  Constraint
+  (update-sym [x _] x))
+
+(extend-type AllValues
+  Constraint
+  (update-sym [x _] x))
+
 (extend-type ast/type-assertion
   Emitter
   (replace-bound-vars [ast subs]
@@ -1845,7 +1933,7 @@
     (for [var (lookup-sym (.sym ast))
           constraint (type-constraint (maybe (.type-sym ast)) (ast/file-name ast) (ast/line-number ast))]
       (c-code "" [] [] UnknownType {} {(.c-var var)
-                                       (.constrained-symbol constraint (maybe (.sym ast)))}))
+                                       (update-sym constraint (.sym ast))}))
     ;; TODO:  move this to the c-init comp* fn
     ;; (for [type-nums (get-asserted-types (.type-sym ast) (ast/file-name ast) (ast/line-number ast))
     ;;       var (lookup-sym (.sym ast))]
@@ -1869,13 +1957,23 @@
   (assert-type [ast]
     (maybe (.type-sym ast))))
 
+(extend-type MinCountConstraint
+  Emitter
+  (emit [ast]
+    (either (and (= "" (.var ast))
+                 (maybe (sm/state-maybe empty-c-code)))
+            (sm/state-maybe (c-code (.var ast) [] [] UnknownType {}
+                                    {(.var ast) ast})))))
+
 (extend-type ast/min-count-assertion
   Emitter
   (emit [ast]
-    (for [var (lookup-sym (.sym ast))
-          ;; constraint (type-constraint (maybe (.type-sym ast)) (ast/file-name ast) (ast/line-number ast))
-          ]
-      (c-code "" [] [] UnknownType {} {}))))
+    (for [var (lookup-sym (.sym ast))]
+      (c-code "" [] [] UnknownType {}
+              {(.c-var var) (MinCountConstraint (.len ast)
+                                                (list [(ast/file-name ast) (ast/line-number ast)])
+                                                (maybe (.sym ast))
+                                                (.c-var var))}))))
 
 (extend-type ast/result-ast
   Assertion
@@ -2015,13 +2113,15 @@
               num-ptr (str "numPtr" num-idx)]
         _ (sm/assoc-in-val [.constants .numbers num]
                            (c-code num-ptr [] [] IntegerType {}
-                                   {num-ptr (TypeConstraint {IntegerType #{}} empty-list 'Integer nothing)}))]
+                                   {num-ptr (TypeConstraint {IntegerType #{}} empty-list 'Integer nothing
+                                                            num-ptr)}))]
     (c-init num-ptr
             []
             ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
              "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
             IntegerType {}
-            {num-ptr (TypeConstraint {IntegerType #{}} empty-list 'Integer nothing)}
+            {num-ptr (TypeConstraint {IntegerType #{}} empty-list 'Integer nothing
+                                     num-ptr)}
             "" 0)))
 
 (extend-type Integer
@@ -2090,58 +2190,71 @@
 
 
 (defn call-vector [target args arg-asts]
-  (for [_ (sm/when (= target 'vector))
-        vect-sym (genlocal "newVect")
-        result-sym (genlocal "rslt")
-
-        ;; _ (add-constraint (StaticLengthConstraint (count args)
-        ;;                                           (list [(ast/file-name target)
-        ;;                                                  (ast/line-number target)])
-        ;;                                           nothing)
-        ;;                   '_ result-sym (ast/file-name target) (ast/line-number target))
-
-        line (line-macro target "// call-vector")
-        constraint (type-constraint (maybe 'Vector) (ast/file-name target) (ast/line-number target))]
-    (comp* (c-init "" [] [] VectorType {} {} (ast/file-name target) (ast/line-number target))
-           (comp args
-                 [(c-init result-sym
-                          [line
-                           "Vector *" vect-sym " = empty_vect;" line-sep
-                           (map args
-                                (fn [arg]
-                                  (let [arg-sym (.c-var arg)]
-                                    [vect-sym " = mutateVectConj(" vect-sym ", "
-                                     arg-sym ");" line-sep])))
-                           "Value *" result-sym " = (Value *)" vect-sym ";" line-sep]
-                          [] VectorType {} {result-sym constraint}
-                          (ast/file-name target) (ast/line-number target))]))))
+  (let [file-name (ast/file-name target)
+        line-number (ast/line-number target)]
+    (for [_ (sm/when (= target 'vector))
+          vect-sym (genlocal "newVect")
+          result-sym (genlocal "rslt")
+          line (line-macro target "// call-vector")
+          type-constraint (type-constraint (maybe 'Vector) file-name line-number)]
+      (let [arg-constraints (.constraints (collapse-expressions args))
+            constraints (comp type-constraint
+                              (StaticLengthConstraint (count args)
+                                                      (list [file-name line-number])
+                                                      nothing
+                                                      result-sym)
+                              (ItemsConstraint (map args (fn [arg]
+                                                           (either (get arg-constraints (.c-var arg))
+                                                                   top-type)))
+                                               (list [file-name line-number])
+                                               nothing
+                                               result-sym))]
+        (comp* (c-init "" [] [] VectorType {} {} file-name line-number)
+               (comp args
+                     [(c-init result-sym
+                              [line
+                               "Vector *" vect-sym " = empty_vect;" line-sep
+                               (map args
+                                    (fn [arg]
+                                      (let [arg-sym (.c-var arg)]
+                                        [vect-sym " = mutateVectConj(" vect-sym ", "
+                                         arg-sym ");" line-sep])))
+                               "Value *" result-sym " = (Value *)" vect-sym ";" line-sep]
+                              [] VectorType {} {result-sym constraints}
+                              file-name line-number)]))))))
 
 (defn call-list [target args arg-asts]
-  (for [_ (sm/when (= target 'list))
-        line (line-macro target "// call-list")
-        list-sym (genlocal "newList")
-        result-sym (genlocal "rslt")
-
-        ;; _ (add-constraint (StaticLengthConstraint (count args)
-        ;;                                           (list [(ast/file-name target)
-        ;;                                                  (ast/line-number target)])
-        ;;                                           nothing)
-        ;;                   '_ result-sym (ast/file-name target) (ast/line-number target))
-
-        constraint (type-constraint (maybe 'List) (ast/file-name target) (ast/line-number target))]
-
-    (comp* (c-init "" [] [] ListType {} {} (ast/file-name target) (ast/line-number target))
-           (comp args
-                 [(c-init result-sym
-                          [line "List *" list-sym " = empty_list;" line-sep
-                           (map (reverse args)
-                                (fn [arg]
-                                  (let [arg-sym (.c-var arg)]
-                                    [list-sym " = listCons(" "(Value *)" arg-sym
-                                     ", " list-sym ");" line-sep])))
-                           "Value *" result-sym " = (Value *)" list-sym ";" line-sep]
-                          [] ListType {} {result-sym constraint}
-                          (ast/file-name target) (ast/line-number target))]))))
+  (let [file-name (ast/file-name target)
+        line-number (ast/line-number target)]
+    (for [_ (sm/when (= target 'list))
+          line (line-macro target "// call-list")
+          list-sym (genlocal "newList")
+          result-sym (genlocal "rslt")
+          type-constraint (type-constraint (maybe 'List) file-name line-number)]
+      (let [arg-constraints (.constraints (collapse-expressions args))
+            constraints (comp type-constraint
+                              (StaticLengthConstraint (count args)
+                                                      (list [file-name line-number])
+                                                      nothing
+                                                      result-sym)
+                              (ItemsConstraint (map args (fn [arg]
+                                                           (either (get arg-constraints (.c-var arg))
+                                                                   top-type)))
+                                               (list [file-name line-number])
+                                               nothing
+                                               result-sym))]
+        (comp* (c-init "" [] [] ListType {} {} file-name line-number)
+               (comp args
+                     [(c-init result-sym
+                              [line "List *" list-sym " = empty_list;" line-sep
+                               (map (reverse args)
+                                    (fn [arg]
+                                      (let [arg-sym (.c-var arg)]
+                                        [list-sym " = listCons(" "(Value *)" arg-sym
+                                         ", " list-sym ");" line-sep])))
+                               "Value *" result-sym " = (Value *)" list-sym ";" line-sep]
+                              [] ListType {} {result-sym constraints}
+                              file-name line-number)]))))))
 
 (defn arg-constraints [arg-vars constraints file-name line-number]
   (assert (instance? ItemsConstraint constraints))
@@ -2453,9 +2566,9 @@
         line-number (ast/line-number ast)]
     (for [arity-info (lookup-static-arity (.c-var target) (count arg-vars))
           constraints (lookup-static-constraints (.c-var target) (count arg-vars))
+          result-sym (genlocal "rslt")
           ;; _ (comp (sm/update-in-val [.other 'static-fixed-sites] inc)
           ;;         (sm/assoc-in-val [.other 'static-fixed-sites] 1))
-          result-sym (genlocal "rslt")
           line (line-macro ast "// static-fixed")]
       (c-init result-sym
               [line "Value *" result-sym " = " (.c-var arity-info) "("
@@ -2798,18 +2911,19 @@
                                                                 file-name line-num)]))))
                     (for [dest-args (genlocal "destArgs")
                           fixed-bindings (map (traverse (.fixed params) bind) vec)
-
-                          check-expr (sm/state-maybe empty-c-code)
-                          ;; check-expr (check-constraint (MinCountConstraint fixed-count
-                          ;;                                                  (list [file-name line-num])
-                          ;;                                                  nothing)
-                          ;;                              '_ list-var file-name line-num)
-
                           :let [fixed-vars (flat-map fixed-bindings .vars)
+                                cs (.constraints (collapse-expressions (flat-map fixed-bindings .destruct)))
+                                ic (ItemsConstraint (seq (map fixed-vars (fn [var]
+                                                                           (either (get cs var)
+                                                                                   top-type))))
+                                                    (list [file-name line-num])
+                                                    nothing
+                                                    (.c-var list-var))
                                 ;; TODO: see if 'list-var'has an ItemsConstraint
                                 ;; and pull the contraint sets out of there
                                 fixed-exprs (map fixed-vars (fn [var]
-                                                              (c-init var [] [] UnknownType {} {}
+                                                              (c-init var [] [] UnknownType {}
+                                                                      {}
                                                                       file-name line-num)))
                                 tail-expr (c-init tail-var [] [] ListType {} {tail-var list-constraint}
                                                   file-name line-num)]
@@ -2818,12 +2932,13 @@
                           _ (set-sym tail-var tail-expr)]
                       (ParamBinding [(.c-var list-var)]
                                     (comp [list-var
-                                           check-expr
                                            (c-code ""
                                                    (destruct-seq (.c-var list-var)
                                                                  (conj fixed-vars tail-var)
                                                                  dest-args file-name line-num)
-                                                   [] UnknownType {(.c-var list-var) 1} {})]
+                                                   [] UnknownType
+                                                   {(.c-var list-var) 1}
+                                                   {(.c-var list-var) ic})]
                                           (conj fixed-exprs tail-expr)
                                           (flat-map fixed-bindings .destruct)
                                           (.destruct tail-binding)))))]
@@ -2841,19 +2956,9 @@
     (map (traverse (.fixed params) (fn [param]
                                      (get-param-constraints param constraint-map)))
          (fn [items-constraints]
-           (ItemsConstraint items-constraints empty-list nothing))))
-
-  (emit [params]
-    ;; Doesn't actually emit anything, just collects all the sub-vars
-    ;; but it doesn't even do that
-    (for [local-var (genlocal "seq")
-          ;; item-vars (traverse (.fixed params) emit)
-          ;; tail-var (comp (flat-map (sm/when (.variadic params)) emit)
-          ;;                (map (genlocal "tail") (fn [var]
-          ;;                                         (c-code var [] [] ListType {} top-type))))
-          ]
-      (c-init local-var [] [] UnknownType {} {}
-              (ast/file-name params) (ast/line-number params))))
+           (-> (ItemsConstraint empty-list empty-list nothing "")
+               (update-path (ast/file-name params) (ast/line-number params))
+               (.items-constraints items-constraints)))))
 
   (bind [params]
     (for [param-var (genlocal "arg")
@@ -2869,6 +2974,20 @@
                                         (replace-bound-vars param subs)))]
       (ast/params-ast new-fixed (map (.variadic ast) (fn [v]
                                                        (replace-bound-vars v subs)))))))
+
+;; TODO: delete
+  ;; (emit [params]
+  ;;   ;; Doesn't actually emit anything, just collects all the sub-vars
+  ;;   ;; but it doesn't even do that
+  ;;   (for [local-var (genlocal "seq")
+  ;;         item-vars (traverse (.fixed params) emit)
+  ;;         ;; tail-var (comp (flat-map (sm/when (.variadic params)) emit)
+  ;;         ;;                (map (genlocal "tail") (fn [var]
+  ;;         ;;                                         (c-code var [] [] ListType {} top-type))))
+  ;;         ]
+  ;;     (c-init local-var [] [] UnknownType {} {}
+  ;;             (ast/file-name params) (ast/line-number params))))
+
 
 
 (extend-type ast/binding-ast
@@ -3002,7 +3121,8 @@
               (map impl-fns .decl)
               type-num
               (apply merge-with + (map impl-fns .refs-map))
-              {reified-sym (TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>") nothing)}
+              {reified-sym (TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>") nothing
+                                           reified-sym)}
               file-name line-number))))
 
 (defn static-reified-value [type-num impl-fns]
@@ -3015,7 +3135,8 @@
              type-num ", -1, (Value *)0, 0, {}};" line-sep
              "Value *" reified-ptr " = (Value *)&" reified-sym ";" line-sep]
             type-num {}
-            {reified-ptr (TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>") nothing)})))
+            {reified-ptr (TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>") nothing
+                                         reified-ptr)})))
 
 (defprotocol ArityType
   (closure-arity? [_]
@@ -3246,7 +3367,7 @@
                               ", (List *)0, " ((.variadic params) "1" "0")
                               ", " (.c-var checker-fn) "};" line-sep]
                              FnArityType {} {})
-                     (update-path param-constraints (ast/file-name fn-sym) (ast/line-number fn-sym))
+                     param-constraints
                      (expr-constraints body))))))
 
 (defn bind-params [params fn-var arity-fn-var]
@@ -3378,9 +3499,8 @@
 (defn update-param-constraint [constraint sym]
   ;; (assert (instance? Constraints constraint))
   (-> constraint
-      (.path (conj (.path constraint)
-                   [(str (ast/file-name sym) ":") (ast/line-number sym)]))
-      (.constrained-symbol (maybe sym))))
+      (update-path (ast/file-name sym) (ast/line-number sym))
+      (update-sym sym)))
 
 (defn emit-impl [type-str type-num impl-decl]
   (assert (instance? ProtoImplDeclaration impl-decl))
@@ -3392,9 +3512,8 @@
           ;;          (ast/file-name fn-name) (ast/line-number fn-name))
           :let [param-constraints (.items-constraints (.param-constraints dispatcher-info))
                 constraints (for [[param constraints] (zip-lists (.fixed params)
-                                                                 param-constraints)
-                                  constraint (seq constraints)]
-                              (update-param-constraint constraint param))]
+                                                                 param-constraints)]
+                              (update-param-constraint constraints param))]
           ext-fn (comp (emit-fn-arity (rdr/tag (str type-str fn-name))
                                       (.fn-var arity-ast)
                                       params 
@@ -3554,30 +3673,6 @@
             expr (emit clause)]
         expr))))
 
-(defn diff-constraints [new old]
-  (reduce (seq new) {}
-          (fn [diff [var constraints]]
-            (either (flat-map (get old var)
-                              (fn [old-constraints]
-                                (let [constraint-diff (difference (.constraints constraints)
-                                                                  (.constraints old-constraints))]
-                                  (or (and (empty? constraint-diff)
-                                           (maybe diff))
-                                      (maybe (assoc diff var constraint-diff))))))
-                    (assoc diff var constraints)))))
-
-(defn intersect-constraints [a b]
-  (reduce (seq a) {}
-          (fn [inter [var a-consts]]
-            (either (flat-map (get b var)
-                              (fn [b-consts]
-                                (let [ab-consts (intersection (.constraints a-consts)
-                                                              (.constraints b-consts))]
-                                  (or (and (empty? ab-consts)
-                                           (maybe inter))
-                                      (maybe (assoc inter var ab-consts))))))
-                    inter))))
-
 (defn clause-refs [exprs]
   (let [clause-vars (-> exprs
                         (remove (fn [c] (empty? (.init c))))
@@ -3614,34 +3709,32 @@
                                         (for [curr-constraints get-all-constraints
                                               expr (emit-cond-clause clause)
                                               new-constraints get-all-constraints]
-                                          [expr (diff-constraints new-constraints
-                                                                  curr-constraints)]))))
-        :let [[[first-clause first-constraints] & evalled-clauses] evalled-clauses]
-        _ (set-all-constraints (merge-with comp
-                                           initial-constraints
-                                           first-constraints))]
-    (let [evalled-clauses (map evalled-clauses
-                               (fn [[expr constraints]]
-                                 [(.init expr [(add-runtime-constraints constraints)
-                                               (.init expr)])
-                                  constraints]))
-          evalled-clauses (cons [first-clause {}] evalled-clauses)
-          refs-map (-> evalled-clauses
-                       (map (fn [[c]] c))
-                       clause-refs)
-          clause-count (dec (count evalled-clauses))]
-      (c-init result-var
-              ["Value *" result-var ";" line-sep
-               (-> evalled-clauses
-                   (clause-inits cond-test refs-map result-var)
-                   (conj (last-init evalled-clauses result-var))
-                   (interpose [tail-return "} else {" line-sep
-                               "dec_and_free(" result-var ", 1);" line-sep]))
-               (repeat clause-count (str "}" line-sep))]
-              (map evalled-clauses (fn [[c]] (.decl c)))
-              MaybeType refs-map
-              {result-var (TypeConstraint {MaybeType #{}} empty-list 'Maybe nothing)}
-              (ast/file-name clauses) (ast/line-number clauses)))))
+                                          [expr {}]))))]
+    (do
+      ;; TODO: 'first-constraints' is probably bogus and this will have to be rewritten
+      (let [[[first-clause first-constraints] & evalled-clauses] evalled-clauses
+            evalled-clauses (map evalled-clauses
+                                 (fn [[expr constraints]]
+                                   [(.init expr [(add-runtime-constraints constraints)
+                                                 (.init expr)])
+                                    constraints]))
+            evalled-clauses (cons [first-clause {}] evalled-clauses)
+            refs-map (-> evalled-clauses
+                         (map (fn [[c]] c))
+                         clause-refs)
+            clause-count (dec (count evalled-clauses))]
+        (c-init result-var
+                ["Value *" result-var ";" line-sep
+                 (-> evalled-clauses
+                     (clause-inits cond-test refs-map result-var)
+                     (conj (last-init evalled-clauses result-var))
+                     (interpose [tail-return "} else {" line-sep
+                                 "dec_and_free(" result-var ", 1);" line-sep]))
+                 (repeat clause-count (str "}" line-sep))]
+                (map evalled-clauses (fn [[c]] (.decl c)))
+                MaybeType refs-map
+                {result-var (TypeConstraint {MaybeType #{}} empty-list 'Maybe nothing result-var)}
+                (ast/file-name clauses) (ast/line-number clauses))))))
 
 (deftype TailAnd [clauses]
   (assert (instance? List clauses))
@@ -3852,19 +3945,17 @@
         assertions (filter body assertion?)]
     (for [curr-context (reset-fn-context)
           _ (bind-params params "" "")
-          _ (emit assertions)
-          constraints (traverse (.fixed params)
-                                (fn [sym]
-                                  (for [var (map (lookup-sym sym) .c-var)
-                                        cs (get-constraints var)]
-                                    cs)))
+
+          x (emit assertions)
+          constraints (get-param-constraints params (.constraints (collapse-expressions x)))
+
           _ (reset-fn-context curr-context)
           arity-fn-var (global-var fn-name "protoDisp")
           impls-sym (global-var (str fn-name "_Implementations") "protoImpls")
           return-type (get-type-number type-symbol)
           _ (new-proto-dispatcher fn-name num-args arity-fn-var impls-sym
                                   return-type return-assertions
-                                  (ItemsConstraint constraints empty-list nothing))
+                                  constraints)
           ;; TODO: change 'top-type' to a Constraints value for the result
           _ (new-static-arity dispatch-fn-var num-args arity-fn-var return-type top-type)]
       ["ProtoImpls " impls-sym ";\n"
@@ -3995,6 +4086,7 @@
   Emitter
   (emit [ast]
     (comp (for [fn-sym (sm/when (.fn-sym ast))
+                ;; _ (debug "=========")
                 ;; _ (debug 'fn-sym fn-sym (ast/file-name fn-sym) (ast/line-number fn-sym))
                 fn-var (comp (map (lookup-declaration fn-sym) .c-var)
                              (global-var fn-sym "fn"))
@@ -4314,6 +4406,7 @@
   Emitter
   (emit-definition [ast]
     (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)
           sym (.sym ast)
           fields (.fixed (.fields ast))
           const-arity-index (inc (count fields))]
@@ -4322,13 +4415,11 @@
                                             (either (and (= file-name 'core)
                                                          (maybe "$TOCCATA_DIR/core.toc"))
                                                     file-name)
-                                            ", " (ast/line-number ast)))]
+                                            ", " line-number))]
               "")
 
             (for [type-val-sym (global-var "#type-val-")
-                  :let [type-val-sym (rdr/tag type-val-sym
-                                              (ast/file-name sym)
-                                              (ast/line-number sym))
+                  :let [type-val-sym (rdr/tag type-val-sym file-name line-number)
                         type-num (extract rdr/type-counter)]
                   _ (sm/assoc-in-val [.modules file-name .types sym] {type-num (-> fields
                                                                                    (map (fn [name]
@@ -4360,9 +4451,15 @@
                   constructor-arity (map (get-proto-impl invoke-sym const-arity-index
                                                          const-type-num)
                                          .c-var)
-                  ;; TODO: make sure the TypeConstraint gets added to the result constraints
-                  _ (sm/assoc-in-val [.fns constructor-arity const-arity-index .c-info .type-num]
-                                     type-num)]
+                  constructor-info (sm/get-in-val [.fns constructor-arity const-arity-index .c-info])
+                  _ (sm/assoc-in-val [.fns constructor-arity const-arity-index .c-info]
+                                     (-> constructor-info
+                                         (.constraints {(.c-var constructor-info)
+                                                        (update-path (TypeConstraint {type-num (set fields)}
+                                                                                     empty-list sym nothing
+                                                                                     (.c-var constructor-info))
+                                                                     file-name line-number)})
+                                         (.type-num type-num)))]
               (comp type-val-decl
                     [(c-code "" [] (flatten getters) UnknownType {} {})]
                     type-constructor
