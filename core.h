@@ -156,6 +156,7 @@ Value *(*type_name)(List *closures, Value *t);
 Value *(*seq)(List *closures, Value *t);
 Value *(*showFn)(List *closures, Value *t);
 Value *(*fn_apply)(List *closures, Value *f, Value *args);
+Value *(*hasField)(List *closures, Value *v, Value *field);
 
 Value *my_malloc(int64_t sz);
 List *malloc_list();

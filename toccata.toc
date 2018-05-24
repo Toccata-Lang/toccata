@@ -555,7 +555,7 @@
 
 (def empty-items-constraint (ItemsConstraint empty-list empty-list nothing ""))
 
-(deftype FieldConstraint [field path sym var]
+(deftype FieldConstraint [field field-var path sym var]
   (assert (instance? Tagged field))
   (assert (instance? List path))
   (assert (instance? Maybe sym))
@@ -571,6 +571,23 @@
     (list "<FieldConstraint " (str field) " " (str sym) ">"))
 
   Constraint
+  (runtime-check [constraint file-name line-number]
+    (let [file-name (either (and (= file-name 'core)
+                                 (maybe "$TOCCATA_DIR/core.toc"))
+                            file-name)
+          sym-location (either (= "" file-name)
+                               (str " at " file-name ", line " line-number))]
+      ["if (isNothing(hasField(empty_list, incRef(" var ", 1), " field-var "),\"\",0)) {"
+       "\n#ifndef EMBEDDED\n"
+       "fprintf(stderr, \"Value of type '%s' does not have field '"
+       field "'" sym-location "\\n\", extractStr(type_name(empty_list, " var ")));\n" line-sep
+       "fprintf(stderr, \""
+       (interpose (format-path constraint (inc (count path))) "\\n")
+       "\\n\");"
+       "\n#endif\n"
+       "abort();" line-sep
+       "}\n"]))
+
   (format-path [x desired-len]
     (format-path* (cons [(str "Field '" (subs (str field) 1) "' required from") ""]
                         path)
@@ -2094,7 +2111,9 @@
                                              (ast/file-name ast) (ast/line-number ast))]))))))
 
 (defn dispatch-type-unknown [target arg-vars ast]
-  (let [num-args (count arg-vars)]
+  (let [num-args (count arg-vars)
+        file-name (ast/file-name ast)
+        line-number (ast/line-number ast)]
     (for [disp-info (get-protocol-dispatcher target num-args)
           ;; _ (comp (sm/when (or (= (ast/file-name target) 'core)))
           ;;         (sm/update-in-val [.other 'type-unknown-sites] inc)
@@ -2102,37 +2121,36 @@
           result-sym (genlocal "rslt")
           line (comp (map (sm/when (or (= (ast/file-name target) 'core)))
                           (fn [_] ""))
-                     (line-macro target (str "// type-unknown " target)))]
-      (let [file-name (ast/file-name ast)
-            line-number (ast/line-number ast)
-            constraints (either (and (= "." (subs (str target) 0 1))
-                                     (map (first arg-vars)
-                                          (fn [expr]
-                                            {(.c-var expr) (FieldConstraint target
-                                                                            (list [file-name line-number])
-                                                                            nothing
-                                                                            result-sym)})))
-                                {})]
-        (collapse-expressions (comp arg-vars
-                                    [(c-init result-sym
-                                             [line "Value *" result-sym " = proto" num-args "Arg(&"
-                                              (.impls-sym disp-info)
-                                              ", \"" (.sym target) "\", "
-                                              (interpose (comp (map arg-vars .c-var)
-                                                               [(str "\"" (.file-name target) "\"")
-                                                                (ast/line-number target)])
-                                                         ", ")
-                                              ");" line-sep]
-                                             []
-                                             (.return-type disp-info)
-                                             (reduce (map arg-vars .c-var) {}
-                                                     (fn [m arg]
-                                                       (merge-with + m {arg 1})))
-                                             (merge-with (partial compose-constraints file-name line-number)
-                                                         constraints
-                                                         (arg-constraints arg-vars (.param-constraints disp-info)
-                                                                          file-name line-number))
-                                             file-name line-number)]))))))
+                     (line-macro target (str "// type-unknown " target)))
+          field-constraint (comp (for [expr (sm/when (and (= "." (subs (str target) 0 1))
+                                                          (first arg-vars)))
+                                       dispatch-var (sm/get-in-val [.modules 'core .proto-fns target .disp-sym])]
+                                   {(.c-var expr) (FieldConstraint target
+                                                                   dispatch-var
+                                                                   (list [file-name line-number])
+                                                                   nothing
+                                                                   result-sym)})
+                                 (sm/state-maybe {}))]
+      (collapse-expressions (comp arg-vars
+                                  [(c-init result-sym
+                                           [line "Value *" result-sym " = proto" num-args "Arg(&"
+                                            (.impls-sym disp-info)
+                                            ", \"" (.sym target) "\", "
+                                            (interpose (comp (map arg-vars .c-var)
+                                                             [(str "\"" (.file-name target) "\"")
+                                                              (ast/line-number target)])
+                                                       ", ")
+                                            ");" line-sep]
+                                           []
+                                           (.return-type disp-info)
+                                           (reduce (map arg-vars .c-var) {}
+                                                   (fn [m arg]
+                                                     (merge-with + m {arg 1})))
+                                           (merge-with (partial compose-constraints file-name line-number)
+                                                       field-constraint
+                                                       (arg-constraints arg-vars (.param-constraints disp-info)
+                                                                        file-name line-number))
+                                           file-name line-number)])))))
 
 (defn call-proto-impl [name args ast]
   (for [_ (sm/when (< 0 (count args)))
@@ -3106,10 +3124,12 @@
                       arity-var "->fn = " arity-fn-var ";" line-sep
                       arity-var "->closures = empty_list;" line-sep]]
       (ClosureArity arity-fn-var params
-                    (collapse-expressions (comp [(c-code arity-var arity-init arity-decl UnknownType {} {})]
-                                                closure-vars
-                                                [(c-init arity-var [] [] FnArityType {} {}
-                                                         file-name line-number)]))))))
+                    (.constraints (collapse-expressions (comp [(c-code arity-var arity-init arity-decl
+                                                                       UnknownType {} {})]
+                                                              closure-vars
+                                                              [(c-init arity-var [] [] FnArityType {} {}
+                                                                       file-name line-number)]))
+                                  {})))))
 
 (defn emit-static-arity [fn-sym fn-context arity-fn-var params param-vars result-constraint body-exprs]
   (assert (instance? ast/params-ast params))
@@ -4028,8 +4048,6 @@
                                                                  FunctionType {} {}))
                             _ (sm/assoc-in-val [.modules 'core .proto-fns getter-sym]
                                                (ProtoFnInfo getter-sym dispatch-fn-var {}))
-                            _ (sm/assoc-in-val [.modules 'core .proto-fns getter-sym]
-                                               (ProtoFnInfo getter-sym dispatch-fn-var {}))
                             _ (sm/assoc-in-val [.modules 'core .proto-fns getter-sym .dispatchers 1]
                                                (ProtocolDispatcher 1 arity-fn-var1 impls-sym1
                                                                    UnknownType [] empty-items-constraint {}))
@@ -4425,6 +4443,11 @@
                 (map (get-proto-dispatch-sym (rdr/tag 'get*) 5)
                      (fn [arity-sym]
                        ["Value *(*get)(List *, Value*, Value*, Value*, Value*, Value*) = "
+                        arity-sym ";\n"]))
+
+                (map (get-proto-dispatch-sym (rdr/tag 'has-field) 2)
+                     (fn [arity-sym]
+                       ["Value *(*hasField)(List *, Value*, Value*) = "
                         arity-sym ";\n"]))
 
                 (map (lookup-core-fn-arity (rdr/tag 'show) 1)
