@@ -32,12 +32,12 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "")
+(def line-sep "\n")
 
 (defn line-macro [ast marker]
   (let [file-name (ast/file-name ast)]
     (sm/state-maybe (either (= "" file-name)
-                            ["\n" marker "\n#line "
+                            ["\n" marker "\n// #line "
                              (str (ast/line-number ast)) " " "\""
                              (either (and (= 'core file-name)
                                           (maybe path-to-core))
@@ -400,6 +400,7 @@
   (assert (instance? List path))
   (assert (instance? Tagged type-sym))
   (assert (instance? Maybe sym))
+  ;; (assert (instance? String var))
 
   Stringable
   (string-list [_]
@@ -435,6 +436,9 @@
                                     file-name)
                   sym-location (either (= "" file-name)
                                        (str " at " file-name ", line " line-number))]
+              ;; TODO
+              ;; (or (instance? AllValues value-info)
+              ;;     (maybe (print-err 'tc file-name line-number "\n\n" constraint "\n\n" value-info)))
               ["switch (" var "->type) {" line-sep
                (map (keys type-maps) (fn [type-num]
                                        ["case " type-num ": " line-sep]))
@@ -452,6 +456,7 @@
                "}" line-sep]))))
 
 (def fn-constraint (TypeConstraint {FunctionType {}} empty-list 'Function nothing ""))
+(def sym-constraint (TypeConstraint {SymbolType {}} empty-list 'Symbol nothing ""))
 
 (extend-type StaticLengthConstraint
   (assert (instance? Integer length))
@@ -525,6 +530,9 @@
             (let [file-name (either (and (= file-name 'core)
                                          (maybe "$TOCCATA_DIR/core.toc"))
                                     file-name)]
+              ;; TODO
+              ;; (or (instance? AllValues value-info)
+              ;;     (maybe (print-err 'ic file-name line-number "\n\n" constraint "\n\n" value-info)))
               (either (and (empty? items-constraints)
                            (maybe []))
                       [(-> (TypeConstraint {ListType #{} VectorType #{}} path 'Sequence sym var)
@@ -2015,10 +2023,12 @@
                                            (vector s)
                                            maybe)))
                   :let [sym-var (str "sym" sym-idx)
-                        sym-ptr (str "symPtr" sym-idx)]
-                  constraint (type-constraint SymbolType (ast/file-name ast) (ast/line-number ast))
+                        sym-ptr (str "symPtr" sym-idx)
+                        constraint (update-path sym-constraint
+                                                (ast/file-name ast) (ast/line-number ast))]
                   _ (sm/assoc-in-val [.constants .symbols sym]
-                                     (c-code sym-ptr [] [] {} {sym-ptr constraint}))]
+                                     (c-code sym-ptr [] [] {}
+                                             {sym-ptr constraint}))]
               (c-code sym-ptr
                       []
                       ["SubString " sym-var " = {SymbolType, -1, " (count (str sym))
@@ -2028,14 +2038,17 @@
 
   (emit-defined-value [ast defined-sym]
     (for [quoted (emit ast)
-          constraint (type-constraint SymbolType (ast/file-name ast) (ast/line-number ast))
           _ (new-module-def defined-sym (c-code (.c-var quoted) [] [] {}
-                                                {(.c-var quoted) constraint}))]
+                                                {(.c-var quoted) (update-path sym-constraint
+                                                                              (ast/file-name ast)
+                                                                              (ast/line-number ast))}))]
       [(make-c-code quoted)]))
 
   (tail-call [ast params result-constraint]
     (TailCall ast params result-constraint)))
 
+
+(def vect-constraint (TypeConstraint {VectorType {}} empty-list 'Vector nothing ""))
 
 (defn call-vector [target args arg-asts]
   (let [file-name (ast/file-name target)
@@ -2043,18 +2056,17 @@
     (for [_ (sm/when (= target 'vector))
           vect-sym (genlocal "newVect")
           result-sym (genlocal "rslt")
-          line (line-macro target "// call-vector")
-          vect-constraint (type-constraint VectorType file-name line-number)]
+          line (line-macro target "// call-vector")]
       (let [arg-constraints (.constraints (collapse-expressions args))
             constraints (comp vect-constraint
                               (StaticLengthConstraint (count args)
-                                                      (list [file-name line-number])
+                                                      empty-list
                                                       nothing
                                                       result-sym)
                               (ItemsConstraint (map args (fn [arg]
                                                            (either (get arg-constraints (.c-var arg))
                                                                    top-type)))
-                                               (list [file-name line-number])
+                                               empty-list
                                                nothing
                                                result-sym))]
         (collapse-expressions (comp args
@@ -2070,8 +2082,10 @@
                                              [] (reduce (map args .c-var) {}
                                                      (fn [m arg]
                                                        (merge-with + m {arg 1})))
-                                             {result-sym constraints}
+                                             {result-sym (update-path constraints file-name line-number)}
                                              file-name line-number)]))))))
+
+(def list-constraint (TypeConstraint {ListType {}} empty-list 'List nothing ""))
 
 (defn call-list [target args arg-asts]
   (let [file-name (ast/file-name target)
@@ -2079,18 +2093,17 @@
     (for [_ (sm/when (= target 'list))
           line (line-macro target "// call-list")
           list-sym (genlocal "newList")
-          result-sym (genlocal "rslt")
-          list-constraint (type-constraint ListType file-name line-number)]
+          result-sym (genlocal "rslt")]
       (let [arg-constraints (.constraints (collapse-expressions args))
             constraints (comp list-constraint
                               (StaticLengthConstraint (count args)
-                                                      (list [file-name line-number])
+                                                      empty-list
                                                       nothing
                                                       result-sym)
                               (ItemsConstraint (map args (fn [arg]
                                                            (either (get arg-constraints (.c-var arg))
                                                                    top-type)))
-                                               (list [file-name line-number])
+                                               empty-list
                                                nothing
                                                result-sym))]
         (collapse-expressions (comp args
@@ -2105,7 +2118,7 @@
                                              [] (reduce (map args .c-var) {}
                                                      (fn [m arg]
                                                        (merge-with + m {arg 1})))
-                                             {result-sym constraints}
+                                             {result-sym (update-path constraints file-name line-number)}
                                              file-name line-number)]))))))
 
 (defn arg-constraints [arg-asts arg-vars constraints file-name line-number]
@@ -2801,6 +2814,7 @@
   (bind-list [list-var params]
     (let [file-name (ast/file-name params)
           line-num (ast/line-number params)
+          list-constraint (update-path list-constraint file-name line-num)
           fixed-count (count (.fixed params))
           tail-sym (either (.variadic params)
                            (rdr/tag "#tail"))
@@ -2808,7 +2822,6 @@
       (for [tail-binding (bind tail-sym)
             _ (comp (sm/when (empty? (.init list-var)))
                     (set-sym (.c-var list-var) list-var))
-            list-constraint (type-constraint ListType file-name line-num)
             _ (constrain-sym tail-sym list-constraint)
             :let [tail-var (-> tail-binding .vars first extract)]
             r (comp (sm/when (and (= 0 fixed-count)
@@ -3535,7 +3548,8 @@
           (fn [[var constraint]]
             (either (and (get (.refs-map last-clause) var)
                          (maybe (runtime-check (update-var constraint (str var)) top-type "" 0)))
-                    "")))
+                    "")
+            ))
      ((= "" (.c-var last-clause))
       (.init last-clause)
       [(.init last-clause)
@@ -3551,7 +3565,8 @@
                  (fn [[var constraint]]
                    (either (and (get (.refs-map clause) var)
                                 (maybe (runtime-check (update-var constraint (str var)) top-type "" 0)))
-                           "")))
+                           "")
+                   ))
             (.init clause)
             result-var " = " (.c-var clause) ";" line-sep
             cond-test result-var ",\"\",0)) {" line-sep
