@@ -497,6 +497,7 @@
   (assert (instance? List items-constraints))
   (assert (instance? List path))
   (assert (instance? Maybe sym))
+  (assert (instance? String var))
 
   Container
   (empty? [_]
@@ -844,7 +845,6 @@
            (let [max-len (reduce ls 0 (fn [max l]
                                         (either (> (count l) max)
                                                 max)))]
-             (print-err 'max-len max-len (map ls count))
              (map ls (fn [l]
                        (either (and (< (count l) max-len)
                                     (maybe (comp l (repeat (- max-len (count l))
@@ -1821,16 +1821,6 @@
                            "in assertion at"
                            (str file-name ":")
                            line-number)))
-
-(defn set-type [sym type-num]
-  (comp (for [_ (get-sym sym)
-              sym-info (sm/get-in-val [.fn-context .syms sym])
-              constraint (type-constraint type-num "" 0)
-              :let [sym-info (add-constraint sym-info constraint
-                                             (ast/file-name sym) (ast/line-number sym))]
-              _ (sm/assoc-in-val [.fn-context .syms sym] sym-info)]
-          sym-info)
-          (sm/state-maybe empty-c-code)))
 
 ;; TODO: line numbering starts to go wrong here
 
@@ -4066,22 +4056,22 @@
                                (ast/line-number (.type ast)))))))
 
 
-(deftype sym-type-ast [sym type-num]
-  (assert (instance? Tagged sym))
-  (assert (instance? Integer type-num))
+(deftype constraint-ast [constraint ast]
+  (assert (instance? SymbolConstraints constraint))
 
   Stringable
   (string-list [_]
-    (list "<FieldType " (str sym) " " (str type-num) ">"))
+    (list "<ExprConstraint " (str constraint) " " (str ast) ">"))
 
   Emitter
-  (replace-syms [ast subs]
-    (sm/state-maybe (sym-type-ast (either (get subs sym)
-                                          sym)
-                                  type-num)))
+  (tail-call [_ params return-constraints]
+    (constraint-ast constraint (tail-call ast params return-constraints)))
 
   (emit [_]
-    (set-type sym type-num)))
+    (for [expr (emit ast)]
+      (add-constraint expr (-> constraint
+                               (update-path (ast/file-name ast) (ast/line-number ast)))
+                      (ast/file-name ast) (ast/line-number ast)))))
 
 (deftype expr-type-ast [type-sym ast]
   (assert (instance? Tagged type-sym))
@@ -4102,7 +4092,7 @@
                                (update-path (ast/file-name ast) (ast/line-number ast)))
                       (ast/file-name ast) (ast/line-number ast)))))
 
-(defn constructor-expr [new-type-name type-val-sym fields assertions]
+(defn constructor-expr [new-type-name new-type-constraint type-val-sym fields assertions]
   (let [reified-type-num (extract rdr/type-counter)]
     (ast/definition new-type-name
       [(ast/reified reified-type-num
@@ -4123,8 +4113,8 @@
                        [(ast/fn-arity-ast (str new-type-name "_invoke") ""
                                           (ast/params (vec (cons '_ (seq fields)))) ""
                                           (comp assertions
-                                                [(expr-type-ast
-                                                  new-type-name
+                                                [(constraint-ast
+                                                  new-type-constraint
                                                   (ast/call-ast new-type-value-sym
                                                                 [type-val-sym
                                                                  (ast/call-ast 'vector
@@ -4251,7 +4241,8 @@
                          "Value *" arity-fn-var2
                          "(List *closures, Value *arg1, Value *arg2);\n"]))))))
 
-(defn create-getters [sym fields type-assertions]
+(defn create-getters [sym type-constraint fields type-assertions]
+  ;; TODO: this is so, so awful
   (let [type-value (rdr/tag "#value")
         field-types (reduce type-assertions {}
                             (fn [field-types assertion]
@@ -4262,39 +4253,29 @@
      (map (zip-lists (seq fields) (range (count fields)))
           (fn [[field field-index]]
             (let [new-value (rdr/tag (str field))
-                  extract-field (ast/call-ast
-                                 extract-sym
-                                 [(ast/call-ast
-                                   nth-sym [(ast/call-ast reified-type-args-sym
-                                                          [type-value])
-                                            field-index])])
+                  extract-field (ast/call-ast extract-sym
+                                              [(ast/call-ast nth-sym
+                                                             [(ast/call-ast reified-type-args-sym
+                                                                            [type-value])
+                                                              field-index])])
                   extract-field (either (map (get field-types field)
                                              (fn [field-type]
                                                [(expr-type-ast field-type extract-field)]))
                                         [extract-field])
-                  set-field (expr-type-ast
-                             sym (ast/call-ast
-                                  make-value-sym
-                                  [type-value
-                                   (ast/call-ast extract-sym
-                                                 [(ast/call-ast
-                                                   store-sym
-                                                   [(ast/call-ast
-                                                     reified-type-args-sym
-                                                     [type-value])
-                                                    field-index new-value])])]))
+                  set-field (ast/call-ast make-value-sym
+                                          [type-value
+                                           (ast/call-ast extract-sym
+                                                         [(ast/call-ast
+                                                           store-sym
+                                                           [(ast/call-ast
+                                                             reified-type-args-sym
+                                                             [type-value])
+                                                            field-index new-value])])])
                   set-field (either (map (get field-types field)
                                          (fn [type-sym]
                                            [(ast/assert-type type-sym new-value)
-                                            ;; TODO: need this?
-                                            ;; (ast/result-ast (symbol "#x")
-                                            ;;                 (ast/assert-type sym (symbol "#x")))
-                                            (expr-type-ast sym set-field)]))
-                                    [
-                                     ;; TODO: need this?
-                                     ;; (ast/result-ast (symbol "#x")
-                                     ;;                 (ast/assert-type sym (symbol "#x")))
-                                     (expr-type-ast sym set-field)])]
+                                            (constraint-ast type-constraint set-field)]))
+                                    [(constraint-ast type-constraint set-field)])]
               [(rdr/tag (str "." field))
                [(ast/fn-arity-ast (str sym "_" field) ""
                                   (ast/params [type-value new-value]) ""
@@ -4310,11 +4291,10 @@
                        [(ast/assert-type (.sym ast) type-value-parameter)]
                        (filter (.body arity) assertion?)
                        [(ast/let-ast [(ast/binding (.fields ast)
-                                        (ast/call-ast
-                                         reified-type-args-sym
-                                         [type-value-parameter]))]
-                                     (comp (vec field-types)
-                                           (remove (.body arity) assertion?)))])]
+                                        (constraint-ast field-types (ast/call-ast
+                                                                     reified-type-args-sym
+                                                                     [type-value-parameter])))]
+                                     (remove (.body arity) assertion?))])]
     (-> arity
         (.body new-body)
         (.fn-sym (str sym "_" fn-name)))))
@@ -4352,7 +4332,9 @@
                                                (map (fn [name]
                                                       (symbol
                                                        (str "." name))))
-                                               set)}]
+                                               set)}
+                        new-type-constraint (TypeConstraint type-map (list [file-name line-number])
+                                                            sym nothing "")]
                   _ (sm/assoc-in-val [.type-maps type-num] (TypeInfo sym type-map))
                   _ (sm/assoc-in-val [.modules file-name .types sym] type-num)
                   _ (sm/assoc-in-val [.constants .type-names type-num] (str sym))
@@ -4360,19 +4342,26 @@
                   getters (declare-getters sym fields)
 
                   type-constructor (emit-definition
-                                    (constructor-expr sym type-val-sym fields
+                                    (constructor-expr sym new-type-constraint type-val-sym fields
                                                       (filter (.impls ast) assertion?)))
-                  field-types (traverse (filter (.impls ast) assert-type)
-                                        (fn [assertion]
-                                          (let [type-assertion (.assertion assertion)]
-                                            (for [type-num (-> (.type-sym type-assertion)
-                                                               maybe
-                                                               get-type-number)]
-                                              (sym-type-ast (.sym type-assertion) type-num)))))
-                  :let [impls (merge-with comp
-                                          (create-getters sym fields
+                  field-maps (traverse (filter (.impls ast) assertion?)
+                                       (fn [assertion]
+                                         (map (to-constraint (.assertion assertion))
+                                              (fn [c]
+                                                {(.sym (.assertion assertion)) c}))))
+                  :let [field-map (reduce field-maps {} (fn [m field-map]
+                                                          (merge-with (partial compose-constraints
+                                                                               file-name line-number)
+                                                                      m field-map)))
+                        field-constraints (ItemsConstraint
+                                           (map (seq fields) (fn [field]
+                                                               (either (get field-map field)
+                                                                       top-type)))
+                                           empty-list (maybe (symbol (str sym "-field-constraints"))) "")
+                        impls (merge-with comp
+                                          (create-getters sym new-type-constraint fields
                                                           (filter (.impls ast) assert-type))
-                                          (destructure-fields sym ast field-types))]
+                                          (destructure-fields sym ast field-constraints))]
                   type-val-def (emit-definition (type-val-expr sym type-num type-val-sym
                                                                fields impls))
 
@@ -4384,10 +4373,8 @@
                   _ (sm/assoc-in-val [.fns constructor-arity const-arity-index .c-info]
                                      (-> constructor-info
                                          (.constraints {(.c-var constructor-info)
-                                                        (update-path (TypeConstraint type-map
-                                                                                     empty-list sym nothing
-                                                                                     (.c-var constructor-info))
-                                                                     file-name line-number)})))]
+                                                        (-> new-type-constraint
+                                                            (update-var (.c-var constructor-info)))})))]
               (comp type-val-decl
                     [(c-code "" [] (flatten getters) {} {})]
                     type-constructor
