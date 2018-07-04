@@ -1150,9 +1150,6 @@ void *futuresThread(void *input) {
   while(workerIndex >= 0 && future != (Future *)0) {
     Value *f = future->action;
     if(f->type != FunctionType) {
-// TODO: untested code path
-fprintf(stderr, "futuresThread 1\n");
-abort();
       result = invoke0Args(empty_list, f);
     } else {
       FnArity *arity = findFnArity(f, 0);
@@ -1160,9 +1157,6 @@ abort();
         FnType0 *fn = (FnType0 *)arity->fn;
         result = fn(arity->closures);
       } else if(arity != (FnArity *)0 && arity->variadic) {
-// TODO: untested code path
-fprintf(stderr, "futuresThread 4\n");
-abort();
         FnType1 *fn = (FnType1 *)arity->fn;
         result = fn(arity->closures, (Value *)empty_list);
       } else {
@@ -2695,7 +2689,6 @@ Value *strSha1(Value *arg0) {
     Sha1Update(&context, buffer, len);
     Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
     Integer *hashVal = (Integer *)integerValue(shaVal);
-  // TODO: I'm not sure why I do this
   #ifdef CHECK_MEM_LEAK
     if (refs == -1)
       __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
@@ -3587,13 +3580,12 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
      for (int i = 0; i < itemCount; i++) {
         if (equal(incRef(node->array[2 * i], 1), incRef(key, 1))) {
            newNode->array[2 * i] = key;
-           // incRef(key, 1);
            newNode->array[2 * i + 1] = val;
            newNode->count -= 2;
         } else {
            newNode->array[2 * i] = node->array[2 * i];
-           incRef(node->array[2 * i], 1);
            newNode->array[2 * i + 1] = node->array[2 * i + 1];
+           incRef(node->array[2 * i], 1);
            incRef(node->array[2 * i + 1], 1);
         }
      }
@@ -3606,20 +3598,18 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
      dec_and_free(arg4, 1);
      return((Value *)newNode);
   } else {
-// TODO: untested code path
-fprintf(stderr, "collision assoc* 5\n");
-abort();
      BitmapIndexedNode *bmi = &emptyBMI;
      Integer newShift = {IntegerType, -1, 0};
 
      bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, key, val, arg3, (Value *)&newShift);
      for (int i = 0; i < itemCount; i++) {
-// TODO: untested code path
-fprintf(stderr, "collision assoc* 6\n");
-abort();
-        bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, node->array[2 * i], node->array[2 * i + 1],
-                                         sha1((List *)0, node->array[i]), (Value *)&newShift);
+       bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi,
+					incRef(node->array[2 * i], 1),
+					incRef(node->array[2 * i + 1], 1),
+					sha1((List *)0, incRef(node->array[i], 1)), (Value *)&newShift);
      }
+     dec_and_free(arg0, 1);
+     dec_and_free(arg4, 1);
      return((Value *)bmi);
   }
 }
@@ -3706,35 +3696,24 @@ Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
   int itemCount = node->count / 2;
 
   if(itemCount == 1) {
-// TODO: untested code path
-fprintf(stderr, "collision dissoc 1\n");
-abort();
     if(equal(incRef(node->array[0], 1), key)) {
-// TODO: untested code path
-fprintf(stderr, "collision dissoc 2\n");
-abort();
       dec_and_free(arg0, 1);
       dec_and_free(arg2, 1);
       dec_and_free(arg3, 1);
       return((Value *)&emptyBMI);
     } else {
-// TODO: untested code path
-fprintf(stderr, "collision dissoc 3\n");
-abort();
       dec_and_free(arg2, 1);
       dec_and_free(arg3, 1);
       return(arg0);
     }
   } else {
     int keyIdx = -1;
-    for (int i = 0; i < itemCount; keyIdx++, i++) {
-      if (equal(incRef(node->array[2 * i], 1), incRef(key, 1))) {
-// TODO: untested code path
-fprintf(stderr, "collision dissoc 4\n");
-abort();
-        keyIdx = i;
-      }
-    }
+    int i = 0;
+    do {
+      keyIdx = i;
+      i++;
+    } while (i < itemCount && !equal(incRef(node->array[2 * i], 1), incRef(key, 1)));
+
     if(keyIdx >= 0) {
       newNode = malloc_hashCollisionNode(itemCount - 1);
       for (int i = 0, j = 0; i < itemCount; i++) {
@@ -3760,27 +3739,26 @@ Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *a
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   List *seq = (List *)arg1;
   for (int i = 0; i < node->count / 2; i++) {
-     incRef(arg1, 1);
-     if (node->array[2 * i] != (Value *)0 && equal(arg1, incRef(node->array[2 * i], 1))) {
-        if (node->array[2 * i + 1] != (Value *)0) {
-          incRef(node->array[2 * i + 1], 1);
-          dec_and_free(arg0, 1);
-          dec_and_free(arg1, 1);
-          dec_and_free(arg2, 1);
-          dec_and_free(arg3, 1);
-          dec_and_free(arg4, 1);
-          return(node->array[2 * i + 1]);
-        } else {
-// TODO: untested code path
-fprintf(stderr, "collision get 4\n");
+    if (node->array[2 * i] != (Value *)0 && equal(incRef(arg1, 1),
+						  incRef(node->array[2 * i], 1))) {
+      if (node->array[2 * i + 1] != (Value *)0) {
+	incRef(node->array[2 * i + 1], 1);
+	dec_and_free(arg0, 1);
+	dec_and_free(arg1, 1);
+	dec_and_free(arg2, 1);
+	dec_and_free(arg3, 1);
+	dec_and_free(arg4, 1);
+	return(node->array[2 * i + 1]);
+      } else {
+fprintf(stderr, "Trying to get an invalid value from a CollisionNode of a hash-map. This should never happen!!!");
 abort();
-          dec_and_free(arg0, 1);
-          dec_and_free(arg1, 1);
-          dec_and_free(arg3, 1);
-          dec_and_free(arg4, 1);
-          return(arg2);
-        }
-     }
+	dec_and_free(arg0, 1);
+	dec_and_free(arg1, 1);
+	dec_and_free(arg3, 1);
+	dec_and_free(arg4, 1);
+	return(arg2);
+      }
+    }
   }
   dec_and_free(arg0, 1);
   dec_and_free(arg1, 1);
