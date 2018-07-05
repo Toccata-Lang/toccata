@@ -1,7 +1,7 @@
 
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "a478b64"))
+                            :sha "3a195b6"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "c89ab00"))
@@ -10,7 +10,7 @@
                              :sha "7690cd3"))
 (add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
                             "system.toc"
-                            :sha "843fe91"))
+                            :sha "40c1c4d"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
                            :sha "ecde30b"))
@@ -1636,7 +1636,7 @@
                                 (ast/line-number sym))
                      (abort)))))))))
 
-(extend-type Constraints
+(extend-type SymbolConstraints
   Emitter
   (emit [constraint]
     (either (map (.sym constraint)
@@ -1649,6 +1649,13 @@
                          _ (set-sym sym var)]
                      (.refs-map var (dissoc (.refs-map sym-info) (.c-var sym-info))))))
             (sm/state-maybe empty-c-code))))
+
+(extend-type MultiConstraint
+  Emitter
+  (emit [constraint]
+    (map (traverse (.constraints constraint) emit)
+         (fn [[expr & exprs]]
+           (comp* expr exprs)))))
 
 (extend-type AllValues
   Emitter
@@ -2236,15 +2243,23 @@
     call-info))
 
 (defn inline-wrap-and-apply* [name args]
-  (let [[dispatch-ast & arg-asts] args]
-    (for [dispatch-val (emit dispatch-ast)
-          impl-ast (map (get-proto-impl name (count args)
-                                        (expr-type-num dispatch-val))
-                        .ast)
-          expr (-> impl-ast
-                   (replace-bound-vars {})
-                   (inline-expr (cons dispatch-val arg-asts)))]
-      expr)))
+  ;; TODO: this is subtly broken in replacing syms/bound-vars. It breaks on:
+  ;; (for [name (list 1 2 3 4)
+  ;;       :let [name (str name)]
+  ;;       :when-not (= "." (subs name 0 1))]
+  ;;   name)
+
+  ;; (let [[dispatch-ast & arg-asts] args]
+  ;;   (for [dispatch-val (emit dispatch-ast)
+  ;;         impl-ast (map (get-proto-impl name (count args)
+  ;;                                       (expr-type-num dispatch-val))
+  ;;                       .ast)
+  ;;         expr (-> impl-ast
+  ;;                  (replace-bound-vars {})
+  ;;                  (inline-expr (cons dispatch-val arg-asts)))]
+  ;;     expr))
+  (zero sm/state-maybe)
+  )
 
 
 (defn inline-flat-map [name args]
@@ -3649,15 +3664,24 @@
 (extend-type ast/and-ast
   Emitter
   (emit [ast]
-    (for [result-var (genlocal "andRslt")
-          expr (emit-cond-expr "if (isNothing(" result-var (.clauses ast) "")]
-      expr))
+    (let [clauses (filter (.clauses ast) produces-code?)]
+      (either (and (empty? clauses)
+                   (maybe (sm/state-maybe empty-c-code)))
+              (for [result-var (genlocal "andRslt")
+                    expr (emit-cond-expr "if (isNothing(" result-var clauses "")]
+                expr))))
 
   (tail-call [ast params result-constraint]
-    (let [[last-clause & clauses] (reverse (seq (.clauses ast)))]
-      (TailAnd (-> (tail-call last-clause params result-constraint)
-                   (cons clauses)
-                   reverse))))
+    (let [clauses (-> (.clauses ast)
+                      (filter produces-code?)
+                      seq
+                      reverse)]
+      (either (map (first clauses)
+                   (fn [last-clause]
+                     (TailAnd (-> (tail-call last-clause params result-constraint)
+                                  (cons (rest clauses))
+                                  reverse))))
+              (TailAnd empty-list))))
 
   (replace-syms [ast subs]
     (for [new-clauses (traverse (.clauses ast)
@@ -3689,20 +3713,19 @@
                                (str "return(" result-var ");" line-sep))]
       expr)))
 
-(def TailExpr (comp TailCall
-                    TailAnd
-                    TailOr))
-
 (extend-type ast/or-ast
   Emitter
   (emit [ast]
-    (let [clauses (.clauses ast)]
-      (flat-map (genlocal "orRslt")
-                (fn [result-var]
-                  (emit-cond-expr "if (!isNothing(" result-var clauses line-sep)))))
+    (let [clauses (filter (.clauses ast) produces-code?)]
+      (either (and (empty? clauses)
+                   (maybe (sm/state-maybe empty-c-code)))
+              (flat-map (genlocal "orRslt")
+                        (fn [result-var]
+                          (emit-cond-expr "if (!isNothing(" result-var clauses
+                                          line-sep))))))
 
   (tail-call [ast params result-constraint]
-    (let [clauses (.clauses ast)]
+    (let [clauses (filter (.clauses ast) produces-code?)]
       (TailOr (either (flat-map (last clauses)
                                 (fn [last-clause]
                                   (store clauses (dec (count clauses))
