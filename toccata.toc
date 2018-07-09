@@ -1177,11 +1177,11 @@
   (string-list [_] (list "<Module '" (str path) "'>")))
 
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [fn-context init modules fns namespaces constants reify-fn-index type-maps]
+(deftype GlobalContext [fn-context rt-init modules fns namespaces constants reify-fn-index type-maps]
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
   ;; init                   context for the runtime initialization
-  (assert (instance? RuntimeInit init))
+  (assert (instance? RuntimeInit rt-init))
   ;; modules                info for each module compiled
   (assert (instance? HashMap modules))
   ;; fns                    static functions
@@ -2779,19 +2779,13 @@
                                                            (ast/call-ast get-type-sym ['y])])])])]]]})
                       defined-sym)]
             expr)
-          (for [init-fn-context (sm/new-sm (fn [s]
-                                             (assert (instance? GlobalContext s))
-                                             (-> s
-                                                 .init
-                                                 .fn-context
-                                                 (vector s)
-                                                 maybe)))
+          (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
                 fn-context (reset-fn-context init-fn-context)
                 value (emit fn-val)
                 var (comp (map (lookup-declaration defined-sym) .c-var)
                           (global-var defined-sym "var"))
                 init-fn-context (reset-fn-context fn-context)
-                _ (sm/assoc-in-val [.init .fn-context] init-fn-context)
+                _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
                 _ (new-module-def defined-sym (c-code var [] [] {}
                                                       {var (expr-constraints value)}))]
             [(c-init var [(.init value)
@@ -2955,19 +2949,13 @@
               (ast/file-name ast) (ast/line-number ast))))
 
   (emit-defined-value [ast defined-sym]
-    (for [init-fn-context (sm/new-sm (fn [s]
-                                       (assert (instance? GlobalContext s))
-                                       (-> s
-                                           .init
-                                           .fn-context
-                                           (vector s)
-                                           maybe)))
+    (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
           fn-context (reset-fn-context init-fn-context)
           value (emit ast)
           var (comp (map (lookup-declaration defined-sym) .c-var)
                     (global-var defined-sym "var"))
           init-fn-context (reset-fn-context fn-context)
-          _ (sm/assoc-in-val [.init .fn-context] init-fn-context)
+          _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
           _ (new-module-def defined-sym (c-code var [] [] {}
                                                 {var (expr-constraints value)}))]
       [(c-init var [(.init value)
@@ -3487,17 +3475,11 @@
         reified-result)))
 
   (emit-defined-value [ast defined-sym]
-    (for [init-fn-context (sm/new-sm (fn [s]
-                                       (assert (instance? GlobalContext s))
-                                       (-> s
-                                           .init
-                                           .fn-context
-                                           (vector s)
-                                           maybe)))
+    (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
           fn-context (reset-fn-context init-fn-context)
           value (emit ast)
           init-fn-context (reset-fn-context fn-context)
-          _ (sm/assoc-in-val [.init .fn-context] init-fn-context)
+          _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
           value (comp (map (lookup-declaration defined-sym)
                            (fn [c-info]
                              (c-code (.c-var value) [(.init value) "\n" (.c-var c-info) " = "
@@ -4408,13 +4390,8 @@
 (def emit-main*
   (for [main-fn (comp (lookup-static-arity 'main 1)
                       (compilation-error "'main' function is missing"))
-        values (sm/new-sm (fn [s]
-                            (assert (instance? GlobalContext s))
-                            (-> s
-                                .init
-                                .exprs
-                                (vector s)
-                                maybe)))]
+        values (sm/get-in-val [.rt-init .exprs])
+        modules (sm/get-in-val [.modules])]
     (write-strings ["\n#\n"
                     "\nint main (int argc, char **argv) {\n"
                     "maybeNothing = maybe((List *)0, (Value *)0, nothing);\n"
@@ -4446,6 +4423,12 @@
                     "Value *the_final_answer = " (.c-var main-fn)
                     "((List *)empty_list, (Value *)argList);\n\n"
                     "#ifdef CHECK_MEM_LEAK\n"
+                    (map (vals modules) (fn [module]
+                                          (either (map (get-in module [.values (symbol "#symbols")])
+                                                       (fn [expr]
+                                                         (free-global (c-init (.c-var expr)
+                                                                              [] [] {} {} "" 0))))
+                                                  "")))
                     (map values free-global) "\n"
                     "#\n"
                     "  cleanupMemory(the_final_answer, maybeNothing, argList);\n"
@@ -4526,10 +4509,11 @@
 (defn emit-ast [context ast]
   (update-context context
                   (comp (for [emitted (emit-definition ast)
-                              :let [_ (map emitted (fn [expr]
-                                                     (write-strings (.decl expr))))]
-                              _ (sm/update-in-val [.init .exprs] (fn [exprs]
-                                                                   (comp exprs emitted)))]
+                              :let [emitted (map emitted (fn [expr]
+                                                           (write-strings (.decl expr))
+                                                           (.decl expr [])))]
+                              _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
+                                                                      (comp exprs emitted)))]
                           "")
                         (compilation-error "Could not emit code for expression at "
                                            (ast/file-name ast) (ast/line-number ast)))))
@@ -4764,6 +4748,30 @@
                (grmr/apply-fn send-to-emitter
                               rdr/top-level)))))
 
+(defn gather-symbols [context file-name]
+  (update-context context
+                  (comp (for [symbols (sm/get-in-val [.modules file-name .values])
+                              vect-sym (global-var "symbols_")
+                              _ (sm/assoc-in-val [.modules file-name .values (symbol "#symbols")]
+                                                 (c-code vect-sym [] [] {} {}))
+                              assocs (traverse (seq symbols)
+                                               (fn [[sym var]]
+                                                 (for [sym-var (emit (ast/quoted-ast sym))]
+                                                   (c-code ""
+                                                           [vect-sym " = assoc((List *)0, (Value *)" vect-sym
+                                                            ", incRef(" (.c-var sym-var) ", 1),"
+                                                            " incRef(" (.c-var var) ", 1),"
+                                                            " symbolSha1(incRef(" (.c-var sym-var) ", 1)),"
+                                                            " const0Ptr);\n"]
+                                                           (.decl sym-var) {} {}))))
+                              :let [_ (write-strings (map assocs .decl))]
+                              _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
+                                                                      (comp exprs assocs
+                                                                            [(c-code "" [vect-sym "->refs = -1;"]
+                                                                                     [] {} {})])))]
+                          '_)
+                        (sm/state-maybe '_))))
+
 (defn load-core [modules]
   (either (or (and (get modules 'core)
                    (maybe modules))
@@ -4774,7 +4782,19 @@
                                       'project-directory ""
                                       'root-directory ""}
                                      (lazy-list file-in))]
-                (assoc modules 'core 'loaded)))
+                (do
+                  (send ast-emitter gather-symbols 'core)
+                  (send ast-emitter (fn [context]
+                                      (update-context context
+                                                      (flat-map (sm/get-in-val [.modules 'core .values
+                                                                                (symbol "#symbols")])
+                                                                (fn [expr]
+                                                                  (write-strings [["Value *" (.c-var expr)
+                                                                                   " = (Value *)&emptyBMI;\n"]])
+                                                                  (sm/assoc-in-val [.modules 'core .values
+                                                                                    (rdr/tag 'core)]
+                                                                                   expr))))))
+                  (assoc modules 'core 'loaded))))
           (do
             (print-err "Could not compile Toccata core."
                        "Is the $TOCCATA_DIR environment variable set correctly?")
