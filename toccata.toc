@@ -2591,12 +2591,16 @@
               [] {} {}
               (ast/file-name ast) (ast/line-number ast)))))
 
+(def symbols-sym (symbol "#symbols"))
+(def types-sym (symbol "#types"))
 (def invoke-sym (rdr/tag 'invoke))
 (def Type-sym (rdr/tag 'Type))
 (def Function-sym (rdr/tag 'Function))
+(def Container-sym (rdr/tag 'Container))
 (def Stringable-sym (rdr/tag 'Stringable))
 (def type-name-sym (rdr/tag 'type-name))
 (def =*-sym (rdr/tag '=*))
+(def apply*-sym (rdr/tag 'apply*))
 (def get-type-sym (rdr/tag 'reified-get-type))
 (def extract-sym (rdr/tag 'extract))
 (def instance?-sym (rdr/tag 'instance?))
@@ -4093,6 +4097,15 @@
                                                                  (ast/call-ast 'vector
                                                                                (vec fields))]))]))]]]
 
+                     Container-sym
+                     [[apply*-sym
+                       [(ast/fn-arity-ast (str new-type-name "_apply_ST_") ""
+                                          (ast/params ['_ 'fields]) ""
+                                          ;; TODO: need field constraints here
+                                          [(ast/call-ast new-type-value-sym
+                                                          [type-val-sym
+                                                           (ast/call-ast 'vec ['fields])])])]]]
+
                      Stringable-sym
                      [[string-list-sym
                        [(ast/fn-arity (ast/params ['z]) ""
@@ -4424,7 +4437,13 @@
                     "((List *)empty_list, (Value *)argList);\n\n"
                     "#ifdef CHECK_MEM_LEAK\n"
                     (map (vals modules) (fn [module]
-                                          (either (map (get-in module [.values (symbol "#symbols")])
+                                          (either (map (get-in module [.values symbols-sym])
+                                                       (fn [expr]
+                                                         (free-global (c-init (.c-var expr)
+                                                                              [] [] {} {} "" 0))))
+                                                  "")))
+                    (map (vals modules) (fn [module]
+                                          (either (map (get-in module [.values types-sym])
                                                        (fn [expr]
                                                          (free-global (c-init (.c-var expr)
                                                                               [] [] {} {} "" 0))))
@@ -4752,7 +4771,7 @@
   (update-context context
                   (comp (for [symbols (sm/get-in-val [.modules file-name .values])
                               vect-sym (global-var "symbols_")
-                              _ (sm/assoc-in-val [.modules file-name .values (symbol "#symbols")]
+                              _ (sm/assoc-in-val [.modules file-name .values symbols-sym]
                                                  (c-code vect-sym [] [] {} {}))
                               assocs (traverse (seq symbols)
                                                (fn [[sym var]]
@@ -4764,6 +4783,32 @@
                                                             " symbolSha1(incRef(" (.c-var sym-var) ", 1)),"
                                                             " const0Ptr);\n"]
                                                            (.decl sym-var) {} {}))))
+                              :let [_ (write-strings (map assocs .decl))]
+                              _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
+                                                                      (comp exprs assocs
+                                                                            [(c-code "" [vect-sym "->refs = -1;"]
+                                                                                     [] {} {})])))]
+                          '_)
+                        (sm/state-maybe '_))))
+
+(defn gather-types [context file-name]
+  (update-context context
+                  (comp (for [types (sm/get-in-val [.modules file-name .types])
+                              vect-sym (global-var "types_")
+                              _ (sm/assoc-in-val [.modules file-name .values types-sym]
+                                                 (c-code vect-sym [] [] {} {}))
+                              assocs (traverse (seq types)
+                                               (fn [[sym var]]
+                                                 (for [sym-var (emit (ast/quoted-ast sym))
+                                                       expr (emit var)]
+                                                   (c-code ""
+                                                           [vect-sym " = assoc((List *)0, (Value *)" vect-sym
+                                                            ", incRef(" (.c-var sym-var) ", 1),"
+                                                            " incRef(" (.c-var expr) ", 1),"
+                                                            " symbolSha1(incRef(" (.c-var sym-var) ", 1)),"
+                                                            " const0Ptr);\n"]
+                                                           [(.decl sym-var) (.decl expr)]
+                                                           {} {}))))
                               :let [_ (write-strings (map assocs .decl))]
                               _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
                                                                       (comp exprs assocs
@@ -4784,16 +4829,25 @@
                                      (lazy-list file-in))]
                 (do
                   (send ast-emitter gather-symbols 'core)
+                  (send ast-emitter gather-types 'core)
                   (send ast-emitter (fn [context]
                                       (update-context context
-                                                      (flat-map (sm/get-in-val [.modules 'core .values
-                                                                                (symbol "#symbols")])
-                                                                (fn [expr]
-                                                                  (write-strings [["Value *" (.c-var expr)
-                                                                                   " = (Value *)&emptyBMI;\n"]])
-                                                                  (sm/assoc-in-val [.modules 'core .values
-                                                                                    (rdr/tag 'core)]
-                                                                                   expr))))))
+                                                      (for [symbols (sm/get-in-val [.modules 'core .values
+                                                                                    symbols-sym])
+                                                            _ (sm/assoc-in-val [.modules 'core .values
+                                                                                (rdr/tag 'core-symbols)]
+                                                                               symbols)
+                                                            types (sm/get-in-val [.modules 'core .values
+                                                                                  types-sym])
+                                                            _ (sm/assoc-in-val [.modules 'core .values
+                                                                                (rdr/tag 'core-types)]
+                                                                               types)]
+                                                        (do
+                                                          (write-strings [["Value *" (.c-var symbols)
+                                                                           " = (Value *)&emptyBMI;\n"]])
+                                                          (write-strings [["Value *" (.c-var types)
+                                                                           " = (Value *)&emptyBMI;\n"]])
+                                                          '_)))))
                   (assoc modules 'core 'loaded))))
           (do
             (print-err "Could not compile Toccata core."
