@@ -21,6 +21,15 @@
                             "ast.toc"
                             :sha "ba18227"))
 
+(defprotocol StringWriter
+  (write-str [x]
+    (print x)))
+
+(def string-writer (agent ""))
+(defn write-strings [strs]
+  (send string-writer (fn [_]
+                        (write-str strs))))
+
 (def Tagged (comp ast/SymbolOrString
                   rdr/tagged-symbol))
 
@@ -32,12 +41,12 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "")
+(def line-sep "\n")
 
 (defn line-macro [ast marker]
   (let [file-name (ast/file-name ast)]
     (sm/state-maybe (either (= "" file-name)
-                            ["\n" marker "\n#line "
+                            ["\n" marker "\n// #line "
                              (str (ast/line-number ast)) " " "\""
                              (either (and (= 'core file-name)
                                           (maybe path-to-core))
@@ -376,7 +385,12 @@
 
   ;; update the constraint map for symbol
   (constrain-sym [sym constraint]
-    (sm/state-maybe constraint)))
+    (sm/state-maybe constraint))
+
+  ;; encode a static representation of a core data structure
+  (encode [m]
+    (emit m))
+  (encode [m var-prefix]))
 
 (defprotocol Assertion
   (assertion? [ast]
@@ -1240,7 +1254,7 @@
                                                         (ast/line-number proto-sym))
                                             (abort))))))))
         (sm/assoc-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym]
-                         proto-sym)))
+                         {})))
 
 (defn get-protocol [proto-sym]
   ;; Look for the protocol information
@@ -1485,25 +1499,6 @@
                           (map l (fn [x]
                                    (cons emitted x))))))))
 
-(extend-type List
-  Emitter
-  (tail-call [asts args result-constraint]
-    (let [asts (reverse asts)]
-      (either (empty? asts)
-              (let [[tail & init] asts]
-                (-> (tail-call tail args result-constraint)
-                    (cons init)
-                    reverse))))))
-
-(extend-type Vector
-  Emitter
-  (tail-call [asts params result-constraint]
-    (extract (or (empty? asts)
-                 (flat-map (last asts)
-                           (fn [tail]
-                             (store asts (dec (count asts))
-                                    (tail-call tail params result-constraint))))))))
-
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn global-var
   ([arg-name] (sm/state-maybe (gensym arg-name)))
@@ -1661,6 +1656,48 @@
   Emitter
   (emit [constraint]
     (sm/state-maybe empty-c-code)))
+
+(extend-type List
+  Emitter
+  (tail-call [asts args result-constraint]
+    (let [asts (reverse asts)]
+      (either (empty? asts)
+              (let [[tail & init] asts]
+                (-> (tail-call tail args result-constraint)
+                    (cons init)
+                    reverse))))))
+
+(extend-type Vector
+  Emitter
+  (tail-call [asts params result-constraint]
+    (extract (or (empty? asts)
+                 (flat-map (last asts)
+                           (fn [tail]
+                             (store asts (dec (count asts))
+                                    (tail-call tail params result-constraint))))))))
+
+(extend-type HashMap
+  Emitter
+  (encode [m] (encode m "var_"))
+  (encode [m var-prefix]
+    (for [map-var (global-var var-prefix)
+          :let [_ (write-strings [["Value *" map-var " = (Value *)&emptyBMI;\n"]])]
+          assocs (traverse (seq m)
+                           (fn [[sym var]]
+                             (for [sym-var (emit (ast/quoted-ast sym))
+                                   expr (encode var)]
+                               (do
+                                 (write-strings [(.decl sym-var) (.decl expr)])
+                                 (c-code ""
+                                         [map-var " = assoc((List *)0, (Value *)" map-var
+                                          ", incRef(" (.c-var sym-var) ", 1), "
+                                          (.c-var expr)
+                                          ", symbolSha1(incRef(" (.c-var sym-var) ", 1)),"
+                                          " const0Ptr);\n"]
+                                         [] {} {})))))
+          _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
+                                                  (comp exprs assocs)))]
+      (c-code map-var [] [] {} {}))))
 
 (deftype StaticArityInfo [c-info param-constraints]
   (assert (instance? C-expr c-info))
@@ -1974,6 +2011,11 @@
 
 (extend-type String
   Emitter
+  (encode [s var-prefix]
+    (for [var (global-var var-prefix)
+          expr (emit s)]
+      (c-code var [] [] {} {})))
+
   (emit [str-val]
     (comp (sm/get-in-val [.constants .strings str-val])
           (make-static-string str-val)))
@@ -2013,6 +2055,11 @@
 
 (extend-type Integer
   Emitter
+  (encode [s var-prefix]
+    (for [var (global-var var-prefix)
+          expr (emit s)]
+      (c-code var [] [] {} {})))
+
   (replace-syms [ast _]
     (sm/state-maybe ast))
 
@@ -2277,6 +2324,11 @@
 
 (extend-type rdr/tagged-symbol
   Emitter
+  (encode [s var-prefix]
+    (for [var (global-var var-prefix)
+          expr (emit s)]
+      (c-code var [] [] {} {})))
+
   (constrain-sym [sym constraint]
     (for [var (sm/get-in-val [.fn-context .syms sym])
           :let [constraint (-> (compose-constraints (ast/file-name sym) (ast/line-number sym)
@@ -2593,6 +2645,7 @@
 
 (def symbols-sym (symbol "#symbols"))
 (def types-sym (symbol "#types"))
+(def protocols-sym (symbol "#protocols"))
 (def invoke-sym (rdr/tag 'invoke))
 (def Type-sym (rdr/tag 'Type))
 (def Function-sym (rdr/tag 'Function))
@@ -3823,7 +3876,7 @@
       [(c-code "" [] (.decl (.var-info fn-arity)) {} {})])))
 
 
-(defn declare-proto-dispatch-arity [fn-name dispatch-fn-var prototype]
+(defn declare-proto-dispatch-arity [proto-sym fn-name dispatch-fn-var prototype]
   (let [params (.params prototype)
         num-args (count params)
         body (.default-body prototype)
@@ -3831,6 +3884,8 @@
         return-assertions (filter body return-assertion?)
         assertions (filter body assertion?)]
     (for [curr-context (reset-fn-context)
+          _ (sm/assoc-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym fn-name num-args]
+                             fn-name)
           _ (bind-params params "" "")
           return-constraint (map (traverse return-assertions to-constraint)
                                  (partial comp* top-type))
@@ -3871,8 +3926,7 @@
                                    {dispatch-fn-sym fn-constraint}))
         _ (new-protocol-fn fn-name dispatch-fn-sym)
         dispatch-arities (traverse arities
-                                   (partial declare-proto-dispatch-arity fn-name
-                                            dispatch-fn-sym))
+                                   (partial declare-proto-dispatch-arity proto-name fn-name dispatch-fn-sym))
         default-fns (traverse arities (partial emit-proto-default proto-name fn-name))]
     ["\n// proto fn for " proto-name "/" fn-name "\n"
      "Value *" dispatch-fn-sym ";\n"
@@ -4368,16 +4422,10 @@
                                    core-types               ;; type-maps
                                    ))
 
-(def string-writer (agent ""))
-
 (def logger (agent ""))
 (defn log [& msg]
   (send logger (fn [_]
                  (apply print-err msg))))
-
-(defprotocol StringWriter
-  (write-str [x]
-    (print x)))
 
 (extend-type Vector
   StringWriter
@@ -4397,9 +4445,6 @@
   (free-global [c-info]
     ["freeGlobal(" (.c-var c-info) ");" line-sep]))
 
-(defn write-strings [strs]
-  (send string-writer (fn [_]
-                        (write-str strs))))
 (def emit-main*
   (for [main-fn (comp (lookup-static-arity 'main 1)
                       (compilation-error "'main' function is missing"))
@@ -4444,6 +4489,12 @@
                                                   "")))
                     (map (vals modules) (fn [module]
                                           (either (map (get-in module [.values types-sym])
+                                                       (fn [expr]
+                                                         (free-global (c-init (.c-var expr)
+                                                                              [] [] {} {} "" 0))))
+                                                  "")))
+                    (map (vals modules) (fn [module]
+                                          (either (map (get-in module [.values protocols-sym])
                                                        (fn [expr]
                                                          (free-global (c-init (.c-var expr)
                                                                               [] [] {} {} "" 0))))
@@ -4770,50 +4821,24 @@
 (defn gather-symbols [context file-name]
   (update-context context
                   (comp (for [symbols (sm/get-in-val [.modules file-name .values])
-                              vect-sym (global-var "symbols_")
-                              _ (sm/assoc-in-val [.modules file-name .values symbols-sym]
-                                                 (c-code vect-sym [] [] {} {}))
-                              assocs (traverse (seq symbols)
-                                               (fn [[sym var]]
-                                                 (for [sym-var (emit (ast/quoted-ast sym))]
-                                                   (c-code ""
-                                                           [vect-sym " = assoc((List *)0, (Value *)" vect-sym
-                                                            ", incRef(" (.c-var sym-var) ", 1),"
-                                                            " incRef(" (.c-var var) ", 1),"
-                                                            " symbolSha1(incRef(" (.c-var sym-var) ", 1)),"
-                                                            " const0Ptr);\n"]
-                                                           (.decl sym-var) {} {}))))
-                              :let [_ (write-strings (map assocs .decl))]
-                              _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
-                                                                      (comp exprs assocs
-                                                                            [(c-code "" [vect-sym "->refs = -1;"]
-                                                                                     [] {} {})])))]
+                              expr (encode symbols "symbols_")
+                              _ (sm/assoc-in-val [.modules file-name .values symbols-sym] expr)]
                           '_)
                         (sm/state-maybe '_))))
 
 (defn gather-types [context file-name]
   (update-context context
                   (comp (for [types (sm/get-in-val [.modules file-name .types])
-                              vect-sym (global-var "types_")
-                              _ (sm/assoc-in-val [.modules file-name .values types-sym]
-                                                 (c-code vect-sym [] [] {} {}))
-                              assocs (traverse (seq types)
-                                               (fn [[sym var]]
-                                                 (for [sym-var (emit (ast/quoted-ast sym))
-                                                       expr (emit var)]
-                                                   (c-code ""
-                                                           [vect-sym " = assoc((List *)0, (Value *)" vect-sym
-                                                            ", incRef(" (.c-var sym-var) ", 1),"
-                                                            " incRef(" (.c-var expr) ", 1),"
-                                                            " symbolSha1(incRef(" (.c-var sym-var) ", 1)),"
-                                                            " const0Ptr);\n"]
-                                                           [(.decl sym-var) (.decl expr)]
-                                                           {} {}))))
-                              :let [_ (write-strings (map assocs .decl))]
-                              _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
-                                                                      (comp exprs assocs
-                                                                            [(c-code "" [vect-sym "->refs = -1;"]
-                                                                                     [] {} {})])))]
+                              expr (encode types "types_")
+                              _ (sm/assoc-in-val [.modules file-name .values types-sym] expr)]
+                          '_)
+                        (sm/state-maybe '_))))
+
+(defn gather-protocols [context file-name]
+  (update-context context
+                  (comp (for [protocols (sm/get-in-val [.modules file-name .protocols])
+                              expr (encode protocols "protos_")
+                              _ (sm/assoc-in-val [.modules file-name .values protocols-sym] expr)]
                           '_)
                         (sm/state-maybe '_))))
 
@@ -4830,6 +4855,7 @@
                 (do
                   (send ast-emitter gather-symbols 'core)
                   (send ast-emitter gather-types 'core)
+                  (send ast-emitter gather-protocols 'core)
                   (send ast-emitter (fn [context]
                                       (update-context context
                                                       (for [symbols (sm/get-in-val [.modules 'core .values
@@ -4841,13 +4867,22 @@
                                                                                   types-sym])
                                                             _ (sm/assoc-in-val [.modules 'core .values
                                                                                 (rdr/tag 'core-types)]
-                                                                               types)]
-                                                        (do
-                                                          (write-strings [["Value *" (.c-var symbols)
-                                                                           " = (Value *)&emptyBMI;\n"]])
-                                                          (write-strings [["Value *" (.c-var types)
-                                                                           " = (Value *)&emptyBMI;\n"]])
-                                                          '_)))))
+                                                                               types)
+                                                            protos (sm/get-in-val [.modules 'core .values
+                                                                                   protocols-sym])
+                                                            _ (sm/assoc-in-val [.modules 'core .values
+                                                                                (rdr/tag 'core-protocols)]
+                                                                               protos)
+                                                            _ (sm/update-in-val
+                                                               [.rt-init .exprs]
+                                                               (fn [exprs]
+                                                                 (comp exprs 
+                                                                       [(c-code ""
+                                                                                [(.c-var symbols) "->refs = -1;\n"
+                                                                                 (.c-var types) "->refs = -1;\n"
+                                                                                 (.c-var protos) "->refs = -1;\n"]
+                                                                                [] {} {})])))]
+                                                        '_))))
                   (assoc modules 'core 'loaded))))
           (do
             (print-err "Could not compile Toccata core."
@@ -4910,3 +4945,4 @@
                               (send string-writer (fn [_]
                                                     (deliver waiter 'x)))))
           (extract waiter))))
+
