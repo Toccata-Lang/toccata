@@ -895,7 +895,9 @@ Value *incRef(Value *v, int deltaRefs) {
 void moveFreeToCentral();
 
 void freeGlobal(Value *x) {
-  if (x->refs == -10)
+  if (x == (Value*)0 ||
+      x->refs == -10 ||
+      x == (Value *)&emptyBMI)
     return;
   x->refs = 1;
   dec_and_free(x, 1);
@@ -2327,7 +2329,18 @@ Value *listEQ(Value *arg0, Value *arg1) {
 }
 
 int8_t equal(Value *v1, Value *v2) {
-   Value *equals = equalSTAR((List *)0, v1, v2);
+  Value *equals;
+  switch (v1->type) {
+  case IntegerType:
+    equals = integer_EQ(v1, v2);
+    break;
+  case SymbolType:
+    equals = symEQ(v1, v2);
+    break;
+  default:
+    equals = equalSTAR((List *)0, v1, v2);
+    break;
+  }
    int8_t notEquals = isNothing(equals, "", 0);
    dec_and_free(equals, 1);
    return(!notEquals);
@@ -2347,7 +2360,12 @@ Value *maybeExtract(Value *arg0) {
 
 Value *fnApply(Value *arg0, Value *arg1) {
   List *argList = (List *)arg1;
-  FnArity *_arity = findFnArity(arg0, argList->len);
+  FnArity *_arity;
+  // TODO: this should be restored to assume a Function value
+  if (arg0->type == FunctionType)
+    _arity = findFnArity(arg0, argList->len);
+  else
+    _arity = (FnArity *)arg0;
 
   if (_arity == (FnArity *)0) {
     fprintf(stderr, "\n*** no arity of '%s' found to apply to %" PRId64 " args\n",
@@ -3264,6 +3282,22 @@ Value *bmiCount(Value *arg0) {
   return(integerValue(accum));
 }
 
+Value *baseSha1(Value *v1) {
+  Value *hash;
+  switch (v1->type) {
+  case IntegerType:
+    hash = integerSha1(v1);
+    break;
+  case SymbolType:
+    hash = symbolSha1(v1);
+    break;
+  default:
+    hash = sha1((List *)0, v1);
+    break;
+  }
+  return(hash);
+}
+
 Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
@@ -3315,7 +3349,7 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
     } else {
       // there is already a key/val pair at the position where key
       // would be placed. Extend tree a level
-      Value *hashValue = sha1((List *)0, incRef(keyOrNull, 1));
+      Value *hashValue = baseSha1(incRef(keyOrNull, 1));
       int64_t existingKeyHash = ((Integer *)hashValue)->numVal;
       dec_and_free(hashValue, 1);
       if (existingKeyHash == hash) {
@@ -3363,7 +3397,7 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
             newNode->array[i] = assoc((List *)0, (Value *)&emptyBMI,
                                       node->array[j],
                                       incRef(node->array[j + 1], 1),
-                                      sha1((List *)0, node->array[j]),
+                                      baseSha1(node->array[j]),
                                       incRef(newShift, 1));
           }
           j += 2;
@@ -3423,12 +3457,12 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
       incRef(keyOrNull, 1);
       if (equal(key, keyOrNull)) {
         // found 'key' at this position
-        incRef(valOrNode, 1);
+	incRef(valOrNode, 1);
         dec_and_free(arg0, 1);
         dec_and_free(arg2, 1);
         dec_and_free(arg3, 1);
         dec_and_free(arg4, 1);
-        return(valOrNode);
+	return(valOrNode);
       } else {
       // there's a key in this position, but doesn't equal 'key'
         dec_and_free(arg0, 1);
@@ -3540,7 +3574,7 @@ Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value 
   ArrayNode *newNode;
 
   Value *subNode = node->array[idx];
-  Value *keyHash = sha1((List *)0, incRef(key, 1));
+  Value *keyHash = baseSha1(incRef(key, 1));
   if (subNode == (Value *)0) {
     newNode = (ArrayNode *)malloc_arrayNode();
     for (int i = 0; i < 32; i++) {
@@ -3575,7 +3609,7 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
   int shift = (int)((Integer *)arg4)->numVal;
   int itemCount = node->count / 2;
 
-  if(equal(sha1((List *)0, incRef(node->array[0], 1)), incRef(arg3, 1))) {
+  if(equal(baseSha1(incRef(node->array[0], 1)), incRef(arg3, 1))) {
      HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
      for (int i = 0; i < itemCount; i++) {
         if (equal(incRef(node->array[2 * i], 1), incRef(key, 1))) {
@@ -3606,7 +3640,7 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
        bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi,
 					incRef(node->array[2 * i], 1),
 					incRef(node->array[2 * i + 1], 1),
-					sha1((List *)0, incRef(node->array[i], 1)), (Value *)&newShift);
+					baseSha1(incRef(node->array[i], 1)), (Value *)&newShift);
      }
      dec_and_free(arg0, 1);
      dec_and_free(arg4, 1);
@@ -3616,18 +3650,6 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
 
 Value notFound = {65000, -1};
 Value *notFoundPtr = &notFound;
-
-Value *hashMapGet(Value *arg0, Value *arg1) {
-  incRef(arg1, 1);
-  Value *hash = sha1((List *)0, arg1);
-  Value *shift = const0Ptr;
-  Value *found = get((List *)0, arg0, arg1, notFoundPtr, hash, shift);
-  if (found == notFoundPtr) {
-    return(nothing);
-  } else {
-    return(maybe((List *)0, (Value *)0, found));
-  }
-}
 
 Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
   ArrayNode *node = (ArrayNode *)arg0;
@@ -3798,7 +3820,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
     dec_and_free(newShift, 1);
     return(arg0);
   } else {
-      Value *hash = sha1((List *)0, incRef(key, 1));
+      Value *hash = baseSha1(incRef(key, 1));
       Value *n = dissoc((List *)0, incRef(subNode, 1), key, hash, newShift);
       newNode = (ArrayNode *)malloc_arrayNode();
       for (int i = 0; i < 32; i++) {
@@ -3813,6 +3835,51 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
       dec_and_free(arg3, 1);
   }
   return((Value *)newNode);
+}
+
+Value *get(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
+  switch(node->type) {
+  case BitmapIndexedType: 
+    return(bmiGet(node, k, v, hash, shift));
+  case ArrayNodeType:
+    return(arrayNodeGet(node, k, v, hash, shift));
+  case HashCollisionNodeType:
+    return(collisionGet(node, k, v, hash, shift));
+  default:
+    fprintf(stderr, "Can't get from that kind of node\n");
+    abort();
+  }
+}
+
+Value *assoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
+  switch(node->type) {
+  case BitmapIndexedType: 
+    return(bmiAssoc(node, k, v, hash, shift));
+  case ArrayNodeType:
+    return(arrayNodeAssoc(node, k, v, hash, shift));
+  case HashCollisionNodeType:
+    return(collisionAssoc(node, k, v, hash, shift));
+  default:
+    fprintf(stderr, "Can't assoc into that kind of node\n");
+    abort();
+  }
+}
+
+Value *hashMapGet(Value *arg0, Value *arg1) {
+  Value *hash = baseSha1(incRef(arg1, 1));
+  Value *shift = const0Ptr;
+  Value *found = get((List *)0, arg0, arg1, notFoundPtr, hash, shift);
+  if (found == notFoundPtr) {
+    return(nothing);
+  } else {
+    return(maybe((List *)0, (Value *)0, found));
+  }
+}
+
+Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
+  Value *hash = baseSha1(incRef(arg1, 1));
+  Value *shift = const0Ptr;
+  return(assoc((List *)0, arg0, arg1, arg2, hash, shift));
 }
 
 Value *dynamicCall1Arg(Value *f, Value *arg) {
@@ -4158,4 +4225,63 @@ Value *reifiedTypeArgs(Value *x) {
   incRef(typeArgs, 1);
   dec_and_free(x, 1);
   return(typeArgs);
+}
+
+Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym, Value *dispValue, Value *args) {
+  List *allArgs = listCons(dispValue, (List *)args);
+  Value *protocol = hashMapGet(protocols, protoSym);
+  if (!isNothing(protocol, "", 0)) {
+    protocol = maybeExtract(protocol);
+    Value *arities = hashMapGet(protocol, fnSym);
+    if (!isNothing(arities, "", 0)) {
+      arities = maybeExtract(arities);
+      Value *impls = hashMapGet(arities, integerValue(allArgs->len));
+      impls = maybeExtract(impls);
+      if (!isNothing(impls, "", 0)) {
+	Value *f = hashMapGet(impls, integerValue(dispValue->type));
+	if (!isNothing(f, "", 0)) {
+	  f = maybeExtract(f);
+	  return(fn_apply(empty_list, f, (Value *)allArgs));
+	} else {
+	  f = hashMapGet(impls, const0Ptr);
+	  if (!isNothing(f, "", 0)) {
+	    f = maybeExtract(f);
+	    return(fn_apply(empty_list, f, (Value *)allArgs));
+	  }
+	}
+      }
+    }
+  }
+  fprintf(stderr, "\n*** Could not find implementation of '%s' with %" PRId64 
+	  " arguments for type: %s (%" PRId64 ")\n", ((SubString *)fnSym)->buffer, allArgs->len,
+	  extractStr(type_name(empty_list, dispValue)), dispValue->type);
+  abort();
+}
+
+FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64_t dispType, int64_t argCount) {
+  Value *protocolM = hashMapGet(protocols, protoSym);
+  if (!isNothing(protocolM, "", 0)) {
+    Value *protocol = maybeExtract(protocolM);
+    Value *arities = hashMapGet(protocol, fnSym);
+    if (!isNothing(arities, "", 0)) {
+      arities = maybeExtract(arities);
+      Value *iv = integerValue(argCount);
+      Value *impls = hashMapGet(arities, iv);
+      impls = maybeExtract(impls);
+      if (!isNothing(impls, "", 0)) {
+	Value *f = hashMapGet(impls, integerValue(dispType));
+	if (!isNothing(f, "", 0)) {
+	  return((FnArity *)maybeExtract(f));
+	} else {
+	  f = hashMapGet(incRef(impls, 1), const0Ptr);
+	  if (!isNothing(f, "", 0)) {
+	    return((FnArity *)maybeExtract(f));
+	  }
+	}
+      }
+    }
+  }
+  fprintf(stderr, "\n*** Could not find implementation of '%s' with %" PRId64 
+	  " arguments for type: (%" PRId64 ")\n", ((SubString *)fnSym)->buffer, argCount, dispType);
+  abort();
 }

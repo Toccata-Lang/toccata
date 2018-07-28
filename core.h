@@ -142,9 +142,7 @@ Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, V
 void prefs(char *tag, Value *v);
 
 Value *(*equalSTAR)(List *closures, Value *, Value *);
-Value *(*assoc)(List *closures, Value *, Value *, Value *, Value *, Value *);
 Value *(*dissoc)(List *closures, Value *, Value *, Value *, Value *);
-Value *(*get)(List *, Value *, Value *, Value *, Value *, Value *);
 Value *(*sha1)(List *, Value *);
 Value *(*hashSeq)(List *, Value* n, Value *s);
 Value *(*count)(List *, Value* n);
@@ -237,6 +235,7 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3);
 Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value *arg4);
 Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4);
 Value *hashMapGet(Value *arg0, Value *arg1);
+Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2);
 Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4);
 Value *collisionCount(Value *arg0);
 Value *arrayNodeCount(Value *arg0);
@@ -267,3 +266,7 @@ Value *finalize_sha1(Value *ctxt);
 void Sha1Update (Sha1Context* Context, void* Buffer, int64_t BufferSize);
 void strSha1Update(Sha1Context *ctxt, Value *arg0);
 Value *reifiedTypeArgs(Value *x);
+Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym, Value *dispValue, Value *args);
+FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64_t dispType, int64_t argCount);
+Value *get(List *, Value *, Value *, Value *, Value *, Value *);
+Value *assoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift);
