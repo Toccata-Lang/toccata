@@ -1,7 +1,7 @@
 
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "3a195b6"))
+                            :sha "4893cbf"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "c89ab00"))
@@ -1159,7 +1159,7 @@
 
 (def empty-closures (Closures [] {} {}))
 
-(deftype ConstantValues [numbers strings symbols type-names]
+(deftype ConstantValues [numbers strings symbols type-names other]
   ;; numbers                static numbers
   (assert (instance? HashMap numbers))
   ;; strings                static strings
@@ -1258,6 +1258,99 @@
                                                    [path s]))
                    (maybe [(ast/file-name sym) s])))))
 
+(def C-var-punct (grmr/any (grmr/apply-fn (constantly "_STAR_")
+                                          (grmr/ignore "*"))
+                           (grmr/apply-fn (constantly "")
+                                          (grmr/ignore "."))
+                           (grmr/apply-fn (constantly "_HASH_")
+                                          (grmr/ignore "#"))
+                           (grmr/apply-fn (constantly "_PLUS_")
+                                          (grmr/ignore "+"))
+                           (grmr/apply-fn (constantly "_QM_")
+                                          (grmr/ignore "?"))
+                           (grmr/apply-fn (constantly "_BANG_")
+                                          (grmr/ignore "!"))
+                           (grmr/apply-fn (constantly "_EQ_")
+                                          (grmr/ignore "="))
+                           (grmr/apply-fn (constantly "_LT_")
+                                          (grmr/ignore "<"))
+                           (grmr/apply-fn (constantly "_GT_")
+                                          (grmr/ignore ">"))))
+
+(def C-var-remaining
+  (grmr/none-or-more (grmr/any "_"
+                               (grmr/apply-fn (constantly "_")
+                                              (grmr/ignore "-"))
+                               grmr/alpha
+                               grmr/digit
+                               C-var-punct)))
+
+(def C-var (grmr/apply-fn (fn [start remaining]
+                            (apply str start (seq remaining)))
+                          (grmr/any grmr/alpha
+                                    (map (grmr/ignore "#") (fn [] ""))
+                                    (map (grmr/ignore "-") (fn [] "_MINUS_"))
+                                    C-var-punct)
+                          C-var-remaining))
+
+(def check-C-var (rd/parser C-var))
+
+(defn genlocal
+  ([pre]
+   (sm/new-sm (fn [s]
+                (assert (instance? GlobalContext s))
+                (let [ctxt (.fn-context s)
+                      sym-count (.sym-count ctxt)
+                      new-ctxt (.fn-context s (.sym-count ctxt (inc sym-count)))]
+                  (maybe [(str pre sym-count) new-ctxt])))))
+  ([sym arg-name]
+   (sm/new-sm (fn [s]
+                (assert (instance? GlobalContext s))
+                (let [ctxt (.fn-context s)
+                      sym-count (.sym-count ctxt)
+                      new-ctxt (.fn-context s (.sym-count ctxt (inc sym-count)))]
+                  (maybe [(str (either (check-C-var (str sym "_"))
+                                       arg-name)
+                               sym-count)
+                          new-ctxt]))))))
+
+(deftype ParamBinding [vars destruct]
+  (assert (instance? Vector vars))
+  (assert (instance? Vector destruct))
+
+  Stringable
+  (string-list [_]
+    (comp (list "<ParamBinding ")
+          (string-list vars)
+          (list " ")
+          (string-list destruct)
+          (list ">")))
+
+  Composition
+  (comp* [x xs]
+    (let [xs (vec (cons x xs))]
+      (ParamBinding (flat-map xs .vars) (flat-map xs .destruct)))))
+
+
+(defn traverse [asts f]
+  (assert-result x (instance? sm/new-sm x))
+
+  ;; TODO: use a vector instead
+  (reduce (reverse asts) (sm/state-maybe empty-list)
+            (fn [l ast]
+              (flat-map (f ast)
+                        (fn [emitted]
+                          (map l (fn [x]
+                                   (cons emitted x))))))))
+
+;; generate symbols that are available globally inside the 'state-maybe' container
+(defn global-var
+  ([arg-name] (sm/state-maybe (gensym (str "g_" arg-name))))
+  ([sym arg-name]
+   (sm/state-maybe (gensym (str "g_" (either (check-C-var (str sym "_"))
+                                             arg-name))))))
+
+
 (deftype ProtoImpl [dispatch-type c-var ast param-constraints result-constraints]
   (assert (instance? ArityValPtr c-var))
   (assert (instance? Integer dispatch-type))
@@ -1286,16 +1379,12 @@
           path)
         (lookup-protocol-path fn-sym 'core)))
 
-(defn check-protocol-name [proto-sym]
-  ;; Ensure all protocol symbols are unique
-  (comp (for [proto-info (sm/get-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym])]
-          (do
-            (print-err  "Duplicate protocol"
-                        (str "'" proto-sym "'") "at"
-                        (str (ast/file-name proto-sym) ":")
-                        (ast/line-number proto-sym))
-            (abort)))
-        (sm/state-maybe '_)))
+(defn redef-proto-fn-error [sym]
+  (for [path (find-protocol-path sym)
+        _ (compilation-error "Redefining" (str "'" sym "'") "at"
+                             (str (ast/file-name sym) ":") (ast/line-number sym)
+                             "which is a protocol function in" path)]
+    ""))
 
 (defn new-proto-impl [proto-sym fn-sym arg-count dispatch-type var ast param-constraints result-constraints]
   (assert (instance? Tagged proto-sym))
@@ -1361,106 +1450,6 @@
                      ;;                    (str (ast/file-name fn-sym) ",")
                      ;;                    (ast/line-number fn-sym))
                      )))))
-
-(def C-var-punct (grmr/any (grmr/apply-fn (constantly "_STAR_")
-                                          (grmr/ignore "*"))
-                           (grmr/apply-fn (constantly "")
-                                          (grmr/ignore "."))
-                           (grmr/apply-fn (constantly "_HASH_")
-                                          (grmr/ignore "#"))
-                           (grmr/apply-fn (constantly "_PLUS_")
-                                          (grmr/ignore "+"))
-                           (grmr/apply-fn (constantly "_QM_")
-                                          (grmr/ignore "?"))
-                           (grmr/apply-fn (constantly "_BANG_")
-                                          (grmr/ignore "!"))
-                           (grmr/apply-fn (constantly "_EQ_")
-                                          (grmr/ignore "="))
-                           (grmr/apply-fn (constantly "_LT_")
-                                          (grmr/ignore "<"))
-                           (grmr/apply-fn (constantly "_GT_")
-                                          (grmr/ignore ">"))))
-
-(def C-var-remaining
-  (grmr/none-or-more (grmr/any "_"
-                               (grmr/apply-fn (constantly "_")
-                                              (grmr/ignore "-"))
-                               grmr/alpha
-                               grmr/digit
-                               C-var-punct)))
-
-(def C-var (grmr/apply-fn (fn [start remaining]
-                            (apply str start (seq remaining)))
-                          (grmr/any grmr/alpha
-                                    (map (grmr/ignore "#") (fn [] ""))
-                                    (map (grmr/ignore "-") (fn [] "_MINUS_"))
-                                    C-var-punct)
-                          C-var-remaining))
-
-(def check-C-var (rd/parser C-var))
-
-(defn genlocal
-  ([pre]
-   (sm/new-sm (fn [s]
-                (assert (instance? GlobalContext s))
-                (let [ctxt (.fn-context s)
-                      sym-count (.sym-count ctxt)
-                      new-ctxt (.fn-context s (.sym-count ctxt (inc sym-count)))]
-                  (maybe [(str pre sym-count) new-ctxt])))))
-  ([sym arg-name]
-   (sm/new-sm (fn [s]
-                (assert (instance? GlobalContext s))
-                (let [ctxt (.fn-context s)
-                      sym-count (.sym-count ctxt)
-                      new-ctxt (.fn-context s (.sym-count ctxt (inc sym-count)))]
-                  (maybe [(str (either (check-C-var (str sym "_"))
-                                       arg-name)
-                               sym-count)
-                          new-ctxt]))))))
-
-(defn redef-proto-fn-error [sym]
-  (for [path (find-protocol-path sym)
-        _ (compilation-error "Redefining" (str "'" sym "'") "at"
-                             (str (ast/file-name sym) ":") (ast/line-number sym)
-                             "which is a protocol function in" path)]
-    ""))
-
-(deftype ParamBinding [vars destruct]
-  (assert (instance? Vector vars))
-  (assert (instance? Vector destruct))
-
-  Stringable
-  (string-list [_]
-    (comp (list "<ParamBinding ")
-          (string-list vars)
-          (list " ")
-          (string-list destruct)
-          (list ">")))
-
-  Composition
-  (comp* [x xs]
-    (let [xs (vec (cons x xs))]
-      (ParamBinding (flat-map xs .vars) (flat-map xs .destruct)))))
-
-
-(defn traverse [asts f]
-  (assert-result x (instance? sm/new-sm x))
-
-  ;; TODO: use a vector instead
-  (reduce (reverse asts) (sm/state-maybe empty-list)
-            (fn [l ast]
-              (flat-map (f ast)
-                        (fn [emitted]
-                          (map l (fn [x]
-                                   (cons emitted x))))))))
-
-;; generate symbols that are available globally inside the 'state-maybe' container
-(defn global-var
-  ([arg-name] (sm/state-maybe (gensym (str "g_" arg-name))))
-  ([sym arg-name]
-   (sm/state-maybe (gensym (str "g_" (either (check-C-var (str sym "_"))
-                                             arg-name))))))
-
 
 (defn new-module-def [sym value]
   (comp (redef-proto-fn-error sym)
@@ -1726,11 +1715,6 @@
                (assert (instance? GlobalContext s))
                (for [module (get (.modules s) 'core)
                      fn-sym (get (.values module) sym)
-                     ;; TODO: remove this when possible
-                     :let [_ (or (instance? FnValPtr (.c-var fn-sym))
-                                 (do
-                                   (print-err 'booom 1)
-                                   (abort)))]
                      expr (get-in (.fns s) [(.c-var fn-sym) num-args .c-var])]
                  [expr s]))))
 
@@ -1952,6 +1936,11 @@
   Emitter
   (produces-code? [ast] nothing)
 
+  (replace-syms [ast subs]
+    (either (for [new-sym (get subs (.sym ast))]
+              (.sym ast new-sym))
+            (sm/state-maybe ast)))
+
   (to-constraint [ast]
     (to-constraint (.assertion ast)))
 
@@ -1961,6 +1950,9 @@
   (tail-call [ast params result-constraint] ast))
 
 (deftype ResultConstraint [assertion]
+  Stringable
+  (string-list [_] (list "<ResultConstraint " (str assertion) ">"))
+
   Assertion
   (return-assertion? [ast] (maybe ast))
 
@@ -1968,7 +1960,7 @@
   (produces-code? [ast] nothing)
 
   (to-constraint [ast]
-    (sm/state-maybe assertion))
+    (sm/state-maybe ast))
 
   (emit [ast]
     (sm/state-maybe empty-c-code))
@@ -2222,8 +2214,8 @@
                     impl-info (get-proto-impl target num-args (expr-type-num dispatch-val))
                     constraints (arg-constraints (.args ast) args (.param-constraints impl-info)
                                                  (ast/file-name ast) (ast/line-number ast))
-                    ;; _ (comp (sm/update-in-val [.other 'type-known-sites] inc)
-                    ;;         (sm/assoc-in-val [.other 'type-known-sites] 1))
+                    _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
+                            (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
                     result-var (genlocal "rslt")
                     line (line-macro target (str "// call proto fn " target))]
                 (comp* empty-c-code
@@ -2528,8 +2520,8 @@
           constraints (arg-constraints (.args ast) arg-vars (.param-constraints arity-info)
                                        file-name line-number)
           result-sym (genlocal "rslt")
-          ;; _ (comp (sm/update-in-val [.other 'static-fixed-sites] inc)
-          ;;         (sm/assoc-in-val [.other 'static-fixed-sites] 1))
+          _ (comp (sm/update-in-val [.constants .other 'static-fixed-sites] inc)
+                  (sm/assoc-in-val [.constants .other 'static-fixed-sites] 1))
           line (line-macro ast "// static-fixed")]
       (c-init result-sym
               [line "Value *" result-sym " = " (.c-var arity-info) "("
@@ -2544,8 +2536,8 @@
     (for [arity-info (lookup-static-arity-info (.c-var target) 'variadic)
           arg-consts (arg-constraints (.args ast) arg-vars (.param-constraints arity-info)
                                       file-name line-number)
-          ;; _ (comp (sm/update-in-val [.other 'static-variadic-sites] inc)
-          ;;         (sm/assoc-in-val [.other 'static-variadic-sites] 1))
+          _ (comp (sm/update-in-val [.constants .other 'static-variadic-sites] inc)
+                  (sm/assoc-in-val [.constants .other 'static-variadic-sites] 1))
           args-list (call-list (rdr/tag 'list file-name line-number)
                                (map arg-vars (fn [arg]
                                                (.init arg [])))
@@ -2569,8 +2561,8 @@
   ;; TODO: eventually, we maight be able to establish some constraints for 'target'
   (for [arity-sym (genlocal "arity")
         :when (= FunctionType (expr-type-num target))
-        ;; _ (comp (sm/update-in-val [.other 'dyn-fn-sites] inc)
-        ;;         (sm/assoc-in-val [.other 'dyn-fn-sites] 1))
+        _ (comp (sm/update-in-val [.constants .other 'dyn-fn-sites] inc)
+                (sm/assoc-in-val [.constants .other 'dyn-fn-sites] 1))
         variadic-sym (genlocal "dynArgs")
         fn-var (genlocal "fn")
         result-sym (genlocal "rslt")
@@ -2647,8 +2639,8 @@
           fn-sym (genlocal "fn")
           result-sym (genlocal "rslt")
           invoke-arity-sym (lookup-core-fn-arity invoke-sym num-invoke-args)
-          ;; _ (comp (sm/update-in-val [.other 'dyn-unknown-sites] inc)
-          ;;         (sm/assoc-in-val [.other 'dyn-unknown-sites] 1))
+          _ (comp (sm/update-in-val [.constants .other 'dyn-unknown-sites] inc)
+                  (sm/assoc-in-val [.constants .other 'dyn-unknown-sites] 1))
           line (line-macro ast "// dynamic unknown type")]
       (let [arg-syms (conj args (str arity-sym "->closures"))]
         (c-init result-sym
@@ -2683,8 +2675,8 @@
   (let [num-args (inc (count args))]
     (for [_ (sm/when-not (= UnknownType (expr-type-num target)))
           invoke-info (get-proto-impl Function-sym invoke-sym num-args (expr-type-num target))
-          ;; _ (comp (sm/update-in-val [.other 'invoke-sites] inc)
-          ;;         (sm/assoc-in-val [.other 'invoke-sites] 1))
+          _ (comp (sm/update-in-val [.constants .other 'invoke-sites] inc)
+                  (sm/assoc-in-val [.constants .other 'invoke-sites] 1))
           constraints (arg-constraints (cons target (seq (.args ast)))
                                        (cons target args)
                                        (.param-constraints invoke-info)
@@ -3297,7 +3289,7 @@
                               ", " (.c-var checker-fn) "};" line-sep]
                              {} {})
                      param-constraints
-                     result-constraint)))))
+                     (expr-constraints body))))))
 
 (defn bind-params [params fn-var]
   (assert (instance? ast/params-ast params))
@@ -3373,8 +3365,7 @@
                                                        param-vars result-constraint body-exprs))]
                arity-info)))))
 
-(deftype ProtoImplDeclaration [proto-sym fn-name arity-ast arity-var c-fn c-decl
-                               param-assertions result-constraint]
+(deftype ProtoImplDeclaration [proto-sym fn-name arity-ast arity-var c-fn c-decl]
   (assert (instance? Tagged proto-sym))
   (assert (instance? Tagged fn-name))
   (assert (instance? ArityValPtr arity-var))
@@ -3401,17 +3392,24 @@
                                            (-> arity-ast .params .fixed))
                                 {} (fn [m [old-sym new-sym]]
                                      (assoc m old-sym new-sym)))]
-          impl-assertions (-> dispatcher-info
+          result-assertions (-> dispatcher-info
                               .ast
                               .body
-                              (filter assertion?)
+                              (filter return-assertion?)
                               (traverse (fn [ast]
                                           (replace-syms ast sym-map))))
-          :let [arity-ast (.body arity-ast (comp (vec impl-assertions) (.body arity-ast)))]
+          param-assertions (-> dispatcher-info
+                               .ast
+                               .body
+                               (filter assertion?)
+                               (traverse (fn [ast]
+                                           (replace-syms ast sym-map))))
+          :let [arity-ast (.body arity-ast (comp [] param-assertions result-assertions (.body arity-ast)))]
           _ (new-static-arity impl-fn-var num-args c-fn
                               (.result-constraints dispatcher-info))
           _ (new-proto-impl proto-sym fn-name num-args type-num arity-impl-var arity-ast
-                            empty-items-constraint top-type)]
+                            empty-items-constraint
+                            (.result-constraints dispatcher-info))]
       (ProtoImplDeclaration proto-sym fn-name
                             arity-ast
                             arity-impl-var c-fn
@@ -3422,11 +3420,7 @@
                                                           (str "Value *")))))
                                         ", ")
                              ");\n"
-                             "FnArity *" arity-impl-var ";\n"]
-                            [] (-> dispatcher-info
-                                   (.result-constraints)
-                                   (update-path (ast/file-name fn-name) (ast/line-number fn-name))
-                                   ResultConstraint)))))
+                             "FnArity *" arity-impl-var ";\n"]))))
 
 (defn update-param-constraint [constraint sym]
   ;; (assert (instance? Constraints constraint))
@@ -3437,7 +3431,7 @@
 (defn emit-impl [type-str type-num impl-decl]
   (assert (instance? ProtoImplDeclaration impl-decl))
 
-  (let [[proto-sym fn-sym arity-ast arity-var c-fn _ param-assertions result-constraint] (type-args impl-decl)
+  (let [[proto-sym fn-sym arity-ast arity-var c-fn] (type-args impl-decl)
         params (.params arity-ast)
         [disp-param] (.fixed params)
         num-args (count params)
@@ -3450,16 +3444,10 @@
                                       constraint (type-constraint type-num file-name line-number)]
                                   (update-param-constraint constraint disp-param))
                                 (sm/state-maybe top-type))
-          :let [param-constraints [] ;; TODO:  (.items-constraints (.param-constraints dispatcher-info))
-                constraints (-> (zip-lists (.fixed params) param-constraints)
-                                (map (fn [[param constraints]]
-                                       (update-param-constraint constraints param)))
-                                (conj disp-constraint))]
           ext-fn (comp (emit-fn-arity (rdr/tag (str type-str fn-sym))
                                       (.fn-var arity-ast)
                                       params
-                                      (comp constraints
-                                            [result-constraint]
+                                      (comp [disp-constraint]
                                             (.body arity-ast))
                                       c-fn)
                        (compilation-error "Could not compile protocol fn:"
@@ -3909,39 +3897,6 @@
                 (str fn-var) fn-constraint)
               (ast/file-name fn-sym) (ast/line-number fn-sym)))))
 
-(defn dispatcher-ast [protocols-var proto-sym-var fn-sym-var params fn-sym assertions]
-  (let [arg-count (count params)
-        arg-vars (map (zip-lists (.fixed params)
-                                 (range arg-count))
-                      (fn [[arg n]]
-                        (either (check-C-var (str arg "_" n))
-                                (str "arg" n))))]
-    (ast/fn-arity params ""
-                  (comp assertions
-                        [(ast/inline-ast
-                          'C nothing
-                          (str "FnArity *arity = newFindProtoImpl(" protocols-var ", " proto-sym-var ", "
-                               fn-sym-var ", " (extract (first arg-vars)) "->type, " arg-count ");\n"
-                               "FnType" arg-count " *_fn = (FnType" arg-count " *)arity->fn;\n" 
-                               "return(_fn(arity->closures, " (-> arg-vars
-                                                                  (interpose ", ") 
-                                                                  to-str)
-                               "));\n")
-                          (ast/file-name fn-sym) (ast/line-number fn-sym))]))))
-
-(defn create-dispatch-arity [proto-sym fn-sym prototype]
-  (assert (instance? prototype-ast prototype))
-
-  (let [params (.params prototype)
-        num-args (count params)
-        body (.default-body prototype)
-        assertions (filter body assertion?)]
-    (for [protocols-expr (emit (rdr/tag protocols-sym (ast/file-name proto-sym) (ast/line-number proto-sym)))
-          proto-sym-expr (emit (ast/quoted-ast proto-sym))
-          fn-sym-expr (emit (ast/quoted-ast fn-sym))]
-      (dispatcher-ast (.c-var protocols-expr) (.c-var proto-sym-expr) (.c-var fn-sym-expr)
-                      params fn-sym assertions))))
-
 (defn missing-impl-body [proto-sym fn-sym prototype]
   (comp (filter (.default-body prototype) assertion?)
         (filter (.default-body prototype) return-assertion?)
@@ -3956,30 +3911,62 @@
         body (either (and (empty? body)
                           (maybe (missing-impl-body protocol-sym fn-sym prototype)))
                      (.default-body prototype))]
-    (for [arity-impl-var (map (global-var (str "Default_" fn-sym) "arityImpl") CFnPtr)
+    (for [arity-impl-var (global-var (str "Default_" fn-sym) "arityImpl")
+          :let [arity-impl-var (CFnPtr arity-impl-var)]
           static-arity (emit-fn-arity (rdr/tag (str "Default_" fn-sym)) disp-fn-var
-                                      (.params prototype) body arity-impl-var)
+                                      (.params prototype)
+                                      (comp (remove (.default-body prototype) produces-code?)
+                                            body)
+                                      arity-impl-var)
           _ (sm/assoc-in-val [.modules (ast/file-name protocol-sym) .protocols protocol-sym fn-sym
                               (.param-count static-arity) 0]
                              (ProtoImpl 0 (.c-var (.var-info static-arity))
                                         (ast/fn-arity (.params prototype) "" body)
                                         (.param-constraints static-arity)
-                                        (.result-constraints static-arity)))]
+                                        (.result-constraints static-arity)))
+          _ (sm/assoc-in-val [.fns (.arity-fn-var static-arity) (.param-count static-arity) .param-constraints]
+                             (.param-constraints static-arity))]
       (.decl (.var-info static-arity)))))
 
 (defn create-dispatcher [proto-sym [fn-sym arities]]
   (for [proto-sym-expr (emit (ast/quoted-ast proto-sym))
         fn-sym-expr (emit (ast/quoted-ast fn-sym))
-        dispatch-arities (traverse arities (partial create-dispatch-arity proto-sym fn-sym))
-        disp-fn-expr (emit (ast/fn-ast (maybe fn-sym) (vec dispatch-arities)))
-        _ (new-module-def fn-sym (c-code (.c-var disp-fn-expr) [] [] {}
-                                         {(.c-var disp-fn-expr) fn-constraint}))
-        default-fns (traverse arities (partial emit-proto-default proto-sym fn-sym (.c-var disp-fn-expr)))]
+
+        fn-var (comp (map (lookup-declaration fn-sym) .c-var)
+                     (global-var fn-sym "fn"))
+        :let [fn-var (FnValPtr fn-var)]
+        arities-info (traverse arities
+                               (fn [arity]
+                                 (let [arg-count (count (.params arity))]
+                                   (for [c-fn (global-var fn-sym "arityImpl")
+                                         _ (new-static-arity fn-var arg-count (CFnPtr c-fn)
+                                                             top-type empty-items-constraint)]
+                                     ["Value *" c-fn "("
+                                      (-> (map (range arg-count) (fn [n] (str "Value *arg" n)))
+                                          (conj "List *closures")
+                                          (interpose ", "))
+                                      ");\n"]))))
+
+        _ (new-module-def fn-sym (c-code fn-var [] [] {} {fn-var fn-constraint}))
+        default-fns (traverse arities (partial emit-proto-default proto-sym fn-sym fn-var))]
     [(.decl proto-sym-expr)
      (.decl fn-sym-expr)
      "\n// proto fn for " proto-sym "/" fn-sym "\n"
-     (.decl disp-fn-expr)
+     "\n// --------- " fn-sym " -------------\n"
+     "Value *" fn-var ";\n"
+     arities-info
      default-fns]))
+
+(defn check-protocol-name [proto-sym]
+  ;; Ensure all protocol symbols are unique
+  (comp (for [proto-info (sm/get-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym])]
+          (do
+            (print-err  "Duplicate protocol"
+                        (str "'" proto-sym "'") "at"
+                        (str (ast/file-name proto-sym) ":")
+                        (ast/line-number proto-sym))
+            (abort)))
+        (sm/state-maybe '_)))
 
 (extend-type ast/protocol-ast
   Emitter
@@ -4417,7 +4404,7 @@
                                    {}                       ;; map for module info
                                    {}                       ;; map for static fns
                                    {}                       ;; map for namespaces
-                                   (ConstantValues {} {} {} type-names)
+                                   (ConstantValues {} {} {} type-names {})
                                    0                        ;; reify-fn-index
                                    core-types               ;; type-maps
                                    ))
@@ -4448,6 +4435,45 @@
 (defn gather-protocols [file-name]
   (for [protocols (sm/get-in-val [.modules file-name .protocols])
         expr (encode protocols "protos_")
+        _ (traverse (for [[proto-sym proto-fns] (seq protocols)
+                          [fn-sym arities] (seq proto-fns)]
+                      [proto-sym fn-sym arities])
+                    (fn [[proto-sym fn-sym arities]]
+                      (for [disp-fn (sm/get-in-val [.modules file-name .values fn-sym])
+                            :let [fn-var (.c-var disp-fn)]
+                            c-fns (traverse (keys arities)
+                                            (fn [arg-count]
+                                              (for [disp-arity (lookup-static-arity-info fn-var arg-count)
+                                                    arity-var (global-var "arity")]
+                                                [arg-count arity-var (.c-var disp-arity)])))
+                            struct-var (global-var "fn")]
+                        (write-strings
+                         [(map c-fns
+                               (fn [[arg-count arity-var c-fn]]
+                                 (let [impls (extract (get arities arg-count))]
+                                   ["Value *" c-fn "(List *"
+                                    (interpose (cons "closures" (map (range arg-count) (partial str "Value *arg")))
+                                               ",")
+                                    ") {\nFnArity *arity;\n"
+                                    "switch (arg0->type) {\n"
+                                    (map (seq (dissoc impls 0))
+                                         (fn [[type-num arity-info]]
+                                           ["case " (str type-num) ": arity = " (.c-var arity-info) ";\nbreak;\n"]))
+                                    ;; TODO: search for impl in protos hash-map
+                                    "default: arity = " (.c-var (extract (get impls 0))) ";\n"
+                                    "}\n"
+                                    "FnType" arg-count " *_fn = (FnType" arg-count " *)arity->fn;\n" 
+                                    "return(_fn(arity->closures, " (-> (map (range arg-count) (partial str "arg"))
+                                                                       (interpose ", "))
+                                    "));\n}\n"
+                                    "FnArity " arity-var " = {FnArityType, -1, "
+                                    arg-count
+                                    ", (List *)0, 0, " c-fn "};\n"])))
+                          "Function " struct-var " = {FunctionType, -1, \""
+                          fn-sym "\", " (count c-fns) ", "
+                          "{" (interpose (map c-fns (fn [[_ arity-var]] (str "&" arity-var))) ", ")
+                          "}};\n"
+                          "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]))))
         protos-var (sm/get-in-val [.modules file-name .values protocols-sym])]
     (c-code (.c-var protos-var)
             [(.init expr) (.c-var protos-var) " = " (.c-var expr) ";\n"]
@@ -4521,11 +4547,6 @@
 
 (defn get-proto-dispatch-sym [fn-sym num-args]
   (for [fn-var (lookup-sym fn-sym)
-        ;; TODO: remove this when possible
-        :let [_ (or (instance? FnValPtr (.c-var fn-var))
-                    (do
-                      (print-err 'booom 2)
-                      (abort)))]
         arity-var (sm/get-in-val [.fns (.c-var fn-var) num-args])]
     (.c-var arity-var)))
 
@@ -4870,18 +4891,16 @@
           (abort)))
     (extract waiter)
     (send ast-emitter emit-main)
-    ;; (send ast-emitter finalize-protocols)
     (send ast-emitter fixup-native-symbols)
-    ;; (send ast-emitter (fn [ctxt]
-    ;;                     (print-err
-    ;;                      "\n" 'static-fixed (get-in ctxt ['_ .other 'static-fixed-sites])
-    ;;                      "\n" 'static-variadic (get-in ctxt ['_ .other 'static-variadic-sites])
-    ;;                      "\n" 'invoke (get-in ctxt ['_ .other 'invoke-sites])
-    ;;                      "\n" 'dyn-fn (get-in ctxt ['_ .other 'dyn-fn-sites])
-    ;;                      "\n" 'dyn-unknown (get-in ctxt ['_ .other 'dyn-unknown-sites])
-    ;;                      "\n" 'type-known (get-in ctxt ['_ .other 'type-known-sites])
-    ;;                      "\n" 'type-unknown (get-in ctxt ['_ .other 'type-unknown-sites])
-    ;;                      "\n")))
+    (send ast-emitter (fn [ctxt]
+                        (print-err
+                         "\n" 'static-fixed (get-in ctxt ['_ .constants .other 'static-fixed-sites])
+                         "\n" 'static-variadic (get-in ctxt ['_ .constants .other 'static-variadic-sites])
+                         "\n" 'type-known (get-in ctxt ['_ .constants .other 'type-known-sites])
+                         "\n" 'invoke (get-in ctxt ['_ .constants .other 'invoke-sites])
+                         "\n" 'dyn-fn (get-in ctxt ['_ .constants .other 'dyn-fn-sites])
+                         "\n" 'dyn-unknown (get-in ctxt ['_ .constants .other 'dyn-unknown-sites])
+                         "\n")))
     ;; wait for agents to clear their queues
     (let [waiter (promise)]
       (send ast-emitter (fn [_]
