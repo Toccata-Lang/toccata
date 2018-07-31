@@ -3669,9 +3669,10 @@ Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *a
     dec_and_free(newShift, 1);
     return(notFound);
   } else {
+    incRef(subNode, 1);
     dec_and_free(arg0, 1);
     dec_and_free(arg4, 1);
-    return(get((List *)0, incRef(subNode, 1), key, notFound, arg3, newShift));
+    return(get((List *)0, subNode, key, notFound, arg3, newShift));
   }
 }
 
@@ -3877,6 +3878,8 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
 }
 
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
+  // if (arg1->refs == -10)
+  // abort();
   Value *hash = baseSha1(incRef(arg1, 1));
   Value *shift = const0Ptr;
   return(assoc((List *)0, arg0, arg1, arg2, hash, shift));
