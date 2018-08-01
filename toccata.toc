@@ -180,8 +180,7 @@
     type-map)
 
   (extract-type-map [_]
-    (assert-result r (instance? Maybe r))
-    nothing)
+    (assert-result r (instance? Maybe r)))
 
   (extract-items-constraints [_]
     (assert-result r (instance? List r))
@@ -254,6 +253,7 @@
   (intersect [_ c] c)
   (update-sym [x _] x)
   (update-var [x _] x)
+  (extract-type-map [_] nothing)
 
   Composition
   (comp* [av-type constraints]
@@ -589,6 +589,8 @@
           ">"))
 
   Constraint
+  (extract-type-map [_] nothing)
+
   (restrict-types [c type-map]
     (reduce (seq type-map) {}
             (fn [type-map [type-num field-set]]
@@ -623,11 +625,50 @@
                   desired-len)))
 
 (def SymbolConstraints (comp TypeConstraint
-                             StaticLengthConstraint
-                             StaticIntConstraint
-                             StaticStrConstraint
+                             StaticConstraints
                              ItemsConstraint
                              FieldConstraint))
+
+(def ValueConstraint (comp SymbolConstraints
+                           MultiConstraint
+                           AllValues))
+
+(deftype ResultConstraint [assertion]
+  (assert (instance? ValueConstraint assertion))
+
+  Stringable
+  (string-list [_] (list "<ResultConstraint " (str assertion) ">"))
+
+  Constraint
+  (update-var [_ new-var]
+    (ResultConstraint (update-var assertion new-var)))
+
+  (update-sym [_ new-var]
+    (ResultConstraint (update-sym assertion new-var)))
+
+  (extract-type-map [_]
+    (extract-type-map assertion))
+
+  (intersect [rc c]
+    (either (and (instance? ResultConstraint c)
+                 (maybe (ResultConstraint (intersect assertion (.assertion c)))))
+            (ResultConstraint (intersect assertion c))))
+
+  Eq
+  (=* [x y]
+    (and (or (and (instance? ResultConstraint y)
+                  (=* assertion (.assertion y)))
+             (=* assertion y))
+         (maybe x)))
+
+  Assertion
+  (return-assertion? [ast] (maybe ast))
+
+  Emitter
+  (produces-code? [ast] nothing)
+
+  (to-constraint [ast]
+    (sm/state-maybe ast)))
 
 (extend-type SymbolConstraints
   Emitter
@@ -662,6 +703,8 @@
                        (and (empty? (filter (vals (.type-maps tc)) (fn [fields]
                                                                      (fields field))))
                             (maybe (NoValues [tc c])))))
+                (and (instance? ResultConstraint c)
+                     (maybe (ResultConstraint (intersect tc (.assertion c)))))
                 (and (instance? TypeConstraint c)
                      (let [types-map (select-keys (.type-maps tc) (keys (.type-maps c)))]
                        (and (empty? types-map)
@@ -694,6 +737,8 @@
                          (maybe (conj c fc))))
                 (and (instance? ItemsConstraint c)
                      (maybe (NoValues [fc c])))
+                (and (instance? ResultConstraint c)
+                     (maybe (ResultConstraint (intersect fc (.assertion c)))))
                 (and (instance? TypeConstraint c)
                      (let [field (.field fc)]
                        (and (empty? (filter (vals (.type-maps c)) (fn [fields]
@@ -717,6 +762,8 @@
     (either (or (= ic c)
                 (= c bottom-type)
                 (and (= c top-type) (maybe ic))
+                (and (instance? ResultConstraint c)
+                     (maybe (ResultConstraint (intersect ic (.assertion c)))))
                 (and (instance? MultiConstraint c)
                      (or (= bottom-type (reduce (.constraints c) ic
                                                 (fn [x y]
@@ -747,6 +794,8 @@
     (either (or (= slc c)
                 (= c bottom-type)
                 (and (= c top-type) (maybe slc))
+                (and (instance? ResultConstraint c)
+                     (maybe (ResultConstraint (intersect slc (.assertion c)))))
                 (and (instance? MultiConstraint c)
                      (or (= bottom-type (reduce (.constraints c) slc
                                                 (fn [x y]
@@ -766,6 +815,8 @@
     (either (or (= slc c)
                 (= c bottom-type)
                 (and (= c top-type) (maybe slc))
+                (and (instance? ResultConstraint c)
+                     (maybe (ResultConstraint (intersect slc (.assertion c)))))
                 (and (instance? MultiConstraint c)
                      (or (= bottom-type (reduce (.constraints c) slc
                                                 (fn [x y]
@@ -782,6 +833,8 @@
     (either (or (= slc c)
                 (= c bottom-type)
                 (and (= c top-type) (maybe slc))
+                (and (instance? ResultConstraint c)
+                     (maybe (ResultConstraint (intersect slc (.assertion c)))))
                 (and (instance? MultiConstraint c)
                      (or (= bottom-type (reduce (.constraints c) slc
                                                 (fn [x y]
@@ -795,7 +848,8 @@
 (def Constraints (comp AllValues
                        NoValues
                        MultiConstraint
-                       SymbolConstraints))
+                       SymbolConstraints
+                       ResultConstraint))
 
 (extend-type Constraints
   Composition
@@ -1355,7 +1409,7 @@
   (assert (instance? ArityValPtr c-var))
   (assert (instance? Integer dispatch-type))
   (assert (instance? ItemsConstraint param-constraints))
-  (assert (instance? Constraints result-constraints))
+  (assert (instance? ResultConstraint result-constraints))
 
   Stringable
   (string-list [_] (list "<ProtoImpl type: " (target-type-name dispatch-type) " " (str c-var) ">"))
@@ -1392,7 +1446,7 @@
   (assert (instance? Integer dispatch-type))
   (assert (instance? ast/fn-arity-ast ast))
   (assert (instance? ItemsConstraint param-constraints))
-  (assert (instance? Constraints result-constraints))
+  (assert (instance? ResultConstraint result-constraints))
   (assert (instance? ArityValPtr var))
 
   (for [protocol-path (find-protocol-path fn-sym)
@@ -1685,7 +1739,7 @@
 (deftype StaticArityInfo [c-var param-constraints result-constraint]
   (assert (instance? CFnPtr c-var))
   (assert (instance? ItemsConstraint param-constraints))
-  (assert (instance? Constraints result-constraint))
+  (assert (instance? ValueConstraint result-constraint))
 
   Stringable
   (string-list [_]
@@ -1946,30 +2000,7 @@
             (sm/state-maybe ast)))
 
   (to-constraint [ast]
-    (to-constraint (.assertion ast)))
-
-  (emit [ast]
-    (sm/state-maybe empty-c-code))
-
-  (tail-call [ast params result-constraint] ast))
-
-(deftype ResultConstraint [assertion]
-  Stringable
-  (string-list [_] (list "<ResultConstraint " (str assertion) ">"))
-
-  Assertion
-  (return-assertion? [ast] (maybe ast))
-
-  Emitter
-  (produces-code? [ast] nothing)
-
-  (to-constraint [ast]
-    (sm/state-maybe ast))
-
-  (emit [ast]
-    (sm/state-maybe empty-c-code))
-
-  (tail-call [ast params result-constraint] ast))
+    (to-constraint (.assertion ast))))
 
 (defn emit-tail-expr [ast result-constraint expr]
   (do
@@ -2002,8 +2033,7 @@
   Emitter
   (emit [_]
     (comp (for [_ (sm/when (and (instance? ast/call-ast ast)
-                                (or (instance? Symbol (.call-target ast))
-                                    (instance? rdr/tagged-symbol (.call-target ast)))))
+                                (instance? Tagged (.call-target ast))))
                 target (emit (.call-target ast))
                 _ (sm/get-in-val [.fn-context .recurse (.c-var target) (count (.args ast))])
                 args (-> (.args ast)
@@ -2213,9 +2243,10 @@
 
 (defn call-proto-impl [target args ast]
   (either (for [dispatch-val (first args)]
-            (let [num-args (count args)]
-              (for [_ (sm/when-not (= UnknownType (expr-type-num dispatch-val)))
-                    impl-info (get-proto-impl target num-args (expr-type-num dispatch-val))
+            (let [num-args (count args)
+                  disp-type (expr-type-num dispatch-val)]
+              (for [_ (sm/when-not (= UnknownType disp-type))
+                    impl-info (get-proto-impl target num-args disp-type)
                     constraints (arg-constraints (.args ast) args (.param-constraints impl-info)
                                                  (ast/file-name ast) (ast/line-number ast))
                     _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
@@ -2284,12 +2315,7 @@
           :let [constraint (-> (compose-constraints (ast/file-name sym) (ast/line-number sym)
                                                     constraint (expr-constraints var))
                                (update-var (str (.c-var var)))
-                               (update-sym sym))
-                type-num (either (for [type-nums (extract-type-map constraint)
-                                       :when (= 1 (count type-nums))
-                                       type-num (first (keys type-nums))]
-                                   type-num)
-                                 UnknownType)]
+                               (update-sym sym))]
           _ (set-sym sym (.constraints var {(.c-var var) constraint}))]
       constraint))
 
@@ -2674,9 +2700,10 @@
                 (ast/file-name ast) (ast/line-number ast))))))
 
 (defn call-invoke [target args ast]
-  (let [num-args (inc (count args))]
-    (for [_ (sm/when-not (= UnknownType (expr-type-num target)))
-          invoke-info (get-proto-impl Function-sym invoke-sym num-args (expr-type-num target))
+  (let [num-args (inc (count args))
+        target-type (expr-type-num target)]
+    (for [_ (sm/when-not (= UnknownType target-type))
+          invoke-info (get-proto-impl Function-sym invoke-sym num-args target-type)
           _ (comp (sm/update-in-val [.constants .other 'invoke-sites] inc)
                   (sm/assoc-in-val [.constants .other 'invoke-sites] 1))
           constraints (arg-constraints (cons target (seq (.args ast)))
@@ -2753,7 +2780,9 @@
                                                    :when-not (empty? type-info)]
                                                type-info)))
                 :let [all-types-info (comp* type-info other-types-info)
-                      reified-type-num (extract rdr/type-counter)]
+                      reified-type-num (extract rdr/type-counter)
+                      x* (rdr/tag "#x")
+                      y* (rdr/tag "#y")]
                 _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
                                    reified-type-num)
                 _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym all-types-info))
@@ -2764,12 +2793,14 @@
                         [[instance?-sym
                           [(ast/fn-arity-ast
                             (str defined-sym "_instance_QMARK_") (FnValPtr "")
-                            (ast/params ['x 'y]) ""
-                            [(ast/call-ast (rdr/tag 'some)
-                                           [(ast/call-ast list-sym (vec (keys all-types-info)))
-                                            (ast/call-ast (rdr/tag 'partial)
-                                                          [=*-sym
-                                                           (ast/call-ast get-type-sym ['y])])])])]]]})
+                            (ast/params [x* y*]) ""
+                            [(ast/and-ast
+                              [(ast/call-ast (rdr/tag 'some)
+                                              [(ast/call-ast list-sym (vec (keys all-types-info)))
+                                               (ast/call-ast (rdr/tag 'partial)
+                                                             [=*-sym
+                                                              (ast/call-ast get-type-sym [y*])])])
+                               (ast/call-ast maybe-sym [y*])])])]]]})
                       defined-sym)]
             expr)
           (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
@@ -3058,20 +3089,20 @@
 (defn new-static-arity
   ([fn-ptr num-params arity-var result-constraints]
    (assert (instance? FnValPtr fn-ptr))
-   (assert (instance? Constraints result-constraints))
+   (assert (instance? ResultConstraint result-constraints))
    (assert (instance? CFnPtr arity-var))
 
    (new-static-arity fn-ptr num-params arity-var result-constraints empty-items-constraint))
 
   ([fn-ptr num-params arity-var result-constraints param-constraints]
    (assert (instance? FnValPtr fn-ptr))
-   (assert (instance? Constraints result-constraints))
+   (assert (instance? ResultConstraint result-constraints))
    (assert (instance? CFnPtr arity-var))
 
    (for [_ (sm/assoc-in-val [.fns fn-ptr num-params]
                             (StaticArityInfo arity-var
                                              param-constraints
-                                             result-constraints))]
+                                             (.assertion result-constraints)))]
      '_)))
 
 (deftype StaticArity [arity-fn-var c-fn param-count var-info param-constraints result-constraints]
@@ -3079,7 +3110,7 @@
   (assert (instance? CFnPtr c-fn))
   (assert (instance? C-expr var-info))
   (assert (instance? ItemsConstraint param-constraints))
-  (assert (instance? Constraints result-constraints))
+  (assert (instance? ResultConstraint result-constraints))
 
   Stringable
   (string-list [_]
@@ -3092,10 +3123,11 @@
                             param-constraints result-constraints)]
       var-info)))
 
-(deftype ClosureArity [arity-fn-var params var-info]
+(deftype ClosureArity [arity-fn-var params var-info result-constraint]
   (assert (instance? CFnPtr arity-fn-var))
   (assert (instance? ast/params-ast params))
   (assert (instance? C-expr var-info))
+  (assert (instance? ResultConstraint result-constraint))
 
   Stringable
   (string-list [_]
@@ -3118,7 +3150,7 @@
                   args (to-str (interpose (comp ["closures" dispArg] args) ", "))]
             _ (new-proto-impl proto-sym fn-name param-count dispatch-type-num
                               (ArityValPtr (str "&" fn-arity-sym)) arity-ast
-                              empty-items-constraint top-type)
+                              empty-items-constraint result-constraint)
             _ (sm/update-in-val [.reify-fn-index] inc)]
         (let [reified-fn (c-code "" []
                                  ["// implementation of " fn-name "\n"
@@ -3203,7 +3235,7 @@
                               (assert (instance? GlobalContext s))
                               (let [closures (-> s .fn-context .closed-over .closures)]
                                 (and (first closures)
-                                     (maybe (vector closures s))))))
+                                     (maybe [closures s])))))
         closures-destruct (destruct-closures closures)
         :let [body (collapse-expressions (comp (.destruct param-vars)
                                                closures-destruct
@@ -3226,6 +3258,9 @@
     (let [file-name (ast/file-name fn-sym)
           line-number (ast/line-number fn-sym)
           param-constraints (update-path param-constraints file-name line-number)
+          result-constraint (expr-constraints body)
+          result-constraint (either (instance? ResultConstraint result-constraint)
+                                    (ResultConstraint result-constraint))
           arity-decl [(.decl body)
                       "Value *" c-fn "("
                       (-> (.vars param-vars)
@@ -3236,10 +3271,10 @@
                       ") {\n"
                       "\nwhile (1) {\n"
                       (for [[constraint var] (zip-lists (.items-constraints param-constraints)
-                                                         (.vars param-vars))]
-                         (-> constraint
-                             (update-var var)
-                             (runtime-check top-type file-name line-number)))
+                                                        (.vars param-vars))]
+                        (-> constraint
+                            (update-var var)
+                            (runtime-check top-type file-name line-number)))
                       (.init body)
                       line-sep "};};\n"]
           arity-init ["FnArity *" arity-var
@@ -3255,7 +3290,8 @@
                                          (comp closure-vars
                                                [(c-init arity-var [] [] {} {}
                                                         file-name line-number)]))
-                                  {})))))
+                                  {})
+                    result-constraint))))
 
 (defn emit-static-arity [fn-sym fn-context fn-var c-fn params param-vars result-constraint body-exprs]
   (assert (instance? FnValPtr fn-var))
@@ -3263,7 +3299,10 @@
   (assert (instance? ParamBinding param-vars))
   (assert (instance? CFnPtr c-fn))
 
-  (let [body (collapse-expressions (comp (.destruct param-vars) body-exprs))]
+  (let [body (collapse-expressions (comp (.destruct param-vars) body-exprs))
+        result-constraint (expr-constraints body)
+        result-constraint (either (instance? ResultConstraint result-constraint)
+                                  (ResultConstraint result-constraint))]
     (for [arity-var (global-var fn-sym "staticArity")
           param-constraints (get-param-constraints params (.constraints body))
           checker-fn (checking-fn fn-sym params param-vars c-fn param-constraints)
@@ -3292,7 +3331,7 @@
                               ", " (.c-var checker-fn) "};" line-sep]
                              {} {})
                      param-constraints
-                     (expr-constraints body))))))
+                     result-constraint)))))
 
 (defn bind-params [params fn-var]
   (assert (instance? ast/params-ast params))
@@ -3548,8 +3587,7 @@
       (for [syms get-syms
             expr (emit clause)
             _ (set-syms syms)]
-        (either (and (or (= (expr-type-num expr)
-                            MaybeType)
+        (either (and (or (= MaybeType (expr-type-num expr))
                          (= "" (.c-var expr)))
                      (maybe expr))
                 (.init expr [(.init expr)
@@ -3848,7 +3886,7 @@
     (for [;; _ (debug 'main-fn)
           fn-arity (emit-fn-arity (rdr/tag 'main) (FnValPtr "") (.params ast) (.body ast))
           ;; _ (debug "=======")
-          result-constraint (type-constraint IntegerType "" 0)
+          result-constraint (map (type-constraint IntegerType "" 0) ResultConstraint)
           _ (new-static-arity (FnValPtr 'main) 1 (.c-fn fn-arity) result-constraint)]
       [(c-code "" [] (.decl (.var-info fn-arity)) {} {})])))
 
@@ -3934,18 +3972,19 @@
         fn-sym-expr (emit (ast/quoted-ast fn-sym))
 
         fn-var (comp (map (lookup-declaration fn-sym) .c-var)
-                     (global-var fn-sym "fn"))
+                     (global-var (str "dispFn_" fn-sym) "fn"))
         :let [fn-var (FnValPtr fn-var)]
         arities-info (traverse arities
                                (fn [arity]
                                  (let [arg-count (count (.params arity))]
-                                   (for [c-fn (global-var fn-sym "arityImpl")
+                                   (for [c-fn (global-var (str "disp_" fn-sym) "dispatcher")
                                          result-constraints (-> arity
                                                                 .default-body
                                                                 (filter return-assertion?)
                                                                 (traverse to-constraint))
                                          _ (new-static-arity fn-var arg-count (CFnPtr c-fn)
-                                                             (comp* top-type result-constraints)
+                                                             (comp* (ResultConstraint top-type)
+                                                                    result-constraints)
                                                              empty-items-constraint)]
                                      ["Value *" c-fn "("
                                       (-> (map (range arg-count) (fn [n] (str "Value *arg" n)))
@@ -4123,7 +4162,9 @@
                       (ast/file-name ast) (ast/line-number ast)))))
 
 (defn constructor-expr [new-type-name new-type-constraint type-val-sym fields assertions]
-  (let [reified-type-num (extract rdr/type-counter)]
+  (let [reified-type-num (extract rdr/type-counter)
+        x* (rdr/tag "#x")
+        y* (rdr/tag "#y")]
     (ast/definition new-type-name
       [(ast/reified reified-type-num
                     {Type-sym
@@ -4133,10 +4174,12 @@
                                           [(str "*" new-type-name " constructor*")])]]
                       [instance?-sym
                        [(ast/fn-arity-ast (str new-type-name "_instance_QMARK_") (FnValPtr "")
-                                          (ast/params ['x 'y]) ""
-                                          [(ast/call-ast =*-sym
-                                                         [(ast/call-ast get-type-sym [type-val-sym])
-                                                          (ast/call-ast get-type-sym ['y])])])]]]
+                                          (ast/params [x* y*]) ""
+                                          [(ast/and-ast
+                                            [(ast/call-ast =*-sym
+                                                            [(ast/call-ast get-type-sym [type-val-sym])
+                                                             (ast/call-ast get-type-sym [y*])])
+                                             (ast/call-ast maybe-sym [y*])])])]]]
 
                      Function-sym
                      [[invoke-sym
@@ -4272,12 +4315,7 @@
                                                                             ""
                                                                             empty-list
                                                                             (maybe (symbol "#x"))
-                                                                            "")
-                                                           ;; TODO: make work
-                                                           ;; (ResultConstraint (FieldConstraint getter-sym ""
-                                                           ;;                                    empty-list nothing
-                                                           ;;                                    ""))
-                                                           ])]]))))))
+                                                                            "")])]]))))))
 
 (defn create-getters [sym constraint fields field-constraints]
   (let [type-value (rdr/tag "#value")]
@@ -4345,7 +4383,8 @@
           line-number (ast/line-number ast)
           sym (.sym ast)
           fields (.fixed (.fields ast))
-          const-arity-index (inc (count fields))]
+          const-arity-index (inc (count fields))
+          field-assertions (filter (.impls ast) assertion?)]
       (comp (for [_ (sm/get-in-val [.modules file-name .types sym])
                   _ (compilation-error (str "Trying to re-define type name: '" sym "' in module "
                                             (either (and (= file-name 'core)
@@ -4372,8 +4411,8 @@
 
                   type-constructor (emit-definition
                                     (constructor-expr sym new-type-constraint type-val-sym fields
-                                                      (filter (.impls ast) assertion?)))
-                  field-maps (traverse (filter (.impls ast) assertion?)
+                                                      field-assertions))
+                  field-maps (traverse field-assertions
                                        (fn [assertion]
                                          (map (to-constraint (.assertion assertion))
                                               (fn [c]
@@ -4398,7 +4437,7 @@
                                       expr-type-num)
                   _ (sm/assoc-in-val [.modules 'core .protocols Function-sym invoke-sym const-arity-index
                                       const-type-num .result-constraints]
-                                     new-type-constraint)]
+                                     (ResultConstraint new-type-constraint))]
               (comp type-val-decl
                     [(c-code "" [] (flatten getters) {} {})]
                     type-constructor
