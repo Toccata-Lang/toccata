@@ -385,6 +385,12 @@
   (constrain-sym [sym constraint]
     (sm/state-maybe constraint))
 
+  (update-call-site-count [_]
+    (assert-result x (instance? sm/new-sm x)))
+
+  (call-site-meta-data [c-var file-name line-number]
+    (assert-result x (instance? sm/new-sm x)))
+
   ;; encode a static representation of a core data structure
   (encode [m]
     (emit m))
@@ -926,9 +932,16 @@
   ;; pointer to a FnArity struct
   (assert (instance? ast/SymbolOrString var)))
 
-(deftype CFnPtr [var]
+(deftype StaticFnPtr [var]
   ;; pointer to a FnArity struct
   (assert (instance? ast/SymbolOrString var)))
+
+(deftype ProtoDispFnPtr [var]
+  ;; pointer to a FnArity struct
+  (assert (instance? ast/SymbolOrString var)))
+
+(def CFnPtr (comp StaticFnPtr
+                  ProtoDispFnPtr))
 
 (def PointerVar (comp FnValPtr
                       ArityValPtr
@@ -1795,33 +1808,34 @@
 (defn make-static-string [str-val]
   ;; TODO: when adding meta data, make sure to update this as well
   (let [str-len (count str-val)]
-    (for [str-idx (sm/new-sm (fn [s]
-                               (assert (instance? GlobalContext s))
-                               (-> s
-                                   .constants
-                                   .strings
-                                   count
-                                   (vector s)
-                                   maybe)))
-          :let [str-sym (str "str" str-idx)
-                str-ptr (str "strPtr" str-idx)]
-          _ (sm/assoc-in-val [.constants .strings str-val]
-                             (c-code str-ptr [] [] {}
-                                     {str-ptr (TypeConstraint {StringBufferType #{}} empty-list
-                                                              'String nothing str-ptr)}))]
-      (c-init str-ptr
-              []
-              ["struct {int64_t type;
+    (comp (sm/get-in-val [.constants .strings str-val])
+          (for [str-idx (sm/new-sm (fn [s]
+                                     (assert (instance? GlobalContext s))
+                                     (-> s
+                                         .constants
+                                         .strings
+                                         count
+                                         (vector s)
+                                         maybe)))
+                :let [str-sym (str "str" str-idx)
+                      str-ptr (str "strPtr" str-idx)]
+                _ (sm/assoc-in-val [.constants .strings str-val]
+                                   (c-code str-ptr [] [] {}
+                                           {str-ptr (TypeConstraint {StringBufferType #{}} empty-list
+                                                                    'String nothing str-ptr)}))]
+            (c-init str-ptr
+                    []
+                    ["struct {int64_t type;
         int32_t refs;
         int64_t len;
         Integer *hash;
         char buffer["
-               (inc str-len)
-               "];\n} " str-sym " = {StringBufferType, -1, "
-               str-len ", 0, \"" (escape-chars str-val) "\"};\n"
-               "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
-              {} {str-ptr (TypeConstraint {StringBufferType #{}} empty-list 'String nothing str-ptr)}
-              "" 0))))
+                     (inc str-len)
+                     "];\n} " str-sym " = {StringBufferType, -1, "
+                     str-len ", 0, \"" (escape-chars str-val) "\"};\n"
+                     "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
+                    {} {str-ptr (TypeConstraint {StringBufferType #{}} empty-list 'String nothing str-ptr)}
+                    "" 0)))))
 
 (defn make-c-code [value]
   (c-code (.c-var value) (.init value) (.decl value)
@@ -2062,8 +2076,7 @@
       (c-code var [] [] {} {})))
 
   (emit [str-val]
-    (comp (sm/get-in-val [.constants .strings str-val])
-          (make-static-string str-val)))
+    (make-static-string str-val))
 
   (emit-defined-value [str-val defined-sym]
     (for [value (emit str-val)
@@ -2258,8 +2271,8 @@
                              [(c-init result-var
                                       [line "Value *" result-var " = ((FnType" num-args " *)(((FnArity *)"
                                        (.c-var impl-info) ")->fn))("
-                                       ;; TODO: this assumes no closures, which is wrong
-                                       (interpose (conj (map args .c-var) "empty_list")
+                                       (interpose (conj (map args .c-var)
+                                                        ["((FnArity *)" (.c-var impl-info) ")->closures"])
                                                   ", ")
                                        ");" line-sep]
                                       [] {}
@@ -2540,6 +2553,27 @@
                    (.c-var "")
                    (.decl ["Value *" c-var ";\n"]))])))))
 
+(extend-type StaticFnPtr
+  Emitter
+  (call-site-meta-data [v f l]
+    (sm/state-maybe (c-code "empty_list" [] [] {} {})))
+
+  (update-call-site-count [_]
+    (comp (sm/update-in-val [.constants .other 'static-fixed-sites] inc)
+          (sm/assoc-in-val [.constants .other 'static-fixed-sites] 1))))
+
+(extend-type ProtoDispFnPtr
+  Emitter
+  (call-site-meta-data [_ file-name line-number]
+    (let [str-val (str file-name ": " line-number)]
+      (map (make-static-string str-val)
+           (fn [expr]
+             (.c-var expr (str "(List *)" (.c-var expr)))))))
+
+  (update-call-site-count [_]
+    (comp (sm/update-in-val [.constants .other 'proto-dispatch-sites] inc)
+          (sm/assoc-in-val [.constants .other 'proto-dispatch-sites] 1))))
+
 ;; optimize calls to static, fixed arity, functions
 (defn call-static-fixed [target arg-vars ast]
   (let [file-name (ast/file-name ast)
@@ -2548,14 +2582,16 @@
           constraints (arg-constraints (.args ast) arg-vars (.param-constraints arity-info)
                                        file-name line-number)
           result-sym (genlocal "rslt")
-          _ (comp (sm/update-in-val [.constants .other 'static-fixed-sites] inc)
-                  (sm/assoc-in-val [.constants .other 'static-fixed-sites] 1))
-          line (line-macro ast "// static-fixed")]
+          _ (update-call-site-count (.c-var arity-info))
+          line (line-macro ast "// static-fixed")
+          call-site-location (call-site-meta-data (.c-var arity-info) file-name line-number)]
       (c-init result-sym
               [line "Value *" result-sym " = " (.c-var arity-info) "("
-               (interpose (cons "empty_list" (seq (map arg-vars .c-var))) ", ") ");" line-sep]
-              [] {} (assoc constraints
-                      result-sym (.result-constraint arity-info))
+               (interpose (cons (.c-var call-site-location)
+                                (seq (map arg-vars .c-var))) ", ") ");" line-sep]
+              (.decl call-site-location)
+              {} (assoc constraints
+                   result-sym (.result-constraint arity-info))
               file-name line-number))))
 
 (defn call-static-variadic [target arg-vars ast]
@@ -2746,6 +2782,7 @@
                                     ((instance? Symbol target-ast)
                                      (rdr/tag target-ast)
                                      target-ast))))]
+      ;; TODO: use deftypes for each of the different kind of call sites.
       (comp (for [new-ast (inline-expr (.call-target ast) (.args ast))
                   call-site (emit new-ast)]
               (c-init (.c-var call-site) (.init call-site) (.decl call-site)
@@ -3360,7 +3397,7 @@
 
    (flat-map (global-var fn-sym "arityImpl")
              (fn [c-fn]
-               (emit-fn-arity fn-sym fn-var params body (CFnPtr c-fn)))))
+               (emit-fn-arity fn-sym fn-var params body (StaticFnPtr c-fn)))))
 
   ([fn-sym fn-var params body c-fn]
    (assert (instance? FnValPtr fn-var))
@@ -3428,7 +3465,7 @@
           c-fn (global-var (str type-str fn-name) "arityFn")
           :let [impl-fn-var (FnValPtr impl-fn-var)
                 arity-impl-var (ArityValPtr arity-impl-var)
-                c-fn (CFnPtr c-fn)]
+                c-fn (ProtoDispFnPtr c-fn)]
           dispatcher-info (get-proto-impl proto-sym fn-name num-args 0)
           :let [sym-map (reduce (zip-lists (-> dispatcher-info .ast .params .fixed)
                                            (-> arity-ast .params .fixed))
@@ -3942,7 +3979,7 @@
         [(ast/inline-ast
           'C nothing
           (str "fprintf(stderr,\"*** Could not find implementation of '" proto-sym "/" fn-sym
-               "\\n\");\nabort();\n")
+               " at %s\\n\", ((String *)closures)->buffer);\nabort();\n")
           (ast/file-name fn-sym) (ast/line-number fn-sym))]))
 
 (defn emit-proto-default [protocol-sym fn-sym disp-fn-var prototype]
@@ -3951,7 +3988,7 @@
                           (maybe (missing-impl-body protocol-sym fn-sym prototype)))
                      (.default-body prototype))]
     (for [arity-impl-var (global-var (str "Default_" fn-sym) "arityImpl")
-          :let [arity-impl-var (CFnPtr arity-impl-var)]
+          :let [arity-impl-var (ProtoDispFnPtr arity-impl-var)]
           static-arity (emit-fn-arity (rdr/tag (str "Default_" fn-sym)) disp-fn-var
                                       (.params prototype)
                                       (comp (remove (.default-body prototype) produces-code?)
@@ -3982,7 +4019,7 @@
                                                                 .default-body
                                                                 (filter return-assertion?)
                                                                 (traverse to-constraint))
-                                         _ (new-static-arity fn-var arg-count (CFnPtr c-fn)
+                                         _ (new-static-arity fn-var arg-count (ProtoDispFnPtr c-fn)
                                                              (comp* (ResultConstraint top-type)
                                                                     result-constraints)
                                                              empty-items-constraint)]
@@ -4938,14 +4975,12 @@
     (send ast-emitter emit-main)
     (send ast-emitter fixup-native-symbols)
     (send ast-emitter (fn [ctxt]
-                        (print-err
-                         "\n" 'static-fixed (get-in ctxt ['_ .constants .other 'static-fixed-sites])
-                         "\n" 'static-variadic (get-in ctxt ['_ .constants .other 'static-variadic-sites])
-                         "\n" 'type-known (get-in ctxt ['_ .constants .other 'type-known-sites])
-                         "\n" 'invoke (get-in ctxt ['_ .constants .other 'invoke-sites])
-                         "\n" 'dyn-fn (get-in ctxt ['_ .constants .other 'dyn-fn-sites])
-                         "\n" 'dyn-unknown (get-in ctxt ['_ .constants .other 'dyn-unknown-sites])
-                         "\n")))
+                        (map (get-in ctxt ['_ .constants .other])
+                             (fn [counts]
+                               (apply print-err "\n" (interpose (map (seq counts)
+                                                                     (fn [[k v]]
+                                                                       (str k ": " v)))
+                                                                "\n"))))))
     ;; wait for agents to clear their queues
     (let [waiter (promise)]
       (send ast-emitter (fn [_]
