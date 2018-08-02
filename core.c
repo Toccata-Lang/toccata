@@ -843,7 +843,7 @@ freeValFn freeJmpTbl[TypeCount] = {NULL,
 				   &freeOpaquePtr};
 
 void dec_and_free(Value *v, int deltaRefs) {
-  if (decRefs(v, deltaRefs) >= -1)
+  if (v == (Value *)0 || decRefs(v, deltaRefs) >= -1)
     return;
 
   if (v->type < TypeCount) {
@@ -1163,6 +1163,7 @@ void *futuresThread(void *input) {
         result = fn(arity->closures, (Value *)empty_list);
       } else {
         fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
+	// TODO: soft abort?
         abort();
       }
     }
@@ -1249,116 +1250,6 @@ FnArity *findFnArity(Value *fnVal, int64_t argCount) {
   }
   return(variadic);
 };
-
-Value *proto1Arg(ProtoImpls *protoImpls, char *name, Value *arg0,
-                 char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 1 argument for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType1 *_fn = (FnType1 *)_arity->fn;
-  return(_fn(_arity->closures, arg0));
-}
-
-Value *proto2Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 2 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-                    name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType2 *_fn = (FnType2 *)_arity->fn;
-  return(_fn(_arity->closures, arg0, arg1));
-}
-
-Value *proto3Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
-                 char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 3 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType3 *_fn = (FnType3 *)_arity->fn;
-  return(_fn(_arity->closures, arg0, arg1, arg2));
-}
-
-Value *proto4Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
-                 Value *arg3, char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 4 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType4 *_fn = (FnType4 *)_arity->fn;
-  return(_fn(_arity->closures, arg0, arg1, arg2, arg3));
-}
-
-Value *proto5Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
-                 Value *arg3, Value *arg4, char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 5 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType5 *_fn = (FnType5 *)_arity->fn;
-  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4));
-}
-
-Value *proto6Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
-                 Value *arg3, Value *arg4, Value *arg5, char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 5 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType6 *_fn = (FnType6 *)_arity->fn;
-  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5));
-}
-
-Value *proto7Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
-                 Value *arg3, Value *arg4, Value *arg5, Value *arg6,
-                 char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 7 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType7 *_fn = (FnType7 *)_arity->fn;
-  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5, arg6));
-}
-
-Value *proto8Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
-                 Value *arg3, Value *arg4, Value *arg5, Value *arg6, Value *arg7,
-                 char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 8 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType8 *_fn = (FnType8 *)_arity->fn;
-  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7));
-}
-
-Value *proto9Arg(ProtoImpls *protoImpls, char *name, Value *arg0, Value *arg1, Value *arg2,
-                 Value *arg3, Value *arg4, Value *arg5, Value *arg6, Value *arg7,
-                 Value *arg8, char *file, int64_t line) {
-  FnArity *_arity = (FnArity *)findProtoImpl(arg0->type, protoImpls);
-  if(_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** Could not find implementation of '%s' with 9 arguments for type: %s (%" PRId64 ") at %s: %" PRId64 "\n",
-            name, extractStr(type_name(empty_list, arg0)), arg0->type, file, line);
-    abort();
-  }
-  FnType9 *_fn = (FnType9 *)_arity->fn;
-  return(_fn(_arity->closures, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
-}
 
 int8_t isNothing(Value *v, char *fileName, int lineNumber) {
   return(v->type == MaybeType && ((Maybe *)v)->value == (Value *)0);
@@ -1497,6 +1388,7 @@ Value **arrayFor(Vector *v, unsigned index) {
     }
   } else {
     fprintf(stderr, "Vector index out of bounds\n");
+    // TODO: soft abort?
     abort();
     return((Value **)0);
   }
@@ -1962,6 +1854,7 @@ Value *listMap(Value *arg0, Value *f) {
       arity2 = findFnArity(f, 1);
       if(arity2 == (FnArity *)0) {
         fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
+	// TODO: soft abort?
         abort();
       }
     }
@@ -2350,6 +2243,7 @@ Value *maybeExtract(Value *arg0) {
   Maybe *mValue = (Maybe *)arg0;
   if (mValue->value == (Value *)0) {
     fprintf(stderr, "The 'nothing' value can not be passed to 'extract'.\n");
+    // TODO: soft abort?
     abort();
   }
   incRef(mValue->value, 1);
@@ -2370,6 +2264,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
   if (_arity == (FnArity *)0) {
     fprintf(stderr, "\n*** no arity of '%s' found to apply to %" PRId64 " args\n",
             ((Function *)arg0)->name, argList->len);
+    // TODO: soft abort?
     abort();
   } else if(_arity->variadic) {
     FnType1 *_fn = (FnType1 *)_arity->fn;
@@ -2520,6 +2415,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     return(result);
   } else {
     fprintf(outstream, "error in 'fn-apply'\n");
+    // TODO: soft abort?
     abort();
   }
 }
@@ -2541,6 +2437,7 @@ Value *maybeApply(Value *arg0, Value *arg1) {
       rslt9 = fn8(arity6->closures, (Value *)empty_list);
     } else {
       fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
+      // TODO: soft abort?
       abort();
     }
     dec_and_free(arg0, 1);
@@ -2642,6 +2539,7 @@ Value *maybeMap(Value *arg0, Value *arg1) {
       rslt6 = fn5(arity3->closures, (Value *)varArgs4);
     } else {
       fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
+      // TODO: soft abort?
       abort();
     }
   }
@@ -2939,6 +2837,7 @@ Value *dynamicCall2Arg(Value *f, Value *arg0, Value *arg1) {
       rslt = fn(arity->closures, (Value *)dynArgs);
     } else {
       fprintf(stderr, "\n*** Invalid function for string reduction.\n");
+      // TODO: soft abort?
       abort();
     }
     dec_and_free(f, 1);
@@ -3143,6 +3042,7 @@ Value *listFilter(Value *arg0, Value *arg1) {
       arity2 = findFnArity(arg1, 1);
       if(arity2 == (FnArity *)0) {
 	fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
+	// TODO: soft abort?
 	abort();
       }
     }
@@ -3225,6 +3125,7 @@ Value *createNode(int shift,
 {
   if (shift > 60) {
     fprintf(stderr, "Ran out of shift!!!!!!");
+    // TODO: soft abort?
     abort();
   }
   BitmapIndexedNode *newNode = malloc_bmiNode(2);
@@ -3878,8 +3779,6 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
 }
 
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
-  // if (arg1->refs == -10)
-  // abort();
   Value *hash = baseSha1(incRef(arg1, 1));
   Value *shift = const0Ptr;
   return(assoc((List *)0, arg0, arg1, arg2, hash, shift));
@@ -3901,6 +3800,7 @@ Value *dynamicCall1Arg(Value *f, Value *arg) {
       rslt = fn(arity->closures, (Value *)dynArgs);
     } else {
       fprintf(stderr, "\n*** Invalid action for Promise.\n");
+      // TODO: soft abort?
       abort();
     }
     dec_and_free(f, 1);
@@ -4222,43 +4122,13 @@ Value *reifiedTypeArgs(Value *x) {
   if (x->type < TypeCount) {
     fprintf(stderr, "'type-args' undefined for %s (%" PRId64 ")\n",
             extractStr(type_name(empty_list, x)), x->type);
+    // TODO: soft abort?
     abort();
   }
   Value *typeArgs = ((ReifiedVal *)x)->typeArgs;
   incRef(typeArgs, 1);
   dec_and_free(x, 1);
   return(typeArgs);
-}
-
-Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym, Value *dispValue, Value *args) {
-  List *allArgs = listCons(dispValue, (List *)args);
-  Value *protocol = hashMapGet(protocols, protoSym);
-  if (!isNothing(protocol, "", 0)) {
-    protocol = maybeExtract(protocol);
-    Value *arities = hashMapGet(protocol, fnSym);
-    if (!isNothing(arities, "", 0)) {
-      arities = maybeExtract(arities);
-      Value *impls = hashMapGet(arities, integerValue(allArgs->len));
-      impls = maybeExtract(impls);
-      if (!isNothing(impls, "", 0)) {
-	Value *f = hashMapGet(impls, integerValue(dispValue->type));
-	if (!isNothing(f, "", 0)) {
-	  f = maybeExtract(f);
-	  return(fn_apply(empty_list, f, (Value *)allArgs));
-	} else {
-	  f = hashMapGet(impls, const0Ptr);
-	  if (!isNothing(f, "", 0)) {
-	    f = maybeExtract(f);
-	    return(fn_apply(empty_list, f, (Value *)allArgs));
-	  }
-	}
-      }
-    }
-  }
-  fprintf(stderr, "\n*** Could not find implementation of '%s' with %" PRId64 
-	  " arguments for type: %s (%" PRId64 ")\n", ((SubString *)fnSym)->buffer, allArgs->len,
-	  extractStr(type_name(empty_list, dispValue)), dispValue->type);
-  abort();
 }
 
 FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64_t dispType, int64_t argCount) {
@@ -4286,5 +4156,6 @@ FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64
   }
   fprintf(stderr, "\n*** Could not find implementation of '%s' with %" PRId64 
 	  " arguments for type: (%" PRId64 ")\n", ((SubString *)fnSym)->buffer, argCount, dispType);
+  // TODO: soft abort?
   abort();
 }
