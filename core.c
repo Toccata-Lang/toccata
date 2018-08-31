@@ -1151,20 +1151,20 @@ void *futuresThread(void *input) {
     future = (Future *)readFuturesQueue();
   while(workerIndex >= 0 && future != (Future *)0) {
     Value *f = future->action;
+    // TODO: what happens if the future aborts?
     if(f->type != FunctionType) {
       result = invoke0Args(empty_list, f);
     } else {
       FnArity *arity = findFnArity(f, 0);
       if(arity != (FnArity *)0 && !arity->variadic) {
-        FnType0 *fn = (FnType0 *)arity->fn;
-        result = fn(arity->closures);
+	FnType0 *fn = (FnType0 *)arity->fn;
+	result = fn(arity->closures);
       } else if(arity != (FnArity *)0 && arity->variadic) {
-        FnType1 *fn = (FnType1 *)arity->fn;
-        result = fn(arity->closures, (Value *)empty_list);
+	FnType1 *fn = (FnType1 *)arity->fn;
+	result = fn(arity->closures, (Value *)empty_list);
       } else {
-        fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
-	// TODO: soft abort?
-        abort();
+	fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
+	abort();
       }
     }
     int32_t refs;
@@ -1388,7 +1388,6 @@ Value **arrayFor(Vector *v, unsigned index) {
     }
   } else {
     fprintf(stderr, "Vector index out of bounds\n");
-    // TODO: soft abort?
     abort();
     return((Value **)0);
   }
@@ -1874,6 +1873,7 @@ Value *listMap(Value *arg0, Value *f) {
       }
 
       // 'y' is the value for the new list
+      // TODO: abort if y is abort value
 
       if (head == empty_list) {
         // if we haven't started the new list yet
@@ -2243,7 +2243,6 @@ Value *maybeExtract(Value *arg0) {
   Maybe *mValue = (Maybe *)arg0;
   if (mValue->value == (Value *)0) {
     fprintf(stderr, "The 'nothing' value can not be passed to 'extract'.\n");
-    // TODO: soft abort?
     abort();
   }
   incRef(mValue->value, 1);
@@ -2414,75 +2413,8 @@ Value *fnApply(Value *arg0, Value *arg1) {
     dec_and_free(arg1, 1);
     return(result);
   } else {
-    fprintf(outstream, "error in 'fn-apply'\n");
-    // TODO: soft abort?
+    fprintf(stderr, "error in 'fn-apply'\n");
     abort();
-  }
-}
-
-Value *maybeApply(Value *arg0, Value *arg1) {
-  if (isNothing(arg0, "", 0)) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  } else if (((List *)arg1)->len == 0) {
-    Value *f = ((Maybe *)arg0)->value;
-    Value *rslt9;
-    FnArity *arity6 = findFnArity(f, 0);
-    if(arity6 != (FnArity *)0 && !arity6->variadic) {
-      FnType0 *fn8 = (FnType0 *)arity6->fn;
-      rslt9 = fn8(arity6->closures);
-    } else if(arity6 != (FnArity *)0 && arity6->variadic) {
-      FnType1 *fn8 = (FnType1 *)arity6->fn;
-      rslt9 = fn8(arity6->closures, (Value *)empty_list);
-    } else {
-      fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
-      // TODO: soft abort?
-      abort();
-    }
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(maybe((List *)0, (Value *)0, rslt9));
-  } else {
-    List *head = empty_list;
-    List *tail;
-    for (List *l = (List *)arg1; l->head != (Value *)0; l = l->tail) {
-      if (isNothing(l->head, "", 0)) {
-        dec_and_free((Value *)head, 1);
-        dec_and_free(arg0, 1);
-        dec_and_free(arg1, 1);
-        return(nothing);
-      } else {
-        Value *x = ((Maybe *)l->head)->value;
-        incRef(x, 1);
-        if (head == empty_list) {
-          // if we haven't started the new list yet
-          head = malloc_list();
-          head->len = 1;
-          head->head = x;
-          head->tail = empty_list;
-          tail = head;
-        } else {
-          // otherwise, append to tail of list
-          List *new_tail = malloc_list();
-          new_tail->len = 1;
-          new_tail->head = x;
-          new_tail->tail = empty_list;
-          tail->tail = new_tail;
-          tail = new_tail;
-          head->len++;
-        }
-      }
-    }
-
-    Value *f = ((Maybe *)arg0)->value;
-
-    incRef(f, 1);
-    Value *rslt19 = fnApply(f, (Value *)head);
-    Value *rslt20 = maybe(empty_list, (Value *)0, rslt19);
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(rslt20);
   }
 }
 
@@ -3063,6 +2995,7 @@ Value *listFilter(Value *arg0, Value *arg1) {
       }
 
       // 'y' is the filter maybe/nothing value
+      // TODO: abort if y is abort value
 
       if (!isNothing(y, "", 0)) {
 	incRef(x, 1);
@@ -3125,7 +3058,6 @@ Value *createNode(int shift,
 {
   if (shift > 60) {
     fprintf(stderr, "Ran out of shift!!!!!!");
-    // TODO: soft abort?
     abort();
   }
   BitmapIndexedNode *newNode = malloc_bmiNode(2);
@@ -3452,6 +3384,7 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
     } else {
       // there is already a key/val pair at the position where key
       // would be. Do nothing
+      dec_and_free(arg2, 1);
       dec_and_free(arg3, 1);
       return(arg0);
     }
@@ -4120,15 +4053,14 @@ int64_t countSeq(Value *seq) {
 
 Value *reifiedTypeArgs(Value *x) {
   if (x->type < TypeCount) {
-    fprintf(stderr, "'type-args' undefined for %s (%" PRId64 ")\n",
-            extractStr(type_name(empty_list, x)), x->type);
-    // TODO: soft abort?
-    abort();
+    dec_and_free(x, 1);
+    return((Value *)empty_vect);
+  } else {
+    Value *typeArgs = ((ReifiedVal *)x)->typeArgs;
+    incRef(typeArgs, 1);
+    dec_and_free(x, 1);
+    return(typeArgs);
   }
-  Value *typeArgs = ((ReifiedVal *)x)->typeArgs;
-  incRef(typeArgs, 1);
-  dec_and_free(x, 1);
-  return(typeArgs);
 }
 
 FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64_t dispType, int64_t argCount) {

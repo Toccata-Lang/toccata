@@ -60,12 +60,7 @@
   (instance? [t x]
     ;; test whether `x` is of type `t`
     (assert-result a (instance? Maybe a)))
-
-  (same-type? [x y]
-    ;; test whether `x` and `y` are of the 'same' type. 'Sameness' could
-    ;; also mean that the types of `x` and `y` are different, but have
-    ;; been composed into a union type. (Also referred to as "sum types")
-    (assert-result a (instance? Maybe a))))
+  )
 
 ;; Internal functions, shouldn't be used in code
 (defn new-type-value [reified-template type-arg-values]
@@ -127,7 +122,7 @@
   return((Value *)strVal);\n"))
 
 (defn fn-apply [x args]
-  (assert (instance? Function x))
+  (assert (instance? Fn x))
   (assert (instance? List args))
   (inline C "return(fnApply(x_0, args_1));"))
 
@@ -206,7 +201,7 @@
     (instance? [_ x]
       (inline C Maybe "return(checkInstance(VectorType, x_1));"))))
 
-(def Function
+(def Fn
   (reify
     Type
     (instance? [_ x]
@@ -572,7 +567,7 @@
   }"))
 
 (defn fn-name [f]
-  (assert (instance? Function f))
+  (assert (instance? Fn f))
   (inline C StringBuffer "
   Value *strVal = stringValue(((Function *)f_0)->name);
   dec_and_free(f_0, 1);
@@ -587,9 +582,19 @@
   (assert (instance? Maybe mv))
   (inline C Maybe "return(maybeMap(mv_0, f_1));"))
 
-(defn maybe-apply [mv args]
+(defn maybe-apply [mv m-args args]
   (assert (instance? Maybe mv))
-  (inline C Maybe "return(maybeApply(mv_0, args_1));"))
+  (assert (instance? List m-args))
+  (assert (instance? Vector args))
+
+  (either (for [m-arg (first m-args)]
+            (either (map m-arg (fn [arg]
+                                 (maybe-apply mv (rest m-args) (conj args arg))))
+                    nothing))
+          (map mv (fn [f]
+                    (either (and (instance? Fn f)
+                                 (maybe (apply f (seq args))))
+                            (apply* f (seq args)))))))
 
 (extend-type Maybe
   Container
@@ -599,20 +604,18 @@
   (extract [mv]
     (inline C "return(maybeExtract(mv_0));"))
 
-  (extract [mv]
-    (inline C "return(maybeExtract(mv_0));"))
-
   (wrap [_ mv]
     (maybe mv))
 
   (apply* [mv args]
-    (maybe-apply mv args))
+    (maybe-apply mv args []))
 
   (flat-map [mv f]
     (and mv (f (extract mv))))
 
   Composition
-  (zero [mv] nothing)
+  (zero [mv]
+    nothing)
 
   Function
   (invoke [m t f] (inline C "return(maybeInvoke(m_0, t_1, f_2));"))
@@ -627,7 +630,7 @@
   (get [m _ not-found]
     (either m not-found))
 
-  (assoc [_ _ v]
+  (assoc [x y v]
     (maybe v)))
 
 ;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
@@ -726,14 +729,15 @@
 (defn <
   ;; Test whether a number of values are in order from least to greatest
   ;; (Uses `<*` protocol function)
-  ([x y] (<* x y))
+  ([x y]
+   (<* x y))
   ([v & vs]
    (or (and (empty? vs)
             (maybe v))
-       (let [[y] vs]
-         (apply* (maybe (fn [x _] x))
-                 (list (<* v y)
-                       (apply* < (list vs))))))))
+       (and (apply* < (list vs))
+            (flat-map (first vs)
+                      (fn [y]
+                        (<* v y)))))))
 
 (defn >
   ;; Test whether a number of values are in order from greatest to least
@@ -882,15 +886,15 @@
                      (str-append new-str s)))
       new-str)))
 
-(extend-type Function
+(extend-type Fn
   Type
-  (type-name [_] "Function")
+  (type-name [_] "Fn")
 
   Eq
-  (=* [_ _] nothing)
+  (=* [x y] nothing)
 
   Stringable
-  (string-list [_] (list "<Function " (fn-name _) ">"))
+  (string-list [_] (list "<Fn " (fn-name _) ">"))
 
   (show* [x _]
     (string-list x))
@@ -999,12 +1003,6 @@
 
   (count [l]
     (vect-count l))
-
-  (conj [vect v]
-    (inline C Vector "
-  Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
-  dec_and_free(vect_0, 1);
-  return(result);"))
 
   (conj [vect v]
     (inline C Vector "
@@ -2213,3 +2211,14 @@ abort();
 
 (def Sequence (comp List
                     Vector))
+
+(def CoreTypes (comp Integer
+                     String
+                     Symbol
+                     Maybe
+                     List
+                     Vector
+                     Fn
+                     Promise
+                     Agent
+                     Future))
