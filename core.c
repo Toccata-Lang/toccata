@@ -2947,19 +2947,6 @@ Value *symLT(Value *arg0, Value *arg1) {
   }
 }
 
-Value *maybeInvoke(Value *arg0, Value *arg1, Value *arg2) {
-  Maybe *mValue = (Maybe *)arg0;
-  if (mValue->value == (Value *)0) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(arg2);
-  } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg2, 1);
-    return(arg1);
-  }
-}
-
 Value *listFilter(Value *arg0, Value *arg1) {
   List *l = (List *)arg0;
   if (l->len == 0) {
@@ -3444,41 +3431,41 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
   int itemCount = node->count / 2;
 
   if(equal(baseSha1(incRef(node->array[0], 1)), incRef(arg3, 1))) {
-     HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
-     for (int i = 0; i < itemCount; i++) {
-        if (equal(incRef(node->array[2 * i], 1), incRef(key, 1))) {
-           newNode->array[2 * i] = key;
-           newNode->array[2 * i + 1] = val;
-           newNode->count -= 2;
-        } else {
-           newNode->array[2 * i] = node->array[2 * i];
-           newNode->array[2 * i + 1] = node->array[2 * i + 1];
-           incRef(node->array[2 * i], 1);
-           incRef(node->array[2 * i + 1], 1);
-        }
-     }
-     if (newNode->count / 2 != itemCount) {
-        newNode->array[2 * itemCount] = key;
-        newNode->array[2 * itemCount + 1] = val;
-     }
-     dec_and_free(arg0, 1);
-     dec_and_free(arg3, 1);
-     dec_and_free(arg4, 1);
-     return((Value *)newNode);
+    HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
+    for (int i = 0; i < itemCount; i++) {
+      if (equal(incRef(key, 1), incRef(node->array[2 * i], 1))) {
+	newNode->array[2 * i] = key;
+	newNode->array[2 * i + 1] = val;
+	newNode->count -= 2;
+      } else {
+	newNode->array[2 * i] = node->array[2 * i];
+	newNode->array[2 * i + 1] = node->array[2 * i + 1];
+	incRef(node->array[2 * i], 1);
+	incRef(node->array[2 * i + 1], 1);
+      }
+    }
+    if (newNode->count / 2 != itemCount) {
+      newNode->array[2 * itemCount] = key;
+      newNode->array[2 * itemCount + 1] = val;
+    }
+    dec_and_free(arg0, 1);
+    dec_and_free(arg3, 1);
+    dec_and_free(arg4, 1);
+    return((Value *)newNode);
   } else {
-     BitmapIndexedNode *bmi = &emptyBMI;
-     Integer newShift = {IntegerType, -1, 0};
+    BitmapIndexedNode *bmi = &emptyBMI;
+    Integer newShift = {IntegerType, -1, 0};
 
-     bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, key, val, arg3, (Value *)&newShift);
-     for (int i = 0; i < itemCount; i++) {
-       bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi,
-					incRef(node->array[2 * i], 1),
-					incRef(node->array[2 * i + 1], 1),
-					baseSha1(incRef(node->array[i], 1)), (Value *)&newShift);
-     }
-     dec_and_free(arg0, 1);
-     dec_and_free(arg4, 1);
-     return((Value *)bmi);
+    bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, key, val, arg3, (Value *)&newShift);
+    for (int i = 0; i < itemCount; i++) {
+      bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi,
+				       incRef(node->array[2 * i], 1),
+				       incRef(node->array[2 * i + 1], 1),
+				       baseSha1(incRef(node->array[i], 1)), (Value *)&newShift);
+    }
+    dec_and_free(arg0, 1);
+    dec_and_free(arg4, 1);
+    return((Value *)bmi);
   }
 }
 
@@ -3553,7 +3540,7 @@ Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
   int itemCount = node->count / 2;
 
   if(itemCount == 1) {
-    if(equal(incRef(node->array[0], 1), key)) {
+    if(equal(key, incRef(node->array[0], 1))) {
       dec_and_free(arg0, 1);
       dec_and_free(arg2, 1);
       dec_and_free(arg3, 1);
@@ -3569,7 +3556,7 @@ Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
     do {
       keyIdx = i;
       i++;
-    } while (i < itemCount && !equal(incRef(node->array[2 * i], 1), incRef(key, 1)));
+    } while (i < itemCount && !equal(incRef(key, 1), incRef(node->array[2 * i], 1)));
 
     if(keyIdx >= 0) {
       newNode = malloc_hashCollisionNode(itemCount - 1);
@@ -3594,7 +3581,6 @@ Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
 
 Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
   HashCollisionNode *node = (HashCollisionNode *)arg0;
-  List *seq = (List *)arg1;
   for (int i = 0; i < node->count / 2; i++) {
     if (node->array[2 * i] != (Value *)0 && equal(incRef(arg1, 1),
 						  incRef(node->array[2 * i], 1))) {

@@ -1,33 +1,25 @@
 
-;; abort can happen;
-;;   at the start of a cond clause
-;;   when a value is passed to a function
-;;   when a value is created (c-init)
-;;   in the checking function
-;;   at the top of a closure fn
-;;   when no arity is found at a dyn call site
-
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "4893cbf"))
+                            :sha "8e5fd43"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "c89ab00"))
+                           :sha "83cc570"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
-                             :sha "7690cd3"))
+                             :sha "1653d24"))
 (add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
                             "system.toc"
                             :sha "40c1c4d"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "ecde30b"))
+                           :sha "93614d5"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "e7a489b"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "ba18227"))
+                            :sha "41e5ca6"))
 
 (defprotocol StringWriter
   (write-str [x]
@@ -151,12 +143,12 @@
 
 ;; useful for debugging the compiler
 (defn debug [& args]
-  (map sm-space (fn [_] (apply print-err args))))
+  (map sm-space (fn [_] (new-apply* print-err args))))
 
 ;; for when a fatal error occurs
 (defn compilation-error [& msg]
   (sm/new-sm (fn [s]
-               (apply print-err msg)
+               (apply* print-err msg)
                (abort))))
 
 (defn format-path* [path desired-len]
@@ -1030,11 +1022,11 @@
 (def empty-c-code (empty-code "" [] [] {} {}))
 
 (defn conflicting-assertions [constraints file-name line-number]
-  (apply print-err "Conflicting assertions"
-         (either (= "" file-name)
-                 (str " at " file-name ": " line-number))
-         "\n"
-         (format-path (MultiConstraint constraints) 0))
+  (apply* print-err (list* "Conflicting assertions"
+                           (either (= "" file-name)
+                                   (str " at " file-name ": " line-number))
+                           "\n"
+                           (format-path (MultiConstraint constraints) 0)))
   (abort))
 
 (defn compose-constraints [file-name line-number x y]
@@ -1197,7 +1189,9 @@
                               (runtime-check value-info file-name line-number)))
                         "")
                 (either (or (for [refs (get-in y [.refs-map c-var])]
-                              [((< refs 2) "" ["incRef(" c-var ", " (dec refs) ");" line-sep])])
+                              [(either (and (< refs 2)
+                                            (maybe ""))
+                                       ["incRef(" c-var ", " (dec refs) ");" line-sep])])
                             (= "" c-var))
                         [line-sep "dec_and_free(" c-var ", 1);" line-sep])
                 (.init y)]
@@ -1382,7 +1376,7 @@
                                C-var-punct)))
 
 (def C-var (grmr/apply-fn (fn [start remaining]
-                            (apply str start (seq remaining)))
+                            (apply* str (list* start (seq remaining))))
                           (grmr/any grmr/alpha
                                     (map (grmr/ignore "#") (fn [] ""))
                                     (map (grmr/ignore "-") (fn [] "_MINUS_"))
@@ -2817,9 +2811,9 @@
           line-number (ast/line-number ast)
           ast (extract (update-in ast [.call-target]
                                   (fn [target-ast]
-                                    ((instance? Symbol target-ast)
-                                     (rdr/tag target-ast)
-                                     target-ast))))]
+                                    (either (and (instance? Symbol target-ast)
+                                                 (maybe (rdr/tag target-ast)))
+                                            target-ast))))]
       ;; TODO: use deftypes for each of the different kind of call sites.
       (comp (for [new-ast (inline-expr (.call-target ast) (.args ast))
                   call-site (emit new-ast)]
@@ -3137,7 +3131,7 @@
                           ["((ReifiedVal *)" reified-sym
                            ")->impls[" index "] = (Value *)" sym ";" line-sep])))]
               (map impl-fns .decl)
-              (apply merge-with + (map impl-fns .refs-map))
+              (apply* merge-with (list* + (map impl-fns .refs-map)))
               {reified-sym (TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>") nothing
                                            reified-sym)}
               file-name line-number))))
@@ -3359,7 +3353,10 @@
                       arity-var "->count = " (count (.vars param-vars))
                       ";" line-sep
                       arity-var "->variadic = "
-                      ((.variadic params) "1" "0") ";" line-sep
+                      (either (and (.variadic params)
+                                   (maybe "1"))
+                              "0")
+                      ";" line-sep
                       arity-var "->fn = " c-fn ";" line-sep
                       arity-var "->closures = empty_list;" line-sep]]
       (ClosureArity c-fn params
@@ -3389,7 +3386,9 @@
         ;; (and (= UnknownType result-type)
         ;;      (maybe (print-err 'unknown-return-type fn-sym
         ;;                        (ast/file-name body-exprs) (ast/line-number body-exprs))))
-        (StaticArity fn-var c-fn ((.variadic params) 'variadic (count params))
+        (StaticArity fn-var c-fn (either (and (.variadic params)
+                                              (maybe'variadic))
+                                         (count params))
                      (c-code (ArityValPtr (str "&" arity-var)) []
                              [(.decl body)
                               "Value *" c-fn "("
@@ -3404,7 +3403,9 @@
                               (.init checker-fn)
                               "FnArity " arity-var " = {FnArityType, -1, "
                               (count (.vars param-vars))
-                              ", (List *)0, " ((.variadic params) "1" "0")
+                              ", (List *)0, " (either (and (.variadic params)
+                                                           (maybe "1"))
+                                                      "0")
                               ", " (.c-var checker-fn) "};" line-sep]
                              {} {})
                      param-constraints
@@ -3460,11 +3461,13 @@
                                                                           "<result value>")]
                                               (and (= bottom-type result-type)
                                                    (do
-                                                     (apply print-err "Conflicting result assertions"
-                                                            (either (= "" file-name)
-                                                                    (str " at " file-name ": " line-number))
-                                                            "\n"
-                                                            (format-path result-type 0))
+                                                     (new-apply* print-err
+                                                                 (list* "Conflicting result assertions"
+                                                                        (either (= "" file-name)
+                                                                                (str " at " file-name ": "
+                                                                                     line-number))
+                                                                        "\n"
+                                                                        (format-path result-type 0)))
                                                      (maybe (abort))))
                                               result-type)))
                    _ (comp (get-sym fn-sym)
@@ -3708,7 +3711,7 @@
                         (map .c-var)
                         set)
         refs-maps (map exprs .refs-map)]
-    (-> (apply merge-with + refs-maps)
+    (-> (apply* merge-with (list* + refs-maps))
         (remove-keys clause-vars))))
 
 (defn last-init [evalled-clauses result-var]
@@ -3722,10 +3725,10 @@
             (either (and (get (.refs-map last-clause) var)
                          (maybe (runtime-check (update-var constraint (str var)) top-type "" 0)))
                     "")))
-     ((= "" (.c-var last-clause))
-      (.init last-clause)
-      [(.init last-clause)
-       result-var " = " (.c-var last-clause) ";" line-sep])]))
+     (either (and  (= "" (.c-var last-clause))
+                   (maybe (.init last-clause)))
+             [(.init last-clause)
+              result-var " = " (.c-var last-clause) ";" line-sep])]))
 
 (defn cond-clause-init [cond-test result-var [init refs-map] clause]
   (let [refs-map (-> (.refs-map clause)
@@ -4012,7 +4015,7 @@
                     (fn [[sym index]]
                       (str struct-var "->arities[" index "] = " sym ";" line-sep)))
                "Value *" fn-var " = (Value *)" struct-var ";" line-sep]
-              [(map emitted-arities .decl)] (apply merge-with + (map emitted-arities .refs-map))
+              [(map emitted-arities .decl)] (apply* merge-with (list* + (map emitted-arities .refs-map)))
               (assoc (.constraints (collapse-expressions emitted-arities))
                 (str fn-var) fn-constraint)
               (ast/file-name fn-sym) (ast/line-number fn-sym)))))
@@ -4548,7 +4551,7 @@
 (def logger (agent ""))
 (defn log [& msg]
   (send logger (fn [_]
-                 (apply print-err msg))))
+                 (new-apply* print-err msg))))
 
 (extend-type Vector
   StringWriter
@@ -4814,9 +4817,9 @@
          (let [[path-len] (reduce real-path [-1 0]
                                   (fn [[slash-pos c-pos] c]
                                     (let [c-pos (inc c-pos)]
-                                      ((= c "/")
-                                       [c-pos c-pos]
-                                       [slash-pos c-pos]))))]
+                                      (either (and (= c "/")
+                                                   (maybe [c-pos c-pos]))
+                                              [slash-pos c-pos]))))]
            (subs real-path 0 path-len)))))
 
 (def compile-module)
@@ -5048,10 +5051,10 @@
     (send ast-emitter (fn [ctxt]
                         (map (get-in ctxt ['_ .constants .other])
                              (fn [counts]
-                               (apply print-err "\n" (interpose (map (seq counts)
-                                                                     (fn [[k v]]
-                                                                       (str k ": " v)))
-                                                                "\n"))))))
+                               (apply* print-err (list* "\n" (interpose (map (seq counts)
+                                                                             (fn [[k v]]
+                                                                               (str k ": " v)))
+                                                                        "\n")))))))
     ;; wait for agents to clear their queues
     (let [waiter (promise)]
       (send ast-emitter (fn [_]

@@ -202,7 +202,6 @@ Value *symEQ(Value *arg0, Value *arg1);
 Value *symLT(Value *arg0, Value *arg1);
 Value *stringValue(char *s);
 Value *opaqueValue(void *ptr, Destructor *destruct);
-Value *maybeInvoke(Value *arg0, Value *arg1, Value *arg2);
 Value *listFilter(Value *arg0, Value *arg1);
 List *reverseList(List *input);
 Value *bmiHashSeq(Value *arg0, Value *arg1);
