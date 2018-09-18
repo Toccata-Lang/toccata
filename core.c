@@ -3461,7 +3461,7 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
       bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi,
 				       incRef(node->array[2 * i], 1),
 				       incRef(node->array[2 * i + 1], 1),
-				       baseSha1(incRef(node->array[i], 1)), (Value *)&newShift);
+				       baseSha1(incRef(node->array[2 * i], 1)), (Value *)&newShift);
     }
     dec_and_free(arg0, 1);
     dec_and_free(arg4, 1);
