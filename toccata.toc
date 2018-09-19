@@ -2227,8 +2227,7 @@
 (defn call-vector [target args arg-asts]
   (let [file-name (ast/file-name target)
         line-number (ast/line-number target)]
-    (for [_ (sm/when (= target 'vector))
-          vect-sym (genlocal "newVect")
+    (for [vect-sym (genlocal "newVect")
           result-sym (genlocal "rslt")
           line (line-macro target "// call-vector")]
       (let [arg-constraints (.constraints (collapse-expressions args))
@@ -2263,8 +2262,7 @@
 (defn call-list [target args arg-asts]
   (let [file-name (ast/file-name target)
         line-number (ast/line-number target)]
-    (for [_ (sm/when (= target 'list))
-          line (line-macro target "// call-list")
+    (for [line (line-macro target "// call-list")
           list-sym (genlocal "newList")
           result-sym (genlocal "rslt")]
       (let [arg-constraints (.constraints (collapse-expressions args))
@@ -2293,32 +2291,28 @@
                               {result-sym (update-path constraints file-name line-number)}
                               file-name line-number)]))))))
 
-(defn call-proto-impl [target args ast]
-  (either (for [dispatch-val (first args)]
-            (let [num-args (count args)
-                  disp-type (expr-type-num dispatch-val)]
-              (for [_ (sm/when-not (= UnknownType disp-type))
-                    impl-info (get-proto-impl target num-args disp-type)
-                    constraints (arg-constraints (.args ast) args (.param-constraints impl-info)
-                                                 (ast/file-name ast) (ast/line-number ast))
-                    _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
-                            (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
-                    result-var (genlocal "rslt")
-                    line (line-macro target (str "// call proto fn " target))]
-                (comp* empty-c-code
-                       (comp args
-                             [(c-init result-var
-                                      [line "Value *" result-var " = ((FnType" num-args " *)(((FnArity *)"
-                                       (.c-var impl-info) ")->fn))("
-                                       (interpose (conj (map args .c-var)
-                                                        ["((FnArity *)" (.c-var impl-info) ")->closures"])
-                                                  ", ")
-                                       ");" line-sep]
-                                      [] {}
-                                      (assoc constraints
-                                        result-var (.result-constraints impl-info))
-                                      (ast/file-name ast) (ast/line-number ast))])))))
-          (zero sm/state-maybe)))
+(defn call-proto-impl [target disp-type args ast]
+  (let [num-args (count args)]
+    (for [impl-info (get-proto-impl target num-args disp-type)
+          constraints (arg-constraints (.args ast) args (.param-constraints impl-info)
+                                       (ast/file-name ast) (ast/line-number ast))
+          _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
+                  (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
+          result-var (genlocal "rslt")
+          line (line-macro target (str "// call proto fn " target))]
+      (comp* empty-c-code
+             (comp args
+                   [(c-init result-var
+                            [line "Value *" result-var " = ((FnType" num-args " *)(((FnArity *)"
+                             (.c-var impl-info) ")->fn))("
+                             (interpose (conj (map args .c-var)
+                                              ["((FnArity *)" (.c-var impl-info) ")->closures"])
+                                        ", ")
+                             ");" line-sep]
+                            [] {}
+                            (assoc constraints
+                              result-var (.result-constraints impl-info))
+                            (ast/file-name ast) (ast/line-number ast))])))))
 
 (defn inline-wrap-and-apply [name args]
   ;; TODO: this is subtly broken in replacing syms/bound-vars. It breaks on:
@@ -2423,9 +2417,15 @@
     (TailCall ast params result-constraint))
 
   (emit-call-expr [target-ast args call-expr-ast]
-    (comp (call-vector target-ast args (.args call-expr-ast))
-          (call-list target-ast args (.args call-expr-ast))
-          (call-proto-impl target-ast args call-expr-ast)))
+    (either (or (and (= target-ast 'vector)
+                     (maybe (call-vector target-ast args (.args call-expr-ast))))
+                (and (= target-ast 'list)
+                     (maybe (call-list target-ast args (.args call-expr-ast))))
+                (for [dispatch-val (first args)
+                      :let [disp-type (expr-type-num dispatch-val)]
+                      :when-not (= UnknownType disp-type)]
+                  (call-proto-impl target-ast disp-type args call-expr-ast)))
+            (zero sm/state-maybe)))
 
   (replace-syms [ast subs]
     (sm/state-maybe (get subs ast ast)))
@@ -2638,10 +2638,10 @@
                                       file-name line-number)
           _ (comp (sm/update-in-val [.constants .other 'static-variadic-sites] inc)
                   (sm/assoc-in-val [.constants .other 'static-variadic-sites] 1))
-          args-list (call-list (rdr/tag 'list file-name line-number)
-                               (map arg-vars (fn [arg]
-                                               (.init arg [])))
-                               (.args ast))
+          args-list (emit-call-expr (rdr/tag 'list file-name line-number)
+                                    (map arg-vars (fn [arg]
+                                                    (.init arg [])))
+                                    ast)
           result-sym (genlocal "rslt")
           line (line-macro ast "// static-variadic")]
       (c-init result-sym
