@@ -1153,7 +1153,7 @@ void *futuresThread(void *input) {
     Value *f = future->action;
     // TODO: what happens if the future aborts?
     if(f->type != FunctionType) {
-      result = invoke0Args(empty_list, f);
+      result = invoke0Args(empty_list, incRef(f, 1));
     } else {
       FnArity *arity = findFnArity(f, 0);
       if(arity != (FnArity *)0 && !arity->variadic) {
