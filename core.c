@@ -45,9 +45,6 @@ Value *my_malloc(int64_t sz) {
 
 void cleanupMemory (Value *the_final_answer, Value *maybeNothing, List *argList) {
 #ifdef CHECK_MEM_LEAK
-  cleaningUp = 1;
-  mainThreadDone = 1;
-  waitForWorkers();
   dec_and_free(the_final_answer, 1);
   freeGlobal((Value *)argList);
   freeGlobal(maybeNothing);
