@@ -726,12 +726,16 @@ Promise *malloc_promise() {
 }
 
 void freePromise(Value *v) {
- if (((Promise *)v)->actions != (List *)0)
-   dec_and_free((Value *)(((Promise *)v)->actions), 1);
- if (((Promise *)v)->result != (Value *)0)
-   dec_and_free(((Promise *)v)->result, 1);
- v->next = freePromises.head;
- freePromises.head = v;
+  Promise *p = (Promise *)v;
+  if (p->actions != (List *)0) {
+    Value *action = ((List *)p->actions)->head;
+    dec_and_free((Value *)(p->actions), 1);
+  }
+  if (p->result != (Value *)0) {
+    dec_and_free(p->result, 1);
+  }
+  v->next = freePromises.head;
+  freePromises.head = v;
 }
 
 FreeValList centralFreeFutures = (FreeValList){(Value *)0, 0};
@@ -1139,6 +1143,33 @@ Value *readFuturesQueue() {
   }
 }
 
+Value *deliverFuture(Value *fut, Value *val) {
+  Future *future = (Future *)fut;
+  if (future->result == (Value *)0) {
+    pthread_mutex_lock (&future->access);
+    future->result = val;
+    List *l = future->actions;
+    List *head = l;
+    future->actions = (List *)0;
+    pthread_cond_broadcast(&future->delivered);
+    pthread_mutex_unlock (&future->access);
+
+    // perform actions
+    if (l != (List *)0 && l->len != 0) {
+      for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
+	incRef(x, 1);
+	incRef(val, 1);
+	Value *trash = dynamicCall1Arg(x, val);
+	dec_and_free(trash, 1);
+      }
+      dec_and_free((Value *)head, 1);
+    }
+  } else {
+    dec_and_free(val, 1);
+  }
+  return fut;
+}
+
 __thread int64_t workerIndex;
 void *futuresThread(void *input) {
   workerIndex = (int64_t)input;
@@ -1148,7 +1179,6 @@ void *futuresThread(void *input) {
     future = (Future *)readFuturesQueue();
   while(workerIndex >= 0 && future != (Future *)0) {
     Value *f = future->action;
-    // TODO: what happens if the future aborts?
     if(f->type != FunctionType) {
       result = invoke0Args(empty_list, incRef(f, 1));
     } else {
@@ -1166,9 +1196,7 @@ void *futuresThread(void *input) {
     }
     int32_t refs;
     __atomic_load(&future->refs, &refs, __ATOMIC_RELAXED);
-    if (refs != -1) {
-      deliverFuture((Value *)future, result);
-    }
+    deliverFuture((Value *)future, result);
     dec_and_free((Value *)future, 1);
     if (workerIndex >= 0) {
       future = (Future *)readFuturesQueue();
@@ -1201,17 +1229,17 @@ void replaceWorker() {
 char *extractStr(Value *v) {
   // Should only be used to print an error meessage when calling 'abort'
   // Leaks a String value
-  String *newStr = (String *)my_malloc(sizeof(String) + ((String *)v)->len + 5);
-  newStr->hash = (Integer *)0;
   if (v->type == StringBufferType)
-    snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((String *)v)->buffer);
-  else if (v->type == SubStringType)
+    return(((String *)v)->buffer);
+  else if (v->type == SubStringType) {
+    String *newStr = (String *)my_malloc(sizeof(String) + ((String *)v)->len + 5);
+    newStr->hash = (Integer *)0;
     snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((SubString *)v)->buffer);
-  else {
+    return(newStr->buffer);
+  } else {
     fprintf(stderr, "\ninvalid type for 'extractStr'\n");
     abort();
   }
-  return(newStr->buffer);
 }
 
 Value *findProtoImpl(int64_t type, ProtoImpls *impls) {
@@ -3754,11 +3782,13 @@ Value *deliverPromise(Value *arg0, Value *arg1) {
       p->result = arg1;
       pthread_cond_broadcast(&p->delivered);
     }
+    List *l = p->actions;
+    List *head = l;
+    p->actions = (List *)0;
     pthread_mutex_unlock(&p->access);
 
     // perform actions
-    List *l = p->actions;
-    if (l->len != 0) {
+    if (l != (List *)0 && l->len != 0) {
       for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
 	incRef(x, 1);
 	incRef(arg1, 1);
@@ -3766,6 +3796,9 @@ Value *deliverPromise(Value *arg0, Value *arg1) {
 	dec_and_free(trash, 1);
       }
     }
+    dec_and_free((Value *)head, 1);
+  } else {
+    dec_and_free(arg1, 1);
   }
   return(arg0);
 }
@@ -3856,26 +3889,6 @@ Value *addFutureAction(Future *p, Value *action) {
   return((Value *)p);
 }
 
-Value *deliverFuture(Value *fut, Value *val) {
-  Future *future = (Future *)fut;
-  pthread_mutex_lock (&future->access);
-  future->result = val;
-  pthread_cond_broadcast(&future->delivered);
-  pthread_mutex_unlock (&future->access);
-
-  // perform actions
-  List *l = future->actions;
-  if (l != (List *)0 && l->len != 0) {
-    for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
-      incRef(x, 1);
-      incRef(val, 1);
-      Value *trash = dynamicCall1Arg(x, val);
-      dec_and_free(trash, 1);
-    }
-  }
-  return fut;
-}
-
 Value *makeAgent(Value *arg0) {
   Agent *a = (Agent *)my_malloc(sizeof(Agent));
   a->type = AgentType;
@@ -3935,7 +3948,7 @@ Value *updateAgent_impl(List *closures) {
   if (pthread_mutex_trylock (&agent->access) == 0) { // succeeded
     List *action = readAgentQueue(agent);
     while(action != (List *)0) {
-      Function *f = (Function *)action->head;
+      Value *f = (Value *)action->head;
       List *args = listCons(agent->val, action->tail);
       incRef((Value *)action->tail, 1);
       agent->val = fn_apply(empty_list, incRef((Value *)f, 1), (Value *)args);
