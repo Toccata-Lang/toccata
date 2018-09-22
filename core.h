@@ -124,6 +124,7 @@ Value *(*dissoc)(List *closures, Value *, Value *, Value *, Value *);
 Value *(*sha1)(List *, Value *);
 Value *(*hashSeq)(List *, Value* n, Value *s);
 Value *(*count)(List *, Value* n);
+Value *(*vals)(List *, Value* n);
 Value *(*invoke0Args)(List *closures, Value *f);
 Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
 Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);

@@ -6,6 +6,13 @@ Integer const0 = {IntegerType, -1, 0};
 Value *const0Ptr = (Value *)&const0;
 int cleaningUp = 0;
 
+// Immutable hash-map ported from Clojure
+BitmapIndexedNode emptyBMI = {BitmapIndexedType, -1, 0, 0};
+
+// threads that have been replaced, but haven't exited
+pthread_mutex_t lingeringAccess = PTHREAD_MUTEX_INITIALIZER;
+Value *lingeringThreads = (Value *)&emptyBMI;
+
 void prefs(char *tag, Value *v) {
   fprintf(stderr, "%s: %p %d\n", tag, v, v->refs);
 }
@@ -997,6 +1004,22 @@ void moveFreeToCentral() {
   moveToCentral(&freeFutures, &centralFreeFutures);
 }
 
+Value *baseSha1(Value *v1) {
+  Value *hash;
+  switch (v1->type) {
+  case IntegerType:
+    hash = integerSha1(v1);
+    break;
+  case SymbolType:
+    hash = symbolSha1(v1);
+    break;
+  default:
+    hash = sha1((List *)0, v1);
+    break;
+  }
+  return(hash);
+}
+
 List *reverseList(List *input) {
   List *output = empty_list;
   Value *item;
@@ -1043,6 +1066,23 @@ void waitForWorkers() {
   __atomic_load(&futuresQueue.input, &l, __ATOMIC_RELAXED);
   dec_and_free((Value *)l, 1);
   pthread_mutex_unlock (&futuresQueue.mutex);
+
+  int done = 0;
+  do {
+    pthread_mutex_lock (&lingeringAccess);
+    List *lingering = (List *)vals(empty_list, lingeringThreads);
+    lingeringThreads = (Value *)&emptyBMI;
+    pthread_mutex_unlock (&lingeringAccess);
+
+    l = lingering;
+    for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
+      pthread_t threadId = (pthread_t)((Integer *)x)->numVal;
+      pthread_join(threadId, NULL);
+    }
+    if (lingering->len == 0)
+      done = 1;
+    dec_and_free((Value *)lingering, 1);
+  } while(!done);
 }
 
 Value *shutDown_impl(List *closures) {
@@ -1202,10 +1242,17 @@ void *futuresThread(void *input) {
       future = (Future *)readFuturesQueue();
     }
   }
+  __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+  Value *threadHandle = (Value *)integerValue((int64_t)pthread_self());
+
+  pthread_mutex_lock (&lingeringAccess);
+  lingeringThreads = dissoc(empty_list, lingeringThreads, incRef(threadHandle, 1),
+  			    baseSha1(threadHandle), (Value *)integerValue(0));
+  pthread_mutex_unlock (&lingeringAccess);
+
 #ifdef CHECK_MEM_LEAK
   moveFreeToCentral();
 #endif
-  __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
   return(NULL);
 }
 
@@ -1224,6 +1271,12 @@ void replaceWorker() {
       workerIndex = -1;
     }
   }
+  Value *threadHandle = (Value *)integerValue((int64_t)me);
+  pthread_mutex_lock (&lingeringAccess);
+  lingeringThreads = assoc(empty_list, lingeringThreads, incRef((Value *)threadHandle, 1),
+			   incRef((Value *)threadHandle, 1),
+			   baseSha1(threadHandle), (Value *)integerValue(0));
+  pthread_mutex_unlock (&lingeringAccess);
 }
 
 char *extractStr(Value *v) {
@@ -3037,9 +3090,6 @@ Value *listFilter(Value *arg0, Value *arg1) {
   }
 }
 
-// Immutable hash-map ported from Clojure
-BitmapIndexedNode emptyBMI = {BitmapIndexedType, -1, 0, 0};
-
 BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
                                            Value *key, Value* val)
 {
@@ -3125,22 +3175,6 @@ Value *bmiCount(Value *arg0) {
   }
   dec_and_free(arg0, 1);
   return(integerValue(accum));
-}
-
-Value *baseSha1(Value *v1) {
-  Value *hash;
-  switch (v1->type) {
-  case IntegerType:
-    hash = integerSha1(v1);
-    break;
-  case SymbolType:
-    hash = symbolSha1(v1);
-    break;
-  default:
-    hash = sha1((List *)0, v1);
-    break;
-  }
-  return(hash);
 }
 
 Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4) {
