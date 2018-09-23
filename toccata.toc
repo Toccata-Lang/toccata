@@ -16,10 +16,10 @@
                              :sha "cb55c51"))
 (add-ns ev (git-dependency "https://github.com/Toccata-Lang/eval.git"
                            "eval.toc"
-                           :sha "1a6b863"))
+                           :sha "398aa61"))
 (add-ns interp (git-dependency "https://github.com/Toccata-Lang/eval.git"
                                "interpreter.toc"
-                               :sha "1a6b863"))
+                               :sha "398aa61"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
                             :sha "6b65dea"))
@@ -4849,6 +4849,28 @@
   (load-module [ast root-dir proj-dir]))
 
 (extend-type ast/module-ast
+  ev/Evaluator
+  (ev/eval [x]
+    (let [file (.file-path x)]
+      (comp (for [curr-file-name (sm/get-val .file-name)
+                  curr-file-path (sm/when (file-directory curr-file-name))
+                  :let [file (str curr-file-path file)]
+                  mod-syms (comp (sm/get-in-val [.ns file .syms])
+                                 (for [asts (sm/when (for [file-in (fio/file-in file)
+                                                           asts (ev/parse {'file-name file
+                                                                           'line-number 1}
+                                                                          (lazy-list file-in))]
+                                                       asts))
+                                       _ (sm/set-val .file-name file)
+                                       _ (sm/assoc-in-val [.ns file] (ev/EvalNamespace {} {} {}))
+                                       _ (ev/eval asts)
+                                       mod-syms (sm/get-in-val [.ns file .syms])]
+                                   mod-syms))
+                  _ (sm/assoc-in-val [.ns curr-file-name .imports file] mod-syms)]
+              mod-syms)
+            (ev/abort-interp "Could not import module" (str "'" file "'") "at"
+                             (ev/ast-location-str x))))) 
+
   ASTEmitter
   (load-module [ast root-dir proj-dir]
     (let [waiter (promise)
@@ -4856,10 +4878,9 @@
       (send module-compiler compile-module file-path waiter root-dir proj-dir)
       [waiter file-path])))
 
-(def clone-repo)
 (def repo-cloner (agent {}))
 
-(defn clone-repo* [ast root-dir proj-dir]
+(defn clone-repo* [ast proj-dir]
   (let [opts (.args ast)
         checkout (either (or (get opts 'tag)
                              (get opts 'sha)
@@ -4887,7 +4908,7 @@
               (abort)))
     dep-path))
 
-(defn clone-repo [cloned ast waiter root-dir proj-dir]
+(defn clone-repo [cloned ast waiter proj-dir]
   (assert (instance? HashMap cloned))
   (let [opts (.args ast)
         checkout (either (or (get opts 'tag)
@@ -4909,11 +4930,39 @@
                                           (map cloning-future (partial deliver waiter))
                                           cloning-future)))
             (assoc cloned dep-path (future (fn []
-                                             (let [dep-path (clone-repo* ast root-dir proj-dir)]
+                                             (let [dep-path (clone-repo* ast proj-dir)]
                                                (deliver waiter dep-path)
                                                dep-path)))))))
 
 (extend-type ast/git-dep-ast
+  ev/Evaluator
+  (ev/eval [ast]
+    (let [file (.file ast)]
+      (either (and (-> file
+                      seq
+                      (some (partial = "/")))
+                   (maybe (ev/abort-interp "For git dependencies,"
+                                           "files may only be imported from root of repository,"
+                                           file "is invalid.")))
+              (comp (for [script-dir (sm/get-val .script-dir)
+                          :let [clone-waiter (promise)
+                                dep-path (do
+                                           (clone-repo {} ast clone-waiter script-dir)
+                                           (extract clone-waiter))
+                                module-path (str dep-path "/" file)
+                                _ (or (sys/access module-path)
+                                      (do
+                                        (print-err "Dependency file" file "missing from cloned repository"
+                                                   (.repo ast) ":" (ast/file-name ast) (ast/line-number ast))
+                                        (abort)))]
+                          curr-file-name (sm/get-val .file-name)
+                          _ (sm/set-val .file-name module-path)
+                          r (ev/eval (ast/module-ast file))
+                          _ (sm/set-val .file-name curr-file-name)]
+                      r)
+                    (ev/abort-interp "Could not import module" (str "'" file "'") "from git repo at"
+                                     (ev/ast-location-str ast))))))
+
   ASTEmitter
   (load-module [ast root-dir proj-dir]
     (let [file (.file ast)]
@@ -4929,7 +4978,7 @@
 
       (let [clone-waiter (promise)
             dep-path (do
-                       (send repo-cloner clone-repo ast clone-waiter root-dir proj-dir)
+                       (send repo-cloner clone-repo ast clone-waiter proj-dir)
                        (extract clone-waiter))
             waiter (promise)
             module-path (str dep-path "/" file)]
@@ -5032,7 +5081,9 @@
               (and (< 2 (count params))
                    (let [[_ option file-name & args] params]
                      (or (and (= "--script" option)
-                              (maybe (interp/interp-file file-name args)))
+                              (flat-map (file-directory file-name)
+                                        (fn [script-dir]
+                                          (interp/interp-file file-name script-dir args))))
                          (do
                            (print-err "The only option for the compiler is '--script'")
                            (maybe -1))))))
