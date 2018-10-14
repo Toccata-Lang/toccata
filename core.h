@@ -130,6 +130,7 @@ Value *(*invoke1Arg)(List *closures, Value *f, Value* arg);
 Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
 Value *(*type_name)(List *closures, Value *t);
 Value *(*seq)(List *closures, Value *t);
+Value *(*newHashSet)(List *closures, Value *t);
 Value *(*rest)(List *closures, Value *t);
 Value *(*showFn)(List *closures, Value *t);
 Value *(*fn_apply)(List *closures, Value *f, Value *args);
@@ -248,3 +249,4 @@ Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym, Value *dis
 FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64_t dispType, int64_t argCount);
 Value *get(List *, Value *, Value *, Value *, Value *, Value *);
 Value *assoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift);
+Value *newTypeValue(Value *template_value, Value *fields);

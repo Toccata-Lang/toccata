@@ -4121,3 +4121,13 @@ FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64
   // TODO: soft abort?
   abort();
 }
+
+Value *newTypeValue(Value *template_value, Value *fields) {
+  ReifiedVal *template = (ReifiedVal *)template_value;
+  ReifiedVal *rv = malloc_reified(template->implCount);
+  int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
+  memcpy(rv, template, rvSize);
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  rv->typeArgs = fields;
+  return((Value *)rv);
+}
