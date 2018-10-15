@@ -1069,20 +1069,9 @@
   (string-list [_]
     (list "<C-Code " (str c-var) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
-          (str constraints) ">"))
+          (str constraints) ">")))
 
-  Collection
-  (empty? [c]
-    (and (empty? init)
-         (empty? decl)
-         (empty? constraints)))
-
-  Emitter
-  (emit [x]
-    (sm/state-maybe x)))
-
-;; TODO:  this is a copy-and-past of 'c-code'. see about combining somehow
-(deftype c-static-reified [c-var init decl refs-map constraints]
+(deftype c-static-reified [c-var init decl refs-map constraints c-struct]
   (assert (instance? Sequence init))
   (assert (instance? Sequence decl))
   (assert (instance? HashMap refs-map))
@@ -1092,13 +1081,58 @@
   (string-list [_]
     (list "<C-Static-Reified " (str c-var) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
-          (str constraints) ">"))
+          (str constraints) ">")))
 
+(deftype c-static-str [c-var init decl refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? HashMap refs-map))
+  (assert (instance? HashMap constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-String " (str c-var) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
+          (str constraints) ">")))
+
+(deftype c-static-int [c-var init decl refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? HashMap refs-map))
+  (assert (instance? HashMap constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Int " (str c-var) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
+          (str constraints) ">")))
+
+(deftype c-static-sym [c-var init decl refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? HashMap refs-map))
+  (assert (instance? HashMap constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Symbol " (str c-var) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
+          (str constraints) ">")))
+
+(def C-Static-Value (comp c-static-int
+                          c-static-str
+                          c-static-sym
+                          c-static-reified))
+
+(def C-Value (comp c-code
+                   C-Static-Value))
+
+(extend-type C-Value
   Collection
   (empty? [c]
-    (and (empty? init)
-         (empty? decl)
-         (empty? constraints)))
+    (and (empty? (.init c))
+         (empty? (.decl c))
+         (empty? (.constraints c))))
 
   Emitter
   (emit [x]
@@ -1118,11 +1152,7 @@
           (str constraints) ">"))
 
   Collection
-  (empty? [c] nothing)
-
-  Emitter
-  (emit [x]
-    (sm/state-maybe x)))
+  (empty? [c] nothing))
 
 ;; same as 'c-code', but defines a function parameter
 (deftype c-param [c-var init decl refs-map constraints file-name line-number]
@@ -1138,16 +1168,11 @@
           (str constraints) ">"))
 
   Collection
-  (empty? [c] nothing)
-
-  Emitter
-  (emit [x]
-    (sm/state-maybe x)))
+  (empty? [c] nothing))
 
 (def C-expr (comp empty-code
-                  c-code
+                  C-Value
                   c-param
-                  c-static-reified
                   c-init))
 
 (defn add-constraint [expr constraint file-name line-number]
@@ -1247,36 +1272,7 @@
           (.refs-map refs-map)
           (.constraints constraints-map)))))
 
-(extend-type c-code
-  Composition
-  (comp* [x xs]
-    (assert-result z (instance? C-expr z))
-
-    (either (map (first xs)
-                 (fn [y]
-                   (let [y (comp* y (rest xs))]
-                     (-> y
-                         (.init [(.init x) (.init y)])
-                         (.decl [(.decl x) (.decl y)])
-                         (.refs-map (merge-with + (.refs-map x) (.refs-map y)))
-                         (.constraints (merge-with comp (.constraints x) (.constraints y)))))))
-            x))
-
-  C-Code
-  (collapse-expressions* [x y]
-    (assert (instance? C-expr y))
-    (assert-result z (instance? C-expr z))
-
-    (let [x (either (and (empty? (.init x))
-                         (maybe (.refs-map x {})))
-                    x)]
-      (-> y
-          (.init [(.init x) (.init y)])
-          (.decl [(.decl x) (.decl y)])
-          (.refs-map (merge-with + (.refs-map x) (.refs-map y)))
-          (.constraints (merge-with comp (.constraints x) (.constraints y)))))))
-
-(extend-type c-static-reified
+(extend-type C-Value
   Composition
   (comp* [x xs]
     (assert-result z (instance? C-expr z))
@@ -1652,10 +1648,6 @@
                            (assert (instance? GlobalContext s))
                            (maybe [(.syms (.fn-context s)) s]))))
 
-(defn get-sym [sym]
-  (flat-map get-syms (fn [syms]
-                       (sm/when (get syms sym)))))
-
 (defn set-syms [syms]
   (sm/new-sm (fn [s]
                (assert (instance? GlobalContext s))
@@ -1668,8 +1660,15 @@
                      syms (.syms ctxt)]
                  (maybe [s (.fn-context s (.syms ctxt (assoc syms sym expr)))])))))
 
+(defn find-global-sym [sym]
+  ;; Attempt to look up the global (ie. not closed over) value given a symbol.
+  (for [ns-path (sym-ns-path sym)
+        expr (sm/get-in-val [.modules ns-path .values sym])]
+    expr))
+
 ;; This is so hideous on purpose. It's called *A LOT* so I unwound it for performance's sake
 (defn lookup-sym [sym]
+  ;; Look up a value given a symbol. Will abort if the symbol cannot be found.
   (let [sym-file (ast/file-name sym)]
     (comp (sm/new-sm
            (fn [s]
@@ -1682,7 +1681,8 @@
                    refs-map (.refs-map closed-over)]
                (or (map (or (and (rdr/namespace sym)
                                  (or (-> (flat-map (extract-sym-path s sym)
-                                                   (partial get modules))
+                                                   (fn [x]
+                                                     (get modules x)))
                                          (flat-map (fn [module]
                                                      (let [values (.values module)]
                                                        (or (get values (.base sym))
@@ -1946,22 +1946,23 @@
                 :let [str-sym (str "str" str-idx)
                       str-ptr (str "strPtr" str-idx)]
                 _ (sm/assoc-in-val [.constants .strings str-val]
-                                   (c-code str-ptr [] [] {}
-                                           {str-ptr (TypeConstraint {StringBufferType #{}} empty-list
-                                                                    'String nothing str-ptr)}))]
-            (c-init str-ptr
-                    []
-                    ["struct {int64_t type;
+                                   (c-static-str str-ptr [] [] {}
+                                                 {str-ptr (TypeConstraint {StringBufferType #{}} empty-list
+                                                                          'String nothing str-ptr)}
+                                                 str-sym))]
+            (c-static-str str-ptr
+                          []
+                          ["struct {int64_t type;
         int32_t refs;
         int64_t len;
         Integer *hash;
         char buffer["
-                     (inc str-len)
-                     "];\n} " str-sym " = {StringBufferType, -1, "
-                     str-len ", 0, \"" (escape-chars str-val) "\"};\n"
-                     "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
-                    {} {str-ptr (TypeConstraint {StringBufferType #{}} empty-list 'String nothing str-ptr)}
-                    "" 0)))))
+                           (inc str-len)
+                           "];\n} " str-sym " = {StringBufferType, -1, "
+                           str-len ", 0, \"" (escape-chars str-val) "\"};\n"
+                           "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
+                          {} {str-ptr (TypeConstraint {StringBufferType #{}} empty-list 'String nothing str-ptr)}
+                          str-sym)))))
 
 (defn make-c-code [value]
   (c-code (.c-var value) (.init value) (.decl value)
@@ -2236,16 +2237,16 @@
         :let [num-sym (str "num" num-idx)
               num-ptr (str "numPtr" num-idx)]
         _ (sm/assoc-in-val [.constants .numbers num]
-                           (c-code num-ptr [] [] {}
-                                   {num-ptr (TypeConstraint {IntegerType #{}} empty-list 'Integer nothing
-                                                            num-ptr)}))]
-    (c-init num-ptr
-            []
-            ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
-             "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
-            {} {num-ptr (TypeConstraint {IntegerType #{}} empty-list 'Integer nothing
-                                        num-ptr)}
-            "" 0)))
+                           (c-static-int num-ptr [] [] {}
+                                         {num-ptr (TypeConstraint {IntegerType #{}} empty-list 'Integer nothing
+                                                                  num-ptr)}
+                                         num-sym))]
+    (c-static-int num-ptr []
+                  ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
+                   "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
+                  {} {num-ptr (TypeConstraint {IntegerType #{}} empty-list 'Integer nothing
+                                              num-ptr)}
+                  num-sym)))
 
 (extend-type Integer
   Emitter
@@ -2292,14 +2293,15 @@
                         constraint (update-path sym-constraint
                                                 (ast/file-name ast) (ast/line-number ast))]
                   _ (sm/assoc-in-val [.constants .symbols sym]
-                                     (c-code sym-ptr [] [] {}
-                                             {sym-ptr constraint}))]
-              (c-code sym-ptr
-                      []
-                      ["SubString " sym-var " = {SymbolType, -1, " (count (str sym))
-                       ", 0, 0, \"" sym "\"};\n"
-                       "Value *" sym-ptr " = (Value *)&" sym-var ";\n"]
-                      {} {sym-ptr constraint})))))
+                                     (c-static-sym sym-ptr [] [] {}
+                                                   {sym-ptr constraint}
+                                                   sym-var))]
+              (c-static-sym sym-ptr
+                            []
+                            ["SubString " sym-var " = {SymbolType, -1, " (count (str sym))
+                             ", 0, 0, \"" sym "\"};\n"
+                             "Value *" sym-ptr " = (Value *)&" sym-var ";\n"]
+                            {} {sym-ptr constraint} sym-var)))))
 
   (emit-defined-value [ast defined-sym]
     (for [quoted (emit ast)
@@ -2964,8 +2966,7 @@
                                                       (compilation-error "Invalid enum value " (str "'" sym "'")
                                                                          " at:" (ast/file-name defined-sym)
                                                                          (ast/line-number defined-sym))))
-                                          (for [ns-file (sym-ns-path sym)
-                                                expr (comp (sm/get-in-val [.modules ns-file .values sym])
+                                          (for [expr (comp (find-global-sym sym)
                                                            (compilation-error "Invalid enum value " (str "'" sym "'")
                                                                               " at:" (ast/file-name defined-sym)
                                                                               (ast/line-number defined-sym)))
@@ -3101,6 +3102,9 @@
             top-type))
 
   Emitter
+  (emit [x]
+    (sm/state-maybe x))
+
   (bind-list [list-var params]
     (let [file-name (ast/file-name params)
           line-num (ast/line-number params)
@@ -3322,7 +3326,8 @@
                        type-num ", -1, (Value *)0, 0, {}};" line-sep
                        "Value *" reified-ptr " = (Value *)&" reified-sym ";" line-sep]
                       {} {reified-ptr (TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>")
-                                                      nothing (str reified-ptr))})))
+                                                      nothing (str reified-ptr))}
+                      reified-sym)))
 
 (defprotocol ArityType
   (closure-arity? [_]
@@ -3646,9 +3651,10 @@
                                                                    (format-path result-type 0)))
                                                      (maybe (abort))))
                                               result-type)))
-                   _ (comp (get-sym fn-sym)
-                           (set-sym fn-sym (c-code fn-var [] [] {}
-                                                   {fn-var fn-constraint})))
+                   syms get-syms
+                   _ (either (map (get syms fn-sym) sm/state-maybe)
+                             (set-sym fn-sym (c-code fn-var [] [] {}
+                                                     {fn-var fn-constraint})))
                    param-vars (bind-params params fn-var)
                    :let [param-vars (either (and (some body (partial instance? ast/inline-ast))
                                                  (maybe (.destruct param-vars [])))
@@ -3816,10 +3822,12 @@
                              (c-static-reified (.c-var value) [(.init value) "\n" (.c-var c-info) " = "
                                                                (.c-var value) ";" line-sep]
                                                (.decl value) (.refs-map value)
-                                               {(.c-var value) (expr-constraints value)})))
+                                               {(.c-var value) (expr-constraints value)}
+                                               (.c-struct value))))
                       (sm/state-maybe value))
           _ (new-module-def defined-sym (c-static-reified (.c-var value) [] [] {}
-                                                          {(.c-var value) (expr-constraints value)}))]
+                                                          {(.c-var value) (expr-constraints value)}
+                                                          (.c-struct value)))]
       [value]))
 
   (tail-call [ast params result-constraint]
@@ -4387,8 +4395,7 @@
   Emitter
   (emit-definition [ast]
     (let [type-sym (.type ast)]
-      (comp (for [ns-path (sym-ns-path (.type ast))
-                  type-nums (get-type-numbers (maybe type-sym))
+      (comp (for [type-nums (get-type-numbers (maybe type-sym))
                   fns (map (traverse (seq type-nums) (partial extend-type* ast))
                            flatten)]
               fns)
@@ -4862,12 +4869,6 @@
                                                          (free-global (c-init (.c-var expr)
                                                                               [] [] {} {} "" 0))))
                                                   "")))
-                    ;; (map (vals modules) (fn [module]
-                    ;;                       (either (map (get-in module [.values types-sym])
-                    ;;                                    (fn [expr]
-                    ;;                                      (free-global (c-init (.c-var expr)
-                    ;;                                                           [] [] {} {} "" 0))))
-                    ;;                               "")))
                     (map (vals modules) (fn [module]
                                           (either (map (get-in module [.values protocols-sym])
                                                        (fn [expr]
