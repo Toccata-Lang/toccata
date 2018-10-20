@@ -10,6 +10,7 @@
 extern void abort();
 
 #define VECTOR_ARRAY_LEN 32
+#define ARRAY_NODE_LEN 32
 
 typedef struct
 {
@@ -32,7 +33,7 @@ typedef struct {int64_t type; int32_t refs; Value *array[VECTOR_ARRAY_LEN];} Vec
 typedef struct {int64_t type; int32_t refs; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
 typedef struct {int64_t type; int32_t refs; int32_t bitmap; Value *array[];} BitmapIndexedNode;
-typedef struct {int64_t type; int32_t refs; Value *array[32];} ArrayNode;
+typedef struct {int64_t type; int32_t refs; Value *array[ARRAY_NODE_LEN];} ArrayNode;
 typedef struct {int64_t type; int32_t refs; int16_t count; Value *array[];} HashCollisionNode;
 typedef struct {int64_t type; int32_t refs; Value *result; List *actions;
                 pthread_cond_t delivered; pthread_mutex_t access;} Promise;
@@ -99,7 +100,9 @@ int32_t refsError;
 
 FILE *outstream;
 List *empty_list;
+List empty_list_struct;
 Vector *empty_vect;
+Vector empty_vect_struct;
 BitmapIndexedNode emptyBMI;
 
 struct {List* input; List* output;

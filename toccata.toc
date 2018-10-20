@@ -417,7 +417,12 @@
   ;; encode a static representation of a core data structure
   (encode [m]
     (emit m))
-  (encode [m var-prefix]))
+  (encode [m var-prefix])
+
+  ;; encode a statically initialized representation of a core data structure
+  (encode-static [m]
+    ;; (print-err 'encode-static (get-type m) (type-name m) m)
+    (zero sm/state-maybe)))
 
 (defprotocol Assertion
   (assertion? [ast]
@@ -967,7 +972,7 @@
   ;; pointer to a Fn struct
   (assert (instance? ast/SymbolOrString var)))
 
-(deftype ArityValPtr [var]
+(deftype ArityValPtr [var struct]
   ;; pointer to a FnArity struct
   (assert (instance? ast/SymbolOrString var)))
 
@@ -1081,7 +1086,7 @@
   (string-list [_]
     (list "<C-Static-Reified " (str c-var) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
-          (str constraints) ">")))
+          (str constraints) ", " (str c-struct) ">")))
 
 (deftype c-static-str [c-var init decl refs-map constraints c-struct]
   (assert (instance? Sequence init))
@@ -1093,7 +1098,7 @@
   (string-list [_]
     (list "<C-Static-String " (str c-var) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
-          (str constraints) ">")))
+          (str constraints) ", " (str c-struct) ">")))
 
 (deftype c-static-int [c-var init decl refs-map constraints c-struct]
   (assert (instance? Sequence init))
@@ -1105,7 +1110,7 @@
   (string-list [_]
     (list "<C-Static-Int " (str c-var) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
-          (str constraints) ">")))
+          (str constraints) ", " (str c-struct) ">")))
 
 (deftype c-static-sym [c-var init decl refs-map constraints c-struct]
   (assert (instance? Sequence init))
@@ -1117,12 +1122,30 @@
   (string-list [_]
     (list "<C-Static-Symbol " (str c-var) ", "
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
+          (str constraints) ", " (str c-struct) ">")))
+
+(deftype c-static-val [c-var init decl refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? HashMap refs-map))
+  (assert (instance? HashMap constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Value " (str c-var) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
           (str constraints) ">")))
 
 (def C-Static-Value (comp c-static-int
                           c-static-str
                           c-static-sym
-                          c-static-reified))
+                          c-static-reified
+                          c-static-val))
+
+(extend-type C-Static-Value
+  Emitter
+  (encode-static [x]
+    (sm/state-maybe x)))
 
 (def C-Value (comp c-code
                    C-Static-Value))
@@ -1519,7 +1542,12 @@
 
   Emitter
   (encode [_]
-    (sm/state-maybe (c-code (str "(Value *)" c-var) [] [] {} {}))))
+    (sm/state-maybe (c-code (str "(Value *)" c-var) [] [] {} {})))
+
+  (encode-static [_]
+    (either (and (= "" (.var c-var))
+                 (maybe (zero sm/state-maybe)))
+            (sm/state-maybe (c-static-val (str "(Value *)" c-var) [] [] {} {} (.struct c-var))))))
 
 (defn lookup-protocol-path [fn-sym path]
   ;; is protocol function `fn-sym` declared in module at 'path'
@@ -1819,8 +1847,60 @@
                     (cons init)
                     reverse))))))
 
+(defn encodeVectorInfo [v]
+  (inline C Vector "
+  Vector *v = (Vector *)v_0;
+
+  Vector *array = empty_vect;
+  for (int i = 0; i < v->count; i++) {
+    Value *val = v->tail[i];
+    incRef(val, 1);
+    array = mutateVectConj(array, val);
+  }
+
+  Vector *result = empty_vect;
+  result = mutateVectConj(result, integerValue(v->shift));
+  result = mutateVectConj(result, integerValue(v->tailOffset));
+  if (v->root != (VectorNode *)0) {
+    fprintf(stderr, \"Encode Vector root\\n\");
+    abort();
+  } else {
+    result = mutateVectConj(result, nothing);
+  }
+  result = mutateVectConj(result, (Value *)array);
+
+  dec_and_free(v_0, 1);
+  return((Value *)result);
+  "))
+
+(def vector-array-len (inline C List "(Value *)&(Integer){IntegerType,-1,VECTOR_ARRAY_LEN}"))
+
 (extend-type Vector
   Emitter
+  (encode-static [v]
+    (let [[shift offset root array] (encodeVectorInfo v)]
+      (for [items (traverse array encode-static)
+            root (either (map root encode-static)
+                         (sm/state-maybe (c-static-val "NULL" [] [] {} {} "NULL")))
+            struct (global-var "vect_")
+            var (global-var "vect_")]
+        (comp* empty-c-code (comp items
+                                  (let [items (either (and (empty? items)
+                                                           (maybe "0"))
+                                                      (interpose (map items
+                                                                      (fn [expr]
+                                                                        (str "(Value *)&" (.c-struct expr))))
+                                                                 ", "))]
+                                    [(c-static-val var []
+                                                   ["Vector " struct " = {VectorType, -1, "
+                                                    (str (count array))
+                                                    ", " (str shift) ", " (str offset) ", "
+                                                    (.c-struct root) ", " items
+                                                    (map (range (- vector-array-len (count array))) (fn [_] ", 0"))
+                                                    "};" line-sep
+                                                    "Value *" var "= (Value *)&" struct ";" line-sep]
+                                                   {} {} struct)]))))))
+
   (tail-call [asts params result-constraint]
     (either (flat-map (last asts)
                   (fn [tail]
@@ -1835,10 +1915,105 @@
          (fn [expr]
            (.init expr (comp (.init expr) ["return(" (.c-var expr) ");" line-sep]))))))
 
+(defn bmiArray [m]
+  (inline C Vector "
+  BitmapIndexedNode *node = (BitmapIndexedNode *)m_0;
+  int cnt = __builtin_popcount(node->bitmap);
+  Vector *v = empty_vect;
+  for (int i = 0; i < cnt * 2; i++) {
+    Value *val = node->array[i];
+    if (val == (Value *)0)
+      v = mutateVectConj(v, (Value *)nothing);
+    else {
+      incRef(val, 1);
+      v = mutateVectConj(v, maybe(empty_list, (Value *)0, val));
+    }
+  }
+  dec_and_free(m_0, 1);
+  return((Value *)v);
+  "))
+
+(defn bmiBitmap [m]
+  (inline C Integer "
+  BitmapIndexedNode *node = (BitmapIndexedNode *)m_0;
+  Value *result = integerValue(node->bitmap);
+  dec_and_free(m_0, 1);
+  return((Value *)result);
+  "))
+
+(extend-type BitmapIndexedNode
+  Emitter
+  (encode-static [m]
+    (for [items (traverse (bmiArray m) (fn [v]
+                                         (either (map v (fn [v]
+                                                          (map (encode-static v) maybe)))
+                                                 (sm/state-maybe nothing))))
+          struct (global-var "bmi_")
+          var (global-var "bmi_")]
+      (comp* empty-c-code (comp (map items (fn [v] (either v empty-c-code)))
+                                (let [items (either (and (empty? items)
+                                                         (maybe "0"))
+                                                    (interpose (map items
+                                                                    (fn [v]
+                                                                      (either (map v (fn [expr]
+                                                                                       (str "(Value *)&"
+                                                                                            (.c-struct expr))))
+                                                                              "NULL")))
+                                                               ", "))]
+                                  [(c-static-val var []
+                                                 ["BitmapIndexedNode " struct " = {BitmapIndexedType, -1, "
+                                                  (str (bmiBitmap m))
+                                                  ", " items
+                                                  "};" line-sep
+                                                  "Value *" var "= (Value *)&" struct ";" line-sep]
+                                                 {} {} struct)]))))))
+
+(defn arrayNodeArray [m]
+  (inline C Vector "
+  ArrayNode *node = (ArrayNode *)m_0;
+  Vector *v = empty_vect;
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+    Value *val = node->array[i];
+    if (val == (Value *)0)
+      v = mutateVectConj(v, (Value *)nothing);
+    else {
+      incRef(val, 1);
+      v = mutateVectConj(v, maybe(empty_list, (Value *)0, val));
+    }
+  }
+  dec_and_free(m_0, 1);
+  return((Value *)v);
+  "))
+
+(extend-type ArrayNode
+  Emitter
+  (encode-static [m]
+    (for [items (traverse (arrayNodeArray m) (fn [v]
+                                               (either (map v (fn [v]
+                                                                (map (encode-static v) maybe)))
+                                                       (sm/state-maybe nothing))))
+          struct (global-var "arrayNode_")
+          var (global-var "arrayNode_")]
+      (comp* empty-c-code (comp (map items (fn [v] (either v empty-c-code)))
+                                (let [items (either (and (empty? items)
+                                                         (maybe "0"))
+                                                    (interpose (map items
+                                                                    (fn [v]
+                                                                      (either (map v (fn [expr]
+                                                                                       (str "(Value *)&"
+                                                                                            (.c-struct expr))))
+                                                                              "NULL")))
+                                                               ", "))]
+                                  [(c-static-val var []
+                                                 ["ArrayNode " struct " = {ArrayNodeType, -1, " items "};"
+                                                  line-sep "Value *" var "= (Value *)&" struct ";" line-sep]
+                                                 {} {} struct)]))))))
+
 (extend-type HashMap
   Emitter
   (emit [m]
-    (encode m))
+    (comp (encode-static m)
+          (encode m)))
 
   (tail-call [m params result-constraint]
     (TailHashMap m))
@@ -1846,33 +2021,24 @@
   (encode [m] (encode m "var_"))
 
   (encode [m var-prefix]
-    ;; TODO: statically encode where possible
-    (for [map-var (global-var var-prefix)
-          :let [_ (write-strings [["Value *" map-var " = (Value *)&emptyBMI;\n"]])]
-          assocs (traverse (seq m)
-                           (fn [[sym var]]
-                             ;; TODO: make this a call to 'encode' rather than 'emit'
-                             (for [sym-var (either (and (instance? Tagged sym)
-                                                        (maybe (emit (ast/quoted-ast sym))))
-                                                   (emit sym))
-                                   expr (encode var)]
-                               (do
-                                 (write-strings [(.decl sym-var) (.decl expr)])
-                                 [(.init sym-var) (.init expr)
-                                  map-var " = hashMapAssoc((Value *)" map-var
-                                  ", incRef(" (.c-var sym-var) ", 1), " (.c-var expr) ");\n"]))))]
-      (c-code map-var
-              (comp* [] assocs)
-              [] {} {}))))
-
-(extend-type HashSet
-  Emitter
-  (emit [hs]
-    (for [expr (encode (.set-map hs))
-          var (genlocal "set_")]
-      (-> expr
-          (.c-var var)
-          (.init (comp (.init expr) ["Value *" var " = newHashSet(empty_list, " (.c-var expr) ");" line-sep]))))))
+    (comp (encode-static m)
+          (for [map-var (global-var var-prefix)
+                :let [_ (write-strings [["Value *" map-var " = (Value *)&emptyBMI;\n"]])]
+                assocs (traverse (seq m)
+                                 (fn [[sym var]]
+                                   ;; TODO: make this a call to 'encode' rather than 'emit'
+                                   (for [sym-var (either (and (instance? Tagged sym)
+                                                              (maybe (emit (ast/quoted-ast sym))))
+                                                         (emit sym))
+                                         expr (encode var)]
+                                     (do
+                                       (write-strings [(.decl sym-var) (.decl expr)])
+                                       [(.init sym-var) (.init expr)
+                                        map-var " = hashMapAssoc((Value *)" map-var
+                                        ", incRef(" (.c-var sym-var) ", 1), " (.c-var expr) ");\n"]))))]
+            (c-code map-var
+                    (comp* [] assocs)
+                    [] {} {})))))
 
 
 (deftype StaticArityInfo [c-var param-constraints result-constraint]
@@ -1964,10 +2130,6 @@
                           {} {str-ptr (TypeConstraint {StringBufferType #{}} empty-list 'String nothing str-ptr)}
                           str-sym)))))
 
-(defn make-c-code [value]
-  (c-code (.c-var value) (.init value) (.decl value)
-          (.refs-map value) (.constraints value)))
-
 (defn get-type-info [path type-symbol]
   (sm/new-sm (fn [s]
                (assert (instance? GlobalContext s))
@@ -2028,6 +2190,27 @@
 ;;                            line-number)))
 
 ;; TODO: line numbering starts to go wrong here
+
+(extend-type HashSet
+  Emitter
+  (encode-static [hs]
+    ;; TODO:  remove the need for the 'when-not'
+    (for [m (encode-static [(.set-map hs)])
+          type-num (get-type-number (maybe (rdr/tag 'HashSet)))
+          :when-not (= 0 type-num)
+          struct (global-var "set_")
+          var (global-var "set_")]
+      (comp m (c-static-val var []
+                            ["ReifiedVal " struct " = {" (str type-num) ", -1, (Value *)&" (.c-struct m) ", 0, 0};\n"
+                             "Value *" var " = (Value *)&" struct ";" line-sep]
+                            {} {} struct))))
+
+  (emit [hs]
+    (for [expr (encode (.set-map hs))
+          var (genlocal "set_")]
+      (-> expr
+          (.c-var var)
+          (.init (comp (.init expr) ["Value *" var " = newHashSet(empty_list, " (.c-var expr) ");" line-sep]))))))
 
 (extend-type ast/assert-ast
   Assertion
@@ -2207,23 +2390,8 @@
 
 (extend-type String
   Emitter
-  (encode [s var-prefix]
-    (for [var (global-var var-prefix)
-          expr (emit s)]
-      (c-code var [] [] {} {})))
-
   (emit [str-val]
-    (make-static-string str-val))
-
-  (emit-defined-value [str-val defined-sym]
-    (for [value (emit str-val)
-          _ (new-module-def defined-sym (c-code (.c-var value) [] [] {}
-                                                (.constraints value)))]
-      [(make-c-code value)]))
-
-  (tail-call [x params result-constraint]
-    (TailCall x params result-constraint)))
-
+    (make-static-string str-val)))
 
 (defn make-static-num [num]
   (for [num-idx (sm/new-sm (fn [s]
@@ -2250,33 +2418,12 @@
 
 (extend-type Integer
   Emitter
-  (encode [s var-prefix]
-    (for [var (global-var var-prefix)
-          expr (emit s)]
-      (c-code var [] [] {} {})))
-
-  (replace-syms [ast _]
-    (sm/state-maybe ast))
-
   (emit [num]
     (comp (sm/get-in-val [.constants .numbers num])
-          (make-static-num num)))
-
-  (emit-defined-value [num defined-sym]
-    (for [value (emit num)
-          _ (new-module-def defined-sym (c-code (.c-var value) [] [] {}
-                                                (.constraints value)))]
-      [(make-c-code value)]))
-
-  (tail-call [x params result-constraint]
-    (TailCall x params result-constraint)))
-
+          (make-static-num num))))
 
 (extend-type ast/quoted-ast
   Emitter
-  (replace-syms [ast _]
-    (sm/state-maybe ast))
-
   (emit [ast]
     (let [sym (.q-val ast)]
       (comp (sm/get-in-val [.constants .symbols sym])
@@ -2301,19 +2448,31 @@
                             ["SubString " sym-var " = {SymbolType, -1, " (count (str sym))
                              ", 0, 0, \"" sym "\"};\n"
                              "Value *" sym-ptr " = (Value *)&" sym-var ";\n"]
-                            {} {sym-ptr constraint} sym-var)))))
+                            {} {sym-ptr constraint} sym-var))))))
 
-  (emit-defined-value [ast defined-sym]
-    (for [quoted (emit ast)
-          _ (new-module-def defined-sym (c-code (.c-var quoted) [] [] {}
-                                                {(.c-var quoted) (update-path sym-constraint
-                                                                              (ast/file-name ast)
-                                                                              (ast/line-number ast))}))]
-      [(make-c-code quoted)]))
 
-  (tail-call [ast params result-constraint]
-    (TailCall ast params result-constraint)))
+(def LiteralValues (comp Integer
+                         ast/quoted-ast
+                         String))
 
+(extend-type LiteralValues
+  Emitter
+  (encode-static [n]
+    (emit n))
+
+  (replace-syms [ast _]
+    (sm/state-maybe ast))
+
+  (emit-defined-value [num defined-sym]
+    (for [value (emit num)
+          _ (new-module-def defined-sym (-> value
+                                            (.init [])
+                                            (.decl [])
+                                            (.refs-map {})))]
+      [value]))
+
+  (tail-call [x params result-constraint]
+    (TailCall x params result-constraint)))
 
 (def vect-constraint (TypeConstraint {VectorType #{}} empty-list 'Vector nothing ""))
 
@@ -2444,10 +2603,8 @@
 
 (extend-type rdr/tagged-symbol
   Emitter
-  (encode [s var-prefix]
-    (for [var (global-var var-prefix)
-          expr (emit s)]
-      (c-code var [] [] {} {})))
+  (encode-static [x]
+    (emit (ast/quoted-ast (.sym x))))
 
   (constrain-sym [sym constraint]
     (for [var (sm/get-in-val [.fn-context .syms sym])
@@ -2502,9 +2659,9 @@
     (lookup-sym sym))
 
   (emit-defined-value [sym defined-sym]
-    (for [value (lookup-sym sym)
+    (for [value (emit sym)
           _ (new-module-def defined-sym value)]
-      [(make-c-code value)]))
+      [value]))
 
   (tail-call [ast params result-constraint]
     (TailCall ast params result-constraint))
@@ -2542,6 +2699,9 @@
 
 (extend-type Symbol
   Emitter
+  (encode-static [sym]
+    (emit (ast/quoted-ast sym)))
+
   (constrain-sym [sym constraint]
     (for [var (sm/get-in-val [.fn-context .syms sym])
           :let [constraint (-> (compose-constraints (ast/file-name sym) (ast/line-number sym)
@@ -2926,36 +3086,35 @@
         _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
                            reified-type-num)
         _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym all-types-info))
-        expr (emit-defined-value
-              (ast/reified
-               reified-type-num
-               {Type-sym
-                [[instance?-sym
-                  [(ast/fn-arity-ast
-                    (str defined-sym "_instance_QMARK_") (FnValPtr "")
-                    (ast/params [x* y*]) ""
-                    [(ast/and-ast
-                      [(ast/call-ast (rdr/tag 'some)
-                                     [(ast/call-ast list-sym (vec (keys all-types-info)))
-                                      (ast/call-ast (rdr/tag 'partial)
-                                                    [=*-sym
-                                                     (ast/call-ast get-type-sym [y*])])])
-                       (ast/call-ast maybe-sym [y*])])])]]
+        exprs (emit-defined-value
+               (ast/reified
+                reified-type-num
+                {Type-sym
+                 [[instance?-sym
+                   [(ast/fn-arity-ast
+                     (str defined-sym "_instance_QMARK_") (FnValPtr "")
+                     (ast/params [x* y*]) ""
+                     [(ast/and-ast
+                       [(ast/call-ast (rdr/tag 'some)
+                                      [(ast/call-ast list-sym (vec (keys all-types-info)))
+                                       (ast/call-ast (rdr/tag 'partial)
+                                                     [=*-sym
+                                                      (ast/call-ast get-type-sym [y*])])])
+                        (ast/call-ast maybe-sym [y*])])])]]
 
-                 [type-mapping-sym
-                  [(ast/fn-arity-ast
-                    (str defined-sym "_type_mapping") (FnValPtr "")
-                    (ast/params [x*]) ""
-                    [(map-vals all-types-info (fn [field-set]
-                                                (map field-set ast/quoted-ast)))])]]]
+                  [type-mapping-sym
+                   [(ast/fn-arity-ast
+                     (str defined-sym "_type_mapping") (FnValPtr "")
+                     (ast/params [x*]) ""
+                     [(map-vals all-types-info (fn [field-set]
+                                                 (map field-set ast/quoted-ast)))])]]]
 
-                Stringable-sym
-                [[string-list-sym
-                  [(ast/fn-arity (ast/params ['z]) ""
-                                 [(ast/call-ast list-sym
-                                                ["<SumType " (str defined-sym) ">"])])]]]})
-              defined-sym)]
-    expr))
+                 Stringable-sym
+                 [[string-list-sym
+                   [(ast/fn-arity (ast/params [x*]) ""
+                                  [(ast/call-ast list-sym ["<SumType " (str defined-sym) ">"])])]]]})
+               defined-sym)]
+    exprs))
 
 (defn define-enum-type [fn-val defined-sym]
   (for [_ (sm/when (= (.call-target fn-val) 'enum))
@@ -2985,34 +3144,35 @@
                            reified-type-num)
         _ (sm/assoc-in-val [.type-maps reified-type-num]
                            (TypeInfo defined-sym type-map))
-        expr (emit-defined-value
-              (ast/reified
-               reified-type-num
-               {Type-sym
-                [[instance?-sym
-                  [(ast/fn-arity-ast
-                    (str defined-sym "_instance_QMARK_") (FnValPtr "")
-                    (ast/params [x* y*]) ""
-                    [(ast/and-ast
-                      [(ast/call-ast (rdr/tag 'some)
-                                     [(ast/call-ast list-sym (vec (keys type-map)))
-                                      (ast/call-ast (rdr/tag 'partial)
-                                                    [=*-sym (ast/call-ast get-type-sym [y*])])])
-                       (ast/call-ast maybe-sym [y*])])])]]
+        exprs (emit-defined-value
+               (ast/reified
+                reified-type-num
+                {Type-sym
+                 [[instance?-sym
+                   [(ast/fn-arity-ast
+                     (str defined-sym "_instance_QMARK_") (FnValPtr "")
+                     (ast/params [x* y*]) ""
+                     [(ast/and-ast
+                       [(ast/call-ast (rdr/tag 'some)
+                                      [(ast/call-ast list-sym (vec (keys type-map)))
+                                       (ast/call-ast (rdr/tag 'partial)
+                                                     [=*-sym (ast/call-ast get-type-sym [y*])])])
+                        (ast/call-ast maybe-sym [y*])])])]]
 
-                 [type-mapping-sym
-                  [(ast/fn-arity-ast
-                    (str defined-sym "_type_mapping") (FnValPtr "")
-                    (ast/params [x*]) ""
-                    [type-map])]]]
+                  [type-mapping-sym
+                   [(ast/fn-arity-ast
+                     (str defined-sym "_type_mapping") (FnValPtr "")
+                     (ast/params [x*]) ""
+                     [(map-vals type-map (fn [field-set]
+                                           (map field-set ast/quoted-ast)))])]]]
 
-                Stringable-sym
-                [[string-list-sym
-                  [(ast/fn-arity (ast/params ['z]) ""
-                                 [(ast/call-ast list-sym
-                                                ["<SumType " (str defined-sym) ">"])])]]]})
-              defined-sym)]
-    expr))
+                 Stringable-sym
+                 [[string-list-sym
+                   [(ast/fn-arity (ast/params ['z]) ""
+                                  [(ast/call-ast list-sym
+                                                 ["<SumType " (str defined-sym) ">"])])]]]})
+               defined-sym)]
+    exprs))
 
 (extend-type ast/call-ast
   Emitter
@@ -3399,7 +3559,7 @@
                                                ", "))
                   args (to-str (interpose (comp ["closures" dispArg] args) ", "))]
             _ (new-proto-impl proto-sym fn-name param-count dispatch-type-num
-                              (ArityValPtr (str "&" fn-arity-sym)) arity-ast
+                              (ArityValPtr (str "&" fn-arity-sym) fn-arity-sym) arity-ast
                               empty-items-constraint result-constraint)
             _ (sm/update-in-val [.reify-fn-index] inc)]
         (let [reified-fn (c-code "" []
@@ -3570,7 +3730,7 @@
         (StaticArity fn-var c-fn (either (and (.variadic params)
                                               (maybe'variadic))
                                          (count params))
-                     (c-code (ArityValPtr (str "&" arity-var)) []
+                     (c-code (ArityValPtr (str "&" arity-var) arity-var) []
                              [(.decl body)
                               "Value *" c-fn "("
                               (-> (.vars param-vars)
@@ -3690,7 +3850,7 @@
           arity-impl-var (global-var (str type-str fn-name) "arityImpl")
           c-fn (global-var (str type-str fn-name) "arityFn")
           :let [impl-fn-var (FnValPtr impl-fn-var)
-                arity-impl-var (ArityValPtr arity-impl-var)
+                arity-impl-var (ArityValPtr arity-impl-var "")
                 c-fn (ProtoDispFnPtr c-fn)]
           dispatcher-info (get-proto-impl proto-sym fn-name num-args 0)
           :let [sym-map (reduce (zip-lists (-> dispatcher-info .ast .params .fixed)
@@ -4172,17 +4332,17 @@
                                                               (.param-constraints static-arity))]
                                       (.var-info static-arity))))]
     (let [arity-count (count emitted-arities)]
-      (c-code fn-var []
-              ["\n// --------- " fn-sym " -------------\n"
-               "Value *" fn-var ";\n"
-               (map emitted-arities .decl)
-               "Function " struct-var " = {FunctionType, -1, \""
-               fn-sym "\", " arity-count ", "
-               "{" (to-str (interpose (map emitted-arities .c-var)
-                                      ", "))
-               "}};\n"
-               "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]
-              {} {fn-var fn-constraint}))))
+      (c-static-val fn-var []
+                    ["\n// --------- " fn-sym " -------------\n"
+                     "Value *" fn-var ";\n"
+                     (map emitted-arities .decl)
+                     "Function " struct-var " = {FunctionType, -1, \""
+                     fn-sym "\", " arity-count ", "
+                     "{" (to-str (interpose (map emitted-arities .c-var)
+                                            ", "))
+                     "}};\n"
+                     "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]
+                    {} {fn-var fn-constraint} struct-var))))
 
 (defn closure-fn [fn-sym fn-var arities]
   (for [_ (sm/when (some arities closure-arity?))
@@ -4366,9 +4526,11 @@
 
   (emit-defined-value [fn-val defined-sym]
     (for [value (emit fn-val)
-          _ (new-module-def defined-sym (c-code (.c-var value) [] [] {}
-                                                {(.c-var value) fn-constraint}))]
-      [(make-c-code value)]))
+          _ (new-module-def defined-sym (-> value
+                                            (.init [])
+                                            (.decl [])
+                                            (.refs-map {})))]
+      [value]))
 
   (tail-call [x params result-constraint]
     (TailCall x params result-constraint))
@@ -4760,53 +4922,60 @@
     ["freeGlobal(" (.c-var c-info) ");\n"]))
 
 (defn gather-protocols [file-name]
-  (for [protocols (sm/get-in-val [.modules file-name .protocols])
-        expr (encode protocols "protos_")
-        _ (traverse (for [[proto-sym proto-fns] (seq protocols)
-                          [fn-sym arities] (seq proto-fns)]
-                      [proto-sym fn-sym arities])
-                    (fn [[proto-sym fn-sym arities]]
-                      (for [disp-fn (sm/get-in-val [.modules file-name .values fn-sym])
-                            :let [fn-var (.c-var disp-fn)]
-                            c-fns (traverse (keys arities)
-                                            (fn [arg-count]
-                                              (for [disp-arity (lookup-static-arity-info fn-var arg-count)
-                                                    arity-var (global-var "arity")]
-                                                [arg-count arity-var (.c-var disp-arity)])))
-                            struct-var (global-var "fn")]
-                        (write-strings
-                         [(map c-fns
-                               (fn [[arg-count arity-var c-fn]]
-                                 (let [impls (extract (get arities arg-count))]
-                                   ["Value *" c-fn "(List *"
-                                    (interpose (cons "closures" (map (range arg-count) (partial str "Value *arg")))
-                                               ",")
-                                    ") {\nFnArity *arity;\n#\n"
-                                    "switch (arg0->type) {\n"
-                                    (map (seq (dissoc impls 0))
-                                         (fn [[type-num arity-info]]
-                                           ["case " (str type-num) ": arity = " (.c-var arity-info) ";\nbreak;\n"]))
-                                    ;; TODO: search for impl in protos hash-map
-                                    "default: arity = " (.c-var (extract (get impls 0))) ";\n"
-                                    "if (arity->closures == (List *)0)\narity->closures = closures;\n"
-                                    "break;\n"
-                                    "}\n"
-                                    "FnType" arg-count " *_fn = (FnType" arg-count " *)arity->fn;\n" 
-                                    "return(_fn(arity->closures, " (-> (map (range arg-count) (partial str "arg"))
-                                                                       (interpose ", "))
-                                    "));\n}\n"
-                                    "FnArity " arity-var " = {FnArityType, -1, "
-                                    arg-count
-                                    ", (List *)0, 0, " c-fn "};\n"])))
-                          "Function " struct-var " = {FunctionType, -1, \""
-                          fn-sym "\", " (count c-fns) ", "
-                          "{" (interpose (map c-fns (fn [[_ arity-var]] (str "&" arity-var))) ", ")
-                          "}};\n"
-                          "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]))))
-        protos-var (sm/get-in-val [.modules file-name .values protocols-sym])]
-    (c-code (.c-var protos-var)
-            [(.init expr) (.c-var protos-var) " = " (.c-var expr) ";\n"]
-            [] {} {})))
+  (comp (for [protocols (sm/get-in-val [.modules file-name .protocols])
+              expr (encode-static protocols)
+              _ (traverse (for [[proto-sym proto-fns] (seq protocols)
+                                [fn-sym arities] (seq proto-fns)]
+                            [proto-sym fn-sym arities])
+                          (fn [[proto-sym fn-sym arities]]
+                            (for [disp-fn (sm/get-in-val [.modules file-name .values fn-sym])
+                                  :let [fn-var (.c-var disp-fn)]
+                                  c-fns (traverse (keys arities)
+                                                  (fn [arg-count]
+                                                    (for [disp-arity (lookup-static-arity-info fn-var arg-count)
+                                                          arity-var (global-var "arity")]
+                                                      [arg-count arity-var (.c-var disp-arity)])))
+                                  struct-var (global-var "dispFnStruct")
+                                  _ (sm/assoc-in-val [.modules file-name .values fn-sym]
+                                                     (c-static-val fn-var [] [] {} {} struct-var))]
+                              (write-strings
+                               [(map c-fns
+                                     (fn [[arg-count arity-var c-fn]]
+                                       (let [impls (extract (get arities arg-count))]
+                                         ["Value *" c-fn "(List *"
+                                          (interpose (cons "closures" (map (range arg-count)
+                                                                           (partial str "Value *arg")))
+                                                     ",")
+                                          ") {\nFnArity *arity;\n#\n"
+                                          "switch (arg0->type) {\n"
+                                          (map (seq (dissoc impls 0))
+                                               (fn [[type-num arity-info]]
+                                                 ["case " (str type-num) ": arity = "
+                                                  (.c-var arity-info) ";\nbreak;\n"]))
+                                          ;; TODO: search for impl in protos hash-map
+                                          "default: arity = " (.c-var (extract (get impls 0))) ";\n"
+                                          "if (arity->closures == (List *)0)\narity->closures = closures;\n"
+                                          "break;\n"
+                                          "}\n"
+                                          "FnType" arg-count " *_fn = (FnType" arg-count " *)arity->fn;\n" 
+                                          "return(_fn(arity->closures, " (-> (range arg-count)
+                                                                             (map (partial str "arg"))
+                                                                             (interpose ", "))
+                                          "));\n}\n"
+                                          "FnArity " arity-var " = {FnArityType, -1, "
+                                          arg-count
+                                          ", (List *)0, 0, " c-fn "};\n"])))
+                                "Function " struct-var " = {FunctionType, -1, \""
+                                fn-sym "\", " (count c-fns) ", "
+                                "{" (interpose (map c-fns (fn [[_ arity-var]] (str "&" arity-var))) ", ")
+                                "}};\n"
+                                "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]))))
+              protos-var (sm/get-in-val [.modules file-name .values protocols-sym])]
+          (comp expr
+                (c-code (.c-var protos-var)
+                        [(.c-var protos-var) " = " (.c-var expr) ";\n"]
+                        [] {} {})))
+        (compilation-error "Could not gather the protocols for" (str "'" file-name "'"))))
 
 (defn gather-symbols [file-name]
   (for [symbols (sm/get-in-val [.modules file-name .values])
@@ -4814,9 +4983,10 @@
                  (dissoc symbols-sym)
                  (encode "symbols_"))
         sym-var (sm/get-in-val [.modules file-name .values symbols-sym])]
-    (c-code (.c-var sym-var)
-            [(.init expr) (.c-var sym-var) " = " (.c-var expr) ";\n"]
-            [] {} {})))
+    (comp expr
+          (c-code (.c-var sym-var)
+                  [(.c-var sym-var) " = " (.c-var expr) ";\n"]
+                  [] {} {}))))
 
 (def emit-main*
   (for [main-fn (comp (lookup-static-arity-info (FnValPtr 'main) 1)
@@ -4826,6 +4996,8 @@
         symbols (traverse (keys modules) gather-symbols)
         values (sm/get-in-val [.rt-init .exprs])]
     (write-strings ["\n#\n"
+                    (map protos .decl)
+                    (map symbols .decl)
                     "\nint main (int argc, char **argv) {\n"
                     "maybeNothing = maybe((List *)0, (Value *)0, nothing);\n"
                     "maybeNothing->refs = -1;\n"
@@ -4836,8 +5008,7 @@
                     "pthread_cond_init(&futuresQueue.notEmpty, NULL);\n"
                     "pthread_mutex_init(&shutDown.access, NULL);\n"
                     "startWorkers();\n"
-                    (map protos (fn [proto]
-                                  [(.init proto) (.c-var proto) "->refs = -1;\n"]))
+                    (map protos .init)
                     (map values .init) "\n"
                     (map symbols (fn [sym-map]
                                    [(.init sym-map) (.c-var sym-map) "->refs = -1;\n"]))
@@ -4865,12 +5036,6 @@
                     "waitForWorkers();\n"
                     (map (vals modules) (fn [module]
                                           (either (map (get-in module [.values symbols-sym])
-                                                       (fn [expr]
-                                                         (free-global (c-init (.c-var expr)
-                                                                              [] [] {} {} "" 0))))
-                                                  "")))
-                    (map (vals modules) (fn [module]
-                                          (either (map (get-in module [.values protocols-sym])
                                                        (fn [expr]
                                                          (free-global (c-init (.c-var expr)
                                                                               [] [] {} {} "" 0))))

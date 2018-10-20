@@ -21,8 +21,10 @@ int64_t malloc_count = 0;
 int64_t free_count = 0;
 
 Value *nothing = (Value *)&(Maybe){MaybeType, -1, 0};
-List *empty_list = &(List){ListType,-1,0,0,0};
-Vector *empty_vect = &(Vector){VectorType,-1,0,5,0,0};
+List empty_list_struct = (List){ListType,-1,0,0,0};
+List *empty_list = &empty_list_struct;
+Vector empty_vect_struct = (Vector){VectorType,-1,0,5,0,0};
+Vector *empty_vect = &empty_vect_struct;;
 
 #define NUM_WORKERS 10
 pthread_t workers[NUM_WORKERS];
@@ -701,7 +703,7 @@ ArrayNode *malloc_arrayNode() {
 
 void freeArrayNode(Value *v) {
   ArrayNode *node = (ArrayNode *)v;
-  for (int i = 0; i < 32; i++) {
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
     if (node->array[i] != (Value *)0) {
       dec_and_free(node->array[i], 1);
     }
@@ -1511,7 +1513,7 @@ Vector *vectConj(Vector *vect, Value *val) {
     Vector *newVect = newVector(vect->tail, VECTOR_ARRAY_LEN);
     newVect->shift = vect->shift;
     newVect->count = vect->count + 1;
-    if (newVect->count < 32) {
+    if (newVect->count < VECTOR_ARRAY_LEN) {
       newVect->tailOffset = 0;
     } else {
       newVect->tailOffset = (newVect->count - 1) & ~0x1f;
@@ -3266,7 +3268,7 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
       int jdx = mask(hash, shift);
       Value *newShift = (Value *)integerValue(shift + 5);
       newNode->array[jdx] = assoc((List *)0, (Value *)&emptyBMI, key, val, arg3, incRef(newShift, 1));
-      for (int i = 0, j = 0; i < 32; i++) {
+      for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
         if ((node->bitmap >> i) & 1) {
           if (node->array[j] == (Value *)0) {
             newNode->array[i] = node->array[j + 1];
@@ -3457,7 +3459,7 @@ Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value 
   Value *keyHash = baseSha1(incRef(key, 1));
   if (subNode == (Value *)0) {
     newNode = (ArrayNode *)malloc_arrayNode();
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < ARRAY_NODE_LEN; i++) {
       if (node->array[i] != (Value *)0) {
 	newNode->array[i] = node->array[i];
 	incRef(newNode->array[i], 1);
@@ -3467,7 +3469,7 @@ Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value 
   } else {
     Value *n = assoc((List *)0, incRef(subNode, 1), key, val, keyHash, newShift);
     newNode = (ArrayNode *)malloc_arrayNode();
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < ARRAY_NODE_LEN; i++) {
       if (i != idx && node->array[i] != (Value *)0) {
 	newNode->array[i] = node->array[i];
 	incRef(newNode->array[i], 1);
@@ -3558,7 +3560,7 @@ Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *a
 
 Value *arrayNodeCount(Value *arg0) {
   int accum = 0;
-  for(int i = 0; i < 32; i++){
+  for(int i = 0; i < ARRAY_NODE_LEN; i++){
     if (((ArrayNode *)arg0)->array[i] != (Value *)0) {
       Integer *subCnt = (Integer *)count((List *)0, incRef(((ArrayNode *)arg0)->array[i], 1));
       accum += subCnt->numVal;
@@ -3672,7 +3674,7 @@ abort();
 Value *arrayNodeSeq(Value *arg0, Value *arg1) {
   ArrayNode *node = (ArrayNode *)arg0;
   List *seq = (List *)arg1;
-  for (int i = 0; i < 32; i++) {
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
     if (node->array[i] != (Value *)0) {
       incRef(node->array[i], 1);
       seq = (List *)hashSeq((List *)0, node->array[i], (Value *)seq);
@@ -3703,7 +3705,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
       Value *hash = baseSha1(incRef(key, 1));
       Value *n = dissoc((List *)0, incRef(subNode, 1), key, hash, newShift);
       newNode = (ArrayNode *)malloc_arrayNode();
-      for (int i = 0; i < 32; i++) {
+      for (int i = 0; i < ARRAY_NODE_LEN; i++) {
         if (i != idx && node->array[i] != (Value *)0) {
           newNode->array[i] = node->array[i];
           incRef(newNode->array[i], 1);
