@@ -1123,6 +1123,18 @@
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
           (str constraints) ", " (str c-struct) ">")))
 
+(deftype c-static-fn [c-var init decl refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? HashMap refs-map))
+  (assert (instance? HashMap constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Function " (str c-var) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
+          (str constraints) ">")))
+
 (deftype c-static-val [c-var init decl refs-map constraints c-struct]
   (assert (instance? Sequence init))
   (assert (instance? Sequence decl))
@@ -1139,6 +1151,7 @@
                           c-static-str
                           c-static-sym
                           c-static-reified
+                          c-static-fn
                           c-static-val))
 
 (extend-type C-Static-Value
@@ -2867,11 +2880,10 @@
           (sm/assoc-in-val [.constants .other 'proto-dispatch-sites] 1))))
 
 ;; optimize calls to static, fixed arity, functions
-(defn call-static-fixed [target arg-vars ast]
+(defn call-static-fixed [target arity-info arg-vars ast]
   (let [file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
-    (for [arity-info (lookup-static-arity-info (.c-var target) (count arg-vars))
-          constraints (arg-constraints (.args ast) arg-vars (.param-constraints arity-info)
+    (for [constraints (arg-constraints (.args ast) arg-vars (.param-constraints arity-info)
                                        file-name line-number)
           result-sym (genlocal "rslt")
           _ (update-call-site-count (.c-var arity-info))
@@ -2886,11 +2898,10 @@
                    result-sym (.result-constraint arity-info))
               file-name line-number))))
 
-(defn call-static-variadic [target arg-vars ast]
+(defn call-static-variadic [target arity-info arg-vars ast]
   (let [file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
-    (for [arity-info (lookup-static-arity-info (.c-var target) 'variadic)
-          arg-consts (arg-constraints (.args ast) arg-vars (.param-constraints arity-info)
+    (for [arg-consts (arg-constraints (.args ast) arg-vars (.param-constraints arity-info)
                                       file-name line-number)
           _ (comp (sm/update-in-val [.constants .other 'static-variadic-sites] inc)
                   (sm/assoc-in-val [.constants .other 'static-variadic-sites] 1))
@@ -3033,6 +3044,8 @@
 
 (defn call-invoke [target args ast]
   (let [num-args (inc (count args))
+        file-name (ast/file-name ast)
+        line-number (ast/line-number ast)
         target-type (expr-type-num target)]
     (for [_ (sm/when-not (= UnknownType target-type))
           invoke-info (get-proto-impl Function-sym invoke-sym num-args target-type)
@@ -3046,8 +3059,7 @@
           line (line-macro ast "// call invoke")]
       (c-init result-sym
               [line "Value *" result-sym " = ((FnType" num-args " *)(((FnArity *)" (.c-var invoke-info) ")->fn))("
-               (interpose (conj (cons (.c-var target) (map args .c-var))
-                                "empty_list") ", ") ");" line-sep]
+               (interpose (list* "empty_list" (.c-var target) (map args .c-var)) ", ") ");" line-sep]
               [] {} (assoc constraints
                       result-sym (.result-constraints invoke-info))
               (ast/file-name ast) (ast/line-number ast)))))
@@ -3175,6 +3187,43 @@
                defined-sym)]
     exprs))
 
+(defprotocol CallSite
+  (emit-call-site [target args ast]
+    (comp (call-invoke target args ast)
+          (call-dyn-fn-value target (map args .c-var) ast)
+          (call-dyn-unknown-type target (map args .c-var) ast))))
+
+(extend-type c-static-reified
+  CallSite
+  (emit-call-site [target args ast]
+    (comp (call-invoke target args ast)
+          (compilation-error "No implementation of 'Function/invoke' with"
+                             (count args) "arguments"
+                             (either (map (instance? Tagged (.call-target ast))
+                                          (fn [sym]
+                                            (str "for '" sym "'")))
+                                     "")
+                             "at:" (ast/file-name ast) (ast/line-number ast)))))
+
+(extend-type c-static-fn
+  CallSite
+  (emit-call-site [target args ast]
+    (comp (for [fn-info (sm/get-in-val [.fns (.c-var target)])
+                site (either (or (map (get fn-info (count args))
+                                      (fn [arity-info]
+                                        (call-static-fixed target arity-info args ast)))
+                                 (map (get fn-info 'variadic)
+                                      (fn [arity-info]
+                                        (call-static-variadic target arity-info args ast))))
+                             (zero sm/state-maybe))]
+            site)
+          (compilation-error "No arity with" (count args) "arguments found"
+                             (either (map (instance? Tagged (.call-target ast))
+                                          (fn [sym]
+                                            (str "for '" sym "'")))
+                                     "")
+                             "at:" (ast/file-name ast) (ast/line-number ast)))))
+
 (extend-type ast/call-ast
   Emitter
   (emit [ast]
@@ -3198,11 +3247,7 @@
                       (fn [args]
                         (comp (emit-call-expr (.call-target ast) args ast)
                               (for [target (emit (.call-target ast))
-                                    call-site (comp (call-static-fixed target args ast)
-                                                    (call-static-variadic target args ast)
-                                                    (call-invoke target args ast)
-                                                    (call-dyn-fn-value target (map args .c-var) ast)
-                                                    (call-dyn-unknown-type target (map args .c-var) ast))]
+                                    call-site (emit-call-site target args ast)]
                                 (comp* target (comp args [call-site])))
                               (compilation-error "Could not compile call site at:"
                                                  file-name line-number)))))))
@@ -3851,8 +3896,6 @@
           arity-impl-var (global-var (str type-str fn-name) "arityImpl")
           c-fn (global-var (str type-str fn-name) "arityFn")
           :let [impl-fn-var (FnValPtr impl-fn-var)
-                ;; TODO: this produces an unhelpful error message
-                ;; arity-impl-var (ArityValPtr arity-impl-var)
                 arity-impl-var (ArityValPtr arity-impl-var "")
                 c-fn (ProtoDispFnPtr c-fn)]
           dispatcher-info (get-proto-impl proto-sym fn-name num-args 0)
@@ -3926,7 +3969,7 @@
           ]
       (-> reified
           (.c-var arity-var)
-          (.init (either (or (empty? (.decl reified))
+          (.init (either (or (empty? (.init reified))
                              (and (instance? StaticArity ext-fn)
                                   (maybe (.init reified))))
                          [(.init reified)
@@ -4334,17 +4377,17 @@
                                                               (.param-constraints static-arity))]
                                       (.var-info static-arity))))]
     (let [arity-count (count emitted-arities)]
-      (c-static-val fn-var []
-                    ["\n// --------- " fn-sym " -------------\n"
-                     "Value *" fn-var ";\n"
-                     (map emitted-arities .decl)
-                     "Function " struct-var " = {FunctionType, -1, \""
-                     fn-sym "\", " arity-count ", "
-                     "{" (to-str (interpose (map emitted-arities .c-var)
-                                            ", "))
-                     "}};\n"
-                     "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]
-                    {} {fn-var fn-constraint} struct-var))))
+      (c-static-fn fn-var []
+                   ["\n// --------- " fn-sym " -------------\n"
+                    "Value *" fn-var ";\n"
+                    (map emitted-arities .decl)
+                    "Function " struct-var " = {FunctionType, -1, \""
+                    fn-sym "\", " arity-count ", "
+                    "{" (to-str (interpose (map emitted-arities .c-var)
+                                           ", "))
+                    "}};\n"
+                    "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]
+                   {} {fn-var fn-constraint} struct-var))))
 
 (defn closure-fn [fn-sym fn-var arities]
   (for [_ (sm/when (some arities closure-arity?))
@@ -4433,7 +4476,7 @@
                                           (interpose ", "))
                                       ");\n"]))))
 
-        _ (new-module-def fn-sym (c-code fn-var [] [] {} {fn-var fn-constraint}))
+        _ (new-module-def fn-sym (c-static-fn fn-var [] [] {} {fn-var fn-constraint} ""))
         default-fns (traverse arities (partial emit-proto-default proto-sym fn-sym fn-var))]
     [(.decl proto-sym-expr)
      (.decl fn-sym-expr)
