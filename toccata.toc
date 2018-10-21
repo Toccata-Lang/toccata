@@ -141,8 +141,8 @@
     type-map))
 
 (def core-types {IntegerType (TypeInfo 'Integer {IntegerType #{}})
-                 StringBufferType (TypeInfo 'StringBuffer {StringBufferType #{}})
-                 SubStringType (TypeInfo 'SubString {SubStringType #{}})
+                 StringBufferType (TypeInfo 'String {StringBufferType #{}})
+                 SubStringType (TypeInfo 'String {SubStringType #{}})
                  FnArityType (TypeInfo 'FnArity {FnArityType #{}})
                  FunctionType (TypeInfo 'Fn {FunctionType #{}})
                  ListType (TypeInfo 'List {ListType #{}})
@@ -470,7 +470,7 @@
     (maybe type-maps))
 
   (format-path [x desired-len]
-    (format-path* (cons [(str "'" type-sym "' From") ""]
+    (format-path* (cons [(str "Type '" type-sym "' From") ""]
                         path)
                   desired-len))
 
@@ -492,7 +492,6 @@
                (interpose (format-path constraint (inc (count path))) "\\n")
                "\\n\");"
                "\n#endif\n"
-               "// TODO: soft abort?\n"
                (line-marker file-name line-number "// runtime-check")
                "abort();" line-sep
                "}" line-sep]))))
@@ -586,7 +585,6 @@
                         (interpose (format-path constraint (inc (count path))) "\\n")
                         "\\n\");"
                         "\n#endif\n"
-                        "// TODO: soft abort?\n"
                         (line-marker file-name line-number "// runtime-check")
                         "abort();" line-sep
                         "}\n"])
@@ -645,7 +643,6 @@
                (interpose (format-path constraint (inc (count path))) "\\n")
                "\\n\");"
                "\n#endif\n"
-               "// TODO: soft abort?\n"
                (line-marker file-name line-number "// runtime-check")
                "abort();" line-sep
                "}\ndec_and_free(dork, 1);\n}\n"])))
@@ -681,9 +678,11 @@
     (extract-type-map assertion))
 
   (intersect [rc c]
-    (either (and (instance? ResultConstraint c)
-                 (maybe (ResultConstraint (intersect assertion (.assertion c)))))
-            (ResultConstraint (intersect assertion c))))
+    (let [intersected (either (and (instance? ResultConstraint c)
+                                   (maybe (intersect assertion (.assertion c))))
+                              (intersect assertion c))]
+      (either (= bottom-type intersected)
+              (ResultConstraint intersected))))
 
   Eq
   (=* [x y]
@@ -788,11 +787,16 @@
   (update-path [constraint file-name line-number]
     (let [file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
+                            file-name)
+          new-path (either (for [[top-file top-line] (first (.path constraint))
+                                 _ (and (= top-line line-number)
+                                        (= top-file file-name))]
+                             (.path constraint))
+                           (cons [file-name line-number] (.path constraint)))]
       (ItemsConstraint (map (.items-constraints constraint)
                             (fn [constraints]
                               (update-path constraints file-name line-number)))
-                       (cons [file-name line-number] (.path constraint))
+                       new-path
                        (.sym constraint) (.var constraint))))
 
   (intersect [ic c]
@@ -960,12 +964,7 @@
   (update-var [mc var]
     (.constraints mc (map (.constraints mc)
                           (fn [c]
-                            (update-var c var)))))
-
-  (update-path [mc file-name line-number]
-    (.constraints mc (map (.constraints mc)
-                          (fn [c]
-                            (update-path c file-name line-number))))))
+                            (update-var c var))))))
 
 
 (deftype FnValPtr [var]
@@ -1047,7 +1046,7 @@
 (defn conflicting-assertions [constraints file-name line-number]
   (apply print-err (list* "Conflicting assertions"
                            (either (= "" file-name)
-                                   (str " at " file-name ": " line-number))
+                                   (str "at " file-name ": " line-number))
                            "\n"
                            (format-path (MultiConstraint constraints) 0)))
   (abort))
@@ -1056,7 +1055,7 @@
   (assert (instance? Constraints x))
   (assert (instance? Constraints y))
 
-  (let [z (comp* x (list y))]
+  (let [z (comp x y)]
     (and (= bottom-type z)
          (let [constraints (either (and (< 1 (count (.constraints z)))
                                         (maybe (.constraints z)))
@@ -1799,11 +1798,15 @@
   (update-path [constraint file-name line-number]
     (let [file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
+                            file-name)
+          new-path (either (for [[top-file top-line] (first (.path constraint))
+                                 _ (and (= top-line line-number)
+                                        (= top-file file-name))]
+                             (.path constraint))
+                           (cons [file-name line-number] (.path constraint)))]
       (either (and (= "" file-name)
                    (maybe constraint))
-              (.path constraint (cons [(str file-name ":") line-number]
-                                      (.path constraint)))))))
+              (.path constraint new-path)))))
 
 (extend-type FieldConstraint
   Emitter
@@ -2055,23 +2058,6 @@
   (assert (instance? FnPTr fn-var))
   
   (sm/get-in-val [.fns fn-var num-params]))
-
-(defn arg-constraints [arg-asts arg-vars constraints file-name line-number]
-  (assert (instance? ItemsConstraint constraints))
-
-  (for [constraint-maps (traverse (zip-lists (seq arg-asts)
-                                             (seq arg-vars)
-                                             (.items-constraints constraints))
-                                  (fn [[ast var constraint]]
-                                    (let [constraint (update-path constraint file-name line-number)
-                                          new-const (compose-constraints file-name line-number
-                                                                         constraint
-                                                                         (update-path (expr-constraints var)
-                                                                                      file-name line-number))]
-                                      (comp (for [_ (constrain-sym ast constraint)]
-                                              {(.c-var var) new-const})
-                                            (sm/state-maybe {(.c-var var) new-const})))))]
-    (comp* {} constraint-maps)))
 
 (defn lookup-core-fn-arity [sym num-args]
   (sm/new-sm (fn [s]
@@ -2543,6 +2529,23 @@
                               {result-sym (update-path constraints file-name line-number)}
                               file-name line-number)]))))))
 
+(defn arg-constraints [arg-asts arg-vars constraints file-name line-number]
+  (assert (instance? ItemsConstraint constraints))
+
+  (for [constraint-maps (traverse (zip-lists (seq arg-asts)
+                                             (seq arg-vars)
+                                             (.items-constraints constraints))
+                                  (fn [[ast var constraint]]
+                                    (let [constraint (update-path constraint file-name line-number)
+                                          constraints (update-path (expr-constraints var) file-name line-number)
+                                          new-const (compose-constraints file-name line-number
+                                                                         constraint
+                                                                         constraints)]
+                                      (comp (for [_ (constrain-sym ast constraint)]
+                                              {(.c-var var) new-const})
+                                            (sm/state-maybe {(.c-var var) new-const})))))]
+    (comp* {} constraint-maps)))
+
 (defn call-proto-impl [target disp-type args ast]
   (let [num-args (count args)]
     (for [impl-info (get-proto-impl target num-args disp-type)
@@ -2943,7 +2946,6 @@
                "} else {" line-sep "fprintf(stderr, \"\\n*** no arity found for '%s' at: %s, %d.\\n\", "
                "((Function *)" (.c-var target) ")->name, \"" (ast/file-name ast)
                "\", " (ast/line-number ast) ");\n  abort();\n}\n"
-               "// TODO: soft abort?\n"
                "dec_and_free("(.c-var target) ", 1);" line-sep]
               [] {} {}
               (ast/file-name ast) (ast/line-number ast)))))
@@ -3025,7 +3027,6 @@
                  "} else {" line-sep "fprintf(stderr, \"\\n*** no arity found for '%s'.\\n\", "
                  "((Function *)" (.c-var target) ")->name"
                  ");" line-sep "  abort();" line-sep "}" line-sep
-                 "// TODO: soft abort?\n"
                  "dec_and_free("(.c-var target) ", 1);" line-sep "}" line-sep]
                 [] {} {}
                 file-name line-number)))))
@@ -3850,6 +3851,8 @@
           arity-impl-var (global-var (str type-str fn-name) "arityImpl")
           c-fn (global-var (str type-str fn-name) "arityFn")
           :let [impl-fn-var (FnValPtr impl-fn-var)
+                ;; TODO: this produces an unhelpful error message
+                ;; arity-impl-var (ArityValPtr arity-impl-var)
                 arity-impl-var (ArityValPtr arity-impl-var "")
                 c-fn (ProtoDispFnPtr c-fn)]
           dispatcher-info (get-proto-impl proto-sym fn-name num-args 0)
@@ -4026,7 +4029,6 @@
                              "fprintf(stderr, \"Expected Maybe, got %s\\n\", extractStr(type_name(empty_list, "
                              (.c-var expr) ")));" line-sep
                              "abort();" line-sep
-                             "// TODO: soft abort?\n"
                              "}" line-sep]))))))
 
 (extend-type rdr/tagged-symbol
@@ -4312,7 +4314,7 @@
 (extend-type ast/main-ast
   Emitter
   (emit-definition [ast]
-    (for [;; _ (debug 'main-fn)
+    (for [;; _ (debug "=======\n*** " 'main-fn)
           fn-arity (emit-fn-arity (rdr/tag 'main) (FnValPtr "") (.params ast) (.body ast))
           ;; _ (debug "=======")
           result-constraint (map (type-constraint IntegerType "" 0) ResultConstraint)
@@ -4597,8 +4599,8 @@
 
   (emit [_]
     (for [expr (emit ast)]
-      (add-constraint expr (-> constraint
-                               (update-path (ast/file-name ast) (ast/line-number ast)))
+      (add-constraint expr
+                      (update-path constraint (ast/file-name ast) (ast/line-number ast))
                       (ast/file-name ast) (ast/line-number ast)))))
 
 (defn constructor-expr [new-type-name new-type-constraint type-val-sym fields assertions]
