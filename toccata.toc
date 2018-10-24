@@ -1553,8 +1553,8 @@
   (string-list [_] (list "<ProtoImpl type: " (target-type-name dispatch-type) " " (str c-var) ">"))
 
   Emitter
-  (encode [_]
-    (sm/state-maybe (c-code (str "(Value *)" c-var) [] [] {} {})))
+  (encode [x]
+    (encode-static x))
 
   (encode-static [_]
     (either (and (= "" (.var c-var))
@@ -1569,7 +1569,6 @@
                            _ (some (vals protos) (fn [proto] (get proto fn-sym)))]
                        [path s]))))
 
-;; TODO: still need?
 (defn find-protocol-path [fn-sym]
   (comp (for [path (sym-ns-path fn-sym)
               path (lookup-protocol-path fn-sym path)]
@@ -2042,11 +2041,11 @@
                 :let [_ (write-strings [["Value *" map-var " = (Value *)&emptyBMI;\n"]])]
                 assocs (traverse (seq m)
                                  (fn [[sym var]]
-                                   ;; TODO: make this a call to 'encode' rather than 'emit'
                                    (for [sym-var (either (and (instance? Tagged sym)
                                                               (maybe (emit (ast/quoted-ast sym))))
                                                          (emit sym))
-                                         expr (encode var)]
+                                         expr (comp (encode-static var)
+                                                    (encode var))]
                                      (do
                                        (write-strings [(.decl sym-var) (.decl expr)])
                                        [(.init sym-var) (.init expr)
@@ -3057,12 +3056,15 @@
                                        (ast/file-name ast) (ast/line-number ast))
           result-sym (genlocal "rslt")
           line (line-macro ast "// call invoke")]
-      (c-init result-sym
-              [line "Value *" result-sym " = ((FnType" num-args " *)(((FnArity *)" (.c-var invoke-info) ")->fn))("
-               (interpose (list* "empty_list" (.c-var target) (map args .c-var)) ", ") ");" line-sep]
-              [] {} (assoc constraints
-                      result-sym (.result-constraints invoke-info))
-              (ast/file-name ast) (ast/line-number ast)))))
+      (do
+        ;; TODO: this should be calling the C fn directly, not the checker fn
+        ;; but first, the constraints have to be checked at the call site
+        (c-init result-sym
+                [line "Value *" result-sym " = ((FnType" num-args " *)(((FnArity *)" (.c-var invoke-info) ")->fn))("
+                 (interpose (list* "empty_list" (.c-var target) (map args .c-var)) ", ") ");" line-sep]
+                [] {} (assoc constraints
+                        result-sym (.result-constraints invoke-info))
+                (ast/file-name ast) (ast/line-number ast))))))
 
 (defn update-last [asts f]
   (either (empty? asts)
@@ -3234,7 +3236,6 @@
                                     (either (and (instance? Symbol target-ast)
                                                  (maybe (rdr/tag target-ast)))
                                             target-ast))))]
-      ;; TODO: use deftypes for each of the different kind of call sites.
       (comp (for [new-ast (inline-expr (.call-target ast) (.args ast))
                   call-site (emit new-ast)]
               (c-init (.c-var call-site) (.init call-site) (.decl call-site)
@@ -3245,6 +3246,7 @@
                           (filter produces-code?)
                           (traverse emit))
                       (fn [args]
+                        ;; TODO: I bet we could eliminate 'emit-call-expr'
                         (comp (emit-call-expr (.call-target ast) args ast)
                               (for [target (emit (.call-target ast))
                                     call-site (emit-call-site target args ast)]
@@ -4060,19 +4062,27 @@
       (for [syms get-syms
             expr (emit clause)
             _ (set-syms syms)]
-        (either (and (or (= MaybeType (expr-type-num expr))
-                         (= "" (.c-var expr)))
-                     (maybe expr))
-                (.init expr [(.init expr)
-                             "if (" (.c-var expr) "->type != MaybeType) {" line-sep
-                             "fprintf(stderr, \"Wrong type of result returned at %s, line %d\\n\", \""
-                             file-name "\","
-                             (ast/line-number clause)
-                             ");" line-sep
-                             "fprintf(stderr, \"Expected Maybe, got %s\\n\", extractStr(type_name(empty_list, "
-                             (.c-var expr) ")));" line-sep
-                             "abort();" line-sep
-                             "}" line-sep]))))))
+        (let [checks (map (seq (.refs-map expr))
+                          (fn [[var refs]]
+                            (either (for [constraint (get (.constraints expr) var)
+                                          _ (< 0 refs)]
+                                      (runtime-check (update-var constraint var) top-type
+                                                     (ast/file-name clause) (ast/line-number clause)))
+                                    "")))]
+          (either (and (or (= MaybeType (expr-type-num expr))
+                           (= "" (.c-var expr)))
+                       (maybe (.init expr [checks (.init expr)])))
+                  (.init expr [checks
+                               (.init expr)
+                               "if (" (.c-var expr) "->type != MaybeType) {" line-sep
+                               "fprintf(stderr, \"Wrong type of result returned at %s, line %d\\n\", \""
+                               file-name "\","
+                               (ast/line-number clause)
+                               ");" line-sep
+                               "fprintf(stderr, \"Expected Maybe, got %s\\n\", extractStr(type_name(empty_list, "
+                               (.c-var expr) ")));" line-sep
+                               "abort();" line-sep
+                               "}" line-sep])))))))
 
 (extend-type rdr/tagged-symbol
   EmitCond
@@ -4146,9 +4156,7 @@
     clause-inits))
 
 (defn emit-cond-expr [cond-test result-var clauses tail-return]
-  (map (-> clauses
-           (filter produces-code?)
-           (traverse emit-cond-clause))
+  (map (traverse clauses emit-cond-clause)
        (fn [evalled-clauses]
          (let [refs-map (clause-refs evalled-clauses result-var)
                [first-clause] evalled-clauses]
@@ -4185,7 +4193,8 @@
   (emit [ast]
     (for [result-var (genlocal "andRslt")
           expr (emit-cond-expr "if (isNothing(" result-var
-                               (.clauses ast) (str "return(nothing);" line-sep))]
+                               (filter (.clauses ast) produces-code?)
+                               (str "return(nothing);" line-sep))]
       expr)))
 
 
@@ -4237,7 +4246,8 @@
   Emitter
   (emit [ast]
     (for [result-var (genlocal "orRslt")
-          expr (emit-cond-expr "if (!isNothing(" result-var (.clauses ast)
+          expr (emit-cond-expr "if (!isNothing(" result-var
+                               (filter (.clauses ast) produces-code?)
                                (str "return(" result-var ");" line-sep))]
       expr)))
 
@@ -4317,8 +4327,10 @@
   Emitter
   (emit [ast]
     (for [result-var (genlocal "eitherRslt")
-          cond-val (emit (.clause ast))
-          alt-val (emit (.alt ast))]
+          cond-val (emit-cond-clause (.clause ast))
+          syms get-syms
+          alt-val (emit (.alt ast))
+          _ (set-syms syms)]
       (let [cond-rslt (.c-var cond-val)
             refs-map (-> (merge-with + (.refs-map cond-val) (.refs-map alt-val))
                          (filter-vals (partial < 0)))]
@@ -4613,8 +4625,7 @@
 
 
 (deftype constraint-ast [constraint ast]
-  ;; TODO; re-enable
-  ;; (assert (instance? SymbolConstraints constraint))
+   (assert (instance? SymbolConstraints constraint))
 
   Stringable
   (string-list [_]
@@ -4821,9 +4832,14 @@
                                                              [(ast/call-ast reified-type-args-sym
                                                                             [type-value])
                                                               field-index])])
-                  extract-field (either (map (= top-type field-constraint)
-                                             (fn [_]
-                                               [extract-field]))
+                  extract-field (either (or (map (= top-type field-constraint)
+                                                 (fn [_]
+                                                   [extract-field]))
+                                            (map (instance? MultiConstraint field-constraint)
+                                                 (fn [mc]
+                                                   (map (.constraints mc)
+                                                        (fn [c]
+                                                          (constraint-ast c extract-field))))))
                                         [(constraint-ast field-constraint extract-field)])
                   set-field [(update-sym field-constraint field)
                              (constraint-ast constraint
@@ -5389,14 +5405,6 @@
                                               (grmr/get-value 'project-directory))))
                (grmr/apply-fn send-to-emitter
                               rdr/top-level)))))
-
-(defn gather-types [context file-name]
-  (update-context context
-                  (comp (for [types (sm/get-in-val [.modules file-name .types])
-                              expr (encode types "types_")
-                              _ (sm/assoc-in-val [.modules file-name .values types-sym] expr)]
-                          '_)
-                        (sm/state-maybe '_))))
 
 (defn load-core [modules]
   (either (or (and (get modules 'core)

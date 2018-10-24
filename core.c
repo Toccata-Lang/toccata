@@ -1933,7 +1933,6 @@ Value *listMap(Value *arg0, Value *f) {
       arity2 = findFnArity(f, 1);
       if(arity2 == (FnArity *)0) {
         fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
-	// TODO: soft abort?
         abort();
       }
     }
@@ -1953,8 +1952,6 @@ Value *listMap(Value *arg0, Value *f) {
       }
 
       // 'y' is the value for the new list
-      // TODO: abort if y is abort value
-
       if (head == empty_list) {
         // if we haven't started the new list yet
         head = malloc_list();
@@ -2343,7 +2340,6 @@ Value *fnApply(Value *arg0, Value *arg1) {
   if (_arity == (FnArity *)0) {
     fprintf(stderr, "\n*** no arity of '%s' found to apply to %" PRId64 " args\n",
             ((Function *)arg0)->name, argList->len);
-    // TODO: soft abort?
     abort();
   } else if(_arity->variadic) {
     FnType1 *_fn = (FnType1 *)_arity->fn;
@@ -2551,7 +2547,6 @@ Value *maybeMap(Value *arg0, Value *arg1) {
       rslt6 = fn5(arity3->closures, (Value *)varArgs4);
     } else {
       fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
-      // TODO: soft abort?
       abort();
     }
   }
@@ -2849,7 +2844,6 @@ Value *dynamicCall2Arg(Value *f, Value *arg0, Value *arg1) {
       rslt = fn(arity->closures, (Value *)dynArgs);
     } else {
       fprintf(stderr, "\n*** Invalid function for string reduction.\n");
-      // TODO: soft abort?
       abort();
     }
     dec_and_free(f, 1);
@@ -3041,7 +3035,6 @@ Value *listFilter(Value *arg0, Value *arg1) {
       arity2 = findFnArity(arg1, 1);
       if(arity2 == (FnArity *)0) {
 	fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
-	// TODO: soft abort?
 	abort();
       }
     }
@@ -3062,8 +3055,6 @@ Value *listFilter(Value *arg0, Value *arg1) {
       }
 
       // 'y' is the filter maybe/nothing value
-      // TODO: abort if y is abort value
-
       if (!isNothing(y, "", 0)) {
 	incRef(x, 1);
 	if (head == empty_list) {
@@ -3780,7 +3771,6 @@ Value *dynamicCall1Arg(Value *f, Value *arg) {
       rslt = fn(arity->closures, (Value *)dynArgs);
     } else {
       fprintf(stderr, "\n*** Invalid action for Promise.\n");
-      // TODO: soft abort?
       abort();
     }
     dec_and_free(f, 1);
@@ -4120,7 +4110,6 @@ FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64
   }
   fprintf(stderr, "\n*** Could not find implementation of '%s' with %" PRId64 
 	  " arguments for type: (%" PRId64 ")\n", ((SubString *)fnSym)->buffer, argCount, dispType);
-  // TODO: soft abort?
   abort();
 }
 
