@@ -1,5 +1,7 @@
 
-(add-ns c (module "constraints.toc"))
+(add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
+                          "constraints.toc"
+                          :sha "b7c2946"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "f7b5678"))
@@ -130,11 +132,6 @@
                      'Opaque OpaqueType
                      'TypeCount TypeCount})
 
-(def fn-constraint (c/TypeConstraint {FunctionType #{}} empty-list 'Fn nothing ""))
-(def sym-constraint (c/TypeConstraint {SymbolType #{}} empty-list 'Symbol nothing ""))
-(def vect-constraint (c/TypeConstraint {VectorType #{}} empty-list 'Vector nothing ""))
-(def list-constraint (c/TypeConstraint {ListType #{}} empty-list 'List nothing ""))
-
 (deftype TypeInfo [sym type-map]
   (assert (instance? HashMap type-map))
 
@@ -162,6 +159,14 @@
                  FutureType (TypeInfo 'Future {FutureType #{}})
                  AgentType (TypeInfo 'Agent {AgentType #{}})
                  OpaqueType (TypeInfo 'Opaque {OpaqueType #{}})})
+
+(def fn-constraint (c/TypeConstraint {FunctionType #{}} empty-list 'Fn nothing ""))
+(def sym-constraint (c/TypeConstraint {SymbolType #{}} empty-list 'Symbol nothing ""))
+(def vect-constraint (c/TypeConstraint {VectorType #{}} empty-list 'Vector nothing ""))
+(def list-constraint (c/TypeConstraint {ListType #{}} empty-list 'List nothing ""))
+(def string-constraint (c/TypeConstraint {StringBufferType #{}} empty-list 'String nothing ""))
+(def int-constraint (c/TypeConstraint {IntegerType #{}} empty-list 'Integer nothing ""))
+(def maybe-constraint  (c/TypeConstraint {MaybeType #{}} empty-list 'Maybe nothing ""))
 
 (def sm-space (sm/state-maybe ""))
 
@@ -328,6 +333,7 @@
 (defprotocol C-Code
   (expr-constraints [expr]
     (assert-result x (instance? c/Constraints x)))
+
   (collapse-expressions* [x y]))
 
 (defn expr-type-num [expr]
@@ -366,25 +372,14 @@
 
 (def empty-c-code (empty-code "" [] [] {} {}))
 
-(defn conflicting-assertions [constraints file-name line-number]
-  (apply print-err (list* "Conflicting assertions"
-                           (either (= "" file-name)
-                                   (str "at " file-name ": " line-number))
-                           "\n"
-                           (c/format-path (c/MultiConstraint constraints) 0)))
-  (abort))
+(defn merge-constraint-maps [file-name line-number x y]
+  (assert (instance? HashMap x))
+  (assert (instance? HashMap y))
 
-(defn compose-constraints [file-name line-number x y]
-  (assert (instance? c/Constraints x))
-  (assert (instance? c/Constraints y))
-
-  (let [z (comp x y)]
-    (and (= c/bottom-type z)
-         (let [constraints (either (and (< 1 (count (.constraints z)))
-                                        (maybe (.constraints z)))
-                                   [x y])]
-           (maybe (conflicting-assertions constraints file-name line-number))))
-    z))
+  (merge-with (fn [x-constraint y-constraint]
+                (either (c/compose-constraints file-name line-number x-constraint y-constraint)
+                        (abort)))
+              x y))
 
 (deftype c-code [c-var init decl refs-map constraints]
   (assert (instance? Sequence init))
@@ -572,11 +567,6 @@
                   c-param
                   c-init))
 
-(defn add-constraint [expr constraint file-name line-number]
-  (let [constraints (either (get-in expr [.constraints (.c-var expr)])
-                            c/top-type)]
-    (.constraints expr {(.c-var expr) (compose-constraints file-name line-number constraints constraint)})))
-
 (extend-type empty-code
   Composition
   (comp* [x xs]
@@ -623,8 +613,8 @@
           refs-map (assoc refs-map (.c-var x) 0)]
       (c-code (.c-var y)
               init [(.decl x) (.decl y)] refs-map
-              (merge-with (partial compose-constraints (.file-name x) (.line-number x))
-                          (.constraints x) (.constraints y))))))
+              (merge-constraint-maps (ast/file-name x) (ast/line-number x)
+                                     (.constraints x) (.constraints y))))))
 
 (extend-type c-init
   Composition
@@ -661,8 +651,8 @@
                 (.init y)]
           refs-map (dissoc (merge-with + (.refs-map x) (.refs-map y))
                            c-var)
-          constraints-map (merge-with (partial compose-constraints file-name line-number)
-                                      (.constraints x) (.constraints y))]
+          constraints-map (merge-constraint-maps file-name line-number
+                                                 (.constraints x) (.constraints y))]
       (-> y
           (.init init)
           (.decl [(.decl x) (.decl y)])
@@ -1129,11 +1119,6 @@
                      (abort)))))))))
 
 (extend-type c/ItemsConstraint
-  c/Constraint
-  (c/extract-type-map [_]
-    (maybe {ListType #{}
-            VectorType #{}}))
-
   Emitter
   (runtime-check [constraint value-info sym-location]
     (either (and (c/satisfied-by constraint value-info)
@@ -1237,32 +1222,18 @@
       (either (map (.sym constraint)
                    (fn [sym]
                      (for [sym-info (lookup-sym sym)
-                           :let [var (.constraints sym-info (merge-with (partial compose-constraints
-                                                                                 file-name line-number)
-                                                                        (.constraints sym-info)
-                                                                        {(.c-var sym-info)
-                                                                         (c/update-var constraint (.c-var sym-info))}))]
+                           :let [var (.constraints sym-info
+                                                   (merge-constraint-maps file-name line-number
+                                                                          (.constraints sym-info)
+                                                                          {(.c-var sym-info)
+                                                                           (c/update-var constraint (.c-var sym-info))}))]
                            _ (set-sym sym var)]
                        (.refs-map var (dissoc (.refs-map sym-info) (.c-var sym-info))))))
               (sm/state-maybe empty-c-code))))
 
   Assertion
   (assertion? [constraint]
-    (maybe constraint))
-
-  c/Constraint
-  (c/update-path [constraint file-name line-number]
-    (let [file-name (either (and (= file-name 'core)
-                                 (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)
-          new-path (either (for [[top-file top-line] (first (.path constraint))
-                                 _ (and (= top-line line-number)
-                                        (= top-file file-name))]
-                             (.path constraint))
-                           (cons [file-name line-number] (.path constraint)))]
-      (either (and (= "" file-name)
-                   (maybe constraint))
-              (.path constraint new-path)))))
+    (maybe constraint)))
 
 (extend-type c/FieldConstraint
   Emitter
@@ -1273,10 +1244,10 @@
                    (fn [sym]
                      (for [sym-info (lookup-sym sym)
                            field-var (lookup-sym (.field constraint))
-                           :let [var (.constraints sym-info (merge-with (partial compose-constraints
-                                                                                 file-name line-number)
-                                                                        (.constraints sym-info)
-                                                                        {(.c-var sym-info)
+                           :let [var (.constraints sym-info
+                                                   (merge-constraint-maps file-name line-number
+                                                                          (.constraints sym-info)
+                                                                          {(.c-var sym-info)
                                                                          (-> constraint
                                                                              (.field-var (.c-var field-var))
                                                                              (c/update-var (.c-var sym-info)))}))]
@@ -1579,8 +1550,7 @@
                       str-ptr (str "strPtr" str-idx)]
                 _ (sm/assoc-in-val [.constants .strings str-val]
                                    (c-static-str str-ptr [] [] {}
-                                                 {str-ptr (c/TypeConstraint {StringBufferType #{}} empty-list
-                                                                          'String nothing str-ptr)}
+                                                 {str-ptr (.var string-constraint str-ptr)}
                                                  str-sym))]
             (c-static-str str-ptr
                           []
@@ -1593,7 +1563,7 @@
                            "];\n} " str-sym " = {StringBufferType, -1, "
                            str-len ", 0, \"" (escape-chars str-val) "\"};\n"
                            "Value *" str-ptr " = (Value *)&" str-sym ";\n"]
-                          {} {str-ptr (c/TypeConstraint {StringBufferType #{}} empty-list 'String nothing str-ptr)}
+                          {} {str-ptr (.var string-constraint str-ptr)}
                           str-sym)))))
 
 (defn get-type-info [path type-symbol]
@@ -1773,9 +1743,9 @@
     ;; TODO: periodically enable this to check on things
     ;; (print-err 'check (some return-assertions assert-return-type) return-type
     ;;            (ast/file-name ast) (ast/line-number ast))
-    (merge-with (partial compose-constraints "" 0)
-                (.constraints expr)
-                {(.c-var expr) result-constraint})
+    (merge-constraint-maps "" 0
+                           (.constraints expr)
+                           {(.c-var expr) result-constraint})
     (collapse-expressions [expr
                            (c-code (.c-var expr)
                                    ["return(" (.c-var expr) ");" line-sep]
@@ -1838,14 +1808,12 @@
               num-ptr (str "numPtr" num-idx)]
         _ (sm/assoc-in-val [.constants .numbers num]
                            (c-static-int num-ptr [] [] {}
-                                         {num-ptr (c/TypeConstraint {IntegerType #{}} empty-list 'Integer nothing
-                                                                  num-ptr)}
+                                         {num-ptr (.var int-constraint num-ptr)}
                                          num-sym))]
     (c-static-int num-ptr []
                   ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
                    "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
-                  {} {num-ptr (c/TypeConstraint {IntegerType #{}} empty-list 'Integer nothing
-                                              num-ptr)}
+                  {} {num-ptr (.var int-constraint num-ptr)}
                   num-sym)))
 
 (extend-type Integer
@@ -1978,9 +1946,10 @@
                                      (fn [[ast var constraint]]
                                        (let [constraint (c/update-path constraint file-name line-number)
                                              constraints (c/update-path (expr-constraints var) file-name line-number)
-                                             new-const (compose-constraints file-name line-number
-                                                                            constraint
-                                                                            constraints)]
+                                             new-const (either (c/compose-constraints file-name line-number
+                                                                                      constraint
+                                                                                      constraints)
+                                                               (abort))]
                                          (comp (for [_ (constrain-sym ast constraint)]
                                                  {(.c-var var) new-const})
                                                (sm/state-maybe {(.c-var var) new-const})))))]
@@ -2046,8 +2015,9 @@
 
   (constrain-sym [sym constraint]
     (for [var (sm/get-in-val [.fn-context .syms sym])
-          :let [constraint (-> (compose-constraints (ast/file-name sym) (ast/line-number sym)
-                                                    constraint (expr-constraints var))
+          :let [constraint (-> (either (c/compose-constraints (ast/file-name sym) (ast/line-number sym)
+                                                              constraint (expr-constraints var))
+                                       (abort))
                                (c/update-var (str (.c-var var)))
                                (c/update-sym sym))]
           _ (set-sym sym (.constraints var {(.c-var var) constraint}))]
@@ -2131,8 +2101,9 @@
 
   (constrain-sym [sym constraint]
     (for [var (sm/get-in-val [.fn-context .syms sym])
-          :let [constraint (-> (compose-constraints (ast/file-name sym) (ast/line-number sym)
-                                                    constraint (expr-constraints var))
+          :let [constraint (-> (either (c/compose-constraints (ast/file-name sym) (ast/line-number sym)
+                                                              constraint (expr-constraints var))
+                                       (abort))
                                (c/update-var (str (.c-var var)))
                                (c/update-sym sym))
                 type-num (either (for [type-nums (c/extract-type-map constraint)
@@ -2328,9 +2299,10 @@
                (.c-var args-list) ");" line-sep]
               [] {}
               (assoc-all arg-consts
-                         (.c-var args-list) (compose-constraints file-name line-number
-                                                                 (.param-constraints arity-info)
-                                                                 (expr-constraints args-list))
+                         (.c-var args-list) (either (c/compose-constraints file-name line-number
+                                                                           (.param-constraints arity-info)
+                                                                           (expr-constraints args-list))
+                                                    (abort))
                          result-sym (.result-constraint arity-info))
               (ast/file-name ast) (ast/line-number ast)))))
 
@@ -2831,9 +2803,6 @@
           bound-var (bind (.binding ast) val-var)]
       bound-var)))
 
-(defn merge-constraints [c1 c2]
-  (comp c1 c2))
-
 (extend-type ast/let-ast
   Emitter
   (emit [ast]
@@ -2854,8 +2823,8 @@
           _ (set-syms locals)]
       (let [constraints (reduce moar-constraints (.constraints code)
                                 (fn [m1 m2]
-                                  (merge-with (partial compose-constraints (ast/file-name ast) (ast/line-number ast))
-                                              m1 m2)))]
+                                  (merge-constraint-maps (ast/file-name ast) (ast/line-number ast)
+                                                         m1 m2)))]
         (c-init result-var
                 [(.init code)
                  (either (= "" result-var)
@@ -3607,7 +3576,7 @@
                    (map evalled-clauses .decl)
                    refs-map
                    (assoc (.constraints first-clause)
-                     result-var (c/TypeConstraint {MaybeType #{}} empty-list 'Maybe nothing result-var))
+                     result-var (.var maybe-constraint result-var))
                    (ast/file-name clauses) (ast/line-number clauses))))))
 
 (deftype TailAnd [clauses]
@@ -3756,7 +3725,7 @@
                 (comp (.decl cond-val) (.decl alt-val))
                 refs-map
                 {result-var result-constraint
-                 (.c-var cond-val) (c/TypeConstraint {MaybeType #{}} empty-list 'Maybe nothing (.c-var cond-val))})))))
+                 (.c-var cond-val) (.var maybe-constraint (.c-var cond-val))})))))
 
 (extend-type ast/either-ast
   Emitter
@@ -3785,7 +3754,7 @@
                  result-var " = " (.c-var alt-val) ";" line-sep
                  "}" line-sep]
                 (comp (.decl cond-val) (.decl alt-val)) refs-map
-                {(.c-var cond-val) (c/TypeConstraint {MaybeType #{}} empty-list 'Maybe nothing (.c-var cond-val))}
+                {(.c-var cond-val) (.var maybe-constraint (.c-var cond-val))}
                 (ast/file-name ast) (ast/line-number ast)))))
 
   (tail-call [ast params result-constraint]
@@ -4094,9 +4063,14 @@
 
   (emit [_]
     (for [expr (emit ast)]
-      (add-constraint expr
-                      (c/update-path constraint (ast/file-name ast) (ast/line-number ast))
-                      (ast/file-name ast) (ast/line-number ast)))))
+      (let [constraint (c/update-path constraint (ast/file-name ast) (ast/line-number ast))
+            file-name (ast/file-name ast)
+            line-number (ast/line-number ast)
+            constraints (either (get-in expr [.constraints (.c-var expr)])
+                                c/top-type)]
+        (.constraints expr {(.c-var expr) (either (c/compose-constraints file-name line-number
+                                                                         constraints constraint)
+                                                  (abort))})))))
 
 (defn constructor-expr [new-type-name new-type-constraint type-val-sym fields assertions]
   (assert (instance? c/TypeConstraint new-type-constraint))
@@ -4369,9 +4343,8 @@
                                                  (fn [c]
                                                    {(.sym (.assertion assertion)) c}))))
                   :let [field-map (reduce field-maps {} (fn [m field-map]
-                                                          (merge-with (partial compose-constraints
-                                                                               file-name line-number)
-                                                                      m field-map)))
+                                                          (merge-constraint-maps file-name line-number
+                                                                                 m field-map)))
                         field-constraints (c/ItemsConstraint
                                            (map fields (fn [field]
                                                          (either (get field-map field)
