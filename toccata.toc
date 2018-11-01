@@ -42,7 +42,7 @@
   (send string-writer (fn [_]
                         (write-str strs))))
 
-(def Tagged (comp ast/SymbolOrString
+(def Tagged (comp Symbol
                   rdr/tagged-symbol))
 
 (def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
@@ -164,7 +164,8 @@
 (def sym-constraint (c/TypeConstraint {SymbolType #{}} empty-list 'Symbol nothing ""))
 (def vect-constraint (c/TypeConstraint {VectorType #{}} empty-list 'Vector nothing ""))
 (def list-constraint (c/TypeConstraint {ListType #{}} empty-list 'List nothing ""))
-(def string-constraint (c/TypeConstraint {StringBufferType #{}} empty-list 'String nothing ""))
+(def string-constraint (c/TypeConstraint {StringBufferType #{} SubStringType #{}}
+                                         empty-list 'String nothing ""))
 (def int-constraint (c/TypeConstraint {IntegerType #{}} empty-list 'Integer nothing ""))
 (def maybe-constraint  (c/TypeConstraint {MaybeType #{}} empty-list 'Maybe nothing ""))
 
@@ -283,8 +284,8 @@
     nothing))
 
 (defn destruct-seq [seq-c-var elem-c-vars dest-args file-name line-num]
-  (assert (instance? Tagged seq-c-var))
-  (assert (instance? Tagged dest-args))
+  (assert (instance? String seq-c-var))
+  (assert (instance? String dest-args))
 
   (let [elem-count (count elem-c-vars)]
     [(map elem-c-vars (fn [var]
@@ -353,6 +354,7 @@
 ;; refs-map: map of C variables that are used in 'init' and how many times
 
 (deftype empty-code [c-var init decl refs-map constraints]
+  (assert (instance? String c-var))
   (assert (instance? Sequence init))
   (assert (instance? Sequence decl))
   (assert (instance? HashMap refs-map))
@@ -477,6 +479,18 @@
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
           (str constraints) ">")))
 
+(deftype c-static-arity [c-var init decl refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? HashMap refs-map))
+  (assert (instance? HashMap constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Arity " (str c-var) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
+          (str constraints) ">")))
+
 (deftype c-static-fn [c-var init decl refs-map constraints c-struct]
   (assert (instance? Sequence init))
   (assert (instance? Sequence decl))
@@ -508,6 +522,7 @@
                           c-list-fn
                           c-vector-fn
                           c-static-fn
+                          c-static-arity
                           c-protocol-fn
                           c-static-val))
 
@@ -548,6 +563,7 @@
 
 ;; same as 'c-code', but defines a function parameter
 (deftype c-param [c-var init decl refs-map constraints file-name line-number]
+  (assert (instance? String c-var))
   (assert (instance? Sequence init))
   (assert (instance? Sequence decl))
   (assert (instance? HashMap refs-map))
@@ -1168,24 +1184,26 @@
   (runtime-check [constraint value-info sym-location]
     []))
 
-(extend-type c/TypeConstraint
-  Emitter
-  (runtime-check [constraint value-info sym-location]
-    (either (and (c/satisfied-by constraint value-info)
-                 (maybe ""))
-            ["switch (" (.var constraint) "->type) {" 
-             (map (keys (.type-maps constraint)) (fn [type-num]
-                                                   ["case " type-num ": " ]))
-             "break; default:"
-             "\n#ifndef EMBEDDED\n"
-             "fprintf(stderr, \"Invalid type of value for '"
-             (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");\n"
-             "fprintf(stderr, \"Needed " (str (.type-sym constraint))
-             ", got %s\\n\", extractStr(type_name(empty_list, " (.var constraint) ")));" 
-             "fprintf(stderr, \""
-             (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
-             "\\n\");"
-             "\n#endif\nabort();" "}" ])))
+(defn get-type-info [path type-symbol]
+  (sm/new-sm (fn [s]
+               (assert (instance? GlobalContext s))
+               (let [modules (.modules s)]
+                 (for [type-num (or (flat-map (get modules path)
+                                              (fn [module]
+                                                (get (.types module) type-symbol)))
+                                    (flat-map (get modules 'core)
+                                              (fn [module]
+                                                (get (.types module) type-symbol))))
+                       type-map (get-in s [.type-maps type-num .type-map])]
+                   [type-map s])))))
+
+(defn get-type-sym-info [type-symbol]
+  (assert (instance? Maybe type-symbol))
+  (comp (for [type-symbol (sm/when type-symbol)
+              ns-path (sym-ns-path type-symbol)
+              type-info (get-type-info ns-path type-symbol)]
+          type-info)
+        (sm/state-maybe {})))
 
 (extend-type c/ResultConstraint
   Emitter
@@ -1234,6 +1252,78 @@
   Assertion
   (assertion? [constraint]
     (maybe constraint)))
+
+(extend-type c/TypeConstraint
+  Emitter
+  (to-constraint [ast]
+    (map (get-type-sym-info (maybe (.type-sym ast)))
+         (fn [type-info]
+           (either (and (empty? type-info)
+                        (maybe c/top-type))
+                   (.type-maps ast type-info)))))
+
+  (emit [ast]
+    (either (map (.sym ast)
+                 (fn [sym]
+                   (for [constraint (map (get-type-sym-info (maybe (.type-sym ast)))
+                                         (fn [type-info]
+                                           (either (and (empty? type-info)
+                                                        (maybe c/top-type))
+                                                   (.type-maps ast type-info))))
+                         _ (constrain-sym sym constraint)
+                         var (lookup-sym sym)]
+                     (c-code "" [] [] {} (.constraints var)))))
+            (sm/state-maybe empty-c-code)))
+
+  (runtime-check [constraint value-info sym-location]
+    (either (and (c/satisfied-by constraint value-info)
+                 (maybe ""))
+            ["switch (" (.var constraint) "->type) {" 
+             (map (keys (.type-maps constraint)) (fn [type-num]
+                                                   ["case " type-num ": " ]))
+             "break; default:"
+             "\n#ifndef EMBEDDED\n"
+             "fprintf(stderr, \"Invalid type of value for '"
+             (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");\n"
+             "fprintf(stderr, \"Needed " (str (.type-sym constraint))
+             ", got %s\\n\", extractStr(type_name(empty_list, " (.var constraint) ")));" 
+             "fprintf(stderr, \""
+             (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
+             "\\n\");"
+             "\n#endif\nabort();}"])))
+
+(extend-type c/MaxValue
+  Emitter
+  (to-constraint [ast]
+    (sm/state-maybe ast))
+
+  (emit [ast]
+    (either (map (.sym ast)
+                 (fn [sym]
+                   (for [_ (constrain-sym sym ast)
+                         var (lookup-sym sym)]
+                     (c-code "" [] [] {} (.constraints var)))))
+            (sm/state-maybe empty-c-code)))
+
+  (runtime-check [constraint value-info sym-location]
+    ;; TODO: checking the type here actually results in two checks back-to-back for
+    ;; runtime-tests/int-too-large.toc
+    (either (and (c/satisfied-by constraint value-info)
+                 (maybe ""))
+            [(-> int-constraint
+                 (.var (.var constraint))
+                 (.sym (.sym constraint))
+                 (runtime-check value-info sym-location))
+             "if (" (str (.max constraint)) " < ((Integer *)" (.var constraint) ")->numVal) {"
+             "\n#ifndef EMBEDDED\n"
+             "fprintf(stderr, \"Value of '" (either (.sym constraint) "<unknown>")
+             "' is too large %s\\n\", " sym-location ");\n"
+             "fprintf(stderr, \"Maximum allowed value is " (str (.max constraint))
+             ", got %\" PRId64 \"\\n\", ((Integer *)" (.var constraint) ")->numVal);\n"
+             "fprintf(stderr, \""
+             (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
+             "\\n\");"
+             "\n#endif\nabort();}"])))
 
 (extend-type c/FieldConstraint
   Emitter
@@ -1566,27 +1656,6 @@
                           {} {str-ptr (.var string-constraint str-ptr)}
                           str-sym)))))
 
-(defn get-type-info [path type-symbol]
-  (sm/new-sm (fn [s]
-               (assert (instance? GlobalContext s))
-               (let [modules (.modules s)]
-                 (for [type-num (or (flat-map (get modules path)
-                                              (fn [module]
-                                                (get (.types module) type-symbol)))
-                                    (flat-map (get modules 'core)
-                                              (fn [module]
-                                                (get (.types module) type-symbol))))
-                       type-map (get-in s [.type-maps type-num .type-map])]
-                   [type-map s])))))
-
-(defn get-type-sym-info [type-symbol]
-  (assert (instance? Maybe type-symbol))
-  (comp (for [type-symbol (sm/when type-symbol)
-              ns-path (sym-ns-path type-symbol)
-              type-info (get-type-info ns-path type-symbol)]
-          type-info)
-        (sm/state-maybe {})))
-
 (defn type-constraint [type-num file-name line-number]
   (comp (for [type-info (sm/get-in-val [.type-maps type-num])]
           (either (and (empty? (.type-map type-info))
@@ -1660,39 +1729,6 @@
         emit))
 
   (tail-call [ast params result-constraint] ast))
-
-(extend-type ast/type-assertion
-  Emitter
-  (replace-bound-vars [ast subs]
-    (.sym ast (either (get subs (.sym ast))
-                      (.sym ast))))
-
-  (replace-syms [ast subs]
-    (sm/state-maybe (.sym ast (either (get subs (.sym ast))
-                                      (.sym ast)))))
-
-  (to-constraint [ast]
-    (let [sym (.type-sym ast)
-          file-name (ast/file-name ast)
-          line-number (ast/line-number ast)]
-      (comp (map (get-type-sym-info (maybe sym))
-                 (fn [type-info]
-                   (either (and (empty? type-info)
-                                (maybe c/top-type))
-                           (-> type-info
-                               (c/TypeConstraint empty-list sym nothing "")
-                               (c/update-path file-name line-number)))))
-            (sm/state-maybe c/top-type))))
-
-  (emit [ast]
-    (for [constraint (to-constraint ast)
-          _ (constrain-sym (.sym ast) constraint)
-          var (lookup-sym (.sym ast))]
-      (c-code "" [] [] {} (.constraints var))))
-
-  Assertion
-  (assert-type [ast]
-    (maybe (.type-sym ast))))
 
 (extend-type ast/min-count-assertion
   Emitter
@@ -1808,7 +1844,9 @@
               num-ptr (str "numPtr" num-idx)]
         _ (sm/assoc-in-val [.constants .numbers num]
                            (c-static-int num-ptr [] [] {}
-                                         {num-ptr (.var int-constraint num-ptr)}
+                                         {num-ptr (comp (.var int-constraint num-ptr)
+                                                        (c/StaticIntConstraint num empty-list
+                                                                               nothing num-ptr))}
                                          num-sym))]
     (c-static-int num-ptr []
                   ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
@@ -2008,11 +2046,8 @@
       (ast/let-ast [(ast/binding dispatch-sym dispatch-val)]
                    (vec body-exprs)))))
 
-(extend-type rdr/tagged-symbol
+(extend-type Tagged
   Emitter
-  (encode-static [x]
-    (emit (ast/quoted-ast (.sym x))))
-
   (constrain-sym [sym constraint]
     (for [var (sm/get-in-val [.fn-context .syms sym])
           :let [constraint (-> (either (c/compose-constraints (ast/file-name sym) (ast/line-number sym)
@@ -2093,89 +2128,15 @@
   (replace-bound-vars [ast subs]
     (get subs ast ast)))
 
+(extend-type rdr/tagged-symbol
+  Emitter
+  (encode-static [x]
+    (emit (ast/quoted-ast (.sym x)))))
 
 (extend-type Symbol
   Emitter
   (encode-static [sym]
-    (emit (ast/quoted-ast sym)))
-
-  (constrain-sym [sym constraint]
-    (for [var (sm/get-in-val [.fn-context .syms sym])
-          :let [constraint (-> (either (c/compose-constraints (ast/file-name sym) (ast/line-number sym)
-                                                              constraint (expr-constraints var))
-                                       (abort))
-                               (c/update-var (str (.c-var var)))
-                               (c/update-sym sym))
-                type-num (either (for [type-nums (c/extract-type-map constraint)
-                                       :when (= 1 (count type-nums))
-                                       type-num (first (keys type-nums))]
-                                   type-num)
-                                 UnknownType)]
-          _ (set-sym sym (-> var
-                             (.constraints {(.c-var var) constraint})))]
-      constraint))
-
-  (get-param-constraints [sym constraint-map]
-    (for [expr (lookup-sym sym)]
-      (-> (either (get constraint-map (.c-var expr))
-                  c/top-type)
-          (c/update-var (.c-var expr))
-          (c/update-sym sym))))
-
-  (bind [binding]
-    (for [arg-var (genlocal binding "arg")
-          :let [arg-var (str arg-var)
-                arg (c-code arg-var [] [] {arg-var 1} {})]
-          _ (comp (redef-proto-fn-error binding)
-                  (set-sym binding arg))]
-      (ParamBinding [arg-var] [])))
-
-  (bind [binding evalled]
-    (assert (instance? C-expr evalled))
-
-    (for [arg-var (genlocal binding "arg")
-          :let [arg-var (str arg-var)
-                constraint (expr-constraints evalled)
-                evalled (-> evalled
-                            (.c-var arg-var)
-                            (.constraints (assoc (.constraints evalled)
-                                            arg-var constraint))
-                            (.init [(.init evalled) "Value *" arg-var " = "
-                                    (.c-var evalled) ";" line-sep]))
-                evalled-ref (c-code (.c-var evalled) [] []
-                                    {(.c-var evalled) 1}
-                                    {(.c-var evalled) constraint})]
-          _ (comp (redef-proto-fn-error binding)
-                  (set-sym binding evalled-ref))]
-      (either (and (empty? (.init evalled))
-                   (maybe (ParamBinding [(.c-var evalled)] [evalled])))
-              (ParamBinding [(.c-var evalled)]
-                            [(c-init (.c-var evalled) (.init evalled) (.decl evalled)
-                                     (.refs-map evalled)
-                                     (.constraints evalled)
-                                     (ast/file-name binding) (ast/line-number binding))]))))
-
-  (emit [sym]
-    (lookup-sym sym))
-
-  (replace-syms [ast subs]
-    (sm/state-maybe (get subs ast ast)))
-
-  (inline-expr [name arg-asts]
-    (let [args (filter arg-asts produces-code?)
-          num-args (count args)]
-      (either (or (and (< 0 num-args)
-                       (or (= name 'wrap)
-                           (= name 'apply))
-                       (maybe (inline-wrap-and-apply name args)))
-                  (and (= 2 num-args)
-                       (or (= name 'flat-map)
-                           (= name 'map))
-                       (maybe (inline-flat-map name args))))
-              (zero sm/state-maybe))))
-
-  (replace-bound-vars [ast subs]
-    (get subs ast ast)))
+    (emit (ast/quoted-ast sym))))
 
 (extend-type ast/inline-ast
   Emitter
@@ -2755,9 +2716,10 @@
                       (ParamBinding [(.c-var list-var)]
                                     (comp [list-var
                                            (c-code ""
-                                                   (destruct-seq (.c-var list-var)
+                                                   ;; TODO: remove call to 'str' for the c-var
+                                                   (destruct-seq (str (.c-var list-var))
                                                                  (conj fixed-vars tail-var)
-                                                                 dest-args file-name line-num)
+                                                                 (str dest-args) file-name line-num)
                                                    [] {(.c-var list-var) 1} {})]
                                           (conj fixed-exprs tail-expr)
                                           (flat-map fixed-bindings .destruct)
@@ -3042,8 +3004,8 @@
                                       ["Value *" checking-fn-var
                                        "(List *closures, Value *args) {\n"
                                        line
-                                       (destruct-seq 'args (.vars param-vars)
-                                                     dest-args file-name line-number)
+                                       (destruct-seq "args" (.vars param-vars)
+                                                     (str dest-args) file-name line-number)
                                        "return(" arity-fn-var
                                        "(closures, args));\n};\n"]
                                       [] {} {})))
@@ -3181,25 +3143,25 @@
         (StaticArity fn-var c-fn (either (and (.variadic params)
                                               (maybe'variadic))
                                          (count params))
-                     (c-code (ArityValPtr (str "&" arity-var) arity-var) []
-                             [(.decl body)
-                              "Value *" c-fn "("
-                              (-> (.vars param-vars)
-                                  (map (fn [param] (str "Value *" param)))
-                                  (seq)
-                                  (conj "List *closures")
-                                  (interpose ", "))
-                              ") {\nwhile (1) {\n"
-                              (.init body)
-                              line-sep "};};\n"
-                              (.init checker-fn)
-                              "FnArity " arity-var " = {FnArityType, -1, "
-                              (count (.vars param-vars))
-                              ", (List *)0, " (either (and (.variadic params)
-                                                           (maybe "1"))
-                                                      "0")
-                              ", " (.c-var checker-fn) "};" line-sep]
-                             {} {})
+                     (c-static-arity (ArityValPtr (str "&" arity-var) arity-var) []
+                                     [(.decl body)
+                                      "Value *" c-fn "("
+                                      (-> (.vars param-vars)
+                                          (map (fn [param] (str "Value *" param)))
+                                          (seq)
+                                          (conj "List *closures")
+                                          (interpose ", "))
+                                      ") {\nwhile (1) {\n"
+                                      (.init body)
+                                      line-sep "};};\n"
+                                      (.init checker-fn)
+                                      "FnArity " arity-var " = {FnArityType, -1, "
+                                      (count (.vars param-vars))
+                                      ", (List *)0, " (either (and (.variadic params)
+                                                                   (maybe "1"))
+                                                              "0")
+                                      ", " (.c-var checker-fn) "};" line-sep]
+                                     {} {} arity-var)
                      param-constraints
                      result-constraint)))))
 
@@ -3244,6 +3206,7 @@
                  param-asserts (filter body assertion?)
                  fn-sym (rdr/tag fn-sym file-name line-number)]
              (for [fn-context (reset-fn-context)
+                   ;; _ (debug (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
                    result-constraint (map (-> body
                                               (filter return-assertion?)
                                               (map .assertion)
@@ -3278,7 +3241,9 @@
                    arity-info (comp (emit-closure-arity fn-sym fn-context c-fn params
                                                         param-vars body-exprs)
                                     (emit-static-arity fn-sym fn-context fn-var c-fn params
-                                                       param-vars result-constraint body-exprs))]
+                                                       param-vars result-constraint body-exprs))
+                   ;; _ (debug "============")
+                   ]
                arity-info)))))
 
 (deftype ProtoImplDeclaration [proto-sym fn-name arity-ast arity-var c-fn c-decl]
@@ -3854,7 +3819,7 @@
   (let [body (filter (.default-body prototype) produces-code?)
         body (either (and (empty? body)
                           (maybe (missing-impl-body protocol-sym fn-sym prototype)))
-                     (.default-body prototype))]
+                     body)]
     (for [arity-impl-var (global-var (str "Default_" fn-sym) "arityImpl")
           :let [arity-impl-var (ProtoDispFnPtr arity-impl-var)]
           static-arity (emit-fn-arity (rdr/tag (str "Default_" fn-sym)) disp-fn-var
@@ -4323,8 +4288,7 @@
                         type-num (extract rdr/type-counter)
                         type-map {type-num (-> fields
                                                (map (fn [name]
-                                                      (symbol
-                                                       (str "." name))))
+                                                      (symbol (str "." name))))
                                                set)}
                         new-type-constraint (c/TypeConstraint type-map (list [file-name line-number])
                                                             sym nothing "")]
@@ -4339,9 +4303,13 @@
                                                       field-assertions))
                   field-maps (ev/traverse field-assertions
                                           (fn [assertion]
+                                            ;; TODO: refactor how this all works after assertions are elminated
                                             (map (to-constraint (.assertion assertion))
                                                  (fn [c]
-                                                   {(.sym (.assertion assertion)) c}))))
+                                                   {(either (and (instance? Maybe (.sym (.assertion assertion)))
+                                                                 (.sym (.assertion assertion)))
+                                                            (.sym (.assertion assertion)))
+                                                    c}))))
                   :let [field-map (reduce field-maps {} (fn [m field-map]
                                                           (merge-constraint-maps file-name line-number
                                                                                  m field-map)))
