@@ -1507,8 +1507,11 @@ VectorNode *pushTail(unsigned count, int level, VectorNode *parent, VectorNode *
 }
 
 Vector *vectConj(Vector *vect, Value *val) {
+  if (vect->refs == 1) {
+    return(mutateVectConj((Vector *)incRef((Value *)vect, 1), val));
+  }
   // if there's room in the tail
-  if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
+  else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
     // make a new vector and copy info over
     Vector *newVect = newVector(vect->tail, VECTOR_ARRAY_LEN);
     newVect->shift = vect->shift;
@@ -1617,6 +1620,7 @@ VectorNode *doAssoc(int level, VectorNode *node, unsigned index, Value *val) {
 }
 
 Value *vectStore(Vector *vect, unsigned index, Value *val) {
+  // TODO: check the refs count and mutate if equal 1
   if (index < vect->count) {
     if (index >= vect->tailOffset) {
       unsigned newIndex = index & 0x1f;

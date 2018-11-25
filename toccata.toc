@@ -894,10 +894,11 @@
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn global-var
-  ([arg-name] (sm/state-maybe (gensym (str "g_" arg-name))))
+  ([arg-name]
+   (sm/state-maybe (str (gensym (str "g_" arg-name)))))
   ([sym arg-name]
-   (sm/state-maybe (gensym (str "g_" (either (check-C-var (str sym "_"))
-                                             arg-name))))))
+   (sm/state-maybe (str (gensym (str "g_" (either (check-C-var (str sym "_"))
+                                                  arg-name)))))))
 
 
 (deftype ProtoImpl [dispatch-type c-var ast param-constraints result-constraints c-fn]
@@ -1133,6 +1134,17 @@
                                 (str sym-file ":")
                                 (ast/line-number sym))
                      (abort)))))))))
+
+(extend-type c/StaticConstraints
+  Emitter
+  (runtime-check [constraint value-info sym-location]
+    []))
+
+(extend-type c/InnerConstraint
+  Emitter
+  (runtime-check [constraint value-info sym-location]
+    ;; TODO: this needs to be implemented, or something
+    []))
 
 (extend-type c/ItemsConstraint
   Emitter
@@ -1455,6 +1467,7 @@
 (deftype TailHashMap [m]
   Emitter
   (emit [_]
+    ;; TODO: put the code to init the value in the run time init
     (map (encode m)
          (fn [expr]
            (.init expr (comp (.init expr) ["return(" (.c-var expr) ");" line-sep]))))))
@@ -1556,6 +1569,7 @@
 (extend-type HashMap
   Emitter
   (emit [m]
+    ;; TODO: put the code to init the value in the run time init
     (comp (encode-static m)
           (encode m)))
 
@@ -1841,17 +1855,16 @@
                                    (vector s)
                                    maybe)))
         :let [num-sym (str "num" num-idx)
-              num-ptr (str "numPtr" num-idx)]
+              num-ptr (str "numPtr" num-idx)
+              constraint (c/StaticIntConstraint num empty-list nothing num-ptr)]
         _ (sm/assoc-in-val [.constants .numbers num]
                            (c-static-int num-ptr [] [] {}
-                                         {num-ptr (comp (.var int-constraint num-ptr)
-                                                        (c/StaticIntConstraint num empty-list
-                                                                               nothing num-ptr))}
+                                         {num-ptr constraint}
                                          num-sym))]
     (c-static-int num-ptr []
                   ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
                    "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
-                  {} {num-ptr (.var int-constraint num-ptr)}
+                  {} {num-ptr constraint}
                   num-sym)))
 
 (extend-type Integer
@@ -1927,11 +1940,12 @@
                                                       nothing
                                                       result-sym)
                               (c/ItemsConstraint (map args (fn [arg]
-                                                           (either (get arg-constraints (.c-var arg))
-                                                                   c/top-type)))
-                                               empty-list
-                                               nothing
-                                               result-sym))]
+                                                             (either (get arg-constraints (.c-var arg))
+                                                                     c/top-type)))
+                                                 empty-list
+                                                 nothing
+                                                 result-sym))
+            constraints (c/update-path constraints file-name line-number)]
         (c-init result-sym
                 [line
                  "Vector *" vect-sym " = empty_vect;" line-sep
@@ -1942,7 +1956,7 @@
                            arg-sym ");" line-sep])))
                  "Value *" result-sym " = (Value *)" vect-sym ";" line-sep]
                 [] {}
-                {result-sym (c/update-path constraints file-name line-number)}
+                {result-sym constraints}
                 file-name line-number)))))
 
 (defn call-list [target args]
@@ -2585,15 +2599,53 @@
   (emit-call-site [target args ast]
     (static-call-site target args ast)))
 
+(defn inner-map-constraint [ast args]
+  (for [_ (sm/when (= (.call-target ast) 'map))
+        :let [[v f] args]
+        fn-info (sm/get-in-val [.fns (.c-var f)])]
+    (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)
+          ;;                                  this '1' is the arity of the fn we want
+          [inner-const rc] (either (for [info (get fn-info 1)
+                                         c (-> info
+                                               .param-constraints
+                                               .items-constraints
+                                               first)]
+                                     [(c/InnerConstraint (c/update-path c file-name line-number)
+                                                         (list [file-name line-number])
+                                                         nothing (.c-var v))
+                                      (.result-constraint info)])
+                                   [c/top-type c/top-type])
+          new-const (either (c/compose-constraints file-name line-number
+                                                   inner-const
+                                                   (expr-constraints v))
+                            (abort))]
+      [[(.constraints v (assoc (.constraints v)
+                          (.c-var v) new-const))
+        f]
+       (c/InnerConstraint (c/update-path rc file-name line-number)
+                          (list [file-name line-number])
+                          nothing "")])))
+
 (extend-type c-protocol-fn
   CallSite
   (emit-call-site [target args ast]
-    (either (for [dispatch-val (first args)
-                  :let [disp-type (expr-type-num dispatch-val)]
-                  :when-not (= UnknownType disp-type)]
-              (comp (call-proto-impl (.call-target ast) disp-type args ast)
-                    (static-call-site target args ast)))
-            (static-call-site target args ast))))
+    (for [[args result-c] (comp (inner-map-constraint ast args)
+                                (sm/state-maybe [args c/top-type]))
+          r (either (for [dispatch-val (first args)
+                          :let [disp-type (expr-type-num dispatch-val)]
+                          :when-not (= UnknownType disp-type)]
+                      (comp (call-proto-impl (.call-target ast) disp-type args ast)
+                            (static-call-site target args ast)))
+                    (static-call-site target args ast))]
+      (let [file-name (ast/file-name ast)
+            line-number (ast/line-number ast)
+            new-result-c (either (c/compose-constraints file-name line-number
+                                                        (c/update-var result-c (.c-var r))
+                                                        (expr-constraints r))
+                                 (abort))]
+        (.constraints r (assoc (.constraints r)
+                          (.c-var r) new-result-c))))))
 
 (extend-type ast/call-ast
   Emitter
@@ -2605,7 +2657,9 @@
                                     (either (and (instance? Symbol target-ast)
                                                  (maybe (rdr/tag target-ast)))
                                             target-ast))))]
-      (comp (for [new-ast (inline-expr (.call-target ast) (.args ast))
+      ;; TODO: re-enable inlining
+      (comp (for [_ (zero sm/state-maybe)
+                  new-ast (inline-expr (.call-target ast) (.args ast))
                   call-site (emit new-ast)]
               (c-init (.c-var call-site) (.init call-site) (.decl call-site)
                       (.refs-map call-site)
@@ -2673,7 +2727,10 @@
 (extend-type C-expr
   C-Code
   (expr-constraints [expr]
-    (either (get (.constraints expr) (.c-var expr))
+    (either (map (get (.constraints expr) (.c-var expr))
+                 (fn [const]
+                   (either (map (instance? c/ResultConstraint const) .assertion)
+                           const)))
             c/top-type))
 
   Emitter
@@ -4222,6 +4279,7 @@
                                                           (constraint-ast c extract-field))))))
                                         [(constraint-ast field-constraint extract-field)])
                   set-field [(c/update-sym field-constraint field)
+                             ;; TOOO: make this check refs count and mutate if possible
                              (constraint-ast constraint
                                              (ast/call-ast make-value-sym
                                                            [type-value
