@@ -1655,6 +1655,50 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
   }
 }
 
+Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
+  if (index < vect->count &&
+      index >= vect->tailOffset &&
+      vect->refs == 1) {
+    unsigned newIndex = index & 0x1f;
+    dec_and_free(vect->tail[newIndex], 1);
+
+    vect->tail[newIndex] = val;
+    return((Value *)vect);
+  } else {
+    Value *result = vectStore(vect, index, val);
+    if (isNothing(result, "", 0)) {
+      fprintf(stderr, "*** Improper use of fastVectStore\n");
+      abort();
+    } else {
+      Value *inner = ((Maybe *)result)->value;
+      incRef(inner, 1);
+      dec_and_free(result, 1);
+      dec_and_free((Value *)vect, 1);
+      return(inner);
+    }
+  }
+}
+
+Value *updateField(Value *rval, Value *field, Value *index) {
+  if (rval->refs == 1) {
+    ReifiedVal *template = (ReifiedVal *)rval;
+    template->typeArgs = fastVectStore((Vector *)template->typeArgs, ((Integer *)index)->numVal, field);
+    dec_and_free(index, 1);
+    return(rval);
+  } else {
+    ReifiedVal *template = (ReifiedVal *)rval;
+    ReifiedVal *rv = malloc_reified(template->implCount);
+    int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
+    memcpy(rv, template, rvSize);
+    __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+    rv->typeArgs = fastVectStore((Vector *)incRef((Value *)template->typeArgs, 1),
+				 ((Integer *)index)->numVal, field);
+    dec_and_free(index, 1);
+    dec_and_free(rval, 1);
+    return((Value *)rv);
+  }
+}
+
 Value *vectGet(Vector *vect, unsigned index) {
   // this fn does not dec_and_free vect on purpose
   // it lets calling functions do that.
@@ -2001,6 +2045,7 @@ Value *listMap(Value *arg0, Value *f) {
 }
 
 Value *listConcat(Value *arg0) {
+  // TODO: check refs count for each list and stitch them together
   List *ls = (List *)arg0;
 
   if (ls->len == 0) {

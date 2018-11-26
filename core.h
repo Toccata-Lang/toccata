@@ -166,6 +166,7 @@ Value *integerValue(int64_t n);
 Vector *vectConj(Vector *vect, Value *val);
 Vector *mutateVectConj(Vector *vect, Value *val);
 Value *vectStore(Vector *vect, unsigned index, Value *val);
+Value *updateField(Value *rval, Value *field, Value *index);
 Value *vectorReverse(Value *arg0);
 List *listCons(Value *x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
