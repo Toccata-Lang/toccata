@@ -1275,9 +1275,9 @@ void replaceWorker() {
   }
   Value *threadHandle = (Value *)integerValue((int64_t)me);
   pthread_mutex_lock (&lingeringAccess);
-  lingeringThreads = assoc(empty_list, lingeringThreads, incRef((Value *)threadHandle, 1),
-			   incRef((Value *)threadHandle, 1),
-			   baseSha1(threadHandle), (Value *)integerValue(0));
+  lingeringThreads = copyAssoc(empty_list, lingeringThreads, incRef((Value *)threadHandle, 1),
+			       incRef((Value *)threadHandle, 1),
+			       baseSha1(threadHandle), (Value *)integerValue(0));
   pthread_mutex_unlock (&lingeringAccess);
 }
 
@@ -1621,6 +1621,7 @@ VectorNode *doAssoc(int level, VectorNode *node, unsigned index, Value *val) {
 
 Value *vectStore(Vector *vect, unsigned index, Value *val) {
   // TODO: check the refs count and mutate if equal 1
+  // but only if all nodes 'above' this one are mutate-able
   if (index < vect->count) {
     if (index >= vect->tailOffset) {
       unsigned newIndex = index & 0x1f;
@@ -1923,6 +1924,8 @@ Value *checkInstance(int64_t typeNum, Value *arg1) {
 }
 
 Value *listMap(Value *arg0, Value *f) {
+  // TODO: check refs count and mutate update if = 1
+  // however, can only mutate while refs count = 1
   // List map
   List *l = (List *)arg0;
   if (l->len == 0) {
@@ -3174,7 +3177,7 @@ Value *bmiCount(Value *arg0) {
   return(integerValue(accum));
 }
 
-Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4) {
+Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
@@ -3191,7 +3194,7 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
       // There is no key in the position, so valOrNode is
       // pointer to a node.
       Value *newShift = (Value *)integerValue(shift + 5);
-      Value *n = assoc((List *)0, incRef(valOrNode, 1), key, val, arg3, newShift);
+      Value *n = copyAssoc((List *)0, incRef(valOrNode, 1), key, val, arg3, newShift);
       if (n == valOrNode) {
         // the key was already associated with the value
         // so do nothing
@@ -3262,7 +3265,7 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
       ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
       int jdx = mask(hash, shift);
       Value *newShift = (Value *)integerValue(shift + 5);
-      newNode->array[jdx] = assoc((List *)0, (Value *)&emptyBMI, key, val, arg3, incRef(newShift, 1));
+      newNode->array[jdx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, arg3, incRef(newShift, 1));
       for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
         if ((node->bitmap >> i) & 1) {
           if (node->array[j] == (Value *)0) {
@@ -3270,14 +3273,14 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
             incRef(newNode->array[i], 1);
           } else {
             incRef(node->array[j], 2);
-            newNode->array[i] = assoc((List *)0, (Value *)&emptyBMI,
-                                      node->array[j],
-                                      incRef(node->array[j + 1], 1),
-                                      baseSha1(node->array[j]),
-                                      incRef(newShift, 1));
-          }
-          j += 2;
-        }
+	    newNode->array[i] = copyAssoc((List *)0, (Value *)&emptyBMI,
+					  node->array[j],
+					  incRef(node->array[j + 1], 1),
+					  baseSha1(node->array[j]),
+					  incRef(newShift, 1));
+	  }
+	  j += 2;
+	}
       }
       dec_and_free((Value *)node, 1);
       dec_and_free(arg4, 1);
@@ -3305,6 +3308,163 @@ Value *bmiAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4)
       dec_and_free(arg3, 1);
       dec_and_free(arg4, 1);
       return((Value *)newNode);
+    }
+  }
+}
+
+Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4) {
+  if (arg0->refs != 1) {
+    return(bmiCopyAssoc(arg0, arg1, arg2, arg3, arg4));
+  } else {
+    BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
+    Value *key = arg1;
+    Value *val = arg2;
+    int64_t hash = ((Integer *)arg3)->numVal;
+    int shift = (int)((Integer *)arg4)->numVal;
+
+    int bit = bitpos(hash, shift);
+    int idx = __builtin_popcount(node->bitmap & (bit - 1));
+    if (node->bitmap & bit) {
+      // if the hash position is already filled
+      Value *keyOrNull = node->array[2 * idx];
+      Value *valOrNode = node->array[2 * idx + 1];
+      if (keyOrNull == (Value *)0) {
+	// There is no key in the position, so valOrNode is
+	// pointer to a node.
+	Value *newShift = (Value *)integerValue(shift + 5);
+	Value *n;
+	n = mutateAssoc((List *)0, valOrNode, key, val, arg3, newShift);
+	// replace key/val at 'idx' with new stuff
+	node->array[idx * 2] = (Value *)0;;
+	node->array[idx * 2 + 1] = n;
+	dec_and_free(arg4, 1);
+	return(arg0);
+      } else if (equal(incRef(key, 1), incRef(keyOrNull, 1))) {
+	if (equal(incRef(val, 1), incRef(valOrNode, 1))) {
+	  dec_and_free(arg1, 1);
+	  dec_and_free(arg2, 1);
+	  dec_and_free(arg3, 1);
+	  dec_and_free(arg4, 1);
+	  return(arg0);
+	} else {
+	  // if the keyOrNull points to a value that is equal to key
+	  // replace key/val at 'idx' with new stuff
+	  node->array[idx * 2] = key;
+	  node->array[idx * 2 + 1] = val;
+	  dec_and_free(valOrNode, 1);
+	  dec_and_free(keyOrNull, 1);
+	  dec_and_free((Value *)arg3, 1);
+	  dec_and_free((Value *)arg4, 1);
+	  return(arg0);
+	}
+      } else {
+	// there is already a key/val pair at the position where key
+	// would be placed. Extend tree a level
+	Value *hashValue = baseSha1(incRef(keyOrNull, 1));
+	int64_t existingKeyHash = ((Integer *)hashValue)->numVal;
+	dec_and_free(hashValue, 1);
+	if (existingKeyHash == hash) {
+	  // make & return HashCollisionNode
+	  HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
+	  newLeaf->array[0] = keyOrNull;
+	  newLeaf->array[1] = valOrNode;
+	  newLeaf->array[2] = key;
+	  newLeaf->array[3] = val;
+
+	  // replace key/val at 'idx' with new stuff
+	  node->array[idx * 2] = (Value *)0;
+	  node->array[idx * 2 + 1] = (Value *)newLeaf;
+	  dec_and_free(arg3, 1);
+	  dec_and_free(arg4, 1);
+	  return(arg0);
+	} else {
+	  Value *newLeaf = createNode(shift + 5,
+				      existingKeyHash, keyOrNull, valOrNode,
+				      hash, key, val);
+	  // replace key/val at 'idx' with new stuff
+	  node->array[idx * 2] = (Value *)0;
+	  node->array[idx * 2 + 1] = (Value *)newLeaf;
+	  dec_and_free(arg3, 1);
+	  dec_and_free(arg4, 1);
+	  return(arg0);
+	}
+      }
+    } else {
+      // the position in the node is empty
+      int n = __builtin_popcount(node->bitmap);
+      if (n >= 16) {
+	ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
+	int jdx = mask(hash, shift);
+	Value *newShift = (Value *)integerValue(shift + 5);
+	newNode->array[jdx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, arg3, incRef(newShift, 1));
+	for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
+	  if ((node->bitmap >> i) & 1) {
+	    if (node->array[j] == (Value *)0) {
+	      newNode->array[i] = node->array[j + 1];
+	      node->array[j + 1] = (Value *)0;
+	    } else {
+	      incRef(node->array[j], 1);
+	      newNode->array[i] = copyAssoc((List *)0, (Value *)&emptyBMI,
+					    node->array[j],
+					    node->array[j + 1],
+					    baseSha1(node->array[j]),
+					    incRef(newShift, 1));
+	      node->array[j] = (Value *)0;
+	      node->array[j + 1] = (Value *)0;
+	    }
+	    j += 2;
+	  }
+	}
+	node->bitmap = 0;
+	dec_and_free((Value *)node, 1);
+	dec_and_free(arg4, 1);
+	dec_and_free(newShift, 1);
+	return((Value *)newNode);
+      } else {
+	// TODO: revert this back to the bmiCopyAssoc because it seems to add allocations
+	// but I have no explanation why
+	/*
+	int itemCount = n + 1;
+	BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
+	newNode->bitmap = node->bitmap | bit;
+	for (int i = 0; i < idx * 2; i++) {
+	  newNode->array[i] = node->array[i];
+	  node->array[i] = 0;
+	}
+	newNode->array[2 * idx] = key;
+	newNode->array[2 * idx + 1] = val;
+	for (int i = idx * 2; i < n * 2; i++) {
+	  newNode->array[i + 2] = node->array[i];
+	  node->array[i] = 0;
+	}
+	node->bitmap = 0;
+	dec_and_free((Value *)node, 1);
+	dec_and_free(arg3, 1);
+	dec_and_free(arg4, 1);
+	return((Value *)newNode);
+	// */
+	int itemCount = n + 1;
+	BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
+	newNode->bitmap = node->bitmap | bit;
+	for (int i = 0; i < idx * 2; i++) {
+	  if (node->array[i] != (Value *)0) {
+	    incRef(node->array[i], 1);
+	  }
+	  newNode->array[i] = node->array[i];
+	}
+	newNode->array[2 * idx] = key;
+	newNode->array[2 * idx + 1] = val;
+	for (int i = idx * 2; i < n * 2; i++) {
+	  if (node->array[i] != (Value *)0) {
+	    incRef(node->array[i], 1);
+	  }
+	  newNode->array[i + 2] = node->array[i];
+	}
+	dec_and_free((Value *)node, 1);
+	dec_and_free(arg3, 1);
+	dec_and_free(arg4, 1);
+	return((Value *)newNode);
+      }
     }
   }
 }
@@ -3440,7 +3600,7 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
   }
 }
 
-Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value *arg4) {
+Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value *arg4) {
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
@@ -3460,9 +3620,9 @@ Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value 
 	incRef(newNode->array[i], 1);
       }
     }
-    newNode->array[idx] = assoc((List *)0, (Value *)&emptyBMI, key, val, keyHash, newShift);
+    newNode->array[idx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, keyHash, newShift);
   } else {
-    Value *n = assoc((List *)0, incRef(subNode, 1), key, val, keyHash, newShift);
+    Value *n = copyAssoc((List *)0, incRef(subNode, 1), key, val, keyHash, newShift);
     newNode = (ArrayNode *)malloc_arrayNode();
     for (int i = 0; i < ARRAY_NODE_LEN; i++) {
       if (i != idx && node->array[i] != (Value *)0) {
@@ -3476,6 +3636,32 @@ Value *arrayNodeAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value 
   dec_and_free(arg3, 1);
   dec_and_free(arg4, 1);
   return((Value *)newNode);
+}
+
+Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value *arg4) {
+  if (arg0->refs != 1) {
+    return(arrayNodeCopyAssoc(arg0, arg1, arg2, arg3, arg4));
+  } else {
+    ArrayNode *node = (ArrayNode *)arg0;
+    Value *key = arg1;
+    Value *val = arg2;
+    int64_t hash = ((Integer *)arg3)->numVal;
+    int shift = (int)((Integer *)arg4)->numVal;
+    int idx = mask(hash, shift);
+    Value *newShift = (Value *)integerValue(shift + 5);
+
+    Value *subNode = node->array[idx];
+    Value *keyHash = baseSha1(incRef(key, 1));
+    if (subNode == (Value *)0) {
+      node->array[idx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, keyHash, newShift);
+    } else {
+      Value *n = mutateAssoc((List *)0, subNode, key, val, keyHash, newShift);
+      node->array[idx] = n;
+    }
+    dec_and_free(arg3, 1);
+    dec_and_free(arg4, 1);
+    return((Value *)node);
+  }
 }
 
 Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
@@ -3509,15 +3695,15 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
     dec_and_free(arg4, 1);
     return((Value *)newNode);
   } else {
-    BitmapIndexedNode *bmi = &emptyBMI;
     Integer newShift = {IntegerType, -1, 0};
 
-    bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi, key, val, arg3, (Value *)&newShift);
+    BitmapIndexedNode * bmi = (BitmapIndexedNode *)copyAssoc((List *)0, (Value *)&emptyBMI,
+							     key, val, arg3, (Value *)&newShift);
     for (int i = 0; i < itemCount; i++) {
-      bmi = (BitmapIndexedNode *)assoc((List *)0, (Value *)bmi,
-				       incRef(node->array[2 * i], 1),
-				       incRef(node->array[2 * i + 1], 1),
-				       baseSha1(incRef(node->array[2 * i], 1)), (Value *)&newShift);
+      bmi = (BitmapIndexedNode *)mutateAssoc((List *)0, (Value *)bmi,
+					     incRef(node->array[2 * i], 1),
+					     incRef(node->array[2 * i + 1], 1),
+					     baseSha1(incRef(node->array[2 * i], 1)), (Value *)&newShift);
     }
     dec_and_free(arg0, 1);
     dec_and_free(arg4, 1);
@@ -3728,17 +3914,32 @@ Value *get(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *
   }
 }
 
-Value *assoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
+Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
   switch(node->type) {
   case BitmapIndexedType: 
-    return(bmiAssoc(node, k, v, hash, shift));
+    return(bmiCopyAssoc(node, k, v, hash, shift));
   case ArrayNodeType:
-    return(arrayNodeAssoc(node, k, v, hash, shift));
+    return(arrayNodeCopyAssoc(node, k, v, hash, shift));
   case HashCollisionNodeType:
     return(collisionAssoc(node, k, v, hash, shift));
   default:
     fprintf(stderr, "Can't assoc into that kind of node\n");
     abort();
+  }
+}
+
+Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
+  switch(node->type) {
+  case BitmapIndexedType: 
+    return(bmiCopyAssoc(node, k, v, hash, shift));
+  case ArrayNodeType:
+    return(arrayNodeMutateAssoc(node, k, v, hash, shift));
+    /*
+  case HashCollisionNodeType:
+    return(collisionAssoc(node, k, v, hash, shift));
+    // */
+  default:
+    return(copyAssoc(closures, node, k, v, hash, shift));
   }
 }
 
@@ -3753,10 +3954,11 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
   }
 }
 
+// used for static encoding hash maps
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
   Value *hash = baseSha1(incRef(arg1, 1));
   Value *shift = const0Ptr;
-  return(assoc((List *)0, arg0, arg1, arg2, hash, shift));
+  return(mutateAssoc((List *)0, arg0, arg1, arg2, hash, shift));
 }
 
 Value *dynamicCall1Arg(Value *f, Value *arg) {
