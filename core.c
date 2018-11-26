@@ -1604,7 +1604,7 @@ Vector *mutateVectConj(Vector *vect, Value *val) {
   }
 }
 
-VectorNode *doAssoc(int level, VectorNode *node, unsigned index, Value *val) {
+VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Value *val) {
   if (level == 0) {
     int arrayIndex = index & 0x1f;
     VectorNode *newNode = newVectorNode(node->array, arrayIndex);
@@ -1613,8 +1613,8 @@ VectorNode *doAssoc(int level, VectorNode *node, unsigned index, Value *val) {
   } else {
     int arrayIndex = (index >> level) & 0x1f;
     VectorNode *newNode = newVectorNode(node->array, arrayIndex);
-    newNode->array[arrayIndex] = (Value *)doAssoc(level - 5, (VectorNode *)node->array[arrayIndex],
-                                                  index, val);
+    newNode->array[arrayIndex] = (Value *)copyVectStore(level - 5, (VectorNode *)node->array[arrayIndex],
+							index, val);
     return(newNode);
   }
 }
@@ -1641,7 +1641,7 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
       ret->count = vect->count;
       ret->tailOffset = vect->tailOffset;
       ret->shift = vect->shift;
-      ret->root = doAssoc(vect->shift, vect->root, index, val);
+      ret->root = copyVectStore(vect->shift, vect->root, index, val);
       Value *mval = maybe((List *)0, (Value *)0, (Value *)ret);
       return(mval);
     }
@@ -1935,6 +1935,7 @@ Value *listMap(Value *arg0, Value *f) {
   } else {
     List *head = empty_list;
     List *tail = empty_list;
+    int mutate = 0;
     FnArity *arity2;
     if(f->type == FunctionType) {
       arity2 = findFnArity(f, 1);
@@ -1943,9 +1944,20 @@ Value *listMap(Value *arg0, Value *f) {
         abort();
       }
     }
+    if (arg0->refs == 1) {
+      mutate = 1;
+      head = l;
+      head->len = 0;
+
+      tail = l;
+    }
     for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
       Value *y;
-      incRef(x, 1);
+      if (l->refs != 1)
+	mutate = 0;
+
+      if (!mutate)
+	incRef(x, 1);
       if(f->type != FunctionType) {
         incRef(f, 1);
         y = invoke1Arg(empty_list, f, x);
@@ -1959,7 +1971,11 @@ Value *listMap(Value *arg0, Value *f) {
       }
 
       // 'y' is the value for the new list
-      if (head == empty_list) {
+      if (mutate) {
+	l->head = y;
+	tail = l;
+        head->len++;
+      } else if (head == empty_list) {
         // if we haven't started the new list yet
         head = malloc_list();
         head->len = 1;
@@ -1977,7 +1993,8 @@ Value *listMap(Value *arg0, Value *f) {
         head->len++;
       }
     }
-    dec_and_free(arg0, 1);
+    if (arg0->refs != 1)
+      dec_and_free(arg0, 1);
     dec_and_free(f, 1);
     return((Value *)head);
   }
