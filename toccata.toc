@@ -454,6 +454,18 @@
           (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
           (str constraints) ">")))
 
+(deftype c-maybe-fn [c-var init decl refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? Sequence decl))
+  (assert (instance? HashMap refs-map))
+  (assert (instance? HashMap constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Maybe-Function " (str c-var) ", "
+          (str (count init)) ", "(str (count decl)) ", " (str refs-map) ", "
+          (str constraints) ">")))
+
 (deftype c-list-fn [c-var init decl refs-map constraints c-struct]
   (assert (instance? Sequence init))
   (assert (instance? Sequence decl))
@@ -519,6 +531,7 @@
                           c-static-sym
                           c-static-reified
                           c-list-fn
+                          c-maybe-fn
                           c-vector-fn
                           c-static-fn
                           c-static-arity
@@ -1991,7 +2004,7 @@
   (let [file-name (ast/file-name target)
         line-number (ast/line-number target)]
     (for [vect-sym (genlocal "newVect")
-          result-sym (genlocal "rslt")
+          result-sym (genlocal "vect")
           line (line-macro target "// call-vector")]
       (let [arg-constraints (.constraints (collapse-expressions args))
             constraints (comp vect-constraint
@@ -2024,7 +2037,7 @@
         line-number (ast/line-number target)]
     (for [line (line-macro target "// call-list")
           list-sym (genlocal "newList")
-          result-sym (genlocal "rslt")]
+          result-sym (genlocal "list")]
       (let [arg-constraints (.constraints (collapse-expressions args))
             constraints (comp list-constraint
                               (c/StaticLengthConstraint (count args)
@@ -2045,6 +2058,21 @@
                           [list-sym " = listCons(" "(Value *)" arg-sym
                            ", " list-sym ");" line-sep])))
                  "Value *" result-sym " = (Value *)" list-sym ";" line-sep]
+                [] {}
+                {result-sym (c/update-path constraints file-name line-number)}
+                file-name line-number)))))
+
+(defn call-maybe [target [arg]]
+  (let [file-name (ast/file-name target)
+        line-number (ast/line-number target)]
+    (for [line (line-macro target "// call-maybe")
+          result-sym (genlocal "maybe")]
+      (let [constraints (comp maybe-constraint
+                              (either (= c/top-type (expr-constraints arg))
+                                      (c/InnerConstraint (expr-constraints arg)
+                                                         empty-list nothing result-sym)))]
+        (c-init result-sym
+                [line "Value *" result-sym " = (Value *)maybe((List *)0, (Value *)0, " (.c-var arg) ");" line-sep]
                 [] {}
                 {result-sym (c/update-path constraints file-name line-number)}
                 file-name line-number)))))
@@ -2644,6 +2672,11 @@
                                    "")
                            "at:" (ast/file-name ast) (ast/line-number ast))))
 
+(extend-type c-maybe-fn
+  CallSite
+  (emit-call-site [target args ast]
+    (call-maybe (.call-target ast) args)))
+
 (extend-type c-list-fn
   CallSite
   (emit-call-site [target args ast]
@@ -2659,44 +2692,77 @@
   (emit-call-site [target args ast]
     (static-call-site target args ast)))
 
-;; TODO: do an 'inner-reduce-constraint' fn
-;; TODO: propogate inner constraints through calls to 'seq' and 'vec'
-;; TODO: test inner-map-constraint on state-maybe values
+;; TODO: propogate inner constraints through calls to seq, vec, first, last, rest, butlast, reverse, nth, get, extract
+;; TODO: test add-inner-constraint on state-maybe values
+;; TODO: possible contenders to add; apply
+;; TODO: Add contents constraint for conj, cons, store
+;; TODO: add inner constraint to Strings
+;; TODP: insert InnerConstraint into anon fn passed to higher order fn
 
-(defn inner-map-constraint [ast args]
-  (and (or (= (.call-target ast) 'map)
-           (= (.call-target ast) 'flat-map))
-       (let [[v f] args
+(defn inner-constraint-for-reduce [ast args]
+  (and (= (.call-target ast) 'reduce)
+       (let [[v initial-val f] args
              file-name (ast/file-name ast)
              line-number (ast/line-number ast)
-             ;;                                  this '1' is the arity of the fn we want
-             [inner-const rc] (either (for [info (get-in f [.arities 1])
+             inner-const (either (for [info (get-in f [.arities 2])
                                             c (-> info
                                                   .param-constraints
                                                   .items-constraints
-                                                  first)]
-                                        [(c/InnerConstraint (c/update-path c file-name line-number)
-                                                            (list [file-name line-number])
-                                                            nothing (.c-var v))
-                                         (.result-constraint info)])
-                                      [c/top-type c/top-type])
+                                                  second)]
+                                   (c/InnerConstraint c empty-list nothing ""))
+                                 c/top-type)
+             inner-const (-> inner-const
+                             (c/update-path file-name line-number)
+                             (c/update-var (.c-var v)))
              new-const (either (c/compose-constraints file-name line-number
                                                       inner-const
                                                       (expr-constraints v))
                                (abort))]
          (maybe [[(.constraints v (assoc (.constraints v)
                                     (.c-var v) new-const))
+                  initial-val
                   f]
-                 (either (and (= (.call-target ast) 'flat-map)
-                              (maybe rc))
-                         (c/InnerConstraint (c/update-path rc file-name line-number)
-                                            (list [file-name line-number])
-                                            nothing ""))]))))
+                 c/top-type]))))
+
+(def ignore-result-type #{'filter 'drop-while 'take-while}) ;; TODO: add 'split-with
+
+(defn add-inner-constraint [ast args]
+  (or (inner-constraint-for-reduce ast args)
+      (and (or (= (.call-target ast) 'map)
+               (= (.call-target ast) 'flat-map)
+               (ignore-result-type (.call-target ast)))
+           (let [[v f] args
+                 file-name (ast/file-name ast)
+                 line-number (ast/line-number ast)
+                 [inner-const rc] (either (for [info (get-in f [.arities 1])
+                                                c (-> info
+                                                      .param-constraints
+                                                      .items-constraints
+                                                      first)]
+                                            [(c/InnerConstraint c empty-list nothing "")
+                                             (.result-constraint info)])
+                                          [c/top-type c/top-type])
+                 inner-const (-> inner-const
+                                 (c/update-path file-name line-number)
+                                 (c/update-var (.c-var v)))
+                 new-const (either (c/compose-constraints file-name line-number
+                                                          inner-const
+                                                          (expr-constraints v))
+                                   (abort))]
+             (maybe [[(.constraints v (assoc (.constraints v)
+                                        (.c-var v) new-const))
+                      f]
+                     (either (or (and (ignore-result-type (.call-target ast))
+                                      (maybe c/top-type))
+                                 (and (= (.call-target ast) 'flat-map)
+                                      (maybe rc)))
+                             (-> (c/InnerConstraint rc empty-list nothing "")
+                                 (c/update-path file-name line-number)))])))))
 
 (extend-type c-protocol-fn
   CallSite
   (emit-call-site [target args ast]
-    (let [[args result-c] (either (inner-map-constraint ast args)
+    (let [[args result-c] (either (add-inner-constraint ast args)
                                   [args c/top-type])]
       (map (either (for [dispatch-val (first args)
                          :let [disp-type (expr-type-num dispatch-val)]
@@ -3918,6 +3984,8 @@
                 "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]]
       (either (or (and (= fn-sym 'list)
                        (maybe (c-list-fn fn-var [] decl {} {} struct-var)))
+                  (and (= fn-sym 'maybe)
+                       (maybe (c-maybe-fn fn-var [] decl {} {} struct-var)))
                   (and (= fn-sym 'vector)
                        (maybe (c-vector-fn fn-var [] decl {} {} struct-var))))
               (c-static-fn fn-var [] decl
@@ -4376,7 +4444,6 @@
                                                           (constraint-ast c extract-field))))))
                                         [(constraint-ast field-constraint extract-field)])
                   set-field [(c/update-sym field-constraint field)
-                             ;; TOOO: make this check refs count and mutate if possible
                              (constraint-ast constraint
                                              (ast/call-ast update-field-sym
                                                            [type-value new-value field-index]))]]

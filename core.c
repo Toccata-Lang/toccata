@@ -1509,9 +1509,8 @@ VectorNode *pushTail(unsigned count, int level, VectorNode *parent, VectorNode *
 Vector *vectConj(Vector *vect, Value *val) {
   if (vect->refs == 1) {
     return(mutateVectConj((Vector *)incRef((Value *)vect, 1), val));
-  }
-  // if there's room in the tail
-  else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
+    // if there's room in the tail
+  } else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
     // make a new vector and copy info over
     Vector *newVect = newVector(vect->tail, VECTOR_ARRAY_LEN);
     newVect->shift = vect->shift;
@@ -1968,8 +1967,6 @@ Value *checkInstance(int64_t typeNum, Value *arg1) {
 }
 
 Value *listMap(Value *arg0, Value *f) {
-  // TODO: check refs count and mutate update if = 1
-  // however, can only mutate while refs count = 1
   // List map
   List *l = (List *)arg0;
   if (l->len == 0) {
@@ -3483,28 +3480,6 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
 	dec_and_free(newShift, 1);
 	return((Value *)newNode);
       } else {
-	// TODO: revert this back to the bmiCopyAssoc because it seems to add allocations
-	// but I have no explanation why
-	/*
-	int itemCount = n + 1;
-	BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
-	newNode->bitmap = node->bitmap | bit;
-	for (int i = 0; i < idx * 2; i++) {
-	  newNode->array[i] = node->array[i];
-	  node->array[i] = 0;
-	}
-	newNode->array[2 * idx] = key;
-	newNode->array[2 * idx + 1] = val;
-	for (int i = idx * 2; i < n * 2; i++) {
-	  newNode->array[i + 2] = node->array[i];
-	  node->array[i] = 0;
-	}
-	node->bitmap = 0;
-	dec_and_free((Value *)node, 1);
-	dec_and_free(arg3, 1);
-	dec_and_free(arg4, 1);
-	return((Value *)newNode);
-	// */
 	int itemCount = n + 1;
 	BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
 	newNode->bitmap = node->bitmap | bit;
@@ -3993,7 +3968,7 @@ Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, V
 Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
   switch(node->type) {
   case BitmapIndexedType: 
-    return(bmiCopyAssoc(node, k, v, hash, shift));
+    return(bmiMutateAssoc(node, k, v, hash, shift));
   case ArrayNodeType:
     return(arrayNodeMutateAssoc(node, k, v, hash, shift));
     /*
