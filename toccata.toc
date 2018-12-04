@@ -241,6 +241,7 @@
   ;; encode a static representation of a core data structure
   (encode [m]
     (emit m))
+
   (encode [m var-prefix])
 
   ;; encode a statically initialized representation of a core data structure
@@ -1692,11 +1693,6 @@
 
   (tail-call [ast params result-constraint] ast))
 
-;; TODO: if I put ast/block-comment in, the result is unacceptable
-(def NoCode (comp c/ResultConstraint
-                  ast/block-comment-ast
-                  c/SymbolConstraints))
-
 (defn make-static-string [str-val]
   ;; TODO: when adding meta data, make sure to update this as well
   (let [str-len (count str-val)]
@@ -1797,6 +1793,7 @@
   ast/FileLineInfo
   (ast/file-name [_]
     (ast/file-name ast))
+
   (ast/line-number [_]
     (ast/line-number ast))
 
@@ -1807,7 +1804,7 @@
                 target (emit (.call-target ast))
                 _ (sm/get-in-val [.fn-context .recurse (.c-var target) (count (.args ast))])
                 args (-> (.args ast)
-                         (remove (partial instance? NoCode))
+                         (remove (partial instance? ast/NoCode))
                          (ev/traverse emit))
                 line (line-macro ast "// recursive-fixed")]
             (comp* empty-c-code (comp args
@@ -1823,6 +1820,20 @@
                                          (maybe (.refs-map expr {})))
                                     expr)]
                    (emit-tail-expr ast result-constraint expr)))))))
+
+(extend-type ast/string-ast
+  Emitter
+  (emit [ast]
+    (for [expr (make-static-string (.string ast))
+          :let [expr (.constraints expr {(.c-var expr) (-> expr
+                                                           expr-constraints
+                                                           (c/update-path (ast/file-name ast)
+                                                                          (ast/line-number ast)))})]
+          _ (sm/assoc-in-val [.constants .strings (.string ast)]
+                             (-> expr
+                                 (.init [])
+                                 (.decl [])))]
+      expr)))
 
 (extend-type String
   Emitter
@@ -1850,6 +1861,21 @@
                    "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
                   {} {num-ptr constraint}
                   num-sym)))
+
+(extend-type ast/integer-ast
+  Emitter
+  (emit [ast]
+    (comp (sm/get-in-val [.constants .numbers (.int ast)])
+          (for [expr (make-static-num (.int ast))
+                :let [expr (.constraints expr {(.c-var expr) (-> expr
+                                                                 expr-constraints
+                                                                 (c/update-path (ast/file-name ast)
+                                                                                (ast/line-number ast)))})]
+                _ (sm/assoc-in-val [.constants .numbers (.int ast)]
+                                   (-> expr
+                                       (.init [])
+                                       (.decl [])))]
+            expr))))
 
 (extend-type Integer
   Emitter
@@ -1886,8 +1912,10 @@
                             {} {sym-ptr constraint} sym-var))))))
 
 
-(def LiteralValues (comp Integer
-                         ast/quoted-ast
+(def LiteralValues (comp ast/quoted-ast
+                         ast/string-ast
+                         ast/integer-ast
+                         Integer
                          String))
 
 (extend-type LiteralValues
@@ -2128,7 +2156,7 @@
     (sm/state-maybe (get subs ast ast)))
 
   (inline-expr [name arg-asts]
-    (let [args (remove arg-asts (partial instance? NoCode))
+    (let [args (remove arg-asts (partial instance? ast/NoCode))
           num-args (count args)]
       (either (or (and (< 0 num-args)
                        (or (= name 'wrap)
@@ -2430,7 +2458,7 @@
 (defn update-last [asts f]
   (either (empty? asts)
           (let [[tail & init] (-> asts
-                                  (remove (partial instance? NoCode))
+                                  (remove (partial instance? ast/NoCode))
                                   reverse)]
             (-> (f tail)
                 (cons init)
@@ -2756,7 +2784,7 @@
                       (.constraints call-site)
                       (ast/file-name ast) (ast/line-number ast)))
             (flat-map (-> (.args ast)
-                          (remove (partial instance? NoCode))
+                          (remove (partial instance? ast/NoCode))
                           (ev/traverse emit))
                       (fn [args]
                         (comp (for [target (emit (.call-target ast))
@@ -3367,7 +3395,7 @@
    (assert (instance? CFnPtr c-fn))
    (assert (min-count body 1))
 
-   (either (and (empty? (remove body (partial instance? NoCode)))
+   (either (and (empty? (remove body (partial instance? ast/NoCode)))
                 (maybe (zero sm/state-maybe)))
            (let [file-name (ast/file-name body)
                  line-number (ast/line-number body)
@@ -3402,7 +3430,7 @@
                                                  (maybe (.destruct param-vars [])))
                                             param-vars)]
                    body-exprs (-> body
-                                  (remove (partial instance? NoCode))
+                                  (remove (partial instance? ast/NoCode))
                                   ((fn [body] (comp param-asserts body)))
                                   (tail-call (.vars param-vars) result-constraint)
                                   (ev/traverse emit))
@@ -3729,7 +3757,7 @@
   (emit [ast]
     (for [result-var (genlocal "andRslt")
           expr (emit-cond-expr "if (isNothing(" result-var
-                               (remove (.clauses ast) (partial instance? NoCode))
+                               (remove (.clauses ast) (partial instance? ast/NoCode))
                                (str "return(nothing);" line-sep))]
       expr)))
 
@@ -3737,7 +3765,7 @@
 (extend-type ast/and-ast
   Emitter
   (emit [ast]
-    (let [clauses (remove (.clauses ast) (partial instance? NoCode))]
+    (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
       (either (and (empty? clauses)
                    (maybe (sm/state-maybe empty-c-code)))
               (for [result-var (genlocal "andRslt")
@@ -3746,7 +3774,7 @@
 
   (tail-call [ast params result-constraint]
     (let [clauses (-> (.clauses ast)
-                      (remove (partial instance? NoCode))
+                      (remove (partial instance? ast/NoCode))
                       seq
                       reverse)]
       (either (map (first clauses)
@@ -3784,14 +3812,14 @@
   (emit [ast]
     (for [result-var (genlocal "orRslt")
           expr (emit-cond-expr "if (!isNothing(" result-var
-                               (remove (.clauses ast) (partial instance? NoCode))
+                               (remove (.clauses ast) (partial instance? ast/NoCode))
                                (str "return(" result-var ");" line-sep))]
       expr)))
 
 (extend-type ast/or-ast
   Emitter
   (emit [ast]
-    (let [clauses (remove (.clauses ast) (partial instance? NoCode))]
+    (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
       (either (and (empty? clauses)
                    (maybe (sm/state-maybe empty-c-code)))
               (flat-map (genlocal "orRslt")
@@ -3800,7 +3828,7 @@
                                           line-sep))))))
 
   (tail-call [ast params result-constraint]
-    (let [clauses (remove (.clauses ast) (partial instance? NoCode))]
+    (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
       (TailOr (either (flat-map (last clauses)
                                 (fn [last-clause]
                                   (store clauses (dec (count clauses))
@@ -3992,7 +4020,7 @@
             (ast/file-name fn-sym) (ast/line-number fn-sym))])))
 
 (defn emit-proto-default [protocol-sym fn-sym disp-fn-var prototype]
-  (let [body (remove (.default-body prototype) (partial instance? NoCode))
+  (let [body (remove (.default-body prototype) (partial instance? ast/NoCode))
         body (either (and (empty? body)
                           (maybe (missing-impl-body protocol-sym fn-sym prototype)))
                      body)]
@@ -4000,7 +4028,7 @@
           :let [arity-impl-var (ProtoDispFnPtr arity-impl-var)]
           static-arity (emit-fn-arity (rdr/tag (str "Default_" fn-sym)) disp-fn-var
                                       (.params prototype)
-                                      (comp (filter (.default-body prototype) (partial instance? NoCode))
+                                      (comp (filter (.default-body prototype) (partial instance? ast/NoCode))
                                             body)
                                       arity-impl-var)
           _ (sm/assoc-in-val [.modules (ast/file-name protocol-sym) .protocols protocol-sym fn-sym
