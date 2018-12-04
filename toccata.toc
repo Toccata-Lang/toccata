@@ -823,6 +823,7 @@
   (string-list [_] (list "<Module '" (str path) "'>")))
 
 ;; There's a bunch of information to keep track of while compiling
+;; TODO: might be able to remove the 'fns' field
 (deftype GlobalContext [fn-context rt-init modules fns namespaces constants reify-fn-index type-maps]
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
@@ -3407,9 +3408,9 @@
                                           (filter (partial instance? c/ResultConstraint))
                                           (map .assertion)
                                           (ev/traverse to-constraint))
-                   :let [result-constraint (let [result-type (c/update-sym (reduce result-constraints c/top-type
-                                                                                   c/intersect)
-                                                                           "<result value>")]
+                   :let [result-constraint (let [result-type (c/update-sym
+                                                              (reduce result-constraints c/top-type c/intersect)
+                                                              "<result value>")]
                                              (and (= c/bottom-type result-type)
                                                   (do
                                                     (apply print-err
@@ -3514,6 +3515,7 @@
         line-number (ast/line-number fn-sym)]
     (for [
           ;; _ (debug 'impl file-name line-number type-str fn-sym num-args)
+          default-impl (get-proto-impl fn-sym num-args 0)
           disp-constraint (comp (for [_ (sm/get-in-val [.constants .type-names type-num])
                                       ;; TODO: this needs to be factored out
                                       ;; also, this should not be a type-constraint, it should only set
@@ -3524,7 +3526,8 @@
           ext-fn (comp (emit-fn-arity (rdr/tag (str type-str fn-sym))
                                       (.fn-var arity-ast)
                                       params
-                                      (comp [disp-constraint]
+                                      (comp [disp-constraint
+                                             (c/ResultConstraint (.result-constraint default-impl))]
                                             (.body arity-ast))
                                       c-fn)
                        (compilation-error "Could not compile protocol fn:"
@@ -4028,15 +4031,21 @@
           :let [arity-impl-var (ProtoDispFnPtr arity-impl-var)]
           static-arity (emit-fn-arity (rdr/tag (str "Default_" fn-sym)) disp-fn-var
                                       (.params prototype)
-                                      (comp (filter (.default-body prototype) (partial instance? ast/NoCode))
-                                            body)
+                                      (-> (.default-body prototype)
+                                          (filter (partial instance? ast/NoCode))
+                                          (comp body))
                                       arity-impl-var)
+          result-constraints (-> (.default-body prototype)
+                                 (filter (partial instance? c/ResultConstraint))
+                                 (map .assertion)
+                                 (ev/traverse to-constraint))
+          :let [result-constraint (reduce result-constraints c/top-type c/intersect)]
           _ (sm/assoc-in-val [.modules (ast/file-name protocol-sym) .protocols protocol-sym fn-sym
                               (.param-count static-arity) 0]
                              (ProtoImpl 0 (.c-var (.var-info static-arity))
                                         (ast/fn-arity (.params prototype) "" body)
                                         (.param-constraints static-arity)
-                                        (.result-constraint static-arity)
+                                        result-constraint
                                         arity-impl-var))
           _ (sm/assoc-in-val [.fns (.arity-fn-var static-arity) (.param-count static-arity) .param-constraints]
                              (.param-constraints static-arity))]
