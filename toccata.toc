@@ -311,6 +311,8 @@
   (expr-constraints [expr]
     (assert-result x (instance? c/Constraints x)))
 
+  (constrain-expr [expr constraint])
+
   (collapse-expressions* [x y]))
 
 (defn expr-type-num [expr]
@@ -1283,6 +1285,7 @@
       (either (map (.sym constraint)
                    (fn [sym]
                      (for [sym-info (lookup-sym sym)
+                           ;; TODO: maybe use constrain-expr
                            :let [var (.constraints sym-info
                                                    (merge-constraint-maps file-name line-number
                                                                           (.constraints sym-info)
@@ -1384,6 +1387,7 @@
                    (fn [sym]
                      (for [sym-info (lookup-sym sym)
                            field-var (lookup-sym (.field constraint))
+                           ;; TODO: maybe use constrain-expr
                            :let [var (.constraints sym-info
                                                    (merge-constraint-maps file-name line-number
                                                                           (.constraints sym-info)
@@ -1910,6 +1914,10 @@
   Emitter
   (emit [ast]
     (for [expr (make-static-string (.string ast))
+          :let [expr (constrain-expr expr (-> expr
+                                              expr-constraints
+                                              (c/update-path (ast/file-name ast)
+                                                             (ast/line-number ast))))]
           _ (sm/assoc-in-val [.constants .strings (.string ast)]
                              (-> expr
                                  (.init [])
@@ -1920,6 +1928,11 @@
   Emitter
   (emit [ast]
     (for [expr (make-static-num (.int ast))
+          :let [new-constraint (-> expr
+                                   expr-constraints
+                                   (c/update-path (ast/file-name ast)
+                                                  (ast/line-number ast)))
+                expr (constrain-expr expr new-constraint)]
           _ (sm/assoc-in-val [.constants .numbers (.int ast)]
                              (-> expr
                                  (.init [])
@@ -2270,7 +2283,8 @@
                                 (seq (map arg-vars .c-var))) ", ") ");" line-sep]
               (.decl call-site-location)
               {} (assoc constraints
-                   result-sym (.result-constraint arity-info))
+                   result-sym (c/update-path (.result-constraint arity-info)
+                                             file-name line-number))
               file-name line-number))))
 
 (defn call-static-variadic [target arity-info arg-vars ast]
@@ -2841,6 +2855,16 @@
                    (either (map (instance? c/ResultConstraint const) .assertion)
                            const)))
             c/top-type))
+
+  (constrain-expr [expr constraint]
+    (let [new-constraint (either (c/compose-constraints "" 0
+                                                        constraint
+                                                        (expr-constraints expr))
+                                 (abort))
+          new-constraints (-> (.constraints expr)
+                              (dissoc (.c-var expr))
+                              (assoc (.c-var expr) new-constraint))]
+      (.constraints expr new-constraints)))
 
   Emitter
   (emit [x]
@@ -3733,7 +3757,7 @@
                    (map evalled-clauses .decl)
                    refs-map
                    (assoc (.constraints first-clause)
-                     result-var (.var maybe-constraint result-var))
+                     result-var (c/update-var maybe-constraint result-var))
                    (ast/file-name clauses) (ast/line-number clauses))))))
 
 (deftype TailAnd [clauses]
