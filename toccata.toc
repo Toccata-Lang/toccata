@@ -2475,54 +2475,58 @@
       (vec)))
 
 (defn define-sum-type [fn-val defined-sym]
-  ;; TODO: abort if trying to compose types and regular values
-  (for [[type-sym type-syms] (sm/when (and (= (.call-target fn-val) 'comp*)
-                                           (maybe (.args fn-val))))
-        ns-path (sym-ns-path type-sym)
-        type-info (get-type-info ns-path type-sym)
-        :when-not (empty? type-info)
-        other-types-info (ev/traverse (.args type-syms)
-                                      (fn [sym]
-                                        (for [ns-path (sym-ns-path sym)
-                                              type-info (get-type-info ns-path sym)
-                                              :when-not (empty? type-info)]
-                                          type-info)))
-        :let [all-types-info (comp* type-info other-types-info)
-              reified-type-num (extract rdr/type-counter)
-              x* (rdr/tag "#x")
-              y* (rdr/tag "#y")]
-        _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
-                           reified-type-num)
-        _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym all-types-info))
-        exprs (emit-defined-value
-               (ast/reified
-                reified-type-num
-                {Type-sym
-                 [[instance?-sym
-                   [(ast/fn-arity-ast
-                     (str defined-sym "_instance_QMARK_") (FnValPtr "")
-                     (ast/params [x* y*]) ""
-                     [(ast/and-ast
-                       [(ast/call-ast (rdr/tag 'some)
-                                      [(ast/call-ast list-sym (vec (keys all-types-info)))
-                                       (ast/call-ast (rdr/tag 'partial)
-                                                     [=*-sym
-                                                      (ast/call-ast get-type-sym [y*])])])
-                        (ast/call-ast maybe-sym [y*])])])]]
+  (either (map (= (.call-target fn-val) 'comp*)
+               (fn [_]
+                 (let [[type-sym type-syms] (.args fn-val)
+                       type-syms (cons type-sym (seq (.args type-syms)))
+                       file-name (ast/file-name defined-sym)
+                       line-number (ast/line-number defined-sym)]
+                   (for [types-info (ev/traverse type-syms get-type-sym-info)
+                         :when-not (empty? (remove types-info empty?))
+                         :let [_ (map (zip-lists type-syms types-info)
+                                      (fn [[sym info]]
+                                        (and (empty? info)
+                                             (do
+                                               (print-err "Unknown type" (str "'" sym "'") "at"
+                                                          (str file-name ":") line-number)
+                                               (maybe (abort))))))
+                               types-info (reduce types-info {} comp)
+                               reified-type-num (extract rdr/type-counter)
+                               x* (rdr/tag "#x")
+                               y* (rdr/tag "#y")]
+                         _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
+                                            reified-type-num)
+                         _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym types-info))
+                         exprs (emit-defined-value
+                                (ast/reified
+                                 reified-type-num
+                                 {Type-sym
+                                  [[instance?-sym
+                                    [(ast/fn-arity-ast
+                                      (str defined-sym "_instance_QMARK_") (FnValPtr "")
+                                      (ast/params [x* y*]) ""
+                                      [(ast/and-ast
+                                        [(ast/call-ast (rdr/tag 'some)
+                                                       [(ast/call-ast list-sym (vec (keys types-info)))
+                                                        (ast/call-ast (rdr/tag 'partial)
+                                                                      [=*-sym
+                                                                       (ast/call-ast get-type-sym [y*])])])
+                                         (ast/call-ast maybe-sym [y*])])])]]
 
-                  [type-mapping-sym
-                   [(ast/fn-arity-ast
-                     (str defined-sym "_type_mapping") (FnValPtr "")
-                     (ast/params [x*]) ""
-                     [(map-vals all-types-info (fn [field-set]
-                                                 (map field-set ast/quoted-ast)))])]]]
+                                   [type-mapping-sym
+                                    [(ast/fn-arity-ast
+                                      (str defined-sym "_type_mapping") (FnValPtr "")
+                                      (ast/params [x*]) ""
+                                      [(map-vals types-info (fn [field-set]
+                                                              (map field-set ast/quoted-ast)))])]]]
 
-                 Stringable-sym
-                 [[string-list-sym
-                   [(ast/fn-arity (ast/params [x*]) ""
-                                  [(ast/call-ast list-sym ["<SumType " (str defined-sym) ">"])])]]]})
-               defined-sym)]
-    exprs))
+                                  Stringable-sym
+                                  [[string-list-sym
+                                    [(ast/fn-arity (ast/params [x*]) ""
+                                                   [(ast/call-ast list-sym ["<SumType " (str defined-sym) ">"])])]]]})
+                                defined-sym)]
+                     exprs))))
+          zero-sm))
 
 (defn define-enum-type [fn-val defined-sym]
   (for [_ (sm/when (= (.call-target fn-val) 'enum))
