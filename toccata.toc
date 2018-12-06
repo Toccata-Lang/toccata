@@ -1819,67 +1819,38 @@
                                     expr)]
                    (emit-tail-expr ast result-constraint expr)))))))
 
-(extend-type ast/string-ast
-  Emitter
-  (emit [ast]
-    (for [expr (make-static-string (.string ast))
-          :let [expr (.constraints expr {(.c-var expr) (-> expr
-                                                           expr-constraints
-                                                           (c/update-path (ast/file-name ast)
-                                                                          (ast/line-number ast)))})]
-          _ (sm/assoc-in-val [.constants .strings (.string ast)]
-                             (-> expr
-                                 (.init [])
-                                 (.decl [])))]
-      expr)))
-
 (extend-type String
   Emitter
   (emit [str-val]
     (make-static-string str-val)))
 
 (defn make-static-num [num]
-  (for [num-idx (sm/new-sm (fn [s]
-                               (assert (instance? GlobalContext s))
-                               (-> s
-                                   .constants
-                                   .numbers
-                                   count
-                                   (vector s)
-                                   maybe)))
-        :let [num-sym (str "num" num-idx)
-              num-ptr (str "numPtr" num-idx)
-              constraint (c/StaticIntConstraint num empty-list nothing num-ptr)]
-        _ (sm/assoc-in-val [.constants .numbers num]
-                           (c-static-int num-ptr [] [] {}
-                                         {num-ptr constraint}
-                                         num-sym))]
-    (c-static-int num-ptr []
-                  ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
-                   "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
-                  {} {num-ptr constraint}
-                  num-sym)))
-
-(extend-type ast/integer-ast
-  Emitter
-  (emit [ast]
-    (comp (sm/get-in-val [.constants .numbers (.int ast)])
-          (for [expr (make-static-num (.int ast))
-                :let [expr (.constraints expr {(.c-var expr) (-> expr
-                                                                 expr-constraints
-                                                                 (c/update-path (ast/file-name ast)
-                                                                                (ast/line-number ast)))})]
-                _ (sm/assoc-in-val [.constants .numbers (.int ast)]
-                                   (-> expr
-                                       (.init [])
-                                       (.decl [])))]
-            expr))))
+  (comp (sm/get-in-val [.constants .numbers num])
+        (for [num-idx (sm/new-sm (fn [s]
+                                   (assert (instance? GlobalContext s))
+                                   (-> s
+                                       .constants
+                                       .numbers
+                                       count
+                                       (vector s)
+                                       maybe)))
+              :let [num-sym (str "num" num-idx)
+                    num-ptr (str "numPtr" num-idx)
+                    constraint (c/StaticIntConstraint num empty-list nothing num-ptr)]
+              _ (sm/assoc-in-val [.constants .numbers num]
+                                 (c-static-int num-ptr [] [] {}
+                                               {num-ptr constraint}
+                                               num-sym))]
+          (c-static-int num-ptr []
+                        ["Integer " num-sym " = {IntegerType, -1, " num "};\n"
+                         "Value *" num-ptr " = (Value *)&" num-sym ";\n"]
+                        {} {num-ptr constraint}
+                        num-sym))))
 
 (extend-type Integer
   Emitter
   (emit [num]
-    (comp (sm/get-in-val [.constants .numbers num])
-          (make-static-num num))))
+    (make-static-num num)))
 
 (extend-type ast/quoted-ast
   Emitter
@@ -1934,6 +1905,26 @@
 
   (tail-call [x params result-constraint]
     (TailCall x params result-constraint)))
+
+(extend-type ast/string-ast
+  Emitter
+  (emit [ast]
+    (for [expr (make-static-string (.string ast))
+          _ (sm/assoc-in-val [.constants .strings (.string ast)]
+                             (-> expr
+                                 (.init [])
+                                 (.decl [])))]
+      expr)))
+
+(extend-type ast/integer-ast
+  Emitter
+  (emit [ast]
+    (for [expr (make-static-num (.int ast))
+          _ (sm/assoc-in-val [.constants .numbers (.int ast)]
+                             (-> expr
+                                 (.init [])
+                                 (.decl [])))]
+      expr)))
 
 (defn call-vector [target args]
   (assert (instance? Vector args))
@@ -2640,6 +2631,7 @@
 
 (defn inner-constraint-for-reduce [ast args]
   (and (= (.call-target ast) 'reduce)
+       (= 3 (count args))
        (let [[v initial-val f] args
              file-name (ast/file-name ast)
              line-number (ast/line-number ast)
@@ -2670,6 +2662,7 @@
       (and (or (= (.call-target ast) 'map)
                (= (.call-target ast) 'flat-map)
                (ignore-result-type (.call-target ast)))
+           (< 1 (count args))
            (let [[v f & args] args]
              (for [info (or (get-in f [.arities 1])
                             (get-in f [.arities 'variadic]))
@@ -4123,14 +4116,12 @@
   Emitter
   (emit [ast]
     (emit-fn-arity (either (and (= "" (.fn-sym ast))
-                                (maybe (rdr/tag 'anon
-                                                (ast/file-name (.params ast))
-                                                (ast/line-number (.params ast)))))
+                                (maybe 'anon))
                            (.fn-sym ast))
                    (FnValPtr (str (.fn-var ast))) (.params ast) (.body ast)))
 
   (inline-expr [ast arg-asts]
-    (sm/state-maybe (ast/let-ast (make-bindings (.fixed (.params ast)) arg-asts)
+    (wrap zero-sm (ast/let-ast (make-bindings (.fixed (.params ast)) arg-asts)
                                  (.body ast))))
 
   (replace-syms [ast subs]
