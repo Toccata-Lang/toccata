@@ -3641,14 +3641,48 @@
                                       (- refs var-refs)))
           refs-map))
 
+(deftype constraint-ast [constraint ast]
+   (assert (instance? c/SymbolConstraints constraint))
+
+  Stringable
+  (string-list [_]
+    (list "(ExprConstraint " (str constraint) " " (str ast) ")"))
+
+  Emitter
+  (replace-syms [_ subs]
+    (for [new-ast (replace-syms ast subs)]
+      (let [new-constraint (either (for [sym (.sym constraint)
+                                         new-sym (get subs sym)]
+                                     (c/update-sym constraint new-sym))
+                                   constraint)]
+        (constraint-ast new-constraint new-ast))))
+
+  (replace-bound-vars [_ subs]
+    (let [new-constraint (either (for [sym (.sym constraint)
+                                         new-sym (get subs sym)]
+                                     (c/update-sym constraint new-sym))
+                                 constraint)
+          new-ast (replace-bound-vars ast subs)]
+      (constraint-ast new-constraint new-ast)))
+
+  (tail-call [_ params return-constraints]
+    (constraint-ast constraint (tail-call ast params return-constraints)))
+
+  (emit [_]
+    (for [expr (emit ast)]
+      (constrain-expr expr
+                      (c/update-path constraint
+                                     (ast/file-name ast) (ast/line-number ast))))))
+
 (defprotocol EmitCond
   (emit-cond-clause [clause]
     (let [file-name (ast/file-name clause)
           file-name (either (and (= file-name 'core)
                                  (maybe "$TOCCATA_DIR/core.toc"))
-                            file-name)]
+                            file-name)
+          line-number (ast/line-number clause)]
       (for [syms get-syms
-            expr (emit clause)
+            expr (emit (constraint-ast (c/update-path maybe-constraint file-name line-number) clause))
             _ (set-syms syms)]
         (let [checks (map (seq (.refs-map expr))
                           (fn [[var refs]]
@@ -3657,20 +3691,8 @@
                                       (runtime-check (c/update-var constraint var) c/top-type
                                                      (ast/file-name clause) (ast/line-number clause)))
                                     "")))]
-          (either (and (or (= MaybeType (expr-type-num expr))
-                           (= "" (.c-var expr)))
-                       (maybe (.init expr [checks (.init expr)])))
-                  (.init expr [checks
-                               (.init expr)
-                               "if (" (.c-var expr) "->type != MaybeType) {" line-sep
-                               "fprintf(stderr, \"Wrong type of result returned at %s, line %d\\n\", \""
-                               file-name "\","
-                               (ast/line-number clause)
-                               ");" line-sep
-                               "fprintf(stderr, \"Expected Maybe, got %s\\n\", extractStr(type_name(empty_list, "
-                               (.c-var expr) ")));" line-sep
-                               "abort();" line-sep
-                               "}" line-sep])))))))
+          (.init expr [checks
+                       (.init expr)]))))))
 
 (extend-type rdr/tagged-symbol
   EmitCond
@@ -3705,29 +3727,35 @@
   (let [last-clause (either (last evalled-clauses)
                             (do
                               (print-err "Booom!!!")
-                              (abort)))]
+                              (abort)))
+        clause-type (-> last-clause
+                        expr-constraints
+                        c/extract-type-map)]
     ;; TODO: only check the constraints that haven't been checked yet
-    [;; (map (seq (.constraints last-clause))
-     ;;      (fn [[var constraint]]
-     ;;        (either (and (get (.refs-map last-clause) var)
-     ;;                     (maybe (runtime-check (c/update-var constraint (str var)) c/top-type "" 0)))
-     ;;                "")))
+    [(map (seq (.constraints last-clause))
+          (fn [[var constraint]]
+            (either (and (get (.refs-map last-clause) var)
+                         (maybe (runtime-check (c/update-var constraint (str var)) c/top-type "" 0)))
+                    "")))
      (either (and  (= "" (.c-var last-clause))
                    (maybe (.init last-clause)))
              [(.init last-clause)
               result-var " = " (.c-var last-clause) ";" line-sep])]))
 
 (defn cond-clause-init [cond-test result-var [init refs-map] clause]
+  (assert (instance? Vector init))
+  (assert (instance? C-expr clause))
+
   (let [refs-map (-> (.refs-map clause)
                      seq
                      (reduce refs-map decrement-refs))]
-    [(conj (vec init)
+    [(conj init
            ;; TODO: only check the constraints that haven't been checked yet
-           [;; (map (seq (.constraints clause))
-            ;;      (fn [[var constraint]]
-            ;;        (either (and (get (.refs-map clause) var)
-            ;;                     (maybe (runtime-check (c/update-var constraint (str var)) c/top-type "" 0)))
-            ;;                "")))
+           [(map (seq (.constraints clause))
+                 (fn [[var constraint]]
+                   (either (and (get (.refs-map clause) var)
+                                (maybe (runtime-check (c/update-var constraint var) c/top-type "" 0)))
+                           "")))
             (.init clause)
             result-var " = " (.c-var clause) ";" line-sep
             cond-test result-var ",\"\",0)) {" line-sep
@@ -4190,8 +4218,12 @@
           (for [fn-var (global-var "fn")
                 :let [fn-var (FnValPtr fn-var)]
                 arities (ev/traverse (.arities ast) emit)
-                fn-expr (comp (closure-fn 'anon fn-var arities)
-                              (static-fn 'anon fn-var arities))]
+                fn-expr (comp (closure-fn (str "anonymous function at "
+                                               (ast/file-name ast) ": " (ast/line-number ast))
+                                          fn-var arities)
+                              (static-fn (str "anonymous function at "
+                                              (ast/file-name ast) ": " (ast/line-number ast))
+                                         fn-var arities))]
             fn-expr)))
 
   (emit-defined-value [fn-val defined-sym]
@@ -4236,44 +4268,6 @@
                                (str (ast/file-name (.type ast)) ":")
                                (ast/line-number (.type ast)))))))
 
-
-(deftype constraint-ast [constraint ast]
-   (assert (instance? c/SymbolConstraints constraint))
-
-  Stringable
-  (string-list [_]
-    (list "(ExprConstraint " (str constraint) " " (str ast) ")"))
-
-  Emitter
-  (replace-syms [_ subs]
-    (for [new-ast (replace-syms ast subs)]
-      (let [new-constraint (either (for [sym (.sym constraint)
-                                         new-sym (get subs sym)]
-                                     (c/update-sym constraint new-sym))
-                                   constraint)]
-        (constraint-ast new-constraint new-ast))))
-
-  (replace-bound-vars [_ subs]
-    (let [new-constraint (either (for [sym (.sym constraint)
-                                         new-sym (get subs sym)]
-                                     (c/update-sym constraint new-sym))
-                                 constraint)
-          new-ast (replace-bound-vars ast subs)]
-      (constraint-ast new-constraint new-ast)))
-
-  (tail-call [_ params return-constraints]
-    (constraint-ast constraint (tail-call ast params return-constraints)))
-
-  (emit [_]
-    (for [expr (emit ast)]
-      (let [file-name (ast/file-name ast)
-            line-number (ast/line-number ast)
-            constraint (c/update-path constraint file-name line-number)
-            constraints (expr-constraints expr)
-            new-constraints (either (c/compose-constraints file-name line-number
-                                                           constraints constraint)
-                                    (abort))]
-        (.constraints expr {(.c-var expr) new-constraints})))))
 
 (defn constructor-expr [new-type-name new-type-constraint type-val-sym fields assertions]
   (assert (instance? c/TypeConstraint new-type-constraint))
