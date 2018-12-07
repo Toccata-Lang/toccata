@@ -1281,21 +1281,14 @@
             (wrap zero-sm constraint)))
 
   (emit [constraint]
-    (let [[file-name line-number] (either (first (.path constraint))
-                                          ["" 0])]
-      (either (map (.sym constraint)
-                   (fn [sym]
-                     (for [sym-info (lookup-sym sym)
-                           ;; TODO: maybe use constrain-expr
-                           :let [var (.constraints sym-info
-                                                   (merge-constraint-maps file-name line-number
-                                                                          (.constraints sym-info)
-                                                                          {(.c-var sym-info)
-                                                                           (c/update-var constraint
-                                                                                         (.c-var sym-info))}))]
-                           _ (set-sym sym var)]
-                       (.refs-map var (dissoc (.refs-map sym-info) (.c-var sym-info))))))
-              (wrap zero-sm empty-c-code)))))
+    (either (map (.sym constraint)
+                 (fn [sym]
+                   (for [sym-info (lookup-sym sym)
+                         :let [var (constrain-expr sym-info (-> constraint
+                                                                (c/update-var (.c-var sym-info))))]
+                         _ (set-sym sym var)]
+                     (.refs-map var (dissoc (.refs-map sym-info) (.c-var sym-info))))))
+            (wrap zero-sm empty-c-code))))
 
 (extend-type c/InnerConstraint
   Emitter
@@ -1382,23 +1375,16 @@
 (extend-type c/FieldConstraint
   Emitter
   (emit [constraint]
-    (let [[file-name line-number] (either (first (.path constraint))
-                                          ["" 0])]
-      (either (map (.sym constraint)
-                   (fn [sym]
-                     (for [sym-info (lookup-sym sym)
-                           field-var (lookup-sym (.field constraint))
-                           ;; TODO: maybe use constrain-expr
-                           :let [var (.constraints sym-info
-                                                   (merge-constraint-maps file-name line-number
-                                                                          (.constraints sym-info)
-                                                                          {(.c-var sym-info)
-                                                                           (-> constraint
-                                                                               (.field-var (.c-var field-var))
-                                                                               (c/update-var (.c-var sym-info)))}))]
-                           _ (set-sym sym var)]
-                       (.refs-map var (dissoc (.refs-map sym-info) (.c-var sym-info))))))
-              (wrap zero-sm empty-c-code))))
+    (either (map (.sym constraint)
+                 (fn [sym]
+                   (for [sym-info (lookup-sym sym)
+                         field-var (lookup-sym (.field constraint))
+                         :let [var (constrain-expr sym-info (-> constraint
+                                                                (.field-var (.c-var field-var))
+                                                                (c/update-var (.c-var sym-info))))]
+                         _ (set-sym sym var)]
+                     (.refs-map var (dissoc (.refs-map sym-info) (.c-var sym-info))))))
+            (wrap zero-sm empty-c-code)))
 
   (runtime-check [constraint value-info sym-location]
     (either (and (c/satisfied-by constraint value-info)
@@ -1929,11 +1915,10 @@
   Emitter
   (emit [ast]
     (for [expr (make-static-num (.int ast))
-          :let [new-constraint (-> expr
-                                   expr-constraints
-                                   (c/update-path (ast/file-name ast)
-                                                  (ast/line-number ast)))
-                expr (constrain-expr expr new-constraint)]
+          :let [expr (constrain-expr expr (-> expr
+                                              expr-constraints
+                                              (c/update-path (ast/file-name ast)
+                                                             (ast/line-number ast))))]
           _ (sm/assoc-in-val [.constants .numbers (.int ast)]
                              (-> expr
                                  (.init [])
@@ -2101,7 +2086,7 @@
                                        (abort))
                                (c/update-var (str (.c-var var)))
                                (c/update-sym sym))]
-          _ (set-sym sym (.constraints var {(.c-var var) constraint}))]
+          _ (set-sym sym (constrain-expr var constraint))]
       constraint))
 
   (get-param-constraints [sym constraint-map]
@@ -2127,8 +2112,7 @@
                 constraint (expr-constraints evalled)
                 evalled (-> evalled
                             (.c-var arg-var)
-                            (.constraints (assoc (.constraints evalled)
-                                            arg-var constraint))
+                            (constrain-expr constraint)
                             (.init [(.init evalled) "Value *" arg-var " = "
                                     (.c-var evalled) ";" line-sep]))
                 evalled-ref (c-code (.c-var evalled) [] []
@@ -2364,6 +2348,7 @@
 (def =*-sym (rdr/tag '=*))
 (def apply-sym (rdr/tag 'apply))
 (def get-type-sym (rdr/tag 'reified-get-type))
+;; TODO: see where you can use either instead of extract
 (def extract-sym (rdr/tag 'extract))
 (def instance?-sym (rdr/tag 'instance?))
 (def new-type-value-sym (rdr/tag 'new-type-value))
@@ -2668,10 +2653,7 @@
                                                       inner-const
                                                       (expr-constraints v))
                                (abort))]
-         (maybe [[(.constraints v (assoc (.constraints v)
-                                    (.c-var v) new-const))
-                  initial-val
-                  f]
+         (maybe [[(constrain-expr v new-const) initial-val f]
                  c/top-type]))))
 
 (def ignore-result-type #{'split-with 'filter 'drop-while 'take-while})
@@ -2702,10 +2684,7 @@
                                                               inner-const
                                                               (expr-constraints v))
                                        (abort))]
-                 [(list* (.constraints v (assoc (.constraints v)
-                                           (.c-var v) new-const))
-                         f
-                         args)
+                 [(list* (constrain-expr v new-const) f args)
                   (either (or (and (ignore-result-type (.call-target ast))
                                    (maybe c/top-type))
                               (and (= (.call-target ast) 'flat-map)
@@ -2772,8 +2751,7 @@
                                                                expr-constraints
                                                                (c/update-path file-name line-number)))
                                     (abort))]
-               (.constraints r (assoc (.constraints r)
-                                 (.c-var r) result-c))))))))
+               (constrain-expr r result-c)))))))
 
 (extend-type ast/call-ast
   Emitter
@@ -3671,9 +3649,7 @@
 
   (emit [_]
     (for [expr (emit ast)]
-      (constrain-expr expr
-                      (c/update-path constraint
-                                     (ast/file-name ast) (ast/line-number ast))))))
+      (constrain-expr expr (c/update-path constraint (ast/file-name ast) (ast/line-number ast))))))
 
 (defprotocol EmitCond
   (emit-cond-clause [clause]
@@ -3702,8 +3678,7 @@
           constraint (type-constraint (expr-type-num expr)
                                       (ast/file-name sym) (ast/line-number sym))]
       (let [expr-c (expr-constraints expr)]
-        (.constraints expr (assoc (.constraints expr)
-                             (.c-var expr) (c/intersect constraint expr-c)))))))
+        (constrain-expr expr (c/intersect constraint expr-c))))))
 
 (extend-type Symbol
   EmitCond
@@ -3712,8 +3687,7 @@
           constraint (type-constraint (expr-type-num expr)
                                       (ast/file-name sym) (ast/line-number sym))]
       (let [expr-c (expr-constraints expr)]
-        (.constraints expr (assoc (.constraints expr)
-                             (.c-var expr) (c/intersect constraint expr-c)))))))
+        (constrain-expr expr (c/intersect constraint expr-c))))))
 
 (defn clause-refs [exprs result-var]
   (let [clause-vars (-> exprs
