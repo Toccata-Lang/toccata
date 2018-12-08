@@ -37,6 +37,14 @@
   (write-str [x]
     (print x)))
 
+(extend-type Vector
+  StringWriter
+  (write-str [v] (map v write-str)))
+
+(extend-type List
+  StringWriter
+  (write-str [l] (map l write-str)))
+
 (def string-writer (agent ""))
 (defn write-strings [strs]
   (send string-writer (fn [_]
@@ -250,6 +258,10 @@
     zero-sm)
 
   (runtime-check [constraint value-info file-name line-number]
+    ;; TODO: this causes wierd error messages
+    ;;  (assert (instance? String file-name))
+    ;;  (assert (instance? Integer line-number))
+
     ;; generated code must preserve ref counts
     (either (and (c/satisfied-by constraint value-info)
                  (maybe ""))
@@ -1901,10 +1913,11 @@
   Emitter
   (emit [ast]
     (for [expr (make-static-string (.string ast))
-          :let [expr (constrain-expr expr (-> expr
-                                              expr-constraints
-                                              (c/update-path (ast/file-name ast)
-                                                             (ast/line-number ast))))]
+          :let [expr (.constraints expr (assoc (.constraints expr)
+                                          (.c-var expr) (-> expr
+                                                            expr-constraints
+                                                            (c/update-path (ast/file-name ast)
+                                                                           (ast/line-number ast)))))]
           _ (sm/assoc-in-val [.constants .strings (.string ast)]
                              (-> expr
                                  (.init [])
@@ -1915,10 +1928,11 @@
   Emitter
   (emit [ast]
     (for [expr (make-static-num (.int ast))
-          :let [expr (constrain-expr expr (-> expr
-                                              expr-constraints
-                                              (c/update-path (ast/file-name ast)
-                                                             (ast/line-number ast))))]
+          :let [expr (.constraints expr (assoc (.constraints expr)
+                                          (.c-var expr) (-> expr
+                                                            expr-constraints
+                                                            (c/update-path (ast/file-name ast)
+                                                                           (ast/line-number ast)))))]
           _ (sm/assoc-in-val [.constants .numbers (.int ast)]
                              (-> expr
                                  (.init [])
@@ -2086,7 +2100,8 @@
                                        (abort))
                                (c/update-var (str (.c-var var)))
                                (c/update-sym sym))]
-          _ (set-sym sym (constrain-expr var constraint))]
+          _ (set-sym sym (.constraints var (assoc (.constraints var)
+                                             (.c-var var) constraint)))]
       constraint))
 
   (get-param-constraints [sym constraint-map]
@@ -2112,7 +2127,6 @@
                 constraint (expr-constraints evalled)
                 evalled (-> evalled
                             (.c-var arg-var)
-                            (constrain-expr constraint)
                             (.init [(.init evalled) "Value *" arg-var " = "
                                     (.c-var evalled) ";" line-sep]))
                 evalled-ref (c-code (.c-var evalled) [] []
@@ -2308,7 +2322,8 @@
         fn-var (genlocal "fn")
         result-sym (genlocal "rslt")
         line (line-macro ast "// dynamic fn type")]
-    (let [arg-syms (comp [(str arity-sym "->closures")] args)
+    (let [args (map args .c-var)
+          arg-syms (comp [(str arity-sym "->closures")] args)
           num-args (count args)]
       (c-init result-sym
               ["Value *" result-sym ";" line-sep
@@ -2389,7 +2404,8 @@
           line (line-macro ast "// dynamic unknown type")
           sym-location (emit (either (= "\"\"" file-name)
                                      (str "\"at " file-name ": " line-number "\"")))]
-      (let [arg-syms (comp [(str arity-sym "->closures")] args)]
+      (let [args (map args .c-var)
+            arg-syms (comp [(str arity-sym "->closures")] args)]
         (comp sym-location
               (c-init result-sym
                       [line "Value *" result-sym ";" line-sep
@@ -2435,14 +2451,13 @@
                                        (ast/file-name ast) (ast/line-number ast))
           result-sym (genlocal "rslt")
           line (line-macro ast "// call invoke")]
-      (do
-        (c-init result-sym
-                [line "Value *" result-sym " = " (.c-fn invoke-info) "("
-                 (interpose (list* "empty_list" (.c-var target) (map args .c-var)) ", ")
-                 ");" line-sep]
-                [] {} (assoc constraints
-                        result-sym (.result-constraint invoke-info))
-                (ast/file-name ast) (ast/line-number ast))))))
+      (c-init result-sym
+              [line "Value *" result-sym " = " (.c-fn invoke-info) "("
+               (interpose (list* "empty_list" (.c-var target) (map args .c-var)) ", ")
+               ");" line-sep]
+              [] {} (assoc constraints
+                      result-sym (.result-constraint invoke-info))
+              (ast/file-name ast) (ast/line-number ast)))))
 
 (defn update-last [asts f]
   (either (empty? asts)
@@ -2575,8 +2590,8 @@
 (defprotocol CallSite
   (emit-call-site [target args ast]
     (comp (call-invoke target args ast)
-          (call-dyn-fn-value target (map args .c-var) ast)
-          (call-dyn-unknown-type target (map args .c-var) ast))))
+          (call-dyn-fn-value target args ast)
+          (call-dyn-unknown-type target args ast))))
 
 (extend-type c-static-reified
   CallSite
@@ -2653,7 +2668,9 @@
                                                       inner-const
                                                       (expr-constraints v))
                                (abort))]
-         (maybe [[(constrain-expr v new-const) initial-val f]
+         (maybe [[(.constraints v (assoc (.constraints v)
+                                    (.c-var v) new-const))
+                  initial-val f]
                  c/top-type]))))
 
 (def ignore-result-type #{'split-with 'filter 'drop-while 'take-while})
@@ -2684,7 +2701,9 @@
                                                               inner-const
                                                               (expr-constraints v))
                                        (abort))]
-                 [(list* (constrain-expr v new-const) f args)
+                 [(list* (.constraints v (assoc (.constraints v)
+                                           (.c-var v) new-const))
+                         f args)
                   (either (or (and (ignore-result-type (.call-target ast))
                                    (maybe c/top-type))
                               (and (= (.call-target ast) 'flat-map)
@@ -2751,7 +2770,8 @@
                                                                expr-constraints
                                                                (c/update-path file-name line-number)))
                                     (abort))]
-               (constrain-expr r result-c)))))))
+               (.constraints r (assoc (.constraints r)
+                                 (.c-var r) result-c))))))))
 
 (extend-type ast/call-ast
   Emitter
@@ -3659,17 +3679,12 @@
                             file-name)
           line-number (ast/line-number clause)]
       (for [syms get-syms
-            expr (emit (constraint-ast (c/update-path maybe-constraint file-name line-number) clause))
+            expr (-> maybe-constraint
+                     (c/update-path file-name line-number)
+                     (constraint-ast clause)
+                     emit)
             _ (set-syms syms)]
-        (let [checks (map (seq (.refs-map expr))
-                          (fn [[var refs]]
-                            (either (for [constraint (get (.constraints expr) var)
-                                          _ (< 0 refs)]
-                                      (runtime-check (c/update-var constraint var) c/top-type
-                                                     (ast/file-name clause) (ast/line-number clause)))
-                                    "")))]
-          (.init expr [checks
-                       (.init expr)]))))))
+        expr))))
 
 (extend-type rdr/tagged-symbol
   EmitCond
@@ -3677,8 +3692,7 @@
     (for [expr (emit sym)
           constraint (type-constraint (expr-type-num expr)
                                       (ast/file-name sym) (ast/line-number sym))]
-      (let [expr-c (expr-constraints expr)]
-        (constrain-expr expr (c/intersect constraint expr-c))))))
+      (constrain-expr expr constraint))))
 
 (extend-type Symbol
   EmitCond
@@ -3686,38 +3700,9 @@
     (for [expr (emit sym)
           constraint (type-constraint (expr-type-num expr)
                                       (ast/file-name sym) (ast/line-number sym))]
-      (let [expr-c (expr-constraints expr)]
-        (constrain-expr expr (c/intersect constraint expr-c))))))
+      (constrain-expr expr constraint))))
 
-(defn clause-refs [exprs result-var]
-  (let [clause-vars (-> exprs
-                        (remove (fn [c] (empty? (.init c))))
-                        (map .c-var)
-                        set)
-        refs-maps (map exprs .refs-map)]
-    (dissoc (apply merge-with (list* + refs-maps))
-            result-var)))
-
-(defn last-init [evalled-clauses result-var]
-  (let [last-clause (either (last evalled-clauses)
-                            (do
-                              (print-err "Booom!!!")
-                              (abort)))
-        clause-type (-> last-clause
-                        expr-constraints
-                        c/extract-type-map)]
-    ;; TODO: only check the constraints that haven't been checked yet
-    [(map (seq (.constraints last-clause))
-          (fn [[var constraint]]
-            (either (and (get (.refs-map last-clause) var)
-                         (maybe (runtime-check (c/update-var constraint (str var)) c/top-type "" 0)))
-                    "")))
-     (either (and  (= "" (.c-var last-clause))
-                   (maybe (.init last-clause)))
-             [(.init last-clause)
-              result-var " = " (.c-var last-clause) ";" line-sep])]))
-
-(defn cond-clause-init [cond-test result-var [init refs-map] clause]
+(defn cond-clause-init [cond-test result-var [init refs-map constraints] clause]
   (assert (instance? Vector init))
   (assert (instance? C-expr clause))
 
@@ -3726,11 +3711,14 @@
                      (reduce refs-map decrement-refs))]
     [(conj init
            ;; TODO: only check the constraints that haven't been checked yet
-           [(map (seq (.constraints clause))
-                 (fn [[var constraint]]
-                   (either (and (get (.refs-map clause) var)
-                                (maybe (runtime-check (c/update-var constraint var) c/top-type "" 0)))
-                           "")))
+           [;; (map (seq (.constraints clause))
+            ;;      (fn [[var constraint]]
+            ;;        (either (for [_ (get (.refs-map clause) var)
+            ;;                      prev-constraint (or (get constraints var)
+            ;;                                          (maybe c/top-type))]
+            ;;                  (runtime-check (c/update-var constraint var)
+            ;;                                 prev-constraint "" 0))
+            ;;                "")))
             (.init clause)
             result-var " = " (.c-var clause) ";" line-sep
             cond-test result-var ",\"\",0)) {" line-sep
@@ -3738,34 +3726,43 @@
                                   (either (and (= 0 remaining)
                                                (maybe ""))
                                           ["dec_and_free(" c-sym ", " remaining ");" line-sep])))])
-     refs-map]))
+     refs-map
+     (comp constraints (.constraints clause))]))
 
 (defn clause-inits [evalled-clauses cond-test refs-map result-var]
-  (let [[clause-inits] (reduce (butlast evalled-clauses)
-                               [[] refs-map]
-                               (partial cond-clause-init cond-test result-var))]
-    clause-inits))
+  (let [[clause-inits _ constraints] (reduce (butlast evalled-clauses)
+                                             [[] refs-map {}]
+                                             (partial cond-clause-init cond-test result-var))
+        last-clause (either (last evalled-clauses)
+                            (do
+                              (print-err "Booom!!!")
+                              (abort)))
+        last-init [(.init last-clause)
+                   (either (= "" (.c-var last-clause))
+                           [result-var " = " (.c-var last-clause) ";" line-sep])]]
+    (conj clause-inits last-init)))
+
+(defn clause-refs [exprs result-var]
+  (dissoc (apply merge-with (list* + (map exprs .refs-map)))
+          result-var))
 
 (defn emit-cond-expr [cond-test result-var clauses tail-return]
-  (map (ev/traverse clauses emit-cond-clause)
-       (fn [evalled-clauses]
-         (let [refs-map (clause-refs evalled-clauses result-var)
-               [first-clause] evalled-clauses]
-           (c-init result-var
-                   ["Value *" result-var ";" line-sep
-                    (-> evalled-clauses
-                        (clause-inits cond-test refs-map result-var)
-                        (conj (last-init evalled-clauses result-var))
-                        (interpose [tail-return "} else {" line-sep
-                                    "dec_and_free(" result-var ", 1);" line-sep]))
-                    (-> (count evalled-clauses)
-                        (dec)
-                        (repeat (str "}" line-sep)))]
-                   (map evalled-clauses .decl)
-                   refs-map
-                   (assoc (.constraints first-clause)
-                     result-var (c/update-var maybe-constraint result-var))
-                   (ast/file-name clauses) (ast/line-number clauses))))))
+  (for [evalled-clauses (ev/traverse clauses emit-cond-clause)]
+    (let [[first-clause] evalled-clauses
+          refs-map (clause-refs evalled-clauses result-var)]
+      (c-init result-var
+              ["Value *" result-var ";" line-sep
+               (-> evalled-clauses
+                   (clause-inits cond-test refs-map result-var)
+                   (interpose [tail-return "} else {" line-sep
+                               "dec_and_free(" result-var ", 1);" line-sep]))
+               (-> (count evalled-clauses)
+                   dec
+                   (repeat (str "}" line-sep)))]
+              (map evalled-clauses .decl)
+              refs-map
+              (.constraints first-clause)
+              (ast/file-name clauses) (ast/line-number clauses)))))
 
 (deftype TailAnd [clauses]
   (assert (instance? Vector clauses))
@@ -3787,7 +3784,6 @@
                                (remove (.clauses ast) (partial instance? ast/NoCode))
                                (str "return(nothing);" line-sep))]
       expr)))
-
 
 (extend-type ast/and-ast
   Emitter
@@ -4364,9 +4360,8 @@
                                        [(ast/or-ast
                                          [(ast/and-ast
                                            [(ast/call-ast has-field-sym [x* field*])
-                                            (ast/call-ast
-                                             maybe-sym
-                                             [(ast/call-ast field* [x* 'new-value])])])
+                                            (ast/call-ast maybe-sym
+                                                          [(ast/call-ast field* [x* 'new-value])])])
                                           (ast/call-ast maybe-sym [x*])])])])]]]
 
                                  Hashable-sym
@@ -4555,14 +4550,6 @@
                                    core-types               ;; type-maps
                                    ))
 
-(extend-type Vector
-  StringWriter
-  (write-str [v] (map v write-str)))
-
-(extend-type List
-  StringWriter
-  (write-str [l] (map l write-str)))
-
 (defprotocol FreeGlobal
   (free-global [_]
     (assert-result x (instance? Vector x))
@@ -4615,7 +4602,8 @@
                                                        (-> constraint
                                                            (c/update-var var)
                                                            (runtime-check c/top-type
-                                                                          "((String *)closures)->buffer")))
+                                                                          (str "(closures == (List *)0 ? \"\" : "
+                                                                               "((String *)closures)->buffer)"))))
                                                      "\nbreak;\n"]))
                                              (let [arity-info (extract (get impls 0))]
                                                ["default: arity = " (.c-var arity-info) ";_fn = (FnType" arg-count
