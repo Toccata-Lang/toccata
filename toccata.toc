@@ -3768,6 +3768,27 @@
                 result-var (.var maybe-constraint result-var))
               (ast/file-name clauses) (ast/line-number clauses)))))
 
+(defn emit-and-expr [cond-test result-var clauses tail-return]
+  (for [evalled-clauses (ev/traverse clauses emit-cond-clause)]
+    (let [[first-clause] evalled-clauses
+          last-clause (extract (last evalled-clauses))
+          refs-map (clause-refs evalled-clauses result-var)
+          [exprs] (clause-checks evalled-clauses)]
+      (c-init result-var
+              ["Value *" result-var ";" line-sep
+               (-> exprs
+                   (clause-inits cond-test refs-map result-var)
+                   (interpose [tail-return "} else {" line-sep
+                               "dec_and_free(" result-var ", 1);" line-sep]))
+               (-> (count evalled-clauses)
+                   dec
+                   (repeat (str "}" line-sep)))]
+              (map evalled-clauses .decl)
+              refs-map
+              (assoc (.constraints first-clause)
+                result-var (expr-constraints last-clause))
+              (ast/file-name clauses) (ast/line-number clauses)))))
+
 (deftype TailAnd [clauses]
   (assert (instance? Vector clauses))
 
@@ -3784,9 +3805,9 @@
   Emitter
   (emit [ast]
     (for [result-var (genlocal "andRslt")
-          expr (emit-cond-expr "if (isNothing(" result-var
-                               (remove (.clauses ast) (partial instance? ast/NoCode))
-                               (str "return(nothing);" line-sep))]
+          expr (emit-and-expr "if (isNothing(" result-var
+                              (remove (.clauses ast) (partial instance? ast/NoCode))
+                              (str "return(nothing);" line-sep))]
       expr)))
 
 (extend-type ast/and-ast
@@ -3796,7 +3817,7 @@
       (either (and (empty? clauses)
                    (maybe (wrap zero-sm empty-c-code)))
               (for [result-var (genlocal "andRslt")
-                    expr (emit-cond-expr "if (isNothing(" result-var clauses "")]
+                    expr (emit-and-expr "if (isNothing(" result-var clauses "")]
                 expr))))
 
   (tail-call [ast params result-constraint]
