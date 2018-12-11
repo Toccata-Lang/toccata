@@ -258,7 +258,7 @@
     zero-sm)
 
   (runtime-check [constraint value-info file-name line-number]
-    ;; TODO: this causes wierd error messages
+    ;; TODO: this causes weird error messages
     ;;  (assert (instance? String file-name))
     ;;  (assert (instance? Integer line-number))
 
@@ -266,7 +266,8 @@
     (either (and (c/satisfied-by constraint value-info)
                  (maybe ""))
             (runtime-check constraint value-info
-                           (either (= "\"\"" file-name)
+                           (either (and (= "" file-name)
+                                        (maybe "\"\""))
                                    (str "\"at " file-name ": " line-number "\"")))))
 
   (runtime-check [constraint value-info sym-location]))
@@ -1525,6 +1526,10 @@
             asts)))
 
 (deftype TailHashMap [m]
+  Stringable
+  (string-list [_]
+    (list (str m)))
+
   Emitter
   (emit [_]
     ;; TODO: put the code to init the value in the run time init
@@ -3686,21 +3691,12 @@
             _ (set-syms syms)]
         expr))))
 
-(extend-type rdr/tagged-symbol
+(extend-type Tagged
   EmitCond
   (emit-cond-clause [sym]
-    (for [expr (emit sym)
-          constraint (type-constraint (expr-type-num expr)
-                                      (ast/file-name sym) (ast/line-number sym))]
-      (constrain-expr expr constraint))))
-
-(extend-type Symbol
-  EmitCond
-  (emit-cond-clause [sym]
-    (for [expr (emit sym)
-          constraint (type-constraint (expr-type-num expr)
-                                      (ast/file-name sym) (ast/line-number sym))]
-      (constrain-expr expr constraint))))
+    (for [expr (emit sym)]
+      (constrain-expr expr (c/update-path maybe-constraint
+                                          (ast/file-name sym) (ast/line-number sym))))))
 
 (defn cond-clause-init [cond-test result-var [init refs-map constraints] clause]
   (assert (instance? Vector init))
@@ -3710,16 +3706,7 @@
                      seq
                      (reduce refs-map decrement-refs))]
     [(conj init
-           ;; TODO: only check the constraints that haven't been checked yet
-           [;; (map (seq (.constraints clause))
-            ;;      (fn [[var constraint]]
-            ;;        (either (for [_ (get (.refs-map clause) var)
-            ;;                      prev-constraint (or (get constraints var)
-            ;;                                          (maybe c/top-type))]
-            ;;                  (runtime-check (c/update-var constraint var)
-            ;;                                 prev-constraint "" 0))
-            ;;                "")))
-            (.init clause)
+           [(.init clause)
             result-var " = " (.c-var clause) ";" line-sep
             cond-test result-var ",\"\",0)) {" line-sep
             (map (seq refs-map) (fn [[c-sym remaining]]
@@ -3746,13 +3733,30 @@
   (dissoc (apply merge-with (list* + (map exprs .refs-map)))
           result-var))
 
+(defn clause-checks [[first-clause & evalled-clauses]]
+  (reduce evalled-clauses [[first-clause] (.constraints first-clause)]
+          (fn [[clauses constraints] clause]
+            ;; TODO: only check values that are necesasry
+            (let [checks (map (seq (.constraints clause))
+                              (fn [[var constraint]]
+                                (either (for [refs (get (.refs-map clause) var)
+                                              :when (< 0 refs)]
+                                          (runtime-check (c/update-var constraint var)
+                                                         (either (get constraints var)
+                                                                 c/top-type)
+                                                         "" 0))
+                                        "")))]
+              [(conj clauses (.init clause (comp checks (.init clause))))
+               (comp constraints (.constraints clause))]))))
+
 (defn emit-cond-expr [cond-test result-var clauses tail-return]
   (for [evalled-clauses (ev/traverse clauses emit-cond-clause)]
     (let [[first-clause] evalled-clauses
-          refs-map (clause-refs evalled-clauses result-var)]
+          refs-map (clause-refs evalled-clauses result-var)
+          [exprs] (clause-checks evalled-clauses)]
       (c-init result-var
               ["Value *" result-var ";" line-sep
-               (-> evalled-clauses
+               (-> exprs
                    (clause-inits cond-test refs-map result-var)
                    (interpose [tail-return "} else {" line-sep
                                "dec_and_free(" result-var ", 1);" line-sep]))
