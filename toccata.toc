@@ -1313,6 +1313,16 @@
     ;; TODO: this needs to be implemented, or something
     []))
 
+(extend-type c/ContentsConstraint
+  Emitter
+  (to-constraint [ast]
+    (for [new-constraints (ev/traverse (seq (.constraints ast)) to-constraint)]
+      (.constraints ast new-constraints)))
+
+  (runtime-check [constraint value-info sym-location]
+    ;; TODO: this needs to be implemented, or something
+    []))
+
 (extend-type c/TypeConstraint
   Emitter
   (to-constraint [ast]
@@ -2043,6 +2053,34 @@
                                                (wrap zero-sm {(.c-var var) new-const})))))]
     (comp* {} constraint-maps)))
 
+(defn add-contents-constraint [ast args]
+  (let [file-name (ast/file-name ast)
+        line-number (ast/line-number ast)
+        target (.call-target ast)]
+    (either (flat-map (or (and (or (= target 'conj)
+                                   (= target 'store))
+                               (= 2 (count args))
+                               (maybe args))
+                          (and (= target 'cons)
+                               (= 2 (count args))
+                               (maybe (reverse args)))
+                          (and (= target 'assoc)
+                               (= 3 (count args))
+                               (let [[collection k v] args]
+                                 ;; TODO: still to be implemented
+                                 ;; (print-err 'assoc-key k)
+                                 nothing)))
+                      (fn [[collection contents]]
+                        (or (= (expr-constraints contents) c/top-type)
+                            (-> (c/ContentsConstraint (-> contents
+                                                          expr-constraints
+                                                          (c/update-path file-name line-number)
+                                                          vector)
+                                                      empty-list nothing "")
+                                (c/update-path file-name line-number)
+                                maybe))))
+            c/top-type)))
+
 (defn call-proto-impl [target disp-type args ast]
   (let [num-args (count args)]
     (for [impl-info (get-proto-impl target num-args disp-type)
@@ -2052,14 +2090,15 @@
                   (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
           result-var (genlocal "rslt")
           line (line-macro target (str "// call proto fn " target))]
-      (c-init result-var
-              [line "Value *" result-var " = " (.c-fn impl-info) "("
-               (interpose (list* "empty_list" (map args .c-var)) ", ")
-               ");" line-sep]
-              [] {}
-              (assoc constraints
-                result-var (.result-constraint impl-info))
-              (ast/file-name ast) (ast/line-number ast)))))
+      (constrain-expr (c-init result-var
+                              [line "Value *" result-var " = " (.c-fn impl-info) "("
+                               (interpose (list* "empty_list" (map args .c-var)) ", ")
+                               ");" line-sep]
+                              [] {}
+                              (assoc constraints
+                                result-var (.result-constraint impl-info))
+                              (ast/file-name ast) (ast/line-number ast))
+                      (add-contents-constraint ast args)))))
 
 (defn inline-wrap-and-apply [name args]
   ;; TODO: this is subtly broken in replacing syms/bound-vars. It breaks on:
@@ -2618,7 +2657,7 @@
                                     (fn [arity-info]
                                       (call-static-variadic target arity-info args ast))))
                            zero-sm)]
-          site)
+          (constrain-expr site (add-contents-constraint ast args)))
         (compilation-error "No arity with" (count args) "arguments found"
                            (either (map (instance? Tagged (.call-target ast))
                                         (fn [sym]
