@@ -24,7 +24,7 @@ typedef void (Destructor)(void *);
 typedef struct Value {int64_t type; int32_t refs; struct Value* next;} Value;
 typedef struct {int64_t type; int32_t refs; int64_t numVal;} Integer;
 typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; char buffer[0];} String;
-typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; Value *source; char *buffer;} SubString;
+typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; char *buffer; Value *source;} SubString;
 typedef struct List {int64_t type; int32_t refs; int64_t len; Value* head; struct List *tail;} List;
 typedef struct {int64_t type; int32_t refs; int count; List *closures; int variadic; void *fn;} FnArity;
 typedef struct {int64_t type; int32_t refs; char *name; int64_t arityCount; FnArity *arities[];} Function;
