@@ -148,6 +148,7 @@ String *malloc_string(int len);
 FnArity *findFnArity(Value *fnVal, int64_t argCount);
 ReifiedVal *malloc_reified(int implCount);
 Promise *malloc_promise();
+Integer *malloc_integer();
 
 Value *findProtoImpl(int64_t type, ProtoImpls *impls);
 void startWorkers();

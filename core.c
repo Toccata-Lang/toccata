@@ -1349,22 +1349,14 @@ Value *intValue(int64_t n) {
 
 Value *prSTAR(Value *str) {
   int bytes;
-  if (str->type == StringBufferType) {
-    bytes = fprintf(outstream, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
-  } else if (str->type == SubStringType) {
-    bytes = fprintf(outstream, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
-  }
+  bytes = fprintf(outstream, "%-.*s", (int)((SubString *)str)->len, ((String *)str)->buffer);
   dec_and_free(str, 1);
   return(intValue(bytes));
 }
 
 Value *prErrSTAR(Value *str) {
   int bytes;
-  if (str->type == StringBufferType) {
-    bytes = fprintf(stderr, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
-  } else if (str->type == SubStringType) {
-    bytes = fprintf(stderr, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
-  }
+  bytes = fprintf(stderr, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
   dec_and_free(str, 1);
   return(intValue(bytes));
 }
@@ -1874,68 +1866,23 @@ Value *strLT(Value *arg0, Value *arg1) {
 
 Value *strCount(Value *arg0) {
    Value *numVal;
-   if (arg0->type == StringBufferType)
-     numVal = integerValue(((String *)arg0)->len);
-   else
-     numVal = integerValue(((SubString *)arg0)->len);
+   numVal = integerValue(((String *)arg0)->len);
    dec_and_free(arg0, 1);
    return(numVal);
 }
 
 Value *strList(Value *arg0) {
   List *result = empty_list;
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    for (int64_t i = s->len - 1; i >= 0; i--) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = listCons((Value *)subStr, result);
-    }
-    incRef(arg0, s->len);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    for (int64_t i = s->len - 1; i >= 0; i--) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = listCons((Value *)subStr, result);
-    }
-    incRef(arg0, s->len);
+  String *s = (String *)arg0;
+  for (int64_t i = s->len - 1; i >= 0; i--) {
+    SubString *subStr = malloc_substring();
+    subStr->type = SubStringType;
+    subStr->len = 1;
+    subStr->source = arg0;
+    subStr->buffer = s->buffer + i;
+    result = listCons((Value *)subStr, result);
   }
-  dec_and_free(arg0, 1);
-  return((Value *)result);
-}
-
-Value *strVect(Value *arg0) {
-  Vector *result = empty_vect;
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    for (int64_t i = 0; i < s->len; i++) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = mutateVectConj(result, (Value *)subStr);
-    }
-    incRef(arg0, s->len);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    for (int64_t i = 0; i < s->len; i++) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = mutateVectConj(result, (Value *)subStr);
-    }
-    incRef(arg0, s->len);
-  }
+  incRef(arg0, s->len);
   dec_and_free(arg0, 1);
   return((Value *)result);
 }
@@ -2625,15 +2572,9 @@ Value *maybeMap(Value *arg0, Value *arg1) {
 void strSha1Update(Sha1Context *ctxt, Value *arg0) {
   char *buffer;
   int64_t len;
-  if (arg0->type == StringBufferType) {
-    String *strVal = (String *)arg0;
-    buffer = strVal->buffer;
-    len = strVal->len;
-  } else if (arg0->type == SubStringType) {
-    SubString *strVal = (SubString *)arg0;
-    buffer = strVal->buffer;
-    len = strVal->len;
-  }
+  String *strVal = (String *)arg0;
+  buffer = strVal->buffer;
+  len = strVal->len;
 
   Sha1Update(ctxt, (void *)&arg0->type, 8);
   Sha1Update(ctxt, buffer, len);
@@ -2647,23 +2588,13 @@ Value *strSha1(Value *arg0) {
 #ifdef CHECK_MEM_LEAK
   int32_t refs;
 #endif
-  if (arg0->type == StringBufferType) {
-    String *strVal = (String *)arg0;
-    hash = &strVal->hash;
-    buffer = strVal->buffer;
-    len = strVal->len;
+  String *strVal = (String *)arg0;
+  hash = &strVal->hash;
+  buffer = strVal->buffer;
+  len = strVal->len;
 #ifdef CHECK_MEM_LEAK
-    __atomic_load(&strVal->refs, &refs, __ATOMIC_RELAXED);
+  __atomic_load(&strVal->refs, &refs, __ATOMIC_RELAXED);
 #endif
-  } else if (arg0->type == SubStringType) {
-    SubString *strVal = (SubString *)arg0;
-    hash = &strVal->hash;
-    buffer = strVal->buffer;
-    len = strVal->len;
-#ifdef CHECK_MEM_LEAK
-    __atomic_load(&strVal->refs, &refs, __ATOMIC_RELAXED);
-#endif
-  }
 
   if (*hash != (Integer *)0) {
     incRef((Value *)*hash, 1);
@@ -2690,76 +2621,39 @@ Value *strSha1(Value *arg0) {
 }
 
 Value *escapeChars(Value *arg0) {
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    String *result = malloc_string(s->len * 2);
-    char *resultBuffer = result->buffer;
-    int resultIndex = 0;
-    for(int i = 0; i < s->len; i++) {
-      if (s->buffer[i] == 10) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 110;
-      } else if (s->buffer[i] == 34) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 34;
-      } else if (s->buffer[i] == 13) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 114;
-      } else if (s->buffer[i] == 12) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 102;
-      } else if (s->buffer[i] == 8) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 98;
-      } else if (s->buffer[i] == 9) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 116;
-      } else if (s->buffer[i] == 92) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 92;
-      } else
-        resultBuffer[resultIndex++] = s->buffer[i];
-    }
-    resultBuffer[resultIndex] = 0;
-    result->len = resultIndex;
-    dec_and_free(arg0, 1);
-    return((Value *)result);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    String *result = malloc_string(s->len * 2);
-    char *resultBuffer = result->buffer;
-    int resultIndex = 0;
-    for(int i = 0; i < s->len; i++) {
-      if (s->buffer[i] == 10) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 110;
-      } else if (s->buffer[i] == 34) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 34;
-      } else if (s->buffer[i] == 13) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 114;
-      } else if (s->buffer[i] == 12) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 102;
-      } else if (s->buffer[i] == 8) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 98;
-      } else if (s->buffer[i] == 9) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 116;
-      } else if (s->buffer[i] == 92) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 92;
-      } else
-        resultBuffer[resultIndex++] = s->buffer[i];
-    }
-    resultBuffer[resultIndex] = 0;
-    result->len = resultIndex;
-    dec_and_free(arg0, 1);
-    return((Value *)result);
+  String *s = (String *)arg0;
+  String *result = malloc_string(s->len * 2);
+  char *resultBuffer = result->buffer;
+  int resultIndex = 0;
+  for(int i = 0; i < s->len; i++) {
+    if (s->buffer[i] == 10) {
+      resultBuffer[resultIndex++] = 92;
+      resultBuffer[resultIndex++] = 110;
+    } else if (s->buffer[i] == 34) {
+      resultBuffer[resultIndex++] = 92;
+      resultBuffer[resultIndex++] = 34;
+    } else if (s->buffer[i] == 13) {
+      resultBuffer[resultIndex++] = 92;
+      resultBuffer[resultIndex++] = 114;
+    } else if (s->buffer[i] == 12) {
+      resultBuffer[resultIndex++] = 92;
+      resultBuffer[resultIndex++] = 102;
+    } else if (s->buffer[i] == 8) {
+      resultBuffer[resultIndex++] = 92;
+      resultBuffer[resultIndex++] = 98;
+    } else if (s->buffer[i] == 9) {
+      resultBuffer[resultIndex++] = 92;
+      resultBuffer[resultIndex++] = 116;
+    } else if (s->buffer[i] == 92) {
+      resultBuffer[resultIndex++] = 92;
+      resultBuffer[resultIndex++] = 92;
+    } else
+      resultBuffer[resultIndex++] = s->buffer[i];
   }
-  return(arg0);
+  resultBuffer[resultIndex] = 0;
+  result->len = resultIndex;
+  dec_and_free(arg0, 1);
+  return((Value *)result);
 }
 
 Value *opaqueValue(void *ptr, Destructor *destruct) {
@@ -2866,29 +2760,16 @@ Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
 
 Value *strSeq(Value *arg0) {
   List *result = empty_list;
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    for (int64_t i = s->len - 1; i >= 0; i--) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = listCons((Value *)subStr, result);
-    }
-    incRef(arg0, s->len);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    for (int64_t i = s->len - 1; i >= 0; i--) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = listCons((Value *)subStr, result);
-    }
-    incRef(arg0, s->len);
+  String *s = (String *)arg0;
+  for (int64_t i = s->len - 1; i >= 0; i--) {
+    SubString *subStr = malloc_substring();
+    subStr->type = SubStringType;
+    subStr->len = 1;
+    subStr->source = arg0;
+    subStr->buffer = s->buffer + i;
+    result = listCons((Value *)subStr, result);
   }
+  incRef(arg0, s->len);
   dec_and_free(arg0, 1);
   return((Value *)result);
 }
@@ -2922,10 +2803,7 @@ Value *strReduce(Value *s0, Value *x1, Value *f2) {
   Value *result = x1;
 
   char *buffer;
-  if (s0->type == StringBufferType)
-    buffer = ((String *)s0)->buffer;
-  else if (s0->type == SubStringType)
-    buffer = ((SubString *)s0)->buffer;
+  buffer = ((String *)s0)->buffer;
 
   incRef(f2, len);
   for (int64_t i = 0; i < len; i++) {
@@ -2944,29 +2822,16 @@ Value *strReduce(Value *s0, Value *x1, Value *f2) {
 
 Value *strVec(Value *arg0) {
   Vector *result = empty_vect;
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    for (int64_t i = 0; i < s->len; i++) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = mutateVectConj(result, (Value *)subStr);
-    }
-    incRef(arg0, s->len);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    for (int64_t i = 0; i < s->len; i++) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = mutateVectConj(result, (Value *)subStr);
-    }
-    incRef(arg0, s->len);
+  String *s = (String *)arg0;
+  for (int64_t i = 0; i < s->len; i++) {
+    SubString *subStr = malloc_substring();
+    subStr->type = SubStringType;
+    subStr->len = 1;
+    subStr->source = arg0;
+    subStr->buffer = s->buffer + i;
+    result = mutateVectConj(result, (Value *)subStr);
   }
+  incRef(arg0, s->len);
   dec_and_free(arg0, 1);
   return((Value *)result);
 }
@@ -2991,17 +2856,13 @@ Value *vectorGet(Value *arg0, Value *arg1) {
 Value *symbol(Value *arg0) {
   int64_t len;
   char *buffer;
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    buffer = s->buffer;
-    len = s->len;
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    buffer = s->buffer;
-    len = s->len;
-  } else if (arg0->type == SymbolType) {
+  if (arg0->type == SymbolType) {
     return(arg0);
   }
+
+  String *s = (String *)arg0;
+  buffer = s->buffer;
+  len = s->len;
 
   SubString *subStr = malloc_substring();
   subStr->type = SymbolType;
@@ -4230,6 +4091,14 @@ Value *updateAgent_impl(List *closures) {
 };
 
 void scheduleAgent(Agent *agent, List *action) {
+#ifdef TOCCATA_WASM
+  Value *f = (Value *)action->head;
+  List *args = listCons(agent->val, action->tail);
+  incRef((Value *)action->tail, 1);
+  agent->val = fn_apply(empty_list, (Value *)f, (Value *)args);
+  action->head = (Value *)0;
+  dec_and_free((Value *)action, 1);
+#else
   List *newList = malloc_list();
   newList->head = (Value *)action;
   List *input;
@@ -4253,6 +4122,7 @@ void scheduleAgent(Agent *agent, List *action) {
   f->action = (Value *)updateAgentFn;
   f->actions = empty_list;
   scheduleFuture(f);
+#endif
 }
 
 void freeExtractCache(void *cachePtr) {
@@ -4279,10 +4149,7 @@ void freeIntGenerator(void *ptr) {
 
 String *nullTerm(Value *s) {
   String *arg0Str = malloc_string(((String *)s)->len);
-  if (s->type == StringBufferType)
-    snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((String *)s)->buffer);
-  else if (s->type == SubStringType)
-    snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((SubString *)s)->buffer);
+  snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((String *)s)->buffer);
   dec_and_free(s, 1);
   return(arg0Str);
 }
