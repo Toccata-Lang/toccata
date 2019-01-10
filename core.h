@@ -141,6 +141,8 @@ Value *(*hasField)(List *closures, Value *v, Value *field);
 
 Value *my_malloc(int64_t sz);
 List *malloc_list();
+Maybe *malloc_maybe();
+Vector *malloc_vector();
 Value *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
 Function *malloc_function(int arityCount);

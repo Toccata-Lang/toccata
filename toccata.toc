@@ -4618,19 +4618,33 @@
   (emit-definition [ast]
     (let [num-args (.num-args ast)]
       (comp (for [fn-var (map (lookup-sym (.sym ast)) .c-var)
-                  expr (lookup-static-arity-info fn-var num-args)]
+                  expr (lookup-static-arity-info fn-var num-args)
+                  c-fn-name (global-var (str (.sym ast)))
+                  :let [c-fn-name (either (check-C-var c-fn-name)
+                                          c-fn-name)
+                        js-wrapper (c-code ""
+                                           ["\nEM_ASM(\n" (str (.sym ast)) " = function("
+                                            (interpose (map (range num-args) (partial str "arg")) ", ") ") {\n"
+                                            "_" c-fn-name "("
+                                            (interpose (map (range num-args)
+                                                            (fn [idx]
+                                                              ["sendValue(arg" idx ")"]))
+                                                       ", ")
+                                            ");\n return; \n};);\n"]
+                                           [] {} {})]
+                  _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
+                                                          (conj exprs js-wrapper)))]
               [(c-code "" []
-                       ["
-EMSCRIPTEN_KEEPALIVE
-void " (str (.sym ast)) "("
-(interpose (map (range num-args) (partial str "int64_t arg")) ", ") ") {
-  " (.c-var expr) "("
-  (interpose (cons "empty_list"
-                   (map (range num-args)
-                        (fn [idx]
-                          ["(Value *)arg" idx])))
-             ", ")
-  ");\n return; \n}; "]
+                       ["EMSCRIPTEN_KEEPALIVE\n void " c-fn-name "("
+                        (interpose (map (range num-args) (partial str "int64_t arg")) ", ")
+                        ") {\ndec_and_free("
+                        (.c-var expr) "("
+                        (interpose (cons "empty_list"
+                                         (map (range num-args)
+                                              (fn [idx]
+                                                ["(Value *)arg" idx])))
+                                   ", ")
+                        "), 1);\n return; \n};\n"]
                        {} {})])
             (compilation-error "Could not find function" (.sym ast) "or an arity with" num-args "arguments.")))))
 
