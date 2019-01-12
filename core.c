@@ -2839,7 +2839,7 @@ Value *strVec(Value *arg0) {
 Value *vectorGet(Value *arg0, Value *arg1) {
   Vector *vect = (Vector *)arg0;
   Integer *index = (Integer *)arg1;
-  if (vect->count <= index->numVal) {
+  if (index->numVal < 0 || vect->count <= index->numVal) {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(nothing);
