@@ -1897,7 +1897,7 @@
               (c-static-sym sym-ptr
                             []
                             ["SubString " sym-var " = {SymbolType, -1, " (count (str sym))
-                             ", 0, \"" sym "\", 0};\n"
+                             ", 0, 0, \"" sym "\"};\n"
                              "Value *" sym-ptr " = (Value *)&" sym-var ";\n"]
                             {} {sym-ptr constraint} sym-var))))))
 
@@ -4613,6 +4613,36 @@
                     type-constructor
                     type-val-def))))))
 
+;; (defn js-callable-arity [[num-args expr]]
+;;   (for [c-fn-name (global-var (str (.sym ast) "_" num-args))
+;;         :let [c-fn-name (either (check-C-var c-fn-name)
+;;                                 c-fn-name)
+;;               js-wrapper (c-code ""
+;;                                  ["\nEM_ASM(\n" (str (.sym ast)) " = function("
+;;                                   (interpose (map (range num-args) (partial str "arg")) ", ") ") {\n"
+;;                                   "_" c-fn-name "("
+;;                                   (interpose (map (range num-args)
+;;                                                   (fn [idx]
+;;                                                     ["sendValue(arg" idx ")"]))
+;;                                              ", ")
+;;                                   ");\n return; \n};);\n"]
+;;                                  [] {} {})]
+;;         _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
+;;                                                 (conj exprs js-wrapper)))]
+;;     [c-fn-name num-args]
+;;     [(c-code "" []
+;;              ["EMSCRIPTEN_KEEPALIVE\n void " c-fn-name "("
+;;               (interpose (map (range num-args) (partial str "int64_t arg")) ", ")
+;;               ") {\ndec_and_free("
+;;               (.c-var expr) "("
+;;               (interpose (cons "empty_list"
+;;                                (map (range num-args)
+;;                                     (fn [idx]
+;;                                       ["(Value *)arg" idx])))
+;;                          ", ")
+;;               "), 1);\n return; \n};\n"]
+;;              {} {})]))
+
 (extend-type ast/JS-callable
   Emitter
   (emit-definition [ast]
@@ -4636,7 +4666,7 @@
                                                           (conj exprs js-wrapper)))]
               [(c-code "" []
                        ["EMSCRIPTEN_KEEPALIVE\n void " c-fn-name "("
-                        (interpose (map (range num-args) (partial str "int64_t arg")) ", ")
+                        (interpose (map (range num-args) (partial str "int arg")) ", ")
                         ") {\ndec_and_free("
                         (.c-var expr) "("
                         (interpose (cons "empty_list"
@@ -5133,6 +5163,17 @@
                        "Is the $TOCCATA_DIR environment variable set correctly?")
             (abort))))
 
+(defn fixup-protocols-symbols [context file-name protocols-sym symbols-sym]
+  (update-context
+   context
+   (for [protocols-var (sm/get-in-val [.modules file-name .values protocols-sym])
+         _ (sm/assoc-in-val [.modules file-name .values 'protocols]
+                            protocols-var)
+         symbols-var (sm/get-in-val [.modules file-name .values symbols-sym])
+         _ (sm/assoc-in-val [.modules file-name .values 'symbols]
+                            symbols-var)]
+     '_)))
+
 (defn compile-module [loaded-modules file-name waiter-prom root-dir proj-dir]
   (assert (instance? HashMap loaded-modules))
   (let [loaded-modules (load-core loaded-modules)]
@@ -5152,16 +5193,8 @@
                                                                          'line-number 1}
                                                                         (lazy-list file-in))]
                                                    (send ast-emitter
-                                                         (fn [context]
-                                                           (update-context
-                                                            context
-                                                            (for [protocols-var (sm/get-in-val [.modules file-name .values protocols-sym])
-                                                                  _ (sm/assoc-in-val [.modules file-name .values 'protocols]
-                                                                                     protocols-var)
-                                                                  symbols-var (sm/get-in-val [.modules file-name .values symbols-sym])
-                                                                  _ (sm/assoc-in-val [.modules file-name .values 'symbols]
-                                                                                     symbols-var)]
-                                                              '_))))
+                                                         fixup-protocols-symbols file-name
+                                                         protocols-sym symbols-sym)
                                                    r)))
                                      (do
                                        (print-err "Could not compile" file-name)
@@ -5200,16 +5233,17 @@
                      (or (and (= "--script" option)
                               (flat-map (sys/file-directory file-name)
                                         (fn [script-dir]
-                                          (interp/interp-file file-name script-dir
-                                                              [(interp/CompiledNs 'file fio/symbols fio/protocols)
-                                                               (interp/CompiledNs 'reader rdr/symbols rdr/protocols)
-                                                               (interp/CompiledNs 'grammar grmr/symbols grmr/protocols)
-                                                               (interp/CompiledNs 'parse rd/symbols rd/protocols)
-                                                               (interp/CompiledNs 'ast ast/symbols ast/protocols)
-                                                               (interp/CompiledNs 'sys sys/symbols sys/protocols)
-                                                               (interp/CompiledNs 'state-maybe sm/symbols sm/protocols)
-                                                               (interp/CompiledNs 'strm strm/symbols strm/protocols)]
-                                                              args))))
+                                          (interp/interp-file
+                                           file-name script-dir
+                                           [(interp/CompiledNs 'file fio/symbols fio/protocols)
+                                            (interp/CompiledNs 'reader rdr/symbols rdr/protocols)
+                                            (interp/CompiledNs 'grammar grmr/symbols grmr/protocols)
+                                            (interp/CompiledNs 'parse rd/symbols rd/protocols)
+                                            (interp/CompiledNs 'ast ast/symbols ast/protocols)
+                                            (interp/CompiledNs 'sys sys/symbols sys/protocols)
+                                            (interp/CompiledNs 'state-maybe sm/symbols sm/protocols)
+                                            (interp/CompiledNs 'strm strm/symbols strm/protocols)]
+                                           args))))
                          (do
                            (print-err "The only option for the compiler is '--script'")
                            (maybe -1))))))

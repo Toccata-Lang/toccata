@@ -24,7 +24,7 @@ typedef void (Destructor)(void *);
 typedef struct Value {int64_t type; int32_t refs; struct Value* next;} Value;
 typedef struct {int64_t type; int32_t refs; int64_t numVal;} Integer;
 typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; char buffer[0];} String;
-typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; char *buffer; Value *source;} SubString;
+typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; Value *source; char *buffer;} SubString;
 typedef struct List {int64_t type; int32_t refs; int64_t len; Value* head; struct List *tail;} List;
 typedef struct {int64_t type; int32_t refs; int count; List *closures; int variadic; void *fn;} FnArity;
 typedef struct {int64_t type; int32_t refs; char *name; int64_t arityCount; FnArity *arities[];} Function;
@@ -141,8 +141,6 @@ Value *(*hasField)(List *closures, Value *v, Value *field);
 
 Value *my_malloc(int64_t sz);
 List *malloc_list();
-Maybe *malloc_maybe();
-Vector *malloc_vector();
 Value *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
 Function *malloc_function(int arityCount);
@@ -150,7 +148,6 @@ String *malloc_string(int len);
 FnArity *findFnArity(Value *fnVal, int64_t argCount);
 ReifiedVal *malloc_reified(int implCount);
 Promise *malloc_promise();
-Integer *malloc_integer();
 
 Value *findProtoImpl(int64_t type, ProtoImpls *impls);
 void startWorkers();
