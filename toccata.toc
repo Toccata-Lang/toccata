@@ -2520,118 +2520,6 @@
              (ast/binding-ast param val)))
       (vec)))
 
-(defn define-sum-type [fn-val defined-sym]
-  (either (map (= (.call-target fn-val) 'comp*)
-               (fn [_]
-                 (let [[type-sym type-syms] (.args fn-val)
-                       type-syms (cons type-sym (seq (.args type-syms)))
-                       file-name (ast/file-name defined-sym)
-                       line-number (ast/line-number defined-sym)]
-                   (for [types-info (ev/traverse type-syms get-type-sym-info)
-                         :when-not (empty? (remove types-info empty?))
-                         :let [_ (map (zip-lists type-syms types-info)
-                                      (fn [[sym info]]
-                                        (and (empty? info)
-                                             (do
-                                               (print-err "Unknown type" (str "'" sym "'") "at"
-                                                          (str file-name ":") line-number)
-                                               (maybe (abort))))))
-                               types-info (reduce types-info {} comp)
-                               reified-type-num (extract rdr/type-counter)
-                               x* (rdr/tag "#x")
-                               y* (rdr/tag "#y")]
-                         _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
-                                            reified-type-num)
-                         _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym types-info))
-                         exprs (emit-defined-value
-                                (ast/reified
-                                 reified-type-num
-                                 {Type-sym
-                                  [[instance?-sym
-                                    [(ast/fn-arity-ast
-                                      (str defined-sym "_instance_QMARK_") (FnValPtr "")
-                                      (ast/params [x* y*]) ""
-                                      [(ast/and-ast
-                                        [(ast/call-ast (rdr/tag 'some)
-                                                       [(ast/call-ast list-sym (vec (keys types-info)))
-                                                        (ast/call-ast (rdr/tag 'partial)
-                                                                      [=*-sym
-                                                                       (ast/call-ast get-type-sym [y*])])])
-                                         (ast/call-ast maybe-sym [y*])])])]]
-
-                                   [type-mapping-sym
-                                    [(ast/fn-arity-ast
-                                      (str defined-sym "_type_mapping") (FnValPtr "")
-                                      (ast/params [x*]) ""
-                                      [(map-vals types-info (fn [field-set]
-                                                              (map field-set ast/quoted-ast)))])]]]
-
-                                  Stringable-sym
-                                  [[string-list-sym
-                                    [(ast/fn-arity (ast/params [x*]) ""
-                                                   [(ast/call-ast list-sym ["<SumType " (str defined-sym) ">"])])]]]})
-                                defined-sym)]
-                     exprs))))
-          zero-sm))
-
-(defn define-enum-type [fn-val defined-sym]
-  (for [_ (sm/when (= (.call-target fn-val) 'enum))
-        type-maps (comp (ev/traverse (.args fn-val)
-                                     (fn [sym]
-                                       (comp (flat-map (sm/get-in-val [.modules (ast/file-name sym) .types sym])
-                                                       (fn [_]
-                                                         (compilation-error "Invalid enum value " (str "'" sym "'")
-                                                                            " at:" (ast/file-name defined-sym)
-                                                                            (ast/line-number defined-sym))))
-                                             (for [expr (comp (find-global-sym sym)
-                                                              (compilation-error "Invalid enum value " (str "'" sym "'")
-                                                                                 " at:" (ast/file-name defined-sym)
-                                                                                 (ast/line-number defined-sym)))
-                                                   :when (instance? c-static-reified expr)
-                                                   type-map (sm/when (-> expr
-                                                                         expr-constraints
-                                                                         c/extract-type-map))]
-                                               type-map))))
-                        (compilation-error "Invalid enum values at:"
-                                           (ast/file-name defined-sym) (ast/line-number defined-sym)))
-        :let [type-map (comp* {} type-maps)
-              reified-type-num (extract rdr/type-counter)
-              x* (rdr/tag "#x")
-              y* (rdr/tag "#y")]
-        _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
-                           reified-type-num)
-        _ (sm/assoc-in-val [.type-maps reified-type-num]
-                           (TypeInfo defined-sym type-map))
-        exprs (emit-defined-value
-               (ast/reified
-                reified-type-num
-                {Type-sym
-                 [[instance?-sym
-                   [(ast/fn-arity-ast
-                     (str defined-sym "_instance_QMARK_") (FnValPtr "")
-                     (ast/params [x* y*]) ""
-                     [(ast/and-ast
-                       [(ast/call-ast (rdr/tag 'some)
-                                      [(ast/call-ast list-sym (vec (keys type-map)))
-                                       (ast/call-ast (rdr/tag 'partial)
-                                                     [=*-sym (ast/call-ast get-type-sym [y*])])])
-                        (ast/call-ast maybe-sym [y*])])])]]
-
-                  [type-mapping-sym
-                   [(ast/fn-arity-ast
-                     (str defined-sym "_type_mapping") (FnValPtr "")
-                     (ast/params [x*]) ""
-                     [(map-vals type-map (fn [field-set]
-                                           (map field-set ast/quoted-ast)))])]]]
-
-                 Stringable-sym
-                 [[string-list-sym
-                   [(ast/fn-arity (ast/params ['z]) ""
-                                  [(ast/call-ast list-sym
-                                                 ["<SumType " (str defined-sym) ">"])])]]]})
-               defined-sym)]
-    exprs))
-
 (defprotocol CallSite
   (emit-call-site [target args ast]
     (comp (call-invoke target args ast)
@@ -2818,8 +2706,141 @@
                (.constraints r (assoc (.constraints r)
                                  (.c-var r) result-c))))))))
 
+(defn define-sum-type [fn-val defined-sym]
+  (either (map (= (.call-target fn-val) 'comp*)
+               (fn [_]
+                 (let [[type-sym type-syms] (.args fn-val)
+                       type-syms (cons type-sym (seq (.args type-syms)))
+                       file-name (ast/file-name defined-sym)
+                       line-number (ast/line-number defined-sym)]
+                   (for [types-info (ev/traverse type-syms get-type-sym-info)
+                         :when-not (empty? (remove types-info empty?))
+                         :let [_ (map (zip-lists type-syms types-info)
+                                      (fn [[sym info]]
+                                        (and (empty? info)
+                                             (do
+                                               (print-err "Unknown type" (str "'" sym "'") "at"
+                                                          (str file-name ":") line-number)
+                                               (maybe (abort))))))
+                               types-info (reduce types-info {} comp)
+                               reified-type-num (extract rdr/type-counter)
+                               x* (rdr/tag "#x")
+                               y* (rdr/tag "#y")]
+                         _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
+                                            reified-type-num)
+                         _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym types-info))
+                         exprs (emit-defined-value
+                                (ast/reified
+                                 reified-type-num
+                                 {Type-sym
+                                  [[instance?-sym
+                                    [(ast/fn-arity-ast
+                                      (str defined-sym "_instance_QMARK_") (FnValPtr "")
+                                      (ast/params [x* y*]) ""
+                                      [(ast/and-ast
+                                        [(ast/call-ast (rdr/tag 'some)
+                                                       [(ast/call-ast list-sym (vec (keys types-info)))
+                                                        (ast/call-ast (rdr/tag 'partial)
+                                                                      [=*-sym
+                                                                       (ast/call-ast get-type-sym [y*])])])
+                                         (ast/call-ast maybe-sym [y*])])])]]
+
+                                   [type-mapping-sym
+                                    [(ast/fn-arity-ast
+                                      (str defined-sym "_type_mapping") (FnValPtr "")
+                                      (ast/params [x*]) ""
+                                      [(map-vals types-info (fn [field-set]
+                                                              (map field-set ast/quoted-ast)))])]]]
+
+                                  Stringable-sym
+                                  [[string-list-sym
+                                    [(ast/fn-arity (ast/params [x*]) ""
+                                                   [(ast/call-ast list-sym ["<SumType " (str defined-sym) ">"])])]]]})
+                                defined-sym)]
+                     exprs))))
+          zero-sm))
+
+(defn define-enum-type [fn-val defined-sym]
+  (for [_ (sm/when (= (.call-target fn-val) 'enum))
+        type-maps (comp (ev/traverse (.args fn-val)
+                                     (fn [sym]
+                                       (comp (flat-map (sm/get-in-val [.modules (ast/file-name sym) .types sym])
+                                                       (fn [_]
+                                                         (compilation-error "Invalid enum value " (str "'" sym "'")
+                                                                            " at:" (ast/file-name defined-sym)
+                                                                            (ast/line-number defined-sym))))
+                                             (for [expr (comp (find-global-sym sym)
+                                                              (compilation-error "Invalid enum value " (str "'" sym "'")
+                                                                                 " at:" (ast/file-name defined-sym)
+                                                                                 (ast/line-number defined-sym)))
+                                                   :when (instance? c-static-reified expr)
+                                                   type-map (sm/when (-> expr
+                                                                         expr-constraints
+                                                                         c/extract-type-map))]
+                                               type-map))))
+                        (compilation-error "Invalid enum values at:"
+                                           (ast/file-name defined-sym) (ast/line-number defined-sym)))
+        :let [type-map (comp* {} type-maps)
+              reified-type-num (extract rdr/type-counter)
+              x* (rdr/tag "#x")
+              y* (rdr/tag "#y")]
+        _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
+                           reified-type-num)
+        _ (sm/assoc-in-val [.type-maps reified-type-num]
+                           (TypeInfo defined-sym type-map))
+        exprs (emit-defined-value
+               (ast/reified
+                reified-type-num
+                {Type-sym
+                 [[instance?-sym
+                   [(ast/fn-arity-ast
+                     (str defined-sym "_instance_QMARK_") (FnValPtr "")
+                     (ast/params [x* y*]) ""
+                     [(ast/and-ast
+                       [(ast/call-ast (rdr/tag 'some)
+                                      [(ast/call-ast list-sym (vec (keys type-map)))
+                                       (ast/call-ast (rdr/tag 'partial)
+                                                     [=*-sym (ast/call-ast get-type-sym [y*])])])
+                        (ast/call-ast maybe-sym [y*])])])]]
+
+                  [type-mapping-sym
+                   [(ast/fn-arity-ast
+                     (str defined-sym "_type_mapping") (FnValPtr "")
+                     (ast/params [x*]) ""
+                     [(map-vals type-map (fn [field-set]
+                                           (map field-set ast/quoted-ast)))])]]]
+
+                 Stringable-sym
+                 [[string-list-sym
+                   [(ast/fn-arity (ast/params ['z]) ""
+                                  [(ast/call-ast list-sym
+                                                 ["<SumType " (str defined-sym) ">"])])]]]})
+               defined-sym)]
+    exprs))
+
 (extend-type ast/call-ast
   Emitter
+  (emit-defined-value [fn-val defined-sym]
+    (comp (define-sum-type fn-val defined-sym)
+          (define-enum-type fn-val defined-sym)
+          (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
+                fn-context (reset-fn-context init-fn-context)
+                value (emit fn-val)
+                var (comp (map (lookup-declaration defined-sym) .c-var)
+                          (global-var defined-sym "var"))
+                init-fn-context (reset-fn-context fn-context)
+                _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
+                _ (new-module-def defined-sym (c-code var [] [] {}
+                                                      {var (c/update-var (expr-constraints value) var)}))]
+            [(c-init var [(.init value)
+                          var " = " (.c-var value) ";" line-sep
+                          var "->refs = -1;" line-sep "\n#\n"]
+                     [(.decl value) "Value *" var ";\n"]
+                     (.refs-map value)
+                     (assoc (.constraints value)
+                       var (c/update-var (expr-constraints value) var))
+                     (ast/file-name fn-val) (ast/line-number fn-val))])))
+
   (emit [ast]
     (let [file-name (ast/file-name ast)
           line-number (ast/line-number ast)
@@ -2845,27 +2866,6 @@
                                 (comp* target (comp args [call-site])))
                               (compilation-error "Could not compile call site at:"
                                                  file-name line-number)))))))
-
-  (emit-defined-value [fn-val defined-sym]
-    (comp (define-sum-type fn-val defined-sym)
-          (define-enum-type fn-val defined-sym)
-          (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
-                fn-context (reset-fn-context init-fn-context)
-                value (emit fn-val)
-                var (comp (map (lookup-declaration defined-sym) .c-var)
-                          (global-var defined-sym "var"))
-                init-fn-context (reset-fn-context fn-context)
-                _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
-                _ (new-module-def defined-sym (c-code var [] [] {}
-                                                      {var (c/update-var (expr-constraints value) var)}))]
-            [(c-init var [(.init value)
-                          var " = " (.c-var value) ";" line-sep
-                          var "->refs = -1;" line-sep "\n#\n"]
-                     [(.decl value) "Value *" var ";\n"]
-                     (.refs-map value)
-                     (assoc (.constraints value)
-                       var (c/update-var (expr-constraints value) var))
-                     (ast/file-name fn-val) (ast/line-number fn-val))])))
 
   (tail-call [ast params result-constraint]
     (TailCall ast params result-constraint))
@@ -3837,7 +3837,9 @@
 
   Stringable
   (string-list [expr]
-    (comp (list "<TailAnd ") (flat-map clauses string-list) (list ">")))
+    (comp (list "<TailAnd ")
+          (flat-map (seq clauses) string-list)
+          (list ">")))
 
   ast/FileLineInfo
   (ast/file-name [_]
@@ -3897,7 +3899,9 @@
 
   Stringable
   (string-list [expr]
-    (comp (list "<TailOr ") (flat-map clauses string-list) (list ">")))
+    (comp (list "<TailOr ")
+          (flat-map (seq clauses) string-list)
+          (list ">")))
 
   ast/FileLineInfo
   (ast/file-name [_]
