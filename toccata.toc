@@ -996,8 +996,8 @@
   (sm/new-sm (fn [s]
                (assert (instance? GlobalContext s))
                (for [protos (get-in s [.modules path .protocols])
-                           _ (some (vals protos) (fn [proto] (get proto fn-sym)))]
-                       [path s]))))
+                     _ (some (vals protos) (fn [proto] (get proto (rdr/untag fn-sym))))]
+                 [path s]))))
 
 (defn find-protocol-path [fn-sym]
   (comp (for [path (sym-ns-path fn-sym)
@@ -1023,7 +1023,8 @@
   (assert (instance? CFnPtr c-fn))
 
   (for [protocol-path (find-protocol-path fn-sym)
-        _ (sm/assoc-in-val [.modules protocol-path .protocols proto-sym fn-sym arg-count dispatch-type]
+        _ (sm/assoc-in-val [.modules protocol-path .protocols (rdr/untag proto-sym) (rdr/untag fn-sym)
+                            arg-count dispatch-type]
                            (ProtoImpl dispatch-type var ast param-constraints result-constraint c-fn))]
     ""))
 
@@ -1038,30 +1039,30 @@
                      (for [proto-info (-> (.modules s)
                                           (get path)
                                           (flat-map (fn [module]
-                                                      (get (.protocols module) proto-sym))))]
+                                                      (get (.protocols module) (rdr/untag proto-sym)))))]
                        [proto-info s]))
                    (for [proto-info (-> (.modules s)
                                         (get 'core)
                                         (flat-map (fn [module]
-                                                    (get (.protocols module) proto-sym))))]
+                                                    (get (.protocols module) (rdr/untag proto-sym)))))]
                      [proto-info s])))))
 
 ;; TODO: it feels like these 2 arities are too different
 (defn get-proto-impl
-  ([fn-name arg-count type-num]
+  ([fn-sym arg-count type-num]
    (sm/new-sm (fn [s]
                 (assert (instance? GlobalContext s))
-                (or (let [proto-path (either (extract-sym-path s fn-name)
-                                             (ast/file-name fn-name))]
+                (or (let [proto-path (either (extract-sym-path s fn-sym)
+                                             (ast/file-name fn-sym))]
                       (for [protocols (get-in s [.modules proto-path .protocols])
                             impl-info (some (vals protocols)
                                             (fn [dispatchers]
-                                              (get-in dispatchers [fn-name arg-count type-num])))]
+                                              (get-in dispatchers [(rdr/untag fn-sym) arg-count type-num])))]
                         [impl-info s]))
                     (for [protocols (get-in s [.modules 'core .protocols])
                           impl-info (some (seq protocols)
                                           (fn [[proto-name dispatchers]]
-                                            (get-in dispatchers [fn-name arg-count type-num])))]
+                                            (get-in dispatchers [(rdr/untag fn-sym) arg-count type-num])))]
                       [impl-info s])))))
   ([proto-sym fn-sym arg-count type-num]
    (flat-map (sm/new-sm (fn [s]
@@ -1069,8 +1070,10 @@
                                           (ast/file-name proto-sym))
                                   s])))
              (fn [proto-path]
-               (comp (sm/get-in-val [.modules proto-path .protocols proto-sym fn-sym arg-count type-num])
-                     (sm/get-in-val [.modules 'core .protocols proto-sym fn-sym arg-count type-num])
+               (comp (sm/get-in-val [.modules proto-path .protocols (rdr/untag proto-sym) (rdr/untag fn-sym)
+                                     arg-count type-num])
+                     (sm/get-in-val [.modules 'core .protocols (rdr/untag proto-sym) (rdr/untag fn-sym)
+                                     arg-count type-num])
                      ;; (compilation-error "Invalid protocol fn:"
                      ;;                    (str "'" fn-sym "' in")
                      ;;                    (str (ast/file-name fn-sym) ",")
@@ -1154,8 +1157,8 @@
                                                      (get modules x)))
                                          (flat-map (fn [module]
                                                      (let [values (.values module)]
-                                                       (or (get values (.base sym))
-                                                           (get values (rdr/tag (.base sym))))))))
+                                                       (or (get values (rdr/untag sym))
+                                                           (get values (rdr/tag (rdr/untag sym))))))))
                                      (do
                                        (print-err "Undefined symbol" (str "'" sym "'") "at"
                                                   (str sym-file ":")
@@ -4142,7 +4145,8 @@
                                  (map .assertion)
                                  (ev/traverse to-constraint))
           :let [result-constraint (reduce result-constraints c/top-type c/intersect)]
-          _ (sm/assoc-in-val [.modules (ast/file-name protocol-sym) .protocols protocol-sym fn-sym
+          _ (sm/assoc-in-val [.modules (ast/file-name protocol-sym) .protocols
+                              (rdr/untag protocol-sym) (rdr/untag fn-sym)
                               (.param-count static-arity) 0]
                              (ProtoImpl 0 (.c-var (.var-info static-arity))
                                         (ast/fn-arity (.params prototype) ""
@@ -4198,7 +4202,7 @@
 
 (defn check-protocol-name [proto-sym]
   ;; Ensure all protocol symbols are unique
-  (comp (for [proto-info (sm/get-in-val [.modules (ast/file-name proto-sym) .protocols proto-sym])]
+  (comp (for [proto-info (sm/get-in-val [.modules (ast/file-name proto-sym) .protocols (rdr/untag proto-sym)])]
           (do
             (print-err  "Duplicate protocol"
                         (str "'" proto-sym "'") "at"
@@ -4465,7 +4469,8 @@
   (ev/traverse fields
                (fn [field]
                  (let [getter-sym (rdr/tag (str "." field) 'core 0)]
-                   (comp (map (sm/get-in-val [.modules 'core .protocols Type-sym getter-sym]) (fn [_] []))
+                   (comp (map (sm/get-in-val [.modules 'core .protocols (rdr/untag Type-sym) (rdr/untag getter-sym)])
+                              (fn [_] []))
                          (create-dispatcher Type-sym
                                             [getter-sym
                                              [(ast/prototype getter-sym
@@ -4608,8 +4613,8 @@
 
                   const-type-num (map (sm/get-in-val [.modules file-name .values sym])
                                       expr-type-num)
-                  _ (sm/assoc-in-val [.modules 'core .protocols Function-sym invoke-sym const-arity-index
-                                      const-type-num .result-constraint]
+                  _ (sm/assoc-in-val [.modules 'core .protocols (rdr/untag Function-sym) (rdr/untag invoke-sym)
+                                      const-arity-index const-type-num .result-constraint]
                                      new-type-constraint)]
               (comp type-val-decl
                     [(c-code "" [] (flatten getters) {} {})]
@@ -4704,14 +4709,13 @@
 
 (defn gather-protocols [file-name]
   (comp (for [protocols (sm/get-in-val [.modules file-name .protocols])
-              _ (apply debug (list* 'protocols "\n" (interpose (seq (map-vals protocols keys)) "\n")))
               expr (encode-static protocols)
               _ (ev/traverse
-                 (for [[proto-sym proto-fns] (seq protocols)
+                 (for [[_ proto-fns] (seq protocols)
                        [fn-sym arities] (seq proto-fns)]
-                   [proto-sym fn-sym arities])
-                 (fn [[proto-sym fn-sym arities]]
-                   (for [disp-fn (sm/get-in-val [.modules file-name .values fn-sym])
+                   [fn-sym arities])
+                 (fn [[fn-sym arities]]
+                   (for [disp-fn (sm/get-in-val [.modules file-name .values (rdr/tag fn-sym)])
                          :let [fn-var (.c-var disp-fn)]
                          c-fns (ev/traverse (keys arities)
                                             (fn [arg-count]
