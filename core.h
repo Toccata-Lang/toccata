@@ -26,7 +26,8 @@ typedef struct {int64_t type; int32_t refs; int64_t numVal;} Integer;
 typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; char buffer[0];} String;
 typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; Value *source; char *buffer;} SubString;
 typedef struct List {int64_t type; int32_t refs; int64_t len; Value* head; struct List *tail;} List;
-typedef struct {int64_t type; int32_t refs; int count; List *closures; int variadic; void *fn;} FnArity;
+typedef struct {int64_t type; int32_t refs; int count; List *closures;
+                int variadic; void *fn; Value *paramConstraints; Value *resultConstraint;} FnArity;
 typedef struct {int64_t type; int32_t refs; char *name; int64_t arityCount; FnArity *arities[];} Function;
 typedef struct {int64_t type; int32_t refs; Value* value;} Maybe;
 typedef struct {int64_t type; int32_t refs; Value *array[VECTOR_ARRAY_LEN];} VectorNode;
@@ -71,6 +72,7 @@ typedef struct {
   int64_t sym_counter;} intGenerator;
 
 Value *nothing;
+Maybe nothing_struct;
 Value *maybeNothing;
 int32_t refsInit;
 int32_t staticRefsInit;
@@ -96,7 +98,22 @@ int32_t refsError;
 #define FutureType 16
 #define AgentType 17
 #define OpaqueType 18
-#define TypeCount 19
+#define CoreTypeCount 19
+#define TypeConstraintType 20
+#define NoValuesType 21
+#define AllValuesType 22
+#define MultiConstraintType 23
+#define ResultConstraintType 24
+#define ItemsConstraintType 25
+#define FieldConstraintType 26
+#define StaticIntConstraintType 27
+#define MinValueType 28
+#define MaxValueType 29
+#define InferredInnerType 30
+#define StaticLengthConstraintType 31
+#define StaticStrConstraintType 32
+#define ContentsConstraintType 33
+#define TypeCount 34
 
 FILE *outstream;
 List *empty_list;

@@ -97,6 +97,21 @@
 (def FutureType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FutureType};"))
 (def AgentType (inline C Integer "(Value *)&(Integer){IntegerType, -1, AgentType};"))
 (def OpaqueType (inline C Integer "(Value *)&(Integer){IntegerType, -1, OpaqueType};"))
+(def TypeConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, TypeConstraintType};"))
+(def NoValuesType (inline C Integer "(Value *)&(Integer){IntegerType, -1, NoValuesType};"))
+(def AllValuesType (inline C Integer "(Value *)&(Integer){IntegerType, -1, AllValuesType};"))
+(def MultiConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, MultiConstraintType};"))
+(def ResultConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, ResultConstraintType};"))
+(def ItemsConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, ItemsConstraintType};"))
+(def FieldConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FieldConstraintType};"))
+(def StaticIntConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StaticIntConstraintType};"))
+(def MinValueType (inline C Integer "(Value *)&(Integer){IntegerType, -1, MinValueType};"))
+(def MaxValueType (inline C Integer "(Value *)&(Integer){IntegerType, -1, MaxValueType};"))
+(def InferredInnerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, InferredInnerType};"))
+(def StaticLengthConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1,
+    StaticLengthConstraintType};"))
+(def StaticStrConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StaticStrConstraintType};"))
+(def ContentsConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, ContentsConstraintType};"))
 (def TypeCount (inline C Integer "(Value *)&(Integer){IntegerType, -1, TypeCount};"))
 
 (def type-names {IntegerType "Integer"
@@ -310,6 +325,10 @@
                       CFnPtr))
 
 (extend-type PointerVar
+  Emitter
+  (encode-static [x]
+    (emit (.var x)))
+
   Stringable
   (string-list [x]
     (list (str (.var x))))
@@ -618,7 +637,6 @@
   C-Code
   (collapse-expressions* [x y]
     (assert (instance? C-expr y))
-
     y))
 
 (extend-type c-param
@@ -1208,6 +1226,32 @@
                                 (ast/line-number sym))
                      (abort)))))))))
 
+(extend-type c/Constraints
+  Emitter
+  (encode-static [x]
+    ;; TODO: for some reason, encoding the sym doesn't alwys work,
+    ;; fortunately, it's not needed
+    (let [x (either (map (instance? c/SymbolConstraints x)
+                         (fn [x]
+                           (-> x
+                               (.var "")
+                               (.sym nothing))))
+                    x)]
+      (comp (for [args (encode-static (type-args x))
+                  struct (global-var "reified_")
+                  var (global-var "reified_")]
+              (collapse-expressions
+               [args (c-static-val var []
+                                   ["ReifiedVal " struct " = {" (str (get-type x)) ", -1, (Value *)&"
+                                    (.c-struct args)
+                                    ", 0};" line-sep
+                                    "Value *" var "= (Value *)&" struct ";" line-sep]
+                                   {} {} struct)]))
+            ;; TODO remove
+            (for [_ (debug 'missing x)
+                  :when nothing]
+              '_)))))
+
 (extend-type c/StaticConstraints
   Emitter
   (runtime-check [constraint value-info sym-location]
@@ -1343,7 +1387,7 @@
                                            (either (and (empty? type-info)
                                                         (maybe c/top-type))
                                                    (.type-maps ast type-info))))
-                         _ (constrain-sym sym constraint)
+                        _ (constrain-sym sym constraint)
                          var (lookup-sym sym)]
                      (c-code "" [] [] {} (.constraints var)))))
             (wrap sm/zero-sm empty-c-code)))
@@ -1467,8 +1511,40 @@
   (to-constraint [ast]
     (to-constraint (.assertion ast))))
 
+(extend-type Maybe
+  Emitter
+  (encode-static [v]
+    (either (map v (fn [v]
+                     (for [expr (encode-static v)
+                           struct (global-var "maybe_")
+                           var (global-var "maybe_")]
+                       (comp expr
+                             (c-static-val var []
+                                           ["Maybe " struct " = (Maybe){MaybeType, -1, (Value *)&" (.c-struct expr)
+                                            "};" line-sep
+                                            "Maybe *" var " = &" struct ";" line-sep] {} {} struct)))))
+            (wrap sm/zero-sm
+                  (c-static-val "nothing" [] [] {} {} "nothing_struct")))))
+
 (extend-type List
   Emitter
+  (encode-static [l]
+    (either (map (first l)
+                 (fn [head]
+                   (for [tail-expr (encode-static (rest l))
+                         head-expr (encode-static head)
+                         struct (global-var "list_")
+                         var (global-var "list_")]
+                     (comp tail-expr
+                           head-expr
+                           (c-static-val var []
+                                         ["List " struct " = {ListType, -1, " (str (count l))
+                                          ", (Value *)&" (.c-struct head-expr)
+                                          ", &" (.c-struct tail-expr) "};" line-sep]
+                                         {} {} struct)))))
+            (wrap sm/zero-sm
+                  (c-static-val "empty_list" [] [] {} {} "empty_list_struct"))))
+
   (tail-call [asts args result-constraint]
     (let [asts (reverse asts)]
       (either (empty? asts)
@@ -1771,16 +1847,16 @@
                   UnknownType))
         (wrap sm/zero-sm UnknownType)))
 
+
 (extend-type HashSet
   Emitter
   (encode-static [hs]
     (for [m (encode-static [(.set-map hs)])
-          type-num (get-type-number (maybe (rdr/tag 'HashSet)))
-          :when-not (= 0 type-num)
           struct (global-var "set_")
           var (global-var "set_")]
       (comp m (c-static-val var []
-                            ["ReifiedVal " struct " = {" (str type-num) ", -1, (Value *)&" (.c-struct m) ", 0, 0};\n"
+                            ["ReifiedVal " struct " = {" (str (get-type hs))
+                             ", -1, (Value *)&" (.c-struct m) ", 0, 0};\n"
                              "Value *" var " = (Value *)&" struct ";" line-sep]
                             {} {} struct))))
 
@@ -2744,14 +2820,16 @@
                                                         (ast/call-ast (rdr/tag 'partial)
                                                                       [=*-sym
                                                                        (ast/call-ast get-type-sym [y*])])])
-                                         (ast/call-ast maybe-sym [y*])])])]]
+                                         (ast/call-ast maybe-sym [y*])])]
+                                      [] c/top-type)]]
 
                                    [type-mapping-sym
                                     [(ast/fn-arity-ast
                                       (str defined-sym "_type_mapping") (FnValPtr "")
                                       (ast/params [x*]) ""
                                       [(map-vals types-info (fn [field-set]
-                                                              (map field-set ast/quoted-ast)))])]]]
+                                                              (map field-set ast/quoted-ast)))]
+                                      [] c/top-type)]]]
 
                                   Stringable-sym
                                   [[string-list-sym
@@ -2802,14 +2880,16 @@
                                       [(ast/call-ast list-sym (vec (keys type-map)))
                                        (ast/call-ast (rdr/tag 'partial)
                                                      [=*-sym (ast/call-ast get-type-sym [y*])])])
-                        (ast/call-ast maybe-sym [y*])])])]]
+                        (ast/call-ast maybe-sym [y*])])]
+                     [] c/top-type)]]
 
                   [type-mapping-sym
                    [(ast/fn-arity-ast
                      (str defined-sym "_type_mapping") (FnValPtr "")
                      (ast/params [x*]) ""
                      [(map-vals type-map (fn [field-set]
-                                           (map field-set ast/quoted-ast)))])]]]
+                                           (map field-set ast/quoted-ast)))]
+                     [] c/top-type)]]]
 
                  Stringable-sym
                  [[string-list-sym
@@ -3130,8 +3210,7 @@
 
 (defn closure-reified-value [type-num impl-fns file-name line-number]
   (let [inits (map impl-fns .init)]
-    (for [reified-sym (genlocal "reifiedDyn")
-          :when-not (every inits empty?)]
+    (for [reified-sym (genlocal "reifiedDyn")]
       (c-init reified-sym
               [inits
                "Value *" reified-sym " = (Value *)malloc_reified("
@@ -3249,7 +3328,7 @@
                                   "return(rval);" line-sep
                                   "};\n\n"
                                   "FnArity " fn-arity-sym " = {FnArityType, -1, " param-count
-                                  ", (List *)0, 0, " impl-fn-sym "};" line-sep]
+                                  ", (List *)0, 0, " impl-fn-sym ", (Value *)0, (Value *)0};" line-sep]
                                  {} {})]
           (comp reified-fn var-info))))))
 
@@ -3396,7 +3475,25 @@
           param-constraints (get-param-constraints params (.constraints body))
           checker-fn (checking-fn fn-sym params param-vars c-fn param-constraints)
           _ (reset-fn-context fn-context)]
-      (do
+      (let [expr (c-static-arity (ArityValPtr (str "&" arity-var) arity-var) []
+                                 [(.decl body)
+                                  "Value *" c-fn "("
+                                  (-> (.vars param-vars)
+                                      (map (fn [param] (str "Value *" param)))
+                                      (seq)
+                                      (conj "List *closures")
+                                      (interpose ", "))
+                                  ") {\nwhile (1) {\n"
+                                  (.init body)
+                                  line-sep "};};\n"
+                                  (.init checker-fn)
+                                  "FnArity " arity-var " = {FnArityType, -1, "
+                                  (count (.vars param-vars))
+                                  ", (List *)0, " (either (and (.variadic params)
+                                                               (maybe "1"))
+                                                          "0")
+                                  ", " (.c-var checker-fn) ", (Value *)0, (Value *)0};" line-sep]
+                                 {} {} arity-var)]
         ;; TODO: use this to eliminate unknown return type values
         ;; (and (= UnknownType result-type)
         ;;      (maybe (print-err 'unknown-return-type fn-sym
@@ -3404,25 +3501,7 @@
         (StaticArity fn-var c-fn (either (and (.variadic params)
                                               (maybe'variadic))
                                          (count params))
-                     (c-static-arity (ArityValPtr (str "&" arity-var) arity-var) []
-                                     [(.decl body)
-                                      "Value *" c-fn "("
-                                      (-> (.vars param-vars)
-                                          (map (fn [param] (str "Value *" param)))
-                                          (seq)
-                                          (conj "List *closures")
-                                          (interpose ", "))
-                                      ") {\nwhile (1) {\n"
-                                      (.init body)
-                                      line-sep "};};\n"
-                                      (.init checker-fn)
-                                      "FnArity " arity-var " = {FnArityType, -1, "
-                                      (count (.vars param-vars))
-                                      ", (List *)0, " (either (and (.variadic params)
-                                                                   (maybe "1"))
-                                                              "0")
-                                      ", " (.c-var checker-fn) "};" line-sep]
-                                     {} {} arity-var)
+                     expr
                      param-constraints
                      (either (map (instance? c/ResultConstraint result-constraint) .assertion)
                              result-constraint))))))
@@ -3649,9 +3728,11 @@
             _ (sm/set-val .reify-fn-index 0)
             impl-fns (extend-type* ast reified-type-num)
             _ (sm/set-val .reify-fn-index reify-fn-index)
-            reified-result (comp (closure-reified-value reified-type-num impl-fns
-                                                        (ast/file-name ast) (ast/line-number ast))
-                                 (static-reified-value reified-type-num impl-fns))]
+            reified-result (either (map (every impl-fns (partial instance? c-static-arity))
+                                        (fn [_]
+                                          (static-reified-value reified-type-num impl-fns)))
+                                 (closure-reified-value reified-type-num impl-fns
+                                                        (ast/file-name ast) (ast/line-number ast)))]
         reified-result)))
 
   (emit-defined-value [ast defined-sym]
@@ -4341,13 +4422,15 @@
                      [[type-name-sym
                        [(ast/fn-arity-ast (str new-type-name "_const_type_name") (FnValPtr "")
                                           (ast/params ['_]) ""
-                                          [(str "*" new-type-name " constructor*")])]]
+                                          [(str "*" new-type-name " constructor*")]
+                                          [] c/top-type)]]
                       [type-mapping-sym
                        [(ast/fn-arity-ast (str new-type-name "_const_type_map") (FnValPtr "")
                                           (ast/params ['_]) ""
                                           [(map-vals (.type-maps new-type-constraint)
                                                      (fn [field-set]
-                                                       (map field-set ast/quoted-ast)))])]]
+                                                       (map field-set ast/quoted-ast)))]
+                                          [] c/top-type)]]
                       [instance?-sym
                        [(ast/fn-arity-ast (str new-type-name "_instance_QMARK_") (FnValPtr "")
                                           (ast/params [x* y*]) ""
@@ -4355,7 +4438,8 @@
                                             [(ast/call-ast =*-sym
                                                             [(ast/call-ast get-type-sym [type-val-sym])
                                                              (ast/call-ast get-type-sym [y*])])
-                                             (ast/call-ast maybe-sym [y*])])])]]]
+                                             (ast/call-ast maybe-sym [y*])])]
+                                          [] c/top-type)]]]
 
                      Function-sym
                      [[invoke-sym
@@ -4367,7 +4451,8 @@
                                                   (ast/call-ast new-type-value-sym
                                                                 [type-val-sym
                                                                  (ast/call-ast 'vector
-                                                                               (vec fields))]))]))]]]
+                                                                               (vec fields))]))])
+                                          [] c/top-type)]]]
 
                      Container-sym
                      [[apply-sym
@@ -4376,7 +4461,8 @@
                                           ;; TODO: need field constraints here
                                           [(ast/call-ast new-type-value-sym
                                                           [type-val-sym
-                                                           (ast/call-ast 'vec ['fields])])])]]]
+                                                           (ast/call-ast 'vec ['fields])])]
+                                          [] c/top-type)]]]
 
                      Stringable-sym
                      [[string-list-sym
@@ -4397,7 +4483,8 @@
                                  [[type-name-sym
                                    [(ast/fn-arity-ast (str type-sym "_type_name") (FnValPtr "")
                                                       (ast/params [x*]) ""
-                                                      [(str type-sym)])]]
+                                                      [(str type-sym)]
+                                                      [] c/top-type)]]
                                   [has-field-sym
                                    [(ast/fn-arity-ast
                                      (str type-sym "_has_field") (FnValPtr "")
@@ -4408,7 +4495,8 @@
                                                     (ast/call-ast identical-sym
                                                                   [(rdr/tag (str "." field))
                                                                    field*])))
-                                             (rdr/tag 'nothing)))])]]]
+                                             (rdr/tag 'nothing)))]
+                                     [] c/top-type)]]]
 
                                  Eq-sym
                                  [[=*-sym
@@ -4422,7 +4510,8 @@
                                         (ast/call-ast
                                          =*-sym [(ast/call-ast reified-type-args-sym [x*])
                                                  (ast/call-ast reified-type-args-sym [y*])])
-                                        (ast/call-ast maybe-sym [x*])])])]]]
+                                        (ast/call-ast maybe-sym [x*])])]
+                                     [] c/top-type)]]]
 
                                  Associative-sym
                                  [[get-symb
@@ -4432,7 +4521,8 @@
                                      [(ast/and-ast
                                        [(ast/call-ast has-field-sym [x* field*])
                                         (ast/call-ast maybe-sym
-                                                      [(ast/call-ast field* [x*])])])])]]
+                                                      [(ast/call-ast field* [x*])])])]
+                                     [] c/top-type)]]
 
                                   [assoc-sym
                                    [(ast/fn-arity-ast
@@ -4443,7 +4533,8 @@
                                         [(ast/call-ast has-field-sym [x* field*])
                                          (ast/call-ast maybe-sym
                                                        [(ast/call-ast field* [x* 'new-value])])])
-                                       x*)])]]]
+                                       x*)]
+                                     [] c/top-type)]]]
 
                                  Hashable-sym
                                  [[sha1-update-sym
@@ -4453,7 +4544,8 @@
                                      [(ast/call-ast sha1-update-type-sym [x* ctxt*])
                                       (ast/call-ast
                                        sha1-update-sym
-                                       [(ast/call-ast reified-type-args-sym [x*]) ctxt*])])]]
+                                       [(ast/call-ast reified-type-args-sym [x*]) ctxt*])]
+                                     [] c/top-type)]]
                                   [sha1-sym
                                    [(ast/fn-arity-ast
                                      (str type-sym "_sha1") (FnValPtr "")
@@ -4462,7 +4554,8 @@
                                        sha1-finalize-sym
                                        [(ast/call-ast
                                          sha1-update-sym
-                                         [x* (ast/call-ast sha1-init-sym [])])])])]]]}
+                                         [x* (ast/call-ast sha1-init-sym [])])])]
+                                     [] c/top-type)]]]}
                                 impls))])))
 
 (defn declare-getters [new-type-name fields]
@@ -4517,10 +4610,12 @@
               [(rdr/tag (str "." field))
                [(ast/fn-arity-ast (str sym "_" field) (FnValPtr "")
                                   (ast/params [type-value new-value]) ""
-                                  set-field)
+                                  set-field
+                                  [] c/top-type)
                 (ast/fn-arity-ast (str sym "_" field) (FnValPtr "")
                                   (ast/params [type-value]) ""
-                                  extract-field)]])))}))
+                                  extract-field
+                                  [] c/top-type)]])))}))
 
 (defn destruct-impl-fields [sym ast field-types arity]
   (let [[type-value-parameter] (.fixed (.params arity))
@@ -4547,6 +4642,26 @@
                        [fn-name (map arities
                                      (partial destruct-impl-fields sym ast field-types))]))))))
 
+(def pre-defed-types {'TypeConstraint TypeConstraintType
+                      'NoValues NoValuesType
+                      'AllValues AllValuesType
+                      'MultiConstraint MultiConstraintType
+                      'ResultConstraint ResultConstraintType
+                      'ItemsConstraint ItemsConstraintType
+                      'FieldConstraint FieldConstraintType
+                      'StaticIntConstraint StaticIntConstraintType
+                      'MinValue MinValueType
+                      'MaxValue MaxValueType
+                      'InferredInner InferredInnerType
+                      'StaticLengthConstraint StaticLengthConstraintType
+                      'StaticStrConstraint StaticStrConstraintType
+                      'ContentsConstraint ContentsConstraintType})
+
+(defn new-type-number [type-symbol]
+  (assert (instance? Tagged type-symbol))
+  (either (get pre-defed-types type-symbol)
+          (extract rdr/type-counter)))
+
 (extend-type ast/type-ast
   Emitter
   (emit-definition [ast]
@@ -4567,7 +4682,7 @@
             ;; TODO: 'type-val-sym' ends up looking like "g_g__HASH_type_val_2882_2883'
             (for [type-val-sym (global-var "#type-val-")
                   :let [type-val-sym (rdr/tag type-val-sym file-name line-number)
-                        type-num (extract rdr/type-counter)
+                        type-num (new-type-number sym)
                         type-map {type-num (-> fields
                                                (map (fn [name]
                                                       (symbol (str "." name))))
@@ -4764,7 +4879,7 @@
                                  "));\n}\n"
                                  "FnArity " arity-var " = {FnArityType, -1, "
                                  arg-count
-                                 ", (List *)0, 0, " c-fn "};\n"])))
+                                 ", (List *)0, 0, " c-fn ", (Value *)0, (Value *)0};\n"])))
                        "Function " struct-var " = {FunctionType, -1, \""
                        fn-sym "\", " (count c-fns) ", "
                        "{" (interpose (map c-fns (fn [[_ arity-var]] (str "&" arity-var))) ", ")
@@ -4792,6 +4907,7 @@
   (for [main-fn (comp (lookup-static-arity-info (FnValPtr 'main) 1)
                       (compilation-error "'main' function is missing"))
         modules (sm/get-in-val [.modules])
+        ;; TODO: only gather symbols/prototypes if interpreter is compiled
         protos (ev/traverse (keys modules) gather-protocols)
         symbols (ev/traverse (keys modules) gather-symbols)
         values (sm/get-in-val [.rt-init .exprs])]
@@ -5243,10 +5359,6 @@
                                             (interp/CompiledNs 'ast ast/symbols ast/protocols)
                                             (interp/CompiledNs 'sys sys/symbols sys/protocols)
                                             (interp/CompiledNs 'state-maybe sm/symbols sm/protocols)
-
-                                            ;; TODO: remove when no longer needed
-                                            (interp/CompiledNs 'c c/symbols c/protocols)
-
                                             (interp/CompiledNs 'strm strm/symbols strm/protocols)]
                                            args))))
                          (do

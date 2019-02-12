@@ -20,8 +20,9 @@ void prefs(char *tag, Value *v) {
 int64_t malloc_count = 0;
 int64_t free_count = 0;
 
-Value *nothing = (Value *)&(Maybe){MaybeType, -1, 0};
-List empty_list_struct = (List){ListType,-1,0,0,0};
+Maybe nothing_struct = {MaybeType, -1, 0};
+Value *nothing = (Value *)&nothing_struct;
+  List empty_list_struct = (List){ListType,-1,0,0,0};
 List *empty_list = &empty_list_struct;
 Vector empty_vect_struct = (Vector){VectorType,-1,0,5,0,0};
 Vector *empty_vect = &empty_vect_struct;;
@@ -832,31 +833,31 @@ void freeOpaquePtr(Value *v) {
     free(v);
 }
 
-freeValFn freeJmpTbl[TypeCount] = {NULL,
-				   &freeInteger,
-				   &freeString,
-				   &freeFnArity,
-				   &freeFunction,
-				   &freeSubString,
-				   &freeList,
-				   &freeMaybe,
-				   &freeVector,
-				   &freeVectorNode,
-				   &freeSubString,
-				   &freeBitmapNode,
-				   &freeArrayNode,
-				   &freeHashCollisionNode,
-				   NULL,
-				   &freePromise,
-				   &freeFuture,
-				   &freeAgent,
-				   &freeOpaquePtr};
+freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
+				       &freeInteger,
+				       &freeString,
+				       &freeFnArity,
+				       &freeFunction,
+				       &freeSubString,
+				       &freeList,
+				       &freeMaybe,
+				       &freeVector,
+				       &freeVectorNode,
+				       &freeSubString,
+				       &freeBitmapNode,
+				       &freeArrayNode,
+				       &freeHashCollisionNode,
+				       NULL,
+				       &freePromise,
+				       &freeFuture,
+				       &freeAgent,
+				       &freeOpaquePtr};
 
 void dec_and_free(Value *v, int deltaRefs) {
   if (v == (Value *)0 || decRefs(v, deltaRefs) >= -1)
     return;
 
-  if (v->type < TypeCount) {
+  if (v->type < CoreTypeCount) {
     freeJmpTbl[v->type](v);
   } else {
     ReifiedVal *rv = (ReifiedVal *)v;
@@ -4326,7 +4327,7 @@ int64_t countSeq(Value *seq) {
 }
 
 Value *reifiedTypeArgs(Value *x) {
-  if (x->type < TypeCount) {
+  if (x->type < CoreTypeCount) {
     dec_and_free(x, 1);
     return((Value *)empty_vect);
   } else {
