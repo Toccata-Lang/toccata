@@ -64,12 +64,12 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "")
+(def line-sep "\n")
 
 (defn line-marker [file-name line-number marker]
   (either (and (= "" file-name)
                (maybe "\n#\n"))
-          ["\n" marker "\n#line "
+          ["\n" marker "\n// #line "
            (str line-number) " " "\""
            (either (and (= 'core file-name)
                         (maybe path-to-core))
@@ -1243,8 +1243,10 @@
               (collapse-expressions
                [args (c-static-val var []
                                    ["ReifiedVal " struct " = {" (str (get-type x)) ", -1, (Value *)&"
-                                    (.c-struct args)
-                                    ", 0};" line-sep
+                                    (.c-struct args) ", "
+                                    ;; TODO: magic number 10
+                                    (repeat 10 "(Value *)0, ")
+                                    "0, {}};" line-sep
                                     "Value *" var "= (Value *)&" struct ";" line-sep]
                                    {} {} struct)]))
             ;; TODO remove
@@ -1856,7 +1858,10 @@
           var (global-var "set_")]
       (comp m (c-static-val var []
                             ["ReifiedVal " struct " = {" (str (get-type hs))
-                             ", -1, (Value *)&" (.c-struct m) ", 0, 0};\n"
+                             ", -1, (Value *)&" (.c-struct m) ", "
+                             ;; TODO: magic number 10
+                             (repeat 10 "(Value *)0, ")
+                             "0, 0};\n"
                              "Value *" var " = (Value *)&" struct ";" line-sep]
                             {} {} struct))))
 
@@ -2508,6 +2513,7 @@
 (def update-field-sym (rdr/tag 'update-field))
 (def store-sym (rdr/tag 'store))
 (def reified-type-args-sym (rdr/tag 'reified-type-args))
+(def get-field-sym (rdr/tag 'get-field))
 (def nth-sym (rdr/tag 'nth))
 
 (defn call-dyn-unknown-type [target args ast]
@@ -3219,6 +3225,10 @@
                "((ReifiedVal *)" reified-sym ")->implCount = "
                (count impl-fns) ";" line-sep
                "((ReifiedVal *)" reified-sym ")->typeArgs = (Value *)0;" line-sep
+               ;; TODO: magic value 10
+               (map (range 10) (fn [idx]
+                                 (str "((ReifiedVal *)" reified-sym ")->fields[" idx
+                                      "] = (Value *)0;" line-sep)))
                (-> impl-fns
                    (map .c-var)
                    (index)
@@ -3238,7 +3248,10 @@
                       []
                       [(map impl-fns .decl)
                        "ReifiedVal " reified-sym " = {"
-                       type-num ", -1, (Value *)0, 0, {}};" line-sep
+                       type-num ", -1, (Value *)0, "
+                       ;; TODO: magic value 10
+                       (repeat 10 "(Value *)0, ")
+                       "0, {}};" line-sep
                        "Value *" reified-ptr " = (Value *)&" reified-sym ";" line-sep]
                       {} {reified-ptr (c/TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>")
                                                       nothing (str reified-ptr))}
@@ -4409,7 +4422,7 @@
                                (ast/line-number (.type ast)))))))
 
 
-(defn constructor-expr [new-type-name new-type-constraint type-val-sym fields assertions]
+(defn constructor-expr [new-type-name type-num new-type-constraint type-val-sym fields assertions]
   (assert (instance? c/TypeConstraint new-type-constraint))
   (assert (instance? Vector fields))
 
@@ -4444,14 +4457,28 @@
                      Function-sym
                      [[invoke-sym
                        [(ast/fn-arity-ast (str new-type-name "_invoke") (FnValPtr "")
-                                          (ast/params (vec (cons '_ (seq fields)))) ""
-                                          (comp assertions
-                                                [(constraint-ast
-                                                  new-type-constraint
-                                                  (ast/call-ast new-type-value-sym
-                                                                [type-val-sym
-                                                                 (ast/call-ast 'vector
-                                                                               (vec fields))]))])
+                                          ;; TODO: can't use 'arg, have to use "fields"
+                                          (ast/params (comp ['_] (repeat (count fields) 'arg))) ""
+                                          ;; TODO: put assertions back in
+                                          [(ast/inline-ast 'C nothing
+                                                           (str "ReifiedVal *rv = malloc_reified(0);\n"
+                                                                " __atomic_store(&rv->refs,"
+                                                                " &refsInit, __ATOMIC_RELAXED);\n"
+                                                                "rv->type = " type-num ";\n"
+                                                                (to-str (map (range (count fields))
+                                                                             (fn [idx]
+                                                                               (str "rv->fields[" idx "] = arg_"
+                                                                                    (inc idx) ";\n"))))
+                                                                "return((Value *)rv);\n")
+                                                           "wtf" 0)]
+                                          ;; (ast/params (vec (cons '_ (seq fields)))) ""
+                                          ;; (comp assertions
+                                          ;;       [(constraint-ast
+                                          ;;         new-type-constraint
+                                          ;;         (ast/call-ast new-type-value-sym
+                                          ;;                       [type-val-sym
+                                          ;;                        (ast/call-ast 'vector
+                                          ;;                                      (vec fields))]))])
                                           [] c/top-type)]]]
 
                      Container-sym
@@ -4589,20 +4616,18 @@
      (map (zip-lists (seq fields) (range (count fields)) field-constraints)
           (fn [[field field-index field-constraint]]
             (let [new-value (rdr/tag (str field))
-                  extract-field (ast/call-ast extract-sym
-                                              [(ast/call-ast nth-sym
-                                                             [(ast/call-ast reified-type-args-sym
-                                                                            [type-value])
-                                                              field-index])])
-                  extract-field (either (or (map (= c/top-type field-constraint)
-                                                 (fn [_]
-                                                   [extract-field]))
-                                            (map (instance? c/MultiConstraint field-constraint)
-                                                 (fn [mc]
-                                                   (map (.constraints mc)
-                                                        (fn [c]
-                                                          (constraint-ast c extract-field))))))
-                                        [(constraint-ast field-constraint extract-field)])
+                  extract-field [(ast/inline-ast 'C nothing (str "return(getField(value_0, " field-index "));\n")
+                                                  "" 0)]
+                  ;; TODO: add back in
+                  ;; extract-field (either (or (map (= c/top-type field-constraint)
+                  ;;                                (fn [_]
+                  ;;                                  [extract-field]))
+                  ;;                           (map (instance? c/MultiConstraint field-constraint)
+                  ;;                                (fn [mc]
+                  ;;                                  (map (.constraints mc)
+                  ;;                                       (fn [c]
+                  ;;                                         (constraint-ast c extract-field))))))
+                  ;;                       [(constraint-ast field-constraint extract-field)])
                   set-field [(c/update-sym field-constraint field)
                              (constraint-ast constraint
                                              (ast/call-ast update-field-sym
@@ -4619,15 +4644,27 @@
 
 (defn destruct-impl-fields [sym ast field-types arity]
   (let [[type-value-parameter] (.fixed (.params arity))
+        fields (.fixed (.fields ast))
+        field-count (count fields)
         return-assertions (filter (.body arity) (partial instance? c/ResultConstraint))
+        field-constraints (-> field-types
+                              c/extract-items-constraints
+                              (comp (repeat field-count c/top-type))
+                              (take field-count))
         new-body (comp return-assertions
                        [(ast/assert-type (.sym ast) type-value-parameter)]
                        (filter (.body arity) (partial instance? c/SymbolConstraints))
-                       [(ast/let-ast [(ast/binding (.fields ast)
-                                        (constraint-ast field-types (ast/call-ast
-                                                                     reified-type-args-sym
-                                                                     [type-value-parameter])))]
-                                     (remove (.body arity) (partial instance? c/SymbolConstraints)))])]
+                       [(-> (zip-lists fields
+                                       field-constraints
+                                       (range field-count))
+                            (map (fn [[field-sym field-constraint index]]
+                                   ;; TODO: add field-constraint
+                                   (ast/binding field-sym
+                                     (ast/call-ast get-field-sym
+                                                   [type-value-parameter index]))))
+                            vec
+                            (ast/let-ast 
+                             (remove (.body arity) (partial instance? c/SymbolConstraints))))])]
     (-> arity
         (.body new-body)
         (.fn-sym (str sym "_" fn-name)))))
@@ -4721,8 +4758,8 @@
                                                           (.items-constraints field-constraints))
                                           (destructure-fields sym ast field-constraints))]
                   type-constructor (emit-definition
-                                    (constructor-expr sym new-type-constraint type-val-sym fields
-                                                      field-assertions))
+                                    (constructor-expr sym type-num new-type-constraint type-val-sym
+                                                      fields field-assertions))
                   type-val-def (emit-definition (type-val-expr sym type-num type-val-sym
                                                                fields impls))
 
@@ -5370,7 +5407,7 @@
                      (fn [root-dir]
                        (write-strings ["\n#define _XOPEN_SOURCE 600"
                                        "\n#include <stdlib.h>"
-                                       "\n#include \"core.h\"\n"])
+                                       "\n#include \"new-core.h\"\n"])
                        (send module-compiler compile-module file-name waiter root-dir root-dir)))
                 (do
                   (print-err "Could not find " (str "'" file-name "'"))

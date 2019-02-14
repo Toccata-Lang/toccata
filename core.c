@@ -490,7 +490,6 @@ Vector *malloc_vector() {
       vectorStructs->count = 0;
       vectorStructs->shift = 5;
       vectorStructs->root = (VectorNode *)0;
-      vectorStructs->root = (VectorNode *)0;
       memset(&vectorStructs->tail, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
       return(vectorStructs);
     }
@@ -501,7 +500,6 @@ Vector *malloc_vector() {
   __atomic_store(&newVector->refs, &refsInit, __ATOMIC_RELAXED);
   newVector->count = 0;
   newVector->shift = 5;
-  newVector->root = (VectorNode *)0;
   newVector->root = (VectorNode *)0;
   memset(&newVector->tail, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
   return(newVector);
@@ -584,6 +582,8 @@ ReifiedVal *malloc_reified(int implCount) {
   }
   __atomic_store(&newReifiedVal->refs, &refsInit, __ATOMIC_RELAXED);
   newReifiedVal->implCount = implCount;
+  for (int i = 0; i < FIELD_COUNT; i++)
+    newReifiedVal->fields[i] = (Value *)0; 
   newReifiedVal->typeArgs = (Value *)0;
   return(newReifiedVal);
 }
@@ -866,6 +866,11 @@ void dec_and_free(Value *v, int deltaRefs) {
     }
     if (rv->typeArgs != (Value *)0)
       dec_and_free(rv->typeArgs, 1);
+    for (int i = 0; i < FIELD_COUNT; i++) {
+      if (rv->fields[i] != 0) {
+	dec_and_free(rv->fields[i], 1);
+      }
+    }
     if (rv->implCount < 20) {
       v->next = freeReified[rv->implCount].head;
       freeReified[rv->implCount].head = v;
@@ -1298,22 +1303,6 @@ char *extractStr(Value *v) {
   }
 }
 
-Value *findProtoImpl(int64_t type, ProtoImpls *impls) {
-  int64_t implIndex = 0;
-  Value *defaultImpl = (Value *)0;
-  while(implIndex < impls->implCount) {
-    if (impls->impls[implIndex].type == 0) {
-       defaultImpl = impls->impls[implIndex].implFn;
-    }
-
-    if (type != impls->impls[implIndex].type) {
-      implIndex++;
-    } else
-      return(impls->impls[implIndex].implFn);
-  }
-  return(defaultImpl);
-};
-
 FnArity *findFnArity(Value *fnVal, int64_t argCount) {
   Function *fn = (Function *)fnVal;
   int arityIndex = 0;
@@ -1680,9 +1669,12 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
 }
 
 Value *updateField(Value *rval, Value *field, Value *index) {
+  int64_t idx = ((Integer *)index)->numVal;
   if (rval->refs == 1) {
     ReifiedVal *template = (ReifiedVal *)rval;
-    template->typeArgs = fastVectStore((Vector *)template->typeArgs, ((Integer *)index)->numVal, field);
+    dec_and_free(template->fields[idx], 1);
+    template->fields[idx] = field;
+
     dec_and_free(index, 1);
     return(rval);
   } else {
@@ -1691,8 +1683,16 @@ Value *updateField(Value *rval, Value *field, Value *index) {
     int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
     memcpy(rv, template, rvSize);
     __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-    rv->typeArgs = fastVectStore((Vector *)incRef((Value *)template->typeArgs, 1),
-				 ((Integer *)index)->numVal, field);
+    for (int i = 0; i < template->implCount; i++) {
+      incRef(template->impls[i], 1);
+    }
+    for (int i = 0; i < FIELD_COUNT; i++) {
+      if (i != idx && rv->fields[i] != 0) {
+	incRef(rv->fields[i], 1);
+      }
+    }
+    rv->fields[idx] = field;
+    incRef(field, 1);
     dec_and_free(index, 1);
     dec_and_free(rval, 1);
     return((Value *)rv);
@@ -4331,10 +4331,16 @@ Value *reifiedTypeArgs(Value *x) {
     dec_and_free(x, 1);
     return((Value *)empty_vect);
   } else {
-    Value *typeArgs = ((ReifiedVal *)x)->typeArgs;
-    incRef(typeArgs, 1);
+    Vector *typeArgs = empty_vect;
+    ReifiedVal *rv = (ReifiedVal *)x;
+    for (int i = 0; i < FIELD_COUNT; i++) {
+      if (rv->fields[i] != (Value *)0) {
+	typeArgs = mutateVectConj((Vector *)incRef((Value *)typeArgs, 1),
+				  incRef(rv->fields[i], 1));
+      }
+    }
     dec_and_free(x, 1);
-    return(typeArgs);
+    return((Value *)typeArgs);
   }
 }
 
@@ -4372,6 +4378,19 @@ Value *newTypeValue(Value *template_value, Value *fields) {
   int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
   memcpy(rv, template, rvSize);
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  rv->typeArgs = fields;
+  rv->typeArgs = (Value *)0;
+  Vector *vect = (Vector *)fields;
+  for (int i = 0; i < vect->count; i++) {
+    rv->fields[i] = vect->tail[i];
+    incRef(rv->fields[i], 1);
+  }
+  dec_and_free(fields, 1);
   return((Value *)rv);
+}
+
+Value *getField(Value *value, int fieldIndex) {
+  ReifiedVal *rv = (ReifiedVal *)value;
+  Value *result = incRef(rv->fields[fieldIndex], 1);
+  dec_and_free(value, 1);
+  return(result);
 }

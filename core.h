@@ -11,6 +11,7 @@ extern void abort();
 
 #define VECTOR_ARRAY_LEN 32
 #define ARRAY_NODE_LEN 32
+#define FIELD_COUNT 10
 
 typedef struct
 {
@@ -43,7 +44,7 @@ typedef struct {int64_t type; int32_t refs; Value *action; Value* errorCallback;
 typedef struct {int64_t type; int32_t refs;
                 Value *val; List* input; List *output;
                 pthread_mutex_t access;} Agent;
-typedef struct {int64_t type; int32_t refs; Value *typeArgs; int implCount;
+typedef struct {int64_t type; int32_t refs; Value *typeArgs; Value *fields[FIELD_COUNT]; int implCount;
                 Value* impls[];} ReifiedVal;
 typedef struct {int64_t type; int32_t refs; void *ptr; Destructor *destruct;} Opaque;
 
@@ -166,7 +167,6 @@ FnArity *findFnArity(Value *fnVal, int64_t argCount);
 ReifiedVal *malloc_reified(int implCount);
 Promise *malloc_promise();
 
-Value *findProtoImpl(int64_t type, ProtoImpls *impls);
 void startWorkers();
 void replaceWorker();
 void waitForWorkers();
@@ -274,3 +274,4 @@ Value *get(List *, Value *, Value *, Value *, Value *, Value *);
 Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift);
 Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift);
 Value *newTypeValue(Value *template_value, Value *fields);
+Value *getField(Value *value, int fieldIndex);
