@@ -41,10 +41,9 @@ typedef struct {int64_t type; int32_t refs; Value *result; List *actions;
                 pthread_cond_t delivered; pthread_mutex_t access;} Promise;
 typedef struct {int64_t type; int32_t refs; Value *action; Value* errorCallback; List *actions;
                 Value *result; pthread_cond_t delivered; pthread_mutex_t access;} Future;
-typedef struct {int64_t type; int32_t refs;
-                Value *val; List* input; List *output;
+typedef struct {int64_t type; int32_t refs; Value *val; List* input; List *output;
                 pthread_mutex_t access;} Agent;
-typedef struct {int64_t type; int32_t refs; Value *typeArgs; Value *fields[FIELD_COUNT]; int implCount;
+typedef struct {int64_t type; int32_t refs; Value *fields[FIELD_COUNT]; int implCount;
                 Value* impls[];} ReifiedVal;
 typedef struct {int64_t type; int32_t refs; void *ptr; Destructor *destruct;} Opaque;
 

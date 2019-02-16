@@ -584,7 +584,6 @@ ReifiedVal *malloc_reified(int implCount) {
   newReifiedVal->implCount = implCount;
   for (int i = 0; i < FIELD_COUNT; i++)
     newReifiedVal->fields[i] = (Value *)0; 
-  newReifiedVal->typeArgs = (Value *)0;
   return(newReifiedVal);
 }
 
@@ -864,8 +863,6 @@ void dec_and_free(Value *v, int deltaRefs) {
     for (int i = 0; i < rv->implCount; i++) {
       dec_and_free(rv->impls[i], 1);
     }
-    if (rv->typeArgs != (Value *)0)
-      dec_and_free(rv->typeArgs, 1);
     for (int i = 0; i < FIELD_COUNT; i++) {
       if (rv->fields[i] != 0) {
 	dec_and_free(rv->fields[i], 1);
@@ -4378,7 +4375,6 @@ Value *newTypeValue(Value *template_value, Value *fields) {
   int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
   memcpy(rv, template, rvSize);
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  rv->typeArgs = (Value *)0;
   Vector *vect = (Vector *)fields;
   for (int i = 0; i < vect->count; i++) {
     rv->fields[i] = vect->tail[i];
