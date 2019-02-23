@@ -11,7 +11,12 @@ extern void abort();
 
 #define VECTOR_ARRAY_LEN 32
 #define ARRAY_NODE_LEN 32
-#define FIELD_COUNT 10
+
+// #define FAST_DECS 1
+// #define FAST_INCS 1
+
+#define TYPE_SIZE int64_t
+#define REFS_SIZE int32_t
 
 typedef struct
 {
@@ -22,35 +27,34 @@ typedef struct
 
 typedef void (Destructor)(void *);
 // TODO: add hash cache and meta data. And update 'make-static-*' as well
-typedef struct Value {int64_t type; int32_t refs; struct Value* next;} Value;
-typedef struct {int64_t type; int32_t refs; int64_t numVal;} Integer;
-typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; char buffer[0];} String;
-typedef struct {int64_t type; int32_t refs; int64_t len; Integer *hash; Value *source; char *buffer;} SubString;
-typedef struct List {int64_t type; int32_t refs; int64_t len; Value* head; struct List *tail;} List;
-typedef struct {int64_t type; int32_t refs; int count; List *closures;
+typedef struct Value {TYPE_SIZE type; REFS_SIZE refs; struct Value* next;} Value;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t numVal;} Integer;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t len; Integer *hash; char buffer[0];} String;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t len; Integer *hash; Value *source; char *buffer;} SubString;
+typedef struct List {TYPE_SIZE type; REFS_SIZE refs; int64_t len; Value* head; struct List *tail;} List;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int count; List *closures;
                 int variadic; void *fn; Value *paramConstraints; Value *resultConstraint;} FnArity;
-typedef struct {int64_t type; int32_t refs; char *name; int64_t arityCount; FnArity *arities[];} Function;
-typedef struct {int64_t type; int32_t refs; Value* value;} Maybe;
-typedef struct {int64_t type; int32_t refs; Value *array[VECTOR_ARRAY_LEN];} VectorNode;
-typedef struct {int64_t type; int32_t refs; int32_t count; int8_t shift; int64_t tailOffset;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; char *name; int64_t arityCount; FnArity *arities[];} Function;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value* value;} Maybe;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *array[VECTOR_ARRAY_LEN];} VectorNode;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
-typedef struct {int64_t type; int32_t refs; int32_t bitmap; Value *array[];} BitmapIndexedNode;
-typedef struct {int64_t type; int32_t refs; Value *array[ARRAY_NODE_LEN];} ArrayNode;
-typedef struct {int64_t type; int32_t refs; int16_t count; Value *array[];} HashCollisionNode;
-typedef struct {int64_t type; int32_t refs; Value *result; List *actions;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int32_t bitmap; Value *array[];} BitmapIndexedNode;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *array[ARRAY_NODE_LEN];} ArrayNode;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int16_t count; Value *array[];} HashCollisionNode;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *result; List *actions;
                 pthread_cond_t delivered; pthread_mutex_t access;} Promise;
-typedef struct {int64_t type; int32_t refs; Value *action; Value* errorCallback; List *actions;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *action; Value* errorCallback; List *actions;
                 Value *result; pthread_cond_t delivered; pthread_mutex_t access;} Future;
-typedef struct {int64_t type; int32_t refs; Value *val; List* input; List *output;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *val; List* input; List *output;
                 pthread_mutex_t access;} Agent;
-typedef struct {int64_t type; int32_t refs; Value *fields[FIELD_COUNT]; int implCount;
-                Value* impls[];} ReifiedVal;
-typedef struct {int64_t type; int32_t refs; void *ptr; Destructor *destruct;} Opaque;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int8_t implCount; Value* impls[];} ReifiedVal;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; void *ptr; Destructor *destruct;} Opaque;
 
 Integer const0;
 Value *const0Ptr;
 
-typedef struct {int64_t type; Value *implFn;} ProtoImpl;
+typedef struct {TYPE_SIZE type; Value *implFn;} ProtoImpl;
 typedef struct {int64_t implCount; ProtoImpl impls[];} ProtoImpls;
 
 typedef Value *(FnType0)(List *);
@@ -74,9 +78,9 @@ typedef struct {
 Value *nothing;
 Maybe nothing_struct;
 Value *maybeNothing;
-int32_t refsInit;
-int32_t staticRefsInit;
-int32_t refsError;
+REFS_SIZE refsInit;
+REFS_SIZE staticRefsInit;
+REFS_SIZE refsError;
 
 #define IgnoreType -1
 #define UnknownType 0
@@ -171,7 +175,6 @@ void replaceWorker();
 void waitForWorkers();
 char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);
-Value *intValue(int64_t n);
 Value *prSTAR(Value *);
 Value *prErrSTAR(Value *);
 Value *add_ints(Value *arg0, Value *arg1);
@@ -192,7 +195,7 @@ Value *strCount(Value *arg0);
 Value *strEQ(Value *arg0, Value *arg1);
 Value *strList(Value *arg0);
 Value *strVect(Value *arg0);
-Value *checkInstance(int64_t typeNum, Value *arg1);
+Value *checkInstance(TYPE_SIZE typeNum, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);
 Value *listConcat(Value *arg0);
 Value *car(Value *arg0);
@@ -268,7 +271,6 @@ void Sha1Update (Sha1Context* Context, void* Buffer, int64_t BufferSize);
 void strSha1Update(Sha1Context *ctxt, Value *arg0);
 Value *reifiedTypeArgs(Value *x);
 Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym, Value *dispValue, Value *args);
-FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64_t dispType, int64_t argCount);
 Value *get(List *, Value *, Value *, Value *, Value *, Value *);
 Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift);
 Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift);

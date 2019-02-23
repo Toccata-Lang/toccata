@@ -27,7 +27,13 @@ List *empty_list = &empty_list_struct;
 Vector empty_vect_struct = (Vector){VectorType,-1,0,5,0,0};
 Vector *empty_vect = &empty_vect_struct;;
 
+#ifdef SINGLE_THREADED
+#define NUM_WORKERS 1
+#else
+#ifndef NUM_WORKERS
 #define NUM_WORKERS 10
+#endif
+#endif
 pthread_t workers[NUM_WORKERS];
 int32_t runningWorkers = NUM_WORKERS;
 int8_t mainThreadDone = 0;
@@ -40,16 +46,21 @@ int bitpos(int64_t hash, int shift) {
   return 1 << mask(hash, shift);
 }
 
-int32_t refsInit = 1;
-int32_t staticRefsInit = -1;
-int32_t refsError = -10;
+REFS_SIZE refsInit = 1;
+REFS_SIZE staticRefsInit = -1;
+REFS_SIZE refsError = -10;
 Value *my_malloc(int64_t sz) {
 #ifdef CHECK_MEM_LEAK
   __atomic_fetch_add(&malloc_count, 1, __ATOMIC_ACQ_REL);
 #endif
   Value *val = malloc(sz);
-  if (sz > sizeof(Value))
+  if (sz > sizeof(Value)) {
+#ifdef SINGLE_THREADED
+    val->refs = refsInit;
+#else
     __atomic_store(&val->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
+  }
   return(val);
 }
 
@@ -67,6 +78,22 @@ typedef struct {Value *head; uintptr_t aba;} FreeValList;
 Value *removeFreeValue(FreeValList *freeList) {
   Value *item = (Value *)0;
   FreeValList orig;
+#ifdef SINGLE_THREADED
+  orig = *freeList;
+  FreeValList next = orig;
+  item = orig.head;
+  if (item == (Value *)0) {
+    return((Value *)0);
+  } else {
+    next.head = item->next;
+    freeList = &next;
+    if (item->refs != -10) {
+      fprintf(stderr, "failure in removeFreeValue: %d\n", item->refs);
+      abort();
+    }
+    return(item);
+  }
+#else
   __atomic_load((long long *)freeList, (long long *)&orig, __ATOMIC_RELAXED);
   FreeValList next = orig;
   if (orig.head != (Value *)0) {
@@ -86,7 +113,7 @@ Value *removeFreeValue(FreeValList *freeList) {
   if (item == (Value *)0) {
     return((Value *)0);
   } else {
-    int32_t refs;
+    REFS_SIZE refs;
     __atomic_load(&item->refs, &refs, __ATOMIC_RELAXED);
     if (refs != -10) {
       fprintf(stderr, "failure in removeFreeValue: %d\n", refs);
@@ -94,12 +121,85 @@ Value *removeFreeValue(FreeValList *freeList) {
     }
     return(item);
   }
+#endif
+}
+
+int decRefs(Value *v, int deltaRefs) {
+#ifndef FAST_DECS
+#ifdef SINGLE_THREADED
+  if (v->refs == -1)
+    return(v->refs);
+
+  if (v->refs < deltaRefs) {
+    fprintf(stderr, "failure in dec_and_free: %d %p\n", v->refs, v);
+    abort();
+  } else if (v->refs == deltaRefs)
+    v->refs = -10;
+  else
+    v->refs -= deltaRefs;
+  return(v->refs);
+#else
+  REFS_SIZE refs;
+  __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
+  if (refs == -1)
+    return(refs);
+
+  REFS_SIZE newRefs;
+  do {
+    if (refs < deltaRefs) {
+      fprintf(stderr, "failure in dec_and_free: %d %p\n", refs, v);
+      abort();
+    } else if (refs == deltaRefs)
+      newRefs = -10;
+    else
+      newRefs = refs - deltaRefs;
+  } while (!__atomic_compare_exchange(&v->refs, &refs, &newRefs, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+
+  return(newRefs);
+#endif
+#else
+#ifndef SINGLE_THREADED
+  fprintf(stderr, "FAST_DECS can only be used when SINGLE_THREADED is defined");
+  abort();
+#endif
+  if (v->refs == -1)
+    return(v->refs);
+
+  if (v->refs == deltaRefs)
+    v->refs = -10;
+  else
+    v->refs -= deltaRefs;
+  return(v->refs);
+#endif
 }
 
 FreeValList centralFreeIntegers = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeIntegers = {(Value *)0, 0};
 Integer *malloc_integer() {
   Integer *newInteger = (Integer *)freeIntegers.head;
+#ifdef SINGLE_THREADED
+  if (newInteger == (Integer *)0) {
+    newInteger = (Integer *)removeFreeValue(&centralFreeIntegers);
+    if (newInteger == (Integer *)0) {
+      Integer *numberStructs = (Integer *)my_malloc(sizeof(Integer) * 100);
+      for (int i = 1; i < 99; i++) {
+	numberStructs[i].refs = refsError;
+        ((Value *)&numberStructs[i])->next = (Value *)&numberStructs[i + 1];
+      }
+      numberStructs[99].refs = refsError;
+      ((Value *)&numberStructs[99])->next = (Value *)0;
+      freeIntegers.head = (Value *)&numberStructs[1];
+
+      numberStructs->type = IntegerType;
+      numberStructs->refs = refsInit;
+      return(numberStructs);
+    }
+  } else {
+    freeIntegers.head = freeIntegers.head->next;
+  }
+  newInteger->type = IntegerType;
+  newInteger->refs = refsInit;
+#else
   if (newInteger == (Integer *)0) {
     newInteger = (Integer *)removeFreeValue(&centralFreeIntegers);
     if (newInteger == (Integer *)0) {
@@ -124,27 +224,8 @@ Integer *malloc_integer() {
   }
   newInteger->type = IntegerType;
   __atomic_store(&newInteger->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   return(newInteger);
-}
-
-int decRefs(Value *v, int deltaRefs) {
-  int32_t refs;
-  __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
-  if (refs == -1)
-    return(refs);
-
-  int32_t newRefs;
-  do {
-    if (refs < deltaRefs) {
-      fprintf(stderr, "failure in dec_and_free: %d %p\n", refs, v);
-      abort();
-    } else if (refs == deltaRefs)
-      newRefs = -10;
-    else
-      newRefs = refs - deltaRefs;
-  } while (!__atomic_compare_exchange(&v->refs, &refs, &newRefs, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
-
-  return(newRefs);
 }
 
 typedef void (*freeValFn)(Value *);
@@ -177,7 +258,11 @@ String *malloc_string(int len) {
       freeStrings.head = freeStrings.head->next;
     }
   }
+#ifdef SINGLE_THREADED
+  str->refs = refsInit;
+#else
   __atomic_store(&str->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   str->hash = (Integer *)0;
   str->type = StringBufferType;
   str->len = len;
@@ -197,7 +282,6 @@ void freeString(Value *v) {
     } else {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-      // __atomic_fetch_add(&free_strs, 1, __ATOMIC_ACQ_REL);
 #endif
       if (!cleaningUp)
 	free(v);
@@ -213,13 +297,21 @@ SubString *malloc_substring() {
     if (subStr == (SubString *)0) {
       subStr = (SubString *)my_malloc(sizeof(SubString));
       subStr->hash = (Integer *)0;
+#ifdef SINGLE_THREADED
+      subStr->refs = refsInit;
+#else
       __atomic_store(&subStr->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
       return(subStr);
     }
   } else {
     freeSubStrings.head = freeSubStrings.head->next;
   }
+#ifdef SINGLE_THREADED
+  subStr->refs = refsInit;
+#else
   __atomic_store(&subStr->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   subStr->hash = (Integer *)0;
   return(subStr);
 }
@@ -253,7 +345,11 @@ FnArity *malloc_fnArity() {
     freeFnArities.head = freeFnArities.head->next;
   }
   newFnArity->type = FnArityType;
+#ifdef SINGLE_THREADED
+  newFnArity->refs = refsInit;
+#else
   __atomic_store(&newFnArity->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   return(newFnArity);
 }
 
@@ -288,7 +384,11 @@ Function *malloc_function(int arityCount) {
   Function *newFunction;
   if (arityCount > 9) {
     newFunction = (Function *)my_malloc(sizeof(Function) + sizeof(FnArity *) * arityCount);
-    __atomic_store(&((Function *)newFunction)->refs, &refsInit, __ATOMIC_RELAXED);
+#ifdef SINGLE_THREADED
+  ((Function *)newFunction)->refs = refsInit;
+#else
+  __atomic_store(&((Function *)newFunction)->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
     newFunction->type = FunctionType;
     return(newFunction);
   } else {
@@ -302,7 +402,11 @@ Function *malloc_function(int arityCount) {
       freeFunctions[arityCount].head = freeFunctions[arityCount].head->next;
     }
     newFunction->type = FunctionType;
+#ifdef SINGLE_THREADED
+    ((Function *)newFunction)->refs = refsInit;
+#else
     __atomic_store(&((Function *)newFunction)->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
     return((Function *)newFunction);
   }
 }
@@ -318,7 +422,7 @@ void freeFunction(Value *v) {
     freeFunctions[f->arityCount].head = v;
   } else {
 #ifdef CHECK_MEM_LEAK
-    __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
     if (!cleaningUp)
       free(v);
@@ -329,6 +433,31 @@ FreeValList centralFreeLists = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeLists = (FreeValList){(Value *)0, 0};
 List *malloc_list() {
   List *newList = (List *)freeLists.head;
+#ifdef SINGLE_THREADED
+  if (newList == (List *)0) {
+    newList = (List *)removeFreeValue(&centralFreeLists);
+    if (newList == (List *)0) {
+      List *listStructs = (List *)my_malloc(sizeof(List) * 100);
+      for (int i = 1; i < 99; i++) {
+        listStructs[i].refs = refsError;
+        ((Value *)&listStructs[i])->next = (Value *)&listStructs[i + 1];
+      }
+      listStructs[99].refs = refsError;
+      ((Value *)&listStructs[99])->next = freeLists.head;
+      freeLists.head = (Value *)&listStructs[1];
+      malloc_count += 99;
+
+      listStructs->type = ListType;
+      listStructs->refs = refsInit;
+      listStructs->head = (Value *)0;
+      listStructs->tail = (List *)0;
+      listStructs->len = 0;
+      return(listStructs);
+    }
+  } else {
+    freeLists.head = freeLists.head->next;
+  }
+#else
   if (newList == (List *)0) {
     newList = (List *)removeFreeValue(&centralFreeLists);
     if (newList == (List *)0) {
@@ -354,6 +483,7 @@ List *malloc_list() {
   } else {
     freeLists.head = freeLists.head->next;
   }
+#endif
 
   newList->type = ListType;
   newList->refs = 1;
@@ -372,8 +502,17 @@ void freeList(Value *v) {
   l->tail = (List *)0;
   v->next = freeLists.head;
   freeLists.head = v;
+#ifdef SINGLE_THREADED
   if (tail != (List *)0) {
-    int32_t refs;
+    if (tail->refs == 1) {
+      freeList((Value *)tail);
+      tail->refs = refsError;
+    } else {
+      decRefs((Value *)tail, 1);
+    }
+#else
+  if (tail != (List *)0) {
+    REFS_SIZE refs;
     __atomic_load(&tail->refs, &refs, __ATOMIC_RELAXED);
     if (refs == 1) {
       freeList((Value *)tail);
@@ -381,6 +520,7 @@ void freeList(Value *v) {
     } else {
       decRefs((Value *)tail, 1);
     }
+#endif
   }
 }
 
@@ -388,6 +528,29 @@ FreeValList centralFreeMaybes = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeMaybes = {(Value *)0, 0};
 Maybe *malloc_maybe() {
   Maybe *newMaybe = (Maybe *)freeMaybes.head;
+#ifdef SINGLE_THREADED
+  if (newMaybe == (Maybe *)0) {
+    newMaybe = (Maybe *)removeFreeValue(&centralFreeMaybes);
+    if (newMaybe == (Maybe *)0) {
+      Maybe *maybeStructs = (Maybe *)my_malloc(sizeof(Maybe) * 50);
+      for (int i = 1; i < 49; i++) {
+        maybeStructs[i].refs = refsError;
+        ((Value *)&maybeStructs[i])->next = (Value *)&maybeStructs[i + 1];
+      }
+      maybeStructs[49].refs = refsError;
+      ((Value*)&maybeStructs[49])->next = (Value *)0;
+      freeMaybes.head = (Value *)&maybeStructs[1];
+
+      maybeStructs->type = MaybeType;
+      maybeStructs->refs = refsInit;
+      return(maybeStructs);
+    }
+  } else {
+    freeMaybes.head = freeMaybes.head->next;
+  }
+  newMaybe->type = MaybeType;
+  newMaybe->refs = refsInit;
+#else
   if (newMaybe == (Maybe *)0) {
     newMaybe = (Maybe *)removeFreeValue(&centralFreeMaybes);
     if (newMaybe == (Maybe *)0) {
@@ -412,6 +575,7 @@ Maybe *malloc_maybe() {
   }
   newMaybe->type = MaybeType;
   __atomic_store(&newMaybe->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   return(newMaybe);
 }
 
@@ -427,6 +591,30 @@ FreeValList centralFreeVectorNodes = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeVectorNodes = {(Value *)0, 0};
 VectorNode *malloc_vectorNode() {
   VectorNode *newVectorNode = (VectorNode *)freeVectorNodes.head;
+#ifdef SINGLE_THREADED
+  if (newVectorNode == (VectorNode *)0) {
+    newVectorNode = (VectorNode *)removeFreeValue(&centralFreeVectorNodes);
+    if (newVectorNode == (VectorNode *)0) {
+      VectorNode *nodeStructs = (VectorNode *)my_malloc(sizeof(VectorNode) * 50);
+      for (int i = 1; i < 49; i++) {
+        nodeStructs[i].refs = refsError;
+        ((Value *)&nodeStructs[i])->next = (Value *)&nodeStructs[i + 1];
+      }
+      nodeStructs[49].refs = refsError;
+      ((Value*)&nodeStructs[49])->next = (Value *)0;
+      freeVectorNodes.head = (Value *)&nodeStructs[1];
+
+      nodeStructs->type = VectorNodeType;
+      nodeStructs->refs = refsInit;
+      memset(&nodeStructs->array, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
+      return(nodeStructs);
+    }
+  } else {
+    freeVectorNodes.head = freeVectorNodes.head->next;
+  }
+  newVectorNode->type = VectorNodeType;
+  newVectorNode->refs = refsInit;
+#else	
   if (newVectorNode == (VectorNode *)0) {
     newVectorNode = (VectorNode *)removeFreeValue(&centralFreeVectorNodes);
     if (newVectorNode == (VectorNode *)0) {
@@ -452,6 +640,7 @@ VectorNode *malloc_vectorNode() {
   }
   newVectorNode->type = VectorNodeType;
   __atomic_store(&newVectorNode->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   memset(&newVectorNode->array, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
   return(newVectorNode);
 }
@@ -470,6 +659,33 @@ FreeValList centralFreeVectors = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeVectors = {(Value *)0, 0};
 Vector *malloc_vector() {
   Vector *newVector = (Vector *)freeVectors.head;
+#ifdef SINGLE_THREADED
+  if (newVector == (Vector *)0) {
+    newVector = (Vector *)removeFreeValue(&centralFreeVectors);
+    if (newVector == (Vector *)0) {
+      Vector *vectorStructs = (Vector *)my_malloc(sizeof(Vector) * 300);
+      for (int i = 1; i < 299; i++) {
+        vectorStructs[i].refs = refsError;
+        ((Value *)&vectorStructs[i])->next = (Value *)&vectorStructs[i + 1];
+      }
+      vectorStructs[299].refs = refsError;
+      ((Value*)&vectorStructs[299])->next = (Value *)0;
+      freeVectors.head = (Value *)&vectorStructs[1];
+
+      vectorStructs->type = VectorType;
+      vectorStructs->refs = refsInit;
+      vectorStructs->count = 0;
+      vectorStructs->shift = 5;
+      vectorStructs->root = (VectorNode *)0;
+      memset(&vectorStructs->tail, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
+      return(vectorStructs);
+    }
+  } else {
+    freeVectors.head = freeVectors.head->next;
+  }
+  newVector->type = VectorType;
+  newVector->refs = refsInit;
+#else
   if (newVector == (Vector *)0) {
     newVector = (Vector *)removeFreeValue(&centralFreeVectors);
     if (newVector == (Vector *)0) {
@@ -498,6 +714,7 @@ Vector *malloc_vector() {
   }
   newVector->type = VectorType;
   __atomic_store(&newVector->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   newVector->count = 0;
   newVector->shift = 5;
   newVector->root = (VectorNode *)0;
@@ -508,8 +725,12 @@ Vector *malloc_vector() {
 void freeVector(Value *v) {
   Value *root = (Value *)((Vector *)v)->root;
   if (root != (Value *)0) {
-    int32_t refs;
+    REFS_SIZE refs;
+#ifdef SINGLE_THREADED
+    refs = root->refs;
+#else
     __atomic_load(&root->refs, &refs, __ATOMIC_RELAXED);
+#endif
     if (refs == 1) {
       freeVectorNode((Value *)root);
       decRefs((Value *)root, 1);
@@ -574,16 +795,36 @@ ReifiedVal *malloc_reified(int implCount) {
     if (newReifiedVal == (ReifiedVal *)0) {
       newReifiedVal = (ReifiedVal *)removeFreeValue(&centralFreeReified[implCount]);
       if (newReifiedVal == (ReifiedVal *)0) {
-        newReifiedVal = (ReifiedVal *)my_malloc(sizeof(ReifiedVal) + sizeof(Function *) * implCount);
+	char *reifiedStructs = (char *)my_malloc((sizeof(ReifiedVal) + sizeof(Function *) * implCount) *
+						 1000);
+	for (int i = 1; i < 999; i++) {
+	  ((ReifiedVal *)&reifiedStructs[i * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)])->refs =
+	    refsError;
+	  ((Value *)&reifiedStructs[i * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)])->next =
+	    (Value *)&reifiedStructs[(i + 1) * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)];
+	}
+	((ReifiedVal *)&reifiedStructs[999 * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)])->refs = refsError;
+	((Value *)&reifiedStructs[999 * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)])->next = (Value *)0;
+	freeReified[implCount].head = (Value *)&reifiedStructs[(sizeof(ReifiedVal) + sizeof(Function *) *
+								implCount)];
+
+	((ReifiedVal *)reifiedStructs)->implCount = implCount;
+	((ReifiedVal *)reifiedStructs)->refs = refsInit;
+#ifdef CHECK_MEM_LEAK
+      __atomic_fetch_add(&malloc_count, 999, __ATOMIC_ACQ_REL);
+#endif
+	return((ReifiedVal *)reifiedStructs);
       }
     } else {
       freeReified[implCount].head = freeReified[implCount].head->next;
     }
   }
+#ifdef SINGLE_THREADED
+  newReifiedVal->refs = refsInit;
+#else
   __atomic_store(&newReifiedVal->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   newReifiedVal->implCount = implCount;
-  for (int i = 0; i < FIELD_COUNT; i++)
-    newReifiedVal->fields[i] = (Value *)0; 
   return(newReifiedVal);
 }
 
@@ -636,7 +877,11 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
     freeBMINodes[itemCount].head = freeBMINodes[itemCount].head->next;
   }
   bmiNode->type = BitmapIndexedType;
+#ifdef SINGLE_THREADED
+  bmiNode->refs = refsInit;
+#else
   __atomic_store(&bmiNode->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   bmiNode->bitmap = 0;
   memset(&bmiNode->array, 0, sizeof(Value *) * (itemCount * 2));
   return(bmiNode);
@@ -665,7 +910,11 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
   memset(collisionNode, 0, nodeSize);
   collisionNode->type = HashCollisionNodeType;
   collisionNode->count = itemCount * 2;
+#ifdef SINGLE_THREADED
+  collisionNode->refs = refsInit;
+#else
   __atomic_store(&collisionNode->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   return(collisionNode);
 }
 
@@ -677,7 +926,7 @@ void freeHashCollisionNode(Value *v) {
     }
   }
 #ifdef CHECK_MEM_LEAK
-  __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
   if (!cleaningUp)
     free(v);
@@ -697,7 +946,11 @@ ArrayNode *malloc_arrayNode() {
   }
   memset(arrayNode, 0, sizeof(ArrayNode));
   arrayNode->type = ArrayNodeType;
+#ifdef SINGLE_THREADED
+  arrayNode->refs = refsInit;
+#else
   __atomic_store(&arrayNode->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   return(arrayNode);
 }
 
@@ -726,7 +979,11 @@ Promise *malloc_promise() {
   }
   memset(newPromise, 0, sizeof(Promise));
   newPromise->type = PromiseType;
+#ifdef SINGLE_THREADED
+  newPromise->refs = refsInit;
+#else
   __atomic_store(&newPromise->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   newPromise->result = (Value *)0;
   newPromise->actions = empty_list;
   pthread_cond_init(&newPromise->delivered, NULL);
@@ -761,7 +1018,11 @@ Future *malloc_future(int line) {
   }
   memset(newFuture, 0, sizeof(Future));
   newFuture->type = FutureType;
+#ifdef SINGLE_THREADED
+  newFuture->refs = refsInit;
+#else
   __atomic_store(&newFuture->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   newFuture->result = (Value *)0;
   newFuture->action = (Value *)0;
   newFuture->errorCallback = (Value *)0;
@@ -786,8 +1047,12 @@ void freeFuture(Value *v) {
 
 void emptyAgent(Agent *agent) {
   pthread_mutex_lock (&agent->access);
-  int32_t refs;
+  REFS_SIZE refs;
+#ifdef SINGLE_THREADED
+  refs = agent->output->refs;
+#else
   __atomic_load(&agent->output->refs, &refs, __ATOMIC_RELAXED);
+#endif
   if (refs != 1 && refs != -1) {
     fprintf(stderr, "failure in emptyAgent()\n");
     abort();
@@ -795,8 +1060,13 @@ void emptyAgent(Agent *agent) {
   dec_and_free((Value *)agent->output, 1);
 
   List *l;
+#ifdef SINGLE_THREADED
+  l = agent->input;
+  l->refs = refs;
+#else
   __atomic_load(&agent->input, &l, __ATOMIC_RELAXED);
   __atomic_load(&l->refs, &refs, __ATOMIC_RELAXED);
+#endif
   if (refs != 1 && refs != -1) {
     fprintf(stderr, "failure in emptyAgent()\n");
     abort();
@@ -807,14 +1077,18 @@ void emptyAgent(Agent *agent) {
 
 void freeAgent(Value *v) {
   Value *val = ((Agent *)v)->val;
-  int32_t refs;
+  REFS_SIZE refs;
+#ifdef SINGLE_THREADED
+  refs = val->refs;
+#else
   __atomic_load(&val->refs, &refs, __ATOMIC_RELAXED);
+#endif
   emptyAgent((Agent *)v);
   if (val != (Value *)0) {
     dec_and_free(val, 1);
   }
 #ifdef CHECK_MEM_LEAK
-  __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
   if (!cleaningUp)
     free(v);
@@ -826,7 +1100,7 @@ void freeOpaquePtr(Value *v) {
   if (opaque->destruct != NULL)
     opaque->destruct(opaque->ptr);
 #ifdef CHECK_MEM_LEAK
-  __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
   if (!cleaningUp)
     free(v);
@@ -863,11 +1137,6 @@ void dec_and_free(Value *v, int deltaRefs) {
     for (int i = 0; i < rv->implCount; i++) {
       dec_and_free(rv->impls[i], 1);
     }
-    for (int i = 0; i < FIELD_COUNT; i++) {
-      if (rv->fields[i] != 0) {
-	dec_and_free(rv->fields[i], 1);
-      }
-    }
     if (rv->implCount < 20) {
       v->next = freeReified[rv->implCount].head;
       freeReified[rv->implCount].head = v;
@@ -885,6 +1154,7 @@ void dec_and_free(Value *v, int deltaRefs) {
 };
 
 Value *incRef(Value *v, int deltaRefs) {
+#ifndef FAST_INCS
   if (deltaRefs < 0) {
     fprintf(stderr, "bad deltaRefs: %p\n", v);
     abort();
@@ -893,15 +1163,36 @@ Value *incRef(Value *v, int deltaRefs) {
   if (deltaRefs < 1)
     return(v);
 
-  int32_t refs;
+#ifdef SINGLE_THREADED
+  if (v->refs < -1) {
+    fprintf(stderr, "failure in incRef: %d %p\n", v->refs, v);
+    abort();
+  }
+
+  if (v->refs >= 0) {
+    v->refs += deltaRefs;;
+  }
+#else
+  REFS_SIZE refs;
   __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
   if (refs < -1) {
     fprintf(stderr, "failure in incRef: %d %p\n", refs, v);
     abort();
   }
 
-  if (refs >= 0)
+  if (refs >= 0) {
     __atomic_fetch_add(&v->refs, deltaRefs, __ATOMIC_ACQ_REL);
+  }
+#endif
+#else
+#ifndef SINGLE_THREADED
+  fprintf(stderr, "FAST_INCS can only be used when SINGLE_THREADED is defined");
+  abort();
+#endif
+  if (v->refs >= 0) {
+    v->refs += deltaRefs;;
+  }
+#endif
   return(v);
 }
 
@@ -919,11 +1210,17 @@ void freeGlobal(Value *x) {
 
 void emptyFreeList(FreeValList *freeLinkedList) {
   FreeValList listHead;
+#ifdef SINGLE_THREADED
+  listHead = *freeLinkedList;
+#else
   __atomic_load((long long *)freeLinkedList, (long long *)&listHead, __ATOMIC_RELAXED);
+#endif
   for(Value *item = listHead.head;
       item != (Value *)0;
       item =  item->next) {
-    __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#ifdef CHECK_MEM_LEAK
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
   }
 }
 
@@ -941,8 +1238,12 @@ void freeAll() {
   }
   emptyFreeList(&centralFreeFutures);
   FreeValList listHead;
+#ifdef SINGLE_THREADED
+  listHead = centralFreeFutures;
+#else
   __atomic_load((long long *)&centralFreeFutures,
                 (long long *)&listHead, __ATOMIC_RELAXED);
+#endif
   emptyFreeList(&centralFreePromises);
   emptyFreeList(&centralFreeArrayNodes);
   emptyFreeList(&centralFreeSubStrings);
@@ -955,12 +1256,17 @@ void freeAll() {
   emptyFreeList(&centralFreeIntegers);
 
 //*
+#ifdef SINGLE_THREADED
+  fprintf(stderr, "malloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
+          malloc_count, free_count, malloc_count - free_count);
+#else
   int64_t mallocs;
   __atomic_load(&malloc_count, &mallocs, __ATOMIC_RELAXED);
   int64_t frees;
   __atomic_load(&free_count, &frees, __ATOMIC_RELAXED);
   fprintf(stderr, "malloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
           mallocs, frees, mallocs - frees);
+#endif
 // */
 }
 
@@ -974,6 +1280,14 @@ void moveToCentral(FreeValList *freeList, FreeValList *centralList) {
     return;
   else {
     FreeValList orig;
+#ifdef SINGLE_THREADED
+    orig = *centralList;
+    FreeValList next = orig;
+    tail->next = orig.head;
+    next.head = freeList->head;
+    next.aba = orig.aba + 1;
+    *centralList = next;
+#else
     __atomic_load((long long *)centralList, (long long *)&orig, __ATOMIC_RELAXED);
     FreeValList next = orig;
     do {
@@ -981,6 +1295,7 @@ void moveToCentral(FreeValList *freeList, FreeValList *centralList) {
       next.head = freeList->head;
       next.aba = orig.aba + 1;
     } while (!__atomic_compare_exchange((long long *)centralList, (long long *)&orig, (long long *)&next, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+#endif
     freeList->head = (Value *)0;
     return;
   }
@@ -1043,12 +1358,19 @@ void scheduleFuture(Future *fut) {
   List *newList = malloc_list();
   newList->head = (Value *)fut;
   List *input;
+#ifdef SINGLE_THREADED
+  input = futuresQueue.input;
+  newList->len = input->len + 1;
+  newList->tail = input;
+  futuresQueue.input = newList;
+#else
   __atomic_load(&futuresQueue.input, &input, __ATOMIC_RELAXED);
   do {
     newList->len = input->len + 1;
     newList->tail = input;
   } while (!__atomic_compare_exchange(&futuresQueue.input, &input, &newList, 0,
 				      __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+#endif
 
   // It is unusual to not hold the mutex when signalling the condition. But
   // in this case it's ok. All the threads waiting on the condition are of
@@ -1059,6 +1381,9 @@ void scheduleFuture(Future *fut) {
 }
 
 void waitForWorkers() {
+#ifdef SINGLE_THREADED
+  // no need to wait
+#else
   pthread_cond_broadcast(&futuresQueue.notEmpty);
   for (int8_t i = 0; i < NUM_WORKERS; i++) {
     pthread_join(workers[i], NULL);
@@ -1088,6 +1413,7 @@ void waitForWorkers() {
       done = 1;
     dec_and_free((Value *)lingering, 1);
   } while(!done);
+#endif
 }
 
 Value *shutDown_impl(List *closures) {
@@ -1110,6 +1436,10 @@ void stopWorkers() {
 
 Value *readFuturesQueue() {
   List *output;
+#ifdef SINGLE_THREADED
+  // do nothing with futures in a single threaded system
+  return((Value *)0);
+#else
   __atomic_load(&futuresQueue.output, &output, __ATOMIC_RELAXED);
   while (output != (List *)0 && output->len != 0 &&
          !__atomic_compare_exchange(&futuresQueue.output, &output, &output->tail, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
@@ -1119,7 +1449,7 @@ Value *readFuturesQueue() {
     Value *item = output->head;
     output->head = (Value *)0;
     output->tail = (List *)0;
-    int32_t refs;
+    REFS_SIZE refs;
     __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
     if (refs != 1) {
       fprintf(stderr, "error reading futures queue 1 %d\n", refs);
@@ -1137,7 +1467,7 @@ Value *readFuturesQueue() {
       Value *item = output->head;
       output->head = (Value *)0;
       output->tail = (List *)0;
-      int32_t refs;
+      REFS_SIZE refs;
       __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
       if (refs != 1) {
         fprintf(stderr, "error reading futures queue 2\n");
@@ -1175,7 +1505,7 @@ Value *readFuturesQueue() {
         Value *item = output->head;
         output->head = (Value *)0;
         output->tail = (List *)0;
-        int32_t refs;
+        REFS_SIZE refs;
         __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
         if (refs != 1) {
           fprintf(stderr, "error reading futures queue 3\n");
@@ -1186,6 +1516,7 @@ Value *readFuturesQueue() {
       }
     }
   }
+#endif
 }
 
 Value *deliverFuture(Value *fut, Value *val) {
@@ -1239,15 +1570,17 @@ void *futuresThread(void *input) {
 	abort();
       }
     }
-    int32_t refs;
-    __atomic_load(&future->refs, &refs, __ATOMIC_RELAXED);
     deliverFuture((Value *)future, result);
     dec_and_free((Value *)future, 1);
     if (workerIndex >= 0) {
       future = (Future *)readFuturesQueue();
     }
   }
+#ifdef SINGLE_THREADED
+  runningWorkers--;
+#else
   __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+#endif
   Value *threadHandle = (Value *)integerValue((int64_t)pthread_self());
 
   pthread_mutex_lock (&lingeringAccess);
@@ -1263,7 +1596,11 @@ void *futuresThread(void *input) {
 
 int32_t numWorkers = NUM_WORKERS;
 void startWorkers() {
+#ifdef SINGLE_THREADED
+  runningWorkers = numWorkers;
+#else
   __atomic_store(&runningWorkers, &numWorkers, __ATOMIC_RELAXED);
+#endif
   for (int64_t i = 0; i < NUM_WORKERS; i++)
     pthread_create(&workers[i], NULL, futuresThread, (void *)i);
 }
@@ -1328,12 +1665,6 @@ Value *maybe(List *closures, Value *arg0, Value *arg1) {
   return((Value *)mVal);
 }
 
-Value *intValue(int64_t n) {
-  Integer *numVal = malloc_integer();
-  numVal->numVal = n;
-  return((Value *)numVal);
-};
-
 Value *prSTAR(Value *str) {
   int bytes;
   if (str->type == StringBufferType) {
@@ -1342,7 +1673,7 @@ Value *prSTAR(Value *str) {
     bytes = fprintf(outstream, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
   }
   dec_and_free(str, 1);
-  return(intValue(bytes));
+  return(integerValue(bytes));
 }
 
 Value *prErrSTAR(Value *str) {
@@ -1353,11 +1684,11 @@ Value *prErrSTAR(Value *str) {
     bytes = fprintf(stderr, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
   }
   dec_and_free(str, 1);
-  return(intValue(bytes));
+  return(integerValue(bytes));
 }
 
 Value *add_ints(Value *arg0, Value *arg1) {
-  Value *numVal = intValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
+  Value *numVal = integerValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
   dec_and_free(arg0, 1);
   dec_and_free(arg1, 1);
   return(numVal);
@@ -1393,7 +1724,7 @@ Value *integer_EQ(Value *arg0, Value *arg1) {
 }
 
 Value *isInstance(Value *arg0, Value *arg1) {
-  int64_t typeNum = ((Integer *)arg0)->numVal;
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   if (typeNum == arg1->type) {
      dec_and_free(arg1, 1);
      return(maybe((List *)0, (Value *)0, arg0));
@@ -1667,29 +1998,33 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
 
 Value *updateField(Value *rval, Value *field, Value *index) {
   int64_t idx = ((Integer *)index)->numVal;
+  ReifiedVal *template = (ReifiedVal *)rval;
+  if (idx >= template->implCount) {
+    fprintf(stderr, "Field index for type '%s' out of bounds: %" PRId64 ". Max: %d\n",
+	    extractStr(type_name(empty_list, rval)), idx, template->implCount);
+    abort();
+  }
   if (rval->refs == 1) {
-    ReifiedVal *template = (ReifiedVal *)rval;
-    dec_and_free(template->fields[idx], 1);
-    template->fields[idx] = field;
+    dec_and_free(template->impls[idx], 1);
+    template->impls[idx] = field;
 
     dec_and_free(index, 1);
     return(rval);
   } else {
-    ReifiedVal *template = (ReifiedVal *)rval;
     ReifiedVal *rv = malloc_reified(template->implCount);
     int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
     memcpy(rv, template, rvSize);
+#ifdef SINGLE_THREADED
+    rv->refs = refsInit;
+#else
     __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
     for (int i = 0; i < template->implCount; i++) {
-      incRef(template->impls[i], 1);
-    }
-    for (int i = 0; i < FIELD_COUNT; i++) {
-      if (i != idx && rv->fields[i] != 0) {
-	incRef(rv->fields[i], 1);
+      if (i != idx) {
+        incRef(template->impls[i], 1);
       }
     }
-    rv->fields[idx] = field;
-    incRef(field, 1);
+    rv->impls[idx] = field;
     dec_and_free(index, 1);
     dec_and_free(rval, 1);
     return((Value *)rv);
@@ -1949,7 +2284,7 @@ Value *integer_LT(Value *arg0, Value *arg1) {
   }
 }
 
-Value *checkInstance(int64_t typeNum, Value *arg1) {
+Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
   if (typeNum == arg1->type) {
     return(maybe((List *)0, (Value *)0, arg1));
   } else if (StringBufferType == typeNum && SubStringType == arg1->type) {
@@ -2279,7 +2614,6 @@ Sha1Update( Context, finalcount, 8 );  // Should cause a Sha1TransformFunction()
 void free_sha1(void *ptr) {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-      // __atomic_fetch_add(&free_strs, 1, __ATOMIC_ACQ_REL);
 #endif
   free(ptr);
 }
@@ -2643,7 +2977,7 @@ Value *strSha1(Value *arg0) {
   char *buffer;
   int64_t len;
 #ifdef CHECK_MEM_LEAK
-  int32_t refs;
+  REFS_SIZE refs;
 #endif
   if (arg0->type == StringBufferType) {
     String *strVal = (String *)arg0;
@@ -2676,10 +3010,11 @@ Value *strSha1(Value *arg0) {
     Sha1Update(&context, buffer, len);
     Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
     Integer *hashVal = (Integer *)integerValue(shaVal);
-  #ifdef CHECK_MEM_LEAK
-    if (refs == -1)
+#ifdef CHECK_MEM_LEAK
+    if (refs == -1) {
       __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
-  #endif
+    }
+#endif
     *hash = (Integer *)hashVal;
     incRef((Value *)hashVal, 1);
     dec_and_free(arg0, 1);
@@ -3027,7 +3362,7 @@ Value *symbolSha1(Value *arg0) {
     Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
     Integer *hashVal = (Integer *)integerValue(shaVal);
 #ifdef CHECK_MEM_LEAK
-    int32_t refs;
+    REFS_SIZE refs;
     __atomic_load(&subStrVal->refs, &refs, __ATOMIC_RELAXED);
     if (refs == -1)
       __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
@@ -3746,7 +4081,7 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
   }
 }
 
-Value notFound = {65000, -1};
+Value notFound = {0, -1};
 Value *notFoundPtr = &notFound;
 
 Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
@@ -4025,12 +4360,19 @@ Value *addPromiseAction(Promise *p, Value *action) {
     List *newList = malloc_list();
     newList->head = (Value *)action;
     List *actions;
+#ifdef SINGLE_THREADED
+    actions = p->actions;
+    newList->len = actions->len + 1;
+    newList->tail = actions;
+    p->actions = newList;
+#else
     __atomic_load(&p->actions, &actions, __ATOMIC_RELAXED);
     do {
       newList->len = actions->len + 1;
       newList->tail = actions;
     } while (!__atomic_compare_exchange(&p->actions, &actions,
 					&newList, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+#endif
     pthread_mutex_unlock(&p->access);
   } else {
     pthread_mutex_unlock(&p->access);
@@ -4075,10 +4417,19 @@ Value *extractPromise(Value *arg0) {
   while (p->result == (Value *)0) {
     pthread_mutex_lock (&p->access);
     if (p->result == (Value *)0) {
+#ifdef SINGLE_THREADED
+      runningWorkers--;
+      int rw = runningWorkers;
+#else
       int rw = __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+#endif
       replaceWorker();
       pthread_cond_wait(&p->delivered, &p->access);
-      rw = __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+#ifdef SINGLE_THREADED
+      runningWorkers++;
+#else
+      __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+#endif
     }
     pthread_mutex_unlock (&p->access);
   }
@@ -4106,10 +4457,18 @@ Value *extractFuture(Value *arg0) {
   while (f->result == (Value *)0) {
     pthread_mutex_lock (&f->access);
     if (f->result == (Value *)0) {
+#ifdef SINGLE_THREADED
+      runningWorkers--;
+#else
       __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+#endif
       replaceWorker();
       pthread_cond_wait(&f->delivered, &f->access);
+#ifdef SINGLE_THREADED
+      runningWorkers++;
+#else
       __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
+#endif
     }
     pthread_mutex_unlock (&f->access);
   }
@@ -4135,6 +4494,17 @@ Value *addFutureAction(Future *p, Value *action) {
     List *newList = malloc_list();
     newList->head = (Value *)action;
     List *actions;
+#ifdef SINGLE_THREADED
+    actions = p->actions;
+    if (actions != (List *)0) {
+      newList->len = actions->len + 1;
+      newList->tail = actions;
+    } else {
+      newList->len = 1;
+      newList->tail = empty_list;
+    }
+    p->actions = newList;
+#else
     __atomic_load(&p->actions, &actions, __ATOMIC_RELAXED);
     do {
       if (actions != (List *)0) {
@@ -4146,6 +4516,7 @@ Value *addFutureAction(Future *p, Value *action) {
       }
     } while (!__atomic_compare_exchange(&p->actions, &actions,
 					&newList, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+#endif
     pthread_mutex_unlock(&p->access);
   } else {
     pthread_mutex_unlock(&p->access);
@@ -4159,7 +4530,11 @@ Value *addFutureAction(Future *p, Value *action) {
 Value *makeAgent(Value *arg0) {
   Agent *a = (Agent *)my_malloc(sizeof(Agent));
   a->type = AgentType;
+#ifdef SINGLE_THREADED
+  a->refs = refsInit;
+#else
   __atomic_store(&a->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   a->input = empty_list;
   a->output = empty_list;
   pthread_mutex_init(&a->access, NULL);
@@ -4182,8 +4557,12 @@ List *readAgentQueue(Agent *agent) {
     agent->output = output->tail;
     output->head = (Value *)0;
     output->tail = (List *)0;
-    int32_t refs;
+    REFS_SIZE refs;
+#ifdef SINGLE_THREADED
+    refs = output->refs;
+#else
     __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
+#endif
     if (refs != 1) {
       fprintf(stderr, "failure in readAgentQueue()\n");
       abort();
@@ -4194,9 +4573,14 @@ List *readAgentQueue(Agent *agent) {
     // move the input list to the output
     // atomically get the input list and reset it to empty_list
     List *input;
+#ifdef SINGLE_THREADED
+    input = agent->input;
+    agent->input = empty_list;
+#else
     __atomic_load(&agent->input, &input, __ATOMIC_RELAXED);
     while (!__atomic_compare_exchange(&agent->input, &input, &empty_list, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
       ;
+#endif
 
     if (input == (List *)0 || input->len == 0) {
       // if the input was empty, return 0
@@ -4228,7 +4612,7 @@ Value *updateAgent_impl(List *closures) {
 };
 
 void scheduleAgent(Agent *agent, List *action) {
-#ifdef TOCCATA_WASM
+#ifdef SINGLE_THREADED
   Value *f = (Value *)action->head;
   List *args = listCons(agent->val, action->tail);
   incRef((Value *)action->tail, 1);
@@ -4269,9 +4653,9 @@ void freeExtractCache(void *cachePtr) {
     if (!cleaningUp)
       free(cacheTail);
 #ifdef CHECK_MEM_LEAK
-    __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-  }
+   }
 }
 
 void freeIntGenerator(void *ptr) {
@@ -4279,7 +4663,7 @@ void freeIntGenerator(void *ptr) {
     if (!cleaningUp)
       free(ptr);
 #ifdef CHECK_MEM_LEAK
-    __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
   }
 }
@@ -4330,10 +4714,10 @@ Value *reifiedTypeArgs(Value *x) {
   } else {
     Vector *typeArgs = empty_vect;
     ReifiedVal *rv = (ReifiedVal *)x;
-    for (int i = 0; i < FIELD_COUNT; i++) {
-      if (rv->fields[i] != (Value *)0) {
+    for (int i = 0; i < rv->implCount; i++) {
+      if (rv->impls[i] != (Value *)0) {
 	typeArgs = mutateVectConj((Vector *)incRef((Value *)typeArgs, 1),
-				  incRef(rv->fields[i], 1));
+				  incRef(rv->impls[i], 1));
       }
     }
     dec_and_free(x, 1);
@@ -4341,52 +4725,35 @@ Value *reifiedTypeArgs(Value *x) {
   }
 }
 
-FnArity *newFindProtoImpl(Value *protocols, Value *protoSym, Value *fnSym, int64_t dispType, int64_t argCount) {
-  Value *protocolM = hashMapGet(protocols, protoSym);
-  if (!isNothing(protocolM, "", 0)) {
-    Value *protocol = maybeExtract(protocolM);
-    Value *arities = hashMapGet(protocol, fnSym);
-    if (!isNothing(arities, "", 0)) {
-      arities = maybeExtract(arities);
-      Value *iv = integerValue(argCount);
-      Value *impls = hashMapGet(arities, iv);
-      impls = maybeExtract(impls);
-      if (!isNothing(impls, "", 0)) {
-	Value *f = hashMapGet(impls, integerValue(dispType));
-	if (!isNothing(f, "", 0)) {
-	  return((FnArity *)maybeExtract(f));
-	} else {
-	  f = hashMapGet(incRef(impls, 1), const0Ptr);
-	  if (!isNothing(f, "", 0)) {
-	    return((FnArity *)maybeExtract(f));
-	  }
-	}
-      }
-    }
+Value *getField(Value *value, int fieldIndex) {
+  if (value->type < CoreTypeCount) {
+    fprintf(stderr, "Should not call 'getField' on core type '%s'\n",
+	    extractStr(type_name(empty_list, value)));
+    abort();
   }
-  fprintf(stderr, "\n*** Could not find implementation of '%s' with %" PRId64 
-	  " arguments for type: (%" PRId64 ")\n", ((SubString *)fnSym)->buffer, argCount, dispType);
-  abort();
+
+  ReifiedVal *rv = (ReifiedVal *)value;
+  if (fieldIndex >= rv->implCount) {
+    fprintf(stderr, "field index for type '%s' out of bounds: %d. max: %d\n",
+	    extractStr(type_name(empty_list, value)), fieldIndex, rv->implCount);
+    abort();
+  }
+  Value *result = incRef(rv->impls[fieldIndex], 1);
+  dec_and_free(value, 1);
+  return(result);
 }
 
 Value *newTypeValue(Value *template_value, Value *fields) {
   ReifiedVal *template = (ReifiedVal *)template_value;
   ReifiedVal *rv = malloc_reified(template->implCount);
-  int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
-  memcpy(rv, template, rvSize);
-  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
   Vector *vect = (Vector *)fields;
-  for (int i = 0; i < vect->count; i++) {
-    rv->fields[i] = vect->tail[i];
-    incRef(rv->fields[i], 1);
-  }
+  int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * vect->count;
+  memcpy(rv, template, rvSize);
+#ifdef SINGLE_THREADED
+  rv->refs = refsInit;
+#else
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+#endif
   dec_and_free(fields, 1);
   return((Value *)rv);
-}
-
-Value *getField(Value *value, int fieldIndex) {
-  ReifiedVal *rv = (ReifiedVal *)value;
-  Value *result = incRef(rv->fields[fieldIndex], 1);
-  dec_and_free(value, 1);
-  return(result);
 }
