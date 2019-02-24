@@ -58,6 +58,14 @@ Value *my_malloc(int64_t sz) {
 #ifdef SINGLE_THREADED
     val->refs = refsInit;
 #else
+#ifdef FAST_INCS
+    fprintf(stderr, "FAST_INCS can only be defined when SINGLE_THREADED is defined.\n");
+    abort();
+#endif
+#ifdef FAST_DECS
+    fprintf(stderr, "FAST_DECS can only be defined when SINGLE_THREADED is defined.\n");
+    abort();
+#endif
     __atomic_store(&val->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
   }
@@ -158,10 +166,6 @@ int decRefs(Value *v, int deltaRefs) {
   return(newRefs);
 #endif
 #else
-#ifndef SINGLE_THREADED
-  fprintf(stderr, "FAST_DECS can only be used when SINGLE_THREADED is defined");
-  abort();
-#endif
   if (v->refs == -1)
     return(v->refs);
 
@@ -510,6 +514,7 @@ void freeList(Value *v) {
     } else {
       decRefs((Value *)tail, 1);
     }
+  }
 #else
   if (tail != (List *)0) {
     REFS_SIZE refs;
@@ -520,8 +525,8 @@ void freeList(Value *v) {
     } else {
       decRefs((Value *)tail, 1);
     }
-#endif
   }
+#endif
 }
 
 FreeValList centralFreeMaybes = (FreeValList){(Value *)0, 0};
@@ -1152,8 +1157,8 @@ void dec_and_free(Value *v, int deltaRefs) {
 #endif
 };
 
-Value *incRef(Value *v, int deltaRefs) {
 #ifndef FAST_INCS
+Value *incRef(Value *v, int deltaRefs) {
   if (deltaRefs < 0) {
     fprintf(stderr, "bad deltaRefs: %p\n", v);
     abort();
@@ -1183,17 +1188,14 @@ Value *incRef(Value *v, int deltaRefs) {
     __atomic_fetch_add(&v->refs, deltaRefs, __ATOMIC_ACQ_REL);
   }
 #endif
-#else
-#ifndef SINGLE_THREADED
-  fprintf(stderr, "FAST_INCS can only be used when SINGLE_THREADED is defined");
-  abort();
-#endif
-  if (v->refs >= 0) {
-    v->refs += deltaRefs;;
-  }
-#endif
   return(v);
 }
+#else
+Value *simpleIncRef(Value *v, int n) {
+  v->refs += n;
+  return(v);
+}
+#endif
 
 void moveFreeToCentral();
 

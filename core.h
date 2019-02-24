@@ -140,8 +140,15 @@ int64_t free_count;
 void cleanupMemory(Value *the_final_answer, Value *maybeNothing, List *argList);
 void freeAll();
 void freeGlobal(Value *x);
-void dec_and_free(Value *v, int deltaRefs);
+
+#ifndef FAST_INCS
 Value *incRef(Value *v, int deltaRefs);
+#else
+Value *simpleIncRef(Value *v, int n);
+#define incRef(V, N) ((V)->refs >= 0 ? simpleIncRef(V, N) : V)
+#endif
+
+void dec_and_free(Value *v, int deltaRefs);
 
 void prefs(char *tag, Value *v);
 
