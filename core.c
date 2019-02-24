@@ -1996,8 +1996,7 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
   }
 }
 
-Value *updateField(Value *rval, Value *field, Value *index) {
-  int64_t idx = ((Integer *)index)->numVal;
+Value *updateField(Value *rval, Value *field, int64_t idx) {
   ReifiedVal *template = (ReifiedVal *)rval;
   if (idx >= template->implCount) {
     fprintf(stderr, "Field index for type '%s' out of bounds: %" PRId64 ". Max: %d\n",
@@ -2008,7 +2007,6 @@ Value *updateField(Value *rval, Value *field, Value *index) {
     dec_and_free(template->impls[idx], 1);
     template->impls[idx] = field;
 
-    dec_and_free(index, 1);
     return(rval);
   } else {
     ReifiedVal *rv = malloc_reified(template->implCount);
@@ -2025,7 +2023,6 @@ Value *updateField(Value *rval, Value *field, Value *index) {
       }
     }
     rv->impls[idx] = field;
-    dec_and_free(index, 1);
     dec_and_free(rval, 1);
     return((Value *)rv);
   }
