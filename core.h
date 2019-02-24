@@ -12,11 +12,13 @@ extern void abort();
 #define VECTOR_ARRAY_LEN 32
 #define ARRAY_NODE_LEN 32
 
-// #define FAST_DECS 1
-// #define FAST_INCS 1
-
+#ifndef TYPE_SIZE
 #define TYPE_SIZE int64_t
+#endif
+
+#ifndef REFS_SIZE
 #define REFS_SIZE int32_t
+#endif
 
 typedef struct
 {

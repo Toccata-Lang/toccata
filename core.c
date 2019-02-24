@@ -795,23 +795,22 @@ ReifiedVal *malloc_reified(int implCount) {
     if (newReifiedVal == (ReifiedVal *)0) {
       newReifiedVal = (ReifiedVal *)removeFreeValue(&centralFreeReified[implCount]);
       if (newReifiedVal == (ReifiedVal *)0) {
-	char *reifiedStructs = (char *)my_malloc((sizeof(ReifiedVal) + sizeof(Function *) * implCount) *
-						 1000);
-	for (int i = 1; i < 999; i++) {
-	  ((ReifiedVal *)&reifiedStructs[i * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)])->refs =
+	int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * implCount;
+	int rvCount = 100000;
+	char *reifiedStructs = (char *)my_malloc(rvSize * rvCount);
+	for (int i = 1; i < (rvCount - 1); i++) {
+	  ((ReifiedVal *)&reifiedStructs[i * rvSize])->refs =
 	    refsError;
-	  ((Value *)&reifiedStructs[i * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)])->next =
-	    (Value *)&reifiedStructs[(i + 1) * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)];
+	  ((Value *)&reifiedStructs[i * rvSize])->next = (Value *)&reifiedStructs[(i + 1) * rvSize];
 	}
-	((ReifiedVal *)&reifiedStructs[999 * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)])->refs = refsError;
-	((Value *)&reifiedStructs[999 * (sizeof(ReifiedVal) + sizeof(Function *) * implCount)])->next = (Value *)0;
-	freeReified[implCount].head = (Value *)&reifiedStructs[(sizeof(ReifiedVal) + sizeof(Function *) *
-								implCount)];
+	((ReifiedVal *)&reifiedStructs[(rvCount - 1) * rvSize])->refs = refsError;
+	((Value *)&reifiedStructs[(rvCount - 1) * rvSize])->next = (Value *)0;
+	freeReified[implCount].head = (Value *)&reifiedStructs[rvSize];
 
 	((ReifiedVal *)reifiedStructs)->implCount = implCount;
 	((ReifiedVal *)reifiedStructs)->refs = refsInit;
 #ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&malloc_count, 999, __ATOMIC_ACQ_REL);
+      __atomic_fetch_add(&malloc_count, (rvCount - 1), __ATOMIC_ACQ_REL);
 #endif
 	return((ReifiedVal *)reifiedStructs);
       }
