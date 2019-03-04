@@ -4714,8 +4714,7 @@ Value *reifiedTypeArgs(Value *x) {
     ReifiedVal *rv = (ReifiedVal *)x;
     for (int i = 0; i < rv->implCount; i++) {
       if (rv->impls[i] != (Value *)0) {
-	typeArgs = mutateVectConj((Vector *)incRef((Value *)typeArgs, 1),
-				  incRef(rv->impls[i], 1));
+	typeArgs = mutateVectConj(typeArgs, incRef(rv->impls[i], 1));
       }
     }
     dec_and_free(x, 1);
