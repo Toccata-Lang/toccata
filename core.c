@@ -791,7 +791,7 @@ __thread FreeValList freeReified[20] = {{(Value *)0, 0},
                                         {(Value *)0, 0},
                                         {(Value *)0, 0},
                                         {(Value *)0, 0}};
-ReifiedVal *malloc_reified(int implCount) {
+ReifiedVal *malloc_reified(int64_t implCount) {
   ReifiedVal *newReifiedVal;
   if (implCount > 19) {
     newReifiedVal = (ReifiedVal *)my_malloc(sizeof(ReifiedVal) + sizeof(Function *) * implCount);
@@ -1142,8 +1142,9 @@ void dec_and_free(Value *v, int deltaRefs) {
       dec_and_free(rv->impls[i], 1);
     }
     if (rv->implCount < 20) {
-      v->next = freeReified[rv->implCount].head;
-      freeReified[rv->implCount].head = v;
+      int64_t implCount = rv->implCount;
+      v->next = freeReified[implCount].head;
+      freeReified[implCount].head = v;
     } else {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
@@ -1940,6 +1941,7 @@ VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Value *va
 Value *vectStore(Vector *vect, unsigned index, Value *val) {
   // TODO: check the refs count and mutate if equal 1
   // but only if all nodes 'above' this one are mutate-able
+  // and if you do mutate this vect, clear the cahced hash value (once that's implemented)
   if (index < vect->count) {
     if (index >= vect->tailOffset) {
       unsigned newIndex = index & 0x1f;
@@ -2000,7 +2002,7 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
 Value *updateField(Value *rval, Value *field, int64_t idx) {
   ReifiedVal *template = (ReifiedVal *)rval;
   if (idx >= template->implCount) {
-    fprintf(stderr, "Field index for type '%s' out of bounds: %" PRId64 ". Max: %d\n",
+    fprintf(stderr, "Field index for type '%s' out of bounds: %" PRId64 ". Max: %" PRId64 "\n",
 	    extractStr(type_name(empty_list, rval)), idx, template->implCount);
     abort();
   }
@@ -4731,7 +4733,7 @@ Value *getField(Value *value, int fieldIndex) {
 
   ReifiedVal *rv = (ReifiedVal *)value;
   if (fieldIndex >= rv->implCount) {
-    fprintf(stderr, "field index for type '%s' out of bounds: %d. max: %d\n",
+    fprintf(stderr, "field index for type '%s' out of bounds: %d. max: %" PRId64 "\n",
 	    extractStr(type_name(empty_list, value)), fieldIndex, rv->implCount);
     abort();
   }

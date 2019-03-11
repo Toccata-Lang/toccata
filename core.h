@@ -12,6 +12,10 @@ extern void abort();
 #define VECTOR_ARRAY_LEN 32
 #define ARRAY_NODE_LEN 32
 
+#ifdef TOCCATA_WASM
+#define SINGLE_THREADED 1
+#endif
+
 #ifndef TYPE_SIZE
 #define TYPE_SIZE int64_t
 #endif
@@ -50,7 +54,7 @@ typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *action; Value* errorCallb
                 Value *result; pthread_cond_t delivered; pthread_mutex_t access;} Future;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *val; List* input; List *output;
                 pthread_mutex_t access;} Agent;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int8_t implCount; Value* impls[];} ReifiedVal;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t implCount; Value* impls[];} ReifiedVal;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; void *ptr; Destructor *destruct;} Opaque;
 
 Integer const0;
@@ -175,8 +179,11 @@ Value *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
 Function *malloc_function(int arityCount);
 String *malloc_string(int len);
+Maybe *malloc_maybe();
+Integer *malloc_integer();
+Vector *malloc_vector();
 FnArity *findFnArity(Value *fnVal, int64_t argCount);
-ReifiedVal *malloc_reified(int implCount);
+ReifiedVal *malloc_reified(int64_t implCount);
 Promise *malloc_promise();
 
 void startWorkers();
