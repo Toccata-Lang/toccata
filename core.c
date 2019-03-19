@@ -4744,10 +4744,13 @@ Value *getField(Value *value, int fieldIndex) {
 
 Value *newTypeValue(Value *template_value, Value *fields) {
   ReifiedVal *template = (ReifiedVal *)template_value;
-  ReifiedVal *rv = malloc_reified(template->implCount);
   Vector *vect = (Vector *)fields;
-  int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * vect->count;
-  memcpy(rv, template, rvSize);
+  ReifiedVal *rv = malloc_reified(vect->count);
+  rv->type = template_value->type;
+  for (int i = 0; i < vect->count; i++) {
+    rv->impls[i] = vect->tail[i];
+    vect->tail[i] = (Value *)0;
+  }
 #ifdef SINGLE_THREADED
   rv->refs = refsInit;
 #else
