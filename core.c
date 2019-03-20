@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "core.h"
 
+Value *universalProtoFn = (Value *)0;
 Integer const0 = {IntegerType, -1, 0};
 Value *const0Ptr = (Value *)&const0;
 int cleaningUp = 0;
@@ -3107,6 +3108,7 @@ Value *stringValue(char *s) {
   int64_t len = strlen(s);
   String *strVal = malloc_string(len);
   strncpy(strVal->buffer, s, len);
+  strVal->buffer[len] = 0;
   return((Value *)strVal);
 };
 

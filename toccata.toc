@@ -64,12 +64,12 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "\n")
+(def line-sep "")
 
 (defn line-marker [file-name line-number marker]
   (either (and (= "" file-name)
                (maybe "\n#\n"))
-          ["\n" marker "\n// #line "
+          ["\n" marker "\n#line "
            (str line-number) " " "\""
            (either (and (= 'core file-name)
                         (maybe path-to-core))
@@ -4184,21 +4184,43 @@
                     (ast/file-name fn-sym) (ast/line-number fn-sym)))))
 
 (defn missing-impl-body [proto-sym fn-sym prototype]
-  (let [disp-arg (either (-> prototype .params .fixed first extract (str "_") check-C-var)
-                         "arg")]
+  (let [num-args (-> prototype .params .fixed count)
+        [disp-arg & args] (map (zip-lists (-> prototype .params .fixed)
+                                          (range num-args))
+                               (fn [[arg idx]]
+                                 (either (check-C-var (str arg "_" idx))
+                                         (str "arg" idx))))
+        args (cons disp-arg args)]
     (comp (filter (.default-body prototype) (partial instance? c/SymbolConstraints))
           (filter (.default-body prototype) (partial instance? c/ResultConstraint))
           [(ast/inline-ast
             'C nothing
-            (str "if (closures != (List *)0) {"
+            (str "if (universalProtoFn != 0){\n"
+                 "  List *args = empty_list;\n"
+                 (to-str (flat-map (reverse args)
+                                   (fn [arg]
+                                     (list "  args = listCons(" "(Value *)" arg ", args);\n"))))
+                 "  args = listCons(symbol(stringValue(\"" fn-sym "\")), args);\n"
+                 "  args = listCons(stringValue(\"" (ast/file-name fn-sym) "\"), args);\n"
+                 "  Value *result = fnApply(universalProtoFn, (Value *)args);\n"
+                 "  Value *inner = ((Maybe *)result)->value;\n"
+                 "  if (inner != (Value *)0) {"
+                 "    incRef(inner, 1);\n"
+                 "    dec_and_free(result, 1);\n"
+                 "    return(inner);\n"
+                 "  } else {\n"
+                 "    dec_and_free(result, 1);\n"
+                 "  }\n"
+                 "}\n"
+                 "if (closures != (List *)0) {"
                  "fprintf(stderr,\"*** Could not find implementation of '" proto-sym "/" fn-sym
-                 "' for type '%s' at %s\\n\", "
-                 "((String *)type_name(empty_list, " disp-arg "0))->buffer, "
-                 "((String *)closures)->buffer);\nabort();\n"
+                 "' for type '%s' with %d arguments at %s\\n\", "
+                 "((String *)type_name(empty_list, " disp-arg "))->buffer, " num-args
+                 ", ((String *)closures)->buffer);\nabort();\n"
                  "} else {"
                  "fprintf(stderr,\"*** Could not find implementation of '" proto-sym "/" fn-sym
-                 "' for type '%s'\\n\", "
-                 "((String *)type_name(empty_list, " disp-arg "0))->buffer);\nabort();\n"
+                 "' for type '%s' with %d arguments.\\n\", "
+                 "((String *)type_name(empty_list, " disp-arg "))->buffer, " num-args ");\nabort();\n"
                  "}")
             (ast/file-name fn-sym) (ast/line-number fn-sym))])))
 

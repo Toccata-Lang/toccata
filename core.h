@@ -131,6 +131,7 @@ List empty_list_struct;
 Vector *empty_vect;
 Vector empty_vect_struct;
 BitmapIndexedNode emptyBMI;
+Value *universalProtoFn;
 
 struct {List* input; List* output;
         pthread_mutex_t mutex; pthread_cond_t notEmpty;} futuresQueue;
