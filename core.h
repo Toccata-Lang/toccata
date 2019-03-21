@@ -291,5 +291,6 @@ Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym, Value *dis
 Value *get(List *, Value *, Value *, Value *, Value *, Value *);
 Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift);
 Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift);
-Value *newTypeValue(Value *template_value, Value *fields);
+Value *newTypeValue(int typeNum, Vector *fields);
 Value *getField(Value *value, int fieldIndex);
+Vector *listVec(Value *list);

@@ -4744,11 +4744,20 @@ Value *getField(Value *value, int fieldIndex) {
   return(result);
 }
 
-Value *newTypeValue(Value *template_value, Value *fields) {
-  ReifiedVal *template = (ReifiedVal *)template_value;
+Vector *listVec(Value *list) {
+  List *l = (List *)list;
+  Vector *newVect = empty_vect;
+  for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
+    newVect = mutateVectConj(newVect, incRef(x, 1));
+  }
+  dec_and_free(list, 1);
+  return(newVect);
+}
+
+Value *newTypeValue(int typeNum, Vector *fields) {
   Vector *vect = (Vector *)fields;
   ReifiedVal *rv = malloc_reified(vect->count);
-  rv->type = template_value->type;
+  rv->type = typeNum;
   for (int i = 0; i < vect->count; i++) {
     rv->impls[i] = vect->tail[i];
     vect->tail[i] = (Value *)0;
@@ -4758,6 +4767,6 @@ Value *newTypeValue(Value *template_value, Value *fields) {
 #else
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
-  dec_and_free(fields, 1);
+  dec_and_free((Value *)fields, 1);
   return((Value *)rv);
 }
