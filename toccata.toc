@@ -1894,6 +1894,7 @@
 
   Emitter
   (emit [_]
+    ;; TODO: make sure this gernates good code
     (comp (for [_ (sm/when (and (instance? ast/call-ast ast)
                                 (instance? Tagged (.call-target ast))))
                 target (emit (.call-target ast))
@@ -2474,7 +2475,6 @@
               (ast/file-name ast) (ast/line-number ast)))))
 
 (def symbols-sym (symbol "#symbols"))
-(def types-sym (symbol "#types"))
 (def protocols-sym (symbol "#protocols"))
 (def invoke-sym (rdr/tag 'invoke))
 (def Type-sym (rdr/tag 'Type 'core 0))
@@ -3930,6 +3930,7 @@
 
   Emitter
   (emit [ast]
+    ;; TODO: make sure this gernates good code
     (for [result-var (genlocal "andRslt")
           expr (emit-and-expr "if (isNothing(" result-var
                               (remove (.clauses ast) (partial instance? ast/NoCode))
@@ -3992,6 +3993,7 @@
 
   Emitter
   (emit [ast]
+    ;; TODO: make sure this gernates good code
     (for [result-var (genlocal "orRslt")
           expr (emit-cond-expr "if (!isNothing(" result-var
                                (remove (.clauses ast) (partial instance? ast/NoCode))
@@ -4041,6 +4043,7 @@
 
   Emitter
   (emit [ast]
+    ;; TODO: make sure this gernates good code
     (for [cond-val (emit clause)
           alt-val (map (emit alt)
                        (fn [expr]
@@ -4182,35 +4185,55 @@
                               (assoc m (.param-count arity) arity)))
                     (ast/file-name fn-sym) (ast/line-number fn-sym)))))
 
+(defn call-universal-proto-fn [fn-sym disp-arg args]
+  (let [args (cons disp-arg args)]
+    (str "if (universalProtoFn != 0){\n"
+         "  incRef(" disp-arg ", 1);\n"
+         "  List *args = empty_list;\n"
+         (to-str (flat-map (reverse args)
+                           (fn [arg]
+                             (list "  args = listCons(" "(Value *)" arg ", args);\n"))))
+         "  args = listCons(symbol(stringValue(\"" fn-sym "\")), args);\n"
+         "  args = listCons(stringValue(\"" (ast/file-name fn-sym) "\"), args);\n"
+         "  Value *result = fnApply(universalProtoFn, (Value *)args);\n"
+         "  Value *inner = ((Maybe *)result)->value;\n"
+         "  if (inner != (Value *)0) {\n"
+         "    incRef(inner, 1);\n"
+         "    dec_and_free(result, 1);\n"
+         "    dec_and_free(" disp-arg ", 1);\n"
+         "    return(inner);\n"
+         "  }\n"
+         "}\n")))
+
+(deftype InsertCode [fn-sym prototype]
+  Emitter
+  (emit [_]
+    (let [num-args (-> prototype .params .fixed count)
+          [disp-arg & args] (map (zip-lists (-> prototype .params .fixed)
+                                            (range num-args))
+                                 (fn [[arg idx]]
+                                   (either (check-C-var (str arg "_" idx))
+                                           (str "arg" idx))))]
+      (wrap sm/zero-sm (c-code ""
+                               [(call-universal-proto-fn fn-sym disp-arg args)]
+                               []
+                               (reduce args {disp-arg 1}
+                                       (fn [m arg]
+                                         (assoc m arg 1)))
+                               {})))))
+
 (defn missing-impl-body [proto-sym fn-sym prototype]
   (let [num-args (-> prototype .params .fixed count)
         [disp-arg & args] (map (zip-lists (-> prototype .params .fixed)
                                           (range num-args))
                                (fn [[arg idx]]
                                  (either (check-C-var (str arg "_" idx))
-                                         (str "arg" idx))))
-        args (cons disp-arg args)]
+                                         (str "arg" idx))))]
     (comp (filter (.default-body prototype) (partial instance? c/SymbolConstraints))
           (filter (.default-body prototype) (partial instance? c/ResultConstraint))
           [(ast/inline-ast
             'C nothing
-            (str "if (universalProtoFn != 0){\n"
-                 "  List *args = empty_list;\n"
-                 (to-str (flat-map (reverse args)
-                                   (fn [arg]
-                                     (list "  args = listCons(" "(Value *)" arg ", args);\n"))))
-                 "  args = listCons(symbol(stringValue(\"" fn-sym "\")), args);\n"
-                 "  args = listCons(stringValue(\"" (ast/file-name fn-sym) "\"), args);\n"
-                 "  Value *result = fnApply(universalProtoFn, (Value *)args);\n"
-                 "  Value *inner = ((Maybe *)result)->value;\n"
-                 "  if (inner != (Value *)0) {"
-                 "    incRef(inner, 1);\n"
-                 "    dec_and_free(result, 1);\n"
-                 "    return(inner);\n"
-                 "  } else {\n"
-                 "    dec_and_free(result, 1);\n"
-                 "  }\n"
-                 "}\n"
+            (str (call-universal-proto-fn fn-sym disp-arg args)
                  "if (closures != (List *)0) {"
                  "fprintf(stderr,\"*** Could not find implementation of '" proto-sym "/" fn-sym
                  "' for type '%s' with %d arguments at %s\\n\", "
@@ -4240,7 +4263,7 @@
                                               (.params prototype)
                                               (-> (.default-body prototype)
                                                   (filter (partial instance? ast/NoCode))
-                                                  (comp body))
+                                                  (comp [(InsertCode fn-sym prototype)] body))
                                               arity-impl-var))
           result-constraints (-> (.default-body prototype)
                                  (filter (partial instance? c/ResultConstraint))
@@ -4945,7 +4968,9 @@
 (defn gather-symbols [file-name]
   (for [symbols (sm/get-in-val [.modules file-name .values])
         expr (-> symbols
-                 (dissoc symbols-sym)
+                 (dissoc symbols-sym protocols-sym)
+                 (assoc 'filename (either (instance? String file-name)
+                                          ""))
                  (encode "symbols_"))
         sym-var (sm/get-in-val [.modules file-name .values symbols-sym])]
     (comp expr
@@ -5044,8 +5069,7 @@
                                                           symbols-sym (c-code symbols-var [] [] {} {})}
                                                          {} core-type-nums {}))]
                           (write-strings ["Value *" protos-var " = (Value *)&emptyBMI;\n"
-                                          "Value *" symbols-var " = (Value *)&emptyBMI;\n"
-                                          ]))
+                                          "Value *" symbols-var " = (Value *)&emptyBMI;\n"]))
                         (compilation-error "Compilation error (Could not prepare new module"
                                            module-name ".)"))))
 
@@ -5166,7 +5190,8 @@
                                                        asts))
                                        _ (sm/set-val .file-name file)
                                        base-imports (sm/get-val .base-imports)
-                                       _ (sm/assoc-in-val [.ns file] (ev/EvalNamespace file base-imports {} {}))
+                                       _ (sm/assoc-in-val [.ns file] (ev/EvalNamespace file base-imports
+                                                                                       {} {} {}))
                                        _ (ev/eval asts)
                                        mod-syms (sm/get-in-val [.ns file .syms])]
                                    mod-syms))
@@ -5319,7 +5344,7 @@
                (grmr/apply-fn send-to-emitter
                               rdr/top-level)))))
 
-(defn fixup-protocols-symbols [context file-name protocols-sym symbols-sym]
+(defn fixup-generated-symbols [context file-name protocols-sym symbols-sym]
   (update-context context
                   (for [protocols-var (sm/get-in-val [.modules file-name .values protocols-sym])
                         _ (sm/assoc-in-val [.modules file-name .values 'protocols]
@@ -5341,7 +5366,7 @@
                                      (lazy-list file-in))]
                 (do
                   (send ast-emitter
-                        fixup-protocols-symbols 'core protocols-sym symbols-sym)
+                        fixup-generated-symbols 'core protocols-sym symbols-sym)
                   (assoc modules 'core 'loaded))))
           (do
             (print-err "Could not compile Toccata core."
@@ -5367,7 +5392,7 @@
                                                                          'line-number 1}
                                                                         (lazy-list file-in))]
                                                    (send ast-emitter
-                                                         fixup-protocols-symbols file-name
+                                                         fixup-generated-symbols file-name
                                                          protocols-sym symbols-sym)
                                                    r)))
                                      (do
@@ -5409,15 +5434,33 @@
                                         (fn [script-dir]
                                           (interp/interp-file
                                            file-name script-dir
-                                           [(interp/CompiledNs 'file fio/symbols fio/protocols)
-                                            (interp/CompiledNs 'reader rdr/symbols rdr/protocols)
-                                            (interp/CompiledNs 'grammar grmr/symbols grmr/protocols)
-                                            (interp/CompiledNs 'parse rd/symbols rd/protocols)
-                                            (interp/CompiledNs 'ast ast/symbols ast/protocols)
-                                            (interp/CompiledNs 'sys sys/symbols sys/protocols)
-                                            (interp/CompiledNs 'state-maybe sm/symbols sm/protocols)
-                                            (interp/CompiledNs 'const c/symbols c/protocols)
-                                            (interp/CompiledNs 'strm strm/symbols strm/protocols)]
+                                           [(interp/CompiledNs 'file (either (get fio/symbols 'filename)
+                                                                             "")
+                                                               fio/symbols fio/protocols)
+                                            (interp/CompiledNs 'reader (either (get rdr/symbols 'filename)
+                                                                               "")
+                                                               rdr/symbols rdr/protocols)
+                                            (interp/CompiledNs 'grammar  (either (get grmr/symbols 'filename)
+                                                                                 "")
+                                                               grmr/symbols grmr/protocols)
+                                            (interp/CompiledNs 'parse  (either (get rd/symbols 'filename)
+                                                                               "")
+                                                               rd/symbols rd/protocols)
+                                            (interp/CompiledNs 'ast  (either (get ast/symbols 'filename)
+                                                                             "")
+                                                               ast/symbols ast/protocols)
+                                            (interp/CompiledNs 'sys  (either (get sys/symbols 'filename)
+                                                                             "")
+                                                               sys/symbols sys/protocols)
+                                            (interp/CompiledNs 'state-maybe  (either (get sm/symbols 'filename)
+                                                                                     "")
+                                                               sm/symbols sm/protocols)
+                                            (interp/CompiledNs 'const  (either (get c/symbols 'filename)
+                                                                               "")
+                                                               c/symbols c/protocols)
+                                            (interp/CompiledNs 'strm  (either (get strm/symbols 'filename)
+                                                                              "")
+                                                               strm/symbols strm/protocols)]
                                            args))))
                          (do
                            (print-err "The only option for the compiler is '--script'")
