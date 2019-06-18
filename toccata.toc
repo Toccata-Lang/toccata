@@ -823,7 +823,7 @@
   (assert (instance? Vector exprs)))
 
 ;; information that must be tracked for each module
-(deftype Module [path values protocols types declarations]
+(deftype Module [path values protocols types declarations ns-syms]
   ;; path             path to file containing the modules source code (Symbol or String)
   ;; values           map of value symbols to defined values
   (assert (instance? HashMap values))
@@ -833,6 +833,8 @@
   (assert (instance? HashMap types))
   ;; declarations     map of symbols to C vars that have not been defined
   (assert (instance? HashMap declarations))
+  ;; imported namespaces
+  (assert (instance? HashMap ns-syms))
 
   Stringable
   (string-list [_] (list "<Module '" (str path) "'>")))
@@ -1146,6 +1148,7 @@
 ;; This is so hideous on purpose. It's called *A LOT* so I unwound it for performance's sake
 (defn lookup-sym [sym]
   ;; Look up a value given a symbol. Will abort if the symbol cannot be found.
+  (assert (instance? rdr/tagged-symbol sym))
   (let [sym-file (ast/file-name sym)]
     (comp (sm/new-sm
            (fn [s]
@@ -1156,22 +1159,23 @@
                    closed-over (.closed-over ctxt)
                    closures (.closures closed-over)
                    refs-map (.refs-map closed-over)]
-               (or (map (or (and (rdr/namespace sym)
-                                 (or (-> (flat-map (extract-sym-path s sym)
-                                                   (fn [x]
-                                                     (get modules x)))
-                                         (flat-map (fn [module]
-                                                     (let [values (.values module)]
-                                                       (or (get values (rdr/untag sym))
-                                                           (get values (rdr/tag (rdr/untag sym))))))))
-                                     (do
-                                       (print-err "Undefined symbol" (str "'" sym "'") "at"
-                                                  (str sym-file ":")
-                                                  (ast/line-number sym))
-                                       (maybe (abort)))))
-                            (get syms sym))
+               (or (map (or
+                         ;; lookup namespace-qual sym
+                         (flat-map (rdr/namespace sym)
+                                   (fn [ns-sym]
+                                     (or (get-in modules [sym-file .ns-syms
+                                                          (rdr/tag ns-sym)
+                                                          (rdr/tag (.base sym))])
+                                         (do
+                                           (print-err "Undefined symbol" (str "'" sym "'") "at"
+                                                      (str sym-file ":")
+                                                      (ast/line-number sym))
+                                           (maybe (abort))))))
+                         ;; lookup sym in local fn context
+                         (get syms sym))
                         (fn [expr]
                           [expr s]))
+                   ;; lookup symbol in enclosing context of fn
                    (map (-> ctxt .context-syms (get sym))
                         (fn [sym-info]
                           (either (some closures
@@ -1203,7 +1207,8 @@
                                       (fn [module]
                                         (or (get (.values module) sym)
                                             (get-in (.declarations module) [sym '_]))))
-                            (flat-map (get modules 'core)
+                            (flat-map (and (map (first (str sym)) (partial =* "."))
+                                           (get modules 'core))
                                       (fn [module]
                                         (get (.values module) sym))))
                         (fn [expr] [expr s]))
@@ -1433,13 +1438,14 @@
   (emit [constraint]
     (either (map (.sym constraint)
                  (fn [sym]
-                   (for [sym-info (lookup-sym sym)
-                         field-var (lookup-sym (.field constraint))
-                         :let [var (constrain-expr sym-info (-> constraint
-                                                                (.field-var (.c-var field-var))
-                                                                (c/update-var (.c-var sym-info))))]
-                         _ (set-sym sym var)]
-                     (.refs-map var (dissoc (.refs-map sym-info) (.c-var sym-info))))))
+                   (let [sym (rdr/tag sym)]
+                     (for [sym-info (lookup-sym sym)
+                           field-var (lookup-sym (rdr/tag (.field constraint)))
+                           :let [var (constrain-expr sym-info (-> constraint
+                                                                  (.field-var (.c-var field-var))
+                                                                  (c/update-var (.c-var sym-info))))]
+                           _ (set-sym sym var)]
+                       (.refs-map var (dissoc (.refs-map sym-info) (.c-var sym-info)))))))
             (wrap sm/zero-sm empty-c-code)))
 
   (runtime-check [constraint value-info sym-location]
@@ -2192,7 +2198,7 @@
       constraint))
 
   (get-param-constraints [sym constraint-map]
-    (for [expr (lookup-sym sym)]
+    (for [expr (lookup-sym (rdr/tag sym))]
       (-> (either (get constraint-map (.c-var expr))
                   c/top-type)
           (c/update-var (.c-var expr))
@@ -2230,10 +2236,10 @@
                                      (ast/file-name binding) (ast/line-number binding))]))))
 
   (emit [sym]
-    (lookup-sym sym))
+    (lookup-sym (rdr/tag sym)))
 
   (emit-defined-value [sym defined-sym]
-    (for [value (emit sym)
+    (for [value (emit (rdr/tag sym))
           _ (new-module-def defined-sym value)]
       [value]))
 
@@ -2438,39 +2444,42 @@
 
 (def symbols-sym (symbol "#symbols"))
 (def protocols-sym (symbol "#protocols"))
-(def invoke-sym (rdr/tag 'invoke))
+(def invoke-sym (rdr/tag 'invoke 'core 0))
 (def Type-sym (rdr/tag 'Type 'core 0))
 (def Function-sym (rdr/tag 'Function 'core 0))
 (def Container-sym (rdr/tag 'Container 'core 0))
 (def Stringable-sym (rdr/tag 'Stringable 'core 0))
-(def type-name-sym (rdr/tag 'type-name))
-(def type-mapping-sym (rdr/tag 'type-mapping))
-(def =*-sym (rdr/tag '=*))
-(def apply-sym (rdr/tag 'apply))
-(def get-type-sym (rdr/tag 'reified-get-type))
-(def extract-sym (rdr/tag 'extract))
-(def instance?-sym (rdr/tag 'instance?))
-(def string-list-sym (rdr/tag 'string-list))
-(def list-sym (rdr/tag 'list))
-(def has-field-sym (rdr/tag 'has-field))
-(def identical-sym (rdr/tag 'identical))
-(def Eq-sym (rdr/tag 'Eq))
+(def type-name-sym (rdr/tag 'type-name 'core 0))
+(def type-mapping-sym (rdr/tag 'type-mapping 'core 0))
+(def =*-sym (rdr/tag '=* 'core 0))
+(def apply-sym (rdr/tag 'apply 'core 0))
+(def get-type-sym (rdr/tag 'reified-get-type 'core 0))
+(def extract-sym (rdr/tag 'extract 'core 0))
+(def instance?-sym (rdr/tag 'instance? 'core 0))
+(def string-list-sym (rdr/tag 'string-list 'core 0))
+(def list-sym (rdr/tag 'list 'core 0))
+(def has-field-sym (rdr/tag 'has-field 'core 0))
+(def identical-sym (rdr/tag 'identical 'core 0))
+(def Eq-sym (rdr/tag 'Eq 'core 0))
 (def Associative-sym (rdr/tag 'Associative 'core 0))
-(def get-symb (rdr/tag 'get))
-(def maybe-sym (rdr/tag 'maybe))
+(def get-symb (rdr/tag 'get 'core 0))
+(def maybe-sym (rdr/tag 'maybe 'core 0))
 (def HashMapNode-sym (rdr/tag 'HashMapNode 'core 0))
 (def Hashable-sym (rdr/tag 'Hashable 'core 0))
-(def sha1-sym (rdr/tag 'sha1))
-(def sha1-update-sym (rdr/tag 'sha1-update))
-(def sha1-init-sym (rdr/tag 'sha1-init))
-(def sha1-finalize-sym (rdr/tag 'sha1-finalize))
-(def sha1-update-type-sym (rdr/tag 'sha1-update-type))
-(def assoc-sym (rdr/tag 'assoc))
-(def update-field-sym (rdr/tag 'update-field))
-(def store-sym (rdr/tag 'store))
-(def reified-type-args-sym (rdr/tag 'reified-type-args))
-(def get-field-sym (rdr/tag 'get-field))
-(def nth-sym (rdr/tag 'nth))
+(def sha1-sym (rdr/tag 'sha1 'core 0))
+(def sha1-update-sym (rdr/tag 'sha1-update 'core 0))
+(def sha1-init-sym (rdr/tag 'sha1-init 'core 0))
+(def sha1-finalize-sym (rdr/tag 'sha1-finalize 'core 0))
+(def sha1-update-type-sym (rdr/tag 'sha1-update-type 'core 0))
+(def assoc-sym (rdr/tag 'assoc 'core 0))
+(def update-field-sym (rdr/tag 'update-field 'core 0))
+(def store-sym (rdr/tag 'store 'core 0))
+(def reified-type-args-sym (rdr/tag 'reified-type-args 'core 0))
+(def get-field-sym (rdr/tag 'get-field 'core 0))
+(def nth-sym (rdr/tag 'nth 'core 0))
+(def partial-sym (rdr/tag 'partial 'core 0))
+(def some-sym (rdr/tag 'some 'core 0))
+(def nothing-sym (rdr/tag 'nothing 'core 0))
 
 (defn call-dyn-unknown-type [target args ast]
   ;; TODO: eventually, we maight be able to establish some constraints for 'target'
@@ -2777,9 +2786,9 @@
                                       (str defined-sym "_instance_QMARK_") (FnValPtr "")
                                       (ast/params [x* y*]) ""
                                       [(ast/and-ast
-                                        [(ast/call-ast (rdr/tag 'some)
+                                        [(ast/call-ast some-sym
                                                        [(ast/call-ast list-sym (vec (keys types-info)))
-                                                        (ast/call-ast (rdr/tag 'partial)
+                                                        (ast/call-ast partial-sym
                                                                       [=*-sym
                                                                        (ast/call-ast get-type-sym [y*])])])
                                          (ast/call-ast maybe-sym [y*])])]
@@ -2838,9 +2847,9 @@
                      (str defined-sym "_instance_QMARK_") (FnValPtr "")
                      (ast/params [x* y*]) ""
                      [(ast/and-ast
-                       [(ast/call-ast (rdr/tag 'some)
+                       [(ast/call-ast some-sym
                                       [(ast/call-ast list-sym (vec (keys type-map)))
-                                       (ast/call-ast (rdr/tag 'partial)
+                                       (ast/call-ast partial-sym
                                                      [=*-sym (ast/call-ast get-type-sym [y*])])])
                         (ast/call-ast maybe-sym [y*])])]
                      [] c/top-type)]]
@@ -4497,7 +4506,7 @@
                                                     (ast/call-ast identical-sym
                                                                   [(rdr/tag (str "." field))
                                                                    field*])))
-                                             (rdr/tag 'nothing)))]
+                                             nothing-sym))]
                                      [] c/top-type)]]]
 
                                  Eq-sym
@@ -5010,11 +5019,13 @@
                   (comp (sm/get-in-val [.modules module-name])
                         (for [protos-var (global-var "protos_")
                               symbols-var (global-var "symbols_")
+                              core-syms (sm/get-in-val [.modules 'core .values] {})
                               _ (sm/assoc-in-val [.modules module-name]
                                                  (Module module-name
-                                                         {protocols-sym (c-code protos-var [] {} {})
-                                                          symbols-sym (c-code symbols-var [] {} {})}
-                                                         {} core-type-nums {}))
+                                                         (assoc-all core-syms
+                                                           protocols-sym (c-code protos-var [] {} {})
+                                                           symbols-sym (c-code symbols-var [] {} {}))
+                                                         {} core-type-nums {} {}))
                               _ (declare ["Value *" protos-var " = (Value *)&emptyBMI;\n"
                                           "Value *" symbols-var " = (Value *)&emptyBMI;\n"])]
                           '_)
@@ -5275,13 +5286,26 @@
               (update-context context
                               (sm/assoc-in-val [.namespaces (ast/file-name ast) (.ns-sym ast)]
                                                mod-file-name))))
-      waiter)))
+      [waiter ast])))
 
 (def analyze-forms
   (rd/parser (grmr/none-or-more
               (grmr/any
                (grmr/apply-fn (fn [modules]
-                                (map modules extract))
+                                ;; old code
+                                ;; (map modules extract)
+                                (map modules
+                                     (fn [[waiter ast]]
+                                       ;; TODO: refactor this mess
+                                       (send ast-emitter
+                                             (fn [context ns-file-name mod-file-name ns-sym]
+                                               (update-context
+                                                context
+                                                (for [syms (sm/get-in-val [.modules ns-file-name .values])
+                                                      _ (sm/assoc-in-val [.modules mod-file-name .ns-syms ns-sym]
+                                                                         syms)]
+                                                  '_)))
+                                             (extract waiter) (ast/file-name ast) (.ns-sym ast)))))
                               (grmr/one-or-more
                                (grmr/apply-fn add-namespace
                                               rdr/read-add-ns
