@@ -271,6 +271,9 @@
 
   (encode [m var-prefix])
 
+  (validate-field [c m fields file-name line-number]
+    m)
+
   ;; encode a statically initialized representation of a core data structure
   ;; TODO: make sure every impl is needed and constrains the var properly
   (encode-static [m]
@@ -1351,6 +1354,18 @@
 
 (extend-type c/SymbolConstraints
   Emitter
+  (validate-field [c m fields file-name line-number]
+    (map (.sym c)
+         (fn [c-sym]
+           (either (some fields (partial = c-sym))
+                   (do
+                     (print-err "Invalid field"
+                                (str "'" c-sym "'")
+                                "at:" (str file-name ":")
+                                line-number)
+                     (abort)))
+           {})))
+
   (tail-call [constraint _ _]
     constraint)
 
@@ -1754,7 +1769,8 @@
 
   Stringable
   (string-list [_]
-    (list "<StaticArityInfo " (str c-var) ">")))
+    (list "(StaticArityInfo " (str c-var) " " (str param-constraints) " "
+          (str result-constraint)  ")")))
 
 ;; we cache all the info about static function arities to optimize call sites
 (defn lookup-static-arity-info [fn-var num-params]
@@ -2113,6 +2129,7 @@
         line-number (ast/line-number ast)]
     (for [dispatch-var (map (sm/when (first arg-vars)) .c-var)
           disp-type  (var-type-num dispatch-var)
+          ;; _ (debug 'cpi file-name line-number (.call-target ast) disp-type)
           :when-not (= UnknownType disp-type)
           impl-info (get-proto-impl target num-args disp-type)
           _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
@@ -2335,14 +2352,14 @@
   (let [file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
     (for [result-sym (genlocal "rslt")
-          ;; _ (debug 'csf file-name line-number (.call-target ast) result-sym (.result-constraint arity-info))
-          _ (constrain-var file-name line-number result-sym (c/update-path (.result-constraint arity-info)
-                                                                           file-name line-number))
+          ;; _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
+          ;;          (.param-constraints arity-info) "\n"
+          ;;          result-sym (.result-constraint arity-info))
+          _ (constrain-var file-name line-number result-sym (.result-constraint arity-info))
           _ (ev/traverse (zip-lists (map arg-vars .c-var)
                                     (.items-constraints (.param-constraints arity-info)))
                          (fn [[var constraint]]
-                           (constrain-var file-name line-number var (c/update-path constraint
-                                                                                   file-name line-number))))
+                           (constrain-var file-name line-number var constraint)))
           _ (update-call-site-count (.c-var arity-info))
           line (line-macro ast "// static-fixed")
           call-site-location (call-site-meta-data (.c-var arity-info) file-name line-number)]
@@ -2363,8 +2380,7 @@
                                (map arg-vars (fn [arg]
                                                (.init arg []))))
           result-sym (genlocal "rslt")
-          _ (constrain-var file-name line-number result-sym
-                           (c/update-path (.result-constraint arity-info) file-name line-number))
+          _ (constrain-var file-name line-number result-sym (.result-constraint arity-info))
           ;; TODO: this needs to be commpleted
           ;; _ (ev/traverse (zip-lists (map arg-vars .c-var)
           ;;                           (.items-constraints (.param-constraints arity-info)))
@@ -2514,13 +2530,11 @@
                   (sm/assoc-in-val [.constants .other 'invoke-sites] 1))
           result-sym (genlocal "rslt")
 
-          _ (constrain-var file-name line-number result-sym (c/update-path (.result-constraint invoke-info)
-                                                                           file-name line-number))
+          _ (constrain-var file-name line-number result-sym (.result-constraint invoke-info))
           _ (ev/traverse (zip-lists (map (comp [target] arg-vars) .c-var)
                                     (.items-constraints (.param-constraints invoke-info)))
                          (fn [[var constraint]]
-                           (constrain-var file-name line-number var (c/update-path constraint
-                                                                                   file-name line-number))))
+                           (constrain-var file-name line-number var constraint)))
 
           ;; _ (debug "-----")
           line (line-macro ast "// call invoke")]
@@ -3026,18 +3040,23 @@
 (extend-type ast/let-ast
   Emitter
   (emit [ast]
-    (for [locals get-syms
-          bindings (ev/traverse (.bindings ast) emit)
-          body-exprs (ev/traverse (.body ast) emit)
-          :let [code (collapse-expressions (comp (flat-map bindings .destruct) body-exprs))]
-          result-var (either (map (= "" (.c-var code)) sm/state-maybe)
-                             (genlocal "let_rslt"))
-          _ (set-syms locals)]
-      (c-init result-var
-              [(.init code)
-               (either (= "" result-var)
-                       [line-sep "Value *" result-var " = " (.c-var code) ";" line-sep])]
-              (.refs-map code) (ast/file-name ast) (ast/line-number ast))))
+    (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)]
+      (for [locals get-syms
+            bindings (ev/traverse (.bindings ast) emit)
+            body-exprs (ev/traverse (.body ast) emit)
+            :let [code (collapse-expressions (comp (flat-map bindings .destruct) body-exprs))]
+            result-var (either (map (= "" (.c-var code)) sm/state-maybe)
+                               (genlocal "let_rslt"))
+            _ (update-subs
+               (typ/propogate-constraint (.c-var code) result-var identity
+                                         file-name line-number))
+            _ (set-syms locals)]
+        (c-init result-var
+                [(.init code)
+                 (either (= "" result-var)
+                         [line-sep "Value *" result-var " = " (.c-var code) ";" line-sep])]
+                (.refs-map code) file-name line-number))))
 
   (emit-defined-value [ast defined-sym]
     (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
@@ -3169,8 +3188,8 @@
 
   Stringable
   (string-list [_]
-    (comp (list "<StaticArity " (str arity-fn-var) " " (str param-count) " ")
-          (string-list var-info) ">"))
+    (list "(StaticArity " (str arity-fn-var) " " (str param-count) " "
+          (str var-info) " " (str param-constraints) " " (str result-constraint)))
 
   ArityType
   (reify-arity [_ dispatch-type-num arity-ast fn-name proto-sym]
@@ -3369,7 +3388,7 @@
                       arity-var "->fn = " c-fn ";" line-sep
                       arity-var "->closures = empty_list;" line-sep]]
       (ClosureArity c-fn params (either (and (.variadic params)
-                                             (maybe'variadic))
+                                             (maybe 'variadic))
                                         (count params))
                     (comp* (c-code arity-var arity-init {} c/top-type)
                            (comp closure-vars
@@ -4130,7 +4149,11 @@
 
 (defn emit-proto-default [protocol-sym fn-sym disp-fn-var prototype]
   (let [body (remove (.default-body prototype) (partial instance? ast/NoCode))
-        default-body (missing-impl-body protocol-sym fn-sym prototype)]
+        default-body (missing-impl-body protocol-sym fn-sym prototype)
+        arity-ast (ast/fn-arity (.params prototype) ""
+                                (either (and (empty? body)
+                                             (maybe default-body))
+                                        body))]
     (for [arity-impl-var (global-var (str "Default_" fn-sym) "arityImpl")
           :let [arity-impl-var (ProtoDispFnPtr arity-impl-var)]
           decls (sm/get-in-val [.fn-context .decl])
@@ -4152,22 +4175,28 @@
                                                   (filter (partial instance? ast/NoCode))
                                                   (comp [(InsertCode fn-sym prototype)] body))
                                               arity-impl-var))
+
           result-constraints (-> (.default-body prototype)
                                  (filter (partial instance? c/ResultConstraint))
                                  (map .assertion)
                                  (ev/traverse to-constraint))
-          :let [result-constraint (reduce result-constraints c/top-type c/intersect)]
+          param-constraints (-> (.default-body prototype)
+                                (remove (partial instance? c/ResultConstraint))
+                                (filter (partial instance? c/Constraints))
+                                (ev/traverse to-constraint))
+          :let [result-constraint (reduce result-constraints c/top-type c/intersect)
+                param-constraints (.param-constraints default-arity)
+                param-count (.param-count static-arity)]
+
+          _ (sm/assoc-in-val [.fns disp-fn-var param-count .param-constraints]
+                             param-constraints)
+          _ (sm/assoc-in-val [.fns disp-fn-var param-count .result-constraint]
+                             result-constraint)
           _ (sm/assoc-in-val [.modules (ast/file-name protocol-sym) .protocols
                               (rdr/untag protocol-sym) (rdr/untag fn-sym)
-                              (.param-count static-arity) 0]
-                             (ProtoImpl 0 (.c-var (.var-info static-arity))
-                                        (ast/fn-arity (.params prototype) ""
-                                                      (either (and (empty? body)
-                                                                   (maybe default-body))
-                                                              body))
-                                        c/empty-items-constraint
-                                        result-constraint
-                                        arity-impl-var))]
+                              param-count 0]
+                             (ProtoImpl 0 (.c-var (.var-info static-arity)) arity-ast
+                                        param-constraints result-constraint arity-impl-var))]
       static-arity)))
 
 (defn create-dispatcher [proto-sym [fn-sym arities]]
@@ -4670,18 +4699,7 @@
                   field-assertions (ev/traverse field-assertions to-constraint)
                   :let [field-map (reduce field-assertions
                                           {} (fn [m c]
-                                               (either (or (map (= c c/top-type) (fn [_] m))
-                                                           (map (.sym c)
-                                                                (fn [c-sym]
-                                                                  (either (some fields (partial = c-sym))
-                                                                          (do
-                                                                            (print-err "Invalid field"
-                                                                                       (str "'" c-sym "'")
-                                                                                       "at:" (str file-name ":")
-                                                                                       line-number)
-                                                                            (abort)))
-                                                                  {})))
-                                                       m)))
+                                               (validate-field c m fields file-name line-number)))
 
                         field-constraints (c/ItemsConstraint
                                            (map fields (fn [field]
