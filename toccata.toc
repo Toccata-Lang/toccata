@@ -255,7 +255,6 @@
     (assert (instance? ast/params-ast params)))
 
   ;; get the constraints for a symbol or params-ast
-  ;; TODO: remove this
   (get-param-constraints [_ subs]
     (assert-result x (instance? sm/new-sm x)))
 
@@ -355,7 +354,8 @@
   (expr-constraints [expr]
     (assert-result x (instance? c/Constraints x)))
 
-  (collapse-expressions* [x y]))
+  (collapse-expressions* [x y]
+    (assert-result r (instance? sm/new-sm r))))
 
 ;; information about a compiled expression(s)
 ;; c-var: C variable that holds the value produced by the code
@@ -382,6 +382,18 @@
     (wrap sm/zero-sm x)))
 
 (def empty-c-code (empty-code "" [] {}))
+
+(defn collapse-expressions [cs]
+  (assert-result r (instance? sm/new-sm r))
+
+  (either (or (and (empty? cs)
+                   (maybe (sm/state-maybe empty-c-code)))
+              (and (empty? (rest cs))
+                   (map (first cs) sm/state-maybe)))
+          (let [[c & cs] cs]
+            (flat-map (collapse-expressions cs)
+                      (fn [expr]
+                        (collapse-expressions* c expr))))))
 
 (deftype c-code [c-var init refs-map constraints]
   (assert (instance? Sequence init))
@@ -547,6 +559,22 @@
   (emit [x]
     (wrap sm/zero-sm x)))
 
+;; same as 'c-code', but defines a function parameter
+(deftype c-param [c-var init refs-map constraints file-name line-number]
+  (assert (instance? String c-var))
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+  (assert (instance? (map-of String c/ContentsConstraint) constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Param " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ", "
+          (str constraints) ">"))
+
+  Collection
+  (empty? [c] nothing))
+
 ;; same as 'c-code', but is the first appearance of 'c-var' in the generated code
 (deftype c-init [c-var init refs-map file-name line-number]
   (assert (instance? Sequence init))
@@ -577,6 +605,7 @@
 
 (def C-expr (comp empty-code
                   C-Value
+                  c-param
                   c-closure-fn
                   c-init))
 
@@ -591,7 +620,28 @@
   C-Code
   (collapse-expressions* [x y]
     (assert (instance? C-expr y))
-    y))
+    (sm/state-maybe y)))
+
+(extend-type c-param
+  C-Code
+  (collapse-expressions* [x y]
+    (assert (instance? C-expr y))
+
+    (let [init (either (or (for [refs (get-in y [.refs-map (.c-var x)])]
+                             [(.init x)
+                              (either (and (< refs 2)
+                                           (maybe ""))
+                                      ["incRef(" (.c-var x) ", " (dec refs) ");" line-sep])
+                              (.init y)])
+                           (and (= "" (.c-var x))
+                                (maybe [(.init x) (.init y)])))
+                       [(.init x)
+                        line-sep "dec_and_free(" (.c-var x) ", 1);" line-sep
+                        (.init y)])
+          refs-map (dissoc (merge-with + (.refs-map x) (.refs-map y))
+                           (.c-var x))
+          refs-map (assoc refs-map (.c-var x) 0)]
+      (sm/state-maybe (c-code (.c-var y) init refs-map c/top-type)))))
 
 (extend-type c-init
   Composition
@@ -599,39 +649,47 @@
     (either (map (first xs)
                  (fn [y]
                    (let [y (comp* y (rest xs))
-                         y (.refs-map y (merge-with + (.refs-map y) {(.c-var x) 1}))]
-                     (collapse-expressions* x y))))
+                         y (.refs-map y (merge-with + (.refs-map y) {(.c-var x) 1}))
+                         c-var (.c-var x)
+                         file-name (.file-name x)
+                         line-number (.line-number x)
+                         init [(.init x)
+                               (either (or (for [refs (get-in y [.refs-map c-var])]
+                                             [(either (and (< refs 2)
+                                                           (maybe ""))
+                                                      ["incRef(" c-var ", " (dec refs) ");" line-sep])])
+                                           (= "" c-var))
+                                       [line-sep "dec_and_free(" c-var ", 1);" line-sep])
+                               (.init y)]
+                         refs-map (dissoc (merge-with + (.refs-map x) (.refs-map y))
+                                          c-var)]
+                     (-> y
+                         (.init init)
+                         (.refs-map refs-map)))))
             x)) 
 
   C-Code
   (collapse-expressions* [x y]
     (assert (instance? C-expr y))
-    (assert-result z (instance? C-expr z))
 
     (let [c-var (.c-var x)
           file-name (.file-name x)
           line-number (.line-number x)
-          init [(.init x)
-                ;; TODO: will need to implement something similar
-                ;; (either (for [constraint (get (.constraints y) c-var)
-                ;;               value-info (or (get (.constraints x) c-var)
-                ;;                              (maybe c/top-type))]
-                ;;           (-> constraint
-                ;;               (c/update-var c-var)
-                ;;               (runtime-check value-info file-name line-number)))
-                ;;         "")
-                (either (or (for [refs (get-in y [.refs-map c-var])]
-                              [(either (and (< refs 2)
-                                            (maybe ""))
-                                       ["incRef(" c-var ", " (dec refs) ");" line-sep])])
-                            (= "" c-var))
-                        [line-sep "dec_and_free(" c-var ", 1);" line-sep])
-                (.init y)]
+          
           refs-map (dissoc (merge-with + (.refs-map x) (.refs-map y))
                            c-var)]
-      (-> y
-          (.init init)
-          (.refs-map refs-map)))))
+      (let [init [(.init x)
+                  (either (or (for [refs (get-in y [.refs-map c-var])]
+                                [(either (and (< refs 2)
+                                              (maybe ""))
+                                         ["incRef(" c-var ", " (dec refs) ");" line-sep])])
+                              (= "" c-var))
+                          [line-sep "dec_and_free(" c-var ", 1);" line-sep])
+                  (.init y)]]
+        (-> y
+            (.init init)
+            (.refs-map refs-map)
+            sm/state-maybe)))))
 
 (extend-type c-closure-fn
   Composition
@@ -639,27 +697,33 @@
     (either (map (first xs)
                  (fn [y]
                    (let [y (comp* y (rest xs))
-                         y (.refs-map y (merge-with + (.refs-map y) {(.c-var x) 1}))]
-                     (collapse-expressions* x y))))
+                         y (.refs-map y (merge-with + (.refs-map y) {(.c-var x) 1}))
+                         c-var (.c-var x)
+                         file-name (.file-name x)
+                         line-number (.line-number x)
+                         init [(.init x)
+                               (either (or (for [refs (get-in y [.refs-map c-var])]
+                                             [(either (and (< refs 2)
+                                                           (maybe ""))
+                                                      ["incRef(" c-var ", " (dec refs) ");" line-sep])])
+                                           (= "" c-var))
+                                       [line-sep "dec_and_free(" c-var ", 1);" line-sep])
+                               (.init y)]
+                         refs-map (dissoc (merge-with + (.refs-map x) (.refs-map y))
+                                          c-var)]
+                     (-> y
+                         (.init init)
+                         (.refs-map refs-map)))))
             x)) 
 
   C-Code
   (collapse-expressions* [x y]
     (assert (instance? C-expr y))
-    (assert-result z (instance? C-expr z))
 
     (let [c-var (.c-var x)
           file-name (.file-name x)
           line-number (.line-number x)
           init [(.init x)
-                ;; TODO: will need to implement something similar
-                ;; (either (for [constraint (get (.constraints y) c-var)
-                ;;               value-info (or (get (.constraints x) c-var)
-                ;;                              (maybe c/top-type))]
-                ;;           (-> constraint
-                ;;               (c/update-var c-var)
-                ;;               (runtime-check value-info file-name line-number)))
-                ;;         "")
                 (either (or (for [refs (get-in y [.refs-map c-var])]
                               [(either (and (< refs 2)
                                             (maybe ""))
@@ -671,7 +735,8 @@
                            c-var)]
       (-> y
           (.init init)
-          (.refs-map refs-map)))))
+          (.refs-map refs-map)
+          sm/state-maybe))))
 
 (extend-type C-Value
   Composition
@@ -689,22 +754,14 @@
   C-Code
   (collapse-expressions* [x y]
     (assert (instance? C-expr y))
-    (assert-result z (instance? C-expr z))
 
     (let [x (either (and (empty? (.init x))
                          (maybe (.refs-map x {})))
                     x)]
       (-> y
           (.init [(.init x) (.init y)])
-          (.refs-map (merge-with + (.refs-map x) (.refs-map y)))))))
-
-(defn collapse-expressions [cs]
-  (either (or (and (empty? cs)
-                   (maybe empty-c-code))
-              (and (empty? (rest cs))
-                   (first cs)))
-          (let [[c & cs] cs]
-            (collapse-expressions* c (collapse-expressions cs)))))
+          (.refs-map (merge-with + (.refs-map x) (.refs-map y)))
+          sm/state-maybe))))
 
 (deftype Closures [closures refs-map]
   (assert (instance? (vector-of Vector) closures))
@@ -896,17 +953,31 @@
                                sym-count)
                           new-ctxt]))))))
 
-;; TODO: I bet a c-code could be used in place of ParamBinding
-(deftype ParamBinding [vars destruct]
+;; TODO: find a place for this proto-fn
+(defprotocol ConstrainParams
+  (constrain-params [pb]))
+(deftype ParamBinding [bound vars tail-var destruct]
   (assert (instance? Vector destruct))
+
+  ConstrainParams
+  (constrain-params [pb]
+    (either (or (and (empty? vars)
+                     (= tail-var "")
+                     (maybe (typ/get-constraint bound))))
+            (for [tail-const (typ/get-constraint tail-var)
+                  items-const (typ/traverse vars constrain-params)
+                  :let [constraint (c/ItemsConstraint items-const tail-const empty-list nothing tail-var)]
+                  _ (typ/append-constraint bound constraint "" 0)]
+              constraint)))
 
   Stringable
   (string-list [_]
-    (comp (list "<ParamBinding ")
-          (string-list vars)
-          (list " ")
-          (string-list destruct)
-          (list ">"))))
+    (either (or (and (empty? vars)
+                     (= tail-var "")
+                     (maybe (list bound)))
+                (and (empty? vars)
+                     (maybe (list "[|" tail-var "]"))))
+            (list (str (comp vars [(str "| " tail-var)]))))))
 
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
@@ -1031,6 +1102,11 @@
                     c-static-reified
                     c-static-str
                     c-static-int
+                    c-static-fn
+                    c-static-sym
+                    c-maybe-fn
+                    c-list-fn
+                    c-vector-fn
                     c-protocol-fn))
 
 (defn new-module-def [sym value]
@@ -1210,9 +1286,9 @@
                   _ (declare ["ReifiedVal " struct " = {" (str (get-type x)) ", -1, "
                               ;; TODO: should be the args's .c-structs
                               "0, {}};" line-sep
-                              "Value *" var "= (Value *)&" struct ";" line-sep])]
-              (collapse-expressions
-               [args (c-static-val var [] {} struct)]))
+                              "Value *" var "= (Value *)&" struct ";" line-sep])
+                  r (collapse-expressions [args (c-static-val var [] {} struct)])]
+              r)
             ;; TODO remove
             (for [_ (debug 'missing x)
                   :when nothing]
@@ -1235,16 +1311,18 @@
                          (runtime-check value-info sym-location))
                      (let [min-count (str (count (.items-constraints constraint)))]
                        ["if (countSeq(incRef(" (.var constraint) ", 1)) < " min-count ") {"
-                        "\n#ifndef EMBEDDED\n"
+                        ;; "\n#ifndef EMBEDDED\n"
                         "fprintf(stderr, \"Insufficient values for '"
-                        (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");\n"
+                        (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");" line-sep
                         "fprintf(stderr, \"Needed " min-count
                         ", got %\" PRId64 \"\\n\", ((Integer *)count(empty_list, "
                         (.var constraint) "))->numVal);" line-sep
                         "fprintf(stderr, \"" (interpose (c/format-path constraint (inc (count (.path constraint))))
                                                         "\\n")
-                        "\\n\");\n#endif\nabort();" line-sep "}\n"])
-                     "if (1) {\n"
+                        "\\n\");"
+                        ;; "\n#endif\n"
+                        "abort();" line-sep "}"])
+                     "if (1) {" line-sep
                      "incRef(" (.var constraint) ", 1);" line-sep
                      (let [items (map (range (inc (count (.items-constraints constraint))))
                                       (partial str (.var constraint) "_"))]
@@ -1353,7 +1431,7 @@
     ;; TODO: this needs to be implemented, or something
     []))
 
-(extend-type c/ContentsConstraint
+(extend-type c/CollectionOf
   Emitter
   (runtime-check [constraint value-info sym-location]
     ;; TODO: this needs to be implemented, or something
@@ -1395,15 +1473,16 @@
              (map (keys (.type-maps constraint)) (fn [type-num]
                                                    ["case " type-num ": " ]))
              "break; default:"
-             "\n#ifndef EMBEDDED\n"
+             ;; "\n#ifndef EMBEDDED\n"
              "fprintf(stderr, \"Invalid type of value for '"
-             (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");\n"
+             (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");" line-sep
              "fprintf(stderr, \"Needed " (str (.type-sym constraint))
              ", got %s\\n\", extractStr(type_name(empty_list, " (.var constraint) ")));" 
              "fprintf(stderr, \""
              (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
              "\\n\");"
-             "\n#endif\nabort();}"])))
+             ;; "\n#endif\n"
+             "abort();}"])))
 
 (extend-type c/MaxValue
   Emitter
@@ -1417,15 +1496,22 @@
                  (.sym (.sym constraint))
                  (runtime-check value-info sym-location))
              "if (" (str (.max constraint)) " < ((Integer *)" (.var constraint) ")->numVal) {"
-             "\n#ifndef EMBEDDED\n"
+             ;; "\n#ifndef EMBEDDED\n"
              "fprintf(stderr, \"Value of '" (either (.sym constraint) "<unknown>")
-             "' is too large %s\\n\", " sym-location ");\n"
+             "' is too large %s\\n\", " sym-location ");" line-sep
              "fprintf(stderr, \"Maximum allowed value is " (str (.max constraint))
-             ", got %\" PRId64 \"\\n\", ((Integer *)" (.var constraint) ")->numVal);\n"
+             ", got %\" PRId64 \"\\n\", ((Integer *)" (.var constraint) ")->numVal);" line-sep
              "fprintf(stderr, \""
              (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
              "\\n\");"
-             "\n#endif\nabort();}"])))
+             ;; "\n#endif\n"
+             "abort();}"])))
+
+(extend-type c/MinValue
+  Emitter
+  (runtime-check [constraint value-info sym-location]
+    ;; TODO: finish
+    ""))
 
 (extend-type c/FieldConstraint
   Emitter
@@ -1445,17 +1531,18 @@
                  (maybe ""))
             ["if(1) {\n"
              "Value *dork = hasField(empty_list, incRef(" (.var constraint) ", 1), "
-             (.field-var constraint) ");\n" "if (isNothing(dork,\"\",0)) {\n#ifndef EMBEDDED\n"
+             (.field-var constraint) ");\n" "if (isNothing(dork,\"\",0)) {"
+             ;; "\n#ifndef EMBEDDED\n"
              "fprintf(stderr, \"Value '" (either (.sym constraint) "<unknown>")
              "' of type '%s' does not have field '"
              (.field constraint) "' %s\\n\", extractStr(type_name(empty_list, "
-             (.var constraint) ")), " sym-location ");\n" 
+             (.var constraint) ")), " sym-location ");" line-sep 
              "fprintf(stderr, \""
              (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
              "\\n\");"
-             "\n#endif\n"
+             ;; "\n#endif\n"
              "abort();" 
-             "}\ndec_and_free(dork, 1);\n}\n"])))
+             "} dec_and_free(dork, 1);}"])))
 
 (extend-type c/MultiConstraint
   Emitter
@@ -1590,9 +1677,9 @@
                         (.c-struct root) ", " new-items
                         (map (range (- vector-array-len (count array))) (fn [_] ", 0"))
                         "};" line-sep
-                        "Value *" var "= (Value *)&" struct ";" line-sep])]
-        (comp* empty-c-code (comp items
-                                  [(c-static-val var [] {} struct)])))))
+                        "Value *" var "= (Value *)&" struct ";" line-sep])
+            r (collapse-expressions (comp items [(c-static-val var [] {} struct)]))]
+        r)))
 
   (tail-call [asts params result-constraint]
     (either (flat-map (last asts)
@@ -1663,9 +1750,10 @@
                                                       empty-list 'HashMap nothing ""))
           _ (declare ["BitmapIndexedNode " struct " = {BitmapIndexedType, -1, "
                       (str (bmiBitmap m)) ", " new-items "};" line-sep
-                      "Value *" var "= (Value *)&" struct ";" line-sep])]
-      (comp* empty-c-code (comp (map items (fn [v] (either v empty-c-code)))
-                                [(c-static-val var [] {} struct)])))))
+                      "Value *" var "= (Value *)&" struct ";" line-sep])
+          r (collapse-expressions (comp (map items (fn [v] (either v empty-c-code)))
+                                        [(c-static-val var [] {} struct)]))]
+      r)))
 
 (defn arrayNodeArray [m]
   (inline C Vector "
@@ -1705,9 +1793,10 @@
           _ (constrain-var "" 0 var (c/TypeConstraint {ArrayNodeType #{}}
                                                       empty-list 'HashMap nothing ""))
           _ (declare ["ArrayNode " struct " = {ArrayNodeType, -1, " new-items "};"
-                      line-sep "Value *" var "= (Value *)&" struct ";" line-sep])]
-      (comp* empty-c-code (comp (map items (fn [v] (either v empty-c-code)))
-                                [(c-static-val var [] {} struct)])))))
+                      line-sep "Value *" var "= (Value *)&" struct ";" line-sep])
+          r (collapse-expressions (comp (map items (fn [v] (either v empty-c-code)))
+                                        [(c-static-val var [] {} struct)]))]
+      r)))
 
 (extend-type HashMap
   Emitter
@@ -1812,7 +1901,7 @@
           _ (declare ["ReifiedVal " struct " = {" (str (get-type hs))
                       ", -1, 1, (Value *)&" (.c-struct m) "};\n"
                       "Value *" var " = (Value *)&" struct ";" line-sep])]
-      (comp m (c-static-val var [] {} struct))))
+      (c-static-val var [] {} struct)))
 
   (emit [hs]
     (for [expr (encode (.set-map hs))
@@ -1857,18 +1946,27 @@
                          (remove (partial instance? ast/NoCode))
                          (ev/traverse emit))
                 line (line-macro ast "// recursive-fixed")]
-            (comp* empty-c-code (comp args
-                                      [(c-code ""
-                                               [line
-                                                (map (zip-lists params (map args .c-var))
-                                                     (fn [[param arg]]
-                                                       [param " = " arg ";" line-sep]))]
-                                               {} c/top-type)])))
-          (map (emit ast)
-               (fn [expr]
-                 (emit-tail-expr ast (either (and (instance? Tagged ast)
-                                                  (maybe (.refs-map expr {})))
-                                             expr)))))))
+            (do
+              ;; TODO: was comp*
+              ;; (collapse-expressions (comp args
+              ;;                             [(c-code ""
+              ;;                                      [line
+              ;;                                       (map (zip-lists params (map args .c-var))
+              ;;                                            (fn [[param arg]]
+              ;;                                              [param " = " arg ";" line-sep]))]
+              ;;                                      {} c/top-type)]))
+              (comp* empty-c-code (comp args
+                                        [(c-code ""
+                                                 [line
+                                                  (map (zip-lists params (map args .c-var))
+                                                       (fn [[param arg]]
+                                                         [param " = " arg ";" line-sep]))]
+                                                 {} c/top-type)]))))
+          (flat-map (emit ast)
+                    (fn [expr]
+                      (emit-tail-expr ast (either (and (instance? Tagged ast)
+                                                       (maybe (.refs-map expr {})))
+                                                  expr)))))))
 
 (defn make-static-string [str-val]
   ;; TODO: when adding meta data, make sure to update this as well
@@ -1884,7 +1982,8 @@
                                                     maybe)))
                            :let [str-sym (str "str" str-idx)
                                  str-ptr (str "strPtr" str-idx)
-                                 constraint (.var string-constraint str-ptr)]
+                                 constraint (c/TypeConstraint {StringBufferType #{}}
+                                                              empty-list 'String nothing str-ptr)]
                            _ (sm/assoc-in-val [.constants .strings str-val]
                                               (c-static-str str-ptr [] {} constraint str-sym))
                            _ (declare ["struct {TYPE_SIZE type;
@@ -2055,9 +2154,10 @@
           _ (update-subs
              (typ/propogate-constraint (.c-var arg) result-sym
                                        (fn [inner]
-                                         (c/intersect maybe-constraint
-                                                      (c/InferredInner inner empty-list
-                                                                       nothing result-sym)))
+                                         (either (= inner c/top-type)
+                                                 (c/intersect maybe-constraint
+                                                              (c/InferredInner inner empty-list
+                                                                               nothing result-sym))))
                                        file-name line-number))]
       (c-init result-sym
               [line "Value *" result-sym " = (Value *)maybe((List *)0, (Value *)0, " (.c-var arg) ");" line-sep]
@@ -2101,7 +2201,7 @@
                 ;;          ;; TODO: this should actuall just set an ItemsConstraint for a single item
                 ;;          ;; not a ContentsConstraint on the entire collection
                 ;;          (update-subs (for [cont-const (typ/get-constraint cont-var)
-                ;;                             :let [new-c (c/ContentsConstraint
+                ;;                             :let [new-c (c/CollectionOf
                 ;;                                          [cont-const] empty-list nothing "")]
                 ;;                             _ (typ/append-constraint result new-c
                 ;;                                                      file-name line-number)]
@@ -2170,7 +2270,7 @@
         line-number (ast/line-number ast)]
     (for [dispatch-var (map (sm/when (first arg-vars)) .c-var)
           disp-type  (var-type-num dispatch-var)
-          ;; _ (debug 'cpi file-name line-number (.call-target ast) disp-type)
+          ;; _ (debug 'cpi file-name line-number (.call-target ast) (first arg-vars) dispatch-var disp-type)
           :when-not (= UnknownType disp-type)
           impl-info (get-proto-impl target num-args disp-type)
           _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
@@ -2244,8 +2344,9 @@
                     (set-sym binding (c-code (.c-var evalled) [] {(.c-var evalled) 1}
                                              c/top-type)))]
         (either (and (empty? (.init evalled))
-                     (maybe (ParamBinding (.c-var evalled) [evalled])))
+                     (maybe (ParamBinding (.c-var evalled) [] "" [evalled])))
                 (ParamBinding (.c-var evalled)
+                              [] ""
                               [(c-init (.c-var evalled) (.init evalled)
                                        (.refs-map evalled) file-name line-number)])))))
 
@@ -2299,14 +2400,17 @@
             :when (= (.lang ast) target-lang)
             line-info (line-macro ast "// inline")
             :let [init [line-info (.txt ast) "\n#\n"]]
-            type-num (get-type-number (.result-type ast))
-            expr (either (and (= UnknownType type-num)
-                              (maybe (wrap sm/zero-sm (c-code "" init {} c/top-type))))
-                         (for [c-var (genlocal "rslt")
-                               constraint (type-constraint type-num file-name line-number)
-                               :let [constraint (c/update-path constraint file-name line-number)]
-                               _ (constrain-var file-name line-number c-var constraint)]
-                           (c-code c-var init {} constraint)))]
+
+            expr (comp (for [type-sym (sm/when (.result-type ast))
+                             ns-path (sym-ns-path type-sym)
+                             type-map (get-type-info ns-path type-sym)
+                             c-var (genlocal "rslt")
+                             :let [constraint (c/TypeConstraint type-map
+                                                                (list [file-name line-number])
+                                                                type-sym nothing "")]
+                             _ (constrain-var file-name line-number c-var constraint)]
+                         (c-code c-var init {} constraint))
+                       (wrap sm/zero-sm (c-code "" init {} c/top-type)))]
         expr)))
 
   (emit-defined-value [ast defined-sym]
@@ -2388,16 +2492,22 @@
           ;; _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
           ;;          (.param-constraints arity-info) "\n"
           ;;          result-sym (.result-constraint arity-info))
+          ;; _ (debug 'arg-vars arg-vars)
           _ (constrain-var file-name line-number result-sym (.result-constraint arity-info))
-          _ (ev/traverse (zip-lists (map arg-vars .c-var)
-                                    (.items-constraints (.param-constraints arity-info)))
-                         (fn [[var constraint]]
-                           (constrain-var file-name line-number var constraint)))
+          check-args (ev/traverse (zip-lists (map arg-vars .c-var)
+                                             (.items-constraints (.param-constraints arity-info)))
+                                  (fn [[var constraint]]
+                                    (for [curr-const (sm/get-in-val [.fn-context .subs 0 var] c/top-type)
+                                          _ (constrain-var file-name line-number var constraint)]
+                                      (-> constraint
+                                          (c/update-var var)
+                                          (runtime-check curr-const file-name line-number)))))
           _ (update-call-site-count (.c-var arity-info))
           line (line-macro ast "// static-fixed")
           call-site-location (call-site-meta-data (.c-var arity-info) file-name line-number)]
       (c-init result-sym
-              [line "Value *" result-sym " = " (.c-var arity-info) "("
+              [check-args
+               line "Value *" result-sym " = " (.c-var arity-info) "("
                (interpose (cons (.c-var call-site-location)
                                 (seq (map arg-vars .c-var))) ", ") ");" line-sep]
               {} file-name line-number))))
@@ -2526,34 +2636,33 @@
                                      (str "\"at " file-name ": " line-number "\"")))]
       (let [args (map args .c-var)
             arg-syms (comp [(str arity-sym "->closures")] args)]
-        (comp sym-location
-              (c-init result-sym
-                      [line "Value *" result-sym ";" line-sep
-                       "if((" (.c-var target) ")->type != FunctionType) {" line-sep
-                       result-sym " = " invoke-arity-sym "("
-                       (interpose (list* (str "(List *)" (.c-var sym-location))
-                                         (.c-var target) args) ", ") ");"
-                       line-sep "} else {" line-sep
+        (c-init result-sym
+                [line "Value *" result-sym ";" line-sep
+                 "if((" (.c-var target) ")->type != FunctionType) {" line-sep
+                 result-sym " = " invoke-arity-sym "("
+                 (interpose (list* (str "(List *)" (.c-var sym-location))
+                                   (.c-var target) args) ", ") ");"
+                 line-sep "} else {" line-sep
 
-                       "FnArity *" arity-sym " = findFnArity(" (.c-var target) ", " num-args ");" line-sep
-                       "if(" arity-sym " != (FnArity *)0 && !" arity-sym "->variadic) {" line-sep
-                       "FnType" num-args " *" fn-sym " = (FnType" num-args " *)" arity-sym "->fn;"
-                       line-sep
-                       result-sym " = " fn-sym "(" (to-str (interpose arg-syms ", ")) ");" line-sep
-                       "} else if(" arity-sym " != (FnArity *)0 && " arity-sym "->variadic) {" line-sep
-                       "FnType1 *" fn-sym " = (FnType1 *)" arity-sym "->fn;" line-sep
-                       "List *" variadic-sym " = empty_list;" line-sep
-                       (map (reverse (rest arg-syms))
-                            (fn [arg-sym]
-                              (str variadic-sym " = (List *)listCons("
-                                   arg-sym ", " variadic-sym ");" line-sep)))
-                       result-sym " = " fn-sym "(" (str arity-sym) "->closures, (Value *)"
-                       variadic-sym ");" line-sep
-                       "} else {" line-sep "fprintf(stderr, \"\\n*** no arity found for '%s'.\\n\", "
-                       "((Function *)" (.c-var target) ")->name"
-                       ");" line-sep "  abort();" line-sep "}" line-sep
-                       "dec_and_free("(.c-var target) ", 1);" line-sep "}" line-sep]
-                      {} file-name line-number))))))
+                 "FnArity *" arity-sym " = findFnArity(" (.c-var target) ", " num-args ");" line-sep
+                 "if(" arity-sym " != (FnArity *)0 && !" arity-sym "->variadic) {" line-sep
+                 "FnType" num-args " *" fn-sym " = (FnType" num-args " *)" arity-sym "->fn;"
+                 line-sep
+                 result-sym " = " fn-sym "(" (to-str (interpose arg-syms ", ")) ");" line-sep
+                 "} else if(" arity-sym " != (FnArity *)0 && " arity-sym "->variadic) {" line-sep
+                 "FnType1 *" fn-sym " = (FnType1 *)" arity-sym "->fn;" line-sep
+                 "List *" variadic-sym " = empty_list;" line-sep
+                 (map (reverse (rest arg-syms))
+                      (fn [arg-sym]
+                        (str variadic-sym " = (List *)listCons("
+                             arg-sym ", " variadic-sym ");" line-sep)))
+                 result-sym " = " fn-sym "(" (str arity-sym) "->closures, (Value *)"
+                 variadic-sym ");" line-sep
+                 "} else {" line-sep "fprintf(stderr, \"\\n*** no arity found for '%s'.\\n\", "
+                 "((Function *)" (.c-var target) ")->name"
+                 ");" line-sep "  abort();" line-sep "}" line-sep
+                 "dec_and_free("(.c-var target) ", 1);" line-sep "}" line-sep]
+                {} file-name line-number)))))
 
 (defn call-invoke [target arg-vars ast]
   (let [num-args (inc (count arg-vars))
@@ -2862,7 +2971,10 @@
                       (fn [args]
                         (comp (for [target (emit (.call-target ast))
                                     call-site (emit-call-site target args ast)]
-                                (comp* target (comp args [call-site])))
+                                (do
+                                  ;; TODO: was comp*
+                                  ;; (collapse-expressions (comp [target] args [call-site]))
+                                  (comp* target (comp args [call-site]))))
                               (compilation-error "Could not compile call site at:"
                                                  file-name line-number)))))))
 
@@ -2910,9 +3022,10 @@
       (for [tail-binding (bind tail-sym)
             _ (comp (sm/when (empty? (.init list-var)))
                     (set-sym (.c-var list-var) list-var))
-            :let [tail-var (.vars tail-binding)]
+            :let [tail-var (.bound tail-binding)]
             r (comp (sm/when (and (= 0 fixed-count)
                                   (maybe (ParamBinding (.c-var list-var)
+                                                       [] tail-var
                                                        [list-var
                                                         (c-init tail-var ["Value *" tail-var " = seq(empty_list, "
                                                                           (.c-var list-var) ");" line-sep]
@@ -2933,6 +3046,7 @@
                                                         (bind target (c-code var [] {} c/top-type))))
                           dest-args (genlocal "destArgs")]
                       (ParamBinding (.c-var list-var)
+                                    fixed-bindings tail-var
                                     (comp [list-var
                                            (c-code ""
                                                    (destruct-seq (.c-var list-var)
@@ -3031,15 +3145,10 @@
       (for [locals get-syms
             bindings (ev/traverse (.bindings ast) emit)
             body-exprs (ev/traverse (.body ast) emit)
-            _ (ev/traverse (zip-lists (.bindings ast)
-                                      bindings)
-                           (fn [[params expr]]
-                             (for [binding-c (flat-map (sm/get-in-val [.fn-context .subs 0] {})
-                                                       (partial get-param-constraints (.binding params)))
-                                   _ (constrain-var file-name line-number
-                                                    (.vars expr) binding-c)]
-                               '_)))
-            :let [code (collapse-expressions (comp (flat-map bindings .destruct) body-exprs))]
+            _ (ev/traverse bindings
+                           (fn [binding]
+                             (update-subs (constrain-params binding))))
+            code (collapse-expressions (comp (flat-map bindings .destruct) body-exprs))
             result-var (either (map (= "" (.c-var code)) sm/state-maybe)
                                (genlocal "let_rslt"))
             _ (update-subs
@@ -3233,7 +3342,7 @@
                         "};\n\n"
                         "FnArity " fn-arity-sym " = {FnArityType, -1, " param-count
                         ", (List *)0, 0, " impl-fn-sym ", (Value *)0, (Value *)0};" line-sep])]
-        (comp empty-c-code var-info)))))
+        var-info))))
 
 (defn checking-fn [fn-sym params param-vars arity-fn-var constraints]
   (let [file-name (ast/file-name params)
@@ -3314,86 +3423,87 @@
 (defn emit-closure-arity [fn-sym fn-context c-fn params param-vars body-exprs]
   (assert (instance? CFnPtr c-fn))
 
-  (for [closures (sm/new-sm (fn [s]
-                              (assert (instance? GlobalContext s))
-                              (let [closures (-> s .fn-context .closed-over .closures)]
-                                (and (first closures)
-                                     (maybe [closures s])))))
-        closure-subs (sm/get-in-val [.fn-context .subs])
-        closures-destruct (destruct-closures closures)
-        :let [body (collapse-expressions (comp closures-destruct
-                                               body-exprs))
-              file-name (ast/file-name fn-sym)
-              line-number (ast/line-number fn-sym)]
+  (let [file-name (ast/file-name fn-sym)
+        line-number (ast/line-number fn-sym)]
+    (for [closures (sm/new-sm (fn [s]
+                                (assert (instance? GlobalContext s))
+                                (let [closures (-> s .fn-context .closed-over .closures)]
+                                  (and (first closures)
+                                       (maybe [closures s])))))
+          closure-subs (sm/get-in-val [.fn-context .subs])
+          closures-destruct (destruct-closures closures)
+          body (collapse-expressions (comp closures-destruct
+                                           body-exprs))
+          
+          param-constraints (flat-map (sm/get-in-val [.fn-context .subs 0] {})
+                                      (fn [sub]
+                                        (get-param-constraints params sub)))
+          result-constraint (set-result-constraint (.c-var body) file-name line-number)
+          _ (reset-fn-context fn-context)
+          closed-over (ev/traverse closures (fn [[closed-over sym]]
+                                              (map (lookup-sym sym)
+                                                   (fn [expr]
+                                                     [closed-over (.c-var expr)]))))
+          _ (update-subs (typ/traverse (for [closure-sub closure-subs
+                                             [closure outer] closed-over
+                                             :let [closure-c (get closure-sub closure)]
+                                             :when closure-c]
+                                         [outer (extract closure-c)])
+                                       (fn [[var constraint]]
+                                         (typ/append-constraint var constraint file-name line-number))))
+          arity-var (genlocal fn-sym "dynArity")
+          closure-vars (ev/traverse closures (fn [[closed-over sym]]
+                                               (for [closure (lookup-sym sym)]
+                                                 (c-code ""
+                                                         [arity-var "->closures = listCons((Value *)"
+                                                          (.c-var closure) ", (List *)" arity-var
+                                                          "->closures);" line-sep]
+                                                         {(.c-var closure) 1}
+                                                         (c/update-var list-constraint (str (.c-var closure)))))))
 
-        param-constraints (flat-map (sm/get-in-val [.fn-context .subs 0] {})
-                                    (fn [sub]
-                                      (get-param-constraints params sub)))
-        result-constraint (set-result-constraint (.c-var body) file-name line-number)
-        _ (reset-fn-context fn-context)
-        closed-over (ev/traverse closures (fn [[closed-over sym]]
-                                            (map (lookup-sym sym)
-                                                 (fn [expr]
-                                                   [closed-over (.c-var expr)]))))
-        _ (update-subs (typ/traverse (for [closure-sub closure-subs
-                                            [closure outer] closed-over
-                                            :let [closure-c (get closure-sub closure)]
-                                            :when closure-c]
-                                        [outer (extract closure-c)])
-                                      (fn [[var constraint]]
-                                        (typ/append-constraint var constraint file-name line-number))))
-        arity-var (genlocal fn-sym "dynArity")
-        closure-vars (ev/traverse closures (fn [[closed-over sym]]
-                                             (for [closure (lookup-sym sym)]
-                                               (c-code ""
-                                                       [arity-var "->closures = listCons((Value *)"
-                                                        (.c-var closure) ", (List *)" arity-var
-                                                        "->closures);" line-sep]
-                                                       {(.c-var closure) 1}
-                                                       (c/update-var list-constraint (str (.c-var closure)))))))
-
-        _ (declare ["Value *" c-fn "("
-                    (-> param-vars
-                        (map (fn [param] (str "Value *" param)))
-                        (seq)
-                        (conj "List *closures")
-                        (interpose ", "))
-                    ") {\n"
-                    "\nwhile (1) {\n"
-                    (for [[constraint var] (zip-lists (.items-constraints param-constraints)
-                                                      param-vars)]
-                      (-> constraint
-                          (c/update-var var)
-                          (runtime-check c/top-type file-name line-number)))
-                    (.init body)
-                    line-sep "};};\n"])]
-    (let [arity-init ["FnArity *" arity-var
-                      " = malloc_fnArity();" line-sep
-                      arity-var "->count = " (count param-vars)
-                      ";" line-sep
-                      arity-var "->variadic = "
-                      (either (and (.variadic params)
-                                   (maybe "1"))
-                              "0")
-                      ";" line-sep
-                      arity-var "->fn = " c-fn ";" line-sep
-                      arity-var "->closures = empty_list;" line-sep]]
+          _ (declare ["Value *" c-fn "("
+                      (-> param-vars
+                          (map (fn [param] (str "Value *" param)))
+                          (seq)
+                          (conj "List *closures")
+                          (interpose ", "))
+                      ") {\n"
+                      "\nwhile (1) {\n"
+                      (for [[constraint var] (zip-lists (.items-constraints param-constraints)
+                                                        param-vars)]
+                        (-> constraint
+                            (c/update-var var)
+                            (runtime-check c/top-type file-name line-number)))
+                      (.init body)
+                      line-sep "};};\n"])
+          :let [arity-init ["FnArity *" arity-var
+                            " = malloc_fnArity();" line-sep
+                            arity-var "->count = " (count param-vars)
+                            ";" line-sep
+                            arity-var "->variadic = "
+                            (either (and (.variadic params)
+                                         (maybe "1"))
+                                    "0")
+                            ";" line-sep
+                            arity-var "->fn = " c-fn ";" line-sep
+                            arity-var "->closures = empty_list;" line-sep]]
+          expr (collapse-expressions (comp [(c-code arity-var arity-init {} c/top-type)]
+                                           closure-vars
+                                           [(c-init arity-var [] {} file-name line-number)]))]
       (ClosureArity c-fn params (either (and (.variadic params)
                                              (maybe 'variadic))
                                         (count params))
-                    (comp* (c-code arity-var arity-init {} c/top-type)
-                           (comp closure-vars
-                                 [(c-init arity-var [] {} file-name line-number)]))
+                    expr
                     param-constraints result-constraint))))
 
 (defn emit-static-arity [fn-sym fn-context fn-var c-fn params param-vars body-exprs]
   (assert (instance? ast/params-ast params))
   (assert (instance? CFnPtr c-fn))
 
-  (let [body (collapse-expressions body-exprs)
-        file-name (ast/file-name fn-sym)
+  (let [file-name (ast/file-name fn-sym)
         line-number (ast/line-number fn-sym)]
-    (for [arity-var (global-var fn-sym "staticArity")
+    (for [body (collapse-expressions body-exprs)
+          arity-var (global-var fn-sym "staticArity")
           param-constraints (flat-map (sm/get-in-val [.fn-context .subs 0] {})
                                       (fn [sub]
                                         (get-param-constraints params sub)))
@@ -3454,7 +3564,7 @@
                                       (for [p-bindings (ev/traverse (.fixed params) bind)
                                             _ (sm/assoc-in-val [.fn-context .recurse fn-var (count params)] '_)]
                                         p-bindings))
-                   :let [param-vars (map p-bindings .vars)
+                   :let [param-vars (map p-bindings .bound)
                          param-destruct (either (or (and (some body (partial instance? ast/inline-ast))
                                                          (maybe []))
                                                     (and (.variadic params)
@@ -3889,12 +3999,12 @@
   (emit [ast]
     ;; TODO: make sure this generates good code
     (for [cond-val (emit clause)
-          alt-val (map (emit alt)
-                       (fn [expr]
-                         (let [expr (either (and (instance? Tagged alt)
-                                                 (maybe (.refs-map expr {})))
-                                            expr)]
-                           (emit-tail-expr alt expr))))
+          alt-val (flat-map (emit alt)
+                            (fn [expr]
+                              (let [expr (either (and (instance? Tagged alt)
+                                                      (maybe (.refs-map expr {})))
+                                                 expr)]
+                                (emit-tail-expr alt expr))))
           result-var (genlocal "rslt")]
       (let [cond-rslt (.c-var cond-val)
             refs-map (merge-with + (.refs-map cond-val) (.refs-map alt-val))]
@@ -4807,11 +4917,12 @@
                                      "}};\n"
                                      "Value *" fn-var " = (Value *)&" struct-var ";\n\n"])]
                      '_)))
-              protos-var (sm/get-in-val [.modules file-name .values protocols-sym])]
-          (comp expr
-                (c-code (.c-var protos-var)
-                        [(.c-var protos-var) " = " (.c-var expr) ";\n"]
-                        {} c/top-type)))
+              protos-var (sm/get-in-val [.modules file-name .values protocols-sym])
+              r (collapse-expressions [expr
+                                       (c-code (.c-var protos-var)
+                                               [(.c-var protos-var) " = " (.c-var expr) ";\n"]
+                                               {} c/top-type)])]
+          r)
         (compilation-error "Could not gather the protocols for" (str "'" file-name "'"))))
 
 (defn gather-symbols [file-name]
@@ -4821,11 +4932,12 @@
                  (assoc 'filename (either (instance? String file-name)
                                           ""))
                  (encode "symbols_"))
-        sym-var (sm/get-in-val [.modules file-name .values symbols-sym])]
-    (comp expr
-          (c-code (.c-var sym-var)
-                  [(.c-var sym-var) " = " (.c-var expr) ";\n"]
-                  {} c/top-type))))
+        sym-var (sm/get-in-val [.modules file-name .values symbols-sym])
+        r (collapse-expressions [expr
+                                 (c-code (.c-var sym-var)
+                                         [(.c-var sym-var) " = " (.c-var expr) ";\n"]
+                                         {} c/top-type)])]
+    r))
 
 (def emit-main*
   (for [main-fn (comp (lookup-static-arity-info 'main 1)
