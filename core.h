@@ -123,7 +123,8 @@ REFS_SIZE refsError;
 #define StaticLengthConstraintType 31
 #define StaticStrConstraintType 32
 #define ContentsConstraintType 33
-#define TypeCount 34
+#define HashSetType 34
+#define TypeCount 35
 
 FILE *outstream;
 List *empty_list;

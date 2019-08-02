@@ -113,6 +113,7 @@
     StaticLengthConstraintType};"))
 (def StaticStrConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StaticStrConstraintType};"))
 (def ContentsConstraintType (inline C Integer "(Value *)&(Integer){IntegerType, -1, ContentsConstraintType};"))
+(def HashSetType (inline C Integer "(Value *)&(Integer){IntegerType, -1, HashSetType};"))
 (def TypeCount (inline C Integer "(Value *)&(Integer){IntegerType, -1, TypeCount};"))
 
 (def type-names {IntegerType "Integer"
@@ -128,6 +129,7 @@
                  BitmapIndexedType "BitmapIndexNode"
                  ArrayNodeType "ArrayNode"
                  HashCollisionNodeType "HashCollisionNode"
+                 HashSetType "Set"
                  PromiseType "Promise"
                  FutureType "Future"
                  AgentType "Agent"
@@ -1400,14 +1402,16 @@
             (wrap sm/zero-sm constraint)))
 
   (emit [constraint]
-    ;; TODO: so wrong
-    (either (map (.sym constraint)
-                 (fn [sym]
-                   (for [sym-info (lookup-sym sym)
-                         _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
-                                          (.c-var sym-info) constraint)]
-                     (.refs-map sym-info (dissoc (.refs-map sym-info) (.c-var sym-info))))))
-            (wrap sm/zero-sm empty-c-code))))
+    (either (and (= (.var constraint) "")
+                 (map (.sym constraint)
+                      (fn [sym]
+                        (for [sym-info (lookup-sym sym)
+                              _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
+                                               (.c-var sym-info) constraint)]
+                          empty-c-code))))
+            (for [_ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
+                                   (.var constraint) constraint)]
+              empty-c-code))))
 
 (extend-type c/InferredInner
   Emitter
@@ -1417,6 +1421,22 @@
 
 (extend-type c/CollectionOf
   Emitter
+  (emit [constraint]
+    (either (and (= (.var constraint) "")
+                 (map (.sym constraint)
+                      (fn [sym]
+                        (for [sym-info (lookup-sym sym)
+                              inner-c (to-constraint (.constraints constraint))
+                              _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
+                                               (.c-var sym-info)
+                                               (.constraints constraint inner-c))]
+                          empty-c-code))))
+            (for [inner-c (to-constraint (.constraints constraint))
+                  _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
+                                   (.var constraint)
+                                   (.constraints constraint inner-c))]
+              empty-c-code)))
+
   (runtime-check [constraint value-info sym-location]
     ;; TODO: this needs to be implemented, or something
     []))
@@ -1559,9 +1579,10 @@
     constraint)
 
   (emit [ast]
-    (either (and (get-in ast [.assertion .var])
-                 (maybe (-> ast .assertion (.var "#result") emit)))
-            (wrap sm/zero-sm empty-c-code)))
+    (-> ast
+        .assertion
+        (c/update-var "#result")
+        emit))
 
   (runtime-check [constraint value-info sym-location]
     ;; TODO: perhaps this should be implemented
@@ -3217,10 +3238,11 @@
                (.refs-map value) (ast/file-name ast) (ast/line-number ast))]))
 
   (tail-call [ast params result-constraint]
-    (.body ast (-> ast
-                   .body
-                   (remove (partial instance? ast/NoCode))
-                   (tail-call params result-constraint))))
+    (.body ast (comp (filter (.body ast) (partial instance? c/SymbolConstraints))
+                     (-> ast
+                         .body
+                         (remove (partial instance? ast/NoCode))
+                         (tail-call params result-constraint)))))
 
   (replace-syms [ast subs]
     (let [f (fn recur [bindings new-bindings subs]
@@ -3589,6 +3611,7 @@
    (assert (instance? CFnPtr c-fn))
    (assert (min-count body 1))
 
+   ;; TODO: there are two ResultConstraint's in 'body'
    (either (and (empty? (remove body (partial instance? ast/NoCode)))
                 (maybe sm/zero-sm))
            (let [file-name (ast/file-name body)
@@ -3721,7 +3744,9 @@
                                       (.fn-var arity-ast)
                                       params
                                       (comp [disp-constraint
-                                             (c/ResultConstraint (.result-constraint default-impl))]
+                                             (-> (.result-constraint default-impl)
+                                                 (c/update-path file-name line-number)
+                                                 c/ResultConstraint)]
                                             (.body arity-ast))
                                       c-fn)
                        (compilation-error "Could not compile protocol fn:"
@@ -4201,17 +4226,18 @@
           [(ast/inline-ast
             'C nothing
             (str (call-universal-proto-fn fn-sym disp-arg args)
+                 (to-str (line-marker (ast/file-name fn-sym) (ast/line-number fn-sym) "// missing impl"))
                  "if (closures != (List *)0) {"
                  "fprintf(stderr,\"*** Could not find implementation of '" proto-sym "/" fn-sym
                  "' for type '%s' with %d arguments at %s\\n\", "
                  "((String *)type_name(empty_list, " disp-arg "))->buffer, " num-args
-                 ", ((String *)closures)->buffer);\nabort();\n"
+                 ", ((String *)closures)->buffer);abort();"
                  "} else {"
                  "fprintf(stderr,\"*** Could not find implementation of '" proto-sym "/" fn-sym
                  "' for type '%s' with %d arguments.\\n\", "
-                 "((String *)type_name(empty_list, " disp-arg "))->buffer, " num-args ");\nabort();\n"
+                 "((String *)type_name(empty_list, " disp-arg "))->buffer, " num-args ");abort();"
                  "}")
-            (ast/file-name fn-sym) (ast/line-number fn-sym))])))
+            "" 0)])))
 
 (defn emit-proto-default [protocol-sym fn-sym disp-fn-var prototype]
   (let [body (remove (.default-body prototype) (partial instance? ast/NoCode))
@@ -4661,24 +4687,19 @@
         fields (.fixed (.fields ast))
         field-count (count fields)
         return-assertions (filter (.body arity) (partial instance? c/ResultConstraint))
-        field-constraints (-> field-types
-                              c/extract-items-constraints
-                              (comp (repeat field-count c/top-type))
-                              (take field-count))
         new-body (comp return-assertions
                        [(ast/assert-type (.sym ast) type-value-parameter)]
                        (filter (.body arity) (partial instance? c/SymbolConstraints))
                        [(-> (zip-lists fields
-                                       field-constraints
                                        (range field-count))
-                            (map (fn [[field-sym field-constraint index]]
-                                   ;; TODO: add field-constraint
+                            (map (fn [[field-sym index]]
                                    (ast/binding field-sym
                                      (ast/call-ast get-field-sym
                                                    [type-value-parameter index]))))
                             vec
                             (ast/let-ast 
-                             (remove (.body arity) (partial instance? c/SymbolConstraints))))])]
+                             (comp (c/extract-items-constraints field-types)
+                                   (remove (.body arity) (partial instance? c/SymbolConstraints)))))])]
     (-> arity
         (.body new-body)
         (.fn-sym (str sym "_" fn-name)))))
@@ -4693,7 +4714,8 @@
                        [fn-name (map arities
                                      (partial destruct-impl-fields sym ast field-types))]))))))
 
-(def pre-defed-types {'TypeConstraint TypeConstraintType
+(def pre-defed-types {'HashSet HashSetType
+                      'TypeConstraint TypeConstraintType
                       'NoValues NoValuesType
                       'AllValues AllValuesType
                       'MultiConstraint MultiConstraintType
@@ -4906,20 +4928,22 @@
                                                                                   (.items-constraints)
                                                                                   (zip-lists (map (range arg-count)
                                                                                                   (partial str "arg"))))]
-                                                         (-> constraint
-                                                             (c/update-var var)
-                                                             (runtime-check c/top-type
-                                                                            (str "(closures == (List *)0 ? \"\" : "
-                                                                                 "((String *)closures)->buffer)"))))
-                                                       "\nbreak;\n"]))
+                                                         (do
+                                                           ;; TODO: don't check TypeConstraints
+                                                           (-> constraint
+                                                               (c/update-var var)
+                                                               (runtime-check c/top-type
+                                                                              (str "(closures == (List *)0 ? \"\" : "
+                                                                                   "((String *)closures)->buffer)")))))
+                                                       "\nclosures = arity->closures;\nbreak;\n"]))
                                                (let [arity-info (extract (get impls 0))]
                                                  ["default: arity = " (.c-var arity-info) ";_fn = (FnType" arg-count
                                                   " *)" (.c-fn arity-info) ";\nbreak;\n"])
                                                "}\n"
                                                ;; "FnType" arg-count " *_fn = (FnType" arg-count " *)arity->fn;\n" 
-                                               "return(_fn(arity->closures, " (-> (range arg-count)
-                                                                                  (map (partial str "arg"))
-                                                                                  (interpose ", "))
+                                               "return(_fn(closures, " (-> (range arg-count)
+                                                                           (map (partial str "arg"))
+                                                                           (interpose ", "))
                                                "));\n}\n"
                                                "FnArity " arity-var " = {FnArityType, -1, "
                                                arg-count
