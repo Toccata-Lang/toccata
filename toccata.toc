@@ -375,7 +375,6 @@
   (assert (instance? String c-var))
   (assert (instance? Sequence init))
   (assert (instance? (map-of String Integer) refs-map))
-  (assert (instance? (map-of String c/Constraints) constraints))
 
   Stringable
   (string-list [_]
@@ -1260,7 +1259,7 @@
   (encode-static [x]
     ;; TODO: for some reason, encoding the sym doesn't alwys work,
     ;; fortunately, it's not needed
-    (let [x (either (map (instance? c/SymbolConstraints x)
+    (let [x (either (map (instance? c/Constraints x)
                          (fn [x]
                            (-> x
                                (.var "")
@@ -1947,9 +1946,7 @@
                                 (instance? Tagged (.call-target ast))))
                 target (emit (.call-target ast))
                 _ (sm/get-in-val [.fn-context .recurse (.c-var target) (count (.args ast))])
-                args (-> (.args ast)
-                         (remove (partial instance? ast/NoCode))
-                         (ev/traverse emit))
+                args (ev/traverse (.args ast) emit)
                 line (line-macro ast "// recursive-fixed")]
             (do
               ;; TODO: was comp*
@@ -2168,50 +2165,62 @@
               [line "Value *" result-sym " = (Value *)maybe((List *)0, (Value *)0, " (.c-var arg) ");" line-sep]
               {} file-name line-number))))
 
+(def conj-like #{'conj 'store 'mutate-vect-conj})
+
 (defn add-contents-constraint [ast result args]
   (let [file-name (ast/file-name ast)
         line-number (ast/line-number ast)
         target (.call-target ast)]
-    (either (or (map (and (= target 'cons)
-                          (= 2 (count args))
-                          (maybe (take args 2)))
-                     (fn [[v coll]]
+    (either (or (for [_ (= target 'cons)
+                      v (first args)
+                      coll (second args)]
+                  (let [v-var (.c-var v)
+                        coll-var (.c-var coll)]
+                    (update-subs (for [v-const (typ/get-constraint v-var)
+                                       coll-const (typ/get-constraint coll-var)
+                                       :let [coll-type (c/extract-coll-type coll-const)]
+                                       _ (typ/append-constraint v-var (either (get coll-type .constraints)
+                                                                              c/top-type)
+                                                                file-name line-number)
+                                       _ (typ/append-constraint result
+                                                                (c/ItemsConstraint [v-const] coll-const
+                                                                                   empty-list nothing result)
+                                                                file-name line-number)
+                                       _ (typ/append-constraint result
+                                                                (c/extract-coll-type coll-const)
+                                                                file-name line-number)]
+                                   '_))))
+                (map (or (for [_ (conj-like target)
+                               coll (first args)
+                               v (second args)]
+                           [coll v])
+                         (for [_ (= target 'assoc)
+                               coll (first args)
+                               v (nth args 2)]
+                           [coll v]))
+                     (fn [[coll v]]
                        (let [v-var (.c-var v)
                              coll-var (.c-var coll)]
                          (update-subs (for [v-const (typ/get-constraint v-var)
                                             coll-const (typ/get-constraint coll-var)
-                                            :let [new-c (c/ItemsConstraint
-                                                         [v-const]
-                                                         coll-const
-                                                         empty-list nothing result)]
-                                            _ (typ/append-constraint result new-c
-                                                                     file-name line-number)]
-                                        '_)))))
-                ;; TODO: finish this, add other type 'conj' impls
-                ;; (map (or (and (or (= target 'conj)
-                ;;                   (= target 'mutate-vect-conj)
-                ;;                   (= target 'store))
-                ;;               (= 2 (count args))
-                ;;               (maybe args))
-                ;;          (and (= target 'assoc)
-                ;;               (= 3 (count args))
-                ;;               (let [[collection k v] (take args 3)]
-                ;;                 ;; TODO: still to be implemented
-                ;;                 ;; (print-err 'assoc-key k)
-                ;;                 nothing)))
-                ;;      (fn [[_ contents]]
-                ;;        (assert (instance? C-expr contents))
-
-                ;;        (let [cont-var (.c-var contents)]
-                ;;          ;; TODO: this should actuall just set an ItemsConstraint for a single item
-                ;;          ;; not a ContentsConstraint on the entire collection
-                ;;          (update-subs (for [cont-const (typ/get-constraint cont-var)
-                ;;                             :let [new-c (c/CollectionOf
-                ;;                                          [cont-const] empty-list nothing "")]
-                ;;                             _ (typ/append-constraint result new-c
-                ;;                                                      file-name line-number)]
-                ;;                         '_)))))
-                )
+                                            :let [coll-type (c/extract-coll-type coll-const)
+                                                  _ (either (c/compose-constraints file-name line-number
+                                                                                   (c/update-path
+                                                                                    (c/ItemsConstraint [v-const]
+                                                                                                       c/top-type
+                                                                                                       empty-list
+                                                                                                       nothing result)
+                                                                                    file-name line-number)
+                                                                                   (c/update-path coll-type
+                                                                                                  file-name line-number))
+                                                            (abort))]
+                                            _ (typ/append-constraint
+                                               v-var
+                                               (either (map (instance? c/CollectionOf coll-type) .constraints)
+                                                       c/top-type)
+                                               file-name line-number)
+                                            _ (typ/append-constraint result coll-type file-name line-number)]
+                                        '_))))))
             (wrap sm/zero-sm '_))))
 
 (defn inner-constraint-for-reduce [result-var ast args]
@@ -2734,16 +2743,6 @@
                ");" line-sep]
               {} file-name line-number))))
 
-(defn update-last [asts f]
-  (either (empty? asts)
-          (let [[tail & init] (-> asts
-                                  (remove (partial instance? ast/NoCode))
-                                  reverse)]
-            (-> (f tail)
-                (cons init)
-                reverse
-                vec))))
-
 (defn make-bindings [params args]
   (-> (zip-lists (seq params) (seq args))
       (map (fn [[param val]]
@@ -3010,9 +3009,7 @@
                   call-site (emit new-ast)]
               (c-init (.c-var call-site) (.init call-site)
                       (.refs-map call-site) (ast/file-name ast) (ast/line-number ast)))
-            (flat-map (-> (.args ast)
-                          (remove (partial instance? ast/NoCode))
-                          (ev/traverse emit))
+            (flat-map (ev/traverse (.args ast) emit)
                       (fn [args]
                         (comp (for [target (emit (.call-target ast))
                                     call-site (emit-call-site target args ast)]
@@ -3238,7 +3235,7 @@
                (.refs-map value) (ast/file-name ast) (ast/line-number ast))]))
 
   (tail-call [ast params result-constraint]
-    (.body ast (comp (filter (.body ast) (partial instance? c/SymbolConstraints))
+    (.body ast (comp (filter (.body ast) (partial instance? c/Constraints))
                      (-> ast
                          .body
                          (remove (partial instance? ast/NoCode))
@@ -3259,13 +3256,22 @@
         (ast/let-ast (vec new-bindings) (vec new-body)))))
 
   (inline-expr [ast arg-asts]
-    (let [unique-syms (map arg-asts (fn [_] (gensym "#arg")))]
+    (let [unique-syms (map arg-asts (fn [_] (gensym "#arg")))
+          new-body (either (empty? (.body ast))
+                           (let [[tail & init] (-> (.body ast)
+                                                   (remove (partial instance? ast/NoCode))
+                                                   reverse)]
+                             (-> (ast/call-ast tail unique-syms)
+                                 (cons init)
+                                 reverse
+                                 vec)))
+          new-body (comp (filter (.body ast) (partial instance? c/Constraints))
+                         new-body)]
       (wrap sm/zero-sm
             (-> ast
                 (.bindings (comp (make-bindings unique-syms arg-asts)
                                  (.bindings ast)))
-                (.body (update-last (.body ast) (fn [ast]
-                                                  (ast/call-ast ast unique-syms))))))))
+                (.body new-body)))))
 
   (replace-bound-vars [ast subs]
     (let [f (fn recur [bindings new-bindings subs]
@@ -4221,8 +4227,7 @@
                                (fn [[arg idx]]
                                  (either (check-C-var (str arg "_" idx))
                                          (str "arg" idx))))]
-    (comp (filter (.default-body prototype) (partial instance? c/SymbolConstraints))
-          (filter (.default-body prototype) (partial instance? c/ResultConstraint))
+    (comp (filter (.default-body prototype) (partial instance? c/Constraints))
           [(ast/inline-ast
             'C nothing
             (str (call-universal-proto-fn fn-sym disp-arg args)
@@ -4240,8 +4245,8 @@
             "" 0)])))
 
 (defn emit-proto-default [protocol-sym fn-sym disp-fn-var prototype]
-  (let [body (remove (.default-body prototype) (partial instance? ast/NoCode))
-        default-body (missing-impl-body protocol-sym fn-sym prototype)
+  (let [default-body (missing-impl-body protocol-sym fn-sym prototype)
+        body (remove (.default-body prototype) (partial instance? ast/NoCode))
         arity-ast (ast/fn-arity (.params prototype) ""
                                 (either (and (empty? body)
                                              (maybe default-body))
@@ -4253,7 +4258,7 @@
           default-arity (emit-fn-arity (rdr/tag (str "Default_" fn-sym)) disp-fn-var
                                       (.params prototype)
                                       (-> (.default-body prototype)
-                                          (filter (partial instance? ast/NoCode))
+                                          (filter (partial instance? c/Constraints))
                                           (comp default-body))
                                       arity-impl-var)
           after-decls (sm/get-in-val [.fn-context .decl])
@@ -4264,7 +4269,7 @@
                                (emit-fn-arity (rdr/tag (str "Default_" fn-sym)) disp-fn-var
                                               (.params prototype)
                                               (-> (.default-body prototype)
-                                                  (filter (partial instance? ast/NoCode))
+                                                  (filter (partial instance? c/Constraints))
                                                   (comp [(InsertCode fn-sym prototype)] body))
                                               arity-impl-var))
 
@@ -4686,11 +4691,9 @@
   (let [[type-value-parameter] (.fixed (.params arity))
         fields (.fixed (.fields ast))
         field-count (count fields)
-        return-assertions (filter (.body arity) (partial instance? c/ResultConstraint))
-        new-body (comp return-assertions
-                       [(ast/assert-type (.sym ast) type-value-parameter)]
-                       (filter (.body arity) (partial instance? c/SymbolConstraints))
-                       [(-> (zip-lists fields
+        new-body (comp (filter (.body arity) (partial instance? c/Constraints))
+                       [(ast/assert-type (.sym ast) type-value-parameter)
+                        (-> (zip-lists fields
                                        (range field-count))
                             (map (fn [[field-sym index]]
                                    (ast/binding field-sym
@@ -4699,7 +4702,7 @@
                             vec
                             (ast/let-ast 
                              (comp (c/extract-items-constraints field-types)
-                                   (remove (.body arity) (partial instance? c/SymbolConstraints)))))])]
+                                   (remove (.body arity) (partial instance? c/Constraints)))))])]
     (-> arity
         (.body new-body)
         (.fn-sym (str sym "_" fn-name)))))
