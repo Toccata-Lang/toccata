@@ -1289,12 +1289,12 @@
   (runtime-check [constraint value-info sym-location]
     (either (and (c/satisfied-by constraint value-info)
                  (maybe ""))
-            (either (and (empty? (.items-constraints constraint))
+            (either (and (empty? (c/extract-items-constraints constraint))
                          (maybe []))
                     [(-> (c/TypeConstraint {ListType #{} VectorType #{}} (.path constraint) 'Sequence
                                            (.sym constraint) (.var constraint))
                          (runtime-check value-info sym-location))
-                     (let [min-count (str (count (.items-constraints constraint)))]
+                     (let [min-count (str (count (c/extract-items-constraints constraint)))]
                        ["if (countSeq(incRef(" (.var constraint) ", 1)) < " min-count ") {"
                         ;; "\n#ifndef EMBEDDED\n"
                         "fprintf(stderr, \"Insufficient values for '"
@@ -1309,10 +1309,10 @@
                         "abort();" line-sep "}"])
                      "if (1) {" line-sep
                      "incRef(" (.var constraint) ", 1);" line-sep
-                     (let [items (map (range (inc (count (.items-constraints constraint))))
+                     (let [items (map (range (inc (count (c/extract-items-constraints constraint))))
                                       (partial str (.var constraint) "_"))]
                        [(destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
-                        (for [[constraints item] (zip-lists (.items-constraints constraint) items)]
+                        (for [[constraints item] (zip-lists (c/extract-items-constraints constraint) items)]
                           (let [constraints (either (map (.sym constraint) (fn [sym]
                                                                              (c/update-sym constraints sym)))
                                                     constraints)]
@@ -2231,12 +2231,12 @@
              line-number (ast/line-number ast)]
          (for [arity-info (or (get-in f [.arities 2])
                               (get-in f [.arities 'variadic]))]
-           (let [inner-const (either (map (-> arity-info .param-constraints .items-constraints second)
+           (let [inner-const (either (map (-> arity-info .param-constraints c/extract-items-constraints second)
                                           (fn [c]
                                             (c/InferredInner c (list [file-name line-number])
                                                              nothing (.c-var v))))
                                      c/top-type)
-                 init-const (either (-> arity-info .param-constraints .items-constraints first)
+                 init-const (either (-> arity-info .param-constraints c/extract-items-constraints first)
                                     c/top-type)
                  result-c (.result-constraint arity-info)]
              ;; TODO: this is where we can remove need for .param-constraints and .result-constraint
@@ -2259,7 +2259,7 @@
              (let [[v f] (take args 2)]
                (for [arity-info (or (get-in f [.arities 1])
                                     (get-in f [.arities 'variadic]))]
-                 (let [inner-const (either (map (-> arity-info .param-constraints .items-constraints first)
+                 (let [inner-const (either (map (-> arity-info .param-constraints c/extract-items-constraints first)
                                                 (fn [c]
                                                   (c/InferredInner c (list [file-name line-number])
                                                                    nothing (.c-var v))))
@@ -2311,7 +2311,7 @@
                                      file-name line-number)
           _ (constrain-var file-name line-number result-sym (.result-constraint impl-info))
           _ (ev/traverse (zip-lists (map arg-vars .c-var)
-                                    (.items-constraints (.param-constraints impl-info)))
+                                    (c/extract-items-constraints (.param-constraints impl-info)))
                          (fn [[var constraint]]
                            (constrain-var file-name line-number var constraint)))
           line (line-macro target (str "// call proto fn " target))
@@ -2568,11 +2568,9 @@
           ;; _ (debug 'csv file-name line-number (.call-target ast) (.c-var target) "\n"
           ;;          (.param-constraints arity-info) "\n"
           ;;          result-sym (.result-constraint arity-info))
-          ;; _ (debug 'arg-vars arg-vars)
           _ (constrain-var file-name line-number result-sym (.result-constraint arity-info))
           check-args (constrain-args arg-vars (.param-constraints arity-info)
                                      file-name line-number)
-
           _ (constrain-var file-name line-number (.c-var args-list) (.param-constraints arity-info))
           line (line-macro ast "// static-variadic")]
       (c-init result-sym
@@ -2730,7 +2728,7 @@
 
           _ (constrain-var file-name line-number result-sym (.result-constraint invoke-info))
           _ (ev/traverse (zip-lists (map arg-vars .c-var)
-                                    (.items-constraints (.param-constraints invoke-info)))
+                                    (c/extract-items-constraints (.param-constraints invoke-info)))
                          (fn [[var constraint]]
                            (constrain-var file-name line-number var constraint)))
 
@@ -3413,7 +3411,7 @@
 (defn checking-fn [fn-sym params param-vars arity-fn-var constraints]
   (let [file-name (ast/file-name params)
         line-number (ast/line-number params)
-        constraints-list (.items-constraints constraints)]
+        constraints-list (c/extract-items-constraints constraints)]
     (for [dest-args (genlocal "destArgs")
           checking-fn-var (global-var fn-sym "paramChecker")
           line (line-macro params "// paramChecker")]
@@ -3529,6 +3527,16 @@
                                                          (c/update-var list-constraint (str (.c-var closure)))))))
 
           line (line-macro fn-sym "// paramChecker")
+          :let [check-params (either (for [_ (.variadic params)
+                                           var-args (first param-vars)]
+                                       (-> param-constraints
+                                           (c/update-var var-args)
+                                           (runtime-check c/top-type file-name line-number)))
+                                     (for [[constraint var] (zip-lists (c/extract-items-constraints param-constraints)
+                                                                       param-vars)]
+                                       (-> constraint
+                                           (c/update-var var)
+                                           (runtime-check c/top-type file-name line-number))))] 
           _ (declare ["Value *" c-fn "("
                       (-> param-vars
                           (map (fn [param] (str "Value *" param)))
@@ -3538,11 +3546,7 @@
                       ") {\n"
                       "\nwhile (1) {\n"
                       line
-                      (for [[constraint var] (zip-lists (.items-constraints param-constraints)
-                                                        param-vars)]
-                        (-> constraint
-                            (c/update-var var)
-                            (runtime-check c/top-type file-name line-number)))
+                      check-params
                       (.init body)
                       line-sep "};};\n"])
           :let [arity-init ["FnArity *" arity-var
@@ -4785,7 +4789,7 @@
                                            empty-list (maybe (symbol (str sym "-field-constraints"))) "")
                         impls (merge-with comp
                                           (create-getters sym new-type-constraint fields
-                                                          (.items-constraints field-constraints))
+                                                          (c/extract-items-constraints field-constraints))
                                           (destructure-fields sym ast field-constraints))]
                   type-constructor (emit-constructor sym type-num new-type-constraint type-val-sym
                                                      fields field-assertions)
@@ -4928,7 +4932,7 @@
                                                        (.c-var arity-info) ";\n_fn = (FnType"
                                                        arg-count " *)" (.c-fn arity-info) ";\n"
                                                        (for [[constraint var] (-> (.param-constraints arity-info)
-                                                                                  (.items-constraints)
+                                                                                  c/extract-items-constraints
                                                                                   (zip-lists (map (range arg-count)
                                                                                                   (partial str "arg"))))]
                                                          (do
