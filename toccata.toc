@@ -1964,11 +1964,18 @@
                                                        (fn [[param arg]]
                                                          [param " = " arg ";" line-sep]))]
                                                  {} c/top-type)]))))
-          (flat-map (emit ast)
-                    (fn [expr]
-                      (emit-tail-expr ast (either (and (instance? Tagged ast)
-                                                       (maybe (.refs-map expr {})))
-                                                  expr)))))))
+          (for [expr (emit ast)
+                curr-const (sm/get-in-val [.fn-context .subs 0 (.c-var expr)] c/top-type)
+                result-const (sm/get-in-val [.fn-context .subs 0 "#result"] c/top-type)
+                :let [expr (either (and (instance? Tagged ast)
+                                       (maybe (.refs-map expr {})))
+                                  expr)
+                      ;; TODO: this check kills TCO
+                      check-result (runtime-check (c/update-var result-const (.c-var expr))
+                                                  curr-const
+                                                  (ast/file-name ast) (ast/line-number ast))]
+                final-expr (emit-tail-expr ast (.init expr [(.init expr) check-result]))]
+            final-expr))))
 
 (defn make-static-string [str-val]
   ;; TODO: when adding meta data, make sure to update this as well
@@ -2282,6 +2289,7 @@
                (fn [[var constraint]]
                  (let [var (.c-var var)]
                    (for [curr-const (sm/get-in-val [.fn-context .subs 0 var] c/top-type)
+                         ;; TODO: don't do runtime checks for param args
                          _ (constrain-var file-name line-number var constraint)]
                      (either (and (instance? c-param var)
                                   (maybe (sm/state-maybe "")))
@@ -3619,20 +3627,20 @@
 
   ([fn-sym fn-var params body c-fn]
    (assert (instance? CFnPtr c-fn))
-   (assert (min-count body 1))
 
    ;; TODO: there are two ResultConstraint's in 'body'
    (either (and (empty? (remove body (partial instance? ast/NoCode)))
                 (maybe sm/zero-sm))
            (let [file-name (ast/file-name body)
                  line-number (ast/line-number body)
-                 param-asserts (filter body (partial instance? c/SymbolConstraints))
+                 constraints (filter body (partial instance? c/Constraints))
+                 body (remove body (partial instance? ast/NoCode))
                  fn-sym (rdr/tag fn-sym file-name line-number)
                  fn-constraint (-> fn-constraint
                                    (c/update-var (str fn-var))
                                    (c/update-sym fn-sym))]
              (for [fn-context (reset-fn-context)
-                   ;; _ (debug (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
+                   ;; _ (debug "------------\n" (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
                    p-bindings (either (and (.variadic params)
                                            (maybe (map (bind-param params) vector)))
                                       (for [p-bindings (ev/traverse (.fixed params) bind-param)
@@ -3657,7 +3665,7 @@
                    syms get-syms
                    _ (either (map (get syms fn-sym) sm/state-maybe)
                              (set-sym fn-sym (c-code fn-var [] {} fn-constraint)))
-                   body-exprs (-> (comp param-destruct body)
+                   body-exprs (-> (comp param-destruct constraints body)
                                   (tail-call param-vars c/top-type)
                                   ;; ((fn [b] (print-err 'body "\n" (interpose b "\n")) b))
                                   (ev/traverse emit))
@@ -3856,6 +3864,7 @@
       (for [syms get-syms
             expr (emit clause)
             curr-const (sm/get-in-val [.fn-context .subs 0 (.c-var expr)] c/top-type)
+            ;; TODO: it appears even if curr-const is MaybeType, the runtime check is emitted anyway
             _ (constrain-var file-name line-number (.c-var expr) maybe-constraint)
             _ (set-syms syms)]
         (either (and (= (.c-var expr) "")
@@ -3865,6 +3874,11 @@
                                  (c/update-path file-name line-number)
                                  (c/update-var (.c-var expr))
                                  (runtime-check curr-const file-name line-number))]))))))
+
+(extend-type TailCall
+  EmitCond
+  (emit-cond-clause [clause]
+    (emit clause)))
 
 (extend-type Tagged
   EmitCond
@@ -3953,12 +3967,12 @@
 
   Emitter
   (emit [ast]
-    ;; TODO: make sure this gernates good code
     (for [result-var (genlocal "andRslt")
+          _ (constrain-var (ast/file-name ast) (ast/line-number ast) "#result" maybe-constraint)
           expr (emit-cond-expr "if (isNothing(" result-var
-                               (remove (.clauses ast) (partial instance? ast/NoCode))
+                               (.clauses ast)
                                (str "return(nothing);" line-sep))]
-      (.init expr [(.init expr) "return(" result-var ");" line-sep]))))
+      expr)))
 
 (extend-type ast/and-ast
   Emitter
@@ -3971,7 +3985,11 @@
                 expr))))
 
   (tail-call [ast params result-constraint]
-    (TailAnd (remove (.clauses ast) (partial instance? ast/NoCode))))
+    (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
+      (either (map (last clauses) (fn [last-c]
+                                    (TailAnd (conj (butlast clauses)
+                                                   (tail-call last-c params result-constraint)))))
+              ast)))
 
   (replace-syms [ast subs]
     (for [new-clauses (ev/traverse (.clauses ast)
@@ -4000,12 +4018,12 @@
 
   Emitter
   (emit [ast]
-    ;; TODO: make sure this generates good code
     (for [result-var (genlocal "orRslt")
+          _ (constrain-var (ast/file-name ast) (ast/line-number ast) "#result" maybe-constraint)
           expr (emit-cond-expr "if (!isNothing(" result-var
                                (remove (.clauses ast) (partial instance? ast/NoCode))
                                (str "return(" result-var ");" line-sep))]
-      (.init expr [(.init expr) "return(" result-var ");" line-sep]))))
+      expr)))
 
 (extend-type ast/or-ast
   Emitter
@@ -4019,7 +4037,11 @@
                                           line-sep))))))
 
   (tail-call [ast params result-constraint]
-    (TailOr (remove (.clauses ast) (partial instance? ast/NoCode))))
+    (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
+      (either (map (last clauses) (fn [last-c]
+                                    (TailOr (conj (butlast clauses)
+                                                  (tail-call last-c params result-constraint)))))
+              ast)))
 
   (replace-syms [ast subs]
     (for [new-clauses (ev/traverse (.clauses ast)
@@ -4045,15 +4067,9 @@
 
   Emitter
   (emit [ast]
-    ;; TODO: make sure this generates good code
-    (for [cond-val (emit clause)
-          alt-val (flat-map (emit alt)
-                            (fn [expr]
-                              (let [expr (either (and (instance? Tagged alt)
-                                                      (maybe (.refs-map expr {})))
-                                                 expr)]
-                                (emit-tail-expr alt expr))))
-          result-var (genlocal "rslt")]
+    (for [result-var (genlocal "rslt")
+          cond-val (emit-cond-clause clause)
+          alt-val (emit alt)]
       (let [cond-rslt (.c-var cond-val)
             refs-map (merge-with + (.refs-map cond-val) (.refs-map alt-val))]
         (c-code ""
@@ -4102,7 +4118,9 @@
                 refs-map (ast/file-name ast) (ast/line-number ast)))))
 
   (tail-call [ast params result-constraint]
-    (TailEither (.clause ast) (.alt ast) result-constraint))
+    (TailEither (.clause ast)
+                (tail-call (.alt ast) params result-constraint)
+                result-constraint))
 
   (replace-syms [ast subs]
     (for [new-ast (replace-syms (.clause ast) subs)
