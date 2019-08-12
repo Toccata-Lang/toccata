@@ -1693,12 +1693,14 @@
 
   Emitter
   (emit [_]
-    ;; TODO: put the code to init the value in the run time init
-    (for [expr (map (encode m)
-                    (fn [expr]
-                      (.init expr (comp (.init expr) ["return(" (.c-var expr) ");" line-sep]))))
-          _ (constrain-var "" 0 (.c-var expr) hashmap-constraint)]
-      expr)))
+    (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
+          fn-context (reset-fn-context (.subs init-fn-context [{}]))
+          value (encode m)
+          init-fn-context (reset-fn-context fn-context)
+          _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
+          _ (constrain-var "" 0 (.c-var value) hashmap-constraint)]
+      (c-code (.c-var value) ["return(" (.c-var value) ");" line-sep]
+              {} hashmap-constraint))))
 
 (defn bmiArray [m]
   (inline C Vector "
@@ -1799,9 +1801,15 @@
 (extend-type HashMap
   Emitter
   (emit [m]
-    ;; TODO: put the code to init the value in the run time init
-    (comp (encode-static m)
-          (encode m)))
+    (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
+          fn-context (reset-fn-context (.subs init-fn-context [{}]))
+          value (comp (encode-static m)
+                      (encode m))
+          init-fn-context (reset-fn-context fn-context)
+          _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
+          _ (constrain-var "" 0 (.c-var value) hashmap-constraint)]
+      (c-code (.c-var value) ["return(" (.c-var value) ");" line-sep]
+              {} hashmap-constraint)))
 
   (tail-call [m params]
     (TailHashMap m))
@@ -2078,7 +2086,6 @@
 
   (emit-defined-value [num defined-sym]
     (for [value (emit num)
-          ;; TODO: make sure stored value has it's constraints set
           _ (new-module-def defined-sym (-> value
                                             (.init [])
                                             (.refs-map {})))]
@@ -2403,7 +2410,6 @@
 
   (emit-defined-value [sym defined-sym]
     (for [value (emit (rdr/tag sym))
-          ;; TODO: make sure stored value has it's constraints set
           _ (new-module-def defined-sym value)]
       [value]))
 
@@ -2468,7 +2474,6 @@
           constraint (type-constraint type-num (ast/file-name ast) (ast/line-number ast))
           c-var (comp (map (lookup-declaration defined-sym) .c-var)
                       (global-var defined-sym "var"))
-          ;; TODO: make sure stored value has it's constraints set
           _ (new-module-def defined-sym (c-code (str c-var) [] {} constraint))
           line-info (line-macro ast "// inline")
           _ (declare [line-info "Value *" c-var " = " (.txt ast) ";" line-sep "\n#\n"])]
@@ -2973,19 +2978,25 @@
                defined-sym)]
     exprs))
 
+(defn init-at-runtime [ast]
+  (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
+        fn-context (reset-fn-context (.subs init-fn-context [{}]))
+        value (emit ast)
+        constraint (sm/get-in-val [.fn-context .subs 0 (.c-var value)] c/top-type)
+        init-fn-context (reset-fn-context fn-context)
+        _ (constrain-var (ast/file-name ast) (ast/line-number ast) (.c-var value) constraint)
+        _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)]
+    value))
+
 (extend-type ast/call-ast
   Emitter
   (emit-defined-value [fn-val defined-sym]
     (comp (define-sum-type fn-val defined-sym)
           (define-enum-type fn-val defined-sym)
-          (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
-                fn-context (reset-fn-context (.subs init-fn-context [{}]))
-                value (emit fn-val)
+          (for [value (init-at-runtime fn-val)
+                constraint (sm/get-in-val [.fn-context .subs 0 (.c-var value)] c/top-type)
                 var (comp (map (lookup-declaration defined-sym) .c-var)
                           (global-var defined-sym "var"))
-                constraint (sm/get-in-val [.fn-context .subs 0 (.c-var value)] c/top-type)
-                init-fn-context (reset-fn-context fn-context)
-                _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
                 _ (new-module-def defined-sym (c-code var [] {} (c/update-var constraint var)))
                 _ (declare ["Value *" var ";\n"])]
             [(c-init var [(.init value)
@@ -3214,14 +3225,9 @@
                 (.refs-map code) file-name line-number))))
 
   (emit-defined-value [ast defined-sym]
-    (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
-          fn-context (reset-fn-context (.subs init-fn-context [{}]))
-          value (emit ast)
+    (for [value (init-at-runtime ast)
           var (comp (map (lookup-declaration defined-sym) .c-var)
                     (global-var defined-sym "var"))
-          init-fn-context (reset-fn-context fn-context)
-          _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
-          ;; TODO: make sure stored value has it's constraints set
           val-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var value)] c/top-type)
           _ (new-module-def defined-sym (c-code var [] {} val-constraint))
           _ (declare ["Value *" var ";\n"])]
@@ -3794,23 +3800,17 @@
         reified-result)))
 
   (emit-defined-value [ast defined-sym]
-    (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
-          fn-context (reset-fn-context (.subs init-fn-context [{}]))
-          value (emit ast)
-          val-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var value)] c/top-type)
-          init-fn-context (reset-fn-context fn-context)
-          _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
+    (for [value (init-at-runtime ast)
           value (comp (map (lookup-declaration defined-sym)
                            (fn [c-info]
                              (c-static-reified (.c-var value) [(.init value) "\n" (.c-var c-info) " = "
                                                                (.c-var value) ";" line-sep]
                                                (.refs-map value)
-                                               val-constraint
+                                               (.constraints value)
                                                (.c-struct value))))
                       (wrap sm/zero-sm value))
-          ;; TODO: make sure stored value has it's constraints set
           _ (new-module-def defined-sym (c-static-reified (.c-var value) [] {}
-                                                          val-constraint
+                                                          (.constraints value)
                                                           (.c-struct value)))]
       [value]))
 
@@ -4314,7 +4314,6 @@
                     "\n// --------- " fn-sym " -------------\n"
                     "Value *" fn-var ";\n"
                     arities-info])
-        ;; TODO: make sure stored value has it's constraints set
         _ (new-module-def fn-sym (c-protocol-fn fn-var [] {} fn-constraint "" {}))
         default-fns (ev/traverse arities (partial emit-proto-default proto-sym fn-sym fn-var))
         :let [default-arities (reduce default-fns {}
@@ -4417,7 +4416,6 @@
 
   (emit-defined-value [fn-val defined-sym]
     (for [value (emit fn-val)
-          ;; TODO: make sure stored value has it's constraints set
           _ (new-module-def defined-sym (-> value
                                             (.init [])
                                             (.refs-map {})))]
