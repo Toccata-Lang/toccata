@@ -2328,8 +2328,10 @@ Value *listMap(Value *arg0, Value *f) {
     }
     for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
       Value *y;
-      if (l->refs != 1)
+      if (mutate && l->refs > 1) {
+	dec_and_free((Value *)l, 1);
 	mutate = 0;
+      }
 
       if (!mutate)
 	incRef(x, 1);
