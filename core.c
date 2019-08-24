@@ -1403,7 +1403,7 @@ void waitForWorkers() {
   int done = 0;
   do {
     pthread_mutex_lock (&lingeringAccess);
-    List *lingering = (List *)vals(empty_list, lingeringThreads);
+    List *lingering = (List *)vals((List *)0, lingeringThreads);
     lingeringThreads = (Value *)&emptyBMI;
     pthread_mutex_unlock (&lingeringAccess);
 
@@ -1559,7 +1559,7 @@ void *futuresThread(void *input) {
   while(workerIndex >= 0 && future != (Future *)0) {
     Value *f = future->action;
     if(f->type != FunctionType) {
-      result = invoke0Args(empty_list, incRef(f, 1));
+      result = invoke0Args((List *)0, incRef(f, 1));
     } else {
       FnArity *arity = findFnArity(f, 0);
       if(arity != (FnArity *)0 && !arity->variadic) {
@@ -1587,7 +1587,7 @@ void *futuresThread(void *input) {
   Value *threadHandle = (Value *)integerValue((int64_t)pthread_self());
 
   pthread_mutex_lock (&lingeringAccess);
-  lingeringThreads = dissoc(empty_list, lingeringThreads, incRef(threadHandle, 1),
+  lingeringThreads = dissoc((List *)0, lingeringThreads, incRef(threadHandle, 1),
   			    baseSha1(threadHandle), (Value *)integerValue(0));
   pthread_mutex_unlock (&lingeringAccess);
 
@@ -2004,7 +2004,7 @@ Value *updateField(Value *rval, Value *field, int64_t idx) {
   ReifiedVal *template = (ReifiedVal *)rval;
   if (idx >= template->implCount) {
     fprintf(stderr, "Field index for type '%s' out of bounds: %" PRId64 ". Max: %" PRId64 "\n",
-	    extractStr(type_name(empty_list, rval)), idx, template->implCount);
+	    extractStr(type_name((List *)0, rval)), idx, template->implCount);
     abort();
   }
   if (rval->refs == 1) {
@@ -2337,7 +2337,7 @@ Value *listMap(Value *arg0, Value *f) {
 	incRef(x, 1);
       if(f->type != FunctionType) {
         incRef(f, 1);
-        y = invoke1Arg(empty_list, f, x);
+        y = invoke1Arg((List *)0, f, x);
       } else if(arity2->variadic) {
         FnType1 *fn4 = (FnType1 *)arity2->fn;
         List *varArgs3 = (List *)listCons(x, empty_list);
@@ -2933,7 +2933,7 @@ Value *maybeMap(Value *arg0, Value *arg1) {
   } else if((arg1)->type != FunctionType) {
     incRef(arg1, 1);
     incRef(mValue->value, 1);
-    rslt6 = invoke1Arg(empty_list, arg1, mValue->value);
+    rslt6 = invoke1Arg((List *)0, arg1, mValue->value);
   } else {
     FnArity *arity3 = findFnArity(arg1, 1);
     if(arity3 != (FnArity *)0 && !arity3->variadic) {
@@ -3233,7 +3233,7 @@ Value *strSeq(Value *arg0) {
 Value *dynamicCall2Arg(Value *f, Value *arg0, Value *arg1) {
   Value *rslt;
   if(f->type != FunctionType) {
-    rslt = invoke2Args(empty_list, f, arg0, arg1);
+    rslt = invoke2Args((List *)0, f, arg0, arg1);
   } else {
     FnArity *arity = findFnArity(f, 2);
     if(arity != (FnArity *)0 && !arity->variadic) {
@@ -3446,7 +3446,7 @@ Value *listFilter(Value *arg0, Value *arg1) {
       incRef(x, 1);
       if(arg1->type != FunctionType) {
 	incRef(arg1, 1);
-	y = invoke1Arg(empty_list, arg1, x);
+	y = invoke1Arg((List *)0, arg1, x);
       } else if(arity2->variadic) {
 	FnType1 *fn4 = (FnType1 *)arity2->fn;
 	List *varArgs3 = empty_list;
@@ -4338,7 +4338,7 @@ Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
 Value *dynamicCall1Arg(Value *f, Value *arg) {
   Value *rslt;
   if(f->type != FunctionType) {
-    rslt = invoke1Arg(empty_list, f, arg);
+    rslt = invoke1Arg((List *)0, f, arg);
   } else {
     FnArity *arity = findFnArity(f, 1);
     if(arity != (FnArity *)0 && !arity->variadic) {
@@ -4606,7 +4606,7 @@ Value *updateAgent_impl(List *closures) {
       Value *f = (Value *)action->head;
       List *args = listCons(agent->val, action->tail);
       incRef((Value *)action->tail, 1);
-      agent->val = fn_apply(empty_list, incRef((Value *)f, 1), (Value *)args);
+      agent->val = fn_apply((List *)0, incRef((Value *)f, 1), (Value *)args);
       dec_and_free((Value *)action, 1);
       action = readAgentQueue(agent);
     }
@@ -4620,7 +4620,7 @@ void scheduleAgent(Agent *agent, List *action) {
   Value *f = (Value *)action->head;
   List *args = listCons(agent->val, action->tail);
   incRef((Value *)action->tail, 1);
-  agent->val = fn_apply(empty_list, (Value *)f, (Value *)args);
+  agent->val = fn_apply((List *)0, (Value *)f, (Value *)args);
   action->head = (Value *)0;
   dec_and_free((Value *)action, 1);
 #else
@@ -4692,7 +4692,7 @@ void show(Value *v) {
     return;
   }
   incRef(v, 1);
-  List *strings = (List *)showFn(empty_list, v);
+  List *strings = (List *)showFn((List *)0, v);
   List *l = strings;
   for (Value *h = l->head; l != (List *)0 && h != (Value *)0; h = l->head) {
     incRef(h, 1);
@@ -4705,7 +4705,7 @@ void show(Value *v) {
 }
 
 int64_t countSeq(Value *seq) {
-  Integer *len = (Integer *)count(empty_list, seq);
+  Integer *len = (Integer *)count((List *)0, seq);
   int64_t result = len->numVal;
   dec_and_free((Value *)len, 1);
   return(result);
@@ -4731,14 +4731,14 @@ Value *reifiedTypeArgs(Value *x) {
 Value *getField(Value *value, int fieldIndex) {
   if (value->type < CoreTypeCount) {
     fprintf(stderr, "Should not call 'getField' on core type '%s'\n",
-	    extractStr(type_name(empty_list, value)));
+	    extractStr(type_name((List *)0, value)));
     abort();
   }
 
   ReifiedVal *rv = (ReifiedVal *)value;
   if (fieldIndex >= rv->implCount) {
     fprintf(stderr, "field index for type '%s' out of bounds: %d. max: %" PRId64 "\n",
-	    extractStr(type_name(empty_list, value)), fieldIndex, rv->implCount);
+	    extractStr(type_name((List *)0, value)), fieldIndex, rv->implCount);
     abort();
   }
   Value *result = incRef(rv->impls[fieldIndex], 1);
