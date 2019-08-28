@@ -1942,7 +1942,7 @@ VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Value *va
 Value *vectStore(Vector *vect, unsigned index, Value *val) {
   // TODO: check the refs count and mutate if equal 1
   // but only if all nodes 'above' this one are mutate-able
-  // and if you do mutate this vect, clear the cahced hash value (once that's implemented)
+  // and if you do mutate this vect, clear the cached hash value (once that's implemented)
   if (index < vect->count) {
     if (index >= vect->tailOffset) {
       unsigned newIndex = index & 0x1f;
@@ -2238,35 +2238,6 @@ Value *strList(Value *arg0) {
       subStr->source = arg0;
       subStr->buffer = s->buffer + i;
       result = listCons((Value *)subStr, result);
-    }
-    incRef(arg0, s->len);
-  }
-  dec_and_free(arg0, 1);
-  return((Value *)result);
-}
-
-Value *strVect(Value *arg0) {
-  Vector *result = empty_vect;
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    for (int64_t i = 0; i < s->len; i++) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = mutateVectConj(result, (Value *)subStr);
-    }
-    incRef(arg0, s->len);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    for (int64_t i = 0; i < s->len; i++) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = mutateVectConj(result, (Value *)subStr);
     }
     incRef(arg0, s->len);
   }
