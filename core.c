@@ -1132,7 +1132,7 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeOpaquePtr};
 
 void dec_and_free(Value *v, int deltaRefs) {
-  if (v == (Value *)0 || decRefs(v, deltaRefs) >= -1)
+  if (v == (Value *)0 || v->refs == -2 || decRefs(v, deltaRefs) >= -1)
     return;
 
   if (v->type < CoreTypeCount) {
@@ -1166,7 +1166,7 @@ Value *incRef(Value *v, int deltaRefs) {
     abort();
   }
 
-  if (deltaRefs < 1)
+  if (v->refs == -2 || deltaRefs < 1)
     return(v);
 
 #ifdef SINGLE_THREADED
@@ -1204,6 +1204,7 @@ void moveFreeToCentral();
 void freeGlobal(Value *x) {
   if (x == (Value*)0 ||
       x->refs == -10 ||
+      x->refs == -2 ||
       x == (Value *)&emptyBMI)
     return;
   x->refs = 1;
@@ -3968,14 +3969,20 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Va
     newNode->array[idx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, keyHash, newShift);
   } else {
     Value *n = copyAssoc((List *)0, incRef(subNode, 1), key, val, keyHash, newShift);
-    newNode = (ArrayNode *)malloc_arrayNode();
-    for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-      if (i != idx && node->array[i] != (Value *)0) {
-	newNode->array[i] = node->array[i];
-	incRef(newNode->array[i], 1);
+    if (n == subNode) {
+      dec_and_free(arg3, 1);
+      dec_and_free(arg4, 1);
+      return((Value *)node);
+    } else {
+      newNode = (ArrayNode *)malloc_arrayNode();
+      for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+	if (i != idx && node->array[i] != (Value *)0) {
+	  newNode->array[i] = node->array[i];
+	  incRef(newNode->array[i], 1);
+	}
       }
+      newNode->array[idx] = n;
     }
-    newNode->array[idx] = n;
   }
   dec_and_free((Value *)node, 1);
   dec_and_free(arg3, 1);
