@@ -85,7 +85,6 @@ Value *nothing;
 Maybe nothing_struct;
 Value *maybeNothing;
 REFS_SIZE refsInit;
-REFS_SIZE staticRefsInit;
 REFS_SIZE refsError;
 
 #define IgnoreType -1

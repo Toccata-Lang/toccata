@@ -3,12 +3,12 @@
 #include "core.h"
 
 Value *universalProtoFn = (Value *)0;
-Integer const0 = {IntegerType, -1, 0};
+Integer const0 = {IntegerType, -2, 0};
 Value *const0Ptr = (Value *)&const0;
 int cleaningUp = 0;
 
 // Immutable hash-map ported from Clojure
-BitmapIndexedNode emptyBMI = {BitmapIndexedType, -1, 0, 0};
+BitmapIndexedNode emptyBMI = {BitmapIndexedType, -2, 0, 0};
 
 // threads that have been replaced, but haven't exited
 pthread_mutex_t lingeringAccess = PTHREAD_MUTEX_INITIALIZER;
@@ -21,11 +21,11 @@ void prefs(char *tag, Value *v) {
 int64_t malloc_count = 0;
 int64_t free_count = 0;
 
-Maybe nothing_struct = {MaybeType, -1, 0};
+Maybe nothing_struct = {MaybeType, -2, 0};
 Value *nothing = (Value *)&nothing_struct;
-  List empty_list_struct = (List){ListType,-1,0,0,0};
+  List empty_list_struct = (List){ListType,-2,0,0,0};
 List *empty_list = &empty_list_struct;
-Vector empty_vect_struct = (Vector){VectorType,-1,0,5,0,0};
+Vector empty_vect_struct = (Vector){VectorType,-2,0,5,0,0};
 Vector *empty_vect = &empty_vect_struct;;
 
 #ifdef SINGLE_THREADED
@@ -48,7 +48,6 @@ int bitpos(int64_t hash, int shift) {
 }
 
 REFS_SIZE refsInit = 1;
-REFS_SIZE staticRefsInit = -1;
 REFS_SIZE refsError = -10;
 Value *my_malloc(int64_t sz) {
 #ifdef CHECK_MEM_LEAK
@@ -96,7 +95,7 @@ Value *removeFreeValue(FreeValList *freeList) {
   } else {
     next.head = item->next;
     freeList = &next;
-    if (item->refs != -10) {
+    if (item->refs != refsError) {
       fprintf(stderr, "failure in removeFreeValue: %d\n", item->refs);
       abort();
     }
@@ -124,7 +123,7 @@ Value *removeFreeValue(FreeValList *freeList) {
   } else {
     REFS_SIZE refs;
     __atomic_load(&item->refs, &refs, __ATOMIC_RELAXED);
-    if (refs != -10) {
+    if (refs != refsError) {
       fprintf(stderr, "failure in removeFreeValue: %d\n", refs);
       abort();
     }
@@ -136,21 +135,21 @@ Value *removeFreeValue(FreeValList *freeList) {
 int decRefs(Value *v, int deltaRefs) {
 #ifndef FAST_DECS
 #ifdef SINGLE_THREADED
-  if (v->refs == -1)
+  if (v->refs == -1 || v->refs == -2)
     return(v->refs);
 
   if (v->refs < deltaRefs) {
     fprintf(stderr, "failure in dec_and_free: %d %p\n", v->refs, v);
     abort();
   } else if (v->refs == deltaRefs)
-    v->refs = -10;
+    v->refs = refsError;
   else
     v->refs -= deltaRefs;
   return(v->refs);
 #else
   REFS_SIZE refs;
   __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
-  if (refs == -1)
+  if (refs == -1 || refs == -2)
     return(refs);
 
   REFS_SIZE newRefs;
@@ -159,7 +158,7 @@ int decRefs(Value *v, int deltaRefs) {
       fprintf(stderr, "failure in dec_and_free: %d %p\n", refs, v);
       abort();
     } else if (refs == deltaRefs)
-      newRefs = -10;
+      newRefs = refsError;
     else
       newRefs = refs - deltaRefs;
   } while (!__atomic_compare_exchange(&v->refs, &refs, &newRefs, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
@@ -167,11 +166,12 @@ int decRefs(Value *v, int deltaRefs) {
   return(newRefs);
 #endif
 #else
-  if (v->refs == -1)
+  if (v->refs == -1 ||
+      v->refs == -2)
     return(v->refs);
 
   if (v->refs == deltaRefs)
-    v->refs = -10;
+    v->refs = refsError;
   else
     v->refs -= deltaRefs;
   return(v->refs);
@@ -1058,7 +1058,9 @@ void emptyAgent(Agent *agent) {
 #else
   __atomic_load(&agent->output->refs, &refs, __ATOMIC_RELAXED);
 #endif
-  if (refs != 1 && refs != -1) {
+  if (refs != 1 &&
+      refs != -1 &&
+      refs != -2) {
     fprintf(stderr, "failure in emptyAgent()\n");
     abort();
   }
@@ -1072,7 +1074,9 @@ void emptyAgent(Agent *agent) {
   __atomic_load(&agent->input, &l, __ATOMIC_RELAXED);
   __atomic_load(&l->refs, &refs, __ATOMIC_RELAXED);
 #endif
-  if (refs != 1 && refs != -1) {
+  if (refs != 1 &&
+      refs != -1 &&
+      refs != -2) {
     fprintf(stderr, "failure in emptyAgent()\n");
     abort();
   }
@@ -1170,7 +1174,7 @@ Value *incRef(Value *v, int deltaRefs) {
     return(v);
 
 #ifdef SINGLE_THREADED
-  if (v->refs < -1) {
+  if (v->refs < -2) {
     fprintf(stderr, "failure in incRef: %d %p\n", v->refs, v);
     abort();
   }
@@ -1181,7 +1185,7 @@ Value *incRef(Value *v, int deltaRefs) {
 #else
   REFS_SIZE refs;
   __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
-  if (refs < -1) {
+  if (refs < -2) {
     fprintf(stderr, "failure in incRef: %d %p\n", refs, v);
     abort();
   }
@@ -1203,7 +1207,7 @@ void moveFreeToCentral();
 
 void freeGlobal(Value *x) {
   if (x == (Value*)0 ||
-      x->refs == -10 ||
+      x->refs == refsError ||
       x->refs == -2 ||
       x == (Value *)&emptyBMI)
     return;
@@ -1429,9 +1433,9 @@ Value *shutDown_impl(List *closures) {
   return(nothing);
  };
 
-FnArity shutDown_arity = {FnArityType, -1, 0, (List *)0, 0, shutDown_impl};
-Function shutDownFn = {FunctionType, -1, "shutdown-workers", 1, {&shutDown_arity}};
-Future shutDown = {FutureType, -1, (Value *)&shutDownFn, (Value *)0, (List *)0, (Value *)0, 0};
+FnArity shutDown_arity = {FnArityType, -2, 0, (List *)0, 0, shutDown_impl};
+Function shutDownFn = {FunctionType, -2, "shutdown-workers", 1, {&shutDown_arity}};
+Future shutDown = {FutureType, -2, (Value *)&shutDownFn, (Value *)0, (List *)0, (Value *)0, 0};
 
 void stopWorkers() {
   for (int32_t i = 0; i < NUM_WORKERS; i++)
@@ -1882,7 +1886,7 @@ Vector *vectConj(Vector *vect, Value *val) {
 
 Vector *mutateVectConj(Vector *vect, Value *val) {
   // if 'vect' is a static vector
-  if (vect->refs == -1) {
+  if (vect->refs <= -1) {
     Vector *result = vectConj(vect, val);
     return(result);
   } else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
@@ -2986,7 +2990,7 @@ Value *strSha1(Value *arg0) {
     Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
     Integer *hashVal = (Integer *)integerValue(shaVal);
 #ifdef CHECK_MEM_LEAK
-    if (refs == -1) {
+    if (refs <= -1) {
       __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
     }
 #endif
@@ -3340,7 +3344,7 @@ Value *symbolSha1(Value *arg0) {
 #ifdef CHECK_MEM_LEAK
     REFS_SIZE refs;
     __atomic_load(&subStrVal->refs, &refs, __ATOMIC_RELAXED);
-    if (refs == -1)
+    if (refs <= -1)
       __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
 #endif
     subStrVal->hash = (Integer *)hashVal;
@@ -3972,6 +3976,7 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Va
     if (n == subNode) {
       dec_and_free(arg3, 1);
       dec_and_free(arg4, 1);
+      dec_and_free(n, 1);
       return((Value *)node);
     } else {
       newNode = (ArrayNode *)malloc_arrayNode();
