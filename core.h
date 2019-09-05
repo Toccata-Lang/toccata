@@ -35,26 +35,28 @@ typedef void (Destructor)(void *);
 // TODO: add hash cache and meta data. And update 'make-static-*' as well
 typedef struct Value {TYPE_SIZE type; REFS_SIZE refs; struct Value* next;} Value;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t numVal;} Integer;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t len; Integer *hash; char buffer[0];} String;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t len; Integer *hash; Value *source; char *buffer;} SubString;
-typedef struct List {TYPE_SIZE type; REFS_SIZE refs; int64_t len; Value* head; struct List *tail;} List;
+typedef struct HashedValue {TYPE_SIZE type; REFS_SIZE refs; Integer *hash;} HashedValue;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Integer *hash; int64_t len; char buffer[0];} String;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Integer *hash; int64_t len; Value *source; char *buffer;} SubString;
+typedef struct List {TYPE_SIZE type; REFS_SIZE refs; Integer *hash;
+                     int64_t len; Value* head; struct List *tail;} List;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int count; List *closures;
                 int variadic; void *fn; Value *paramConstraints; Value *resultConstraint;} FnArity;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; char *name; int64_t arityCount; FnArity *arities[];} Function;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value* value;} Maybe;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Integer *hash; Value* value;} Maybe;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *array[VECTOR_ARRAY_LEN];} VectorNode;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int32_t count; int8_t shift; int64_t tailOffset;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Integer *hash; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int32_t bitmap; Value *array[];} BitmapIndexedNode;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *array[ARRAY_NODE_LEN];} ArrayNode;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int16_t count; Value *array[];} HashCollisionNode;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Integer *hash; int32_t bitmap; Value *array[];} BitmapIndexedNode;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Integer *hash; Value *array[ARRAY_NODE_LEN];} ArrayNode;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Integer *hash; int16_t count; Value *array[];} HashCollisionNode;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *result; List *actions;
                 pthread_cond_t delivered; pthread_mutex_t access;} Promise;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *action; Value* errorCallback; List *actions;
                 Value *result; pthread_cond_t delivered; pthread_mutex_t access;} Future;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *val; List* input; List *output;
                 pthread_mutex_t access;} Agent;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t implCount; Value* impls[];} ReifiedVal;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; Integer *hash; int64_t implCount; Value* impls[];} ReifiedVal;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; void *ptr; Destructor *destruct;} Opaque;
 
 Integer const0;
@@ -133,6 +135,9 @@ Vector empty_vect_struct;
 BitmapIndexedNode emptyBMI;
 Value *universalProtoFn;
 int typeCount;
+
+ReifiedVal all_values_struct;
+Value *all_values;
 
 struct {List* input; List* output;
         pthread_mutex_t mutex; pthread_cond_t notEmpty;} futuresQueue;

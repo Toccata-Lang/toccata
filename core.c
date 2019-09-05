@@ -21,12 +21,15 @@ void prefs(char *tag, Value *v) {
 int64_t malloc_count = 0;
 int64_t free_count = 0;
 
-Maybe nothing_struct = {MaybeType, -2, 0};
+Maybe nothing_struct = {MaybeType, -2, 0, 0};
 Value *nothing = (Value *)&nothing_struct;
-  List empty_list_struct = (List){ListType,-2,0,0,0};
+List empty_list_struct = (List){ListType,-2,0,0,0,0};
 List *empty_list = &empty_list_struct;
-Vector empty_vect_struct = (Vector){VectorType,-2,0,5,0,0};
+Vector empty_vect_struct = (Vector){VectorType,-2,0,0,5,0,0};
 Vector *empty_vect = &empty_vect_struct;;
+
+// ReifiedVal all_values_struct = {AllValuesType, -2, 0};
+// Value *all_values = (Value *)&all_values_struct;
 
 #ifdef SINGLE_THREADED
 #define NUM_WORKERS 1
@@ -323,13 +326,16 @@ SubString *malloc_substring() {
 
 void freeSubString(Value *v) {
   Value *src = ((SubString *)v)->source;
-  Integer *hash = ((SubString *)v)->hash;
   if (src != (Value *)0) {
     dec_and_free(src, 1);
   }
+
+  Integer *hash = ((SubString *)v)->hash;
   if (hash != (Integer *)0) {
     dec_and_free((Value *)hash, 1);
+    ((SubString *)v)->hash = (Integer *)0;
   }
+
   v->next = freeSubStrings.head;
   freeSubStrings.head = v;
 }
@@ -454,6 +460,7 @@ List *malloc_list() {
 
       listStructs->type = ListType;
       listStructs->refs = refsInit;
+      listStructs->hash = (Integer *)0;;
       listStructs->head = (Value *)0;
       listStructs->tail = (List *)0;
       listStructs->len = 0;
@@ -480,6 +487,7 @@ List *malloc_list() {
 
       listStructs->type = ListType;
       __atomic_store(&listStructs->refs, &refsInit, __ATOMIC_RELAXED);
+      listStructs->hash = (Integer *)0;;
       listStructs->head = (Value *)0;
       listStructs->tail = (List *)0;
       listStructs->len = 0;
@@ -492,6 +500,7 @@ List *malloc_list() {
 
   newList->type = ListType;
   newList->refs = 1;
+  newList->hash = (Integer *)0;;
   newList->head = (Value *)0;
   newList->tail = (List *)0;
   newList->len = 0;
@@ -549,6 +558,7 @@ Maybe *malloc_maybe() {
 
       maybeStructs->type = MaybeType;
       maybeStructs->refs = refsInit;
+      maybeStructs->hash = (Integer *)0;;
       return(maybeStructs);
     }
   } else {
@@ -573,6 +583,7 @@ Maybe *malloc_maybe() {
 #endif
 
       maybeStructs->type = MaybeType;
+      maybeStructs->hash = (Integer *)0;;
       __atomic_store(&maybeStructs->refs, &refsInit, __ATOMIC_RELAXED);
       return(maybeStructs);
     }
@@ -580,6 +591,7 @@ Maybe *malloc_maybe() {
     freeMaybes.head = freeMaybes.head->next;
   }
   newMaybe->type = MaybeType;
+  newMaybe->hash = (Integer *)0;;
   __atomic_store(&newMaybe->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
   return(newMaybe);
@@ -679,6 +691,7 @@ Vector *malloc_vector() {
       freeVectors.head = (Value *)&vectorStructs[1];
 
       vectorStructs->type = VectorType;
+      vectorStructs->hash = (Integer *)0;;
       vectorStructs->refs = refsInit;
       vectorStructs->count = 0;
       vectorStructs->shift = 5;
@@ -709,6 +722,7 @@ Vector *malloc_vector() {
 
       vectorStructs->type = VectorType;
       __atomic_store(&vectorStructs->refs, &refsInit, __ATOMIC_RELAXED);
+      vectorStructs->hash = (Integer *)0;;
       vectorStructs->count = 0;
       vectorStructs->shift = 5;
       vectorStructs->root = (VectorNode *)0;
@@ -724,6 +738,7 @@ Vector *malloc_vector() {
   newVector->count = 0;
   newVector->shift = 5;
   newVector->root = (VectorNode *)0;
+  newVector->hash = (Integer *)0;;
   memset(&newVector->tail, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
   return(newVector);
 }
@@ -815,6 +830,7 @@ ReifiedVal *malloc_reified(int64_t implCount) {
 
 	((ReifiedVal *)reifiedStructs)->implCount = implCount;
 	((ReifiedVal *)reifiedStructs)->refs = refsInit;
+	((ReifiedVal *)reifiedStructs)->hash = (Integer *)0;;
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&malloc_count, (rvCount - 1), __ATOMIC_ACQ_REL);
 #endif
@@ -826,6 +842,7 @@ ReifiedVal *malloc_reified(int64_t implCount) {
   }
 #ifdef SINGLE_THREADED
   newReifiedVal->refs = refsInit;
+  newReifiedVal->hash = (Integer *)0;;
 #else
   __atomic_store(&newReifiedVal->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
@@ -884,6 +901,7 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
   bmiNode->type = BitmapIndexedType;
 #ifdef SINGLE_THREADED
   bmiNode->refs = refsInit;
+  bmiNode->hash = (Integer *)0;;
 #else
   __atomic_store(&bmiNode->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
@@ -915,6 +933,7 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
   memset(collisionNode, 0, nodeSize);
   collisionNode->type = HashCollisionNodeType;
   collisionNode->count = itemCount * 2;
+  collisionNode->hash = (Integer *)0;;
 #ifdef SINGLE_THREADED
   collisionNode->refs = refsInit;
 #else
@@ -951,6 +970,7 @@ ArrayNode *malloc_arrayNode() {
   }
   memset(arrayNode, 0, sizeof(ArrayNode));
   arrayNode->type = ArrayNodeType;
+  arrayNode->hash = (Integer *)0;;
 #ifdef SINGLE_THREADED
   arrayNode->refs = refsInit;
 #else
@@ -2977,9 +2997,10 @@ Value *strSha1(Value *arg0) {
   }
 
   if (*hash != (Integer *)0) {
-    incRef((Value *)*hash, 1);
+    Integer *hashVal = (Integer *)*hash;
+    incRef((Value *)hashVal, 1);
     dec_and_free(arg0, 1);
-    return((Value *)*hash);
+    return((Value *)hashVal);
   } else {
     int64_t shaVal;
     Sha1Context context;
@@ -3331,9 +3352,10 @@ Value *symbolSha1(Value *arg0) {
   SubString *subStrVal = (SubString *)arg0;
 
   if (subStrVal->hash != (Integer *)0) {
-    incRef((Value *)subStrVal->hash, 1);
+    Value *hashVal = (Value *)subStrVal->hash;
+    incRef(hashVal, 1);
     dec_and_free(arg0, 1);
-    return((Value *)subStrVal->hash);
+    return(hashVal);
   }
   else {
     Sha1Initialise(&context);
