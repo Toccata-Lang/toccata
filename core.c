@@ -15,7 +15,10 @@ pthread_mutex_t lingeringAccess = PTHREAD_MUTEX_INITIALIZER;
 Value *lingeringThreads = (Value *)&emptyBMI;
 
 void prefs(char *tag, Value *v) {
-  fprintf(stderr, "%s: %p %d\n", tag, v, v->refs);
+  if (v != (Value *)0)
+    fprintf(stderr, "%s: %p %d\n", tag, v, v->refs);
+  else
+    fprintf(stderr, "%s: %p\n", tag, v);
 }
 
 int64_t malloc_count = 0;
