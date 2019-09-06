@@ -1308,7 +1308,7 @@
               (sha1-update-type l ctxt)
               (reduce l ctxt (fn [ctxt x]
                                (sha1-update x ctxt)))
-              (sha1-finalize ctxt))))
+              (cache-hash l (sha1-finalize ctxt)))))
 
   Container
   (apply [mf vects]
@@ -1438,7 +1438,7 @@
               (sha1-update-type v ctxt)
               (reduce v ctxt (fn [ctxt x]
                                (sha1-update x ctxt)))
-              (sha1-finalize ctxt))))
+              (cache-hash v (sha1-finalize ctxt)))))
 
   Composition
   (zero [_] empty-vector)
@@ -1604,6 +1604,15 @@
               (find-hi v pivot hi))
             hi)))
 
+(deftype Sorting [k v]
+  Eq
+  (=* [x y]
+    (=* k (.k y)))
+
+  Ord
+  (<* [x y]
+    (<* k (.k y))))
+
 ;; TODO: not effecient. But will be when implemented as C code
 (defn sort*
   [v p r]
@@ -1629,9 +1638,17 @@
                                      (sort* v3 (inc q) r))))))))
           [v r]))
 
-(defn sort [v]
-  (let [[v] (sort* v 0 (dec (count v)))]
-    v))
+(defn sort
+  ([vs]
+   (let [[vs] (sort* vs 0 (dec (count vs)))]
+     vs))
+  ([vs f]
+   (-> vs
+       (map (fn [v]
+              (Sorting (f v) v)))
+       sort
+       (reduce [] (fn [vs v]
+                    (conj vs (.v v)))))))
 
 (extend-type BitmapIndexedNode
   Type
@@ -1756,8 +1773,21 @@
                                             (show-kv kv indent))))
                     (list "}")))))
 
-;; Hashable
-;; TODO: sort the contents of the hash-map by key value hash before reducing over the seq
+  Hashable
+  (sha1-update [x ctxt]
+    (sha1-update-type x ctxt)
+    ;; TODO: can you get anymore stupid
+    (-> (vec (seq x))
+        (sort (fn [[k v]] k))
+        (reduce ctxt (fn [ctxt x]
+                       (sha1-update x ctxt)))))
+  
+  (sha1 [v]
+    (either (hash-cached? v)
+            (let [ctxt (sha1-init)]
+              (sha1-update v ctxt)
+              (cache-hash v (sha1-finalize ctxt)))))
+
 
   ;; TODO: remove this impl
   Seqable
@@ -2103,26 +2133,24 @@
                      " ")
           (list "}")))
 
-;; Hashable
-;; TODO: sort the contents of the hash-map by key value hash before reducing over the seq
-
   Function
   (invoke [_ v]
     (get set-map v))
 
   Hashable
-  (sha1-update [s ctxt]
-    (sha1-update-type s ctxt)
-    (reduce (seq set-map) ctxt (fn [ctxt x]
-                                 (sha1-update x ctxt))))
+  (sha1-update [x ctxt]
+    (sha1-update-type x ctxt)
+    ;; TODO: can you get anymore stupid
+    (-> (vec (seq set-map))
+        (sort (fn [[k v]] k))
+        (reduce ctxt (fn [ctxt x]
+                       (sha1-update x ctxt)))))
 
   (sha1 [s]
-    ;; TODO: cache the hash in the struct
-    (let [ctxt (sha1-init)]
-      (sha1-update-type s ctxt)
-      (reduce (seq set-map) ctxt (fn [ctxt x]
-                                   (sha1-update x ctxt)))
-      (sha1-finalize ctxt)))
+    (either (hash-cached? s)
+            (let [ctxt (sha1-init)]
+              (sha1-update s ctxt)
+              (cache-hash s (sha1-finalize ctxt)))))
 
   Associative
   (get [m k]
