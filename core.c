@@ -281,23 +281,24 @@ String *malloc_string(int len) {
 }
 
 void freeString(Value *v) {
-    Integer *hash = ((String *)v)->hash;
-    if (hash != (Integer *)0) {
-      dec_and_free((Value *)hash, 1);
-    }
-
-    int64_t len = ((String *)v)->len;
-    if (len <= STRING_RECYCLE_LEN) {
-      v->next = freeStrings.head;
-      freeStrings.head = v;
-    } else {
-#ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-#endif
-      if (!cleaningUp)
-	free(v);
-    }
+  Integer *hash = ((String *)v)->hash;
+  if (hash != (Integer *)0) {
+    dec_and_free((Value *)hash, 1);
+    ((String *)v)->hash = 0;
   }
+
+  int64_t len = ((String *)v)->len;
+  if (len <= STRING_RECYCLE_LEN) {
+    v->next = freeStrings.head;
+    freeStrings.head = v;
+  } else {
+#ifdef CHECK_MEM_LEAK
+    __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
+    if (!cleaningUp)
+      free(v);
+  }
+}
 
 FreeValList centralFreeSubStrings = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeSubStrings = {(Value *)0, 0};
@@ -511,6 +512,12 @@ List *malloc_list() {
 }
 
 void freeList(Value *v) {
+  Integer *hash = ((HashedValue *)v)->hash;
+  if (hash != (Integer *)0) {
+    dec_and_free((Value *)hash, 1);
+    ((HashedValue *)v)->hash = 0;
+  }
+
   List *l = (List *)v;
   Value *head = l->head;
   if (head != (Value *)0)
@@ -594,13 +601,19 @@ Maybe *malloc_maybe() {
     freeMaybes.head = freeMaybes.head->next;
   }
   newMaybe->type = MaybeType;
-  newMaybe->hash = (Integer *)0;;
   __atomic_store(&newMaybe->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
+  newMaybe->hash = (Integer *)0;;
   return(newMaybe);
 }
 
 void freeMaybe(Value *v) {
+  Integer *hash = ((HashedValue *)v)->hash;
+  if (hash != (Integer *)0) {
+    dec_and_free((Value *)hash, 1);
+    ((HashedValue *)v)->hash = 0;
+  }
+
   Value *value = ((Maybe *)v)->value;
   if (value != (Value *)0)
     dec_and_free(value, 1);
@@ -747,6 +760,12 @@ Vector *malloc_vector() {
 }
 
 void freeVector(Value *v) {
+  Integer *hash = ((HashedValue *)v)->hash;
+  if (hash != (Integer *)0) {
+    dec_and_free((Value *)hash, 1);
+    ((HashedValue *)v)->hash = 0;
+  }
+
   Value *root = (Value *)((Vector *)v)->root;
   if (root != (Value *)0) {
     REFS_SIZE refs;
@@ -845,10 +864,10 @@ ReifiedVal *malloc_reified(int64_t implCount) {
   }
 #ifdef SINGLE_THREADED
   newReifiedVal->refs = refsInit;
-  newReifiedVal->hash = (Integer *)0;;
 #else
   __atomic_store(&newReifiedVal->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
+  newReifiedVal->hash = (Integer *)0;;
   newReifiedVal->implCount = implCount;
   return(newReifiedVal);
 }
@@ -904,16 +923,22 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
   bmiNode->type = BitmapIndexedType;
 #ifdef SINGLE_THREADED
   bmiNode->refs = refsInit;
-  bmiNode->hash = (Integer *)0;;
 #else
   __atomic_store(&bmiNode->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
+  bmiNode->hash = (Integer *)0;;
   bmiNode->bitmap = 0;
   memset(&bmiNode->array, 0, sizeof(Value *) * (itemCount * 2));
   return(bmiNode);
 }
 
 void freeBitmapNode(Value *v) {
+  Integer *hash = ((HashedValue *)v)->hash;
+  if (hash != (Integer *)0) {
+    dec_and_free((Value *)hash, 1);
+    ((HashedValue *)v)->hash = 0;
+  }
+
   BitmapIndexedNode *node = (BitmapIndexedNode *)v;
   int cnt = __builtin_popcount(node->bitmap);
   for (int i = 0; i < (2 * cnt); i++) {
@@ -946,6 +971,12 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
 }
 
 void freeHashCollisionNode(Value *v) {
+  Integer *hash = ((HashedValue *)v)->hash;
+  if (hash != (Integer *)0) {
+    dec_and_free((Value *)hash, 1);
+    ((HashedValue *)v)->hash = 0;
+  }
+
   HashCollisionNode *node = (HashCollisionNode *)v;
   for (int i = 0; i < node->count; i++) {
     if (node->array[i] != (Value *)0) {
@@ -983,6 +1014,12 @@ ArrayNode *malloc_arrayNode() {
 }
 
 void freeArrayNode(Value *v) {
+  Integer *hash = ((HashedValue *)v)->hash;
+  if (hash != (Integer *)0) {
+    dec_and_free((Value *)hash, 1);
+    ((HashedValue *)v)->hash = 0;
+  }
+
   ArrayNode *node = (ArrayNode *)v;
   for (int i = 0; i < ARRAY_NODE_LEN; i++) {
     if (node->array[i] != (Value *)0) {
@@ -1169,6 +1206,13 @@ void dec_and_free(Value *v, int deltaRefs) {
     for (int i = 0; i < rv->implCount; i++) {
       dec_and_free(rv->impls[i], 1);
     }
+
+    Integer *hash = ((HashedValue *)rv)->hash;
+    if (hash != (Integer *)0) {
+      dec_and_free((Value *)hash, 1);
+      ((HashedValue *)rv)->hash = 0;
+    }
+
     if (rv->implCount < 20) {
       int64_t implCount = rv->implCount;
       v->next = freeReified[implCount].head;

@@ -784,7 +784,7 @@
 
 (def empty-closures (Closures [] {}))
 
-(deftype ConstantValues [numbers strings symbols type-names other]
+(deftype ConstantValues [numbers strings symbols type-names encoded other]
   ;; numbers                static numbers
   (assert (instance? HashMap numbers))
   ;; strings                static strings
@@ -792,7 +792,9 @@
   ;; symbols                static symbols
   (assert (instance? HashMap symbols))
   ;; type-names             map of type numbers to type names
-  (assert (instance? HashMap type-names)))
+  (assert (instance? HashMap type-names))
+  ;; encoded                cache of values that have been statically encoded
+  (assert (instance? HashMap encoded)))
 
 ;; Every function arity has some information that's local to it
 
@@ -1305,7 +1307,7 @@
               (comp (for [args (ev/traverse (type-args x) encode-static)
                           struct (global-var "cnstr_")
                           var (global-var "cnstr_")
-                          _ (declare ["ReifiedVal " struct " = {" (str (get-type x)) ", -2, "
+                          _ (declare ["ReifiedVal " struct " = {" (str (get-type x)) ", -2, 0, "
                                       (str (count args)) (flat-map args (fn [expr]
                                                                           [",(Value *)&" (.c-struct expr)]))
                                       "};" line-sep
@@ -1870,15 +1872,18 @@
 (extend-type HashSet
   Emitter
   (encode-static [hs]
-    (for [m (encode-static [(.set-map hs)])
-          struct (global-var "set_")
-          var (global-var "set_")
-          _ (constrain-var "" 0 var (c/TypeConstraint {(get-type hs) #{}}
-                                                      empty-list 'HashSet nothing ""))
-          _ (declare ["ReifiedVal " struct " = {" (str (get-type hs))
-                      ", -2, 0, 1, (Value *)&" (.c-struct m) "};\n"
-                      "Value *" var " = (Value *)&" struct ";" line-sep])]
-      (c-static-val var [] {} struct)))
+    (comp (sm/get-in-val [.constants .encoded hs])
+          (for [m (encode-static [(.set-map hs)])
+                struct (global-var "set_")
+                var (global-var "set_")
+                _ (constrain-var "" 0 var (c/TypeConstraint {(get-type hs) #{}}
+                                                            empty-list 'HashSet nothing ""))
+                _ (declare ["ReifiedVal " struct " = {" (str (get-type hs))
+                            ", -2, 0, 1, (Value *)&" (.c-struct m) "};\n"
+                            "Value *" var " = (Value *)&" struct ";" line-sep])
+                :let [expr (c-static-val var [] {} struct)]
+                _ (sm/assoc-in-val [.constants .encoded hs] expr)]
+            expr)))
 
   (emit [hs]
     (for [expr (encode (.set-map hs))
@@ -2017,35 +2022,39 @@
 (extend-type BitmapIndexedNode
   Emitter
   (encode-static [m]
-    (for [items (ev/traverse (bmiArray m) (fn [v]
-                                            (either (map v (fn [v]
-                                                             (map (encode-static v) maybe)))
-                                                    (wrap sm/zero-sm nothing))))
-          struct (global-var "bmi_")
-          var (global-var "bmi_")
-          :let [new-items (either (and (empty? items)
-                                       (maybe "0"))
-                                  (interpose (map items
-                                                  (fn [v]
-                                                    (either (map v (fn [expr]
-                                                                     (and (instance? String (.c-struct expr))
-                                                                          (empty? (.c-struct expr))
-                                                                          (do
-                                                                            ;; TODO: remove sometime
-                                                                            (print-err 'booom expr)
-                                                                            (abort)))
-                                                                     (str "(Value *)&"
-                                                                          (.c-struct expr))))
-                                                            "NULL")))
-                                             ", "))]
-          _ (constrain-var "" 0 var (c/TypeConstraint {BitmapIndexedType #{}}
-                                                      empty-list 'HashMap nothing ""))
-          _ (declare ["BitmapIndexedNode " struct " = {BitmapIndexedType, -2, 0, "
-                      (str (bmiBitmap m)) ", " new-items "};\n"
-                      "Value *" var " = (Value *)&" struct ";\n"])
-          r (collapse-expressions (comp (map items (fn [v] (either v empty-c-code)))
-                                        [(c-static-val var [] {} struct)]))]
-      r)))
+    (comp (sm/get-in-val [.constants .encoded m])
+          (for [items (ev/traverse (bmiArray m) (fn [v]
+                                                  (either (map v (fn [v]
+                                                                   (map (encode-static v) maybe)))
+                                                          (wrap sm/zero-sm nothing))))
+                struct (global-var "bmi_")
+                var (global-var "bmi_")
+                ;; TODO: see just what is being encoded
+                ;; _ (debug 'encoding m (c-static-val var [] {} struct))
+                :let [new-items (either (and (empty? items)
+                                             (maybe "0"))
+                                        (interpose (map items
+                                                        (fn [v]
+                                                          (either (map v (fn [expr]
+                                                                           (and (instance? String (.c-struct expr))
+                                                                                (empty? (.c-struct expr))
+                                                                                (do
+                                                                                  ;; TODO: remove sometime
+                                                                                  (print-err 'booom expr)
+                                                                                  (abort)))
+                                                                           (str "(Value *)&"
+                                                                                (.c-struct expr))))
+                                                                  "NULL")))
+                                                   ", "))]
+                _ (constrain-var "" 0 var (c/TypeConstraint {BitmapIndexedType #{}}
+                                                            empty-list 'HashMap nothing ""))
+                _ (declare ["BitmapIndexedNode " struct " = {BitmapIndexedType, -2, 0, "
+                            (str (bmiBitmap m)) ", " new-items "};\n"
+                            "Value *" var " = (Value *)&" struct ";\n"])
+                expr (collapse-expressions (comp (map items (fn [v] (either v empty-c-code)))
+                                                 [(c-static-val var [] {} struct)]))
+                _ (sm/assoc-in-val [.constants .encoded m] (c-static-val var [] {} struct))]
+            expr))))
 
 (extend-type HashCollisionNode
   Emitter
@@ -5083,7 +5092,7 @@
                                    {}                       ;; map for module info
                                    {}                       ;; map for static fns
                                    {}                       ;; map for namespaces
-                                   (ConstantValues {} {} {} type-names {})
+                                   (ConstantValues {} {} {} type-names {} {})
                                    0                        ;; reify-fn-index
                                    core-types               ;; type-maps
                                    ))
@@ -5158,16 +5167,17 @@
 
 (defn gather-protocols [file-name]
   (comp (for [protocols (sm/get-in-val [.modules file-name .protocols])
-              expr (encode-static protocols)
+              ;; expr (encode-static protocols)
               x (apply (wrap sm/zero-sm list)
                        (map (for [[_ proto-fns] (seq protocols)
                                   [fn-sym arities] (seq proto-fns)]
                               [fn-sym arities])
                             (partial declare-dispatcher file-name)))
               protos-var (sm/get-in-val [.modules file-name .values protocols-sym])
-              r (collapse-expressions [expr
+              r (collapse-expressions [;; expr
                                        (c-code (.c-var protos-var)
-                                               [(.c-var protos-var) " = " (.c-var expr) ";\n"]
+                                               [;; (.c-var protos-var) " = " (.c-var expr) ";\n"
+                                                ]
                                                {} c/top-type)])]
           r)
         (compilation-error "Could not gather the protocols for" (str "'" file-name "'"))))
@@ -5196,7 +5206,7 @@
                       (compilation-error "'main' function is missing"))
         modules (sm/get-in-val [.modules])
         protos (ev/traverse (keys modules) gather-protocols)
-        symbols (ev/traverse (keys modules) gather-symbols)
+        ;; symbols (ev/traverse (keys modules) gather-symbols)
         values (sm/get-in-val [.rt-init .exprs])
         decl (sm/get-in-val [.fn-context .decl])
         _ (sm/assoc-in-val [.fn-context .decl] [])]
@@ -5221,11 +5231,11 @@
                       "pthread_mutex_init(&shutDown.access, NULL);\n"
                       "startWorkers();\n"
                       (map protos .init)
-                      (map symbols .init)
+                      ;; (map symbols .init)
                       (map values .init) "\n"
-                      (map symbols (fn [sym-map]
-                                     ["if(" (.c-var sym-map) "->refs > 0)\n"
-                                      (.c-var sym-map) "->refs = -1;\n"]))
+                      ;; (map symbols (fn [sym-map]
+                      ;;                ["if(" (.c-var sym-map) "->refs > 0)\n"
+                      ;;                 (.c-var sym-map) "->refs = -1;\n"]))
                       "\n#\n"
                       "  List *argList = malloc_list();\n"
                       "  argList->len = 0;\n"

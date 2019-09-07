@@ -1203,16 +1203,30 @@
 
 (defn cache-hash [x hash]
   (assert (instance? Integer hash))
-  (inline C "
+  (inline C Integer "
+  if (((HashedValue *)x_0)->hash != (Integer *)0) {
+    fprintf(stderr, \"Hash Cache BOOOOOOOMMMMM\\n\");
+    abort();
+  }
   ((HashedValue *)x_0)->hash = (Integer *)hash_1;
-  incRef(hash_1, 1);
-  dec_and_free(x_0, 1);
-  return(hash_1);
+  if (hash_1)
+    incRef(hash_1, 1);
+  if (x_0->refs < 0) {
+#ifdef CHECK_MEM_LEAK
+    __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+#endif
+    return(hash_1);
+  } else {
+    dec_and_free(x_0, 1);
+    return(hash_1);
+  }
 "))
 
 (defn hash-cached? [x]
-  (inline C "
+  (inline C Maybe "
   Value *hashVal = (Value *)((HashedValue *)x_0)->hash;
+  if (hashVal)
+    incRef(hashVal, 1);
   Value *mval = maybe((List *)0, (Value *)0, hashVal);
   dec_and_free(x_0, 1);
   return(mval);
@@ -1667,6 +1681,22 @@
   (get* [node k v hash shift]
     (inline C "return(bmiGet(node_0, k_1, v_2, hash_3, shift_4));"))
 
+  Seqable
+  (vec [m]
+    ;; TODO: must get k/v pairs
+    (inline C Vector "
+  BitmapIndexedNode *node = (BitmapIndexedNode *)m_0;
+  int cnt = __builtin_popcount(node->bitmap);
+  Vector *v = empty_vect;
+  for (int i = 0; i < cnt * 2; i++) {
+    Value *val = node->array[i];
+    incRef(val, 1);
+    v = mutateVectConj(v, val);
+  }
+  dec_and_free(m_0, 1);
+  return((Value *)v);
+  "))
+
   Collection
   (count [x]
     (inline C Integer "return(bmiCount(x_0));")))
@@ -1678,6 +1708,21 @@
   Collection
   (count [x]
     (inline C Integer "return(arrayNodeCount(x_0));"))
+
+  Seqable
+  (vec [m]
+    ;; TODO: must get k/v pairs
+    (inline C Vector "
+  ArrayNode *node = (ArrayNode *)m_0;
+  Vector *v = empty_vect;
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+    Value *val = node->array[i];
+    incRef(val, 1);
+    v = mutateVectConj(v, val);
+  }
+  dec_and_free(m_0, 1);
+  return((Value *)v);
+  "))
 
   HashMapNode
   (assoc* [m k v hash shift]
@@ -1699,6 +1744,22 @@
   Collection
   (count [x]
     (inline C Integer "return(collisionCount(x_0));"))
+
+  Seqable
+  (vec [m]
+    ;; TODO: must get k/v pairs
+    (inline C Vector "
+  HashCollisionNode *node = (HashCollisionNode *)m_0;
+  int cnt = node->count;
+  Vector *v = empty_vect;
+  for (int i = 0; i < cnt; i++) {
+    Value *val = node->array[i];
+    incRef(val, 1);
+    v = mutateVectConj(v, val);
+  }
+  dec_and_free(m_0, 1);
+  return((Value *)v);
+  "))
 
   HashMapNode
   (assoc* [node k v hash shift]
