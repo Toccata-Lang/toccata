@@ -1295,7 +1295,6 @@
     ;; TODO: for some reason, encoding the sym doesn't alwys work,
     ;; fortunately, it's not needed
 
-    ;; TODO: remove duplicate static struct encodings. particularly empty HashSet and type maps
     (either (and (= c/top-type x)
                  (maybe (sm/state-maybe (c-static-val "all_values" [] {} "all_values_struct"))))
             (let [x (either (map (instance? c/SymbolConstraints x)
@@ -1312,8 +1311,8 @@
                                                                           [",(Value *)&" (.c-struct expr)]))
                                       "};" line-sep
                                       "Value *" var " = (Value *)&" struct ";" line-sep])
-                          r (collapse-expressions (conj args (c-static-val var [] {} struct)))]
-                      r)
+                          expr (collapse-expressions (conj args (c-static-val var [] {} struct)))]
+                      expr)
                     ;; TODO remove
                     (for [_ (debug 'missing x)
                           :when nothing]
@@ -1634,36 +1633,42 @@
 (extend-type Maybe
   Emitter
   (encode-static [v]
-    (either (map v (fn [v]
-                     (for [expr (encode-static v)
-                           struct (global-var "maybe_")
-                           var (global-var "maybe_")
-                           _ (declare ["Maybe " struct " = (Maybe){MaybeType, -2, (Value *)&" (.c-struct expr)
-                                       "};" line-sep "Maybe *" var " = &" struct ";" line-sep])]
-                       (do
-                         ;; TODO: we need to encode the constraints on 'var' as well
-                         (comp expr
-                               (c-static-val var [] {} struct))))))
-            (wrap sm/zero-sm
-                  (c-static-val "nothing" [] {} "nothing_struct")))))
+    (comp (sm/get-in-val [.constants .encoded v])
+          (either (map v (fn [v]
+                           (for [_ (debug 'encoding-maybe v (sha1 v))
+                                 expr (encode-static v)
+                                 struct (global-var "maybe_")
+                                 var (global-var "maybe_")
+                                 _ (declare ["Maybe " struct " = (Maybe){MaybeType, -2, 0, (Value *)&"
+                                             (.c-struct expr) "};" line-sep
+                                             "Maybe *" var " = &" struct ";" line-sep])
+                                 _ (sm/assoc-in-val [.constants .encoded v] (c-static-val var [] {} struct))]
+                             (do
+                               ;; TODO: we need to encode the constraints on 'var' as well
+                               (comp expr
+                                     (c-static-val var [] {} struct))))))
+                  (wrap sm/zero-sm
+                        (c-static-val "nothing" [] {} "nothing_struct"))))))
 
 (extend-type List
   Emitter
   (encode-static [l]
-    (either (map (first l)
-                 (fn [head]
-                   (for [tail-expr (encode-static (rest l))
-                         head-expr (encode-static head)
-                         struct (global-var "list_")
-                         var (global-var "list_")
-                         _ (declare ["List " struct " = {ListType, -2, 0, " (str (count l))
-                                     ", (Value *)&" (.c-struct head-expr)
-                                     ", &" (.c-struct tail-expr) "};" line-sep])]
-                     (comp tail-expr
-                           head-expr
-                           (c-static-val var [] {} struct)))))
-            (wrap sm/zero-sm
-                  (c-static-val "empty_list" [] {} "empty_list_struct"))))
+    (comp (sm/get-in-val [.constants .encoded l])
+          (either (map (first l)
+                       (fn [head]
+                         (for [tail-expr (encode-static (rest l))
+                               head-expr (encode-static head)
+                               struct (global-var "list_")
+                               var (global-var "list_")
+                               _ (declare ["List " struct " = {ListType, -2, 0, " (str (count l))
+                                           ", (Value *)&" (.c-struct head-expr)
+                                           ", &" (.c-struct tail-expr) "};" line-sep])
+                               _ (sm/assoc-in-val [.constants .encoded l] (c-static-val var [] {} struct))]
+                           (comp tail-expr
+                                 head-expr
+                                 (c-static-val var [] {} struct)))))
+                  (wrap sm/zero-sm
+                        (c-static-val "empty_list" [] {} "empty_list_struct")))))
 
   (tail-call [asts args]
     (let [asts (reverse asts)]
@@ -1704,27 +1709,26 @@
 (extend-type Vector
   Emitter
   (encode-static [v]
-    (either (and (empty? v)
-                 (maybe (sm/state-maybe (c-static-val "empty_vect" [] {} "empty_vect_struct"))))
-            (let [[shift offset root array] (encodeVectorInfo v)]
-              (for [items (ev/traverse array encode-static)
-                    root (either (map root encode-static)
-                                 (wrap sm/zero-sm (c-static-val "NULL" [] {} "NULL")))
-                    struct (global-var "vect_")
-                    var (global-var "vect_")
-                    :let [new-items (interpose (map items
-                                                    (fn [expr]
-                                                      (str "(Value *)&" (.c-struct expr))))
-                                               ", ")]
-                    _ (declare ["Vector " struct " = {VectorType, -2, 0, "
-                                (str (count array))
-                                ", " (str shift) ", " (str offset) ", "
-                                (.c-struct root) ", " new-items
-                                (map (range (- vector-array-len (count array))) (fn [_] ", 0"))
-                                "};" line-sep
-                                "Value *" var " = (Value *)&" struct ";" line-sep])
-                    r (collapse-expressions (comp items [(c-static-val var [] {} struct)]))]
-                r))))
+    (comp (sm/get-in-val [.constants .encoded v])
+          (let [[shift offset root array] (encodeVectorInfo v)]
+            (for [items (ev/traverse array encode-static)
+                  root (either (map root encode-static)
+                               (wrap sm/zero-sm (c-static-val "NULL" [] {} "NULL")))
+                  struct (global-var "vect_")
+                  var (global-var "vect_")
+                  _ (declare ["Vector " struct " = {VectorType, -2, 0, "
+                              (str (count array))
+                              ", " (str shift) ", " (str offset) ", "
+                              (.c-struct root)
+                              (map items
+                                   (fn [expr]
+                                     (str ", (Value *)&" (.c-struct expr))))
+                              (map (range (- vector-array-len (count array))) (fn [_] ", 0"))
+                              "};" line-sep
+                              "Value *" var " = (Value *)&" struct ";" line-sep])
+                  expr (collapse-expressions (comp items [(c-static-val var [] {} struct)]))
+                  _ (sm/assoc-in-val [.constants .encoded v] expr)]
+              expr))))
 
   (tail-call [asts params]
     (either (flat-map (last asts)
@@ -2023,14 +2027,13 @@
   Emitter
   (encode-static [m]
     (comp (sm/get-in-val [.constants .encoded m])
-          (for [items (ev/traverse (bmiArray m) (fn [v]
+          (for [;; _ (debug 'encoding-bmi m
+                items (ev/traverse (bmiArray m) (fn [v]
                                                   (either (map v (fn [v]
                                                                    (map (encode-static v) maybe)))
                                                           (wrap sm/zero-sm nothing))))
                 struct (global-var "bmi_")
                 var (global-var "bmi_")
-                ;; TODO: see just what is being encoded
-                ;; _ (debug 'encoding m (c-static-val var [] {} struct))
                 :let [new-items (either (and (empty? items)
                                              (maybe "0"))
                                         (interpose (map items
@@ -2059,46 +2062,53 @@
 (extend-type HashCollisionNode
   Emitter
   (encode-static [m]
-    (for [items (ev/traverse (collisionArray m) encode-static)
-          struct (global-var "collision_")
-          var (global-var "collision_")
-          :let [new-items (interpose (map items
-                                          (fn [expr]
-                                            (str "(Value *)&" (.c-struct expr))))
-                                     ", ")]
-          _ (constrain-var "" 0 var (c/TypeConstraint {HashCollisionNodeType #{}}
-                                                      empty-list 'HashMap nothing ""))
-          _ (declare ["HashCollisionNode " struct " = {HashCollisionNodeType, -2, 0, "
-                      (str (count items)) ", " new-items "};\n"
-                      "Value *" var " = (Value *)&" struct ";\n"])
-          r (collapse-expressions (comp items [(c-static-val var [] {} struct)]))]
-      r)))
+    (comp (sm/get-in-val [.constants .encoded m])
+          (for [;; TODO: see just what is being encoded
+                ;; _ (debug 'encoding-hash-collistion m)
+                items (ev/traverse (collisionArray m) encode-static)
+                struct (global-var "collision_")
+                var (global-var "collision_")
+                :let [new-items (interpose (map items
+                                                (fn [expr]
+                                                  (str "(Value *)&" (.c-struct expr))))
+                                           ", ")]
+                _ (constrain-var "" 0 var (c/TypeConstraint {HashCollisionNodeType #{}}
+                                                            empty-list 'HashMap nothing ""))
+                _ (declare ["HashCollisionNode " struct " = {HashCollisionNodeType, -2, 0, "
+                            (str (count items)) ", " new-items "};\n"
+                            "Value *" var " = (Value *)&" struct ";\n"])
+                expr (collapse-expressions (comp items [(c-static-val var [] {} struct)]))
+                _ (sm/assoc-in-val [.constants .encoded m] (c-static-val var [] {} struct))]
+            expr))))
 
 (extend-type ArrayNode
   Emitter
   (encode-static [m]
-    (for [items (ev/traverse (arrayNodeArray m) (fn [v]
-                                                  (either (map v (fn [v]
-                                                                   (map (encode-static v) maybe)))
-                                                          (wrap sm/zero-sm nothing))))
-          struct (global-var "arrayNode_")
-          var (global-var "arrayNode_")
-          :let [new-items (either (and (empty? items)
-                                       (maybe "0"))
-                                  (interpose (map items
-                                                  (fn [v]
-                                                    (either (map v (fn [expr]
-                                                                     (str "(Value *)&"
-                                                                          (.c-struct expr))))
-                                                            "NULL")))
-                                             ", "))]
-          _ (constrain-var "" 0 var (c/TypeConstraint {ArrayNodeType #{}}
-                                                      empty-list 'HashMap nothing ""))
-          _ (declare ["ArrayNode " struct " = {ArrayNodeType, -2, 0, " new-items "};"
-                      line-sep "Value *" var " = (Value *)&" struct ";" line-sep])
-          r (collapse-expressions (comp (map items (fn [v] (either v empty-c-code)))
-                                        [(c-static-val var [] {} struct)]))]
-      r)))
+    (comp (sm/get-in-val [.constants .encoded m])
+          (for [;; _ (debug 'encoding-array-node m
+                items (ev/traverse (arrayNodeArray m) (fn [v]
+                                                        (either (map v (fn [v]
+                                                                         (map (encode-static v) maybe)))
+                                                                (wrap sm/zero-sm nothing))))
+                struct (global-var "arrayNode_")
+                var (global-var "arrayNode_")
+                :let [new-items (either (and (empty? items)
+                                             (maybe "0"))
+                                        (interpose (map items
+                                                        (fn [v]
+                                                          (either (map v (fn [expr]
+                                                                           (str "(Value *)&"
+                                                                                (.c-struct expr))))
+                                                                  "NULL")))
+                                                   ", "))]
+                _ (constrain-var "" 0 var (c/TypeConstraint {ArrayNodeType #{}}
+                                                            empty-list 'HashMap nothing ""))
+                _ (declare ["ArrayNode " struct " = {ArrayNodeType, -2, 0, " new-items "};"
+                            line-sep "Value *" var " = (Value *)&" struct ";" line-sep])
+                expr (collapse-expressions (comp (map items (fn [v] (either v empty-c-code)))
+                                                 [(c-static-val var [] {} struct)]))
+                _ (sm/assoc-in-val [.constants .encoded m] (c-static-val var [] {} struct))]
+            expr))))
 
 (extend-type HashMap
   Emitter
@@ -3718,8 +3728,8 @@
           result-constraint (set-result-constraint (.c-var body) file-name line-number)
           runtime-check-fn (checking-fn fn-sym params param-vars c-fn param-constraints)
           _ (reset-fn-context fn-context)
-          ;; param-struct (encode-static param-constraints)
-          ;; rslt-struct (encode-static result-constraint)
+          param-struct (encode-static param-constraints)
+          rslt-struct (encode-static result-constraint)
           _ (declare ["Value *" c-fn "("
                       (-> param-vars
                           (map (fn [param] (str "Value *" param)))
@@ -3735,8 +3745,8 @@
                       ", (List *)0, " (either (and (.variadic params)
                                                    (maybe "1"))
                                               "0")
-                      ", " (.c-var runtime-check-fn) ", (Value *)0" ;; (.c-struct param-struct)
-                      ", (Value *)0" ;; (.c-struct rslt-struct)
+                      ", " (.c-var runtime-check-fn) ", (Value *)&" (.c-struct param-struct)
+                      ", (Value *)&" (.c-struct rslt-struct)
                       "};" line-sep])]
       (let [expr (c-static-arity (ArityValPtr (str "&" arity-var) arity-var) [] {} arity-var)]
         ;; TODO: use this to eliminate unknown return type values
@@ -5205,8 +5215,12 @@
   (for [main-fn (comp (lookup-static-arity-info 'main 1)
                       (compilation-error "'main' function is missing"))
         modules (sm/get-in-val [.modules])
+        _ (debug 'test 1)
+        ;; TODO: remove
+        _ (encode-static (maybe (str "something" " bogus")))
+        _ (encode-static (maybe (str "something " "bogus")))
         protos (ev/traverse (keys modules) gather-protocols)
-        ;; symbols (ev/traverse (keys modules) gather-symbols)
+        symbols (ev/traverse (keys modules) gather-symbols)
         values (sm/get-in-val [.rt-init .exprs])
         decl (sm/get-in-val [.fn-context .decl])
         _ (sm/assoc-in-val [.fn-context .decl] [])]
@@ -5231,11 +5245,11 @@
                       "pthread_mutex_init(&shutDown.access, NULL);\n"
                       "startWorkers();\n"
                       (map protos .init)
-                      ;; (map symbols .init)
+                      (map symbols .init)
                       (map values .init) "\n"
-                      ;; (map symbols (fn [sym-map]
-                      ;;                ["if(" (.c-var sym-map) "->refs > 0)\n"
-                      ;;                 (.c-var sym-map) "->refs = -1;\n"]))
+                      (map symbols (fn [sym-map]
+                                     ["if(" (.c-var sym-map) "->refs > 0)\n"
+                                      (.c-var sym-map) "->refs = -1;\n"]))
                       "\n#\n"
                       "  List *argList = malloc_list();\n"
                       "  argList->len = 0;\n"

@@ -31,8 +31,8 @@ List *empty_list = &empty_list_struct;
 Vector empty_vect_struct = (Vector){VectorType,-2,0,0,5,0,0};
 Vector *empty_vect = &empty_vect_struct;;
 
-// ReifiedVal all_values_struct = {AllValuesType, -2, 0};
-// Value *all_values = (Value *)&all_values_struct;
+ReifiedVal all_values_struct = {AllValuesType, -2, 0};
+Value *all_values = (Value *)&all_values_struct;
 
 #ifdef SINGLE_THREADED
 #define NUM_WORKERS 1
