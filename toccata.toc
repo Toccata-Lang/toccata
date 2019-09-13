@@ -590,6 +590,25 @@
   Collection
   (empty? [c] nothing))
 
+(deftype c-field [c-var init refs-map constraints parent]
+  (assert (instance? String c-var))
+  (assert (instance? Sequence init))
+  (assert (instance? HashMap refs-map))
+  (assert (instance? c/Constraints constraints))
+  (assert (instance? String parent))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Field " (str c-var) ", "
+          (str (count init)) ">"))
+
+  Emitter
+  (emit [x]
+    (sm/state-maybe x))
+
+  Collection
+  (empty? [c] nothing))
+
 (def C-Value (comp c-code
                    c-param
                    C-Static-Value))
@@ -1289,6 +1308,33 @@
                                                              (assoc var new-c)))))))
                               s)])))))))
 
+(extend-type c-field
+  Composition
+  (comp* [x xs]
+    (assert-result z (instance? C-expr z))
+
+    (print-err 'c-field 'comp*)
+    (abort)
+    empty-c-code)
+
+  C-Code
+  (collapse-expressions* [x y]
+    (assert (instance? C-expr y))
+
+    (either (for [refs (get-in y [.refs-map (.c-var x)])
+                  _ (< 0 refs)]
+              (-> y
+                  (.init [(.init x)
+                          "incRef(" (.c-var x) ", " (str refs) ");\n"
+                          ;; TODO: it would be nice to remove the need for this dec_and_free
+                          ;; do just one after all needed fields are extracted
+                          "dec_and_free(" (.parent x) ", 1);\n"
+                          (.init y)])
+                  (.refs-map (merge-with + {(.parent x) 1}
+                                         (dissoc (.refs-map y) (.c-var x))))
+                  sm/state-maybe))
+            (sm/state-maybe y))))
+
 (extend-type c/Constraints
   Emitter
   (encode-static [x]
@@ -1877,7 +1923,7 @@
   Emitter
   (encode-static [hs]
     (comp (sm/get-in-val [.constants .encoded hs])
-          (for [m (encode-static [(.set-map hs)])
+          (for [m (encode-static (.set-map hs))
                 struct (global-var "set_")
                 var (global-var "set_")
                 _ (constrain-var "" 0 var (c/TypeConstraint {(get-type hs) #{}}
@@ -2436,6 +2482,15 @@
                ");" line-sep]
               {} file-name line-number))))
 
+(defn inline-get-field [name args]
+  (for [reified-val (nth args 0)
+        field-index (nth args 1)]
+    (for [;; _ (debug 'inlining (ast/file-name name) (ast/line-number name) "\n" (ast/call-ast name args))
+          dispatch-val (emit reified-val)
+          rslt (genlocal "rslt")]
+      (c-field rslt ["Value *" rslt " = ((ReifiedVal *)" (.c-var dispatch-val) ")->impls[" (str field-index) "];\n"]
+               {} c/top-type (.c-var dispatch-val)))))
+
 (defn inline-wrap-and-apply [name args]
   (for [dispatch-ast (first args)
         wrapped (second args)]
@@ -2469,6 +2524,11 @@
       (ast/let-ast [(ast/binding dispatch-sym dispatch-val)]
                    (vec body-exprs)))))
 
+(def get-field-sym (rdr/tag 'get-field 'core 0))
+
+(def BindingValue (comp C-expr
+                        c-field))
+
 (extend-type Tagged
   Emitter
   (get-param-constraints [sym subs]
@@ -2496,20 +2556,29 @@
       r))
 
   (bind [binding evalled]
-    (assert (instance? C-expr evalled))
+    (assert (instance? BindingValue evalled))
 
     (let [file-name (ast/file-name binding)
           line-number (ast/line-number binding)]
       
       (for [_ (comp (redef-proto-fn-error binding)
+                    (for [_ (sm/when (instance? c-field evalled))
+                          expr (sm/get-in-val [.fn-context .syms (rdr/tag binding)])
+                          :when (instance? c-param expr)
+                          _ (compilation-error "The parameter" (str "'" binding "'")
+                                               "shadows a field of the same name at"
+                                               (.file-name expr)
+                                               (.line-number expr))]
+                      '_)
                     (set-sym binding (c-code (.c-var evalled) [] {(.c-var evalled) 1}
                                              c/top-type)))]
         (either (and (empty? (.init evalled))
                      (maybe (ParamBinding (.c-var evalled) [] "" [evalled])))
                 (ParamBinding (.c-var evalled)
                               [] ""
-                              [(c-init (.c-var evalled) (.init evalled)
-                                       (.refs-map evalled) file-name line-number)])))))
+                              [(either (instance? c-field evalled)
+                                       (c-init (.c-var evalled) (.init evalled)
+                                               (.refs-map evalled) file-name line-number))])))))
 
   (emit [sym]
     (lookup-sym (rdr/tag sym)))
@@ -2531,6 +2600,8 @@
       (either (or (and (or (= name 'wrap)
                            (= name 'apply))
                        (inline-wrap-and-apply name args))
+                  (and (= name get-field-sym)
+                       (inline-get-field name args))
                   (and (or (= name 'flat-map)
                            (= name 'map))
                        (inline-flat-map name args)))
@@ -2695,7 +2766,7 @@
 (def type-mapping-sym (rdr/tag 'type-mapping 'core 0))
 (def =*-sym (rdr/tag '=* 'core 0))
 (def apply-sym (rdr/tag 'apply 'core 0))
-(def get-type-sym (rdr/tag 'reified-get-type 'core 0))
+(def get-type-sym (rdr/tag 'default-get-type 'core 0))
 (def extract-sym (rdr/tag 'extract 'core 0))
 (def instance?-sym (rdr/tag 'instance? 'core 0))
 (def string-list-sym (rdr/tag 'string-list 'core 0))
@@ -2716,8 +2787,7 @@
 (def assoc-sym (rdr/tag 'assoc 'core 0))
 (def update-field-sym (rdr/tag 'update-field 'core 0))
 (def store-sym (rdr/tag 'store 'core 0))
-(def reified-type-args-sym (rdr/tag 'reified-type-args 'core 0))
-(def get-field-sym (rdr/tag 'get-field 'core 0))
+(def default-type-args-sym (rdr/tag 'default-type-args 'core 0))
 (def nth-sym (rdr/tag 'nth 'core 0))
 (def partial-sym (rdr/tag 'partial 'core 0))
 (def some-sym (rdr/tag 'some 'core 0))
@@ -3251,6 +3321,11 @@
         r))))
 
 (extend-type c-code
+  C-Code
+  (expr-constraints [expr]
+    (.constraints expr)))
+
+(extend-type c-field
   C-Code
   (expr-constraints [expr]
     (.constraints expr)))
@@ -4813,8 +4888,8 @@
              =*-sym [(ast/call-ast get-type-sym [x*])
                      (ast/call-ast get-type-sym [y*])])
             (ast/call-ast
-             =*-sym [(ast/call-ast reified-type-args-sym [x*])
-                     (ast/call-ast reified-type-args-sym [y*])])
+             =*-sym [(ast/call-ast default-type-args-sym [x*])
+                     (ast/call-ast default-type-args-sym [y*])])
             (ast/call-ast maybe-sym [x*])])]
          [] c/top-type)]]]
 
@@ -4849,7 +4924,7 @@
          [(ast/call-ast sha1-update-type-sym [x* ctxt*])
           (ast/call-ast
            sha1-update-sym
-           [(ast/call-ast reified-type-args-sym [x*]) ctxt*])]
+           [(ast/call-ast default-type-args-sym [x*]) ctxt*])]
          [] c/top-type)]]
       [sha1-sym
        [(ast/fn-arity-ast
@@ -4905,7 +4980,11 @@
                                 (ast/params [type-value]) ""
                                 [(c/ResultConstraint (c/clear-sym field-constraint))
                                  (ast/inline-ast 'C nothing
-                                                 (str "return(getField(value_0, " field-index "));\n")
+                                                 (str "
+  Value *result = incRef(((ReifiedVal *)value_0)->impls[" field-index "], 1);
+  dec_and_free(value_0, 1);
+  return(result);
+")
                                                  "" 0)]
                                 [] c/top-type)]]))}))
 
@@ -5215,7 +5294,6 @@
   (for [main-fn (comp (lookup-static-arity-info 'main 1)
                       (compilation-error "'main' function is missing"))
         modules (sm/get-in-val [.modules])
-        _ (debug 'test 1)
         ;; TODO: remove
         _ (encode-static (maybe (str "something" " bogus")))
         _ (encode-static (maybe (str "something " "bogus")))
@@ -5429,7 +5507,8 @@
                                                        asts))
                                        _ (sm/set-val .file-name file)
                                        base-imports (sm/get-val .base-imports)
-                                       _ (sm/assoc-in-val [.ns file] (ev/EvalNamespace file base-imports {} {}))
+                                       _ (sm/assoc-in-val [.ns file] (ev/EvalNamespace file base-imports {}
+                                                                                       {} [{}]))
                                        _ (ev/eval asts)
                                        mod-syms (sm/get-in-val [.ns file .syms])]
                                    mod-syms))

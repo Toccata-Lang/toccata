@@ -4780,24 +4780,6 @@ Value *reifiedTypeArgs(Value *x) {
   }
 }
 
-Value *getField(Value *value, int fieldIndex) {
-  if (value->type < CoreTypeCount) {
-    fprintf(stderr, "Should not call 'getField' on core type '%s'\n",
-	    extractStr(type_name((List *)0, value)));
-    abort();
-  }
-
-  ReifiedVal *rv = (ReifiedVal *)value;
-  if (fieldIndex >= rv->implCount) {
-    fprintf(stderr, "field index for type '%s' out of bounds: %d. max: %" PRId64 "\n",
-	    extractStr(type_name((List *)0, value)), fieldIndex, rv->implCount);
-    abort();
-  }
-  Value *result = incRef(rv->impls[fieldIndex], 1);
-  dec_and_free(value, 1);
-  return(result);
-}
-
 Vector *listVec(Value *list) {
   List *l = (List *)list;
   Vector *newVect = empty_vect;
