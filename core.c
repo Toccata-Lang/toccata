@@ -2775,7 +2775,6 @@ Value *maybeExtract(Value *arg0) {
 Value *fnApply(Value *arg0, Value *arg1) {
   List *argList = (List *)arg1;
   FnArity *_arity;
-  // TODO: this should be restored to assume a Function value
   if (arg0->type == FunctionType)
     _arity = findFnArity(arg0, argList->len);
   else
