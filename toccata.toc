@@ -3889,6 +3889,8 @@
                 arity-impl-var (ArityValPtr arity-impl-var "")
                 c-fn (ProtoDispFnPtr c-fn)]
           dispatcher-info (get-proto-impl proto-sym fn-name num-args 0)
+          ;; TODO: the param constraints and the result constraint ast expressions
+          ;; are kept in the ast of the dispatcher. Pretty bogus
           :let [sym-map (reduce (zip-lists (-> dispatcher-info .ast .params .fixed)
                                            (-> arity-ast .params .fixed))
                                 {} (fn [m [old-sym new-sym]]
@@ -4525,7 +4527,11 @@
                                  (map .assertion)
                                  (ev/traverse to-constraint))
           :let [result-constraint (reduce result-constraints c/top-type c/intersect)
-                param-count (.param-count static-arity)]
+                param-count (.param-count static-arity)
+                default-impl (ProtoImpl 0 (.c-var (.var-info static-arity)) arity-ast
+                                        (.param-constraints static-arity)
+                                        (.result-constraint static-arity)
+                                        arity-impl-var)]
           
           _ (sm/assoc-in-val [.fns disp-fn-var param-count .param-constraints]
                              pcs)
@@ -4536,20 +4542,16 @@
                                     (fn [p-disp]
                                       (assert (instance? ev/ProtoDispatcher p-disp))
                                       (assoc-in p-disp [.p-impls param-count 0]
-                                                (ProtoImpl 0 (.c-var (.var-info static-arity)) arity-ast
-                                                           pcs result-constraint arity-impl-var))))
+                                                default-impl)))
                   (sm/assoc-in-val [.modules (ast/file-name protocol-sym) .protocols
                                     (rdr/untag protocol-sym) (rdr/untag fn-sym)]
                                    (ev/ProtoDispatcher (rdr/untag fn-sym)
                                                        (either (and (= 'core (ast/file-name protocol-sym))
                                                                     (maybe ""))
                                                                (ast/file-name protocol-sym))
-                                                       {param-count
-                                                        {0 (ProtoImpl 0 (.c-var (.var-info static-arity)) arity-ast
-                                                                      (.param-constraints static-arity)
-                                                                      (.result-constraint static-arity)
-                                                                      arity-impl-var)}}
-                                                       pcs ev/empty-state)))]
+                                                       {param-count {'param-consts pcs
+                                                                     0 default-impl}}
+                                                       ev/empty-state)))]
       static-arity)))
 
 (defn create-dispatcher [proto-sym [fn-sym arities]]
@@ -5201,7 +5203,7 @@
                                 ") {\nFnArity *arity;\n#\n"
                                 "FnType" arg-count " *_fn;\n"
                                 "switch (arg0->type) {\n"
-                                (map (seq (dissoc impls 0))
+                                (map (seq (dissoc impls 0 'param-consts 'result-const))
                                      (fn [[type-num arity-info]]
                                        (assert (instance? ProtoImpl arity-info))
 
@@ -5220,7 +5222,18 @@
                                                                   "((String *)closures)->buffer)"))))
                                         "\nclosures = arity->closures;\nbreak;\n"]))
                                 (let [arity-info (extract (get impls 0))]
-                                  ["default: arity = " (.c-var arity-info) ";_fn = (FnType" arg-count
+                                  ["default: // bogus\n"
+                                   (for [[constraint var] (-> (.param-constraints arity-info)
+                                                              c/extract-items-constraints
+                                                              (zip-lists (map (range arg-count)
+                                                                              (partial str "arg")))
+                                                              rest)]
+                                     (-> constraint
+                                         (c/update-var var)
+                                         (runtime-check c/top-type
+                                                        (str "(closures == (List *)0 ? \"\" : "
+                                                             "((String *)closures)->buffer)"))))
+                                   "_fn = (FnType" arg-count
                                    " *)" (.c-fn arity-info) ";\nbreak;\n"])
                                 "}\n"
                                 ;; "FnType" arg-count " *_fn = (FnType" arg-count " *)arity->fn;\n" 
