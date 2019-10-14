@@ -1751,7 +1751,7 @@ Value *prSTAR(Value *str) {
   return(integerValue(bytes));
 }
 
-Value *prErrSTAR(Value *str) {
+Value *defaultPrErrSTAR(Value *str) {
   int bytes;
   if (str->type == StringBufferType) {
     bytes = fprintf(stderr, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);

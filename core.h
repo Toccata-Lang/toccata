@@ -180,6 +180,7 @@ Value *(*rest)(List *closures, Value *t);
 Value *(*showFn)(List *closures, Value *t);
 Value *(*fn_apply)(List *closures, Value *f, Value *args);
 Value *(*hasField)(List *closures, Value *v, Value *field);
+Value *(*prErrSTAR)(Value *str);
 
 Value *my_malloc(int64_t sz);
 List *malloc_list();
@@ -200,7 +201,6 @@ void waitForWorkers();
 char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);
 Value *prSTAR(Value *);
-Value *prErrSTAR(Value *);
 Value *add_ints(Value *arg0, Value *arg1);
 Value *integer_str(Value *arg0);
 Value *integer_EQ(Value *arg0, Value *arg1);
@@ -301,3 +301,4 @@ Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash,
 Value *newTypeValue(int typeNum, Vector *fields);
 Value *getField(Value *value, int fieldIndex);
 Vector *listVec(Value *list);
+Value *defaultPrErrSTAR(Value *str);
