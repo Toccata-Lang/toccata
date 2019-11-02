@@ -1,7 +1,6 @@
 #! /bin/sh
 
-TOCCATA_DIR="$(cd -P -- $(dirname -- $0)/../ && pwd)"
-
+export TOCCATA_DIR="$(cd -P -- $(dirname -- $0)/../ && pwd)"
 PATH=$PATH:$TOCCATA_DIR
 
 usage() {
@@ -9,8 +8,8 @@ usage() {
     exit 1
 }
 
-if [ -z "$1" ]; then
+if [ "$#" -lt 1 ]; then
     usage
 fi
 
-toccata $1
+toccata "$@"
