@@ -648,7 +648,7 @@ VectorNode *malloc_vectorNode() {
   }
   newVectorNode->type = VectorNodeType;
   newVectorNode->refs = refsInit;
-#else	
+#else
   if (newVectorNode == (VectorNode *)0) {
     newVectorNode = (VectorNode *)removeFreeValue(&centralFreeVectorNodes);
     if (newVectorNode == (VectorNode *)0) {
@@ -2709,6 +2709,37 @@ Value *bitOr(Value *arg0, Value *arg1) {
   return(result);
 }
 
+Value *bitXor(Value *arg0, Value *arg1) {
+  Value *result;
+  result = integerValue(((Integer *)arg0)->numVal ^ ((Integer *)arg1)->numVal);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(result);
+}
+
+Value *bitShiftLeft(Value *arg0, Value *arg1) {
+  Value *result;
+  result = integerValue(((Integer *)arg0)->numVal << ((Integer *)arg1)->numVal);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(result);
+}
+
+Value *bitShiftRight(Value *arg0, Value *arg1) {
+  Value *result;
+  result = integerValue(((Integer *)arg0)->numVal >> ((Integer *)arg1)->numVal);
+  dec_and_free(arg0, 1);
+  dec_and_free(arg1, 1);
+  return(result);
+}
+
+Value *bitNot(Value *arg0) {
+  Value *result;
+  result = integerValue(~((Integer *)arg0)->numVal);
+  dec_and_free(arg0, 1);
+  return(result);
+}
+
 Value *addIntegers(Value *arg0, Value *arg1) {
   Value *numVal = integerValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
   dec_and_free(arg0, 1);
@@ -4327,7 +4358,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
 
 Value *get(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
   switch(node->type) {
-  case BitmapIndexedType: 
+  case BitmapIndexedType:
     return(bmiGet(node, k, v, hash, shift));
   case ArrayNodeType:
     return(arrayNodeGet(node, k, v, hash, shift));
@@ -4341,7 +4372,7 @@ Value *get(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *
 
 Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
   switch(node->type) {
-  case BitmapIndexedType: 
+  case BitmapIndexedType:
     return(bmiCopyAssoc(node, k, v, hash, shift));
   case ArrayNodeType:
     return(arrayNodeCopyAssoc(node, k, v, hash, shift));
@@ -4355,7 +4386,7 @@ Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, V
 
 Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
   switch(node->type) {
-  case BitmapIndexedType: 
+  case BitmapIndexedType:
     return(bmiMutateAssoc(node, k, v, hash, shift));
   case ArrayNodeType:
     return(arrayNodeMutateAssoc(node, k, v, hash, shift));
