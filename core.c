@@ -2791,10 +2791,18 @@ int8_t equal(Value *v1, Value *v2) {
    return(!notEquals);
 }
 
+Value *stringValue(char *s) {
+  int64_t len = strlen(s);
+  String *strVal = malloc_string(len);
+  strncpy(strVal->buffer, s, len);
+  strVal->buffer[len] = 0;
+  return((Value *)strVal);
+};
+
 Value *maybeExtract(Value *arg0) {
   Maybe *mValue = (Maybe *)arg0;
   if (mValue->value == (Value *)0) {
-    fprintf(stderr, "The 'nothing' value can not be passed to 'extract'.\n");
+    (*prErrSTAR)(stringValue("\n*** The 'nothing' value can not be passed to 'extract'.\n"));
     abort();
   }
   incRef(mValue->value, 1);
@@ -3178,14 +3186,6 @@ Value *opaqueValue(void *ptr, Destructor *destruct) {
   opVal->ptr = ptr;
   opVal->destruct = destruct;
   return((Value *)opVal);
-};
-
-Value *stringValue(char *s) {
-  int64_t len = strlen(s);
-  String *strVal = malloc_string(len);
-  strncpy(strVal->buffer, s, len);
-  strVal->buffer[len] = 0;
-  return((Value *)strVal);
 };
 
 Value *subs2(Value *arg0, Value *arg1) {
