@@ -109,24 +109,25 @@ REFS_SIZE refsError;
 #define FutureType 16
 #define AgentType 17
 #define OpaqueType 18
-#define CoreTypeCount 19
-#define TypeConstraintType 20
-#define NoValuesType 21
-#define AllValuesType 22
-#define MultiConstraintType 23
-#define ResultConstraintType 24
-#define ItemsConstraintType 25
-#define FieldConstraintType 26
-#define StaticIntConstraintType 27
-#define MinValueType 28
-#define MaxValueType 29
-#define InferredInnerType 30
-#define StaticLengthConstraintType 31
-#define StaticStrConstraintType 32
-#define ContentsConstraintType 33
-#define HashSetType 34
-#define ProtoDispatcherType 35
-#define TypeCount 36
+#define FloatType 19
+#define CoreTypeCount 20
+#define TypeConstraintType 21
+#define NoValuesType 22
+#define AllValuesType 23
+#define MultiConstraintType 24
+#define ResultConstraintType 25
+#define ItemsConstraintType 26
+#define FieldConstraintType 27
+#define StaticIntConstraintType 28
+#define MinValueType 29
+#define MaxValueType 30
+#define InferredInnerType 31
+#define StaticLengthConstraintType 32
+#define StaticStrConstraintType 33
+#define ContentsConstraintType 34
+#define HashSetType 35
+#define ProtoDispatcherType 36
+#define TypeCount 37
 
 FILE *outstream;
 List *empty_list;
