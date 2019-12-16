@@ -307,3 +307,4 @@ Value *newTypeValue(int typeNum, Vector *fields);
 Value *getField(Value *value, int fieldIndex);
 Vector *listVec(Value *list);
 Value *defaultPrErrSTAR(Value *str);
+Value *vectGet(Vector *vect, unsigned index);
