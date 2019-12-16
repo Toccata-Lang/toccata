@@ -4417,6 +4417,37 @@ Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
   return(mutateAssoc((List *)0, arg0, arg1, arg2, hash, shift));
 }
 
+Value *hashMapVec(Value *m) {
+  int cnt;
+  Value **arr;
+
+  if (m->type == BitmapIndexedType) {
+    cnt = __builtin_popcount(((BitmapIndexedNode *)m)->bitmap);
+    arr = ((BitmapIndexedNode *)m)->array;
+  } else if (m->type == ArrayNodeType) {
+    cnt = ARRAY_NODE_LEN;
+    arr = ((ArrayNode *)m)->array;
+  } else if (m->type == HashCollisionNodeType) {
+    cnt = ((HashCollisionNode *)m)->count;
+    arr = ((HashCollisionNode *)m)->array;
+  } else {
+    fprintf(stderr, "*** Invalid (Value *) passed to 'hashMapVec'\n");
+    abort();
+  }
+  Vector *v = empty_vect;
+  for (int i = 0; i < cnt * 2; i += 2) {
+    Vector *pair = empty_vect;
+    Value *val = arr[i];
+    incRef(val, 1);
+    pair = mutateVectConj(pair, val);
+    val = arr[i + 1];
+    incRef(val, 1);
+    pair = mutateVectConj(pair, val);
+    v = mutateVectConj(v, (Value *)pair);
+  }
+  return((Value *)v);
+}
+
 Value *dynamicCall1Arg(Value *f, Value *arg) {
   Value *rslt;
   if(f->type != FunctionType) {
