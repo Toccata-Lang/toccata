@@ -1145,6 +1145,7 @@ void emptyAgent(Agent *agent) {
 }
 
 void freeAgent(Value *v) {
+  // TODO: must add loop detection. It's too easy to screw up and cause a cycle
   Value *val = ((Agent *)v)->val;
   REFS_SIZE refs;
 #ifdef SINGLE_THREADED
@@ -1332,7 +1333,7 @@ void freeAll() {
 
 //*
 #ifdef SINGLE_THREADED
-  fprintf(stderr, "malloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
+  fprintf(stderr, "\nmalloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
           malloc_count, free_count, malloc_count - free_count);
 #else
   int64_t mallocs;
@@ -4410,7 +4411,7 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
   }
 }
 
-// used for static encoding hash maps
+// used for static encoding hash maps and other things
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
   Value *hash = baseSha1(incRef(arg1, 1));
   Value *shift = const0Ptr;
@@ -4731,6 +4732,7 @@ Value *updateAgent_impl(List *closures) {
 void scheduleAgent(Agent *agent, List *action) {
 #ifdef SINGLE_THREADED
   Value *f = (Value *)action->head;
+  incRef((Value *)agent->val, 1);
   List *args = listCons(agent->val, action->tail);
   incRef((Value *)action->tail, 1);
   agent->val = fn_apply((List *)0, (Value *)f, (Value *)args);
