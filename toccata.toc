@@ -2245,6 +2245,26 @@
                 _ (constrain-var "" 0 map-var hashmap-constraint)]
             (c-code map-var (comp* [] assocs) {} hashmap-constraint)))))
 
+(extend-type ast/value-of-ast
+  Emitter
+  (emit [ast]
+    (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)]
+      (flat-map (ev/traverse (.type-exprs ast) get-type-sym-info)
+                (fn [type-maps]
+                  (print-err 'boom)
+                  (abort)
+                  (emit-sym-constraint (c/TypeConstraint (comp* {} type-maps)
+                                                         (list [file-name line-number])
+                                                         (-> (list* "value-of " (-> (.type-exprs ast)
+                                                                                    (map (fn [s]
+                                                                                           (str "'" s "'")))
+                                                                                    (interpose " or ")))
+                                                             to-str 
+                                                             symbol 
+                                                             (rdr/tag file-name line-number))
+                                                         (.sym ast) "")))))))
+
 (extend-type ast/quoted-ast
   Emitter
   (emit [ast]
@@ -2371,7 +2391,7 @@
                                          (either (= inner c/top-type)
                                                  (c/intersect maybe-constraint
                                                               (c/InferredInner inner empty-list
-                                                                               nothing result-sym))))
+                                                                              nothing result-sym))))
                                        file-name line-number))]
       (c-init result-sym
               [line "Value *" result-sym " = (Value *)maybe((List *)0, (Value *)0, " (.c-var arg) ");" line-sep]
@@ -2388,19 +2408,17 @@
                       coll (second args)]
                   (let [v-var (.c-var v)
                         coll-var (.c-var coll)]
-                    (update-subs (for [v-const (typ/get-constraint v-var)
-                                       coll-const (typ/get-constraint coll-var)
+                    (update-subs (for [coll-const (typ/get-constraint coll-var)
                                        :let [coll-type (c/extract-coll-type coll-const)]
                                        _ (typ/append-constraint v-var (either (get coll-type .constraints)
                                                                               c/top-type)
                                                                 file-name line-number)
+                                       v-const (typ/get-constraint v-var)
                                        _ (typ/append-constraint result
                                                                 (c/ItemsConstraint [v-const] coll-const
                                                                                    empty-list nothing result)
                                                                 file-name line-number)
-                                       _ (typ/append-constraint result
-                                                                (c/extract-coll-type coll-const)
-                                                                file-name line-number)]
+                                       _ (typ/append-constraint result coll-type file-name line-number)]
                                    '_))))
                 (map (or (for [_ (conj-like target)
                                coll (first args)
@@ -2473,7 +2491,7 @@
                  (let [inner-const (either (map (-> arity-info .param-constraints c/extract-items-constraints first)
                                                 (fn [c]
                                                   (c/InferredInner c (list [file-name line-number])
-                                                                   nothing (.c-var v))))
+                                                                  nothing (.c-var v))))
                                            c/top-type)
                        result-c (either (or (and (map-fns (.call-target ast))
                                                  (maybe (-> (c/InferredInner (.result-constraint arity-info)
@@ -3027,7 +3045,7 @@
                                    (let [inner-c (c/extract-inner-constraint constraint)]
                                      (either (or (= inner-c c/top-type)
                                                  (and (= (.call-target ast) 'extract)
-                                                      (maybe (.inner inner-c))))
+                                                      (maybe (c/extract-contents-constraint inner-c))))
                                              inner-c)))
                                  file-name line-number)))))
 
@@ -3209,6 +3227,7 @@
 
             expr (comp (for [type-sym (sm/when (.result-type ast))
                              ns-path (sym-ns-path type-sym)
+                             ;; TODO: should use 'get-type-sym-info' instead
                              type-map (get-type-info ns-path type-sym)
                              c-var (genlocal "rslt")
                              :let [constraint (c/TypeConstraint type-map
