@@ -251,6 +251,10 @@
   (encode [m]
     (emit m))
 
+  ;; Change any InferredInner constraint to a CollectionOf
+  (promote-inferred [c]
+    c)
+
   (encode [m var-prefix])
 
   (validate-field [c m fields file-name line-number]
@@ -1429,7 +1433,8 @@
         (wrap sm/zero-sm {})))
 
 (defn constrain-var [file-name line-number var constraint]
-  (either (and (instance? c/AllValues constraint)
+  (either (and (or (= "" var)
+                   (instance? c/AllValues constraint))
                (maybe (wrap sm/zero-sm '_)))
           (update-subs
            (typ/append-constraint var constraint file-name line-number))))
@@ -1493,6 +1498,11 @@
 
 (extend-type c/ItemsConstraint
   Emitter
+  (promote-inferred [c]
+    (-> c
+        (.tail-constraint (promote-inferred (.tail-constraint c)))
+        (.items-constraints (map (.items-constraints c) promote-inferred))))
+
   (replace-syms [ast subs]
     (for [new-items (ev/traverse (.items-constraints ast) (fn [c]
                                                             (replace-syms c subs)))
@@ -1541,17 +1551,23 @@
 
 (extend-type c/InferredInner
   Emitter
+  (promote-inferred [c]
+    (apply c/CollectionOf (type-args c)))
+
   (runtime-check [constraint value-info sym-location]
     ;; Not worth the cost to check this at runtime
     []))
 
 (extend-type c/CollectionOf
   Emitter
+  (promote-inferred [c]
+    (.constraints c (promote-inferred (.constraints c))))
+
   (emit [constraint]
     (either (and (= (.var constraint) "")
                  (map (.sym constraint)
                       (fn [sym]
-                        (for [sym-info (lookup-sym sym)
+                        (for [sym-info (lookup-sym (rdr/tag sym))
                               inner-c (to-constraint (.constraints constraint))
                               _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
                                                (.c-var sym-info)
@@ -1562,6 +1578,10 @@
                                    (.var constraint)
                                    (.constraints constraint inner-c))]
               empty-c-code)))
+
+  (to-constraint [c]
+    (map (to-constraint (.constraints c))
+         (partial .constraints c)))
 
   (runtime-check [constraint value-info sym-location]
     ;; Not worth the cost to check this at runtime
@@ -1577,11 +1597,14 @@
             (wrap sm/zero-sm constraint)))
 
   (to-constraint [ast]
-    (map (get-type-sym-info (.type-sym ast))
-         (fn [type-info]
-           (either (and (empty? type-info)
-                        (maybe c/top-type))
-                   (.type-maps ast type-info)))))
+    ;; TODO: this seems to not work when type-sym is 'HashMap
+    (either (and (empty? (.type-maps ast))
+                 (maybe (map (get-type-sym-info (.type-sym ast))
+                             (fn [type-info]
+                               (either (and (empty? type-info)
+                                            (maybe c/top-type))
+                                       (.type-maps ast type-info))))))
+            (wrap sm/zero-sm ast)))
 
   (emit [ast]
     ;; TODO: throw an error when the type symbol isn't defined
@@ -1676,6 +1699,29 @@
 
 (extend-type c/MultiConstraint
   Emitter
+  (promote-inferred [c]
+    (.constraints c (map (.constraints c) promote-inferred)))
+
+  (validate-field [c m fields file-name line-number]
+    (either (for [first-c (first (.constraints c))
+                  c-sym (.sym first-c)]
+              (do
+                (either (some fields (partial = c-sym))
+                        (do
+                          (print-err "Invalid field"
+                                     (str "'" c-sym "'")
+                                     "at:" (str file-name ":")
+                                     line-number)
+                          (abort)))
+                (-> m
+                    (dissoc c-sym)
+                    (assoc c-sym (either (c/compose-constraints file-name line-number
+                                                                c
+                                                                (either (get m c-sym)
+                                                                        c/top-type))
+                                         (abort))))))
+            m))
+
   (replace-syms [ast subs]
     (for [new-cs (ev/traverse (.constraints ast) (fn [c]
                                                    (replace-syms c subs)))]
@@ -1689,6 +1735,10 @@
             (map (.constraints constraint)
                  (fn [c]
                    (runtime-check c value-info sym-location)))))
+
+  (to-constraint [ast]
+    (map (ev/traverse (.constraints ast) to-constraint)
+         (partial .constraints ast)))
 
   (emit [constraint]
     (map (ev/traverse (.constraints constraint) emit)
@@ -2430,7 +2480,7 @@
                                                   _ (either (c/compose-constraints file-name line-number
                                                                                    (c/update-path
                                                                                     (c/ItemsConstraint [v-const]
-                                                                                                       c/top-type
+                                                                                                       c/coll-of-any
                                                                                                        empty-list
                                                                                                        nothing result)
                                                                                     file-name line-number)
@@ -3228,7 +3278,8 @@
                                                                 type-sym nothing "")]
                              _ (constrain-var file-name line-number c-var constraint)]
                          (c-code c-var init {} constraint))
-                       (wrap sm/zero-sm (c-code "" init {} c/top-type)))]
+                       (wrap sm/zero-sm (c-code "" init {} c/top-type)))
+            _ (set-result-constraint (.c-var expr) file-name line-number)]
         expr)))
 
   (emit-defined-value [ast defined-sym]
@@ -5070,31 +5121,33 @@
                                                                                (maybe (symbol "#x"))
                                                                                "")])]]))))))
 
-(defn create-getters [sym constraint fields field-constraints]
+(defn create-getters [sym fields field-constraints]
   (let [type-value (rdr/tag "#value")]
     {Type-sym
      (map (zip-lists (seq fields) (range (count fields)) field-constraints)
           (fn [[field field-index field-constraint]]
-            [(rdr/tag (str "." field))
-             [(ast/fn-arity-ast (str sym "_" field) ""
-                                (ast/params [type-value (rdr/tag "#field")]) ""
-                                [(c/update-sym field-constraint (rdr/tag "#field"))
-                                 (ast/inline-ast 'C (maybe sym)
-                                                 (str "return(updateField(value_0, field_1, "
-                                                      field-index "));\n")
-                                                 "" 0)]
-                                c/empty-items-constraint c/top-type)
-              (ast/fn-arity-ast (str sym "_" field) ""
-                                (ast/params [type-value]) ""
-                                [(c/ResultConstraint (c/clear-sym field-constraint))
-                                 (ast/inline-ast 'C nothing
-                                                 (str "
+            (let [field-constraint (c/update-path field-constraint
+                                                  (ast/file-name sym) (ast/line-number sym))]
+              [(rdr/tag (str "." field))
+               [(ast/fn-arity-ast (str sym "_" field) ""
+                                  (ast/params [type-value (rdr/tag "#field")]) ""
+                                  [(c/update-sym field-constraint (rdr/tag "#field"))
+                                   (ast/inline-ast 'C (maybe sym)
+                                                   (str "return(updateField(value_0, field_1, "
+                                                        field-index "));\n")
+                                                   "" 0)]
+                                  c/empty-items-constraint c/top-type)
+                (ast/fn-arity-ast (str sym "_" field) ""
+                                  (ast/params [type-value]) ""
+                                  [(c/ResultConstraint (c/clear-sym field-constraint))
+                                   (ast/inline-ast 'C nothing
+                                                   (str "
   Value *result = incRef(((ReifiedVal *)value_0)->impls[" field-index "], 1);
   dec_and_free(value_0, 1);
   return(result);
 ")
-                                                 "" 0)]
-                                c/empty-items-constraint c/top-type)]]))}))
+                                                   "" 0)]
+                                  c/empty-items-constraint c/top-type)]])))}))
 
 (defn destruct-impl-fields [sym ast arity]
   (let [[type-value-parameter] (.fixed (.params arity))
@@ -5162,7 +5215,7 @@
           sym (.sym ast)
           fields (.fixed (.fields ast))
           const-arity-index (inc (count fields))
-          field-assertions (filter (.impls ast) (partial instance? c/SymbolConstraints))]
+          field-assertions (filter (.impls ast) (partial instance? c/ValueConstraint))]
       (comp (for [_ (sm/get-in-val [.modules file-name .types sym])
                   _ (compilation-error (str "Trying to re-define type name: '" sym "' in module "
                                             (either (and (= file-name 'core)
@@ -5193,15 +5246,12 @@
                                              (map fields (fn [field]
                                                            (either (get field-map field)
                                                                    c/top-type)))
-                                             c/top-type
+                                             c/coll-of-any
                                              empty-list (maybe (symbol (str sym " fields"))) "")
-                          impls (-> (merge-with comp
-                                                (default-type-impls sym type-num fields)
-                                                (destructure-fields sym ast))
-                                    seq
-                                    (comp (seq (create-getters sym new-type-constraint fields
-                                                               (c/extract-items-constraints field-constraints)))))
-                          impl-arities (for [[proto-sym impl-fns] impls
+                          impls (merge-with comp
+                                            (default-type-impls sym type-num fields)
+                                            (destructure-fields sym ast))
+                          impl-arities (for [[proto-sym impl-fns] (seq impls)
                                              [fn-name arities] (seq impl-fns)
                                              impl-arity arities]
                                          [proto-sym fn-name (.fn-var impl-arity (str (.fn-var impl-arity)))])]
@@ -5219,8 +5269,18 @@
                                                                (.items-constraints (map (.items-constraints fc)
                                                                                         (fn [c]
                                                                                           (c/update-var c "")))))))
-                                                    field-constraints)]
+                                                    field-constraints)
 
+                          field-constraints (promote-inferred field-constraints)
+                          getter-arities (create-getters sym fields
+                                                         (c/extract-items-constraints field-constraints))
+                          getter-arities (for [[proto-sym impl-fns] (seq getter-arities)
+                                               [fn-name arities] (seq impl-fns)
+                                               impl-arity arities]
+                                           [proto-sym fn-name (.fn-var impl-arity (str (.fn-var impl-arity)))])]
+
+                    getter-arities (ev/traverse getter-arities (partial declare-impl (str sym) type-num))
+                    _ (ev/traverse getter-arities (partial emit-impl (str sym) type-num))
                     _ (sm/assoc-in-val [.fn-context .field-constrs] nothing)
 
                     type-constructor (emit-constructor sym type-num new-type-constraint
