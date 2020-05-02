@@ -2297,9 +2297,13 @@
 
 (extend-type c/SumConstraint
   Emitter
-  (runtime-check [constraint value-info file-name line-number]
-    (print-err 'sum-runtim-check)
-    "")
+  (runtime-check [constraint value-info sym-location]
+    (either (and (c/satisfied-by constraint value-info)
+                 (maybe ""))
+            (do
+              ;; TODO: needs to be implemmented
+              (print-err 'sum-runtime-check)
+              "")))
 
   (to-constraint [ast]
     (map (ev/traverse (.alts ast) to-constraint)
@@ -4298,10 +4302,10 @@
     (conj clause-inits last-init)))
 
 (defn clause-refs [exprs result-var]
-  (dissoc (apply merge-with (list* + (map exprs .refs-map)))
-          result-var))
+  (-> (apply merge-with (list* + (map exprs .refs-map)))
+      (dissoc result-var)))
 
-(defn emit-cond-expr [cond-test result-var clauses tail-return]
+(defn emit-and-expr [cond-test result-var clauses tail-return]
   (let [file-name (ast/file-name clauses)
         line-number (ast/line-number clauses)]
     (for [evalled-clauses (ev/traverse clauses emit-cond-clause)
@@ -4342,8 +4346,8 @@
           line-number (ast/line-number ast)]
       (for [result-var (genlocal "andRslt")
             _ (constrain-var file-name line-number "#result" maybe-constraint)
-            expr (emit-cond-expr "if (isNothing(" result-var
-                                 (.clauses ast)
+            expr (emit-and-expr "if (isNothing(" result-var
+                                 (remove (.clauses ast) (partial instance? ast/NoCode))
                                  (str "return(nothing);" line-sep))
             _ (set-result-constraint (.c-var expr) file-name line-number)]
         expr))))
@@ -4352,11 +4356,9 @@
   Emitter
   (emit [ast]
     (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
-      (either (and (empty? clauses)
-                   (maybe (wrap sm/zero-sm empty-c-code)))
-              (for [result-var (genlocal "andRslt")
-                    expr (emit-cond-expr "if (isNothing(" result-var clauses "")]
-                expr))))
+      (flat-map (genlocal "andRslt")
+                (fn [result-var]
+                  (emit-and-expr "if (isNothing(" result-var clauses "")))))
 
   (tail-call [ast params]
     (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
@@ -4374,6 +4376,69 @@
   (replace-bound-vars [ast subs]
     (ast/and-ast (map (.clauses ast) (fn [ast]
                                        (replace-bound-vars ast subs))))))
+
+(defn sum-type [cs]
+  (either (or (and (empty? cs)
+                   (maybe c/top-type))
+              (some cs (partial = c/top-type)))
+          (let [new-cs (reduce cs []
+                               (fn [new-cs curr]
+                                 (either (and (some new-cs (fn [c]
+                                                             (= c (c/intersect c curr))))
+                                              (maybe new-cs))
+                                         (conj new-cs curr))))]
+            (either (and (= 1 (count new-cs))
+                         (first new-cs))
+                    (c/SumConstraint new-cs empty-list nothing "")))))
+
+(defn emit-or-expr [result-var clauses tail-return]
+  (let [file-name (ast/file-name clauses)
+        line-number (ast/line-number clauses)]
+    (either (map (first clauses)
+                 (fn [clause]
+                   (for [subs (sm/get-in-val [.fn-context .subs] [])
+                         expr (emit-cond-clause clause)
+                         final-subs (sm/get-in-val [.fn-context .subs] [])
+
+                         expr-cs (ev/traverse (rest clauses)
+                                              (fn [clause]
+                                                (for [_ (sm/assoc-in-val [.fn-context .subs] subs)
+                                                      expr (emit-cond-clause clause)
+                                                      constraint (sm/get-in-val [.fn-context .subs 0 (.c-var expr)]
+                                                                                c/top-type)]
+                                                  [constraint expr])))
+                         _ (sm/assoc-in-val [.fn-context .subs] final-subs)
+                         exprs (ev/traverse expr-cs
+                                            (fn [[c expr]]
+                                              (map (constrain-var
+                                                    file-name line-number (.c-var expr)
+                                                    (either (c/compose-constraints file-name line-number
+                                                                                   c maybe-constraint)
+                                                            (abort)))
+                                                   (fn [_]
+                                                     expr))))
+                         :let [exprs (comp [expr] exprs)]
+                         cs (ev/traverse exprs
+                                         (fn [expr]
+                                           (sm/get-in-val [.fn-context .subs 0 (.c-var expr)] c/top-type)))
+                         :let [result-c (-> cs
+                                            (map c/extract-contents-constraint)
+                                            sum-type
+                                            ast/assert-maybe-of
+                                            (c/update-path file-name line-number))]
+                         _ (constrain-var file-name line-number result-var result-c)]
+                     (let [refs-map (clause-refs exprs result-var)]
+                       (c-init result-var
+                               ["Value *" result-var ";" line-sep
+                                (-> exprs
+                                    (clause-inits "if (!isNothing("  refs-map result-var)
+                                    (interpose [tail-return "} else {" line-sep
+                                                "dec_and_free(" result-var ", 1);" line-sep]))
+                                (-> (count exprs)
+                                    dec
+                                    (repeat (str "}" line-sep)))]
+                               refs-map file-name line-number)))))
+            (wrap sm/zero-sm empty-c-code))))
 
 (deftype TailOr [clauses]
   (assert (instance? Vector clauses))
@@ -4396,22 +4461,30 @@
           line-number (ast/line-number ast)]
       (for [result-var (genlocal "orRslt")
             _ (constrain-var file-name line-number "#result" maybe-constraint)
-            expr (emit-cond-expr "if (!isNothing(" result-var
-                                 (remove (.clauses ast) (partial instance? ast/NoCode))
-                                 (str "return(" result-var ");" line-sep))
+            expr (emit-or-expr result-var (remove (.clauses ast) (partial instance? ast/NoCode))
+                               (str "return(" result-var ");" line-sep))
             _ (set-result-constraint (.c-var expr) file-name line-number)]
         expr))))
+
+;; TODO: emitting this expression seems inefficient
+;; (let [wrapper name-list]
+;;   (flat-map wrapper
+;;             (fn [name]
+;;               (flat-map
+;;                (extract
+;;                 (or (and (maybe 'not)
+;;                          (maybe (wrap wrapper (extract (maybe 'not)))))
+;;                     (maybe (zero (zero wrapper)))))
+;;                (fn [x]
+;;                  (wrap wrapper x))))))
 
 (extend-type ast/or-ast
   Emitter
   (emit [ast]
-    (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
-      (either (and (empty? clauses)
-                   (maybe (wrap sm/zero-sm empty-c-code)))
-              (flat-map (genlocal "orRslt")
-                        (fn [result-var]
-                          (emit-cond-expr "if (!isNothing(" result-var clauses
-                                          line-sep))))))
+    (flat-map (genlocal "orRslt")
+              (fn [result-var]
+                (emit-or-expr result-var (remove (.clauses ast) (partial instance? ast/NoCode))
+                              line-sep))))
 
   (tail-call [ast params]
     (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
