@@ -2295,6 +2295,10 @@
                 _ (constrain-var "" 0 map-var hashmap-constraint)]
             (c-code map-var (comp* [] assocs) {} hashmap-constraint)))))
 
+(extend-type c/KeysConstraint
+  Emitter
+  (runtime-check [constraint value-info sym-location]
+    ""))
 (extend-type c/SumConstraint
   Emitter
   (runtime-check [constraint value-info sym-location]
@@ -2467,38 +2471,67 @@
                                                                 file-name line-number)
                                        _ (typ/append-constraint result coll-type file-name line-number)]
                                    '_))))
-                (map (or (for [_ (conj-like target)
-                               coll (first args)
-                               v (second args)]
-                           [coll v])
-                         (for [_ (= target 'assoc)
-                               coll (first args)
-                               v (nth args 2)]
-                           [coll v]))
-                     (fn [[coll v]]
-                       (let [v-var (.c-var v)
-                             coll-var (.c-var coll)]
-                         (update-subs (for [v-const (typ/get-constraint v-var)
-                                            coll-const (typ/get-constraint coll-var)
-                                            :let [coll-type (c/extract-coll-type coll-const)
-                                                  _ (either (c/compose-constraints file-name line-number
-                                                                                   (c/update-path
-                                                                                    (c/ItemsConstraint [v-const]
-                                                                                                       c/coll-of-any
-                                                                                                       empty-list
-                                                                                                       nothing result)
-                                                                                    file-name line-number)
-                                                                                   (c/update-path coll-type
-                                                                                                  file-name line-number))
-                                                            (abort))]
-                                            _ (typ/append-constraint
-                                               v-var
-                                               (either (map (instance? c/CollectionOf coll-type) .constraints)
-                                                       c/top-type)
-                                               file-name line-number)
-                                            _ (typ/append-constraint result coll-type file-name line-number)]
-                                        '_))))))
+                (for [_ (conj-like target)
+                      coll (first args)
+                      v (second args)]
+                  (let [v-var (.c-var v)
+                        coll-var (.c-var coll)]
+                    (update-subs (for [v-const (typ/get-constraint v-var)
+                                       coll-const (typ/get-constraint coll-var)
+                                       :let [coll-type (c/extract-coll-type coll-const)
+                                             _ (either (c/compose-constraints
+                                                        file-name line-number
+                                                        (c/update-path (c/ItemsConstraint [v-const]
+                                                                                          c/coll-of-any
+                                                                                          empty-list
+                                                                                          nothing result)
+                                                                       file-name line-number)
+                                                        (c/update-path coll-type
+                                                                       file-name line-number))
+                                                       (abort))]
+                                       _ (typ/append-constraint
+                                          v-var
+                                          (either (map (instance? c/CollectionOf coll-type) .constraints)
+                                                  c/top-type)
+                                          file-name line-number)
+                                       _ (typ/append-constraint result coll-type file-name line-number)]
+                                   '_)))))
             (wrap sm/zero-sm '_))))
+
+(defn add-hash-map-constraints [ast result args]
+  (either (for [_ (= (.call-target ast) 'assoc)
+                coll-var (map (nth args 0) .c-var)
+                k-var (map (nth args 1) .c-var)
+                v-var (map (nth args 2) .c-var)]
+            (let [file-name (ast/file-name ast)
+                  line-number (ast/line-number ast)]
+              (update-subs (for [k-const (typ/get-constraint k-var)
+                                 v-const (typ/get-constraint v-var)
+                                 coll-const (typ/get-constraint coll-var)
+                                 :let [coll-type (c/extract-coll-type coll-const)
+                                       key-constraint (either (map (instance? c/KeysConstraint
+                                                                              (c/extract-key-constraint coll-const))
+                                                                   .constraint)
+                                                              c/top-type)
+                                       _ (either (c/compose-constraints file-name line-number
+                                                                        (c/update-path
+                                                                         (c/ItemsConstraint [v-const]
+                                                                                            c/coll-of-any
+                                                                                            empty-list
+                                                                                            nothing result)
+                                                                         file-name line-number)
+                                                                        (c/update-path coll-type
+                                                                                       file-name line-number))
+                                                 (abort))]
+                                 _ (typ/append-constraint
+                                    v-var
+                                    (either (map (instance? c/CollectionOf coll-type) .constraints)
+                                            c/top-type)
+                                    file-name line-number)
+                                 _ (typ/append-constraint k-var  key-constraint file-name line-number)
+                                 _ (typ/append-constraint result coll-type file-name line-number)]
+                             '_))))
+            (wrap sm/zero-sm '_)))
 
 (defn inner-constraint-for-reduce [result-var ast args]
   (and (= (.call-target ast) 'reduce)
@@ -2592,7 +2625,8 @@
           line (line-macro target (str "// call proto fn " target))
           _ (either (add-inner-constraint result-sym ast arg-vars)
                     (wrap sm/zero-sm '_))
-          _ (add-contents-constraint ast result-sym  arg-vars)]
+          _ (add-contents-constraint ast result-sym  arg-vars)
+          _ (add-hash-map-constraints ast result-sym  arg-vars)]
       (c-init result-sym
               [line
                check-args
@@ -2714,6 +2748,7 @@
     (wrap sm/zero-sm (get subs ast ast)))
 
   (inline-expr [name arg-asts]
+    ;; TODO: inline '=' arity 2 if the definition in scope is from core
     (let [args (remove arg-asts (partial instance? ast/NoCode))
           num-args (count args)]
       (either (or (and (or (= name 'wrap)
@@ -3039,6 +3074,7 @@
                            sm/zero-sm)
               _ (either (add-inner-constraint (.c-var expr) ast args)
                         (wrap sm/zero-sm '_))
+              _ (add-hash-map-constraints ast (.c-var expr) args)
               _ (add-contents-constraint ast (.c-var expr) args)]
           expr)
         (compilation-error "No arity with" (count args) "arguments found"
@@ -4377,20 +4413,6 @@
     (ast/and-ast (map (.clauses ast) (fn [ast]
                                        (replace-bound-vars ast subs))))))
 
-(defn sum-type [cs]
-  (either (or (and (empty? cs)
-                   (maybe c/top-type))
-              (some cs (partial = c/top-type)))
-          (let [new-cs (reduce cs []
-                               (fn [new-cs curr]
-                                 (either (and (some new-cs (fn [c]
-                                                             (= c (c/intersect c curr))))
-                                              (maybe new-cs))
-                                         (conj new-cs curr))))]
-            (either (and (= 1 (count new-cs))
-                         (first new-cs))
-                    (c/SumConstraint new-cs empty-list nothing "")))))
-
 (defn emit-or-expr [result-var clauses tail-return]
   (let [file-name (ast/file-name clauses)
         line-number (ast/line-number clauses)]
@@ -4423,7 +4445,7 @@
                                            (sm/get-in-val [.fn-context .subs 0 (.c-var expr)] c/top-type)))
                          :let [result-c (-> cs
                                             (map c/extract-contents-constraint)
-                                            sum-type
+                                            c/sum-type
                                             ast/assert-maybe-of
                                             (c/update-path file-name line-number))]
                          _ (constrain-var file-name line-number result-var result-c)]
@@ -4544,30 +4566,37 @@
 (extend-type ast/either-ast
   Emitter
   (emit [ast]
-    (for [result-var (genlocal "eitherRslt")
-          cond-val (emit-cond-clause (.clause ast))
-          syms get-syms
-          alt-val (emit (.alt ast))
-          _ (set-syms syms)]
-      (let [cond-rslt (.c-var cond-val)
-            refs-map (-> (merge-with + (.refs-map cond-val) (.refs-map alt-val))
-                         (filter-vals (partial < 0)))]
-        (c-init result-var
-                [(.init cond-val)
-                 "Value *" result-var ";" line-sep
-                 "if (!isNothing(" cond-rslt ",\"\",0)) {" line-sep
-                 result-var " = maybeExtract(" cond-rslt ");" line-sep
-                 (map (seq (.refs-map alt-val))
-                      (fn [[c-sym remaining]]
-                        (either (and (= 0 remaining)
-                                     (maybe ""))
-                                ["dec_and_free(" c-sym ", " remaining ");" line-sep])))
-                 "} else {" line-sep
-                 "dec_and_free(" cond-rslt ", 1);" line-sep
-                 (.init alt-val)
-                 result-var " = " (.c-var alt-val) ";" line-sep
-                 "}" line-sep]
-                refs-map (ast/file-name ast) (ast/line-number ast)))))
+    (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)]
+      (for [result-var (genlocal "eitherRslt")
+            cond-val (emit-cond-clause (.clause ast))
+            syms get-syms
+            alt-val (emit (.alt ast))
+            _ (set-syms syms)
+            cond-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var cond-val)] c/top-type)
+            alt-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var alt-val)] c/top-type)
+            _ (constrain-var file-name line-number result-var
+                             (c/sum-type [(c/extract-contents-constraint cond-constraint)
+                                          alt-constraint]))]
+        (let [cond-rslt (.c-var cond-val)
+              refs-map (-> (merge-with + (.refs-map cond-val) (.refs-map alt-val))
+                           (filter-vals (partial < 0)))]
+          (c-init result-var
+                  [(.init cond-val)
+                   "Value *" result-var ";" line-sep
+                   "if (!isNothing(" cond-rslt ",\"\",0)) {" line-sep
+                   result-var " = maybeExtract(" cond-rslt ");" line-sep
+                   (map (seq (.refs-map alt-val))
+                        (fn [[c-sym remaining]]
+                          (either (and (= 0 remaining)
+                                       (maybe ""))
+                                  ["dec_and_free(" c-sym ", " remaining ");" line-sep])))
+                   "} else {" line-sep
+                   "dec_and_free(" cond-rslt ", 1);" line-sep
+                   (.init alt-val)
+                   result-var " = " (.c-var alt-val) ";" line-sep
+                   "}" line-sep]
+                  refs-map file-name line-number)))))
 
   (tail-call [ast params]
     (TailEither (.clause ast)
