@@ -268,18 +268,20 @@
       sm/zero-sm))
 
   (runtime-check [constraint value-info file-name line-number]
-     (assert (instance? ast/SymbolOrString file-name))
-     (assert (instance? Integer line-number))
+    (assert (instance? ast/SymbolOrString file-name))
+    (assert (instance? Integer line-number))
+    (assert-result r (instance? Vector r))
 
     ;; generated code must preserve ref counts
     (either (and (c/satisfied-by constraint value-info)
-                 (maybe ""))
+                 (maybe []))
             (runtime-check constraint value-info
                            (either (and (= "" file-name)
-                                        (maybe "\"\""))
-                                   (str "\"at " file-name ": " line-number "\"")))))
+                                        (maybe ["\"\""]))
+                                   ["\"at " file-name ": " line-number "\""]))))
 
-  (runtime-check [constraint value-info sym-location]))
+  (runtime-check [constraint value-info sym-location]
+    (assert-result r (instance? Vector r))))
 
 (defn destruct-seq [seq-c-var elem-c-vars dest-args file-name line-num]
   (assert (instance? String seq-c-var))
@@ -1516,7 +1518,7 @@
   (runtime-check [constraint value-info sym-location]
     (either (and (or (c/satisfied-by constraint value-info)
                      (empty? (c/extract-items-constraints constraint)))
-                 (maybe ""))
+                 (maybe []))
             [(-> (c/TypeConstraint {c/ListType #{} c/VectorType #{}} (.path constraint) 'Sequence
                                    (.sym constraint) (.var constraint))
                  (runtime-check value-info sym-location))
@@ -1616,7 +1618,7 @@
 
   (runtime-check [constraint value-info sym-location]
     (either (and (c/satisfied-by constraint value-info)
-                 (maybe ""))
+                 (maybe []))
             ["switch (" (.var constraint) "->type) {" 
              (map (keys (.type-maps constraint)) (fn [type-num]
                                                    ["case " type-num ": " ]))
@@ -1636,7 +1638,7 @@
   Emitter
   (runtime-check [constraint value-info sym-location]
     (either (and (c/satisfied-by constraint value-info)
-                 (maybe ""))
+                 (maybe []))
             ["if (" (str (.max constraint)) " < ((Integer *)" (.var constraint) ")->numVal) {"
              ;; "\n#ifndef EMBEDDED\n"
              "fprintf(stderr, \"Value of '" (either (.sym constraint) "<unknown>")
@@ -1653,7 +1655,7 @@
   Emitter
   (runtime-check [constraint value-info sym-location]
     (either (and (c/satisfied-by constraint value-info)
-                 (maybe ""))
+                 (maybe []))
             ["if (" (str (.min constraint)) " > ((Integer *)" (.var constraint) ")->numVal) {"
              ;; "\n#ifndef EMBEDDED\n"
              "fprintf(stderr, \"Value of '" (either (.sym constraint) "<unknown>")
@@ -1681,7 +1683,7 @@
 
   (runtime-check [constraint value-info sym-location]
     (either (and (c/satisfied-by constraint value-info)
-                 (maybe ""))
+                 (maybe []))
             ["if(1) {\n"
              "Value *dork = hasField((List *)0, incRef(" (.var constraint) ", 1), "
              (.field-var constraint) ");\n" "if (isNothing(dork,\"\",0)) {"
@@ -1731,7 +1733,7 @@
     (either (and (or (some (.constraints constraint)
                            (partial instance? c/StaticConstraints))
                      (c/satisfied-by constraint value-info))
-                 (maybe ""))
+                 (maybe []))
             (map (.constraints constraint)
                  (fn [c]
                    (runtime-check c value-info sym-location)))))
@@ -2104,8 +2106,7 @@
                         check-result (either (and (instance? c-param expr)
                                                   (maybe ""))
                                              (runtime-check (c/update-var result-const (.c-var expr))
-                                                            curr-const
-                                                            file-name line-number))]
+                                                            curr-const file-name line-number))]
                   _ (constrain-var file-name line-number (.c-var expr) result-const)
                   final-expr (emit-tail-expr ast (.init expr [(.init expr) check-result]))
                   _ (set-result-constraint (.c-var final-expr) file-name line-number)]
@@ -2298,16 +2299,16 @@
 (extend-type c/KeysConstraint
   Emitter
   (runtime-check [constraint value-info sym-location]
-    ""))
+    []))
 (extend-type c/SumConstraint
   Emitter
   (runtime-check [constraint value-info sym-location]
     (either (and (c/satisfied-by constraint value-info)
-                 (maybe ""))
+                 (maybe []))
             (do
               ;; TODO: needs to be implemmented
               (print-err 'sum-runtime-check)
-              "")))
+              [])))
 
   (to-constraint [ast]
     (map (ev/traverse (.alts ast) to-constraint)
@@ -4539,29 +4540,39 @@
 
   Emitter
   (emit [ast]
-    (for [result-var (genlocal "rslt")
-          cond-val (emit-cond-clause clause)
-          ;; TODO: add set-result-constraint for cond-val
-          alt-val (emit alt)
-          _ (set-result-constraint (.c-var alt-val) (ast/file-name ast) (ast/line-number ast))]
-      (let [cond-rslt (.c-var cond-val)
-            refs-map (merge-with + (.refs-map cond-val) (.refs-map alt-val))]
-        (c-code ""
-                [(.init cond-val)
-                 "if (!isNothing(" cond-rslt ",\"\",0)) {" line-sep
-                 "Value *" result-var " = maybeExtract(" cond-rslt ");" line-sep
-                 (map (seq (.refs-map alt-val))
-                      (fn [[c-sym remaining]]
-                        (either (and (= 0 remaining)
-                                     (maybe ""))
-                                ["dec_and_free(" c-sym ", " remaining ");" line-sep])))
-                 "return(" result-var ");" line-sep
-                 "} else {" line-sep
-                 "dec_and_free(" cond-rslt ", 1);" line-sep
-                 (.init alt-val)
-                 "}" line-sep]
-                refs-map
-                c/top-type)))))
+    (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)]
+      (for [result-var (genlocal "rslt")
+            cond-val (emit-cond-clause clause)
+            alt-val (emit alt)
+            result-const (sm/get-in-val [.fn-context .subs 0 "#result"] c/top-type)
+            cond-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var cond-val)] c/top-type)
+            alt-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var alt-val)] c/top-type)
+            :let [expr-const (c/sum-type [(c/extract-contents-constraint cond-constraint)
+                                          alt-constraint])]
+            _ (constrain-var file-name line-number result-var
+                             expr-const)
+            _ (set-result-constraint result-var file-name line-number)]
+        (let [cond-rslt (.c-var cond-val)
+              refs-map (merge-with + (.refs-map cond-val) (.refs-map alt-val))]
+          (c-code ""
+                  [(.init cond-val)
+                   "if (!isNothing(" cond-rslt ",\"\",0)) {" line-sep
+                   "Value *" result-var " = maybeExtract(" cond-rslt ");" line-sep
+                   (map (seq (.refs-map alt-val))
+                        (fn [[c-sym remaining]]
+                          (either (and (= 0 remaining)
+                                       (maybe ""))
+                                  ["dec_and_free(" c-sym ", " remaining ");" line-sep])))
+                   (runtime-check (c/update-var result-const result-var)
+                                  expr-const file-name line-number)
+                   "return(" result-var ");" line-sep
+                   "} else {" line-sep
+                   "dec_and_free(" cond-rslt ", 1);" line-sep
+                   (.init alt-val)
+                   "}" line-sep]
+                  refs-map
+                  c/top-type))))))
 
 (extend-type ast/either-ast
   Emitter
