@@ -1,4 +1,7 @@
 
+;; TODO: a benchmark to implement
+;; https://github.com/christianscott/levenshtein-distance-benchmarks
+
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
                           :sha "4529b1f"))
@@ -56,8 +59,8 @@
   (send string-writer (fn [_]
                         (write-str strs))))
 
-(def Tagged (comp Symbol
-                  rdr/tagged-symbol))
+(def Tagged (any-of Symbol
+                    rdr/tagged-symbol))
 
 (def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
                                     (fn [toc-dir]
@@ -312,12 +315,12 @@
   ;; pointer to a FnArity struct
   (assert (instance? ast/SymbolOrString var)))
 
-(def CFnPtr (comp StaticFnPtr
-                  ProtoDispFnPtr))
+(def CFnPtr (any-of StaticFnPtr
+                    ProtoDispFnPtr))
 
-(def PointerVar (comp FnValPtr
-                      ArityValPtr
-                      CFnPtr))
+(def PointerVar (any-of FnValPtr
+                        ArityValPtr
+                        CFnPtr))
 
 (extend-type PointerVar
   Emitter
@@ -537,18 +540,18 @@
       (print-err 'could-not-encode m)
       sm/zero-sm)))
 
-(def C-Static-Value (comp c-static-int
-                          c-static-str
-                          c-static-sym
-                          c-static-reified
-                          c-constructor
-                          c-list-fn
-                          c-maybe-fn
-                          c-vector-fn
-                          c-static-fn
-                          c-static-arity
-                          c-protocol-fn
-                          c-static-val))
+(def C-Static-Value (any-of c-static-int
+                            c-static-str
+                            c-static-sym
+                            c-static-reified
+                            c-constructor
+                            c-list-fn
+                            c-maybe-fn
+                            c-vector-fn
+                            c-static-fn
+                            c-static-arity
+                            c-protocol-fn
+                            c-static-val))
 
 (extend-type C-Static-Value
   Emitter
@@ -588,9 +591,9 @@
   Collection
   (empty? [c] nothing))
 
-(def C-Value (comp c-code
-                   c-param
-                   C-Static-Value))
+(def C-Value (any-of c-code
+                     c-param
+                     C-Static-Value))
 
 (extend-type C-Value
   Collection
@@ -629,11 +632,11 @@
   (empty? [c] nothing))
 
 
-(def C-expr (comp empty-code
-                  C-Value
-                  c-param
-                  c-closure-fn
-                  c-init))
+(def C-expr (any-of empty-code
+                    C-Value
+                    c-param
+                    c-closure-fn
+                    c-init))
 
 (extend-type empty-code
   Composition
@@ -1166,17 +1169,17 @@
                      ;;                    (ast/line-number fn-sym))
                      )))))
 
-(def DefExprs (comp c-code
-                    c-static-reified
-                    c-constructor
-                    c-static-str
-                    c-static-int
-                    c-static-fn
-                    c-static-sym
-                    c-maybe-fn
-                    c-list-fn
-                    c-vector-fn
-                    c-protocol-fn))
+(def DefExprs (any-of c-code
+                      c-static-reified
+                      c-constructor
+                      c-static-str
+                      c-static-int
+                      c-static-fn
+                      c-static-sym
+                      c-maybe-fn
+                      c-list-fn
+                      c-vector-fn
+                      c-protocol-fn))
 
 (defn new-module-def [sym value]
   (assert (instance? DefExprs value))
@@ -2344,11 +2347,11 @@
               (c-static-sym sym-ptr [] {} constraint sym-var))))))
 
 
-(def LiteralValues (comp ast/quoted-ast
-                         ast/string-ast
-                         ast/integer-ast
-                         Integer
-                         String))
+(def LiteralValues (any-of ast/quoted-ast
+                           ast/string-ast
+                           ast/integer-ast
+                           Integer
+                           String))
 
 (extend-type LiteralValues
   Emitter
@@ -2680,8 +2683,8 @@
 
 (def get-field-sym (rdr/tag 'get-field 'core 0))
 
-(def BindingValue (comp C-expr
-                        c-field))
+(def BindingValue (any-of C-expr
+                          c-field))
 
 (extend-type Tagged
   Emitter
@@ -3157,71 +3160,76 @@
                       (wrap sm/zero-sm '_))]
         expr))))
 
-(defn define-sum-type [fn-val defined-sym]
-  (either (map (= (.call-target fn-val) 'comp*)
-               (fn [_]
-                 (let [[type-sym type-syms] (.args fn-val)
-                       type-syms (cons type-sym (seq (.args type-syms)))
-                       file-name (ast/file-name fn-val)
-                       line-number (ast/line-number fn-val)]
-                   (for [types-info (ev/traverse type-syms get-type-sym-info)
-                         :when-not (empty? (remove types-info empty?))
-                         :let [_ (map (zip-lists type-syms types-info)
-                                      (fn [[sym info]]
-                                        (and (empty? info)
-                                             (do
-                                               (print-err "Unknown type" (str "'" sym "'") "at"
-                                                          (str file-name ":") line-number)
-                                               (maybe (abort))))))
-                               types-info (reduce types-info {} comp)
-                               reified-type-num (extract rdr/type-counter)
-                               x* (rdr/tag "#x")
-                               y* (rdr/tag "#y")]
-                         _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
-                                            reified-type-num)
-                         _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym types-info))
-                         exprs (emit-defined-value
-                                (ast/reified
-                                 reified-type-num
-                                 {(rdr/tag Eq-sym file-name line-number)
-                                  {=*-sym
-                                   [(ast/fn-arity-ast
-                                     (str defined-sym "_EQ_QMARK_") ""
-                                     (ast/params [x* y*]) ""
-                                     [(ast/call-ast =*-sym
-                                                    [reified-type-num
-                                                     (ast/call-ast get-type-sym [y*])])]
-                                     c/empty-items-constraint c/top-type)]}
+(extend-type c/SumConstraint
+  Emitter
+  (runtime-check [constraint value-info sym-location]
+    (either (and (c/satisfied-by constraint value-info)
+                 (maybe []))
+            (do
+              ;; TODO: needs to be implemmented
+              (print-err 'sum-runtime-check)
+              [])))
 
-                                  (rdr/tag Type-sym file-name line-number)
-                                  {instance?-sym
-                                   [(ast/fn-arity-ast
-                                     (str defined-sym "_instance_QMARK_") ""
-                                     (ast/params [x* y*]) ""
-                                     [(ast/and-ast
-                                       [(ast/call-ast some-sym
-                                                      [(ast/call-ast list-sym (vec (keys types-info)))
-                                                       (ast/call-ast partial-sym
-                                                                     [=*-sym
-                                                                      (ast/call-ast get-type-sym [y*])])])
-                                        (ast/call-ast maybe-sym [y*])])]
-                                     c/empty-items-constraint c/top-type)]
+  (to-constraint [ast]
+    (map (ev/traverse (.alts ast) to-constraint)
+         (partial .alts ast)))
 
-                                   type-mapping-sym
-                                   [(ast/fn-arity-ast
-                                     (str defined-sym "_type_mapping") ""
-                                     (ast/params [x*]) ""
-                                     [(map-vals types-info (fn [field-set]
-                                                             (map field-set ast/quoted-ast)))]
-                                     c/empty-items-constraint c/top-type)]}
+  (emit-defined-value [ast defined-sym]
+    (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)
+          reified-type-num (extract rdr/type-counter)
+          x* (rdr/tag "#x")
+          y* (rdr/tag "#y")]
+      (for [ast (to-constraint ast)
+            :let [types-info (either (c/extract-type-map ast)
+                                     {})]
+            _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types defined-sym]
+                               reified-type-num)
+            _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym types-info))
+            exprs (emit-defined-value
+                   (ast/reified
+                    reified-type-num
+                    {(rdr/tag Eq-sym file-name line-number)
+                     {=*-sym
+                      [(ast/fn-arity-ast
+                        (str defined-sym "_EQ_QMARK_") ""
+                        (ast/params [x* y*]) ""
+                        [(ast/call-ast =*-sym
+                                       [reified-type-num
+                                        (ast/call-ast get-type-sym [y*])])]
+                        c/empty-items-constraint c/top-type)]}
 
-                                  (rdr/tag Stringable-sym file-name line-number)
-                                  {string-list-sym
-                                   [(ast/fn-arity (ast/params [x*]) ""
-                                                  [(ast/call-ast list-sym ["<SumType " (str defined-sym) ">"])])]}})
-                                defined-sym)]
-                     exprs))))
-          sm/zero-sm))
+                     (rdr/tag Type-sym file-name line-number)
+                     {instance?-sym
+                      [(ast/fn-arity-ast
+                        (str defined-sym "_instance_QMARK_") ""
+                        (ast/params [x* y*]) ""
+                        [(ast/and-ast
+                          [(ast/call-ast some-sym
+                                         [(ast/call-ast list-sym (vec (keys types-info)))
+                                          (ast/call-ast partial-sym
+                                                        [=*-sym
+                                                         (ast/call-ast get-type-sym [y*])])])
+                           (ast/call-ast maybe-sym [y*])])]
+                        c/empty-items-constraint c/top-type)]
+
+                      type-mapping-sym
+                      [(ast/fn-arity-ast
+                        (str defined-sym "_type_mapping") ""
+                        (ast/params [x*]) ""
+                        [(map-vals types-info (fn [field-set]
+                                                (map field-set ast/quoted-ast)))]
+                        c/empty-items-constraint c/top-type)]}
+
+                     (rdr/tag Stringable-sym file-name line-number)
+                     {string-list-sym
+                      [(ast/fn-arity (ast/params [x*]) ""
+                                     [(ast/call-ast list-sym ["<SumType " (str defined-sym) ">"])])]}})
+                   defined-sym)]
+        exprs)))
+
+  (emit [ast]
+    (flat-map (to-constraint ast) emit-sym-constraint)))
 
 (defn define-enum-type [fn-val defined-sym]
   (for [_ (sm/when (= (.call-target fn-val) 'enum))
@@ -3375,8 +3383,7 @@
                                            {} c/top-type)])))))
 
   (emit-defined-value [fn-val defined-sym]
-    (comp (define-sum-type fn-val defined-sym)
-          (define-enum-type fn-val defined-sym)
+    (comp (define-enum-type fn-val defined-sym)
           (for [value (init-at-runtime fn-val defined-sym)
                 constraint (sm/get-in-val [.fn-context .subs 0 (.c-var value)] c/top-type)
                 var (comp (map (lookup-declaration defined-sym) .c-var)
@@ -4123,8 +4130,8 @@
                             arity-ast
                             arity-impl-var c-fn))))
 
-(def SymConstraints (comp c/SymbolConstraints
-                          c/MultiConstraint))
+(def SymConstraints (any-of c/SymbolConstraints
+                            c/MultiConstraint))
 
 (deftype ConstrainVar [constraint]
   (assert (instance? SymConstraints constraint))
@@ -4550,8 +4557,7 @@
             alt-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var alt-val)] c/top-type)
             :let [expr-const (c/sum-type [(c/extract-contents-constraint cond-constraint)
                                           alt-constraint])]
-            _ (constrain-var file-name line-number result-var
-                             expr-const)
+            _ (constrain-var file-name line-number result-var expr-const)
             _ (set-result-constraint result-var file-name line-number)]
         (let [cond-rslt (.c-var cond-val)
               refs-map (merge-with + (.refs-map cond-val) (.refs-map alt-val))]
@@ -5753,6 +5759,10 @@
                 (map (get-proto-dispatch-sym (rdr/tag 'vals) 1)
                      (fn [arity-sym]
                        ["Value *(*vals)(List *, Value*) = " arity-sym ";\n"]))
+
+                (map (get-proto-dispatch-sym (rdr/tag 'first) 1)
+                     (fn [arity-sym]
+                       ["Value *(*first)(List *, Value*) = " arity-sym ";\n"]))
 
                 (map (get-proto-dispatch-sym (rdr/tag 'rest) 1)
                      (fn [arity-sym]

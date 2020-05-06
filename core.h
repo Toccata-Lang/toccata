@@ -178,6 +178,7 @@ Value *(*invoke2Args)(List *closures, Value *f, Value* arg0, Value* arg1);
 Value *(*type_name)(List *closures, Value *t);
 Value *(*seq)(List *closures, Value *t);
 Value *(*newHashSet)(List *closures, Value *t);
+Value *(*first)(List *closures, Value *t);
 Value *(*rest)(List *closures, Value *t);
 Value *(*showFn)(List *closures, Value *t);
 Value *(*fn_apply)(List *closures, Value *f, Value *args);
