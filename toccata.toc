@@ -1284,6 +1284,8 @@
     expr))
 
 (defn update-subs [f]
+  (assert (instance? typ/new-sv f))
+
   (for [subs (sm/get-in-val [.fn-context .subs] [])
         :let [_ (and (empty? subs)
                      (maybe (do
@@ -2890,6 +2892,7 @@
 
   (inline-expr [name arg-asts]
     ;; TODO: inline '=' arity 2 if the definition in scope is from core
+    ;; also, inline 'partial' to add file/line to error messages
     (let [args (remove arg-asts (partial instance? ast/NoCode))
           num-args (count args)]
       (either (or (and (or (= name 'wrap)
@@ -4766,9 +4769,9 @@
   (emit [ast]
     (let [file-name (ast/file-name ast)
           line-number (ast/line-number ast)]
-      ;; TODO: this is so fantastically wrong. What should the c-var of the final result be?
+      ;; TODO: this is so fantastically wrong.
       ;; How does the alt result-var get constrained?
-      (for [result-var (genlocal "rslt")
+      (for [result-var (genlocal "tailEither_rslt")
             cond-val (emit-cond-clause clause)
             alt-val (emit alt)
             result-const (sm/get-in-val [.fn-context .subs 0 "#result"] c/top-type)
@@ -4781,10 +4784,11 @@
             checked-var (genlocal 'checked)]
         (let [cond-rslt (.c-var cond-val)
               refs-map (merge-with + (.refs-map cond-val) (.refs-map alt-val))]
-          (c-code ""
+          (c-code result-var
                   [(.init cond-val)
+                   "Value *" result-var ";" line-sep
                    "if (!isNothing(" cond-rslt ",\"\",0)) {" line-sep
-                   "Value *" result-var " = maybeExtract(" cond-rslt ");" line-sep
+                   result-var " = maybeExtract(" cond-rslt ");" line-sep
                    (map (seq (.refs-map alt-val))
                         (fn [[c-sym remaining]]
                           (either (and (= 0 remaining)
@@ -4798,7 +4802,8 @@
                    "} else {" line-sep
                    "dec_and_free(" cond-rslt ", 1);" line-sep
                    (.init alt-val)
-                   ;; alt-val doesn't need a return value because it's a TailCall
+                   (either (= "" (.c-var alt-val))
+                           [result-var " = " (.c-var alt-val) ";" line-sep])
                    "}" line-sep]
                   refs-map
                   c/top-type))))))
@@ -4956,12 +4961,12 @@
                                  (fn [[arg idx]]
                                    (either (check-C-var (str arg "_" idx))
                                            (str "arg" idx))))]
-      (wrap sm/zero-sm (c-code "protoRslt"
-                               [(call-universal-proto-fn fn-sym disp-arg args)]
-                               (reduce args {disp-arg 1}
-                                       (fn [m arg]
-                                         (assoc m arg 1)))
-                               c/top-type)))))
+      (sm/state-maybe (c-code "protoRslt"
+                              [(call-universal-proto-fn fn-sym disp-arg args)]
+                              (reduce args {disp-arg 1}
+                                      (fn [m arg]
+                                        (assoc m arg 1)))
+                              c/top-type)))))
 
 (defn missing-impl-body [proto-sym fn-sym prototype]
   (let [num-args (-> prototype .params .fixed count)
@@ -4993,64 +4998,68 @@
 
 (defn emit-proto-default [protocol-sym fn-sym disp-fn-var prototype]
   (let [default-body (missing-impl-body protocol-sym fn-sym prototype)
+        default-constraints (filter (.default-body prototype)
+                                    (partial instance? c/Constraints))
         body (remove (.default-body prototype) (partial instance? ast/NoCode))
         arity-ast (ast/fn-arity (.params prototype) ""
                                 (either (and (empty? body)
                                              (maybe default-body))
                                         body))
         params (.params prototype)]
-    (for [arity-impl-var (global-var (str "Default_" fn-sym) "arityImpl")
-          :let [arity-impl-var (ProtoDispFnPtr arity-impl-var)]
-
+    (for [arity-impl-var (map (global-var (str "Default_" fn-sym) "arityImpl")
+                              ProtoDispFnPtr)
           fn-context (reset-fn-context)
+
+          ;; create vars for all the parameters
+          ;; TODO: this could probably be simplified after 'bind-list' is refactored
           p-bindings (either (and (.variadic params)
                                   (maybe (map (bind-param params) vector)))
                              (ev/traverse (.fixed params) bind-param))
-          _ (sm/update-in-val [.fn-context .subs]
-                              (fn [subs]
-                                (map subs (fn [sub]
-                                            (-> p-bindings
-                                                (map .bound)
-                                                (reduce sub dissoc))))))
-          _ (-> (.default-body prototype)
-                (filter (partial instance? c/Constraints))
-                (ev/traverse emit))
+
+          ;; clear any constraints for the parameter vars
+          _ (update-subs (-> p-bindings
+                             (map .bound)
+                             (typ/traverse (fn [var]
+                                             (typ/set-constraint var c/top-type)))))
+
+          ;; constrain those vars with the given assertions
+          _ (ev/traverse default-constraints emit)
+
+          ;; save the constraints specified for the parameters
           pcs (flat-map (sm/get-in-val [.fn-context .subs 0] {})
-                                      (fn [sub]
-                                        (get-param-constraints params sub)))
+                        (fn [sub]
+                          (get-param-constraints params sub)))
           _ (reset-fn-context fn-context)
 
-          static-arity (either (and (empty? body)
-                                    (maybe (emit-fn-arity (symbol (str "Default_" fn-sym)) disp-fn-var
-                                                          params
-                                                          (-> (.default-body prototype)
-                                                              (filter (partial instance? c/Constraints))
-                                                              (comp default-body))
-                                                          arity-impl-var)))
-                               (emit-fn-arity (symbol (str "Default_" fn-sym)) disp-fn-var
-                                              params
-                                              (-> (.default-body prototype)
-                                                  (filter (partial instance? c/Constraints))
-                                                  (comp [(ast/either-ast
-                                                          (InsertCode fn-sym prototype)
-                                                          (ast/let-ast [] body))]))
-                                              arity-impl-var))
-          result-constraints (-> (.default-body prototype)
-                                 (filter (partial instance? c/ResultConstraint))
-                                 (map .assertion)
-                                 (ev/traverse to-constraint))
-          :let [result-constraint (reduce result-constraints c/top-type c/intersect)
-                param-count (.param-count static-arity)
+          ;; compute the given result constraints
+          result-constraint (-> (.default-body prototype)
+                                (filter (partial instance? c/ResultConstraint))
+                                (map .assertion)
+                                (ev/traverse to-constraint)
+                                (map (fn [result-constraints]
+                                       (reduce result-constraints c/top-type c/intersect))))
+
+          ;; emit the default proto function
+          static-arity (emit-fn-arity (symbol (str "Default_" fn-sym)) disp-fn-var params
+                                      (comp default-constraints
+                                            (either (and (empty? body)
+                                                         (maybe default-body))
+                                                    [(ast/either-ast
+                                                      (InsertCode fn-sym prototype)
+                                                      (ast/let-ast [] body))]))
+                                      arity-impl-var)
+
+          :let [param-count (.param-count static-arity)
                 default-impl (ProtoImpl 0 (.c-var (.var-info static-arity)) arity-ast
                                         (.param-constraints static-arity)
-                                        result-constraint
+                                        (.result-constraint static-arity)
                                         arity-impl-var)]
           
           ;; this is the info to type-check the sites where the dispatcher is called
           _ (sm/assoc-in-val [.fns disp-fn-var param-count .param-constraints]
                              pcs)
           _ (sm/assoc-in-val [.fns disp-fn-var param-count .result-constraint]
-                             (.result-constraint static-arity))
+                             result-constraint)
 
           ;; this is the info used to emit the implementations
           _ (comp (sm/update-in-val [.modules (ast/file-name protocol-sym) .protocols
