@@ -271,7 +271,6 @@
     (emit m))
 
   ;; Change any InferredInner constraint to a CollectionOf
-  ;; TODO: change to use extract-coll-constraint
   (promote-inferred [c]
     c)
 
@@ -1650,7 +1649,7 @@
 (extend-type c/InferredInner
   Emitter
   (promote-inferred [c]
-    (apply c/CollectionOf (type-args c)))
+    (c/extract-coll-constraint c))
 
   (runtime-check [constraint value-info checked-var]
     ;; Only checking the inside of Maybe values
@@ -1662,7 +1661,7 @@
              (.var constraint) "->type == MaybeType && !isNothing(" (.var constraint) ", \"\", 0)) {"
              "Value *inner_value = " (str "((Maybe *)" (.var constraint) ")->value") ";" line-sep
              line-sep (runtime-check (-> constraint
-                                         .inner
+                                         .contents
                                          (c/update-var "inner_value"))
                                      c/top-type checked-var)
              line-sep "}"]))
@@ -1677,7 +1676,7 @@
              (.var constraint) "->type == MaybeType && !isNothing(" (.var constraint) ", \"\", 0)) {"
              "Value *inner_value = " (str "((Maybe *)" (.var constraint) ")->value") ";" line-sep
              line-sep (runtime-check (-> constraint
-                                         .inner
+                                         .contents
                                          (c/update-var "inner_value"))
                                      c/top-type sym-location checked-var)
              line-sep "}"])))
@@ -1685,27 +1684,24 @@
 (extend-type c/CollectionOf
   Emitter
   (promote-inferred [c]
-    (.constraints c (promote-inferred (.constraints c))))
+    (.contents c (promote-inferred (.contents c))))
 
   (emit [constraint]
-    (either (and (= (.var constraint) "")
-                 (map (.sym constraint)
-                      (fn [sym]
-                        (for [sym-info (lookup-sym (ast/tag sym))
-                              inner-c (to-constraint (.constraints constraint))
-                              _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
-                                               (.c-var sym-info)
-                                               (.constraints constraint inner-c))]
-                          empty-c-code))))
-            (for [inner-c (to-constraint (.constraints constraint))
-                  _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
-                                   (.var constraint)
-                                   (.constraints constraint inner-c))]
-              empty-c-code)))
+    (for [constraint (to-constraint constraint)
+          var (either (and (= (.var constraint) "")
+                           (map (.sym constraint)
+                                (fn [sym]
+                                  (map (lookup-sym (ast/tag sym)) .c-var))))
+                      (sm/state-maybe (.var constraint)))
+          _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
+                           var constraint)]
+      empty-c-code))
 
   (to-constraint [c]
-    (map (to-constraint (.constraints c))
-         (partial .constraints c)))
+    (map (to-constraint (.contents c))
+         ;; TODO: this should throw an assertion, the runtime check doesn't tell you where it happened at
+         ;; (partial .constraints c)
+         (partial .contents c)))
 
   (runtime-check [constraint value-info checked-var]
     ;; Only checking the inside of Maybe values
@@ -1717,7 +1713,7 @@
              (.var constraint) "->type == MaybeType && !isNothing(" (.var constraint) ", \"\", 0)) {"
              "Value *inner_value = " (str "((Maybe *)" (.var constraint) ")->value") ";" line-sep
              line-sep (runtime-check (-> constraint
-                                         .constraints
+                                         .contents
                                          (c/update-var "inner_value"))
                                      c/top-type checked-var)
              line-sep "}"]))
@@ -1732,7 +1728,7 @@
              (.var constraint) "->type == MaybeType && !isNothing(" (.var constraint) ", \"\", 0)) {"
              "Value *inner_value = " (str "((Maybe *)" (.var constraint) ")->value") ";" line-sep
              line-sep (runtime-check (-> constraint
-                                         .constraints
+                                         .contents
                                          (c/update-var "inner_value"))
                                      c/top-type sym-location checked-var)
              line-sep "}"])))
