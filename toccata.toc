@@ -219,7 +219,7 @@
     (assert-result x (instance? sm/new-sm x))
 
     ;; TODO: remove this. Don't want a default impl
-    ast)
+    (sm/state-maybe ast))
 
   ;; prepend "#" to all the bound variables in the AST
   (replace-bound-vars [ast subs]
@@ -1931,6 +1931,7 @@
     (replace-bound-vars (.assertion constraint) subs))
 
   (replace-syms [constraint subs]
+    ;; TODO: why am I even replacing syms in the result constraint
     (replace-syms (.assertion constraint) subs))
 
   (tail-call [constraint _]
@@ -4264,37 +4265,34 @@
   (string-list [_]
     (list "<ProtoImplDeclaration " (str proto-sym) " " (str fn-name) ">")))
 
-(defn declare-impl [type-str type-num [proto-sym fn-name arity-ast]]
+(defn declare-impl [type-str type-num [proto-sym fn-sym arity-ast]]
   (assert (instance? Integer type-num))
 
   (let [num-args (count (.params arity-ast))]
-    (for [impl-fn-var (global-var fn-name "staticArity")
-          arity-impl-var (global-var (str type-str fn-name) "arityImpl")
-          c-fn (global-var (str type-str fn-name) "arityFn")
+    (for [impl-fn-var (global-var fn-sym "staticArity")
+          arity-impl-var (global-var (str type-str fn-sym) "arityImpl")
+          c-fn (global-var (str type-str fn-sym) "arityFn")
           :let [impl-fn-var impl-fn-var
                 arity-impl-var (ArityValPtr arity-impl-var "")
                 c-fn (ProtoDispFnPtr c-fn)]
-          dispatcher-info (get-proto-impl proto-sym fn-name num-args 0)
-          ;; TODO: the param constraints and the result constraint ast expressions
-          ;; are kept in the ast of the dispatcher. Pretty bogus
+          dispatcher-info (get-proto-impl proto-sym fn-sym num-args 0)
           :let [sym-map (reduce (zip-lists (-> dispatcher-info .ast .params .fixed)
                                            (-> arity-ast .params .fixed))
                                 {} (fn [m [old-sym new-sym]]
-                                     (assoc m old-sym new-sym)))
-                result-assertions (-> dispatcher-info
-                                      .ast
-                                      .body
-                                      (filter (partial instance? c/ResultConstraint)))]
+                                     (assoc m old-sym new-sym)))]
           param-assertions (-> dispatcher-info
-                               .ast
-                               .body
-                               (filter (partial instance? c/SymbolConstraints))
-                               (ev/traverse (fn [ast]
-                                              (replace-syms ast sym-map))))
-          :let [arity-ast (.body arity-ast (comp [] param-assertions result-assertions (.body arity-ast)))]
+                               .param-constraints
+                               (replace-syms sym-map)
+                               (map (fn [c]
+                                      (-> c
+                                          c/extract-items-constraints
+                                          (map (fn [c]
+                                                 (c/update-var c "")))))))
+          :let [arity-ast (.body arity-ast (comp [(c/ResultConstraint (.result-constraint dispatcher-info))]
+                                                 param-assertions (.body arity-ast)))]
           _ (new-static-arity impl-fn-var num-args c-fn
                               c/empty-items-constraint c/top-type)
-          _ (new-proto-impl proto-sym fn-name num-args type-num arity-impl-var arity-ast
+          _ (new-proto-impl proto-sym fn-sym num-args type-num arity-impl-var arity-ast
                             c/empty-items-constraint c/top-type c-fn)
           _ (declare ["Value *" c-fn "("
                       (interpose (cons "List *closures"
@@ -4304,7 +4302,7 @@
                                  ", ")
                       ");\n"
                       "FnArity *" arity-impl-var ";\n"])]
-      (ProtoImplDeclaration proto-sym fn-name
+      (ProtoImplDeclaration proto-sym fn-sym
                             arity-ast
                             arity-impl-var c-fn))))
 
@@ -5051,15 +5049,13 @@
 
           :let [param-count (.param-count static-arity)
                 default-impl (ProtoImpl 0 (.c-var (.var-info static-arity)) arity-ast
-                                        (.param-constraints static-arity)
-                                        (.result-constraint static-arity)
-                                        arity-impl-var)]
+                                        pcs result-constraint arity-impl-var)]
           
           ;; this is the info to type-check the sites where the dispatcher is called
           _ (sm/assoc-in-val [.fns disp-fn-var param-count .param-constraints]
-                             pcs)
+                             (.param-constraints static-arity))
           _ (sm/assoc-in-val [.fns disp-fn-var param-count .result-constraint]
-                             result-constraint)
+                             (.result-constraint static-arity))
 
           ;; this is the info used to emit the implementations
           _ (comp (sm/update-in-val [.modules (ast/file-name protocol-sym) .protocols
@@ -5618,9 +5614,9 @@
                                              [fn-name arities] (seq impl-fns)
                                              impl-arity arities]
                                          [proto-sym fn-name (.fn-var impl-arity (str (.fn-var impl-arity)))])]
-                    impl-arities (ev/traverse impl-arities (partial declare-impl (str sym) type-num))
-
                     _ (sm/assoc-in-val [.fn-context .field-constrs] (maybe field-constraints))
+
+                    impl-arities (ev/traverse impl-arities (partial declare-impl (str sym) type-num))
                     _ (ev/traverse impl-arities (partial emit-impl (str sym) type-num))
 
                     new-field-constrs (sm/get-in-val [.fn-context .field-constrs])
