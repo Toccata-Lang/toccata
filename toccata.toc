@@ -1519,6 +1519,7 @@
                  (fn [_]
                    empty-c-code)))))
 
+;; TODO: how many of these impls would work for ValueConstraint
 (extend-type c/SymbolConstraints
   Emitter
   (validate-field [c m fields file-name line-number]
@@ -2894,6 +2895,7 @@
   (inline-expr [name arg-asts]
     ;; TODO: inline '=' arity 2 if the definition in scope is from core
     ;; also, inline 'partial' to add file/line to error messages
+    ;; and, 'get-in', 'update-in'
     (let [args (remove arg-asts (partial instance? ast/NoCode))
           num-args (count args)]
       (either (or (and (or (= name 'wrap)
@@ -3366,17 +3368,21 @@
     (map (ev/traverse (.alts ast) to-constraint)
          (partial .alts ast)))
 
-  (emit-defined-value [ast defined-sym]
-    ;; TODO: can probably be used for all ValueConstraints
-    (let [file-name (ast/file-name ast)
-          line-number (ast/line-number ast)
+  (emit [ast]
+    (flat-map (to-constraint ast) emit-sym-constraint)))
+
+(extend-type c/ValueConstraint
+  Emitter
+  (emit-defined-value [constraint defined-sym]
+    (let [file-name (ast/file-name constraint)
+          line-number (ast/line-number constraint)
           reified-type-num (extract rdr/type-counter)
           x* (ast/tag "#x")
           y* (ast/tag "#y")]
-      (for [ast (to-constraint ast)
-            :let [types-info (either (c/extract-type-map ast)
+      (for [constraint (to-constraint constraint)
+            :let [types-info (either (c/extract-type-map constraint)
                                      {})]
-            _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types (ast/untag defined-sym)] ast)
+            _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types (ast/untag defined-sym)] constraint)
             _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo (ast/tag defined-sym) types-info))
             exprs (emit-defined-value
                    (ast/reified
@@ -3419,10 +3425,7 @@
                       [(ast/fn-arity (ast/params [x*]) ""
                                      [(ast/call-ast list-sym ["<SumType " (str defined-sym) ">"])])]}})
                    defined-sym)]
-        exprs)))
-
-  (emit [ast]
-    (flat-map (to-constraint ast) emit-sym-constraint)))
+        exprs))))
 
 (defn define-enum-type [fn-val defined-sym]
   (let [file-name (ast/file-name defined-sym)
@@ -4233,11 +4236,10 @@
                                                                      (ast/file-name params)
                                                                      (ast/line-number params))))
                                                       (flat-map p-bindings .destruct)))]
-                   _ (sm/update-in-val [.fn-context .subs]
-                                       (fn [subs]
-                                         (map subs (fn [sub]
-                                                     (reduce (conj param-vars "#result")
-                                                             sub dissoc)))))
+                   _ (update-subs (typ/traverse (conj param-vars "#result")
+                                                (fn [var]
+                                                  (typ/set-constraint var c/top-type))))
+
                    ;; TODO: use (sm/get-in [.fn-context .syms fn-sym]) instead
                    syms get-syms
                    _ (either (map (get syms fn-sym) sm/state-maybe)
