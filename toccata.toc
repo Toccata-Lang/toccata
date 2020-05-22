@@ -1569,9 +1569,6 @@
         (.items-constraints (map (.items-constraints c) promote-inferred))))
 
   (replace-syms [ast subs]
-    ;; TODO: should be in the defprotocol
-    (assert (instance? (map-of ast/tagged-symbol ast/tagged-symbol) subs))
-
     (for [new-items (ev/traverse (.items-constraints ast) (fn [c]
                                                             (replace-syms c subs)))
           new-tail (replace-syms (.tail-constraint ast) subs)
@@ -1586,38 +1583,46 @@
     (either (and (or (c/satisfied-by constraint value-info)
                      (empty? (c/extract-items-constraints constraint)))
                  (maybe []))
-            ["if (" checked-var "){"
-             (-> (c/TypeConstraint {c/ListType #{} c/VectorType #{}} (.path constraint) 'Sequence
-                                   (.sym constraint) (.var constraint))
-                 (runtime-check value-info checked-var))
+            [(let [rt-check (-> (c/TypeConstraint {c/ListType #{} c/VectorType #{}} (.path constraint) 'Sequence
+                                                  (.sym constraint) (.var constraint))
+                                (runtime-check value-info checked-var))]
+               (either (empty? rt-check)
+                       ["if (" checked-var "){" rt-check "}"]))
              (let [min-count (str (count (c/extract-items-constraints constraint)))]
                ["if (" checked-var " && countSeq(incRef(" (.var constraint) ", 1)) < " min-count ") {"
                 checked-var "= 0;" line-sep "}"])
-             "if (" checked-var ") {" line-sep
-             "incRef(" (.var constraint) ", 1);" line-sep
              (let [items (map (range (inc (count (c/extract-items-constraints constraint))))
-                              (partial str (.var constraint) "_"))]
-               [(destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
-                (for [[constraints item] (zip-lists (c/extract-items-constraints constraint) items)]
-                  (let [constraints (either (map (.sym constraint) (fn [sym]
-                                                                     (c/update-sym constraints sym)))
-                                            constraints)]
-                    (-> constraints
-                        (c/update-var item)
-                        (runtime-check value-info checked-var))))
-                "if (" checked-var "){"
-                (map items (fn [item]
-                             (str "dec_and_free(" item ", 1);" line-sep)))])
-             "}}}" line-sep]))
+                              (partial str (.var constraint) "_"))
+                   rt-checks (for [[constraints item] (zip-lists (c/extract-items-constraints constraint) items)]
+                               (let [constraints (either (map (.sym constraint) (fn [sym]
+                                                                                  (c/update-sym constraints sym)))
+                                                         constraints)]
+                                 (-> constraints
+                                     (c/update-var item)
+                                     (runtime-check value-info checked-var))))]
+               (either (map (every rt-checks empty?)
+                            (fn [_]
+                              (print-err 'hit-it 1)
+                              []))
+                       ["if (" checked-var ") {" line-sep
+                        "incRef(" (.var constraint) ", 1);" line-sep
+                        (destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
+                        rt-checks
+                        "if (" checked-var "){"
+                        (map items (fn [item]
+                                     (str "dec_and_free(" item ", 1);" line-sep)))
+                        "}}"]))
+             line-sep]))
 
   (runtime-check [constraint value-info sym-location checked-var]
     (either (and (or (c/satisfied-by constraint value-info)
                      (empty? (c/extract-items-constraints constraint)))
                  (maybe []))
-            ["if (" checked-var "){"
-             (-> (c/TypeConstraint {c/ListType #{} c/VectorType #{}} (.path constraint) 'Sequence
+            [(let [rt-check (-> (c/TypeConstraint {c/ListType #{} c/VectorType #{}} (.path constraint) 'Sequence
                                    (.sym constraint) (.var constraint))
-                 (runtime-check value-info sym-location checked-var))
+                                (runtime-check value-info sym-location checked-var))]
+               (either (empty? rt-check)
+                       ["if (" checked-var "){" rt-check "}"]))
              (let [min-count (str (count (c/extract-items-constraints constraint)))]
                ["if (" checked-var " && countSeq(incRef(" (.var constraint) ", 1)) < " min-count ") {"
                 ;; "\n#ifndef EMBEDDED\n"
@@ -1631,22 +1636,25 @@
                 "\\n\");"
                 ;; "\n#endif\n"
                 checked-var "= 0;" line-sep "}"])
-             "if (" checked-var ") {" line-sep
-             "incRef(" (.var constraint) ", 1);" line-sep
              (let [items (map (range (inc (count (c/extract-items-constraints constraint))))
-                              (partial str (.var constraint) "_"))]
-               [(destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
-                (for [[constraints item] (zip-lists (c/extract-items-constraints constraint) items)]
-                  (let [constraints (either (map (.sym constraint) (fn [sym]
-                                                                     (c/update-sym constraints sym)))
-                                            constraints)]
-                    (-> constraints
-                        (c/update-var item)
-                        (runtime-check value-info sym-location checked-var))))
-                "if (" checked-var "){"
-                (map items (fn [item]
-                             (str "dec_and_free(" item ", 1);" line-sep)))])
-             "}}}" line-sep])))
+                              (partial str (.var constraint) "_"))
+                   rt-checks (for [[constraints item] (zip-lists (c/extract-items-constraints constraint) items)]
+                               (let [constraints (either (map (.sym constraint) (fn [sym]
+                                                                                  (c/update-sym constraints sym)))
+                                                         constraints)]
+                                 (-> constraints
+                                     (c/update-var item)
+                                     (runtime-check value-info sym-location checked-var))))]
+               (either (map (every rt-checks empty?) (fn [_] []))
+                       ["if (" checked-var ") {" line-sep
+                        "incRef(" (.var constraint) ", 1);" line-sep
+                        (destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
+                        rt-checks
+                        "if (" checked-var "){"
+                        (map items (fn [item]
+                                     (str "dec_and_free(" item ", 1);" line-sep)))
+                        "}}"]))
+             line-sep])))
 
 (extend-type c/InferredInner
   Emitter
@@ -4588,10 +4596,7 @@
                          exprs (ev/traverse (rest clauses)
                                             (fn [clause]
                                               (for [_ (sm/assoc-in-val [.fn-context .subs] subs)
-                                                    expr (emit-cond-clause clause)
-                                                    ;; TODO: probably don't need this
-                                                    _ (constrain-var file-name line-number (.c-var expr)
-                                                                     maybe-constraint)]
+                                                    expr (emit-cond-clause clause)]
                                                 expr)))
                          :let [exprs (comp [expr] exprs)]
                          _ (sm/assoc-in-val [.fn-context .subs] final-subs)
