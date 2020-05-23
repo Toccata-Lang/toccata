@@ -569,6 +569,7 @@ Maybe *malloc_maybe() {
       maybeStructs->type = MaybeType;
       maybeStructs->refs = refsInit;
       maybeStructs->hash = (Integer *)0;;
+      maybeStructs->value = (Value *)0;;
       return(maybeStructs);
     }
   } else {
@@ -595,6 +596,7 @@ Maybe *malloc_maybe() {
       maybeStructs->type = MaybeType;
       maybeStructs->hash = (Integer *)0;;
       __atomic_store(&maybeStructs->refs, &refsInit, __ATOMIC_RELAXED);
+      maybeStructs->value = (Value *)0;;
       return(maybeStructs);
     }
   } else {
@@ -603,7 +605,8 @@ Maybe *malloc_maybe() {
   newMaybe->type = MaybeType;
   __atomic_store(&newMaybe->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
-  newMaybe->hash = (Integer *)0;;
+  newMaybe->hash = (Integer *)0;
+  newMaybe->value = (Value *)0;
   return(newMaybe);
 }
 
