@@ -207,6 +207,7 @@
     sm/zero-sm)
 
   ;; Mark this AST node as the final (or tail) expression in a function body
+  ;; TODO: all tail expressions must gather the result constraint, etc
   (tail-call [_ params])
 
   ;; Unwrap the tail call
@@ -1302,97 +1303,84 @@
         _ (sm/assoc-in-val [.fn-context .subs] new-subs)]
     '_))
 
-;; This is so hideous on purpose. It's called *A LOT* so I unwound it for performance's sake
+(defn constrain-var [file-name line-number var constraint]
+  (cond (or (= "" var)
+            (instance? c/AllValues constraint))
+        (wrap sm/zero-sm '_)
+
+        (update-subs
+         (typ/append-constraint var constraint file-name line-number))))
+
+(defn lookup-closure-sym [sym]
+  (let [file-name (ast/file-name sym)
+        line-number (ast/line-number sym)]
+    (for [sym-info (sm/get-in-val [.fn-context .context-syms sym])
+          closures (sm/get-in-val [.fn-context .closed-over .closures])
+          expr (either (some closures
+                             (fn [[closure-var sym-literal constraint]]
+                               (for [_ (= sym sym-literal)]
+                                 ;; already added to closures
+                                 (map (sm/update-in-val [.fn-context .closed-over .refs-map closure-var]
+                                                        inc)
+                                      (fn [_]
+                                        (do
+                                          (cond (= sym 'marvelous)
+                                                (do
+                                                  (print-err 'found-in-context 1 sym-info)
+                                                  (print-err 'constraint constraint))
+                                                '_)
+                                          (c-code closure-var [] {closure-var 1} constraint)))))))
+                       ;; first time sym is closed over
+                       (for [sym-count (sm/get-in-val [.fn-context .sym-count])
+                             _ (sm/update-in-val [.fn-context .sym-count] inc)
+                             :let [constraint (expr-constraints sym-info)
+                                   closure-var (str "val" sym-count)]
+                             _ (sm/update-in-val [.fn-context .closed-over .closures]
+                                                 (fn [closures]
+                                                   (conj closures [closure-var sym constraint])))
+                             _ (sm/assoc-in-val [.fn-context .closed-over .refs-map closure-var]
+                                                1)]
+                         (do
+                           (cond (= sym 'marvelous)
+                                 (do
+                                   (print-err 'found-in-context 2 sym-info)
+                                   (print-err 'constraint constraint))
+                                 '_)
+                           (c-code closure-var [] {closure-var 1} constraint))))]
+      expr)))
+
 (defn lookup-sym [sym]
-  ;; Look up a value given a symbol. Will abort if the symbol cannot be found.
   (assert (instance? ast/tagged-symbol sym))
 
   (let [file-name (ast/file-name sym)
         line-number (ast/line-number sym)]
-    (sm/new-sm
-     (fn [s]
-       (assert (instance? GlobalContext s))
-       (let [ctxt (.fn-context s)
-             syms (.syms ctxt)
-             modules (.modules s)
-             closed-over (.closed-over ctxt)
-             closures (.closures closed-over)
-             refs-map (.refs-map closed-over)]
-         (map (or (map (or
-                        ;; lookup namespace-qual sym
-                        (flat-map (ast/namespace sym)
-                                  (fn [ns-sym]
-                                    (or (get-in modules [file-name .ns-syms
-                                                         (ast/tag ns-sym)
-                                                         (ast/tag (.base sym))])
-                                        (do
-                                          (print-err "Undefined symbol" (str "'" sym "'") "at"
-                                                     (str file-name ":")
-                                                     (ast/line-number sym))
-                                          (maybe (abort))))))
-                        ;; lookup sym in local fn context
-                        (get syms sym))
-                       (fn [expr]
-                         [expr s]))
-                  ;; lookup symbol in enclosing context of fn
-                  (map (-> ctxt .context-syms (get sym))
-                       (fn [sym-info]
-                         (let [constraint (expr-constraints sym-info)]
-                           (either (some closures
-                                         (fn [[closure-var sym-literal]]
-                                           (and (= sym sym-literal)
-                                                (map (get refs-map closure-var)
-                                                     (fn [refs-count]
-                                                       (let [new-refs-map (assoc refs-map
-                                                                            closure-var (inc refs-count))
-                                                             new-closed-over (.refs-map closed-over new-refs-map)
-                                                             new-ctxt (.closed-over ctxt new-closed-over)]
-                                                         [(c-code closure-var [] {closure-var 1} constraint)
-                                                          (.fn-context s new-ctxt)]))))))
-                                   (let [sym-count (.sym-count ctxt)
-                                         closure-var (str "val" sym-count)
-                                         new-sym-count (inc sym-count)
-                                         new-closures (conj closures [closure-var sym constraint])
-                                         new-refs-map (assoc refs-map closure-var 1)
-                                         new-closed-over (-> closed-over
-                                                             (.closures new-closures)
-                                                             (.refs-map new-refs-map))
-                                         new-ctxt (-> ctxt
-                                                      (.sym-count new-sym-count)
-                                                      (.closed-over new-closed-over))]
-                                     [(c-code closure-var [] {closure-var 1} constraint)
-                                      (.fn-context s new-ctxt)])))))
-                  (map (or (flat-map (get modules file-name)
-                                     (fn [module]
-                                       (or (get (.values module) sym)
-                                           (get-in (.declarations module) [sym '_]))))
-                           (flat-map (and (map (first (str sym)) (partial =* "."))
-                                          (get modules 'core))
-                                     (fn [module]
-                                       (get (.values module) sym))))
-                       (fn [expr] [expr s]))
-                  (do
-                    (print-err "Undefined symbol" (str "'" sym "'") "at"
-                               (str file-name ":")
-                               (ast/line-number sym))
-                    (abort)))
-              (fn [[expr s]]
-                [expr (either (update-in s [.fn-context .subs]
-                                         (fn [subs]
-                                           (map subs (fn [sub]
-                                                       (let [var (.c-var expr)
-                                                             constraint (expr-constraints expr)
-                                                             new-c (either (map (get sub var)
-                                                                                (fn [c2]
-                                                                                  (either (c/compose-constraints
-                                                                                           file-name line-number
-                                                                                           constraint c2)
-                                                                                          (abort))))
-                                                                           constraint)]
-                                                         (-> sub
-                                                             (dissoc var)
-                                                             (assoc var new-c)))))))
-                              s)])))))))
+    (for [expr (comp (for [ns-sym (sm/when (ast/namespace sym))
+                           ;; lookup namespace-qual sym
+                           expr (comp (sm/get-in-val [.modules file-name .ns-syms
+                                                      (ast/tag ns-sym) (ast/tag (.base sym))])
+                                      (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                                                         (str file-name ":")
+                                                         line-number))]
+                       expr)
+
+                     ;; lookup sym in local fn context
+                     (sm/get-in-val [.fn-context .syms sym])
+
+                     ;; lookup symbol in enclosing context of fn
+                     (lookup-closure-sym sym)
+
+                     ;; lookup in module
+                     (sm/get-in-val [.modules file-name .values sym])
+                     (sm/get-in-val [.modules file-name .declarations sym '_])
+
+                     ;; lookup in core module
+                     (sm/get-in-val [.modules 'core .values sym])
+                     (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                                        (str file-name ":")
+                                        (ast/line-number sym)))
+          _ (comp (constrain-var file-name line-number (.c-var expr) (expr-constraints expr))
+                  (sm/state-maybe '_))]
+      expr)))
 
 (extend-type c-field
   Composition
@@ -1492,14 +1480,6 @@
           type-info)
         (compilation-error "Invalid type" (str "'" type-symbol "'") "at"
                            (ast/file-name type-symbol) (ast/line-number type-symbol))))
-
-(defn constrain-var [file-name line-number var constraint]
-  (cond (or (= "" var)
-            (instance? c/AllValues constraint))
-        (wrap sm/zero-sm '_)
-
-        (update-subs
-         (typ/append-constraint var constraint file-name line-number))))
 
 (defn emit-sym-constraint [constraint]
   (let [file-name (ast/file-name constraint)
@@ -2140,6 +2120,17 @@
                          (constrain-var file-name line-number (c/extract-var c) c)))]
     result-constraint))
 
+(deftype TailExpr [ast]
+  Stringable
+  (string-list [_]
+    (list (str ast)))
+
+  Emitter
+  (emit [_]
+    (for [expr (emit ast)
+          _ (set-result-constraint (.c-var expr) "" 0)]
+      expr)))
+
 (deftype TailHashMap [m]
   Stringable
   (string-list [_]
@@ -2247,7 +2238,7 @@
   (emit-definition [_] (wrap sm/zero-sm []))
 
   (tail-call [ast params]
-    ast))
+    (TailExpr ast)))
 
 (defn type-constraint [type-num file-name line-number]
   (comp (for [type-info (sm/get-in-val [.type-maps type-num])]
@@ -2434,7 +2425,7 @@
                                                                               (empty? (.c-struct expr))
                                                                               (do
                                                                                 ;; TODO: remove sometime
-                                                                                (print-err 'booom expr)
+                                                                                (print-err 'wtf-boom expr)
                                                                                 (abort)))
                                                                          (str "(Value *)&"
                                                                               (.c-struct expr))))
@@ -3614,7 +3605,7 @@
       [empty-c-code]))
 
   (tail-call [ast params]
-    ast)
+    (TailExpr ast))
 
   (replace-syms [ast _]
     (wrap sm/zero-sm ast)))
@@ -3695,6 +3686,7 @@
 
   (inline-expr [ast arg-asts]
     (either (for [_ (instance? ast/call-ast ast)
+                  ;; TODO: this needs to be generalized
                   _ (= (.call-target ast) 'new-sm)
                   fn-ast (first (.args ast))]
               (inline-expr fn-ast arg-asts))
@@ -3712,7 +3704,7 @@
 (extend-type C-expr
   Emitter
   (tail-call [expr _]
-    expr)
+    (TailExpr expr))
 
   (emit [x]
     (wrap sm/zero-sm x))
