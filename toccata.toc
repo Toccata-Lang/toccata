@@ -2885,6 +2885,23 @@
       (ast/let-ast [(ast/binding dispatch-sym dispatch-val)]
                    (vec body-exprs)))))
 
+(defn inline-first [[arg]]
+  (for [_ (instance? ast/call-ast arg)
+        :let [target (.call-target arg)]
+        :when (or (= target 'list)
+                  (= target 'vector))
+        head (first (.args arg))]
+    (let [head-sym (ast/tag "#head" (ast/file-name arg) (ast/line-number arg))]
+      (sm/state-maybe (ast/let-ast [(ast/binding head-sym head)]
+                                   (conj (rest (.args arg)) head-sym))))))
+
+(defn inline-rest [[arg]]
+  (for [_ (instance? ast/call-ast arg)
+        :let [target (.call-target arg)]
+        :when (or (= target 'list)
+                  (= target 'vector))
+        head (first (.args arg))]
+    (sm/state-maybe (ast/let-ast [] [head (.args arg (rest (.args arg)))]))))
 (def get-field-sym (ast/tag 'get-field 'core 0))
 
 (extend-type Tagged
@@ -2966,7 +2983,14 @@
                        (inline-get-field name args))
                   (and (or (= name 'flat-map)
                            (= name 'map))
-                       (inline-flat-map name args)))
+                       (inline-flat-map name args))
+                  (and (= name 'first)
+                       (= 1 (count args))
+                       (inline-first args))
+                  (and (= name 'rest)
+                       (= 1 (count args))
+                       (inline-rest args))
+                  )
               sm/zero-sm))))
 
 (extend-type ast/tagged-symbol
@@ -3364,7 +3388,7 @@
 (defn propogate-inner-constraint [result-var ast args]
   (let [file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
-    ;; TODO: do hash-seq as well
+    ;; TODO: do hash-seq, list-concat, comp-vect as well
     (for [_ (or (returns-inner (.call-target ast))
                 (= (.call-target ast) 'extract))
           arg (first args)]
@@ -3696,7 +3720,7 @@
                         (comp (for [target (emit (.call-target ast))
                                     call-site (emit-call-site target args ast)]
                                 (do
-                                  ;; TODO: was comp*
+                                  ;; TODO: why does 'collapse-expressions' not work here?
                                   ;; (collapse-expressions (comp [target] args [call-site]))
                                   (comp* target (comp args [call-site]))))
                               (compilation-error "Could not compile call site at:"
