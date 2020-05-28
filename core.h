@@ -184,6 +184,7 @@ Value *(*showFn)(List *closures, Value *t);
 Value *(*fn_apply)(List *closures, Value *f, Value *args);
 Value *(*hasField)(List *closures, Value *v, Value *field);
 Value *(*prErrSTAR)(Value *str);
+Value *(*prValue)(List *, Value *v);
 
 Value *my_malloc(int64_t sz);
 List *malloc_list();

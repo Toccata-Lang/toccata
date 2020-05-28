@@ -383,6 +383,11 @@
   (expr-constraints [expr]
     (assert-result x (instance? c/Constraints x)))
 
+  (expr-constraints [expr new-const]
+    (assert (instance? c/Constraints new-const))
+
+    expr)
+
   (collapse-expressions* [x y]
     (assert-result r (instance? sm/new-sm r))))
 
@@ -410,18 +415,6 @@
     (wrap sm/zero-sm x)))
 
 (def empty-c-code (empty-code "" [] {}))
-
-(defn collapse-expressions [cs]
-  (assert-result r (instance? sm/new-sm r))
-
-  (either (or (and (empty? cs)
-                   (maybe (sm/state-maybe empty-c-code)))
-              (and (empty? (rest cs))
-                   (map (first cs) sm/state-maybe)))
-          (let [[c & cs] cs]
-            (flat-map (collapse-expressions cs)
-                      (fn [expr]
-                        (collapse-expressions* c expr))))))
 
 (deftype c-code [c-var init refs-map constraints]
   (assert (instance? Sequence init))
@@ -674,6 +667,23 @@
                     c-closure-fn
                     c-init))
 
+(def BindingValue (any-of C-expr
+                          c-field))
+
+(defn collapse-expressions [cs]
+  (assert (instance? (sequence-of BindingValue)
+                     cs))
+  (assert-result r (instance? sm/new-sm r))
+
+  (either (or (and (empty? cs)
+                   (maybe (sm/state-maybe empty-c-code)))
+              (and (empty? (rest cs))
+                   (map (first cs) sm/state-maybe)))
+          (let [[c & cs] cs]
+            (flat-map (collapse-expressions cs)
+                      (fn [expr]
+                        (collapse-expressions* c expr))))))
+
 (extend-type empty-code
   Composition
   (comp* [x xs]
@@ -849,7 +859,7 @@
   ;; C code to declare stuff needed for fn arity
   (assert (instance? Vector decl))
   ;; Substitutions for checking types
-  (assert (instance? (vector-of HashMap) subs))
+  (assert (instance? (vector-of (map-of String c/ValueConstraint)) subs))
   ;; constraints for fields in type-ast implementations
   (assert (instance? (maybe-of c/ItemsConstraint) field-constrs))
 
@@ -928,8 +938,14 @@
    (sm/new-sm (fn [s]
                 (assert (instance? GlobalContext s))
                 (let [curr-fn-context (.fn-context s)
-                      new-context (comp (-> curr-fn-context .context-syms)
-                                        (-> curr-fn-context .syms))]
+                      subs (either (get-in curr-fn-context [.subs 0])
+                                   {})
+                      new-context (reduce (seq (.syms curr-fn-context))
+                                          (.context-syms curr-fn-context)
+                                          (fn [syms [sym expr]]
+                                            (assoc syms sym
+                                                   (expr-constraints expr (either (get subs (.c-var expr))
+                                                                                  c/top-type)))))]
                   (maybe [(.decl curr-fn-context [])
                           (.fn-context s (FunctionArityContext {} 0 {} new-context empty-closures
                                                                (.decl curr-fn-context) [{}]
@@ -1323,13 +1339,7 @@
                                  (map (sm/update-in-val [.fn-context .closed-over .refs-map closure-var]
                                                         inc)
                                       (fn [_]
-                                        (do
-                                          (cond (= sym 'marvelous)
-                                                (do
-                                                  (print-err 'found-in-context 1 sym-info)
-                                                  (print-err 'constraint constraint))
-                                                '_)
-                                          (c-code closure-var [] {closure-var 1} constraint)))))))
+                                        (c-code closure-var [] {closure-var 1} constraint))))))
                        ;; first time sym is closed over
                        (for [sym-count (sm/get-in-val [.fn-context .sym-count])
                              _ (sm/update-in-val [.fn-context .sym-count] inc)
@@ -1340,13 +1350,7 @@
                                                    (conj closures [closure-var sym constraint])))
                              _ (sm/assoc-in-val [.fn-context .closed-over .refs-map closure-var]
                                                 1)]
-                         (do
-                           (cond (= sym 'marvelous)
-                                 (do
-                                   (print-err 'found-in-context 2 sym-info)
-                                   (print-err 'constraint constraint))
-                                 '_)
-                           (c-code closure-var [] {closure-var 1} constraint))))]
+                         (c-code closure-var [] {closure-var 1} constraint)))]
       expr)))
 
 (defn lookup-sym [sym]
@@ -1588,18 +1592,17 @@
                                (-> constraints
                                    (c/update-var item)
                                    (runtime-check value-info checked-var))))]
-             (either (map (every rt-checks empty?)
-                          (fn [_]
-                            (print-err 'hit-it 1)
-                            []))
-                     ["if (" checked-var ") {" line-sep
-                      "incRef(" (.var constraint) ", 1);" line-sep
-                      (destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
-                      rt-checks
-                      "if (" checked-var "){"
-                      (map items (fn [item]
-                                   (str "dec_and_free(" item ", 1);" line-sep)))
-                      "}}"]))
+             (cond (every rt-checks empty?)
+                   []
+
+                   ["if (" checked-var ") {" line-sep
+                    "incRef(" (.var constraint) ", 1);" line-sep
+                    (destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
+                    rt-checks
+                    "if (" checked-var "){"
+                    (map items (fn [item]
+                                 (str "dec_and_free(" item ", 1);" line-sep)))
+                    "}}"]))
            line-sep]))
 
   (runtime-check [constraint value-info sym-location checked-var]
@@ -1691,6 +1694,9 @@
     (.contents c (promote-inferred (.contents c))))
 
   (emit [constraint]
+    ;; TODO: a better way
+    ;; (flat-map (to-constraint constraint)
+    ;;           emit-sym-constraint)
     (for [constraint (to-constraint constraint)
           var (either (and (= (.var constraint) "")
                            (map (.sym constraint)
@@ -1757,12 +1763,16 @@
   (emit [ast]
     (let [untagged (ast/untag (.type-sym ast))]
       (comp (for [ns-path (sym-ns-path (.type-sym ast))
-                  constraint (comp (sm/get-in-val [.modules 'core .types untagged])
-                                   (sm/get-in-val [.modules ns-path .types untagged]))
+                  ;; TODO: perhaps use 'to-constraint' here
+                  constraint (cond (empty? (.type-maps ast))
+                                   (comp (sm/get-in-val [.modules 'core .types untagged])
+                                         (sm/get-in-val [.modules ns-path .types untagged]))
+                                   (sm/state-maybe ast))
                   expr (-> (either (map (c/extract-sym ast) (fn [sym]
                                                               (c/update-sym constraint sym)))
                                    (c/clear-sym constraint))
                            (c/update-var (c/extract-var ast))
+                           (c/update-path (ast/file-name ast) (ast/line-number ast))
                            (emit-sym-constraint))]
               expr)
             ;; TODO: should be an error
@@ -2877,9 +2887,6 @@
 
 (def get-field-sym (ast/tag 'get-field 'core 0))
 
-(def BindingValue (any-of C-expr
-                          c-field))
-
 (extend-type Tagged
   Emitter
   (get-param-constraints [sym subs]
@@ -3399,6 +3406,36 @@
   (runtime-check [constraint value-info sym-location checked-var]
     (let [alts (.alts constraint)
           var (c/extract-var constraint)]
+
+      (either (and (c/satisfied-by constraint value-info)
+                   (maybe []))
+              ["if (" checked-var "){"
+               "int checkPassed = 0;"
+               (reduce alts []
+                       (fn [ss alt]
+                         (comp ss
+                               ["if(!checkPassed){" line-sep
+                                checked-var " = 1;" line-sep
+                                ;; TODO: what if runtime-check is empty?
+                                (runtime-check (c/update-var alt var)
+                                               value-info checked-var)
+                                "if(" checked-var "){checkPassed = 1;}"])))
+               (repeat (count alts) "}")
+               "if (!checkPassed){"
+               ;; "\n#ifndef EMBEDDED\n"
+               "fprintf(stderr, \"Invalid type of value for '"
+               (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");" line-sep
+               ;; TODO: this error message needs to be more clearer
+               "fprintf(stderr, \"Got %s\\n\", extractStr(type_name((List *)0, " var ")));" 
+               "fprintf(stderr, \"Needed a value specified in\\n"
+               (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
+               "\\n\");"
+               ;; "\n#endif\n"
+               "abort();}}" line-sep])))
+
+  (runtime-check [constraint value-info checked-var]
+    (let [alts (.alts constraint)
+          var (c/extract-var constraint)]
       (either (and (c/satisfied-by constraint value-info)
                    (maybe []))
               ["if (" checked-var "){"
@@ -3411,17 +3448,7 @@
                                 ;; TODO: what if runtime-check is empty?
                                 (runtime-check (c/update-var alt var)
                                                value-info checked-var)])))
-               (repeat (count alts) "}")
-               "if (!" checked-var "){"
-               ;; "\n#ifndef EMBEDDED\n"
-               "fprintf(stderr, \"Invalid type of value for '"
-               (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");" line-sep
-               "fprintf(stderr, \"Got %s\\n\", extractStr(type_name((List *)0, " (.var constraint) ")));" 
-               "fprintf(stderr, \"Needed a value of a type from: \\n"
-               (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
-               "\\n\");"
-               ;; "\n#endif\n"
-               "}}" line-sep])))
+               (repeat (count alts) "}") "}" line-sep])))
 
   (to-constraint [ast]
     (map (ev/traverse (.alts ast) to-constraint)
@@ -3760,51 +3787,81 @@
 
 (extend-type c-code
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-field
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-param
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-constructor
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-static-reified
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-protocol-fn
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-static-int
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-static-str
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-static-sym
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
 (extend-type c-static-fn
   C-Code
+  (expr-constraints [expr new-c]
+    (.constraints expr new-c))
+
   (expr-constraints [expr]
     (.constraints expr)))
 
@@ -4285,7 +4342,9 @@
                  fn-sym (either (instance? ast/tagged-symbol fn-sym)
                                 (ast/tag fn-sym file-name line-number))]
              (for [fn-context (reset-fn-context)
-                   ;; _ (debug "------------\n" (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
+                   ;; _ (cond (= fn-sym 'collapse-expressions)
+                   ;;         (debug "------------\n" (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
+                   ;;         (sm/state-maybe 8))
                    p-bindings (cond (.variadic params)
                                     (map (bind-param params) vector)
                                     (for [p-bindings (ev/traverse (.fixed params) bind-param)
@@ -4315,13 +4374,18 @@
                              (set-sym fn-sym (c-code fn-var [] {} fn-constraint)))
                    body-exprs (-> (comp param-destruct constraints body)
                                   (tail-call param-vars)
-                                  ;; ((fn [b] (print-err 'body "\n" (interpose b "\n")) b))
+                                  ;; ((fn [b] (cond (= fn-sym 'collapse-expressions)
+                                  ;;                (print-err 'body "\n" (interpose b "\n"))
+                                  ;;                (sm/state-maybe 8))
+                                  ;;    b))
                                   (ev/traverse emit))
                    arity-info (comp (emit-closure-arity fn-sym fn-context c-fn params
                                                         param-vars body-exprs)
                                     (emit-static-arity fn-sym fn-context fn-var c-fn params
                                                        param-vars body-exprs))
-                   ;; _ (debug "============")
+                   ;; _ (cond (= fn-sym 'collapse-expressions)
+                   ;;       (debug "============")
+                   ;;       (sm/state-maybe 8))
                    ]
                arity-info)))))
 
@@ -4857,8 +4921,9 @@
             result-const (sm/get-in-val [.fn-context .subs 0 "#result"] c/top-type)
             cond-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var cond-val)] c/top-type)
             alt-constraint (sm/get-in-val [.fn-context .subs 0 (.c-var alt-val)] c/top-type)
-            :let [expr-const (c/sum-type [(c/extract-contents-constraint cond-constraint)
-                                          alt-constraint])]
+            :let [expr-const (-> (c/sum-type [(c/extract-contents-constraint cond-constraint)
+                                              alt-constraint])
+                                 (c/update-path file-name line-number))]
             _ (constrain-var file-name line-number result-var expr-const)
             _ (set-result-constraint result-var file-name line-number)
             checked-var (genlocal 'checked)]
@@ -6286,6 +6351,10 @@
                 (map (lookup-core-fn-arity (ast/tag 'apply) 2)
                      (fn [arity-ptr]
                        ["Value *(*fn_apply)(List *, Value*, Value*) = " arity-ptr ";\n"]))
+
+                (map (lookup-core-fn-arity (ast/tag 'pr-value) 1)
+                     (fn [arity-ptr]
+                       ["Value *(*prValue)(List *, Value*) = " arity-ptr ";\n"]))
                 )))
 
 (defn fixup-native-symbols [context]
