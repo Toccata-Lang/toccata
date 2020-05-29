@@ -1383,8 +1383,10 @@
                                         (str file-name ":")
                                         (ast/line-number sym)))
           _ (comp (constrain-var file-name line-number (.c-var expr) (expr-constraints expr))
-                  (sm/state-maybe '_))]
-      expr)))
+                  (sm/state-maybe '_))
+
+          constraint (sm/get-in-val [.fn-context .subs 0 (.c-var expr)] c/top-type)]
+      (expr-constraints expr constraint))))
 
 (extend-type c-field
   Composition
@@ -1930,6 +1932,11 @@
                                                                         c/top-type))
                                          (abort))))))
             m))
+
+  (replace-bound-vars [constraint subs]
+    (.constraints constraint
+                  (map (.constraints constraint) (fn [c]
+                                                   (replace-bound-vars c subs)))))
 
   (replace-syms [ast subs]
     ;; TODO: should be in the defprotocol
@@ -2813,7 +2820,9 @@
         line-number (ast/line-number ast)]
     (for [dispatch-var (map (sm/when (first arg-vars)) .c-var)
           disp-type  (var-type-num dispatch-var)
-          ;; _ (debug 'cpi file-name line-number (.call-target ast) (first arg-vars) dispatch-var disp-type)
+          ;; _ (cond (= file-name "test.toc")
+          ;;         (debug 'cpi file-name line-number (.call-target ast) (first arg-vars) dispatch-var disp-type)
+          ;;         (sm/state-maybe 0))
           :when-not (= c/UnknownType disp-type)
           result-sym (genlocal "rslt")
           impl-info (get-proto-impl target num-args disp-type)
@@ -2901,7 +2910,65 @@
         :when (or (= target 'list)
                   (= target 'vector))
         head (first (.args arg))]
+    ;TODO: what about any ItemsConstraints or MinCount (when it arrives)
     (sm/state-maybe (ast/let-ast [] [head (.args arg (rest (.args arg)))]))))
+
+(defn make-bindings [params args]
+  (-> (zip-lists (seq params) (seq args))
+      (map (fn [[param val]]
+             (ast/binding-ast param val)))
+      (vec)))
+
+;; (defn inline-comp* [[arg args]]
+;;   (for [_ (instance? ast/call-ast args)
+;;         _ (maybe (print-err 'comp* arg args))
+;;         :when (= (.call-target args) 'rest)]
+;;     (let [file (ast/file-name args)
+;;           line (ast/line-number args)]
+;;       (for [_ (debug 'comp* arg args)
+;;             args (inline-expr (.call-target args) (.args args))
+;;             :let [target (.call-target args)]
+;;             :when (or (= target 'list)
+;;                       (= target 'vector))
+;;             expr (emit arg)
+;;             dispatch-type (var-type-num (.c-var expr))
+;;             :when-not (= c/UnknownType dispatch-type)
+;;             arg-exprs (ev/traverse (.args args) emit)
+;;             impl-ast (map (get-proto-impl 'comp* 2 dispatch-type) .ast)
+;;             :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
+;;             :let [impl-ast (replace-bound-vars impl-ast {})
+;;                   dispatch-ast (c-code (.c-var expr) [] {(.c-var expr) 1} (expr-constraints expr))
+;;                   disp-binding (ast/binding-ast (ast/tag "dispArg" file line) expr)
+;;                   args-bindings (-> (range (count arg-exprs))
+;;                                     (map (fn [n]
+;;                                            (ast/tag (str "arg" n) file line)))
+;;                                     (make-bindings arg-exprs))
+;;                   args-ast (.args args (map args-bindings .binding))
+;;                   [dispatch-sym args-sym] (.fixed (.params impl-ast))]
+;;             body-exprs (ev/traverse (.body impl-ast)
+;;                                     (fn [ast]
+;;                                       (replace-syms ast {dispatch-sym (.binding disp-binding)
+;;                                                          args-sym args-ast})))]
+;;         (ast/let-ast (comp [disp-binding]
+;;                            args-bindings)
+;;                      body-exprs)))))
+
+;; (defn inline-comp [args]
+;;   (let [file (ast/file-name args)
+;;         line (ast/line-number args)]
+;;     (maybe (for [[expr & exprs] (ev/traverse args emit)]
+;;              (let [bindings (make-bindings (map (range (count args))
+;;                                                 (fn [n]
+;;                                                   (ast/tag (str "arg" n) file line)))
+;;                                            (comp [expr]
+;;                                                  exprs))]
+;;                (ast/let-ast
+;;                 bindings
+;;                 [(ast/call-ast (ast/tag 'comp* file line)
+;;                                [(c-code (.c-var expr) [] {(.c-var expr) 1} (expr-constraints expr))
+;;                                 (ast/call-ast (ast/tag 'list file line)
+;;                                               (map (rest bindings) .binding))])]))))))
+
 (def get-field-sym (ast/tag 'get-field 'core 0))
 
 (extend-type Tagged
@@ -2971,8 +3038,7 @@
     (TailCall ast params))
 
   (inline-expr [name arg-asts]
-    ;; TODO: inline '=' arity 2 if the definition in scope is from core
-    ;; also, inline 'partial' to add file/line to error messages
+    ;; TODO: inline 'partial' to add file/line to error messages
     ;; and, 'get-in', 'update-in'
     (let [args (remove arg-asts (partial instance? ast/NoCode))
           num-args (count args)]
@@ -2984,12 +3050,25 @@
                   (and (or (= name 'flat-map)
                            (= name 'map))
                        (inline-flat-map name args))
-                  (and (= name 'first)
-                       (= 1 (count args))
-                       (inline-first args))
-                  (and (= name 'rest)
-                       (= 1 (count args))
-                       (inline-rest args))
+                  (and (= name '=)
+                       (= num-args 2)
+                       (-> '=*
+                           (ast/tag (ast/file-name name) (ast/line-number name))
+                           (ast/call-ast arg-asts)
+                           sm/state-maybe 
+                           maybe))
+                  ;; (and (= name 'first)
+                  ;;      (= 1 num-args)
+                  ;;      (inline-first args))
+                  ;; (and (= name 'rest)
+                  ;;      (= 1 num-args)
+                  ;;      (inline-rest args))
+                  ;; (and (= name 'comp*)
+                  ;;      (= 2 num-args)
+                  ;;      (inline-comp* args))
+                  ;; (and (= name 'comp)
+                  ;;      (< 1 num-args)
+                  ;;      (inline-comp args))
                   )
               sm/zero-sm))))
 
@@ -3296,12 +3375,6 @@
                (interpose (list* "(List *)0" (map arg-vars .c-var)) ", ")
                ");" line-sep]
               {} file-name line-number))))
-
-(defn make-bindings [params args]
-  (-> (zip-lists (seq params) (seq args))
-      (map (fn [[param val]]
-             (ast/binding-ast param val)))
-      (vec)))
 
 (defprotocol CallSite
   (emit-call-site [target args ast]
