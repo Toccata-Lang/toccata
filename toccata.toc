@@ -1363,8 +1363,7 @@
                            expr (comp (sm/get-in-val [.modules file-name .ns-syms
                                                       (ast/tag ns-sym) (ast/tag (.base sym))])
                                       (compilation-error "Undefined symbol" (str "'" sym "'") "at"
-                                                         (str file-name ":")
-                                                         line-number))]
+                                                         (str file-name ":") line-number))]
                        expr)
 
                      ;; lookup sym in local fn context
@@ -1380,8 +1379,7 @@
                      ;; lookup in core module
                      (sm/get-in-val [.modules 'core .values sym])
                      (compilation-error "Undefined symbol" (str "'" sym "'") "at"
-                                        (str file-name ":")
-                                        (ast/line-number sym)))
+                                        (str file-name ":") (ast/line-number sym)))
           _ (comp (constrain-var file-name line-number (.c-var expr) (expr-constraints expr))
                   (sm/state-maybe '_))
 
@@ -1548,7 +1546,9 @@
 
     (either (for [old-sym (.sym constraint)
                   new-sym (get subs (ast/tag old-sym))]
-              (wrap sm/zero-sm (c/update-sym constraint (ast/untag new-sym))))
+              (wrap sm/zero-sm (cond (instance? Tagged new-sym)
+                                     (c/update-sym constraint (ast/untag new-sym))
+                                     c/top-type)))
             (wrap sm/zero-sm constraint)))
 
   (emit [constraint]
@@ -2902,7 +2902,8 @@
         head (first (.args arg))]
     (let [head-sym (ast/tag "#head" (ast/file-name arg) (ast/line-number arg))]
       (sm/state-maybe (ast/let-ast [(ast/binding head-sym head)]
-                                   (conj (rest (.args arg)) head-sym))))))
+                                   (conj (rest (.args arg))
+                                         (ast/call-ast (ast/tag 'maybe) [head-sym])))))))
 
 (defn inline-rest [[arg]]
   (for [_ (instance? ast/call-ast arg)
@@ -2911,7 +2912,11 @@
                   (= target 'vector))
         head (first (.args arg))]
     ;TODO: what about any ItemsConstraints or MinCount (when it arrives)
-    (sm/state-maybe (ast/let-ast [] [head (.args arg (rest (.args arg)))]))))
+    (map (emit head)
+         (fn [head]
+           (cond (empty? (.init head))
+                 (.args arg (rest (.args arg)))
+                 (ast/let-ast [] [head (.args arg (rest (.args arg)))]))))))
 
 (defn make-bindings [params args]
   (-> (zip-lists (seq params) (seq args))
@@ -2919,55 +2924,56 @@
              (ast/binding-ast param val)))
       (vec)))
 
-;; (defn inline-comp* [[arg args]]
-;;   (for [_ (instance? ast/call-ast args)
-;;         _ (maybe (print-err 'comp* arg args))
-;;         :when (= (.call-target args) 'rest)]
-;;     (let [file (ast/file-name args)
-;;           line (ast/line-number args)]
-;;       (for [_ (debug 'comp* arg args)
-;;             args (inline-expr (.call-target args) (.args args))
-;;             :let [target (.call-target args)]
-;;             :when (or (= target 'list)
-;;                       (= target 'vector))
-;;             expr (emit arg)
-;;             dispatch-type (var-type-num (.c-var expr))
-;;             :when-not (= c/UnknownType dispatch-type)
-;;             arg-exprs (ev/traverse (.args args) emit)
-;;             impl-ast (map (get-proto-impl 'comp* 2 dispatch-type) .ast)
-;;             :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
-;;             :let [impl-ast (replace-bound-vars impl-ast {})
-;;                   dispatch-ast (c-code (.c-var expr) [] {(.c-var expr) 1} (expr-constraints expr))
-;;                   disp-binding (ast/binding-ast (ast/tag "dispArg" file line) expr)
-;;                   args-bindings (-> (range (count arg-exprs))
-;;                                     (map (fn [n]
-;;                                            (ast/tag (str "arg" n) file line)))
-;;                                     (make-bindings arg-exprs))
-;;                   args-ast (.args args (map args-bindings .binding))
-;;                   [dispatch-sym args-sym] (.fixed (.params impl-ast))]
-;;             body-exprs (ev/traverse (.body impl-ast)
-;;                                     (fn [ast]
-;;                                       (replace-syms ast {dispatch-sym (.binding disp-binding)
-;;                                                          args-sym args-ast})))]
-;;         (ast/let-ast (comp [disp-binding]
-;;                            args-bindings)
-;;                      body-exprs)))))
+(defn inline-comp* [[arg args]]
+  (let [file (ast/file-name args)
+        line (ast/line-number args)]
+    (maybe (for [expr (emit arg)
+                 dispatch-type (var-type-num (.c-var expr))
+                 :when-not (= c/UnknownType dispatch-type)
+                 impl-ast (map (get-proto-impl 'comp* 2 dispatch-type) .ast)
+                 :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
+                 args (either (flat-map (instance? ast/call-ast args)
+                                        (fn [ast]
+                                          (let [target (.call-target ast)]
+                                            (and (= target 'rest)
+                                                 (maybe (inline-expr target (.args args)))))))
+                              (sm/state-maybe args))
+                 :when (and (instance? ast/call-ast args)
+                            (let [target (.call-target args)]
+                              (or (= target 'list)
+                                  (= target 'vector))))
+                 arg-exprs (ev/traverse (.args args) emit)
+                 :let [impl-ast (replace-bound-vars impl-ast {})
+                       disp-binding (ast/binding-ast (ast/tag "dispArg" file line) expr)
+                       args-bindings (-> (range (count arg-exprs))
+                                         (map (fn [n]
+                                                (ast/tag (str "arg" n) file line)))
+                                         (make-bindings arg-exprs))
+                       args-ast (.args args (map args-bindings .binding))
+                       [dispatch-sym args-sym] (.fixed (.params impl-ast))]
+                 body-exprs (ev/traverse (.body impl-ast)
+                                         (fn [ast]
+                                           (replace-syms ast {dispatch-sym (.binding disp-binding)
+                                                              args-sym args-ast})))]
+             (ast/let-ast (comp [disp-binding]
+                                args-bindings)
+                          body-exprs)))))
 
-;; (defn inline-comp [args]
-;;   (let [file (ast/file-name args)
-;;         line (ast/line-number args)]
-;;     (maybe (for [[expr & exprs] (ev/traverse args emit)]
-;;              (let [bindings (make-bindings (map (range (count args))
-;;                                                 (fn [n]
-;;                                                   (ast/tag (str "arg" n) file line)))
-;;                                            (comp [expr]
-;;                                                  exprs))]
-;;                (ast/let-ast
-;;                 bindings
-;;                 [(ast/call-ast (ast/tag 'comp* file line)
-;;                                [(c-code (.c-var expr) [] {(.c-var expr) 1} (expr-constraints expr))
-;;                                 (ast/call-ast (ast/tag 'list file line)
-;;                                               (map (rest bindings) .binding))])]))))))
+(defn inline-comp [args]
+  (let [file (ast/file-name args)
+        line (ast/line-number args)]
+    (maybe (for [[expr & exprs] (ev/traverse args emit)]
+             (let [[binding & bindings] (make-bindings (map (range (count args))
+                                                            (fn [n]
+                                                              (ast/tag (str "arg" n) file line)))
+                                                       (comp [expr]
+                                                             exprs))]
+               (ast/let-ast
+                (comp [binding] bindings)
+                [(ast/call-ast (ast/tag 'comp* file line)
+                               [(.binding binding)
+                                (ast/call-ast (ast/tag 'list file line)
+                                              (vec (map bindings .binding)))])]))))))
 
 (def get-field-sym (ast/tag 'get-field 'core 0))
 
@@ -3057,19 +3063,18 @@
                            (ast/call-ast arg-asts)
                            sm/state-maybe 
                            maybe))
-                  ;; (and (= name 'first)
-                  ;;      (= 1 num-args)
-                  ;;      (inline-first args))
-                  ;; (and (= name 'rest)
-                  ;;      (= 1 num-args)
-                  ;;      (inline-rest args))
-                  ;; (and (= name 'comp*)
-                  ;;      (= 2 num-args)
-                  ;;      (inline-comp* args))
-                  ;; (and (= name 'comp)
-                  ;;      (< 1 num-args)
-                  ;;      (inline-comp args))
-                  )
+                  (and (= name 'first)
+                       (= 1 num-args)
+                       (inline-first args))
+                  (and (= name 'rest)
+                       (= 1 num-args)
+                       (inline-rest args))
+                  (and (= name 'comp*)
+                       (= 2 num-args)
+                       (inline-comp* args))
+                  (and (= name 'comp)
+                       (< 1 num-args)
+                       (inline-comp args)))
               sm/zero-sm))))
 
 (extend-type ast/tagged-symbol
@@ -4077,7 +4082,7 @@
                           new-bindings (recur (rest bindings) new-bindings new-subs)]
                       (conj new-bindings (.val binding-ast new-val)))
                     (wrap sm/zero-sm new-bindings)))]
-      (for [new-bindings (f (.bindings ast) [] subs)
+      (for [new-bindings (f (.bindings ast) empty-list subs)
             new-body (ev/traverse (.body ast) (fn [ast]
                                                 (replace-syms ast subs)))]
         (ast/let-ast (vec new-bindings) (vec new-body)))))
@@ -4103,22 +4108,32 @@
 
   (replace-bound-vars [ast subs]
     (let [f (fn recur [bindings new-bindings subs]
+              (assert (instance? (vector-of ast/binding-ast) bindings))
+
               (either (for [binding-ast (first bindings)]
                         (let [new-val (replace-bound-vars (.val binding-ast) subs)
                               new-subs (reduce (all-symbols (.binding binding-ast))
                                                subs (fn [new-subs sym]
-                                                      (assoc new-subs sym (ast/tag (str "#" sym)))))
+                                                      (do
+                                                        ;; TODO: putting this in blows up
+                                                        ;; (print-err 'bad (ast/tag (str "#" sym)
+                                                        ;;                          (ast/file-name ast)
+                                                        ;;                          (ast/line-number ast)))
+                                                        (assoc new-subs sym
+                                                               (ast/tag (str "#" sym)
+                                                                        (ast/file-name sym)
+                                                                        (ast/line-number sym))))))
                               [new-bindings new-subs] (recur (rest bindings) new-bindings new-subs)]
                           [(conj new-bindings
                                  (ast/binding-ast (replace-bound-vars (.binding binding-ast)
                                                                       new-subs)
                                                   new-val))
                            new-subs]))
-                      [new-bindings subs]))]
-      (let [[new-bindings new-subs] (f (.bindings ast) empty-list subs)
-            new-body (map (.body ast) (fn [ast]
-                                        (replace-bound-vars ast new-subs)))]
-        (ast/let-ast (vec new-bindings) (vec new-body))))))
+                      [new-bindings subs]))
+          [new-bindings new-subs] (f (.bindings ast) empty-list subs)
+          new-body (map (.body ast) (fn [ast]
+                                      (replace-bound-vars ast new-subs)))]
+      (ast/let-ast (vec new-bindings) (vec new-body)))))
 
 
 (defn index [coll]
@@ -4439,9 +4454,7 @@
                  fn-sym (either (instance? ast/tagged-symbol fn-sym)
                                 (ast/tag fn-sym file-name line-number))]
              (for [fn-context (reset-fn-context)
-                   ;; _ (cond (= fn-sym 'collapse-expressions)
-                   ;;         (debug "------------\n" (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
-                   ;;         (sm/state-maybe 8))
+                   ;; _ (debug "------------\n" (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
                    p-bindings (cond (.variadic params)
                                     (map (bind-param params) vector)
                                     (for [p-bindings (ev/traverse (.fixed params) bind-param)
@@ -4471,18 +4484,13 @@
                              (set-sym fn-sym (c-code fn-var [] {} fn-constraint)))
                    body-exprs (-> (comp param-destruct constraints body)
                                   (tail-call param-vars)
-                                  ;; ((fn [b] (cond (= fn-sym 'collapse-expressions)
-                                  ;;                (print-err 'body "\n" (interpose b "\n"))
-                                  ;;                (sm/state-maybe 8))
-                                  ;;    b))
+                                  ;; ((fn [b] (print-err 'body "\n" (interpose b "\n")) b))
                                   (ev/traverse emit))
                    arity-info (comp (emit-closure-arity fn-sym fn-context c-fn params
                                                         param-vars body-exprs)
                                     (emit-static-arity fn-sym fn-context fn-var c-fn params
                                                        param-vars body-exprs))
-                   ;; _ (cond (= fn-sym 'collapse-expressions)
-                   ;;       (debug "============")
-                   ;;       (sm/state-maybe 8))
+                   ;; _ (debug "============")
                    ]
                arity-info)))))
 
@@ -6705,7 +6713,7 @@
                                                                                 'Agent nothing "")
                                                        'Opaque (c/TypeConstraint {c/OpaqueType #{}} empty-list
                                                                                  'Opaque nothing "")}))))]
-                    
+
                     _ (analyze-forms {'file-name 'core
                                       'line-number 1
                                       'project-directory ""
@@ -6721,7 +6729,7 @@
             (abort))))
 
 (defn compile-module [loaded-modules file-name waiter-prom root-dir proj-dir]
-  (assert (instance? HashMap loaded-modules))
+  (assert (instance? (map-of String Promise) loaded-modules))
   (let [loaded-modules (load-core loaded-modules)]
     (either (map (get loaded-modules file-name)
                  (fn [loaded]
