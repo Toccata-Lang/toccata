@@ -135,6 +135,7 @@
                      'TypeCount c/TypeCount})
 
 (deftype TypeInfo [sym type-map]
+  (assert (instance? ast/tagged-symbol sym))
   (assert (instance? (map-of Integer HashSet) type-map))
 
   Stringable
@@ -146,22 +147,22 @@
     type-map))
 
 ;; TODO: probably needs to go away
-(def core-types {c/IntegerType (TypeInfo 'Integer {c/IntegerType #{}})
-                 c/StringBufferType (TypeInfo 'String {c/StringBufferType #{}})
-                 c/SubStringType (TypeInfo 'String {c/SubStringType #{}})
-                 c/FnArityType (TypeInfo 'FnArity {c/FnArityType #{}})
-                 c/FunctionType (TypeInfo 'Fn {c/FunctionType #{}})
-                 c/ListType (TypeInfo 'List {c/ListType #{}})
-                 c/MaybeType (TypeInfo 'Maybe {c/MaybeType #{}})
-                 c/VectorType (TypeInfo 'Vector {c/VectorType #{}})
-                 c/SymbolType (TypeInfo 'Symbol {c/SymbolType #{}})
-                 c/BitmapIndexedType (TypeInfo 'BitmapIndexedNode {c/BitmapIndexedType #{}})
-                 c/ArrayNodeType (TypeInfo 'ArrayNode {c/ArrayNodeType #{}})
-                 c/HashCollisionNodeType (TypeInfo 'HashCollisionNode {c/HashCollisionNodeType #{}})
-                 c/PromiseType (TypeInfo 'Promise {c/PromiseType #{}})
-                 c/FutureType (TypeInfo 'Future {c/FutureType #{}})
-                 c/AgentType (TypeInfo 'Agent {c/AgentType #{}})
-                 c/OpaqueType (TypeInfo 'Opaque {c/OpaqueType #{}})})
+(def core-types {c/IntegerType (TypeInfo (ast/tag 'Integer) {c/IntegerType #{}})
+                 c/StringBufferType (TypeInfo (ast/tag 'String) {c/StringBufferType #{}})
+                 c/SubStringType (TypeInfo (ast/tag 'String) {c/SubStringType #{}})
+                 c/FnArityType (TypeInfo (ast/tag 'FnArity) {c/FnArityType #{}})
+                 c/FunctionType (TypeInfo (ast/tag 'Fn) {c/FunctionType #{}})
+                 c/ListType (TypeInfo (ast/tag 'List) {c/ListType #{}})
+                 c/MaybeType (TypeInfo (ast/tag 'Maybe) {c/MaybeType #{}})
+                 c/VectorType (TypeInfo (ast/tag 'Vector) {c/VectorType #{}})
+                 c/SymbolType (TypeInfo (ast/tag 'Symbol) {c/SymbolType #{}})
+                 c/BitmapIndexedType (TypeInfo (ast/tag 'BitmapIndexedNode) {c/BitmapIndexedType #{}})
+                 c/ArrayNodeType (TypeInfo (ast/tag 'ArrayNode) {c/ArrayNodeType #{}})
+                 c/HashCollisionNodeType (TypeInfo (ast/tag 'HashCollisionNode) {c/HashCollisionNodeType #{}})
+                 c/PromiseType (TypeInfo (ast/tag 'Promise) {c/PromiseType #{}})
+                 c/FutureType (TypeInfo (ast/tag 'Future) {c/FutureType #{}})
+                 c/AgentType (TypeInfo (ast/tag 'Agent) {c/AgentType #{}})
+                 c/OpaqueType (TypeInfo (ast/tag 'Opaque) {c/OpaqueType #{}})})
 
 (def fn-constraint (c/TypeConstraint {c/FunctionType #{}} empty-list 'Fn nothing ""))
 (def sym-constraint (c/TypeConstraint {c/SymbolType #{}} empty-list 'Symbol nothing ""))
@@ -1727,7 +1728,6 @@
 (extend-type c/TypeConstraint
   Emitter
   (to-constraint [ast]
-    ;; TODO: this seems to not work when type-sym is 'HashMap
     (cond (empty? (.type-maps ast))
           (map (get-type-sym-info (ast/tag (.type-sym ast)))
                (fn [type-info]
@@ -2227,35 +2227,6 @@
 
   (tail-call [ast params]
     (TailExpr ast)))
-
-(defn type-constraint [type-num file-name line-number]
-  (comp (for [type-info (sm/get-in-val [.type-maps type-num])]
-          (cond (empty? (.type-map type-info))
-                c/top-type
-                (-> (.type-map type-info)
-                    (c/TypeConstraint empty-list (ast/tag (.sym type-info)) nothing "")
-                    (c/update-path file-name line-number))))
-        (wrap sm/zero-sm c/top-type)))
-
-;; TODO: factor out this fn
-(defn get-type-numbers [type-symbol]
-  (assert (instance? (maybe-of ast/tagged-symbol) type-symbol))
-
-  (comp (for [type-symbol (sm/when type-symbol)
-              type-nums (get-type-sym-info type-symbol)]
-          (set (keys type-nums)))
-        (wrap sm/zero-sm #{})))
-
-;; TODO: factor out this fn
-(defn get-type-number [type-symbol]
-  (assert (instance? (maybe-of ast/tagged-symbol) type-symbol))
-
-  (comp (for [type-symbol (sm/when type-symbol)
-              type-nums (get-type-sym-info (ast/tag type-symbol))]
-          (either (and (= 1 (count type-nums))
-                       (first (keys type-nums)))
-                  c/UnknownType))
-        (wrap sm/zero-sm c/UnknownType)))
 
 
 (extend-type HashSet
@@ -3540,7 +3511,7 @@
             :let [types-info (either (c/extract-type-map constraint)
                                      {})]
             _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types (ast/untag defined-sym)] constraint)
-            _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo (ast/tag defined-sym) types-info))
+            _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym types-info))
             exprs (emit-defined-value
                    (ast/reified
                     reified-type-num
@@ -3611,7 +3582,7 @@
           _ (sm/assoc-in-val [.modules file-name .types (ast/untag defined-sym)]
                              (c/TypeConstraint type-map empty-list defined-sym nothing ""))
           _ (sm/assoc-in-val [.type-maps reified-type-num]
-                             (TypeInfo (ast/tag defined-sym) type-map))
+                             (TypeInfo defined-sym type-map))
           exprs (emit-defined-value
                  (ast/reified
                   reified-type-num
@@ -3660,6 +3631,17 @@
                   (.c-var map-var) " = hashMapAssoc((Value *)" (.c-var map-var) ", "
                   (.c-var sym-var) ", " (.c-var value) ");\n"])))
 
+;; TODO: factor out this fn
+(defn get-type-number [type-symbol]
+  (assert (instance? (maybe-of ast/tagged-symbol) type-symbol))
+
+  (comp (for [type-symbol (sm/when type-symbol)
+              type-nums (get-type-sym-info (ast/tag type-symbol))]
+          (either (and (= 1 (count type-nums))
+                       (first (keys type-nums)))
+                  c/UnknownType))
+        (wrap sm/zero-sm c/UnknownType)))
+
 (extend-type ast/inline-ast
   Emitter
   (emit [ast]
@@ -3685,8 +3667,12 @@
   (emit-defined-value [ast defined-sym]
     (for [target-lang (wrap sm/zero-sm 'C)
           :when (= (.lang ast) target-lang)
-          type-num (get-type-number (.result-type ast))
-          constraint (type-constraint type-num (ast/file-name ast) (ast/line-number ast))
+          constraint (either (map (.result-type ast)
+                                  (fn [type-sym]
+                                    (to-constraint (c/TypeConstraint {} (list [(ast/file-name ast)
+                                                                               (ast/line-number ast)])
+                                                                     type-sym nothing ""))))
+                             (wrap sm/zero-sm c/top-type))
           c-var (comp (map (lookup-declaration defined-sym) .c-var)
                       (global-var defined-sym "var"))
           _ (new-module-def defined-sym (c-code (str c-var) [] {} constraint))
@@ -3698,7 +3684,6 @@
   (emit-definition [ast]
     (for [target-lang (wrap sm/zero-sm 'C)
           :when (= (.lang ast) target-lang)
-          type-num (get-type-number (.result-type ast))
           _ (declare [(.txt ast)])]
       [empty-c-code]))
 
@@ -4552,8 +4537,10 @@
           ;; _ (debug 'impl file-name line-number type-str fn-sym num-args)
           default-impl (get-proto-impl fn-sym num-args 0)
           disp-constraint (comp (for [_ (sm/get-in-val [.constants .type-names type-num])
-                                      constraint (type-constraint type-num file-name line-number)]
-                                  (-> constraint
+                                      type-info (sm/get-in-val [.type-maps type-num])]
+                                  (-> (.type-map type-info)
+                                      (c/TypeConstraint empty-list (.sym type-info) nothing "")
+                                      (c/update-path file-name line-number)
                                       (c/update-sym (ast/untag disp-param))
                                       ConstrainVar))
                                 (wrap sm/zero-sm c/top-type))
@@ -5601,11 +5588,13 @@
   Emitter
   (emit-definition [ast]
     (let [type-sym (.type ast)]
-      (comp (for [type-nums (get-type-numbers (maybe type-sym))
-                  fns (map (ev/traverse (seq type-nums) (partial extend-type* ast))
-                           flatten)]
-              fns)
-            (compilation-error "Trying to extend unknown type: "
+      (comp (flat-map (get-type-sym-info type-sym)
+                      (fn [type-map]
+                        (-> type-map
+                            keys
+                            (ev/traverse (partial extend-type* ast))
+                            (map flatten))))
+            (compilation-error "Could not extend type: "
                                (str "'" type-sym "'") "at"
                                (str (ast/file-name (.type ast)) ":")
                                (ast/line-number (.type ast)))))))
