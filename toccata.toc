@@ -1434,15 +1434,13 @@
   (runtime-check [constraint value-info sym-location checked-var]
     []))
 
-;; TODO: review every place this fn is called
 (defn get-type-sym-info [type-symbol]
   (assert (instance? ast/tagged-symbol type-symbol))
 
   (comp (for [ns-path (sym-ns-path type-symbol)
               constraint (comp (sm/get-in-val [.modules 'core .types (ast/untag type-symbol)])
-                               (sm/get-in-val [.modules ns-path .types (ast/untag type-symbol)]))
-              type-info (sm/when (c/extract-type-map constraint))]
-          type-info)
+                               (sm/get-in-val [.modules ns-path .types (ast/untag type-symbol)]))]
+          constraint)
         (compilation-error "Invalid type" (str "'" type-symbol "'") "at"
                            (ast/file-name type-symbol) (ast/line-number type-symbol))))
 
@@ -1700,10 +1698,12 @@
   (to-constraint [ast]
     (cond (empty? (.type-maps ast))
           (map (get-type-sym-info (ast/tag (.type-sym ast)))
-               (fn [type-info]
-                 (either (and (empty? type-info)
-                              (maybe c/top-type))
-                         (.type-maps ast type-info))))
+               (fn [constraint]
+                 (-> (either (map (.sym ast)
+                                  (partial c/update-sym constraint))
+                             constraint)
+                     (c/update-var (.var ast))
+                     (c/replace-path (.path ast)))))
 
           (wrap sm/zero-sm ast)))
 
@@ -3609,11 +3609,8 @@
             :let [init [line-info (.txt ast) "\n#\n"]]
 
             expr (comp (for [type-sym (sm/when (.result-type ast))
-                             type-map (get-type-sym-info type-sym)
+                             constraint (get-type-sym-info type-sym)
                              c-var (genlocal "rslt")
-                             :let [constraint (c/TypeConstraint type-map
-                                                                (list [file-name line-number])
-                                                                type-sym nothing "")]
                              _ (constrain-var file-name line-number c-var constraint)]
                          (c-code c-var init {} constraint))
                        (wrap sm/zero-sm (c-code "" init {} c/top-type)))
@@ -4488,7 +4485,14 @@
         [disp-param] (.fixed params)
         num-args (count params)
         file-name (ast/file-name fn-sym)
-        line-number (ast/line-number fn-sym)]
+        line-number (ast/line-number fn-sym)
+        disp-constraint (either (for [type-map (c/extract-type-map disp-constraint)
+                                      :when (< 1 (count type-map))
+                                      fields (get type-map type-num)]
+                                  (c/TypeConstraint {type-num fields} empty-list
+                                                    (symbol type-str)
+                                                    (maybe (ast/untag disp-param)) ""))
+                                disp-constraint)]
     (for [
           ;; _ (debug 'impl file-name line-number type-str fn-sym num-args)
           default-impl (get-proto-impl fn-sym num-args 0)
@@ -4516,7 +4520,6 @@
                           "FnArity *" arity-var " = " (.c-var reified) ";\n"]))))))
 
 (defn extend-type* [ast constraint type-num]
-  (assert (instance? c/TypeConstraint constraint))
   (assert (instance? Integer type-num))
 
   (let [impl-arities (for [[proto-sym impl-fns] (seq (.impls ast))
@@ -5546,8 +5549,9 @@
     (let [type-sym (.type ast)]
       (comp (for [constraint (to-constraint (c/TypeConstraint {} empty-list type-sym nothing ""))
                   fns (flat-map (get-type-sym-info type-sym)
-                                (fn [type-map]
-                                  (-> type-map
+                                (fn [constraint]
+                                  (-> (either (c/extract-type-map constraint)
+                                              {})
                                       keys
                                       (ev/traverse (partial extend-type* ast constraint))
                                       (map flatten))))]
