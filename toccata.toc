@@ -134,36 +134,6 @@
                      'Opaque c/OpaqueType
                      'TypeCount c/TypeCount})
 
-(deftype TypeInfo [sym type-map]
-  (assert (instance? ast/tagged-symbol sym))
-  (assert (instance? (map-of Integer HashSet) type-map))
-
-  Stringable
-  (string-list [_]
-    (list "<TypeInfo " (str sym) ">"))
-
-  Type
-  (type-mapping [_]
-    type-map))
-
-;; TODO: probably needs to go away
-(def core-types {c/IntegerType (TypeInfo (ast/tag 'Integer) {c/IntegerType #{}})
-                 c/StringBufferType (TypeInfo (ast/tag 'String) {c/StringBufferType #{}})
-                 c/SubStringType (TypeInfo (ast/tag 'String) {c/SubStringType #{}})
-                 c/FnArityType (TypeInfo (ast/tag 'FnArity) {c/FnArityType #{}})
-                 c/FunctionType (TypeInfo (ast/tag 'Fn) {c/FunctionType #{}})
-                 c/ListType (TypeInfo (ast/tag 'List) {c/ListType #{}})
-                 c/MaybeType (TypeInfo (ast/tag 'Maybe) {c/MaybeType #{}})
-                 c/VectorType (TypeInfo (ast/tag 'Vector) {c/VectorType #{}})
-                 c/SymbolType (TypeInfo (ast/tag 'Symbol) {c/SymbolType #{}})
-                 c/BitmapIndexedType (TypeInfo (ast/tag 'BitmapIndexedNode) {c/BitmapIndexedType #{}})
-                 c/ArrayNodeType (TypeInfo (ast/tag 'ArrayNode) {c/ArrayNodeType #{}})
-                 c/HashCollisionNodeType (TypeInfo (ast/tag 'HashCollisionNode) {c/HashCollisionNodeType #{}})
-                 c/PromiseType (TypeInfo (ast/tag 'Promise) {c/PromiseType #{}})
-                 c/FutureType (TypeInfo (ast/tag 'Future) {c/FutureType #{}})
-                 c/AgentType (TypeInfo (ast/tag 'Agent) {c/AgentType #{}})
-                 c/OpaqueType (TypeInfo (ast/tag 'Opaque) {c/OpaqueType #{}})})
-
 (def fn-constraint (c/TypeConstraint {c/FunctionType #{}} empty-list 'Fn nothing ""))
 (def sym-constraint (c/TypeConstraint {c/SymbolType #{}} empty-list 'Symbol nothing ""))
 (def vect-constraint (c/TypeConstraint {c/VectorType #{}} empty-list 'Vector nothing ""))
@@ -895,7 +865,7 @@
 
 ;; There's a bunch of information to keep track of while compiling
 ;; TODO: might be able to remove the 'fns' field
-(deftype GlobalContext [fn-context rt-init modules fns namespaces constants reify-fn-index type-maps]
+(deftype GlobalContext [fn-context rt-init modules fns namespaces constants reify-fn-index]
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
   ;; init                   context for the runtime initialization
@@ -3511,7 +3481,6 @@
             :let [types-info (either (c/extract-type-map constraint)
                                      {})]
             _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types (ast/untag defined-sym)] constraint)
-            _ (sm/assoc-in-val [.type-maps reified-type-num] (TypeInfo defined-sym types-info))
             exprs (emit-defined-value
                    (ast/reified
                     reified-type-num
@@ -3581,8 +3550,6 @@
                 y* (ast/tag "#y")]
           _ (sm/assoc-in-val [.modules file-name .types (ast/untag defined-sym)]
                              (c/TypeConstraint type-map empty-list defined-sym nothing ""))
-          _ (sm/assoc-in-val [.type-maps reified-type-num]
-                             (TypeInfo defined-sym type-map))
           exprs (emit-defined-value
                  (ast/reified
                   reified-type-num
@@ -3630,17 +3597,6 @@
     (.init value [(.init value)
                   (.c-var map-var) " = hashMapAssoc((Value *)" (.c-var map-var) ", "
                   (.c-var sym-var) ", " (.c-var value) ");\n"])))
-
-;; TODO: factor out this fn
-(defn get-type-number [type-symbol]
-  (assert (instance? (maybe-of ast/tagged-symbol) type-symbol))
-
-  (comp (for [type-symbol (sm/when type-symbol)
-              type-nums (get-type-sym-info (ast/tag type-symbol))]
-          (either (and (= 1 (count type-nums))
-                       (first (keys type-nums)))
-                  c/UnknownType))
-        (wrap sm/zero-sm c/UnknownType)))
 
 (extend-type ast/inline-ast
   Emitter
@@ -4524,7 +4480,7 @@
                      empty-c-code)))
             (wrap sm/zero-sm empty-c-code))))
 
-(defn emit-impl [type-str type-num impl-decl]
+(defn emit-impl [type-str disp-constraint type-num impl-decl]
   (assert (instance? ProtoImplDeclaration impl-decl))
 
   (let [[proto-sym fn-sym arity-ast arity-var c-fn] (type-args impl-decl)
@@ -4536,14 +4492,6 @@
     (for [
           ;; _ (debug 'impl file-name line-number type-str fn-sym num-args)
           default-impl (get-proto-impl fn-sym num-args 0)
-          disp-constraint (comp (for [_ (sm/get-in-val [.constants .type-names type-num])
-                                      type-info (sm/get-in-val [.type-maps type-num])]
-                                  (-> (.type-map type-info)
-                                      (c/TypeConstraint empty-list (.sym type-info) nothing "")
-                                      (c/update-path file-name line-number)
-                                      (c/update-sym (ast/untag disp-param))
-                                      ConstrainVar))
-                                (wrap sm/zero-sm c/top-type))
           ext-fn (comp (emit-fn-arity (symbol (str type-str fn-sym))
                                       (.fn-var arity-ast)
                                       params
@@ -4567,8 +4515,10 @@
                          [(.init reified)
                           "FnArity *" arity-var " = " (.c-var reified) ";\n"]))))))
 
-(defn extend-type* [ast type-num]
+(defn extend-type* [ast constraint type-num]
+  (assert (instance? c/TypeConstraint constraint))
   (assert (instance? Integer type-num))
+
   (let [impl-arities (for [[proto-sym impl-fns] (seq (.impls ast))
                            [fn-name arities] (seq impl-fns)
                            impl-arity arities]
@@ -4582,23 +4532,29 @@
                 ;; TODO: make sure the proto-name/fn-name exists
                 ;; especially that the fn-name doesn't exist in a different proto-name
                 impl-arities (ev/traverse impl-arities (partial declare-impl type-str type-num))
-                [head-fn & fns] (ev/traverse impl-arities (partial emit-impl type-str type-num))]
+                [head-fn & fns] (ev/traverse impl-arities (partial emit-impl type-str constraint type-num))]
             (cons head-fn fns)))))
 
 (extend-type ast/reify-ast
   Emitter
   (emit [ast]
-    (let [reified-type-num (.type-num ast)]
+    (let [reified-type-num (.type-num ast)
+          file (ast/file-name ast)
+          line (ast/line-number ast)]
       (for [reify-fn-index (sm/get-val .reify-fn-index)
             _ (sm/set-val .reify-fn-index 0)
-            impl-fns (extend-type* ast reified-type-num)
+            impl-fns (extend-type* ast
+                                   (c/TypeConstraint {(.type-num ast) #{}} (list [file line])
+                                                     (symbol (str "reified at " file ": " line))
+                                                     nothing "")
+                                   reified-type-num)
             _ (sm/set-val .reify-fn-index reify-fn-index)
             reified-result (either (map (every impl-fns (partial instance? c-static-arity))
                                         (fn [_]
-                                          (static-reified-value (ast/file-name ast) (ast/line-number ast)
+                                          (static-reified-value file line
                                                                 reified-type-num impl-fns)))
                                  (closure-reified-value reified-type-num impl-fns
-                                                        (ast/file-name ast) (ast/line-number ast)))]
+                                                        file line))]
         reified-result)))
 
   (emit-defined-value [ast defined-sym]
@@ -5588,12 +5544,14 @@
   Emitter
   (emit-definition [ast]
     (let [type-sym (.type ast)]
-      (comp (flat-map (get-type-sym-info type-sym)
-                      (fn [type-map]
-                        (-> type-map
-                            keys
-                            (ev/traverse (partial extend-type* ast))
-                            (map flatten))))
+      (comp (for [constraint (to-constraint (c/TypeConstraint {} empty-list type-sym nothing ""))
+                  fns (flat-map (get-type-sym-info type-sym)
+                                (fn [type-map]
+                                  (-> type-map
+                                      keys
+                                      (ev/traverse (partial extend-type* ast constraint))
+                                      (map flatten))))]
+              fns)
             (compilation-error "Could not extend type: "
                                (str "'" type-sym "'") "at"
                                (str (ast/file-name (.type ast)) ":")
@@ -5943,7 +5901,6 @@
                                                         (.sym ast) nothing "")]
               (for [_ (emit-definition (ast/declaration-ast (.sym ast)))
                     _ (sm/assoc-in-val [.modules file-name .types sym] new-type-constraint)
-                    _ (sm/assoc-in-val [.type-maps type-num] (TypeInfo (.sym ast) type-map))
                     _ (sm/assoc-in-val [.constants .type-names type-num] (str sym))
                     _ (declare-getters sym fields)
 
@@ -5968,7 +5925,7 @@
                     _ (sm/assoc-in-val [.fn-context .field-constrs] (maybe field-constraints))
 
                     impl-arities (ev/traverse impl-arities (partial declare-impl (str sym) type-num))
-                    _ (ev/traverse impl-arities (partial emit-impl (str sym) type-num))
+                    _ (ev/traverse impl-arities (partial emit-impl (str sym) new-type-constraint type-num))
 
                     new-field-constrs (sm/get-in-val [.fn-context .field-constrs])
                     :let [field-constraints (either (map new-field-constrs
@@ -5990,7 +5947,7 @@
                                            [proto-sym fn-name (.fn-var impl-arity (str (.fn-var impl-arity)))])]
 
                     getter-arities (ev/traverse getter-arities (partial declare-impl (str sym) type-num))
-                    _ (ev/traverse getter-arities (partial emit-impl (str sym) type-num))
+                    _ (ev/traverse getter-arities (partial emit-impl (str sym) new-type-constraint type-num))
                     _ (sm/assoc-in-val [.fn-context .field-constrs] nothing)
 
                     type-constructor (emit-constructor (.sym ast) type-num new-type-constraint
@@ -6082,7 +6039,6 @@
                                    {}                       ;; map for namespaces
                                    (ConstantValues {} {} {} type-names {} {})
                                    0                        ;; reify-fn-index
-                                   core-types               ;; type-maps
                                    ))
 
 (defprotocol FreeGlobal
