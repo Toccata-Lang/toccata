@@ -50,14 +50,6 @@
   (write-str [x]
     (print x)))
 
-(extend-type Vector
-  StringWriter
-  (write-str [v] (map v write-str)))
-
-(extend-type List
-  StringWriter
-  (write-str [l] (map l write-str)))
-
 (def string-writer (agent ""))
 (defn write-strings [strs]
   (send string-writer (fn [_]
@@ -1959,6 +1951,9 @@
                         (c-static-val "nothing" [] {} "nothing_struct"))))))
 
 (extend-type List
+  StringWriter
+  (write-str [l] (map l write-str))
+
   Emitter
   (encode-static [l]
     (comp (sm/get-in-val [.constants .encoded l])
@@ -2023,6 +2018,9 @@
 (def vector-array-len (inline C Integer "(Value *)&(Integer){IntegerType,-2,VECTOR_ARRAY_LEN}"))
 
 (extend-type Vector
+  StringWriter
+  (write-str [v] (map v write-str))
+
   Emitter
   (encode-static [v]
     (comp (sm/get-in-val [.constants .encoded v])
@@ -2836,8 +2834,29 @@
              (ast/binding-ast param val)))
       (vec)))
 
+(defn inline-partial [[call-target & args]]
+  ;; TODO: some test exprs for this
+  ;; (partial subs 8)
+  ;; (partial subs "bogus" 'sym 8)
+  ;; (partial subs "bogus" 8 9 10)
+
+  (let [file (ast/file-name call-target)
+        line (ast/line-number call-target)
+        more-args (ast/tag 'more-args file line)
+        fn-sym (ast/tag (str "partial_" (either (instance? Tagged call-target)
+                                                'anon)))]
+    (-> (ast/fn-ast
+         (maybe fn-sym)
+         [(ast/fn-arity-ast fn-sym ""
+                            (ast/params [] (maybe more-args)) ""
+                            [(ast/call-ast (ast/tag 'apply file line)
+                                           [call-target (ast/call-ast (ast/tag 'list* file line)
+                                                                      (comp (vec args) [more-args]))])]
+                            c/empty-items-constraint c/top-type)])
+        sm/state-maybe
+        maybe)))
+
 (defn inline-comp* [[arg args]]
-  ;; TODO: have to get file/line through to the inlined code
   (let [file (ast/file-name args)
         line (ast/line-number args)]
     (maybe (for [expr (emit arg)
@@ -2873,7 +2892,6 @@
                           body-exprs)))))
 
 (defn inline-comp [args]
-  ;; TODO: have to get file/line through to the inlined code
   (let [file (ast/file-name args)
         line (ast/line-number args)]
     (maybe (for [[expr & exprs] (ev/traverse args emit)]
@@ -2954,8 +2972,7 @@
     (TailCall ast params))
 
   (inline-expr [name arg-asts]
-    ;; TODO: inline 'partial' to add file/line to error messages
-    ;; and, 'get-in', 'update-in'
+    ;; TODO: inline 'get-in', 'update-in'
     (let [args (remove arg-asts (partial instance? ast/NoCode))
           num-args (count args)]
       (either (or (and (or (= name 'wrap)
@@ -2973,6 +2990,8 @@
                            (ast/call-ast arg-asts)
                            sm/state-maybe 
                            maybe))
+                  (and (= name 'partial)
+                       (inline-partial args))
                   (and (= name 'first)
                        (= 1 num-args)
                        (inline-first args))
@@ -3077,6 +3096,8 @@
 (defn call-static-fixed [target arity-info arg-vars ast]
   (assert (instance? StaticArityInfo arity-info))
 
+  ;; TODO: if target is 'fn-apply', get the param constraints of the first arg and check them at compile time
+  ;; and run time
   (let [file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
     (for [result-sym (genlocal "rslt")
@@ -5452,6 +5473,7 @@
     (.body ast (unwrap-tail (.body ast))))
 
   (emit [ast]
+    ;; TODO: doesn't look like the arity's ast gets saved
     (emit-fn-arity (cond (= "" (.fn-sym ast))
                          'anon
                          (.fn-sym ast))
@@ -5459,8 +5481,15 @@
 
   (inline-expr [ast arg-asts]
     (wrap sm/zero-sm
-          (ast/let-ast (make-bindings (.fixed (.params ast)) arg-asts)
-                       (.body ast))))
+          (let [fixed-args (take arg-asts (count (.fixed (.params ast))))]
+            (ast/let-ast (conj (make-bindings (.fixed (.params ast)) fixed-args)
+                               (ast/binding-ast (either (.variadic (.params ast))
+                                                        (ast/tag "#_"))
+                                                (ast/call-ast list-sym
+                                                              (-> arg-asts
+                                                                  (drop (count (.fixed (.params ast))))
+                                                                  vec))))
+                         (.body ast)))))
 
   (replace-syms [ast subs]
     (let [subs (reduce (all-symbols (.params ast)) subs dissoc)]
