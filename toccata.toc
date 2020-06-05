@@ -501,8 +501,8 @@
 
   Stringable
   (string-list [_]
-    (list "<C-Static-Arity " (str c-var) ", "
-          (str (count init)) ", " (str refs-map) ">")))
+    (list "(c-static-arity " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ")")))
 
 (deftype c-static-fn [c-var init refs-map constraints c-struct arities]
   (assert (instance? Sequence init))
@@ -511,9 +511,9 @@
 
   Stringable
   (string-list [_]
-    (list "<C-Static-Function " (str c-var) ", "
+    (list "(c-static-fn " (str c-var) ", "
           (str (count init)) ", " (str refs-map) ", "
-          (str constraints) " " (str arities) ">")))
+          (str constraints) " " (str arities) ")")))
 
 (deftype c-static-val [c-var init refs-map c-struct]
   (assert (instance? Sequence init))
@@ -787,6 +787,15 @@
           (.refs-map (merge-with + (.refs-map x) (.refs-map y)))
           sm/state-maybe))))
 
+(deftype StaticArityInfo [c-var param-constraints result-constraint]
+  (assert (instance? c/ItemsConstraint param-constraints))
+  (assert (instance? CFnPtr c-var))
+
+  Stringable
+  (string-list [_]
+    (list "(StaticArityInfo " (str c-var) " " (str param-constraints) " "
+          (str result-constraint)  ")")))
+
 (deftype Closures [closures refs-map]
   (assert (instance? (vector-of Vector) closures))
   (assert (instance? (map-of String Integer) refs-map)))
@@ -865,7 +874,7 @@
   ;; modules                info for each module compiled
   (assert (instance? (map-of ast/SymbolOrString Module) modules))
   ;; fns                    static functions
-  (assert (instance? HashMap fns))
+  (assert (instance? (map-of String StaticArityInfo) fns))
   ;; namespaces             current namespace map
   (assert (instance? HashMap namespaces))
   ;; constants              the various constants encountered
@@ -2022,6 +2031,10 @@
   (write-str [v] (map v write-str))
 
   Emitter
+  (replace-syms [v subs]
+    (sm/traverse v (fn [x]
+                     (replace-syms x subs))))
+
   (encode-static [v]
     (comp (sm/get-in-val [.constants .encoded v])
           (let [[shift offset root array] (encodeVectorInfo v)]
@@ -2161,14 +2174,6 @@
   return((Value *)v);
   "))
 
-
-(deftype StaticArityInfo [c-var param-constraints result-constraint]
-  (assert (instance? CFnPtr c-var))
-
-  Stringable
-  (string-list [_]
-    (list "(StaticArityInfo " (str c-var) " " (str param-constraints) " "
-          (str result-constraint)  ")")))
 
 ;; we cache all the info about static function arities to optimize call sites
 (defn lookup-static-arity-info [fn-var num-params]
@@ -3079,11 +3084,13 @@
 (deftype StaticArity [arity-fn-var c-fn param-count var-info param-constraints result-constraint]
   (assert (instance? CFnPtr c-fn))
   (assert (instance? C-expr var-info))
+  (assert (instance? c/ItemsConstraint param-constraints))
 
   Stringable
   (string-list [_]
     (list "(StaticArity " (str arity-fn-var) " " (str param-count) " "
-          (str var-info) " " (str param-constraints) " " (str result-constraint)))
+          (str var-info) " " (str param-constraints)
+          " " (str result-constraint) ")"))
 
   ArityType
   (reify-arity [_ dispatch-type-num arity-ast fn-name proto-sym]
@@ -3096,8 +3103,6 @@
 (defn call-static-fixed [target arity-info arg-vars ast]
   (assert (instance? StaticArityInfo arity-info))
 
-  ;; TODO: if target is 'fn-apply', get the param constraints of the first arg and check them at compile time
-  ;; and run time
   (let [file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
     (for [result-sym (genlocal "rslt")
@@ -3113,7 +3118,32 @@
           ;;           '_)
           ;;         (sm/state-maybe '_))
           _ (constrain-var file-name line-number result-sym (.result-constraint arity-info))
-          check-args (constrain-args arg-vars (.param-constraints arity-info)
+          param-constraints (comp (for [fn-var (sm/when (and (= (.call-target ast) 'fn-apply)
+                                                             (first arg-vars)))
+                                        applied-fn (sm/when (first (.args ast)))
+                                        fn-info (sm/get-in-val [.fns (.c-var fn-var)])]
+                                    ;; TODO: catch problems at compile time
+                                    (let [file (ast/file-name applied-fn)
+                                          line (ast/line-number applied-fn)
+                                          param-constraints (-> (seq fn-info)
+                                                                (map (fn [[_ v]]
+                                                                       (-> v
+                                                                           .param-constraints
+                                                                           c/extract-items-constraints)))
+                                                                ((fn [vs] (vec (apply zip-lists vs))))
+                                                                (map c/sum-type))]
+                                      (-> (c/ItemsConstraint
+                                           [fn-constraint
+                                            (c/ItemsConstraint param-constraints
+                                                               c/coll-of-any
+                                                               empty-list
+                                                               nothing "")]
+                                           c/coll-of-any
+                                           empty-list
+                                           nothing "")
+                                          (c/update-path file line))))
+                                  (sm/state-maybe (.param-constraints arity-info)))
+          check-args (constrain-args arg-vars param-constraints
                                      file-name line-number)
 
           _ (update-call-site-count (.c-var arity-info))
@@ -3388,7 +3418,6 @@
     (static-call-site target args ast)))
 
 ;; TODO: test add-inner-constraint on state-maybe values
-;; TODO: possible contenders to add; apply
 ;; TODO: add inner constraint to Strings
 ;; TODO: insert InferredInner into anon fn passed to higher order fn
 
@@ -3760,6 +3789,9 @@
 ;; the error message is trash
 (extend-type C-expr
   Emitter
+  (replace-syms [v _]
+    (wrap sm/zero-sm v))
+
   (tail-call [expr _]
     (TailExpr expr))
 
@@ -4115,6 +4147,7 @@
   (assert (instance? CFnPtr arity-fn-var))
   (assert (instance? ast/params-ast params))
   (assert (instance? C-expr var-info))
+  (assert (instance? c/ItemsConstraint param-constraints))
 
   Stringable
   (string-list [_]
@@ -5480,16 +5513,20 @@
                    (str (.fn-var ast)) (.params ast) (.body ast)))
 
   (inline-expr [ast arg-asts]
-    (wrap sm/zero-sm
-          (let [fixed-args (take arg-asts (count (.fixed (.params ast))))]
-            (ast/let-ast (conj (make-bindings (.fixed (.params ast)) fixed-args)
-                               (ast/binding-ast (either (.variadic (.params ast))
-                                                        (ast/tag "#_"))
-                                                (ast/call-ast list-sym
-                                                              (-> arg-asts
-                                                                  (drop (count (.fixed (.params ast))))
-                                                                  vec))))
-                         (.body ast)))))
+    (let [fixed-args (take arg-asts (count (.fixed (.params ast))))
+          new-bindings (conj (make-bindings (.fixed (.params ast)) fixed-args)
+                             (ast/binding-ast (either (.variadic (.params ast))
+                                                      (ast/tag "#_"))
+                                              (ast/call-ast list-sym
+                                                            (-> arg-asts
+                                                                (drop (count (.fixed (.params ast))))
+                                                                vec))))]
+      (replace-syms (ast/let-ast new-bindings (.body ast))
+                    (reduce new-bindings {} (fn [m binding]
+                                              (assoc m (.binding binding)
+                                                     (ast/tag (.binding binding)
+                                                              (ast/file-name arg-asts)
+                                                              (ast/line-number arg-asts))))))))
 
   (replace-syms [ast subs]
     (let [subs (reduce (all-symbols (.params ast)) subs dissoc)]
