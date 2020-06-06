@@ -4106,12 +4106,13 @@
   (let [coll (seq coll)]
     (zip-lists (range (count coll)) coll)))
 
-(defn closure-reified-value [type-num impl-fns file-name line-number]
-  (let [inits (map impl-fns .init)]
+(defn closure-reified-value [constraint type-num impl-fns]
+  (let [inits (map impl-fns .init)
+        file-name (ast/file-name constraint)
+        line-number (ast/line-number constraint)]
     (for [reified-sym (genlocal "reifiedDyn")
           _ (constrain-var file-name line-number
-                           reified-sym (c/TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>")
-                                                         nothing reified-sym))]
+                           reified-sym constraint)]
       (c-init reified-sym
               [inits
                "Value *" reified-sym " = (Value *)malloc_reified("
@@ -4126,22 +4127,17 @@
                            ")->impls[" index "] = (Value *)" sym ";" line-sep])))]
               (apply merge-with (list* + (map impl-fns .refs-map))) file-name line-number))))
 
-(defn static-reified-value [file-name line-number type-num impl-fns]
+(defn static-reified-value [constraint type-num impl-fns]
   (for [reified-sym (global-var "reifiedStatic")
         reified-ptr (global-var "reifiedPtr")
-        _ (constrain-var file-name line-number
-                         reified-ptr
-                         (c/TypeConstraint {type-num #{}} (list [file-name line-number])
-                                           (symbol "<Reified Type Value>")
-                                           nothing (str reified-ptr)))
+        :let [constraint (c/update-var constraint reified-ptr)]
+        _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
+                         reified-ptr constraint)
         _ (declare ["ReifiedVal " reified-sym " = {"
                     type-num ", -2, 0, "
                     "0, {}};" line-sep
                     "Value *" reified-ptr " = (Value *)&" reified-sym ";" line-sep])]
-    (c-static-reified reified-ptr [] {}
-                      (c/TypeConstraint {type-num #{}} empty-list (symbol "<Reified Type Value>")
-                                        nothing (str reified-ptr))
-                      reified-sym)))
+    (c-static-reified reified-ptr [] {} constraint reified-sym)))
 
 (defn new-static-arity [fn-ptr num-params arity-var param-constraints result-constraint]
   (assert (instance? CFnPtr arity-var))
@@ -4603,21 +4599,19 @@
   (emit [ast]
     (let [file (ast/file-name ast)
           line (ast/line-number ast)]
-      (for [reified-type-num (sm/update-val .type-counter inc)
+      (for [reified-type-num (either (map (.type-num ast) sm/state-maybe)
+                                     (sm/update-val .type-counter inc))
+            :let [constraint (c/TypeConstraint {reified-type-num #{}} (list [file line])
+                                               (symbol (str "reified at " file ": " line))
+                                               nothing "")]
             reify-fn-index (sm/get-val .reify-fn-index)
             _ (sm/set-val .reify-fn-index 0)
-            impl-fns (extend-type* ast
-                                   (c/TypeConstraint {(.type-num ast) #{}} (list [file line])
-                                                     (symbol (str "reified at " file ": " line))
-                                                     nothing "")
-                                   reified-type-num)
+            impl-fns (extend-type* ast constraint reified-type-num)
             _ (sm/set-val .reify-fn-index reify-fn-index)
             reified-result (either (map (every impl-fns (partial instance? c-static-arity))
                                         (fn [_]
-                                          (static-reified-value file line
-                                                                reified-type-num impl-fns)))
-                                 (closure-reified-value reified-type-num impl-fns
-                                                        file line))]
+                                          (static-reified-value constraint reified-type-num impl-fns)))
+                                   (closure-reified-value constraint reified-type-num impl-fns))]
         reified-result)))
 
   (emit-defined-value [ast defined-sym]
