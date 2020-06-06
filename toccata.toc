@@ -866,7 +866,7 @@
 
 ;; There's a bunch of information to keep track of while compiling
 ;; TODO: might be able to remove the 'fns' field
-(deftype GlobalContext [fn-context rt-init modules fns namespaces constants reify-fn-index]
+(deftype GlobalContext [fn-context rt-init modules fns namespaces constants reify-fn-index type-counter]
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
   ;; init                   context for the runtime initialization
@@ -881,6 +881,8 @@
   (assert (instance? ConstantValues constants))
   ;; reify-fn-index         index of reified fn being compiled
   (assert (instance? Integer reify-fn-index))
+  ;; number of types defined
+  (assert (instance? Integer type-counter))
 
   Stringable
   (string-list [_] (list "<GlobalContext>")))
@@ -3528,16 +3530,16 @@
   (emit-defined-value [constraint defined-sym]
     (let [file-name (ast/file-name constraint)
           line-number (ast/line-number constraint)
-          reified-type-num (extract rdr/type-counter)
           x* (ast/tag "#x")
           y* (ast/tag "#y")]
-      (for [constraint (to-constraint constraint)
+      (for [reified-type-num (sm/update-val .type-counter inc)
+            constraint (to-constraint constraint)
             :let [types-info (either (c/extract-type-map constraint)
                                      {})]
             _ (sm/assoc-in-val [.modules (ast/file-name defined-sym) .types (ast/untag defined-sym)] constraint)
             exprs (emit-defined-value
                    (ast/reified
-                    reified-type-num
+                    (maybe reified-type-num)
                     {(ast/tag Eq-sym file-name line-number)
                      {=*-sym
                       [(ast/fn-arity-ast
@@ -3584,7 +3586,8 @@
     (for [_ (sm/when (= (.call-target fn-val) 'enum))
           type-maps (comp (ev/traverse (.args fn-val)
                                        (fn [sym]
-                                         (comp (flat-map (sm/get-in-val [.modules (ast/file-name sym) .types (ast/untag sym)])
+                                         (comp (flat-map (sm/get-in-val [.modules (ast/file-name sym)
+                                                                         .types (ast/untag sym)])
                                                          (fn [_]
                                                            (compilation-error "Invalid enum value " (str "'" sym "'")
                                                                               " at:" file-name line-number)))
@@ -3599,14 +3602,14 @@
                                                  type-map))))
                           (compilation-error "Invalid enum values at:" file-name line-number))
           :let [type-map (comp* {} type-maps)
-                reified-type-num (extract rdr/type-counter)
                 x* (ast/tag "#x")
                 y* (ast/tag "#y")]
+          reified-type-num (sm/update-val .type-counter inc)
           _ (sm/assoc-in-val [.modules file-name .types (ast/untag defined-sym)]
                              (c/TypeConstraint type-map empty-list defined-sym nothing ""))
           exprs (emit-defined-value
                  (ast/reified
-                  reified-type-num
+                  (maybe reified-type-num)
                   {Type-sym
                    {instance?-sym
                     [(ast/fn-arity-ast
@@ -4599,10 +4602,10 @@
 (extend-type ast/reify-ast
   Emitter
   (emit [ast]
-    (let [reified-type-num (.type-num ast)
-          file (ast/file-name ast)
+    (let [file (ast/file-name ast)
           line (ast/line-number ast)]
-      (for [reify-fn-index (sm/get-val .reify-fn-index)
+      (for [reified-type-num (sm/update-val .type-counter inc)
+            reify-fn-index (sm/get-val .reify-fn-index)
             _ (sm/set-val .reify-fn-index 0)
             impl-fns (extend-type* ast
                                    (c/TypeConstraint {(.type-num ast) #{}} (list [file line])
@@ -5640,7 +5643,6 @@
 
   (let [file-name (ast/file-name new-type-name)
        line-number (ast/line-number new-type-name)
-       reified-type-num (extract rdr/type-counter)
         x* (ast/tag "#x")
         y* (ast/tag "#y")
         field-count (count fields)
@@ -5651,7 +5653,8 @@
                          (fn [m [k v]]
                            (assoc m k v)))]
     (for [assertions (replace-syms assertions args-map)
-          :let [ast (ast/reified reified-type-num
+          reified-type-num (sm/update-val .type-counter inc)
+          :let [ast (ast/reified (maybe reified-type-num)
                                  {(ast/tag Eq-sym file-name line-number)
                                   {(ast/tag =*-sym file-name line-number)
                                    [(ast/fn-arity-ast
@@ -5942,8 +5945,9 @@
 
 (defn new-type-number [type-symbol]
   (assert (instance? Tagged type-symbol))
-  (either (get pre-defed-types type-symbol)
-          (extract rdr/type-counter)))
+  (either (map (get pre-defed-types type-symbol)
+               sm/state-maybe)
+          (sm/update-val .type-counter inc)))
 
 (extend-type ast/type-ast
   Emitter
@@ -5966,74 +5970,74 @@
                                             ", " line-number))]
               "")
 
-            (let [type-num (new-type-number sym)
-                  type-map {type-num (-> fields
-                                         (map (fn [name]
-                                                (symbol (str "." name))))
-                                         set)}
-                  new-type-constraint (c/TypeConstraint type-map (list [file-name line-number])
-                                                        (.sym ast) nothing "")]
-              (for [_ (emit-definition (ast/declaration-ast (.sym ast)))
-                    _ (sm/assoc-in-val [.modules file-name .types sym] new-type-constraint)
-                    _ (sm/assoc-in-val [.constants .type-names type-num] (str sym))
-                    _ (declare-getters sym fields)
+            (for [type-num (new-type-number sym)
+                  :let [type-map {type-num (-> fields
+                                               (map (fn [name]
+                                                      (symbol (str "." name))))
+                                               set)}
+                        new-type-constraint (c/TypeConstraint type-map (list [file-name line-number])
+                                                              (.sym ast) nothing "")]
+                  _ (emit-definition (ast/declaration-ast (.sym ast)))
+                  _ (sm/assoc-in-val [.modules file-name .types sym] new-type-constraint)
+                  _ (sm/assoc-in-val [.constants .type-names type-num] (str sym))
+                  _ (declare-getters sym fields)
 
-                    ;; TODO: this whole section is bogus
-                    field-assertions (ev/traverse field-assertions to-constraint)
-                    :let [field-map (reduce field-assertions
-                                            {} (fn [m c]
-                                                 (validate-field c m fields file-name line-number)))
-                          field-constraints (c/ItemsConstraint
-                                             (map fields (fn [field]
-                                                           (either (get field-map field)
-                                                                   c/top-type)))
-                                             c/coll-of-any
-                                             empty-list (maybe (symbol (str sym " fields"))) "")
-                          impls (merge-with comp
-                                            (default-type-impls sym type-num fields)
-                                            (destructure-fields new-type-constraint field-constraints ast))
-                          impl-arities (for [[proto-sym impl-fns] (seq impls)
+                  ;; TODO: this whole section is bogus
+                  field-assertions (ev/traverse field-assertions to-constraint)
+                  :let [field-map (reduce field-assertions
+                                          {} (fn [m c]
+                                               (validate-field c m fields file-name line-number)))
+                        field-constraints (c/ItemsConstraint
+                                           (map fields (fn [field]
+                                                         (either (get field-map field)
+                                                                 c/top-type)))
+                                           c/coll-of-any
+                                           empty-list (maybe (symbol (str sym " fields"))) "")
+                        impls (merge-with comp
+                                          (default-type-impls sym type-num fields)
+                                          (destructure-fields new-type-constraint field-constraints ast))
+                        impl-arities (for [[proto-sym impl-fns] (seq impls)
+                                           [fn-name arities] (seq impl-fns)
+                                           impl-arity arities]
+                                       [proto-sym fn-name (.fn-var impl-arity (str (.fn-var impl-arity)))])]
+                  _ (sm/assoc-in-val [.fn-context .field-constrs] (maybe field-constraints))
+
+                  impl-arities (ev/traverse impl-arities (partial declare-impl (str sym) type-num))
+                  _ (ev/traverse impl-arities (partial emit-impl (str sym) new-type-constraint type-num))
+
+                  new-field-constrs (sm/get-in-val [.fn-context .field-constrs])
+                  :let [field-constraints (either (map new-field-constrs
+                                                       (fn [fc]
+                                                         (-> fc
+                                                             (c/update-var "")
+                                                             (c/update-sym (symbol (str sym " fields")))
+                                                             (.items-constraints (map (.items-constraints fc)
+                                                                                      (fn [c]
+                                                                                        (c/update-var c "")))))))
+                                                  field-constraints)
+
+                        field-constraints (promote-inferred field-constraints)
+                        getter-arities (create-getters (.sym ast) fields
+                                                       (c/extract-items-constraints field-constraints))
+                        getter-arities (for [[proto-sym impl-fns] (seq getter-arities)
                                              [fn-name arities] (seq impl-fns)
                                              impl-arity arities]
                                          [proto-sym fn-name (.fn-var impl-arity (str (.fn-var impl-arity)))])]
-                    _ (sm/assoc-in-val [.fn-context .field-constrs] (maybe field-constraints))
 
-                    impl-arities (ev/traverse impl-arities (partial declare-impl (str sym) type-num))
-                    _ (ev/traverse impl-arities (partial emit-impl (str sym) new-type-constraint type-num))
+                  getter-arities (ev/traverse getter-arities (partial declare-impl (str sym) type-num))
+                  _ (ev/traverse getter-arities (partial emit-impl (str sym) new-type-constraint type-num))
+                  _ (sm/assoc-in-val [.fn-context .field-constrs] nothing)
 
-                    new-field-constrs (sm/get-in-val [.fn-context .field-constrs])
-                    :let [field-constraints (either (map new-field-constrs
-                                                         (fn [fc]
-                                                           (-> fc
-                                                               (c/update-var "")
-                                                               (c/update-sym (symbol (str sym " fields")))
-                                                               (.items-constraints (map (.items-constraints fc)
-                                                                                        (fn [c]
-                                                                                          (c/update-var c "")))))))
-                                                    field-constraints)
-
-                          field-constraints (promote-inferred field-constraints)
-                          getter-arities (create-getters (.sym ast) fields
-                                                         (c/extract-items-constraints field-constraints))
-                          getter-arities (for [[proto-sym impl-fns] (seq getter-arities)
-                                               [fn-name arities] (seq impl-fns)
-                                               impl-arity arities]
-                                           [proto-sym fn-name (.fn-var impl-arity (str (.fn-var impl-arity)))])]
-
-                    getter-arities (ev/traverse getter-arities (partial declare-impl (str sym) type-num))
-                    _ (ev/traverse getter-arities (partial emit-impl (str sym) new-type-constraint type-num))
-                    _ (sm/assoc-in-val [.fn-context .field-constrs] nothing)
-
-                    type-constructor (emit-constructor (.sym ast) type-num new-type-constraint
-                                                       fields field-constraints)
-                    ;; TODO: this should be better
-                    const-type-num (flat-map (lookup-sym (.sym ast))
-                                             (fn [expr]
-                                               (var-type-num (.c-var expr))))
-                    _ (sm/assoc-in-val [.modules 'core .protocols (ast/untag Function-sym) (ast/untag invoke-sym)
-                                        .p-impls const-arity-index const-type-num .result-constraint]
-                                       new-type-constraint)]
-                type-constructor))))))
+                  type-constructor (emit-constructor (.sym ast) type-num new-type-constraint
+                                                     fields field-constraints)
+                  ;; TODO: this should be better
+                  const-type-num (flat-map (lookup-sym (.sym ast))
+                                           (fn [expr]
+                                             (var-type-num (.c-var expr))))
+                  _ (sm/assoc-in-val [.modules 'core .protocols (ast/untag Function-sym) (ast/untag invoke-sym)
+                                      .p-impls const-arity-index const-type-num .result-constraint]
+                                     new-type-constraint)]
+              type-constructor)))))
 
 ;; (defn js-callable-arity [[num-args expr]]
 ;;   (for [c-fn-name (global-var (str (.sym ast) "_" num-args))
@@ -6113,7 +6117,7 @@
                                    {}                       ;; map for namespaces
                                    (ConstantValues {} {} {} type-names {} {})
                                    0                        ;; reify-fn-index
-                                   ))
+                                   c/TypeCount))
 
 (defprotocol FreeGlobal
   (free-global [_]
@@ -6834,7 +6838,8 @@
             (extract waiter)
             (send ast-emitter (fn [context]
                                 (write-strings ["\nint typeCount = "
-                                                (str (extract rdr/type-counter))
+                                                (str (either (map context .type-counter)
+                                                             "no idea"))
                                                 ";\n"])
                                 context))
             (send ast-emitter emit-main)
@@ -6846,7 +6851,8 @@
                                                                                      (fn [[k v]]
                                                                                        (str k ": " v)))
                                                                                "\n")))
-                                       (print-err "number of types" (extract rdr/type-counter))))))
+                                       (print-err "number of types" (either (map ctxt .type-counter)
+                                                                            "no idea"))))))
             ;; wait for agents to clear their queues
             (let [waiter (promise)]
               (send ast-emitter (fn [_]
