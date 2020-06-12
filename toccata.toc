@@ -2737,7 +2737,7 @@
       (ast/let-ast [(ast/binding dispatch-sym dispatch-val)]
                    (vec body-exprs)))))
 
-(defn inline-first [[arg]]
+(defn inline-first [name [arg]]
   (for [_ (instance? ast/call-ast arg)
         :let [target (.call-target arg)]
         :when (or (= target 'list)
@@ -2748,7 +2748,7 @@
                                    (conj (rest (.args arg))
                                          (ast/call-ast (ast/tag 'maybe) [head-sym])))))))
 
-(defn inline-rest [[arg]]
+(defn inline-rest [name [arg]]
   (for [_ (instance? ast/call-ast arg)
         :let [target (.call-target arg)]
         :when (or (= target 'list)
@@ -2767,7 +2767,7 @@
              (ast/binding-ast param val)))
       (vec)))
 
-(defn inline-partial [[call-target & args]]
+(defn inline-partial [name [call-target & args]]
   ;; TODO: some test exprs for this
   ;; (partial subs 8)
   ;; (partial subs "bogus" 'sym 8)
@@ -2789,7 +2789,7 @@
         sm/state-maybe
         maybe)))
 
-(defn inline-comp* [[arg args]]
+(defn inline-comp* [name [arg args]]
   (let [file (ast/file-name args)
         line (ast/line-number args)]
     (maybe (for [expr (emit arg)
@@ -2824,7 +2824,7 @@
                                 args-bindings)
                           body-exprs)))))
 
-(defn inline-comp [args]
+(defn inline-comp [name args]
   (let [file (ast/file-name args)
         line (ast/line-number args)]
     (maybe (for [[expr & exprs] (ev/traverse args emit)]
@@ -2841,6 +2841,24 @@
                                               (vec (map bindings .binding)))])]))))))
 
 (def get-field-sym (ast/tag 'get-field 'core 0))
+
+(def inlined-fns
+  {'wrap {2 inline-wrap-and-apply}
+   'apply {2 inline-wrap-and-apply}
+   'flat-map {2 inline-flat-map}
+   'map {2 inline-flat-map}
+   '= {2 (fn [name args]
+           (-> '=*
+               (ast/tag (ast/file-name args) (ast/line-number args))
+               (ast/call-ast args)
+               sm/state-maybe 
+               maybe))}
+   get-field-sym (maybe inline-get-field)
+   'partial (maybe inline-partial)
+   'first {1 inline-first}
+   'rest {1 inline-rest}
+   'comp* {2 inline-comp*}
+   'comp (maybe inline-comp)})
 
 (extend-type Tagged
   Emitter
@@ -2905,35 +2923,9 @@
     ;; TODO: inline 'get-in', 'update-in'
     (let [args (remove arg-asts (partial instance? ast/NoCode))
           num-args (count args)]
-      (either (or (and (or (= name 'wrap)
-                           (= name 'apply))
-                       (inline-wrap-and-apply name args))
-                  (and (= name get-field-sym)
-                       (inline-get-field name args))
-                  (and (or (= name 'flat-map)
-                           (= name 'map))
-                       (inline-flat-map name args))
-                  (and (= name '=)
-                       (= num-args 2)
-                       (-> '=*
-                           (ast/tag (ast/file-name name) (ast/line-number name))
-                           (ast/call-ast arg-asts)
-                           sm/state-maybe 
-                           maybe))
-                  (and (= name 'partial)
-                       (inline-partial args))
-                  (and (= name 'first)
-                       (= 1 num-args)
-                       (inline-first args))
-                  (and (= name 'rest)
-                       (= 1 num-args)
-                       (inline-rest args))
-                  (and (= name 'comp*)
-                       (= 2 num-args)
-                       (inline-comp* args))
-                  (and (= name 'comp)
-                       (< 1 num-args)
-                       (inline-comp args)))
+      (either (flat-map (get-in inlined-fns [name num-args])
+                        (fn [f]
+                          (f name args)))
               sm/zero-sm))))
 
 (extend-type ast/tagged-symbol
@@ -4797,11 +4789,27 @@
                    (for [subs (sm/get-in-val [.fn-context .subs] [])
                          expr (emit-cond-clause clause)
                          final-subs (sm/get-in-val [.fn-context .subs] [])
+                         _ (-> expr
+                               .refs-map
+                               (dissoc (.c-var expr))
+                               keys
+                               (sm/traverse (fn [var]
+                                              (update-subs
+                                               (typ/set-constraint var (either (get-in subs [0 var])
+                                                                               c/top-type))))))
 
                          exprs (ev/traverse (rest clauses)
                                             (fn [clause]
-                                              (for [_ (sm/assoc-in-val [.fn-context .subs] subs)
-                                                    expr (emit-cond-clause clause)]
+                                              (for [expr (emit-cond-clause clause)
+                                                    _ (-> expr
+                                                          .refs-map
+                                                          (dissoc (.c-var expr))
+                                                          keys
+                                                          (sm/traverse
+                                                           (fn [var]
+                                                             (update-subs
+                                                              (typ/set-constraint var (either (get-in subs [0 var])
+                                                                                              c/top-type))))))]
                                                 expr)))
                          :let [exprs (comp [expr] exprs)]
                          _ (sm/assoc-in-val [.fn-context .subs] final-subs)
@@ -4899,13 +4907,29 @@
                    (for [subs (sm/get-in-val [.fn-context .subs] [])
                          expr (emit-cond-clause clause)
                          final-subs (sm/get-in-val [.fn-context .subs] [])
+                         _ (-> expr
+                               .refs-map
+                               (dissoc (.c-var expr))
+                               keys
+                               (sm/traverse (fn [var]
+                                              (update-subs
+                                               (typ/set-constraint var (either (get-in subs [0 var])
+                                                                               c/top-type))))))
 
                          expr-cs (ev/traverse (rest clauses)
                                               (fn [clause]
-                                                (for [_ (sm/assoc-in-val [.fn-context .subs] subs)
-                                                      expr (emit-cond-clause clause)
+                                                (for [expr (emit-cond-clause clause)
                                                       constraint (sm/get-in-val [.fn-context .subs 0 (.c-var expr)]
-                                                                                c/top-type)]
+                                                                                c/top-type)
+                                                      _ (-> expr
+                                                            .refs-map
+                                                            (dissoc (.c-var expr))
+                                                            keys
+                                                            (sm/traverse
+                                                             (fn [var]
+                                                               (update-subs
+                                                                (typ/set-constraint var (either (get-in subs [0 var])
+                                                                                                c/top-type))))))]
                                                   [constraint expr])))
                          _ (sm/assoc-in-val [.fn-context .subs] final-subs)
                          ;; TODO: do I really need to do this?
