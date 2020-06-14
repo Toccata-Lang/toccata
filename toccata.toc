@@ -8,6 +8,7 @@
 
 ;; things to remember and aspire to
 ;; https://stackoverflow.blog/2020/06/05/why-the-developers-who-use-rust-love-it-so-much/
+;; https://github.com/hasura/eff
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
@@ -825,27 +826,29 @@
   (sm/get-in-val [.fn-context .subs] {}))
 
 (defn get-constraint [var]
-  (map (sm/get-in-val [.fn-context .subs var] c/top-type)
-       (fn [c]
-         (c/update-var c var))))
+  (sm/new-sm (fn [s]
+               (assert (instance? GlobalContext s))
+               (-> (either (-> s
+                               .fn-context
+                               .subs
+                               (get var))
+                           c/top-type)
+                   (c/update-var var)
+                   (vector s)
+                   maybe))))
 
 (defn set-constraint [var constraint]
-  (let [constraint (c/update-var constraint var)]
-    (sm/assoc-in-val [.fn-context .subs var]
-                     (c/update-var constraint var))
-    ;; (sm/update-in-val [.fn-context .subs]
-    ;;                   (fn [v]
-    ;;                     (either (flat-map (get v 0)
-    ;;                                       (fn [subs]
-    ;;                                         (store v 0 (assoc subs var constraint))))
-    ;;                             v)))
-    ))
+  (cond (= c/top-type constraint)
+        sm-nop
+        (sm/new-sm (fn [s]
+                     (assert (instance? GlobalContext s))
+                     (let [constraint (c/update-var constraint var)]
+                       (maybe [constraint (assoc-in s [.fn-context .subs var] constraint)]))))))
 
 (defn append-constraint [var constraint file-name line-number]
   (let [constraint (c/update-path constraint file-name line-number)]
     (cond (= constraint c/top-type)
           sm-nop
-          ;; sm/update-in-val would be better
           (for [curr-const (get-constraint var)
                 _ (set-constraint var (either (c/compose-constraints file-name line-number
                                                                      constraint curr-const)
@@ -880,15 +883,12 @@
     '_))
 
 (defn var-type-num [var]
-  (map (get-subs)
-       (fn [subs]
-         (let [type-nums (either (flat-map (get subs var)
-                                           (fn [c]
-                                             (map (c/extract-type-map c) keys)))
-                                 [])]
-           (either (and (= 1 (count type-nums))
-                        (first type-nums))
-                   c/UnknownType)))))
+  (for [c (get-constraint var)]
+    (let [type-nums (either (map (c/extract-type-map c) keys)
+                            [])]
+      (either (and (= 1 (count type-nums))
+                   (first type-nums))
+              c/UnknownType))))
 
 (defn declare [new-decl]
   (sm/update-in-val [.fn-context .decl] (fn [decl]
