@@ -4664,9 +4664,11 @@ Value *makeAgent(Value *arg0) {
 }
 
 Value *extractAgent(Value *arg0) {
+  pthread_mutex_lock (&((Agent *)arg0)->access);
   Value *v = ((Agent *)arg0)->val;
   incRef(v, 1);
   dec_and_free(arg0, 1);
+  pthread_mutex_unlock (&((Agent *)arg0)->access);
   return(v);
 }
 
