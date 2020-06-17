@@ -49,6 +49,8 @@
 
 (def type-counter (int-generator c/TypeCount))
 
+(def rt-exprs (agent []))
+
 (defprotocol StringWriter
   (write-str [x]
     (print x)))
@@ -782,12 +784,6 @@
           (string-list syms)
           (list ">"))))
 
-(deftype RuntimeInit [fn-context exprs]
-  ;; fn-context        context for the initialization code
-  (assert (instance? FunctionArityContext fn-context))
-  ;; exprs             the init expressions
-  (assert (instance? Vector exprs)))
-
 ;; information that must be tracked for each module
 (deftype Module [path values protocols declarations ns-syms types]
   ;; path             path to file containing the modules source code (Symbol or String)
@@ -810,7 +806,7 @@
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
   ;; init                   context for the runtime initialization
-  (assert (instance? RuntimeInit rt-init))
+  (assert (instance? FunctionArityContext rt-init))
   ;; modules                info for each module compiled
   (assert (instance? (map-of ast/SymbolOrString Module) modules))
   ;; namespaces             current namespace map
@@ -2087,11 +2083,11 @@
 
   Emitter
   (emit [_]
-    (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
+    (for [init-fn-context (sm/get-val .rt-init)
           fn-context (reset-fn-context (.subs init-fn-context {}))
           value (encode m)
           init-fn-context (reset-fn-context fn-context)
-          _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
+          _ (sm/set-val .rt-init init-fn-context)
           _ (constrain-var "" 0 (.c-var value) hashmap-constraint)
           _ (set-result-constraint (.c-var value) "" 0)]
       (c-code (.c-var value) ["return(" (.c-var value) ");" line-sep]
@@ -2395,12 +2391,12 @@
 (extend-type HashMap
   Emitter
   (emit [m]
-    (for [init-fn-context (sm/get-in-val [.rt-init .fn-context])
+    (for [init-fn-context (sm/get-val .rt-init)
           fn-context (reset-fn-context (.subs init-fn-context {}))
           value (comp (encode-static m)
                       (encode m))
           init-fn-context (reset-fn-context fn-context)
-          _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)
+          _ (sm/get-val .rt-init init-fn-context)
           _ (constrain-var "" 0 (.c-var value) hashmap-constraint)]
       (c-code (.c-var value) ["return(" (.c-var value) ");" line-sep]
               {} hashmap-constraint)))
@@ -3710,7 +3706,7 @@
 
 (defn init-at-runtime [ast defined-sym]
   (for [map-var (lookup-sym (ast/tag symbols-sym (ast/file-name defined-sym) (ast/line-number defined-sym)))
-        init-fn-context (sm/get-in-val [.rt-init .fn-context])
+        init-fn-context (sm/get-val .rt-init)
         fn-context (reset-fn-context (.subs init-fn-context {}))
 
         sym-var (emit (ast/quoted-ast defined-sym))
@@ -3719,7 +3715,7 @@
         constraint (get-constraint (.c-var value))
         init-fn-context (reset-fn-context fn-context)
         _ (constrain-var (ast/file-name ast) (ast/line-number ast) (.c-var value) constraint)
-        _ (sm/assoc-in-val [.rt-init .fn-context] init-fn-context)]
+        _ (sm/set-val .rt-init init-fn-context)]
     (.init value [(.init value)
                   (.c-var map-var) " = hashMapAssoc((Value *)" (.c-var map-var) ", "
                   (.c-var sym-var) ", " (.c-var value) ");\n"])))
@@ -6161,9 +6157,8 @@
                                                        ", ")
                                             ");\n};);\n"
                                             "#endif\n"]
-                                           {} c/top-type)]
-                  _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
-                                                          (conj exprs js-wrapper)))
+                                           {} c/top-type)
+                        _ (send rt-exprs conj js-wrapper)]
                   _ (declare ["\n#ifdef TOCCATA_WASM\n"
                               "EMSCRIPTEN_KEEPALIVE\n Value * " c-fn-name "("
                               (interpose (map (range num-args) (partial str "int arg")) ", ")
@@ -6180,8 +6175,7 @@
             (compilation-error "Could not find function" (.sym ast) "or an arity with" num-args "arguments.")))))
 
 (def global-context (GlobalContext (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
-                                   (RuntimeInit (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
-                                                [])
+                                   (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
                                    {}                       ;; map for module info
                                    {}                       ;; map for namespaces
                                    (ConstantValues {} {} {} type-names {} {})
@@ -6318,7 +6312,6 @@
         modules (sm/get-in-val [.modules])
         protos (ev/traverse (keys modules) gather-protocols)
         symbols (ev/traverse (keys modules) gather-symbols)
-        values (sm/get-in-val [.rt-init .exprs])
         decl (sm/get-in-val [.fn-context .decl])
         _ (sm/assoc-in-val [.fn-context .decl] [])]
     (do
@@ -6344,7 +6337,7 @@
                       "startWorkers();\n"
                       (map protos .init)
                       (map symbols .init)
-                      (map values .init)
+                      (map (extract rt-exprs) .init)
                       "\n#\n"
                       "  List *argList = malloc_list();\n"
                       "  argList->len = 0;\n"
@@ -6410,10 +6403,10 @@
   (update-context context
                   (comp (for [emitted (emit-definition ast)
                               _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
-                              _ (sm/assoc-in-val [.fn-context .decl] [])
-                              _ (sm/update-in-val [.rt-init .exprs] (fn [exprs]
-                                                                      (comp exprs emitted)))]
-                          "")
+                              _ (sm/assoc-in-val [.fn-context .decl] [])]
+                          (do
+                            (send rt-exprs comp emitted)
+                            ""))
                         (compilation-error "Could not emit code for expression at "
                                            (ast/file-name ast) (ast/line-number ast)))))
 
@@ -6704,13 +6697,12 @@
                                            protocols-var)
                         symbols-var (sm/get-in-val [.modules file-name .values symbols-sym])
                         _ (sm/assoc-in-val [.modules file-name .values 'symbols]
-                                           symbols-var)
-                        _ (sm/update-in-val [.rt-init .exprs]
-                                            (fn [exprs]
-                                              (conj exprs (c-code "" ["if(" (.c-var symbols-var) "->refs > 0)\n"
-                                                                      (.c-var symbols-var) "->refs = -1;\n"]
-                                                                  {} c/top-type))))]
-                    '_)))
+                                           symbols-var)]
+                    (do
+                      (send rt-exprs conj (c-code "" ["if(" (.c-var symbols-var) "->refs > 0)\n"
+                                                      (.c-var symbols-var) "->refs = -1;\n"]
+                                                  {} c/top-type))
+                      '_))))
 
 (defn load-core [modules]
   (either (or (and (get modules 'core)
