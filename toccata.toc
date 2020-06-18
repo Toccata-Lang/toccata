@@ -136,8 +136,11 @@
                (apply print-err msg)
                (abort))))
 
+(def sm-nop (wrap sm/zero-sm '_))
+
 (defprotocol Emitter
-  (get-constant [v])
+  (cache-static-constant [v expr]
+    '_)
 
   (all-symbols [ast]
     (assert-result l (instance? (vector-of ast/ParamType) l)))
@@ -777,7 +780,6 @@
   ;; constraints for fields in type-ast implementations
   (assert (instance? (maybe-of c/ItemsConstraint) field-constrs))
 
-
   Stringable
   (string-list [_]
     (comp (list "<FunctionArityContext ")
@@ -785,8 +787,10 @@
           (list ">"))))
 
 ;; information that must be tracked for each module
-(deftype Module [path values protocols declarations ns-syms types]
+(deftype Module [path index values protocols declarations ns-syms types]
   ;; path             path to file containing the modules source code (Symbol or String)
+  ;; index            this module's index
+  (assert (instance? Integer index))
   ;; values           map of value symbols to defined values
   (assert (instance? HashMap values))
   ;; protocols        set of protocol symbols
@@ -801,8 +805,12 @@
   Stringable
   (string-list [_] (list "<Module '" (str path) "'>")))
 
+(def module-count (int-generator 0))
+
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [fn-context rt-init modules namespaces constants reify-fn-index]
+(deftype GlobalContext [module-index fn-context rt-init modules namespaces constants reify-fn-index]
+  ;; module-index           index of module whose definition is curretnly being compiled
+  (assert (instance? Integer module-index))
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
   ;; init                   context for the runtime initialization
@@ -818,8 +826,6 @@
 
   Stringable
   (string-list [_] (list "<GlobalContext>")))
-
-(def sm-nop (wrap sm/zero-sm '_))
 
 (defn get-subs []
   (sm/get-in-val [.fn-context .subs] {}))
@@ -1024,13 +1030,19 @@
 
 ;; generate symbols that are available globally inside the 'state-maybe' container
 (defn make-global-var
-  ([arg-name]
-   (str (gensym (str "g_" arg-name))))
-  ([sym arg-name]
-   (str (gensym (str "g_" (either (check-C-var (str sym "_"))
-                                  arg-name))))))
+  ([module-index arg-name]
+   (str (gensym (str "m" module-index "_" arg-name))))
+  ([module-index sym arg-name]
+   (str (gensym (str "m" module-index "_" (either (check-C-var (str sym "_"))
+                                                  arg-name))))))
 
-(def global-var (sm/lift make-global-var))
+(defn global-var
+  ([arg-name]
+   (for [module-index (sm/get-val .module-index)]
+     (make-global-var module-index arg-name)))
+  ([sym arg-name]
+   (for [module-index (sm/get-val .module-index)]
+     (make-global-var module-index sym arg-name))))
 
 (deftype ProtoImpl [dispatch-type c-var ast param-constraints result-constraint c-fn]
   (assert (instance? ArityValPtr c-var))
@@ -2243,6 +2255,15 @@
   ;; TODO: when adding meta data, make sure to update this as well
   (let [str-len (count str-val)]
     (for [expr (comp (sm/get-in-val [.constants .strings str-val])
+                     (for [expr (sm/when (-> constants
+                                             extract
+                                             (get-in [.strings str-val])))
+                           _ (sm/assoc-in-val [.constants .strings str-val]
+                                              (.init expr []))
+                           _ (debug 'from-constants
+                                    (to-str (.init expr))
+                                    (str "'" str-val "'"))]
+                       expr)
                      (for [str-idx (sm/new-sm (fn [s]
                                                 (assert (instance? GlobalContext s))
                                                 (-> s
@@ -2272,6 +2293,11 @@
 
 (extend-type String
   Emitter
+  (cache-static-constant [s expr]
+    (send constants (fn [constants]
+                      (assoc-in constants [.strings s]
+                                (.init expr ["Value *" (.c-var expr) ";" line-sep])))))
+
   (emit [str-val]
     (make-static-string str-val)))
 
@@ -6174,7 +6200,8 @@
               [empty-c-code])
             (compilation-error "Could not find function" (.sym ast) "or an arity with" num-args "arguments.")))))
 
-(def global-context (GlobalContext (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
+(def global-context (GlobalContext 0                        ;; module-index
+                                   (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
                                    (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
                                    {}                       ;; map for module info
                                    {}                       ;; map for namespaces
@@ -6314,7 +6341,7 @@
         symbols (ev/traverse (keys modules) gather-symbols)
         decl (sm/get-in-val [.fn-context .decl])
         _ (sm/assoc-in-val [.fn-context .decl] [])]
-    (do
+    (let [values (extract rt-exprs)]
       (write-strings decl)
       (write-strings ["\n#\n"
                       "\nint main (int argc, char **argv) {\n"
@@ -6337,7 +6364,7 @@
                       "startWorkers();\n"
                       (map protos .init)
                       (map symbols .init)
-                      (map (extract rt-exprs) .init)
+                      (map values .init)
                       "\n#\n"
                       "  List *argList = malloc_list();\n"
                       "  argList->len = 0;\n"
@@ -6388,8 +6415,11 @@
                   (comp (sm/get-in-val [.modules module-name])
                         (for [protos-var (global-var "protos_")
                               symbols-var (global-var "symbols_")
+                              :let [module-index (extract module-count)]
+                              _ (debug 'new-module module-index module-name)
                               _ (sm/assoc-in-val [.modules module-name]
                                                  (Module module-name
+                                                         module-index
                                                          {protocols-sym (c-code protos-var [] {} c/top-type)
                                                           symbols-sym (c-code symbols-var [] {} c/top-type)}
                                                          {} {} {} {}))
@@ -6401,7 +6431,19 @@
 
 (defn emit-ast [context ast]
   (update-context context
-                  (comp (for [emitted (emit-definition ast)
+                  (comp (for [module-index (comp (sm/get-in-val [.modules (ast/file-name ast) .index])
+                                                 (compilation-error "Could not get module index for"
+                                                                    (ast/file-name ast)))
+                              _ (sm/set-val .module-index module-index)
+                              emitted (emit-definition ast)
+                              static-strs (sm/get-in-val [.constants .strings])
+                              :let [constants (extract constants)
+                                    ;; TODO: 'vec' here segfaults
+                                    ss (seq static-strs)
+                                    _ (map ss
+                                           (fn [[k v]]
+                                             (either (get-in constants [.strings k])
+                                                     (cache-static-constant k v))))]
                               _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
                               _ (sm/assoc-in-val [.fn-context .decl] [])]
                           (do
