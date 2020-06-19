@@ -63,6 +63,7 @@
 (def Tagged (any-of Symbol
                     ast/tagged-symbol))
 
+;; TODO: use 'either' here
 (def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
                                     (fn [toc-dir]
                                       (str toc-dir "/core.toc")))
@@ -632,8 +633,7 @@
 
 
 (defn collapse-expressions [cs]
-  (assert (instance? (sequence-of BindingValue)
-                     cs))
+  (assert (instance? (sequence-of BindingValue) cs))
   (assert-result r (instance? sm/new-sm r))
 
   (either (or (and (empty? cs)
@@ -787,7 +787,7 @@
           (list ">"))))
 
 ;; information that must be tracked for each module
-(deftype Module [path index values protocols declarations ns-syms types]
+(deftype Module [path index values protocols declarations namespaces types]
   ;; path             path to file containing the modules source code (Symbol or String)
   ;; index            this module's index
   (assert (instance? Integer index))
@@ -797,8 +797,8 @@
   (assert (instance? HashMap protocols))
   ;; declarations     map of symbols to C vars that have not been defined
   (assert (instance? HashMap declarations))
-  ;; imported namespaces
-  (assert (instance? HashMap ns-syms))
+  ;; namespaces      imported namespaces
+  (assert (instance? (map-of Symbol Module) namespaces))
   ;; types            map of symbols (type names) to type constraints
   (assert (instance? (map-of Symbol c/ValueConstraint) types))
 
@@ -929,8 +929,8 @@
   (let [file-name (ast/file-name sym)]
     (flat-map (ast/namespace sym)
               (fn [ns-sym]
-                (or (get-in (.namespaces s) [file-name ns-sym])
-                    (get-in (.namespaces s) [file-name (ast/tag ns-sym)]))))))
+                (or (get-in (.namespaces s) [file-name (ast/tag ns-sym)])
+                    (get-in (.namespaces s) [file-name ns-sym]))))))
 
 (defn sym-ns-path [sym]
   (sm/new-sm (fn [s]
@@ -1306,8 +1306,8 @@
         line-number (ast/line-number sym)]
     (for [expr (comp (for [ns-sym (sm/when (ast/namespace sym))
                            ;; lookup namespace-qual sym
-                           expr (comp (sm/get-in-val [.modules file-name .ns-syms
-                                                      (ast/tag ns-sym) (ast/tag (.base sym))])
+                           expr (comp (sm/get-in-val [.modules file-name .namespaces ns-sym
+                                                      .values (ast/tag (.base sym))])
                                       (compilation-error "Undefined symbol" (str "'" sym "'") "at"
                                                          (str file-name ":") line-number))]
                        expr)
@@ -1700,19 +1700,8 @@
 
   (emit [ast]
     (let [untagged (ast/untag (.type-sym ast))]
-      (comp (for [ns-path (sym-ns-path (.type-sym ast))
-                  ;; TODO: perhaps use 'to-constraint' here
-                  constraint (cond (empty? (.type-maps ast))
-                                   (comp (sm/get-in-val [.modules 'core .types untagged])
-                                         (sm/get-in-val [.modules ns-path .types untagged]))
-                                   (sm/state-maybe ast))
-                  expr (-> (either (map (c/extract-sym ast) (fn [sym]
-                                                              (c/update-sym constraint sym)))
-                                   (c/clear-sym constraint))
-                           (c/update-var (c/extract-var ast))
-                           (c/update-path (ast/file-name ast) (ast/line-number ast))
-                           (emit-sym-constraint))]
-              expr)
+      (comp (flat-map (to-constraint ast)
+                      emit-sym-constraint)
             (compilation-error "Unknown type" (str "'" (.type-sym ast) "'") "at"
                                (str (ast/file-name ast) ":") (ast/line-number ast)))))
 
@@ -2481,6 +2470,15 @@
                   _ (constrain-var (ast/file-name ast) (ast/line-number ast)
                                    (.c-var expr) (.constraints expr))]
               expr)
+            ;; (for [expr (sm/when (-> constants
+            ;;                         extract
+            ;;                         (get-in [.symbols sym])))
+            ;;       _ (sm/assoc-in-val [.constants .symbols sym]
+            ;;                          (.init expr []))
+            ;;       _ (constrain-var (ast/file-name ast) (ast/line-number ast)
+            ;;                        (.c-var expr) (.constraints expr))
+            ;;       _ (debug 'from-constants (to-str (.init expr)) sym)]
+            ;;   expr)
             (for [sym-idx (sm/new-sm (fn [s]
                                        (assert (instance? GlobalContext s))
                                        (-> s
@@ -3010,6 +3008,11 @@
 
 (extend-type Symbol
   Emitter
+  (cache-static-constant [s expr]
+    (send constants (fn [constants]
+                      (assoc-in constants [.symbols s]
+                                (.init expr ["Value *" (.c-var expr) ";" line-sep])))))
+
   (replace-syms [sym subs]
     (let [sym (ast/tag sym)]
       (wrap sm/zero-sm (get subs sym sym))))
@@ -3848,11 +3851,8 @@
   (emit [ast]
     (let [file-name (ast/file-name ast)
           line-number (ast/line-number ast)
-          ast (extract (update-in ast [.call-target]
-                                  (fn [target-ast]
-                                    (either (and (instance? Symbol target-ast)
-                                                 (maybe (ast/tag target-ast)))
-                                            target-ast))))]
+          ast (.call-target ast (either (instance? Symbol (.call-target ast))
+                                        (.call-target ast)))]
       (comp (flat-map (inline-expr (.call-target ast) (.args ast))
                       (fn [x]
                         (for [r (emit x)
@@ -5173,6 +5173,11 @@
                    "}" line-sep]
                   refs-map file-name line-number)))))
 
+  (emit-defined-value [ast defined-sym]
+    (for [value (emit ast)
+          _ (new-module-def defined-sym value)]
+      [value]))
+
   (tail-call [ast params]
     (TailEither (.clause ast)
                 (tail-call (.alt ast) params)))
@@ -6450,16 +6455,21 @@
                               emitted (emit-definition ast)
                               static-strs (sm/get-in-val [.constants .strings])
                               static-nums (sm/get-in-val [.constants .numbers])
+                              static-syms (sm/get-in-val [.constants .symbols])
                               :let [constants (extract constants)
                                     ;; TODO: 'vec' here segfaults
-                                    _ (map (seq static-strs)
-                                           (fn [[k v]]
-                                             (either (get-in constants [.strings k])
-                                                     (cache-static-constant k v))))
-                                    _ (map (seq static-nums)
-                                           (fn [[k v]]
-                                             (either (get-in constants [.numbers k])
-                                                     (cache-static-constant k v))))
+                                    ;; _ (map (seq static-strs)
+                                    ;;        (fn [[k v]]
+                                    ;;          (either (get-in constants [.strings k])
+                                    ;;                  (cache-static-constant k v))))
+                                    ;; _ (map (seq static-nums)
+                                    ;;        (fn [[k v]]
+                                    ;;          (either (get-in constants [.numbers k])
+                                    ;;                  (cache-static-constant k v))))
+                                    ;; _ (map (seq static-syms)
+                                    ;;        (fn [[k v]]
+                                    ;;          (either (get-in constants [.symbols k])
+                                    ;;                  (cache-static-constant k v))))
                                     ]
                               _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
                               _ (sm/assoc-in-val [.fn-context .decl] [])]
@@ -6564,7 +6574,7 @@
 (defprotocol ASTEmitter
   (send-to-emitter [ast]
     (send ast-emitter emit-ast ast))
-  (add-namespace [ast root-dir proj-dir])
+  (add-namespace [ast ast-emitter root-dir proj-dir])
   (load-module [ast root-dir proj-dir]))
 
 (extend-type ast/module-ast
@@ -6714,7 +6724,7 @@
 
 (extend-type ast/add-ns-ast
   ASTEmitter
-  (add-namespace [ast root-dir proj-dir]
+  (add-namespace [ast ast-emitter root-dir proj-dir]
     (let [[waiter mod-file-name] (load-module (.mod ast) root-dir proj-dir)]
       (send ast-emitter
             (fn [context]
@@ -6723,7 +6733,7 @@
                                                mod-file-name))))
       [waiter ast])))
 
-(def analyze-forms
+(defn analyze-forms [ast-emitter]
   (rd/parser (grmr/none-or-more
               (grmr/any
                (grmr/apply-fn (fn [modules]
@@ -6736,13 +6746,15 @@
                                              (fn [context ns-file-name mod-file-name ns-sym]
                                                (update-context
                                                 context
-                                                (for [syms (sm/get-in-val [.modules ns-file-name .values])
-                                                      _ (sm/assoc-in-val [.modules mod-file-name .ns-syms ns-sym]
-                                                                         syms)]
+                                                (for [module (sm/get-in-val [.modules ns-file-name])
+                                                      _ (sm/assoc-in-val [.modules mod-file-name .namespaces
+                                                                          (ast/untag ns-sym)]
+                                                                         module)]
                                                   '_)))
                                              (extract waiter) (ast/file-name ast) (.ns-sym ast)))))
                               (grmr/one-or-more
-                               (grmr/apply-fn add-namespace
+                               (grmr/apply-fn (fn [ast root-dir proj-dir]
+                                                (add-namespace ast ast-emitter root-dir proj-dir))
                                               rdr/read-add-ns
                                               (grmr/get-value 'root-directory)
                                               (grmr/get-value 'project-directory))))
@@ -6763,7 +6775,7 @@
                                                   {} c/top-type))
                       '_))))
 
-(defn load-core [modules]
+(defn load-core [ast-emitter modules]
   (either (or (and (get modules 'core)
                    (maybe modules))
               (for [file-in (fio/file-in path-to-core)
@@ -6782,10 +6794,10 @@
                                                        'FnArity (c/TypeConstraint {c/FnArityType #{}}
                                                                                   empty-list 'FnArity nothing "")
                                                        'BitmapIndexedNode (c/TypeConstraint {c/BitmapIndexedType #{}}
-                                                                                  empty-list 'BitmapIndexedNode
-                                                                                  nothing "")
+                                                                                            empty-list 'BitmapIndexedNode
+                                                                                            nothing "")
                                                        'ArrayNode (c/TypeConstraint {c/ArrayNodeType #{}}
-                                                                                  empty-list 'ArrayNode nothing "")
+                                                                                    empty-list 'ArrayNode nothing "")
                                                        'HashCollisionNode (c/TypeConstraint
                                                                            {c/HashCollisionNodeType #{}}
                                                                            empty-list 'HashCollisionNode nothing "")
@@ -6804,11 +6816,12 @@
                                                        'Opaque (c/TypeConstraint {c/OpaqueType #{}} empty-list
                                                                                  'Opaque nothing "")}))))]
 
-                    _ (analyze-forms {'file-name 'core
-                                      'line-number 1
-                                      'project-directory ""
-                                      'root-directory ""}
-                                     (lazy-list file-in))]
+                    _ ((analyze-forms ast-emitter)
+                       {'file-name 'core
+                        'line-number 1
+                        'project-directory ""
+                        'root-directory ""}
+                       (lazy-list file-in))]
                 (do
                   (send ast-emitter
                         fixup-generated-symbols 'core protocols-sym symbols-sym)
@@ -6820,7 +6833,7 @@
 
 (defn compile-module [loaded-modules file-name waiter-prom root-dir proj-dir]
   (assert (instance? (map-of String Promise) loaded-modules))
-  (let [loaded-modules (load-core loaded-modules)]
+  (let [loaded-modules (load-core ast-emitter loaded-modules)]
     (either (map (get loaded-modules file-name)
                  (fn [loaded]
                    (map loaded (fn [_]
@@ -6831,11 +6844,12 @@
                              (either (flat-map (fio/file-in file-name)
                                                (fn [file-in]
                                                  (send ast-emitter new-module file-name)
-                                                 (let [r (analyze-forms {'file-name file-name
-                                                                         'root-directory root-dir
-                                                                         'project-directory proj-dir
-                                                                         'line-number 1}
-                                                                        (lazy-list file-in))]
+                                                 (let [r ((analyze-forms ast-emitter)
+                                                          {'file-name file-name
+                                                           'root-directory root-dir
+                                                           'project-directory proj-dir
+                                                           'line-number 1}
+                                                          (lazy-list file-in))]
                                                    (send ast-emitter
                                                          fixup-generated-symbols file-name
                                                          protocols-sym symbols-sym)
