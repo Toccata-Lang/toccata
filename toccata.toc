@@ -482,7 +482,7 @@
     (list "<C-List-Function " (str c-var) ", "
           (str (count init)) ", " (str refs-map) ">")))
 
-(deftype c-protocol-fn [c-var init refs-map c-struct arities]
+(deftype c-protocol-fn [c-var init refs-map c-struct proto-sym arities]
   (assert (instance? Sequence init))
   (assert (instance? (map-of String Integer) refs-map))
   (assert (instance? HashMap arities))
@@ -1164,40 +1164,21 @@
                            (str (ast/file-name proto-sym) ",")
                            (ast/line-number proto-sym))))
 
-;; TODO: it feels like these 2 arities are too different
-(defn get-proto-impl
-  ([fn-sym arg-count type-num]
-   (sm/new-sm (fn [s]
-                (assert (instance? GlobalContext s))
-                (or (let [proto-path (either (extract-sym-path s fn-sym)
-                                             (ast/file-name fn-sym))]
-                      (for [protocols (get-in s [.modules proto-path .protocols])
-                            impl-info (some (vals protocols)
-                                            (fn [dispatchers]
-                                              (get-in dispatchers [(ast/untag fn-sym) .p-impls
-                                                                   arg-count type-num])))]
-                        [impl-info s]))
-                    (for [protocols (get-in s [.modules 'core .protocols])
-                          impl-info (some (seq protocols)
-                                          (fn [[proto-name dispatchers]]
-                                            (get-in dispatchers [(ast/untag fn-sym) .p-impls
-                                                                 arg-count type-num])))]
-                      [impl-info s])))))
-  ([proto-sym fn-sym arg-count type-num]
-   (flat-map (sm/new-sm (fn [s]
-                          (maybe [(either (extract-sym-path s proto-sym)
-                                          (ast/file-name proto-sym))
-                                  s])))
-             (fn [proto-path]
-               (comp (sm/get-in-val [.modules proto-path .protocols (ast/untag proto-sym) (ast/untag fn-sym)
-                                     .p-impls arg-count type-num])
-                     (sm/get-in-val [.modules 'core .protocols (ast/untag proto-sym) (ast/untag fn-sym)
-                                     .p-impls arg-count type-num])
-                     ;; (compilation-error "Invalid protocol fn:"
-                     ;;                    (str "'" fn-sym "' in")
-                     ;;                    (str (ast/file-name fn-sym) ",")
-                     ;;                    (ast/line-number fn-sym))
-                     )))))
+(defn get-proto-impl [proto-sym fn-sym arg-count type-num]
+  (flat-map (sm/new-sm (fn [s]
+                         (maybe [(either (extract-sym-path s proto-sym)
+                                         (ast/file-name proto-sym))
+                                 s])))
+            (fn [proto-path]
+              (comp (sm/get-in-val [.modules proto-path .protocols (ast/untag proto-sym) (ast/untag fn-sym)
+                                    .p-impls arg-count type-num])
+                    (sm/get-in-val [.modules 'core .protocols (ast/untag proto-sym) (ast/untag fn-sym)
+                                    .p-impls arg-count type-num])
+                    ;; (compilation-error "Invalid protocol fn:"
+                    ;;                    (str "'" fn-sym "' in")
+                    ;;                    (str (ast/file-name fn-sym) ",")
+                    ;;                    (ast/line-number fn-sym))
+                    ))))
 
 (def DefExprs (any-of c-code
                       c-static-reified
@@ -2722,8 +2703,10 @@
              checks line-sep
              "if(!" checked-var "){abort();}}" line-sep])))
 
-(defn call-proto-impl [arg-vars ast]
-  (let [target (.call-target ast)
+(defn call-proto-impl [target arg-vars ast]
+  (assert (instance? c-protocol-fn target))
+
+  (let [target-ast (.call-target ast)
         num-args (count arg-vars)
         file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
@@ -2734,7 +2717,7 @@
           ;;         (sm/state-maybe 0))
           :when-not (= c/UnknownType disp-type)
           result-sym (genlocal "rslt")
-          impl-info (get-proto-impl target num-args disp-type)
+          impl-info (get-proto-impl (.proto-sym target) target-ast num-args disp-type)
           ;; _ (debug 'cpi file-name line-number target disp-type "\n"
           ;;          (.param-constraints impl-info) "\n"
           ;;          result-sym (.result-constraint impl-info))
@@ -2748,7 +2731,7 @@
                                     (c/extract-items-constraints (.param-constraints impl-info)))
                          (fn [[var constraint]]
                            (constrain-var file-name line-number var constraint)))
-          line (line-macro target (str "// call proto fn " target))
+          line (line-macro target-ast (str "// call proto fn " target-ast))
           _ (either (add-inner-constraint result-sym ast arg-vars)
                     sm-nop)
           _ (add-contents-constraint ast result-sym  arg-vars)
@@ -2777,7 +2760,7 @@
           dispatch-val (emit dispatch-ast)
           dispatch-type (var-type-num (.c-var dispatch-val))
           :when-not (= c/UnknownType dispatch-type)
-          impl-ast (map (get-proto-impl name (count args) dispatch-type)
+          impl-ast (map (get-proto-impl (ast/tag 'Container) name (count args) dispatch-type)
                         .ast)
           :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
           new-ast (-> impl-ast
@@ -2792,7 +2775,7 @@
           dispatch-val (emit dispatch-ast)
           dispatch-type (var-type-num (.c-var dispatch-val))
           :when-not (= c/UnknownType dispatch-type)
-          impl-ast (map (get-proto-impl name 2 dispatch-type)
+          impl-ast (map (get-proto-impl (ast/tag 'Container) name 2 dispatch-type)
                         .ast)
           :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
           :let [impl-ast (replace-bound-vars impl-ast {})
@@ -2861,7 +2844,7 @@
     (maybe (for [expr (emit arg)
                  dispatch-type (var-type-num (.c-var expr))
                  :when-not (= c/UnknownType dispatch-type)
-                 impl-ast (map (get-proto-impl 'comp* 2 dispatch-type) .ast)
+                 impl-ast (map (get-proto-impl (ast/tag 'Composition) 'comp* 2 dispatch-type) .ast)
                  :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
                  args (either (flat-map (instance? ast/call-ast args)
                                         (fn [ast]
@@ -3558,7 +3541,7 @@
   (emit-call-site [target args ast]
     (let [file-name (ast/file-name ast)
           line-number (ast/line-number ast)]
-      (for [expr (comp (call-proto-impl args ast)
+      (for [expr (comp (call-proto-impl target args ast)
                        (static-call-site target args ast))
             _ (either (propogate-inner-constraint (.c-var expr) ast args)
                       sm-nop)
@@ -4644,7 +4627,7 @@
                                 disp-constraint)]
     (for [
           ;; _ (debug 'impl file-name line-number type-str fn-sym num-args)
-          default-impl (get-proto-impl fn-sym num-args 0)
+          default-impl (get-proto-impl proto-sym fn-sym num-args 0)
           ext-fn (comp (emit-fn-arity (symbol (str type-str fn-sym))
                                       (.fn-var arity-ast)
                                       params
@@ -5564,7 +5547,7 @@
 
         fn-var (comp (map (lookup-declaration fn-sym) .c-var)
                      (global-var (str "dispFn_" fn-sym) "fn"))
-        _ (new-module-def fn-sym (c-protocol-fn fn-var [] {} "" {}))
+        _ (new-module-def fn-sym (c-protocol-fn fn-var [] {} "" proto-sym {}))
         arities-info (ev/traverse arities
                                   (fn [arity]
                                     (let [arg-count (count (.params arity))]
