@@ -805,18 +805,9 @@
   Stringable
   (string-list [_] (list "<Module '" (str path) "'>")))
 
-(def module-count (int-generator 0))
-
-(def protocols (agent {}))
-(defn get-in-protos [path]
-  (let [result (promise)]
-    (send protocols (fn [protos]
-                      (deliver result (get-in protos path))
-                      protos))
-    (extract result)))
 
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [module-index fn-context rt-init modules namespaces constants reify-fn-index]
+(deftype GlobalContext [module-index fn-context rt-init modules constants reify-fn-index loaded]
   ;; module-index           index of module whose definition is curretnly being compiled
   (assert (instance? Integer module-index))
   ;; fn-context             context for the fn currently being compiled
@@ -825,15 +816,28 @@
   (assert (instance? FunctionArityContext rt-init))
   ;; modules                info for each module compiled
   (assert (instance? (map-of ast/SymbolOrString Module) modules))
-  ;; namespaces             current namespace map
-  (assert (instance? HashMap namespaces))
   ;; constants              the various constants encountered
   (assert (instance? ConstantValues constants))
   ;; reify-fn-index         index of reified fn being compiled
   (assert (instance? Integer reify-fn-index))
+  ;; loaded                 promise to hold finished module
+  (assert (instance? Promise loaded))
 
   Stringable
   (string-list [_] (list "<GlobalContext>")))
+
+;; TODO: use later
+;; (def protocols (agent {}))
+;; (defn get-in-protos [path]
+;;   (let [result (promise)]
+;;     (send protocols (fn [protos]
+;;                       (deliver result (get-in protos path))
+;;                       protos))
+;;     (extract result)))
+
+(def modules (agent {}))
+;; TODO: to be added later
+;; (assert (instance? (agent-of (map-of String (agent-of GlobalContext)))))
 
 (defn get-subs []
   (sm/get-in-val [.fn-context .subs] {}))
@@ -1129,17 +1133,43 @@
 
   (let [ast (unwrap-tail ast)
         new-impl (ProtoImpl dispatch-type var ast param-constraints result-constraint c-fn)]
-    (for [ns-index (namespace-index fn-sym)
-           _  (comp (sm/update-in-val [.modules ns-index .protocols (ast/untag proto-sym) (ast/untag fn-sym)]
-                                     (fn [p-disp]
-                                       (assert (instance? ev/ProtoDispatcher p-disp))
-                                       (assoc-in p-disp [.p-impls arg-count dispatch-type] new-impl)))
-                    (sm/update-in-val [.modules 0 .protocols (ast/untag proto-sym) (ast/untag fn-sym)]
-                                      (fn [p-disp]
-                                        (assert (instance? ev/ProtoDispatcher p-disp))
-                                        (assoc-in p-disp [.p-impls arg-count dispatch-type] new-impl)))
-                   (compilation-error "Compiler Error: missing proto dispatcher" proto-sym fn-sym))]
-      "")))
+    (comp (for [ns-index (namespace-index fn-sym)
+                curr-mod (sm/get-val .module-index)
+                :when (= ns-index curr-mod)
+                _ (comp (sm/update-in-val [.modules ns-index .protocols (ast/untag proto-sym) (ast/untag fn-sym)]
+                                          (fn [p-disp]
+                                            (assert (instance? ev/ProtoDispatcher p-disp))
+                                            (assoc-in p-disp [.p-impls arg-count dispatch-type] new-impl)))
+                        (sm/update-in-val [.modules 0 .protocols (ast/untag proto-sym) (ast/untag fn-sym)]
+                                          (fn [p-disp]
+                                            (assert (instance? ev/ProtoDispatcher p-disp))
+                                            (assoc-in p-disp [.p-impls arg-count dispatch-type] new-impl))))]
+            '_)
+          (map (namespace-index fn-sym)
+               (fn [ns-index]
+                 (send modules
+                       (fn [modules]
+                         ;; TODO: why does this error at compile time?
+                         ;; (assert-result r (instance? HashMap r))
+                         (print-err 'adding-impl fn-sym arg-count dispatch-type)
+                         (either (or (and (get-in modules [ns-index .protocols
+                                                           (ast/untag proto-sym) (ast/untag fn-sym)])
+                                          (update-in modules
+                                                     [ns-index .protocols (ast/untag proto-sym) (ast/untag fn-sym)]
+                                                     (fn [p-disp]
+                                                       (assert (instance? ev/ProtoDispatcher p-disp))
+                                                       (assoc-in p-disp [.p-impls arg-count dispatch-type]
+                                                                 new-impl))))
+                                     (and (get-in modules [0 .protocols (ast/untag proto-sym) (ast/untag fn-sym)])
+                                          (update-in modules
+                                                     [0 .protocols (ast/untag proto-sym) (ast/untag fn-sym)]
+                                                     (fn [p-disp]
+                                                       (assert (instance? ev/ProtoDispatcher p-disp))
+                                                       (assoc-in p-disp [.p-impls arg-count dispatch-type]
+                                                                 new-impl)))))
+                                 (do
+                                   (print-err "Compiler Error: missing proto dispatcher" proto-sym fn-sym)
+                                   (abort))))))))))
 
 (defn verify-proto-name [proto-sym]
   ;; Look for the protocol information
@@ -2207,7 +2237,8 @@
 (defn make-static-string [str-val]
   ;; TODO: when adding meta data, make sure to update this as well
   (let [str-len (count str-val)]
-    (for [expr (comp (sm/get-in-val [.constants .strings str-val])
+    (for [curr-mod (sm/get-val .module-index)
+          expr (comp (sm/get-in-val [.constants .strings str-val])
                      (for [expr (sm/when (-> constants
                                              extract
                                              (get-in [.strings str-val])))
@@ -2225,8 +2256,8 @@
                                                     count
                                                     (vector s)
                                                     maybe)))
-                           :let [str-sym (str "str" str-idx)
-                                 str-ptr (str "strPtr" str-idx)
+                           :let [str-sym (str "m" curr-mod "_str" str-idx)
+                                 str-ptr (str "m" curr-mod "_strPtr" str-idx)
                                  constraint (c/TypeConstraint {c/StringBufferType #{}}
                                                               empty-list 'String nothing str-ptr)]
                            _ (sm/assoc-in-val [.constants .strings str-val]
@@ -2271,8 +2302,9 @@
                                                   count
                                                   (vector s)
                                                   maybe)))
-                         :let [num-sym (str "num" num-idx)
-                               num-ptr (str "numPtr" num-idx)
+                         curr-mod (sm/get-val .module-index)
+                         :let [num-sym (str "m" curr-mod "_num" num-idx)
+                               num-ptr (str "m" curr-mod "_numPtr" num-idx)
                                constraint (c/StaticIntConstraint num empty-list nothing num-ptr)
                                var (c-static-int num-ptr [] {} constraint num-sym)]
                          _ (sm/assoc-in-val [.constants .numbers num] var)
@@ -2451,8 +2483,9 @@
                                            count
                                            (vector s)
                                            maybe)))
-                  :let [sym-var (str "sym" sym-idx)
-                        sym-ptr (str "symPtr" sym-idx)
+                  curr-mod (sm/get-val .module-index)
+                  :let [sym-var (str "m" curr-mod "_sym" sym-idx)
+                        sym-ptr (str "m" curr-mod "_symPtr" sym-idx)
                         constraint (c/update-path sym-constraint
                                                 (ast/file-name ast) (ast/line-number ast))]
                   _ (sm/assoc-in-val [.constants .symbols sym]
@@ -5323,7 +5356,8 @@
           ;; TODO: add param assertions
           fn-arity (emit-fn-arity (ast/tag 'main) "" (.params ast) (.body ast))
           ;; _ (debug "======= done main")
-          _ (sm/assoc-in-val [.modules 0 .values 'main] fn-arity)]
+          curr-mod (sm/get-val .module-index)
+          _ (sm/assoc-in-val [.modules curr-mod .values 'main] fn-arity)]
       [empty-c-code])))
 
 
@@ -6203,15 +6237,6 @@
               [empty-c-code])
             (compilation-error "Could not find function" (.sym ast) "or an arity with" num-args "arguments.")))))
 
-(def global-context (GlobalContext 0                        ;; module-index
-                                   (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
-                                   (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
-                                   {}                       ;; map for module info
-                                   {}                       ;; map for namespaces
-                                   (ConstantValues {} {} {} type-names {} {})
-                                   0                        ;; reify-fn-index
-                                   ))
-
 (defprotocol FreeGlobal
   (free-global [_]
     (assert-result x (instance? Vector x))
@@ -6298,8 +6323,12 @@
                       "Value *" (.c-var disp-fn) " = (Value *)&" struct-var ";\n\n"])]
       '_)))
 
-(defn gather-protocols [mod-index]
-  (comp (for [protocols (sm/get-in-val [.modules mod-index .protocols])
+(def gather-protocols
+  (comp (for [mod-index (sm/get-val .module-index)
+              :let [_ (send string-writer
+                            (fn [_]
+                              (print-err 'gather-protos mod-index)))]
+              protocols (sm/get-in-val [.modules mod-index .protocols])
               expr (encode-static protocols)
               x (apply (wrap sm/zero-sm list)
                        (map (for [[_ proto-fns] (seq protocols)
@@ -6312,15 +6341,20 @@
                                                [(.c-var protos-var) " = " (.c-var expr) ";\n"]
                                                {} c/top-type)])]
           r)
-        (flat-map (sm/get-in-val [.modules mod-index .path])
-                  (fn [file-name]
-                    (compilation-error "Could not gather the protocols for" (str "'" file-name "'"))))))
+        (for [mod-index (sm/get-val .module-index)
+              path (sm/get-in-val [.modules mod-index .path])
+              _ (compilation-error "Could not gather the protocols for" (str "'" path "'"))]
+          '_)))
 
-(defn gather-symbols [mod-index]
-  (for [symbols (sm/get-in-val [.modules mod-index .values])
+(def gather-symbols
+  (for [mod-index (sm/get-val .module-index)
+        :let [_ (send string-writer
+                      (fn [_]
+                        (print-err 'gather-syms mod-index)))]
+        symbols (sm/get-in-val [.modules mod-index .values])
         file-name (sm/get-in-val [.modules mod-index .path])
         expr (-> symbols
-                 (dissoc symbols-sym protocols-sym)
+                 (dissoc symbols-sym 'main protocols-sym)
                  (assoc 'filename (either (instance? String file-name)
                                           ""))
                  seq
@@ -6336,98 +6370,111 @@
                                          {} c/top-type)])]
     r))
 
-(def emit-main*
-  (for [main-fn (comp (sm/get-in-val [.modules 0 .values 'main])
-                      (compilation-error "'main' function is missing"))
-        _ (sm/update-in-val [.modules 0 .values]
-                            (fn [m]
-                              (dissoc m 'main)))
-        modules (sm/get-in-val [.modules])
-        protos (ev/traverse (filter (keys modules) (fn [k]
-                                                     (instance? Integer k)))
-                            gather-protocols)
-        symbols (ev/traverse (filter (keys modules) (fn [k]
-                                                      (instance? Integer k)))
-                             gather-symbols)
-        decl (sm/get-in-val [.fn-context .decl])
-        _ (sm/assoc-in-val [.fn-context .decl] [])]
-    (let [values (extract rt-exprs)]
-      (write-strings decl)
-      (write-strings ["\n#\n"
-                      "\nint main (int argc, char **argv) {\n"
-                      "prErrSTAR = &defaultPrErrSTAR;\n"
-                      "#ifdef SINGLE_THREADED\n"
-                      "#ifdef CHECK_MEM_LEAK\n"
-                      "fprintf(stderr, \"Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK "
-                      "at same time.\");\n "
-                      "abort();\n"
-                      "#endif\n"
-                      "#endif\n"
-                      "maybeNothing = maybe((List *)0, (Value *)0, nothing);\n"
-                      "maybeNothing->refs = -1;\n"
-                      "outstream = stdout;\n"
-                      "__atomic_store(&futuresQueue.input, &empty_list, __ATOMIC_RELAXED);\n"
-                      "futuresQueue.output = empty_list;\n"
-                      "pthread_mutex_init(&futuresQueue.mutex, NULL);\n"
-                      "pthread_cond_init(&futuresQueue.notEmpty, NULL);\n"
-                      "pthread_mutex_init(&shutDown.access, NULL);\n"
-                      "startWorkers();\n"
-                      (map protos .init)
-                      (map symbols .init)
-                      (map values .init)
-                      "\n#\n"
-                      "  List *argList = malloc_list();\n"
-                      "  argList->len = 0;\n"
-                      "  argList->head = (Value *)0;\n"
-                      "  argList->tail = (List *)0;\n"
-                      "  List *tail = argList;\n"
-                      "  for(int i = 0; i < argc; i++) {\n"
-                      "     List *newTail = malloc_list();\n"
-                      "     newTail->len = 0;\n"
-                      "     newTail->tail = (List *)0;\n"
-                      "     newTail->head = (Value *)0;\n"
-                      "     tail->head = stringValue(argv[i]);\n"
-                      "     tail->tail = newTail;\n"
-                      "     tail = newTail;\n"
-                      "     argList->len++;\n}\n"
-                      "  argList->refs = -1;\n"
-                      "Value *the_final_answer = " (.c-fn main-fn)
-                      "((List *)0, (Value *)argList);\n\n"
-                      "#ifdef CHECK_MEM_LEAK\n"
-                      "cleaningUp = 1;\n"
-                      "mainThreadDone = 1;\n"
-                      "waitForWorkers();\n"
-                      (map (seq modules) (fn [[k module]]
-                                           (cond (instance? Integer k)
-                                                 ""
-                                                 (either (map (get-in module [.values symbols-sym])
-                                                              (fn [expr]
-                                                                (free-global (c-init (.c-var expr) [] {} "" 0))))
-                                                         ""))))
-                      (map values free-global)
-                      "\n#\n"
-                      "for(List *l = argList; l != (List *)0; l = l->tail) {\n"
-                      "   l->refs = 1;\n"
-                      "}\n"
-                      "  cleanupMemory(the_final_answer, maybeNothing, argList);\n"
-                      "  if (malloc_count - free_count != 0)\n"
-                      "    return(1);\n"
-                      "#endif"
-                      "\n#\n"
-                      "  return(0);\n};\n"]))))
-
-(def ast-emitter (agent (maybe global-context)))
-
 (defn update-context [context update]
   (assert (instance? Maybe context))
   (flat-map (flat-map context update) second))
 
-(defn new-module [context module-name]
+(defn map-modules [operation]
+  (assert (instance? sm/new-sm operation))
+
+  (let [results-prom (promise)
+        _ (send modules
+                (fn [mods]
+                  (deliver results-prom
+                           (map (seq mods)
+                                (fn [[_ ast-emitter]]
+                                  (let [result-prom (promise)]
+                                    (send ast-emitter
+                                          (fn [ctxt]
+                                            (update-context ctxt
+                                                            (map (comp operation
+                                                                       (sm/state-maybe ""))
+                                                                 (partial deliver result-prom)))))
+                                    result-prom))))
+                  mods))]
+    ;; TODO: this probably doesn't work
+    ;; (extract (apply (promise vector)
+    ;;                 (extract results-prom)))
+    (map (extract results-prom) extract)))
+
+(defn emit-main [main-module]
+  (let [main-fn (either (get-in main-module [.values 'main])
+                        (do
+                          (print-err "'main' function is missing")
+                          (abort)))
+        inits (map-modules (for [proto-expr gather-protocols
+                                 syms-expr gather-symbols]
+                             (comp (.init proto-expr)
+                                   (.init syms-expr))))
+        decls (map-modules (sm/get-in-val [.fn-context .decl]))
+        values-prom (promise)
+        _ (send rt-exprs (partial deliver values-prom))
+        values (extract values-prom)]
+    (print-err 'got-values)
+    (write-strings decls)
+    (write-strings ["\n#\n"
+                    "\nint main (int argc, char **argv) {\n"
+                    "prErrSTAR = &defaultPrErrSTAR;\n"
+                    "#ifdef SINGLE_THREADED\n"
+                    "#ifdef CHECK_MEM_LEAK\n"
+                    "fprintf(stderr, \"Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK "
+                    "at same time.\");\n "
+                    "abort();\n"
+                    "#endif\n"
+                    "#endif\n"
+                    "maybeNothing = maybe((List *)0, (Value *)0, nothing);\n"
+                    "maybeNothing->refs = -1;\n"
+                    "outstream = stdout;\n"
+                    "__atomic_store(&futuresQueue.input, &empty_list, __ATOMIC_RELAXED);\n"
+                    "futuresQueue.output = empty_list;\n"
+                    "pthread_mutex_init(&futuresQueue.mutex, NULL);\n"
+                    "pthread_cond_init(&futuresQueue.notEmpty, NULL);\n"
+                    "pthread_mutex_init(&shutDown.access, NULL);\n"
+                    "startWorkers();\n"
+                    inits
+                    (map values .init)
+                    "\n#\n"
+                    "  List *argList = malloc_list();\n"
+                    "  argList->len = 0;\n"
+                    "  argList->head = (Value *)0;\n"
+                    "  argList->tail = (List *)0;\n"
+                    "  List *tail = argList;\n"
+                    "  for(int i = 0; i < argc; i++) {\n"
+                    "     List *newTail = malloc_list();\n"
+                    "     newTail->len = 0;\n"
+                    "     newTail->tail = (List *)0;\n"
+                    "     newTail->head = (Value *)0;\n"
+                    "     tail->head = stringValue(argv[i]);\n"
+                    "     tail->tail = newTail;\n"
+                    "     tail = newTail;\n"
+                    "     argList->len++;\n}\n"
+                    "  argList->refs = -1;\n"
+                    "Value *the_final_answer = " (.c-fn main-fn)
+                    "((List *)0, (Value *)argList);\n\n"
+                    "#ifdef CHECK_MEM_LEAK\n"
+                    "cleaningUp = 1;\n"
+                    "mainThreadDone = 1;\n"
+                    "waitForWorkers();\n"
+                    (map-modules (for [curr-mod (sm/get-val .module-index)
+                                             expr (sm/get-in-val [.modules curr-mod .value symbols-sym])]
+                                         (free-global (c-init (.c-var expr) [] {} "" 0))))
+                    (map values free-global)
+                    "\n#\n"
+                    "for(List *l = argList; l != (List *)0; l = l->tail) {\n"
+                    "   l->refs = 1;\n"
+                    "}\n"
+                    "  cleanupMemory(the_final_answer, maybeNothing, argList);\n"
+                    "  if (malloc_count - free_count != 0)\n"
+                    "    return(1);\n"
+                    "#endif"
+                    "\n#\n"
+                    "  return(0);\n};\n"
+                    "\nint typeCount = " (str (extract type-counter)) ";\n"])))
+
+(defn new-module [context module-name module-index]
   (update-context context
                   (for [protos-var (global-var "protos_")
                         symbols-var (global-var "symbols_")
-                        :let [module-index (extract module-count)]
-                        _ (debug 'new-module module-index module-name)
                         _ (sm/assoc-in-val [.modules module-name]
                                            (Module module-name
                                                    module-index
@@ -6474,11 +6521,6 @@
                             ""))
                         (compilation-error "Could not emit code for expression at "
                                            (ast/file-name ast) (ast/line-number ast)))))
-
-(defn emit-main [context]
-  (update-context context
-                  (comp emit-main*
-                        (compilation-error "Compilation error (Could not emit 'main' function.)"))))
 
 
 (def fixup-native-symbols*
@@ -6564,14 +6606,215 @@
                   (comp fixup-native-symbols*
                         (compilation-error "Compilation error (Could not fixup native symbols.)"))))
 
-(def compile-module)
-(def module-compiler (agent {}))
-
 (defprotocol ASTEmitter
-  (send-to-emitter [ast]
-    (send ast-emitter emit-ast ast))
-  (add-namespace [ast ast-emitter root-dir proj-dir])
-  (load-module [ast root-dir proj-dir]))
+  (load-module [ast root-dir proj-dir]
+    (assert-result r (instance? Promise r))))
+
+(defn analyze-forms [ast-emitter]
+  (rd/parser (grmr/none-or-more
+              (grmr/any
+               (grmr/one-or-more
+                (grmr/apply-fn (fn [ast root-dir proj-dir]
+                                 (let [ns-sym (ast/untag (.ns-sym ast))
+                                       waiter-prom (load-module (.mod ast) root-dir proj-dir)]
+                                   (send ast-emitter
+                                         (fn [context]
+                                           (update-context
+                                            context
+                                            (let [module (extract waiter-prom)]
+                                              (for [curr-mod (sm/get-val .module-index)
+                                                    mod-path (sm/get-in-val [.modules curr-mod .path])
+                                                    _ (sm/assoc-in-val [.modules curr-mod .namespaces ns-sym]
+                                                                       module)]
+                                                (send string-writer
+                                                      (fn [_]
+                                                        (print-err 'got-module (.path module) "\nfor"
+                                                                   mod-path))))))))))
+                               rdr/read-add-ns
+                               (grmr/get-value 'root-directory)
+                               (grmr/get-value 'project-directory)))
+               (grmr/apply-fn (partial send ast-emitter emit-ast)
+                              rdr/top-level)))))
+
+(defn fixup-generated-symbols [context file-name protocols-sym symbols-sym]
+  (update-context context
+                  (for [_ (set-module-index file-name)
+                        mod-index (sm/get-val .module-index)
+                        protocols-var (sm/get-in-val [.modules mod-index .values protocols-sym])
+                        _ (sm/assoc-in-val [.modules mod-index .values 'protocols]
+                                           protocols-var)
+                        symbols-var (sm/get-in-val [.modules mod-index .values symbols-sym])
+                        _ (sm/assoc-in-val [.modules mod-index .values 'symbols]
+                                           symbols-var)
+                        module (sm/get-in-val [.modules mod-index])
+                        _ (sm/update-val .loaded (fn [loaded-prom]
+                                                   (send string-writer
+                                                         (fn [_]
+                                                           (print-err 'delivering file-name loaded-prom)))
+                                                   (deliver loaded-prom module)))]
+                    (do
+                      (send string-writer
+                            (fn [_]
+                              (print-err 'loaded file-name)))
+                      (send rt-exprs conj (c-code "" ["if(" (.c-var symbols-var) "->refs > 0)\n"
+                                                      (.c-var symbols-var) "->refs = -1;\n"]
+                                                  {} c/top-type))
+                      '_))))
+
+(defn init-core-module [context]
+  (update-context
+   context
+   (for [_ (sm/set-val .module-index 0)
+         _ (sm/assoc-in-val [.modules 0 .types]
+                            {'Integer int-constraint
+                             'StringBuffer (c/TypeConstraint {c/StringBufferType #{}}
+                                                             empty-list 'StringBuffer
+                                                             nothing "")
+                             'SubString (c/TypeConstraint {c/SubStringType #{}}
+                                                          empty-list 'SubString nothing "")
+                             'FnArity (c/TypeConstraint {c/FnArityType #{}}
+                                                        empty-list 'FnArity nothing "")
+                             'BitmapIndexedNode (c/TypeConstraint {c/BitmapIndexedType #{}}
+                                                                  empty-list 'BitmapIndexedNode
+                                                                  nothing "")
+                             'ArrayNode (c/TypeConstraint {c/ArrayNodeType #{}}
+                                                          empty-list 'ArrayNode nothing "")
+                             'HashCollisionNode (c/TypeConstraint
+                                                 {c/HashCollisionNodeType #{}}
+                                                 empty-list 'HashCollisionNode nothing "")
+                             'Fn fn-constraint
+                             'List list-constraint
+                             'Maybe maybe-constraint
+                             'Vector vect-constraint
+                             'Symbol sym-constraint
+                             'HashMap hashmap-constraint
+                             'Promise (c/TypeConstraint {c/PromiseType #{}} empty-list
+                                                        'Promise nothing "")
+                             'Future (c/TypeConstraint {c/FutureType #{}} empty-list
+                                                       'Future nothing "")
+                             'Agent (c/TypeConstraint {c/AgentType #{}} empty-list
+                                                      'Agent nothing "")
+                             'Opaque (c/TypeConstraint {c/OpaqueType #{}} empty-list
+                                                       'Opaque nothing "")})]
+     '_)))
+
+;; (defn load-core [modules]
+;;   (cond (get modules 'core)
+;;         modules
+;;         (do
+;;           (send ast-emitter new-module 'core)
+;;           (send ast-emitter init-core-module)
+;;           (either (or (for [file-in (fio/file-in path-to-core)
+;;                             _ (maybe (print-err 'analyzing-core))
+;;                             _ ((analyze-forms ast-emitter) {'file-name 'core
+;;                                                             'line-number 1
+;;                                                             'project-directory ""
+;;                                                             'root-directory ""}
+;;                                (lazy-list file-in))]
+;;                         (let [_ (print-err 'core-analyzed)
+;;                               core-module (promise)]
+;;                           (send ast-emitter fixup-generated-symbols 'core protocols-sym symbols-sym)
+;;                           (send ast-emitter fixup-native-symbols)
+;;                           (send ast-emitter (fn [ctxt]
+;;                                               (print-err 'delivering-core-module)
+;;                                               (deliver core-module
+;;                                                        (either (get-in ctxt ['_ .modules 0])
+;;                                                                (do
+;;                                                                  (print-err "Toccata's core library was not"
+;;                                                                             "loaded properly")
+;;                                                                  (abort))))
+;;                                               ctxt))
+;;                           (print-err 'waiting-for-core)
+;;                           (let [r (assoc modules 'core (extract core-module))]
+;;                             (print-err 'got-core)
+;;                             r))))
+;;                   (do
+;;                     (print-err "Could not compile Toccata core."
+;;                                "Is the $TOCCATA_DIR environment variable set correctly?")
+;;                     (abort))))))
+
+(def global-context (GlobalContext 0                        ;; module-index
+                                   (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
+                                   (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
+                                   {}                       ;; map for module info
+                                   (ConstantValues {} {} {} type-names {} {})
+                                   0                        ;; reify-fn-index
+                                   (promise)                ;; loaded
+                                   ))
+
+(defn wait-for-module [waiting-module waiter-prom ctxt]
+  (assert (instance? (maybe-of GlobalContext) ctxt))
+
+  (update-context ctxt
+                  (flat-map (sm/get-val .module-index)
+                            (fn [curr-mod] 
+                              (sm/update-val .loaded
+                                             (fn [mod-prom]
+                                               (map mod-prom
+                                                    (fn [loaded-module]
+                                                      (send string-writer
+                                                            (fn [_]
+                                                              (print-err 'delivering (.path loaded-module) "\nto"
+                                                                         waiting-module)))
+                                                      (deliver waiter-prom loaded-module)))))))))
+
+(defn compile-module [module-agents file-name waiter-prom root-dir proj-dir]
+  (assert (instance? (map-of String Agent) module-agents))
+
+  (either (map (get module-agents file-name)
+               (fn [ast-emitter]
+                 (send ast-emitter
+                       (partial wait-for-module file-name waiter-prom))
+                 module-agents))
+          (let [core-prom (promise)
+                module-agents (cond (= file-name 'core)
+                                    module-agents
+                                    (compile-module module-agents 'core core-prom root-dir proj-dir))
+                ast-emitter (-> global-context
+                                (.loaded waiter-prom)
+                                maybe
+                                agent)
+                module-index (count module-agents)]
+            (send string-writer
+                  (fn [_]
+                    (print-err 'new-module module-index file-name)))
+            (send ast-emitter new-module file-name module-index)
+            (cond (= file-name 'core)
+                  (send ast-emitter init-core-module)
+                  (send ast-emitter
+                        (fn [context]
+                          (update-context
+                           context
+                           (for [_ (sm/assoc-in-val [.modules 0] (extract core-prom))]
+                             (send string-writer
+                                   (fn [_]
+                                     (print-err 'got-module 'core "\nfor" file-name))))))))
+            (future (fn []
+                      (either (map (fio/file-in (cond (= file-name 'core)
+                                                      path-to-core
+                                                      file-name))
+                                   (fn [file-in]
+                                     (do
+                                       ((analyze-forms ast-emitter)
+                                        {'file-name file-name
+                                         'root-directory root-dir
+                                         'project-directory proj-dir
+                                         'line-number 1}
+                                        (lazy-list file-in))
+                                       (send string-writer
+                                             (fn [_]
+                                               (print-err 'analyzed file-name)))
+                                       (cond (= file-name 'core)
+                                             (send ast-emitter fixup-native-symbols)
+                                             '_)
+                                       (send ast-emitter
+                                             fixup-generated-symbols file-name
+                                             protocols-sym symbols-sym))))
+                              (do
+                                (print-err "Could not compile" file-name)
+                                (abort)))))
+            (assoc module-agents file-name ast-emitter))))
+
 
 (extend-type ast/module-ast
   ev/Evaluator
@@ -6602,8 +6845,8 @@
   (load-module [ast root-dir proj-dir]
     (let [waiter (promise)
           file-path (str root-dir (.file-path ast))]
-      (send module-compiler compile-module file-path waiter root-dir proj-dir)
-      [waiter file-path])))
+      (send modules compile-module file-path waiter root-dir proj-dir)
+      waiter)))
 
 (def repo-cloner (agent {}))
 
@@ -6715,157 +6958,8 @@
               (print-err "Dependency file" file "missing from cloned repository"
                          (.repo ast) ":" (ast/file-name ast) (ast/line-number ast))
               (abort)))
-        (send module-compiler compile-module module-path waiter (str dep-path "/") proj-dir)
-        [waiter module-path]))))
-
-(extend-type ast/add-ns-ast
-  ASTEmitter
-  (add-namespace [ast ast-emitter root-dir proj-dir]
-    (let [[waiter mod-file-name] (load-module (.mod ast) root-dir proj-dir)]
-      (send ast-emitter
-            (fn [context]
-              (update-context context
-                              (sm/assoc-in-val [.namespaces (ast/file-name ast) (.ns-sym ast)]
-                                               mod-file-name))))
-      [waiter ast])))
-
-(defn analyze-forms [ast-emitter]
-  (rd/parser (grmr/none-or-more
-              (grmr/any
-               (grmr/apply-fn (fn [modules]
-                                ;; old code
-                                ;; (map modules extract)
-                                (map modules
-                                     (fn [[waiter ast]]
-                                       ;; TODO: refactor this mess
-                                       (send ast-emitter
-                                             (fn [context ns-file-name mod-file-name ns-sym]
-                                               (update-context
-                                                context
-                                                ;; TODO: use mod index
-                                                (for [ns-index (sm/get-in-val [.modules ns-file-name .index])
-                                                      module (sm/get-in-val [.modules ns-index])
-                                                      _ (set-module-index mod-file-name)
-                                                      curr-mod (sm/get-val .module-index)
-                                                      _ (sm/assoc-in-val [.modules curr-mod .namespaces
-                                                                          (ast/untag ns-sym)]
-                                                                         module)]
-                                                  '_)))
-                                             (extract waiter) (ast/file-name ast) (.ns-sym ast)))))
-                              (grmr/one-or-more
-                               (grmr/apply-fn (fn [ast root-dir proj-dir]
-                                                (add-namespace ast ast-emitter root-dir proj-dir))
-                                              rdr/read-add-ns
-                                              (grmr/get-value 'root-directory)
-                                              (grmr/get-value 'project-directory))))
-               (grmr/apply-fn send-to-emitter
-                              rdr/top-level)))))
-
-(defn fixup-generated-symbols [context file-name protocols-sym symbols-sym]
-  ;; TODO: shouldn't this be called for every module?
-  (update-context context
-                  (for [_ (set-module-index file-name)
-                        mod-index (sm/get-val .module-index)
-                        protocols-var (sm/get-in-val [.modules mod-index .values protocols-sym])
-                        _ (sm/assoc-in-val [.modules mod-index .values 'protocols]
-                                           protocols-var)
-                        symbols-var (sm/get-in-val [.modules mod-index .values symbols-sym])
-                        _ (sm/assoc-in-val [.modules mod-index .values 'symbols]
-                                           symbols-var)]
-                    (do
-                      (send rt-exprs conj (c-code "" ["if(" (.c-var symbols-var) "->refs > 0)\n"
-                                                      (.c-var symbols-var) "->refs = -1;\n"]
-                                                  {} c/top-type))
-                      '_))))
-
-(defn load-core [ast-emitter modules]
-  (either (or (and (get modules 'core)
-                   (maybe modules))
-              (for [file-in (fio/file-in path-to-core)
-                    :let [_ (send ast-emitter new-module 'core)
-                          _ (send ast-emitter
-                                  (fn [context]
-                                    (update-context
-                                     context
-                                     (for [_ (sm/set-val .module-index 0)
-                                           _ (sm/assoc-in-val [.modules 0 .types]
-                                                              {'Integer int-constraint
-                                                               'StringBuffer (c/TypeConstraint {c/StringBufferType #{}}
-                                                                                               empty-list 'StringBuffer
-                                                                                               nothing "")
-                                                               'SubString (c/TypeConstraint {c/SubStringType #{}}
-                                                                                            empty-list 'SubString nothing "")
-                                                               'FnArity (c/TypeConstraint {c/FnArityType #{}}
-                                                                                          empty-list 'FnArity nothing "")
-                                                               'BitmapIndexedNode (c/TypeConstraint {c/BitmapIndexedType #{}}
-                                                                                                    empty-list 'BitmapIndexedNode
-                                                                                                    nothing "")
-                                                               'ArrayNode (c/TypeConstraint {c/ArrayNodeType #{}}
-                                                                                            empty-list 'ArrayNode nothing "")
-                                                               'HashCollisionNode (c/TypeConstraint
-                                                                                   {c/HashCollisionNodeType #{}}
-                                                                                   empty-list 'HashCollisionNode nothing "")
-                                                               'Fn fn-constraint
-                                                               'List list-constraint
-                                                               'Maybe maybe-constraint
-                                                               'Vector vect-constraint
-                                                               'Symbol sym-constraint
-                                                               'HashMap hashmap-constraint
-                                                               'Promise (c/TypeConstraint {c/PromiseType #{}} empty-list
-                                                                                          'Promise nothing "")
-                                                               'Future (c/TypeConstraint {c/FutureType #{}} empty-list
-                                                                                         'Future nothing "")
-                                                               'Agent (c/TypeConstraint {c/AgentType #{}} empty-list
-                                                                                        'Agent nothing "")
-                                                               'Opaque (c/TypeConstraint {c/OpaqueType #{}} empty-list
-                                                                                         'Opaque nothing "")})]
-                                       '_))))]
-
-                    _ ((analyze-forms ast-emitter)
-                       {'file-name 'core
-                        'line-number 1
-                        'project-directory ""
-                        'root-directory ""}
-                       (lazy-list file-in))]
-                (do
-                  (send ast-emitter
-                        fixup-generated-symbols 'core protocols-sym symbols-sym)
-                  (assoc modules 'core 'loaded))))
-          (do
-            (print-err "Could not compile Toccata core."
-                       "Is the $TOCCATA_DIR environment variable set correctly?")
-            (abort))))
-
-(defn compile-module [loaded-modules file-name waiter-prom root-dir proj-dir]
-  (assert (instance? (map-of String Promise) loaded-modules))
-  (let [loaded-modules (load-core ast-emitter loaded-modules)]
-    (either (map (get loaded-modules file-name)
-                 (fn [loaded]
-                   (map loaded (fn [_]
-                                 (deliver waiter-prom file-name)))
-                   loaded-modules))
-            (assoc loaded-modules file-name
-                   (future (fn []
-                             (either (flat-map (fio/file-in file-name)
-                                               (fn [file-in]
-                                                 (send ast-emitter new-module file-name)
-                                                 (let [r ((analyze-forms ast-emitter)
-                                                          {'file-name file-name
-                                                           'root-directory root-dir
-                                                           'project-directory proj-dir
-                                                           'line-number 1}
-                                                          (lazy-list file-in))]
-                                                   (send ast-emitter
-                                                         ;; module 1 is where the 'main' function must reside
-                                                         ;; it's the root module of the project
-                                                         fixup-generated-symbols file-name
-                                                         protocols-sym symbols-sym)
-                                                   r)))
-                                     (do
-                                       (print-err "Could not compile" file-name)
-                                       (abort)))
-                             (deliver waiter-prom file-name)))))))
-
+        (send modules compile-module module-path waiter (str dep-path "/") proj-dir)
+        waiter))))
 
 (extend-type ev/Thunk
   rd/RecursiveDescent
@@ -6915,86 +7009,83 @@
   (ev/apply-fn [mv [state]]
     (wrap sm/zero-sm (mv state))))
 
+(defn interpret-file [[_ option file-name & args]]
+  (or (and (= "--script" option)
+           (flat-map (or (sys/file-directory file-name)
+                         (do
+                           (print-err "Could not open file:" file-name)
+                           (abort)))
+                     (fn [script-dir]
+                       (interp/interp-file
+                        file-name script-dir
+                        [(interp/CompiledNs 'file (either (get fio/symbols 'filename)
+                                                          "")
+                                            fio/symbols fio/protocols)
+                         (interp/CompiledNs 'reader (either (get rdr/symbols 'filename)
+                                                            "")
+                                            rdr/symbols rdr/protocols)
+                         (interp/CompiledNs 'grammar  (either (get grmr/symbols 'filename)
+                                                              "")
+                                            grmr/symbols grmr/protocols)
+                         (interp/CompiledNs 'parse  (either (get rd/symbols 'filename)
+                                                            "")
+                                            rd/symbols rd/protocols)
+                         (interp/CompiledNs 'ast  (either (get ast/symbols 'filename)
+                                                          "")
+                                            ast/symbols ast/protocols)
+                         (interp/CompiledNs 'sys  (either (get sys/symbols 'filename)
+                                                          "")
+                                            sys/symbols sys/protocols)
+                         (interp/CompiledNs 'state-maybe  (either (get sm/symbols 'filename)
+                                                                  "")
+                                            sm/symbols sm/protocols)
+                         (interp/CompiledNs 'const  (either (get c/symbols 'filename)
+                                                            "")
+                                            c/symbols c/protocols)
+                         (interp/CompiledNs 'shell  (either (get sh/symbols 'filename)
+                                                            "")
+                                            sh/symbols sh/protocols)
+                         (interp/CompiledNs 'strm  (either (get strm/symbols 'filename)
+                                                           "")
+                                            strm/symbols strm/protocols)]
+                        args))))
+      (do
+        (print-err "The only option for the compiler is '--script'")
+        (maybe -1))))
+
 (main [params]
   (either (or (and (< (count params) 2)
                    (do
                      (print-err "A filename to compile must be provided.")
                      (maybe -1)))
               (and (< 2 (count params))
-                   (let [[_ option file-name & args] params]
-                     (or (and (= "--script" option)
-                              (flat-map (or (sys/file-directory file-name)
-                                            (do
-                                              (print-err "Could not open file:" file-name)
-                                              (abort)))
-                                        (fn [script-dir]
-                                          (interp/interp-file
-                                           file-name script-dir
-                                           [(interp/CompiledNs 'file (either (get fio/symbols 'filename)
-                                                                             "")
-                                                               fio/symbols fio/protocols)
-                                            (interp/CompiledNs 'reader (either (get rdr/symbols 'filename)
-                                                                               "")
-                                                               rdr/symbols rdr/protocols)
-                                            (interp/CompiledNs 'grammar  (either (get grmr/symbols 'filename)
-                                                                                 "")
-                                                               grmr/symbols grmr/protocols)
-                                            (interp/CompiledNs 'parse  (either (get rd/symbols 'filename)
-                                                                               "")
-                                                               rd/symbols rd/protocols)
-                                            (interp/CompiledNs 'ast  (either (get ast/symbols 'filename)
-                                                                             "")
-                                                               ast/symbols ast/protocols)
-                                            (interp/CompiledNs 'sys  (either (get sys/symbols 'filename)
-                                                                             "")
-                                                               sys/symbols sys/protocols)
-                                            (interp/CompiledNs 'state-maybe  (either (get sm/symbols 'filename)
-                                                                                     "")
-                                                               sm/symbols sm/protocols)
-                                            (interp/CompiledNs 'const  (either (get c/symbols 'filename)
-                                                                               "")
-                                                               c/symbols c/protocols)
-                                            (interp/CompiledNs 'shell  (either (get sh/symbols 'filename)
-                                                                               "")
-                                                               sh/symbols sh/protocols)
-                                            (interp/CompiledNs 'strm  (either (get strm/symbols 'filename)
-                                                                              "")
-                                                               strm/symbols strm/protocols)]
-                                           args))))
-                         (do
-                           (print-err "The only option for the compiler is '--script'")
-                           (maybe -1))))))
+                   (interpret-file params)))
           (let [[_ file-name] params
-                waiter (promise)
-                type-count (extract type-counter)]
+                waiter (promise)]
             (or (map (sys/file-directory file-name)
                      (fn [root-dir]
                        (write-strings ["\n#define _XOPEN_SOURCE 600"
                                        "\n#include <stdlib.h>"
                                        "\n#include \"core.h\"\n"])
-                       (send module-compiler compile-module file-name waiter root-dir root-dir)))
+                       (send modules compile-module file-name waiter root-dir root-dir)))
                 (do
                   (print-err "Could not find " (str "'" file-name "'"))
                   (abort)))
-            (extract waiter)
-            (send ast-emitter (fn [context]
-                                (write-strings ["\nint typeCount = "
-                                                (str type-count)
-                                                ";\n"])
-                                context))
-            (send ast-emitter emit-main)
-            (send ast-emitter fixup-native-symbols)
-            (send ast-emitter (fn [ctxt]
-                                (map (get-in ctxt ['_ .constants .other])
-                                     (fn [counts]
-                                       (apply print-err (list* "\n" (interpose (map (seq counts)
-                                                                                     (fn [[k v]]
-                                                                                       (str k ": " v)))
-                                                                               "\n")))
-                                       (print-err "number of types" type-count)))))
+            (emit-main (extract waiter))
+            ;; (send ast-emitter (fn [ctxt]
+            ;;                     (map (get-in ctxt ['_ .constants .other])
+            ;;                          (fn [counts]
+            ;;                            (apply print-err (list* "\n" (interpose (map (seq counts)
+            ;;                                                                          (fn [[k v]]
+            ;;                                                                            (str k ": " v)))
+            ;;                                                                    "\n")))
+            ;;                            (print-err "number of types" type-count)))))
             ;; wait for agents to clear their queues
             (let [waiter (promise)]
-              (send ast-emitter (fn [_]
-                                  (send string-writer (fn [_]
-                                                        (deliver waiter 'x)))))
+              (send modules
+                    (fn [mods]
+                      (map (get mods file-name)
+                           (fn [ast-emitter]
+                             (send ast-emitter (fn [_]
+                                                 (send string-writer (partial deliver waiter))))))))
               (extract waiter)))))
