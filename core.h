@@ -128,7 +128,8 @@ REFS_SIZE refsError;
 #define HashSetType 35
 #define ProtoDispatcherType 36
 #define SumConstraintType 37
-#define TypeCount 38
+#define KeysConstraintType 38
+#define TypeCount 39
 
 FILE *outstream;
 List *empty_list;
