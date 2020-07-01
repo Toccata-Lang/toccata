@@ -836,15 +836,15 @@
 (def core-agent (agent (Module 'core 0 {} {} {} {} {})))
 
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [module-index fn-context rt-init modules constants reify-fn-index loaded mod-init]
+(deftype GlobalContext [module-index fn-context rt-init module constants reify-fn-index loaded mod-init]
   ;; module-index           index of module whose definition is curretnly being compiled
   (assert (instance? Integer module-index))
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
   ;; init                   context for the runtime initialization
   (assert (instance? FunctionArityContext rt-init))
-  ;; modules                info for each module compiled
-  (assert (instance? (map-of ast/SymbolOrString Module) modules))
+  ;; module                info for each module compiled
+  (assert (instance? Module module))
   ;; constants              the various constants encountered
   (assert (instance? ConstantValues constants))
   ;; reify-fn-index         index of reified fn being compiled
@@ -856,10 +856,8 @@
 
   Stringable
   (string-list [_] (list "<GlobalContext "
-                         (str (keys modules)) " "
                          (str module-index) " "
-                         (str (get-in modules [module-index .path]))
-                         ">")))
+                         (str module) ">")))
 
 ;; TODO: use later
 ;; (def protocols (agent {}))
@@ -976,15 +974,15 @@
   (either (map (ast/namespace sym)
                (fn [ns-sym]
                  (for [curr-mod (sm/get-val .module-index)
-                       ns-mod (sm/get-in-val [.modules curr-mod .namespaces ns-sym .index])]
+                       ns-mod (sm/get-in-val [.module .namespaces ns-sym .index])]
                    ns-mod)))
           (sm/get-val .module-index)))
 
 (defn redef-proto-fn-error [sym]
   (for [ns-index (namespace-index sym)
-        path (comp (for [protos (sm/get-in-val [.modules ns-index .protocols])
+        path (comp (for [protos (sm/get-in-val [.module .protocols])
                          :when (some (vals protos) (fn [proto] (get proto (ast/untag sym))))
-                         path (sm/get-in-val [.modules ns-index .path])]
+                         path (sm/get-in-val [.module .path])]
                      path)
                    (sm/when (-> (extract core-agent)
                                 .protocols
@@ -1179,8 +1177,8 @@
                        'core)]
     (comp (for [curr-mod (sm/get-val .module-index)
                 :when-not (ast/namespace fn-sym)
-                _ (sm/get-in-val [.modules curr-mod .protocols (ast/untag proto-sym) (ast/untag fn-sym)])
-                _ (sm/update-in-val [.modules curr-mod .protocols (ast/untag proto-sym) (ast/untag fn-sym)]
+                _ (sm/get-in-val [.module .protocols (ast/untag proto-sym) (ast/untag fn-sym)])
+                _ (sm/update-in-val [.module .protocols (ast/untag proto-sym) (ast/untag fn-sym)]
                                     (fn [p-disp]
                                       (assert (instance? ProtoDispatcher p-disp))
                                       (assoc-in p-disp [.p-impls arg-count dispatch-type] new-impl)))]
@@ -1188,8 +1186,8 @@
           (for [curr-mod (sm/get-val .module-index)
                 ns-file (either (map (ast/namespace fn-sym)
                                      (fn [sym]
-                                       (sm/get-in-val [.modules curr-mod .namespaces sym .path])))
-                                 (sm/state-maybe 'core))]
+                                       (sm/get-in-val [.module .namespaces sym .path])))
+                                (sm/state-maybe 'core))]
             (cond (= ns-file 'core)
                   (send core-agent
                         (fn [mod]
@@ -1213,7 +1211,7 @@
                                                   (comp
                                                    (for [ns-index (sm/get-val .module-index)
                                                          _ (sm/update-in-val
-                                                            [.modules ns-index .protocols
+                                                            [.module .protocols
                                                              (ast/untag proto-sym) (ast/untag fn-sym)]
                                                             (fn [p-disp]
                                                               (assert (instance? ProtoDispatcher p-disp))
@@ -1234,9 +1232,9 @@
   (comp (for [curr-mod (sm/get-val .module-index)
               r (comp (flat-map (sm/when (ast/namespace proto-sym))
                                 (fn [ns-sym]
-                                  (sm/get-in-val [.modules curr-mod .namespaces ns-sym .protocols
+                                  (sm/get-in-val [.module .namespaces ns-sym .protocols
                                                   (ast/untag proto-sym)])))
-                      (sm/get-in-val [.modules curr-mod .protocols  (ast/untag proto-sym)]))]
+                      (sm/get-in-val [.module .protocols  (ast/untag proto-sym)]))]
           r)
 
         (sm/when (get-in (extract core-agent) [.protocols (ast/untag proto-sym)]))
@@ -1249,7 +1247,7 @@
   (flat-map (sm/get-val .module-index)
             (fn [curr-mod]
               (cond (= curr-mod 0)
-                    (sm/get-in-val [.modules 0 .protocols (ast/untag proto-sym) (ast/untag fn-sym)
+                    (sm/get-in-val [.module .protocols (ast/untag proto-sym) (ast/untag fn-sym)
                                     .p-impls arg-count type-num])
                     (sm/when (get-in (extract core-agent) [.protocols (ast/untag proto-sym) (ast/untag fn-sym)
                                                            .p-impls arg-count type-num]))))))
@@ -1258,10 +1256,10 @@
   (comp (for [curr-mod (sm/get-val .module-index)
               r (comp (flat-map (sm/when (ast/namespace fn-sym))
                                 (fn [ns-sym]
-                                  (sm/get-in-val [.modules curr-mod .namespaces ns-sym .protocols
+                                  (sm/get-in-val [.module .namespaces ns-sym .protocols
                                                   (ast/untag proto-sym) (ast/untag fn-sym) .p-impls
                                                   arg-count type-num])))
-                      (sm/get-in-val [.modules curr-mod .protocols  (ast/untag proto-sym)
+                      (sm/get-in-val [.module .protocols  (ast/untag proto-sym)
                                       (ast/untag fn-sym) .p-impls arg-count type-num]))]
           r)
 
@@ -1290,14 +1288,14 @@
 
   (comp (redef-proto-fn-error sym)
         (for [curr-mod (sm/get-val .module-index)
-              r (sm/assoc-in-val [.modules curr-mod .values sym] value)
-              _ (sm/assoc-in-val [.modules curr-mod .declarations sym] nothing)]
+              r (sm/assoc-in-val [.module .values sym] value)
+              _ (sm/assoc-in-val [.module .declarations sym] nothing)]
           r)))
 
 (defn lookup-declaration [sym]
   (flat-map (namespace-index sym)
             (fn [ns-index]
-              (sm/get-in-val [.modules ns-index .declarations sym '_]))))
+              (sm/get-in-val [.module .declarations sym '_]))))
 
 (defn already-closed-over [sym]
   (for [closure-var (sm/new-sm (fn [s]
@@ -1370,7 +1368,7 @@
     (for [curr-mod (sm/get-val .module-index)
           expr (comp (for [ns-sym (sm/when (ast/namespace sym))
                            ;; lookup namespace-qual sym
-                           expr (comp (sm/get-in-val [.modules curr-mod .namespaces ns-sym
+                           expr (comp (sm/get-in-val [.module .namespaces ns-sym
                                                       .values (ast/tag (.base sym))])
                                       (compilation-error "Undefined symbol" (str "'" sym "'") "at"
                                                          (str file-name ":") line-number))]
@@ -1383,15 +1381,15 @@
                      (lookup-closure-sym sym)
 
                      ;; lookup in current module
-                     (comp (sm/get-in-val [.modules curr-mod .values sym])
-                           (sm/get-in-val [.modules curr-mod .declarations sym '_]))
+                     (comp (sm/get-in-val [.module .values sym])
+                           (sm/get-in-val [.module .declarations sym '_]))
 
                      ;; lookup in core module
                      (sm/when (get-in (extract core-agent) [.values sym]))
 
                      ;; lookup in imported module by filename of sym
                      ;; TODO: this is for inlined ast's but is insufficient
-                     (for [mods (sm/get-in-val [.modules curr-mod .namespaces])
+                     (for [mods (sm/get-in-val [.module .namespaces])
                            r (sm/when (some (vals mods)
                                               (fn [mod]
                                                 (and (= (.path mod) file-name)
@@ -1503,9 +1501,9 @@
         (for [curr-mod (sm/get-val .module-index)
               type-info (either (map (ast/namespace type-symbol)
                                      (fn [sym-ns]
-                                       (sm/get-in-val [.modules curr-mod .namespaces sym-ns .types
+                                       (sm/get-in-val [.module .namespaces sym-ns .types
                                                        (ast/untag type-symbol)])))
-                                (sm/get-in-val [.modules curr-mod .types (ast/untag type-symbol)]))]
+                                (sm/get-in-val [.module .types (ast/untag type-symbol)]))]
           type-info)
         (compilation-error "Invalid type" (str "'" type-symbol "'") "at"
                            (ast/file-name type-symbol) (ast/line-number type-symbol))))
@@ -3123,7 +3121,7 @@
             (for [c-var (global-var sym "var")
                   :let [c-info (c-code c-var [] {} c/top-type)]
                   curr-mod (sm/get-val .module-index)
-                  _ (sm/assoc-in-val [.modules curr-mod .declarations sym]
+                  _ (sm/assoc-in-val [.module .declarations sym]
                                      (maybe c-info))
 
                   _ (declare ["Value *" c-var ";\n"])]
@@ -3731,7 +3729,7 @@
             :let [types-info (either (c/extract-type-map constraint)
                                      {})]
             curr-mod (sm/get-val .module-index)
-            _ (sm/assoc-in-val [.modules curr-mod .types (ast/untag defined-sym)] constraint)
+            _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)] constraint)
             exprs (emit-defined-value
                    (ast/reified
                     nothing
@@ -3784,8 +3782,7 @@
           type-maps (comp (sm/traverse (.args fn-val)
                                        (fn [sym]
                                          (cond (instance? ast/tagged-symbol sym)
-                                               (comp (flat-map (sm/get-in-val [.modules curr-mod
-                                                                               .types (ast/untag sym)])
+                                               (comp (flat-map (sm/get-in-val [.module .types (ast/untag sym)])
                                                                (fn [_]
                                                                  (compilation-error "Invalid enum value "
                                                                                     (str "'" sym "'")
@@ -3803,7 +3800,7 @@
                 y* (ast/tag "#y")
                 reified-type-num (extract type-counter)]
           curr-mod (sm/get-val .module-index)
-          _ (sm/assoc-in-val [.modules curr-mod .types (ast/untag defined-sym)]
+          _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)]
                              (c/TypeConstraint type-map empty-list defined-sym nothing ""))
           exprs (emit-defined-value
                  (ast/reified
@@ -5449,7 +5446,7 @@
           fn-arity (emit-fn-arity (ast/tag 'main) "" (.params ast) (.body ast))
           ;; _ (debug "======= done main")
           curr-mod (sm/get-val .module-index)
-          _ (sm/assoc-in-val [.modules curr-mod .values 'main] fn-arity)]
+          _ (sm/assoc-in-val [.module .values 'main] fn-arity)]
       [empty-c-code])))
 
 
@@ -5633,7 +5630,7 @@
                                         pcs result-constraint arity-impl-var)]
 
           curr-mod (sm/get-val .module-index)
-          _ (sm/update-in-val [.modules curr-mod .values fn-sym .arities param-count]
+          _ (sm/update-in-val [.module .values fn-sym .arities param-count]
                               (fn [static-arity]
                                 (assert (instance? StaticArity static-arity))
                                 (-> static-arity
@@ -5641,13 +5638,13 @@
                                     (.param-constraints pcs))))
 
           ;; this is the info used to emit the implementations
-          _ (comp (sm/update-in-val [.modules curr-mod .protocols
+          _ (comp (sm/update-in-val [.module .protocols
                                      (ast/untag protocol-sym) (ast/untag fn-sym)]
                                     (fn [p-disp]
                                       (assert (instance? ProtoDispatcher p-disp))
                                       (assoc-in p-disp [.p-impls param-count 0]
                                                 default-impl)))
-                  (sm/assoc-in-val [.modules curr-mod .protocols
+                  (sm/assoc-in-val [.module .protocols
                                     (ast/untag protocol-sym) (ast/untag fn-sym)]
                                    (ProtoDispatcher (ast/untag fn-sym)
                                                        (cond (= 'core (ast/file-name protocol-sym))
@@ -5669,7 +5666,7 @@
                                           arg-count (count params)]
                                       (for [c-fn (global-var (str "disp_" fn-sym) "dispatcher")
                                             curr-mod (sm/get-val .module-index)
-                                            _ (sm/assoc-in-val [.modules curr-mod .values
+                                            _ (sm/assoc-in-val [.module .values
                                                                 fn-sym .arities arg-count]
                                                                ;; TODO: removing the ProtoDispFnPtr causes a
                                                                ;; useless error message because of inlining
@@ -5694,7 +5691,7 @@
 (defn unique-protocol [proto-sym]
   ;; Ensure all protocol symbols are unique
   (comp (for [curr-mod (sm/get-val .module-index)
-              proto-info (comp (sm/get-in-val [.modules curr-mod .protocols (ast/untag proto-sym)])
+              proto-info (comp (sm/get-in-val [.module .protocols (ast/untag proto-sym)])
                                (sm/when (get-in (extract core-agent) [.protocols (ast/untag proto-sym)])))]
           (do
             (print-err  "Duplicate protocol"
@@ -6047,27 +6044,22 @@
          c/empty-items-constraint c/top-type)]]]}))
 
 (defn declare-getter [getter-sym]
-  (let [getter-sym (ast/tag getter-sym)]
-    (comp (sm/get-in-val [.modules 0 .protocols (ast/untag Type-sym) getter-sym])
-          (create-dispatcher
-           Type-sym
-           [getter-sym
-            [(ast/prototype getter-sym
-                            (ast/params [(ast/tag "#x")])
-                            (ast/block-comment "" 0 [])
-                            [(c/FieldConstraint (ast/untag getter-sym)
-                                                ""
-                                                empty-list
-                                                (maybe (symbol "#x"))
-                                                "")])
-             (ast/prototype getter-sym
-                            (ast/params [(ast/tag "#x") (ast/tag "#y")])
-                            (ast/block-comment "" 0 [])
-                            [(c/FieldConstraint (ast/untag getter-sym)
-                                                ""
-                                                empty-list
-                                                (maybe (symbol "#x"))
-                                                "")])]]))))
+  (let [tagged-getter (ast/tag getter-sym)]
+    (flat-map (sm/get-in-val [.module .index])
+              (fn [curr-mod]
+                (comp (sm/get-in-val [.module .protocols 'Type tagged-getter])
+                      (create-dispatcher
+                       Type-sym
+                       [tagged-getter
+                        [(ast/prototype tagged-getter
+                                        (ast/params [(ast/tag "#x")])
+                                        (ast/block-comment "" 0 [])
+                                        [(c/FieldConstraint getter-sym "" empty-list (maybe (symbol "#x")) "")])
+                         (ast/prototype tagged-getter
+                                        (ast/params [(ast/tag "#x") (ast/tag "#y")])
+                                        (ast/block-comment "" 0 [])
+                                        [(c/FieldConstraint getter-sym "" empty-list
+                                                            (maybe (symbol "#x")) "")])]]))))))
 
 (defn declare-getters [new-type-name fields]
   (sm/traverse fields
@@ -6089,8 +6081,7 @@
                                                    (for [_ (declare-getter getter-sym)
                                                          _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
                                                          _ (sm/assoc-in-val [.fn-context .decl] [])
-                                                         proto (sm/get-in-val [.modules 0 .protocols
-                                                                               'Type getter-sym])
+                                                         proto (sm/get-in-val [.module .protocols 'Type getter-sym])
                                                          disp (lookup-sym (ast/tag getter-sym))]
                                                      (send core-agent
                                                            (fn [mod]
@@ -6207,7 +6198,7 @@
           const-arity-index (inc (count fields))
           field-assertions (filter (.impls ast) (partial instance? c/ValueConstraint))]
       (comp (for [curr-mod (sm/get-val .module-index)
-                  _ (comp (sm/get-in-val [.modules curr-mod .types sym])
+                  _ (comp (sm/get-in-val [.module .types sym])
                           (sm/when (get-in (extract core-agent) [.types sym])))
                   _ (compilation-error (str "Trying to re-define type name: '" sym "' in module "
                                             (cond (= file-name 'core)
@@ -6225,7 +6216,7 @@
                                                         (.sym ast) nothing "")]
               (for [_ (emit-definition (ast/declaration-ast (.sym ast)))
                     curr-mod (sm/get-val .module-index)
-                    _ (sm/assoc-in-val [.modules curr-mod .types sym] new-type-constraint)
+                    _ (sm/assoc-in-val [.module .types sym] new-type-constraint)
                     _ (sm/assoc-in-val [.constants .type-names type-num] (str sym))
                     _ (declare-getters sym fields)
 
@@ -6370,7 +6361,7 @@
 
 (defn declare-dispatcher [mod-index [fn-sym arities]]
   (let [arities (.p-impls arities)]
-    (for [disp-fn (sm/get-in-val [.modules mod-index .values (ast/tag fn-sym)])
+    (for [disp-fn (sm/get-in-val [.module .values (ast/tag fn-sym)])
           :let [fn-var (.c-var disp-fn)]
           c-fns (sm/traverse (seq (.arities disp-fn))
                              (fn [[arg-count static-arity]]
@@ -6379,7 +6370,7 @@
                                  [arg-count arity-var (.c-fn static-arity)])))
           struct-var (global-var "dispFnStruct")
 
-          _ (sm/assoc-in-val [.modules mod-index .values (ast/tag fn-sym) .c-struct] struct-var)
+          _ (sm/assoc-in-val [.module .values (ast/tag fn-sym) .c-struct] struct-var)
           checked-var (genlocal 'checked)
           _ (declare [(map c-fns
                            (fn [[arg-count arity-var c-fn]]
@@ -6447,29 +6438,29 @@
 (def gather-protocols
   (comp (for [mod-index (sm/get-val .module-index)
               :let [_ (safe-pr 'gather-protos mod-index)]
-              protocols (sm/get-in-val [.modules mod-index .protocols])
+              protocols (sm/get-in-val [.module .protocols])
               expr (encode-static protocols)
               x (apply (wrap sm/zero-sm list)
                        (map (for [[_ proto-fns] (seq protocols)
                                   [fn-sym arities] (seq proto-fns)]
                               [fn-sym arities])
                             (partial declare-dispatcher mod-index)))
-              protos-var (sm/get-in-val [.modules mod-index .values protocols-sym])
+              protos-var (sm/get-in-val [.module .values protocols-sym])
               r (collapse-expressions [expr
                                        (c-code (.c-var protos-var)
                                                [(.c-var protos-var) " = " (.c-var expr) ";\n"]
                                                {} c/top-type)])]
           r)
         (for [mod-index (sm/get-val .module-index)
-              path (sm/get-in-val [.modules mod-index .path])
+              path (sm/get-in-val [.module .path])
               _ (compilation-error "Could not gather the protocols for" (str "'" path "'"))]
           '_)))
 
 (def gather-symbols
   (for [mod-index (sm/get-val .module-index)
         :let [_ (safe-pr 'gather-syms mod-index)]
-        symbols (sm/get-in-val [.modules mod-index .values])
-        file-name (sm/get-in-val [.modules mod-index .path])
+        symbols (sm/get-in-val [.module .values])
+        file-name (sm/get-in-val [.module .path])
         expr (-> symbols
                  (dissoc symbols-sym 'main protocols-sym)
                  (assoc 'filename (either (instance? String file-name)
@@ -6480,7 +6471,7 @@
                                            (maybe m))
                                       (assoc m k v))))
                  (encode "symbols_"))
-        sym-var (sm/get-in-val [.modules mod-index .values symbols-sym])
+        sym-var (sm/get-in-val [.module .values symbols-sym])
         r (collapse-expressions [expr
                                  (c-code (.c-var sym-var)
                                          [(.c-var sym-var) " = " (.c-var expr) ";\n"]
@@ -6515,6 +6506,16 @@
                         (do
                           (print-err "'main' function is missing")
                           (abort)))
+        _ (send modules
+                (fn [mods]
+                  (map (get mods 'core)
+                       (fn [ast-emitter]
+                         (send ast-emitter
+                               (fn [ctxt]
+                                 (map ctxt
+                                      (fn [ctxt]
+                                        (.module ctxt (extract core-agent))))))))
+                  mods))
         inits (map-modules (for [proto-expr gather-protocols
                                  syms-expr gather-symbols]
                              (comp (.init proto-expr)
@@ -6569,7 +6570,7 @@
                     "mainThreadDone = 1;\n"
                     "waitForWorkers();\n"
                     (map-modules (for [curr-mod (sm/get-val .module-index)
-                                             expr (sm/get-in-val [.modules curr-mod .value symbols-sym])]
+                                             expr (sm/get-in-val [.module .value symbols-sym])]
                                          (free-global (c-init (.c-var expr) [] {} "" 0))))
                     (map values free-global)
                     "\n#\n"
@@ -6589,19 +6590,11 @@
                   (for [protos-var (global-var "protos_")
                         symbols-var (global-var "symbols_")
                         _ (sm/set-val .module-index module-index)
-                        _ (sm/assoc-in-val [.modules module-name]
-                                           (Module module-name
-                                                   module-index
-                                                   {protocols-sym (c-code protos-var [] {} c/top-type)
-                                                    symbols-sym (c-code symbols-var [] {} c/top-type)}
-                                                   {} {} {} {}))
-
-                        _ (sm/assoc-in-val [.modules module-index]
-                                           (Module module-name
-                                                   module-index
-                                                   {protocols-sym (c-code protos-var [] {} c/top-type)
-                                                    symbols-sym (c-code symbols-var [] {} c/top-type)}
-                                                   {} {} {} {}))
+                        _ (sm/set-val .module (Module module-name
+                                                      module-index
+                                                      {protocols-sym (c-code protos-var [] {} c/top-type)
+                                                       symbols-sym (c-code symbols-var [] {} c/top-type)}
+                                                      {} {} {} {}))
                         _ (declare ["Value *" protos-var " = (Value *)&emptyBMI;\n"
                                     "Value *" symbols-var " = (Value *)&emptyBMI;\n"])]
                     '_)))
@@ -6717,7 +6710,7 @@
 (defn fixup-native-symbols [context]
   (update-context context
                   (comp (for [r fixup-native-symbols*
-                              _ (map (sm/get-in-val [.modules 0])
+                              _ (map (sm/get-val .module)
                                      (fn [core-mod]
                                        (send core-agent (fn [_] core-mod))))]
                           r)
@@ -6740,7 +6733,7 @@
                                             context
                                             (let [module (extract waiter-prom)]
                                               (for [curr-mod (sm/get-val .module-index)
-                                                    _ (sm/assoc-in-val [.modules curr-mod .namespaces ns-sym]
+                                                    _ (sm/assoc-in-val [.module .namespaces ns-sym]
                                                                        module)]
                                                 '_)))))))
                                rdr/read-add-ns
@@ -6752,13 +6745,13 @@
 (defn fixup-generated-symbols [context file-name protocols-sym symbols-sym]
   (update-context context
                   (for [mod-index (sm/get-val .module-index)
-                        protocols-var (sm/get-in-val [.modules mod-index .values protocols-sym])
-                        _ (sm/assoc-in-val [.modules mod-index .values 'protocols]
+                        protocols-var (sm/get-in-val [.module .values protocols-sym])
+                        _ (sm/assoc-in-val [.module .values 'protocols]
                                            protocols-var)
-                        symbols-var (sm/get-in-val [.modules mod-index .values symbols-sym])
-                        _ (sm/assoc-in-val [.modules mod-index .values 'symbols]
+                        symbols-var (sm/get-in-val [.module .values symbols-sym])
+                        _ (sm/assoc-in-val [.module .values 'symbols]
                                            symbols-var)
-                        module (sm/get-in-val [.modules mod-index])
+                        module (sm/get-val .module)
                         _ (sm/update-val .loaded (fn [loaded-prom]
                                                    (deliver loaded-prom module)))
                         mod-init (sm/get-val .mod-init)]
@@ -6776,7 +6769,7 @@
   (update-context
    context
    (for [_ (sm/set-val .module-index 0)
-         _ (sm/assoc-in-val [.modules 0 .types]
+         _ (sm/assoc-in-val [.module .types]
                             {'Integer int-constraint
                              'StringBuffer (c/TypeConstraint {c/StringBufferType #{}}
                                                              empty-list 'StringBuffer
@@ -6847,7 +6840,7 @@
 (def global-context (GlobalContext 0                        ;; module-index
                                    (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
                                    (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
-                                   {}                       ;; map for module info
+                                   (Module 'core 0 {} {} {} {} {})
                                    (ConstantValues {} {} {} type-names {} {})
                                    0                        ;; reify-fn-index
                                    (promise)                ;; loaded
