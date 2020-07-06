@@ -6476,6 +6476,9 @@
     ;; TODO: this probably doesn't work
     ;; (extract (apply (promise vector)
     ;;                 (extract results-prom)))
+
+    ;; 'results-prom' is a promise where a vector of promises will be delivered
+    ;; we have to wait for all those promises to be delivered as well
     (map (extract results-prom) extract)))
 
 (defn emit-main [main-module]
@@ -6483,6 +6486,7 @@
                         (do
                           (print-err "'main' function is missing")
                           (abort)))
+        wait-prom (promise)
         _ (send modules
                 (fn [mods]
                   (map (get mods 'core)
@@ -6491,8 +6495,15 @@
                                (fn [ctxt]
                                  (map ctxt
                                       (fn [ctxt]
-                                        (.module ctxt (extract core-agent))))))))
+                                        (.module ctxt (extract core-agent))))))
+                         (send ast-emitter
+                               (fn [ctxt]
+                                 (map ctxt
+                                      (fn [ctxt]
+                                        (deliver wait-prom '_)
+                                        ctxt))))))
                   mods))
+        _ (extract wait-prom)
         inits (map-modules (for [proto-expr gather-protocols
                                  syms-expr gather-symbols]
                              (comp (.init proto-expr)
@@ -6524,6 +6535,8 @@
                     "startWorkers();\n"
                     inits
                     (map values .init)
+                    "init_module_0();\n"
+                    "init_module_1();\n"
                     "\n#\n"
                     "  List *argList = malloc_list();\n"
                     "  argList->len = 0;\n"
@@ -6714,6 +6727,13 @@
                                             (let [module (extract waiter-prom)]
                                               (for [_ (sm/assoc-in-val [.module .namespaces ns-sym]
                                                                        module)
+                                                    _ (sm/update-val .mod-init
+                                                                     (fn [mod-init]
+                                                                       (conj mod-init
+                                                                             (c-code "" ["init_module_"
+                                                                                         (str (.index module))
+                                                                                         "();\n"]
+                                                                                     {} c/top-type))))
                                                     _ (add-module-file module)]
                                                 '_)))))))
                                rdr/read-add-ns
@@ -6731,20 +6751,23 @@
                         symbols-var (sm/get-in-val [.module .values symbols-sym])
                         _ (sm/assoc-in-val [.module .values 'symbols]
                                            symbols-var)
+                        mod-init (sm/get-val .mod-init)
+                        expr (collapse-expressions mod-init)
                         module (sm/get-val .module)
+                        :let [mod-index (.index module)
+                              inited-var (str "m" mod-index "_inited")
+                              _ (write-strings ["int " inited-var " =  0;\n"
+                                                "void init_module_" (str mod-index) "() {\n"
+                                                "if (!" inited-var ") {\n"
+                                                (.init expr)
+                                                "if(" (.c-var symbols-var) "->refs > 0)\n"
+                                                (.c-var symbols-var) "->refs = -1;\n"
+                                                "fprintf(stderr, \"inited " mod-index "\\n\");\n"
+                                                inited-var "= 1;\n}}\n"])]
                         _ (sm/update-val .loaded (fn [loaded-prom]
                                                    (deliver loaded-prom module)))
-                        mod-index (sm/get-in-val [.module .index])
-                        mod-init (sm/get-val .mod-init)]
-                    (do
-                      (write-strings ["void init_module_" (str mod-index) "() {\n"
-                                      mod-init
-                                      "if(" (.c-var symbols-var) "->refs > 0)\n"
-                                                      (.c-var symbols-var) "->refs = -1;\n}\n"])
-                      (send rt-exprs conj (c-code "" ["init_module_" (str mod-index) "();\n"] {} c/top-type))
-                      (safe-pr 'done-with file-name)
-                      '_)
-                    )))
+                        _ (debug 'done-with file-name)]
+                    '_)))
 
 (defn init-core-module [context]
   (update-context
