@@ -836,7 +836,7 @@
 (def core-agent (agent (Module 'core 0 {} {} {} {} {})))
 
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [fn-context rt-init module constants reify-fn-index loaded mod-init]
+(deftype GlobalContext [fn-context rt-init module constants reify-fn-index loaded mod-init mod-files]
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
   ;; init                   context for the runtime initialization
@@ -1193,43 +1193,37 @@
                                     (print-err "Compiler Error: missing proto dispatcher for"
                                                proto-sym fn-sym)
                                     (abort)))))
-                  (send modules
-                        (fn [modules]
-                          (either (map (get modules ns-file)
-                                       (fn [ast-emitter]
-                                         (send ast-emitter
-                                               (fn [ctxt]
-                                                 (update-context
-                                                  ctxt
-                                                  (comp (sm/update-in-val
-                                                         [.module .protocols
-                                                          (ast/untag proto-sym) (ast/untag fn-sym)]
-                                                         (fn [p-disp]
-                                                           (assert (instance? ProtoDispatcher p-disp))
-                                                           (assoc-in p-disp [.p-impls arg-count dispatch-type]
-                                                                     new-impl)))
-                                                        (compilation-error "Compiler Error: missing proto dispatcher for"
-                                                                           proto-sym fn-sym)))))))
-                                  ((compilation-error "Compiler Error: missing namespace for"
-                                                      proto-sym fn-sym)
-                                   'at-this-point-I-dont-care))
-                          modules)))))))
+                  (either (map (get (extract modules) ns-file)
+                               (fn [ast-emitter]
+                                 (send ast-emitter
+                                       (fn [ctxt]
+                                         (update-context
+                                          ctxt
+                                          (comp (sm/update-in-val
+                                                 [.module .protocols
+                                                  (ast/untag proto-sym) (ast/untag fn-sym)]
+                                                 (fn [p-disp]
+                                                   (assert (instance? ProtoDispatcher p-disp))
+                                                   (assoc-in p-disp [.p-impls arg-count dispatch-type]
+                                                             new-impl)))
+                                                (compilation-error "Compiler Error: missing proto dispatcher for"
+                                                                   proto-sym fn-sym)))))))
+                          (do
+                            (print-err "Compiler Error: missing namespace for"
+                                       proto-sym fn-sym)
+                            (abort))))))))
 
-(defn verify-proto-name [proto-sym]
+(defn lookup-protocol [proto-sym]
   ;; Look for the protocol information
   ;; 1. using the namespace portion of the protocol symbol
   ;; 2. using `'core` for protcols defined in the core
-  (comp (comp (flat-map (sm/when (ast/namespace proto-sym))
-                        (fn [ns-sym]
-                          (sm/get-in-val [.module .namespaces ns-sym .protocols
-                                          (ast/untag proto-sym)])))
-              (sm/get-in-val [.module .protocols  (ast/untag proto-sym)]))
+  (comp (flat-map (sm/when (ast/namespace proto-sym))
+                  (fn [ns-sym]
+                    (sm/get-in-val [.module .namespaces ns-sym .protocols
+                                    (ast/untag proto-sym)])))
+        (sm/get-in-val [.module .protocols  (ast/untag proto-sym)])
 
-        (sm/when (get-in (extract core-agent) [.protocols (ast/untag proto-sym)]))
-
-        (compilation-error "Invalid protocol:" proto-sym "in"
-                           (str (ast/file-name proto-sym) ",")
-                           (ast/line-number proto-sym))))
+        (sm/when (get-in (extract core-agent) [.protocols (ast/untag proto-sym)]))))
 
 (defn get-core-proto-impl [proto-sym fn-sym arg-count type-num]
   (flat-map (sm/get-in-val [.module .index])
@@ -1237,17 +1231,30 @@
               (cond (= curr-mod 0)
                     (sm/get-in-val [.module .protocols (ast/untag proto-sym) (ast/untag fn-sym)
                                     .p-impls arg-count type-num])
-                    (sm/when (get-in (extract core-agent) [.protocols (ast/untag proto-sym) (ast/untag fn-sym)
-                                                           .p-impls arg-count type-num]))))))
+                    (sm/new-sm
+                     (fn [s]
+                       (map (or (get-in (extract core-agent)
+                                        [.protocols (ast/untag proto-sym) (ast/untag fn-sym)
+                                         .p-impls arg-count type-num])
+                                (let [core-prom (promise)]
+                                  (send core-agent
+                                        (fn [mod]
+                                          (deliver core-prom
+                                                   (get-in mod [.protocols (ast/untag proto-sym) (ast/untag fn-sym)
+                                                                .p-impls arg-count type-num]))
+                                          mod))
+                                  (extract core-prom)))
+                            (fn [expr]
+                              [expr s]))))))))
 
 (defn get-proto-impl [proto-sym fn-sym arg-count type-num]
-  (comp (comp (flat-map (sm/when (ast/namespace fn-sym))
-                        (fn [ns-sym]
-                          (sm/get-in-val [.module .namespaces ns-sym .protocols
-                                          (ast/untag proto-sym) (ast/untag fn-sym) .p-impls
-                                          arg-count type-num])))
-              (sm/get-in-val [.module .protocols  (ast/untag proto-sym)
-                              (ast/untag fn-sym) .p-impls arg-count type-num]))
+  (comp (flat-map (sm/when (ast/namespace fn-sym))
+                  (fn [ns-sym]
+                    (sm/get-in-val [.module .namespaces ns-sym .protocols
+                                    (ast/untag proto-sym) (ast/untag fn-sym) .p-impls
+                                    arg-count type-num])))
+        (sm/get-in-val [.module .protocols  (ast/untag proto-sym)
+                        (ast/untag fn-sym) .p-impls arg-count type-num])
 
         (get-core-proto-impl proto-sym fn-sym arg-count type-num)
         ;; (compilation-error "Invalid protocol fn:"
@@ -1350,39 +1357,52 @@
 
   (let [file-name (ast/file-name sym)
         line-number (ast/line-number sym)]
-    (for [expr (comp (for [ns-sym (sm/when (ast/namespace sym))
-                           ;; lookup namespace-qual sym
-                           expr (comp (sm/get-in-val [.module .namespaces ns-sym
-                                                      .values (ast/tag (.base sym))])
-                                      (compilation-error "Undefined symbol" (str "'" sym "'") "at"
-                                                         (str file-name ":") line-number))]
-                       expr)
+    (for [expr (either (map (ast/namespace sym)
+                            (fn [ns-sym]
+                              ;; lookup namespace-qual sym
+                              (comp (sm/get-in-val [.module .namespaces ns-sym
+                                                    .values (ast/tag (.base sym))])
+                                    (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                                                       (str file-name ":") line-number))))
+                       (comp 
+                        ;; lookup sym in local fn context
+                        (sm/get-in-val [.fn-context .syms sym])
 
-                     ;; lookup sym in local fn context
-                     (sm/get-in-val [.fn-context .syms sym])
+                        ;; lookup symbol in enclosing context of fn
+                        (lookup-closure-sym sym)
 
-                     ;; lookup symbol in enclosing context of fn
-                     (lookup-closure-sym sym)
+                        ;; lookup in current module
+                        (comp (sm/get-in-val [.module .values sym])
+                              (sm/get-in-val [.module .declarations sym '_]))
 
-                     ;; lookup in current module
-                     (comp (sm/get-in-val [.module .values sym])
-                           (sm/get-in-val [.module .declarations sym '_]))
+                        ;; lookup in core module
+                        (sm/new-sm (fn [s]
+                                     (map (get-in (extract core-agent) [.values sym])
+                                          (fn [expr]
+                                            [expr s]))))
 
-                     ;; lookup in core module
-                     (sm/when (get-in (extract core-agent) [.values sym]))
+                        ;; lookup in imported module by filename of sym
+                        ;; TODO: this is for inlined ast's but is insufficient
+                        (flat-map (sm/get-in-val [.module .namespaces])
+                                  (fn [mods]
+                                    (sm/when (some (vals mods)
+                                                   (fn [mod]
+                                                     (and (= (.path mod) file-name)
+                                                          (or (get-in mod [.values sym])
+                                                              (get-in mod [.declarations sym '_]))))))))
 
-                     ;; lookup in imported module by filename of sym
-                     ;; TODO: this is for inlined ast's but is insufficient
-                     (for [mods (sm/get-in-val [.module .namespaces])
-                           r (sm/when (some (vals mods)
-                                              (fn [mod]
-                                                (and (= (.path mod) file-name)
-                                                     (or (get-in mod [.values sym])
-                                                         (get-in mod [.declarations sym '_]))))))]
-                       r)
+                        ;; last ditch effort to find it in core module
+                        (sm/new-sm (fn [s]
+                                     (let [core-prom (promise)]
+                                       (send core-agent (fn [mod]
+                                                          (deliver core-prom (get-in mod [.values sym]))
+                                                          mod))
+                                       (map (extract core-prom)
+                                            (fn [expr]
+                                              [expr s])))))
 
-                     (compilation-error "Undefined symbol" (str "'" sym "'") "at"
-                                        (str file-name ":") line-number))
+                        (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                                           (str file-name ":") line-number)))
           _ (comp (constrain-var file-name line-number (.c-var expr) (expr-constraints expr))
                   sm-nop)
 
@@ -1481,11 +1501,12 @@
     []))
 
 (defn get-type-sym-info [type-symbol]
-  (comp (sm/when (get-in (extract core-agent) [.types (ast/untag type-symbol)]))
-        (either (map (ast/namespace type-symbol)
-                     (fn [sym-ns]
-                       (sm/get-in-val [.module .namespaces sym-ns .types
-                                       (ast/untag type-symbol)])))
+  (comp (either (or (map (get-in (extract core-agent) [.types (ast/untag type-symbol)])
+                         sm/state-maybe)
+                    (map (ast/namespace type-symbol)
+                         (fn [sym-ns]
+                           (sm/get-in-val [.module .namespaces sym-ns .types
+                                           (ast/untag type-symbol)]))))
                 (sm/get-in-val [.module .types (ast/untag type-symbol)]))
         (compilation-error "Invalid type" (str "'" type-symbol "'") "at"
                            (ast/file-name type-symbol) (ast/line-number type-symbol))))
@@ -2789,39 +2810,41 @@
         num-args (count arg-vars)
         file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
-    (for [dispatch-var (map (sm/when (first arg-vars)) .c-var)
-          disp-type  (var-type-num dispatch-var)
-          ;; _ (cond (= file-name "test.toc")
-          ;;         (debug 'cpi file-name line-number (.call-target ast) (first arg-vars) dispatch-var disp-type)
-          ;;         (sm/state-maybe 0))
-          :when-not (= c/UnknownType disp-type)
-          result-sym (genlocal "rslt")
-          impl-info (get-proto-impl (.proto-sym target) target-ast num-args disp-type)
-          ;; _ (debug 'cpi file-name line-number target disp-type "\n"
-          ;;          (.param-constraints impl-info) "\n"
-          ;;          result-sym (.result-constraint impl-info))
-          ;; _ (debug 'arg-vars arg-vars)
-          _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
-                  (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
-          check-args (constrain-args arg-vars (.param-constraints impl-info)
-                                     file-name line-number)
-          _ (constrain-var file-name line-number result-sym (.result-constraint impl-info))
-          _ (sm/traverse (zip-lists (map arg-vars .c-var)
-                                    (c/extract-items-constraints (.param-constraints impl-info)))
-                         (fn [[var constraint]]
-                           (constrain-var file-name line-number var constraint)))
-          line (line-macro target-ast (str "// call proto fn " target-ast))
-          _ (either (add-inner-constraint result-sym ast arg-vars)
-                    sm-nop)
-          _ (add-contents-constraint ast result-sym  arg-vars)
-          _ (add-hash-map-constraints ast result-sym  arg-vars)]
-      (c-init result-sym
-              [line
-               check-args
-               "Value *" result-sym " = " (.c-fn impl-info) "("
-               (interpose (list* "(List *)0" (map arg-vars .c-var)) ", ")
-               ");" line-sep]
-              {} file-name line-number))))
+    (either (map (first arg-vars)
+                 (fn [expr]
+                   (for [disp-type  (var-type-num (.c-var expr))
+                         ;; _ (cond (= file-name "test.toc")
+                         ;;         (debug 'cpi file-name line-number (.call-target ast) (first arg-vars) (.c-var expr) disp-type)
+                         ;;         (sm/state-maybe 0))
+                         :when-not (= c/UnknownType disp-type)
+                         result-sym (genlocal "rslt")
+                         impl-info (get-proto-impl (.proto-sym target) target-ast num-args disp-type)
+                         ;; _ (debug 'cpi file-name line-number target disp-type "\n"
+                         ;;          (.param-constraints impl-info) "\n"
+                         ;;          result-sym (.result-constraint impl-info))
+                         ;; _ (debug 'arg-vars arg-vars)
+                         _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
+                                 (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
+                         check-args (constrain-args arg-vars (.param-constraints impl-info)
+                                                    file-name line-number)
+                         _ (constrain-var file-name line-number result-sym (.result-constraint impl-info))
+                         _ (sm/traverse (zip-lists (map arg-vars .c-var)
+                                                   (c/extract-items-constraints (.param-constraints impl-info)))
+                                        (fn [[var constraint]]
+                                          (constrain-var file-name line-number var constraint)))
+                         line (line-macro target-ast (str "// call proto fn " target-ast))
+                         _ (either (add-inner-constraint result-sym ast arg-vars)
+                                   sm-nop)
+                         _ (add-contents-constraint ast result-sym  arg-vars)
+                         _ (add-hash-map-constraints ast result-sym  arg-vars)]
+                     (c-init result-sym
+                             [line
+                              check-args
+                              "Value *" result-sym " = " (.c-fn impl-info) "("
+                              (interpose (list* "(List *)0" (map arg-vars .c-var)) ", ")
+                              ");" line-sep]
+                             {} file-name line-number))))
+            sm/zero-sm)))
 
 (defn inline-get-field [name args]
   (for [reified-val (nth args 0)
@@ -3207,26 +3230,12 @@
   (assert (instance? StaticArity arity-info))
 
   (let [file-name (ast/file-name ast)
-        line-number (ast/line-number ast)]
-    (for [result-sym (genlocal "rslt")
-          ;; _ (comp (for [_ (sm/when (= (str (.call-target ast)) "add-numbers"))
-          ;;               _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
-          ;;                        (.param-constraints arity-info) "\n"
-          ;;                        result-sym (.result-constraint arity-info))
-          ;;               _ (debug 'arg-vars arg-vars)
-          ;;               _ (sm/traverse arg-vars (fn [v]
-          ;;                                         (flat-map (get-constraint (.c-var v))
-          ;;                                                   (fn [c]
-          ;;                                                     (debug 'v (.c-var v) 'c c)))))]
-          ;;           '_)
-          ;;         sm-nop)
-          [param-cs result-c] (comp (for [applied-fn (sm/when (first arg-vars))
-                                          :when (= (.call-target ast) 'fn-apply)
-                                          arities (sm/when (get applied-fn .arities))]
+        line-number (ast/line-number ast)
+        [param-cs result-c] (either (for [_ (= (.call-target ast) 'fn-apply)
+                                          applied-fn (first arg-vars)
+                                          arities (get applied-fn .arities)]
                                       ;; TODO: catch problems at compile time
-                                      (let [file (ast/file-name applied-fn)
-                                            line (ast/line-number applied-fn)
-                                            param-constraints (-> arities
+                                      (let [param-constraints (-> arities
                                                                   seq
                                                                   (map (fn [[_ v]]
                                                                          (-> v
@@ -3246,10 +3255,22 @@
                                                                 c/coll-of-any
                                                                 empty-list
                                                                 nothing "")
-                                             (c/update-path file line))
-                                         (c/update-path result-constraint file line)]))
-                                    (sm/state-maybe [(.param-constraints arity-info)
-                                                     (.result-constraint arity-info)]))
+                                             (c/update-path file-name line-number))
+                                         (c/update-path result-constraint file-name line-number)]))
+                                    [(.param-constraints arity-info)
+                                     (.result-constraint arity-info)])]
+    (for [result-sym (genlocal "rslt")
+          ;; _ (comp (for [_ (sm/when (= (str (.call-target ast)) "add-numbers"))
+          ;;               _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
+          ;;                        (.param-constraints arity-info) "\n"
+          ;;                        result-sym (.result-constraint arity-info))
+          ;;               _ (debug 'arg-vars arg-vars)
+          ;;               _ (sm/traverse arg-vars (fn [v]
+          ;;                                         (flat-map (get-constraint (.c-var v))
+          ;;                                                   (fn [c]
+          ;;                                                     (debug 'v (.c-var v) 'c c)))))]
+          ;;           '_)
+          ;;         sm-nop)
           _ (constrain-var file-name line-number result-sym result-c)
           check-args (constrain-args arg-vars param-cs file-name line-number)
 
@@ -3486,8 +3507,6 @@
           ;;          result-sym (.result-constraint invoke-info))
           ;; _ (debug 'arg-vars arg-vars)
           ;; _ (debug 'param-consts (.param-constraints invoke-info))
-
-          pc (sm/when (get invoke-info .param-constraints))
 
           check-args (constrain-args arg-vars (.param-constraints invoke-info)
                                      file-name line-number)
@@ -3756,60 +3775,60 @@
 (defn define-enum-type [fn-val defined-sym]
   (let [file-name (ast/file-name defined-sym)
         line-number (ast/line-number defined-sym)]
-    (for [_ (sm/when (= (.call-target fn-val) 'enum))
-          type-maps (comp (sm/traverse (.args fn-val)
+    (cond (= (.call-target fn-val) 'enum)
+          (for [type-maps (sm/traverse (.args fn-val)
                                        (fn [sym]
                                          (cond (instance? ast/tagged-symbol sym)
-                                               (comp (flat-map (sm/get-in-val [.module .types (ast/untag sym)])
-                                                               (fn [_]
-                                                                 (compilation-error "Invalid enum value "
-                                                                                    (str "'" sym "'")
-                                                                                    " at:" file-name line-number)))
+                                               (comp (sm/get-in-val [.module .types (ast/untag sym)])
                                                      (for [expr (lookup-sym sym)
                                                            :when (instance? c-static-reified expr)
                                                            type-map (sm/when (-> expr
                                                                                  expr-constraints
                                                                                  c/extract-type-map))]
-                                                       type-map))
-                                               sm/zero-sm)))
-                          (compilation-error "Invalid enum values at:" file-name line-number))
-          :let [type-map (comp* {} type-maps)
-                x* (ast/tag "#x")
-                y* (ast/tag "#y")
-                reified-type-num (extract type-counter)]
-          _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)]
-                             (c/TypeConstraint type-map empty-list defined-sym nothing ""))
-          exprs (emit-defined-value
-                 (ast/reified
-                  (maybe reified-type-num)
-                  {Type-sym
-                   {instance?-sym
-                    [(ast/fn-arity-ast
-                      (str defined-sym "_instance_QMARK_") ""
-                      (ast/params [x* y*]) ""
-                      [(ast/and-ast
-                        [(ast/call-ast some-sym
-                                       [(ast/call-ast list-sym (vec (keys type-map)))
-                                        (ast/call-ast partial-sym
-                                                      [=*-sym (ast/call-ast get-type-sym [y*])])])
-                         (ast/call-ast maybe-sym [y*])])]
-                      c/empty-items-constraint c/top-type)]
+                                                       type-map)
+                                                     (compilation-error "Invalid enum value "
+                                                                        (str "'" sym "'")
+                                                                        " at:" file-name line-number))
+                                               (compilation-error "Invalid enum expression at:"
+                                                                  file-name line-number))))
+                :let [type-map (comp* {} type-maps)
+                      x* (ast/tag "#x")
+                      y* (ast/tag "#y")
+                      reified-type-num (extract type-counter)]
+                _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)]
+                                   (c/TypeConstraint type-map empty-list defined-sym nothing ""))
+                exprs (emit-defined-value
+                       (ast/reified
+                        (maybe reified-type-num)
+                        {Type-sym
+                         {instance?-sym
+                          [(ast/fn-arity-ast
+                            (str defined-sym "_instance_QMARK_") ""
+                            (ast/params [x* y*]) ""
+                            [(ast/and-ast
+                              [(ast/call-ast some-sym
+                                             [(ast/call-ast list-sym (vec (keys type-map)))
+                                              (ast/call-ast partial-sym
+                                                            [=*-sym (ast/call-ast get-type-sym [y*])])])
+                               (ast/call-ast maybe-sym [y*])])]
+                            c/empty-items-constraint c/top-type)]
 
-                    type-mapping-sym
-                    [(ast/fn-arity-ast
-                      (str defined-sym "_type_mapping") ""
-                      (ast/params [x*]) ""
-                      [(map-vals type-map (fn [field-set]
-                                            (map field-set ast/quoted-ast)))]
-                      c/empty-items-constraint c/top-type)]}
+                          type-mapping-sym
+                          [(ast/fn-arity-ast
+                            (str defined-sym "_type_mapping") ""
+                            (ast/params [x*]) ""
+                            [(map-vals type-map (fn [field-set]
+                                                  (map field-set ast/quoted-ast)))]
+                            c/empty-items-constraint c/top-type)]}
 
-                   Stringable-sym
-                   {string-list-sym
-                    [(ast/fn-arity (ast/params [(ast/tag 'z)]) ""
-                                   [(ast/call-ast list-sym
-                                                  ["<SumType " (str defined-sym) ">"])])]}})
-                 defined-sym)]
-      exprs)))
+                         Stringable-sym
+                         {string-list-sym
+                          [(ast/fn-arity (ast/params [(ast/tag 'z)]) ""
+                                         [(ast/call-ast list-sym
+                                                        ["<SumType " (str defined-sym) ">"])])]}})
+                       defined-sym)]
+            exprs)
+          sm/zero-sm)))
 
 (defn init-at-runtime [ast defined-sym]
   (for [map-var (lookup-sym (ast/tag symbols-sym (ast/file-name defined-sym) (ast/line-number defined-sym)))
@@ -3982,18 +4001,19 @@
           tail-sym (either (.variadic params)
                            (ast/tag "restArgs"))
           list-var (.refs-map list-var (dissoc (.refs-map list-var) (.c-var list-var)))]
-      (for [tail-binding (bind-fn tail-sym)
-            _ (comp (sm/when (empty? (.init list-var)))
-                    (set-sym (.c-var list-var) list-var))
+      (for [_ (cond (empty? (.init list-var))
+                    (set-sym (.c-var list-var) list-var)
+                    sm-nop)
+            tail-binding (bind-fn tail-sym)
             :let [tail-var (.bound tail-binding)]
-            r (comp (sm/when (and (= 0 fixed-count)
-                                  (maybe (ParamBinding (.c-var list-var)
-                                                       [] tail-var
-                                                       [list-var
-                                                        (c-init tail-var ["Value *" tail-var " = seq((List *)0, "
-                                                                          (.c-var list-var) ");" line-sep]
-                                                                {(.c-var list-var) 1}
-                                                                file-name line-number)]))))
+            r (cond (= 0 fixed-count)
+                    (sm/state-maybe (ParamBinding (.c-var list-var)
+                                                  [] tail-var
+                                                  [list-var
+                                                   (c-init tail-var ["Value *" tail-var " = seq((List *)0, "
+                                                                     (.c-var list-var) ");" line-sep]
+                                                           {(.c-var list-var) 1}
+                                                           file-name line-number)]))
                     (for [content-vars (sm/traverse (.fixed params)
                                                     (fn [target]
                                                       (genlocal target "arg")))
@@ -4258,6 +4278,7 @@
 
   (replace-syms [ast subs]
     (let [f (fn recur [bindings new-bindings subs]
+              ;; TODO: some refactoring might be possible here when all tests are working
               (comp (for [binding-ast (sm/when (first bindings))
                           new-val (replace-syms (.val binding-ast) subs)
                           :let [new-subs (reduce (all-symbols (.binding binding-ast))
@@ -4638,9 +4659,8 @@
           c-fn (global-var (str type-str fn-sym) "arityFn")
           :let [arity-impl-var (ArityValPtr arity-impl-var "")
                 c-fn (ProtoDispFnPtr c-fn)]
-          dispatcher-info (flat-map (lookup-sym fn-sym)
-                                    (fn [dispatcher-info]
-                                      (sm/when (get-in dispatcher-info [.arities num-args]))))
+          dispatcher-info (lookup-sym fn-sym)
+          dispatcher-info (sm/when (get-in dispatcher-info [.arities num-args]))
 
           ;; [arity-fn-var c-fn param-count var-info param-constraints result-constraint]
 
@@ -4746,12 +4766,18 @@
                            [fn-name arities] (seq impl-fns)
                            impl-arity arities]
                        [proto-sym fn-name (.fn-var impl-arity (str (.fn-var impl-arity)))])]
-    (comp (sm/when (empty? impl-arities))
+    (cond (empty? impl-arities)
+          (sm/state-maybe [])
           (for [type-str (comp (map (sm/get-in-val [.constants .type-names type-num])
                                     (fn [type]
                                       (str type "_")))
                                (wrap sm/zero-sm (str "_" type-num "_")))
-                _ (sm/traverse (keys (.impls ast)) verify-proto-name)
+                _ (sm/traverse (keys (.impls ast))
+                               (fn [proto-sym]
+                                 (comp (lookup-protocol proto-sym)
+                                       (compilation-error "Invalid protocol:" proto-sym "in"
+                                                          (str (ast/file-name proto-sym) ",")
+                                                          (ast/line-number proto-sym)))))
                 ;; TODO: make sure the proto-name/fn-name exists
                 ;; especially that the fn-name doesn't exist in a different proto-name
                 impl-arities (sm/traverse impl-arities (partial declare-impl type-str type-num))
@@ -5662,18 +5688,6 @@
         _ (sm/traverse arities (partial emit-proto-default proto-sym fn-sym fn-var))]
     []))
 
-(defn unique-protocol [proto-sym]
-  ;; Ensure all protocol symbols are unique
-  (comp (for [proto-info (comp (sm/get-in-val [.module .protocols (ast/untag proto-sym)])
-                               (sm/when (get-in (extract core-agent) [.protocols (ast/untag proto-sym)])))]
-          (do
-            (print-err  "Duplicate protocol"
-                        (str "'" proto-sym "'") "at"
-                        (str (ast/file-name proto-sym) ":")
-                        (ast/line-number proto-sym))
-            (abort)))
-        sm-nop))
-
 (extend-type ast/protocol-ast
   Emitter
   (emit-definition [ast]
@@ -5684,7 +5698,13 @@
                                                   (fn [prototypes]
                                                     (conj prototypes prototype)))
                                           (assoc m (.fn-name prototype) [prototype]))))]
-      (for [_ (unique-protocol proto-name)
+      (for [_ (comp (flat-map (lookup-protocol proto-name)
+                              (fn [_]
+                                (compilation-error "Duplicate protocol"
+                                                   (str "'" proto-name "'") "at"
+                                                   (str (ast/file-name proto-name) ":")
+                                                   (ast/line-number proto-name))))
+                    sm-nop)
             decl (sm/traverse (seq prototype-map)
                               (partial create-dispatcher proto-name))]
         [empty-c-code]))))
@@ -6687,6 +6707,11 @@
   (load-module [ast root-dir proj-dir]
     (assert-result r (instance? Promise r))))
 
+(defn add-module-file [module]
+  (for [_ (sm/assoc-in-val [.mod-files (.path module)] module)
+        _ (sm/traverse (vals (.namespaces module)) add-module-file)]
+    '_))
+
 (defn analyze-forms [ast-emitter]
   (rd/parser (grmr/none-or-more
               (grmr/any
@@ -6699,8 +6724,10 @@
                                            (update-context
                                             context
                                             (let [module (extract waiter-prom)]
-                                              (sm/assoc-in-val [.module .namespaces ns-sym]
-                                                               module)))))))
+                                              (for [_ (sm/assoc-in-val [.module .namespaces ns-sym]
+                                                                       module)
+                                                    _ (add-module-file module)]
+                                                '_)))))))
                                rdr/read-add-ns
                                (grmr/get-value 'root-directory)
                                (grmr/get-value 'project-directory)))
@@ -6708,6 +6735,7 @@
                               rdr/top-level)))))
 
 (defn fixup-generated-symbols [context file-name protocols-sym symbols-sym]
+  ;; TODO: make sure .declarations is empty
   (update-context context
                   (for [protocols-var (sm/get-in-val [.module .values protocols-sym])
                         _ (sm/assoc-in-val [.module .values 'protocols]
@@ -6765,41 +6793,6 @@
                      'Opaque (c/TypeConstraint {c/OpaqueType #{}} empty-list
                                                'Opaque nothing "")})))
 
-;; (defn load-core [modules]
-;;   (cond (get modules 'core)
-;;         modules
-;;         (do
-;;           (send ast-emitter new-module 'core)
-;;           (send ast-emitter init-core-module)
-;;           (either (or (for [file-in (fio/file-in path-to-core)
-;;                             _ (maybe (print-err 'analyzing-core))
-;;                             _ ((analyze-forms ast-emitter) {'file-name 'core
-;;                                                             'line-number 1
-;;                                                             'project-directory ""
-;;                                                             'root-directory ""}
-;;                                (lazy-list file-in))]
-;;                         (let [_ (print-err 'core-analyzed)
-;;                               core-module (promise)]
-;;                           (send ast-emitter fixup-generated-symbols 'core protocols-sym symbols-sym)
-;;                           (send ast-emitter fixup-native-symbols)
-;;                           (send ast-emitter (fn [ctxt]
-;;                                               (print-err 'delivering-core-module)
-;;                                               (deliver core-module
-;;                                                        (either (get-in ctxt ['_ .modules 0])
-;;                                                                (do
-;;                                                                  (print-err "Toccata's core library was not"
-;;                                                                             "loaded properly")
-;;                                                                  (abort))))
-;;                                               ctxt))
-;;                           (print-err 'waiting-for-core)
-;;                           (let [r (assoc modules 'core (extract core-module))]
-;;                             (print-err 'got-core)
-;;                             r))))
-;;                   (do
-;;                     (print-err "Could not compile Toccata core."
-;;                                "Is the $TOCCATA_DIR environment variable set correctly?")
-;;                     (abort))))))
-
 (def global-context (GlobalContext (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
                                    (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
                                    (Module 'core 0 {} {} {} {} {})
@@ -6807,6 +6800,7 @@
                                    0                        ;; reify-fn-index
                                    (promise)                ;; loaded
                                    []                       ;; mod-init
+                                   {}                       ;; mod-files
                                    ))
 
 (defn wait-for-module [waiter-prom ctxt]
@@ -6824,7 +6818,11 @@
   (either (map (get module-agents file-name)
                (fn [ast-emitter]
                  (send ast-emitter
-                       (partial wait-for-module waiter-prom))
+                       (fn [ctxt]
+                         (update-context ctxt
+                                         (sm/update-val .loaded (fn [mod-prom]
+                                                                  (map mod-prom (partial deliver waiter-prom))
+                                                                  mod-prom)))))
                  module-agents))
           (let [core-prom (promise)
                 module-agents (cond (= file-name 'core)
@@ -6835,14 +6833,13 @@
                                 maybe
                                 agent)
                 module-index (count module-agents)]
-            ;; (safe-pr 'new-module file-name module-index)
             (send ast-emitter new-module file-name module-index)
             (cond (= file-name 'core)
                   (send ast-emitter init-core-module)
                   (send ast-emitter
                         (fn [context]
                           (extract core-prom)
-                          (debug 'emitting file-name)
+                          (safe-pr 'emitting file-name)
                           context)))
             (future (fn []
                       (either (map (fio/file-in (cond (= file-name 'core)
@@ -6858,9 +6855,8 @@
                                          'line-number 1}
                                         (lazy-list file-in))
                                        (safe-pr 'analyzed file-name)
-                                       (cond (= file-name 'core)
-                                             (send ast-emitter fixup-native-symbols)
-                                             '_)
+                                       (and (= file-name 'core)
+                                            (maybe (send ast-emitter fixup-native-symbols)))
                                        (send ast-emitter
                                              fixup-generated-symbols file-name
                                              protocols-sym symbols-sym))))
@@ -7123,6 +7119,7 @@
                 (do
                   (print-err "Could not find " (str "'" file-name "'"))
                   (abort)))
+            (safe-pr 'emitting-main)
             (emit-main (extract waiter))
             ;; (send ast-emitter (fn [ctxt]
             ;;                     (map (get-in ctxt ['_ .constants .other])
@@ -7136,8 +7133,10 @@
             (let [waiter (promise)]
               (send modules
                     (fn [mods]
+                      (safe-pr 'modules-agent-done)
                       (map (get mods file-name)
                            (fn [ast-emitter]
                              (send ast-emitter (fn [_]
+                                                 (safe-pr 'ast-emitter-done)
                                                  (send string-writer (partial deliver waiter))))))))
               (extract waiter)))))
