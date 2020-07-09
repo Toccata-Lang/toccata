@@ -77,14 +77,14 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "")
+(def line-sep "\n")
 
 (defn line-marker [file-name line-number marker]
   (cond (or (= "" file-name)
             (and (= 'core file-name)
                  (= 0 line-number)))
         "\n#\n"
-        ["\n" marker "\n#line "
+        ["\n" marker "\n// #line "
          (str line-number) " " "\""
          (cond (= 'core file-name)
                path-to-core
@@ -830,8 +830,14 @@
 
 (def core-agent (agent (Module 'core 0 {} {} {} {} {})))
 
+(deftype ModuleSetup [init cleanup]
+  ;; init               strings to initialize the module
+  (assert (instance? Vector init))
+  ;; cleanup            strings to initialize the module
+  (assert (instance? Vector cleanup)))
+
 ;; There's a bunch of information to keep track of while compiling
-(deftype GlobalContext [fn-context rt-init module constants reify-fn-index loaded mod-init mod-files]
+(deftype GlobalContext [fn-context rt-init module constants reify-fn-index loaded setup mod-files]
   ;; fn-context             context for the fn currently being compiled
   (assert (instance? FunctionArityContext fn-context))
   ;; init                   context for the runtime initialization
@@ -844,8 +850,10 @@
   (assert (instance? Integer reify-fn-index))
   ;; loaded                 promise to hold finished module
   (assert (instance? Promise loaded))
-  ;; mod-init               strings to initialize the module
-  (assert (instance? Vector mod-init))
+  ;; setup               strings to initialize the module
+  (assert (instance? ModuleSetup setup))
+  ;; mod-files              map from filename to module
+  (assert (instance? (map-of String Module) mod-files))
 
   Stringable
   (string-list [_] (list "<GlobalContext "
@@ -3112,9 +3120,8 @@
     (let [sym (.sym ast)]
       (comp (map (lookup-declaration sym) (fn [_] []))
             (for [c-var (global-var sym "var")
-                  :let [c-info (c-code c-var [] {} c/top-type)]
                   _ (sm/assoc-in-val [.module .declarations sym]
-                                     (maybe c-info))
+                                     (maybe (c-code c-var [] {} c/top-type)))
 
                   _ (declare ["Value *" c-var ";\n"])]
               [empty-c-code])))))
@@ -3824,16 +3831,33 @@
         fn-context (reset-fn-context (.subs init-fn-context {}))
 
         sym-var (emit (ast/quoted-ast defined-sym))
-
         value (emit ast)
+        global-var (comp (map (lookup-declaration defined-sym) .c-var)
+                         (for [var (global-var defined-sym "var")
+                               _ (sm/assoc-in-val [.module .declarations defined-sym]
+                                                  (maybe (c-code var [] {} c/top-type)))
+                               _ (declare ["Value *" var ";\n"])]
+                           var))
+
         constraint (get-constraint (.c-var value))
         init-fn-context (reset-fn-context fn-context)
-        _ (constrain-var (ast/file-name ast) (ast/line-number ast) (.c-var value) constraint)
-        _ (sm/set-val .rt-init init-fn-context)]
-    (.init value [(.init value) line-sep
-                  "incRef(" (.c-var value) ", 1);" line-sep
+        _ (sm/set-val .rt-init init-fn-context)
+        _ (constrain-var (ast/file-name ast) (ast/line-number ast) global-var constraint)
+        _ (cond (empty? (.init value))
+                sm-nop
+                (sm/update-in-val [.setup .cleanup]
+                                  (fn [cleanup]
+                                    (conj cleanup ["freeGlobal(" global-var ");" line-sep]))))]
+    (let [init (either (and (empty? (.init value))
+                            (maybe [global-var " = " (.c-var value) ";" line-sep]))
+                       (comp (.init value)
+                             [global-var " = " (.c-var value) ";" line-sep
+                              global-var "->refs = -1;"]))]
+      (-> value
+          (.c-var global-var)
+          (.init [init line-sep
                   (.c-var map-var) " = hashMapAssoc((Value *)" (.c-var map-var) ", " line-sep
-                  (.c-var sym-var) ", " (.c-var value) ");" line-sep])))
+                  (.c-var sym-var) ", " global-var ");" line-sep])))))
 
 (extend-type ast/inline-ast
   Emitter
@@ -3868,8 +3892,9 @@
           _ (new-module-def defined-sym (c-code (str c-var) [] {} constraint))
           line-info (line-macro ast "// inline")
           _ (declare [line-info "Value *" c-var " = " (.txt ast) ";" line-sep "\n#\n"])
-          r (init-at-runtime (c-code c-var [] {} constraint) defined-sym)]
-      [r]))
+          sym-var (emit (ast/quoted-ast defined-sym))
+          _ (constrain-var (ast/file-name defined-sym) (ast/line-number defined-sym) c-var constraint)]
+      [(c-code c-var [] {} constraint)]))
 
   (emit-definition [ast]
     (for [target-lang (wrap sm/zero-sm 'C)
@@ -3912,11 +3937,8 @@
     (comp (define-enum-type fn-val defined-sym)
           (for [value (init-at-runtime fn-val defined-sym)
                 constraint (get-constraint (.c-var value))
-                var (comp (map (lookup-declaration defined-sym) .c-var)
-                          (global-var defined-sym "var"))
-                _ (new-module-def defined-sym (c-code var [] {var 1} (c/update-var constraint var)))
-                _ (declare ["Value *" var ";\n"])]
-            [(c-init var [(.init value) var " = " (.c-var value) ";" "\n#\n"]
+                _ (new-module-def defined-sym (c-code (.c-var value) [] {} constraint))]
+            [(c-init (.c-var value) [(.init value) (.c-var value) " = " (.c-var value) ";" "\n#\n"]
                      (.refs-map value) (ast/file-name fn-val) (ast/line-number fn-val))])))
 
   (emit [ast]
@@ -4237,12 +4259,9 @@
 
   (emit-defined-value [ast defined-sym]
     (for [value (init-at-runtime ast defined-sym)
-          var (comp (map (lookup-declaration defined-sym) .c-var)
-                    (global-var defined-sym "var"))
           val-constraint (get-constraint (.c-var value))
-          _ (new-module-def defined-sym (c-code var [] {} val-constraint))
-          _ (declare ["Value *" var ";\n"])]
-      [(c-init var [(.init value) var " = " (.c-var value) ";" "\n#\n"]
+          _ (new-module-def defined-sym (c-code (.c-var value) [] {} val-constraint))]
+      [(c-init (.c-var value) [(.init value) (.c-var value) " = " (.c-var value) ";" "\n#\n"]
                (.refs-map value) (ast/file-name ast) (ast/line-number ast))]))
 
   (unwrap-tail [ast]
@@ -4803,14 +4822,6 @@
                                    (ast/call-ast maybe-sym [y*])])]
                                 c/empty-items-constraint c/top-type)]))]
       (for [value (init-at-runtime ast defined-sym)
-            value (comp (map (lookup-declaration defined-sym)
-                             (fn [c-info]
-                               (c-static-reified (.c-var value) [(.init value) "\n" (.c-var c-info) " = "
-                                                                 (.c-var value) ";" line-sep]
-                                                 (.refs-map value)
-                                                 (.constraints value)
-                                                 (.c-struct value))))
-                        (wrap sm/zero-sm value))
             _ (new-module-def defined-sym (c-static-reified (.c-var value) [] {}
                                                             (.constraints value)
                                                             (.c-struct value)))]
@@ -5924,19 +5935,11 @@
                                                                   (to-str (interpose fields ", "))
                                                                   "]>"])])]}})]
           value (init-at-runtime ast new-type-name)
-          expr (comp (map (lookup-declaration new-type-name)
-                          (fn [c-info]
-                            (c-static-reified (.c-var value) [(.init value) "\n" (.c-var c-info) " = "
-                                                              (.c-var value) ";" line-sep]
-                                              (.refs-map value)
-                                              (.constraints value)
-                                              (.c-struct value))))
-                     (wrap sm/zero-sm value))
-          _ (new-module-def new-type-name (c-constructor (.c-var expr) [] {}
-                                                         (.constraints expr)
-                                                         (.c-struct expr)
+          _ (new-module-def new-type-name (c-constructor (.c-var value) [] {}
+                                                         (.constraints value)
+                                                         (.c-struct value)
                                                          type-num fields))]
-      [expr])))
+      [value])))
 
 (defn default-type-impls [type-sym type-num fields]
   (let [x* (ast/tag "#x")
@@ -6554,8 +6557,10 @@
                     "cleaningUp = 1;\n"
                     "mainThreadDone = 1;\n"
                     "waitForWorkers();\n"
-                    (map-modules (for [expr (sm/get-in-val [.module .value symbols-sym])]
+                    (map-modules (for [expr (sm/get-in-val [.module .values symbols-sym])
+                                       _ (debug 'symbols (.c-var expr))]
                                    (free-global (c-init (.c-var expr) [] {} "" 0))))
+                    (map-modules (sm/get-in-val [.setup .cleanup]))
                     (map values free-global)
                     "\n#\n"
                     "for(List *l = argList; l != (List *)0; l = l->tail) {\n"
@@ -6573,6 +6578,7 @@
   (update-context context
                   (for [protos-var (global-var "protos_")
                         symbols-var (global-var "symbols_")
+                        _ (debug 'new-module module-index module-name)
                         _ (sm/set-val .module (Module module-name
                                                       module-index
                                                       {protocols-sym (c-code protos-var [] {} c/top-type)
@@ -6605,8 +6611,8 @@
                                     ]
                               _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
                               _ (sm/assoc-in-val [.fn-context .decl] [])
-                              _ (sm/update-val .mod-init (fn [x]
-                                                           (comp x emitted)))]
+                              _ (sm/update-in-val [.setup .init] (fn [x]
+                                                                   (comp x emitted)))]
                           "")
                         (compilation-error "Could not emit code for expression at "
                                            (ast/file-name ast) (ast/line-number ast)))))
@@ -6722,13 +6728,13 @@
                                             (let [module (extract waiter-prom)]
                                               (for [_ (sm/assoc-in-val [.module .namespaces ns-sym]
                                                                        module)
-                                                    _ (sm/update-val .mod-init
-                                                                     (fn [mod-init]
-                                                                       (conj mod-init
-                                                                             (c-code "" ["init_module_"
-                                                                                         (str (.index module))
-                                                                                         "();\n"]
-                                                                                     {} c/top-type))))
+                                                    _ (sm/update-in-val [.setup .init]
+                                                                        (fn [mod-init]
+                                                                          (conj mod-init
+                                                                                (c-code "" ["init_module_"
+                                                                                            (str (.index module))
+                                                                                            "();\n"]
+                                                                                        {} c/top-type))))
                                                     _ (add-module-file module)]
                                                 '_)))))))
                                rdr/read-add-ns
@@ -6746,7 +6752,8 @@
                         symbols-var (sm/get-in-val [.module .values symbols-sym])
                         _ (sm/assoc-in-val [.module .values 'symbols]
                                            symbols-var)
-                        mod-init (sm/get-val .mod-init)
+                        mod-init (sm/get-in-val [.setup .init])
+                        cleanup (sm/get-in-val [.setup .cleanup])
                         module (sm/get-val .module)
                         :let [mod-index (.index module)
                               inited-var (str "m" mod-index "_inited")
@@ -6757,7 +6764,12 @@
                                                 "if(" (.c-var symbols-var) "->refs > 0)\n"
                                                 (.c-var symbols-var) "->refs = -1;\n"
                                                 "fprintf(stderr, \"inited " mod-index "\\n\");\n"
-                                                inited-var "= 1;\n}}\n"])]
+                                                inited-var "= 1;\n}}\n"])
+
+                              _ (write-strings ["void cleanup_module_" (str mod-index) "() {\n"
+                                                cleanup
+                                                "}\n"])]
+                        _ (sm/assoc-in-val [.setup .cleanup] ["cleanup_module_" (str mod-index) "();\n"])
                         _ (sm/update-val .loaded (fn [loaded-prom]
                                                    (deliver loaded-prom module)))
                         _ (debug 'done-with file-name)]
@@ -6804,7 +6816,7 @@
                                    (ConstantValues {} {} {} type-names {} {})
                                    0                        ;; reify-fn-index
                                    (promise)                ;; loaded
-                                   []                       ;; mod-init
+                                   (ModuleSetup [] [])      ;; setup
                                    {}                       ;; mod-files
                                    ))
 
@@ -7124,7 +7136,10 @@
                 (do
                   (print-err "Could not find " (str "'" file-name "'"))
                   (abort)))
+
+            (extract waiter)
             (safe-pr 'emitting-main)
+
             (emit-main (extract waiter))
             ;; (send ast-emitter (fn [ctxt]
             ;;                     (map (get-in ctxt ['_ .constants .other])
@@ -7135,13 +7150,9 @@
             ;;                                                                    "\n")))
             ;;                            (print-err "number of types" type-count)))))
             ;; wait for agents to clear their queues
+            (map-modules sm-nop)
+            (print-err 'all-emitters-done)
             (let [waiter (promise)]
-              (send modules
-                    (fn [mods]
-                      (safe-pr 'modules-agent-done)
-                      (map (get mods file-name)
-                           (fn [ast-emitter]
-                             (send ast-emitter (fn [_]
-                                                 (safe-pr 'ast-emitter-done)
-                                                 (send string-writer (partial deliver waiter))))))))
-              (extract waiter)))))
+              (send string-writer (partial deliver waiter))
+              (extract waiter))
+            (print-err 'totally-done))))
