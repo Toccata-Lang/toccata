@@ -3104,8 +3104,12 @@ Value *strSha1(Value *arg0) {
       __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
     }
 #endif
-    *hash = (Integer *)hashVal;
     incRef((Value *)hashVal, 1);
+
+    Value *oldHash = (Value *)0;
+    __atomic_exchange(hash, &hashVal, (Integer **)&oldHash, __ATOMIC_RELAXED);
+    if (oldHash != (Value *)0)
+      dec_and_free(oldHash, 1);
     dec_and_free(arg0, 1);
     return((Value *)hashVal);
   }
@@ -3450,7 +3454,11 @@ Value *symbolSha1(Value *arg0) {
     if (refs <= -1)
       __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
 #endif
-    subStrVal->hash = (Integer *)hashVal;
+    Value *oldHash = (Value *)0;
+    __atomic_exchange(&subStrVal->hash, &hashVal, (Integer **)&oldHash, __ATOMIC_RELAXED);
+    if (oldHash != (Value *)0)
+      dec_and_free(oldHash, 1);
+
     incRef((Value *)hashVal, 1);
     dec_and_free(arg0, 1);
     return((Value *)hashVal);
