@@ -313,3 +313,5 @@ Vector *listVec(Value *list);
 Value *defaultPrErrSTAR(Value *str);
 Value *vectGet(Vector *vect, unsigned index);
 Value *hashMapVec(Value *m);
+void incTypeMalloc(TYPE_SIZE type, int delta);
+void incTypeFree(TYPE_SIZE type, int delta);
