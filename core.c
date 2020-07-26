@@ -30,6 +30,39 @@ void prefs(char *tag, Value *v) {
 int64_t malloc_count = 0;
 int64_t free_count = 0;
 
+int64_t type_mallocs[20] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+int64_t type_frees[20] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+void incTypeMalloc(TYPE_SIZE type, int delta) {
+  if (type < 0) {
+    fprintf(stderr, "type malloc inc failure\n");
+    abort();
+  }
+  else if (type == TypeCount)
+    __atomic_fetch_add(&type_mallocs[19], delta, __ATOMIC_ACQ_REL);
+  else if (type > OpaqueType)
+    __atomic_fetch_add(&type_mallocs[0], delta, __ATOMIC_ACQ_REL);
+  else if (type == SymbolType)
+    __atomic_fetch_add(&type_mallocs[5], delta, __ATOMIC_ACQ_REL);
+  else
+    __atomic_fetch_add(&type_mallocs[type], delta, __ATOMIC_ACQ_REL);
+}
+
+void incTypeFree(TYPE_SIZE type, int delta) {
+  if (type < 0) {
+    fprintf(stderr, "type free inc failure\n");
+    abort();
+  }
+  else if (type == TypeCount)
+    __atomic_fetch_add(&type_frees[19], delta, __ATOMIC_ACQ_REL);
+  else if (type > OpaqueType)
+    __atomic_fetch_add(&type_frees[0], delta, __ATOMIC_ACQ_REL);
+  else if (type == SymbolType)
+    __atomic_fetch_add(&type_frees[5], delta, __ATOMIC_ACQ_REL);
+  else
+    __atomic_fetch_add(&type_frees[type], delta, __ATOMIC_ACQ_REL);
+}
+
 Maybe nothing_struct = {MaybeType, -2, 0, 0};
 Value *nothing = (Value *)&nothing_struct;
 List empty_list_struct = (List){ListType,-2,0,0,0,0};
@@ -257,6 +290,7 @@ Integer *malloc_integer() {
   } else {
     freeIntegers.head = freeIntegers.head->next;
   }
+  incTypeMalloc(IntegerType, 1);
   newInteger->type = IntegerType;
   newInteger->refs = refsInit;
   return(newInteger);
@@ -291,11 +325,8 @@ String *malloc_string(int len) {
       freeStrings.head = freeStrings.head->next;
     }
   }
-#ifdef SINGLE_THREADED
+  incTypeMalloc(StringBufferType, 1);
   str->refs = refsInit;
-#else
-  __atomic_store(&str->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   str->hash = (Integer *)0;
   str->type = StringBufferType;
   str->len = len;
@@ -333,11 +364,8 @@ SubString *malloc_substring() {
   } else {
     freeSubStrings.head = freeSubStrings.head->next;
   }
-#ifdef SINGLE_THREADED
+  incTypeMalloc(SubStringType, 1);
   subStr->refs = refsInit;
-#else
-  __atomic_store(&subStr->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   subStr->hash = (Integer *)0;
   return(subStr);
 }
@@ -369,12 +397,9 @@ FnArity *malloc_fnArity() {
   } else {
     freeFnArities.head = freeFnArities.head->next;
   }
+  incTypeMalloc(FnArityType, 1);
   newFnArity->type = FnArityType;
-#ifdef SINGLE_THREADED
   newFnArity->refs = refsInit;
-#else
-  __atomic_store(&newFnArity->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   return(newFnArity);
 }
 
@@ -418,16 +443,14 @@ Function *malloc_function(int arityCount) {
       newFunction = (Function *)removeFreeValue(&centralFreeFunctions[arityCount]);
       if (newFunction == (Function *)0) {
         newFunction = (Function *)my_malloc(sizeof(Function) + sizeof(FnArity *) * arityCount);
+	incTypeMalloc(FunctionType, 1);
       }
     } else {
       freeFunctions[arityCount].head = freeFunctions[arityCount].head->next;
     }
+    incTypeMalloc(FunctionType, 1);
     newFunction->type = FunctionType;
-#ifdef SINGLE_THREADED
     ((Function *)newFunction)->refs = refsInit;
-#else
-    __atomic_store(&((Function *)newFunction)->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
     return((Function *)newFunction);
   }
 }
@@ -476,6 +499,7 @@ List *malloc_list() {
     freeLists.head = freeLists.head->next;
   }
 
+  incTypeMalloc(ListType, 1);
   newList->type = ListType;
   newList->refs = refsInit;
   newList->hash = (Integer *)0;;
@@ -562,6 +586,7 @@ Maybe *malloc_maybe() {
   } else {
     freeMaybes.head = freeMaybes.head->next;
   }
+  incTypeMalloc(MaybeType, 1);
   newMaybe->type = MaybeType;
   newMaybe->refs = refsInit;
   newMaybe->hash = (Integer *)0;
@@ -605,6 +630,7 @@ VectorNode *malloc_vectorNode() {
   } else {
     freeVectorNodes.head = freeVectorNodes.head->next;
   }
+  incTypeMalloc(VectorNodeType, 1);
   newVectorNode->type = VectorNodeType;
   newVectorNode->refs = refsInit;
   memset(&newVectorNode->array, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
@@ -648,6 +674,7 @@ Vector *malloc_vector() {
   } else {
     freeVectors.head = freeVectors.head->next;
   }
+  incTypeMalloc(VectorType, 1);
   newVector->type = VectorType;
   newVector->refs = refsInit;
   newVector->count = 0;
@@ -740,11 +767,8 @@ ReifiedVal *malloc_reified(int64_t implCount) {
       freeReified[implCount].head = freeReified[implCount].head->next;
     }
   }
-#ifdef SINGLE_THREADED
+  incTypeMalloc(0, 1);
   newReifiedVal->refs = refsInit;
-#else
-  __atomic_store(&newReifiedVal->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   newReifiedVal->hash = (Integer *)0;;
   newReifiedVal->implCount = implCount;
   return(newReifiedVal);
@@ -826,12 +850,9 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
       freeBMINodes[itemCount].head = freeBMINodes[itemCount].head->next;
     }
   }
+  incTypeMalloc(BitmapIndexedType, 1);
   bmiNode->type = BitmapIndexedType;
-#ifdef SINGLE_THREADED
   bmiNode->refs = refsInit;
-#else
-  __atomic_store(&bmiNode->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   bmiNode->hash = (Integer *)0;;
   bmiNode->bitmap = 0;
   memset(&bmiNode->array, 0, sizeof(Value *) * (itemCount * 2));
@@ -868,15 +889,12 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
   int nodeSize = sizeof(HashCollisionNode) + sizeof(Value *) * (itemCount * 2);
   HashCollisionNode *collisionNode;
   collisionNode = (HashCollisionNode *)my_malloc(nodeSize);
+  incTypeMalloc(HashCollisionNodeType, 1);
   memset(collisionNode, 0, nodeSize);
   collisionNode->type = HashCollisionNodeType;
   collisionNode->count = itemCount * 2;
   collisionNode->hash = (Integer *)0;;
-#ifdef SINGLE_THREADED
   collisionNode->refs = refsInit;
-#else
-  __atomic_store(&collisionNode->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   return(collisionNode);
 }
 
@@ -922,14 +940,11 @@ ArrayNode *malloc_arrayNode() {
   } else {
     freeArrayNodes.head = freeArrayNodes.head->next;
   }
+  incTypeMalloc(ArrayNodeType, 1);
   memset(arrayNode, 0, sizeof(ArrayNode));
   arrayNode->type = ArrayNodeType;
   arrayNode->hash = (Integer *)0;;
-#ifdef SINGLE_THREADED
   arrayNode->refs = refsInit;
-#else
-  __atomic_store(&arrayNode->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   return(arrayNode);
 }
 
@@ -971,13 +986,10 @@ Promise *malloc_promise() {
   } else {
     freePromises.head = freePromises.head->next;
   }
+  incTypeMalloc(PromiseType, 1);
   memset(newPromise, 0, sizeof(Promise));
   newPromise->type = PromiseType;
-#ifdef SINGLE_THREADED
   newPromise->refs = refsInit;
-#else
-  __atomic_store(&newPromise->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   newPromise->result = (Value *)0;
   newPromise->actions = empty_list;
   pthread_cond_init(&newPromise->delivered, NULL);
@@ -1024,13 +1036,10 @@ Future *malloc_future(int line) {
   } else {
     freeFutures.head = freeFutures.head->next;
   }
+  incTypeMalloc(FutureType, 1);
   memset(newFuture, 0, sizeof(Future));
   newFuture->type = FutureType;
-#ifdef SINGLE_THREADED
   newFuture->refs = refsInit;
-#else
-  __atomic_store(&newFuture->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   newFuture->result = (Value *)0;
   newFuture->action = (Value *)0;
   newFuture->errorCallback = (Value *)0;
@@ -1149,6 +1158,7 @@ void dec_and_free(Value *v, int deltaRefs) {
     return;
 
   if (v->type < CoreTypeCount) {
+    incTypeFree(v->type, 1);
     freeJmpTbl[v->type](v);
   } else {
     ReifiedVal *rv = (ReifiedVal *)v;
@@ -1309,6 +1319,21 @@ void freeAll() {
   __atomic_load(&free_count, &frees, __ATOMIC_RELAXED);
   fprintf(stderr, "malloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
           mallocs, frees, mallocs - frees);
+
+  int64_t totalMallocs = 0;
+  int64_t totalFrees = 0;
+  for (int i = 0; i < 20; i++) {
+    fprintf(stderr, "%d %ld %ld %ld\n", i, type_mallocs[i], type_frees[i], type_mallocs[i] - type_frees[i]);
+    if (i != 19) {
+      totalMallocs += type_mallocs[i];
+      totalFrees += type_frees[i];
+    }
+  }
+  totalMallocs = totalMallocs - type_mallocs[19];
+  fprintf(stderr, "\ntotalMallocs %ld\n", totalMallocs);
+  fprintf(stderr, "malloc diff %ld\n", mallocs - totalMallocs);
+  fprintf(stderr, "\ntotalFrees %ld\n", totalFrees);
+  fprintf(stderr, "free diff %ld\n", frees - totalFrees);
 #endif
 // */
 }
@@ -1624,6 +1649,7 @@ char *extractStr(Value *v) {
     return(((String *)v)->buffer);
   else if (v->type == SubStringType) {
     String *newStr = (String *)my_malloc(sizeof(String) + ((String *)v)->len + 5);
+    incTypeMalloc(StringBufferType, 1);
     newStr->hash = (Integer *)0;
     snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((SubString *)v)->buffer);
     return(newStr->buffer);
@@ -2583,6 +2609,7 @@ Sha1Update( Context, finalcount, 8 );  // Should cause a Sha1TransformFunction()
 void free_sha1(void *ptr) {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      incTypeFree(IntegerType, 1);
 #endif
   free(ptr);
 }
@@ -2592,6 +2619,7 @@ Value *malloc_sha1() {
   Sha1Initialise(ctxt);
 #ifdef CHECK_MEM_LEAK
   __atomic_fetch_add(&malloc_count, 1, __ATOMIC_ACQ_REL);
+  incTypeMalloc(IntegerType, 1);
 #endif
   return(opaqueValue(ctxt, free_sha1));
 }
@@ -3020,6 +3048,7 @@ Value *strSha1(Value *arg0) {
       incRef((Value *)hashVal, 1);
       if (refs <= refsConstant) {
 	__atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
+	incTypeMalloc(IntegerType, -1);
       }
     }
 
@@ -3103,6 +3132,7 @@ Value *escapeChars(Value *arg0) {
 
 Value *opaqueValue(void *ptr, Destructor *destruct) {
   Opaque *opVal = (Opaque *)my_malloc(sizeof(Opaque));
+  incTypeMalloc(OpaqueType, 1);
   opVal->type = OpaqueType;
   opVal->ptr = ptr;
   opVal->destruct = destruct;
@@ -4605,6 +4635,7 @@ Value *addFutureAction(Future *p, Value *action) {
 
 Value *makeAgent(Value *arg0) {
   Agent *a = (Agent *)my_malloc(sizeof(Agent));
+  incTypeMalloc(AgentType, 1);
   a->type = AgentType;
 #ifdef SINGLE_THREADED
   a->refs = refsInit;
@@ -4740,6 +4771,7 @@ void freeExtractCache(void *cachePtr) {
       free(cacheTail);
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      incTypeFree(14, 1);
 #endif
    }
 }
@@ -4750,6 +4782,7 @@ void freeIntGenerator(void *ptr) {
       free(ptr);
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      incTypeFree(14, 1);
 #endif
   }
 }
