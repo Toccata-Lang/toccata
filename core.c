@@ -315,11 +315,7 @@ String *malloc_string(int len) {
       str = (String *)removeFreeValue(&centralFreeStrings);
       if (str == (String *)0) {
 	str = (String *)my_malloc(sizeof(String) + STRING_RECYCLE_LEN + 4);
-	incTypeMalloc(StringBufferType, 1);
 	memset(str->buffer, 0, STRING_RECYCLE_LEN);
-	str->hash = (Integer *)0;
-	str->type = StringBufferType;
-	str->len = len;
       }
     } else {
       freeStrings.head = freeStrings.head->next;
@@ -357,9 +353,6 @@ SubString *malloc_substring() {
     subStr = (SubString *)removeFreeValue(&centralFreeSubStrings);
     if (subStr == (SubString *)0) {
       subStr = (SubString *)my_malloc(sizeof(SubString));
-      subStr->hash = (Integer *)0;
-      subStr->refs = refsInit;
-      return(subStr);
     }
   } else {
     freeSubStrings.head = freeSubStrings.head->next;
@@ -390,9 +383,6 @@ FnArity *malloc_fnArity() {
     newFnArity = (FnArity *)removeFreeValue(&centralFreeFnArities);
     if (newFnArity == (FnArity *)0) {
       newFnArity = (FnArity *)my_malloc(sizeof(FnArity));
-      newFnArity->type = FnArityType;
-      newFnArity->refs = refsInit;
-      return(newFnArity);
     }
   } else {
     freeFnArities.head = freeFnArities.head->next;
@@ -434,25 +424,21 @@ Function *malloc_function(int arityCount) {
   Function *newFunction;
   if (arityCount > 9) {
     newFunction = (Function *)my_malloc(sizeof(Function) + sizeof(FnArity *) * arityCount);
-    ((Function *)newFunction)->refs = refsInit;
-    newFunction->type = FunctionType;
-    return(newFunction);
   } else {
     newFunction = (Function *)freeFunctions[arityCount].head;
     if (newFunction == (Function *)0) {
       newFunction = (Function *)removeFreeValue(&centralFreeFunctions[arityCount]);
       if (newFunction == (Function *)0) {
         newFunction = (Function *)my_malloc(sizeof(Function) + sizeof(FnArity *) * arityCount);
-	incTypeMalloc(FunctionType, 1);
       }
     } else {
       freeFunctions[arityCount].head = freeFunctions[arityCount].head->next;
     }
-    incTypeMalloc(FunctionType, 1);
-    newFunction->type = FunctionType;
-    ((Function *)newFunction)->refs = refsInit;
-    return((Function *)newFunction);
   }
+  incTypeMalloc(FunctionType, 1);
+  newFunction->type = FunctionType;
+  ((Function *)newFunction)->refs = refsInit;
+  return((Function *)newFunction);
 }
 
 void freeFunction(Value *v) {
@@ -1166,6 +1152,7 @@ void dec_and_free(Value *v, int deltaRefs) {
       dec_and_free(rv->impls[i], 1);
     }
 
+    incTypeFree(0, 1);
     decValuePtrRef((Value **)&((HashedValue *)v)->hash);
 
     if (rv->implCount < 20) {
@@ -1265,7 +1252,7 @@ void freeGlobal(Value *x) {
     return;
   x->refs = refsInit;
   dec_and_free(x, 1);
-  x->refs = refsConstant;
+  x->refs = refsStatic;
 }
 
 void emptyFreeList(FreeValList *freeLinkedList) {
