@@ -188,24 +188,20 @@ int decRefs(Value *v, int deltaRefs) {
     v->refs -= deltaRefs;
   return(v->refs);
 #else
-  REFS_SIZE refs;
-  REFS_SIZE newRefs;
+  if (v->refs == refsConstant || v->refs == refsStatic)
+    return(v->refs);
 
-  __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
-  if (refs == refsConstant || refs == refsStatic)
-    return(refs);
+  REFS_SIZE newRefs = __atomic_fetch_sub(&v->refs, deltaRefs, __ATOMIC_ACQ_REL);
+  if (newRefs > deltaRefs)
+    return(newRefs - deltaRefs);
+  else if (newRefs == deltaRefs) {
+    v->refs = refsError;
+    return(refsError);
+  }
 
-  do {
-    if (refs < deltaRefs) {
-      fprintf(stderr, "failure in decRefs, refs too small: %d %p\n", refs, v);
-      abort();
-    } else if (refs == deltaRefs)
-      newRefs = refsError;
-    else
-      newRefs = refs - deltaRefs;
-  } while (!__atomic_compare_exchange(&v->refs, &refs, &newRefs, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
-
-  return(newRefs);
+  fprintf(stderr, "failure in decRefs, refs too small: %d %d %p\n", deltaRefs, v->refs, v);
+  abort();
+  return(refsError);
 #endif
 #else
   if (v->refs == refsConstant ||
@@ -255,13 +251,12 @@ void moveToCentral(FreeValList *freeList, FreeValList *centralList) {
 }
 
 void decValuePtrRef(Value **ptr) {
-  Value *toFree;
+  Value *toFree = (Value *)0;
   Value *oldPtr = (Value *)0;
 
   __atomic_exchange(ptr, &toFree, &oldPtr, __ATOMIC_RELAXED);
   if (oldPtr != (Value *)0) {
     dec_and_free((Value *)oldPtr, 1);
-    *ptr = (Value *)0;
   }
 }
 
@@ -290,7 +285,7 @@ Integer *malloc_integer() {
   } else {
     freeIntegers.head = freeIntegers.head->next;
   }
-  incTypeMalloc(IntegerType, 1);
+  // incTypeMalloc(IntegerType, 1);
   newInteger->type = IntegerType;
   newInteger->refs = refsInit;
   return(newInteger);
@@ -321,7 +316,7 @@ String *malloc_string(int len) {
       freeStrings.head = freeStrings.head->next;
     }
   }
-  incTypeMalloc(StringBufferType, 1);
+  // incTypeMalloc(StringBufferType, 1);
   str->refs = refsInit;
   str->hash = (Integer *)0;
   str->type = StringBufferType;
@@ -357,7 +352,7 @@ SubString *malloc_substring() {
   } else {
     freeSubStrings.head = freeSubStrings.head->next;
   }
-  incTypeMalloc(SubStringType, 1);
+  // incTypeMalloc(SubStringType, 1);
   subStr->refs = refsInit;
   subStr->hash = (Integer *)0;
   return(subStr);
@@ -387,7 +382,7 @@ FnArity *malloc_fnArity() {
   } else {
     freeFnArities.head = freeFnArities.head->next;
   }
-  incTypeMalloc(FnArityType, 1);
+  // incTypeMalloc(FnArityType, 1);
   newFnArity->type = FnArityType;
   newFnArity->refs = refsInit;
   return(newFnArity);
@@ -435,7 +430,7 @@ Function *malloc_function(int arityCount) {
       freeFunctions[arityCount].head = freeFunctions[arityCount].head->next;
     }
   }
-  incTypeMalloc(FunctionType, 1);
+  // incTypeMalloc(FunctionType, 1);
   newFunction->type = FunctionType;
   ((Function *)newFunction)->refs = refsInit;
   return((Function *)newFunction);
@@ -485,7 +480,7 @@ List *malloc_list() {
     freeLists.head = freeLists.head->next;
   }
 
-  incTypeMalloc(ListType, 1);
+  // incTypeMalloc(ListType, 1);
   newList->type = ListType;
   newList->refs = refsInit;
   newList->hash = (Integer *)0;;
@@ -496,12 +491,7 @@ List *malloc_list() {
 }
 
 void freeList(Value *v) {
-#ifdef SINGLE_THREADED
-  Integer *hash = ((HashedValue *)v)->hash;
-  if (hash != (Integer *)0) {
-    dec_and_free((Value *)hash, 1);
-    ((HashedValue *)v)->hash = 0;
-  }
+  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
 
   List *l = (List *)v;
   Value *head = l->head;
@@ -511,6 +501,7 @@ void freeList(Value *v) {
   l->tail = (List *)0;
   v->next = freeLists.head;
   freeLists.head = v;
+#ifdef SINGLE_THREADED
   if (tail != (List *)0) {
     if (tail->refs == 1) {
       freeList((Value *)tail);
@@ -520,30 +511,15 @@ void freeList(Value *v) {
     }
   }
 #else
-  // TODO: use this instead
-  // decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
-  List origList;
-  List clearList = (List){ListType,-10,0,0,0,0};
-  List *l = (List *)v;
-
-  __atomic_exchange((List *)l,
-		    (List *)&clearList,
-		    (List *)&origList,
-		    __ATOMIC_RELAXED);
-  Integer *hash = origList.hash;
-  Value *head = origList.head;
-  List *tail = origList.tail;
-
-  v->next = freeLists.head;
-  freeLists.head = v;
-
-  if (hash != (Integer *)0)
-    dec_and_free((Value *)hash, 1);
-  if (head != (Value *)0)
-    dec_and_free(head, 1);
-  if (tail != (List *)0)
-      dec_and_free((Value *)tail, 1);
+  if (tail != (List *)0) {
+    REFS_SIZE refs = tail->refs;
+    if (refs != 1) {
+      decRefs((Value *)tail, 1);
+    } else {
+      tail->refs = refsError;
+      freeList((Value *)tail);
+    }
+  }
 #endif
 }
 
@@ -572,7 +548,7 @@ Maybe *malloc_maybe() {
   } else {
     freeMaybes.head = freeMaybes.head->next;
   }
-  incTypeMalloc(MaybeType, 1);
+  // incTypeMalloc(MaybeType, 1);
   newMaybe->type = MaybeType;
   newMaybe->refs = refsInit;
   newMaybe->hash = (Integer *)0;
@@ -616,7 +592,7 @@ VectorNode *malloc_vectorNode() {
   } else {
     freeVectorNodes.head = freeVectorNodes.head->next;
   }
-  incTypeMalloc(VectorNodeType, 1);
+  // incTypeMalloc(VectorNodeType, 1);
   newVectorNode->type = VectorNodeType;
   newVectorNode->refs = refsInit;
   memset(&newVectorNode->array, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
@@ -629,7 +605,6 @@ void freeVectorNode(Value *v) {
       dec_and_free(((VectorNode *)v)->array[i], 1);
     }
   }
-  memset((void *)v, 0, sizeof(VectorNode));
   v->refs = refsError;
   v->next = freeVectorNodes.head;
   freeVectorNodes.head = v;
@@ -660,7 +635,7 @@ Vector *malloc_vector() {
   } else {
     freeVectors.head = freeVectors.head->next;
   }
-  incTypeMalloc(VectorType, 1);
+  // incTypeMalloc(VectorType, 1);
   newVector->type = VectorType;
   newVector->refs = refsInit;
   newVector->count = 0;
@@ -673,10 +648,15 @@ Vector *malloc_vector() {
 
 void freeVector(Value *v) {
   decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-  decValuePtrRef((Value **)&((Vector *)v)->root);
+
+  Value *root = (Value *)((Vector *)v)->root;
+  if (root != (Value *)0) {
+    dec_and_free((Value *)root, 1);
+  }
 
   for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
-    decValuePtrRef((Value **)&((Vector *)v)->tail[i]);
+    if (((Vector *)v)->tail[i] != (Value *)0)
+      dec_and_free(((Vector *)v)->tail[i], 1);
   }
   v->next = freeVectors.head;
   freeVectors.head = v;
@@ -753,7 +733,7 @@ ReifiedVal *malloc_reified(int64_t implCount) {
       freeReified[implCount].head = freeReified[implCount].head->next;
     }
   }
-  incTypeMalloc(0, 1);
+  // incTypeMalloc(0, 1);
   newReifiedVal->refs = refsInit;
   newReifiedVal->hash = (Integer *)0;;
   newReifiedVal->implCount = implCount;
@@ -836,7 +816,7 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
       freeBMINodes[itemCount].head = freeBMINodes[itemCount].head->next;
     }
   }
-  incTypeMalloc(BitmapIndexedType, 1);
+  // incTypeMalloc(BitmapIndexedType, 1);
   bmiNode->type = BitmapIndexedType;
   bmiNode->refs = refsInit;
   bmiNode->hash = (Integer *)0;;
@@ -875,7 +855,7 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
   int nodeSize = sizeof(HashCollisionNode) + sizeof(Value *) * (itemCount * 2);
   HashCollisionNode *collisionNode;
   collisionNode = (HashCollisionNode *)my_malloc(nodeSize);
-  incTypeMalloc(HashCollisionNodeType, 1);
+  // incTypeMalloc(HashCollisionNodeType, 1);
   memset(collisionNode, 0, nodeSize);
   collisionNode->type = HashCollisionNodeType;
   collisionNode->count = itemCount * 2;
@@ -896,7 +876,6 @@ void freeHashCollisionNode(Value *v) {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-  memset(v, 0, sizeof(HashCollisionNode));
   if (!cleaningUp)
     free(v);
 }
@@ -926,7 +905,7 @@ ArrayNode *malloc_arrayNode() {
   } else {
     freeArrayNodes.head = freeArrayNodes.head->next;
   }
-  incTypeMalloc(ArrayNodeType, 1);
+  // incTypeMalloc(ArrayNodeType, 1);
   memset(arrayNode, 0, sizeof(ArrayNode));
   arrayNode->type = ArrayNodeType;
   arrayNode->hash = (Integer *)0;;
@@ -972,7 +951,7 @@ Promise *malloc_promise() {
   } else {
     freePromises.head = freePromises.head->next;
   }
-  incTypeMalloc(PromiseType, 1);
+  // incTypeMalloc(PromiseType, 1);
   memset(newPromise, 0, sizeof(Promise));
   newPromise->type = PromiseType;
   newPromise->refs = refsInit;
@@ -1022,7 +1001,7 @@ Future *malloc_future(int line) {
   } else {
     freeFutures.head = freeFutures.head->next;
   }
-  incTypeMalloc(FutureType, 1);
+  // incTypeMalloc(FutureType, 1);
   memset(newFuture, 0, sizeof(Future));
   newFuture->type = FutureType;
   newFuture->refs = refsInit;
@@ -1098,7 +1077,6 @@ void freeAgent(Value *v) {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-  memset(v, 0, sizeof(Agent));
   if (!cleaningUp)
     free(v);
 }
@@ -1111,7 +1089,6 @@ void freeOpaquePtr(Value *v) {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-  memset(v, 0, sizeof(Opaque));
   if (!cleaningUp)
     free(v);
 }
@@ -1144,7 +1121,7 @@ void dec_and_free(Value *v, int deltaRefs) {
     return;
 
   if (v->type < CoreTypeCount) {
-    incTypeFree(v->type, 1);
+    // incTypeFree(v->type, 1);
     freeJmpTbl[v->type](v);
   } else {
     ReifiedVal *rv = (ReifiedVal *)v;
@@ -1152,7 +1129,7 @@ void dec_and_free(Value *v, int deltaRefs) {
       dec_and_free(rv->impls[i], 1);
     }
 
-    incTypeFree(0, 1);
+    // incTypeFree(0, 1);
     decValuePtrRef((Value **)&((HashedValue *)v)->hash);
 
     if (rv->implCount < 20) {
@@ -1197,14 +1174,12 @@ Value *incRef(Value *v, int deltaRefs) {
   __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
 
   REFS_SIZE newRefs;
-  int loopCount = 0;
   do {
-    loopCount++;
     if (refs == refsStatic || refs == refsConstant)
       return(v);
 
     if (refs < refsStatic) {
-      fprintf(stderr, "failure in incRef: %d %d %p\n", loopCount, refs, v);
+      fprintf(stderr, "failure in incRef: %d %p\n", refs, v);
       abort();
     }
 
@@ -1636,7 +1611,7 @@ char *extractStr(Value *v) {
     return(((String *)v)->buffer);
   else if (v->type == SubStringType) {
     String *newStr = (String *)my_malloc(sizeof(String) + ((String *)v)->len + 5);
-    incTypeMalloc(StringBufferType, 1);
+    // incTypeMalloc(StringBufferType, 1);
     newStr->hash = (Integer *)0;
     snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((SubString *)v)->buffer);
     return(newStr->buffer);
@@ -2596,7 +2571,7 @@ Sha1Update( Context, finalcount, 8 );  // Should cause a Sha1TransformFunction()
 void free_sha1(void *ptr) {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-      incTypeFree(IntegerType, 1);
+      // incTypeFree(IntegerType, 1);
 #endif
   free(ptr);
 }
@@ -2606,7 +2581,7 @@ Value *malloc_sha1() {
   Sha1Initialise(ctxt);
 #ifdef CHECK_MEM_LEAK
   __atomic_fetch_add(&malloc_count, 1, __ATOMIC_ACQ_REL);
-  incTypeMalloc(IntegerType, 1);
+  // incTypeMalloc(IntegerType, 1);
 #endif
   return(opaqueValue(ctxt, free_sha1));
 }
@@ -3035,7 +3010,7 @@ Value *strSha1(Value *arg0) {
       incRef((Value *)hashVal, 1);
       if (refs <= refsConstant) {
 	__atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
-	incTypeMalloc(IntegerType, -1);
+	// incTypeMalloc(IntegerType, -1);
       }
     }
 
@@ -3119,7 +3094,7 @@ Value *escapeChars(Value *arg0) {
 
 Value *opaqueValue(void *ptr, Destructor *destruct) {
   Opaque *opVal = (Opaque *)my_malloc(sizeof(Opaque));
-  incTypeMalloc(OpaqueType, 1);
+  // incTypeMalloc(OpaqueType, 1);
   opVal->type = OpaqueType;
   opVal->ptr = ptr;
   opVal->destruct = destruct;
@@ -3389,7 +3364,7 @@ Value *symbolSha1(Value *arg0) {
       incRef((Value *)hashVal, 1);
       if (refs <= refsConstant) {
 	__atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
-	incTypeMalloc(IntegerType, -1);
+	// incTypeMalloc(IntegerType, -1);
       }
     }
 
@@ -4622,7 +4597,7 @@ Value *addFutureAction(Future *p, Value *action) {
 
 Value *makeAgent(Value *arg0) {
   Agent *a = (Agent *)my_malloc(sizeof(Agent));
-  incTypeMalloc(AgentType, 1);
+  // incTypeMalloc(AgentType, 1);
   a->type = AgentType;
 #ifdef SINGLE_THREADED
   a->refs = refsInit;
@@ -4646,12 +4621,6 @@ Value *extractAgent(Value *arg0) {
 }
 
 List *readAgentQueue(Agent *agent) {
-  if (agent == (Agent *)0) {
-    // TODO: Just in case
-    fprintf(stderr, "Agent BOOOM\n");
-    abort();
-  }
-
   List *output = agent->output;
   if (output != (List *)0 && output->len != 0) {
     // if there was an item in the queue, return it
@@ -4758,7 +4727,7 @@ void freeExtractCache(void *cachePtr) {
       free(cacheTail);
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-      incTypeFree(14, 1);
+      // incTypeFree(14, 1);
 #endif
    }
 }
@@ -4769,7 +4738,7 @@ void freeIntGenerator(void *ptr) {
       free(ptr);
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-      incTypeFree(14, 1);
+      // incTypeFree(14, 1);
 #endif
   }
 }
