@@ -41,7 +41,9 @@
   (get* [m k v hash shift]
     (assert-result x (instance? Maybe x)))
 
-  (assoc* [m k v hash shift])
+  (assoc* [m k v hash shift]
+    (assert (instance? Integer hash))
+    (assert (instance? Integer shift)))
 
   (dissoc* [m k hash shift]))
 
@@ -541,8 +543,7 @@
 
 ;; For types that emulate a key/value store
 (defprotocol Associative
-  (assoc [m k v]
-    (assoc* m k v (sha1 k) 0))
+  (assoc [m k v])
 
   (get [m k]
     ;; Retrieve the value associated with `k` in `m`, wrapped in a `Maybe` if it exists.
@@ -1075,7 +1076,7 @@
 "))
 
   (sha1 [x]
-    (inline C Integer "return(integerSha1(x_0));")))
+    (inline C Integer "return(integerValue(integerSha1(x_0)));")))
 
 (extend-type Vector
   Associative
@@ -1207,7 +1208,10 @@
 "))
 
   (sha1 [s]
-    (inline C Integer "return(strSha1(s_0));")))
+    (inline C Integer "
+// fprintf(stderr, \"wtf\\n\");
+// abort();
+return(integerValue(strSha1(s_0)));")))
 
 
 (extend-type Symbol
@@ -1241,49 +1245,16 @@
 "))
 
   (sha1 [s]
-    (inline C Integer "return(symbolSha1(s_0));")))
+    (inline C Integer "
+// fprintf(stderr, \"wtf symbol\\n\");
+// abort();
+return(integerValue(strSha1(s_0)));")))
 
 (defn sha1-update-type [x ctxt]
   (inline C Integer "
   Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->type, 8);
   dec_and_free(x_0, 1);
   return(ctxt_1);
-"))
-
-(defn cache-hash [x hash]
-  (assert (instance? Integer hash))
-  (inline C Integer "
-  Value *oldHash = (Value *)0;
-  if (__atomic_compare_exchange((Integer **)&((HashedValue *)x_0)->hash,
-				(Integer **)&oldHash,
-				(Integer **)&hash_1,
-				1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-    REFS_SIZE refs;
-    __atomic_load(&x_0->refs, &refs, __ATOMIC_RELAXED);
-    if (refs <= -1) {
-      __atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
-      incTypeMalloc(IntegerType, -1);
-    }
-    if (hash_1)
-      incRef(hash_1, 1);
-    else {
-      fprintf(stderr, \"Hash Value BOOOOOOOMMMMM\\n\");
-      abort();
-    }
-  }
-
-  dec_and_free(x_0, 1);
-  return(hash_1);
-"))
-
-(defn hash-cached? [x]
-  (inline C Maybe "
-  Value *hashVal = (Value *)((HashedValue *)x_0)->hash;
-  if (hashVal)
-    incRef(hashVal, 1);
-  Value *mval = maybe((List *)0, (Value *)0, hashVal);
-  dec_and_free(x_0, 1);
-  return(mval);
 "))
 
 (extend-type Maybe
@@ -1302,10 +1273,9 @@
             ctxt))
 
   (sha1 [x]
-    (either (hash-cached? x)
-            (let [ctxt (sha1-init)]
-              (sha1-update x ctxt)
-              (cache-hash x (sha1-finalize ctxt)))))
+    (let [ctxt (sha1-init)]
+      (sha1-update x ctxt)
+      (sha1-finalize ctxt)))
 
   Stringable
   (string-list [mv]
@@ -1371,12 +1341,9 @@
                      (sha1-update x ctxt))))
 
   (sha1 [l]
-    (either (hash-cached? l)
-            (let [ctxt (sha1-init)]
-              (sha1-update-type l ctxt)
-              (reduce l ctxt (fn [ctxt x]
-                               (sha1-update x ctxt)))
-              (cache-hash l (sha1-finalize ctxt)))))
+    (let [ctxt (sha1-init)]
+      (sha1-update l ctxt)
+      (sha1-finalize ctxt)))
 
   Container
   (apply [mf vects]
@@ -1507,12 +1474,9 @@
                      (sha1-update x ctxt))))
 
   (sha1 [v]
-    (either (hash-cached? v)
-            (let [ctxt (sha1-init)]
-              (sha1-update-type v ctxt)
-              (reduce v ctxt (fn [ctxt x]
-                               (sha1-update x ctxt)))
-              (cache-hash v (sha1-finalize ctxt)))))
+    (let [ctxt (sha1-init)]
+      (sha1-update v ctxt)
+      (sha1-finalize ctxt)))
 
   Composition
   (zero [_] empty-vector)
@@ -1734,13 +1698,30 @@
     (inline C List "return(bmiHashSeq(m_0, s_1));"))
 
   (assoc* [m k v hash shift]
-    (inline C BitmapIndexedNode "return(bmiMutateAssoc(m_0, k_1, v_2, hash_3, shift_4));"))
+    ;; TODO: find all calls to 'numVal' and dec_and_free the Values
+    (inline C BitmapIndexedNode "
+  int64_t hash = ((Integer *)hash_3)->numVal;
+  dec_and_free(hash_3, 1);
+  int64_t shift = ((Integer *)shift_4)->numVal;
+  dec_and_free(shift_4, 1);
+  return(bmiMutateAssoc(m_0, k_1, v_2, hash, shift));
+"))
 
   (dissoc* [node k hash shift]
-    (inline C BitmapIndexedNode "return(bmiDissoc(node_0, k_1, hash_2, shift_3));"))
+    (inline C BitmapIndexedNode "
+  int64_t hash = ((Integer *)hash_2)->numVal;
+  dec_and_free(hash_2, 1);
+  int64_t shift = ((Integer *)shift_3)->numVal;
+  dec_and_free(shift_3, 1);
+  return(bmiDissoc(node_0, k_1, hash, shift));"))
 
   (get* [node k v hash shift]
-    (inline C "return(bmiGet(node_0, k_1, v_2, hash_3, shift_4));"))
+    (inline C "
+  int64_t hash = ((Integer *)hash_3)->numVal;
+  dec_and_free(hash_3, 1);
+  int64_t shift = ((Integer *)shift_4)->numVal;
+  dec_and_free(shift_4, 1);
+  return(bmiGet(node_0, k_1, v_2, hash, shift));"))
 
   Seqable
   (vec [m]
@@ -1772,17 +1753,32 @@
   "))
 
   HashMapNode
-  (assoc* [m k v hash shift]
-    (inline C ArrayNode "return(arrayNodeMutateAssoc(m_0, k_1, v_2, hash_3, shift_4));"))
-
   (hash-seq [m s]
     (inline C List "return(arrayNodeSeq(m_0, s_1));"))
 
+  (assoc* [m k v hash shift]
+    (inline C ArrayNode "
+  int64_t hash = ((Integer *)hash_3)->numVal;
+  dec_and_free(hash_3, 1);
+  int64_t shift = ((Integer *)shift_4)->numVal;
+  dec_and_free(shift_4, 1);
+  return(arrayNodeMutateAssoc(m_0, k_1, v_2, hash, shift));"))
+
   (get* [m k v hash shift]
-    (inline C "return(arrayNodeGet(m_0, k_1, v_2, hash_3, shift_4));"))
+    (inline C "
+  int64_t hash = ((Integer *)hash_3)->numVal;
+  dec_and_free(hash_3, 1);
+  int64_t shift = ((Integer *)shift_4)->numVal;
+  dec_and_free(shift_4, 1);
+  return(arrayNodeGet(m_0, k_1, v_2, hash, shift));"))
 
   (dissoc* [m k hash shift]
-    (inline C ArrayNode "return(arrayNodeDissoc(m_0, k_1, hash_2, shift_3));")))
+    (inline C ArrayNode "
+  int64_t hash = ((Integer *)hash_2)->numVal;
+  dec_and_free(hash_2, 1);
+  int64_t shift = ((Integer *)shift_3)->numVal;
+  dec_and_free(shift_3, 1);
+  return(arrayNodeDissoc(m_0, k_1, hash, shift));")))
 
 (extend-type HashCollisionNode
   Type
@@ -1802,17 +1798,32 @@
   "))
 
   HashMapNode
-  (assoc* [node k v hash shift]
-    (inline C HashCollisionNode "return(collisionAssoc(node_0, k_1, v_2, hash_3, shift_4));"))
-
-  (dissoc* [node k hash shift]
-    (inline C HashCollisionNode "return(collisionDissoc(node_0, k_1, hash_2, shift_3));"))
-
   (hash-seq [m s]
     (inline C List "return(collisionSeq(m_0, s_1));"))
 
+  (assoc* [node k v hash shift]
+    (inline C HashCollisionNode "
+  int64_t hash = ((Integer *)hash_3)->numVal;
+  dec_and_free(hash_3, 1);
+  int64_t shift = ((Integer *)shift_4)->numVal;
+  dec_and_free(shift_4, 1);
+  return(collisionAssoc(node_0, k_1, v_2, hash, shift));"))
+
+  (dissoc* [node k hash shift]
+    (inline C HashCollisionNode "
+  int64_t hash = ((Integer *)hash_2)->numVal;
+  dec_and_free(hash_2, 1);
+  int64_t shift = ((Integer *)shift_3)->numVal;
+  dec_and_free(shift_3, 1);
+  return(collisionDissoc(node_0, k_1, hash, shift));"))
+
   (get* [node k v hash shift]
-    (inline C "return(collisionGet(node_0, k_1, v_2, hash_3, shift_4));")))
+    (inline C "
+  int64_t hash = ((Integer *)hash_3)->numVal;
+  dec_and_free(hash_3, 1);
+  int64_t shift = ((Integer *)shift_4)->numVal;
+  dec_and_free(shift_4, 1);
+  return(collisionGet(node_0, k_1, v_2, hash, shift));")))
 
 (defn dissoc [m & ks]
   ;; Create a new copy of `m` without the associations of `ks`
@@ -1823,7 +1834,7 @@
   ;; Create a new copy of `m` that adds an association for all the key/value pairs
   ;; ex. (assoc {'a 1} 'b 2 'c 3 'd 4)
   (reduce (partition kv-pairs 2) m (fn [m [k v]]
-                                     (assoc* m k v (sha1 k) 0))))
+                                     (assoc m k v))))
 
 (defn spaces [n]
   (assert (instance? Integer n))
@@ -1884,10 +1895,9 @@
                        (sha1-update x ctxt)))))
 
   (sha1 [v]
-    (either (hash-cached? v)
-            (let [ctxt (sha1-init)]
-              (sha1-update v ctxt)
-              (cache-hash v (sha1-finalize ctxt)))))
+    (let [ctxt (sha1-init)]
+      (sha1-update v ctxt)
+      (sha1-finalize ctxt)))
 
 
   ;; TODO: remove this impl
@@ -1905,6 +1915,9 @@
          (maybe x)))
 
   Associative
+  (assoc [m k v]
+    (inline C "return(mutateAssoc((List *)0, m_0, k_1, v_2, nakedSha1(incRef(k_1, 1)), 0));"))
+
   (keys [m]
     (map (seq m) (fn [[k v]] k)))
   (vals [m]
@@ -1921,7 +1934,7 @@
   (reduce (partition kv-pairs 2)
           emptyBMI
           (fn [m [k v]]
-            (assoc* m k v (sha1 k) 0))))
+            (assoc m k v))))
 
 (defn filter-keys [m f]
   ;; create a new hash-map from `m` that only contains key/value pairs
@@ -2250,10 +2263,9 @@
                        (sha1-update x ctxt)))))
 
   (sha1 [s]
-    (either (hash-cached? s)
-            (let [ctxt (sha1-init)]
-              (sha1-update s ctxt)
-              (cache-hash s (sha1-finalize ctxt)))))
+    (let [ctxt (sha1-init)]
+      (sha1-update s ctxt)
+      (sha1-finalize ctxt)))
 
   Associative
   (get [m k]

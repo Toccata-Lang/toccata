@@ -270,6 +270,7 @@ Integer *malloc_integer() {
       Integer *numberStructs = (Integer *)my_malloc(sizeof(Integer) * 100);
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&malloc_count, 99, __ATOMIC_ACQ_REL);
+      // incTypeMalloc(TypeCount, 1);
 #endif
       for (int i = 1; i < 99; i++) {
 	numberStructs[i].refs = refsError;
@@ -318,15 +319,13 @@ String *malloc_string(int len) {
   }
   // incTypeMalloc(StringBufferType, 1);
   str->refs = refsInit;
-  str->hash = (Integer *)0;
+  str->hashVal = 0;
   str->type = StringBufferType;
   str->len = len;
   return(str);
 }
 
 void freeString(Value *v) {
-  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
   int64_t len = ((String *)v)->len;
   if (len <= STRING_RECYCLE_LEN) {
     v->next = freeStrings.head;
@@ -354,13 +353,11 @@ SubString *malloc_substring() {
   }
   // incTypeMalloc(SubStringType, 1);
   subStr->refs = refsInit;
-  subStr->hash = (Integer *)0;
+  subStr->hashVal = 0;
   return(subStr);
 }
 
 void freeSubString(Value *v) {
-  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
   Value *src = ((SubString *)v)->source;
   if (src != (Value *)0) {
     dec_and_free(src, 1);
@@ -483,7 +480,7 @@ List *malloc_list() {
   // incTypeMalloc(ListType, 1);
   newList->type = ListType;
   newList->refs = refsInit;
-  newList->hash = (Integer *)0;;
+  newList->hashVal = 0;
   newList->head = (Value *)0;
   newList->tail = (List *)0;
   newList->len = 0;
@@ -491,8 +488,6 @@ List *malloc_list() {
 }
 
 void freeList(Value *v) {
-  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
   List *l = (List *)v;
   Value *head = l->head;
   if (head != (Value *)0)
@@ -504,8 +499,8 @@ void freeList(Value *v) {
 #ifdef SINGLE_THREADED
   if (tail != (List *)0) {
     if (tail->refs == 1) {
-      freeList((Value *)tail);
       tail->refs = refsError;
+      freeList((Value *)tail);
     } else {
       decRefs((Value *)tail, 1);
     }
@@ -551,14 +546,12 @@ Maybe *malloc_maybe() {
   // incTypeMalloc(MaybeType, 1);
   newMaybe->type = MaybeType;
   newMaybe->refs = refsInit;
-  newMaybe->hash = (Integer *)0;
+  newMaybe->hashVal = 0;
   newMaybe->value = (Value *)0;
   return(newMaybe);
 }
 
 void freeMaybe(Value *v) {
-  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
   Value *value = ((Maybe *)v)->value;
   if (value != (Value *)0)
     dec_and_free(value, 1);
@@ -605,7 +598,6 @@ void freeVectorNode(Value *v) {
       dec_and_free(((VectorNode *)v)->array[i], 1);
     }
   }
-  v->refs = refsError;
   v->next = freeVectorNodes.head;
   freeVectorNodes.head = v;
 }
@@ -641,14 +633,12 @@ Vector *malloc_vector() {
   newVector->count = 0;
   newVector->shift = 5;
   newVector->root = (VectorNode *)0;
-  newVector->hash = (Integer *)0;;
+  newVector->hashVal = 0;
   memset(&newVector->tail, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
   return(newVector);
 }
 
 void freeVector(Value *v) {
-  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
   Value *root = (Value *)((Vector *)v)->root;
   if (root != (Value *)0) {
     dec_and_free((Value *)root, 1);
@@ -715,8 +705,7 @@ ReifiedVal *malloc_reified(int64_t implCount) {
 	int rvCount = 100000;
 	char *reifiedStructs = (char *)my_malloc(rvSize * rvCount);
 	for (int i = 1; i < (rvCount - 1); i++) {
-	  ((ReifiedVal *)&reifiedStructs[i * rvSize])->refs =
-	    refsError;
+	  ((ReifiedVal *)&reifiedStructs[i * rvSize])->refs = refsError;
 	  ((Value *)&reifiedStructs[i * rvSize])->next = (Value *)&reifiedStructs[(i + 1) * rvSize];
 	}
 	((ReifiedVal *)&reifiedStructs[(rvCount - 1) * rvSize])->refs = refsError;
@@ -735,7 +724,7 @@ ReifiedVal *malloc_reified(int64_t implCount) {
   }
   // incTypeMalloc(0, 1);
   newReifiedVal->refs = refsInit;
-  newReifiedVal->hash = (Integer *)0;;
+  newReifiedVal->hashVal = 0;
   newReifiedVal->implCount = implCount;
   return(newReifiedVal);
 }
@@ -819,15 +808,13 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
   // incTypeMalloc(BitmapIndexedType, 1);
   bmiNode->type = BitmapIndexedType;
   bmiNode->refs = refsInit;
-  bmiNode->hash = (Integer *)0;;
+  bmiNode->hashVal = 0;
   bmiNode->bitmap = 0;
   memset(&bmiNode->array, 0, sizeof(Value *) * (itemCount * 2));
   return(bmiNode);
 }
 
 void freeBitmapNode(Value *v) {
-  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
   BitmapIndexedNode *node = (BitmapIndexedNode *)v;
   int cnt = __builtin_popcount(node->bitmap);
   for (int i = 0; i < (2 * cnt); i++) {
@@ -859,14 +846,12 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
   memset(collisionNode, 0, nodeSize);
   collisionNode->type = HashCollisionNodeType;
   collisionNode->count = itemCount * 2;
-  collisionNode->hash = (Integer *)0;;
+  collisionNode->hashVal = 0;
   collisionNode->refs = refsInit;
   return(collisionNode);
 }
 
 void freeHashCollisionNode(Value *v) {
-  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
   HashCollisionNode *node = (HashCollisionNode *)v;
   for (int i = 0; i < node->count; i++) {
     if (node->array[i] != (Value *)0) {
@@ -908,14 +893,12 @@ ArrayNode *malloc_arrayNode() {
   // incTypeMalloc(ArrayNodeType, 1);
   memset(arrayNode, 0, sizeof(ArrayNode));
   arrayNode->type = ArrayNodeType;
-  arrayNode->hash = (Integer *)0;;
+  arrayNode->hashVal = 0;
   arrayNode->refs = refsInit;
   return(arrayNode);
 }
 
 void freeArrayNode(Value *v) {
-  decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
   ArrayNode *node = (ArrayNode *)v;
   for (int i = 0; i < ARRAY_NODE_LEN; i++) {
     if (node->array[i] != (Value *)0) {
@@ -1116,7 +1099,9 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeOpaquePtr};
 
 void dec_and_free(Value *v, int deltaRefs) {
-  if (v == (Value *)0 || v->refs == refsStatic ||
+  if (v == (Value *)0 ||
+      v->refs == refsStatic ||
+      v->refs == refsConstant ||
       decRefs(v, deltaRefs) >= refsConstant)
     return;
 
@@ -1130,8 +1115,6 @@ void dec_and_free(Value *v, int deltaRefs) {
     }
 
     // incTypeFree(0, 1);
-    decValuePtrRef((Value **)&((HashedValue *)v)->hash);
-
     if (rv->implCount < 20) {
       int64_t implCount = rv->implCount;
       v->next = freeReified[implCount].head;
@@ -1300,17 +1283,53 @@ void freeAll() {
 // */
 }
 
-Value *baseSha1(Value *v1) {
-  Value *hash;
+int64_t nakedSha1(Value *v1) {
+  Integer *hashVal;
+  int64_t hash;
   switch (v1->type) {
   case IntegerType:
     hash = integerSha1(v1);
     break;
+
+  case StringBufferType:
+  case SubStringType:
   case SymbolType:
-    hash = symbolSha1(v1);
+    hash = strSha1(v1);
     break;
+
+  case ListType:
+  case MaybeType:
+  case VectorType:
+  case BitmapIndexedType:
+  case ArrayNodeType:
+  case HashCollisionNodeType:
+    if (((HashedValue *)v1)->hashVal != 0) {
+      hash = ((HashedValue *)v1)->hashVal;
+      dec_and_free(v1, 1);
+    } else {
+      hashVal = (Integer *)sha1((List *)0, v1);
+      hash = hashVal->numVal;
+      ((HashedValue *)v1)->hashVal = hash;
+      dec_and_free((Value *)hashVal, 1);
+    }
+    break;
+    
   default:
-    hash = sha1((List *)0, v1);
+    if (v1->type > CoreTypeCount) {
+      if (((HashedValue *)v1)->hashVal != 0) {
+	hash = ((HashedValue *)v1)->hashVal;
+	dec_and_free(v1, 1);
+      } else {
+	hashVal = (Integer *)sha1((List *)0, v1);
+	hash = hashVal->numVal;
+	((HashedValue *)v1)->hashVal = hash;
+	dec_and_free((Value *)hashVal, 1);
+      }
+    } else {
+      hashVal = (Integer *)sha1((List *)0, v1);
+      hash = hashVal->numVal;
+      dec_and_free((Value *)hashVal, 1);
+    }
     break;
   }
   return(hash);
@@ -1567,8 +1586,8 @@ void *futuresThread(void *input) {
   Value *threadHandle = (Value *)integerValue((int64_t)pthread_self());
 
   pthread_mutex_lock (&lingeringAccess);
-  lingeringThreads = dissoc((List *)0, lingeringThreads, incRef(threadHandle, 1),
-  			    baseSha1(threadHandle), (Value *)integerValue(0));
+  lingeringThreads = baseDissoc(lingeringThreads, incRef(threadHandle, 1),
+				nakedSha1(threadHandle), 0);
   pthread_mutex_unlock (&lingeringAccess);
 
 #ifdef CHECK_MEM_LEAK
@@ -1600,7 +1619,7 @@ void replaceWorker() {
   pthread_mutex_lock (&lingeringAccess);
   lingeringThreads = copyAssoc(empty_list, lingeringThreads, incRef((Value *)threadHandle, 1),
 			       incRef((Value *)threadHandle, 1),
-			       baseSha1(threadHandle), (Value *)integerValue(0));
+			       nakedSha1(threadHandle), 0);
   pthread_mutex_unlock (&lingeringAccess);
 }
 
@@ -1612,7 +1631,7 @@ char *extractStr(Value *v) {
   else if (v->type == SubStringType) {
     String *newStr = (String *)my_malloc(sizeof(String) + ((String *)v)->len + 5);
     // incTypeMalloc(StringBufferType, 1);
-    newStr->hash = (Integer *)0;
+    newStr->hashVal = 0;
     snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((SubString *)v)->buffer);
     return(newStr->buffer);
   } else {
@@ -2593,7 +2612,7 @@ Value *finalize_sha1(Value *ctxt) {
   return((Value *)integerValue(shaVal));
 }
 
-Value *integerSha1(Value *arg0) {
+int64_t integerSha1(Value *arg0) {
   int64_t shaVal;
   Sha1Context context;
   Integer *numVal = (Integer *)arg0;
@@ -2603,7 +2622,7 @@ Value *integerSha1(Value *arg0) {
   Sha1Update(&context, (void *)&numVal->numVal, 8);
   Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
   dec_and_free(arg0, 1);
-  return((Value *)integerValue(shaVal));
+  return(shaVal);
 }
 
 Value *bitAnd(Value *arg0, Value *arg1) {
@@ -2969,28 +2988,27 @@ void strSha1Update(Sha1Context *ctxt, Value *arg0) {
   return;
 }
 
-Value *strSha1(Value *arg0) {
-  Integer **hash;
+int64_t strSha1(Value *arg0) {
+  int64_t hash;
   char *buffer;
   int64_t len;
 
   if (arg0->type == StringBufferType) {
     String *strVal = (String *)arg0;
-    hash = &strVal->hash;
+    hash = strVal->hashVal;
     buffer = strVal->buffer;
     len = strVal->len;
-  } else if (arg0->type == SubStringType) {
+  } else if (arg0->type == SubStringType ||
+	     arg0->type == SymbolType) {
     SubString *strVal = (SubString *)arg0;
-    hash = &strVal->hash;
+    hash = strVal->hashVal;
     buffer = strVal->buffer;
     len = strVal->len;
   }
 
-  if (*hash != (Integer *)0) {
-    Integer *hashVal = (Integer *)*hash;
-    incRef((Value *)hashVal, 1);
+  if (hash != 0) {
     dec_and_free(arg0, 1);
-    return((Value *)hashVal);
+    return(hash);
   } else {
     int64_t shaVal;
     Sha1Context context;
@@ -2999,23 +3017,10 @@ Value *strSha1(Value *arg0) {
     Sha1Update(&context, (void *)&arg0->type, 8);
     Sha1Update(&context, buffer, len);
     Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
-    Integer *hashVal = (Integer *)integerValue(shaVal);
-    Value *oldHash = (Value *)0;
 
-    REFS_SIZE refs;
-    __atomic_load(&arg0->refs, &refs, __ATOMIC_RELAXED);
-
-    if (__atomic_compare_exchange(hash, (Integer **)&oldHash, &hashVal,
-				  1,__ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-      incRef((Value *)hashVal, 1);
-      if (refs <= refsConstant) {
-	__atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
-	// incTypeMalloc(IntegerType, -1);
-      }
-    }
-
+    ((String *)arg0)->hashVal = shaVal;
     dec_and_free(arg0, 1);
-    return((Value *)hashVal);
+    return(shaVal);
   }
 }
 
@@ -3331,46 +3336,9 @@ Value *symbol(Value *arg0) {
   subStr->type = SymbolType;
   subStr->len = len;
   subStr->source = arg0;
-  subStr->hash = (Integer *)0;
+  subStr->hashVal = 0;
   subStr->buffer = buffer;
   return((Value *)subStr);
-}
-
-Value *symbolSha1(Value *arg0) {
-  SubString *subStrVal = (SubString *)arg0;
-
-  if (subStrVal->hash != (Integer *)0) {
-    Value *hashVal = (Value *)subStrVal->hash;
-    incRef(hashVal, 1);
-    dec_and_free(arg0, 1);
-    return(hashVal);
-  }
-  else {
-    int64_t shaVal;
-    Sha1Context context;
-
-    Sha1Initialise(&context);
-    Sha1Update(&context, (void *)&subStrVal->type, 8);
-    Sha1Update(&context, (void *)subStrVal->buffer, subStrVal->len);
-    Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
-    Integer *hashVal = (Integer *)integerValue(shaVal);
-    Value *oldHash = (Value *)0;
-
-    REFS_SIZE refs;
-    __atomic_load(&subStrVal->refs, &refs, __ATOMIC_RELAXED);
-
-    if (__atomic_compare_exchange(&subStrVal->hash, (Integer **)&oldHash, &hashVal,
-				  1,__ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-      incRef((Value *)hashVal, 1);
-      if (refs <= refsConstant) {
-	__atomic_fetch_sub(&malloc_count, 1, __ATOMIC_ACQ_REL);
-	// incTypeMalloc(IntegerType, -1);
-      }
-    }
-
-    dec_and_free(arg0, 1);
-    return((Value *)hashVal);
-  }
 }
 
 Value *symEQ(Value *arg0, Value *arg1) {
@@ -3568,12 +3536,10 @@ Value *bmiCount(Value *arg0) {
   return(integerValue(accum));
 }
 
-Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4) {
+Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
-  int64_t hash = ((Integer *)arg3)->numVal;
-  int shift = (int)((Integer *)arg4)->numVal;
 
   int bit = bitpos(hash, shift);
   int idx = __builtin_popcount(node->bitmap & (bit - 1));
@@ -3584,27 +3550,23 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* a
     if (keyOrNull == (Value *)0) {
       // There is no key in the position, so valOrNode is
       // pointer to a node.
-      Value *newShift = (Value *)integerValue(shift + 5);
-      Value *n = copyAssoc((List *)0, incRef(valOrNode, 1), key, val, arg3, newShift);
+      int newShift = shift + 5;
+      Value *n = copyAssoc((List *)0, incRef(valOrNode, 1), key, val, hash, newShift);
       if (n == valOrNode) {
         // the key was already associated with the value
         // so do nothing
-        dec_and_free(arg4, 1);
         dec_and_free(n, 1);
         return(arg0);
       } else {
         // clone node and add n to it
         BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, n);
 	dec_and_free(arg0, 1);
-        dec_and_free(arg4, 1);
         return((Value *)newNode);
       }
     } else if (equal(incRef(key, 1), incRef(keyOrNull, 1))) {
       if (equal(incRef(val, 1), incRef(valOrNode, 1))) {
         dec_and_free(arg1, 1);
         dec_and_free(arg2, 1);
-        dec_and_free(arg3, 1);
-        dec_and_free(arg4, 1);
         return(arg0);
       } else {
         // if the keyOrNull points to a value that is equal to key
@@ -3612,16 +3574,12 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* a
         // clone node and add val to it
         BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, key, val);
         dec_and_free((Value *)node, 1);
-        dec_and_free((Value *)arg3, 1);
-        dec_and_free((Value *)arg4, 1);
         return((Value *)newNode);
       }
     } else {
       // there is already a key/val pair at the position where key
       // would be placed. Extend tree a level
-      Value *hashValue = baseSha1(incRef(keyOrNull, 1));
-      int64_t existingKeyHash = ((Integer *)hashValue)->numVal;
-      dec_and_free(hashValue, 1);
+      int64_t existingKeyHash = nakedSha1(incRef(keyOrNull, 1));
       if (existingKeyHash == hash) {
         // make & return HashCollisionNode
         HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
@@ -3635,8 +3593,6 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* a
         BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0,
                                                              (Value *)newLeaf);
         dec_and_free((Value *)node, 1);
-        dec_and_free(arg3, 1);
-        dec_and_free(arg4, 1);
         return((Value *)newNode);
       } else {
         Value *newLeaf = createNode(shift + 5,
@@ -3644,8 +3600,6 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* a
                                     hash, key, val);
         BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, newLeaf);
         dec_and_free((Value *)node, 1);
-        dec_and_free(arg3, 1);
-        dec_and_free(arg4, 1);
         return((Value *)newNode);
       }
     }
@@ -3655,8 +3609,8 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* a
     if (n >= 16) {
       ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
       int jdx = mask(hash, shift);
-      Value *newShift = (Value *)integerValue(shift + 5);
-      newNode->array[jdx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, arg3, incRef(newShift, 1));
+      int newShift = shift + 5;
+      newNode->array[jdx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, hash, newShift);
       for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
         if ((node->bitmap >> i) & 1) {
           if (node->array[j] == (Value *)0) {
@@ -3667,15 +3621,13 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* a
 	    newNode->array[i] = copyAssoc((List *)0, (Value *)&emptyBMI,
 					  node->array[j],
 					  incRef(node->array[j + 1], 1),
-					  baseSha1(node->array[j]),
-					  incRef(newShift, 1));
+					  nakedSha1(node->array[j]),
+					  newShift);
 	  }
 	  j += 2;
 	}
       }
       dec_and_free((Value *)node, 1);
-      dec_and_free(arg4, 1);
-      dec_and_free(newShift, 1);
       return((Value *)newNode);
     } else {
       int itemCount = n + 1;
@@ -3696,22 +3648,18 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* a
         newNode->array[i + 2] = node->array[i];
       }
       dec_and_free((Value *)node, 1);
-      dec_and_free(arg3, 1);
-      dec_and_free(arg4, 1);
       return((Value *)newNode);
     }
   }
 }
 
-Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value* arg4) {
+Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
   if (arg0->refs != 1) {
-    return(bmiCopyAssoc(arg0, arg1, arg2, arg3, arg4));
+    return(bmiCopyAssoc(arg0, arg1, arg2, hash, shift));
   } else {
     BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
     Value *key = arg1;
     Value *val = arg2;
-    int64_t hash = ((Integer *)arg3)->numVal;
-    int shift = (int)((Integer *)arg4)->numVal;
 
     int bit = bitpos(hash, shift);
     int idx = __builtin_popcount(node->bitmap & (bit - 1));
@@ -3722,20 +3670,16 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
       if (keyOrNull == (Value *)0) {
 	// There is no key in the position, so valOrNode is
 	// pointer to a node.
-	Value *newShift = (Value *)integerValue(shift + 5);
 	Value *n;
-	n = mutateAssoc((List *)0, valOrNode, key, val, arg3, newShift);
+	n = mutateAssoc((List *)0, valOrNode, key, val, hash, shift + 5);
 	// replace key/val at 'idx' with new stuff
 	node->array[idx * 2] = (Value *)0;;
 	node->array[idx * 2 + 1] = n;
-	dec_and_free(arg4, 1);
 	return(arg0);
       } else if (equal(incRef(key, 1), incRef(keyOrNull, 1))) {
 	if (equal(incRef(val, 1), incRef(valOrNode, 1))) {
 	  dec_and_free(arg1, 1);
 	  dec_and_free(arg2, 1);
-	  dec_and_free(arg3, 1);
-	  dec_and_free(arg4, 1);
 	  return(arg0);
 	} else {
 	  // if the keyOrNull points to a value that is equal to key
@@ -3744,16 +3688,12 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
 	  node->array[idx * 2 + 1] = val;
 	  dec_and_free(valOrNode, 1);
 	  dec_and_free(keyOrNull, 1);
-	  dec_and_free((Value *)arg3, 1);
-	  dec_and_free((Value *)arg4, 1);
 	  return(arg0);
 	}
       } else {
 	// there is already a key/val pair at the position where key
 	// would be placed. Extend tree a level
-	Value *hashValue = baseSha1(incRef(keyOrNull, 1));
-	int64_t existingKeyHash = ((Integer *)hashValue)->numVal;
-	dec_and_free(hashValue, 1);
+	int64_t existingKeyHash = nakedSha1(incRef(keyOrNull, 1));
 	if (existingKeyHash == hash) {
 	  // make & return HashCollisionNode
 	  HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
@@ -3765,8 +3705,6 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
 	  // replace key/val at 'idx' with new stuff
 	  node->array[idx * 2] = (Value *)0;
 	  node->array[idx * 2 + 1] = (Value *)newLeaf;
-	  dec_and_free(arg3, 1);
-	  dec_and_free(arg4, 1);
 	  return(arg0);
 	} else {
 	  Value *newLeaf = createNode(shift + 5,
@@ -3775,8 +3713,6 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
 	  // replace key/val at 'idx' with new stuff
 	  node->array[idx * 2] = (Value *)0;
 	  node->array[idx * 2 + 1] = (Value *)newLeaf;
-	  dec_and_free(arg3, 1);
-	  dec_and_free(arg4, 1);
 	  return(arg0);
 	}
       }
@@ -3786,8 +3722,8 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
       if (n >= 16) {
 	ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
 	int jdx = mask(hash, shift);
-	Value *newShift = (Value *)integerValue(shift + 5);
-	newNode->array[jdx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, arg3, incRef(newShift, 1));
+	int newShift = shift + 5;
+	newNode->array[jdx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, hash, newShift);
 	for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
 	  if ((node->bitmap >> i) & 1) {
 	    if (node->array[j] == (Value *)0) {
@@ -3798,8 +3734,8 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
 	      newNode->array[i] = copyAssoc((List *)0, (Value *)&emptyBMI,
 					    node->array[j],
 					    node->array[j + 1],
-					    baseSha1(node->array[j]),
-					    incRef(newShift, 1));
+					    nakedSha1(node->array[j]),
+					    newShift);
 	      node->array[j] = (Value *)0;
 	      node->array[j + 1] = (Value *)0;
 	    }
@@ -3808,8 +3744,6 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
 	}
 	node->bitmap = 0;
 	dec_and_free((Value *)node, 1);
-	dec_and_free(arg4, 1);
-	dec_and_free(newShift, 1);
 	return((Value *)newNode);
       } else {
 	int itemCount = n + 1;
@@ -3830,19 +3764,15 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value*
 	  newNode->array[i + 2] = node->array[i];
 	}
 	dec_and_free((Value *)node, 1);
-	dec_and_free(arg3, 1);
-	dec_and_free(arg4, 1);
 	return((Value *)newNode);
       }
     }
   }
 }
 
-Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
+Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,  int shift) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
-  int64_t hash = ((Integer *)arg3)->numVal;
-  int shift = (int)((Integer *)arg4)->numVal;
 
   int bit = bitpos(hash, shift);
   int idx = __builtin_popcount(node->bitmap & (bit - 1));
@@ -3853,10 +3783,8 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
     if (keyOrNull == (Value *)0) {
       // There is no key in the position, so valOrNode is
       // pointer to a node.
-      Value *newShift = (Value *)integerValue(shift + 5);
-      Value *v = get((List *)0, incRef(valOrNode, 1), key, arg2, arg3, newShift);
+      Value *v = get((List *)0, incRef(valOrNode, 1), key, arg2, hash, shift + 5);
       dec_and_free(arg0, 1);
-      dec_and_free(arg4, 1);
       return(v);
     } else {
       incRef(keyOrNull, 1);
@@ -3865,31 +3793,23 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
 	incRef(valOrNode, 1);
 	dec_and_free(arg0, 1);
 	dec_and_free(arg2, 1);
-	dec_and_free(arg3, 1);
-	dec_and_free(arg4, 1);
 	return(valOrNode);
       } else {
 	// there's a key in this position, but doesn't equal 'key'
 	dec_and_free(arg0, 1);
-	dec_and_free(arg3, 1);
-	dec_and_free(arg4, 1);
 	return(arg2);
       }
     }
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
-    dec_and_free(arg3, 1);
-    dec_and_free(arg4, 1);
     return(arg2);
   }
 }
 
-Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
+Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
-  int64_t hash = ((Integer *)arg2)->numVal;
-  int shift = (int)((Integer *)arg3)->numVal;
 
   int bit = bitpos(hash, shift);
   int idx = __builtin_popcount(node->bitmap & (bit - 1));
@@ -3900,24 +3820,20 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
     if (keyOrNull == (Value *)0) {
       // There is no key in the position, so valOrNode is
       // pointer to a node.
-      Value *newShift = (Value *)integerValue(shift + 5);
-      Value *n = dissoc((List *)0, incRef(valOrNode, 1), key, arg2, newShift);
+      Value *n = baseDissoc(incRef(valOrNode, 1), key, hash, shift + 5);
       if (n == valOrNode) {
 	// the key was not in the hash-map
 	// so do nothing
 	dec_and_free(n, 1);
-	dec_and_free(arg3, 1);
 	return(arg0);
       } else if (n == (Value *)&emptyBMI && __builtin_popcount(node->bitmap) == 1) {
 	// the subtree is now empty, and this node only points to it, so propagate
 	dec_and_free(arg0, 1);
-	dec_and_free(arg3, 1);
 	return(n);
       } else {
 	// clone node and add n to it
 	BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, n);
 	dec_and_free(arg0, 1);
-	dec_and_free(arg3, 1);
 	return((Value *)newNode);
       }
     } else if (equal(key, incRef(keyOrNull, 1))) {
@@ -3925,8 +3841,6 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
       if (__builtin_popcount(node->bitmap) == 1) {
 	// and that is the only entry in this node
 	dec_and_free(arg0, 1);
-	dec_and_free(arg2, 1);
-	dec_and_free(arg3, 1);
 	return((Value *)&emptyBMI);
       } else {
 	// create new hash-map with keyOrNull and valOrNode replaced by (Value *)0
@@ -3949,38 +3863,30 @@ Value *bmiDissoc(Value *arg0, Value* arg1, Value* arg2, Value* arg3) {
         }
         newNode->bitmap &= ~bit;
         dec_and_free(arg0, 1);
-        dec_and_free(arg2, 1);
-        dec_and_free(arg3, 1);
         return((Value *)newNode);
       }
     } else {
       // there is already a key/val pair at the position where key
       // would be. Do nothing
-      dec_and_free(arg2, 1);
-      dec_and_free(arg3, 1);
       return(arg0);
     }
   } else {
     // the position in the node is empty, do nothing
     dec_and_free(arg1, 1);
-    dec_and_free(arg2, 1);
-    dec_and_free(arg3, 1);
     return(arg0);
   }
 }
 
-Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value *arg4) {
+Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
-  int64_t hash = ((Integer *)arg3)->numVal;
-  int shift = (int)((Integer *)arg4)->numVal;
   int idx = mask(hash, shift);
-  Value *newShift = (Value *)integerValue(shift + 5);
+  int newShift = shift + 5;
   ArrayNode *newNode;
 
   Value *subNode = node->array[idx];
-  Value *keyHash = baseSha1(incRef(key, 1));
+  int64_t keyHash = nakedSha1(incRef(key, 1));
   if (subNode == (Value *)0) {
     newNode = (ArrayNode *)malloc_arrayNode();
     for (int i = 0; i < ARRAY_NODE_LEN; i++) {
@@ -3993,8 +3899,6 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Va
   } else {
     Value *n = copyAssoc((List *)0, incRef(subNode, 1), key, val, keyHash, newShift);
     if (n == subNode) {
-      dec_and_free(arg3, 1);
-      dec_and_free(arg4, 1);
       dec_and_free(n, 1);
       return((Value *)node);
     } else {
@@ -4009,46 +3913,37 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Va
     }
   }
   dec_and_free((Value *)node, 1);
-  dec_and_free(arg3, 1);
-  dec_and_free(arg4, 1);
   return((Value *)newNode);
 }
 
-Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, Value* arg3, Value *arg4) {
+Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
   if (arg0->refs != 1) {
-    return(arrayNodeCopyAssoc(arg0, arg1, arg2, arg3, arg4));
+    return(arrayNodeCopyAssoc(arg0, arg1, arg2, hash, shift));
   } else {
     ArrayNode *node = (ArrayNode *)arg0;
     Value *key = arg1;
     Value *val = arg2;
-    int64_t hash = ((Integer *)arg3)->numVal;
-    int shift = (int)((Integer *)arg4)->numVal;
     int idx = mask(hash, shift);
-    Value *newShift = (Value *)integerValue(shift + 5);
 
     Value *subNode = node->array[idx];
-    Value *keyHash = baseSha1(incRef(key, 1));
+    int64_t keyHash = nakedSha1(incRef(key, 1));
     if (subNode == (Value *)0) {
-      node->array[idx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, keyHash, newShift);
+      node->array[idx] = copyAssoc((List *)0, (Value *)&emptyBMI, key, val, keyHash, shift + 5);
     } else {
-      Value *n = mutateAssoc((List *)0, subNode, key, val, keyHash, newShift);
+      Value *n = mutateAssoc((List *)0, subNode, key, val, keyHash, shift + 5);
       node->array[idx] = n;
     }
-    dec_and_free(arg3, 1);
-    dec_and_free(arg4, 1);
     return((Value *)node);
   }
 }
 
-Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
+Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
-  int64_t hash = ((Integer *)arg3)->numVal;
-  int shift = (int)((Integer *)arg4)->numVal;
   int itemCount = node->count / 2;
 
-  if(equal(baseSha1(incRef(node->array[0], 1)), incRef(arg3, 1))) {
+  if(nakedSha1(incRef(node->array[0], 1)) == hash) {
     HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
     for (int i = 0; i < itemCount; i++) {
       if (equal(incRef(key, 1), incRef(node->array[2 * i], 1))) {
@@ -4067,22 +3962,17 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
       newNode->array[2 * itemCount + 1] = val;
     }
     dec_and_free(arg0, 1);
-    dec_and_free(arg3, 1);
-    dec_and_free(arg4, 1);
     return((Value *)newNode);
   } else {
-    Integer newShift = {IntegerType, refsConstant, 0};
-
     BitmapIndexedNode * bmi = (BitmapIndexedNode *)copyAssoc((List *)0, (Value *)&emptyBMI,
-							     key, val, arg3, (Value *)&newShift);
+							     key, val, hash, 0);
     for (int i = 0; i < itemCount; i++) {
       bmi = (BitmapIndexedNode *)mutateAssoc((List *)0, (Value *)bmi,
 					     incRef(node->array[2 * i], 1),
 					     incRef(node->array[2 * i + 1], 1),
-					     baseSha1(incRef(node->array[2 * i], 1)), (Value *)&newShift);
+					     nakedSha1(incRef(node->array[2 * i], 1)), 0);
     }
     dec_and_free(arg0, 1);
-    dec_and_free(arg4, 1);
     return((Value *)bmi);
   }
 }
@@ -4090,28 +3980,21 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value 
 Value notFound = {0, -2};
 Value *notFoundPtr = &notFound;
 
-Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
+Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   Value *notFound = arg2;
-  int64_t hash = ((Integer *)arg3)->numVal;
-  int shift = (int)((Integer *)arg4)->numVal;
   int idx = mask(hash, shift);
-  Value *newShift = (Value *)integerValue(shift + 5);
 
   Value *subNode = node->array[idx];
   if (subNode == (Value *)0) {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
-    dec_and_free(arg3, 1);
-    dec_and_free(arg4, 1);
-    dec_and_free(newShift, 1);
     return(notFound);
   } else {
     incRef(subNode, 1);
     dec_and_free(arg0, 1);
-    dec_and_free(arg4, 1);
-    return(get((List *)0, subNode, key, notFound, arg3, newShift));
+    return(get((List *)0, subNode, key, notFound, hash, shift + 5));
   }
 }
 
@@ -4149,23 +4032,17 @@ Value *collisionSeq(Value *arg0, Value *arg1) {
   return((Value *)seq);
 }
 
-Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
+Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Value *key = arg1;
-  int64_t hash = ((Integer *)arg2)->numVal;
-  int shift = (int)((Integer *)arg3)->numVal;
   HashCollisionNode *newNode;
   int itemCount = node->count / 2;
 
   if(itemCount == 1) {
     if(equal(key, incRef(node->array[0], 1))) {
       dec_and_free(arg0, 1);
-      dec_and_free(arg2, 1);
-      dec_and_free(arg3, 1);
       return((Value *)&emptyBMI);
     } else {
-      dec_and_free(arg2, 1);
-      dec_and_free(arg3, 1);
       return(arg0);
     }
   } else {
@@ -4189,15 +4066,13 @@ Value *collisionDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
       }
       dec_and_free(arg0, 1);
       dec_and_free(arg1, 1);
-      dec_and_free(arg2, 1);
-      dec_and_free(arg3, 1);
       return((Value *)newNode);
     }
   }
   return(arg0);
 }
 
-Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *arg4) {
+Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   for (int i = 0; i < node->count / 2; i++) {
     if (node->array[2 * i] != (Value *)0 && equal(incRef(arg1, 1),
@@ -4207,24 +4082,18 @@ Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, Value *arg3, Value *a
 	dec_and_free(arg0, 1);
 	dec_and_free(arg1, 1);
 	dec_and_free(arg2, 1);
-	dec_and_free(arg3, 1);
-	dec_and_free(arg4, 1);
 	return(node->array[2 * i + 1]);
       } else {
 fprintf(stderr, "Trying to get an invalid value from a CollisionNode of a hash-map. This should never happen!!!");
 abort();
 	dec_and_free(arg0, 1);
 	dec_and_free(arg1, 1);
-	dec_and_free(arg3, 1);
-	dec_and_free(arg4, 1);
 	return(arg2);
       }
     }
   }
   dec_and_free(arg0, 1);
   dec_and_free(arg1, 1);
-  dec_and_free(arg3, 1);
-  dec_and_free(arg4, 1);
   return(arg2);
 }
 
@@ -4241,26 +4110,20 @@ Value *arrayNodeSeq(Value *arg0, Value *arg1) {
   return((Value *)seq);
 }
 
-Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
+Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
-  int64_t hash = ((Integer *)arg2)->numVal;
-  int shift = (int)((Integer *)arg3)->numVal;
   int idx = mask(hash, shift);
-  Value *newShift = (Value *)integerValue(shift + 5);
   ArrayNode *newNode;
 
   Value *subNode = node->array[idx];
   if (subNode == (Value *)0) {
     // do nothing
     dec_and_free(arg1, 1);
-    dec_and_free(arg2, 1);
-    dec_and_free(arg3, 1);
-    dec_and_free(newShift, 1);
     return(arg0);
   } else {
-      Value *hash = baseSha1(incRef(key, 1));
-      Value *n = dissoc((List *)0, incRef(subNode, 1), key, hash, newShift);
+      int64_t hash = nakedSha1(incRef(key, 1));
+      Value *n = baseDissoc(incRef(subNode, 1), key, hash, shift + 5);
       newNode = (ArrayNode *)malloc_arrayNode();
       for (int i = 0; i < ARRAY_NODE_LEN; i++) {
         if (i != idx && node->array[i] != (Value *)0) {
@@ -4270,13 +4133,11 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, Value *arg2, Value *arg3) {
       }
       newNode->array[idx] = n;
       dec_and_free(arg0, 1);
-      dec_and_free(arg2, 1);
-      dec_and_free(arg3, 1);
   }
   return((Value *)newNode);
 }
 
-Value *get(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
+Value *get(List *closures, Value *node, Value *k, Value *v, int64_t hash, int shift) {
   switch(node->type) {
   case BitmapIndexedType:
     return(bmiGet(node, k, v, hash, shift));
@@ -4290,7 +4151,21 @@ Value *get(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *
   }
 }
 
-Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
+Value *baseDissoc(Value *node, Value *k, int64_t hash, int shift) {
+  switch(node->type) {
+  case BitmapIndexedType:
+    return(bmiDissoc(node, k, hash, shift));
+  case ArrayNodeType:
+    return(arrayNodeDissoc(node, k, hash, shift));
+  case HashCollisionNodeType:
+    return(collisionDissoc(node, k, hash, shift));
+  default:
+    fprintf(stderr, "Can't dissoc from that kind of node\n");
+    abort();
+  }
+}
+
+Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, int64_t hash, int shift) {
   switch(node->type) {
   case BitmapIndexedType:
     return(bmiCopyAssoc(node, k, v, hash, shift));
@@ -4304,7 +4179,7 @@ Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, V
   }
 }
 
-Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash, Value *shift) {
+Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, int64_t hash, int shift) {
   switch(node->type) {
   case BitmapIndexedType:
     return(bmiMutateAssoc(node, k, v, hash, shift));
@@ -4320,9 +4195,8 @@ Value *mutateAssoc(List *closures, Value *node, Value *k, Value *v, Value *hash,
 }
 
 Value *hashMapGet(Value *arg0, Value *arg1) {
-  Value *hash = baseSha1(incRef(arg1, 1));
-  Value *shift = const0Ptr;
-  Value *found = get((List *)0, arg0, arg1, notFoundPtr, hash, shift);
+  int64_t hash = nakedSha1(incRef(arg1, 1));
+  Value *found = get((List *)0, arg0, arg1, notFoundPtr, hash, 0);
   if (found == notFoundPtr) {
     return(nothing);
   } else {
@@ -4332,9 +4206,8 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
 
 // used for static encoding hash maps and other things
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
-  Value *hash = baseSha1(incRef(arg1, 1));
-  Value *shift = const0Ptr;
-  return(mutateAssoc((List *)0, arg0, arg1, arg2, hash, shift));
+  int64_t hash = nakedSha1(incRef(arg1, 1));
+  return(mutateAssoc((List *)0, arg0, arg1, arg2, hash, 0));
 }
 
 Value *hashMapVec(Value *m) {
