@@ -317,3 +317,4 @@ Value *vectGet(Vector *vect, unsigned index);
 Value *hashMapVec(Value *m);
 void incTypeMalloc(TYPE_SIZE type, int delta);
 void incTypeFree(TYPE_SIZE type, int delta);
+Value *hashVec(Value* n, Value *s);

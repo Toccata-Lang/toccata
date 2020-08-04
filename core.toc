@@ -20,22 +20,12 @@
 
 ;; protocol for implementing the hash map type
 (defprotocol HashMapNode
-  (hash-seq [m]
-    ;; produces a list of key/value pairs from a hash map
-    (assert-result l (instance? List l))
-    (hash-seq m empty-list))
-
   (hash-seq [m s]
     (assert (instance? List s))
     (assert-result l (instance? List l)))
 
-  (hash-vec [m]
-    ;; produces a list of key/value pairs from a hash map
-    (assert-result v (instance? Vector v))
-    (hash-vec m empty-vector))
-
-  (hash-vec [m s]
-    (assert (instance? Vector s))
+  (hash-vec [m v]
+    (assert (instance? Vector v))
     (assert-result v (instance? Vector v)))
 
   (get* [m k v hash shift]
@@ -992,7 +982,7 @@
 
 (defn interpose [coll sep]
   ;; build list by inserting `sep` between each of the elements of `coll`
-  (rest (flat-map (seq coll) (fn [x] (list sep x)))))
+  (rest (flat-map (seq coll) (partial list sep))))
 
 (defn print [& vs]
   (-> vs
@@ -1723,14 +1713,6 @@ return(integerValue(strSha1(s_0)));")))
   dec_and_free(shift_4, 1);
   return(bmiGet(node_0, k_1, v_2, hash, shift));"))
 
-  Seqable
-  (vec [m]
-    (inline C Vector "
-  Value *v = hashMapVec(m_0);
-  dec_and_free(m_0, 1);
-  return(v);
-  "))
-
   Collection
   (count [x]
     (inline C Integer "return(bmiCount(x_0));")))
@@ -1742,15 +1724,6 @@ return(integerValue(strSha1(s_0)));")))
   Collection
   (count [x]
     (inline C Integer "return(arrayNodeCount(x_0));"))
-
-  Seqable
-  (vec [m]
-    ;; TODO: test this
-    (inline C Vector "
-  Value *v = hashMapVec(m_0);
-  dec_and_free(m_0, 1);
-  return(v);
-  "))
 
   HashMapNode
   (hash-seq [m s]
@@ -1788,15 +1761,6 @@ return(integerValue(strSha1(s_0)));")))
   (count [x]
     (inline C Integer "return(collisionCount(x_0));"))
 
-  Seqable
-  (vec [m]
-    ;; TODO: test this
-    (inline C Vector "
-  Value *v = hashMapVec(m_0);
-  dec_and_free(m_0, 1);
-  return(v);
-  "))
-
   HashMapNode
   (hash-seq [m s]
     (inline C List "return(collisionSeq(m_0, s_1));"))
@@ -1828,6 +1792,7 @@ return(integerValue(strSha1(s_0)));")))
 (defn dissoc [m & ks]
   ;; Create a new copy of `m` without the associations of `ks`
   (reduce ks m (fn [m k]
+                 ;; TODO: make inline fn that uses nakedSha1
                  (dissoc* m k (sha1 k) 0))))
 
 (defn assoc-all [m & kv-pairs]
@@ -1858,9 +1823,9 @@ return(integerValue(strSha1(s_0)));")))
   (comp* [mval mvals]
     (reduce mvals mval
             (fn [acc mval]
-              (reduce (seq mval) acc
-                      (fn [acc pair]
-                        (apply assoc (list* acc pair)))))))
+              (reduce (vec mval) acc
+                      (fn [acc [k v]]
+                        (assoc acc k v))))))
 
   Collection
   (empty? [x]
@@ -1869,12 +1834,11 @@ return(integerValue(strSha1(s_0)));")))
 
   Stringable
   (string-list [n]
-    (let [a-list (seq n)]
-      (let [kv-strs (map a-list (fn [[k v]]
-                                  (comp (string-list k) (list " ") (string-list v))))]
-        (comp (list "{")
-              (flatten (interpose kv-strs (list ", ")))
-              (list "}")))))
+    (let [kv-strs (map (seq n) (fn [[k v]]
+                                 (comp (string-list k) (list " ") (string-list v))))]
+      (comp (list "{")
+            (flatten (interpose kv-strs (list ", ")))
+            (list "}"))))
 
   (show* [m indent]
     (either (map (empty? m) string-list)
@@ -1888,8 +1852,7 @@ return(integerValue(strSha1(s_0)));")))
   Hashable
   (sha1-update [x ctxt]
     (sha1-update-type x ctxt)
-    ;; TODO: can you get anymore stupid
-    (-> (vec (seq x))
+    (-> (vec x)
         (sort (fn [[k v]] k))
         (reduce ctxt (fn [ctxt x]
                        (sha1-update x ctxt)))))
@@ -1899,11 +1862,13 @@ return(integerValue(strSha1(s_0)));")))
       (sha1-update v ctxt)
       (sha1-finalize ctxt)))
 
-
-  ;; TODO: remove this impl
   Seqable
   (seq [n]
+    ;; TODO: remove this impl
     (hash-seq n empty-list))
+
+  (vec [m]
+    (hash-vec m []))
 
   Eq
   (=* [x y]
@@ -1913,6 +1878,10 @@ return(integerValue(strSha1(s_0)));")))
                           (flat-map (get y k)
                                     (partial = v))))
          (maybe x)))
+
+  HashMapNode
+  (hash-vec [m s]
+    (inline C Vector "return(hashVec(m_0, s_1));"))
 
   Associative
   (assoc [m k v]
@@ -1986,6 +1955,7 @@ return(integerValue(strSha1(s_0)));")))
             new-m (update-in sub-m (rest path) f)]
         (assoc m k new-m))))
 
+;; TODO: make this a protocol fn and implement for getters automatically
 (defn update [m key f]
   (map (get m key)
        (fn [v]
@@ -2256,8 +2226,7 @@ return(integerValue(strSha1(s_0)));")))
   Hashable
   (sha1-update [x ctxt]
     (sha1-update-type x ctxt)
-    ;; TODO: can you get anymore stupid
-    (-> (vec (seq set-map))
+    (-> (vec set-map)
         (sort (fn [[k v]] k))
         (reduce ctxt (fn [ctxt x]
                        (sha1-update x ctxt)))))

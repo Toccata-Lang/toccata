@@ -460,6 +460,7 @@ List *malloc_list() {
     if (newList == (List *)0) {
       List *listStructs = (List *)my_malloc(sizeof(List) * 100);
 #ifdef CHECK_MEM_LEAK
+      incTypeMalloc(TypeCount, 1);
       __atomic_fetch_add(&malloc_count, 99, __ATOMIC_ACQ_REL);
 #endif
       for (int i = 1; i < 99; i++) {
@@ -477,7 +478,7 @@ List *malloc_list() {
     freeLists.head = freeLists.head->next;
   }
 
-  // incTypeMalloc(ListType, 1);
+  incTypeMalloc(ListType, 1);
   newList->type = ListType;
   newList->refs = refsInit;
   newList->hashVal = 0;
@@ -3518,6 +3519,25 @@ Value *bmiHashSeq(Value *arg0, Value *arg1) {
   return((Value *)seq);
 }
 
+Value *bmiHashVec(Value *arg0, Value *arg1) {
+  BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
+  int cnt = __builtin_popcount(node->bitmap);
+  Vector *vec = (Vector *)arg1;
+  for (int i = 0; i < cnt; i++) {
+    if (node->array[2 * i] == (Value *)0) {
+      vec = (Vector *)hashVec(incRef(node->array[2 * i + 1], 1), (Value *)vec);
+    } else {
+      incRef(node->array[2 * i], 1);
+      incRef(node->array[2 * i + 1], 1);
+      Vector *pair = mutateVectConj(empty_vect, node->array[2 * i]);
+      pair = mutateVectConj(pair, node->array[2 * i + 1]);
+      vec = mutateVectConj(vec, (Value *)pair);
+    }
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)vec);
+}
+
 Value *bmiCount(Value *arg0) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int cnt = __builtin_popcount(((BitmapIndexedNode *)arg0)->bitmap);
@@ -4032,6 +4052,24 @@ Value *collisionSeq(Value *arg0, Value *arg1) {
   return((Value *)seq);
 }
 
+Value *collisionVec(Value *arg0, Value *arg1) {
+  HashCollisionNode *node = (HashCollisionNode *)arg0;
+  Vector *vec = (Vector *)arg1;
+  // TODO: remove
+fprintf(stderr, "collisionNodeVec\n");
+  for (int i = 0; i < node->count / 2; i++) {
+    if (node->array[2 * i] != (Value *)0 && node->array[2 * i + 1] != (Value *)0) {
+      incRef(node->array[2 * i], 1);
+      incRef(node->array[2 * i + 1], 1);
+      Vector *pair = mutateVectConj(empty_vect, node->array[2 * i]);
+      pair = mutateVectConj(pair, node->array[2 * i + 1]);
+      vec = mutateVectConj(vec, (Value *)pair);
+    }
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)vec);
+}
+
 Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Value *key = arg1;
@@ -4110,6 +4148,19 @@ Value *arrayNodeSeq(Value *arg0, Value *arg1) {
   return((Value *)seq);
 }
 
+Value *arrayNodeVec(Value *arg0, Value *arg1) {
+  ArrayNode *node = (ArrayNode *)arg0;
+  Vector *vec = (Vector *)arg1;
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+    if (node->array[i] != (Value *)0) {
+      incRef(node->array[i], 1);
+      vec = (Vector *)hashVec(node->array[i], (Value *)vec);
+    }
+  }
+  dec_and_free(arg0, 1);
+  return((Value *)vec);
+}
+
 Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
@@ -4165,6 +4216,20 @@ Value *baseDissoc(Value *node, Value *k, int64_t hash, int shift) {
   }
 }
 
+Value *hashVec(Value *node, Value *vec) {
+  switch(node->type) {
+  case BitmapIndexedType:
+    return(bmiHashVec(node, vec));
+  case ArrayNodeType:
+    return(arrayNodeVec(node, vec));
+  case HashCollisionNodeType:
+    return(collisionVec(node, vec));
+  default:
+    fprintf(stderr, "Can't assoc into that kind of node\n");
+    abort();
+  }
+}
+
 Value *copyAssoc(List *closures, Value *node, Value *k, Value *v, int64_t hash, int shift) {
   switch(node->type) {
   case BitmapIndexedType:
@@ -4208,63 +4273,6 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
   int64_t hash = nakedSha1(incRef(arg1, 1));
   return(mutateAssoc((List *)0, arg0, arg1, arg2, hash, 0));
-}
-
-Value *hashMapVec(Value *m) {
-  int cnt;
-  Value **arr;
-
-  if (m->type == BitmapIndexedType) {
-    cnt = __builtin_popcount(((BitmapIndexedNode *)m)->bitmap);
-    arr = ((BitmapIndexedNode *)m)->array;
-  } else if (m->type == ArrayNodeType) {
-    cnt = ARRAY_NODE_LEN;
-    arr = ((ArrayNode *)m)->array;
-  } else if (m->type == HashCollisionNodeType) {
-    cnt = ((HashCollisionNode *)m)->count;
-    arr = ((HashCollisionNode *)m)->array;
-  } else {
-    fprintf(stderr, "*** Invalid (Value *) passed to 'hashMapVec'\n");
-    abort();
-  }
-  Vector *v = empty_vect;
-  // TODO: this is totally wrong, Replace with design of hashSeq
-  for (int i = 0; i < cnt * 2; i += 2) {
-    Vector *pair = empty_vect;
-    Value *val = arr[i];
-    incRef(val, 1);
-    pair = mutateVectConj(pair, val);
-    val = arr[i + 1];
-    incRef(val, 1);
-    pair = mutateVectConj(pair, val);
-    v = mutateVectConj(v, (Value *)pair);
-
-    /*
-    BMI
-    if (node->array[2 * i] == (Value *)0) {
-      seq = (List *)hashSeq((List *)0, incRef(node->array[2 * i + 1], 1), (Value *)seq);
-    } else {
-      List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
-      incRef(node->array[2 * i], 1);
-      incRef(node->array[2 * i + 1], 1);
-      seq = listCons((Value *)pair, seq);
-    }
-
-    ArrayNode
-    if (node->array[i] != (Value *)0) {
-      incRef(node->array[i], 1);
-      seq = (List *)hashSeq((List *)0, node->array[i], (Value *)seq);
-    }
-
-    if (node->array[2 * i] != (Value *)0 && node->array[2 * i + 1] != (Value *)0) {
-      List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
-      incRef(node->array[2 * i], 1);
-      incRef(node->array[2 * i + 1], 1);
-      seq = listCons((Value *)pair, seq);
-    }
-    // */
-  }
-  return((Value *)v);
 }
 
 Value *dynamicCall1Arg(Value *f, Value *arg) {
