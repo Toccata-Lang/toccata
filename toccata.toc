@@ -77,14 +77,14 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "\n")
+(def line-sep "")
 
 (defn line-marker [file-name line-number marker]
   (cond (or (= "" file-name)
             (and (= 'core file-name)
                  (= 0 line-number)))
         "\n#\n"
-        ["\n" marker "\n// #line "
+        ["\n" marker "\n#line "
          (str line-number) " " "\""
          (cond (= 'core file-name)
                path-to-core
@@ -875,8 +875,16 @@
   (sm/get-in-val [.fn-context .subs] {}))
 
 (defn get-constraint [var]
+  ;; TODO: this doesn't get promoted up through append-constraint it seems
+  (assert (instance? String var))
+
   (sm/new-sm (fn [s]
                (assert (instance? GlobalContext s))
+               ;; TODO: this doesn't get promoted up through append-constraint it seems
+               ;; assuming the one above is not there
+               ;; and it should come from update-var anyway
+               (assert (instance? String var))
+
                (-> (either (-> s
                                .fn-context
                                .subs
@@ -2686,15 +2694,14 @@
               [line "Value *" result-sym " = (Value *)maybe((Vector *)0, (Value *)0, " (.c-var arg) ");" line-sep]
               {} file-name line-number))))
 
-(def conj-like #{'conj 'store 'mutate-vect-conj})
+(def conj-like #{'conj 'mutate-vect-conj})
 
 (defn constrain-collection [coll-var v-var result-var file-name line-number]
   (for [coll-const (get-constraint coll-var)
         :let [coll-type (c/extract-collection-of coll-const)
               contents-type (c/extract-contents-constraint coll-type)]
         _ (append-constraint v-var contents-type file-name line-number)
-        _ (append-constraint result-var coll-type
-                                 file-name line-number)]
+        _ (append-constraint result-var coll-type file-name line-number)]
     '_))
 
 (defn add-hash-map-constraints [ast result args]
@@ -2728,6 +2735,19 @@
                                                                   empty-list nothing result)
                                                file-name line-number)]
                       '_)))
+                (for [_ (= target 'store)
+                      coll (first args)
+                      v (second args)]
+                  (for [coll-const (get-constraint (.c-var coll))
+                        v-const (get-constraint (.c-var v))
+                        :let [coll-type (c/extract-collection-of coll-const)
+                              contents-type (c/extract-contents-constraint coll-type)]
+                        _ (append-constraint (.c-var v) contents-type file-name line-number)
+                        _ (append-constraint result
+                                             (c/intersect (c/CollectionOf coll-type empty-list nothing "")
+                                                          maybe-constraint)
+                                             file-name line-number)]
+                    '_))
                 (for [_ (conj-like target)
                       coll (first args)
                       v (second args)]
@@ -2832,7 +2852,25 @@
                                  (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
                          check-args (constrain-args arg-vars (.param-constraints impl-info)
                                                     file-name line-number)
-                         _ (constrain-var file-name line-number result-sym (.result-constraint impl-info))
+
+                         _ (comp (cond (or (= (.call-target ast) 'seq)
+                                           (= (.call-target ast) 'vec))
+                                       (let [[arg-var] arg-vars
+                                             coll-c (cond (= (.call-target ast) 'seq)
+                                                          list-constraint
+
+                                                          vect-constraint)]
+                                         (for [arg-c (get-constraint (.c-var arg-var))
+                                               :let [result-c (c/set-type arg-c coll-c)
+                                                     result-c (cond (= result-c c/top-type)
+                                                                    (.result-constraint impl-info)
+
+                                                                    result-c)]
+                                               _ (constrain-var file-name line-number result-sym result-c)]
+                                           '_))
+                                       (constrain-var file-name line-number result-sym
+                                                      (.result-constraint impl-info)))
+                                 (constrain-var file-name line-number result-sym (.result-constraint impl-info)))
                          _ (sm/traverse (zip-lists (map arg-vars .c-var)
                                                    (c/extract-items-constraints (.param-constraints impl-info)))
                                         (fn [[var constraint]]
@@ -2863,10 +2901,10 @@
 (defn inline-wrap-and-apply [name args]
   (for [dispatch-ast (first args)
         wrapped (second args)]
-    (for [;; _ (debug 'inlining (ast/file-name name) (ast/line-number name) "\n" (ast/call-ast name args))
-          dispatch-val (emit dispatch-ast)
+    (for [dispatch-val (emit dispatch-ast)
           dispatch-type (var-type-num (.c-var dispatch-val))
           :when-not (= c/UnknownType dispatch-type)
+          ;; _ (debug 'inlining (ast/file-name name) (ast/line-number name) "\n" (ast/call-ast name args))
           impl-ast (map (get-proto-impl (ast/tag 'Container) name (count args) dispatch-type)
                         .ast)
           :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
@@ -2881,6 +2919,7 @@
     (for [;; _ (debug 'inlining (ast/file-name name) (ast/line-number name) "\n" (ast/call-ast name args))
           dispatch-val (emit dispatch-ast)
           dispatch-type (var-type-num (.c-var dispatch-val))
+          ;; TODO: if this test fails, we have to emit the dispatch-ast twice
           :when-not (= c/UnknownType dispatch-type)
           impl-ast (map (get-proto-impl (ast/tag 'Container) name 2 dispatch-type)
                         .ast)
@@ -2934,14 +2973,13 @@
         more-args (ast/tag 'more-args file line)
         fn-sym (ast/tag (str "partial_" (either (instance? Tagged call-target)
                                                 'anon)))]
-    (-> (ast/fn-ast
-         (maybe fn-sym)
-         [(ast/fn-arity-ast fn-sym ""
-                            (ast/params [] (maybe more-args)) ""
-                            [(ast/call-ast (ast/tag 'apply file line)
-                                           [call-target (ast/call-ast (ast/tag 'list* file line)
-                                                                      (comp (vec args) [more-args]))])]
-                            c/empty-items-constraint c/top-type)])
+    (-> (ast/fn-ast (maybe fn-sym)
+                    [(ast/fn-arity-ast fn-sym ""
+                                       (ast/params [] (maybe more-args)) ""
+                                       [(ast/call-ast (ast/tag 'apply file line)
+                                                      [call-target (ast/call-ast (ast/tag 'list* file line)
+                                                                                 (comp (vec args) [more-args]))])]
+                                       c/empty-items-constraint c/top-type)])
         sm/state-maybe
         maybe)))
 
@@ -3264,10 +3302,9 @@
                                     [(.param-constraints arity-info)
                                      (.result-constraint arity-info)])]
     (for [result-sym (genlocal "rslt")
-          ;; _ (comp (for [_ (sm/when (= (str (.call-target ast)) "add-numbers"))
+          ;; _ (comp (for [_ (sm/when (= (.call-target ast) 'store))
           ;;               _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
-          ;;                        (.param-constraints arity-info) "\n"
-          ;;                        result-sym (.result-constraint arity-info))
+          ;;                        param-cs "\n" result-sym result-c)
           ;;               _ (debug 'arg-vars arg-vars)
           ;;               _ (sm/traverse arg-vars (fn [v]
           ;;                                         (flat-map (get-constraint (.c-var v))
@@ -3275,8 +3312,9 @@
           ;;                                                     (debug 'v (.c-var v) 'c c)))))]
           ;;           '_)
           ;;         sm-nop)
-          _ (constrain-var file-name line-number result-sym result-c)
           check-args (constrain-args arg-vars param-cs file-name line-number)
+          _ (constrain-args arg-vars param-cs file-name line-number)
+          _ (constrain-var file-name line-number result-sym result-c)
 
           _ (update-call-site-count (.c-fn arity-info))
           line (line-macro ast "// static-fixed")
@@ -3308,6 +3346,21 @@
           check-args (constrain-args arg-vars (.param-constraints arity-info)
                                      file-name line-number)
           _ (constrain-var file-name line-number (.c-var args-list) (.param-constraints arity-info))
+
+          _ (comp (cond (= (.call-target ast) 'list*)
+                        (for [arg-cs (map (get-constraint (.c-var args-list))
+                                          c/extract-items-constraints)
+                              tail-c (sm/when (last arg-cs))
+                              _ (constrain-var file-name line-number result-sym
+                                               (c/ItemsConstraint (butlast arg-cs)
+                                                                  tail-c
+                                                                  (list [file-name line-number])
+                                                                  nothing result-sym))]
+                          '_)
+
+                        sm-nop)
+                  sm-nop)
+
           line (line-macro ast "// static-variadic")]
       (c-init result-sym
               [(.init args-list)
@@ -6548,7 +6601,6 @@
         values-prom (promise)
         _ (send rt-exprs (partial deliver values-prom))
         values (extract values-prom)]
-    (print-err 'got-values)
     (write-strings decls)
     (write-strings ["\n#\n"
                     "\nint main (int argc, char **argv) {\n"
@@ -6595,8 +6647,7 @@
                     "cleaningUp = 1;\n"
                     "mainThreadDone = 1;\n"
                     "waitForWorkers();\n"
-                    (map-modules (for [expr (sm/get-in-val [.module .values symbols-sym])
-                                       _ (debug 'symbols (.c-var expr))]
+                    (map-modules (for [expr (sm/get-in-val [.module .values symbols-sym])]
                                    (free-global (c-init (.c-var expr) [] {} "" 0))))
                     (map-modules (sm/get-in-val [.setup .cleanup]))
                     (map values free-global)
@@ -6614,8 +6665,7 @@
 
 (defn new-module [context module-name module-index]
   (update-context context
-                  (for [_ (debug 'new-module module-index module-name)
-                        _ (sm/set-val .module (Module module-name module-index {} {} {} {} {}))
+                  (for [_ (sm/set-val .module (Module module-name module-index {} {} {} {} {}))
                         protos-var (global-var "protos_")
                         _ (new-module-def protocols-sym (c-code protos-var [] {} c/top-type))
                         symbols-var (global-var "symbols_")
@@ -6801,7 +6851,6 @@
                                                         (.init (apply comp mod-init)))
                                                 "if(" (.c-var symbols-var) "->refs > 0)\n"
                                                 (.c-var symbols-var) "->refs = -1;\n"
-                                                "fprintf(stderr, \"inited " mod-index "\\n\");\n"
                                                 inited-var "= 1;\n}}\n"])
 
                               _ (write-strings ["void cleanup_module_" (str mod-index) "() {\n"
@@ -6809,8 +6858,7 @@
                                                 "}\n"])]
                         _ (sm/assoc-in-val [.setup .cleanup] ["cleanup_module_" (str mod-index) "();\n"])
                         _ (sm/update-val .loaded (fn [loaded-prom]
-                                                   (deliver loaded-prom module)))
-                        _ (debug 'done-with file-name)]
+                                                   (deliver loaded-prom module)))]
                     '_)))
 
 (defn init-core-module [context]
@@ -6894,7 +6942,6 @@
                   (send ast-emitter
                         (fn [context]
                           (extract core-prom)
-                          (safe-pr 'emitting file-name)
                           context)))
             (future (fn []
                       (either (map (fio/file-in (cond (= file-name 'core)
@@ -6902,14 +6949,12 @@
                                                       file-name))
                                    (fn [file-in]
                                      (do
-                                       (safe-pr 'analyzing file-name)
                                        ((analyze-forms ast-emitter)
                                         {'file-name file-name
                                          'root-directory root-dir
                                          'project-directory proj-dir
                                          'line-number 1}
                                         (lazy-list file-in))
-                                       (safe-pr 'analyzed file-name)
                                        (and (= file-name 'core)
                                             (maybe (send ast-emitter fixup-native-symbols)))
                                        (send ast-emitter
@@ -7174,10 +7219,7 @@
                 (do
                   (print-err "Could not find " (str "'" file-name "'"))
                   (abort)))
-
             (extract waiter)
-            (safe-pr 'emitting-main)
-
             (emit-main (extract waiter))
             ;; (send ast-emitter (fn [ctxt]
             ;;                     (map (get-in ctxt ['_ .constants .other])
@@ -7189,8 +7231,6 @@
             ;;                            (print-err "number of types" type-count)))))
             ;; wait for agents to clear their queues
             (map-modules sm-nop)
-            (print-err 'all-emitters-done)
             (let [waiter (promise)]
               (send string-writer (partial deliver waiter))
-              (extract waiter))
-            (print-err 'totally-done))))
+              (extract waiter)))))

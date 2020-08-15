@@ -1266,6 +1266,7 @@ void freeAll() {
   fprintf(stderr, "malloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
           mallocs, frees, mallocs - frees);
 
+/*
   int64_t totalMallocs = 0;
   int64_t totalFrees = 0;
   for (int i = 0; i < 20; i++) {
@@ -1280,6 +1281,8 @@ void freeAll() {
   fprintf(stderr, "malloc diff %ld\n", mallocs - totalMallocs);
   fprintf(stderr, "\ntotalFrees %ld\n", totalFrees);
   fprintf(stderr, "free diff %ld\n", frees - totalFrees);
+// */
+
 #endif
 // */
 }
