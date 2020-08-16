@@ -5012,32 +5012,21 @@
         line-number (ast/line-number clauses)]
     (either (map (first clauses)
                  (fn [clause]
-                   (for [subs (get-subs)
-                         expr (emit-cond-clause clause)
+                   (for [expr (emit-cond-clause clause)
                          final-subs (get-subs)
-                         _ (-> expr
-                               .refs-map
-                               (dissoc (.c-var expr))
-                               keys
-                               (sm/traverse (fn [var]
-                                              (either (map (get subs var)
-                                                           (partial set-constraint var))
-                                                      sm-nop))))
-
-                         exprs (sm/traverse (rest clauses)
-                                            (fn [clause]
-                                              (for [expr (emit-cond-clause clause)
-                                                    _ (-> expr
-                                                          .refs-map
-                                                          (dissoc (.c-var expr))
-                                                          keys
-                                                          (sm/traverse (fn [var]
-                                                                         (either (map (get subs var)
-                                                                                      (partial set-constraint var))
-                                                                                 sm-nop))))]
-                                                expr)))
-                         :let [exprs (comp [expr] exprs)]
+                         expr-cs (sm/traverse (rest clauses)
+                                              (fn [clause]
+                                                (for [expr (emit-cond-clause clause)
+                                                      constraint (get-constraint (.c-var expr))]
+                                                  [constraint expr])))
                          _ (sm/assoc-in-val [.fn-context .subs] final-subs)
+                         exprs (sm/traverse expr-cs
+                                            (fn [[c expr]]
+                                              (map (constrain-var file-name line-number (.c-var expr) c)
+                                                   (fn [_]
+                                                     expr))))
+                         :let [exprs (comp [expr] exprs)]
+
                          last-expr (sm/when (last exprs))
                          _ (propogate-constraint (.c-var last-expr) result-var
                                                  identity file-name line-number)]
@@ -5128,42 +5117,18 @@
         line-number (ast/line-number clauses)]
     (either (map (first clauses)
                  (fn [clause]
-                   (for [subs (get-subs)
-                         expr (emit-cond-clause clause)
+                   (for [expr (emit-cond-clause clause)
                          final-subs (get-subs)
-                         _ (-> expr
-                               .refs-map
-                               (dissoc (.c-var expr))
-                               keys
-                               (sm/traverse (fn [var]
-                                              (either (map (get subs var)
-                                                           (partial set-constraint var))
-                                                      sm-nop))))
 
                          expr-cs (sm/traverse (rest clauses)
                                               (fn [clause]
                                                 (for [expr (emit-cond-clause clause)
-                                                      constraint (get-constraint (.c-var expr))
-                                                      _ (-> expr
-                                                            .refs-map
-                                                            (dissoc (.c-var expr))
-                                                            keys
-                                                            (sm/traverse
-                                                             (fn [var]
-                                                               (either (map (get subs var)
-                                                                            (partial set-constraint var))
-                                                                       sm-nop))))]
+                                                      constraint (get-constraint (.c-var expr))]
                                                   [constraint expr])))
                          _ (sm/assoc-in-val [.fn-context .subs] final-subs)
-                         ;; TODO: do I really need to do this?
-                         ;; appears so, but see if there's a different way
                          exprs (sm/traverse expr-cs
                                             (fn [[c expr]]
-                                              (map (constrain-var
-                                                    file-name line-number (.c-var expr)
-                                                    (either (c/compose-constraints file-name line-number
-                                                                                   c maybe-constraint)
-                                                            (abort)))
+                                              (map (constrain-var file-name line-number (.c-var expr) c)
                                                    (fn [_]
                                                      expr))))
                          :let [result-c (-> expr-cs
@@ -5367,31 +5332,48 @@
   (emit-cond-clause [ast]
     (let [file-name (ast/file-name (.value ast))
           line-number (ast/line-number (.value ast))]
-      (for [cond-val (emit-cond-clause (.conditional ast))
+      (for [init-subs (get-subs)
+            cond-val (emit-cond-clause (.conditional ast))
             final-subs (get-subs)
             syms get-syms
             value (emit (.value ast))
             _ (sm/assoc-in-val [.fn-context .subs] final-subs)
             _ (set-syms syms)
             result-var (genlocal "cvRslt")
-            do-value (genlocal "doValue")]
-        (let [refs-map (-> (merge-with + (.refs-map cond-val) (.refs-map value))
-                           (filter-vals (partial < 0)))]
-          (c-init result-var
-                  [(.init cond-val)
-                   "Value *" result-var " = " (.c-var cond-val) ";" line-sep
-                   "int " do-value " = !isNothing(" result-var ",\"\",0);" line-sep
-                   "if (" do-value ") {" line-sep
-                   "dec_and_free(" result-var ", 1);" line-sep
-                   (.init value)
-                   result-var " = " (.c-var value) ";" line-sep
-                   "} else {" line-sep
-                   (map (vec (.refs-map value)) (fn [[c-sym remaining]]
-                                                  (either (and (= 0 remaining)
-                                                               (maybe ""))
-                                                          ["dec_and_free(" c-sym ", " remaining ");" line-sep])))
-                   "}" line-sep "if (" do-value ") {" line-sep]
-                  refs-map file-name line-number)))))
+            do-value (genlocal "doValue")
+            :let [refs-map (-> (merge-with + (.refs-map cond-val) (.refs-map value))
+                               (filter-vals (partial < 0)))]
+            rt-checks (sm/traverse (keys refs-map)
+                                   (fn [var]
+                                     (let [init-c (either (get init-subs var)
+                                                          c/top-type)
+                                           final-c (either (get final-subs var)
+                                                           c/top-type)]
+                                       (cond (c/satisfied-by final-c init-c)
+                                             (sm/state-maybe "")
+
+                                             (for [checked-var (genlocal 'checked)]
+                                               (let [rt-check (runtime-check final-c init-c
+                                                                             file-name line-number checked-var)]
+                                                 (either (empty? rt-check)
+                                                         ["int " checked-var " = 1;" line-sep rt-check line-sep
+                                                          "if(!" checked-var "){abort();}"])))))))]
+        (c-init result-var
+                [rt-checks
+                 (.init cond-val)
+                 "Value *" result-var " = " (.c-var cond-val) ";" line-sep
+                 "int " do-value " = !isNothing(" result-var ",\"\",0);" line-sep
+                 "if (" do-value ") {" line-sep
+                 "dec_and_free(" result-var ", 1);" line-sep
+                 (.init value)
+                 result-var " = " (.c-var value) ";" line-sep
+                 "} else {" line-sep
+                 (map (vec (.refs-map value)) (fn [[c-sym remaining]]
+                                                (either (and (= 0 remaining)
+                                                             (maybe ""))
+                                                        ["dec_and_free(" c-sym ", " remaining ");" line-sep])))
+                 "}" line-sep "if (" do-value ") {" line-sep]
+                refs-map file-name line-number))))
 
   Emitter
   (replace-syms [ast subs]
@@ -5407,18 +5389,15 @@
     (let [[clause & clauses] (.conditionals ast)
           file-name (ast/file-name clause)
           line-number (ast/line-number clause)]
-      (for [subs (get-subs)
-            expr (emit-cond-clause clause)
+      (for [expr (emit-cond-clause clause)
             first-const (get-constraint (.c-var expr))
             final-subs (get-subs)
 
             expr-cs (sm/traverse clauses
                                  (fn [clause]
-                                   (for [_ (sm/assoc-in-val [.fn-context .subs] subs)
-                                         expr (emit-cond-clause clause)
+                                   (for [expr (emit-cond-clause clause)
                                          constraint (get-constraint (.c-var expr))]
                                      [constraint expr])))
-            _ (sm/assoc-in-val [.fn-context .subs] subs)
             default-expr (emit (.default ast))
             def-const (get-constraint (.c-var default-expr))
             _ (sm/assoc-in-val [.fn-context .subs] final-subs)
@@ -5427,8 +5406,7 @@
                               [default-expr])
                   result-c (-> expr-cs
                                (map (fn [[c]] c))
-                               (conj def-const)
-                               (conj first-const)
+                               (comp [def-const first-const])
                                c/sum-type
                                (c/update-path file-name line-number))]
             _ (constrain-var file-name line-number result-var result-c)]
