@@ -65,6 +65,14 @@
         (fn [_]
           (apply print-err args))))
 
+(defn flush-pr []
+  (let [p (promise)]
+    (send string-writer
+          (fn [x]
+            (deliver p 'done)
+            x))
+    (extract p)))
+
 (def Tagged (any-of Symbol
                     ast/tagged-symbol))
 
@@ -2764,8 +2772,9 @@
                               (get-in f [.arities 'variadic]))]
            (let [inner-const (either (map (-> arity-info .param-constraints c/extract-items-constraints second)
                                           (fn [c]
-                                            (c/InferredInner c (list [file-name line-number])
-                                                             nothing (.c-var v))))
+                                            (either (= c/top-type c)
+                                                    (c/InferredInner c (list [file-name line-number])
+                                                                     nothing (.c-var v)))))
                                      c/top-type)
                  init-const (either (-> arity-info .param-constraints c/extract-items-constraints first)
                                     c/top-type)
@@ -2844,10 +2853,12 @@
                          :when-not (= c/UnknownType disp-type)
                          result-sym (genlocal "rslt")
                          impl-info (get-proto-impl (.proto-sym target) target-ast num-args disp-type)
-                         ;; _ (debug 'cpi file-name line-number target disp-type "\n"
-                         ;;          (.param-constraints impl-info) "\n"
-                         ;;          result-sym (.result-constraint impl-info))
-                         ;; _ (debug 'arg-vars arg-vars)
+                         ;; _ (cond (= file-name "test.toc")
+                         ;;         (debug 'cpi file-name line-number target disp-type "\n"
+                         ;;                (.param-constraints impl-info) "\n"
+                         ;;                result-sym (.result-constraint impl-info)
+                         ;;                "\n" 'arg-vars arg-vars)
+                         ;;         (sm/state-maybe 0))
                          _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
                                  (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
                          check-args (constrain-args arg-vars (.param-constraints impl-info)
@@ -3302,7 +3313,7 @@
                                     [(.param-constraints arity-info)
                                      (.result-constraint arity-info)])]
     (for [result-sym (genlocal "rslt")
-          ;; _ (comp (for [_ (sm/when (= (.call-target ast) 'store))
+          ;; _ (comp (for [_ (sm/when (= (.call-target ast) 'list*))
           ;;               _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
           ;;                        param-cs "\n" result-sym result-c)
           ;;               _ (debug 'arg-vars arg-vars)
@@ -3342,23 +3353,25 @@
           ;; _ (debug 'csv file-name line-number (.call-target ast) (.c-var target) "\n"
           ;;          (.param-constraints arity-info) "\n"
           ;;          result-sym (.result-constraint arity-info))
-          _ (constrain-var file-name line-number result-sym (.result-constraint arity-info))
           check-args (constrain-args arg-vars (.param-constraints arity-info)
                                      file-name line-number)
           _ (constrain-var file-name line-number (.c-var args-list) (.param-constraints arity-info))
 
-          _ (comp (cond (= (.call-target ast) 'list*)
-                        (for [arg-cs (map (get-constraint (.c-var args-list))
-                                          c/extract-items-constraints)
-                              tail-c (sm/when (last arg-cs))
-                              _ (constrain-var file-name line-number result-sym
-                                               (c/ItemsConstraint (butlast arg-cs)
-                                                                  tail-c
-                                                                  (list [file-name line-number])
-                                                                  nothing result-sym))]
-                          '_)
+          _ (constrain-var file-name line-number result-sym (.result-constraint arity-info))
+          _ (cond (= (.call-target ast) 'list*)
+                  (for [arg-cs (map (get-constraint (.c-var args-list))
+                                    c/extract-items-constraints)
+                        tail-c (sm/when (last arg-cs))
+                        _ (constrain-var file-name line-number result-sym
+                                         (-> (c/ItemsConstraint (butlast arg-cs)
+                                                               tail-c
+                                                               empty-list
+                                                               nothing "")
+                                            (c/set-type list-constraint)
+                                            (c/update-var result-sym)
+                                            (c/update-path file-name line-number)))]
+                    '_)
 
-                        sm-nop)
                   sm-nop)
 
           line (line-macro ast "// static-variadic")]
