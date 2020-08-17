@@ -3799,7 +3799,8 @@
           x* (ast/tag "#x")
           y* (ast/tag "#y")]
       (for [constraint (to-constraint constraint)
-            :let [types-info (either (c/extract-type-map constraint)
+            :let [constraint (c/update-type-name constraint defined-sym)
+                  types-info (either (c/extract-type-map constraint)
                                      {})]
             _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)] constraint)
             exprs (emit-defined-value
@@ -4921,19 +4922,45 @@
                                       (- refs var-refs)))
           refs-map))
 
+(defn conditional-rt-checks [vars final-subs init-subs file-name line-number]
+  (sm/traverse vars
+               (fn [var]
+                 (let [init-c (either (get init-subs var)
+                                      c/top-type)
+                       final-c (either (get final-subs var)
+                                       c/top-type)]
+                   (cond (c/satisfied-by final-c init-c)
+                         (sm/state-maybe "")
+
+                         (map (genlocal 'checked)
+                              (fn [checked-var]
+                                (let [rt-check (runtime-check final-c init-c
+                                                              file-name line-number checked-var)]
+                                  (either (empty? rt-check)
+                                          ["int " checked-var " = 1;" line-sep rt-check line-sep
+                                           "if(!" checked-var "){abort();}"])))))))))
+
 (defprotocol EmitCond
   (emit-cond-clause [clause]
     (let [file-name (ast/file-name clause)
           line-number (ast/line-number clause)]
       (for [syms get-syms
+            init-subs (get-subs)
             expr (emit clause)
+            final-subs (get-subs)
             curr-const (get-constraint (.c-var expr))
             _ (constrain-var file-name line-number (.c-var expr) maybe-constraint)
             _ (set-syms syms)
+            rt-checks (-> expr
+                          .refs-map
+                          (dissoc (.c-var expr))
+                          keys
+                          (conditional-rt-checks final-subs init-subs file-name line-number))
             checked-var (genlocal 'checked)]
         (cond (= (.c-var expr) "")
               expr
-              (.init expr [(.init expr)
+              (.init expr [rt-checks
+                           (.init expr)
                            (cond  (instance? c-param expr)
                                   ""
                                   (let [rt-check (-> maybe-constraint
@@ -5134,6 +5161,9 @@
                          :let [result-c (-> expr-cs
                                             (map (fn [[c]]
                                                    (c/extract-contents-constraint c)))
+                                            (conj (either (map (get final-subs (.c-var expr))
+                                                               c/extract-contents-constraint)
+                                                          c/top-type))
                                             c/sum-type
                                             assert-maybe-of
                                             (c/update-path file-name line-number))]
@@ -5343,21 +5373,10 @@
             do-value (genlocal "doValue")
             :let [refs-map (-> (merge-with + (.refs-map cond-val) (.refs-map value))
                                (filter-vals (partial < 0)))]
-            rt-checks (sm/traverse (keys refs-map)
-                                   (fn [var]
-                                     (let [init-c (either (get init-subs var)
-                                                          c/top-type)
-                                           final-c (either (get final-subs var)
-                                                           c/top-type)]
-                                       (cond (c/satisfied-by final-c init-c)
-                                             (sm/state-maybe "")
-
-                                             (for [checked-var (genlocal 'checked)]
-                                               (let [rt-check (runtime-check final-c init-c
-                                                                             file-name line-number checked-var)]
-                                                 (either (empty? rt-check)
-                                                         ["int " checked-var " = 1;" line-sep rt-check line-sep
-                                                          "if(!" checked-var "){abort();}"])))))))]
+            rt-checks (-> refs-map
+                          (dissoc (.c-var cond-val) (.c-var value))
+                          keys
+                          (conditional-rt-checks  final-subs init-subs file-name line-number))]
         (c-init result-var
                 [rt-checks
                  (.init cond-val)
