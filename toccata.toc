@@ -277,6 +277,17 @@
     ;; generated code must preserve ref counts
     (cond (c/satisfied-by constraint value-info)
           []
+
+          ;; TODO: at some point, check for more instances of 'satisfied-by' that should pass
+          ;; (do
+          ;;   (or (= c/top-type init-c)
+          ;;       (map (= final-c init-c)
+          ;;            (fn [x]
+          ;;              (safe-pr 'same file-name line-number x)
+          ;;              (safe-pr var)))
+          ;;       (maybe (do
+          ;;                (safe-pr 'not-same file-name line-number)
+          ;;                (safe-pr 'final final-c "\n" 'init init-c)))))
           (runtime-check constraint value-info
                          (cond (= "" file-name)
                                ["\"\""]
@@ -1702,7 +1713,7 @@
 
   (runtime-check [constraint value-info checked-var]
     ;; Only checking the inside of Maybe values
-    ;; Not worth the cost to check this at runtime for Lists/Vectors
+    ;; Not worth the cost to check this at runtime for Lists/Vectors/HashMaps
     ;; Maybe add some kind of feature flag to do this
     (cond (c/satisfied-by constraint value-info)
           []
@@ -1720,7 +1731,7 @@
 
   (runtime-check [constraint value-info sym-location checked-var]
     ;; Only checking the inside of Maybe values
-    ;; Not worth the cost to check this at runtime for Lists/Vectors
+    ;; Not worth the cost to check this at runtime for Lists/Vectors/HashMaps
     ;; Maybe add some kind of feature flag to do this
     (cond (c/satisfied-by constraint value-info)
           []
@@ -1750,7 +1761,7 @@
 
   (runtime-check [constraint value-info checked-var]
     ;; Only checking the inside of Maybe values
-    ;; Not worth the cost to check this at runtime for Lists/Vectors
+    ;; Not worth the cost to check this at runtime for Lists/Vectors/HashMaps
     ;; Maybe add some kind of feature flag to do this
     (cond (c/satisfied-by constraint value-info)
           []
@@ -1768,7 +1779,7 @@
 
   (runtime-check [constraint value-info sym-location checked-var]
     ;; Only checking the inside of Maybe values
-    ;; Not worth the cost to check this at runtime for Lists/Vectors
+    ;; Not worth the cost to check this at runtime for Lists/Vectors/HashMaps
     ;; Maybe add some kind of feature flag to do this
     (cond (c/satisfied-by constraint value-info)
           []
@@ -3329,7 +3340,6 @@
           ;;           '_)
           ;;         sm-nop)
           check-args (constrain-args arg-vars param-cs file-name line-number)
-          _ (constrain-args arg-vars param-cs file-name line-number)
           _ (constrain-var file-name line-number result-sym result-c)
 
           _ (update-call-site-count (.c-fn arity-info))
@@ -4939,6 +4949,8 @@
           refs-map))
 
 (defn conditional-rt-checks [vars final-subs init-subs file-name line-number]
+  ;; TODO: should filter out the non-params somehow. Those should be checked at
+  ;; the call sites
   (sm/traverse vars
                (fn [var]
                  (let [init-c (either (get init-subs var)
@@ -5383,16 +5395,24 @@
             syms get-syms
             final-subs (get-subs)
             value (emit (.value ast))
+            final-final-subs (get-subs)
             _ (sm/assoc-in-val [.fn-context .subs] final-subs)
             _ (set-syms syms)
             result-var (genlocal "cvRslt")
             do-value (genlocal "doValue")
             :let [refs-map (-> (merge-with + (.refs-map cond-val) (.refs-map value))
                                (filter-vals (partial < 0)))]
-            rt-checks (-> refs-map
-                          (dissoc (.c-var value))
+            rt-checks (-> (.refs-map cond-val)
                           keys
-                          (conditional-rt-checks final-subs init-subs file-name line-number))]
+                          (conditional-rt-checks final-subs init-subs
+                                                 (ast/file-name (.conditional ast))
+                                                 (ast/line-number (.conditional ast))))
+            value-rt-checks (-> (.refs-map value)
+                                (dissoc (.c-var value))
+                                keys
+                                (conditional-rt-checks final-final-subs final-subs
+                                                       (ast/file-name (.value ast))
+                                                       (ast/line-number (.value ast))))]
         (c-init result-var
                 [rt-checks
                  (.init cond-val)
@@ -5400,6 +5420,7 @@
                  "int " do-value " = !isNothing(" result-var ",\"\",0);" line-sep
                  "if (" do-value ") {" line-sep
                  "dec_and_free(" result-var ", 1);" line-sep
+                 value-rt-checks
                  (.init value)
                  result-var " = " (.c-var value) ";" line-sep
                  "} else {" line-sep
