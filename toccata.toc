@@ -200,6 +200,8 @@
 
   ;; produce a constraint from an assertion ast
   (to-constraint [ast]
+    (assert (instance? c/Constraints ast))
+
     (wrap sm/zero-sm ast))
 
   ;; expand 'target-ast' so that it's component asts are inlined
@@ -2861,7 +2863,7 @@
     (either (map (first arg-vars)
                  (fn [expr]
                    (for [disp-type  (var-type-num (.c-var expr))
-                         ;; _ (cond (= file-name "bad-constraints.toc")
+                         ;; _ (cond (= target-ast 'split-with)
                          ;;         (debug 'cpi file-name line-number (.call-target ast) (first arg-vars)
                          ;;                (.c-var expr) disp-type)
                          ;;         (sm/state-maybe 0))
@@ -3970,37 +3972,33 @@
   (emit [ast]
     (let [file-name (ast/file-name ast)
           line-number (ast/line-number ast)]
-      (for [target-lang (wrap sm/zero-sm 'C)
-            :when (= (.lang ast) target-lang)
-            line-info (line-macro ast "// inline")
-            :let [init [line-info (.txt ast) "\n#\n"]]
+      (cond (= (.lang ast) 'C)
+            (for [line-info (line-macro ast "// inline")
+                  :let [init [line-info (.txt ast) "\n#\n"]]
 
-            expr (comp (for [type-sym (sm/when (.result-type ast))
-                             constraint (get-type-sym-info type-sym)
-                             c-var (genlocal "rslt")
-                             _ (constrain-var file-name line-number c-var constraint)]
-                         (c-code c-var init {} constraint))
-                       (wrap sm/zero-sm (c-code "" init {} c/top-type)))
-            _ (set-result-constraint (.c-var expr) file-name line-number)]
-        expr)))
+                  expr (comp (for [constraint (to-constraint (.result-type ast))
+                                   c-var (genlocal "rslt")
+                                   _ (constrain-var file-name line-number c-var constraint)]
+                               (c-code c-var init {} constraint))
+                             (wrap sm/zero-sm (c-code "" init {} c/top-type)))
+                  _ (set-result-constraint (.c-var expr) file-name line-number)]
+              expr)
+
+            sm/zero-sm)))
 
   (emit-defined-value [ast defined-sym]
-    (for [target-lang (wrap sm/zero-sm 'C)
-          :when (= (.lang ast) target-lang)
-          constraint (either (map (.result-type ast)
-                                  (fn [type-sym]
-                                    (to-constraint (c/TypeConstraint {} (list [(ast/file-name ast)
-                                                                               (ast/line-number ast)])
-                                                                     type-sym nothing ""))))
-                             (wrap sm/zero-sm c/top-type))
-          c-var (comp (map (lookup-declaration defined-sym) .c-var)
-                      (global-var defined-sym "var"))
-          _ (new-module-def defined-sym (c-code (str c-var) [] {} constraint))
-          line-info (line-macro ast "// inline")
-          _ (declare [line-info "Value *" c-var " = " (.txt ast) ";" line-sep "\n#\n"])
-          sym-var (emit (ast/quoted-ast defined-sym))
-          _ (constrain-var (ast/file-name defined-sym) (ast/line-number defined-sym) c-var constraint)]
-      [(c-code c-var [] {} constraint)]))
+    (cond (= (.lang ast) 'C)
+          (for [constraint (to-constraint (.result-type ast))
+                c-var (comp (map (lookup-declaration defined-sym) .c-var)
+                            (global-var defined-sym "var"))
+                _ (new-module-def defined-sym (c-code (str c-var) [] {} constraint))
+                line-info (line-macro ast "// inline")
+                _ (declare [line-info "Value *" c-var " = " (.txt ast) ";" line-sep "\n#\n"])
+                sym-var (emit (ast/quoted-ast defined-sym))
+                _ (constrain-var (ast/file-name defined-sym) (ast/line-number defined-sym) c-var constraint)]
+            [(c-code c-var [] {} constraint)])
+
+          sm/zero-sm))
 
   (emit-definition [ast]
     ;; TODO: what about the result-type
@@ -6038,7 +6036,7 @@
                                                        (c/extract-items-constraints assertions)
                                                        [(c/update-var new-type-constraint "#result")
                                                         (ast/inline-ast (ast/tag 'C)
-                                                         (maybe new-type-name)
+                                                         new-type-constraint
                                                          (str "ReifiedVal *rv = malloc_reified("
                                                               field-count ");\n"
                                                               "#ifdef SINGLE_THREADED\n"
@@ -6064,7 +6062,7 @@
                                                            (c/update-var "fields_1"))
 
                                                        (ast/inline-ast (ast/tag 'C)
-                                                                       (maybe new-type-name)
+                                                                       new-type-constraint
                                                                        (str "return(newTypeValue(" type-num
                                                                             ", (Vector *)fields_1));")
                                                                        "" 0)]
@@ -6231,15 +6229,15 @@
                [(ast/fn-arity-ast (str sym "_" field) ""
                                   (ast/params [type-value field-arg]) ""
                                   [(c/update-sym field-constraint (ast/untag field-arg))
-                                   (ast/inline-ast (ast/tag 'C) (maybe sym)
+                                   (ast/inline-ast (ast/tag 'C)
+                                                   (c/TypeConstraint {} empty-list sym nothing "")
                                                    (str "return(updateField(value_0, field_1, "
                                                         field-index "));\n")
                                                    "" 0)]
                                   c/empty-items-constraint c/top-type)
                 (ast/fn-arity-ast (str sym "_" field) ""
                                   (ast/params [type-value]) ""
-                                  [(c/ResultConstraint (c/clear-sym field-constraint))
-                                   (ast/inline-ast (ast/tag 'C) nothing
+                                  [(ast/inline-ast (ast/tag 'C) (c/clear-sym field-constraint)
                                                    (str "
   Value *result = incRef(((ReifiedVal *)value_0)->impls[" field-index "], 1);
   dec_and_free(value_0, 1);
