@@ -3261,16 +3261,16 @@ Value *strReduce(Value *s0, Value *x1, Value *f2) {
     buffer = ((SubString *)s0)->buffer;
 
   incRef(f2, len);
+  incRef(s0, len);
   for (int64_t i = 0; i < len; i++) {
     SubString *subStr = malloc_substring();
     subStr->type = SubStringType;
     subStr->len = 1;
     subStr->source = s0;
     subStr->buffer = buffer + i;
-    prefs("before", result);
     result = dynamicCall2Arg(f2, result, (Value *)subStr);
-    prefs("after", result);
   }
+  dec_and_free(f2, 1);
   dec_and_free(s0, 1);
   return((Value *)result);
 }
