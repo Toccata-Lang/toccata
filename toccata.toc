@@ -939,7 +939,8 @@
                              (c/intersect (c/StaticLengthConstraint (count content-vars) empty-list
                                                                     nothing var))
                              (c/intersect (c/ItemsConstraint contents c/coll-of-any empty-list
-                                                             nothing var)))]
+                                                             nothing var))
+                             (c/update-var var))]
         _ (append-constraint var constraint file-name line-number)]
     '_))
 
@@ -1551,19 +1552,20 @@
     (either (for [_ (= "" (c/extract-var constraint))
                   sym (c/extract-sym constraint)]
               (for [expr (lookup-sym (ast/tag sym file-name line-number))
-                    _ (constrain-var file-name line-number (.c-var expr) constraint)
+                    curr-c (get-constraint (.c-var expr))
+                    _ (append-constraint (.c-var expr) constraint file-name line-number)
                     checked-var (genlocal 'checked)]
                 (cond (instance? c-param expr)
                       empty-c-code
                       (c-code (.c-var expr)
                               (let [rt-check (runtime-check (c/update-var constraint (.c-var expr))
-                                                            c/top-type file-name line-number
+                                                            curr-c file-name line-number
                                                             checked-var)]
                                 (either (empty? rt-check)
                                         [line-sep "if(1){int " checked-var " = 1;" line-sep
                                          rt-check
                                          line-sep "if(!" checked-var "){abort();}}" line-sep]))
-                              ;; TODO: change to 'constraint' (and all other calls to c-code
+                              ;; TODO: change 'c/top-type' to 'constraint' (and all other calls to c-code
                               {} c/top-type))))
             (map (constrain-var file-name line-number
                                 (c/extract-var constraint) constraint)
@@ -3506,7 +3508,6 @@
 (def Stringable-sym (ast/tag 'Stringable 'core 0))
 (def type-name-sym (ast/tag 'type-name 'core 0))
 (def type-mapping-sym (ast/tag 'type-mapping 'core 0))
-;; TODO: make sure all uses have the correct result type
 (def =*-sym (ast/tag '=* 'core 0))
 (def apply-sym (ast/tag 'apply 'core 0))
 (def get-type-sym (ast/tag 'default-get-type 'core 0))
@@ -3840,9 +3841,11 @@
                       [(ast/fn-arity-ast
                         (str defined-sym "_EQ_QMARK_") ""
                         (ast/params [x* y*]) ""
-                        [(ast/call-ast =*-sym
-                                       [(ast/call-ast get-type-sym [x*])
-                                        (ast/call-ast get-type-sym [y*])])]
+                        [(ast/and-ast
+                           [(ast/call-ast =*-sym
+                                          [(ast/call-ast get-type-sym [x*])
+                                           (ast/call-ast get-type-sym [y*])])
+                            (ast/call-ast maybe-sym [x*])])]
                         c/empty-items-constraint c/top-type)]}
 
                      (ast/tag Type-sym file-name line-number)
@@ -4054,11 +4057,13 @@
                                         (.call-target ast)))]
       (comp (flat-map (inline-expr (.call-target ast) (.args ast))
                       (fn [x]
-                        (for [r (emit x)
-                              ;; _ (debug 'old "\n" ast)
-                              ;; _ (debug 'new "\n" x)
-                              ]
-                          r)))
+                        ;; (cond (= file-name "test1.toc")
+                        ;;       (for [r (emit x)
+                        ;;             _ (debug 'old file-name line-number "\n" ast)
+                        ;;             _ (debug 'new "\n" x)
+                        ;;             ]
+                        ;;         r))
+                        (emit x)))
             (flat-map (sm/traverse (.args ast) emit)
                       (fn [args]
                         (comp (for [target (emit (.call-target ast))
@@ -5394,10 +5399,12 @@
             syms get-syms
             final-subs (get-subs)
             value (emit (.value ast))
+            value-c (get-constraint (.c-var value))
             final-final-subs (get-subs)
             _ (sm/assoc-in-val [.fn-context .subs] final-subs)
             _ (set-syms syms)
             result-var (genlocal "cvRslt")
+            _ (constrain-var file-name line-number result-var value-c)
             do-value (genlocal "doValue")
             :let [refs-map (-> (merge-with + (.refs-map cond-val) (.refs-map value))
                                (filter-vals (partial < 0)))]
