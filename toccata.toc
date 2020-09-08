@@ -1442,6 +1442,7 @@
   (comp* [x xs]
     (assert-result z (instance? C-expr z))
 
+    ;; TODO
     (print-err 'c-field 'comp*)
     (abort)
     empty-c-code)
@@ -2881,6 +2882,7 @@
                          check-args (constrain-args arg-vars (.param-constraints impl-info)
                                                     file-name line-number)
 
+                         ;; TODO: do I really need this? Can propogate-inner-constraint handle it?
                          _ (comp (cond (or (= (.call-target ast) 'seq)
                                            (= (.call-target ast) 'vec))
                                        (let [[arg-var] arg-vars
@@ -3280,7 +3282,7 @@
                         ")->impls[" reify-fn-index "];" line-sep
                         "incRef(" dispArg ", 1);" line-sep
                         "if (arityPtr->count != " param-count ") {\n"
-                        "fprintf(stderr, \"Booom\\n\");\nabort();\n}\n"
+                        "fprintf(stderr, \"Compiler error: arity count != parameter count\\n\");\nabort();\n}\n"
                         "Value *rval = ((FnType" param-count
                         " *)arityPtr->fn)(arityPtr->" args ");" line-sep
                         "dec_and_free(" dispArg ", 1);" line-sep
@@ -3697,11 +3699,6 @@
   (emit-call-site [target args ast]
     (call-vector (.call-target ast) args)))
 
-(extend-type c-static-fn
-  CallSite
-  (emit-call-site [target args ast]
-    (static-call-site target args ast)))
-
 ;; TODO: test add-inner-constraint on state-maybe values
 ;; TODO: add inner constraint to Strings
 ;; TODO: insert InferredInner into anon fn passed to higher order fn
@@ -3712,16 +3709,46 @@
   (let [file-name (ast/file-name ast)
         line-number (ast/line-number ast)]
     ;; TODO: do hash-seq, list-concat, comp-vect as well
-    (for [_ (or (returns-inner (.call-target ast))
-                (= (.call-target ast) 'extract))
-          arg (first args)]
-      (propogate-constraint (.c-var arg) result-var
-                            (fn [constraint]
-                              (let [inner-c (c/extract-coll-constraint constraint)]
-                                (either (and (= (.call-target ast) 'extract)
-                                             (maybe (c/extract-contents-constraint inner-c)))
-                                        inner-c)))
-                            file-name line-number))))
+    (or (for [_ (or (returns-inner (.call-target ast))
+                    (= (.call-target ast) 'extract))
+              arg (first args)]
+          (propogate-constraint (.c-var arg) result-var
+                                (fn [constraint]
+                                  (let [inner-c (c/extract-coll-constraint constraint)]
+                                    (either (and (= (.call-target ast) 'extract)
+                                                 (maybe (c/extract-contents-constraint inner-c)))
+                                            inner-c)))
+                                file-name line-number))
+
+        (for [_ (= (.call-target ast) 'comp-vect)
+              arg (first args)
+              rest-args (second args)]
+          (for [rest-cs (get-constraint (.c-var rest-args))
+                r (propogate-constraint (.c-var arg) result-var
+                                        (fn [constraint]
+                                          (-> rest-cs
+                                              c/extract-items-constraints
+                                              (conj constraint)
+                                              (remove (fn [c]
+                                                        (-> c
+                                                            c/extract-items-constraints
+                                                            count
+                                                            (= 0))))
+                                              (map c/extract-contents-constraint)
+                                              c/sum-type
+                                              (c/InferredInner empty-list nothing result-var)
+                                              (c/intersect vect-constraint)))
+                                        file-name line-number)]
+            r))
+        )))
+
+(extend-type c-static-fn
+  CallSite
+  (emit-call-site [target args ast]
+    (for [expr (static-call-site target args ast)
+          _ (either (propogate-inner-constraint (.c-var expr) ast args)
+                    sm-nop)]
+      expr)))
 
 (extend-type c-protocol-fn
   Emitter
