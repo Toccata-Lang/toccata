@@ -804,10 +804,14 @@
 
 (def constants (agent (ConstantValues {} {} {} type-names {} {})))
 
+(deftype FnSpec [arity-info param-vars]
+  (assert (instance? HashMap arity-info))
+  (assert (instance? (map-of String c-param) param-vars)))
+
 ;; Every function arity has some information that's local to it
-(deftype FunctionArityContext [recurse sym-count syms context-syms closed-over decl subs field-constrs]
-  ;; recurse       info to detect recursive calls
-  (assert (instance? HashMap recurse))
+(deftype FunctionArityContext [fn-spec sym-count syms context-syms closed-over decl subs field-constrs]
+  ;; fn-spec       info about the function arity being emitted
+  (assert (instance? FnSpec fn-spec))
   ;; sym-count     number of local symbols that have been defined
   (assert (instance? Integer sym-count))
   ;; syms               the symbols local to the function that are currently interned
@@ -987,7 +991,8 @@
                                                    (expr-constraints expr (either (get subs (.c-var expr))
                                                                                   c/top-type)))))]
                   (maybe [(.decl curr-fn-context [])
-                          (.fn-context s (FunctionArityContext {} 0 {} new-context empty-closures
+                          (.fn-context s (FunctionArityContext (FnSpec {} {})
+                                                               0 {} new-context empty-closures
                                                                (.decl curr-fn-context) {}
                                                                (.field-constrs curr-fn-context)))])))))
   ([new-fn-context]
@@ -3094,10 +3099,13 @@
           (c/update-sym (ast/untag sym)))))
 
   (bind-param [binding expr]
-    (for [r (bind binding expr)
-          _ (set-sym binding (c-param (.c-var expr) [] {(.c-var expr) 1} c/top-type
-                                      (ast/file-name binding) (ast/line-number binding)))]
-      r))
+    (let [param-info (c-param (.c-var expr) [] {(.c-var expr) 1} c/top-type
+                              (ast/file-name binding) (ast/line-number binding))]
+      (for [r (bind binding expr)
+            _ (sm/assoc-in-val [.fn-context .fn-spec .param-vars (.c-var expr)]
+                               param-info)
+            _ (set-sym binding param-info)]
+        r)))
 
   (bind-param [binding]
     (for [arg-var (genlocal binding "arg")
@@ -4047,7 +4055,7 @@
   (emit-recursive-call [ast params]
     (for [_ (sm/when (instance? Tagged (.call-target ast)))
           target (emit (.call-target ast))
-          _ (sm/get-in-val [.fn-context .recurse (.c-var target) (count (.args ast))])
+          _ (sm/get-in-val [.fn-context .fn-spec .arity-info (.c-var target) (count (.args ast))])
           args (sm/traverse (.args ast) emit)
           line (line-macro ast "// recursive-fixed")]
       (do
@@ -4520,8 +4528,8 @@
         line-number (ast/line-number params)
         constraints-list (c/extract-items-constraints constraints)]
     (for [dest-args (genlocal "destArgs")
-          checking-fn-var (global-var fn-sym "paramChecker")
-          line (line-macro params "// paramChecker")
+          checking-fn-var (global-var fn-sym "paramCheckerFn")
+          line (line-macro params "// param checking fn")
           checked-var (genlocal 'checked)]
       (cond
        (.variadic params)
@@ -4740,8 +4748,10 @@
                    ;; _ (debug "------------\n" (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
                    p-bindings (cond (.variadic params)
                                     (map (bind-param params) vector)
+
                                     (for [p-bindings (sm/traverse (.fixed params) bind-param)
-                                          _ (sm/assoc-in-val [.fn-context .recurse fn-var (count params)] '_)]
+                                          _ (sm/assoc-in-val [.fn-context .fn-spec .arity-info
+                                                              fn-var (count params)] '_)]
                                       p-bindings))
                    :let [param-vars (map p-bindings .bound)
                          param-destruct (cond
@@ -4978,8 +4988,6 @@
           refs-map))
 
 (defn conditional-rt-checks [vars final-subs init-subs file-name line-number]
-  ;; TODO: should filter out the non-params somehow. Those should be checked at
-  ;; the call sites
   (sm/traverse vars
                (fn [var]
                  (let [init-c (either (get init-subs var)
@@ -4987,15 +4995,14 @@
                        final-c (either (get final-subs var)
                                        c/top-type)]
                    (cond (c/satisfied-by final-c init-c)
-                         (sm/state-maybe "")
+                         (sm/state-maybe [])
 
-                         (map (genlocal 'checked)
-                              (fn [checked-var]
-                                (let [rt-check (runtime-check final-c init-c
-                                                              file-name line-number checked-var)]
-                                  (either (empty? rt-check)
-                                          ["int " checked-var " = 1;" line-sep rt-check line-sep
-                                           "if(!" checked-var "){abort();}"])))))))))
+                         (for [checked-var (genlocal 'checked)
+                               _ (append-constraint var final-c file-name line-number)]
+                           ["int " checked-var " = 1;" line-sep
+                            (runtime-check final-c init-c
+                                           file-name line-number checked-var)
+                            line-sep "if(!" checked-var "){abort();}"]))))))
 
 (defprotocol EmitCond
   (emit-cond-clause [clause]
@@ -5744,6 +5751,7 @@
           ;; TODO: this could probably be simplified after 'bind-list' is refactored
           p-bindings (cond (.variadic params)
                            (map (bind-param params) vector)
+
                            (sm/traverse (.fixed params) bind-param))
 
           ;; clear any constraints for the parameter vars
@@ -6985,8 +6993,8 @@
                      'Opaque (c/TypeConstraint {c/OpaqueType #{}} empty-list
                                                'Opaque nothing "")})))
 
-(def global-context (GlobalContext (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
-                                   (FunctionArityContext {} 0 {} {} empty-closures [] {} nothing)
+(def global-context (GlobalContext (FunctionArityContext (FnSpec {} {}) 0 {} {} empty-closures [] {} nothing)
+                                   (FunctionArityContext (FnSpec {} {}) 0 {} {} empty-closures [] {} nothing)
                                    (Module 'core 0 {} {} {} {} {})
                                    (ConstantValues {} {} {} type-names {} {})
                                    0                        ;; reify-fn-index
