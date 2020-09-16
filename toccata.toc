@@ -46,6 +46,9 @@
 (add-ns sh (git-dependency "https://github.com/Toccata-Lang/shell-proc.git"
                            "shell-proc.toc"
                            :sha "1e413ea"))
+(add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
+                           "state-error.toc"
+                           :sha "ca2395f"))
 
 (def type-counter (int-generator c/TypeCount))
 
@@ -319,6 +322,7 @@
   (assert (instance? String seq-c-var))
   (assert (instance? String dest-args))
 
+  ;; TODO: inline destructuring of sequences if type is known
   (let [elem-count (count elem-c-vars)]
     [(map elem-c-vars (fn [var]
                         ["Value *" var ";" line-sep]))
@@ -1063,7 +1067,23 @@
                                     C-var-punct)
                           C-var-remaining))
 
-(def check-C-var (rd/parser C-var))
+(def C-var (rd/parser C-var))
+
+(defn check-C-var [var-name alt-var]
+  (let [parse-result (C-var var-name)]
+
+    ;; TODO: this form doesn't work. 'instance?' fails
+    ;; (either (and (instance? se/Failure parse-result)
+    ;;              (maybe alt-var))
+
+    ;;       (let [[c-var] parse-result]
+    ;;         c-var))
+
+    (cond (instance? Vector parse-result)
+          (let [[c-var] parse-result]
+            c-var)
+
+          alt-var)))
 
 (defn genlocal
   ([pre]
@@ -1079,8 +1099,7 @@
                 (let [ctxt (.fn-context s)
                       sym-count (.sym-count ctxt)
                       new-ctxt (.fn-context s (.sym-count ctxt (inc sym-count)))]
-                  (maybe [(str (either (check-C-var (str sym "_"))
-                                       arg-name)
+                  (maybe [(str (check-C-var (str sym "_") arg-name)
                                sym-count)
                           new-ctxt]))))))
 
@@ -1122,8 +1141,7 @@
   ([module-index arg-name]
    (str (gensym (str "m" module-index "_" arg-name))))
   ([module-index sym arg-name]
-   (str (gensym (str "m" module-index "_" (either (check-C-var (str sym "_"))
-                                                  arg-name))))))
+   (str (gensym (str "m" module-index "_" (check-C-var (str sym "_") arg-name))))))
 
 (defn global-var
   ([arg-name]
@@ -1399,7 +1417,7 @@
                                                     .values (ast/tag (.base sym))])
                                     (sm/get-in-val [.mod-files file-name .namespaces ns-sym
                                                     .values (ast/tag (.base sym))])
-                                    (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                                    (compilation-error "Undefined symbol" (str "'" ns-sym "/" sym "'") "at"
                                                        (str file-name ":") line-number))))
                        (comp 
                         ;; lookup sym in local fn context
@@ -3158,7 +3176,7 @@
     (TailCall ast params))
 
   (inline-expr [name arg-asts]
-    ;; TODO: inline 'get-in', 'update-in'
+    ;; TODO: inline 'get-in', 'update-in', getters/setters
     (let [args (remove arg-asts (partial instance? ast/NoCode))
           num-args (count args)]
       (either (flat-map (get-in inlined-fns [name num-args])
@@ -3650,6 +3668,10 @@
                              "at:" (ast/file-name ast) (ast/line-number ast)))))
 
 (extend-type c-constructor
+  Emitter
+  (clear-init [cc]
+    (.init cc []))
+
   CallSite
   (emit-call-site [target args ast]
     (comp (call-invoke target args ast)
@@ -4125,7 +4147,8 @@
   (inline-expr [ast arg-asts]
     (either (for [_ (instance? ast/call-ast ast)
                   ;; TODO: this needs to be generalized
-                  _ (= (.call-target ast) 'new-sm)
+                  _ (or (= (.call-target ast) 'new-sm)
+                        (= (.call-target ast) 'new-se))
                   fn-ast (first (.args ast))]
               (inline-expr fn-ast arg-asts))
             (for [new-call-target (inline-expr (.call-target ast) (.args ast))
@@ -5702,8 +5725,7 @@
           [disp-arg & args] (map (zip-lists (-> prototype .params .fixed)
                                             (range num-args))
                                  (fn [[arg idx]]
-                                   (either (check-C-var (str arg "_" idx))
-                                           (str "arg" idx))))]
+                                   (check-C-var (str arg "_" idx) (str "arg" idx))))]
       (sm/state-maybe (c-code "protoRslt"
                               [(call-universal-proto-fn fn-sym disp-arg args)]
                               (reduce args {disp-arg 1}
@@ -5716,8 +5738,7 @@
         [disp-arg & args] (map (zip-lists (-> prototype .params .fixed)
                                           (range num-args))
                                (fn [[arg idx]]
-                                 (either (check-C-var (str arg "_" idx))
-                                         (str "arg" idx))))]
+                                 (check-C-var (str arg "_" idx) (str "arg" idx))))]
     (comp (filter (.default-body prototype) (partial instance? c/Constraints))
           [(c-code ""
                    ["incRef(" disp-arg ", 1);"
@@ -6627,9 +6648,7 @@
       (comp (for [fn-var (lookup-sym (.sym ast))
                   expr (sm/when (get-in fn-var [.arities num-args]))
                   c-fn-name (global-var (str (.sym ast)))
-                  :let [c-fn-name (either (check-C-var c-fn-name)
-                                          c-fn-name)
-                        js-wrapper (c-code ""
+                  :let [js-wrapper (c-code ""
                                            ["\n#ifdef TOCCATA_WASM\n"
                                             "EM_ASM(\n" (str (.sym ast)) " = function("
                                             (interpose (map (range num-args) (partial str "arg")) ", ") ") {\n"
@@ -7393,10 +7412,10 @@
 
   rd/RecursiveDescent
   (rd/recursive-descent [f]
-    (wrap sm/zero-sm (fn [& rules]
-                      (apply (wrap sm/zero-sm (fn [& parsed-values]
-                                                (apply f (remove parsed-values rd/ignore?))))
-                              rules)))))
+    (se/state-error (fn [& rules]
+                      (apply (se/state-error (fn [& parsed-values]
+                                               (apply f (remove parsed-values rd/ignore?))))
+                             rules)))))
 
 ;; (extend-type sm/new-sm
 ;;   ev/Evaluator
