@@ -36,7 +36,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "b2408a2"))
+                            :sha "fce6b2d"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "1e4a251"))
@@ -88,14 +88,14 @@
                                             "TOCCATA_DIR")
                                  (abort)))))
 
-(def line-sep "")
+(def line-sep "\n")
 
 (defn line-marker [file-name line-number marker]
   (cond (or (= "" file-name)
             (and (= 'core file-name)
                  (= 0 line-number)))
         "\n#\n"
-        ["\n" marker "\n#line "
+        ["\n" marker "\n// #line "
          (str line-number) " " "\""
          (cond (= 'core file-name)
                path-to-core
@@ -1417,7 +1417,7 @@
                                                     .values (ast/tag (.base sym))])
                                     (sm/get-in-val [.mod-files file-name .namespaces ns-sym
                                                     .values (ast/tag (.base sym))])
-                                    (compilation-error "Undefined symbol" (str "'" ns-sym "/" sym "'") "at"
+                                    (compilation-error "Undefined symbol" (str "'" sym "'") "at"
                                                        (str file-name ":") line-number))))
                        (comp 
                         ;; lookup sym in local fn context
@@ -7069,28 +7069,40 @@
               (grmr/any
                (grmr/one-or-more
                 (grmr/apply-fn (fn [ast root-dir proj-dir]
-                                 (let [ns-sym (ast/untag (.ns-sym ast))
-                                       waiter-prom (load-module (.mod ast) root-dir proj-dir)]
-                                   (send ast-emitter
-                                         (fn [context]
-                                           (update-context
-                                            context
-                                            (let [module (extract waiter-prom)]
-                                              (for [_ (sm/assoc-in-val [.module .namespaces ns-sym]
-                                                                       module)
-                                                    _ (sm/update-in-val [.setup .init]
-                                                                        (fn [mod-init]
-                                                                          (conj mod-init
-                                                                                (c-code "" ["init_module_"
-                                                                                            (str (.index module))
-                                                                                            "();\n"]
-                                                                                        {} c/top-type))))
-                                                    _ (add-module-file module)]
-                                                '_)))))))
+                                 (either (map (instance? se/Error ast)
+                                              (fn [ast]
+                                                (send string-writer (fn [_]
+                                                                      (print-err (.msg ast))
+                                                                      (abort)))))
+                                         (let [ns-sym (ast/untag (.ns-sym ast))
+                                               waiter-prom (load-module (.mod ast) root-dir proj-dir)]
+                                           (send ast-emitter
+                                                 (fn [context]
+                                                   (update-context
+                                                    context
+                                                    (let [module (extract waiter-prom)]
+                                                      (for [_ (sm/assoc-in-val [.module .namespaces ns-sym]
+                                                                               module)
+                                                            _ (sm/update-in-val [.setup .init]
+                                                                                (fn [mod-init]
+                                                                                  (conj mod-init
+                                                                                        (c-code ""
+                                                                                                ["init_module_"
+                                                                                                 (str (.index module))
+                                                                                                 "();\n"]
+                                                                                                {} c/top-type))))
+                                                            _ (add-module-file module)]
+                                                        '_))))))))
                                rdr/read-add-ns
                                (grmr/get-value 'root-directory)
                                (grmr/get-value 'project-directory)))
-               (grmr/apply-fn (partial send ast-emitter emit-ast)
+               (grmr/apply-fn (fn [ast]
+                                (either (map (instance? se/Error ast)
+                                             (fn [ast]
+                                               (send string-writer (fn [_]
+                                                                     (print-err (.msg ast))
+                                                                     (abort)))))
+                                        (send ast-emitter emit-ast ast)))
                               rdr/top-level)))))
 
 (defn fixup-generated-symbols [context file-name protocols-sym symbols-sym]
