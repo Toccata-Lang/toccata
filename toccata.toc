@@ -4596,25 +4596,35 @@
                 "));\n};\n"]
                {} c/top-type)))))
 
+(def vect-array-len (inline C Integer "(Value *)&(Integer){IntegerType, -2, VECTOR_ARRAY_LEN};"))
+
 (defn destruct-closures [closure-info]
-  (for [destArgs (genlocal "destArgs")]
-    (let [closures (-> closure-info
-                       (map (fn [[arg]] arg))
-                       vec
-                       (conj "closuresTail"))
-          closure-count (count closures)]
-      (comp [(c-code ""
-                      [(map closures (fn [arg] ["Value *" arg ";" line-sep]))
-                       "incRef((Value *)closures, 1);" line-sep
-                       "Value **" destArgs "[" closure-count "] = {"
-                       (interpose (map closures (partial vector "&")) ", ")
-                       "};" line-sep
-                       "destructValue(\"\", \"\", (Value *)closures"
-                       ", " closure-count ", " destArgs ");" line-sep]
-                      {} c/top-type)]
-            (map (vec closure-info)
-                 (fn [[arg _ constraint]]
-                   (c-init arg [] {} "" 0)))))))
+  (let [closure-count (count closure-info)]
+    (cond (<= closure-count vect-array-len)
+          (sm/state-maybe (map (vec (zip-lists (range closure-count) closure-info))
+                               (fn [[idx [arg _ constraint]]]
+                                 (c-init arg ["Value *" arg " = closures->tail[" idx "];"
+                                              " incRef(" arg ",1);" line-sep]
+                                         {} "" 0))))
+
+          (for [destArgs (genlocal "destArgs")]
+            (let [closures (-> closure-info
+                               (map (fn [[arg]] arg))
+                               vec
+                               (conj "closuresTail"))
+                  closure-count (count closures)]
+              (comp [(c-code ""
+                             [(map closures (fn [arg] ["Value *" arg ";" line-sep]))
+                              "incRef((Value *)closures, 1);" line-sep
+                              "Value **" destArgs "[" closure-count "] = {"
+                              (interpose (map closures (partial vector "&")) ", ")
+                              "};" line-sep
+                              "destructValue(\"\", \"\", (Value *)closures"
+                              ", " closure-count ", " destArgs ");" line-sep]
+                             {} c/top-type)]
+                    (map (vec closure-info)
+                         (fn [[arg _ constraint]]
+                           (c-init arg [] {} "" 0)))))))))
 
 (defn emit-closure-arity [fn-sym fn-context c-fn params param-vars body-exprs]
   (assert (instance? CFnPtr c-fn))
