@@ -2905,24 +2905,24 @@
                                                     file-name line-number)
 
                          ;; TODO: do I really need this? Can propogate-inner-constraint handle it?
-                         _ (comp (cond (or (= (.call-target ast) 'seq)
-                                           (= (.call-target ast) 'vec))
-                                       (let [[arg-var] arg-vars
-                                             coll-c (cond (= (.call-target ast) 'seq)
-                                                          list-constraint
+                         _ (cond (or (= (.call-target ast) 'seq)
+                                     (= (.call-target ast) 'vec))
+                                 (let [[arg-var] arg-vars
+                                       coll-c (cond (= (.call-target ast) 'seq)
+                                                    list-constraint
 
-                                                          vect-constraint)]
-                                         (for [arg-c (get-constraint (.c-var arg-var))
-                                               :let [result-c (c/set-type arg-c coll-c)
-                                                     result-c (cond (= result-c c/top-type)
-                                                                    (.result-constraint impl-info)
+                                                    vect-constraint)]
+                                   (for [arg-c (get-constraint (.c-var arg-var))
+                                         :let [result-c (c/set-type arg-c coll-c)
+                                               result-c (cond (= result-c c/top-type)
+                                                              (.result-constraint impl-info)
 
-                                                                    result-c)]
-                                               _ (constrain-var file-name line-number result-sym result-c)]
-                                           '_))
-                                       (constrain-var file-name line-number result-sym
-                                                      (.result-constraint impl-info)))
-                                 (constrain-var file-name line-number result-sym (.result-constraint impl-info)))
+                                                              result-c)]
+                                         _ (constrain-var file-name line-number result-sym result-c)]
+                                     '_))
+
+                                 (constrain-var file-name line-number result-sym
+                                                (.result-constraint impl-info)))
                          _ (sm/traverse (zip-lists (map arg-vars .c-var)
                                                    (c/extract-items-constraints (.param-constraints impl-info)))
                                         (fn [[var constraint]]
@@ -6603,19 +6603,8 @@
                     _ (sm/assoc-in-val [.fn-context .field-constrs] nothing)
 
                     type-constructor (emit-constructor (.sym ast) type-num new-type-constraint
-                                                       fields field-constraints)
-
-                    ;; TODO: this should be better
-                    const-type-num (flat-map (lookup-sym (.sym ast))
-                                             (fn [expr]
-                                               (var-type-num (.c-var expr))))]
-                (do
-                  (send core-agent
-                        (fn [mod]
-                          (assoc-in mod [.protocols (ast/untag Function-sym) (ast/untag invoke-sym)
-                                         .p-impls const-arity-index const-type-num .result-constraint]
-                                    new-type-constraint)))
-                  type-constructor)))))))
+                                                       fields field-constraints)]
+                type-constructor))))))
 
 ;; (defn js-callable-arity [[num-args expr]]
 ;;   (for [c-fn-name (global-var (str (.sym ast) "_" num-args))
@@ -7071,15 +7060,24 @@
     '_))
 
 (defn analyze-forms [ast-emitter]
-  (rd/parser (grmr/none-or-more
-              (grmr/any
-               (grmr/one-or-more
-                (apply-to (fn [ast root-dir proj-dir]
-                            (either (map (instance? se/Error ast)
-                                         (fn [ast]
-                                           (send string-writer (fn [_]
-                                                                 (print-err (.msg ast))
-                                                                 (abort)))))
+  (rd/parser
+   (grmr/catch-error (fn [error curr-state]
+                       (either (or (for [file (get-in error [.state .values 'file-name])
+                                         line (get-in error [.state .values 'line-number])
+                                         expr-line (get-in curr-state [.values 'line-number])]
+                                     (do
+                                       (print-err (.msg error) " At" (str file ":") (str line ".")
+                                                  (cond (= line expr-line) ""
+                                                        (str "\n In expression at line " (str expr-line "."))))))
+                                   (for [file (get-in error [.state .values 'file-name])
+                                         expr-line (get-in curr-state [.values 'line-number])]
+                                     (print-err (.msg error) " At" (str file ":") (str expr-line "."))))
+                               (print-err (.msg error)))
+                       (abort))
+                     (grmr/none-or-more
+                      (grmr/any
+                       (grmr/one-or-more
+                        (apply-to (fn [ast root-dir proj-dir]
                                     (let [ns-sym (ast/untag (.ns-sym ast))
                                           waiter-prom (load-module (.mod ast) root-dir proj-dir)]
                                       (send ast-emitter
@@ -7098,18 +7096,13 @@
                                                                                             "();\n"]
                                                                                            {} c/top-type))))
                                                        _ (add-module-file module)]
-                                                   '_))))))))
-                          rdr/read-add-ns
-                          (grmr/get-value 'root-directory)
-                          (grmr/get-value 'project-directory)))
-               (apply-to (fn [ast]
-                           (either (map (instance? se/Error ast)
-                                        (fn [ast]
-                                          (send string-writer (fn [_]
-                                                                (print-err (.msg ast))
-                                                                (abort)))))
-                                   (send ast-emitter emit-ast ast)))
-                         rdr/top-level)))))
+                                                   '_)))))))
+                                  rdr/read-add-ns
+                                  (grmr/get-value 'root-directory)
+                                  (grmr/get-value 'project-directory)))
+                       (apply-to (fn [ast]
+                                   (send ast-emitter emit-ast ast))
+                                 rdr/top-level))))))
 
 (defn fixup-generated-symbols [context file-name protocols-sym symbols-sym]
   ;; TODO: make sure .declarations is empty
