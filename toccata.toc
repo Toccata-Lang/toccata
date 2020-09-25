@@ -12,7 +12,7 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "4da8e3d"))
+                          :sha "c04c82d"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "1fac257"))
@@ -58,6 +58,8 @@
   (write-str [x]
     (print x)))
 
+(def sm-nop (sm/state-maybe '_))
+
 (def string-writer (agent ""))
 (defn write-strings [strs]
   (send string-writer (fn [_]
@@ -75,6 +77,14 @@
             (deliver p 'done)
             x))
     (extract p)))
+
+;; useful for debugging the compiler
+(defn debug [& args]
+  (map sm-nop (fn [_]
+                (send string-writer
+                      (fn [_]
+                        (apply print-err args)))
+                (flush-pr))))
 
 (def Tagged (any-of Symbol
                     ast/tagged-symbol))
@@ -142,16 +152,6 @@
 (def int-constraint (c/TypeConstraint {c/IntegerType #{}} empty-list 'Integer nothing ""))
 (def maybe-constraint  (c/TypeConstraint {c/MaybeType #{}} empty-list 'Maybe nothing ""))
 
-(def sm-nop (wrap sm/zero-sm '_))
-
-;; useful for debugging the compiler
-(defn debug [& args]
-  (map sm-nop (fn [_]
-                (send string-writer
-                      (fn [_]
-                        (apply print-err args)))
-                (flush-pr))))
-
 ;; for when a fatal error occurs
 (defn compilation-error [& msg]
   (sm/new-sm (fn [s]
@@ -162,9 +162,14 @@
                nothing)))
 
 (defprotocol Emitter
+  (reify-constraint [c param-cs]
+    c)
+
   (cache-static-constant [v expr]
     '_)
 
+  ;; TODO: rewrite 'all-symbols' to use a recursion scheme
+  ;; could then be used for 'bind-param', etc.
   (all-symbols [ast]
     (assert-result l (instance? (vector-of ast/ParamType) l)))
 
@@ -1539,6 +1544,20 @@
   (runtime-check [constraint value-info sym-location checked-var]
     []))
 
+(extend-type c/DynamicConstraint
+  Emitter
+  (emit [constraint]
+    (wrap sm/zero-sm empty-c-code))
+
+  (replace-syms [constraint _]
+     (wrap sm/zero-sm constraint))
+
+  (runtime-check [constraint value-info checked-var]
+    [])
+
+  (runtime-check [constraint value-info sym-location checked-var]
+    []))
+
 (defn get-type-sym-info [type-symbol]
   (comp (either (or (map (get-in (extract core-agent) [.types (ast/untag type-symbol)])
                          sm/state-maybe)
@@ -1628,10 +1647,21 @@
 
 (extend-type c/ItemsConstraint
   Emitter
+  (reify-constraint [ast param-cs]
+    (c/ItemsConstraint (map (.items-constraints ast) (fn [c]
+                                                       (reify-constraint c param-cs)))
+                       (reify-constraint (.tail-constraint ast) param-cs)
+                       (.path ast) (.sym ast) (.var ast)))
+
   (promote-inferred [c]
     (-> c
         (.tail-constraint (promote-inferred (.tail-constraint c)))
         (.items-constraints (map (.items-constraints c) promote-inferred))))
+
+  (replace-bound-vars [ast subs]
+    (print-err 'ItemsConstraint 'replace-bound-vars 'line _LINE_)
+    (abort)
+    ast)
 
   (replace-syms [ast subs]
     (for [new-items (sm/traverse (.items-constraints ast) (fn [c]
@@ -1984,7 +2014,13 @@
                                          (abort))))))
             m))
 
+  (reify-constraint [constraint param-cs]
+    (.constraints constraint
+                  (map (.constraints constraint) (fn [c]
+                                                   (reify-constraint c param-cs)))))
+
   (replace-bound-vars [constraint subs]
+    ;; TODO: let the Vector impl do this
     (.constraints constraint
                   (map (.constraints constraint) (fn [c]
                                                    (replace-bound-vars c subs)))))
@@ -2136,6 +2172,10 @@
   (write-str [v] (map v write-str))
 
   Emitter
+  (reify-constraint [v subs]
+    (map v (fn [x]
+             (reify-constraint x subs))))
+
   (replace-bound-vars [v subs]
     (map v (fn [x]
              (replace-bound-vars x subs))))
@@ -3111,9 +3151,13 @@
   (get-param-constraints [sym]
     (for [expr (lookup-sym (ast/tag sym))
           c (get-constraint (.c-var expr))]
-      (-> c
-          (c/update-var (.c-var expr))
-          (c/update-sym (ast/untag sym)))))
+      (let [c (cond (instance? c/DynamicConstraint c)
+                    c/top-type
+
+                    c)]
+        (-> c
+            (c/update-var (.c-var expr))
+            (c/update-sym (ast/untag sym))))))
 
   (bind-param [binding expr]
     (let [param-info (c-param (.c-var expr) [] {(.c-var expr) 1} c/top-type
@@ -3358,18 +3402,20 @@
                                     [(.param-constraints arity-info)
                                      (.result-constraint arity-info)])]
     (for [result-sym (genlocal "rslt")
-          ;; _ (comp (for [_ (sm/when (= (.call-target ast) 'list*))
+          arg-cs (sm/traverse arg-vars (fn [v]
+                                         (get-constraint (.c-var v))))
+          ;; _ (comp (for [_ (sm/when (= file-name "test.toc"))
           ;;               _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
-          ;;                        param-cs "\n" result-sym result-c)
+          ;;                        param-cs "\n" result-sym (reify-constraint result-c arg-cs))
           ;;               _ (debug 'arg-vars arg-vars)
-          ;;               _ (sm/traverse arg-vars (fn [v]
-          ;;                                         (flat-map (get-constraint (.c-var v))
-          ;;                                                   (fn [c]
-          ;;                                                     (debug 'v (.c-var v) 'c c)))))]
+          ;;               _ (sm/traverse (zip-lists arg-vars arg-cs)
+          ;;                              (fn [[v c]]
+          ;;                                (debug 'v (.c-var v) 'c c)))]
           ;;           '_)
           ;;         sm-nop)
           check-args (constrain-args arg-vars param-cs file-name line-number)
-          _ (constrain-var file-name line-number result-sym result-c)
+          _ (constrain-var file-name line-number result-sym
+                           (reify-constraint result-c arg-cs))
 
           _ (update-call-site-count (.c-fn arity-info))
           line (line-macro ast "// static-fixed")
@@ -3808,8 +3854,26 @@
                       sm-nop)]
         expr))))
 
+(extend-type c/DynamicParamConstraint
+  Emitter
+  (reify-constraint [c param-cs]
+    (either (get param-cs (.param-index c))
+            c/top-type)))
+
 (extend-type c/SumConstraint
   Emitter
+  (replace-syms [ast subs]
+    (print-err 'replace-syms 'line _LINE_)
+    (sm/state-maybe (abort)))
+
+  (replace-bound-vars [ast subs]
+    (print-err 'replace-bound-vars 'line _LINE_)
+    (abort)
+    ast)
+
+  (reify-constraint [ast param-cs]
+    (.alts ast (reify-constraint (.alts ast) param-cs)))
+
   (runtime-check [constraint value-info sym-location checked-var]
     (let [alts (.alts constraint)
           var (c/extract-var constraint)]
@@ -4800,9 +4864,19 @@
                                                               (ast/file-name params)
                                                               (ast/line-number params))))
                                                (flat-map p-bindings .destruct)))]
-                   _ (sm/traverse (conj param-vars "#result")
+                   _ (sm/traverse param-vars
                                   (fn [var]
                                     (set-constraint var c/top-type)))
+                   _ (sm/traverse (zip-lists (.fixed params) (range (count (.fixed params))))
+                                  (fn [[sym index]]
+                                    (cond (instance? ast/params-ast sym)
+                                          sm-nop
+
+                                          (flat-map (map (lookup-sym sym) .c-var)
+                                                    (fn [var]
+                                                      (set-constraint var (c/DynamicParamConstraint
+                                                                           index empty-list (maybe sym) var)))))))
+                   _ (set-constraint "#result" c/top-type)
 
                    syms get-syms
                    _ (either (map (get syms fn-sym) sm/state-maybe)
@@ -5520,6 +5594,8 @@
           line-number (ast/line-number clause)]
       (for [expr (emit-cond-clause clause)
             first-const (get-constraint (.c-var expr))
+            ;; TODO: this is wrong, it captures the constraints for the first value clause
+            ;; which may not be valid if the conditional fails
             final-subs (get-subs)
 
             expr-cs (sm/traverse clauses
