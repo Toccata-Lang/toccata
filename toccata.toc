@@ -12,10 +12,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "714eb3f"))
+                          :sha "dfd0010"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "be3e25b"))
+                            :sha "5ef3769"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -36,7 +36,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "d1f0ad4"))
+                            :sha "c72fbb6"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "b0d9109"))
@@ -942,8 +942,10 @@
     (cond (= constraint c/top-type)
           sm-nop
           (for [curr-const (get-constraint var)
-                _ (set-constraint var (either (c/compose-constraints file-name line-number
-                                                                     constraint curr-const)
+                _ (set-constraint var (either (or (map (= curr-const c/top-type)
+                                                       (fn [_] constraint))
+                                                  (c/compose-constraints file-name line-number
+                                                                         constraint curr-const))
                                               (abort)))]
             '_))))
 
@@ -2925,20 +2927,24 @@
     (either (map (first arg-vars)
                  (fn [expr]
                    (for [disp-type  (var-type-num (.c-var expr))
-                         ;; _ (cond (= target-ast 'split-with)
+                         ;; _ (cond (or (= (.call-target ast) 'brop)
+                         ;;             (= file-name "runtime-tests/bad-proto-param-4.toc"))
                          ;;         (debug 'cpi file-name line-number (.call-target ast) (first arg-vars)
                          ;;                (.c-var expr) disp-type)
-                         ;;         (sm/state-maybe 0))
+                         ;;         sm-nop)
                          :when-not (= c/UnknownType disp-type)
                          result-sym (genlocal "rslt")
                          impl-info (get-proto-impl (.proto-sym target) target-ast num-args disp-type)
-                         ;; _ (cond (= file-name "testc.toc")
-                         ;;         (map (debug 'cpi file-name line-number target disp-type "\n"
-                         ;;                     (.param-constraints impl-info) "\n"
-                         ;;                     result-sym (.result-constraint impl-info)
-                         ;;                     "\n" 'arg-vars arg-vars)
-                         ;;              (fn [_] (flush-pr)))
-                         ;;         (sm/state-maybe 0))
+
+                         ;; arg-cs (sm/traverse (map arg-vars .c-var) get-constraint)
+                         ;; _ (cond (or (= (.call-target ast) 'brop)
+                         ;;             (= file-name "runtime-tests/bad-proto-param-4.toc"))
+                         ;;         (debug 'cpi file-name line-number target disp-type "\n"
+                         ;;                (.param-constraints impl-info) "\n"
+                         ;;                result-sym (.result-constraint impl-info)
+                         ;;                "\n" 'arg-vars arg-vars "\n"
+                         ;;                'arg-cs "\n" (interpose arg-cs "\n"))
+                         ;;         sm-nop)
                          _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
                                  (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
                          check-args (constrain-args arg-vars (.param-constraints impl-info)
@@ -3203,7 +3209,13 @@
                                                (.refs-map evalled) file-name line-number))])))))
 
   (emit [sym]
-    (lookup-sym (ast/tag sym)))
+    (let [sym (ast/tag sym)]
+      (for [expr (lookup-sym sym)
+            c (get-constraint (.c-var expr))
+            _ (set-constraint (.c-var expr)
+                              (c/update-path c (ast/file-name sym) (ast/line-number sym)))
+            ]
+        expr)))
 
   (emit-defined-value [sym defined-sym]
     (for [value (emit (ast/tag sym))
@@ -3221,17 +3233,6 @@
                         (fn [f]
                           (f name args)))
               sm/zero-sm))))
-
-(extend-type ast/tagged-symbol
-  Emitter
-  (replace-syms [ast subs]
-    (wrap sm/zero-sm (get subs ast ast)))
-
-  (replace-bound-vars [ast subs]
-    (get subs ast ast))
-
-  (encode-static [x]
-    (emit (ast/quoted-ast (.sym x)))))
 
 (extend-type Symbol
   Emitter
@@ -3402,9 +3403,16 @@
                                     [(.param-constraints arity-info)
                                      (.result-constraint arity-info)])]
     (for [result-sym (genlocal "rslt")
-          arg-cs (sm/traverse arg-vars (fn [v]
-                                         (get-constraint (.c-var v))))
-          ;; _ (comp (for [_ (sm/when (= file-name "test.toc"))
+          arg-cs (sm/traverse (map arg-vars .c-var) get-constraint)
+          :let [result-c (either (and (= (.call-target ast) 'fn-apply)
+                                      (map (second arg-cs)
+                                           (fn [coll-c]
+                                             (reify-constraint result-c
+                                                               (c/extract-items-constraints coll-c 10)))))
+
+                               (reify-constraint result-c arg-cs))]
+          ;; _ (comp (for [_ (sm/when (or (= (.call-target ast) 'brop)
+          ;;                              (= file-name "runtime-tests/bad-proto-param-4.toc")))
           ;;               _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
           ;;                        param-cs "\n" result-sym (reify-constraint result-c arg-cs))
           ;;               _ (debug 'arg-vars arg-vars)
@@ -3414,8 +3422,7 @@
           ;;           '_)
           ;;         sm-nop)
           check-args (constrain-args arg-vars param-cs file-name line-number)
-          _ (constrain-var file-name line-number result-sym
-                           (reify-constraint result-c arg-cs))
+          _ (constrain-var file-name line-number result-sym result-c)
 
           _ (update-call-site-count (.c-fn arity-info))
           line (line-macro ast "// static-fixed")
@@ -3857,7 +3864,11 @@
 (extend-type c/DynamicParamConstraint
   Emitter
   (reify-constraint [c param-cs]
-    (either (get param-cs (.param-index c))
+    (either (map (get param-cs (.param-index c))
+                 (fn [param-c]
+                   (reduce (reverse (.path c)) param-c
+                           (fn [c [file line]]
+                             (c/update-path c file line)))))
             c/top-type)))
 
 (extend-type c/SumConstraint
@@ -4416,6 +4427,15 @@
 
 (extend-type ast/tagged-symbol
   Emitter
+  (replace-syms [ast subs]
+    (wrap sm/zero-sm (get subs ast ast)))
+
+  (replace-bound-vars [ast subs]
+    (get subs ast ast))
+
+  (encode-static [x]
+    (emit (ast/quoted-ast (.sym x))))
+
   (all-symbols [ast]
     [ast]))
 
@@ -4785,11 +4805,6 @@
           arity-var (global-var fn-sym "staticArity")
           result-constraint (get-constraint (.c-var body))
           param-constraints (get-param-constraints params)
-          _ (cond (= file-name "test.toc")
-                  (debug 'esa file-name line-number fn-sym "\n" 'params param-constraints
-                         "\n" 'result result-constraint)
-
-                  sm-nop)
           runtime-check-fn (checking-fn fn-sym params param-vars c-fn param-constraints)
           _ (reset-fn-context fn-context)
           ;; TODO: put back in when rstoring the interpreter
@@ -4888,7 +4903,8 @@
                              (set-sym fn-sym (c-code fn-var [] {} fn-constraint)))
                    body-exprs (-> (comp param-destruct constraints body)
                                   (tail-call param-vars)
-                                  ;; ((fn [b] (print-err 'body "\n" (interpose b "\n")) b))
+                                  ;; ((fn [b] (and (= file-name "runtime-tests/bad-proto-param-4.toc")
+                                  ;;               (maybe (print-err 'body "\n" (interpose b "\n")))) b))
                                   (sm/traverse emit))
                    arity-info (comp (emit-closure-arity fn-sym fn-context c-fn params
                                                         param-vars body-exprs)
