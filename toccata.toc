@@ -162,9 +162,6 @@
                nothing)))
 
 (defprotocol Emitter
-  (reify-constraint [c param-cs]
-    c)
-
   (cache-static-constant [v expr]
     '_)
 
@@ -1649,12 +1646,6 @@
 
 (extend-type c/ItemsConstraint
   Emitter
-  (reify-constraint [ast param-cs]
-    (c/ItemsConstraint (map (.items-constraints ast) (fn [c]
-                                                       (reify-constraint c param-cs)))
-                       (reify-constraint (.tail-constraint ast) param-cs)
-                       (.path ast) (.sym ast) (.var ast)))
-
   (promote-inferred [c]
     (-> c
         (.tail-constraint (promote-inferred (.tail-constraint c)))
@@ -2016,11 +2007,6 @@
                                          (abort))))))
             m))
 
-  (reify-constraint [constraint param-cs]
-    (.constraints constraint
-                  (map (.constraints constraint) (fn [c]
-                                                   (reify-constraint c param-cs)))))
-
   (replace-bound-vars [constraint subs]
     ;; TODO: let the Vector impl do this
     (.constraints constraint
@@ -2174,10 +2160,6 @@
   (write-str [v] (map v write-str))
 
   Emitter
-  (reify-constraint [v subs]
-    (map v (fn [x]
-             (reify-constraint x subs))))
-
   (replace-bound-vars [v subs]
     (map v (fn [x]
              (replace-bound-vars x subs))))
@@ -2762,8 +2744,9 @@
                "Value *" result-sym " = (Value *)" list-sym ";" line-sep]
               {} file-name line-number))))
 
-(defn call-maybe [target arg]
-  (let [file-name (ast/file-name target)
+(defn call-maybe [ast arg]
+  (let [target (.call-target ast)
+        file-name (ast/file-name target)
         line-number (ast/line-number target)]
     (for [line (line-macro target "// call-maybe")
           result-sym (genlocal "maybe")
@@ -2867,6 +2850,7 @@
 (def ignore-result-type #{'split-with 'filter 'drop-while 'take-while})
 (def map-fns #{'map 'map-vals 'list-map 'maybe-map 'add-promise-action 'add-future-action})
 
+;; TODO: with DynamicConstraints, the need for this function is questionable
 (defn add-inner-constraint [result-var ast args]
   (or (inner-constraint-for-reduce result-var ast args)
       (let [file-name (ast/file-name ast)
@@ -2878,24 +2862,31 @@
              (let [[v f] (take args 2)]
                (for [arity-info (or (get-in f [.arities 1])
                                     (get-in f [.arities 'variadic]))]
-                 (let [inner-const (either (map (-> arity-info .param-constraints c/extract-items-constraints first)
+                 (let [inner-const (either (map (-> arity-info
+                                                    .param-constraints
+                                                    (c/extract-items-constraints 1)
+                                                    first)
                                                 (fn [c]
                                                   (c/InferredInner c (list [file-name line-number])
                                                                   nothing (.c-var v))))
                                            c/top-type)
+                       result-c (.result-constraint arity-info)
                        result-c (cond
                                  (map-fns (.call-target ast))
-                                 (-> (c/InferredInner (.result-constraint arity-info)
+                                 (-> (c/InferredInner result-c
                                                       empty-list nothing "")
                                      (c/update-path file-name line-number))
 
                                  (= (.call-target ast) 'flat-map)
-                                 (c/update-path (.result-constraint arity-info)
+                                 (c/update-path result-c
                                                 file-name line-number)
 
                                  c/top-type)]
-                   (for [_ (constrain-var file-name line-number (.c-var v) inner-const)
-                         _ (constrain-var file-name line-number result-var result-c)]
+                   (for [v-c (get-constraint (.c-var v))
+                         _ (constrain-var file-name line-number (.c-var v) inner-const)
+                         _ (constrain-var file-name line-number result-var
+                                          (c/reify-constraint result-c
+                                                              [(c/extract-contents-constraint v-c)]))]
                      '_))))))))
 
 (defn constrain-args [arg-vars param-constraints file-name line-number]
@@ -2927,8 +2918,7 @@
     (either (map (first arg-vars)
                  (fn [expr]
                    (for [disp-type  (var-type-num (.c-var expr))
-                         ;; _ (cond (and (= (.call-target ast) 'reduce)
-                         ;;              (= file-name "assertion-tests/dynamic-nested-value-1.toc"))
+                         ;; _ (cond (= file-name "test.toc")
                          ;;         (debug 'cpi file-name line-number (.call-target ast) (first arg-vars)
                          ;;                (.c-var expr) disp-type)
                          ;;         sm-nop)
@@ -2936,8 +2926,7 @@
                          result-sym (genlocal "rslt")
                          impl-info (get-proto-impl (.proto-sym target) target-ast num-args disp-type)
                          arg-cs (sm/traverse (map arg-vars .c-var) get-constraint)
-                         ;; _ (cond (and (= (.call-target ast) 'reduce)
-                         ;;              (= file-name "assertion-tests/dynamic-nested-value-1.toc"))
+                         ;; _ (cond (= file-name "test.toc")
                          ;;         (debug 'cpi file-name line-number target disp-type "\n"
                          ;;                (.param-constraints impl-info) "\n"
                          ;;                result-sym (c/reify-constraint (.result-constraint impl-info)
@@ -2960,16 +2949,31 @@
                                                     vect-constraint)]
                                    (for [arg-c (get-constraint (.c-var arg-var))
                                          :let [result-c (c/set-type arg-c coll-c)
+                                               ;; TODO: test a dynamic constraint here if possible
+                                               ;; TODO: is result-c ever going to be c/top-type?
                                                result-c (cond (= result-c c/top-type)
-                                                              (reify-constraint (.result-constraint impl-info)
-                                                                                arg-cs)
+                                                              (.result-constraint impl-info)
 
-                                                              result-c)]
+                                                              result-c)
+                                               result-c (c/reify-constraint result-c arg-cs)]
                                          _ (constrain-var file-name line-number result-sym result-c)]
                                      '_))
 
+                                 (= (.call-target ast) 'instance?)
+                                 (let [[_ arg-var] arg-vars
+                                       [_ arg-c] arg-cs
+                                       result-c (c/intersect (c/reify-constraint (.result-constraint impl-info)
+                                                                                 arg-cs)
+                                                             (c/InferredInner arg-c empty-list nothing ""))
+                                       result-c (cond (= result-c c/bottom-type)
+                                                      (.result-constraint impl-info)
+
+                                                      result-c)]
+                                   (constrain-var file-name line-number result-sym
+                                                  result-c))
+
                                  (constrain-var file-name line-number result-sym
-                                                (reify-constraint (.result-constraint impl-info) arg-cs)))
+                                                (c/reify-constraint (.result-constraint impl-info) arg-cs)))
                          _ (sm/traverse (zip-lists (map arg-vars .c-var)
                                                    (c/extract-items-constraints (.param-constraints impl-info)))
                                         (fn [[var constraint]]
@@ -3408,15 +3412,14 @@
           :let [result-c (either (and (= (.call-target ast) 'fn-apply)
                                       (map (second arg-cs)
                                            (fn [coll-c]
-                                             (reify-constraint result-c
+                                             (c/reify-constraint result-c
                                                                (c/extract-items-constraints coll-c 10)))))
 
-                               (reify-constraint result-c arg-cs))]
-          ;; _ (comp (for [_ (sm/when (or (= (.call-target ast) 'brop)
-          ;;                              (= file-name "runtime-tests/bad-proto-param-4.toc")))
+                                 (c/reify-constraint result-c arg-cs))]
+          ;; _ (comp (for [_ (sm/when (= file-name "test.toc"))
           ;;               _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
-          ;;                        param-cs "\n" result-sym (reify-constraint result-c arg-cs))
-          ;;               _ (debug 'arg-vars arg-vars)
+          ;;                        param-cs "\n" result-sym (c/reify-constraint result-c arg-cs))
+          ;;               _ (debug 'arg-cs arg-cs)
           ;;               _ (sm/traverse (zip-lists arg-vars arg-cs)
           ;;                              (fn [[v c]]
           ;;                                (debug 'v (.c-var v) 'c c)))]
@@ -3760,7 +3763,7 @@
   (emit-call-site [target args ast]
     (either (map (and (= 1 (count args))
                       (first args))
-                 (partial call-maybe (.call-target ast)))
+                 (partial call-maybe ast))
             (compilation-error "Call to 'maybe' in" (ast/file-name ast) "at line" (ast/line-number ast)
                                "has the wrong number of arguments. Only a single argument is valid."))))
 
@@ -3862,16 +3865,6 @@
                       sm-nop)]
         expr))))
 
-(extend-type c/DynamicParamConstraint
-  Emitter
-  (reify-constraint [c param-cs]
-    (either (map (get param-cs (.param-index c))
-                 (fn [param-c]
-                   (reduce (reverse (.path c)) param-c
-                           (fn [c [file line]]
-                             (c/update-path c file line)))))
-            c/top-type)))
-
 (extend-type c/SumConstraint
   Emitter
   (replace-syms [ast subs]
@@ -3882,9 +3875,6 @@
     (print-err 'replace-bound-vars 'line _LINE_)
     (abort)
     ast)
-
-  (reify-constraint [ast param-cs]
-    (.alts ast (reify-constraint (.alts ast) param-cs)))
 
   (runtime-check [constraint value-info sym-location checked-var]
     (let [alts (.alts constraint)
@@ -3965,7 +3955,9 @@
             _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)] constraint)
             exprs (emit-defined-value
                    (ast/reified
-                    nothing
+                    ;; TODO: total hack, should be
+                    ;; nothing
+                    (= 0 1)
                     {(ast/tag Eq-sym file-name line-number)
                      {=*-sym
                       [(ast/fn-arity-ast
@@ -3983,7 +3975,10 @@
                       [(ast/fn-arity-ast
                         (ast/tag (str defined-sym "_instance_QMARK_") file-name line-number) ""
                         (ast/params [x* y*]) ""
-                        [(ast/and-ast
+                        [(c/ResultConstraint (c/intersect maybe-constraint
+                                                          (c/InferredInner constraint
+                                                                           empty-list nothing "")))
+                         (ast/and-ast
                           ;; TODO: this needs to be replace with runtime-check
                           [(ast/call-ast some-sym
                                          [(ast/call-ast list-sym (vec (keys types-info)))
@@ -4030,9 +4025,11 @@
                 :let [type-map (comp* {} type-maps)
                       x* (ast/tag "#x")
                       y* (ast/tag "#y")
-                      reified-type-num (extract type-counter)]
+                      reified-type-num (extract type-counter)
+                      constraint (-> (c/TypeConstraint type-map empty-list defined-sym nothing "")
+                                     (c/update-path file-name line-number))]
                 _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)]
-                                   (c/TypeConstraint type-map empty-list defined-sym nothing ""))
+                                   constraint)
                 exprs (emit-defined-value
                        (ast/reified
                         (maybe reified-type-num)
@@ -4041,7 +4038,10 @@
                           [(ast/fn-arity-ast
                             (ast/tag (str defined-sym "_instance_QMARK_") file-name line-number) ""
                             (ast/params [x* y*]) ""
-                            [(ast/and-ast
+                            [(c/ResultConstraint (c/intersect maybe-constraint
+                                                              (c/InferredInner constraint
+                                                                               empty-list nothing "")))
+                             (ast/and-ast
                               [(ast/call-ast some-sym
                                              [(ast/call-ast list-sym (vec (keys type-map)))
                                               (ast/call-ast partial-sym
@@ -5010,8 +5010,7 @@
                                                     (symbol type-str)
                                                     (maybe (ast/untag disp-param)) ""))
                                 disp-constraint)]
-    (for [
-          ;; _ (debug 'impl file-name line-number type-str fn-sym num-args "\n" disp-constraint)
+    (for [;; _ (debug 'impl file-name line-number type-str fn-sym num-args "\n" disp-constraint)
           default-impl (get-proto-impl proto-sym fn-sym num-args 0)
           ext-fn (comp (emit-fn-arity (symbol (str type-str fn-sym))
                                       (.fn-var arity-ast)
@@ -5025,6 +5024,14 @@
                        (compilation-error "Could not compile protocol fn:"
                                           (str "'" fn-sym "' in")
                                           (str file-name ",") line-number))
+          :let [ext-fn (cond (= fn-sym 'instance?)
+                             (either (update-in ext-fn [.param-constraints .items-constraints]
+                                                (fn [cs]
+                                                  (either (store cs 1 c/top-type)
+                                                          cs)))
+                                     ext-fn)
+
+                             ext-fn)]
           reified (reify-arity ext-fn type-num arity-ast fn-sym proto-sym)
           ;; _ (debug "---------")
           ]
@@ -6278,8 +6285,8 @@
 
   (let [file-name (ast/file-name new-type-name)
        line-number (ast/line-number new-type-name)
-        x* (ast/tag "#x")
-        y* (ast/tag "#y")
+        x* (ast/tag "#x" file-name line-number)
+        y* (ast/tag "#y" file-name line-number)
         field-count (count fields)
         args (map (range field-count)
                   (fn [n]
@@ -6321,7 +6328,10 @@
                                    [(ast/fn-arity-ast
                                      (ast/tag (str new-type-name "_instance_QMARK_") file-name line-number) ""
                                      (ast/params [x* y*]) ""
-                                     [(ast/and-ast
+                                     [(c/ResultConstraint (c/intersect maybe-constraint
+                                                                       (c/InferredInner new-type-constraint
+                                                                                        empty-list nothing "")))
+                                      (ast/and-ast
                                        [(ast/call-ast =*-sym
                                                       [type-num
                                                        (ast/call-ast get-type-sym [y*])])
