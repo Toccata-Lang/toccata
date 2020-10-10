@@ -88,6 +88,7 @@ Maybe nothing_struct;
 Value *maybeNothing;
 REFS_SIZE refsInit;
 REFS_SIZE refsError;
+REFS_SIZE refsStatic;
 
 #define IgnoreType -1
 #define UnknownType 0
@@ -170,9 +171,10 @@ void prefs(char *tag, Value *v);
 Value *(*equalSTAR)(Vector *, Value *, Value *);
 Value *(*dissoc)(Vector *, Value *, Value *, Value *, Value *);
 Value *(*sha1)(Vector *, Value *);
-Value *(*hashSeq)(Vector *, Value* n, Value *s);
-Value *(*count)(Vector *, Value* n);
-Value *(*vals)(Vector *, Value* n);
+Value *(*hashSeq)(Vector *, Value*, Value *s);
+Value *(*count)(Vector *, Value*);
+Value *(*vals)(Vector *, Value*);
+Value *(*zero)(Vector *, Value*);
 Value *(*invoke0Args)(Vector *, Value *f);
 Value *(*invoke1Arg)(Vector *, Value *f, Value* arg);
 Value *(*invoke2Args)(Vector *, Value *f, Value* arg0, Value* arg1);
