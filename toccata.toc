@@ -12,10 +12,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "4bede89"))
+                          :sha "75b9949"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "1870d56"))
+                            :sha "3e177ef"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -36,7 +36,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "1570c39"))
+                            :sha "6d3f511"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "b0d9109"))
@@ -968,11 +968,10 @@
                              file-name line-number)]
     '_))
 
-;; TODO can probably be rewritten to be better
 (defn propogate-constraint [src-var dest-var f file-name line-number]
-  (for [arg-c (get-constraint src-var)
-        _ (append-constraint dest-var (f arg-c) file-name line-number)]
-    '_))
+  (flat-map (get-constraint src-var)
+            (fn [arg-c]
+              (append-constraint dest-var (f arg-c) file-name line-number))))
 
 (defn var-type-num [var]
   (for [c (get-constraint var)]
@@ -1379,24 +1378,31 @@
     (for [sym-info (sm/get-in-val [.fn-context .context-syms sym])
           closures (sm/get-in-val [.fn-context .closed-over .closures])
           expr (either (some closures
-                             (fn [[closure-var sym-literal constraint]]
+                             (fn [[closure-var sym-literal]]
                                (for [_ (= sym sym-literal)]
                                  ;; already added to closures
                                  (map (sm/update-in-val [.fn-context .closed-over .refs-map closure-var]
                                                         inc)
                                       (fn [_]
-                                        (c-code closure-var [] {closure-var 1} constraint))))))
+                                        (-> sym-info
+                                            clear-init
+                                            (.c-var closure-var)
+                                            (.refs-map {closure-var 1})))))))
                        ;; first time sym is closed over
                        (for [sym-count (sm/get-in-val [.fn-context .sym-count])
                              _ (sm/update-in-val [.fn-context .sym-count] inc)
                              :let [constraint (expr-constraints sym-info)
                                    closure-var (str "val" sym-count)]
+                             _ (set-constraint closure-var constraint)
                              _ (sm/update-in-val [.fn-context .closed-over .closures]
                                                  (fn [closures]
-                                                   (conj closures [closure-var sym constraint])))
+                                                   (conj closures [closure-var sym])))
                              _ (sm/assoc-in-val [.fn-context .closed-over .refs-map closure-var]
                                                 1)]
-                         (c-code closure-var [] {closure-var 1} constraint)))]
+                         (-> sym-info
+                             clear-init
+                             (.c-var closure-var)
+                             (.refs-map {closure-var 1}))))]
       expr)))
 
 (defn lookup-sym [sym]
@@ -1543,20 +1549,6 @@
   (runtime-check [constraint value-info sym-location checked-var]
     []))
 
-(extend-type c/DynamicConstraint
-  Emitter
-  (emit [constraint]
-    (wrap sm/zero-sm empty-c-code))
-
-  (replace-syms [constraint _]
-     (wrap sm/zero-sm constraint))
-
-  (runtime-check [constraint value-info checked-var]
-    [])
-
-  (runtime-check [constraint value-info sym-location checked-var]
-    []))
-
 (defn get-type-sym-info [type-symbol]
   (comp (either (or (map (get-in (extract core-agent) [.types (ast/untag type-symbol)])
                          sm/state-maybe)
@@ -1643,6 +1635,14 @@
 
   (emit [constraint]
     (emit-sym-constraint constraint)))
+
+(extend-type c/DynamicConstraint
+  Emitter
+  (runtime-check [constraint value-info checked-var]
+    [])
+
+  (runtime-check [constraint value-info sym-location checked-var]
+    []))
 
 (extend-type c/ItemsConstraint
   Emitter
@@ -1791,6 +1791,7 @@
     (.contents c (promote-inferred (.contents c))))
 
   (emit [constraint]
+    ;; TODO: why is to-constraint called?
     (flat-map (to-constraint constraint)
               emit-sym-constraint))
 
@@ -2209,6 +2210,8 @@
   (for [result-c (get-constraint "#result")
         var-c (get-constraint result-var)
         :let [final (c/intersect result-c var-c)
+              ;; TODO: this gets printed twice for constructor invokes. Why?
+              ;; _ (print-err 'final file-name line-number result-var final)
               _ (and (= c/bottom-type final)
                      (do
                        (print-err "Invalid return value for function at" file-name line-number)
@@ -2750,7 +2753,6 @@
         line-number (ast/line-number target)]
     (for [line (line-macro target "// call-maybe")
           result-sym (genlocal "maybe")
-          ;; TODO: investigate what this call does
           _ (propogate-constraint (.c-var arg) result-sym
                                   (fn [inner]
                                     (either (= inner c/top-type)
@@ -2769,12 +2771,7 @@
         :let [coll-type (c/extract-collection-of coll-const)
               contents-type (c/extract-contents-constraint coll-type)]
         _ (append-constraint v-var contents-type file-name line-number)
-        v-c (get-constraint v-var)
-        _ (append-constraint result-var
-                             (c/intersect coll-type
-                                          (c/InferredInner v-c empty-list
-                                                           nothing v-var))
-                             file-name line-number)]
+        v-c (get-constraint v-var)]
     '_))
 
 (defn add-hash-map-constraints [ast result args]
@@ -2885,9 +2882,7 @@
                                  c/top-type)]
                    (for [v-c (get-constraint (.c-var v))
                          _ (constrain-var file-name line-number (.c-var v) inner-const)
-                         _ (constrain-var file-name line-number result-var
-                                          (c/reify-constraint result-c
-                                                              [(c/extract-contents-constraint v-c)]))]
+                         _ (constrain-var file-name line-number result-var result-c)]
                      '_))))))))
 
 (defn constrain-args [arg-vars param-constraints file-name line-number]
@@ -2919,21 +2914,26 @@
     (either (map (first arg-vars)
                  (fn [expr]
                    (for [disp-type  (var-type-num (.c-var expr))
+                         arg-cs (sm/traverse arg-vars (fn [var]
+                                                        (get-constraint (.c-var var))))
                          ;; _ (cond (= file-name "test.toc")
-                         ;;         (debug 'cpi file-name line-number (.call-target ast) (first arg-vars)
+                         ;;         (debug 'cpi file-name (ast/line-number (.call-target ast))
+                         ;;                (.call-target ast) (first arg-vars)
                          ;;                (.c-var expr) disp-type)
                          ;;         sm-nop)
-                         :when-not (= c/UnknownType disp-type)
+                         :when-not (= disp-type c/UnknownType)
                          result-sym (genlocal "rslt")
                          impl-info (get-proto-impl (.proto-sym target) target-ast num-args disp-type)
-                         arg-cs (sm/traverse (map arg-vars .c-var) get-constraint)
                          ;; _ (cond (= file-name "test.toc")
-                         ;;         (debug 'cpi file-name line-number target disp-type "\n"
-                         ;;                (.param-constraints impl-info) "\n"
-                         ;;                result-sym (c/reify-constraint (.result-constraint impl-info)
-                         ;;                                               arg-cs)
-                         ;;                "\n" 'arg-vars arg-vars "\n"
-                         ;;                'arg-cs "\n" (interpose arg-cs "\n"))
+                         ;;         (for [_ (debug 'cpi file-name line-number target disp-type "\n\n"
+                         ;;                        'param-cs (.param-constraints impl-info) "\n\n"
+                         ;;                        'impl-result (.result-constraint impl-info) "\n\n"
+                         ;;                        "\n\n" 'arg-vars arg-vars "\n\n"
+                         ;;                        'arg-cs "\n" (interpose arg-cs "\n"))
+                         ;;               _ (debug'reified result-sym
+                         ;;                                (c/reify-constraint (.result-constraint impl-info) arg-cs
+                         ;;                                                    file-name line-number))]
+                         ;;           '_)
                          ;;         sm-nop)
                          _ (comp (sm/update-in-val [.constants .other 'type-known-sites] inc)
                                  (sm/assoc-in-val [.constants .other 'type-known-sites] 1))
@@ -2950,13 +2950,10 @@
                                                     vect-constraint)]
                                    (for [arg-c (get-constraint (.c-var arg-var))
                                          :let [result-c (c/set-type arg-c coll-c)
-                                               ;; TODO: test a dynamic constraint here if possible
-                                               ;; TODO: is result-c ever going to be c/top-type?
                                                result-c (cond (= result-c c/top-type)
                                                               (.result-constraint impl-info)
 
-                                                              result-c)
-                                               result-c (c/reify-constraint result-c arg-cs)]
+                                                              result-c)]
                                          _ (constrain-var file-name line-number result-sym result-c)]
                                      '_))
 
@@ -2964,7 +2961,7 @@
                                  (let [[_ arg-var] arg-vars
                                        [_ arg-c] arg-cs
                                        result-c (c/intersect (c/reify-constraint (.result-constraint impl-info)
-                                                                                 arg-cs)
+                                                                                 arg-cs file-name line-number)
                                                              (c/InferredInner arg-c empty-list nothing ""))
                                        result-c (cond (= result-c c/bottom-type)
                                                       (.result-constraint impl-info)
@@ -2974,7 +2971,8 @@
                                                   result-c))
 
                                  (constrain-var file-name line-number result-sym
-                                                (c/reify-constraint (.result-constraint impl-info) arg-cs)))
+                                                (c/reify-constraint (.result-constraint impl-info) arg-cs
+                                                                    file-name line-number)))
                          _ (sm/traverse (zip-lists (map arg-vars .c-var)
                                                    (c/extract-items-constraints (.param-constraints impl-info)))
                                         (fn [[var constraint]]
@@ -3219,8 +3217,7 @@
       (for [expr (lookup-sym sym)
             c (get-constraint (.c-var expr))
             _ (set-constraint (.c-var expr)
-                              (c/update-path c (ast/file-name sym) (ast/line-number sym)))
-            ]
+                              (c/update-path c (ast/file-name sym) (ast/line-number sym)))]
         expr)))
 
   (emit-defined-value [sym defined-sym]
@@ -3414,13 +3411,17 @@
                                       (map (second arg-cs)
                                            (fn [coll-c]
                                              (c/reify-constraint result-c
-                                                               (c/extract-items-constraints coll-c 10)))))
+                                                                 (c/extract-items-constraints coll-c 10)
+                                                                  file-name line-number))))
 
-                                 (c/reify-constraint result-c arg-cs))]
+                                 (-> result-c
+                                     (c/reify-constraint arg-cs file-name line-number)
+                                     (c/update-var result-sym)))]
           ;; _ (comp (for [_ (sm/when (= file-name "test.toc"))
           ;;               _ (debug 'csf file-name line-number (.call-target ast) (.c-var target) "\n"
-          ;;                        param-cs "\n" result-sym (c/reify-constraint result-c arg-cs))
+          ;;                        param-cs "\n" 'result result-sym r-c)
           ;;               _ (debug 'arg-cs arg-cs)
+          ;;               _ (debug 'reified r-c)
           ;;               _ (sm/traverse (zip-lists arg-vars arg-cs)
           ;;                              (fn [[v c]]
           ;;                                (debug 'v (.c-var v) 'c c)))]
@@ -3462,7 +3463,7 @@
           arg-cs (sm/traverse arg-vars (fn [var]
                                          (get-constraint (.c-var var))))
           _ (constrain-var file-name line-number result-sym
-                           (c/reify-constraint (.result-constraint arity-info) arg-cs))
+                           (c/reify-constraint (.result-constraint arity-info) arg-cs file-name line-number))
           _ (cond (= (.call-target ast) 'list*)
                   (for [arg-cs (map (get-constraint (.c-var args-list))
                                     c/extract-items-constraints)
@@ -3486,68 +3487,6 @@
                line
                "Value *" result-sym " = " (.c-fn arity-info) "((Vector *)0, (Value *)"
                (.c-var args-list) ");" line-sep]
-              {} (ast/file-name ast) (ast/line-number ast)))))
-
-;; TODO: factor out commonality with call-static-fixed
-(defn call-closure-fixed [target arity-info arg-vars ast]
-  (assert (instance? ClosureArity arity-info))
-
-  (let [file-name (ast/file-name ast)
-        line-number (ast/line-number ast)]
-    (for [_ (comp (sm/update-in-val [.constants .other 'closure-fixed-sites] inc)
-                  (sm/assoc-in-val [.constants .other 'closure-fixed-sites] 1))
-          result-sym (genlocal "rslt")
-          ;; _ (debug 'ccf file-name line-number (.call-target ast) (.c-var target) "\n"
-          ;;          (.param-constraints arity-info) "\n"
-          ;;          result-sym (.result-constraint arity-info))
-          arg-cs (sm/traverse arg-vars (fn [var]
-                                         (get-constraint (.c-var var))))
-          _ (constrain-var file-name line-number result-sym
-                           (c/reify-constraint (.result-constraint arity-info) arg-cs))
-          check-args (constrain-args arg-vars (.param-constraints arity-info)
-                                     file-name line-number)
-          ;; _ (constrain-var file-name line-number (.c-var args-list) (.param-constraints arity-info))
-          line (line-macro ast "// closure fixed call")]
-      (c-init result-sym
-              [check-args
-               line "Value *" result-sym " = ((FnType" (str (.param-count arity-info) " *)")
-               (-> arity-info .var-info .c-var) "->fn)("
-               (interpose (cons (str (-> arity-info .var-info .c-var) "->closures")
-                                (seq (map arg-vars .c-var)))
-                          ", ")
-               ");" line-sep "dec_and_free((Value *)" (.c-var target) ", 1);" line-sep]
-              {} file-name line-number))))
-
-;; TODO: factor out commonality with call-static-variadic and call-closure-fixed
-(defn call-closure-variadic [target arity-info arg-vars ast]
-  (assert (instance? ClosureArity arity-info))
-
-  (let [file-name (ast/file-name ast)
-        line-number (ast/line-number ast)]
-    (for [_ (comp (sm/update-in-val [.constants .other 'closure-variadic-sites] inc)
-                  (sm/assoc-in-val [.constants .other 'closure-variadic-sites] 1))
-          args-list (call-list (ast/tag 'list file-name line-number)
-                               (map arg-vars (fn [arg]
-                                               (.init arg []))))
-          result-sym (genlocal "rslt")
-          ;; _ (debug 'ccv file-name line-number (.call-target ast) (.c-var target) "\n"
-          ;;          (.param-constraints arity-info) "\n"
-          ;;          result-sym (.result-constraint arity-info))
-          arg-cs (sm/traverse arg-vars (fn [var]
-                                         (get-constraint (.c-var var))))
-          _ (constrain-var file-name line-number result-sym
-                           (c/reify-constraint (.result-constraint arity-info) arg-cs))
-          check-args (constrain-args arg-vars (.param-constraints arity-info)
-                                     file-name line-number)
-          _ (constrain-var file-name line-number (.c-var args-list) (.param-constraints arity-info))
-          line (line-macro ast "// closure-variadic")]
-      (c-init result-sym
-              [(.init args-list)
-               check-args
-               line
-               "Value *" result-sym " = ((FnType1 *)" (-> arity-info .var-info .c-var)
-               "->fn)(" (-> arity-info .var-info .c-var) "->closures, (Value *)" (.c-var args-list) ");" line-sep
-               "dec_and_free((Value *)" (.c-var target) ", 1);" line-sep]
               {} (ast/file-name ast) (ast/line-number ast)))))
 
 (defn call-dyn-fn-value [target args ast]
@@ -3686,9 +3625,9 @@
           _ (comp (sm/update-in-val [.constants .other 'invoke-sites] inc)
                   (sm/assoc-in-val [.constants .other 'invoke-sites] 1))
           result-sym (genlocal "rslt")
-          ;; _ (debug 'ci file-name line-number target num-args 'target-type target-type "\n"
-          ;;          (.param-constraints invoke-info) "\n"
-          ;;          result-sym (.result-constraint invoke-info))
+          ;; _ (debug 'ci file-name line-number target num-args 'target-type target-type "\n\n"
+          ;;          (.param-constraints invoke-info) "\n\n"
+          ;;          'result result-sym (.result-constraint invoke-info))
           ;; _ (debug 'arg-vars arg-vars)
           ;; _ (debug 'param-consts (.param-constraints invoke-info))
 
@@ -3697,14 +3636,18 @@
 
           arg-cs (sm/traverse arg-vars (fn [var]
                                          (get-constraint (.c-var var))))
+          ;; _ (debug 'arg-cs arg-cs)
+          ;; _ (debug 'reified result-sym (c/reify-constraint (.result-constraint invoke-info) arg-cs
+          ;;                                                  file-name line-number))
           _ (constrain-var file-name line-number result-sym
-                           (c/reify-constraint (.result-constraint invoke-info) arg-cs))
+                           (c/reify-constraint (.result-constraint invoke-info) arg-cs file-name line-number))
+          ;; _ (flat-map (get-constraint result-sym)
+          ;;             (partial debug 'set-c))
           _ (sm/traverse (zip-lists (map arg-vars .c-var)
                                     (c/extract-items-constraints (.param-constraints invoke-info)))
                          (fn [[var constraint]]
                            (constrain-var file-name line-number var constraint)))
 
-          ;; _ (debug "-----")
           line (line-macro ast "// call invoke")]
       (c-init result-sym
               [line check-args "\n// call invoke function\n"
@@ -3863,18 +3806,6 @@
       (for [expr (comp (call-proto-impl target args ast)
                        (static-call-site target args ast))
             _ (either (propogate-inner-constraint (.c-var expr) ast args)
-                      sm-nop)
-            _ (either (for [_ (= (.call-target ast) 'wrap)
-                            _ (or (= 2 (count args))
-                                  (do
-                                    (print-err "Wrong number of arguments to 'wrap' in"
-                                               file-name "at line" line-number)
-                                    (maybe (abort))))
-                            wrapped (second args)]
-                        (propogate-constraint (.c-var wrapped) (.c-var expr)
-                                              (fn [inner]
-                                                (c/InferredInner inner empty-list nothing ""))
-                                              file-name line-number))
                       sm-nop)]
         expr))))
 
@@ -4397,26 +4328,40 @@
 (extend-type c-closure-fn
   CallSite
   (emit-call-site [target args ast]
-    (comp (for [expr (either (or (map (get-in target [.arities (count args)])
-                                      (fn [arity-info]
-                                        (call-closure-fixed target arity-info args ast)))
-                                 (map (get-in target [.arities 'variadic])
-                                      (fn [arity-info]
-                                        (call-closure-variadic target arity-info args ast))))
-                             sm/zero-sm)
-                ;; TODO: restore
-                ;; _ (either (add-inner-constraint (.c-var expr) ast args)
-                ;;           (wrap sm/zero-sm '_))
-                ;; _ (add-hash-map-constraints ast (.c-var expr) args)
-                ;; _ (add-contents-constraint ast (.c-var expr) args)
-                ]
-            expr)
-          (compilation-error "No arity with" (count args) "arguments found"
-                             (either (map (instance? Tagged (.call-target ast))
-                                          (fn [sym]
-                                            (str "for '" sym "'")))
-                                     "")
-                             "at:" (ast/file-name ast) (ast/line-number ast))))
+    (let [file-name (ast/file-name ast)
+          line-number (ast/line-number ast)]
+      (comp (for [arity-info (sm/when (or (get-in target [.arities (count args)])
+                                          (map (get-in target [.arities 'variadic])
+                                               (fn [arity-info]
+                                                 (either (c/compose-constraints
+                                                          file-name line-number
+                                                          (c/StaticLengthConstraint (count args)
+                                                                                    empty-list nothing "")
+                                                          (.param-constraints arity-info))
+                                                         (abort))
+                                                 arity-info))))
+                  ;; _ (debug 'call-closure file-name line-number (.call-target ast) (.c-var target) "\n"
+                  ;;          (.param-constraints arity-info) "\n"
+                  ;;          'result-c (.result-constraint arity-info))
+                  _ (constrain-args args (.param-constraints arity-info) file-name line-number)
+                  expr (call-dyn-fn-value target args ast)
+                  arg-cs (sm/traverse args (fn [var]
+                                             (get-constraint (.c-var var))))
+                  _ (constrain-var file-name line-number (.c-var expr)
+                                   (c/reify-constraint (.result-constraint arity-info) arg-cs file-name line-number))
+                  ;; TODO: restore
+                  ;; _ (either (add-inner-constraint (.c-var expr) ast args)
+                  ;;           (wrap sm/zero-sm '_))
+                  ;; _ (add-hash-map-constraints ast (.c-var expr) args)
+                  ;; _ (add-contents-constraint ast (.c-var expr) args)
+                  ]
+              expr)
+            (compilation-error "No arity with" (count args) "arguments found"
+                               (either (map (instance? Tagged (.call-target ast))
+                                            (fn [sym]
+                                              (str "for '" sym "'")))
+                                       "")
+                               "at:" (ast/file-name ast) (ast/line-number ast)))))
 
   Emitter
   (clear-init [expr]
@@ -4700,7 +4645,9 @@
   (let [closure-count (count closure-info)]
     (cond (<= closure-count vect-array-len)
           (sm/state-maybe (map (vec (zip-lists (range closure-count) closure-info))
-                               (fn [[idx [arg _ constraint]]]
+                               ;; TODO: the runtime error message for this version is awful
+                               ;; (fn [[idx [arg _ constraint]]]
+                               (fn [[idx [arg _]]]
                                  (c-init arg ["Value *" arg " = closures->tail[" idx "];"
                                               " incRef(" arg ",1);" line-sep]
                                          {} "" 0))))
@@ -4721,7 +4668,7 @@
                               ", " closure-count ", " destArgs ");" line-sep]
                              {} c/top-type)]
                     (map (vec closure-info)
-                         (fn [[arg _ constraint]]
+                         (fn [[arg _]]
                            (c-init arg [] {} "" 0)))))))))
 
 (defn emit-closure-arity [fn-sym fn-context c-fn params param-vars body-exprs]
@@ -4740,7 +4687,9 @@
                                            body-exprs))
 
           result-constraint (get-constraint (.c-var body))
-          param-constraints (get-param-constraints params)
+          param-constraints (map (get-param-constraints params)
+                                 (fn [param-constraints]
+                                   (c/reify-constraint param-constraints [] "" 0)))
           _ (reset-fn-context fn-context)
           closed-over (sm/traverse closures (fn [[closed-over sym]]
                                               (map (lookup-sym sym)
@@ -4818,7 +4767,9 @@
     (for [body (collapse-expressions body-exprs)
           arity-var (global-var fn-sym "staticArity")
           result-constraint (get-constraint (.c-var body))
-          param-constraints (get-param-constraints params)
+          param-constraints (map (get-param-constraints params)
+                                 (fn [param-constraints]
+                                   (c/reify-constraint param-constraints [] "" 0)))
           runtime-check-fn (checking-fn fn-sym params param-vars c-fn param-constraints)
           _ (reset-fn-context fn-context)
           ;; TODO: put back in when rstoring the interpreter
@@ -4866,6 +4817,7 @@
    ;; TODO: there are two ResultConstraint's in 'body'
    (either (and (empty? (remove body (partial instance? ast/NoCode)))
                 (maybe sm/zero-sm))
+           ;; TODO: I'm tired of file-name not being accurate for compiler-generated fns
            (let [file-name (ast/file-name body)
                  line-number (ast/line-number body)
                  constraints (filter body (partial instance? c/Constraints))
@@ -4917,8 +4869,7 @@
                              (set-sym fn-sym (c-code fn-var [] {} fn-constraint)))
                    body-exprs (-> (comp param-destruct constraints body)
                                   (tail-call param-vars)
-                                  ;; ((fn [b] (and (= file-name "runtime-tests/bad-proto-param-4.toc")
-                                  ;;               (maybe (print-err 'body "\n" (interpose b "\n")))) b))
+                                  ;; ((fn [b] (print-err 'body "\n" (interpose b "\n")) b))
                                   (sm/traverse emit))
                    arity-info (comp (emit-closure-arity fn-sym fn-context c-fn params
                                                         param-vars body-exprs)
@@ -6291,7 +6242,7 @@
 
 
 (defn emit-constructor [new-type-name type-num new-type-constraint fields assertions]
- (assert (instance? ast/tagged-symbol new-type-name))
+  (assert (instance? ast/tagged-symbol new-type-name))
   (assert (instance? c/TypeConstraint new-type-constraint))
   (assert (instance? (vector-of Symbol) fields))
   (assert (instance? c/ItemsConstraint assertions))
@@ -6303,7 +6254,7 @@
         field-count (count fields)
         args (map (range field-count)
                   (fn [n]
-                    (ast/tag (symbol (str "arg" n)))))
+                    (ast/tag (str "arg" n))))
         args-map (reduce (zip-lists fields args) {}
                          (fn [m [k v]]
                            (assoc m k v)))]
@@ -6356,33 +6307,34 @@
                                    [(ast/fn-arity-ast
                                      (ast/tag (str new-type-name "_invoke") file-name line-number) ""
                                      (ast/params (comp [(ast/tag '_)] args)) ""
-                                     (comp
-                                      [(c/ItemsConstraint (-> (range field-count)
-                                                               (zip-lists fields)
-                                                               (map (fn [[idx field]]
-                                                                      (c/DynamicParamConstraint idx empty-list
-                                                                                                (maybe field) "")))
-                                                               (conj c/top-type)
-                                                               vec)
-                                                           c/coll-of-any empty-list nothing "")]
-                                      (c/extract-items-constraints assertions)
-                                      [(c/update-var new-type-constraint "#result")
-                                       (ast/inline-ast (ast/tag 'C)
-                                                       new-type-constraint
-                                                       (str "ReifiedVal *rv = malloc_reified("
-                                                            field-count ");\n"
-                                                            "#ifdef SINGLE_THREADED\n"
-                                                            "rv->refs = refsInit;\n#else\n"
-                                                            " __atomic_store(&rv->refs,"
-                                                            " &refsInit, __ATOMIC_RELAXED);\n"
-                                                            "#endif\n"
-                                                            "rv->type = " type-num ";\n"
-                                                            (to-str (map (range field-count)
-                                                                         (fn [idx]
-                                                                           (str "rv->impls[" idx "] = arg" idx
-                                                                                "_" (inc idx) ";\n"))))
-                                                            "return((Value *)rv);\n")
-                                                       "" 0)])
+                                     (comp [(c/ResultConstraint
+                                             (-> (c/DynamicFieldsConstraint
+                                                  (-> (range field-count)
+                                                      (zip-lists args)
+                                                      (map (fn [[idx arg]]
+                                                             (c/DynamicParamConstraint (inc idx) empty-list
+                                                                                       (maybe (ast/untag arg)) "")))
+                                                      vec)
+                                                  empty-list nothing "")
+                                                 (c/update-sym (symbol "#result"))))]
+                                           (c/extract-items-constraints assertions)
+                                           [(c/update-var new-type-constraint "#result")
+                                            (ast/inline-ast (ast/tag 'C)
+                                                            new-type-constraint
+                                                            (str "ReifiedVal *rv = malloc_reified("
+                                                                 field-count ");\n"
+                                                                 "#ifdef SINGLE_THREADED\n"
+                                                                 "rv->refs = refsInit;\n#else\n"
+                                                                 " __atomic_store(&rv->refs,"
+                                                                 " &refsInit, __ATOMIC_RELAXED);\n"
+                                                                 "#endif\n"
+                                                                 "rv->type = " type-num ";\n"
+                                                                 (to-str (map (range field-count)
+                                                                              (fn [idx]
+                                                                                (str "rv->impls[" idx "] = arg" idx
+                                                                                     "_" (inc idx) ";\n"))))
+                                                                 "return((Value *)rv);\n")
+                                                            "" 0)])
                                      c/empty-items-constraint c/top-type)]}
 
                                   (ast/tag Container-sym file-name line-number)
@@ -6563,28 +6515,33 @@
           (fn [[field field-index field-constraint]]
             (let [field-constraint (c/update-path field-constraint
                                                   (ast/file-name sym) (ast/line-number sym))]
-              [(ast/tag (str "." field))
+              [(ast/tag (str "." field) file-name line-number)
                [(ast/fn-arity-ast
                  (ast/tag (str sym "_" field) file-name line-number) ""
                  (ast/params [type-value field-arg]) ""
                  [(c/update-sym field-constraint (ast/untag field-arg))
+                  ;; TODO: add replacing of dynamic field constraint
                   (ast/inline-ast (ast/tag 'C)
                                   (c/TypeConstraint {} empty-list sym nothing "")
                                   (str "return(updateField(value_0, field_1, "
                                        field-index "));\n")
                                   "" 0)]
                  c/empty-items-constraint c/top-type)
-                (ast/fn-arity-ast
-                 (ast/tag (str sym "_" field) file-name line-number) ""
-                 (ast/params [type-value]) ""
-                 [(ast/inline-ast (ast/tag 'C) (c/clear-sym field-constraint)
-                                  (str "
+                (let [field-constraint (-> field-constraint
+                                           (c/intersect (c/DynamicItemConstraint 0 field-index
+                                                                                 empty-list nothing ""))
+                                           c/clear-sym)]
+                  (ast/fn-arity-ast
+                   (ast/tag (str sym "_" field) file-name line-number) ""
+                   (ast/params [type-value]) ""
+                   [(ast/inline-ast (ast/tag 'C) field-constraint
+                                    (str "
   Value *result = incRef(((ReifiedVal *)value_0)->impls[" field-index "], 1);
   dec_and_free(value_0, 1);
   return(result);
 ")
-                                  "" 0)]
-                 c/empty-items-constraint c/top-type)]])))}))
+                                    "" 0)]
+                   c/empty-items-constraint c/top-type))]])))}))
 
 (defn destruct-impl-fields [type-const field-constraints ast arity]
   (assert (instance? ast/type-ast ast))
