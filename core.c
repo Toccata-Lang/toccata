@@ -1135,6 +1135,10 @@ void dec_and_free(Value *v, int deltaRefs) {
 
 #ifndef FAST_INCS
 Value *incRef(Value *v, int deltaRefs) {
+  if ((Value *)v == 0) {
+    fprintf(stderr, "bad incRef value: %p\n", v);
+    abort();
+  }
   if (deltaRefs < 0) {
     fprintf(stderr, "bad deltaRefs: %p\n", v);
     abort();
