@@ -5033,25 +5033,7 @@
           ;; TODO: put back in when rstoring the interpreter
           ;; param-struct (encode-static param-constraints)
           ;; rslt-struct (encode-static result-constraint)
-          _ (declare ["Value *" c-fn "("
-                      (-> param-vars
-                          (map (partial str "Value *"))
-                          (seq)
-                          (conj "Vector *closures")
-                          (interpose ", "))
-                      ") {\nwhile (1) {\n"
-                      (.init body)
-                      line-sep "};};\n"
-                      (.init runtime-check-fn)
-                      "FnArity " arity-var " = {FnArityType, -2, "
-                      (count param-vars)
-                      ", (Vector *)0, " (cond (.variadic params)
-                                            "1"
-                                            "0")
-                      ", " (.c-var runtime-check-fn) ;; ", (Value *)&" (.c-struct param-struct)
-                      ;; ", (Value *)&" (.c-struct rslt-struct)
-                      ", (Value *)0, (Value *)0"
-                      "};" line-sep])]
+          ]
       (let [expr (c-static-arity (ArityValPtr (str "&" arity-var) arity-var) [] {} arity-var)]
         ;; TODO: use this to eliminate unknown return type values
         ;; (and (= c/UnknownType result-type)
@@ -5060,7 +5042,27 @@
         (StaticArity fn-var c-fn params (cond (.variadic params)
                                               'variadic
                                               (count params))
-                     expr
+                     (.init expr ["Value *" c-fn "("
+                                  (-> param-vars
+                                      (map (partial str "Value *"))
+                                      (seq)
+                                      (conj "Vector *closures")
+                                      (interpose ", "))
+                                  ") {\nwhile (1) {\n"
+                                  (.init body)
+                                  line-sep "};};\n"
+                                  (.init runtime-check-fn)
+                                  "FnArity " arity-var " = {FnArityType, -2, "
+                                  (count param-vars)
+                                  ", (Vector *)0, " (cond (.variadic params)
+                                                          "1"
+                                                          "0")
+                                  ", " (.c-var runtime-check-fn)
+                                  ;; TODO: put back in when rstoring the interpreter
+                                  ;; ", (Value *)&" (.c-struct param-struct)
+                                  ;; ", (Value *)&" (.c-struct rslt-struct)
+                                  ", (Value *)0, (Value *)0"
+                                  "};" line-sep])
                      param-constraints result-constraint)))))
 
 (defn emit-fn-arity
@@ -5249,6 +5251,15 @@
                        (compilation-error "Could not compile protocol fn:"
                                           (str "'" fn-sym "' in")
                                           (str file-name ",") line-number))
+          ext-fn (cond (instance? StaticArity ext-fn)
+                       (-> ext-fn
+                           .var-info
+                           .init
+                           declare
+                           (map (fn [_]
+                                  (.var-info ext-fn (.init (.var-info ext-fn) [])))))
+
+                       (sm/state-maybe ext-fn))
           :let [ext-fn (cond (= fn-sym 'instance?)
                              (either (update-in ext-fn [.param-constraints .items-constraints]
                                                 (fn [cs]
@@ -5969,6 +5980,15 @@
           ;; _ (debug "=======\n*** " 'main-fn)
           ;; TODO: add param assertions
           fn-arity (emit-fn-arity (ast/tag 'main) "" (.params ast) (.body ast))
+          fn-arity (cond (instance? StaticArity fn-arity)
+                         (-> fn-arity
+                             .var-info
+                             .init
+                             declare
+                             (map (fn [_]
+                                    (.var-info fn-arity (.init (.var-info fn-arity) [])))))
+
+                         (sm/state-maybe fn-arity))
           ;; _ (debug "======= done main")
           _ (sm/assoc-in-val [.module .values 'main] fn-arity)]
       [empty-c-code])))
@@ -5981,6 +6001,9 @@
                                            (ast/file-name fn-sym) (ast/line-number fn-sym))]
         _ (constrain-var (ast/file-name fn-sym) (ast/line-number fn-sym)
                          fn-var fn-constraint)
+        _ (declare ["Value *" fn-var ";\n"])
+        _ (sm/traverse arities (fn [arity]
+                                 (-> arity .var-info .init declare)))
         _ (declare ["Function " struct-var " = {FunctionType, -2, \""
                     fn-sym "\", " arity-count ", "
                     "{"   (-> arities
@@ -5990,27 +6013,41 @@
                               (to-str))
                     "}};\n"
                     "Value *" fn-var " = (Value *)&" struct-var ";\n\n"])]
-    (cond
-     (= fn-sym 'list)
-     (c-list-fn fn-var [] {} struct-var)
+    (let [arities (map arities (fn [arity]
+                                 (.var-info arity (.init (.var-info arity) []))))]
+      (cond
+       (= fn-sym 'list)
+       (c-list-fn fn-var [] {} struct-var)
 
-     (= fn-sym 'maybe)
-     (c-maybe-fn fn-var [] {} struct-var)
+       (= fn-sym 'maybe)
+       (c-maybe-fn fn-var [] {} struct-var)
 
-     (= fn-sym 'vector)
-     (c-vector-fn fn-var [] {} struct-var)
+       (= fn-sym 'vector)
+       (c-vector-fn fn-var [] {} struct-var)
 
-     (c-static-fn fn-var [] {} struct-var
-                  (reduce arities {}
-                          (fn [m arity]
-                            (assoc m (.param-count arity) arity)))))))
+       (c-static-fn fn-var [] {} struct-var
+                    (reduce arities {}
+                            (fn [m arity]
+                              (assoc m (.param-count arity) arity))))))))
 
 (defn closure-fn [fn-sym fn-var arities]
   (for [_ (sm/when (some arities (partial instance? ClosureArity)))
         struct-var (global-var fn-sym "fnStruct")
         line (line-macro fn-sym (str "// creating " fn-sym))
-        :let [emitted-arities (map arities .var-info)]]
-    (let [arity-count (count arities)]
+        _ (declare (-> arities
+                       (filter (partial instance? StaticArity))
+                       (map (fn [arity]
+                              (-> arity
+                                  .var-info
+                                  .init)))))]
+    (let [emitted-arities (map arities (fn [arity]
+                                         (either (map (instance? StaticArity arity)
+                                                      (fn [arity]
+                                                        (-> arity
+                                                            .var-info
+                                                            (.init []))))
+                                                 (.var-info arity))))
+          arity-count (count arities)]
       (c-closure-fn (str fn-var)
                     [(map emitted-arities .init)
                      line "Function *" struct-var " = malloc_function(" arity-count ");" line-sep
@@ -6147,6 +6184,15 @@
                                                     (InsertCode fn-sym prototype)
                                                     (ast/let-ast [] body))]))
                                       arity-impl-var)
+          static-arity (cond (instance? StaticArity static-arity)
+                             (-> static-arity
+                                 .var-info
+                                 .init
+                                 declare
+                                 (map (fn [_]
+                                        (.var-info static-arity (.init (.var-info static-arity) [])))))
+
+                             (sm/state-maybe static-arity))
 
           :let [param-count (.param-count static-arity)
                 default-impl (ProtoImpl 0 (.c-var (.var-info static-arity)) arity-ast
@@ -6424,8 +6470,7 @@
                            ;; _ (debug 'fn-sym fn-sym (ast/file-name fn-sym) (ast/line-number fn-sym))
                            fn-var (comp (map (lookup-declaration fn-sym) .c-var)
                                         (global-var fn-sym "fn"))
-                           _ (declare ["\n// --------- " fn-sym " -------------\n"
-                                       "Value *" fn-var ";\n"])
+                           _ (declare ["\n// --------- " fn-sym " -------------\n"])
                            _ (constrain-var file-name line-number fn-var fn-constraint)
                            arities (sm/traverse (map (.arities ast) (fn [arity]
                                                                       (-> arity
