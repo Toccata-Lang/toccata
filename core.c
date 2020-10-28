@@ -1428,7 +1428,11 @@ Value *shutDown_impl(Vector *closures) {
   return(nothing);
  };
 
+#ifdef CLOSURE_INFO
+FnArity shutDown_arity = {FnArityType, -2, 0, (Vector *)0, (Value *)0, 0, shutDown_impl};
+#else
 FnArity shutDown_arity = {FnArityType, -2, 0, (Vector *)0, 0, shutDown_impl};
+#endif
 Function shutDownFn = {FunctionType, -2, "shutdown-workers", 1, {&shutDown_arity}};
 Future shutDown = {FutureType, -2, (Value *)&shutDownFn, (Value *)0, (List *)0, (Value *)0, 0};
 

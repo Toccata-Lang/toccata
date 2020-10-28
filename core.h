@@ -7,6 +7,8 @@
 #include <inttypes.h>
 #include <sys/wait.h>
 
+#define CLOSURE_INFO 1
+
 extern void abort();
 
 #define VECTOR_ARRAY_LEN 32
@@ -43,7 +45,7 @@ typedef struct List {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *array[VECTOR_ARRAY_LEN];} VectorNode;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int count; Vector *closures;
+typedef struct {TYPE_SIZE type; REFS_SIZE refs; int count; Vector *closures; Value *parent;
                 int variadic; void *fn; Value *paramConstraints; Value *resultConstraint;} FnArity;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; char *name; int64_t arityCount; FnArity *arities[];} Function;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; Value* value;} Maybe;
