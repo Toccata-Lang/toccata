@@ -1315,7 +1315,7 @@ int64_t nakedSha1(Value *v1) {
       hash = ((HashedValue *)v1)->hashVal;
       dec_and_free(v1, 1);
     } else {
-      hashVal = (Integer *)sha1((Vector *)0, v1);
+      hashVal = (Integer *)sha1((FnArity *)0, v1);
       hash = hashVal->numVal;
       ((HashedValue *)v1)->hashVal = hash;
       dec_and_free((Value *)hashVal, 1);
@@ -1328,13 +1328,13 @@ int64_t nakedSha1(Value *v1) {
 	hash = ((HashedValue *)v1)->hashVal;
 	dec_and_free(v1, 1);
       } else {
-	hashVal = (Integer *)sha1((Vector *)0, v1);
+	hashVal = (Integer *)sha1((FnArity *)0, v1);
 	hash = hashVal->numVal;
 	((HashedValue *)v1)->hashVal = hash;
 	dec_and_free((Value *)hashVal, 1);
       }
     } else {
-      hashVal = (Integer *)sha1((Vector *)0, v1);
+      hashVal = (Integer *)sha1((FnArity *)0, v1);
       hash = hashVal->numVal;
       dec_and_free((Value *)hashVal, 1);
     }
@@ -1403,7 +1403,7 @@ void waitForWorkers() {
   int done = 0;
   do {
     pthread_mutex_lock (&lingeringAccess);
-    List *lingering = (List *)vals((Vector *)0, lingeringThreads);
+    List *lingering = (List *)vals((FnArity *)0, lingeringThreads);
     lingeringThreads = (Value *)&emptyBMI;
     pthread_mutex_unlock (&lingeringAccess);
 
@@ -1419,7 +1419,7 @@ void waitForWorkers() {
 #endif
 }
 
-Value *shutDown_impl(Vector *closures) {
+Value *shutDown_impl(FnArity *closures) {
   Value *item;
 #ifdef CHECK_MEM_LEAK
   moveFreeToCentral();
@@ -1428,11 +1428,7 @@ Value *shutDown_impl(Vector *closures) {
   return(nothing);
  };
 
-#ifdef CLOSURE_INFO
 FnArity shutDown_arity = {FnArityType, -2, 0, (Vector *)0, (Value *)0, 0, shutDown_impl};
-#else
-FnArity shutDown_arity = {FnArityType, -2, 0, (Vector *)0, 0, shutDown_impl};
-#endif
 Function shutDownFn = {FunctionType, -2, "shutdown-workers", 1, {&shutDown_arity}};
 Future shutDown = {FutureType, -2, (Value *)&shutDownFn, (Value *)0, (List *)0, (Value *)0, 0};
 
@@ -1570,15 +1566,15 @@ void *futuresThread(void *input) {
   while(workerIndex >= 0 && future != (Future *)0) {
     Value *f = future->action;
     if(f->type != FunctionType) {
-      result = invoke0Args((Vector *)0, incRef(f, 1));
+      result = invoke0Args((FnArity *)0, incRef(f, 1));
     } else {
       FnArity *arity = findFnArity(f, 0);
       if(arity != (FnArity *)0 && !arity->variadic) {
 	FnType0 *fn = (FnType0 *)arity->fn;
-	result = fn(arity->closures);
+	result = fn(arity);
       } else if(arity != (FnArity *)0 && arity->variadic) {
 	FnType1 *fn = (FnType1 *)arity->fn;
-	result = fn(arity->closures, (Value *)empty_list);
+	result = fn(arity, (Value *)empty_list);
       } else {
 	fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
 	abort();
@@ -1674,7 +1670,7 @@ int8_t isNothing(Value *v, char *fileName, int lineNumber) {
   return(v->type == MaybeType && ((Maybe *)v)->value == (Value *)0);
 }
 
-Value *maybe(Vector *closures, Value *arg0, Value *arg1) {
+Value *maybe(FnArity *closures, Value *arg0, Value *arg1) {
   Maybe *mVal = malloc_maybe();
   mVal->value = arg1;
   return((Value *)mVal);
@@ -1734,7 +1730,7 @@ Value *integer_EQ(Value *arg0, Value *arg1) {
     return(nothing);
   } else {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   }
 }
 
@@ -1742,15 +1738,15 @@ Value *isInstance(Value *arg0, Value *arg1) {
   TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   if (typeNum == arg1->type) {
      dec_and_free(arg1, 1);
-     return(maybe((Vector *)0, (Value *)0, arg0));
+     return(maybe((FnArity *)0, (Value *)0, arg0));
   } else if (StringBufferType == typeNum && SubStringType == arg1->type) {
      dec_and_free(arg1, 1);
-     return(maybe((Vector *)0, (Value *)0, arg0));
+     return(maybe((FnArity *)0, (Value *)0, arg0));
   // } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
                                         // ArrayNodeType == arg1->type ||
                                         // HashCollisionNodeType == arg1->type)) {
      // dec_and_free(arg1, 1);
-     // return(maybe((Vector *)0, (Value *)0, arg0));
+     // return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
      dec_and_free(arg0, 1);
      dec_and_free(arg1, 1);
@@ -1967,7 +1963,7 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
       if (ret->root != (VectorNode *)0) {
         incRef((Value *)ret->root, 1);
       }
-      Value *mval = maybe((Vector *)0, (Value *)0, (Value *)ret);
+      Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
       return(mval);
     } else {
       Vector *ret = newVector(vect->tail, VECTOR_ARRAY_LEN);
@@ -1975,12 +1971,12 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
       ret->tailOffset = vect->tailOffset;
       ret->shift = vect->shift;
       ret->root = copyVectStore(vect->shift, vect->root, index, val);
-      Value *mval = maybe((Vector *)0, (Value *)0, (Value *)ret);
+      Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
       return(mval);
     }
   } else if (index == vect->count) {
     Value *ret = (Value *)vectConj(vect, val);
-    Value *mval = maybe((Vector *)0, (Value *)0, (Value *)ret);
+    Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
     return(mval);
   } else {
     dec_and_free(val, 1);
@@ -2016,7 +2012,7 @@ Value *updateField(Value *rval, Value *field, int64_t idx) {
   ReifiedVal *template = (ReifiedVal *)rval;
   if (idx >= template->implCount) {
     fprintf(stderr, "Field index for type '%s' out of bounds: %" PRId64 ". Max: %" PRId64 "\n",
-	    extractStr(type_name((Vector *)0, rval)), idx, template->implCount);
+	    extractStr(type_name((FnArity *)0, rval)), idx, template->implCount);
     abort();
   }
   if (rval->refs == 1) {
@@ -2149,7 +2145,7 @@ Value *strEQ(Value *arg0, Value *arg1) {
 
   if (strncmp(s1, s2, len) == 0) {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
@@ -2210,7 +2206,7 @@ Value *strLT(Value *arg0, Value *arg1) {
   int cmp = strncmp(s1, s2, len);
   if (cmp < 0 || (cmp == 0 && s1Len < s2Len)) {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
@@ -2260,7 +2256,7 @@ Value *strList(Value *arg0) {
 Value *integer_LT(Value *arg0, Value *arg1) {
  if (((Integer *)arg0)->numVal < ((Integer *)arg1)->numVal) {
      dec_and_free(arg1, 1);
-     return(maybe((Vector *)0, (Value *)0, arg0));
+     return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
      dec_and_free(arg0, 1);
      dec_and_free(arg1, 1);
@@ -2270,13 +2266,13 @@ Value *integer_LT(Value *arg0, Value *arg1) {
 
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
   if (typeNum == arg1->type) {
-    return(maybe((Vector *)0, (Value *)0, arg1));
+    return(maybe((FnArity *)0, (Value *)0, arg1));
   } else if (StringBufferType == typeNum && SubStringType == arg1->type) {
-    return(maybe((Vector *)0, (Value *)0, arg1));
+    return(maybe((FnArity *)0, (Value *)0, arg1));
   } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
                                         ArrayNodeType == arg1->type ||
                                         HashCollisionNodeType == arg1->type)) {
-    return(maybe((Vector *)0, (Value *)0, arg1));
+    return(maybe((FnArity *)0, (Value *)0, arg1));
   } else {
     dec_and_free(arg1, 1);
     return(nothing);
@@ -2322,14 +2318,14 @@ Value *listMap(Value *arg0, Value *f) {
 	incRef(x, 1);
       if(f->type != FunctionType) {
         incRef(f, 1);
-        y = invoke1Arg((Vector *)0, f, x);
+        y = invoke1Arg((FnArity *)0, f, x);
       } else if(arity2->variadic) {
         FnType1 *fn4 = (FnType1 *)arity2->fn;
         List *varArgs3 = (List *)listCons(x, empty_list);
-        y = fn4(arity2->closures, (Value *)varArgs3);
+        y = fn4(arity2, (Value *)varArgs3);
       } else {
         FnType1 *fn4 = (FnType1 *)arity2->fn;
-        y = fn4(arity2->closures, x);
+        y = fn4(arity2, x);
       }
 
       // 'y' is the value for the new list
@@ -2432,7 +2428,7 @@ Value *car(Value *arg0) {
     Value *h = lst->head;
     incRef(h, 1);
     dec_and_free(arg0, 1);
-    return(maybe((Vector *)0, (Value *)0, h));
+    return(maybe((FnArity *)0, (Value *)0, h));
   }
 }
 
@@ -2453,7 +2449,7 @@ Value *cdr(Value *arg0) {
 Value *integerLT(Value *arg0, Value *arg1) {
   if (((Integer *)arg0)->numVal < ((Integer *)arg1)->numVal) {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
@@ -2713,7 +2709,7 @@ Value *listEQ(Value *arg0, Value *arg1) {
       }
     }
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   }
 }
 
@@ -2727,7 +2723,7 @@ int8_t equal(Value *v1, Value *v2) {
     equals = symEQ(v1, v2);
     break;
   default:
-    equals = equalSTAR((Vector *)0, v1, v2);
+    equals = equalSTAR((FnArity *)0, v1, v2);
     break;
   }
    int8_t notEquals = isNothing(equals, "", 0);
@@ -2769,19 +2765,19 @@ Value *fnApply(Value *arg0, Value *arg1) {
     abort();
   } else if(_arity->variadic) {
     FnType1 *_fn = (FnType1 *)_arity->fn;
-    Value *result = _fn(_arity->closures, arg1);
+    Value *result = _fn(_arity, arg1);
     dec_and_free(arg0, 1);
     return(result);
   } else if (argList->len == 0) {
     FnType0 *_fn = (FnType0 *)_arity->fn;
-    Value *result = _fn(_arity->closures);
+    Value *result = _fn(_arity);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 1) {
     FnType1 *_fn = (FnType1 *)_arity->fn;
     Value *appArg0 = argList->head; incRef(appArg0, 1);
-    Value *result = _fn(_arity->closures, appArg0);
+    Value *result = _fn(_arity, appArg0);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -2790,7 +2786,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg0 = argList->head; incRef(appArg0, 1);
     argList = argList->tail;
     Value *appArg1 = argList->head; incRef(appArg1, 1);
-    Value *result = _fn(_arity->closures, appArg0, appArg1);
+    Value *result = _fn(_arity, appArg0, appArg1);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -2801,7 +2797,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg1 = argList->head; incRef(appArg1, 1);
     argList = argList->tail;
     Value *appArg2 = argList->head; incRef(appArg2, 1);
-    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2);
+    Value *result = _fn(_arity, appArg0, appArg1, appArg2);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -2814,7 +2810,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg2 = argList->head; incRef(appArg2, 1);
     argList = argList->tail;
     Value *appArg3 = argList->head; incRef(appArg3, 1);
-    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3);
+    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -2829,7 +2825,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg3 = argList->head; incRef(appArg3, 1);
     argList = argList->tail;
     Value *appArg4 = argList->head; incRef(appArg4, 1);
-    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4);
+    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -2846,7 +2842,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg4 = argList->head; incRef(appArg4, 1);
     argList = argList->tail;
     Value *appArg5 = argList->head; incRef(appArg5, 1);
-    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5);
+    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -2865,7 +2861,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg5 = argList->head; incRef(appArg5, 1);
     argList = argList->tail;
     Value *appArg6 = argList->head; incRef(appArg6, 1);
-    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6);
+    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -2886,7 +2882,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg6 = argList->head; incRef(appArg6, 1);
     argList = argList->tail;
     Value *appArg7 = argList->head; incRef(appArg7, 1);
-    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7);
+    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -2909,7 +2905,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg7 = argList->head; incRef(appArg7, 1);
     argList = argList->tail;
     Value *appArg8 = argList->head; incRef(appArg8, 1);
-    Value *result = _fn(_arity->closures, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7,
+    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7,
                         appArg8);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
@@ -2924,13 +2920,13 @@ Value *maybeEQ(Value *arg0, Value *arg1) {
   if (arg1->type == MaybeType &&
       ((Maybe *)arg0)->value == ((Maybe *)arg1)->value) {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   } else if (arg1->type == MaybeType &&
              ((Maybe *)arg0)->value != (Value *)0 &&
              ((Maybe *)arg1)->value != (Value *)0) {
     incRef(((Maybe *)arg0)->value, 1);
     incRef(((Maybe *)arg1)->value, 1);
-    Value *eqResult = equalSTAR((Vector *)0, ((Maybe *)arg0)->value, ((Maybe *)arg1)->value);
+    Value *eqResult = equalSTAR((FnArity *)0, ((Maybe *)arg0)->value, ((Maybe *)arg1)->value);
     if (isNothing(eqResult, "", 0)) {
       dec_and_free(eqResult, 1);
       dec_and_free(arg0, 1);
@@ -2939,7 +2935,7 @@ Value *maybeEQ(Value *arg0, Value *arg1) {
     } else {
       dec_and_free(eqResult, 1);
       dec_and_free(arg1, 1);
-      Value *result = maybe((Vector *)0, (Value *)0, arg0);
+      Value *result = maybe((FnArity *)0, (Value *)0, arg0);
       return(result);
     }
   } else {
@@ -2958,25 +2954,25 @@ Value *maybeMap(Value *arg0, Value *arg1) {
   } else if((arg1)->type != FunctionType) {
     incRef(arg1, 1);
     incRef(mValue->value, 1);
-    rslt6 = invoke1Arg((Vector *)0, arg1, mValue->value);
+    rslt6 = invoke1Arg((FnArity *)0, arg1, mValue->value);
   } else {
     FnArity *arity3 = findFnArity(arg1, 1);
     if(arity3 != (FnArity *)0 && !arity3->variadic) {
       FnType1 *fn5 = (FnType1 *)arity3->fn;
       incRef(mValue->value, 1);
-      rslt6 = fn5(arity3->closures, mValue->value);
+      rslt6 = fn5(arity3, mValue->value);
     } else if(arity3 != (FnArity *)0 && arity3->variadic) {
       FnType1 *fn5 = (FnType1 *)arity3->fn;
       List *varArgs4 = empty_list;
       incRef(mValue->value, 1);
       varArgs4 = (List *)listCons(mValue->value, varArgs4);
-      rslt6 = fn5(arity3->closures, (Value *)varArgs4);
+      rslt6 = fn5(arity3, (Value *)varArgs4);
     } else {
       fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
       abort();
     }
   }
-  Value *result = maybe((Vector *)0, (Value *)0, rslt6);
+  Value *result = maybe((FnArity *)0, (Value *)0, rslt6);
   dec_and_free(arg0, 1);
   dec_and_free(arg1, 1);
   return(result);
@@ -3237,18 +3233,18 @@ Value *strSeq(Value *arg0) {
 Value *dynamicCall2Arg(Value *f, Value *arg0, Value *arg1) {
   Value *rslt;
   if(f->type != FunctionType) {
-    rslt = invoke2Args((Vector *)0, f, arg0, arg1);
+    rslt = invoke2Args((FnArity *)0, f, arg0, arg1);
   } else {
     FnArity *arity = findFnArity(f, 2);
     if(arity != (FnArity *)0 && !arity->variadic) {
       FnType2 *fn = (FnType2 *)arity->fn;
-      rslt = fn(arity->closures, arg0, arg1);
+      rslt = fn(arity, arg0, arg1);
     } else if(arity != (FnArity *)0 && arity->variadic) {
       FnType1 *fn = (FnType1 *)arity->fn;
       List *dynArgs = empty_list;
       dynArgs = (List *)listCons(arg1, dynArgs);
       dynArgs = (List *)listCons(arg0, dynArgs);
-      rslt = fn(arity->closures, (Value *)dynArgs);
+      rslt = fn(arity, (Value *)dynArgs);
     } else {
       fprintf(stderr, "\n*** Invalid function for string reduction.\n");
       abort();
@@ -3322,7 +3318,7 @@ Value *vectorGet(Value *arg0, Value *arg1) {
   } else {
     Value *val = vectGet(vect, (unsigned)index->numVal);
     incRef(val, 1);
-    Value *result = maybe((Vector *)0, (Value *)0, val);
+    Value *result = maybe((FnArity *)0, (Value *)0, val);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -3364,7 +3360,7 @@ Value *symEQ(Value *arg0, Value *arg1) {
     if (s1->len == s2->len &&
 	strncmp(s1->buffer, s2->buffer, s1->len) == 0) {
       dec_and_free(arg1, 1);
-      return(maybe((Vector *)0, (Value *)0, arg0));
+      return(maybe((FnArity *)0, (Value *)0, arg0));
     } else {
       dec_and_free(arg0, 1);
       dec_and_free(arg1, 1);
@@ -3390,7 +3386,7 @@ Value *symLT(Value *arg0, Value *arg1) {
     int cmp = strncmp(s0->buffer, s1->buffer, len);
     if (cmp < 0 || (cmp == 0 && s0->len < s1->len)) {
       dec_and_free(arg1, 1);
-      return(maybe((Vector *)0, (Value *)0, arg0));
+      return(maybe((FnArity *)0, (Value *)0, arg0));
     } else {
       dec_and_free(arg0, 1);
       dec_and_free(arg1, 1);
@@ -3421,15 +3417,15 @@ Value *listFilter(Value *arg0, Value *arg1) {
       incRef(x, 1);
       if(arg1->type != FunctionType) {
 	incRef(arg1, 1);
-	y = invoke1Arg((Vector *)0, arg1, x);
+	y = invoke1Arg((FnArity *)0, arg1, x);
       } else if(arity2->variadic) {
 	FnType1 *fn4 = (FnType1 *)arity2->fn;
 	List *varArgs3 = empty_list;
 	varArgs3 = (List *)listCons(x, varArgs3);
-	y = fn4(arity2->closures, (Value *)varArgs3);
+	y = fn4(arity2, (Value *)varArgs3);
       } else {
 	FnType1 *fn4 = (FnType1 *)arity2->fn;
-	y = fn4(arity2->closures, x);
+	y = fn4(arity2, x);
       }
 
       // 'y' is the filter maybe/nothing value
@@ -3518,7 +3514,7 @@ Value *bmiHashSeq(Value *arg0, Value *arg1) {
   List *seq = (List *)arg1;
   for (int i = 0; i < cnt; i++) {
     if (node->array[2 * i] == (Value *)0) {
-      seq = (List *)hashSeq((Vector *)0, incRef(node->array[2 * i + 1], 1), (Value *)seq);
+      seq = (List *)hashSeq((FnArity *)0, incRef(node->array[2 * i + 1], 1), (Value *)seq);
     } else {
       List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
       incRef(node->array[2 * i], 1);
@@ -3555,7 +3551,7 @@ Value *bmiCount(Value *arg0) {
   int accum = 0;
   for(int i = 0; i < cnt; i++) {
     if (node->array[i * 2] == (Value *)0 && node->array[i * 2 + 1] != (Value *)0) {
-      Integer *subCnt = (Integer *)count((Vector *)0,
+      Integer *subCnt = (Integer *)count((FnArity *)0,
 					 incRef(((BitmapIndexedNode *)arg0)->array[i * 2 + 1], 1));
       accum += subCnt->numVal;
       dec_and_free((Value *)subCnt, 1);
@@ -3814,7 +3810,7 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,  int shift) {
     if (keyOrNull == (Value *)0) {
       // There is no key in the position, so valOrNode is
       // pointer to a node.
-      Value *v = get((Vector *)0, incRef(valOrNode, 1), key, arg2, hash, shift + 5);
+      Value *v = get((FnArity *)0, incRef(valOrNode, 1), key, arg2, hash, shift + 5);
       dec_and_free(arg0, 1);
       return(v);
     } else {
@@ -4025,7 +4021,7 @@ Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
   } else {
     incRef(subNode, 1);
     dec_and_free(arg0, 1);
-    return(get((Vector *)0, subNode, key, notFound, hash, shift + 5));
+    return(get((FnArity *)0, subNode, key, notFound, hash, shift + 5));
   }
 }
 
@@ -4033,7 +4029,7 @@ Value *arrayNodeCount(Value *arg0) {
   int accum = 0;
   for(int i = 0; i < ARRAY_NODE_LEN; i++){
     if (((ArrayNode *)arg0)->array[i] != (Value *)0) {
-      Integer *subCnt = (Integer *)count((Vector *)0, incRef(((ArrayNode *)arg0)->array[i], 1));
+      Integer *subCnt = (Integer *)count((FnArity *)0, incRef(((ArrayNode *)arg0)->array[i], 1));
       accum += subCnt->numVal;
       dec_and_free((Value *)subCnt, 1);
     }
@@ -4152,7 +4148,7 @@ Value *arrayNodeSeq(Value *arg0, Value *arg1) {
   for (int i = 0; i < ARRAY_NODE_LEN; i++) {
     if (node->array[i] != (Value *)0) {
       incRef(node->array[i], 1);
-      seq = (List *)hashSeq((Vector *)0, node->array[i], (Value *)seq);
+      seq = (List *)hashSeq((FnArity *)0, node->array[i], (Value *)seq);
     }
   }
   dec_and_free(arg0, 1);
@@ -4199,7 +4195,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   return((Value *)newNode);
 }
 
-Value *get(Vector *closures, Value *node, Value *k, Value *v, int64_t hash, int shift) {
+Value *get(FnArity *closures, Value *node, Value *k, Value *v, int64_t hash, int shift) {
   switch(node->type) {
   case BitmapIndexedType:
     return(bmiGet(node, k, v, hash, shift));
@@ -4272,11 +4268,11 @@ Value *mutateAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift) {
 
 Value *hashMapGet(Value *arg0, Value *arg1) {
   int64_t hash = nakedSha1(incRef(arg1, 1));
-  Value *found = get((Vector *)0, arg0, arg1, notFoundPtr, hash, 0);
+  Value *found = get((FnArity *)0, arg0, arg1, notFoundPtr, hash, 0);
   if (found == notFoundPtr) {
     return(nothing);
   } else {
-    return(maybe((Vector *)0, (Value *)0, found));
+    return(maybe((FnArity *)0, (Value *)0, found));
   }
 }
 
@@ -4289,17 +4285,17 @@ Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
 Value *dynamicCall1Arg(Value *f, Value *arg) {
   Value *rslt;
   if(f->type != FunctionType) {
-    rslt = invoke1Arg((Vector *)0, f, arg);
+    rslt = invoke1Arg((FnArity *)0, f, arg);
   } else {
     FnArity *arity = findFnArity(f, 1);
     if(arity != (FnArity *)0 && !arity->variadic) {
       FnType1 *fn = (FnType1 *)arity->fn;
-      rslt = fn(arity->closures, arg);
+      rslt = fn(arity, arg);
     } else if(arity != (FnArity *)0 && arity->variadic) {
       FnType1 *fn = (FnType1 *)arity->fn;
       List *dynArgs = empty_list;
       dynArgs = (List *)listCons(arg, dynArgs);
-      rslt = fn(arity->closures, (Value *)dynArgs);
+      rslt = fn(arity, (Value *)dynArgs);
     } else {
       fprintf(stderr, "\n*** Invalid action for Promise.\n");
       abort();
@@ -4405,7 +4401,7 @@ Value *promiseDelivered(Value *arg0) {
     dec_and_free(arg0, 1);
     return(nothing);
   } else {
-    Value *mv = maybe((Vector *)0, (Value *)0, p->result);
+    Value *mv = maybe((FnArity *)0, (Value *)0, p->result);
     incRef(p->result, 1);
     dec_and_free(arg0, 1);
     return((Value *)mv);
@@ -4558,15 +4554,15 @@ List *readAgentQueue(Agent *agent) {
   }
 }
 
-Value *updateAgent_impl(List *args) {
-  Agent *agent = (Agent *)((Vector *)args)->tail[0];
+Value *updateAgent_impl(FnArity *arity) {
+  Agent *agent = (Agent *)(arity->closures)->tail[0];
   if (pthread_mutex_trylock (&agent->access) == 0) { // succeeded
     List *action = readAgentQueue(agent);
     while(action != (List *)0) {
       Value *f = (Value *)action->head;
       List *args = listCons(agent->val, action->tail);
       incRef((Value *)action->tail, 1);
-      agent->val = fn_apply((Vector *)0, incRef((Value *)f, 1), (Value *)args);
+      agent->val = fn_apply((FnArity *)0, incRef((Value *)f, 1), (Value *)args);
       dec_and_free((Value *)action, 1);
       action = readAgentQueue(agent);
     }
@@ -4581,7 +4577,7 @@ void scheduleAgent(Agent *agent, List *action) {
   incRef((Value *)agent->val, 1);
   List *args = listCons(agent->val, action->tail);
   incRef((Value *)action->tail, 1);
-  agent->val = fn_apply((Vector *)0, (Value *)f, (Value *)args);
+  agent->val = fn_apply((FnArity *)0, (Value *)f, (Value *)args);
   action->head = (Value *)0;
   dec_and_free((Value *)action, 1);
 #else
@@ -4655,7 +4651,7 @@ void show(Value *v) {
     return;
   }
   incRef(v, 1);
-  List *strings = (List *)showFn((Vector *)0, v);
+  List *strings = (List *)showFn((FnArity *)0, v);
   List *l = strings;
   for (Value *h = l->head; l != (List *)0 && h != (Value *)0; h = l->head) {
     incRef(h, 1);
@@ -4668,7 +4664,7 @@ void show(Value *v) {
 }
 
 int64_t countSeq(Value *seq) {
-  Integer *len = (Integer *)count((Vector *)0, seq);
+  Integer *len = (Integer *)count((FnArity *)0, seq);
   int64_t result = len->numVal;
   dec_and_free((Value *)len, 1);
   return(result);
