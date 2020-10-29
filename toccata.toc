@@ -3537,7 +3537,7 @@
             [dispArg & args] (sm/traverse (.fixed params) (fn [arg] (genlocal arg "arg")))
             :let [arg-decls (to-str (interpose (conj (map (cons dispArg args)
                                                           (partial str "Value *"))
-                                                     (str "FnArity *closures"))
+                                                     (str "FnArity *arity"))
                                                ", "))
                   args (to-str (interpose (comp [dispArg] args) ", "))]
             _ (new-proto-impl proto-sym fn-name param-count dispatch-type-num
@@ -4858,7 +4858,7 @@
        (.variadic params)
        (c-code checking-fn-var
                ["Value *" checking-fn-var
-                "(FnArity *closures, Value *args) {\n"
+                "(FnArity *arity, Value *args) {\n"
                 line
                 "int " checked-var "= 1;"
                 (-> constraints
@@ -4867,7 +4867,7 @@
                     (runtime-check c/top-type file-name line-number checked-var))
                 "if(!" checked-var "){abort();}" line-sep
                 "return(" arity-fn-var
-                "(closures, args));\n};\n"]
+                "(arity, args));\n};\n"]
                {} c/top-type)
        (every constraints-list (partial = c/top-type))
        (c-code arity-fn-var [] {} c/top-type)
@@ -4877,7 +4877,7 @@
                 (-> param-vars
                     (map (fn [param] (str "Value *" param)))
                     (seq)
-                    (conj "FnArity *closures")
+                    (conj "FnArity *arity")
                     (interpose ", "))
                 ") {\n"
                 line
@@ -4892,7 +4892,7 @@
                 "return(" arity-fn-var "("
                 (-> param-vars
                     (seq)
-                    (conj "closures")
+                    (conj "arity")
                     (interpose ", "))
                 "));\n};\n"]
                {} c/top-type)))))
@@ -4906,7 +4906,7 @@
                                ;; TODO: the runtime error message for this version is awful
                                ;; (fn [[idx [arg _ constraint]]]
                                (fn [[idx [arg _]]]
-                                 (c-init arg ["Value *" arg " = closures->closures->tail[" idx "];"
+                                 (c-init arg ["Value *" arg " = arity->closures->tail[" idx "];"
                                               " incRef(" arg ",1);" line-sep]
                                          {} "" 0))))
 
@@ -4918,11 +4918,11 @@
                   closure-count (count closures)]
               (comp [(c-code ""
                              [(map closures (fn [arg] ["Value *" arg ";" line-sep]))
-                              "incRef((Value *)closures->closures, 1);" line-sep
+                              "incRef((Value *)arity->closures, 1);" line-sep
                               "Value **" destArgs "[" closure-count "] = {"
                               (interpose (map closures (partial vector "&")) ", ")
                               "};" line-sep
-                              "destructValue(\"\", \"\", (Value *)closures"
+                              "destructValue(\"\", \"\", (Value *)arity->closures"
                               ", " closure-count ", " destArgs ");" line-sep]
                              {} c/top-type)]
                     (map (vec closure-info)
@@ -4986,7 +4986,7 @@
                       (-> param-vars
                           (map (partial str "Value *"))
                           (seq)
-                          (conj "FnArity *closures")
+                          (conj "FnArity *arity")
                           (interpose ", "))
                       ") {\n"
                       "\nwhile (1) {\n"
@@ -5046,7 +5046,7 @@
                                   (-> param-vars
                                       (map (partial str "Value *"))
                                       (seq)
-                                      (conj "FnArity *closures")
+                                      (conj "FnArity *arity")
                                       (interpose ", "))
                                   ") {\nwhile (1) {\n"
                                   (.init body)
@@ -5189,7 +5189,7 @@
                           .fixed
                           (map (fn [_] "Value *"))
                           (seq)
-                          (conj "FnArity *closures")
+                          (conj "FnArity *arity")
                           (interpose ", "))
                       ");\n"
                       "FnArity *" arity-impl-var ";\n"])]
@@ -6051,13 +6051,14 @@
       (c-closure-fn (str fn-var)
                     [(map emitted-arities .init)
                      line "Function *" struct-var " = malloc_function(" arity-count ");" line-sep
+                     "Value *" fn-var " = (Value *)" struct-var ";" line-sep
                      struct-var "->name = \"" fn-sym "\";" line-sep
                      struct-var "->arityCount = " arity-count ";" line-sep
                      (map (zip-lists (map emitted-arities .c-var)
                                      (range arity-count))
                           (fn [[sym index]]
-                            (str struct-var "->arities[" index "] = " sym ";" line-sep)))
-                     "Value *" fn-var " = (Value *)" struct-var ";" line-sep]
+                            [sym "->parent = " fn-var ";" line-sep
+                             struct-var "->arities[" index "] = " sym ";" line-sep]))]
                     (apply merge-with (list* + (map emitted-arities .refs-map)))
                     (reduce arities {}
                             (fn [m arity]
@@ -6118,11 +6119,11 @@
                     ;; TODO: maybe use 'InsertCode' instead
                     (call-universal-proto-fn fn-sym disp-arg args)
                     (to-str (line-marker (ast/file-name fn-sym) (ast/line-number fn-sym) ""))
-                    "if (closures != (FnArity *)0) {"
+                    "if (arity != (FnArity *)0) {"
                     "fprintf(stderr,\"*** Could not find implementation of '" proto-sym "/" fn-sym
                     "' for type '%s' with %d arguments %s\\n\", "
                     "((String *)type_name((FnArity *)0, " disp-arg "))->buffer, " num-args
-                    ", ((String *)closures)->buffer);abort();"
+                    ", ((String *)arity)->buffer);abort();"
                     "} else {"
                     "fprintf(stderr,\"*** Could not find implementation of '" proto-sym "/" fn-sym
                     "' for type '%s' with %d arguments.\\n\", "
@@ -6245,7 +6246,7 @@
                                                                             c/top-type))]
                                         ["Value *" c-fn "("
                                          (-> (map (range arg-count) (partial str "Value *arg"))
-                                             (conj "FnArity *closures")
+                                             (conj "FnArity *arity")
                                              (interpose ", "))
                                          ");\n"]))))
         _ (declare ["\n// proto fn for " proto-sym "/" fn-sym "\n"

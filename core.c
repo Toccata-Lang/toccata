@@ -380,6 +380,7 @@ FnArity *malloc_fnArity() {
     freeFnArities.head = freeFnArities.head->next;
   }
   // incTypeMalloc(FnArityType, 1);
+  newFnArity->parent = (Value *)0;
   newFnArity->type = FnArityType;
   newFnArity->refs = refsInit;
   return(newFnArity);
@@ -1419,7 +1420,7 @@ void waitForWorkers() {
 #endif
 }
 
-Value *shutDown_impl(FnArity *closures) {
+Value *shutDown_impl(FnArity *arity) {
   Value *item;
 #ifdef CHECK_MEM_LEAK
   moveFreeToCentral();
@@ -1670,7 +1671,7 @@ int8_t isNothing(Value *v, char *fileName, int lineNumber) {
   return(v->type == MaybeType && ((Maybe *)v)->value == (Value *)0);
 }
 
-Value *maybe(FnArity *closures, Value *arg0, Value *arg1) {
+Value *maybe(FnArity *arity, Value *arg0, Value *arg1) {
   Maybe *mVal = malloc_maybe();
   mVal->value = arg1;
   return((Value *)mVal);
@@ -4195,7 +4196,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   return((Value *)newNode);
 }
 
-Value *get(FnArity *closures, Value *node, Value *k, Value *v, int64_t hash, int shift) {
+Value *get(FnArity *arity, Value *node, Value *k, Value *v, int64_t hash, int shift) {
   switch(node->type) {
   case BitmapIndexedType:
     return(bmiGet(node, k, v, hash, shift));
