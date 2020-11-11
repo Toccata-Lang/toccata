@@ -1,6 +1,7 @@
 
-;; TODO: a benchmark to implement
+;; TODO: benchmarks to implement
 ;; https://github.com/christianscott/levenshtein-distance-benchmarks
+;; https://github.com/darklang/fizzboom/
 
 ;; libs to implement
 ;; ZIO and associated
@@ -2393,6 +2394,19 @@
                          (constrain-var file-name line-number (c/extract-var c) c)))]
     final))
 
+(defn extract-closures []
+  (sm/new-sm (fn [s]
+               (assert (instance? GlobalContext s))
+               (let [closures (-> s .fn-context .closed-over .closures)]
+                 (and (first closures)
+                      (maybe [closures s]))))))
+
+(defn free-closure-parent []
+  (comp (map (extract-closures) (fn [_]
+                                  ["if (arity->parent) "
+                                   "dec_and_free(arity->parent, 1);" line-sep]))
+        (sm/state-maybe "")))
+
 (deftype TailExpr [ast]
   Stringable
   (string-list [_]
@@ -2411,14 +2425,16 @@
 
   Emitter
   (emit [_]
+    ;; TODO: need to test freeing the parent fn in closures
     (for [init-fn-context (sm/get-val .rt-init)
           fn-context (reset-fn-context (.subs init-fn-context {}))
           value (encode m)
           init-fn-context (reset-fn-context fn-context)
           _ (sm/set-val .rt-init init-fn-context)
           _ (constrain-var "" 0 (.c-var value) hashmap-constraint)
-          _ (set-result-constraint (.c-var value) "" 0)]
-      (c-code (.c-var value) ["return(" (.c-var value) ");" line-sep]
+          _ (set-result-constraint (.c-var value) "" 0)
+          free-parent (free-closure-parent)]
+      (c-code (.c-var value) [free-parent line-sep "return(" (.c-var value) ");" line-sep]
               {} hashmap-constraint))))
 
 (defn collisionArray [m]
@@ -2517,16 +2533,6 @@
           (.c-var var)
           (.init (comp (.init expr) ["Value *" var " = newHashSet((FnArity *)0, " (.c-var expr) ");" line-sep]))))))
 
-(defn emit-tail-expr [ast expr]
-  ;; TODO: periodically enable this to check on things
-  ;; (print-err 'check (some return-assertions assert-return-type) return-type
-  ;;            (ast/file-name ast) (ast/line-number ast))
-  (collapse-expressions [expr
-                         (c-code (.c-var expr)
-                                 ["return(" (.c-var expr) ");" line-sep]
-                                 {(.c-var expr) 1}
-                                 c/top-type)]))
-
 (deftype TailCall [ast params]
   (assert (instance? Vector params))
 
@@ -2550,6 +2556,7 @@
                   curr-const (get-constraint (.c-var expr))
                   result-const (get-constraint "#result")
                   checked-var (genlocal 'checked)
+                  free-parent (free-closure-parent)
                   :let [expr (cond (instance? Tagged ast)
                                    (.refs-map expr {})
                                    expr)
@@ -2563,7 +2570,16 @@
                                                       rt-check
                                                       "if(!" checked-var "){abort();}}" line-sep])))]
                   _ (constrain-var file-name line-number (.c-var expr) result-const)
-                  final-expr (emit-tail-expr ast (.init expr [(.init expr) check-result]))
+                  final-expr (collapse-expressions [(.init expr [(.init expr) check-result])
+                                                    (c-code (.c-var expr)
+                                                            [free-parent
+                                                             "return(" (.c-var expr) ");" line-sep]
+                                                            {(.c-var expr) 1}
+                                                            c/top-type)])
+                  ;; TODO: periodically enable this to check on things
+                  ;; (print-err 'check (some return-assertions assert-return-type) return-type
+                  ;;            (ast/file-name ast) (ast/line-number ast))
+
                   _ (set-result-constraint (.c-var final-expr) file-name line-number)]
               final-expr)))))
 
@@ -2754,6 +2770,7 @@
           init-fn-context (reset-fn-context fn-context)
           _ (sm/get-val .rt-init init-fn-context)
           _ (constrain-var "" 0 (.c-var value) hashmap-constraint)]
+      ;; TODO: wtf? There shouldn't be a 'return' here
       (c-code (.c-var value) ["return(" (.c-var value) ");" line-sep]
               {} hashmap-constraint)))
 
@@ -3271,7 +3288,7 @@
         more-args (ast/tag "#more-args" file line)
         fn-sym (ast/tag (str "partial_" (either (instance? Tagged call-target)
                                                 'anon)))]
-    (-> (ast/fn-ast (maybe fn-sym)
+    (-> (ast/fn-ast nothing
                     [(ast/fn-arity-ast fn-sym ""
                                        (ast/params [] (maybe more-args)) ""
                                        [(ast/call-ast (ast/tag 'apply file line)
@@ -3555,6 +3572,7 @@
                         "Value *rval = ((FnType" param-count
                         " *)arityPtr->fn)(arityPtr," args ");" line-sep
                         "dec_and_free(" dispArg ", 1);" line-sep
+                        ;; TODO: verify that we don't need to free the parent fn here
                         "return(rval);" line-sep
                         "};\n\n"
                         "FnArity " fn-arity-sym " = {FnArityType, -2, " param-count
@@ -4311,6 +4329,7 @@
 (extend-type ast/call-ast
   Emitter
   (emit-recursive-call [ast params]
+    ;; TODO: check for closures and insert dec_and_free(arity->parent, 1);
     (for [_ (sm/when (instance? Tagged (.call-target ast)))
           target (emit (.call-target ast))
           _ (sm/get-in-val [.fn-context .fn-spec .arity-info (.c-var target) (count (.args ast))])
@@ -4902,13 +4921,15 @@
 (defn destruct-closures [closure-info]
   (let [closure-count (count closure-info)]
     (cond (<= closure-count vect-array-len)
-          (sm/state-maybe (map (vec (zip-lists (range closure-count) closure-info))
-                               ;; TODO: the runtime error message for this version is awful
-                               ;; (fn [[idx [arg _ constraint]]]
-                               (fn [[idx [arg _]]]
-                                 (c-init arg ["Value *" arg " = arity->closures->tail[" idx "];"
-                                              " incRef(" arg ",1);" line-sep]
-                                         {} "" 0))))
+          (sm/state-maybe (conj (map (vec (zip-lists (range closure-count) closure-info))
+                                     ;; TODO: the runtime error message for this version is awful
+                                     ;; (fn [[idx [arg _ constraint]]]
+                                     (fn [[idx [arg _]]]
+                                       (c-init arg ["Value *" arg " = arity->closures->tail[" idx "];"
+                                                    " incRef(" arg ",1);" line-sep]
+                                               {} "" 0)))
+                                (c-code "" ["if (arity->parent) incRef(arity->parent, 1);" line-sep]
+                                        {} c/top-type)))
 
           (for [destArgs (genlocal "destArgs")]
             (let [closures (-> closure-info
@@ -4923,25 +4944,27 @@
                               (interpose (map closures (partial vector "&")) ", ")
                               "};" line-sep
                               "destructValue(\"\", \"\", (Value *)arity->closures"
-                              ", " closure-count ", " destArgs ");" line-sep]
+                              ", " closure-count ", " destArgs ");" line-sep
+                              "if (arity->parent) incRef(arity->parent, 1);" line-sep]
                              {} c/top-type)]
                     (map (vec closure-info)
                          (fn [[arg _]]
                            (c-init arg [] {} "" 0)))))))))
 
-(defn emit-closure-arity [fn-sym fn-context c-fn params param-vars body-exprs]
+(defn emit-closure-arity [fn-sym fn-var fn-context c-fn params param-vars body-exprs]
+  (assert (instance? String fn-var))
   (assert (instance? CFnPtr c-fn))
 
   (let [file-name (ast/file-name fn-sym)
         line-number (ast/line-number fn-sym)]
-    (for [closures (sm/new-sm (fn [s]
-                                (assert (instance? GlobalContext s))
-                                (let [closures (-> s .fn-context .closed-over .closures)]
-                                  (and (first closures)
-                                       (maybe [closures s])))))
+    (for [closures (extract-closures)
           closure-subs (get-subs)
           closures-destruct (destruct-closures closures)
           body (collapse-expressions (comp closures-destruct
+                                           (either (= "" fn-var)
+                                                   [(c-init fn-var ["Value *" fn-var " = arity->parent;"
+                                                                    " incRef(" fn-var ",1);" line-sep]
+                                                            {} "" 0)])
                                            body-exprs))
 
           result-constraint (get-constraint (.c-var body))
@@ -5126,7 +5149,7 @@
 
                    syms get-syms
                    _ (either (map (get syms fn-sym) sm/state-maybe)
-                             (set-sym fn-sym (c-code fn-var [] {} fn-constraint)))
+                             (set-sym fn-sym (c-code fn-var [] {fn-var 1} fn-constraint)))
                    body-exprs (-> (comp param-destruct constraints body)
                                   (tail-call param-vars)
                                   ;; ((fn [b]
@@ -5134,7 +5157,7 @@
                                   ;;         (maybe (print-err 'body "\n" (interpose b "\n"))))
                                   ;;    b))
                                   (sm/traverse emit))
-                   arity-info (comp (emit-closure-arity fn-sym fn-context c-fn params
+                   arity-info (comp (emit-closure-arity fn-sym fn-var fn-context c-fn params
                                                         param-vars body-exprs)
                                     (emit-static-arity fn-sym fn-context fn-var c-fn params
                                                        param-vars body-exprs))
@@ -5493,8 +5516,13 @@
 
                          last-expr (sm/when (last exprs))
                          _ (propogate-constraint (.c-var last-expr) result-var
-                                                 identity file-name line-number)]
-                     (let [refs-map (clause-refs exprs result-var)]
+                                                 identity file-name line-number)
+                         free-parent (cond (= tail-return "")
+                                           (sm/state-maybe "")
+
+                                           (free-closure-parent))]
+                     (let [tail-return [free-parent line-sep tail-return]
+                           refs-map (clause-refs exprs result-var)]
                        (c-init result-var
                                ["Value *" result-var ";" line-sep
                                 (-> exprs
@@ -5529,6 +5557,7 @@
       (for [result-var (genlocal "andRslt")
             _ (constrain-var file-name line-number "#result" maybe-constraint)
             check-fn (global-var 'checker)
+            ;; TODO: test a closure with a TailAnd
             expr (emit-and-expr result-var (remove (.clauses ast) (partial instance? ast/NoCode))
                                 (str "return(nothing);" line-sep))
             result-const (get-constraint "#result")
@@ -5604,8 +5633,13 @@
                                             c/sum-type
                                             assert-maybe-of
                                             (c/update-path file-name line-number))]
-                         _ (constrain-var file-name line-number result-var result-c)]
-                     (let [exprs (comp [expr]
+                         _ (constrain-var file-name line-number result-var result-c)
+                         free-parent (cond (= tail-return "")
+                                           (sm/state-maybe "")
+
+                                           (free-closure-parent))]
+                     (let [tail-return [free-parent line-sep tail-return]
+                           exprs (comp [expr]
                                        (map expr-cs (fn [[_ expr]] expr)))
                            refs-map (clause-refs exprs result-var)]
                        (c-init result-var
@@ -5642,6 +5676,7 @@
       (for [result-var (genlocal "orRslt")
             _ (constrain-var file-name line-number "#result" maybe-constraint)
             check-fn (global-var 'checker)
+            ;; TODO: test closure with tail or expr
             expr (emit-or-expr result-var (remove (.clauses ast) (partial instance? ast/NoCode))
                                (str "return(" check-fn "(" result-var "));" line-sep))
             result-const (get-constraint "#result")
@@ -5663,8 +5698,7 @@
   (emit [ast]
     (flat-map (genlocal "orRslt")
               (fn [result-var]
-                (emit-or-expr result-var (remove (.clauses ast) (partial instance? ast/NoCode))
-                              line-sep))))
+                (emit-or-expr result-var (remove (.clauses ast) (partial instance? ast/NoCode)) ""))))
 
   (tail-call [ast params]
     (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
@@ -5712,6 +5746,7 @@
                                  (c/update-path file-name line-number))]
             _ (constrain-var file-name line-number result-var expr-const)
             _ (set-result-constraint result-var file-name line-number)
+            free-parent (free-closure-parent)
             checked-var (genlocal 'checked)]
         (let [cond-rslt (.c-var cond-val)
               refs-map (merge-with + (.refs-map cond-val) (.refs-map alt-val))]
@@ -5730,7 +5765,8 @@
                      (either (empty? rt-check)
                              ["int " checked-var " = 1;" line-sep
                               rt-check
-                              line-sep "if(!" checked-var "){abort();}"]))
+                              line-sep "if(!" checked-var "){abort();}" line-sep]))
+                   free-parent
                    "return(" result-var ");" line-sep
                    "} else {" line-sep
                    "dec_and_free(" cond-rslt ", 1);" line-sep
@@ -5890,7 +5926,11 @@
                                (comp [def-const first-const])
                                c/sum-type
                                (c/update-path file-name line-number))]
-            _ (constrain-var file-name line-number result-var result-c)]
+            _ (constrain-var file-name line-number result-var result-c)
+            free-parent (cond (= "" tail-return)
+                              (sm/state-maybe "")
+
+                              (free-closure-parent))]
         (let [refs-map (clause-refs exprs result-var)
               [exprs] (reduce (rest exprs) [[expr ] (.c-var expr)]
                               (fn [[exprs prev-var] expr]
@@ -5901,7 +5941,7 @@
                   ["Value *" result-var ";" line-sep
                    (-> exprs
                        (clause-inits "" refs-map result-var)
-                       (interpose [tail-return "} else {" line-sep]))
+                       (interpose [free-parent line-sep tail-return "} else {" line-sep]))
                    (-> (count exprs)
                        dec
                        (repeat (str "}" line-sep)))]
@@ -6143,8 +6183,9 @@
                                 (cond (empty? body)
                                       default-body
                                       body))
-        params (.params prototype)]
-    (for [arity-impl-var (map (global-var (str "Default_" fn-sym) "arityImpl")
+        params (.params prototype)
+        default-fn-sym (str "Default_" fn-sym)]
+    (for [arity-impl-var (map (global-var default-fn-sym "arityImpl")
                               ProtoDispFnPtr)
           fn-context (reset-fn-context)
 
@@ -6177,7 +6218,7 @@
                                        (reduce result-constraints c/top-type c/intersect))))
 
           ;; emit the default proto function
-          static-arity (emit-fn-arity (symbol (str "Default_" fn-sym)) disp-fn-var params
+          static-arity (emit-fn-arity (symbol default-fn-sym) disp-fn-var params
                                       (comp default-constraints
                                             (cond (empty? body)
                                                   default-body
@@ -6193,7 +6234,7 @@
                                  (map (fn [_]
                                         (.var-info static-arity (.init (.var-info static-arity) [])))))
 
-                             (sm/state-maybe static-arity))
+                             (compilation-error "Compiler error! Default proto impl must be a static arity."))
 
           :let [param-count (.param-count static-arity)
                 default-impl (ProtoImpl 0 (.c-var (.var-info static-arity)) arity-ast
@@ -6483,17 +6524,14 @@
                            ;; _ (debug "---------")
                            ]
                        fn-expr)))
-              (for [fn-var (global-var "fn")
-                    _ (declare ["Value *" fn-var ";\n"])
-                    _ (constrain-var file-name line-number fn-var fn-constraint)
-                    arities (sm/traverse (.arities ast) emit)
-                    fn-expr (comp (closure-fn (str "anonymous function at "
-                                                   (ast/file-name ast) ": " (ast/line-number ast))
-                                              fn-var arities)
-                                  (static-fn (str "anonymous function at "
-                                                  (ast/file-name ast) ": " (ast/line-number ast))
-                                             fn-var arities))]
-                fn-expr))))
+              (let [fn-sym (symbol (str "anonymous function at " (ast/file-name ast) ": " (ast/line-number ast)))]
+                (for [fn-var (global-var "fn")
+                      ;; _ (declare ["Value *" fn-var ";\n"])
+                      _ (constrain-var file-name line-number fn-var fn-constraint)
+                      arities (sm/traverse (.arities ast) emit)
+                      fn-expr (comp (closure-fn fn-sym fn-var arities)
+                                    (static-fn fn-sym fn-var arities))]
+                  fn-expr)))))
 
   (emit-defined-value [fn-val defined-sym]
     (for [value (emit fn-val)
@@ -6506,12 +6544,14 @@
     (TailCall x params))
 
   (inline-expr [ast arg-asts]
-    (either (map (-> (.arities ast)
-                     (filter (fn [arity]
-                               (= (count arg-asts) (count (.params arity)))))
-                     first)
-                 (fn [arity] 
-                   (inline-expr arity arg-asts)))
+    (either (or (map (.fn-sym ast) (fn [_]
+                                     sm/zero-sm))
+                (map (-> (.arities ast)
+                         (filter (fn [arity]
+                                   (= (count arg-asts) (count (.params arity)))))
+                         first)
+                     (fn [arity]
+                       (inline-expr arity arg-asts))))
             sm/zero-sm))
 
   (replace-syms [ast subs]
@@ -6708,7 +6748,9 @@
        [(ast/fn-arity-ast
          (ast/tag (str type-sym "_get") file-name line-number) ""
          (ast/params [x* field*]) ""
-         [(ast/and-ast
+         [(c-code "" ["// TODO: this seems to do runtime checks for 'has-field' result\n// and the result returned\n"]
+                  {} c/top-type)
+          (ast/and-ast
            [(ast/call-ast has-field-sym [x* field*])
             (ast/call-ast maybe-sym
                           [(ast/call-ast field* [x*])])])]
