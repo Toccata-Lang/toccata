@@ -211,10 +211,9 @@
   (cache-static-constant [v expr]
     '_)
 
-  ;; TODO: rewrite 'all-symbols' to use a recursion scheme
-  ;; could then be used for 'bind-param', etc.
-  (all-symbols [ast]
-    (assert-result l (instance? (vector-of ast/ParamType) l)))
+  (get-all-symbols [ast]
+    (assert-result l (instance? (vector-of ast/ParamType) l))
+    ast)
 
   ;; For AST nodes that can be embedded in other AST nodes
   (emit [_]
@@ -236,9 +235,9 @@
   (tail-call [_ params])
 
   ;; Unwrap the tail call
-  (unwrap-tail [ast]
+  (remove-tail [ast]
     ast)
-
+ 
   ;; replace all occurances of the keys in 'subs' with their associated values
   (replace-syms [ast subs]
     (assert (instance? (map-of ast/tagged-symbol ast/tagged-symbol) subs))
@@ -367,10 +366,20 @@
     (assert-result r (instance? Vector r)))
 
   (reify-c [c param-exprs file-name line-number]
-    (sm/state-maybe c))
+    (sm/state-maybe c)))
 
-  (extract-reified-fields [c]
-    []))
+;; (defn extract-collection-of [ast]
+;;   (let [x (old-extract-collection-of ast)
+;;         y (cata collection-of ast)]
+;;     (or (= x y)
+;;         (maybe (print-err 'diff-coll-of c "\n\n" x "\n\n" y)))
+;;     y))
+
+(defn all-symbols [ast]
+  (cata get-all-symbols ast))
+
+(defn unwrap-tail [ast]
+  (cata remove-tail ast))
 
 (defn reify-constraint [c param-exprs file-name line-number]
   (map (reify-c c param-exprs file-name line-number)
@@ -1271,7 +1280,7 @@
           _ (sm/assoc-in-val [.fn-context .field-constrs] (maybe field-constrs))]
       expr))
 
-  (unwrap-tail [_]
+  (remove-tail [_]
     ast)
 
   (tail-call [x params]
@@ -1724,11 +1733,6 @@
         (c/update-path file-name line-number)
         sm/state-maybe)))
 
-(extend-type c/ReifiedFields
-  Emitter
-  (extract-reified-fields [c]
-    (.field-cs c)))
-
 (extend-type c/DynamicParamConstraint
   Emitter
   (reify-c [c param-exprs file-name line-number]
@@ -1747,7 +1751,7 @@
     (comp (for [param-expr (sm/when (get param-exprs (.param-index c)))
                 param-c (get-constraint (.c-var param-expr))
                 item-expr (-> param-c
-                              extract-reified-fields
+                              c/extract-dynamic-fields
                               (get (.item-index c))
                               sm/when)
                 item-c (get-constraint (.c-var item-expr))]
@@ -2144,11 +2148,6 @@
 
 (extend-type c/MultiConstraint
   Emitter
-  (extract-reified-fields [c]
-    (either (map (some (.constraints c) (partial instance? c/ReifiedFields))
-                 extract-reified-fields)
-            []))
-
   (reify-c [constraint param-exprs file-name line-number]
     (for [new-cs (sm/traverse (.constraints constraint)
                               (fn [c]
@@ -2298,14 +2297,6 @@
                   (wrap sm/zero-sm
                         (c-static-val "empty_list" [] {} "empty_list_struct")))))
 
-  (unwrap-tail [asts]
-    (let [asts (reverse asts)]
-      (either (empty? asts)
-              (let [[tail & init] asts]
-                (-> (unwrap-tail tail)
-                    (cons init)
-                    reverse)))))
-
   (tail-call [asts args]
     (let [asts (reverse asts)]
       (either (empty? asts)
@@ -2380,13 +2371,6 @@
                   expr (collapse-expressions (comp items [(c-static-val var [] {} struct)]))
                   _ (sm/assoc-in-val [.constants .encoded v] expr)]
               expr))))
-
-  (unwrap-tail [asts]
-    (either (flat-map (last asts)
-                      (fn [tail]
-                        (store asts (dec (count asts))
-                               (unwrap-tail tail))))
-            asts))
 
   (tail-call [asts params]
     (either (flat-map (last asts)
@@ -4082,17 +4066,6 @@
 
 (extend-type c/SumConstraint
   Emitter
-  (extract-reified-fields [c]
-    ;; (-> (apply zip-lists (map (.alts c) (fn [alt]
-    ;;                                       (extract-reified-fields alt))))
-    ;;     (map (fn [new-alts]
-    ;;            (either (or (some new-alts (partial = top-type))
-    ;;                        (apply = new-alts))
-    ;;                    (.alts c new-alts))))
-    ;;     vec)
-    (print-err "Implement extract-reified-fields for SumConstraint")
-    (abort)) 
-
   (reify-c [ast param-exprs file-name line-number]
     (for [new-alts (sm/traverse (.alts ast)
                                 (fn [alt-c]
@@ -4733,15 +4706,15 @@
   (encode-static [x]
     (emit (ast/quoted-ast (.sym x))))
 
-  (all-symbols [ast]
+  (get-all-symbols [ast]
     [ast]))
 
 (extend-type ast/params-ast
   Emitter
-  (all-symbols [params]
-    (comp (flat-map (.fixed params) all-symbols)
-          (either (map (.variadic params) all-symbols)
-                  [])))
+  (get-all-symbols [params]
+    (comp* (either (map (.variadic params) vector)
+                   [])
+           (seq (.fixed params)) ))
 
   (get-param-constraints [params]
     (for [items-constraints (sm/traverse (.fixed params) get-param-constraints)
@@ -4810,13 +4783,6 @@
           _ (new-module-def defined-sym (c-code (.c-var value) [] {} val-constraint))]
       [(c-init (.c-var value) [(.init value) (.c-var value) " = " (.c-var value) ";" "\n#\n"]
                (.refs-map value) (ast/file-name ast) (ast/line-number ast))]))
-
-  (unwrap-tail [ast]
-    (.body ast (comp (filter (.body ast) (partial instance? c/Constraints))
-                     (-> ast
-                         .body
-                         (remove (partial instance? ast/NoCode))
-                         (unwrap-tail)))))
 
   (tail-call [ast params]
     (.body ast (comp (filter (.body ast) (partial instance? c/Constraints))
@@ -6419,11 +6385,6 @@
     (ConstrainedAST (f ast) constraint))
 
   Emitter
-  (all-symbols [_]
-    (print-err 'aborting _LINE_)
-    (abort)
-    [])
-
   (emit [_]
     (for [expr (emit ast)
           c (to-constraint constraint)
@@ -6444,9 +6405,8 @@
     (print-err 'aborting _LINE_)
     (abort))
 
-  (unwrap-tail [_]
-    (print-err 'aborting _LINE_)
-    (abort))
+  (remove-tail [_]
+    ast)
 
   (replace-syms [_ subs]
     (print-err 'aborting _LINE_)
@@ -6537,9 +6497,6 @@
 
 (extend-type ast/fn-arity-ast
   Emitter
-  (unwrap-tail [ast]
-    (.body ast (unwrap-tail (.body ast))))
-
   (emit [ast]
     ;; TODO: doesn't look like the arity's ast gets saved
     (emit-fn-arity (cond (= "" (.fn-sym ast))
