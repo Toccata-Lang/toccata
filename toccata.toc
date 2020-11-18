@@ -247,10 +247,6 @@
   (update-binding-syms [ast]
     (assert-result x (instance? sm/new-sm x)))
 
-  (old-replace-syms [ast subs]
-    (assert (instance? (map-of ast/tagged-symbol ast/tagged-symbol) subs))
-    (assert-result x (instance? sm/new-sm x)))
-
   ;; prepend "#" to all the bound variables in the AST
   (replace-bound-vars [ast subs]
     (assert (instance? (map-of ast/tagged-symbol ast/tagged-symbol) subs))
@@ -395,17 +391,12 @@
           ;; (print-err 'no-subs subs)
           (sm/state-maybe ast))
 
-        (for [;; x (old-replace-syms ast subs)
-              [y] (sm/when (or ((apo update-syms ast sm/state-maybe) subs)
+        (sm/when (flat-map (or ((apo update-syms ast sm/state-maybe) subs)
                                (do
                                  (print-err 'boom (ast/file-name ast) (ast/line-number ast)
                                             ast "\n\n" subs)
-                                 nothing)))]
-          (do
-            ;; (or (= x y)
-            ;;     (maybe (print-err 'diff-replace-syms (ast/file-name ast) (ast/line-number ast)
-            ;;                       ast "\n\n" x "\n\n" y "\n\n" subs)))
-            y))))
+                                 nothing))
+                           first))))
 
 (defn all-symbols [ast]
   (cata get-all-symbols ast))
@@ -1331,10 +1322,6 @@
   (tail-call [x params]
     (CollectFieldConsts fields (tail-call ast params)))
 
-  (old-replace-syms [_ subs]
-    (map (old-replace-syms ast subs)
-         (partial CollectFieldConsts fields)))
-
   (replace-bound-vars [_ subs]
     (CollectFieldConsts fields (replace-bound-vars ast subs))))
 
@@ -1675,9 +1662,6 @@
   (emit [constraint]
     (wrap sm/zero-sm empty-c-code))
 
-  (old-replace-syms [constraint _]
-     (wrap sm/zero-sm constraint))
-
   (runtime-check [constraint value-info checked-var]
     [])
 
@@ -1773,14 +1757,6 @@
                               (Right c/top-type))))
                     (sm/state-maybe (Right c))))
             (sm/state-maybe (Right c))))
-
-  (old-replace-syms [constraint subs]
-    (either (for [old-sym (.sym constraint)
-                  new-sym (get subs (ast/tag old-sym))]
-              (wrap sm/zero-sm (cond (instance? Tagged new-sym)
-                                     (c/update-sym constraint (ast/untag new-sym))
-                                     c/top-type)))
-            (wrap sm/zero-sm constraint)))
 
   (emit [constraint]
     (emit-sym-constraint constraint)))
@@ -1881,17 +1857,6 @@
                                 (Right (.sym ast (maybe (ast/untag new-sym))))))
                          (sm/state-maybe (Right ast)))))
             (sm/state-maybe (Right ast))))
-
-  (old-replace-syms [ast subs]
-    (for [new-items (sm/traverse (.items-constraints ast) (fn [c]
-                                                            (old-replace-syms c subs)))
-          new-tail (old-replace-syms (.tail-constraint ast) subs)
-          new-sym (either (map (.sym ast) (fn [sym]
-                                            (map (old-replace-syms sym subs)
-                                                 (fn [new-sym]
-                                                   (maybe (ast/untag new-sym))))))
-                          (sm/state-maybe nothing))]
-      (c/ItemsConstraint new-items new-tail (.path ast) new-sym (.var ast))))
 
   (runtime-check [constraint value-info checked-var]
     (cond (or (c/satisfied-by constraint value-info)
@@ -2263,11 +2228,6 @@
                   (map (.constraints constraint) (fn [c]
                                                    (replace-bound-vars c subs)))))
 
-  (old-replace-syms [ast subs]
-    (for [new-cs (sm/traverse (.constraints ast) (fn [c]
-                                                   (old-replace-syms c subs)))]
-      (.constraints ast new-cs)))
-
   (runtime-check [constraint value-info checked-var]
     (cond (or (some (.constraints constraint)
                     (partial instance? c/StaticConstraints))
@@ -2308,9 +2268,6 @@
 
   (update-syms [constraint]
     (sm/state-maybe (Left constraint)))
-
-  (old-replace-syms [constraint subs]
-    (sm/state-maybe constraint))
 
   (tail-call [constraint _]
     constraint)
@@ -2416,10 +2373,6 @@
   (replace-bound-vars [v subs]
     (map v (fn [x]
              (replace-bound-vars x subs))))
-
-  (old-replace-syms [v subs]
-    (sm/traverse v (fn [x]
-                     (old-replace-syms x subs))))
 
   (encode-static [v]
     (comp (sm/get-in-val [.constants .encoded v])
@@ -2971,9 +2924,6 @@
   Emitter
   (encode-static [n]
     (emit n))
-
-  (old-replace-syms [ast _]
-    (wrap sm/zero-sm ast))
 
   (emit-defined-value [num defined-sym]
     (for [value (emit num)
@@ -3599,10 +3549,6 @@
                (sm/state-maybe (ast/tag x)))
          Left))
 
-  (old-replace-syms [sym subs]
-    (let [sym (ast/tag sym)]
-      (wrap sm/zero-sm (get subs sym sym))))
-
   (replace-bound-vars [sym subs]
     (let [sym (ast/tag sym)]
       (get subs sym sym)))
@@ -4185,10 +4131,6 @@
                      (first new-alts))
                 (.alts ast new-alts)))))
 
-  (old-replace-syms [ast subs]
-    (print-err 'old-replace-syms 'line _LINE_)
-    (sm/state-maybe (abort)))
-
   (replace-bound-vars [ast subs]
     (print-err 'replace-bound-vars 'line _LINE_)
     (abort)
@@ -4460,10 +4402,7 @@
       [empty-c-code]))
 
   (tail-call [ast params]
-    (TailExpr ast))
-
-  (old-replace-syms [ast _]
-    (wrap sm/zero-sm ast)))
+    (TailExpr ast)))
 
 (extend-type ast/call-ast
   Emitter
@@ -4538,12 +4477,6 @@
   (tail-call [ast params]
     (TailCall ast params))
 
-  (old-replace-syms [ast subs]
-    (for [target (old-replace-syms (.call-target ast) subs)
-          args (sm/traverse (.args ast) (fn [ast]
-                                          (old-replace-syms ast subs)))]
-      (ast/call-ast target (vec args))))
-
   (inline-expr [ast arg-asts]
     (let [target (.call-target ast)
           file-name (ast/file-name target)
@@ -4585,9 +4518,6 @@
 ;; the error message is trash
 (extend-type C-expr
   Emitter
-  (old-replace-syms [v _]
-    (wrap sm/zero-sm v))
-
   (tail-call [expr _]
     (TailExpr expr))
 
@@ -4812,9 +4742,6 @@
                (sm/state-maybe x))
          Left))
 
-  (old-replace-syms [ast subs]
-    (wrap sm/zero-sm (get subs ast ast)))
-
   (replace-bound-vars [ast subs]
     (get subs ast ast))
 
@@ -4939,21 +4866,6 @@
           (.bindings new-bindings)
           (.body new-body)
           Left)))
-
-  (old-replace-syms [ast subs]
-    (let [f (fn recur [bindings new-bindings subs]
-              ;; TODO: some refactoring might be possible here when all tests are working
-              (comp (for [binding-ast (sm/when (first bindings))
-                          new-val (old-replace-syms (.val binding-ast) subs)
-                          :let [new-subs (reduce (all-symbols (.binding binding-ast))
-                                                 subs dissoc)]
-                          new-bindings (recur (rest bindings) new-bindings new-subs)]
-                      (conj new-bindings (.val binding-ast new-val)))
-                    (wrap sm/zero-sm new-bindings)))]
-      (for [new-bindings (f (.bindings ast) empty-list subs)
-            new-body (sm/traverse (.body ast) (fn [ast]
-                                                (old-replace-syms ast subs)))]
-        (ast/let-ast (vec new-bindings) (vec new-body)))))
 
   (inline-expr [ast arg-asts]
     (let [unique-syms (map arg-asts (fn [_]
@@ -5410,9 +5322,6 @@
     (map (f constraint) ConstrainVar))
 
   Emitter
-  (old-replace-syms [_ subs]
-    (map (old-replace-syms constraint subs) ConstrainVar))
-
   (replace-bound-vars [_ subs]
     (ConstrainVar (replace-bound-vars constraint subs)))
 
@@ -5778,12 +5687,6 @@
                                                    (tail-call last-c params)))))
               ast)))
 
-  (old-replace-syms [ast subs]
-    (for [new-clauses (sm/traverse (.clauses ast)
-                                   (fn [ast]
-                                     (old-replace-syms ast subs)))]
-      (.clauses ast (vec new-clauses))))
-
   (replace-bound-vars [ast subs]
     (ast/and-ast (map (.clauses ast) (fn [ast]
                                        (replace-bound-vars ast subs))))))
@@ -5905,12 +5808,6 @@
                                                   (tail-call last-c params)))))
               ast)))
 
-  (old-replace-syms [ast subs]
-    (for [new-clauses (sm/traverse (.clauses ast)
-                                   (fn [ast]
-                                     (old-replace-syms ast subs)))]
-      (.clauses ast new-clauses)))
-
   (replace-bound-vars [ast subs]
     (ast/or-ast (map (.clauses ast) (fn [ast]
                                       (replace-bound-vars ast subs))))))
@@ -6029,11 +5926,6 @@
     (TailEither (.clause ast)
                 (tail-call (.alt ast) params)))
 
-  (old-replace-syms [ast subs]
-    (for [new-ast (old-replace-syms (.clause ast) subs)
-          new-alt (old-replace-syms (.alt ast) subs)]
-      (ast/either-ast new-ast new-alt)))
-
   (replace-bound-vars [ast subs]
     (ast/either-ast (replace-bound-vars (.clause ast) subs)
                     (replace-bound-vars (.alt ast) subs))))
@@ -6087,11 +5979,6 @@
                 refs-map file-name line-number))))
 
   Emitter
-  (old-replace-syms [ast subs]
-    (for [new-condit (old-replace-syms (.conditional ast) subs)
-          new-value (old-replace-syms (.value ast) subs)]
-      (ast/cond-val-ast new-condit new-value)))
-
   (replace-bound-vars [ast subs]
     (ast/cond-val-ast (replace-bound-vars (.conditional ast) subs)
                       (replace-bound-vars (.value ast) subs))))
@@ -6202,11 +6089,6 @@
   (tail-call [ast _]
     ast)
 
-  (old-replace-syms [ast subs]
-    (for [new-condits (old-replace-syms (.conditionals ast) subs)
-          new-value (old-replace-syms (.default ast) subs)]
-      (TailCond new-condits new-value)))
-
   (replace-bound-vars [ast subs]
     (TailCond (replace-bound-vars (.conditionals ast) subs)
               (replace-bound-vars (.default ast) subs))))
@@ -6221,11 +6103,6 @@
   (tail-call [ast params]
     (TailCond (.conditionals ast)
               (tail-call (.default ast) params)))
-
-  (old-replace-syms [ast subs]
-    (for [new-condits (old-replace-syms (.conditionals ast) subs)
-          new-value (old-replace-syms (.default ast) subs)]
-      (ast/cond-ast new-condits new-value)))
 
   (replace-bound-vars [ast subs]
     (ast/cond-ast (replace-bound-vars (.conditionals ast) subs)
@@ -6585,11 +6462,6 @@
   (remove-tail [_]
     ast)
 
-  (old-replace-syms [_ subs]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
   (replace-bound-vars [_ subs]
     (print-err 'aborting _LINE_)
     (abort))
@@ -6712,12 +6584,6 @@
 
                    (ConstrainedAST new-ast result-constraint))))))
 
-  (old-replace-syms [ast subs]
-    (let [subs (reduce (all-symbols (.params ast)) subs dissoc)]
-      (for [new-body (sm/traverse (.body ast) (fn [ast]
-                                                (old-replace-syms ast subs)))]
-        (.body ast (vec new-body)))))
-
   (replace-bound-vars [ast subs]
     (let [subs (reduce (all-symbols (.params ast)) subs
                        (fn [subs sym]
@@ -6780,12 +6646,6 @@
                      (fn [arity]
                        (inline-expr arity arg-asts))))
             sm/zero-sm))
-
-  (old-replace-syms [ast subs]
-    (for [new-arities (sm/traverse (.arities ast)
-                                   (fn [arity]
-                                     (old-replace-syms arity subs)))]
-      (.arities ast (vec new-arities))))
 
   (replace-bound-vars [ast subs]
     (.arities ast (map (.arities ast) (fn [arity]
