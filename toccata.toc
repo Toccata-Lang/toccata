@@ -239,7 +239,7 @@
     ast)
  
   ;; replace all occurances of the keys in 'subs' with their associated values
-  (update-syms [ast]
+  (update-syms [ast update-bindings]
     (assert-result x (instance? sm/new-sm x))
 
     (sm/state-maybe (Right ast)))
@@ -247,11 +247,8 @@
   (dissoc-sym [ast]
     (assert-result x (instance? sm/new-sm x)))
 
-  ;; prepend "#" to all the bound variables in the AST
-  (replace-bound-vars [ast subs]
-    (assert (instance? (map-of ast/tagged-symbol ast/tagged-symbol) subs))
-
-    ast)
+  (new-bound-var [ast]
+    (assert-result x (instance? sm/new-sm x)))
 
   ;; produce a constraint from an assertion ast
   (to-constraint [ast]
@@ -377,21 +374,32 @@
 ;;   (let [x (old-extract-collection-of ast)
 ;;         y (cata collection-of ast)]
 ;;     (or (= x y)
-;;         (maybe (print-err 'diff-coll-of c "\n\n" x "\n\n" y)))
+;;         (maybe (print-err 'diff-coll-of (ast/file-name ast) (ast/line-number ast "\n\n" x "\n\n" y)))
 ;;     y))
 
 (defn replace-syms [ast subs]
   (assert (instance? HashMap subs))
 
   (cond (empty? subs)
-        (sm/state-maybe ast)
+        ast
 
-        (sm/when (flat-map (or ((apo update-syms ast sm/state-maybe) subs)
-                               (do
-                                 (print-err 'boom (ast/file-name ast) (ast/line-number ast)
-                                            ast "\n\n" subs)
-                                 nothing))
-                           first))))
+        (either (flat-map (or ((apo (fn [ast]
+                                      (update-syms ast dissoc-sym))
+                                    ast sm/state-maybe) subs)
+                              nothing)
+                          first)
+                ast)))
+
+(defn replace-bound-vars [ast subs]
+  (either (flat-map (or ((apo (fn [ast]
+                                (update-syms ast new-bound-var))
+                              ast sm/state-maybe) subs)
+                        (do
+                          (print-err 'boom (ast/file-name ast) (ast/line-number ast)
+                                     ast "\n\n" subs)
+                          nothing))
+                    first)
+          ast))
 
 (defn all-symbols [ast]
   (cata get-all-symbols ast))
@@ -1315,10 +1323,7 @@
     ast)
 
   (tail-call [x params]
-    (CollectFieldConsts fields (tail-call ast params)))
-
-  (replace-bound-vars [_ subs]
-    (CollectFieldConsts fields (replace-bound-vars ast subs))))
+    (CollectFieldConsts fields (tail-call ast params))))
 
 (defn update-context [context update]
   (assert (instance? Maybe context))
@@ -1733,13 +1738,7 @@
   (tail-call [constraint _]
     constraint)
 
-  (replace-bound-vars [constraint subs]
-    (either (for [old-sym (.sym constraint)
-                  new-sym (get subs (ast/tag old-sym))]
-              (c/update-sym constraint (ast/untag new-sym)))
-            constraint))
-
-  (update-syms [c]
+  (update-syms [c _]
     (either (for [old-sym (.sym c)]
               (comp (for [new-sym (sm/get-val (ast/tag old-sym))]
                       (Right (cond (instance? Tagged new-sym)
@@ -1834,12 +1833,7 @@
         (.tail-constraint (promote-inferred (.tail-constraint c)))
         (.items-constraints (map (.items-constraints c) promote-inferred))))
 
-  (replace-bound-vars [ast subs]
-    (print-err 'ItemsConstraint 'replace-bound-vars 'line _LINE_)
-    (abort)
-    ast)
-
-  (update-syms [ast]
+  (update-syms [ast _]
     (either (map (.sym ast)
                  (fn [old-sym]
                    (comp (map (sm/get-val (ast/tag old-sym))
@@ -2212,12 +2206,6 @@
                                          (abort))))))
             m))
 
-  (replace-bound-vars [constraint subs]
-    ;; TODO: let the Vector impl do this
-    (.constraints constraint
-                  (map (.constraints constraint) (fn [c]
-                                                   (replace-bound-vars c subs)))))
-
   (runtime-check [constraint value-info checked-var]
     (cond (or (some (.constraints constraint)
                     (partial instance? c/StaticConstraints))
@@ -2253,10 +2241,7 @@
     (map (reify-constraint (.assertion c) param-exprs file-name line-number)
          (partial .assertion c)))
 
-  (replace-bound-vars [constraint subs]
-    (replace-bound-vars (.assertion constraint) subs))
-
-  (update-syms [constraint]
+  (update-syms [constraint _]
     (sm/state-maybe (Left constraint)))
 
   (tail-call [constraint _]
@@ -2264,6 +2249,11 @@
 
   (emit [ast]
     (-> ast .assertion (c/update-var "#result") emit))
+
+  (update-syms [c _]
+    ;; TODO: this is wrong. These assertions need to be preserved and
+    ;; handled in inlining fn-arities
+    (sm/state-maybe (Left c/top-type)))
 
   (runtime-check [constraint value-info sym-location checked-var]
     ;; Handled other places
@@ -2359,10 +2349,6 @@
   (reify-c [v param-exprs file-name line-number]
     (sm/traverse v (fn [x]
                      (reify-constraint x param-exprs file-name line-number))))
-
-  (replace-bound-vars [v subs]
-    (map v (fn [x]
-             (replace-bound-vars x subs))))
 
   (encode-static [v]
     (comp (sm/get-in-val [.constants .encoded v])
@@ -3296,12 +3282,9 @@
                         .ast)
           :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
           :let [impl-ast (replace-bound-vars impl-ast {})
-                [dispatch-sym f-sym] (.fixed (.params impl-ast))]
-          body-exprs (sm/traverse (.body impl-ast)
-                                  (fn [ast]
-                                    (replace-syms ast {f-sym f-ast})))]
+                [dispatch-sym f-sym] (.fixed (.params impl-ast))]]
       (ast/let-ast [(ast/binding dispatch-sym dispatch-val)]
-                   (vec body-exprs)))))
+                   (replace-syms (.body impl-ast) {f-sym f-ast})))))
 
 (defn inline-zero [name args]
   (for [dispatch-ast (first args)]
@@ -3390,14 +3373,12 @@
                                                 (ast/tag (str "arg" n) file line)))
                                          (make-bindings arg-exprs))
                        args-ast (.args args (map args-bindings .binding))
-                       [dispatch-sym args-sym] (.fixed (.params impl-ast))]
-                 body-exprs (sm/traverse (.body impl-ast)
-                                         (fn [ast]
-                                           (replace-syms ast {dispatch-sym (.binding disp-binding)
-                                                              args-sym args-ast})))]
+                       [dispatch-sym args-sym] (.fixed (.params impl-ast))]]
              (ast/let-ast (comp [disp-binding]
                                 args-bindings)
-                          body-exprs)))))
+                          (replace-syms (.body impl-ast)
+                                        {dispatch-sym (.binding disp-binding)
+                                         args-sym args-ast}))))))
 
 (defn inline-comp [name args]
   (let [file (ast/file-name args)
@@ -3534,14 +3515,15 @@
     (for [_ (sm/dissoc-val (ast/tag x))]
       (Left x)))
 
-  (update-syms [x]
+  (new-bound-var [x]
+    (let [new-var (ast/tag (gensym (str x)))]
+      (for [_ (sm/set-val x new-var)]
+        (Left new-var))))
+
+  (update-syms [x _]
     (map (comp (sm/get-val (ast/tag x))
                (sm/state-maybe (ast/tag x)))
          Left))
-
-  (replace-bound-vars [sym subs]
-    (let [sym (ast/tag sym)]
-      (get subs sym sym)))
 
   (encode-static [sym]
     (emit (ast/quoted-ast sym))))
@@ -4121,11 +4103,6 @@
                      (first new-alts))
                 (.alts ast new-alts)))))
 
-  (replace-bound-vars [ast subs]
-    (print-err 'replace-bound-vars 'line _LINE_)
-    (abort)
-    ast)
-
   (runtime-check [constraint value-info sym-location checked-var]
     (let [alts (.alts constraint)
           var (c/extract-var constraint)]
@@ -4472,7 +4449,7 @@
           file-name (ast/file-name target)
           line-number (ast/line-number target)]
       (comp (for [_ (sm/when (instance? ast/tagged-symbol target))
-                  ;; TODO; this is not general enough. Needs to handler more than one field
+                  ;; TODO; this is not general enough. Needs to handle more than one field
                   ;; and multiple fields being fn's
                   constructor (lookup-sym target)
                   :when (instance? c-constructor constructor)
@@ -4489,20 +4466,15 @@
                   new-body (sm/when (for [ast-body (get-in invoke-info [.ast .body])
                                           let-ast (some ast-body (partial instance? ast/let-ast))]
                                       (.body let-ast)))
-                  new-target (replace-syms (ast/fn-arity new-params
-                                                         (ast/block-comment file-name line-number [])
-                                                         new-body)
-                                           {fn-field fn-ast})
-                  new-ast (inline-expr new-target arg-asts)]
+                  new-ast (-> (ast/fn-arity new-params
+                                            (ast/block-comment file-name line-number [])
+                                            new-body)
+                           (replace-syms {fn-field fn-ast})
+                           (inline-expr arg-asts))]
               new-ast)
             (for [new-call-target (inline-expr target (.args ast))
                   new-ast (inline-expr new-call-target arg-asts)]
-              new-ast))))
-
-  (replace-bound-vars [ast subs]
-    (ast/call-ast (replace-bound-vars (.call-target ast) subs)
-                  (map (.args ast) (fn [ast]
-                                     (replace-bound-vars ast subs))))))
+              new-ast)))))
 
 ;; TODO: when a proto impl is wrong (ie; wrong number of args)
 ;; the error message is trash
@@ -4727,13 +4699,17 @@
     (for [_ (sm/dissoc-val x)]
       (Left x)))
 
-  (update-syms [x]
+  (new-bound-var [x]
+    (let [new-var (ast/tag (gensym (str x))
+                           (ast/file-name x)
+                           (ast/line-number x))]
+      (for [_ (sm/set-val x new-var)]
+        (Left new-var))))
+
+  (update-syms [x _]
     (map (comp (sm/get-val x)
                (sm/state-maybe x))
          Left))
-
-  (replace-bound-vars [ast subs]
-    (get subs ast ast))
 
   (encode-static [x]
     (emit (ast/quoted-ast (.sym x))))
@@ -4775,36 +4751,25 @@
   (bind [params evalled]
     (bind-list evalled params bind))
 
-  (update-syms [ast]
+  (update-syms [ast handle-bindings]
     (either (map (.variadic ast) (fn [var]
                                    (for [new-fixed (map (.fixed ast)
                                                         (fn [param]
-                                                          (apo dissoc-sym param sm/state-maybe))
+                                                          (apo handle-bindings param sm/state-maybe))
                                                         sm/state-maybe)
-                                         new-var (apo dissoc-sym var sm/state-maybe)]
+                                         new-var (apo handle-bindings var sm/state-maybe)]
                                      (Left (ast/params-ast new-fixed (maybe new-var))))))
 
             (map (map (.fixed ast)
                       (fn [param]
-                        (apo dissoc-sym param sm/state-maybe))
+                        (apo handle-bindings param sm/state-maybe))
                       sm/state-maybe)
                  (fn [new-fixed]
-                   (Left (ast/params-ast new-fixed nothing))))))
-
-  (replace-bound-vars [ast subs]
-    (let [new-fixed (map (.fixed ast) (fn [param]
-                                        (replace-bound-vars param subs)))]
-      (ast/params-ast new-fixed (map (.variadic ast) (fn [v]
-                                                       (replace-bound-vars v subs)))))))
+                   (Left (ast/params-ast new-fixed nothing)))))))
 
 
 (extend-type ast/binding-ast
   Emitter
-  (update-syms [ast]
-    (for [new-val (apo update-syms (.val ast) sm/state-maybe)
-          new-binding (apo update-syms (.binding ast) sm/state-maybe)]
-      (Left (ast/binding-ast new-binding new-val))))
-
   (emit [ast]
     (flat-map (emit (.val ast))
               (partial bind (.binding ast)))))
@@ -4843,14 +4808,14 @@
                          .body
                          (remove (partial instance? ast/NoCode))
                          (tail-call params)))))
-  (update-syms [ast]
+  (update-syms [ast handle-bindings]
     (for [prev-state (sm/update-state identity)
-          new-bindings (map (.bindings ast) (fn [binding]
-                                              (apo update-syms binding sm/state-maybe))
-                            sm/state-maybe)
-          new-body (map (.body ast) (fn [ast]
-                                      (apo update-syms ast sm/state-maybe))
-                        sm/state-maybe)
+          new-bindings (apo (fn [ast]
+                              (update-syms ast handle-bindings))
+                            (.bindings ast) sm/state-maybe)
+          new-body (apo (fn [ast]
+                          (update-syms ast handle-bindings))
+                        (.body ast) sm/state-maybe)
           _ (sm/update-state (fn [_] prev-state))]
       (-> ast
           (.bindings new-bindings)
@@ -4873,36 +4838,7 @@
       (sm/state-maybe (ast/let-ast
                        (comp (make-bindings unique-syms arg-asts)
                              (.bindings ast))
-                       new-body))))
-
-  (replace-bound-vars [ast subs]
-    (let [f (fn recur [bindings new-bindings subs]
-              (assert (instance? (vector-of ast/binding-ast) bindings))
-
-              (either (for [binding-ast (first bindings)]
-                        (let [new-val (replace-bound-vars (.val binding-ast) subs)
-                              new-subs (reduce (all-symbols (.binding binding-ast))
-                                               subs (fn [new-subs sym]
-                                                      (do
-                                                        ;; TODO: putting this in blows up
-                                                        ;; (print-err 'bad (ast/tag (str "#" sym)
-                                                        ;;                          (ast/file-name ast)
-                                                        ;;                          (ast/line-number ast)))
-                                                        (assoc new-subs sym
-                                                               (ast/tag (gensym (str sym))
-                                                                        (ast/file-name sym)
-                                                                        (ast/line-number sym))))))
-                              [new-bindings new-subs] (recur (rest bindings) new-bindings new-subs)]
-                          [(conj new-bindings
-                                 (ast/binding-ast (replace-bound-vars (.binding binding-ast)
-                                                                      new-subs)
-                                                  new-val))
-                           new-subs]))
-                      [new-bindings subs]))
-          [new-bindings new-subs] (f (.bindings ast) empty-list subs)
-          new-body (map (.body ast) (fn [ast]
-                                      (replace-bound-vars ast new-subs)))]
-      (ast/let-ast (vec new-bindings) (vec new-body)))))
+                       new-body)))))
 
 
 (defn index [coll]
@@ -5273,15 +5209,13 @@
                                      (cond (= old-sym new-sym)
                                            m
                                            (assoc m old-sym new-sym))))]
-          param-assertions (-> dispatcher-info
-                               .param-constraints
-                               (replace-syms sym-map)
-                               (map (fn [c]
-                                      (-> c
-                                          c/extract-items-constraints
-                                          (map (fn [c]
-                                                 (c/update-var c "")))))))
-          :let [arity-ast (.body arity-ast (comp [(c/ResultConstraint (.result-constraint dispatcher-info))]
+          :let [param-assertions (-> dispatcher-info
+                                     .param-constraints
+                                     (replace-syms sym-map)
+                                     c/extract-items-constraints
+                                     (map (fn [c]
+                                            (c/update-var c ""))))
+                arity-ast (.body arity-ast (comp [(c/ResultConstraint (.result-constraint dispatcher-info))]
                                                  param-assertions (.body arity-ast)))]
           _ (new-proto-impl proto-sym fn-sym num-args type-num arity-impl-var arity-ast
                             c/empty-items-constraint c/top-type c-fn)
@@ -5314,9 +5248,6 @@
     (map (f constraint) ConstrainVar))
 
   Emitter
-  (replace-bound-vars [_ subs]
-    (ConstrainVar (replace-bound-vars constraint subs)))
-
   (emit [_]
     (either (map (c/extract-sym constraint)
                  (fn [sym]
@@ -5677,11 +5608,7 @@
       (either (map (last clauses) (fn [last-c]
                                     (TailAnd (conj (butlast clauses)
                                                    (tail-call last-c params)))))
-              ast)))
-
-  (replace-bound-vars [ast subs]
-    (ast/and-ast (map (.clauses ast) (fn [ast]
-                                       (replace-bound-vars ast subs))))))
+              ast))))
 
 (defn assert-maybe-of [type-expr]
   (assert (instance? c/ValueConstraint type-expr))
@@ -5798,11 +5725,7 @@
       (either (map (last clauses) (fn [last-c]
                                     (TailOr (conj (butlast clauses)
                                                   (tail-call last-c params)))))
-              ast)))
-
-  (replace-bound-vars [ast subs]
-    (ast/or-ast (map (.clauses ast) (fn [ast]
-                                      (replace-bound-vars ast subs))))))
+              ast))))
 
 (deftype TailEither [clause alt]
 
@@ -5916,11 +5839,7 @@
 
   (tail-call [ast params]
     (TailEither (.clause ast)
-                (tail-call (.alt ast) params)))
-
-  (replace-bound-vars [ast subs]
-    (ast/either-ast (replace-bound-vars (.clause ast) subs)
-                    (replace-bound-vars (.alt ast) subs))))
+                (tail-call (.alt ast) params))))
 
 (extend-type ast/cond-val-ast
   EmitCond
@@ -5968,12 +5887,7 @@
                                                              (maybe ""))
                                                         ["dec_and_free(" c-sym ", " remaining ");" line-sep])))
                  "}" line-sep "if (" do-value ") {" line-sep]
-                refs-map file-name line-number))))
-
-  Emitter
-  (replace-bound-vars [ast subs]
-    (ast/cond-val-ast (replace-bound-vars (.conditional ast) subs)
-                      (replace-bound-vars (.value ast) subs))))
+                refs-map file-name line-number)))))
 
 (defn emit-cond-expr [ast result-var tail-return]
     (let [[clause & clauses] (.conditionals ast)
@@ -6079,11 +5993,7 @@
         expr)))
 
   (tail-call [ast _]
-    ast)
-
-  (replace-bound-vars [ast subs]
-    (TailCond (replace-bound-vars (.conditionals ast) subs)
-              (replace-bound-vars (.default ast) subs))))
+    ast))
 
 (extend-type ast/cond-ast
   Emitter
@@ -6094,11 +6004,7 @@
 
   (tail-call [ast params]
     (TailCond (.conditionals ast)
-              (tail-call (.default ast) params)))
-
-  (replace-bound-vars [ast subs]
-    (ast/cond-ast (replace-bound-vars (.conditionals ast) subs)
-                  (replace-bound-vars (.default ast) subs))))
+              (tail-call (.default ast) params))))
 
 (extend-type ast/main-ast
   Emitter
@@ -6454,10 +6360,6 @@
   (remove-tail [_]
     ast)
 
-  (replace-bound-vars [_ subs]
-    (print-err 'aborting _LINE_)
-    (abort))
-
   (inline-expr [target-ast arg-asts]
     (print-err 'aborting _LINE_)
     (abort)
@@ -6539,12 +6441,14 @@
 
 (extend-type ast/fn-arity-ast
   Emitter
-  (update-syms [ast]
+  (update-syms [ast handle-bindings]
     (for [prev-state (sm/update-state identity)
-          new-params (apo update-syms (.params ast) sm/state-maybe)
-          new-body (map (.body ast) (fn [ast]
-                                      (apo update-syms ast sm/state-maybe))
-                        sm/state-maybe)
+          new-params (apo (fn [ast]
+                              (update-syms ast handle-bindings))
+                          (.params ast) sm/state-maybe)
+          new-body (apo (fn [ast]
+                          (update-syms ast handle-bindings))
+                        (.body ast) sm/state-maybe)
           _ (sm/update-state (fn [_] prev-state))]
       (-> ast
           (.params new-params)
@@ -6594,16 +6498,7 @@
       (cond (= c/top-type result-constraint)
             (sm/state-maybe inlined-expr)
 
-            (sm/state-maybe (ConstrainedAST inlined-expr result-constraint)))))
-
-  (replace-bound-vars [ast subs]
-    (let [subs (reduce (all-symbols (.params ast)) subs
-                       (fn [subs sym]
-                         (assoc subs sym (ast/tag (gensym (str sym))))))]
-      (-> ast
-          (.params (replace-bound-vars (.params ast) subs))
-          (.body (map (.body ast) (fn [ast]
-                                    (replace-bound-vars ast subs))))))))
+            (sm/state-maybe (ConstrainedAST inlined-expr result-constraint))))))
 
 
 (extend-type ast/fn-ast
@@ -6657,11 +6552,7 @@
                          first)
                      (fn [arity]
                        (inline-expr arity arg-asts))))
-            sm/zero-sm))
-
-  (replace-bound-vars [ast subs]
-    (.arities ast (map (.arities ast) (fn [arity]
-                                        (replace-bound-vars arity subs))))))
+            sm/zero-sm)))
 
 (extend-type ast/extend-ast
   Emitter
@@ -6689,7 +6580,7 @@
   (assert (instance? c/ItemsConstraint assertions))
 
   (let [file-name (ast/file-name new-type-name)
-       line-number (ast/line-number new-type-name)
+        line-number (ast/line-number new-type-name)
         x* (ast/tag "#x" file-name line-number)
         y* (ast/tag "#y" file-name line-number)
         field-count (count fields)
@@ -6700,102 +6591,102 @@
                          (fn [m [k v]]
                            (cond (= k v)
                                  m
-                                 (assoc m k v))))]
-    (for [assertions (replace-syms assertions args-map)
-          :let [reified-type-num (extract type-counter)
-                ast (ast/reified (maybe reified-type-num)
-                                 {(ast/tag Eq-sym file-name line-number)
-                                  {(ast/tag =*-sym file-name line-number)
-                                   [(ast/fn-arity-ast
-                                     (ast/tag (str new-type-name "_EQ_QMARK_") file-name line-number) ""
-                                     (ast/params [x* y*]) ""
-                                     [(ast/and-ast
-                                       [(ast/call-ast =*-sym
-                                                      [type-num
-                                                       (ast/call-ast get-type-sym [y*])])
-                                        (ast/call-ast maybe-sym [y*])])]
-                                     c/empty-items-constraint c/top-type)]}
+                                 (assoc m k v))))
+        assertions (replace-syms assertions args-map)
+        reified-type-num (extract type-counter)
+        ast (ast/reified (maybe reified-type-num)
+                         {(ast/tag Eq-sym file-name line-number)
+                          {(ast/tag =*-sym file-name line-number)
+                           [(ast/fn-arity-ast
+                             (ast/tag (str new-type-name "_EQ_QMARK_") file-name line-number) ""
+                             (ast/params [x* y*]) ""
+                             [(ast/and-ast
+                               [(ast/call-ast =*-sym
+                                              [type-num
+                                               (ast/call-ast get-type-sym [y*])])
+                                (ast/call-ast maybe-sym [y*])])]
+                             c/empty-items-constraint c/top-type)]}
 
-                                  (ast/tag Type-sym file-name line-number)
-                                  {type-name-sym
-                                   [(ast/fn-arity-ast
-                                     (ast/tag (str new-type-name "_const_type_name") file-name line-number) ""
-                                     (ast/params [(ast/tag '_)]) ""
-                                     [(str "*" new-type-name " constructor*")]
-                                     c/empty-items-constraint c/top-type)]
-                                   type-mapping-sym
-                                   [(ast/fn-arity-ast
-                                     (ast/tag (str new-type-name "_const_type_map") file-name line-number) ""
-                                     (ast/params [(ast/tag '_)]) ""
-                                     [(map-vals (.type-maps new-type-constraint)
-                                                (fn [field-set]
-                                                  (map field-set ast/quoted-ast)))]
-                                     c/empty-items-constraint c/top-type)]
-                                   instance?-sym
-                                   [(ast/fn-arity-ast
-                                     (ast/tag (str new-type-name "_instance_QMARK_") file-name line-number) ""
-                                     (ast/params [x* y*]) ""
-                                     [(c/ResultConstraint (c/intersect maybe-constraint
-                                                                       (c/InferredInner new-type-constraint
-                                                                                        empty-list nothing "")))
-                                      (ast/and-ast
-                                       [(ast/call-ast =*-sym
-                                                      [type-num
-                                                       (ast/call-ast get-type-sym [y*])])
-                                        (ast/call-ast maybe-sym [y*])])]
-                                     c/empty-items-constraint c/top-type)]}
+                          (ast/tag Type-sym file-name line-number)
+                          {type-name-sym
+                           [(ast/fn-arity-ast
+                             (ast/tag (str new-type-name "_const_type_name") file-name line-number) ""
+                             (ast/params [(ast/tag '_)]) ""
+                             [(str "*" new-type-name " constructor*")]
+                             c/empty-items-constraint c/top-type)]
+                           type-mapping-sym
+                           [(ast/fn-arity-ast
+                             (ast/tag (str new-type-name "_const_type_map") file-name line-number) ""
+                             (ast/params [(ast/tag '_)]) ""
+                             [(map-vals (.type-maps new-type-constraint)
+                                        (fn [field-set]
+                                          (map field-set ast/quoted-ast)))]
+                             c/empty-items-constraint c/top-type)]
+                           instance?-sym
+                           [(ast/fn-arity-ast
+                             (ast/tag (str new-type-name "_instance_QMARK_") file-name line-number) ""
+                             (ast/params [x* y*]) ""
+                             [(c/ResultConstraint (c/intersect maybe-constraint
+                                                               (c/InferredInner new-type-constraint
+                                                                                empty-list nothing "")))
+                              (ast/and-ast
+                               [(ast/call-ast =*-sym
+                                              [type-num
+                                               (ast/call-ast get-type-sym [y*])])
+                                (ast/call-ast maybe-sym [y*])])]
+                             c/empty-items-constraint c/top-type)]}
 
-                                  (ast/tag Function-sym file-name line-number)
-                                  {invoke-sym
-                                   [(ast/fn-arity-ast
-                                     (ast/tag (str new-type-name "_invoke") file-name line-number) ""
-                                     (ast/params (comp [(ast/tag '_)] args)) ""
-                                     (comp [(c/ResultConstraint (-> (c/DynamicFields empty-list nothing "")
-                                                                    (c/update-sym (symbol "#result"))))]
-                                           (c/extract-items-constraints assertions)
-                                           [(c/update-var new-type-constraint "#result")
-                                            (ast/inline-ast (ast/tag 'C)
-                                                            new-type-constraint
-                                                            (str "ReifiedVal *rv = malloc_reified("
-                                                                 field-count ");\n"
-                                                                 "#ifdef SINGLE_THREADED\n"
-                                                                 "rv->refs = refsInit;\n#else\n"
-                                                                 " __atomic_store(&rv->refs,"
-                                                                 " &refsInit, __ATOMIC_RELAXED);\n"
-                                                                 "#endif\n"
-                                                                 "rv->type = " type-num ";\n"
-                                                                 (to-str (map (range field-count)
-                                                                              (fn [idx]
-                                                                                (str "rv->impls[" idx "] = arg" idx
-                                                                                     "_" (inc idx) ";\n"))))
-                                                                 "return((Value *)rv);\n")
-                                                            "" 0)])
-                                     c/empty-items-constraint c/top-type)]}
+                          (ast/tag Function-sym file-name line-number)
+                          {invoke-sym
+                           [(ast/fn-arity-ast
+                             (ast/tag (str new-type-name "_invoke") file-name line-number) ""
+                             (ast/params (comp [(ast/tag '_)] args)) ""
+                             (comp [(c/ResultConstraint (-> (c/DynamicFields empty-list nothing "")
+                                                            (c/update-sym (symbol "#result"))))]
+                                   (c/extract-items-constraints assertions)
+                                   [(c/update-var new-type-constraint "#result")
+                                    (ast/inline-ast (ast/tag 'C)
+                                                    new-type-constraint
+                                                    (str "ReifiedVal *rv = malloc_reified("
+                                                         field-count ");\n"
+                                                         "#ifdef SINGLE_THREADED\n"
+                                                         "rv->refs = refsInit;\n#else\n"
+                                                         " __atomic_store(&rv->refs,"
+                                                         " &refsInit, __ATOMIC_RELAXED);\n"
+                                                         "#endif\n"
+                                                         "rv->type = " type-num ";\n"
+                                                         (to-str (map (range field-count)
+                                                                      (fn [idx]
+                                                                        (str "rv->impls[" idx "] = arg" idx
+                                                                             "_" (inc idx) ";\n"))))
+                                                         "return((Value *)rv);\n")
+                                                    "" 0)])
+                             c/empty-items-constraint c/top-type)]}
 
-                                  (ast/tag Container-sym file-name line-number)
-                                  {apply-sym
-                                   [(ast/fn-arity-ast
-                                     (ast/tag (str new-type-name "_apply_ST_") file-name line-number) ""
-                                     (ast/params [(ast/tag '_) (ast/tag 'fields)]) ""
-                                     [(-> (c/MultiConstraint [vect-constraint assertions])
-                                          (c/update-path file-name line-number)
-                                          (c/update-var "fields_1"))
+                          (ast/tag Container-sym file-name line-number)
+                          {apply-sym
+                           [(ast/fn-arity-ast
+                             (ast/tag (str new-type-name "_apply_ST_") file-name line-number) ""
+                             (ast/params [(ast/tag '_) (ast/tag 'fields)]) ""
+                             [(-> (c/MultiConstraint [vect-constraint assertions])
+                                  (c/update-path file-name line-number)
+                                  (c/update-var "fields_1"))
 
-                                      (ast/inline-ast (ast/tag 'C)
-                                                      new-type-constraint
-                                                      (str "return(newTypeValue(" type-num
-                                                           ", (Vector *)fields_1));")
-                                                      "" 0)]
-                                     c/empty-items-constraint c/top-type)]}
+                              (ast/inline-ast (ast/tag 'C)
+                                              new-type-constraint
+                                              (str "return(newTypeValue(" type-num
+                                                   ", (Vector *)fields_1));")
+                                              "" 0)]
+                             c/empty-items-constraint c/top-type)]}
 
-                                  (ast/tag Stringable-sym file-name line-number)
-                                  {string-list-sym
-                                   [(ast/fn-arity (ast/params [(ast/tag 'z)]) ""
-                                                  [(ast/call-ast list-sym
-                                                                 ["<ValueConstructor " (str new-type-name) " ["
-                                                                  (to-str (interpose fields ", "))
-                                                                  "]>"])])]}})]
-          value (init-at-runtime ast new-type-name)
+                          (ast/tag Stringable-sym file-name line-number)
+                          {string-list-sym
+                           [(ast/fn-arity (ast/params [(ast/tag 'z)]) ""
+                                          [(ast/call-ast list-sym
+                                                         ["<ValueConstructor " (str new-type-name) " ["
+                                                          (to-str (interpose fields ", "))
+                                                          "]>"])])]}})]
+    (for [value (init-at-runtime ast new-type-name)
           _ (new-module-def new-type-name (c-constructor (.c-var value) [] {}
                                                          (.constraints value)
                                                          (.c-struct value)
