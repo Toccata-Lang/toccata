@@ -381,15 +381,10 @@
 ;;     y))
 
 (defn replace-syms [ast subs]
-  (cond (empty? (reduce (seq subs) {}
-                        (fn [m [k v]]
-                          (cond (= k v)
-                                m
-                                (assoc m k v)))))
-        (do
-          ;; TODO: activate this and see where it's called from
-          ;; (print-err 'no-subs subs)
-          (sm/state-maybe ast))
+  (assert (instance? HashMap subs))
+
+  (cond (empty? subs)
+        (sm/state-maybe ast)
 
         (sm/when (flat-map (or ((apo update-syms ast sm/state-maybe) subs)
                                (do
@@ -1747,14 +1742,9 @@
   (update-syms [c]
     (either (for [old-sym (.sym c)]
               (comp (for [new-sym (sm/get-val (ast/tag old-sym))]
-                      (cond (instance? Tagged new-sym)
-                            (Right (c/update-sym c (ast/untag new-sym)))
-                            (do
-                              ;; TODO: remove
-                              (or (= "" (.var c))
-                                  (maybe (print-err "check out SymbolConstraints/update-syms" old-sym new-sym
-                                                    (str "'" (.var c) "'"))))
-                              (Right c/top-type))))
+                      (Right (cond (instance? Tagged new-sym)
+                                   (c/update-sym c (ast/untag new-sym))
+                                   c/top-type)))
                     (sm/state-maybe (Right c))))
             (sm/state-maybe (Right c))))
 
@@ -5280,7 +5270,9 @@
           :let [sym-map (reduce (zip-lists (-> dispatcher-info .params .fixed)
                                            (-> arity-ast .params .fixed))
                                 {} (fn [m [old-sym new-sym]]
-                                     (assoc m old-sym new-sym)))]
+                                     (cond (= old-sym new-sym)
+                                           m
+                                           (assoc m old-sym new-sym))))]
           param-assertions (-> dispatcher-info
                                .param-constraints
                                (replace-syms sym-map)
@@ -6555,7 +6547,9 @@
                    (str (.fn-var ast)) (.params ast) (.body ast)))
 
   (inline-expr [ast arg-asts]
-    (let [fixed-args (take arg-asts (count (.fixed (.params ast))))
+    (let [file-name (ast/file-name arg-asts)
+          line-number (ast/line-number arg-asts)
+          fixed-args (take arg-asts (count (.fixed (.params ast))))
           new-bindings (make-bindings (.fixed (.params ast)) fixed-args)
           new-bindings (either (map (.variadic (.params ast))
                                     (fn [var-args]
@@ -6567,22 +6561,28 @@
                                                                (drop (count (.fixed (.params ast))))
                                                                vec))))))
                                new-bindings)
+          ;; TODO: put this back in later, we're tryint to tag all the symbols in the arity for
+          ;; better error messages
+          ;; tagged-bindings (reduce (all-symbols new-bindings) {}
+          ;;                         (fn [m sym]
+          ;;                           (either (instance? Tagged sym)
+          ;;                                   (print-err 'boom new-bindings))
+
+          ;;                           (assoc m
+          ;;                             (ast/untag sym) (ast/tag sym file-name line-number))))
+          ;; inlined-expr (replace-syms (ast/let-ast new-bindings
+          ;;                                         (remove (.body ast) (partial instance? c/ResultConstraint)))
+          ;;                            tagged-bindings)
+          inlined-expr (ast/let-ast new-bindings
+                                    (remove (.body ast) (partial instance? c/ResultConstraint)))
           result-constraint (-> (.body ast)
                                 (filter (partial instance? c/ResultConstraint))
                                 (map .assertion)
                                 (reduce c/top-type c/intersect))]
-      (map (replace-syms (ast/let-ast new-bindings
-                                      (remove (.body ast) (partial instance? c/ResultConstraint)))
-                         (reduce new-bindings {} (fn [m binding]
-                                                   (assoc m (.binding binding)
-                                                          (ast/tag (.binding binding)
-                                                                   (ast/file-name arg-asts)
-                                                                   (ast/line-number arg-asts))))))
-           (fn [new-ast]
-             (cond (= c/top-type result-constraint)
-                   new-ast
+      (cond (= c/top-type result-constraint)
+            (sm/state-maybe inlined-expr)
 
-                   (ConstrainedAST new-ast result-constraint))))))
+            (sm/state-maybe (ConstrainedAST inlined-expr result-constraint)))))
 
   (replace-bound-vars [ast subs]
     (let [subs (reduce (all-symbols (.params ast)) subs
@@ -6686,7 +6686,9 @@
                     (ast/tag (str "arg" n))))
         args-map (reduce (zip-lists fields args) {}
                          (fn [m [k v]]
-                           (assoc m k v)))]
+                           (cond (= k v)
+                                 m
+                                 (assoc m k v))))]
     (for [assertions (replace-syms assertions args-map)
           :let [reified-type-num (extract type-counter)
                 ast (ast/reified (maybe reified-type-num)
