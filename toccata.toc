@@ -2251,9 +2251,7 @@
     (-> ast .assertion (c/update-var "#result") emit))
 
   (update-syms [c _]
-    ;; TODO: this is wrong. These assertions need to be preserved and
-    ;; handled in inlining fn-arities
-    (sm/state-maybe (Left c/top-type)))
+    (sm/state-maybe (Left c)))
 
   (runtime-check [constraint value-info sym-location checked-var]
     ;; Handled other places
@@ -3127,6 +3125,119 @@
              checks line-sep
              "if(!" checked-var "){abort();}}" line-sep])))
 
+(deftype ConstrainedAST [ast constraint]
+  Container
+  (map [x f]
+    (ConstrainedAST (f ast) constraint))
+
+  (map [x f embed]
+    (map (f ast)
+         (fn [new-ast]
+           (ConstrainedAST new-ast constraint))))
+
+  Emitter
+  (emit [_]
+    (for [expr (emit ast)
+          c (to-constraint constraint)
+          _ (append-constraint (.c-var expr) c (ast/file-name ast) (ast/line-number ast))]
+      expr))
+
+  (emit-defined-value [_ defined-sym]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (emit-definition [_]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (tail-call [_ params]
+    (print-err 'aborting _LINE_)
+    (abort))
+
+  (remove-tail [_]
+    ast)
+
+  (inline-expr [target-ast arg-asts]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (clear-init [expr]
+    (print-err 'aborting _LINE_)
+    (abort))
+
+  (bind [binding]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (bind [binding evalled]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (bind-list [list-var params bind-fn]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (bind-param [binding]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+  (bind-param [binding expr]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (get-param-constraints [_]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (update-call-site-count [_]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (call-site-meta-data [c-var file-name line-number]
+    (print-err 'aborting _LINE_)
+    (abort)
+    sm-nop)
+
+  (encode [m]
+    (print-err 'aborting _LINE_)
+    (abort))
+
+  (promote-inferred [c]
+    (print-err 'aborting _LINE_)
+    (abort))
+
+  (encode [m var-prefix]
+    (print-err 'aborting _LINE_)
+    (abort))
+
+  (encode-static [m]
+    (print-err 'aborting _LINE_)
+    (abort))
+
+  (runtime-check [_ value-info file-name line-number checked-var]
+    (print-err 'aborting _LINE_)
+    (abort)
+    [])
+
+  (runtime-check [_ value-info sym-location checked-var]
+    (print-err 'aborting _LINE_)
+    (abort)
+    [])
+
+  (runtime-check [_ value-info checked-var]
+    (print-err 'aborting _LINE_)
+    (abort)
+    []))
+
 (defn call-proto-impl [target arg-vars ast]
   (assert (instance? c-protocol-fn target))
 
@@ -3280,11 +3391,21 @@
           :when-not (= c/UnknownType dispatch-type)
           impl-ast (map (get-proto-impl (ast/tag 'Container) name 2 dispatch-type)
                         .ast)
-          :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
-          :let [impl-ast (replace-bound-vars impl-ast {})
-                [dispatch-sym f-sym] (.fixed (.params impl-ast))]]
-      (ast/let-ast [(ast/binding dispatch-sym dispatch-val)]
-                   (replace-syms (.body impl-ast) {f-sym f-ast})))))
+          :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))]
+      (let [impl-ast (replace-bound-vars impl-ast {})
+            [dispatch-sym f-sym] (.fixed (.params impl-ast))
+            result-constraint (-> (.body impl-ast)
+                                  (filter (partial instance? c/ResultConstraint))
+                                  (map .assertion)
+                                  (reduce c/top-type c/intersect))
+            inlined-expr (ast/let-ast [(ast/binding dispatch-sym dispatch-val)]
+                                      (-> (.body impl-ast)
+                                          (remove (partial instance? c/ResultConstraint))
+                                          (replace-syms {f-sym f-ast})))]
+        (cond (= c/top-type result-constraint)
+              inlined-expr
+
+              (ConstrainedAST inlined-expr result-constraint))))))
 
 (defn inline-zero [name args]
   (for [dispatch-ast (first args)]
@@ -3374,11 +3495,20 @@
                                          (make-bindings arg-exprs))
                        args-ast (.args args (map args-bindings .binding))
                        [dispatch-sym args-sym] (.fixed (.params impl-ast))]]
-             (ast/let-ast (comp [disp-binding]
-                                args-bindings)
-                          (replace-syms (.body impl-ast)
-                                        {dispatch-sym (.binding disp-binding)
-                                         args-sym args-ast}))))))
+             (let [result-constraint (-> (.body impl-ast)
+                                         (filter (partial instance? c/ResultConstraint))
+                                         (map .assertion)
+                                         (reduce c/top-type c/intersect))
+                   inlined-expr (ast/let-ast (comp [disp-binding]
+                                                   args-bindings)
+                                             (-> (.body impl-ast)
+                                                 (remove (partial instance? c/ResultConstraint))
+                                                 (replace-syms {dispatch-sym (.binding disp-binding)
+                                                                args-sym args-ast})))]
+               (cond (= c/top-type result-constraint)
+                     inlined-expr
+
+                     (ConstrainedAST inlined-expr result-constraint)))))))
 
 (defn inline-comp [name args]
   (let [file (ast/file-name args)
@@ -4412,7 +4542,7 @@
                                         (.call-target ast)))]
       (comp (flat-map (inline-expr (.call-target ast) (.args ast))
                       (fn [x]
-                        ;; (cond (= file-name "test-ast.toc")
+                        ;; (cond (= file-name "/home/jim/toccata/dependencies/git/https://github.com/Toccata-Lang/constraints.git/a39c1f1/constraints.toc")
                         ;;       (for [_ (debug 'old file-name line-number "\n" ast)
                         ;;             _ (debug 'new "\n" x)
                         ;;             r (emit x)]
@@ -6325,119 +6455,6 @@
                                          (sm/traverse arities (partial emit-proto-default proto-name
                                                                        fn-sym fn-var))))))]
         [empty-c-code]))))
-
-(deftype ConstrainedAST [ast constraint]
-  Container
-  (map [x f]
-    (ConstrainedAST (f ast) constraint))
-
-  (map [x f embed]
-    (map (f ast)
-         (fn [new-ast]
-           (ConstrainedAST new-ast constraint))))
-
-  Emitter
-  (emit [_]
-    (for [expr (emit ast)
-          c (to-constraint constraint)
-          _ (append-constraint (.c-var expr) c (ast/file-name ast) (ast/line-number ast))]
-      expr))
-
-  (emit-defined-value [_ defined-sym]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (emit-definition [_]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (tail-call [_ params]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (remove-tail [_]
-    ast)
-
-  (inline-expr [target-ast arg-asts]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (clear-init [expr]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (bind [binding]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (bind [binding evalled]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (bind-list [list-var params bind-fn]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (bind-param [binding]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-  (bind-param [binding expr]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (get-param-constraints [_]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (update-call-site-count [_]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (call-site-meta-data [c-var file-name line-number]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (encode [m]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (promote-inferred [c]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (encode [m var-prefix]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (encode-static [m]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (runtime-check [_ value-info file-name line-number checked-var]
-    (print-err 'aborting _LINE_)
-    (abort)
-    [])
-
-  (runtime-check [_ value-info sym-location checked-var]
-    (print-err 'aborting _LINE_)
-    (abort)
-    [])
-
-  (runtime-check [_ value-info checked-var]
-    (print-err 'aborting _LINE_)
-    (abort)
-    []))
 
 (extend-type ast/fn-arity-ast
   Emitter
