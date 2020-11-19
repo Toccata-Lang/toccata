@@ -412,9 +412,6 @@
        (fn [new-c]
          (either (and (= c/bottom-type new-c)
                       (do
-                        ;; (print-err 'c c)
-                        ;; (print-err 'cs cs)
-                        ;; (print-err 'new-c new-c)
                         (c/conflicting-assertions new-c file-name line-number)
                         (abort)))
                  new-c))))
@@ -534,7 +531,7 @@
 
   Stringable
   (string-list [_]
-    (list "<C-Code " (str c-var) ", "
+    (list "<c-code " (str c-var) ", "
           (str (count init)) ", " (str refs-map) ", "
           (str constraints) ">")))
 
@@ -1822,11 +1819,13 @@
   (reify-c [c param-exprs file-name line-number]
     (for [new-items (sm/traverse (.items-constraints c)
                                  (fn [c]
-                                   (reify-constraint c param-exprs file-name line-number)))
-          new-tail (reify-constraint (.tail-constraint c) param-exprs file-name line-number)]
-      (c/ItemsConstraint new-items
-                         new-tail
-                         (.path c) (.sym c) (.var c))))
+                                   (reify-c c param-exprs file-name line-number)))
+          new-tail (reify-c (.tail-constraint c) param-exprs file-name line-number)]
+      (either (or (some new-items (partial = c/bottom-type))
+                  (= c/bottom-type new-tail))
+              (c/ItemsConstraint new-items
+                                 new-tail
+                                 (.path c) (.sym c) (.var c)))))
 
   (promote-inferred [c]
     (-> c
@@ -1923,8 +1922,10 @@
 (extend-type c/InferredInner
   Emitter
   (reify-c [c param-exprs file-name line-number]
-    (map (reify-constraint (.contents c) param-exprs file-name line-number)
-         (partial .contents c)))
+    (map (reify-c (.contents c) param-exprs file-name line-number)
+         (fn [new-contents]
+           (either (= c/bottom-type new-contents)
+                   (.contents c new-contents)))))
 
   (promote-inferred [c]
     (c/extract-coll-constraint c))
@@ -1967,8 +1968,10 @@
 (extend-type c/CollectionOf
   Emitter
   (reify-c [c param-exprs file-name line-number]
-    (map (reify-constraint (.contents c) param-exprs file-name line-number)
-         (partial .contents c)))
+    (map (reify-c (.contents c) param-exprs file-name line-number)
+         (fn [new-contents]
+           (either (= c/bottom-type new-contents)
+                   (.contents c new-contents)))))
 
   (promote-inferred [c]
     (.contents c (promote-inferred (.contents c))))
@@ -2168,17 +2171,18 @@
   (reify-c [constraint param-exprs file-name line-number]
     (for [new-cs (sm/traverse (.constraints constraint)
                               (fn [c]
-                                (reify-constraint c param-exprs file-name line-number)))]
-      (let [new-cs (-> new-cs
-                       (flat-map (fn [reified]
-                                   (either (map (instance? c/MultiConstraint reified) .constraints)
-                                           [reified])))
-                       (remove (partial = c/top-type)))]
-        (either (or (and (empty? new-cs)
-                         (maybe c/top-type))
-                    (and (= 1 (count new-cs))
-                         (first new-cs)))
-                (reduce new-cs (c/MultiConstraint []) c/intersect)))))
+                                (reify-c c param-exprs file-name line-number)))]
+      (either (some new-cs (partial = c/bottom-type))
+              (let [new-cs (-> new-cs
+                               (flat-map (fn [reified]
+                                           (either (map (instance? c/MultiConstraint reified) .constraints)
+                                                   [reified])))
+                               (remove (partial = c/top-type)))]
+                (either (or (and (empty? new-cs)
+                                 (maybe c/top-type))
+                            (and (= 1 (count new-cs))
+                                 (first new-cs)))
+                        (reduce new-cs (c/MultiConstraint []) c/intersect))))))
 
   (tail-call [constraint _]
     constraint)
@@ -2238,8 +2242,10 @@
 (extend-type c/ResultConstraint
   Emitter
   (reify-c [c param-exprs file-name line-number]
-    (map (reify-constraint (.assertion c) param-exprs file-name line-number)
-         (partial .assertion c)))
+    (map (reify-c (.assertion c) param-exprs file-name line-number)
+         (fn [new-assertion]
+           (either (= c/bottom-type new-assertion)
+                   (.assertion c new-assertion)))))
 
   (update-syms [constraint _]
     (sm/state-maybe (Left constraint)))
@@ -2345,8 +2351,11 @@
 
   Emitter
   (reify-c [v param-exprs file-name line-number]
-    (sm/traverse v (fn [x]
-                     (reify-constraint x param-exprs file-name line-number))))
+    (map (sm/traverse v (fn [x]
+                          (reify-c x param-exprs file-name line-number)))
+         (fn [new-v]
+           (either (some new-v (partial = c/bottom-type))
+                   new-v))))
 
   (encode-static [v]
     (comp (sm/get-in-val [.constants .encoded v])
@@ -3126,6 +3135,10 @@
              "if(!" checked-var "){abort();}}" line-sep])))
 
 (deftype ConstrainedAST [ast constraint]
+  Stringable
+  (string-list [_]
+    (list "(ConstrainedAST " (str ast) "\n" (str constraint) ")"))
+
   Container
   (map [x f]
     (ConstrainedAST (f ast) constraint))
@@ -3294,16 +3307,14 @@
                                      '_))
 
                                  (= (.call-target ast) 'instance?)
-                                 (for [reified (reify-constraint (.result-constraint impl-info)
-                                                                 arg-vars file-name line-number)
-                                       target-c (get-constraint (.c-var target))
-                                       :let [result-c (c/intersect reified
-                                                                   (c/InferredInner target-c empty-list nothing ""))
-                                             result-c (cond (= result-c c/bottom-type)
-                                                            (.result-constraint impl-info)
-
-                                                            result-c)]
-                                       _ (constrain-var file-name line-number result-sym result-c)]
+                                 (for [reified (reify-c (.result-constraint impl-info) arg-vars
+                                                        file-name line-number)
+                                       ;; TODO: when reified is bottom-type, you could optimize the
+                                       ;; generated code to eliminate this call.
+                                       _ (cond (= reified c/bottom-type)
+                                               (constrain-var file-name line-number result-sym
+                                                              (c/update-path maybe-constraint file-name line-number))
+                                               (constrain-var file-name line-number result-sym reified))]
                                    '_)
 
                                  (flat-map (reify-constraint (.result-constraint impl-info) arg-vars
@@ -4223,15 +4234,16 @@
   (reify-c [ast param-exprs file-name line-number]
     (for [new-alts (sm/traverse (.alts ast)
                                 (fn [alt-c]
-                                  (reify-constraint alt-c param-exprs file-name line-number)))]
-      (let [new-alts (reduce new-alts []
-                             (fn [new-alts new-c]
-                               (cond
-                                (some new-alts (partial = new-c)) new-alts
-                                (conj new-alts new-c))))]
-        (either (and (= 1 (count new-alts))
-                     (first new-alts))
-                (.alts ast new-alts)))))
+                                  (reify-c alt-c param-exprs file-name line-number)))]
+      (either (some new-alts (partial = c/bottom-type))
+              (let [new-alts (reduce new-alts []
+                                     (fn [new-alts new-c]
+                                       (cond
+                                        (some new-alts (partial = new-c)) new-alts
+                                        (conj new-alts new-c))))]
+                (either (and (= 1 (count new-alts))
+                             (first new-alts))
+                        (.alts ast new-alts))))))
 
   (runtime-check [constraint value-info sym-location checked-var]
     (let [alts (.alts constraint)
@@ -5861,7 +5873,7 @@
 
   Stringable
   (string-list [expr]
-    (comp (list "<TailEither ") (list ">")))
+    (list "(TailEither " (str clause) "\n" (str alt) ")"))
 
   Container
   (map [x f]
