@@ -211,7 +211,7 @@
   (cache-static-constant [v expr]
     '_)
 
-  (get-all-symbols [ast]
+  (all-symbols [ast]
     (assert-result l (instance? (vector-of ast/ParamType) l))
     ast)
 
@@ -289,7 +289,7 @@
     (assert-result x (instance? sm/new-sm x)))
 
   ;; get the constraints for a symbol or params-ast
-  (get-param-constraints [_]
+  (get-param-cs [_]
     (assert-result x (instance? sm/new-sm x)))
 
   (update-call-site-count [_]
@@ -368,6 +368,10 @@
     (assert-result r (instance? Vector r)))
 
   (reify-c [c param-exprs file-name line-number]
+    (assert-result r (instance? sm/new-sm r))
+    (sm/state-maybe c))
+
+  (old-reify-c [c param-exprs file-name line-number]
     (sm/state-maybe c)))
 
 ;; (defn extract-collection-of [ast]
@@ -376,6 +380,10 @@
 ;;     (or (= x y)
 ;;         (maybe (print-err 'diff-coll-of (ast/file-name ast) (ast/line-number ast "\n\n" x "\n\n" y)))
 ;;     y))
+
+(defn get-param-constraints [ast]
+  (for [y (cata get-param-cs ast sm/state-maybe)]
+    (c/update-path y (ast/file-name ast) (ast/line-number ast))))
 
 (defn replace-syms [ast subs]
   (assert (instance? HashMap subs))
@@ -401,20 +409,28 @@
                     first)
           ast))
 
-(defn all-symbols [ast]
-  (cata get-all-symbols ast))
-
 (defn unwrap-tail [ast]
   (cata remove-tail ast))
 
 (defn reify-constraint [c param-exprs file-name line-number]
-  (map (reify-c c param-exprs file-name line-number)
-       (fn [new-c]
-         (either (and (= c/bottom-type new-c)
-                      (do
-                        (c/conflicting-assertions new-c file-name line-number)
-                        (abort)))
-                 new-c))))
+  ;; TODO: this needs elgot with the minimizing Constraint algebra
+  (for [x (old-reify-c c param-exprs file-name line-number)
+        ;; new-c (cata (fn [c]
+        ;;               (reify-c c param-exprs file-name line-number))
+        ;;             c sm/state-maybe)
+        ]
+    (let [new-c x]
+      ;; (or (= x new-c)
+      ;;     (do
+      ;;       (print-err 'diff-reify-c 'c c "\n\n" 'params param-exprs "\n\n" x "\n\n" new-c)
+      ;;       ;; (abort)
+      ;;       nothing
+      ;;       ))
+      (either (and (= c/bottom-type new-c)
+                   (do
+                     (c/conflicting-assertions new-c file-name line-number)
+                     (abort)))
+              new-c))))
 
 (defn destruct-seq [seq-c-var elem-c-vars dest-args file-name line-num]
   (assert (instance? String seq-c-var))
@@ -1752,6 +1768,11 @@
   (reify-c [c param-exprs file-name line-number]
     (-> (c/ReifiedFields (rest param-exprs) (.path c) (.sym c) (.var c))
         (c/update-path file-name line-number)
+        sm/state-maybe))
+
+  (old-reify-c [c param-exprs file-name line-number]
+    (-> (c/ReifiedFields (rest param-exprs) (.path c) (.sym c) (.var c))
+        (c/update-path file-name line-number)
         sm/state-maybe)))
 
 (extend-type c/DynamicParamConstraint
@@ -1765,11 +1786,35 @@
                               (reduce param-c (fn [new-c [file line]]
                                                 (c/update-path new-c file line)))
                               (c/set-type (.result-type c)))))))
+            (sm/state-maybe c/top-type)))
+
+  (old-reify-c [c param-exprs file-name line-number]
+    (either (map (get param-exprs (.param-index c))
+                 (fn [param-expr]
+                   (map (get-constraint (.c-var param-expr))
+                        (fn [param-c]
+                          (-> (reverse (.path c))
+                              (reduce param-c (fn [new-c [file line]]
+                                                (c/update-path new-c file line)))
+                              (c/set-type (.result-type c)))))))
             (sm/state-maybe c/top-type))))
 
 (extend-type c/DynamicItemConstraint
   Emitter
   (reify-c [c param-exprs file-name line-number]
+    (comp (for [param-expr (sm/when (get param-exprs (.param-index c)))
+                param-c (get-constraint (.c-var param-expr))
+                item-expr (-> param-c
+                              c/extract-dynamic-fields
+                              (get (.item-index c))
+                              sm/when)
+                item-c (get-constraint (.c-var item-expr))]
+            (reduce (reverse (.path c)) item-c
+                    (fn [new-c [file line]]
+                      (c/update-path new-c file line))))
+          (sm/state-maybe c/top-type)))
+
+  (old-reify-c [c param-exprs file-name line-number]
     (comp (for [param-expr (sm/when (get param-exprs (.param-index c)))
                 param-c (get-constraint (.c-var param-expr))
                 item-expr (-> param-c
@@ -1804,6 +1849,27 @@
                                sm/zero-sm)))
         (map (fn [dyn-param-cs]
                (c/sum-type dyn-param-cs)))
+        (comp (sm/state-maybe c/top-type))))
+
+  (old-reify-c [c param-exprs file-name line-number]
+    (-> c
+        .invokable-c
+        c/extract-dynamic-params
+        (sm/traverse (fn [dyn-c]
+                       (either (or (for [dyn-param (instance? c/DynamicParamConstraint dyn-c)
+                                         expr (get param-exprs (.param-index dyn-param))]
+                                     (get-result-constraint expr (.num-args c)))
+                                   (for [dyn-param (instance? c/DynamicItemConstraint dyn-c)
+                                         expr (get-in param-exprs [(.param-index dyn-param)])]
+                                     ;; TODO: there could be multiple dyn fields because of a SumConstraint
+                                     (for [dynamic-fields (map (get-constraint (.c-var expr))
+                                                               c/extract-dynamic-fields)
+                                           field-expr (sm/when (get dynamic-fields (.item-index dyn-param)))
+                                           rc (get-result-constraint field-expr (.num-args c))]
+                                       rc)))
+                               sm/zero-sm)))
+        (map (fn [dyn-param-cs]
+               (c/sum-type dyn-param-cs)))
         (comp (sm/state-maybe c/top-type)))))
 
 (extend-type c/DynamicConstraint
@@ -1817,10 +1883,15 @@
 (extend-type c/ItemsConstraint
   Emitter
   (reify-c [c param-exprs file-name line-number]
+    (sm/state-maybe (either (or (some (.items-constraints c) (partial = c/bottom-type))
+                                (= c/bottom-type (.tail-constraint c)))
+                            c)))
+
+  (old-reify-c [c param-exprs file-name line-number]
     (for [new-items (sm/traverse (.items-constraints c)
                                  (fn [c]
-                                   (reify-c c param-exprs file-name line-number)))
-          new-tail (reify-c (.tail-constraint c) param-exprs file-name line-number)]
+                                   (old-reify-c c param-exprs file-name line-number)))
+          new-tail (old-reify-c (.tail-constraint c) param-exprs file-name line-number)]
       (either (or (some new-items (partial = c/bottom-type))
                   (= c/bottom-type new-tail))
               (c/ItemsConstraint new-items
@@ -1922,9 +1993,15 @@
 (extend-type c/InferredInner
   Emitter
   (reify-c [c param-exprs file-name line-number]
-    (map (reify-c (.contents c) param-exprs file-name line-number)
+    (sm/state-maybe (either (or (= c/bottom-type (.contents c))
+                                (= c/top-type (.contents c)))
+                            c)))
+
+  (old-reify-c [c param-exprs file-name line-number]
+    (map (old-reify-c (.contents c) param-exprs file-name line-number)
          (fn [new-contents]
-           (either (= c/bottom-type new-contents)
+           (either (or (= c/bottom-type new-contents)
+                       (= c/top-type new-contents))
                    (.contents c new-contents)))))
 
   (promote-inferred [c]
@@ -1968,9 +2045,15 @@
 (extend-type c/CollectionOf
   Emitter
   (reify-c [c param-exprs file-name line-number]
-    (map (reify-c (.contents c) param-exprs file-name line-number)
+    (sm/state-maybe (either (or (= c/bottom-type (.contents c))
+                                (= c/top-type (.contents c)))
+                            c)))
+
+  (old-reify-c [c param-exprs file-name line-number]
+    (map (old-reify-c (.contents c) param-exprs file-name line-number)
          (fn [new-contents]
-           (either (= c/bottom-type new-contents)
+           (either (or (= c/bottom-type new-contents)
+                       (= c/top-type new-contents))
                    (.contents c new-contents)))))
 
   (promote-inferred [c]
@@ -2168,10 +2251,24 @@
 
 (extend-type c/MultiConstraint
   Emitter
-  (reify-c [constraint param-exprs file-name line-number]
+  (reify-c [c param-exprs file-name line-number]
+    (sm/state-maybe (either (some (.constraints c) (partial = c/bottom-type))
+                            (let [new-cs (-> (.constraints c)
+                                             (flat-map (fn [reified]
+                                                         (either (map (instance? c/MultiConstraint reified)
+                                                                      .constraints)
+                                                                 [reified])))
+                                             (remove (partial = c/top-type)))]
+                              (either (or (and (empty? new-cs)
+                                               (maybe c/top-type))
+                                          (and (= 1 (count new-cs))
+                                               (first new-cs)))
+                                      (reduce new-cs c/top-type c/intersect))))))
+
+  (old-reify-c [constraint param-exprs file-name line-number]
     (for [new-cs (sm/traverse (.constraints constraint)
                               (fn [c]
-                                (reify-c c param-exprs file-name line-number)))]
+                                (old-reify-c c param-exprs file-name line-number)))]
       (either (some new-cs (partial = c/bottom-type))
               (let [new-cs (-> new-cs
                                (flat-map (fn [reified]
@@ -2182,7 +2279,7 @@
                                  (maybe c/top-type))
                             (and (= 1 (count new-cs))
                                  (first new-cs)))
-                        (reduce new-cs (c/MultiConstraint []) c/intersect))))))
+                        (reduce new-cs c/top-type c/intersect))))))
 
   (tail-call [constraint _]
     constraint)
@@ -2242,7 +2339,11 @@
 (extend-type c/ResultConstraint
   Emitter
   (reify-c [c param-exprs file-name line-number]
-    (map (reify-c (.assertion c) param-exprs file-name line-number)
+    (sm/state-maybe (either (= c/bottom-type (.assertion c))
+                            c)))
+
+  (old-reify-c [c param-exprs file-name line-number]
+    (map (old-reify-c (.assertion c) param-exprs file-name line-number)
          (fn [new-assertion]
            (either (= c/bottom-type new-assertion)
                    (.assertion c new-assertion)))))
@@ -2351,8 +2452,12 @@
 
   Emitter
   (reify-c [v param-exprs file-name line-number]
+    (sm/state-maybe (either (some v (partial = c/bottom-type))
+                            v)))
+
+  (old-reify-c [v param-exprs file-name line-number]
     (map (sm/traverse v (fn [x]
-                          (reify-c x param-exprs file-name line-number)))
+                          (old-reify-c x param-exprs file-name line-number)))
          (fn [new-v]
            (either (some new-v (partial = c/bottom-type))
                    new-v))))
@@ -2528,10 +2633,7 @@
                             {} c/top-type)))
 
   (emit-defined-value [_ x] (wrap sm/zero-sm []))
-  (emit-definition [_] (wrap sm/zero-sm []))
-
-  (tail-call [ast params]
-    (TailExpr ast)))
+  (emit-definition [_] (wrap sm/zero-sm [])))
 
 
 (extend-type HashSet
@@ -3205,11 +3307,6 @@
     (abort)
     sm-nop)
 
-  (get-param-constraints [_]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
   (update-call-site-count [_]
     (print-err 'aborting _LINE_)
     (abort)
@@ -3307,8 +3404,9 @@
                                      '_))
 
                                  (= (.call-target ast) 'instance?)
-                                 (for [reified (reify-c (.result-constraint impl-info) arg-vars
-                                                        file-name line-number)
+                                 (for [reified (cata (fn [c]
+                                                       (reify-c c arg-vars file-name line-number))
+                                                     (.result-constraint impl-info) sm/state-maybe)
                                        ;; TODO: when reified is bottom-type, you could optimize the
                                        ;; generated code to eliminate this call.
                                        _ (cond (= reified c/bottom-type)
@@ -3559,7 +3657,7 @@
 
 (extend-type Tagged
   Emitter
-  (get-param-constraints [sym]
+  (get-param-cs [sym]
     (for [expr (lookup-sym (ast/tag sym))
           c (get-constraint (.c-var expr))]
       (let [c (cond (instance? c/DynamicConstraint c)
@@ -3803,6 +3901,7 @@
                                                                              .param-constraints
                                                                              c/extract-items-constraints)))
                                                                   ((partial apply zip-lists))
+                                                                  vec
                                                                   (map (fn [cs]
                                                                          (c/sum-type (vec cs)))))
                                             result-constraint (-> arities
@@ -4226,9 +4325,20 @@
 (extend-type c/SumConstraint
   Emitter
   (reify-c [ast param-exprs file-name line-number]
+    (sm/state-maybe (either (some (.alts ast) (partial = c/bottom-type))
+                            (let [new-alts (reduce (.alts ast) []
+                                                   (fn [new-alts new-c]
+                                                     (cond
+                                                      (some new-alts (partial = new-c)) new-alts
+                                                      (conj new-alts new-c))))]
+                              (either (and (= 1 (count new-alts))
+                                           (first new-alts))
+                                      (.alts ast new-alts))))))
+
+  (old-reify-c [ast param-exprs file-name line-number]
     (for [new-alts (sm/traverse (.alts ast)
                                 (fn [alt-c]
-                                  (reify-c alt-c param-exprs file-name line-number)))]
+                                  (old-reify-c alt-c param-exprs file-name line-number)))]
       (either (some new-alts (partial = c/bottom-type))
               (let [new-alts (reduce new-alts []
                                      (fn [new-alts new-c]
@@ -4850,24 +4960,21 @@
   (encode-static [x]
     (emit (ast/quoted-ast (.sym x))))
 
-  (get-all-symbols [ast]
+  (all-symbols [ast]
     [ast]))
 
 (extend-type ast/params-ast
   Emitter
-  (get-all-symbols [params]
+  (all-symbols [params]
     (comp* (either (map (.variadic params) vector)
                    [])
            (seq (.fixed params)) ))
 
-  (get-param-constraints [params]
-    (for [items-constraints (sm/traverse (.fixed params) get-param-constraints)
-          tail-constraint (either (map (.variadic params) get-param-constraints)
-                                  (wrap sm/zero-sm c/top-type))]
-      (-> c/empty-items-constraint
-          (c/update-path (ast/file-name params) (ast/line-number params))
-          (.tail-constraint tail-constraint)
-          (.items-constraints items-constraints))))
+  (get-param-cs [params]
+    (sm/state-maybe (-> c/empty-items-constraint
+                        (.tail-constraint (either (.variadic params)
+                                                  c/top-type))
+                        (.items-constraints (.fixed params)))))
 
   (bind-param [params]
     (for [param-var (genlocal "arg")
@@ -4944,6 +5051,7 @@
                          .body
                          (remove (partial instance? ast/NoCode))
                          (tail-call params)))))
+
   (update-syms [ast handle-bindings]
     (for [prev-state (sm/update-state identity)
           new-bindings (apo (fn [ast]
@@ -6973,9 +7081,7 @@
     (let [file-name (ast/file-name ast)
           line-number (ast/line-number ast)
           sym (ast/untag (.sym ast))
-          fields (-> ast
-                     .fields
-                     all-symbols
+          fields (-> (cata all-symbols (.fields ast))
                      (map ast/untag))
           const-arity-index (inc (count fields))
           field-assertions (filter (.impls ast) (partial instance? c/ValueConstraint))]
