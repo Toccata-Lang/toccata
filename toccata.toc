@@ -232,7 +232,10 @@
 
   ;; Mark this AST node as the final (or tail) expression in a function body
   ;; TODO: all tail expressions must gather the result constraint, etc
-  (tail-call [_ params])
+  (wrap-tail [ast params]
+    (assert-result r (instance? Either r))
+
+    (Right ast))
 
   ;; Unwrap the tail call
   (remove-tail [ast]
@@ -378,8 +381,13 @@
 ;;   (let [x (old-extract-collection-of ast)
 ;;         y (cata collection-of ast)]
 ;;     (or (= x y)
-;;         (maybe (print-err 'diff-coll-of (ast/file-name ast) (ast/line-number ast "\n\n" x "\n\n" y)))
+;;         (maybe (print-err 'diff-coll-of (ast/file-name ast) (ast/line-number ast) "\n\n" x "\n\n" y))))
 ;;     y))
+
+(defn tail-call [ast params]
+  (apo (fn [ast]
+         (wrap-tail ast params))
+       ast))
 
 (defn get-param-constraints [ast]
   (for [y (cata get-param-cs ast sm/state-maybe)]
@@ -1317,6 +1325,10 @@
           new-ast (f ast)]
       (CollectFieldConsts new-fields new-ast)))
 
+  ast/IsCode
+  (ast/generates-code? [x]
+    (maybe x))
+
   Emitter
   (emit [_]
     (for [expr (emit ast)
@@ -1333,10 +1345,7 @@
       expr))
 
   (remove-tail [_]
-    ast)
-
-  (tail-call [x params]
-    (CollectFieldConsts fields (tail-call ast params))))
+    ast))
 
 (defn update-context [context update]
   (assert (instance? Maybe context))
@@ -1747,9 +1756,6 @@
                                                                            c/top-type))
                                             (abort))))))
             m))
-
-  (tail-call [constraint _]
-    constraint)
 
   (update-syms [c _]
     (either (for [old-sym (.sym c)]
@@ -2281,9 +2287,6 @@
                                  (first new-cs)))
                         (reduce new-cs c/top-type c/intersect))))))
 
-  (tail-call [constraint _]
-    constraint)
-
   (promote-inferred [c]
     (.constraints c (map (.constraints c) promote-inferred)))
 
@@ -2351,9 +2354,6 @@
   (update-syms [constraint _]
     (sm/state-maybe (Left constraint)))
 
-  (tail-call [constraint _]
-    constraint)
-
   (emit [ast]
     (-> ast .assertion (c/update-var "#result") emit))
 
@@ -2410,13 +2410,13 @@
                   (wrap sm/zero-sm
                         (c-static-val "empty_list" [] {} "empty_list_struct")))))
 
-  (tail-call [asts args]
+  (wrap-tail [asts args]
     (let [asts (reverse asts)]
-      (either (empty? asts)
-              (let [[tail & init] asts]
-                (-> (tail-call tail args)
-                    (cons init)
-                    reverse))))))
+      (Left (either (empty? asts)
+                    (let [[tail & init] asts]
+                      (-> (tail-call tail args)
+                          (cons init)
+                          reverse)))))))
 
 (defn encodeVectorInfo [v]
   (inline C Vector "
@@ -2484,12 +2484,12 @@
                   _ (sm/assoc-in-val [.constants .encoded v] expr)]
               expr))))
 
-  (tail-call [asts params]
-    (either (flat-map (last asts)
-                      (fn [tail]
-                        (store asts (dec (count asts))
-                               (tail-call tail params))))
-            asts)))
+  (wrap-tail [asts params]
+    (Left (either (flat-map (last asts)
+                            (fn [tail]
+                              (store asts (dec (count asts))
+                                     (tail-call tail params))))
+                  asts))))
 
 (defn set-result-constraint [result-var file-name line-number]
   ;; TODO: shouldn't be returning the result-constraint
@@ -2934,6 +2934,10 @@
   (map [x f embed]
     (embed x))
 
+  ast/IsCode
+  (ast/generates-code? [expr]
+    (maybe expr))
+
   Emitter
   (emit [m]
     (for [init-fn-context (sm/get-val .rt-init)
@@ -2947,8 +2951,8 @@
       (c-code (.c-var value) ["return(" (.c-var value) ");" line-sep]
               {} hashmap-constraint)))
 
-  (tail-call [m params]
-    (TailHashMap m))
+  (wrap-tail [m params]
+    (Left (TailHashMap m)))
 
   (encode [m] (encode m "var_"))
 
@@ -3027,8 +3031,8 @@
                                             (.refs-map {})))]
       [value]))
 
-  (tail-call [x params]
-    (TailCall x params)))
+  (wrap-tail [x params]
+    (Left (TailCall x params))))
 
 (extend-type ast/string-ast
   Emitter
@@ -3276,10 +3280,6 @@
     (print-err 'aborting _LINE_)
     (abort)
     sm-nop)
-
-  (tail-call [_ params]
-    (print-err 'aborting _LINE_)
-    (abort))
 
   (remove-tail [_]
     ast)
@@ -3734,8 +3734,8 @@
           _ (new-module-def defined-sym value)]
       [value]))
 
-  (tail-call [ast params]
-    (TailCall ast params))
+  (wrap-tail [ast params]
+    (Left (TailCall ast params)))
 
   (inline-expr [name arg-asts]
     ;; TODO: inline 'get-in', 'update-in', getters/setters
@@ -4624,8 +4624,8 @@
           _ (declare [(.txt ast)])]
       [empty-c-code]))
 
-  (tail-call [ast params]
-    (TailExpr ast)))
+  (wrap-tail [ast params]
+    (Left (TailExpr ast))))
 
 (extend-type ast/call-ast
   Emitter
@@ -4697,9 +4697,9 @@
                               (compilation-error "Could not compile call site at:"
                                                  file-name line-number)))))))
 
-  (tail-call [ast params]
-    (TailCall ast params))
-
+  (wrap-tail [ast params]
+    (Left (TailCall ast params)))
+ 
   (inline-expr [ast arg-asts]
     (let [target (.call-target ast)
           file-name (ast/file-name target)
@@ -4735,9 +4735,13 @@
 ;; TODO: when a proto impl is wrong (ie; wrong number of args)
 ;; the error message is trash
 (extend-type C-expr
+  ast/IsCode
+  (ast/generates-code? [expr]
+    (maybe expr))
+
   Emitter
-  (tail-call [expr _]
-    (TailExpr expr))
+  (wrap-tail [expr _]
+    (Left (TailExpr expr)))
 
   (emit [x]
     (wrap sm/zero-sm x))
@@ -4975,6 +4979,9 @@
 
 (extend-type ast/params-ast
   Emitter
+  (wrap-tail [ast params]
+    (Left ast))
+
   (all-symbols [params]
     (comp* (either (map (.variadic params) vector)
                    [])
@@ -5055,12 +5062,15 @@
       [(c-init (.c-var value) [(.init value) (.c-var value) " = " (.c-var value) ";" "\n#\n"]
                (.refs-map value) (ast/file-name ast) (ast/line-number ast))]))
 
-  (tail-call [ast params]
-    (.body ast (comp (filter (.body ast) (partial instance? c/Constraints))
+  (wrap-tail [ast params]
+    ;; TODO: move this filtering of the body to the Vector implementation of wrap-tail
+    (-> ast 
+        (.body (comp (filter (.body ast) (partial instance? c/Constraints))
                      (-> ast
                          .body
-                         (remove (partial instance? ast/NoCode))
-                         (tail-call params)))))
+                         (filter ast/generates-code?)
+                         (tail-call params))))
+        Left))
 
   (update-syms [ast handle-bindings]
     (for [prev-state (sm/update-state identity)
@@ -5502,6 +5512,10 @@
   (map [x f embed]
     (map (f constraint) ConstrainVar))
 
+  ast/IsCode
+  (ast/generates-code? [x]
+    (maybe x))
+
   Emitter
   (emit [_]
     (either (map (c/extract-sym constraint)
@@ -5638,8 +5652,8 @@
                                                             (.c-struct value)))]
         [value])))
 
-  (tail-call [ast params]
-    (TailCall ast params)))
+  (wrap-tail [ast params]
+    (Left (TailCall ast params))))
 
 (defn filter-vals [m f]
   (reduce (vec m) {}
@@ -5858,12 +5872,13 @@
                 (fn [result-var]
                   (emit-and-expr result-var clauses "")))))
 
-  (tail-call [ast params]
-    (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
-      (either (map (last clauses) (fn [last-c]
-                                    (TailAnd (conj (butlast clauses)
-                                                   (tail-call last-c params)))))
-              ast))))
+  (wrap-tail [ast params]
+    (-> (.clauses ast)
+        ;; TODO: move this filtering to the Vector wrap-tail
+        (filter ast/generates-code?)
+        (tail-call params) 
+        TailAnd
+        Left)))
 
 (defn assert-maybe-of [type-expr]
   (assert (instance? c/ValueConstraint type-expr))
@@ -5973,12 +5988,13 @@
               (fn [result-var]
                 (emit-or-expr result-var (remove (.clauses ast) (partial instance? ast/NoCode)) ""))))
 
-  (tail-call [ast params]
-    (let [clauses (remove (.clauses ast) (partial instance? ast/NoCode))]
-      (either (map (last clauses) (fn [last-c]
-                                    (TailOr (conj (butlast clauses)
-                                                  (tail-call last-c params)))))
-              ast))))
+  (wrap-tail [ast params]
+    (-> (.clauses ast)
+        ;; TODO: move this filtering to the Vector wrap-tail
+        (filter ast/generates-code?)
+        (tail-call params) 
+        TailOr
+        Left)))
 
 (deftype TailEither [clause alt]
 
@@ -6090,9 +6106,9 @@
   ;;         _ (new-module-def defined-sym value)]
   ;;     [value]))
 
-  (tail-call [ast params]
-    (TailEither (.clause ast)
-                (tail-call (.alt ast) params))))
+  (wrap-tail [ast params]
+    (Left (TailEither (.clause ast)
+                      (tail-call (.alt ast) params)))))
 
 (extend-type ast/cond-val-ast
   EmitCond
@@ -6242,10 +6258,7 @@
                                    line-sep "if(!" checked-var "){abort();}"]))
                         line-sep "return(arg);}" line-sep])
             _ (set-result-constraint (.c-var expr) file-name line-number)]
-        expr)))
-
-  (tail-call [ast _]
-    ast))
+        expr))))
 
 (extend-type ast/cond-ast
   Emitter
@@ -6254,9 +6267,9 @@
           expr (emit-cond-expr ast result-var "")]
       expr))
 
-  (tail-call [ast params]
-    (TailCond (.conditionals ast)
-              (tail-call (.default ast) params))))
+  (wrap-tail [ast params]
+    (Left (TailCond (.conditionals ast)
+                    (tail-call (.default ast) params)))))
 
 (extend-type ast/main-ast
   Emitter
@@ -6679,8 +6692,8 @@
                                             (.refs-map {})))]
       [value]))
 
-  (tail-call [x params]
-    (TailCall x params))
+  (wrap-tail [x params]
+    (Left (TailCall x params)))
 
   (inline-expr [ast arg-asts]
     (either (or (map (.fn-sym ast) (fn [_]
