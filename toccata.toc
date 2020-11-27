@@ -235,44 +235,10 @@
 
     (Right ast))
 
+  (to-constraint [c]
+    (sm/state-maybe c))
+
   ;; ----- need recursion scheming
-
-  (get-result-constraint [_ num-args]
-    (assert-result r (instance? sm/new-sm r)))
-
-  (cache-static-constant [v expr]
-    '_)
-
-  ;; For AST nodes that can be embedded in other AST nodes
-  (emit [_]
-    (assert-result x (instance? sm/new-sm x)))
-
-  ;; For AST nodes that can be assigned to a symbol at the top level
-  (emit-defined-value [ast defined-sym]
-    (assert-result x (instance? sm/new-sm x)))
-
-  ;; For AST nodes that can appear at the top level of a file
-  (emit-definition [_]
-    (assert-result x (instance? sm/new-sm x)))
-
-  (emit-recursive-call [ast params]
-    sm/zero-sm)
-
-  ;; produce a constraint from an assertion ast
-  (to-constraint [ast]
-    (assert (instance? c/Constraints ast))
-
-    (sm/state-maybe ast))
-
-  ;; expand 'target-ast' so that it's component asts are inlined
-  (inline-expr [target-ast arg-asts]
-    (assert-result x (instance? sm/new-sm x))
-    sm/zero-sm)
-
-  (clear-init [expr]
-    ;; TODO: re-arrange code to make this possible
-    ;; (assert (instance? BindingValue expr))
-    )
 
   ;; generate a new local C var for a symbol
   (bind [binding]
@@ -372,7 +338,38 @@
     (assert-result r (instance? Vector r)))
 
   (old-reify-c [c param-exprs file-name line-number]
-    (sm/state-maybe c)))
+    (sm/state-maybe c))
+
+  (get-result-constraint [_ num-args]
+    (assert-result r (instance? sm/new-sm r)))
+
+  (cache-static-constant [v expr]
+    '_)
+
+  ;; For AST nodes that can be embedded in other AST nodes
+  (emit [_]
+    (assert-result x (instance? sm/new-sm x)))
+
+  ;; For AST nodes that can be assigned to a symbol at the top level
+  (emit-defined-value [ast defined-sym]
+    (assert-result x (instance? sm/new-sm x)))
+
+  ;; For AST nodes that can appear at the top level of a file
+  (emit-definition [_]
+    (assert-result x (instance? sm/new-sm x)))
+
+  (emit-recursive-call [ast params]
+    sm/zero-sm)
+
+  ;; expand 'target-ast' so that it's component asts are inlined
+  (inline-expr [target-ast arg-asts]
+    (assert-result x (instance? sm/new-sm x))
+    sm/zero-sm)
+
+  (clear-init [expr]
+    ;; TODO: re-arrange code to make this possible
+    ;; (assert (instance? BindingValue expr))
+    ))
 
 ;; (defn extract-collection-of [ast]
 ;;   (let [x (old-extract-collection-of ast)
@@ -380,6 +377,10 @@
 ;;     (or (= x y)
 ;;         (maybe (print-err 'diff-coll-of (ast/file-name ast) (ast/line-number ast) "\n\n" x "\n\n" y))))
 ;;     y))
+
+(defn lookup-constrainnt [c]
+  (hylo to-constraint (comp sm/state-maybe c/trim)
+        c sm/state-maybe))
 
 (defn tail-call [ast params]
   (apo (fn [ast]
@@ -1697,28 +1698,31 @@
 (defn emit-sym-constraint [constraint]
   (let [file-name (ast/file-name constraint)
         line-number (ast/line-number constraint)]
-    (either (for [_ (= "" (c/extract-var constraint))
-                  sym (c/extract-sym constraint)]
-              (for [expr (lookup-sym (ast/tag sym file-name line-number))
-                    curr-c (get-constraint (.c-var expr))
-                    _ (append-constraint (.c-var expr) constraint file-name line-number)
-                    checked-var (genlocal 'checked)]
-                (cond (instance? c-param expr)
-                      empty-c-code
-                      (c-code (.c-var expr)
-                              (let [rt-check (runtime-check (c/update-var constraint (.c-var expr))
-                                                            curr-c file-name line-number
-                                                            checked-var)]
-                                (either (empty? rt-check)
-                                        [line-sep "if(1){int " checked-var " = 1;" line-sep
-                                         rt-check
-                                         line-sep "if(!" checked-var "){abort();}}" line-sep]))
-                              ;; TODO: change 'c/top-type' to 'constraint' (and all other calls to c-code
-                              {} c/top-type))))
-            (map (constrain-var file-name line-number
-                                (c/extract-var constraint) constraint)
-                 (fn [_]
-                   empty-c-code)))))
+    (flat-map (lookup-constrainnt constraint)
+              (fn [constraint]
+                (either (for [_ (= "" (c/extract-var constraint))
+                              sym (c/extract-sym constraint)]
+                          (for [expr (lookup-sym (ast/tag sym file-name line-number))
+                                curr-c (get-constraint (.c-var expr))
+                                _ (append-constraint (.c-var expr) constraint file-name line-number)
+                                checked-var (genlocal 'checked)]
+                            (cond (instance? c-param expr)
+                                  empty-c-code
+                                  (c-code (.c-var expr)
+                                          (let [rt-check (runtime-check (c/update-var constraint (.c-var expr))
+                                                                        curr-c file-name line-number
+                                                                        checked-var)]
+                                            (either (empty? rt-check)
+                                                    [line-sep "if(1){int " checked-var " = 1;" line-sep
+                                                     rt-check
+                                                     line-sep "if(!" checked-var "){abort();}}" line-sep]))
+                                          ;; TODO: change 'c/top-type' to 'constraint'
+                                          ;; (and all other calls to c-code
+                                          {} c/top-type))))
+                        (map (constrain-var file-name line-number
+                                            (c/extract-var constraint) constraint)
+                             (fn [_]
+                               empty-c-code)))))))
 
 ;; TODO: how many of these impls would work for ValueConstraint
 (extend-type c/SymbolConstraints
@@ -2068,13 +2072,7 @@
     (.contents c (promote-inferred (.contents c))))
 
   (emit [constraint]
-    ;; TODO: why is to-constraint called?
-    (flat-map (to-constraint constraint)
-              emit-sym-constraint))
-
-  (to-constraint [c]
-    (map (to-constraint (.contents c))
-         (partial .contents c)))
+    (emit-sym-constraint constraint))
 
   (runtime-check [constraint value-info checked-var]
     ;; Only checking the inside of Maybe values
@@ -2123,12 +2121,11 @@
                      (c/update-var (.var ast))
                      (c/replace-path (.path ast)))))
 
-          (wrap sm/zero-sm ast)))
+          (sm/state-maybe ast)))
 
   (emit [ast]
     (let [untagged (ast/untag (.type-sym ast))]
-      (comp (flat-map (to-constraint ast)
-                      emit-sym-constraint)
+      (comp (emit-sym-constraint ast)
             (compilation-error "Unknown type" (str "'" (.type-sym ast) "'") "at"
                                (str (ast/file-name ast) ":") (ast/line-number ast)))))
 
@@ -2332,10 +2329,6 @@
                (fn [c]
                  (runtime-check c value-info sym-location checked-var)))))
 
-  (to-constraint [ast]
-    (map (sm/traverse (.constraints ast) to-constraint)
-         (partial .constraints ast)))
-
   (emit [constraint]
     (map (sm/traverse (.constraints constraint) emit)
          (fn [[expr & exprs]]
@@ -2364,10 +2357,7 @@
 
   (runtime-check [constraint value-info sym-location checked-var]
     ;; Handled other places
-    [])
-
-  (to-constraint [ast]
-    (to-constraint (.assertion ast))))
+    []))
 
 (extend-type Maybe
   Emitter
@@ -3278,96 +3268,9 @@
   Emitter
   (emit [_]
     (for [expr (emit ast)
-          c (to-constraint constraint)
+          c (lookup-constrainnt constraint)
           _ (append-constraint (.c-var expr) c (ast/file-name ast) (ast/line-number ast))]
-      expr))
-
-  (emit-defined-value [_ defined-sym]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (emit-definition [_]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (remove-tail [_]
-    ast)
-
-  (inline-expr [target-ast arg-asts]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (clear-init [expr]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (bind [binding]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (bind [binding evalled]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (bind-list [list-var params bind-fn]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (bind-param [binding]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-  (bind-param [binding expr]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (update-call-site-count [_]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (call-site-meta-data [c-var file-name line-number]
-    (print-err 'aborting _LINE_)
-    (abort)
-    sm-nop)
-
-  (encode [m]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (promote-inferred [c]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (encode [m var-prefix]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (encode-static [m]
-    (print-err 'aborting _LINE_)
-    (abort))
-
-  (runtime-check [_ value-info file-name line-number checked-var]
-    (print-err 'aborting _LINE_)
-    (abort)
-    [])
-
-  (runtime-check [_ value-info sym-location checked-var]
-    (print-err 'aborting _LINE_)
-    (abort)
-    [])
-
-  (runtime-check [_ value-info checked-var]
-    (print-err 'aborting _LINE_)
-    (abort)
-    []))
+      expr)))
 
 (defn call-proto-impl [target arg-vars ast]
   (assert (instance? c-protocol-fn target))
@@ -4415,23 +4318,8 @@
                                                value-info checked-var)])))
                (repeat (count alts) "}") "}" line-sep])))
 
-  (to-constraint [ast]
-    (for [new-alts (sm/traverse (.alts ast) to-constraint)]
-      (let [tcs (filter new-alts (partial instance? c/TypeConstraint))
-            new-alts (remove new-alts (partial instance? c/TypeConstraint))
-            tc (either (map (first tcs) (fn [c]
-                                          (.type-maps c (comp* {} (map tcs .type-maps)))))
-                       c/bottom-type)]
-        (cond (empty? new-alts)
-              tc
-
-              (= tc c/bottom-type)
-              (.alts ast new-alts)
-
-              (.alts ast (conj new-alts tc))))))
-
   (emit [ast]
-    (flat-map (to-constraint ast) emit-sym-constraint)))
+    (emit-sym-constraint ast)))
 
 (extend-type c/ValueConstraint
   Emitter
@@ -4440,7 +4328,7 @@
           line-number (ast/line-number constraint)
           x* (ast/tag "#x")
           y* (ast/tag "#y")]
-      (for [constraint (to-constraint constraint)
+      (for [constraint (lookup-constrainnt constraint)
             :let [constraint (c/update-type-name constraint defined-sym)
                   types-info (either (c/extract-type-map constraint)
                                      {})]
@@ -4602,7 +4490,7 @@
             (for [line-info (line-macro ast "// inline")
                   :let [init [line-info (.txt ast) "\n#\n"]]
 
-                  expr (comp (for [constraint (to-constraint (.result-type ast))
+                  expr (comp (for [constraint (lookup-constrainnt (.result-type ast))
                                    c-var (genlocal "rslt")
                                    _ (constrain-var file-name line-number c-var constraint)]
                                (c-code c-var init {} constraint))
@@ -4614,7 +4502,7 @@
 
   (emit-defined-value [ast defined-sym]
     (cond (= (.lang ast) 'C)
-          (for [constraint (to-constraint (.result-type ast))
+          (for [constraint (lookup-constrainnt (.result-type ast))
                 c-var (comp (map (lookup-declaration defined-sym) .c-var)
                             (global-var defined-sym "var"))
                 _ (new-module-def defined-sym (c-code (str c-var) [] {} constraint))
@@ -6482,7 +6370,7 @@
           result-constraint (-> (.default-body prototype)
                                 (filter (partial instance? c/ResultConstraint))
                                 (map .assertion)
-                                (sm/traverse to-constraint)
+                                (sm/traverse lookup-constrainnt)
                                 (map (fn [result-constraints]
                                        (reduce result-constraints c/top-type c/intersect))))
 
@@ -6713,7 +6601,7 @@
   Emitter
   (emit-definition [ast]
     (let [type-sym (.type ast)]
-      (comp (for [constraint (to-constraint (c/TypeConstraint {} empty-list type-sym nothing ""))
+      (comp (for [constraint (lookup-constrainnt (c/TypeConstraint {} empty-list type-sym nothing ""))
                   fns (flat-map (get-type-sym-info type-sym)
                                 (fn [constraint]
                                   (-> (either (c/extract-type-map constraint)
@@ -7135,7 +7023,7 @@
                     _ (declare-getters sym fields)
 
                     ;; TODO: this whole section is bogus
-                    field-assertions (sm/traverse field-assertions to-constraint)
+                    field-assertions (sm/traverse field-assertions lookup-constrainnt)
                     :let [field-map (reduce field-assertions
                                             {} (fn [m c]
                                                  (validate-field c m fields file-name line-number)))
