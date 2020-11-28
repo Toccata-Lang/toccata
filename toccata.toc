@@ -238,6 +238,15 @@
   (to-constraint [c]
     (sm/state-maybe c))
 
+  ;; prepare an ast node for binding an expression to it
+  (pre-bind [ast]
+    (assert-result x (instance? sm/new-sm x)))
+
+  ;; bind fn parameters
+  (bind-param-expr [binding]
+    ;; (assert (instance? BindingValue expr))
+    (assert-result x (instance? sm/new-sm x)))
+
   ;; ----- need recursion scheming
 
   ;; generate a new local C var for a symbol
@@ -253,13 +262,6 @@
   ;; unpack the 'list-var' and bind the items to the 'elem-vars'
   (bind-list [list-var params bind-fn]
     (assert (instance? ast/params-ast params))
-    (assert-result x (instance? sm/new-sm x)))
-
-  ;; bind fn parameters
-  (bind-param [binding]
-    (assert-result x (instance? sm/new-sm x)))
-  (bind-param [binding expr]
-    ;; (assert (instance? BindingValue expr))
     (assert-result x (instance? sm/new-sm x)))
 
   (update-call-site-count [_]
@@ -378,6 +380,9 @@
 ;;         (maybe (print-err 'diff-coll-of (ast/file-name ast) (ast/line-number ast) "\n\n" x "\n\n" y))))
 ;;     y))
 
+(defn bind-param [ast]
+  (hylo pre-bind bind-param-expr ast sm/state-maybe))
+
 (defn lookup-constrainnt [c]
   (hylo to-constraint (comp sm/state-maybe c/trim)
         c sm/state-maybe))
@@ -440,13 +445,17 @@
 
   ;; TODO: inline destructuring of sequences if type is known
   (let [elem-count (count elem-c-vars)]
-    [(map elem-c-vars (fn [var]
-                        ["Value *" var ";" line-sep]))
-     "Value **" dest-args "[" elem-count "] = {"
-     (interpose (map elem-c-vars (partial vector "&")) ", ")
-     "};" line-sep "destructValue(\"" file-name "\", \"" line-num
-     "\", (Value *)" seq-c-var ", " elem-count ", "
-     dest-args ");" line-sep]))
+    (cond (= 1 elem-count)
+          (let [[tail-var] elem-c-vars]
+            ["Value *" tail-var " = seq((FnArity *)0, " seq-c-var ");" line-sep])
+
+          [(map elem-c-vars (fn [var]
+                              ["Value *" var ";" line-sep]))
+           "Value **" dest-args "[" elem-count "] = {"
+           (interpose (map elem-c-vars (partial vector "&")) ", ")
+           "};" line-sep "destructValue(\"" file-name "\", \"" line-num
+           "\", (Value *)" seq-c-var ", " elem-count ", "
+           dest-args ");" line-sep])))
 
 (deftype FnValPtr [var]
   ;; pointer to a Fn struct
@@ -3585,19 +3594,18 @@
             (c/update-var (.c-var expr))
             (c/update-sym (ast/untag sym))))))
 
-  (bind-param [binding expr]
-    (let [param-info (c-param (.c-var expr) [] {(.c-var expr) 1} c/top-type
-                              (ast/file-name binding) (ast/line-number binding))]
-      (for [r (bind binding expr)
-            _ (sm/assoc-in-val [.fn-context .fn-spec .param-vars (.c-var expr)]
-                               param-info)
-            _ (set-sym binding param-info)]
-        r)))
+  (pre-bind [x]
+    (sm/state-maybe x))
 
-  (bind-param [binding]
-    (flat-map (genlocal binding "arg")
-              (fn [arg-var]
-                (bind-param binding (c-code arg-var [] {arg-var 1} c/top-type)))))
+  (bind-param-expr [binding]
+    (for [bound-var (genlocal binding "arg")
+          :let [param-info (c-param bound-var [] {bound-var 1} c/top-type
+                                    (ast/file-name binding) (ast/line-number binding))]
+          r (bind binding (c-code bound-var [] {bound-var 1} c/top-type))
+          _ (sm/assoc-in-val [.fn-context .fn-spec .param-vars bound-var]
+                             param-info)
+          _ (set-sym binding param-info)]
+      r))
 
   (bind [binding]
     (flat-map (genlocal binding "arg")
@@ -4636,53 +4644,39 @@
     (wrap sm/zero-sm x))
 
   (bind-list [list-var params bind-fn]
-    ;; TODO: wow, this is too complex
     (let [file-name (ast/file-name params)
           line-number (ast/line-number params)
           fixed-count (count (.fixed params))
           tail-sym (either (.variadic params)
                            (ast/tag "restArgs"))
           list-var (.refs-map list-var (dissoc (.refs-map list-var) (.c-var list-var)))]
-      (for [_ (cond (empty? (.init list-var))
+      (for [tail-binding (bind-fn tail-sym)
+            fixed-bindings (sm/traverse (.fixed params) bind-fn)
+            _ (cond (empty? (.init list-var))
                     (set-sym (.c-var list-var) list-var)
                     sm-nop)
-            tail-binding (bind-fn tail-sym)
-            :let [tail-var (.bound tail-binding)]
-            r (cond (= 0 fixed-count)
-                    (sm/state-maybe (ParamBinding (.c-var list-var)
-                                                  [] tail-var
-                                                  [list-var
-                                                   (c-init tail-var ["Value *" tail-var " = seq((FnArity *)0, "
-                                                                     (.c-var list-var) ");" line-sep]
-                                                           {(.c-var list-var) 1}
-                                                           file-name line-number)]))
-                    (for [content-vars (sm/traverse (.fixed params)
-                                                    (fn [target]
-                                                      (genlocal target "arg")))
-                          _ (constrain-var file-name line-number
-                                           (.c-var list-var)
-                                           (rdr/assert-min-count file-name line-number fixed-count))
-                          _ (propogate-contents-constraints (.c-var list-var) content-vars tail-var
-                                                            file-name line-number)
-                          fixed-bindings (sm/traverse (vec (zip-lists (.fixed params)
-                                                                      content-vars))
-                                                      (fn [[target var]]
-                                                        (bind-fn target (c-code var [] {} c/top-type))))
-                          dest-args (genlocal "destArgs")]
-                      (ParamBinding (.c-var list-var)
-                                    fixed-bindings tail-var
-                                    (comp [list-var
-                                           (c-code ""
-                                                   (destruct-seq (.c-var list-var)
-                                                                 (conj content-vars tail-var)
-                                                                 (str dest-args) file-name line-number)
-                                                   {(.c-var list-var) 1} c/top-type)]
-                                          (map (conj content-vars tail-var)
-                                               (fn [var]
-                                                 (c-init var [] {} file-name line-number)))
-                                          (flat-map fixed-bindings .destruct)
-                                          (.destruct tail-binding)))))]
-        r))))
+            :let [tail-var (.bound tail-binding)
+                  content-vars (map fixed-bindings .bound)]
+            dest-args (genlocal "destArgs")
+            _ (cond (= 0 fixed-count)
+                    sm-nop
+                    (constrain-var file-name line-number
+                                   (.c-var list-var)
+                                   (rdr/assert-min-count file-name line-number fixed-count)))
+            _ (propogate-contents-constraints (.c-var list-var) content-vars tail-var
+                                              file-name line-number)]
+        (ParamBinding (.c-var list-var)
+                      fixed-bindings tail-var
+                      (comp [list-var
+                             (c-code ""
+                                     (destruct-seq (.c-var list-var)
+                                                   (conj content-vars tail-var)
+                                                   (str dest-args) file-name line-number)
+                                     {(.c-var list-var) 1} c/top-type)]
+                            (map (conj content-vars tail-var)
+                                 (fn [var]
+                                   (c-init var [] {} file-name line-number)))
+                            (flat-map (conj fixed-bindings tail-binding) .destruct)))))))
 
 (extend-type c-code
   C-Code
@@ -4874,13 +4868,44 @@
                                                   c/top-type))
                         (.items-constraints (.fixed params)))))
 
-  (bind-param [params]
-    (flat-map (genlocal "arg")
-              (fn [param-var]
-                (bind-param params (c-code param-var [] {} c/top-type)))))
+  (pre-bind [params]
+    (sm/state-maybe (cond (.variadic params)
+                          params
 
-  (bind-param [params expr]
-    (bind-list expr params bind-param))
+                          (.variadic params (maybe (ast/tag "restArgs"))))))
+
+  (bind-param-expr [params]
+    (let [file-name (ast/file-name params)
+          line-number (ast/line-number params)
+          fixed-count (count (.fixed params))
+          tail-binding (either (.variadic params)
+                               (do
+                                 (print-err "Compiler error at toccata.toc:" _LINE_)
+                                 (abort)))
+          fixed-bindings (.fixed params)]
+      (for [param-var (genlocal "param")
+            _ (set-sym param-var (c-code param-var [] {} c/top-type))
+            dest-args (genlocal "destArgs")
+            _ (cond (= 0 fixed-count)
+                    sm-nop
+                    (constrain-var file-name line-number
+                                   param-var
+                                   (rdr/assert-min-count file-name line-number fixed-count)))
+            :let [tail-var (.bound tail-binding)
+                  content-vars (map fixed-bindings .bound)]
+            _ (propogate-contents-constraints param-var content-vars tail-var
+                                              file-name line-number)]
+        (ParamBinding param-var
+                      fixed-bindings tail-var
+                      (comp [(c-code ""
+                                     (destruct-seq param-var
+                                                   (conj content-vars tail-var)
+                                                   (str dest-args) file-name line-number)
+                                     {param-var 1} c/top-type)]
+                            (map (conj content-vars tail-var)
+                                 (fn [var]
+                                   (c-init var [] {} file-name line-number)))
+                            (flat-map (conj fixed-bindings tail-binding) .destruct))))))
 
   (bind [params]
     (flat-map (genlocal "arg")
