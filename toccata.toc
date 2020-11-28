@@ -97,6 +97,7 @@
 
 (def rt-exprs (agent []))
 
+;; TODO: replace this with (cata print x)
 (defprotocol StringWriter
   (write-str [x]
     (print x)))
@@ -213,6 +214,14 @@
   (remove-tail [ast]
     ast)
 
+  (all-symbols [ast]
+    (assert-result l (instance? (vector-of ast/ParamType) l))
+    ;; ast
+
+;; how to use
+;; (cata all-symbols (.fields ast))
+    )
+
   (dissoc-sym [ast]
     (assert-result x (instance? sm/new-sm x)))
 
@@ -242,6 +251,10 @@
   (pre-bind [ast]
     (assert-result x (instance? sm/new-sm x)))
 
+  ;; generate a new local C var for a symbol
+  (bind-expr [binding]
+    (assert-result x (instance? sm/new-sm x)))
+
   ;; bind fn parameters
   (bind-param-expr [binding]
     ;; (assert (instance? BindingValue expr))
@@ -249,19 +262,10 @@
 
   ;; ----- need recursion scheming
 
-  ;; generate a new local C var for a symbol
-  (bind [binding]
-    (assert-result x (instance? sm/new-sm x)))
-
   ;; bind the symbol 'binding' to the results of 'evalled'
-  (bind [binding evalled]
+  (bind-expr [binding evalled]
     ;; TODO: re-arrange code to make this possible
     ;; (assert (instance? BindingValue evalled))
-    (assert-result x (instance? sm/new-sm x)))
-
-  ;; unpack the 'list-var' and bind the items to the 'elem-vars'
-  (bind-list [list-var params bind-fn]
-    (assert (instance? ast/params-ast params))
     (assert-result x (instance? sm/new-sm x)))
 
   (update-call-site-count [_]
@@ -380,8 +384,16 @@
 ;;         (maybe (print-err 'diff-coll-of (ast/file-name ast) (ast/line-number ast) "\n\n" x "\n\n" y))))
 ;;     y))
 
-(defn bind-param [ast]
-  (hylo pre-bind bind-param-expr ast sm/state-maybe))
+(defn bind-param [params]
+  (assert (instance? ast/params-ast params))
+  (cond (.variadic params)
+        (map (hylo pre-bind bind-param-expr params sm/state-maybe)
+             vector)
+
+        (map (.fixed params)
+             (fn [ast]
+               (hylo pre-bind bind-param-expr ast sm/state-maybe))
+             sm/state-maybe)))
 
 (defn lookup-constrainnt [c]
   (hylo to-constraint (comp sm/state-maybe c/trim)
@@ -809,6 +821,12 @@
   (map [x _ embed]
     (embed x)))
 
+(defn bind
+  ([ast]
+   (hylo pre-bind bind-expr ast sm/state-maybe))
+  ([ast expr]
+   (bind-expr ast expr)))
+
 (defn collapse-expressions [cs]
   (assert (instance? (sequence-of BindingValue) cs))
   (assert-result r (instance? sm/new-sm r))
@@ -1073,20 +1091,6 @@
                                               (abort)))]
             '_))))
 
-;; only used in bind-list
-(defn propogate-contents-constraints [list-var content-vars tail-var file-name line-number]
-  ;; TOOD: this doesn't work if extract-items-constraints  is given a constraint that has a
-  ;; SumConstraint in it. extract-items-constraints will clear vars in that case
-  (for [items-constraints (map (get-constraint list-var)
-                               c/extract-items-constraints)
-        _ (sm/traverse (zip-lists content-vars items-constraints)
-                       (fn [[var const]]
-                         (append-constraint var const file-name line-number)))
-        _ (append-constraint tail-var (-> list-constraint
-                                          (c/update-var tail-var))
-                             file-name line-number)]
-    '_))
-
 (defn propogate-constraint [src-var dest-var f file-name line-number]
   (flat-map (get-constraint src-var)
             (fn [arg-c]
@@ -1219,7 +1223,7 @@
   (constrain-params [pb]))
 
 (deftype ParamBinding [bound vars tail-var destruct]
-  (assert (instance? Vector destruct))
+  (assert (instance? (vector-of C-expr) destruct))
 
   ConstrainParams
   (constrain-params [pb]
@@ -1237,12 +1241,12 @@
 
   Container
   (map [x f]
-    (print-err 'ParamBindina-mapg)
+    (print-err 'ParamBinding-map)
     (abort)
     x)
 
   (map [x f embed]
-    (print-err 'ParamBindina-mapg)
+    (print-err 'ParamBinding-map-contextual)
     (abort)
     (embed x))
 
@@ -2499,7 +2503,7 @@
                        (print-err "Invalid return value for function at" file-name line-number)
                        (c/conflicting-assertions final file-name line-number)
                        (abort)))]
-        _ (set-constraint result-var final)
+        _ (set-constraint result-var (c/clear-vars final))
         ;; TOOD: this doesn't work if final has a SumConstraint in it.
         ;; extract-items-constraints will clear vars in that case
         _ (sm/traverse (c/extract-items-constraints final)
@@ -3598,24 +3602,27 @@
     (sm/state-maybe x))
 
   (bind-param-expr [binding]
-    (for [bound-var (genlocal binding "arg")
-          :let [param-info (c-param bound-var [] {bound-var 1} c/top-type
+    (for [r (bind binding)
+          :let [bound-var (.bound r)
+                param-info (c-param bound-var [] {bound-var 1} c/top-type
                                     (ast/file-name binding) (ast/line-number binding))]
-          r (bind binding (c-code bound-var [] {bound-var 1} c/top-type))
           _ (sm/assoc-in-val [.fn-context .fn-spec .param-vars bound-var]
                              param-info)
           _ (set-sym binding param-info)]
       r))
 
-  (bind [binding]
-    (flat-map (genlocal binding "arg")
-              (fn [arg-var]
-                (bind binding (c-code arg-var [] {arg-var 1} c/top-type)))))
-
-  (bind [binding evalled]
+  (bind-expr [binding]
     (let [file-name (ast/file-name binding)
           line-number (ast/line-number binding)]
+      (for [arg-var (genlocal binding "arg")
+            :let [evalled (c-code arg-var [] {arg-var 1} c/top-type)]
+            _ (comp (redef-proto-fn-error binding)
+                    (set-sym binding evalled))]
+        (ParamBinding arg-var [] "" [evalled]))))
 
+  (bind-expr [binding evalled]
+    (let [file-name (ast/file-name binding)
+          line-number (ast/line-number binding)]
       (for [_ (comp (redef-proto-fn-error binding)
                     (for [_ (sm/when (instance? c-field evalled))
                           expr (sm/get-in-val [.fn-context .syms (ast/tag binding)])
@@ -4641,42 +4648,7 @@
     (Left (TailExpr expr)))
 
   (emit [x]
-    (wrap sm/zero-sm x))
-
-  (bind-list [list-var params bind-fn]
-    (let [file-name (ast/file-name params)
-          line-number (ast/line-number params)
-          fixed-count (count (.fixed params))
-          tail-sym (either (.variadic params)
-                           (ast/tag "restArgs"))
-          list-var (.refs-map list-var (dissoc (.refs-map list-var) (.c-var list-var)))]
-      (for [tail-binding (bind-fn tail-sym)
-            fixed-bindings (sm/traverse (.fixed params) bind-fn)
-            _ (cond (empty? (.init list-var))
-                    (set-sym (.c-var list-var) list-var)
-                    sm-nop)
-            :let [tail-var (.bound tail-binding)
-                  content-vars (map fixed-bindings .bound)]
-            dest-args (genlocal "destArgs")
-            _ (cond (= 0 fixed-count)
-                    sm-nop
-                    (constrain-var file-name line-number
-                                   (.c-var list-var)
-                                   (rdr/assert-min-count file-name line-number fixed-count)))
-            _ (propogate-contents-constraints (.c-var list-var) content-vars tail-var
-                                              file-name line-number)]
-        (ParamBinding (.c-var list-var)
-                      fixed-bindings tail-var
-                      (comp [list-var
-                             (c-code ""
-                                     (destruct-seq (.c-var list-var)
-                                                   (conj content-vars tail-var)
-                                                   (str dest-args) file-name line-number)
-                                     {(.c-var list-var) 1} c/top-type)]
-                            (map (conj content-vars tail-var)
-                                 (fn [var]
-                                   (c-init var [] {} file-name line-number)))
-                            (flat-map (conj fixed-bindings tail-binding) .destruct)))))))
+    (sm/state-maybe x)))
 
 (extend-type c-code
   C-Code
@@ -4855,12 +4827,51 @@
          Left))
 
   (encode-static [x]
-    (emit (ast/quoted-ast (.sym x)))))
+    (emit (ast/quoted-ast (.sym x))))
+
+  (all-symbols [ast]
+    [ast]))
+
+(defn bind-list [param-var fixed-bindings tail-binding file-name line-number]
+  (let [tail-var (.bound tail-binding)
+        content-vars (map fixed-bindings .bound)
+        fixed-count (count fixed-bindings)]
+    (for [_ (set-sym param-var (c-code param-var [] {} c/top-type))
+          dest-args (genlocal "destArgs")
+          _ (cond (= 0 fixed-count)
+                  sm-nop
+                  (constrain-var file-name line-number
+                                 param-var
+                                 (rdr/assert-min-count file-name line-number fixed-count))) 
+          items-constraints (map (get-constraint param-var)
+                                 c/extract-items-constraints)
+          _ (sm/traverse (zip-lists content-vars items-constraints)
+                         (fn [[var const]]
+                           (append-constraint var const file-name line-number)))
+          _ (append-constraint tail-var (-> list-constraint
+                                            (c/update-var tail-var))
+                               file-name line-number)]
+      (ParamBinding param-var
+                    fixed-bindings tail-var
+                    (comp [(c-code ""
+                                   (destruct-seq param-var
+                                                 (conj content-vars tail-var)
+                                                 (str dest-args) file-name line-number)
+                                   {param-var 1} c/top-type)]
+                          (map (conj content-vars tail-var)
+                               (fn [var]
+                                 (c-init var [] {} file-name line-number)))
+                          (flat-map (conj fixed-bindings tail-binding) .destruct))))))
 
 (extend-type ast/params-ast
   Emitter
   (wrap-tail [ast params]
     (Left ast))
+
+  (all-symbols [params]
+    (comp* (either (map (.variadic params) vector)
+                   [])
+           (seq (.fixed params)) ))
 
   (get-param-cs [params]
     (sm/state-maybe (-> c/empty-items-constraint
@@ -4875,45 +4886,48 @@
                           (.variadic params (maybe (ast/tag "restArgs"))))))
 
   (bind-param-expr [params]
-    (let [file-name (ast/file-name params)
-          line-number (ast/line-number params)
-          fixed-count (count (.fixed params))
-          tail-binding (either (.variadic params)
-                               (do
-                                 (print-err "Compiler error at toccata.toc:" _LINE_)
-                                 (abort)))
-          fixed-bindings (.fixed params)]
-      (for [param-var (genlocal "param")
-            _ (set-sym param-var (c-code param-var [] {} c/top-type))
-            dest-args (genlocal "destArgs")
-            _ (cond (= 0 fixed-count)
-                    sm-nop
-                    (constrain-var file-name line-number
-                                   param-var
-                                   (rdr/assert-min-count file-name line-number fixed-count)))
-            :let [tail-var (.bound tail-binding)
-                  content-vars (map fixed-bindings .bound)]
-            _ (propogate-contents-constraints param-var content-vars tail-var
-                                              file-name line-number)]
-        (ParamBinding param-var
-                      fixed-bindings tail-var
-                      (comp [(c-code ""
-                                     (destruct-seq param-var
-                                                   (conj content-vars tail-var)
-                                                   (str dest-args) file-name line-number)
-                                     {param-var 1} c/top-type)]
-                            (map (conj content-vars tail-var)
-                                 (fn [var]
-                                   (c-init var [] {} file-name line-number)))
-                            (flat-map (conj fixed-bindings tail-binding) .destruct))))))
-
-  (bind [params]
     (flat-map (genlocal "arg")
               (fn [param-var]
-                (bind params (c-code param-var [] {} c/top-type)))))
+                (bind-list param-var
+                           (.fixed params)
+                           (either (.variadic params)
+                                   (do
+                                     (print-err "Compiler error at toccata.toc:" _LINE_)
+                                     (abort)))
+                           (ast/file-name params)
+                           (ast/line-number params)))))
 
-  (bind [params evalled]
-    (bind-list evalled params bind))
+
+
+  (bind-expr [params]
+    (flat-map (genlocal "arg")
+              (fn [param-var]
+                (bind-list param-var
+                           (.fixed params)
+                           (either (.variadic params)
+                                   (do
+                                     (print-err "Compiler error at toccata.toc:" _LINE_)
+                                     (abort)))
+                           (ast/file-name params)
+                           (ast/line-number params)))))
+
+  (bind-expr [params evalled]
+    (let [evalled (.refs-map evalled (dissoc (.refs-map evalled) (.c-var evalled)))]
+      (for [tail-binding (bind (either (.variadic params)
+                                       (ast/tag "restArgs")))
+            fixed-bindings (sm/traverse (.fixed params) bind)
+            _ (cond (empty? (.init evalled))
+                    (set-sym (.c-var evalled) evalled)
+                    sm-nop)
+            binding (bind-list (.c-var evalled)
+                               fixed-bindings
+                               tail-binding
+                               (ast/file-name params)
+                               (ast/line-number params))]
+        (.destruct binding (-> evalled
+                               (.refs-map (dissoc (.refs-map evalled) (.c-var evalled)))
+                               vector
+                               (comp (.destruct binding)))))))
 
   (update-syms [ast handle-bindings]
     (either (map (.variadic ast) (fn [var]
@@ -5220,7 +5234,7 @@
                                       'variadic
                                       (count params))
                     expr
-                    param-constraints result-constraint))))
+                    param-constraints (c/clear-vars result-constraint)))))
 
 (defn emit-static-arity [fn-sym fn-context fn-var c-fn params param-vars body-exprs]
   (assert (instance? ast/params-ast params))
@@ -5269,7 +5283,7 @@
                                   ;; ", (Value *)&" (.c-struct rslt-struct)
                                   ", (Value *)0, (Value *)0"
                                   "};" line-sep])
-                     param-constraints result-constraint)))))
+                     param-constraints (c/clear-vars result-constraint))))))
 
 (defn emit-fn-arity
   ([fn-sym fn-var params body]
@@ -5295,13 +5309,11 @@
                                 (ast/tag fn-sym file-name line-number))]
              (for [fn-context (reset-fn-context)
                    ;; _ (debug "------------\n" (ast/file-name fn-sym) (ast/line-number fn-sym) 'fn-arity fn-sym)
-                   p-bindings (cond (.variadic params)
-                                    (map (bind-param params) vector)
-
-                                    (for [p-bindings (sm/traverse (.fixed params) bind-param)
-                                          _ (sm/assoc-in-val [.fn-context .fn-spec .arity-info
-                                                              fn-var (count params)] '_)]
-                                      p-bindings))
+                   p-bindings (bind-param params)
+                   _ (cond (.variadic params)
+                           sm-nop
+                           (sm/assoc-in-val [.fn-context .fn-spec .arity-info
+                                             fn-var (count params)] '_))
                    :let [param-vars (map p-bindings .bound)
                          param-destruct (cond
                                          (some body (partial instance? ast/inline-ast))
@@ -5337,8 +5349,11 @@
                    body-exprs (-> (comp param-destruct constraints body)
                                   (tail-call param-vars)
                                   ;; ((fn [b]
-                                  ;;    (and (= fn-sym 'Default_hash-seq)
-                                  ;;         (maybe (print-err 'body "\n" (interpose b "\n"))))
+                                  ;;    (and (= fn-sym 'bogus)
+                                  ;;         (do
+                                  ;;           (print-err 'params param-destruct)
+                                  ;;           (print-err 'body "\n" (interpose b "\n"))
+                                  ;;           nothing))
                                   ;;    b))
                                   (sm/traverse emit))
                    arity-info (comp (emit-closure-arity fn-sym fn-var fn-context c-fn params
@@ -5929,9 +5944,9 @@
           line-number (ast/line-number ast)]
       ;; TODO: this is so fantastically wrong.
       ;; How does the alt result-var get constrained?
-      (for [result-var (genlocal "tailEither_rslt")
-            cond-val (emit-cond-clause clause)
+      (for [cond-val (emit-cond-clause clause)
             alt-val (emit alt)
+            result-var (genlocal "tailEither_rslt")
             result-const (get-constraint "#result")
             cond-constraint (get-constraint (.c-var cond-val))
             alt-constraint (get-constraint (.c-var alt-val))
@@ -6362,11 +6377,7 @@
           fn-context (reset-fn-context)
 
           ;; create vars for all the parameters
-          ;; TODO: this could probably be simplified after 'bind-list' is refactored
-          p-bindings (cond (.variadic params)
-                           (map (bind-param params) vector)
-
-                           (sm/traverse (.fixed params) bind-param))
+          p-bindings (bind-param params)
 
           ;; clear any constraints for the parameter vars
           _ (-> p-bindings
