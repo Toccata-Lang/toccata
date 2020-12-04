@@ -881,7 +881,7 @@
                      (-> y
                          (.init init)
                          (.refs-map refs-map)))))
-            x)) 
+            x))
 
   C-Code
   (collapse-expressions* [x y]
@@ -1084,14 +1084,11 @@
   (let [constraint (c/update-path constraint file-name line-number)]
     (cond (= constraint c/top-type)
           sm-nop
-          (for [curr-const (get-constraint var)
-                _ (set-constraint var (either (or (map (= curr-const c/top-type)
-                                                       (fn [_] constraint))
-                                                  ;; TODO: don't need the 'or', just the 'c/compose-constraints'
-                                                  (c/compose-constraints file-name line-number
-                                                                         constraint curr-const))
-                                              (abort)))]
-            '_))))
+          (flat-map (get-constraint var)
+                    (fn [curr-const]
+                      (set-constraint var (either (c/compose-constraints file-name line-number
+                                                                         constraint curr-const)
+                                                  (abort))))))))
 
 (defn propogate-constraint [src-var dest-var f file-name line-number]
   (flat-map (get-constraint src-var)
@@ -1545,52 +1542,60 @@
                              (.refs-map {closure-var 1}))))]
       expr)))
 
+(defn get-sym [sym]
+  (assert (instance? ast/tagged-symbol sym))
+
+  (let [file-name (ast/file-name sym)
+        line-number (ast/line-number sym)]
+    (either (map (ast/namespace sym)
+                 (fn [ns-sym]
+                   ;; lookup namespace-qual sym
+                   (comp (sm/get-in-val [.module .namespaces ns-sym
+                                         .values (ast/tag (.base sym))])
+                         (sm/get-in-val [.mod-files file-name .namespaces ns-sym
+                                         .values (ast/tag (.base sym))]))))
+            (comp
+             ;; lookup sym in local fn context
+             (sm/get-in-val [.fn-context .syms sym])
+
+             ;; lookup symbol in enclosing context of fn
+             (lookup-closure-sym sym)
+
+             ;; lookup in current module
+             (comp (sm/get-in-val [.module .values sym])
+                   (sm/get-in-val [.module .declarations sym '_]))
+
+             ;; lookup in core module
+             (sm/new-sm (fn [s]
+                          (map (get-in (extract core-agent) [.values sym])
+                               (fn [expr]
+                                 [expr s]))))
+
+             ;; lookup in imported module by filename of sym
+             (sm/get-in-val [.mod-files file-name .values sym])
+
+             ;; last ditch effort to find it in core module
+             (sm/new-sm (fn [s]
+                          (let [core-prom (promise)]
+                            (send core-agent (fn [mod]
+                                               (deliver core-prom (get-in mod [.values sym]))
+                                               mod))
+                            (map (extract core-prom)
+                                 (fn [expr]
+                                   [expr s])))))))))
+
 (defn lookup-sym [sym]
   (assert (instance? ast/tagged-symbol sym))
 
   (let [file-name (ast/file-name sym)
         line-number (ast/line-number sym)]
-    (for [expr (either (map (ast/namespace sym)
-                            (fn [ns-sym]
-                              ;; lookup namespace-qual sym
-                              (comp (sm/get-in-val [.module .namespaces ns-sym
-                                                    .values (ast/tag (.base sym))])
-                                    (sm/get-in-val [.mod-files file-name .namespaces ns-sym
-                                                    .values (ast/tag (.base sym))])
+    (for [expr (comp (get-sym sym)
+                     (either (map (ast/namespace sym)
+                                  (fn [ns-sym]
                                     (compilation-error "Undefined symbol" (str "'" sym "'") "at"
-                                                       (str file-name ":") line-number))))
-                       (comp 
-                        ;; lookup sym in local fn context
-                        (sm/get-in-val [.fn-context .syms sym])
-
-                        ;; lookup symbol in enclosing context of fn
-                        (lookup-closure-sym sym)
-
-                        ;; lookup in current module
-                        (comp (sm/get-in-val [.module .values sym])
-                              (sm/get-in-val [.module .declarations sym '_]))
-
-                        ;; lookup in core module
-                        (sm/new-sm (fn [s]
-                                     (map (get-in (extract core-agent) [.values sym])
-                                          (fn [expr]
-                                            [expr s]))))
-
-                        ;; lookup in imported module by filename of sym
-                        (sm/get-in-val [.mod-files file-name .values sym])
-
-                        ;; last ditch effort to find it in core module
-                        (sm/new-sm (fn [s]
-                                     (let [core-prom (promise)]
-                                       (send core-agent (fn [mod]
-                                                          (deliver core-prom (get-in mod [.values sym]))
-                                                          mod))
-                                       (map (extract core-prom)
-                                            (fn [expr]
-                                              [expr s])))))
-
-                        (compilation-error "Undefined symbol" (str "'" sym "'") "at"
-                                           (str file-name ":") line-number)))
+                                                       (str file-name ":") line-number)))
+                             (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                                                (str file-name ":") line-number)))
           _ (comp (constrain-var file-name line-number (.c-var expr) (expr-constraints expr))
                   sm-nop)
 
@@ -1714,13 +1719,13 @@
                               sym (c/extract-sym constraint)]
                           (for [expr (lookup-sym (ast/tag sym file-name line-number))
                                 curr-c (get-constraint (.c-var expr))
-                                _ (append-constraint (.c-var expr) constraint file-name line-number)
+                                _ (append-constraint (.c-var expr) constraint "" 0)
                                 checked-var (genlocal 'checked)]
                             (cond (instance? c-param expr)
                                   empty-c-code
                                   (c-code (.c-var expr)
                                           (let [rt-check (runtime-check (c/update-var constraint (.c-var expr))
-                                                                        curr-c file-name line-number
+                                                                        curr-c "" 0
                                                                         checked-var)]
                                             (either (empty? rt-check)
                                                     [line-sep "if(1){int " checked-var " = 1;" line-sep
@@ -1729,8 +1734,7 @@
                                           ;; TODO: change 'c/top-type' to 'constraint'
                                           ;; (and all other calls to c-code
                                           {} c/top-type))))
-                        (map (constrain-var file-name line-number
-                                            (c/extract-var constraint) constraint)
+                        (map (constrain-var "" 0 (c/extract-var constraint) constraint)
                              (fn [_]
                                empty-c-code)))))))
 
@@ -2144,7 +2148,7 @@
           []
 
           ["if (" checked-var "){"
-           "switch (" (.var constraint) "->type) {" 
+           "switch (" (.var constraint) "->type) {"
            (map (keys (.type-maps constraint)) (fn [type-num]
                                                  ["case " type-num ": " ]))
            "break;\ndefault:"
@@ -2163,7 +2167,7 @@
                      "fprintf(stderr, \"Invalid type of value for '"
                      (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");" line-sep
                      "fprintf(stderr, \"Needed " (str (.type-sym constraint))
-                     ", got %s\\n\", extractStr(type_name((FnArity *)0, " (.var constraint) ")));" 
+                     ", got %s\\n\", extractStr(type_name((FnArity *)0, " (.var constraint) ")));"
                      "fprintf(stderr, \""
                      (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
                      "\\n\");"
@@ -2257,7 +2261,7 @@
                      "fprintf(stderr, \"Value '" (either (.sym constraint) "<unknown>")
                      "' of type '%s' does not have field '"
                      (.field constraint) "' %s\\n\", extractStr(type_name((FnArity *)0, "
-                     (.var constraint) ")), " sym-location ");" line-sep 
+                     (.var constraint) ")), " sym-location ");" line-sep
                      "fprintf(stderr, \""
                      (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
                      "\\n\");"
@@ -3360,7 +3364,7 @@
                                  (for [reified (reify-constraint (.result-constraint impl-info)
                                                                  arg-vars file-name line-number)
                                        ;; TODO: when reified is bottom-type, you could optimize the
-                                       ;; generated code to eliminate this call.
+                                       ;; generated code to eliminate this call to instance?.
                                        _ (cond (= reified c/bottom-type)
                                                (constrain-var file-name line-number result-sym
                                                               (c/update-path maybe-constraint file-name line-number))
@@ -3603,7 +3607,7 @@
            (-> '=*
                (ast/tag (ast/file-name args) (ast/line-number args))
                (ast/call-ast args)
-               sm/state-maybe 
+               sm/state-maybe
                maybe))}
    get-field-sym (maybe inline-get-field)
    'partial (maybe inline-partial)
@@ -3815,7 +3819,7 @@
                   args (to-str (interpose (comp [dispArg] args) ", "))]
             _ (new-proto-impl proto-sym fn-name param-count dispatch-type-num
                               (ArityValPtr (str "&" fn-arity-sym) fn-arity-sym) arity-ast
-                              param-constraints result-constraint 
+                              param-constraints result-constraint
                               (StaticFnPtr (str impl-fn-sym)))
             _ (sm/update-in-val [.reify-fn-index] inc)
             _ (declare ["// implementation of " fn-name "\n"
@@ -4335,7 +4339,7 @@
                "fprintf(stderr, \"Invalid type of value for '"
                (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");" line-sep
                ;; TODO: this error message needs to be more clearer
-               "fprintf(stderr, \"Got %s\\n\", extractStr(type_name((FnArity *)0, " var ")));" 
+               "fprintf(stderr, \"Got %s\\n\", extractStr(type_name((FnArity *)0, " var ")));"
                "fprintf(stderr, \"Needed a value specified in\\n"
                (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
                "\\n\");"
@@ -4424,25 +4428,43 @@
                    defined-sym)]
         exprs))))
 
+(defn define-enum-element [file-name line-number sym]
+  (cond (instance? ast/tagged-symbol sym)
+        (comp (flat-map (get-sym sym)
+                        (fn [expr]
+                          (compilation-error "Invalid enum value " (str "'" sym "'")
+                                             " at:" file-name line-number)))
+              (let [x* (ast/tag 'x file-name line-number)
+                    y* (ast/tag 'y file-name line-number)
+                    reified-type-num (extract type-counter)]
+                (for [_ (emit-defined-value
+                         (ast/reified (maybe reified-type-num)
+                                      {(ast/tag Type-sym file-name line-number)
+                                       {type-name-sym
+                                        [(ast/fn-arity-ast
+                                          (ast/tag (str sym "_const_type_name") file-name line-number) ""
+                                          (ast/params [(ast/tag '_)]) ""
+                                          [(str "'" sym "' enum value at " file-name ": " line-number)]
+                                          c/empty-items-constraint c/top-type)]}
+
+                                       (ast/tag Stringable-sym file-name line-number)
+                                       {string-list-sym
+                                        [(ast/fn-arity (ast/params [(ast/tag 'z)]) ""
+                                                       [(ast/call-ast list-sym [(str sym)])])]}})
+                         sym)]
+                  {reified-type-num #{}}))
+              (flat-map (debug 'here-maybe)
+                        (fn [_]
+                          (compilation-error "wtf" file-name line-number))))
+        (compilation-error "Invalid enum expression at:"
+                           file-name line-number)))
+
 (defn define-enum-type [fn-val defined-sym]
   (let [file-name (ast/file-name defined-sym)
         line-number (ast/line-number defined-sym)]
     (cond (= (.call-target fn-val) 'enum)
-          (for [type-maps (sm/traverse (.args fn-val)
-                                       (fn [sym]
-                                         (cond (instance? ast/tagged-symbol sym)
-                                               (comp (sm/get-in-val [.module .types (ast/untag sym)])
-                                                     (for [expr (lookup-sym sym)
-                                                           :when (instance? c-static-reified expr)
-                                                           type-map (sm/when (-> expr
-                                                                                 expr-constraints
-                                                                                 c/extract-type-map))]
-                                                       type-map)
-                                                     (compilation-error "Invalid enum value "
-                                                                        (str "'" sym "'")
-                                                                        " at:" file-name line-number))
-                                               (compilation-error "Invalid enum expression at:"
-                                                                  file-name line-number))))
+          (for [type-maps (sm/traverse (.args fn-val) (partial define-enum-element file-name line-number))
+                _ (debug 'type-maps type-maps)
                 :let [type-map (comp* {} type-maps)
                       x* (ast/tag "#x")
                       y* (ast/tag "#y")
@@ -4637,7 +4659,7 @@
 
   (wrap-tail [ast params]
     (Left (TailCall ast params)))
- 
+
   (inline-expr [ast arg-asts]
     (let [target (.call-target ast)
           file-name (ast/file-name target)
@@ -4879,7 +4901,7 @@
                   sm-nop
                   (constrain-var file-name line-number
                                  param-var
-                                 (rdr/assert-min-count file-name line-number fixed-count))) 
+                                 (rdr/assert-min-count file-name line-number fixed-count)))
           items-constraints (map (get-constraint param-var)
                                  c/extract-items-constraints)
           _ (sm/traverse (zip-lists content-vars items-constraints)
@@ -5019,7 +5041,7 @@
 
   (wrap-tail [ast params]
     ;; TODO: move this filtering of the body to the Vector implementation of wrap-tail
-    (-> ast 
+    (-> ast
         (.body (comp (filter (.body ast) (partial instance? c/Constraints))
                      (-> ast
                          .body
@@ -5138,7 +5160,7 @@
                   ;; TODO: what if runtime-check is empty?
                   (-> constraint
                       (c/update-var var)
-                      (runtime-check c/top-type file-name line-number checked-var))) 
+                      (runtime-check c/top-type file-name line-number checked-var)))
                 "if(!" checked-var "){abort();}" line-sep
                 "return(" arity-fn-var "("
                 (-> param-vars
@@ -5508,7 +5530,8 @@
           ext-fn (comp (emit-fn-arity (symbol (str type-str fn-sym))
                                       (.fn-var arity-ast)
                                       params
-                                      (comp [disp-constraint
+                                      (comp [(-> disp-constraint
+                                                 (c/update-path file-name line-number))
                                              (-> (.result-constraint default-impl)
                                                  (c/update-path file-name line-number)
                                                  c/ResultConstraint)]
@@ -5838,7 +5861,7 @@
     (-> (.clauses ast)
         ;; TODO: move this filtering to the Vector wrap-tail
         (filter ast/generates-code?)
-        (tail-call params) 
+        (tail-call params)
         TailAnd
         Left)))
 
@@ -5954,7 +5977,7 @@
     (-> (.clauses ast)
         ;; TODO: move this filtering to the Vector wrap-tail
         (filter ast/generates-code?)
-        (tail-call params) 
+        (tail-call params)
         TailOr
         Left)))
 
@@ -6124,18 +6147,17 @@
     (let [[clause & clauses] (.conditionals ast)
           file-name (ast/file-name clause)
           line-number (ast/line-number clause)]
-      (for [expr (emit-cond-clause clause)
+      (for [initial-subs (get-subs)
+            expr (emit-cond-clause clause)
             first-const (get-constraint (.c-var expr))
-            ;; TODO: this is wrong, it captures the constraints for the first value clause
-            ;; which may not be valid if the conditional fails
-            final-subs (get-subs)
-
             expr-cs (sm/traverse clauses
                                  (fn [clause]
-                                   (for [expr (emit-cond-clause clause)
+                                   (for [_ (sm/assoc-in-val [.fn-context .subs] initial-subs)
+                                         expr (emit-cond-clause clause)
                                          constraint (get-constraint (.c-var expr))]
                                      [constraint expr])))
             clauses-subs (get-subs)
+            _ (sm/assoc-in-val [.fn-context .subs] initial-subs)
             default-expr (emit (.default ast))
             default-subs (get-subs)
             def-const (get-constraint (.c-var default-expr))
@@ -6145,7 +6167,7 @@
                                   (conditional-rt-checks default-subs clauses-subs
                                                          (ast/file-name (.default ast))
                                                          (ast/line-number (.default ast))))
-            _ (sm/assoc-in-val [.fn-context .subs] final-subs)
+            _ (sm/assoc-in-val [.fn-context .subs] initial-subs)
             :let [default-expr (.init default-expr
                                       [default-rt-checks
                                        (.init default-expr)])
@@ -6206,7 +6228,7 @@
           line-number (ast/line-number ast)]
       (for [result-var (genlocal "condRslt")
             check-fn (global-var 'checker)
-            expr (emit-cond-expr ast result-var 
+            expr (emit-cond-expr ast result-var
                                  (str "return(" check-fn "(" result-var "));" line-sep))
             result-const (get-constraint "#result")
             expr-const (get-constraint (.c-var expr))
@@ -6225,9 +6247,9 @@
 (extend-type ast/cond-ast
   Emitter
   (emit [ast]
-    (for [result-var (genlocal "condRslt")
-          expr (emit-cond-expr ast result-var "")]
-      expr))
+    (flat-map (genlocal "condRslt")
+              (fn [result-var]
+                (emit-cond-expr ast result-var ""))))
 
   (wrap-tail [ast params]
     (Left (TailCond (.conditionals ast)
@@ -6582,7 +6604,7 @@
           new-bindings (either (map (.variadic (.params ast))
                                     (fn [var-args]
                                       (conj new-bindings
-                                            (ast/binding-ast 
+                                            (ast/binding-ast
                                              var-args
                                              (ast/call-ast list-sym
                                                            (-> arg-asts
@@ -6724,7 +6746,7 @@
                            [(ast/fn-arity-ast
                              (ast/tag (str new-type-name "_const_type_name") file-name line-number) ""
                              (ast/params [(ast/tag '_)]) ""
-                             [(str "*" new-type-name " constructor*")]
+                             [(str "* " new-type-name " constructor at " file-name ": " line-number " *")]
                              c/empty-items-constraint c/top-type)]
                            type-mapping-sym
                            [(ast/fn-arity-ast
@@ -6993,7 +7015,7 @@
         fields (.fixed (.fields ast))
         field-count (count fields)
         body-exprs (remove (.body arity) (partial instance? c/Constraints))
-        body-exprs (either (flat-map (last body-exprs) 
+        body-exprs (either (flat-map (last body-exprs)
                                      (fn [last-expr]
                                        (store body-exprs (dec (count body-exprs))
                                               (CollectFieldConsts (.fields ast) last-expr))))
@@ -7248,7 +7270,7 @@
                                 "FnType" arg-count " *_fn;\n"
                                 "int " checked-var "= 1;"
                                 "switch (arg0->type) {\n"
-                                (-> impls 
+                                (-> impls
                                     (dissoc 0)
                                     (vec)
                                     (map (fn [[type-num arity-info]]
@@ -7286,7 +7308,7 @@
                                    " *)" (.c-fn arity-info) ";\nbreak;\n"])
                                 "}\n"
                                 "if(!" checked-var "){abort();}" line-sep
-                                ;; "FnType" arg-count " *_fn = (FnType" arg-count " *)arity->fn;\n" 
+                                ;; "FnType" arg-count " *_fn = (FnType" arg-count " *)arity->fn;\n"
                                 "return(_fn(closures, " (-> (range arg-count)
                                                             (map (partial str "arg"))
                                                             (interpose ", "))
@@ -7799,7 +7821,7 @@
   ;;                 _ (sm/assoc-in-val [.ns curr-file-name .imports file] mod-syms)]
   ;;             mod-syms)
   ;;           (ev/abort-interp "Could not import module" (str "'" file "'") "at"
-  ;;                            (ev/ast-location-str x))))) 
+  ;;                            (ev/ast-location-str x)))))
 
   ASTEmitter
   (load-module [ast root-dir proj-dir]
