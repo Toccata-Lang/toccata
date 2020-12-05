@@ -180,7 +180,7 @@ int decRefs(Value *v, int deltaRefs) {
     return(v->refs);
 
   if (v->refs < deltaRefs) {
-    fprintf(stderr, "failure in decRefs, refs too small: %d %p\n", v->refs, v);
+    fprintf(stderr, "\nfailure in decRefs, refs too small: %d %p\n", v->refs, v);
     abort();
   } else if (v->refs == deltaRefs)
     v->refs = refsError;
@@ -199,7 +199,7 @@ int decRefs(Value *v, int deltaRefs) {
     return(refsError);
   }
 
-  fprintf(stderr, "failure in decRefs, refs too small: %d %d %p\n", deltaRefs, v->refs, v);
+  fprintf(stderr, "\nfailure in decRefs, refs too small: %d %d %p\n", deltaRefs, v->refs, v);
   abort();
   return(refsError);
 #endif
@@ -4699,7 +4699,14 @@ Vector *listVec(Value *list) {
 }
 
 Value *newTypeValue(int typeNum, Vector *fields) {
-  Vector *vect = (Vector *)fields;
+  Vector *vect ;
+  if (fields->type == ListType) {
+    incRef((Value *)fields, 1);
+    vect = (Vector *)listVec((Value *)fields);
+  }
+  else {
+    vect = fields;
+  }
   ReifiedVal *rv = malloc_reified(vect->count);
   rv->type = typeNum;
   for (int i = 0; i < vect->count; i++) {
