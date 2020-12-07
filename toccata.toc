@@ -20,7 +20,7 @@
                           :sha "dd8f917"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "4a23c6b"))
+                            :sha "ca2b9bc"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -129,6 +129,14 @@
                       (fn [_]
                         (apply print-err args)))
                 (flush-pr))))
+
+(defn se-debug [& args]
+  (map (se/state-error '_)
+       (fn [_]
+         (send string-writer
+               (fn [_]
+                 (apply print-err args)))
+         (flush-pr))))
 
 (def Tagged (any-of Symbol
                     ast/tagged-symbol))
@@ -385,6 +393,11 @@
 ;;     (or (= x y)
 ;;         (maybe (print-err 'diff-coll-of (ast/file-name ast) (ast/line-number ast) "\n\n" x "\n\n" y))))
 ;;     y))
+
+(defn all-syms [params]
+  (assert (instance? ast/params-ast params))
+
+  (cata all-symbols params))
 
 (defn bind-param [params]
   (assert (instance? ast/params-ast params))
@@ -987,7 +1000,7 @@
           (list ">"))))
 
 ;; information that must be tracked for each module
-(deftype Module [path index values protocols declarations namespaces types]
+(deftype Module [path index values protocols declarations namespaces types value-types]
   ;; path             path to file containing the modules source code (Symbol or String)
   ;; index            this module's index
   (assert (instance? Integer index))
@@ -999,13 +1012,15 @@
   (assert (instance? HashMap declarations))
   ;; namespaces      imported namespaces
   (assert (instance? (map-of Symbol Module) namespaces))
-  ;; types            map of symbols (type names) to type constraints
+  ;; types           map of symbols (type names) to type constraints
   (assert (instance? (map-of Symbol c/ValueConstraint) types))
+  ;; value-types     map of symbols (values) to type constraints
+  (assert (instance? (list-of (map-of Symbol c/ValueConstraint)) value-types))
 
   Stringable
   (string-list [_] (list "<Module '" (str path) "'>")))
 
-(def core-agent (agent (Module 'core 0 {} {} {} {} {})))
+(def core-agent (agent (Module 'core 0 {} {} {} {} {} empty-list)))
 
 (deftype ModuleSetup [init cleanup]
   ;; init               strings to initialize the module
@@ -7487,7 +7502,7 @@
 
 (defn new-module [context module-name module-index]
   (update-context context
-                  (for [_ (sm/set-val .module (Module module-name module-index {} {} {} {} {}))
+                  (for [_ (sm/set-val .module (Module module-name module-index {} {} {} {} {} empty-list))
                         protos-var (global-var "protos_")
                         _ (new-module-def protocols-sym (c-code protos-var [] {} c/top-type))
                         symbols-var (global-var "symbols_")
@@ -7496,32 +7511,258 @@
                                     "Value *" symbols-var " = (Value *)&emptyBMI;\n"])]
                     '_)))
 
+(defprotocol TypeChecker
+  (recover-type-constraint [x]
+    (se/state-error x))
+
+  (param-types [_]
+    (assert-result x (instance? se/new-se x)))
+
+  (pre-check [ast]
+    (assert-result r (instance? se/new-se r))
+
+    (flat-map (se-debug 'pre (type-name ast) "\n" ast)
+              (fn [_]
+                (se/state-error ast))))
+
+  (type-check [ast old-ast]
+    (assert-result r (instance? se/new-se r))))
+
+(defn sm-translate [se-val]
+  (sm/new-sm (fn [s]
+               (let [se-result (se-val s)]
+                 (cond (= se/Failure se-result)
+                       sm/zero-sm
+
+                       (instance? se/Error se-result)
+                       ((compilation-error (.val se-result))
+                        (.state se-result))
+
+                       (maybe se-result))))))
+
+(defn se-translate [sm-val]
+  (se/new-se (fn [s]
+               (either (sm-val s)
+                       se/Failure))))
+
+(defn get-param-types [params]
+  (assert (instance? ast/params-ast params))
+
+  (cata param-types params se/state-error))
+
+(defn recover-types [params]
+  (assert (instance? ast/params-ast params))
+
+  (ana recover-type-constraint params se/state-error))
+
+(defn get-type-constraint [sym]
+  (comp (flat-map (se/get-in-val [.module .value-types])
+                  (fn [types-list]
+                    (se/when (flat-map (first types-list)
+                                       (fn [value-types]
+                                         (get value-types (ast/untag sym)))))))
+        (-> ["Could not find type constraint for" (str "'" sym "'")
+             "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
+            (interpose " ")
+            to-str
+            se/throw)))
+
+(defn set-type-constraint [sym constraint]
+  (se/update-in-val [.module .value-types]
+                    (fn [types-list]
+                      (either (map (first types-list)
+                                   (fn [value-types]
+                                     (cons (assoc value-types (ast/untag sym) constraint)
+                                           (rest types-list))))
+                              (list {(ast/untag sym) constraint})))))
+
+(defn remove-type-constraint [sym]
+  (se/update-in-val [.module .value-types]
+                    (fn [types-list]
+                      (either (map (first types-list)
+                                   (fn [value-types]
+                                     (cons (dissoc value-types (ast/untag sym))
+                                           (rest types-list))))
+                              types-list))))
+
+(defn append-type-constraint [sym constraint]
+  (cond (= constraint c/top-type)
+        (se/state-error '_)
+        ;; TODO: this would be a lot better in state-error. Could return Failure or Error
+        ;; and handle appropriatly at the caller
+        (for [curr-const (se/try (get-type-constraint sym)
+                                 (fn [_]
+                                   (se/state-error c/top-type)))
+              :let [new-const (c/intersect curr-const constraint)]
+              _ (cond (= new-const c/bottom-type)
+                      (se/state-error '_)
+                      (set-type-constraint sym new-const))]
+          new-const)))
+
+(defn push-types
+  ([]
+   (flat-map (se/get-in-val [.module .value-types])
+             (fn [types-list]
+               (se/assoc-in-val [.module .value-types]
+                                (either (map (first types-list)
+                                             (fn [value-types]
+                                               (cons value-types types-list)))
+                                        types-list)))))
+  ([value-types]
+   (flat-map (se/get-in-val [.module .value-types])
+             (fn [types-list]
+               (se/assoc-in-val [.module .value-types]
+                                (cons types-list value-types))))))
+
+(defn nip-types []
+  ;; Bringing the Forth to Toccata
+  (flat-map (se/get-in-val [.module .value-types])
+            (fn [types-list]
+              (se/assoc-in-val [.module .value-types]
+                               (either (map (first types-list)
+                                            (fn [value-types]
+                                              (cons value-types (rest types-list))))
+                                       types-list)))))
+
+(extend-type ast/Annotated
+  TypeChecker
+  (pre-check [ast]
+    (pre-check (.ast ast))))
+
+(defn last-constraint [constrained]
+  (assert (instance? (vector-of ConstrainedAST) constrained))
+
+  (either (-> constrained
+              last
+              (map .constraint))
+          c/top-type))
+
+(extend-type ast/definition-ast
+  TypeChecker
+  (type-check [ast old-ast]
+    (let [constraint (last-constraint (.value-exprs ast))]
+      (for [_ (set-type-constraint (.sym old-ast) constraint)]
+        (let [final (ConstrainedAST old-ast constraint)]
+          (print-err 'final final)
+          final)))))
+
+(extend-type ast/inline-ast
+  TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (for [c (se-translate (lookup-constraint (.result-type ast)))]
+      (ConstrainedAST old-ast c))))
+
+(extend-type ast/tagged-symbol
+  TypeChecker
+  (recover-type-constraint [sym]
+    (flat-map (se/get-in-val [.module .value-types])
+              (fn [types-list]
+                (either (for [value-types (nth types-list 1)
+                              prev-constraint (get value-types (ast/untag sym))]
+                          (set-type-constraint sym prev-constraint))
+                        (remove-type-constraint sym)))))
+
+  (param-types [sym]
+    (for [c (get-type-constraint sym)]
+      (cond (instance? c/DynamicConstraint c)
+            c/top-type
+
+            c)))
+
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    (se/state-error ast))
+
+  (type-check [s old-s]
+    (for [curr-const (get-type-constraint s)]
+      (ConstrainedAST old-s curr-const))))
+
+(extend-type ast/params-ast
+  TypeChecker
+  (param-types [params]
+    (se/state-error (-> c/empty-items-constraint
+                        (.tail-constraint (either (.variadic params)
+                                                  c/top-type))
+                        (.items-constraints (.fixed params)))))
+
+  (type-check [ast old-ast]
+    (either (map (.variadic old-ast)
+                 (fn [var-sym]
+                   (for [_ (set-type-constraint var-sym list-constraint)]
+                     old-ast)))
+            (se/state-error old-ast))))
+
+(extend-type ast/fn-arity-ast
+  TypeChecker
+  (pre-check [ast]
+    (flat-map (se-debug 'pre (type-name ast) "\n" ast)
+              (fn [_]
+                (for [_ (push-types)
+                      _ (se/traverse (all-syms (.params ast))
+                                     (fn [sym]
+                                       (set-type-constraint sym c/top-type)))
+                      _ (set-type-constraint (.fn-sym ast) fn-constraint)]
+                  ast))))
+
+  (type-check [ast old-ast]
+    (flat-map (se-debug 'checked (type-name ast) "\n" ast)
+              (fn [_]
+                (for [pts (get-param-types (.params old-ast))
+                      _ (recover-types (.params old-ast))
+                      _ (nip-types)]
+                  (print-err 'pts pts))))))
+
+(extend-type c/TypeConstraint
+  TypeChecker
+  (pre-check [c]
+    (se-translate (to-constraint c)))
+
+  (type-check [c old-c]
+    (map (either (map (.sym old-c)
+                      (fn [sym]
+                        (append-type-constraint sym c)))
+                 (se/state-error '_))
+         (fn [_]
+           (ConstrainedAST old-c old-c)))))
+
+(defn type-check-ast [ast]
+  (flat-map (pre-check ast)
+            (fn [new-ast]
+              (flat-map (map new-ast type-check-ast se/state-error)
+                        (fn [newer-ast]
+                          (type-check newer-ast new-ast))))))
+
 (defn emit-ast [context ast]
   (update-context context
-                  (comp (for [emitted (emit-definition ast)
-                              static-strs (sm/get-in-val [.constants .strings])
-                              static-nums (sm/get-in-val [.constants .numbers])
-                              static-syms (sm/get-in-val [.constants .symbols])
-                              :let [constants (extract constants)
-                                    ;; TODO: 'vec' here segfaults
-                                    ;; _ (map (seq static-strs)
-                                    ;;        (fn [[k v]]
-                                    ;;          (either (get-in constants [.strings k])
-                                    ;;                  (cache-static-constant k v))))
-                                    ;; _ (map (seq static-nums)
-                                    ;;        (fn [[k v]]
-                                    ;;          (either (get-in constants [.numbers k])
-                                    ;;                  (cache-static-constant k v))))
-                                    ;; _ (map (seq static-syms)
-                                    ;;        (fn [[k v]]
-                                    ;;          (either (get-in constants [.symbols k])
-                                    ;;                  (cache-static-constant k v))))
-                                    ]
-                              _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
-                              _ (sm/assoc-in-val [.fn-context .decl] [])
-                              _ (sm/update-in-val [.setup .init] (fn [x]
-                                                                   (comp x emitted)))]
-                          "")
+                  (comp (sm-translate (type-check-ast ast))
+                        ;; (for [emitted (emit-definition ast)
+                        ;;       static-strs (sm/get-in-val [.constants .strings])
+                        ;;       static-nums (sm/get-in-val [.constants .numbers])
+                        ;;       static-syms (sm/get-in-val [.constants .symbols])
+                        ;;       :let [constants (extract constants)
+                        ;;             ;; TODO: 'vec' here segfaults
+                        ;;             ;; _ (map (seq static-strs)
+                        ;;             ;;        (fn [[k v]]
+                        ;;             ;;          (either (get-in constants [.strings k])
+                        ;;             ;;                  (cache-static-constant k v))))
+                        ;;             ;; _ (map (seq static-nums)
+                        ;;             ;;        (fn [[k v]]
+                        ;;             ;;          (either (get-in constants [.numbers k])
+                        ;;             ;;                  (cache-static-constant k v))))
+                        ;;             ;; _ (map (seq static-syms)
+                        ;;             ;;        (fn [[k v]]
+                        ;;             ;;          (either (get-in constants [.symbols k])
+                        ;;             ;;                  (cache-static-constant k v))))
+                        ;;             ]
+                        ;;       _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
+                        ;;       _ (sm/assoc-in-val [.fn-context .decl] [])
+                        ;;       _ (sm/update-in-val [.setup .init] (fn [x]
+                        ;;                                            (comp x emitted)))]
+                        ;;   "")
                         (compilation-error "Could not emit code for expression at "
                                            (ast/file-name ast) (ast/line-number ast)))))
 
@@ -7728,7 +7969,7 @@
 
 (def global-context (GlobalContext (FunctionArityContext (FnSpec {} {}) 0 {} {} empty-closures [] {} nothing)
                                    (FunctionArityContext (FnSpec {} {}) 0 {} {} empty-closures [] {} nothing)
-                                   (Module 'core 0 {} {} {} {} {})
+                                   (Module 'core 0 {} {} {} {} {} empty-list)
                                    (ConstantValues {} {} {} type-names {} {})
                                    0                        ;; reify-fn-index
                                    (promise)                ;; loaded
