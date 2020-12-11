@@ -20,7 +20,7 @@
                           :sha "dd8f917"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "0ace47c"))
+                            :sha "4f9242f"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,10 +41,10 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "f46ed3f"))
+                            :sha "d82d67d"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "8479117"))
+                           :sha "eccb64f"))
 (add-ns strm (git-dependency "https://github.com/Toccata-Lang/stream.git"
                              "stream.toc"
                              :sha "4aa15f9"))
@@ -53,7 +53,7 @@
                            :sha "1e413ea"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
-                           :sha "22f30db"))
+                           :sha "a1bad99"))
 
 (def symbols-sym (ast/tag "#symbols"))
 (def protocols-sym (ast/tag "#protocols"))
@@ -244,6 +244,9 @@
 
     (sm/state-maybe (Right ast)))
 
+  (pop-subs [x]
+    (sm/state-maybe x))
+
   ;; get the constraints for a symbol or params-ast
   (get-param-cs [_]
     (assert-result x (instance? sm/new-sm x)))
@@ -429,17 +432,21 @@
   (cond (empty? subs)
         ast
 
-        (either (flat-map (or ((apo (fn [ast]
-                                      (update-syms ast dissoc-sym))
-                                    ast sm/state-maybe) subs)
+        (either (flat-map (or ((elgot (fn [ast]
+                                        (update-syms ast dissoc-sym))
+                                      pop-subs
+                                      ast sm/state-maybe)
+                               (list subs))
                               nothing)
                           first)
                 ast)))
 
 (defn replace-bound-vars [ast subs]
-  (either (flat-map (or ((apo (fn [ast]
-                                (update-syms ast new-bound-var))
-                              ast sm/state-maybe) subs)
+  (either (flat-map (or ((elgot (fn [ast]
+                                  (update-syms ast new-bound-var))
+                                pop-subs
+                                ast sm/state-maybe)
+                         (list subs))
                         (do
                           (print-err 'boom (ast/file-name ast) (ast/line-number ast)
                                      ast "\n\n" subs)
@@ -1804,7 +1811,9 @@
 
   (update-syms [c _]
     (either (for [old-sym (.sym c)]
-              (comp (for [new-sym (sm/get-val (ast/tag old-sym))]
+              (comp (for [new-sym (sm/get-in-val [0 (ast/tag old-sym)])]
+                      ;; if 'new-sym' isn't Tagged, the constraint is
+                      ;; no longer needed
                       (Right (cond (instance? Tagged new-sym)
                                    (c/update-sym c (ast/untag new-sym))
                                    c/top-type)))
@@ -1972,7 +1981,7 @@
   (update-syms [ast _]
     (either (map (.sym ast)
                  (fn [old-sym]
-                   (comp (map (sm/get-val (ast/tag old-sym))
+                   (comp (map (sm/get-in-val [0 (ast/tag old-sym)])
                               (fn [new-sym]
                                 (Right (.sym ast (maybe (ast/untag new-sym))))))
                          (sm/state-maybe (Right ast)))))
@@ -2407,9 +2416,6 @@
 
   (emit [ast]
     (-> ast .assertion (c/update-var "#result") emit))
-
-  (update-syms [c _]
-    (sm/state-maybe (Left c)))
 
   (runtime-check [constraint value-info sym-location checked-var]
     ;; Handled other places
@@ -3736,16 +3742,20 @@
                                 (.init expr ["Value *" (.c-var expr) ";" line-sep])))))
 
   (dissoc-sym [x]
-    (for [_ (sm/dissoc-val (ast/tag x))]
+    (for [_ (sm/update-state (fn [[subs & subs-list]]
+                               (cons (dissoc subs (ast/tag x))
+                                     subs-list)))]
       (Left x)))
 
   (new-bound-var [x]
     (let [new-var (ast/tag (gensym (str x)))]
-      (for [_ (sm/set-val x new-var)]
+      (for [_ (sm/update-state (fn [[subs & subs-list]]
+                                 (cons (assoc subs x new-var)
+                                       subs-list)))]
         (Left new-var))))
 
   (update-syms [x _]
-    (map (comp (sm/get-val (ast/tag x))
+    (map (comp (sm/get-in-val [0 (ast/tag x)])
                (sm/state-maybe (ast/tag x)))
          Left))
 
@@ -4652,7 +4662,7 @@
                                         (.call-target ast)))]
       (comp (flat-map (inline-expr (.call-target ast) (.args ast))
                       (fn [x]
-                        ;; (cond (= file-name "testc.toc")
+                        ;; (cond (= file-name "test.toc")
                         ;;       (for [_ (debug 'old file-name line-number "\n" ast)
                         ;;             _ (debug 'new "\n" x)
                         ;;             r (emit x)]
@@ -4894,18 +4904,22 @@
 (extend-type ast/tagged-symbol
   Emitter
   (dissoc-sym [x]
-    (for [_ (sm/dissoc-val x)]
+    (for [_ (sm/update-state (fn [[subs & subs-list]]
+                               (cons (dissoc subs (ast/tag x))
+                                     subs-list)))]
       (Left x)))
 
   (new-bound-var [x]
     (let [new-var (ast/tag (gensym (str x))
                            (ast/file-name x)
                            (ast/line-number x))]
-      (for [_ (sm/set-val x new-var)]
+      (for [_ (sm/update-state (fn [[subs & subs-list]]
+                                 (cons (assoc subs x new-var)
+                                       subs-list)))]
         (Left new-var))))
 
   (update-syms [x _]
-    (map (comp (sm/get-val x)
+    (map (comp (sm/get-in-val [0 x])
                (sm/state-maybe x))
          Left))
 
@@ -4952,9 +4966,9 @@
     (Left ast))
 
   (all-symbols [params]
-    (comp* (either (map (.variadic params) vector)
+    (comp* (either (.variadic params)
                    [])
-           (seq (.fixed params)) ))
+           (seq (.fixed params))))
 
   (get-param-cs [params]
     (sm/state-maybe (-> c/empty-items-constraint
@@ -5012,6 +5026,12 @@
                                vector
                                (comp (.destruct binding)))))))
 
+  (new-bound-var [ast]
+    (sm/state-maybe (Right ast)))
+
+  (dissoc-sym [ast]
+    (sm/state-maybe (Right ast)))
+
   (update-syms [ast handle-bindings]
     (either (map (.variadic ast) (fn [var]
                                    (for [new-fixed (map (.fixed ast)
@@ -5031,6 +5051,13 @@
 
 (extend-type ast/binding-ast
   Emitter
+  (update-syms [ast handle-bindings]
+    (for [new-val (elgot (fn [ast]
+                           (update-syms ast handle-bindings))
+                         pop-subs (.val ast) sm/state-maybe)
+          new-bound (apo handle-bindings (.binding ast) sm/state-maybe)]
+      (Left (ast/binding-ast new-bound new-val))))
+
   (emit [ast]
     (flat-map (emit (.val ast))
               (partial bind (.binding ast)))))
@@ -5073,19 +5100,20 @@
                          (tail-call params))))
         Left))
 
-  (update-syms [ast handle-bindings]
-    (for [prev-state (sm/update-state identity)
-          new-bindings (apo (fn [ast]
-                              (update-syms ast handle-bindings))
-                            (.bindings ast) sm/state-maybe)
-          new-body (apo (fn [ast]
-                          (update-syms ast handle-bindings))
-                        (.body ast) sm/state-maybe)
-          _ (sm/update-state (fn [_] prev-state))]
-      (-> ast
-          (.bindings new-bindings)
-          (.body new-body)
-          Left)))
+  (update-syms [ast _]
+    (for [_ (sm/update-state (fn [subs-list]
+                               (either (map (first subs-list)
+                                            (fn [head]
+                                              (cons head subs-list)))
+                                       (list {}))))]
+      (Right ast)))
+
+  (pop-subs [ast]
+    (map (sm/update-state rest)
+         (fn [subs]
+           (or (= (str (ast/file-name ast)) "core")
+               (maybe (print-err 'subs subs)))
+           ast)))
 
   (inline-expr [ast arg-asts]
     (let [unique-syms (map arg-asts (fn [_]
@@ -6599,19 +6627,18 @@
 
 (extend-type ast/fn-arity-ast
   Emitter
-  (update-syms [ast handle-bindings]
-    (for [prev-state (sm/update-state identity)
-          new-params (apo (fn [ast]
-                              (update-syms ast handle-bindings))
-                          (.params ast) sm/state-maybe)
-          new-body (apo (fn [ast]
-                          (update-syms ast handle-bindings))
-                        (.body ast) sm/state-maybe)
-          _ (sm/update-state (fn [_] prev-state))]
-      (-> ast
-          (.params new-params)
-          (.body new-body)
-          Left)))
+  (update-syms [ast _]
+    (for [_ (sm/update-state (fn [subs-list]
+                               (either (map (first subs-list)
+                                            (fn [head]
+                                              (cons head subs-list)))
+                                       (list {}))))]
+      (Right ast)))
+
+  (pop-subs [ast]
+    (map (sm/update-state rest)
+         (fn [_]
+           ast)))
 
   (emit [ast]
     ;; TODO: doesn't look like the arity's ast gets saved
