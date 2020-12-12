@@ -441,15 +441,15 @@
                           first)
                 ast)))
 
-(defn replace-bound-vars [ast subs]
+(defn replace-bound-vars [ast]
   (either (flat-map (or ((elgot (fn [ast]
                                   (update-syms ast new-bound-var))
                                 pop-subs
                                 ast sm/state-maybe)
-                         (list subs))
+                         (list {}))
                         (do
                           (print-err 'boom (ast/file-name ast) (ast/line-number ast)
-                                     ast "\n\n" subs)
+                                     ast)
                           nothing))
                     first)
           ast))
@@ -3472,14 +3472,17 @@
                         .ast)
           :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))
           new-ast (-> impl-ast
-                      (replace-bound-vars {})
+                      replace-bound-vars
                       (inline-expr (list dispatch-val wrapped)))]
       new-ast)))
 
 (defn inline-flat-map [name args]
   (for [dispatch-ast (first args)
         f-ast (second args)]
-    (for [;; _ (debug 'inlining (ast/file-name name) (ast/line-number name) "\n" (ast/call-ast name args))
+    (for [
+          ;; _ (cond (= (ast/file-name name) "test.toc")
+          ;;         (debug 'inlining (ast/file-name name) (ast/line-number name) "\n" (ast/call-ast name args))
+          ;;         sm-nop)
           dispatch-val (emit dispatch-ast)
           dispatch-type (var-type-num (.c-var dispatch-val))
           ;; TODO: if this test fails, we have to emit the dispatch-ast twice
@@ -3487,7 +3490,7 @@
           impl-ast (map (get-proto-impl (ast/tag 'Container) name 2 dispatch-type)
                         .ast)
           :when-not (some (.body impl-ast) (partial instance? ast/inline-ast))]
-      (let [impl-ast (replace-bound-vars impl-ast {})
+      (let [impl-ast (replace-bound-vars impl-ast)
             [dispatch-sym f-sym] (.fixed (.params impl-ast))
             result-constraint (-> (.body impl-ast)
                                   (filter (partial instance? c/ResultConstraint))
@@ -3587,7 +3590,7 @@
                               (or (= target 'list)
                                   (= target 'vector))))
                  arg-exprs (sm/traverse (.args args) emit)
-                 :let [impl-ast (replace-bound-vars impl-ast {})
+                 :let [impl-ast (replace-bound-vars impl-ast)
                        disp-binding (ast/binding-ast (ast/tag "dispArg" file line) expr)
                        args-bindings (-> (range (count arg-exprs))
                                          (map (fn [n]
@@ -4706,9 +4709,6 @@
                   invoke-info (get-core-proto-impl Function-sym invoke-sym
                                                    (-> ast .args count inc)
                                                    (.type-num constructor))
-                  fn-ast (sm/when (flat-map (first (.args ast))
-                                            (partial instance? ast/fn-ast)))
-                  fn-field (sm/when (first (.fields constructor)))
                   new-params (sm/when (map (get-in invoke-info [.ast .params])
                                            (fn [params]
                                              (ast/params-ast (rest (.fixed params))
@@ -4716,11 +4716,15 @@
                   new-body (sm/when (for [ast-body (get-in invoke-info [.ast .body])
                                           let-ast (some ast-body (partial instance? ast/let-ast))]
                                       (.body let-ast)))
+                  fn-ast (sm/when (flat-map (first (.args ast))
+                                            (partial instance? ast/fn-ast)))
+                  fn-field (sm/when (first (.fields constructor)))
                   new-ast (-> (ast/fn-arity new-params
                                             (ast/block-comment file-name line-number [])
                                             new-body)
-                           (replace-syms {fn-field fn-ast})
-                           (inline-expr arg-asts))]
+                              replace-bound-vars
+                              (replace-syms {fn-field fn-ast})
+                              (inline-expr arg-asts))]
               new-ast)
             (for [new-call-target (inline-expr target (.args ast))
                   new-ast (inline-expr new-call-target arg-asts)]
