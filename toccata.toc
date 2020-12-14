@@ -7579,18 +7579,6 @@
   (type-check [ast old-ast]
     (assert-result r (instance? se/new-se r))))
 
-(extend-type ConstrainedAST
-  TypeChecker
-  (strip-asts [ast]
-    (.ast ast))
-
-  (strip-constraints [ast]
-    (.constraint ast))
-
-  (check-call-site [ast args]
-    ;; TODO: seems a little bogus
-    (check-call-site (.ast ast) args)))
-
 (defn sm-translate [se-val]
   (sm/new-sm (fn [s]
                (let [se-result (se-val s)]
@@ -7607,6 +7595,18 @@
   (se/new-se (fn [s]
                (either (sm-val s)
                        se/Failure))))
+
+(extend-type ConstrainedAST
+  TypeChecker
+  (strip-asts [ast]
+    (.ast ast))
+
+  (strip-constraints [ast]
+    (.constraint ast))
+
+  (check-call-site [ast args]
+    ;; TODO: seems a little bogus
+    (check-call-site (.ast ast) args)))
 
 (defn get-param-types [params]
   (assert (instance? ast/params-ast params))
@@ -7666,9 +7666,28 @@
                              (se/state-error (ConstrainedAST sym c/top-type))))
               :let [new-const (c/trim (c/intersect (.constraint curr-const) constraint))]
               _ (cond (= new-const c/bottom-type)
-                      se-nop
+                      (do
+                        (c/conflicting-assertions new-const "type checker testing" _LINE_)
+                        (se/throw new-const))
                       (set-type-constraint sym (.constraint curr-const new-const)))]
           new-const)))
+
+(defn update-constraint [constrained constraint]
+  (assert (instance? ConstrainedAST constrained))
+  (assert (instance? c/Constraints constraint))
+
+  (let [new-c (c/intersect (.constraint constrained) constraint)]
+    (cond (= new-c c/bottom-type)
+          (do
+            (c/conflicting-assertions new-c "type checker testing" _LINE_)
+            (se/throw new-c))
+
+          (either (map (instance? Tagged (.ast constrained))
+                       (fn [sym]
+                         (map (append-type-constraint sym constraint)
+                              (fn [_]
+                                (.constraint constrained new-c)))))
+                  (se/state-error (.constraint constrained new-c))))))
 
 (defn push-types
   ([]
@@ -7685,6 +7704,9 @@
                (se/assoc-in-val [.module .value-types]
                                 (conj types-list value-types))))))
 
+(defn pop-types []
+  (se/update-in-val [.module .value-types] rest))
+
 (defn nip-types []
   ;; Bringing the Forth to Toccata
   (flat-map (se/get-in-val [.module .value-types])
@@ -7694,6 +7716,41 @@
                                             (fn [value-types]
                                               (cons value-types (rest types-list))))
                                        types-list)))))
+
+(extend-type c/Constraints
+  TypeChecker
+  (pre-check [c]
+    (se-translate (to-constraint c))))
+
+(extend-type c/SymbolConstraints
+  TypeChecker
+  (type-check [c old-c]
+    (map (either (map (.sym old-c)
+                      (fn [sym]
+                        (append-type-constraint sym c)))
+                 se-nop)
+         (fn [_]
+           (ConstrainedAST c c)))))
+
+(extend-type c/MultiConstraint
+  TypeChecker
+  (pre-check [c]
+    (se-translate (to-constraint c)))
+
+  (type-check [c old-c]
+    (se/state-error (ConstrainedAST c c))))
+
+(extend-type c/ResultConstraint
+  TypeChecker
+  (pre-check [c]
+    (se/state-error (c/update-sym c (symbol "#result"))))
+
+  (type-check [c old-c]
+    (let [rc (-> c
+                 .assertion
+                 .constraint)]
+      (se/state-error
+       (ConstrainedAST (c/ResultConstraint rc) rc)))))
 
 (extend-type ast/Annotated
   TypeChecker
@@ -8034,7 +8091,7 @@
                                                                          {c/UnknownType
                                                                           {arg-count proto-arity}})
                                                                         fn-constraint))))))
-          _ (se-debug 'checked (type-name ast) "\n" ast)
+          ;; _ (se-debug 'checked (type-name ast) "\n" ast)
           ;; _ (se-debug 'protos (-> (.prototypes ast)
           ;;                         (map (fn [ast]
           ;;                                (str "(" (str (.fn-name ast)) " " (.params ast) "\n"
@@ -8188,60 +8245,58 @@
 
 (extend-type ast/either-ast
   TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    ;; disables printing of pre-check message
+    (se/state-error ast))
+
   (type-check [ast old-ast]
-    (let [clause-c (c/intersect (.constraint (.clause ast))
-                                maybe-constraint)]
-      (either (map (= c/bottom-type clause-c)
-                   (fn [_]
-                     (c/conflicting-assertions clause-c "type checker testing" _LINE_)
-                     (se/throw clause-c)))
-              (for [_ (either (map (instance? Tagged (.ast (.clause ast)))
-                                   (fn [sym]
-                                     (append-type-constraint sym (-> maybe-constraint
-                                                                     (c/update-sym sym)))))
-                              se-nop)]
-                (-> ast
-                    (.clause (-> (.clause ast)
-                                 (.constraint clause-c)))
-                    (ConstrainedAST (c/sum-type [(c/extract-contents-constraint clause-c)
-                                                 (.constraint (.alt ast))]))))))))
+    (for [new-clause (update-constraint (.clause ast) maybe-constraint)]
+      (-> ast
+          (.clause new-clause)
+          (ConstrainedAST (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
+                                       (.constraint (.alt ast))]))))))
 
 (extend-type ast/declaration-ast
   TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    ;; disables printing of pre-check message
+    (se/state-error ast))
+
   (type-check [ast old-ast]
     (set-type-constraint (.sym ast) (ConstrainedAST c/top-type c/top-type))))
 
-(extend-type c/Constraints
-  TypeChecker
-  (pre-check [c]
-    (se-translate (to-constraint c))))
+(deftype CheckedCondVal [ast types])
 
-(extend-type c/SymbolConstraints
+(extend-type ast/cond-val-ast
   TypeChecker
-  (type-check [c old-c]
-    (map (either (map (.sym old-c)
-                      (fn [sym]
-                        (append-type-constraint sym c)))
-                 se-nop)
+  (pre-check [ast]
+    (map (push-types)
          (fn [_]
-           (ConstrainedAST c c)))))
+           ast)))
 
-(extend-type c/MultiConstraint
-  TypeChecker
-  (pre-check [c]
-    (se-translate (to-constraint c)))
-  (type-check [c old-c]
-    (se/state-error (ConstrainedAST c c))))
+  (type-check [ast old-ast]
+    (for [new-conditional (update-constraint (.conditional ast) maybe-constraint)
+          types (se/get-in-val [.module .value-types 0])
+          _ (pop-types)]
+      (-> ast
+          (.conditional new-conditional)
+          (CheckedCondVal types)))))
 
-(extend-type c/ResultConstraint
+(extend-type ast/cond-ast
   TypeChecker
-  (type-check [c old-c]
-    (let [rc (-> c
-                 .assertion
-                 .constraint)]
-      (map (append-type-constraint (symbol "#result") rc)
-           (fn [_]
-             (ConstrainedAST (c/ResultConstraint rc) rc))))))
+  (type-check [ast old-ast]
+    (let [conditionals (vec (map (.conditionals ast) .ast))]
+      (either (first (.conditionals ast))
+              (fn [first-cond]
+                (for [_ (pop-types)
+                      _ (push-types (.types first-cond))]
+                  (ConstrainedAST (.conditionals ast conditionals)
+                                  (-> conditionals
+                                      (map .constraint)
+                                      (conj (.constraint (.default ast)))
+                                      (c/sum-type)))))))))
 
 (defn type-check-ast [ast]
   (flat-map (pre-check ast)
