@@ -7689,6 +7689,9 @@
                                 (.constraint constrained new-c)))))
                   (se/state-error (.constraint constrained new-c))))))
 
+(defn get-types []
+  (se/get-in-val [.module .value-types 0]))
+
 (defn push-types
   ([]
    (flat-map (se/get-in-val [.module .value-types])
@@ -7705,7 +7708,9 @@
                                 (conj types-list value-types))))))
 
 (defn pop-types []
-  (se/update-in-val [.module .value-types] rest))
+  (for [curr-types (get-types)
+        _ (se/update-in-val [.module .value-types] rest)]
+    curr-types))
 
 (defn nip-types []
   ;; Bringing the Forth to Toccata
@@ -7795,8 +7800,7 @@
   (check-call-site [ast args]
     (map (get-type-constraint ast)
          (fn [c-ast]
-           (print-err 'c-ast ast c-ast)
-           (Right (.constraint c-ast)))))
+           (Right c/top-type))))
 
   (pre-check [ast]
     ;; TODO: remove eventually
@@ -8267,7 +8271,10 @@
   (type-check [ast old-ast]
     (set-type-constraint (.sym ast) (ConstrainedAST c/top-type c/top-type))))
 
-(deftype CheckedCondVal [ast types])
+(deftype CheckedCondVal [ast types]
+  Stringable
+  (string-list [_]
+    (list "(CheckedCondVal " (str ast) "\n<types>)")))
 
 (extend-type ast/cond-val-ast
   TypeChecker
@@ -8278,25 +8285,138 @@
 
   (type-check [ast old-ast]
     (for [new-conditional (update-constraint (.conditional ast) maybe-constraint)
-          types (se/get-in-val [.module .value-types 0])
-          _ (pop-types)]
+          types (pop-types)]
       (-> ast
           (.conditional new-conditional)
+          (ConstrainedAST (.constraint (.value ast)))
           (CheckedCondVal types)))))
 
 (extend-type ast/cond-ast
   TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    ;; disables printing of pre-check message
+    (se/state-error ast))
+
   (type-check [ast old-ast]
-    (let [conditionals (vec (map (.conditionals ast) .ast))]
-      (either (first (.conditionals ast))
-              (fn [first-cond]
-                (for [_ (pop-types)
-                      _ (push-types (.types first-cond))]
-                  (ConstrainedAST (.conditionals ast conditionals)
-                                  (-> conditionals
-                                      (map .constraint)
-                                      (conj (.constraint (.default ast)))
-                                      (c/sum-type)))))))))
+    (let [conditionals (either nothing (vec (map (.conditionals ast) .ast)))]
+      (either (map (first (.conditionals ast))
+                   (fn [first-cond]
+                     (for [_ (pop-types)
+                           _ (push-types (.types first-cond))]
+                       (ConstrainedAST (.conditionals ast conditionals)
+                                       (-> conditionals
+                                           (map .constraint)
+                                           (conj (.constraint (.default ast)))
+                                           c/sum-type)))))
+              (se/state-error (ConstrainedAST ast (.constraint (.default ast))))))))
+
+(extend-type ast/integer-ast
+  TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    ;; disables printing of pre-check message
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (se/state-error (ConstrainedAST ast int-constraint))))
+
+(extend-type ast/string-ast
+  TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    ;; disables printing of pre-check message
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (se/state-error (ConstrainedAST ast string-constraint))))
+
+(deftype AndClause [clause]
+  Stringable
+  (string-list [_]
+    (list "(AndClause " (str clause) ")"))
+
+  Container
+  (map [_ f]
+    (AndClause (f clause)))
+
+  (map [_ f embed]
+    (map (f clause) AndClause))
+
+  TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    ;; disables printing of pre-check message
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (for [new-clause (update-constraint (.clause ast) maybe-constraint)
+          types (get-types)]
+      (CheckedCondVal new-clause types))))
+
+(extend-type ast/and-ast
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clauses (map (.clauses ast) AndClause))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (either (for [first-clause (first (.clauses ast))
+                  last-clause (last (.clauses ast))]
+              (for [_ (pop-types)
+                    _ (push-types (.types first-clause))
+                    ;; TODO: when the ast of the first clause is a call to instance?,
+                    ;; recover the type of the symbol in the second arg
+                    ]
+                (-> ast
+                    (.clauses (map (.clauses ast) .ast))
+                    (ConstrainedAST (.constraint (.ast last-clause))))))
+            (se/state-error (ConstrainedAST ast maybe-constraint)))))
+
+(deftype OrClause [clause]
+  Stringable
+  (string-list [_]
+    (list "(OrClause " (str clause) ")"))
+
+  Container
+  (map [_ f]
+    (OrClause (f clause)))
+
+  (map [_ f embed]
+    (map (f clause) OrClause))
+
+  TypeChecker
+  (pre-check [ast]
+    (map (push-types)
+         (fn [_]
+           ast)))
+
+  (type-check [ast old-ast]
+    (for [new-clause (update-constraint (.clause ast) maybe-constraint)
+          types (pop-types)]
+      (CheckedCondVal new-clause types))))
+
+(extend-type ast/or-ast
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clauses (map (.clauses ast) OrClause))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (either (for [first-clause (first (.clauses ast))]
+              (for [_ (pop-types)
+                    _ (push-types (.types first-clause))
+                    ;; TODO: when the ast of the first clause is a call to instance?,
+                    ;; recover the type of the symbol in the second arg
+                    ]
+                (-> ast
+                    (.clauses (map (.clauses ast) .ast))
+                    (ConstrainedAST (-> (.clauses ast)
+                                        (map (comp .constraint .ast))
+                                        c/sum-type)))))
+            (se/state-error (ConstrainedAST ast maybe-constraint)))))
 
 (defn type-check-ast [ast]
   (flat-map (pre-check ast)
