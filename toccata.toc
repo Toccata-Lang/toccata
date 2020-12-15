@@ -20,7 +20,7 @@
                           :sha "dd8f917"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "4f9242f"))
+                            :sha "17e8bb2"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -7739,11 +7739,45 @@
 
 (extend-type c/MultiConstraint
   TypeChecker
-  (pre-check [c]
-    (se-translate (to-constraint c)))
-
   (type-check [c old-c]
-    (se/state-error (ConstrainedAST c c))))
+    (-> c
+        (.constraints (map (.constraints c) .ast))
+        ((fn [c]
+           (ConstrainedAST c c)))
+        se/state-error)))
+
+(deftype ConstrainedSum [alts path sym var]
+  Stringable
+  (string-list [_]
+    (list "(ConstrainedSum " (str alts) ")"))
+
+  Container
+  (map [c f]
+    (.alts c (map alts f)))
+
+  (map [c f embed]
+    (map (map alts f embed)
+         (partial .alts c)))
+
+  TypeChecker
+  (type-check [c old-c]
+    (let [new-c (-> (.alts c)
+                    (map .ast)
+                    c/sum-type
+                    (.path (.path c))
+                    (.sym (.sym c))
+                    (.var (.var c)))]
+      (map (either (map (.sym old-c)
+                        (fn [sym]
+                          (append-type-constraint sym new-c)))
+                   se-nop)
+           (fn [_]
+             (ConstrainedAST new-c new-c))))))
+
+(extend-type c/SumConstraint
+  TypeChecker
+  (pre-check [c]
+    (se/state-error (ConstrainedSum (.alts c) (.path c) (.sym c) (.var c)))))
 
 (extend-type c/ResultConstraint
   TypeChecker
@@ -7778,11 +7812,19 @@
   (type-check [ast old-ast]
     (let [constrained (either (last (.value-exprs ast))
                               (ConstrainedAST old-ast c/top-type))]
-      (for [x (set-type-constraint (.sym old-ast) constrained)
-            _ (se/state-error 'wtf)]
-        (do
-          ;; (print-err 'def (.sym old-ast) constrained)
-          constrained)))))
+      (either (map (instance? c/Constraints (.ast constrained))
+                   (fn [constraint]
+                     (-> (either (map (.sym constraint)
+                                      (fn [sym]
+                                        (remove-type-constraint sym)))
+                                 se-nop)
+                         (flat-map (fn [_]
+                                     (se/assoc-in-val [.module .types (ast/untag (.sym old-ast))]
+                                                      constraint))))))
+              (map (set-type-constraint (.sym old-ast) constrained)
+                   (fn [_]
+                     ;; (print-err 'def (.sym old-ast) constrained)
+                     constrained))))))
 
 (extend-type ast/inline-ast
   TypeChecker
@@ -7920,9 +7962,7 @@
     (either (map (.fn-sym ast)
                  (fn [_]
                    (se/state-error (ConstrainedAST ast fn-constraint))))
-            (flat-map (se-debug 'checked (type-name ast) "\n" ast)
-                      (fn [_]
-                        (se/state-error (ConstrainedAST ast fn-constraint)))))))
+            (se/state-error (ConstrainedAST ast fn-constraint)))))
 
 (extend-type ast/prototype-ast
   TypeChecker
@@ -7962,10 +8002,7 @@
 
   (map [x f embed]
     (map (contextual-map-vals impls (fn [impl-fns]
-                                      (contextual-map-vals impl-fns
-                                                           (fn [arities]
-                                                             (map arities f))
-                                                           embed))
+                                      (contextual-map-vals impl-fns f embed))
                               embed)
          (partial PrototypeImpls fn-sym)))
 
@@ -8136,16 +8173,16 @@
                                                      (.param-consts arity))
                                result-c (c/intersect (.result-const prototype)
                                                      (.result-const arity))
-                               new-arity (-> arity
-                                             (.param-consts param-cs)
-                                             (.result-const result-c))
                                _ (either (map (or (= c/bottom-type param-cs)
                                                   (= c/bottom-type result-c))
                                               (fn [failure-c]
                                                 (c/conflicting-assertions failure-c
                                                                           "type checker testing" _LINE_)
                                                 (abort)))
-                                         '_)]
+                                         '_)
+                               new-arity (-> arity
+                                             (.param-consts param-cs)
+                                             (.result-const result-c))]
                          _ (se/update-in-val [.module .value-types]
                                              (fn [[value-types & types-list]]
                                                (cons (assoc-in value-types
@@ -8201,12 +8238,15 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (comp (for [type-num (map (se-translate (get-type-sym-info (.type ast)))
-                              constraint-type-num)
-                :when-not (= type-num c/UnknownType)
-                _ (extend-prototypes type-num (.impls ast))]
+    (comp (for [constraint (se-translate (get-type-sym-info (.type ast)))
+                :let [type-nums (either (map (c/extract-type-map constraint)
+                                             keys)
+                                        [])]
+                _ (se/traverse type-nums
+                               (fn [type-num]
+                                 (extend-prototypes type-num (.impls ast))))]
             (do
-              (print-err 'checked (type-name ast) "\n" ast)
+              ;; (print-err 'checked (type-name ast) "\n" ast)
               ast))
           (-> ["Could not find type" (str "'" (.type ast) "'")
                "at" (str (ast/file-name (.type ast)) ":") (ast/line-number (.type ast))]
@@ -8231,7 +8271,7 @@
          (fn [_]
            (let [result-c (either (map (last (.body ast)) .constraint)
                                   c/top-type)]
-             (print-err 'checked ast)
+             ;; (print-err 'checked ast)
              (ConstrainedAST ast (c/clear-sym result-c)))))))
 
 (extend-type ast/binding-ast
