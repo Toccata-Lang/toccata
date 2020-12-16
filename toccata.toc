@@ -7583,7 +7583,7 @@
   (sm/new-sm (fn [s]
                (let [se-result (se-val s)]
                  (cond (= se/Failure se-result)
-                       sm/zero-sm
+                       nothing
 
                        (instance? se/Error se-result)
                        ((compilation-error (.val se-result))
@@ -7842,6 +7842,8 @@
   (check-call-site [ast args]
     (map (get-type-constraint ast)
          (fn [c-ast]
+           ;; TODO: seems to be called on recursive calls.
+           ;; return the #result constraint
            (Right c/top-type))))
 
   (pre-check [ast]
@@ -7912,7 +7914,6 @@
         (either (map (= c/bottom-type result-c)
                      (fn [_]
                        (c/conflicting-assertions result-c "type checker testing" _LINE_)
-                       ;; (abort)
                        (se/throw result-c)))
                 (-> ast
                     (.result-const (cata strip-constraints result-c))
@@ -7941,9 +7942,13 @@
                                                    (maybe arity)))))
                    (fn [arity]
                      (-> arity
-                         .result-const
-                         Left
-                         se/state-error)))
+                         .param-consts
+                         (c/extract-items-constraints arg-count)
+                         (zip-lists args)
+                         (se/traverse (fn [[c arg]]
+                                        (update-constraint arg c)))
+                         (map (fn [_]
+                                (Left (.result-const arity)))))))
               (se/throw (str "Could not find implementation of " (str "'" (.fn-sym ast) "'")
                              ;; TOOD: add location
                              "with " arg-count "arguments.")))))
@@ -8467,13 +8472,26 @@
   (type-check [ast old-ast]
     (se/state-error hashmap-constraint)))
 
+(extend-type Vector
+  TypeChecker
+  (type-check [ast old-ast]
+    (se/state-error ast)))
+
 (extend-type ast/type-ast
   TypeChecker
   (pre-check [ast]
-    (map (se-debug 'type-ast (.sym ast) (.fields ast) "\n"
-                   'impls (.impls ast))
-         (fn [_]
-           ast))))
+    (let [sym (.sym ast)
+          fields  (.fixed (.fields ast))
+          type-num (new-type-number sym)
+          type-map {type-num (-> fields
+                                 (map (fn [name]
+                                        (symbol (str "." name))))
+                                 set)}
+          new-type-constraint (c/TypeConstraint type-map empty-list sym nothing "")]
+      (for [;; _ (se-debug 'type-ast sym (.fields ast) "\n" 'impls (.impls ast))
+            _ (se/assoc-in-val [.module .types (ast/untag sym)]
+                               new-type-constraint)]
+        [(ast/declaration-ast sym)]))))
 
 (defn type-check-ast [ast]
   (flat-map (pre-check ast)
