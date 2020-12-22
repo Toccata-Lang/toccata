@@ -2881,6 +2881,14 @@
     expr))
 
 (extend-type Integer
+  Container
+  ;; TODO: remove these
+  (map [x f]
+    x)
+
+  (map [x f embed]
+    (embed x))
+
   Emitter
   (cache-static-constant [n expr]
     (send constants (fn [constants]
@@ -8173,15 +8181,18 @@
       '_)))
 
 (defn impl-arities [impls]
-  (for [[proto-name impls] (vec impls)
+  (for [[proto-sym impls] (vec impls)
         [fn-sym arities] (vec impls)
         arity arities]
-    [proto-name fn-sym (.fn-sym arity fn-sym)]))
+    [proto-sym fn-sym (.fn-sym arity fn-sym)]))
 
-(defn find-prototype [proto-name fn-sym arg-count]
-  (let [proto-name (ast/untag proto-name)
+(defn find-prototype [proto-sym fn-sym arg-count]
+  (assert (instance? ast/tagged-symbol proto-sym))
+  (assert (instance? ast/tagged-symbol fn-sym))
+
+  (let [proto-sym (ast/untag proto-sym)
         fn-sym (ast/untag fn-sym)]
-    (comp (flat-map (se/get-in-val [.module .value-types 0 proto-name
+    (comp (flat-map (se/get-in-val [.module .value-types 0 proto-sym
                                     .ast .prototypes])
                     (fn [prototypes]
                       (either (some prototypes
@@ -8199,32 +8210,29 @@
 (defn extend-prototypes [type-num impls]
   (se/traverse (impl-arities impls)
                (fn [[proto-name fn-sym arity]]
-                 (let [proto-name (ast/untag proto-name)
-                       fn-sym (ast/untag fn-sym)
-                       arg-count (count (.fixed (.params arity)))]
-                   (for [prototype (find-prototype proto-name fn-sym arg-count)
-                         :let [param-cs (c/intersect (.param-consts prototype)
-                                                     (.param-consts arity))
-                               result-c (c/intersect (.result-const prototype)
-                                                     (.result-const arity))
-                               _ (either (map (or (= c/bottom-type param-cs)
-                                                  (= c/bottom-type result-c))
-                                              (fn [failure-c]
-                                                (c/conflicting-assertions failure-c
-                                                                          "type checker testing" _LINE_)
-                                                (abort)))
-                                         '_)
-                               new-arity (-> arity
-                                             (.param-consts param-cs)
-                                             (.result-const result-c))]
-                         _ (se/update-in-val [.module .value-types]
-                                             (fn [[value-types & types-list]]
-                                               (cons (assoc-in value-types
-                                                               [fn-sym .impls type-num
-                                                                (count (.fixed (.params new-arity)))]
-                                                               new-arity)
-                                                     types-list)))]
-                     [proto-name fn-sym new-arity])))))
+                 (for [prototype (find-prototype proto-name fn-sym (count (.fixed (.params arity))))
+                       :let [param-cs (c/intersect (.param-consts prototype)
+                                                   (.param-consts arity))
+                             result-c (c/intersect (.result-const prototype)
+                                                   (.result-const arity))
+                             _ (either (map (or (= c/bottom-type param-cs)
+                                                (= c/bottom-type result-c))
+                                            (fn [failure-c]
+                                              (c/conflicting-assertions failure-c
+                                                                        "type checker testing" _LINE_)
+                                              (abort)))
+                                       '_)
+                             new-arity (-> arity
+                                           (.param-consts param-cs)
+                                           (.result-const result-c))]
+                       _ (se/update-in-val [.module .value-types]
+                                           (fn [[value-types & types-list]]
+                                             (cons (assoc-in value-types
+                                                             [fn-sym .impls type-num
+                                                              (count (.fixed (.params new-arity)))]
+                                                             new-arity)
+                                                   types-list)))]
+                   [proto-name fn-sym new-arity]))))
 
 (extend-type ast/reify-ast
   TypeChecker
@@ -8577,25 +8585,22 @@
         new-type))))
 
 (defn add-prototype-assertions [[proto-sym fn-sym arity]]
-  (let [proto-sym (ast/untag proto-sym)
-        fn-sym (ast/untag fn-sym)
-        arg-count (count (.fixed (.params arity)))]
-    (for [prototype (find-prototype proto-sym fn-sym arg-count)
-          :let [param-cs (c/intersect (.param-consts prototype)
-                                      (.param-consts arity))
-                result-c (c/intersect (.result-const prototype)
-                                      (.result-const arity))
-                _ (either (map (or (= c/bottom-type param-cs)
-                                   (= c/bottom-type result-c))
-                               (fn [failure-c]
-                                 (c/conflicting-assertions failure-c
-                                                           "type checker testing" _LINE_)
-                                 (se/throw "no additional info")))
-                          '_)
-                new-arity (-> arity
-                              (.param-consts (c/clear-sym param-cs))
-                              (.result-const (c/clear-sym result-c)))]]
-      [proto-sym fn-sym new-arity])))
+  (for [prototype (find-prototype proto-sym fn-sym (count (.fixed (.params arity))))
+        :let [param-cs (c/intersect (.param-consts prototype)
+                                    (.param-consts arity))
+              result-c (c/intersect (.result-const prototype)
+                                    (.result-const arity))
+              _ (either (map (or (= c/bottom-type param-cs)
+                                 (= c/bottom-type result-c))
+                             (fn [failure-c]
+                               (c/conflicting-assertions failure-c
+                                                         "type checker testing" _LINE_)
+                               (se/throw "no additional info")))
+                        '_)
+              new-arity (-> arity
+                            (.param-consts (c/clear-sym param-cs))
+                            (.result-const (c/clear-sym result-c)))]]
+    [proto-sym fn-sym new-arity]))
 
 (extend-type ast/type-ast
   TypeChecker
@@ -8625,6 +8630,7 @@
             ]
         [(ast/declaration-ast sym)
          (.items-constraints field-assertions)
+         (ast/extend-ast sym (default-type-impls sym type-num fields))
          ;; TODO
          ;; implementations
          ;;  add param assertions from protocol to impls with updated symbols
@@ -8633,7 +8639,6 @@
          ;;  1 position
 
          ;; promote all inferred field constraints
-         (ast/extend-ast sym (default-type-impls sym type-num fields))
          ;; TODO
          ;; getters
          (ast/definition-ast sym [(create-constructor sym type-num new-type-constraint fields
