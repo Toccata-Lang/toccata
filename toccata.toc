@@ -8619,10 +8619,10 @@
   (type-check [ast old-ast]
     (se/state-error ast)))
 
-(deftype CheckedTypeAST [sym]
+(deftype CheckedTypeAST [sym fields]
   Stringable
   (string-list [_]
-    (list "(CheckedTypeAST " (str sym) ")"))
+    (list "(CheckedTypeAST " (str sym) " " (str fields) ")"))
 
   Container
   (map [x f]
@@ -8639,6 +8639,9 @@
 
   (type-check [ast old-ast]
     (for [new-type (get-type-constraint (.sym ast))
+          ;; _ (se/traverse fields (fn [field]
+          ;;                         (for [field-c (get-type-constraint field)]
+          ;;                           (print-err 'field (.sym ast) field field-c))))
           _ (pop-types)
           _ (set-type-constraint (.sym ast) new-type)]
       (do
@@ -8662,6 +8665,28 @@
                             (.param-consts (c/clear-sym param-cs))
                             (.result-const (c/clear-sym result-c)))]]
     [proto-sym fn-sym new-arity]))
+
+(deftype TypeCheckOnly [x]
+  Stringable
+  (string-list [_]
+    (list "(TypeCheckOnly " (str x) ")"))
+
+  Container
+  (map [ast f]
+    (TypeCheckOnly (f x)))
+
+  (map [ast f embed]
+    (map (f x) TypeCheckOnly))
+
+  TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    ;; disables printing of pre-check message
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (se/state-error (ConstrainedAST (ast/block-comment "" 0 [])
+                                    c/top-type))))
 
 (extend-type ast/type-ast
   TypeChecker
@@ -8688,8 +8713,10 @@
                                     (set-type-constraint sym (ConstrainedAST sym c/top-type))))
             _ (push-types)
             field-assertions (se-translate (lookup-constraint field-assertions))
-            impls (se/traverse (flat-map (.impls ast) impl-arities)
-                               add-prototype-assertions)]
+            impls  (-> (.impls ast)
+                       (remove (partial instance? c/Constraints))
+                       (flat-map impl-arities)
+                       (se/traverse add-prototype-assertions))]
         (let [impls (reduce impls {}
                             (fn [impls [proto-sym fn-sym arity]]
                               (either (update-in impls [proto-sym fn-sym]
@@ -8710,11 +8737,12 @@
                                               default-assoc)
                                           (partial assoc-in hash-map-impls [Associative-sym assoc-sym]))
                                      hash-map-impls)]
-          [(.items-constraints field-assertions)
-           (ast/extend-ast sym (dissoc default-impls Associative-sym))
-           (ast/extend-ast sym (either (update impls Associative-sym (fn [fns]
-                                                                       (dissoc fns assoc-sym get-symb)))
-                                       impls))
+          [(map (.items-constraints field-assertions) TypeCheckOnly)
+           (TypeCheckOnly (ast/extend-ast sym (dissoc default-impls Associative-sym)))
+           (TypeCheckOnly (ast/extend-ast sym (either (update impls Associative-sym
+                                                              (fn [fns]
+                                                                (dissoc fns assoc-sym get-symb)))
+                                                      impls)))
            ;; promote all inferred field constraints
            (cond (empty? hash-map-impls)
                  (ast/block-comment "" 0 [])
@@ -8723,7 +8751,7 @@
            ;; getters
            (ast/definition-ast sym [(create-constructor sym type-num new-type-constraint fields
                                                         field-assertions)])
-           (CheckedTypeAST sym)])))))
+           (CheckedTypeAST sym fields)])))))
 
 (extend-type ast/block-comment-ast
   TypeChecker
