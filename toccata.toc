@@ -274,6 +274,10 @@
     ;; (assert (instance? BindingValue expr))
     (assert-result x (instance? sm/new-sm x)))
 
+  ;; Change any InferredInner constraint to a CollectionOf
+  (promote-inferred [c]
+    c)
+
   ;; ----- need recursion scheming
 
   ;; bind the symbol 'binding' to the results of 'evalled'
@@ -291,10 +295,6 @@
   ;; encode a static representation of a core data structure
   (encode [m]
     (emit m))
-
-  ;; Change any InferredInner constraint to a CollectionOf
-  (promote-inferred [c]
-    c)
 
   (encode [m var-prefix])
 
@@ -1008,6 +1008,8 @@
           (list ">"))))
 
 (deftype ConstrainedAST [ast constraint]
+  (assert (instance? c/Constraints constraint))
+
   Stringable
   (string-list [_]
     (list "(ConstrainedAST " (either (and (instance? ast/tagged-symbol ast)
@@ -1979,11 +1981,6 @@
                                  new-tail
                                  (.path c) (.sym c) (.var c)))))
 
-  (promote-inferred [c]
-    (-> c
-        (.tail-constraint (promote-inferred (.tail-constraint c)))
-        (.items-constraints (map (.items-constraints c) promote-inferred))))
-
   (update-syms [ast _]
     (either (map (.sym ast)
                  (fn [old-sym]
@@ -2138,9 +2135,6 @@
            (either (or (= c/bottom-type new-contents)
                        (= c/top-type new-contents))
                    (.contents c new-contents)))))
-
-  (promote-inferred [c]
-    (.contents c (promote-inferred (.contents c))))
 
   (emit [constraint]
     (emit-sym-constraint constraint))
@@ -2356,9 +2350,6 @@
                             (and (= 1 (count new-cs))
                                  (first new-cs)))
                         (reduce new-cs c/top-type c/intersect))))))
-
-  (promote-inferred [c]
-    (.constraints c (map (.constraints c) promote-inferred)))
 
   (validate-field [c m fields file-name line-number]
     (either (for [first-c (first (.constraints c))
@@ -7025,8 +7016,7 @@
     {Type-sym
      (map (zip-lists (seq fields) (range (count fields)) field-constraints)
           (fn [[field field-index field-constraint]]
-            (let [field-constraint (c/update-path field-constraint
-                                                  (ast/file-name sym) (ast/line-number sym))]
+            (let [field-constraint (c/update-path field-constraint file-name line-number)]
               [(ast/tag (str "." field) file-name line-number)
                [(ast/fn-arity
                  (ast/tag (str sym "_" field) file-name line-number)
@@ -7195,7 +7185,7 @@
                                                                                           (c/update-var c "")))))))
                                                     field-constraints)
 
-                          field-constraints (promote-inferred field-constraints)
+                          field-constraints (cata promote-inferred field-constraints)
                           getter-arities (create-getters (.sym ast) fields
                                                          (c/extract-items-constraints field-constraints))
                           getter-arities (for [[proto-sym impl-fns] (vec getter-arities)
@@ -7570,6 +7560,13 @@
   (type-check [ast old-ast]
     (assert-result r (instance? se/new-se r))))
 
+(defn type-check-ast [ast]
+  (flat-map (pre-check ast)
+            (fn [new-ast]
+              (flat-map (map new-ast type-check-ast se/state-error)
+                        (fn [newer-ast]
+                          (type-check newer-ast new-ast))))))
+
 (defn sm-translate [se-val]
   (sm/new-sm (fn [s]
                (let [se-result (se-val s)]
@@ -7657,28 +7654,21 @@
                                  (.items-constraints [(c/FieldConstraint (ast/untag sym) "" empty-list
                                                                          (maybe (symbol "#w")) "")])
                                  (.tail-constraint c/top-type))
-                    impls (PrototypeImpls sym
-                                          {c/UnknownType
-                                           {1 (ast/fn-arity-ast
-                                               (ast/tag sym) ""
-                                               (ast/params [(ast/tag "#w")] nothing)
-                                               "" [] param-cs c/top-type)
-                                            2 (ast/fn-arity-ast
-                                               (ast/tag sym) ""
-                                               (ast/params [(ast/tag "#w") (ast/tag "#i")] nothing)
-                                               "" [] param-cs c/top-type)}})
-                    protocol (ast/protocol-ast (ast/tag sym)
-                                               [(ast/prototype sym (ast/params [(ast/tag "#x")])
+                    protocol (ast/protocol-ast Type-sym
+                                               [(ast/prototype (ast/tag sym)
+                                                               (ast/params [(ast/tag "#x")])
                                                                (ast/block-comment "" 0 []) [])
-                                                (ast/prototype sym (ast/params [(ast/tag "#x")
-                                                                                (ast/tag "#y")])
+                                                (ast/prototype (ast/tag sym)
+                                                               (ast/params [(ast/tag "#x") (ast/tag "#y")])
                                                                (ast/block-comment "" 0 []) [])])]
-                (for [_ (set-type-constraint sym (ConstrainedAST impls fn-constraint))
-                      ;; TODO: this doesn't work. The Type prtocol needs to be updated for all
-                      ;; elements of the value-types list
-                      ;; _ (se/assoc-in-val [.module .value-types 0 'Type (ast/untag sym)] protocol)
-                      ]
-                  (ConstrainedAST impls fn-constraint)))
+                (for [_ (type-check-ast protocol)
+                      Type-protocol (se/get-in-val [.module .value-types 0 'Type])
+                      _ (se/update-in-val [.module .value-types]
+                                          (fn [types-list]
+                                            (map types-list
+                                                 (fn [value-types]
+                                                   (assoc value-types 'Type Type-protocol)))))]
+                  (ConstrainedAST sym fn-constraint)))
               (-> ["Could not find type constraint for" (str "'" sym "'")
                    "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
                   (interpose " ")
@@ -8195,47 +8185,58 @@
                               new-protocol))))
 
   (type-check [ast old-ast]
-    (for [_ (se/traverse (.prototypes ast)
-                         (fn [proto]
-                           (let [arg-count (count (.fixed (.params proto)))
-                                 proto-arity (ast/fn-arity-ast (.fn-name proto)
-                                                               ""
-                                                               (.params proto)
-                                                               (.doc proto)
-                                                               []
-                                                               (cata strip-constraints (.param-consts proto))
-                                                               (cata strip-constraints (.result-const proto)))]
-                             (comp (for [final (se/get-in-val [.module .value-types 0 (ast/untag (.fn-name proto))
-                                                               .impls c/UnknownType arg-count])]
-                                     (do
-                                       ;; TODO: this won't ever be called during type checking
-                                       (print-err 'final-proto (ast/untag (.fn-name proto)) arg-count "\n"
-                                                  (.param-consts final) "\n\n"
-                                                  (.result-const final))
-                                       (abort)
-                                       '_))
-                                   (set-type-constraint (.fn-name proto)
-                                                        (ConstrainedAST (PrototypeImpls
-                                                                         (.fn-name proto)
-                                                                         {c/UnknownType
-                                                                          {arg-count proto-arity}})
-                                                                        fn-constraint))))))
-          ;; _ (se-debug 'checked (type-name ast) "\n" ast)
-          ;; _ (se-debug 'protos (-> (.prototypes ast)
-          ;;                         (map (fn [ast]
-          ;;                                (str "(" (str (.fn-name ast)) " " (.params ast) "\n"
-          ;;                                     (-> (.param-consts ast)
-          ;;                                         c/extract-items-constraints
-          ;;                                         (remove (fn [c]
-          ;;                                                   (= c/top-type (.constraint c))))
-          ;;                                         (interpose "\n")
-          ;;                                         to-str)
-          ;;                                     "\n\n"
-          ;;                                     (.result-const ast) ")")))
-          ;;                         (interpose "\n\n")
-          ;;                         to-str))
-          _ (set-type-constraint (.protocol-sym ast) (ConstrainedAST ast c/top-type))]
-      '_)))
+    (let [proto-sym (ast/untag (.protocol-sym ast))]
+      (for [_ (se/traverse (.prototypes ast)
+                           (fn [proto]
+                             (let [arg-count (count (.fixed (.params proto)))
+                                   proto-arity (ast/fn-arity-ast (.fn-name proto)
+                                                                 ""
+                                                                 (.params proto)
+                                                                 (.doc proto)
+                                                                 []
+                                                                 (cata strip-constraints (.param-consts proto))
+                                                                 (cata strip-constraints (.result-const proto)))]
+                               (comp (for [final (se/get-in-val [.module .value-types 0 (ast/untag (.fn-name proto))
+                                                                 .impls c/UnknownType arg-count])]
+                                       (do
+                                         ;; TODO: this won't ever be called during type checking
+                                         (print-err 'final-proto (ast/untag (.fn-name proto)) arg-count "\n"
+                                                    (.param-consts final) "\n\n"
+                                                    (.result-const final))
+                                         (abort)
+                                         '_))
+                                     (set-type-constraint (.fn-name proto)
+                                                          (ConstrainedAST (PrototypeImpls
+                                                                           (.fn-name proto)
+                                                                           {c/UnknownType
+                                                                            {arg-count proto-arity}})
+                                                                          fn-constraint))))))
+            ;; _ (se-debug 'checked (type-name ast) "\n" ast)
+            ;; _ (se-debug 'protos (-> (.prototypes ast)
+            ;;                         (map (fn [ast]
+            ;;                                (str "(" (str (.fn-name ast)) " " (.params ast) "\n"
+            ;;                                     (-> (.param-consts ast)
+            ;;                                         c/extract-items-constraints
+            ;;                                         (remove (fn [c]
+            ;;                                                   (= c/top-type (.constraint c))))
+            ;;                                         (interpose "\n")
+            ;;                                         to-str)
+            ;;                                     "\n\n"
+            ;;                                     (.result-const ast) ")")))
+            ;;                         (interpose "\n\n")
+            ;;                         to-str))
+            _ (comp (for [_ (se/get-in-val [.module .value-types 0 proto-sym .ast .prototypes])
+                          _ (se/update-in-val [.module .value-types]
+                                              (fn [types-list]
+                                                (either (for [value-types (first types-list)
+                                                              new-types (update-in value-types
+                                                                                   [proto-sym .ast .prototypes]
+                                                                                   (partial comp (.prototypes ast)))]
+                                                          (cons new-types (rest types-list)))
+                                                        types-list)))]
+                      '_)
+                    (set-type-constraint proto-sym (ConstrainedAST ast c/top-type)))]
+        '_))))
 
 (defn impl-arities [impls]
   (for [[proto-sym impls] (vec impls)
@@ -8249,8 +8250,7 @@
 
   (let [proto-sym (ast/untag proto-sym)
         fn-sym (ast/untag fn-sym)]
-    (comp (flat-map (se/get-in-val [.module .value-types 0 proto-sym
-                                    .ast .prototypes])
+    (comp (flat-map (se/get-in-val [.module .value-types 0 proto-sym .ast .prototypes])
                     (fn [prototypes]
                       (either (some prototypes
                                     (fn [prototype]
@@ -8262,7 +8262,8 @@
                                                (= arg-count))
                                            (maybe (se/state-error prototype)))))
                               se/zero-se)))
-          (se/throw (str "Could not find prototype " _FILE_ " " _LINE_)))))
+          (se/throw (str "Could not find prototype '" proto-sym "/" fn-sym "' " arg-count " "
+                         _FILE_ " " _LINE_)))))
 
 (defn extend-prototypes [type-num impls]
   (se/traverse (impl-arities impls)
@@ -8689,6 +8690,45 @@
     (se/state-error (ConstrainedAST (ast/block-comment "" 0 [])
                                     c/top-type))))
 
+(deftype DestructFields [fields]
+  Stringable
+  (string-list [_]
+    (list "(DestructFields " (to-str fields) ")"))
+
+  Container
+  (map [x f] x)
+  (map [x f embed] (embed x))
+
+  TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove eventually
+    ;; disables printing of pre-check message
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (se/state-error ast)))
+
+(deftype CreateGetters [sym fields]
+  Stringable
+  (string-list [_]
+    (list "(CreateGetters " (to-str fields) ")"))
+
+  Container
+  (map [x f] x)
+  (map [x f embed] (embed x))
+
+  TypeChecker
+  (pre-check [ast]
+    (map (se/traverse fields (fn [field]
+                               (for [_ (get-type-constraint (symbol (str "." field)))
+                                     field-c (map (get-type-constraint field)
+                                                  (fn [field-info]
+                                                    (cata promote-inferred (.constraint field-info))))
+                                     _ (set-type-constraint field (ConstrainedAST field field-c))]
+                                 field-c)))
+         (fn [field-cs]
+           (ast/extend-ast sym (create-getters sym fields field-cs))))))
+
 (extend-type ast/type-ast
   TypeChecker
   (pre-check [ast]
@@ -8696,6 +8736,7 @@
           fields (-> (.fields ast)
                      .fixed
                      (map ast/untag))
+          field-destruct (DestructFields fields)
           field-assertions (-> c/empty-items-constraint
                                (.items-constraints (filter (.impls ast) (partial instance? c/ValueConstraint)))
                                (.tail-constraint (c/CollectionOf c/top-type empty-list nothing "")))
@@ -8722,7 +8763,8 @@
                             (fn [impls [proto-sym fn-sym arity]]
                               (either (update-in impls [proto-sym fn-sym]
                                                  (fn [arities]
-                                                   (conj arities arity)))
+                                                   (conj arities (.body arity (comp [field-destruct]
+                                                                                    (.body arity))))))
                                       (assoc-in impls [proto-sym fn-sym] [arity]))))
               ;; TODO: eliminate the named symbols
               impls-get (get-in impls [Associative-sym get-symb])
@@ -8732,24 +8774,36 @@
 
               hash-map-impls (either (map (or impls-get
                                               default-get)
-                                          (partial assoc-in {} [Associative-sym get-symb]))
+                                          (fn [arities]
+                                            (assoc-in {} [Associative-sym get-symb]
+                                                      (map arities
+                                                           (fn [arity]
+                                                             (.body arity (comp [field-destruct]
+                                                                                (.body arity))))))))
                                      {})
               hash-map-impls (either (map (or impls-assoc
                                               default-assoc)
-                                          (partial assoc-in hash-map-impls [Associative-sym assoc-sym]))
-                                     hash-map-impls)]
+                                          (fn [arities]
+                                            (assoc-in hash-map-impls [Associative-sym assoc-sym]
+                                                      (map arities
+                                                           (fn [arity]
+                                                             (.body arity (comp [field-destruct]
+                                                                                (.body arity))))))))
+                                     hash-map-impls)
+              impls (either (update impls Associative-sym
+                                    (fn [fns]
+                                      (dissoc fns assoc-sym get-symb)))
+                            impls)
+              default-impls (dissoc default-impls Associative-sym)]
           [(map (.items-constraints field-assertions) TypeCheckOnly)
-           (TypeCheckOnly (ast/extend-ast sym (dissoc default-impls Associative-sym)))
-           (TypeCheckOnly (ast/extend-ast sym (either (update impls Associative-sym
-                                                              (fn [fns]
-                                                                (dissoc fns assoc-sym get-symb)))
-                                                      impls)))
-           ;; promote all inferred field constraints
+           (TypeCheckOnly (ast/extend-ast sym default-impls))
+           (TypeCheckOnly (ast/extend-ast sym impls))
+           (CreateGetters sym fields)
            (cond (empty? hash-map-impls)
                  (ast/block-comment "" 0 [])
                  (ast/extend-ast sym hash-map-impls))
-           ;; TODO
-           ;; getters
+           (ast/extend-ast sym default-impls)
+           (ast/extend-ast sym impls)
            (ast/definition-ast sym [(create-constructor sym type-num new-type-constraint fields
                                                         field-assertions)])
            (CheckedTypeAST sym fields)])))))
@@ -8759,40 +8813,33 @@
   (type-check [ast old-ast]
     (se/state-error (ConstrainedAST ast c/top-type))))
 
-(defn type-check-ast [ast]
-  (flat-map (pre-check ast)
-            (fn [new-ast]
-              (flat-map (map new-ast type-check-ast se/state-error)
-                        (fn [newer-ast]
-                          (type-check newer-ast new-ast))))))
-
 (defn emit-ast [context ast]
   (update-context context
-                  (comp ;; (sm-translate (type-check-ast ast))
-                        (for [emitted (emit-definition ast)
-                              static-strs (sm/get-in-val [.constants .strings])
-                              static-nums (sm/get-in-val [.constants .numbers])
-                              static-syms (sm/get-in-val [.constants .symbols])
-                              :let [constants (extract constants)
-                                    ;; TODO: 'vec' here segfaults
-                                    ;; _ (map (seq static-strs)
-                                    ;;        (fn [[k v]]
-                                    ;;          (either (get-in constants [.strings k])
-                                    ;;                  (cache-static-constant k v))))
-                                    ;; _ (map (seq static-nums)
-                                    ;;        (fn [[k v]]
-                                    ;;          (either (get-in constants [.numbers k])
-                                    ;;                  (cache-static-constant k v))))
-                                    ;; _ (map (seq static-syms)
-                                    ;;        (fn [[k v]]
-                                    ;;          (either (get-in constants [.symbols k])
-                                    ;;                  (cache-static-constant k v))))
-                                    ]
-                              _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
-                              _ (sm/assoc-in-val [.fn-context .decl] [])
-                              _ (sm/update-in-val [.setup .init] (fn [x]
-                                                                   (comp x emitted)))]
-                          "")
+                  (comp (sm-translate (type-check-ast ast))
+                        ;; (for [emitted (emit-definition ast)
+                        ;;       static-strs (sm/get-in-val [.constants .strings])
+                        ;;       static-nums (sm/get-in-val [.constants .numbers])
+                        ;;       static-syms (sm/get-in-val [.constants .symbols])
+                        ;;       :let [constants (extract constants)
+                        ;;             ;; TODO: 'vec' here segfaults
+                        ;;             ;; _ (map (seq static-strs)
+                        ;;             ;;        (fn [[k v]]
+                        ;;             ;;          (either (get-in constants [.strings k])
+                        ;;             ;;                  (cache-static-constant k v))))
+                        ;;             ;; _ (map (seq static-nums)
+                        ;;             ;;        (fn [[k v]]
+                        ;;             ;;          (either (get-in constants [.numbers k])
+                        ;;             ;;                  (cache-static-constant k v))))
+                        ;;             ;; _ (map (seq static-syms)
+                        ;;             ;;        (fn [[k v]]
+                        ;;             ;;          (either (get-in constants [.symbols k])
+                        ;;             ;;                  (cache-static-constant k v))))
+                        ;;             ]
+                        ;;       _ (map (sm/get-in-val [.fn-context .decl]) write-strings)
+                        ;;       _ (sm/assoc-in-val [.fn-context .decl] [])
+                        ;;       _ (sm/update-in-val [.setup .init] (fn [x]
+                        ;;                                            (comp x emitted)))]
+                        ;;   "")
                         (compilation-error "Could not emit code for expression at "
                                            (ast/file-name ast) (ast/line-number ast)))))
 
