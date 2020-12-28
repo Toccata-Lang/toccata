@@ -7645,7 +7645,7 @@
   ;;                             r))
   (assert (instance? Tagged sym))
 
-  (comp (se/get-in-val [.module .value-types 0 sym])
+  (comp (se/get-in-val [.module .value-types 0 (ast/untag sym)])
         (cond (flat-map (first (str sym))
                         (partial = "."))
               ;; TODO: getters need to be dclared in the core module
@@ -7663,12 +7663,14 @@
                                                                (ast/block-comment "" 0 []) [])])]
                 (for [_ (type-check-ast protocol)
                       Type-protocol (se/get-in-val [.module .value-types 0 'Type])
+                      ;; TODO: this won't be needed when we use agents
                       _ (se/update-in-val [.module .value-types]
                                           (fn [types-list]
                                             (map types-list
                                                  (fn [value-types]
                                                    (assoc value-types 'Type Type-protocol)))))]
                   (ConstrainedAST sym fn-constraint)))
+              
               (-> ["Could not find type constraint for" (str "'" sym "'")
                    "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
                   (interpose " ")
@@ -7808,7 +7810,10 @@
                     (.var (.var c)))]
       (map (either (map (.sym old-c)
                         (fn [sym]
-                          (append-type-constraint sym new-c)))
+                          (flat-map (se/assoc-in-val [.module .types (ast/untag sym)] new-c)
+                                    (fn [_]
+                                      (print-err 'defined-type sym new-c)
+                                      (append-type-constraint sym new-c)))))
                    se-nop)
            (fn [_]
              (ConstrainedAST new-c new-c))))))
@@ -7842,10 +7847,13 @@
         (.value-exprs (-> (.value-exprs ast)
                           (remove (partial instance? ast/block-comment-ast))
                           (map (fn [inner-ast]
-                                 (either (map (instance? ast/fn-ast inner-ast)
-                                              (fn [fn-ast]
-                                                (.fn-sym fn-ast (maybe (.sym ast)))))
-                                         inner-ast)))))
+                                 (cond (instance? ast/fn-ast inner-ast)
+                                       (.fn-sym inner-ast (maybe (.sym ast)))
+
+                                       (instance? c/SymbolConstraints inner-ast)
+                                       (c/update-sym inner-ast (ast/untag (.sym ast)))
+
+                                       inner-ast)))))
         se/state-error))
 
   (type-check [ast old-ast]
@@ -7854,20 +7862,18 @@
       (flat-map
        ;; (se-debug 'def (.sym old-ast) constrained)
        se-nop
-                (fn [_]
-                  (either (map (instance? c/Constraints (.ast constrained))
-                               (fn [constraint]
-                                 (let [constraint (c/update-type-name constraint (.sym old-ast))]
-                                   (-> (either (map (.sym constraint)
-                                                    (fn [sym]
-                                                      (remove-type-constraint sym)))
-                                               se-nop)
-                                       (flat-map (fn [_]
-                                                   (se/assoc-in-val [.module .types (ast/untag (.sym old-ast))]
-                                                                    constraint)))))))
-                          (map (set-type-constraint (.sym old-ast) constrained)
-                               (fn [_]
-                                 constrained))))))))
+       (fn [_]
+         (either (map (instance? c/Constraints (.ast constrained))
+                      (fn [constraint]
+                        (let [constraint (c/update-type-name constraint (.sym old-ast))
+                              constrained (.constraint constrained constraint)]
+                          (for [_ (se/assoc-in-val [.module .types (ast/untag (.sym old-ast))]
+                                                   constraint)
+                                _ (set-type-constraint (.sym old-ast) constrained)]
+                            constrained))))
+                 (map (set-type-constraint (.sym old-ast) constrained)
+                      (fn [_]
+                        constrained))))))))
 
 (extend-type ast/inline-ast
   TypeChecker
@@ -8772,6 +8778,8 @@
               impls-assoc (get-in impls [Associative-sym assoc-sym])
               default-assoc (get-in default-impls [Associative-sym assoc-sym])
 
+              ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on they result
+              ;; and parameter, respectively
               hash-map-impls (either (map (or impls-get
                                               default-get)
                                           (fn [arities]
