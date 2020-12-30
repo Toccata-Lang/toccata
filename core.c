@@ -4718,6 +4718,9 @@ Value *newTypeValue(int typeNum, Vector *fields) {
 #else
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
 #endif
+  if (fields->type == ListType) {
+    dec_and_free((Value *)vect, 1);
+  }
   dec_and_free((Value *)fields, 1);
   return((Value *)rv);
 }
