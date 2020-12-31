@@ -1017,6 +1017,13 @@
                                      (str ast "\n"))
           (str constraint) ")"))
 
+  ast/FileLineInfo
+  (ast/file-name [_]
+    (ast/file-name ast))
+
+  (ast/line-number [_]
+    (ast/line-number ast))
+
   Container
   (map [x f]
     (ConstrainedAST (f ast) constraint))
@@ -7596,7 +7603,6 @@
     (.constraint ast))
 
   (check-call-site [ast args]
-    ;; TODO: seems a little bogus
     (check-call-site (.ast ast) args)))
 
 (deftype PrototypeImpls [fn-sym impls]
@@ -7841,21 +7847,19 @@
 (extend-type c/SymbolConstraints
   TypeChecker
   (type-check [c old-c]
-    (map (either (map (.sym old-c)
-                      (fn [sym]
-                        (append-type-constraint _LINE_ sym c)))
-                 se-nop)
-         (fn [_]
-           (ConstrainedAST c c)))))
+    (let [c (cata strip-constraints c)]
+      (map (either (map (.sym old-c)
+                        (fn [sym]
+                          (append-type-constraint _LINE_ sym c)))
+                   se-nop)
+           (fn [_]
+             (ConstrainedAST c c))))))
 
 (extend-type c/MultiConstraint
   TypeChecker
   (type-check [c old-c]
-    (-> c
-        (.constraints (map (.constraints c) .ast))
-        ((fn [c]
-           (ConstrainedAST c c)))
-        se/state-error)))
+    (let [c (cata strip-constraints c)]
+      (se/state-error (ConstrainedAST c c)))))
 
 (deftype ConstrainedSum [alts path sym var]
   Stringable
@@ -7877,8 +7881,8 @@
     (se/state-error ast))
 
   (type-check [c old-c]
-    (let [new-c (-> (.alts c)
-                    (map .ast)
+    (let [new-c (-> (cata strip-constraints c)
+                    .alts
                     c/sum-type
                     (.path (.path c))
                     (.sym (.sym c))
@@ -7894,14 +7898,9 @@
 
 (extend-type c/SumConstraint
   TypeChecker
-  (pre-check [ast]
-    ;; TODO: remove eventually
-    ;; disables printing of pre-check message
-    (se/state-error ast))
-
   (type-check [c old-c]
-    (let [new-c (-> (.alts c)
-                    (map .ast)
+    (let [new-c (-> (cata strip-constraints c)
+                    .alts
                     c/sum-type
                     (.path (.path c))
                     (.sym (.sym c))
@@ -7919,11 +7918,9 @@
     (se/state-error (c/update-sym c (symbol "#result"))))
 
   (type-check [c old-c]
-    (let [rc (-> c
-                 .assertion
-                 .constraint)]
-      (se/state-error
-       (ConstrainedAST (c/ResultConstraint rc) rc)))))
+    (let [rc (.assertion (cata strip-constraints c))]
+      (for [_ (append-type-constraint _LINE_ (symbol "#result") rc)]
+        (ConstrainedAST (c/ResultConstraint rc) rc)))))
 
 (extend-type ast/Annotated
   TypeChecker
@@ -7940,7 +7937,7 @@
                                  (cond (instance? ast/fn-ast inner-ast)
                                        (.fn-sym inner-ast (maybe (.sym ast)))
 
-                                       (instance? c/SymbolConstraints inner-ast)
+                                       (instance? c/SumConstraint inner-ast)
                                        (ConstrainedSum (.alts inner-ast) (.path inner-ast)
                                                        (maybe (ast/untag (.sym ast))) (.var inner-ast))
 
@@ -8086,6 +8083,7 @@
   TypeChecker
   (pre-check [ast]
     (for [_ (push-types)
+          _ (set-type-constraint (symbol "#result") (ConstrainedAST c/top-type c/top-type))
           _ (ana constrain-all-syms (ParamConstraintPair (.params ast)
                                                          (.param-consts ast))
                  se/state-error)]
@@ -8097,7 +8095,7 @@
                      (get-type-constraint (symbol "#result"))
                      (fn [_]
                        (se/state-error (ConstrainedAST (symbol "#result") c/top-type))))
-          _ (remove-type-constraint (symbol "#result"))
+          _ (recover-type-constraint (symbol "#result"))
           _ (recover-types (.params old-ast))
           _ (nip-types)]
       (let [result-c (c/intersect (cata strip-constraints result-c)
