@@ -6753,7 +6753,8 @@
                                (ast/line-number (.type ast)))))))
 
 
-(defn create-constructor [new-type-name type-num new-type-constraint fields assertions]
+;; TODO Needs to be removed
+(defn old-create-constructor [new-type-name type-num new-type-constraint fields assertions]
   (assert (instance? ast/tagged-symbol new-type-name))
   (assert (instance? c/TypeConstraint new-type-constraint))
   (assert (instance? (vector-of Symbol) fields))
@@ -6814,7 +6815,7 @@
                                        (ast/call-ast get-type-sym [y*])])
                         (ast/call-ast maybe-sym [y*])])])]}
 
-                  (ast/tag Function-sym file-name line-number)
+                  Function-sym
                   {invoke-sym
                    [(ast/fn-arity
                      (ast/tag (str new-type-name "_invoke") file-name line-number)
@@ -6842,7 +6843,7 @@
                                                  "return((Value *)rv);\n")
                                             "" 0)]))]}
 
-                  (ast/tag Container-sym file-name line-number)
+                  Container-sym
                   {apply-sym
                    [(ast/fn-arity
                      (ast/tag (str new-type-name "_apply_ST_") file-name line-number)
@@ -6865,14 +6866,116 @@
                                                   (to-str (interpose fields ", "))
                                                   "]>"])])]}})))
 
+(defn create-constructor [new-type-name type-num new-type-constraint fields]
+  (assert (instance? ast/tagged-symbol new-type-name))
+  (assert (instance? c/TypeConstraint new-type-constraint))
+  (assert (instance? (vector-of Symbol) fields))
+
+  (let [file-name (ast/file-name new-type-name)
+        line-number (ast/line-number new-type-name)
+        x* (ast/tag "#x" file-name line-number)
+        y* (ast/tag "#y" file-name line-number)
+        field-count (count fields)
+        args (map (range field-count)
+                  (fn [n]
+                    (ast/tag (str "arg" n))))
+        args-map (reduce (zip-lists fields args) {}
+                         (fn [m [k v]]
+                           (cond (= k v)
+                                 m
+                                 (assoc m k v))))
+        reified-type-num (extract type-counter)]
+    (ast/reified (maybe reified-type-num)
+                 {(ast/tag Eq-sym file-name line-number)
+                  {(ast/tag =*-sym file-name line-number)
+                   [(ast/fn-arity
+                     (ast/tag (str new-type-name "_EQ_QMARK_") file-name line-number)
+                     (ast/params [x* y*]) ""
+                     [(ast/and-ast
+                       [(ast/call-ast =*-sym
+                                      [type-num
+                                       (ast/call-ast get-type-sym [y*])])
+                        (ast/call-ast maybe-sym [y*])])])]}
+
+                  (ast/tag Type-sym file-name line-number)
+                  {type-name-sym
+                   [(ast/fn-arity
+                     (ast/tag (str new-type-name "_const_type_name") file-name line-number)
+                     (ast/params [(ast/tag '_)]) ""
+                     [(str "* " new-type-name " constructor at " file-name ": " line-number " *")])]
+
+                   type-mapping-sym
+                   [(ast/fn-arity
+                     (ast/tag (str new-type-name "_const_type_map") file-name line-number)
+                     (ast/params [(ast/tag '_)]) ""
+                     [(map-vals (.type-maps new-type-constraint)
+                                (fn [field-set]
+                                  (map field-set ast/quoted-ast)))])]
+
+                   instance?-sym
+                   [(ast/fn-arity
+                     (ast/tag (str new-type-name "_instance_QMARK_") file-name line-number)
+                     (ast/params [x* y*]) ""
+                     [(-> maybe-constraint
+                          (c/intersect (c/InferredInner new-type-constraint empty-list nothing ""))
+                          c/ResultConstraint)
+                      (ast/and-ast
+                       [(ast/call-ast =*-sym
+                                      [type-num
+                                       (ast/call-ast get-type-sym [y*])])
+                        (ast/call-ast maybe-sym [y*])])])]}
+
+                  Function-sym
+                  {invoke-sym
+                   [(ast/fn-arity
+                     (ast/tag (str new-type-name "_invoke") file-name line-number)
+                     (ast/params (comp [(ast/tag '_)] args)) ""
+                     (comp [(c/ResultConstraint (-> (c/DynamicFields empty-list nothing "")
+                                                    (c/update-sym (symbol "#result"))))]
+                           [(c/update-var new-type-constraint "#result")
+                            (ast/inline-ast (ast/tag 'C)
+                                            new-type-constraint
+                                            (str "ReifiedVal *rv = malloc_reified("
+                                                 field-count ");\n"
+                                                 "#ifdef SINGLE_THREADED\n"
+                                                 "rv->refs = refsInit;\n#else\n"
+                                                 " __atomic_store(&rv->refs,"
+                                                 " &refsInit, __ATOMIC_RELAXED);\n"
+                                                 "#endif\n"
+                                                 "rv->type = " type-num ";\n"
+                                                 (to-str (map (range field-count)
+                                                              (fn [idx]
+                                                                (str "rv->impls[" idx "] = arg" idx
+                                                                     "_" (inc idx) ";\n"))))
+                                                 "return((Value *)rv);\n")
+                                            "" 0)]))]}
+
+                  Container-sym
+                  {apply-sym
+                   [(ast/fn-arity
+                     (ast/tag (str new-type-name "_apply_ST_") file-name line-number)
+                     (ast/params [(ast/tag '_) (ast/tag 'fields)]) ""
+                     [(ast/inline-ast (ast/tag 'C)
+                                      new-type-constraint
+                                      (str "return(newTypeValue(" type-num ", (Vector *)fields_1));")
+                                      "" 0)])]}
+
+                  (ast/tag Stringable-sym file-name line-number)
+                  {string-list-sym
+                   [(ast/fn-arity (ast/params [(ast/tag 'z)]) ""
+                                  [(ast/call-ast list-sym
+                                                 ["<ValueConstructor " (str new-type-name) " ["
+                                                  (to-str (interpose fields ", "))
+                                                  "]>"])])]}})))
+
 (defn emit-constructor [new-type-name type-num new-type-constraint fields assertions]
   (assert (instance? ast/tagged-symbol new-type-name))
   (assert (instance? c/TypeConstraint new-type-constraint))
   (assert (instance? (vector-of Symbol) fields))
   (assert (instance? c/ItemsConstraint assertions))
 
-  (for [value (init-at-runtime (create-constructor new-type-name type-num
-                                                   new-type-constraint fields assertions)
+  (for [value (init-at-runtime (old-create-constructor new-type-name type-num
+                                                       new-type-constraint fields assertions)
                                new-type-name)
         _ (new-module-def new-type-name (c-constructor (.c-var value) [] {}
                                                        (.constraints value)
@@ -7628,6 +7731,7 @@
 (defn get-param-types [params]
   (assert (instance? ast/params-ast params))
 
+  ;; TODO: strip the constraints
   (cata param-types params se/state-error))
 
 (defn recover-types [params]
@@ -8330,6 +8434,8 @@
 
   (let [proto-sym (ast/untag proto-sym)
         fn-sym (ast/untag fn-sym)]
+    ;; TODO: should make this all one big new-se
+    ;; and use (get-in s [.module .value-types 0 fn-sym .ast .impls 0 arg-count])
     (comp (flat-map (comp (se/get-in-val [.module .value-types 0 proto-sym .ast .prototypes])
                           (se/new-se (fn [s]
                                        (either (or (map (get-in (extract core-agent)
@@ -8363,32 +8469,56 @@
           (se/throw (str "Could not find prototype '" proto-sym "/" fn-sym "' " arg-count " "
                          _FILE_ " " _LINE_)))))
 
+(defn add-prototype [type-num [proto-sym fn-sym arity]]
+  (assert (instance? ast/tagged-symbol proto-sym))
+  (assert (instance? ast/tagged-symbol fn-sym))
+
+  (let [arg-count (count (.fixed (.params arity)))]
+    (for [prototype (find-prototype proto-sym fn-sym arg-count)
+          :let [proto-sym (ast/untag proto-sym)
+                fn-sym (ast/untag fn-sym)
+                param-cs (c/intersect (cata strip-constraints (.param-consts prototype))
+                                      (cata strip-constraints (.param-consts arity)))
+                result-c (c/intersect (cata strip-constraints (.result-const prototype))
+                                      (cata strip-constraints (.result-const arity)))
+                new-arity (-> arity
+                              (.param-consts param-cs)
+                              (.result-const result-c))]
+          _ (either (map (or (= c/bottom-type param-cs)
+                             (= c/bottom-type result-c))
+                         (fn [failure-c]
+                           (c/conflicting-assertions failure-c "type checker testing" _LINE_)
+                           ;; TODO: that should work but doesn't type check
+                           ;; (se/throw failure-c)
+                           (abort)
+                           se-nop))
+                  se-nop)
+          _ (comp (for [_ (se/get-in-val [.module .value-types 0 proto-sym .ast .prototypes])
+                        _ (se/update-in-val [.module .value-types]
+                                            (fn [[value-types & types-list]]
+                                              (-> value-types
+                                                   (assoc-in [fn-sym .impls type-num arg-count] new-arity)
+                                                   (cons types-list))))]
+                    '_)
+                  (map se-nop
+                       (fn [_]
+                         (send core-agent
+                               (fn [mod]
+                                 (either (map (get-in mod [.value-types 0 fn-sym .ast .impls])
+                                              (fn [_]
+                                                (.value-types
+                                                 mod
+                                                 (let [[value-types & types-list] (.value-types mod)]
+                                                   (-> value-types
+                                                       (assoc-in [fn-sym .ast .impls type-num arg-count]
+                                                                 new-arity)
+                                                       (cons types-list))))))
+                                         mod)))
+                         '_)))]
+      [proto-sym fn-sym new-arity])))
+
 (defn extend-prototypes [type-num impls]
-  (se/traverse (impl-arities impls)
-               (fn [[proto-name fn-sym arity]]
-                 (for [prototype (find-prototype proto-name fn-sym (count (.fixed (.params arity))))
-                       :let [param-cs (c/intersect (cata strip-constraints (.param-consts prototype))
-                                                   (cata strip-constraints (.param-consts arity)))
-                             result-c (c/intersect (cata strip-constraints (.result-const prototype))
-                                                   (cata strip-constraints (.result-const arity)))
-                             _ (either (map (or (= c/bottom-type param-cs)
-                                                (= c/bottom-type result-c))
-                                            (fn [failure-c]
-                                              (c/conflicting-assertions failure-c
-                                                                        "type checker testing" _LINE_)
-                                              (abort)))
-                                       '_)
-                             new-arity (-> arity
-                                           (.param-consts param-cs)
-                                           (.result-const result-c))]
-                       _ (se/update-in-val [.module .value-types]
-                                           (fn [[value-types & types-list]]
-                                             (cons (assoc-in value-types
-                                                             [fn-sym .impls type-num
-                                                              (count (.fixed (.params new-arity)))]
-                                                             new-arity)
-                                                   types-list)))]
-                   [proto-name fn-sym new-arity]))))
+  (se/traverse (impl-arities impls) (partial add-prototype type-num)))
 
 (extend-type ast/reify-ast
   TypeChecker
@@ -8719,7 +8849,7 @@
   (type-check [ast old-ast]
     (se/state-error ast)))
 
-(deftype CheckedTypeAST [sym fields]
+(deftype CheckedTypeAST [sym type-num new-type-constraint fields]
   Stringable
   (string-list [_]
     (list "(CheckedTypeAST " (str sym) " " (str fields) ")"))
@@ -8733,38 +8863,47 @@
 
   TypeChecker
   (pre-check [ast]
-    ;; TODO: remove eventually
-    ;; disables printing of pre-check message
-    (se/state-error ast))
-
-  (type-check [ast old-ast]
-    (for [new-type (get-type-constraint (.sym ast))
+    (for [field-types (get-param-types (ast/params-ast fields nothing))
           ;; _ (se/traverse fields (fn [field]
           ;;                         (for [field-c (get-type-constraint field)]
           ;;                           (print-err 'field (.sym ast) field field-c))))
           _ (pop-types)
-          _ (set-type-constraint (.sym ast) new-type)]
-      (do
-        ;; (print-err 'defined-type (.sym ast))
-        new-type))))
+
+          arg0-c (se/try
+                   (get-type-constraint 'arg0)
+                   (fn [_]
+                     (se/state-error 'arg0-not-found)))]
+      (let [field-types (cata strip-constraints field-types)
+            ctor (create-constructor sym type-num new-type-constraint fields)
+            ctor (either (for [apply-impl (get-in ctor [.impls Container-sym apply-sym 0])
+                               invoke-impl (get-in ctor [.impls Function-sym invoke-sym 0])]
+                           (-> ctor
+                               (assoc-in [.impls Container-sym apply-sym]
+                                         [(.param-consts apply-impl
+                                                         (-> c/empty-items-constraint
+                                                             (.items-constraints [c/top-type field-types])))])
+                               (assoc-in [.impls Function-sym invoke-sym]
+                                         [(.param-consts invoke-impl field-types)])))
+                         ctor)]
+        (ast/definition-ast sym [ctor])))))
 
 (defn add-prototype-assertions [[proto-sym fn-sym arity]]
-  (for [prototype (find-prototype proto-sym fn-sym (count (.fixed (.params arity))))
-        :let [param-cs (c/intersect (.param-consts prototype)
-                                    (.param-consts arity))
-              result-c (c/intersect (.result-const prototype)
-                                    (.result-const arity))
-              _ (either (map (or (= c/bottom-type param-cs)
-                                 (= c/bottom-type result-c))
-                             (fn [failure-c]
-                               (c/conflicting-assertions failure-c
-                                                         "type checker testing" _LINE_)
-                               (se/throw "no additional info")))
-                        '_)
-              new-arity (-> arity
-                            (.param-consts (c/clear-sym param-cs))
-                            (.result-const (c/clear-sym result-c)))]]
-    [proto-sym fn-sym new-arity]))
+  (for [prototype (find-prototype proto-sym fn-sym (count (.fixed (.params arity))))]
+    (let [param-cs (c/intersect (.param-consts prototype)
+                                (.param-consts arity))
+          result-c (c/intersect (.result-const prototype)
+                                (.result-const arity))
+          _ (either (map (or (= c/bottom-type param-cs)
+                             (= c/bottom-type result-c))
+                         (fn [failure-c]
+                           (c/conflicting-assertions failure-c
+                                                     "type checker testing" _LINE_)
+                           (se/throw "no additional info")))
+                    '_)
+          new-arity (-> arity
+                        (.param-consts (c/clear-sym param-cs))
+                        (.result-const (c/clear-sym result-c)))]
+      [proto-sym fn-sym new-arity])))
 
 (deftype TypeCheckOnly [x]
   Stringable
@@ -8870,7 +9009,7 @@
               impls-assoc (get-in impls [Associative-sym assoc-sym])
               default-assoc (get-in default-impls [Associative-sym assoc-sym])
 
-              ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on they result
+              ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
               ;; and parameter, respectively
               hash-map-impls (either (map (or impls-get
                                               default-get)
@@ -8904,9 +9043,7 @@
                  (ast/extend-ast sym hash-map-impls))
            (ast/extend-ast sym default-impls)
            (ast/extend-ast sym impls)
-           (ast/definition-ast sym [(create-constructor sym type-num new-type-constraint fields
-                                                        field-assertions)])
-           (CheckedTypeAST sym fields)])))))
+           (CheckedTypeAST sym type-num new-type-constraint fields)])))))
 
 (extend-type ast/quoted-ast
   TypeChecker
