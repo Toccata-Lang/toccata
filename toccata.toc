@@ -7655,7 +7655,7 @@
   (strip-asts [ast]
     ast)
 
-  (check-call-site [ast args]
+  (check-call-site [ast args target]
     (assert-result x (instance? se/new-se x)))
 
   (recover-type-constraint [x]
@@ -7703,8 +7703,8 @@
   (strip-asts [ast]
     (.ast ast))
 
-  (check-call-site [ast args]
-    (check-call-site (.ast ast) args)))
+  (check-call-site [ast args target]
+    (check-call-site (.ast ast) args target)))
 
 (deftype PrototypeImpls [fn-sym impls]
   (assert (instance? (map-of Integer HashMap) impls))
@@ -8076,7 +8076,7 @@
 
 (extend-type Tagged
   TypeChecker
-  (check-call-site [ast args]
+  (check-call-site [ast args target]
     (map (get-type-constraint ast)
          (fn [c-ast]
            ;; TODO: seems to be called on recursive calls.
@@ -8208,14 +8208,14 @@
                          (= c/bottom-type pts))
                      (fn [failure-c]
                        (c/conflicting-assertions failure-c "type checker testing" _LINE_)
-                       (se/throw failure-c)))
+                       (abort)))
                 (-> ast
                     (.result-const result-c)
                     (.param-consts pts)))))))
 
 (extend-type ast/fn-ast
   TypeChecker
-  (check-call-site [ast args]
+  (check-call-site [ast args target]
     (let [arg-count (count args)]
       (either (map (or (some (.arities ast) (fn [arity]
                                               (and (-> arity
@@ -8287,7 +8287,7 @@
 
 (extend-type PrototypeImpls
   TypeChecker
-  (check-call-site [proto-impls args]
+  (check-call-site [proto-impls args target]
     (let [num-args (count args)]
       (either (map (first args)
                    (fn [disp-arg]
@@ -8520,7 +8520,7 @@
 
 (extend-type ast/reify-ast
   TypeChecker
-  (check-call-site [ast args]
+  (check-call-site [ast args target]
     (let [num-args (inc (count args))]
       (either (for [invoke-arities (get-in ast [.impls Function-sym invoke-sym])
                     arity (some invoke-arities (fn [arity]
@@ -8537,9 +8537,11 @@
                                       (update-constraint arg c)))
                        (fn [_]
                          (Left result-c)))))
-              (-> ["No 'invoke' implementation found for value at"
-                   ;; TODO: add location
-                   ]
+              (-> ["No 'invoke' implementation found for"
+                   (cond (instance? Tagged target)
+                         (str "'" target "'")
+                         "value")
+                   "at" (str (ast/file-name args) ": ") (ast/line-number args)]
                   (interpose " ")
                   to-str
                   se/throw))))
@@ -8569,7 +8571,7 @@
 
 (extend-type ast/call-ast
   TypeChecker
-  (check-call-site [ast args]
+  (check-call-site [ast args target]
     ;; TODO: might need to be expanded
     (se/state-error (Left c/top-type)))
 
@@ -8580,7 +8582,7 @@
 
   (type-check [ast old-ast]
     (for [result-type (apo (fn [inner-ast]
-                             (check-call-site inner-ast (.args ast)))
+                             (check-call-site inner-ast (.args ast) (.call-target old-ast)))
                            (.call-target ast) se/state-error)]
       (ConstrainedAST old-ast result-type))))
 
@@ -8632,14 +8634,17 @@
   TypeChecker
   (pre-check [ast]
     (let [binding-syms (all-syms (.binding ast))]
-      (for [_ (push-types)
-            _ (se/traverse binding-syms
+      (for [_ (se/traverse binding-syms
                            (fn [sym]
-                             (set-type-constraint sym (ConstrainedAST sym c/top-type))))]
+                             (se/try
+                               (get-type-constraint sym)
+                               (fn [_]
+                                 (set-type-constraint sym (ConstrainedAST sym c/top-type))))))]
         ast)))
 
   (type-check [ast old-ast]
-    (for [_ (ana constrain-all-syms (ParamConstraintPair (either (map (instance? ConstrainedAST (.binding ast))
+    (for [_ (push-types)
+          _ (ana constrain-all-syms (ParamConstraintPair (either (map (instance? ConstrainedAST (.binding ast))
                                                                       .ast)
                                                                  (.binding ast))
                                                          (.constraint (.val ast)))
@@ -8876,11 +8881,14 @@
                                invoke-impl (get-in ctor [.impls Function-sym invoke-sym 0])]
                            (-> ctor
                                (assoc-in [.impls Container-sym apply-sym]
-                                         [(.param-consts apply-impl
-                                                         (-> c/empty-items-constraint
-                                                             (.items-constraints [c/top-type field-types])))])
+                                         [(-> apply-impl
+                                              (.param-consts (-> c/empty-items-constraint
+                                                                 (.items-constraints [c/top-type field-types])))
+                                              (.result-const new-type-constraint))])
                                (assoc-in [.impls Function-sym invoke-sym]
-                                         [(.param-consts invoke-impl field-types)])))
+                                         [(-> invoke-impl
+                                               (.param-consts field-types)
+                                               (.result-const new-type-constraint))])))
                          ctor)]
         (ast/definition-ast sym [ctor])))))
 
