@@ -1754,21 +1754,25 @@
     []))
 
 (defn get-type-sym-info [type-symbol]
-  (comp (either (or (map (get-in (extract core-agent) [.types (ast/untag type-symbol)])
-                         sm/state-maybe)
-                    (map (ast/namespace type-symbol)
-                         (fn [sym-ns]
-                           (sm/get-in-val [.module .namespaces sym-ns .types
-                                           (ast/untag type-symbol)]))))
-                (sm/get-in-val [.module .types (ast/untag type-symbol)]))
-        (let [result-p (promise)]
-          (send core-agent (fn [mod]
-                             (deliver result-p (get-in mod [.types (ast/untag type-symbol)]))
-                             mod))
-          (either (map (extract result-p) sm/state-maybe)
-                  sm/zero-sm))
-        (compilation-error "Invalid type" (str "'" type-symbol "'") "at"
-                           (ast/file-name type-symbol) (ast/line-number type-symbol))))
+  (let [sym-ns (ast/namespace type-symbol)
+        file-name (ast/file-name type-symbol)
+        line-number (ast/line-number type-symbol)
+        type-symbol (ast/untag type-symbol)]
+    (comp (either (or (map (get-in (extract core-agent) [.types type-symbol])
+                           sm/state-maybe)
+                      (map sym-ns
+                           (fn [sym-ns]
+                             (sm/get-in-val [.module .namespaces sym-ns .types
+                                             type-symbol]))))
+                  (sm/get-in-val [.module .types type-symbol]))
+          (let [result-p (promise)]
+            (send core-agent (fn [mod]
+                                   (deliver result-p (get-in mod [.types type-symbol]))
+                                   mod))
+            (either (map (extract result-p) sm/state-maybe)
+                    sm/zero-sm))
+          (compilation-error "Invalid type" (str "'" type-symbol "'") "at"
+                             file-name line-number))))
 
 (defn emit-sym-constraint [constraint]
   (let [file-name (ast/file-name constraint)
@@ -7951,7 +7955,7 @@
 (extend-type c/SymbolConstraints
   TypeChecker
   (type-check [c old-c]
-    (let [c (cata strip-constraints c)]
+    (let [c (map c strip-constraints)]
       (map (either (map (.sym old-c)
                         (fn [sym]
                           (append-type-constraint _LINE_ sym c)))
@@ -7962,7 +7966,7 @@
 (extend-type c/MultiConstraint
   TypeChecker
   (type-check [c old-c]
-    (let [c (cata strip-constraints c)]
+    (let [c (map c strip-constraints)]
       (se/state-error (ConstrainedAST c c)))))
 
 (deftype ConstrainedSum [alts path sym var]
@@ -7985,8 +7989,7 @@
     (se/state-error ast))
 
   (type-check [c old-c]
-    (let [new-c (-> (cata strip-constraints c)
-                    .alts
+    (let [new-c (-> (map (.alts c) strip-constraints)
                     c/sum-type
                     (.path (.path c))
                     (.sym (.sym c))
@@ -8003,8 +8006,7 @@
 (extend-type c/SumConstraint
   TypeChecker
   (type-check [c old-c]
-    (let [new-c (-> (cata strip-constraints c)
-                    .alts
+    (let [new-c (-> (map (.alts c) strip-constraints)
                     c/sum-type
                     (.path (.path c))
                     (.sym (.sym c))
@@ -8022,7 +8024,7 @@
     (se/state-error (c/update-sym c (symbol "#result"))))
 
   (type-check [c old-c]
-    (let [rc (.assertion (cata strip-constraints c))]
+    (let [rc (.constraint (.assertion c))]
       (for [_ (append-type-constraint _LINE_ (symbol "#result") rc)]
         (ConstrainedAST (c/ResultConstraint rc) rc)))))
 
@@ -8104,9 +8106,9 @@
   (param-types [sym]
     (for [c (get-type-constraint sym)]
       (cond (instance? c/DynamicConstraint (.constraint c))
-            (.constraint c c/top-type)
+            c/top-type
 
-            c)))
+            (.constraint c))))
 
   (type-check [s old-s]
     (get-type-constraint s)))
@@ -8202,13 +8204,12 @@
           _ (recover-type-constraint (symbol "#result"))
           _ (recover-types (.params old-ast))
           _ (nip-types)]
-      (let [result-c (c/intersect (cata strip-constraints result-c)
+      (let [result-c (c/intersect (.constraint result-c)
                                   (.result-const ast))
             result-c (c/intersect result-c
                                   (either (map (last (.body ast)) .constraint)
                                           c/top-type))
-            pts (c/intersect (cata strip-constraints pts)
-                             (.param-consts ast))]
+            pts (c/intersect pts (.param-consts ast))]
         (either (map (or (= c/bottom-type result-c)
                          (= c/bottom-type pts))
                      (fn [failure-c]
@@ -8287,8 +8288,8 @@
           _ (recover-types (.params old-ast))
           _ (nip-types)]
       (-> ast
-          (.result-const (cata strip-constraints result-c))
-          (.param-consts (cata strip-constraints pts))))))
+          (.result-const (.constraint result-c))
+          (.param-consts pts)))))
 
 (extend-type PrototypeImpls
   TypeChecker
@@ -8297,19 +8298,22 @@
       (either (map (first args)
                    (fn [disp-arg]
                      (let [type-num (constraint-type-num (.constraint disp-arg))
-                           param-cs (either (or (get-in proto-impls [.impls type-num num-args .param-consts])
-                                                (get-in proto-impls [.impls c/UnknownType num-args .param-consts]))
-                                            c/top-type)
-                           result-c (either (or (get-in proto-impls [.impls type-num num-args .result-const])
-                                                (get-in proto-impls [.impls c/UnknownType num-args .result-const]))
-                                            c/top-type)]
-                       (map (se/traverse (zip-lists args (c/extract-items-constraints param-cs num-args))
+                           arity (either (or (get-in proto-impls [.impls type-num num-args])
+                                             (get-in proto-impls [.impls c/UnknownType num-args]))
+                                         (do
+                                           (print-err "Could not find arity for" (str "'" (.fn-sym proto-impls) "'")
+                                                      "with" num-args "arguments."
+                                                      ;; TODO: add location
+                                                      )
+                                           (abort)))]
+                       (map (se/traverse (zip-lists args (c/extract-items-constraints (.param-consts arity)
+                                                                                      num-args))
                                          (fn [[arg c]]
                                            (update-constraint arg c)))
                             (fn [_]
-                              (Left result-c))))))
+                              (Left (.result-const arity)))))))
               (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at"
-                   ;; TODO: add locatio
+                   ;; TODO: add location
                    ]
                   (interpose " ")
                   to-str
@@ -8393,8 +8397,8 @@
                                                                     (.params proto)
                                                                     (.doc proto)
                                                                     []
-                                                                    (cata strip-constraints (.param-consts proto))
-                                                                    (cata strip-constraints (.result-const proto)))]
+                                                                    (.param-consts proto)
+                                                                    (.result-const proto))]
                                   (either (and (get impls (.fn-name proto))
                                                (maybe (assoc-in impls [(.fn-name proto) .ast .impls
                                                                        c/UnknownType arg-count]
@@ -8477,10 +8481,10 @@
     (for [prototype (find-prototype proto-sym fn-sym arg-count)
           :let [proto-sym (ast/untag proto-sym)
                 fn-sym (ast/untag fn-sym)
-                param-cs (c/intersect (cata strip-constraints (.param-consts prototype))
-                                      (cata strip-constraints (.param-consts arity)))
-                result-c (c/intersect (cata strip-constraints (.result-const prototype))
-                                      (cata strip-constraints (.result-const arity)))
+                param-cs (c/intersect (.param-consts prototype)
+                                      (.param-consts arity))
+                result-c (c/intersect (.result-const prototype)
+                                      (.result-const arity))
                 new-arity (-> arity
                               (.param-consts param-cs)
                               (.result-const result-c))]
@@ -8873,8 +8877,7 @@
                    (get-type-constraint 'arg0)
                    (fn [_]
                      (se/state-error 'arg0-not-found)))]
-      (let [field-types (cata strip-constraints field-types)
-            ctor (create-constructor sym type-num new-type-constraint fields)
+      (let [ctor (create-constructor sym type-num new-type-constraint fields)
             ctor (either (for [apply-impl (get-in ctor [.impls Container-sym apply-sym 0])
                                invoke-impl (get-in ctor [.impls Function-sym invoke-sym 0])]
                            (-> ctor
