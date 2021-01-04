@@ -8230,6 +8230,21 @@
                     (.result-const result-c)
                     (.param-consts pts)))))))
 
+(defn reduce-fixed-point
+  ([f result] (reduce-fixed-point f [] result))
+  ([f results result]
+   (either (or (= c/top-type result)
+               (map (some results (partial = result))
+                    (fn [_]
+                      (c/sum-type results)))
+               (and (> (count results) 3)
+                    (maybe c/top-type)))
+           (let [result-type (constraint-type-num result)
+                 next-result (either (map (find-arity f result-type 2) .result-const)
+                                     c/top-type)]
+             (reduce-fixed-point f (conj results result)
+                                 next-result)))))
+
 (def special-call-targets
   {'vector (fn [_ args]
              (-> c/empty-items-constraint
@@ -8247,23 +8262,31 @@
                Left
                se/state-error))
 
+   'map (fn [arity args]
+          (let [[coll f] args
+                coll-contents (c/extract-contents-constraint (.constraint coll))
+                maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
+                inferred-c (either (flat-map maybe-arity
+                                             (fn [arity]
+                                               ;; TODO: arity could be an 'invoke' arity with 3 args
+                                               (-> (.param-consts arity)
+                                                   (c/extract-items-constraints 1)
+                                                   first)))
+                                   c/top-type)]
+            (for [coll (update-constraint coll (c/InferredInner inferred-c empty-list nothing ""))]
+              (Left (c/InferredInner (either (map maybe-arity .result-const)
+                                             c/top-type)
+                                     empty-list nothing "")))))
+
    'reduce (fn [arity args]
              (let [[coll init-accum f] args
-                   maybe-arity (find-arity (.ast f) 2)
+                   result-c (reduce-fixed-point (.ast f) (.constraint init-accum))
+                   maybe-arity (find-arity (.ast f) (constraint-type-num result-c) 2)
                    [accum-c inferred-c] (either (map maybe-arity
                                                      (fn [arity]
                                                        ;; TODO: arity could be an 'invoke' arity with 3 args
                                                        (c/extract-items-constraints (.param-consts arity) 2)))
-                                                [c/top-type c/top-type])
-                   result-c (c/intersect (.result-const arity)
-                                         (either (map maybe-arity .result-const)
-                                                 c/top-type))
-                   result-c (c/intersect result-c accum-c)]
-               (and (= c/bottom-type result-c)
-                    (do
-                      (c/conflicting-assertions result-c "type checker testing" _LINE_)
-                      (abort)
-                      nothing))
+                                                [c/top-type c/top-type])]
                (for [init-accum (update-constraint init-accum accum-c)
                      coll (update-constraint coll (c/InferredInner inferred-c empty-list nothing ""))]
                  (Left result-c))))
@@ -8642,6 +8665,17 @@
 
 (extend-type ast/call-ast
   TypeChecker
+  (find-arity [_ type-num n]
+    ;; TODO: make 'find-arity' return se/state-error so I can lookup the result of the call-ast
+    (maybe (ast/fn-arity-ast (ast/tag 'anon)
+                             ""
+                             (ast/params-ast (vec (repeat n '_)) nothing)
+                             (ast/block-comment "" 0 [])
+                             []
+                             (-> c/empty-items-constraint
+                                 (.items-constraints (vec (repeat n c/top-type))))
+                             c/top-type)))
+
   (check-call-site [ast args target]
     ;; TODO: might need to be expanded
     (se/state-error (Left c/top-type)))
