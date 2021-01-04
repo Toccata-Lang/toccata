@@ -8262,6 +8262,14 @@
                Left
                se/state-error))
 
+   'maybe (fn [_ args]
+            (-> (either (map (first args) .constraint)
+                        c/top-type)
+                (c/InferredInner empty-list nothing "")
+                (c/intersect maybe-constraint)
+                Left
+                se/state-error))
+
    'map (fn [arity args]
           (let [[coll f] args
                 coll-contents (c/extract-contents-constraint (.constraint coll))
@@ -8277,6 +8285,25 @@
               (Left (c/InferredInner (either (map maybe-arity .result-const)
                                              c/top-type)
                                      empty-list nothing "")))))
+
+   'flat-map (fn [arity args]
+               (let [[coll f] args
+                     coll-contents (c/extract-contents-constraint (.constraint coll))
+                     maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
+                     inferred-c (either (flat-map maybe-arity
+                                                  (fn [arity]
+                                                    ;; TODO: arity could be an 'invoke' arity with 3 args
+                                                    (-> (.param-consts arity)
+                                                        (c/extract-items-constraints 1)
+                                                        first)))
+                                        c/top-type)]
+                 (for [coll (update-constraint coll (c/InferredInner inferred-c empty-list nothing ""))]
+                   (Left (c/InferredInner (either (map maybe-arity (fn [arity]
+                                                                     (-> arity
+                                                                         .result-const
+                                                                         c/extract-contents-constraint)))
+                                                  c/top-type)
+                                          empty-list nothing "")))))
 
    'reduce (fn [arity args]
              (let [[coll init-accum f] args
@@ -8990,16 +9017,21 @@
                                               (.param-consts (-> c/empty-items-constraint
                                                                  (.items-constraints [c/top-type field-types])))
                                               (.result-const new-type-constraint))])
-                               (assoc-in [.impls Function-sym invoke-sym]
-                                         [(-> invoke-impl
-                                               (.param-consts field-types)
-                                               (.result-const new-type-constraint))])))
+                               (assoc-in
+                                [.impls Function-sym invoke-sym]
+                                [(-> invoke-impl
+                                     (.param-consts (.items-constraints field-types
+                                                                        (comp [c/top-type]
+                                                                              (.items-constraints field-types))))
+                                     (.result-const new-type-constraint))])))
                          ctor)]
         (ast/definition-ast sym [ctor])))))
 
-(defn add-prototype-assertions [[proto-sym fn-sym arity]]
+(defn add-prototype-assertions [dispatch-type [proto-sym fn-sym arity]]
   (for [prototype (find-prototype proto-sym fn-sym (count (.fixed (.params arity))))]
     (let [param-cs (c/intersect (.param-consts prototype)
+                                dispatch-type)
+          param-cs (c/intersect param-cs
                                 (.param-consts arity))
           result-c (c/intersect (.result-const prototype)
                                 (.result-const arity))
@@ -9008,7 +9040,7 @@
                          (fn [failure-c]
                            (c/conflicting-assertions failure-c
                                                      "type checker testing" _LINE_)
-                           (se/throw "no additional info")))
+                           (abort)))
                     '_)
           new-arity (-> arity
                         (.param-consts (c/clear-sym param-cs))
@@ -9102,10 +9134,12 @@
             _ (se/traverse fields (fn [sym]
                                     (set-type-constraint sym (ConstrainedAST sym c/top-type))))
             field-assertions (se-translate (lookup-constraint field-assertions))
-            impls  (-> (.impls ast)
-                       (remove (partial instance? c/Constraints))
-                       (flat-map impl-arities)
-                       (se/traverse add-prototype-assertions))]
+            impls (-> (.impls ast)
+                      (remove (partial instance? c/Constraints))
+                      (flat-map impl-arities)
+                      (se/traverse (partial add-prototype-assertions (-> c/empty-items-constraint
+                                                                         (.items-constraints [new-type-constraint])
+                                                                         (.tail-constraint c/top-type)))))]
         (let [impls (reduce impls {}
                             (fn [impls [proto-sym fn-sym arity]]
                               (either (update-in impls [proto-sym fn-sym]
