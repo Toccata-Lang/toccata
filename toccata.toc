@@ -7652,6 +7652,9 @@
                     '_)))
 
 (defprotocol TypeChecker
+  (find-arity [ast args]
+    (assert-result r (instance? Maybe r)))
+
   (strip-asts [ast]
     ast)
 
@@ -7894,7 +7897,7 @@
     (cond (= new-c c/bottom-type)
           (do
             (c/conflicting-assertions new-c "type checker testing" _LINE_)
-            (se/throw new-c))
+            (abort))
 
           (either (map (instance? Tagged (.ast constrained))
                        (fn [sym]
@@ -8076,6 +8079,16 @@
 
 (extend-type Tagged
   TypeChecker
+  (find-arity [_ n]
+    (maybe (ast/fn-arity-ast (ast/tag 'anon)
+                             ""
+                             (ast/params-ast (vec (repeat n '_)) nothing)
+                             (ast/block-comment "" 0 [])
+                             []
+                             (-> c/empty-items-constraint
+                                 (.items-constraints (vec (repeat n c/top-type))))
+                             c/top-type)))
+
   (check-call-site [ast args target]
     (map (get-type-constraint ast)
          (fn [c-ast]
@@ -8132,8 +8145,11 @@
           (map (set-type-constraint param (ConstrainedAST param param-c))
                (fn [_]
                  tup))
-          (let [new-param-cs (c/intersect (ast/new-param-constraints param)
-                                          param-c)
+          (let [new-param-cs  (-> param
+                                  (.variadic (or (.variadic param)
+                                                 (maybe '_)))
+                                  ast/new-param-constraints
+                                  (c/intersect param-c))
                 new-param-cs (either (or (= c/bottom-type new-param-cs)
                                          (and (instance? c/TypeConstraint param-c)
                                               (maybe (ast/new-param-constraints param))))
@@ -8143,12 +8159,13 @@
                     (c/conflicting-assertions new-param-cs "ka blooie" _LINE_)
                     (se/throw new-param-cs))
 
-                  (let [new-tail (cond (= (.tail-constraint new-param-cs) c/bottom-type)
+                  (let [curr-tail (c/extract-tail-constraint new-param-cs)
+                        new-tail (cond (= curr-tail c/bottom-type)
                                        (c/TypeConstraint {c/ListType #{}} empty-list
                                                          'List nothing "")
                                        (c/intersect (c/TypeConstraint {c/ListType #{}}
                                                                       empty-list 'List nothing "")
-                                                    (.tail-constraint new-param-cs)))]
+                                                    curr-tail))]
                     (-> (zip-lists (.fixed param) (c/extract-items-constraints new-param-cs))
                         (map (fn [[x y]]
                                (ParamConstraintPair x y)))
@@ -8213,36 +8230,81 @@
                     (.result-const result-c)
                     (.param-consts pts)))))))
 
+(def special-call-targets
+  {'vector (fn [_ args]
+             (-> c/empty-items-constraint
+                 (.items-constraints (map args .constraint))
+                 (c/intersect vect-constraint)
+                 (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
+                 Left
+                 se/state-error))
+
+   'list (fn [_ args]
+           (-> c/empty-items-constraint
+               (.items-constraints (map args .constraint))
+               (c/intersect list-constraint)
+               (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
+               Left
+               se/state-error))
+
+   'reduce (fn [arity args]
+             (let [[coll init-accum f] args
+                   maybe-arity (find-arity (.ast f) 2)
+                   [accum-c inferred-c] (either (map maybe-arity
+                                                     (fn [arity]
+                                                       ;; TODO: arity could be an 'invoke' arity with 3 args
+                                                       (c/extract-items-constraints (.param-consts arity) 2)))
+                                                [c/top-type c/top-type])
+                   result-c (c/intersect (.result-const arity)
+                                         (either (map maybe-arity .result-const)
+                                                 c/top-type))
+                   result-c (c/intersect result-c accum-c)]
+               (and (= c/bottom-type result-c)
+                    (do
+                      (c/conflicting-assertions result-c "type checker testing" _LINE_)
+                      (abort)
+                      nothing))
+               (for [init-accum (update-constraint init-accum accum-c)
+                     coll (update-constraint coll (c/InferredInner inferred-c empty-list nothing ""))]
+                 (Left result-c))))
+   })
+
 (extend-type ast/fn-ast
   TypeChecker
+  (find-arity [ast arg-count]
+    (or (some (.arities ast) (fn [arity]
+                               (and (-> arity
+                                        .params
+                                        .fixed
+                                        count
+                                        (= arg-count))
+                                    (maybe arity))))
+        (some (.arities ast) (fn [arity]
+                               (and (-> arity
+                                        .params
+                                        .variadic)
+                                    (-> arity
+                                        .params
+                                        .fixed
+                                        count
+                                        (<= arg-count))
+                                    (maybe arity))))))
+
   (check-call-site [ast args target]
     (let [arg-count (count args)]
-      (either (map (or (some (.arities ast) (fn [arity]
-                                              (and (-> arity
-                                                       .params
-                                                       .fixed
-                                                       count
-                                                       (= arg-count))
-                                                   (maybe arity))))
-                       (some (.arities ast) (fn [arity]
-                                              (and (-> arity
-                                                       .params
-                                                       .variadic)
-                                                   (-> arity
-                                                       .params
-                                                       .fixed
-                                                       count
-                                                       (<= arg-count))
-                                                   (maybe arity)))))
+      (either (map (find-arity ast arg-count)
                    (fn [arity]
-                     (-> arity
-                         .param-consts
+                     (-> (.param-consts arity)
                          (c/extract-items-constraints arg-count)
                          (zip-lists args)
+                         vec
                          (se/traverse (fn [[c arg]]
                                         (update-constraint arg c)))
-                         (map (fn [_]
-                                (Left (.result-const arity)))))))
+                         (flat-map (fn [args]
+                                     (either (map (get special-call-targets target)
+                                                  (fn [f]
+                                                    (f arity args)))
+                                             (se/state-error (Left (.result-const arity)))))))))
               (se/throw (str "Could not find implementation of " (str "'" (.fn-sym ast) "'")
                              ;; TOOD: add location
                              "with " arg-count "arguments.")))))
@@ -8287,6 +8349,9 @@
 
 (extend-type PrototypeImpls
   TypeChecker
+  (find-arity [proto-impls arg-count]
+    (get-in proto-impls [.impls c/UnknownType arg-count]))
+
   (check-call-site [proto-impls args target]
     (let [num-args (count args)]
       (either (map (first args)
@@ -8300,12 +8365,17 @@
                                                       ;; TODO: add location
                                                       )
                                            (abort)))]
-                       (map (se/traverse (zip-lists args (c/extract-items-constraints (.param-consts arity)
-                                                                                      num-args))
-                                         (fn [[arg c]]
+                       (->  (.param-consts arity)
+                            (c/extract-items-constraints num-args)
+                            (zip-lists args)
+                            vec
+                            (se/traverse (fn [[c arg]]
                                            (update-constraint arg c)))
-                            (fn [_]
-                              (Left (.result-const arity)))))))
+                            (flat-map (fn [args]
+                                     (either (map (get special-call-targets target)
+                                                  (fn [f]
+                                                    (f arity args)))
+                                             (se/state-error (Left (.result-const arity))))))))))
               (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at"
                    ;; TODO: add location
                    ]
