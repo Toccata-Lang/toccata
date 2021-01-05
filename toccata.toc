@@ -7753,7 +7753,8 @@
                               (list {(ast/untag sym) constraint})))))
 
 (defn add-getter [sym types-list]
-  (let [sym (ast/untag sym)
+  (let [loc (ast/location sym)
+        sym (ast/untag sym)
         getter-field-c (c/FieldConstraint sym "" empty-list (maybe (symbol "#x")) "")
         getter (ConstrainedAST (PrototypeImpls
                                 sym
@@ -7774,7 +7775,8 @@
                                                                                        c/bottom-type
                                                                                        empty-list nothing "")
                                                                     c/top-type)}})
-                               fn-constraint)
+                               (-> fn-constraint
+                                   (c/update-path loc)))
         Type-protocol (either (map (get-in types-list [0 'Type]) .ast)
                               (ast/protocol-ast Type-sym []))
         Type-protocol (-> Type-protocol
@@ -7796,11 +7798,12 @@
                    'Type Type-protocol}))))
 
 (defn create-new-getter [sym]
-  (let [protocol (ast/protocol-ast Type-sym
-                                   [(ast/prototype (ast/tag sym)
+  (let [loc (ast/location sym)
+        protocol (ast/protocol-ast Type-sym
+                                   [(ast/prototype sym
                                                    (ast/params [(ast/tag "#x")])
                                                    (ast/block-comment "" 0 []) [])
-                                    (ast/prototype (ast/tag sym)
+                                    (ast/prototype sym
                                                    (ast/params [(ast/tag "#x") (ast/tag "#y")])
                                                    (ast/block-comment "" 0 []) [])])]
     (for [mod-index (se/get-in-val [.module .index])
@@ -7808,13 +7811,13 @@
                   (for [_ (se/update-in-val [.module .value-types]
                                             (partial add-getter sym))
                         Type-protocol (se/get-in-val [.module .value-types 0 'Type])
-                        getter (se/get-in-val [.module .value-types 0 sym])
+                        getter (se/get-in-val [.module .value-types 0 (ast/untag sym)])
                         _ (se/update-in-val [.module .value-types]
                                             (fn [types-list]
                                               (map types-list
                                                    (fn [value-types]
                                                      (-> value-types
-                                                         (assoc sym getter)
+                                                         (assoc (ast/untag sym) getter)
                                                          (assoc 'Type Type-protocol))))))]
                     '_)
 
@@ -7823,7 +7826,8 @@
                           (fn [mod]
                             (.value-types mod (add-getter sym (.value-types mod)))))
                     se-nop))]
-      (ConstrainedAST sym fn-constraint))))
+      (ConstrainedAST sym (-> fn-constraint
+                              (c/update-path loc))))))
 
 (defn get-type-constraint [sym]
   ;; TODO: make this work
@@ -7832,7 +7836,7 @@
   ;;                             r))
   (assert (instance? Tagged sym))
 
-  (let [file-loc (ast/location sym)
+  (let [loc (ast/location sym)
         sym (ast/untag sym)]
     (map (comp (se/get-in-val [.module .value-types 0 sym])
                (se/new-se (fn [s]
@@ -7851,7 +7855,7 @@
                                     se/Failure)))
                (cond (flat-map (first (str sym))
                                (partial = "."))
-                     (create-new-getter sym)
+                     (create-new-getter (ast/tag sym loc))
 
                      (-> ["Could not find type constraint for" (str "'" sym "'")
                           "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
@@ -7860,7 +7864,7 @@
                          se/throw)))
          (fn [ast]
            (cond (instance? Tagged (.ast ast))
-                 (.ast ast (ast/tag (.ast ast) file-loc))
+                 (.ast ast (ast/tag (.ast ast) loc))
 
                  ast)))))
 
@@ -8132,15 +8136,15 @@
   (type-check [s old-s]
     (get-type-constraint s)))
 
-(deftype ParamConstraintPair [v1 v2]
+(deftype ParamConstraintPair [param constraint]
   (assert (instance? (any-of ast/BindingTarget
                              Symbol)
-                     v1))
-  (assert (instance? c/ValueConstraint v2))
+                     param))
+  (assert (instance? c/ValueConstraint constraint))
 
   Stringable
   (string-list [_]
-    (list "(ParamConstraintPair " (str v1) " " (str v2) ")"))
+    (list "(ParamConstraintPair " (str param) " " (str constraint) ")"))
 
   Container
   (map [x f]
@@ -8204,7 +8208,10 @@
   (type-check [ast old-ast]
     (either (map (.variadic old-ast)
                  (fn [var-sym]
-                   (for [_ (set-type-constraint var-sym (ConstrainedAST var-sym list-constraint))]
+                   (for [_ (set-type-constraint var-sym
+                                                (ConstrainedAST var-sym
+                                                                (-> list-constraint
+                                                                    (c/update-path (ast/location old-ast)))))]
                      old-ast)))
             (se/state-error old-ast))))
 
@@ -8629,18 +8636,16 @@
                                       (.param-consts arity))
                 result-c (c/intersect (.result-const prototype)
                                       (.result-const arity))
+                _ (map (or (= c/bottom-type param-cs)
+                           (= c/bottom-type result-c))
+                       (fn [failure-c]
+                         (c/conflicting-assertions failure-c "type checker testing" _LINE_)
+                         ;; TODO: that should work but doesn't type check
+                         ;; (se/throw failure-c)
+                         (abort)))
                 new-arity (-> arity
                               (.param-consts param-cs)
                               (.result-const result-c))]
-          _ (either (map (or (= c/bottom-type param-cs)
-                             (= c/bottom-type result-c))
-                         (fn [failure-c]
-                           (c/conflicting-assertions failure-c "type checker testing" _LINE_)
-                           ;; TODO: that should work but doesn't type check
-                           ;; (se/throw failure-c)
-                           (abort)
-                           se-nop))
-                  se-nop)
           _ (comp (for [_ (se/get-in-val [.module .value-types 0 proto-sym .ast .prototypes])
                         _ (se/update-in-val [.module .value-types]
                                             (fn [[value-types & types-list]]
@@ -8901,7 +8906,8 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (se/state-error (ConstrainedAST ast int-constraint))))
+    (se/state-error (ConstrainedAST ast (-> int-constraint
+                                            (c/update-path (ast/location old-ast)))))))
 
 (extend-type ast/string-ast
   TypeChecker
@@ -8911,7 +8917,8 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (se/state-error (ConstrainedAST ast string-constraint))))
+    (se/state-error (ConstrainedAST ast (-> string-constraint
+                                            (c/update-path (ast/location old-ast)))))))
 
 (deftype AndClause [clause]
   Stringable
@@ -8955,7 +8962,8 @@
                 (-> ast
                     (.clauses (map (.clauses ast) .ast))
                     (ConstrainedAST (.constraint (.ast last-clause))))))
-            (se/state-error (ConstrainedAST ast maybe-constraint)))))
+            (se/state-error (ConstrainedAST ast (-> maybe-constraint
+                                                    (c/update-path (ast/location old-ast))))))))
 
 (deftype OrClause [clause]
   Stringable
@@ -9000,7 +9008,8 @@
                     (ConstrainedAST (-> (.clauses ast)
                                         (map (comp .constraint .ast))
                                         c/sum-type)))))
-            (se/state-error (ConstrainedAST ast maybe-constraint)))))
+            (se/state-error (ConstrainedAST ast (-> maybe-constraint
+                                                    (c/update-path (ast/location old-ast))))))))
 
 (extend-type String
   TypeChecker
@@ -9256,7 +9265,8 @@
                         (se/state-error ast))
 
                       (type-check [ast old-ast]
-                        (se/state-error (ConstrainedAST ast sym-constraint)))))))
+                        (se/state-error (ConstrainedAST ast (-> sym-constraint
+                                                                (c/update-path (ast/location ast))))))))))
 
 (extend-type ast/main-ast
   TypeChecker
