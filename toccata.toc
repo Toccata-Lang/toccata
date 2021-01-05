@@ -17,7 +17,7 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "b5649ed"))
+                          :sha "1c52006"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "e93f16b"))
@@ -302,7 +302,7 @@
     (assert (instance? c/ValueConstraint c))
     (assert (instance? (map-of Symbol c/ValueConstraint) m))
     (assert (instance? (vector-of Symbol) fields))
-    (assert (instance? ast/SymbolOrString file-name))
+    (assert (instance? c/SymbolOrString file-name))
     (assert (instance? Integer line-number))
 
     m)
@@ -315,7 +315,7 @@
       sm/zero-sm))
 
   (runtime-check [constraint value-info file-name line-number checked-var]
-    (assert (instance? ast/SymbolOrString file-name))
+    (assert (instance? c/SymbolOrString file-name))
     (assert (instance? Integer line-number))
     (assert-result r (instance? Vector r))
 
@@ -494,19 +494,19 @@
 
 (deftype FnValPtr [var]
   ;; pointer to a Fn struct
-  (assert (instance? ast/SymbolOrString var)))
+  (assert (instance? c/SymbolOrString var)))
 
 (deftype ArityValPtr [var struct]
   ;; pointer to a FnArity struct
-  (assert (instance? ast/SymbolOrString var)))
+  (assert (instance? c/SymbolOrString var)))
 
 (deftype StaticFnPtr [var]
   ;; pointer to a FnArity struct
-  (assert (instance? ast/SymbolOrString var)))
+  (assert (instance? c/SymbolOrString var)))
 
 (deftype ProtoDispFnPtr [var]
   ;; pointer to a FnArity struct
-  (assert (instance? ast/SymbolOrString var)))
+  (assert (instance? c/SymbolOrString var)))
 
 (deftype ProtoDispatcher [prototype-name path p-impls]
   (assert (instance? Symbol prototype-name))
@@ -7832,31 +7832,37 @@
   ;;                             r))
   (assert (instance? Tagged sym))
 
-  (let [sym (ast/untag sym)]
-    (comp (se/get-in-val [.module .value-types 0 sym])
-          (se/new-se (fn [s]
-                       (either (or (map (get-in (extract core-agent) [.value-types 0 sym])
-                                        (fn [expr]
-                                          [expr s]))
-                                   ;; last ditch effort
-                                   (let [core-prom (promise)]
-                                     (send core-agent (fn [mod]
-                                                        (deliver core-prom
-                                                                 (get-in mod [.value-types 0 sym]))
-                                                        mod))
-                                     (map (extract core-prom)
-                                          (fn [expr]
-                                            [expr s]))))
-                               se/Failure)))
-          (cond (flat-map (first (str sym))
-                          (partial = "."))
-                (create-new-getter sym)
+  (let [file-loc (ast/location sym)
+        sym (ast/untag sym)]
+    (map (comp (se/get-in-val [.module .value-types 0 sym])
+               (se/new-se (fn [s]
+                            (either (or (map (get-in (extract core-agent) [.value-types 0 sym])
+                                             (fn [expr]
+                                               [expr s]))
+                                        ;; last ditch effort
+                                        (let [core-prom (promise)]
+                                          (send core-agent (fn [mod]
+                                                             (deliver core-prom
+                                                                      (get-in mod [.value-types 0 sym]))
+                                                             mod))
+                                          (map (extract core-prom)
+                                               (fn [expr]
+                                                 [expr s]))))
+                                    se/Failure)))
+               (cond (flat-map (first (str sym))
+                               (partial = "."))
+                     (create-new-getter sym)
 
-                (-> ["Could not find type constraint for" (str "'" sym "'")
-                     "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
-                    (interpose " ")
-                    to-str
-                    se/throw)))))
+                     (-> ["Could not find type constraint for" (str "'" sym "'")
+                          "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
+                         (interpose " ")
+                         to-str
+                         se/throw)))
+         (fn [ast]
+           (cond (instance? Tagged (.ast ast))
+                 (.ast ast (ast/tag (.ast ast) file-loc))
+
+                 ast)))))
 
 (defn remove-type-constraint [sym]
   (assert (instance? Tagged sym))
@@ -7887,24 +7893,30 @@
                       (set-type-constraint sym (.constraint curr-const new-const)))]
           new-const)))
 
-(defn update-constraint [constrained constraint]
-  (assert (instance? ConstrainedAST constrained))
-  (assert (instance? c/Constraints constraint))
+(defn update-constraint
+  ([constrained constraint]
+   (update-constraint constrained constraint
+                      (c/Location "type checker testing" _LINE_)))
 
-  ;; TODO: need to check if 'sym' satisfies 'c'
-  ;; and add runtime-check notation if not
-  (let [new-c (c/intersect (.constraint constrained) constraint)]
-    (cond (= new-c c/bottom-type)
-          (do
-            (c/conflicting-assertions new-c "type checker testing" _LINE_)
-            (abort))
+  ([constrained constraint loc]
+   (assert (instance? ConstrainedAST constrained))
+   (assert (instance? c/Constraints constraint))
+   (assert (instance? c/Location loc))
 
-          (either (map (instance? Tagged (.ast constrained))
-                       (fn [sym]
-                         (map (append-type-constraint _LINE_ sym constraint)
-                              (fn [_]
-                                (.constraint constrained new-c)))))
-                  (se/state-error (.constraint constrained new-c))))))
+   ;; TODO: need to check if 'sym' satisfies 'c'
+   ;; and add runtime-check notation if not
+   (let [new-c (c/intersect (.constraint constrained) constraint)]
+     (cond (= new-c c/bottom-type)
+           (do
+             (c/conflicting-assertions new-c (.file loc) (.line loc))
+             (abort))
+
+           (either (map (instance? Tagged (.ast constrained))
+                        (fn [sym]
+                          (map (append-type-constraint _LINE_ sym constraint)
+                               (fn [_]
+                                 (.constraint constrained new-c)))))
+                   (se/state-error (.constraint constrained new-c)))))))
 
 (defn get-types []
   (se/get-in-val [.module .value-types 0]))
@@ -8246,31 +8258,34 @@
                                  next-result)))))
 
 (def special-call-targets
-  {'vector (fn [_ args]
+  {'vector (fn [target _ args]
              (-> c/empty-items-constraint
                  (.items-constraints (map args .constraint))
                  (c/intersect vect-constraint)
                  (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
+                 (c/update-path (ast/location target))
                  Left
                  se/state-error))
 
-   'list (fn [_ args]
+   'list (fn [target _ args]
            (-> c/empty-items-constraint
                (.items-constraints (map args .constraint))
                (c/intersect list-constraint)
                (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
+               (c/update-path (ast/location target))
                Left
                se/state-error))
 
-   'maybe (fn [_ args]
+   'maybe (fn [target _ args]
             (-> (either (map (first args) .constraint)
                         c/top-type)
                 (c/CollectionOf empty-list nothing "")
                 (c/intersect maybe-constraint)
+                (c/update-path (ast/location target))
                 Left
                 se/state-error))
 
-   'map (fn [arity args]
+   'map (fn [target arity args]
           (let [[coll f] args
                 coll-contents (c/extract-contents-constraint (.constraint coll))
                 maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
@@ -8281,12 +8296,16 @@
                                                    (c/extract-items-constraints 1)
                                                    first)))
                                    c/top-type)]
-            (for [coll (update-constraint coll (c/CollectionOf inferred-c empty-list nothing ""))]
-              (Left (c/InferredInner (either (map maybe-arity .result-const)
-                                             c/top-type)
-                                     empty-list nothing "")))))
+            (for [coll (update-constraint coll (-> (c/CollectionOf inferred-c empty-list nothing "")
+                                                   (c/update-path (ast/location target)))
+                                          (ast/location target))]
+              (-> (c/InferredInner (either (map maybe-arity .result-const)
+                                           c/top-type)
+                                   empty-list nothing "")
+                  (c/update-path (ast/location target))
+                  Left))))
 
-   'flat-map (fn [arity args]
+   'flat-map (fn [target arity args]
                (let [[coll f] args
                      coll-contents (c/extract-contents-constraint (.constraint coll))
                      maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
@@ -8297,26 +8316,36 @@
                                                         (c/extract-items-constraints 1)
                                                         first)))
                                         c/top-type)]
-                 (for [coll (update-constraint coll (c/CollectionOf inferred-c empty-list nothing ""))]
-                   (Left (c/InferredInner (either (map maybe-arity (fn [arity]
-                                                                     (-> arity
-                                                                         .result-const
-                                                                         c/extract-contents-constraint)))
-                                                  c/top-type)
-                                          empty-list nothing "")))))
+                 (for [coll (update-constraint coll (-> (c/CollectionOf inferred-c empty-list nothing "")
+                                                        (c/update-path (ast/location target)))
+                                               (ast/location target))]
+                   (-> (c/InferredInner (either (map maybe-arity (fn [arity]
+                                                                   (-> arity
+                                                                       .result-const
+                                                                       c/extract-contents-constraint)))
+                                                c/top-type)
+                                        empty-list nothing "")
+                       (c/update-path (ast/location target))
+                       Left))))
 
-   'reduce (fn [arity args]
+   'reduce (fn [target arity args]
              (let [[coll init-accum f] args
-                   result-c (reduce-fixed-point (.ast f) (.constraint init-accum))
-                   maybe-arity (find-arity (.ast f) (constraint-type-num result-c) 2)
+                   f (.ast f)
+                   result-c (reduce-fixed-point f (.constraint init-accum))
+                   maybe-arity (find-arity f (constraint-type-num result-c) 2)
                    [accum-c inferred-c] (either (map maybe-arity
                                                      (fn [arity]
                                                        ;; TODO: arity could be an 'invoke' arity with 3 args
                                                        (c/extract-items-constraints (.param-consts arity) 2)))
                                                 [c/top-type c/top-type])]
-               (for [init-accum (update-constraint init-accum accum-c)
-                     coll (update-constraint coll (c/CollectionOf inferred-c empty-list nothing ""))]
-                 (Left result-c))))
+               (for [init-accum (update-constraint init-accum (-> accum-c
+                                                                  (c/update-path (ast/location target)))
+                                                   (ast/location target))
+                     coll (update-constraint coll (c/CollectionOf inferred-c empty-list nothing "")
+                                             (ast/location target))]
+                 (-> accum-c
+                     (c/update-path (ast/location target))
+                     Left))))
    })
 
 (extend-type ast/fn-ast
@@ -8349,11 +8378,11 @@
                          (zip-lists args)
                          vec
                          (se/traverse (fn [[c arg]]
-                                        (update-constraint arg c)))
+                                        (update-constraint arg c (ast/location target))))
                          (flat-map (fn [args]
                                      (either (map (get special-call-targets target)
                                                   (fn [f]
-                                                    (f arity args)))
+                                                    (f target arity args)))
                                              (se/state-error (Left (.result-const arity)))))))))
               (se/throw (str "Could not find implementation of " (str "'" (.fn-sym ast) "'")
                              ;; TOOD: add location
@@ -8421,11 +8450,11 @@
                             (zip-lists args)
                             vec
                             (se/traverse (fn [[c arg]]
-                                           (update-constraint arg c)))
+                                           (update-constraint arg c (ast/location target))))
                             (flat-map (fn [args]
                                      (either (map (get special-call-targets target)
                                                   (fn [f]
-                                                    (f arity args)))
+                                                    (f target arity args)))
                                              (se/state-error (Left (.result-const arity))))))))))
               (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at"
                    ;; TODO: add location
@@ -8655,7 +8684,7 @@
                       result-c (.result-const arity)]
                   (map (se/traverse (zip-lists args (rest (c/extract-items-constraints param-cs num-args)))
                                     (fn [[arg c]]
-                                      (update-constraint arg c)))
+                                      (update-constraint arg c (ast/location target))))
                        (fn [_]
                          (Left result-c)))))
               (-> ["No 'invoke' implementation found for"
@@ -8713,10 +8742,16 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (for [result-type (apo (fn [inner-ast]
-                             (check-call-site inner-ast (.args ast) (.call-target old-ast)))
-                           (.call-target ast) se/state-error)]
-      (ConstrainedAST old-ast result-type))))
+    (let [call-location (ast/location (.call-target old-ast))]
+      (for [result-type (apo (fn [inner-ast]
+                               (check-call-site inner-ast (.args ast) (.call-target old-ast)))
+                             (.call-target ast) se/state-error)
+            ;; new-args (se/traverse (.args ast)
+            ;;                       (fn [arg-ast]
+            ;;                         (add-to-path arg-ast call-location)))
+            ]
+        (ConstrainedAST (.args old-ast (.args ast))
+                        result-type)))))
 
 (extend-type ast/extend-ast
   TypeChecker
@@ -8744,6 +8779,11 @@
 
 (extend-type ast/let-ast
   TypeChecker
+  (check-call-site [ast args target]
+    (either (map (last (.body ast)) (fn [last-ast]
+                                      (check-call-site last-ast args target)))
+            (se/state-error (Left c/top-type))))
+
   (pre-check [ast]
     (-> ast
         (.body (remove (.body ast) (partial instance? ast/block-comment-ast)))
@@ -8791,11 +8831,14 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (for [new-clause (update-constraint (.clause ast) maybe-constraint)]
+    (for [new-clause (update-constraint (.clause ast) (-> maybe-constraint
+                                                          (c/update-path (ast/location old-ast)))
+                                        (ast/location old-ast))]
       (-> ast
           (.clause new-clause)
-          (ConstrainedAST (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
-                                       (.constraint (.alt ast))]))))))
+          (ConstrainedAST (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
+                                           (.constraint (.alt ast))])
+                              (c/update-path (ast/location old-ast))))))))
 
 (extend-type ast/declaration-ast
   TypeChecker
@@ -8820,11 +8863,14 @@
            ast)))
 
   (type-check [ast old-ast]
-    (for [new-conditional (update-constraint (.conditional ast) maybe-constraint)
+    (for [new-conditional (update-constraint (.conditional ast) (-> maybe-constraint
+                                                                    (c/update-path (ast/location old-ast)))
+                                             (ast/location old-ast))
           types (pop-types)]
       (-> ast
           (.conditional new-conditional)
-          (ConstrainedAST (.constraint (.value ast)))
+          (ConstrainedAST (-> (.constraint (.value ast))
+                              (c/update-path (ast/location old-ast))))
           (CheckedCondVal types)))))
 
 (extend-type ast/cond-ast
@@ -8886,7 +8932,8 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (for [new-clause (update-constraint (.clause ast) maybe-constraint)
+    (for [new-clause (update-constraint (.clause ast) (-> maybe-constraint
+                                                          (c/update-path (ast/location old-ast))))
           types (get-types)]
       (CheckedCondVal new-clause types))))
 
@@ -8929,7 +8976,8 @@
            ast)))
 
   (type-check [ast old-ast]
-    (for [new-clause (update-constraint (.clause ast) maybe-constraint)
+    (for [new-clause (update-constraint (.clause ast) (-> maybe-constraint
+                                                          (c/update-path (ast/location old-ast))))
           types (pop-types)]
       (CheckedCondVal new-clause types))))
 
@@ -9193,6 +9241,10 @@
   TypeChecker
   (pre-check [ast]
     (se/state-error (reify
+                      Stringable
+                      (string-list [_]
+                        (list (str "'" (.q-val ast))))
+
                       Container
                       (map [x f embed]
                         (embed x))
