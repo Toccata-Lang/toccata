@@ -17,7 +17,7 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "1c52006"))
+                          :sha "d94ab77"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "e93f16b"))
@@ -7732,8 +7732,11 @@
 (defn get-param-types [params]
   (assert (instance? ast/params-ast params))
 
-  ;; TODO: strip the constraints
-  (cata param-types params se/state-error))
+  (map (cata param-types params se/state-error)
+       (fn [c]
+         (assert (instance? c/MultiConstraint c))
+         (either (some (.constraints c) (partial instance? c/ItemsConstraint))
+                 c/empty-items-constraint))))
 
 (defn recover-types [params]
   (assert (instance? ast/params-ast params))
@@ -8009,9 +8012,7 @@
                     (.var (.var c)))]
       (map (either (map (.sym old-c)
                         (fn [sym]
-                          (flat-map (se/assoc-in-val [.module .types (ast/untag sym)] new-c)
-                                    (fn [_]
-                                      (append-type-constraint _LINE_ sym new-c)))))
+                          (append-type-constraint _LINE_ sym new-c)))
                    se-nop)
            (fn [_]
              (ConstrainedAST new-c new-c))))))
@@ -8072,10 +8073,12 @@
        (fn [_]
          (either (map (instance? c/Constraints (.ast constrained))
                       (fn [constraint]
-                        (let [constraint (c/update-type-name constraint (.sym old-ast))
-                              constrained (.constraint constrained constraint)]
-                          (for [_ (se/assoc-in-val [.module .types (ast/untag (.sym old-ast))]
-                                                   constraint)
+                        (let [c1 (c/update-type-name constraint (ast/untag (.sym old-ast)))
+                              constrained (ConstrainedAST c1 c1)]
+                          (for [;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
+                                ;; the updated version. Possibly a bug in assoc-in*
+                                _ (se/assoc-in-val [.module .types (ast/untag (.sym old-ast))]
+                                                   c1)
                                 _ (set-type-constraint (.sym old-ast) constrained)]
                             constrained))))
                  (map (set-type-constraint (.sym old-ast) constrained)
@@ -8203,7 +8206,8 @@
     (se/state-error (-> c/empty-items-constraint
                         (.tail-constraint (either (.variadic params)
                                                   c/top-type))
-                        (.items-constraints (.fixed params)))))
+                        (.items-constraints (.fixed params))
+                        (c/intersect seq-constraint))))
 
   (type-check [ast old-ast]
     (either (map (.variadic old-ast)
@@ -8211,7 +8215,7 @@
                    (for [_ (set-type-constraint var-sym
                                                 (ConstrainedAST var-sym
                                                                 (-> list-constraint
-                                                                    (c/update-path (ast/location old-ast)))))]
+                                                                    (c/update-path (ast/location var-sym)))))]
                      old-ast)))
             (se/state-error old-ast))))
 
