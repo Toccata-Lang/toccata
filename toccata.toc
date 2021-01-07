@@ -9024,7 +9024,8 @@
 
 (defn add-prototype-assertions [dispatch-type [proto-sym fn-sym arity]]
   (for [prototype (find-prototype proto-sym fn-sym (count (.fixed (.params arity))))]
-    (let [param-cs (c/intersect (.param-consts prototype)
+    (let [loc (ast/location arity)
+          param-cs (c/intersect (.param-consts prototype)
                                 dispatch-type)
           param-cs (c/intersect param-cs
                                 (.param-consts arity))
@@ -9033,8 +9034,7 @@
           _ (either (map (or (= c/bottom-type param-cs)
                              (= c/bottom-type result-c))
                          (fn [failure-c]
-                           (c/conflicting-assertions failure-c
-                                                     "type checker testing" _LINE_)
+                           (c/conflicting-assertions failure-c (.file loc) (.line loc))
                            (abort)))
                     '_)
           new-arity (-> arity
@@ -9097,34 +9097,40 @@
   TypeChecker
   (pre-check [ast]
     (let [sym (.sym ast)
+          loc (ast/location sym)
           fields (-> (.fields ast)
                      .fixed
                      (map ast/untag))
           field-destruct (DestructFields fields)
           field-assertions (-> c/empty-items-constraint
                                (.items-constraints (filter (.impls ast) (partial instance? c/ValueConstraint)))
-                               (.tail-constraint (c/CollectionOf c/top-type empty-list nothing "")))
+                               (.tail-constraint (c/CollectionOf c/top-type empty-list nothing ""))
+                               (c/update-path loc))
           type-num (new-type-number sym)
           type-map {type-num (-> fields
                                  (map (fn [name]
                                         (symbol (str "." name))))
                                  set)}
-          new-type-constraint (c/TypeConstraint type-map empty-list sym nothing "")
+          new-type-constraint (-> (c/TypeConstraint type-map empty-list sym nothing "")
+                                  (c/update-path loc))
           default-impls (default-type-impls sym type-num fields)]
       (for [_ (se/assoc-in-val [.module .types (ast/untag sym)]
                                new-type-constraint)
             _ (se/assoc-in-val [.constants .type-names type-num] (str sym))
-            _ (set-type-constraint sym (ConstrainedAST sym fn-constraint))
+            _ (set-type-constraint sym (ConstrainedAST sym (-> fn-constraint
+                                                               (c/update-path loc))))
             _ (push-types)
             _ (se/traverse fields (fn [sym]
-                                    (set-type-constraint sym (ConstrainedAST sym c/top-type))))
+                                    (set-type-constraint sym (ConstrainedAST sym (-> c/top-type
+                                                                                     (c/update-path loc))))))
             field-assertions (se-translate (lookup-constraint field-assertions))
             impls (-> (.impls ast)
                       (remove (partial instance? c/Constraints))
                       (flat-map impl-arities)
                       (se/traverse (partial add-prototype-assertions (-> c/empty-items-constraint
                                                                          (.items-constraints [new-type-constraint])
-                                                                         (.tail-constraint c/top-type)))))]
+                                                                         (.tail-constraint c/top-type)
+                                                                         (c/update-path loc)))))]
         (let [impls (reduce impls {}
                             (fn [impls [proto-sym fn-sym arity]]
                               (either (update-in impls [proto-sym fn-sym]
