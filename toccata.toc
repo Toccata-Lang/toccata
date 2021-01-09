@@ -7015,7 +7015,7 @@
           (conj (map fields
                      (fn [field]
                        (ast/call-ast identical-sym
-                                     [(ast/tag (str "." field))
+                                     [(ast/tag (str "." field) file-name line-number)
                                       field*])))
                 nothing-sym))])]}
 
@@ -7144,7 +7144,8 @@
                  [(c/update-sym field-constraint (ast/untag field-arg))
                   ;; TODO: add replacing of dynamic field constraint
                   (ast/inline-ast (ast/tag 'C)
-                                  (c/TypeConstraint {} empty-list sym nothing "")
+                                  (-> (c/TypeConstraint {} empty-list sym nothing "")
+                                      (c/update-path (ast/location sym)))
                                   (str "return(updateField(value_0, field_1, "
                                        field-index "));\n")
                                   "" 0)])
@@ -7264,8 +7265,8 @@
                                          (map (fn [name]
                                                 (symbol (str "." name))))
                                          set)}
-                  new-type-constraint (c/TypeConstraint type-map (list [file-name line-number])
-                                                        (.sym ast) nothing "")]
+                  new-type-constraint (-> (c/TypeConstraint type-map empty-list (.sym ast) nothing "")
+                                          (c/update-path file-name line-number))]
               (for [_ (emit-definition (ast/declaration-ast (.sym ast)))
                     _ (sm/assoc-in-val [.module .types sym] new-type-constraint)
                     _ (sm/assoc-in-val [.constants .type-names type-num] (str sym))
@@ -7762,7 +7763,8 @@
 (defn add-getter [sym types-list]
   (let [loc (ast/location sym)
         sym (ast/untag sym)
-        getter-field-c (c/FieldConstraint sym "" empty-list (maybe (symbol "#x")) "")
+        getter-field-c (-> (c/FieldConstraint sym "" empty-list nothing "")
+                           (c/update-path loc))
         getter (ConstrainedAST (PrototypeImpls
                                 sym
                                 {c/UnknownType {1 (ast/fn-arity-ast (ast/tag sym)
@@ -7770,17 +7772,20 @@
                                                                     (ast/params [(ast/tag "#x")])
                                                                     ""
                                                                     []
-                                                                    (c/ItemsConstraint [getter-field-c] c/bottom-type
-                                                                                       empty-list nothing "")
+                                                                    (-> (c/ItemsConstraint [getter-field-c]
+                                                                                           c/bottom-type
+                                                                                           empty-list nothing "")
+                                                                        (c/update-path loc))
                                                                     c/top-type)
                                                 2 (ast/fn-arity-ast (ast/tag sym)
                                                                     ""
                                                                     (ast/params [(ast/tag "#x") (ast/tag "#y")])
                                                                     ""
                                                                     []
-                                                                    (c/ItemsConstraint [getter-field-c c/top-type]
-                                                                                       c/bottom-type
-                                                                                       empty-list nothing "")
+                                                                    (-> (c/ItemsConstraint [getter-field-c c/top-type]
+                                                                                           c/bottom-type
+                                                                                           empty-list nothing "")
+                                                                        (c/update-path loc))
                                                                     c/top-type)}})
                                (-> fn-constraint
                                    (c/update-path loc)))
@@ -7805,14 +7810,7 @@
                    'Type Type-protocol}))))
 
 (defn create-new-getter [sym]
-  (let [loc (ast/location sym)
-        protocol (ast/protocol-ast Type-sym
-                                   [(ast/prototype sym
-                                                   (ast/params [(ast/tag "#x")])
-                                                   (ast/block-comment "" 0 []) [])
-                                    (ast/prototype sym
-                                                   (ast/params [(ast/tag "#x") (ast/tag "#y")])
-                                                   (ast/block-comment "" 0 []) [])])]
+  (let [loc (ast/location sym)]
     (for [mod-index (se/get-in-val [.module .index])
           _ (cond (= 0 mod-index)
                   (for [_ (se/update-in-val [.module .value-types]
@@ -8629,7 +8627,8 @@
                 _ (map (or (= c/bottom-type param-cs)
                            (= c/bottom-type result-c))
                        (fn [failure-c]
-                         (c/conflicting-assertions failure-c "type checker testing" _LINE_)
+                         (let [loc (ast/location (.params arity))]
+                           (c/conflicting-assertions failure-c (.file loc) (.line loc)))
                          ;; TODO: that should work but doesn't type check
                          ;; (se/throw failure-c)
                          (abort)))
@@ -8823,7 +8822,11 @@
 (deftype CheckedCondVal [ast types]
   Stringable
   (string-list [_]
-    (list "(CheckedCondVal " (str ast) "\n<types>)")))
+    (list "(CheckedCondVal " (str ast) "\n<types>)"))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location ast)))
 
 (extend-type ast/cond-val-ast
   TypeChecker
@@ -8882,6 +8885,10 @@
   (map [_ f embed]
     (map (f clause) AndClause))
 
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
   TypeChecker
   (type-check [ast old-ast]
     (for [new-clause (update-constraint (.clause ast) (-> maybe-constraint
@@ -8923,6 +8930,10 @@
   (map [_ f embed]
     (map (f clause) OrClause))
 
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
   TypeChecker
   (pre-check [ast]
     (map (push-types)
@@ -8955,9 +8966,10 @@
                          (.clauses (map (.clauses ast) .ast))
                          (ConstrainedAST (-> (.clauses ast)
                                              (map (comp .constraint .ast))
-                                             c/sum-type))))))
+                                             c/sum-type
+                                             (c/update-path (cata ast/location old-ast))))))))
             (se/state-error (ConstrainedAST ast (-> maybe-constraint
-                                                    (c/update-path (ast/location old-ast))))))))
+                                                    (c/update-path (cata ast/location old-ast))))))))
 
 (extend-type String
   TypeChecker
@@ -9072,10 +9084,10 @@
   (type-check [ast old-ast]
     (se/state-error ast)))
 
-(deftype CreateGetters [sym fields]
+(deftype CreateGetters [sym fields loc]
   Stringable
   (string-list [_]
-    (list "(CreateGetters " (to-str fields) ")"))
+    (list "(CreateGetters " (str sym) " " (to-str fields) " " (str loc) ")"))
 
   Container
   (map [x f] x)
@@ -9084,7 +9096,7 @@
   TypeChecker
   (pre-check [ast]
     (map (se/traverse fields (fn [field]
-                               (for [_ (get-type-constraint (symbol (str "." field)))
+                               (for [_ (create-new-getter (ast/tag (str "." field) loc))
                                      field-c (map (get-type-constraint field)
                                                   (fn [field-info]
                                                     (cata promote-inferred (.constraint field-info))))
@@ -9113,7 +9125,7 @@
                                  set)}
           new-type-constraint (-> (c/TypeConstraint type-map empty-list sym nothing "")
                                   (c/update-path loc))
-          default-impls (default-type-impls sym type-num fields)]
+          default-impls (default-type-impls (ast/tag sym loc) type-num fields)]
       (for [_ (se/assoc-in-val [.module .types (ast/untag sym)]
                                new-type-constraint)
             _ (se/assoc-in-val [.constants .type-names type-num] (str sym))
@@ -9172,7 +9184,7 @@
           [(map (.items-constraints field-assertions) TypeCheckOnly)
            (TypeCheckOnly (ast/extend-ast sym default-impls))
            (TypeCheckOnly (ast/extend-ast sym impls))
-           (CreateGetters sym fields)
+           (CreateGetters sym fields loc)
            (cond (empty? hash-map-impls)
                  (ast/block-comment "" 0 [])
                  (ast/extend-ast sym hash-map-impls))
@@ -9184,13 +9196,28 @@
   TypeChecker
   (pre-check [ast]
     (se/state-error (reify
+                      Type
+                      (type-name [_]
+                        (str "reified at " _LINE_))
+
                       Stringable
                       (string-list [_]
                         (list (str "'" (.q-val ast))))
 
+                      Eq
+                      (=* [_ y]
+                        (= y (.q-val ast)))
+
                       Container
+                      (map [x f]
+                        x)
+
                       (map [x f embed]
                         (embed x))
+
+                      ast/FileLoc
+                      (ast/location [_]
+                        (ast/location ast))
 
                       TypeChecker
                       (type-check [ast old-ast]
