@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "d94ab77"))
+                          :sha "2868067"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "1f79c0c"))
+                            :sha "c633cb6"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "584ef89"))
+                            :sha "9f9dae1"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -8262,6 +8262,16 @@
              (reduce-fixed-point f (conj results result)
                                  next-result)))))
 
+(defn adding-to-list [target item list-arg]
+  (-> c/empty-items-constraint
+      (.items-constraints [item])
+      (.tail-constraint list-arg)
+      (c/intersect list-constraint)
+      c/trim
+      (c/update-path (ast/location target))))
+
+;; TODO: these all need to return args with updated constraints to be put into
+;; the call site
 (def special-call-targets
   {'vector (fn [target _ args]
              (-> c/empty-items-constraint
@@ -8281,18 +8291,103 @@
                Left
                se/state-error))
 
-   'maybe (fn [target _ args]
-            (-> (either (map (first args) .constraint)
-                        c/top-type)
+   'vec (fn [target _ [arg]]
+          (se/state-error (Left (-> (c/set-type (.constraint arg) vect-constraint)
+                                    (c/update-path (ast/location target))))))
+
+   'seq (fn [target _ [arg]]
+          (let [new-c (-> (c/set-type (.constraint arg) list-constraint)
+                          (c/update-path (ast/location target)))]
+            (se/state-error (Left new-c))))
+
+   'extract (fn [target arity [coll]]
+              ;; TODO: check to see if coll has 'always-empty' or static length of 0
+              (either (map (= c/top-type (.result-const arity))
+                           (fn [_]
+                             (-> coll
+                                 .constraint
+                                 c/extract-contents-constraint
+                                 (c/InferredInner empty-list nothing "")
+                                 (c/update-path (ast/location target))
+                                 Left 
+                                 se/state-error)))
+                      ;; TODO: write test for this
+                      (se/state-error (Left (.result-const arity)))))
+
+   'last (fn [target arity [coll]]
+           (either (map (= c/top-type (c/extract-contents-constraint (.result-const arity)))
+                        (fn [_]
+                          (-> coll
+                              .constraint
+                              c/extract-contents-constraint
+                              (c/InferredInner empty-list nothing "")
+                              (c/intersect maybe-constraint)
+                              (c/update-path (ast/location target))
+                              Left 
+                              se/state-error)))
+                   ;; TODO: write test for this
+                   (se/state-error (Left (.result-const arity)))))
+
+   'first (fn [target arity [coll]]
+            (let [coll-c (.constraint coll)
+                  coll-type (constraint-type-num coll-c)
+                  item-c (either (map (or (= c/ListType coll-type)
+                                          (= c/VectorType coll-type))
+                                      (fn [_]
+                                        (let [[item-c] (c/extract-items-constraints coll-c 1)]
+                                          item-c)))
+                                 (c/extract-contents-constraint coll-c))]
+              (either (map (= c/top-type (c/extract-contents-constraint (.result-const arity)))
+                           (fn [_]
+                             (-> item-c
+                                 (c/InferredInner empty-list nothing "")
+                                 (c/intersect maybe-constraint)
+                                 (c/intersect (.result-const arity))
+                                 (c/update-path (ast/location target))
+                                 Left 
+                                 se/state-error)))
+                      ;; TODO: write test for this
+                      (se/state-error (Left (.result-const arity))))))
+
+   'cons (fn [target _ [item-arg coll-arg]]
+           (let [item (.constraint item-arg)
+                 coll (.constraint coll-arg)]
+             (for [_ (update-constraint item-arg (-> coll
+                                                     c/extract-collection-of
+                                                     c/extract-contents-constraint))]
+               (Left (adding-to-list target item coll)))))
+
+   'conj (fn [target _ [coll-arg item-arg]]
+           (let [coll (.constraint coll-arg)
+                 item (.constraint item-arg)
+                 new-coll (either (or (map (= c/ListType (constraint-type-num coll))
+                                           (fn [_]
+                                             (adding-to-list target item coll)))
+                                      (map (= (c/intersect item (c/extract-contents-constraint coll))
+                                              c/bottom-type)
+                                           (fn [failure-c]
+                                             (let [loc (ast/location target)]
+                                               (c/conflicting-assertions failure-c (.file loc) (.line loc)))
+                                             (abort))))
+                                  (-> item
+                                      (c/InferredInner empty-list nothing "")
+                                      (c/intersect coll)
+                                      (c/update-path (ast/location target))))]
+             (for [_ (update-constraint item-arg (-> coll
+                                                     c/extract-collection-of
+                                                     c/extract-contents-constraint))]
+               (Left new-coll))))
+
+   'maybe (fn [target _ [item-arg]]
+            (-> (.constraint item-arg)
                 (c/CollectionOf empty-list nothing "")
                 (c/intersect maybe-constraint)
                 (c/update-path (ast/location target))
                 Left
                 se/state-error))
 
-   'map (fn [target arity args]
-          (let [[coll f] args
-                coll-contents (c/extract-contents-constraint (.constraint coll))
+   'map (fn [target arity [coll f]]
+          (let [coll-contents (c/extract-contents-constraint (.constraint coll))
                 maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
                 inferred-c (either (flat-map maybe-arity
                                              (fn [arity]
@@ -8310,9 +8405,8 @@
                   (c/update-path (ast/location target))
                   Left))))
 
-   'flat-map (fn [target arity args]
-               (let [[coll f] args
-                     coll-contents (c/extract-contents-constraint (.constraint coll))
+   'flat-map (fn [target arity [coll f]]
+               (let [coll-contents (c/extract-contents-constraint (.constraint coll))
                      maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
                      inferred-c (either (flat-map maybe-arity
                                                   (fn [arity]
@@ -8333,9 +8427,8 @@
                        (c/update-path (ast/location target))
                        Left))))
 
-   'reduce (fn [target arity args]
-             (let [[coll init-accum f] args
-                   f (.ast f)
+   'reduce (fn [target arity [coll init-accum f]]
+             (let [f (.ast f)
                    result-c (reduce-fixed-point f (.constraint init-accum))
                    maybe-arity (find-arity f (constraint-type-num result-c) 2)
                    [accum-c inferred-c] (either (map maybe-arity
@@ -8443,8 +8536,7 @@
       (either (map (first args)
                    (fn [disp-arg]
                      (let [type-num (constraint-type-num (.constraint disp-arg))
-                           arity (either (or (get-in proto-impls [.impls type-num num-args])
-                                             (get-in proto-impls [.impls c/UnknownType num-args]))
+                           arity (either (find-arity proto-impls type-num num-args)
                                          (do
                                            (print-err "Could not find arity for" (str "'" (.fn-sym proto-impls) "'")
                                                       "with" num-args "arguments."
