@@ -2596,7 +2596,9 @@
     (TailExpr (f ast)))
 
   (map [x f embed]
-    (map (f x) TailExpr))
+    (map (f ast)
+         (fn [new-ast]
+           (TailExpr new-ast))))
 
   Emitter
   (emit [_]
@@ -2749,12 +2751,11 @@
 
   Container
   (map [x f]
-    (TailCall (f ast) (map params f)))
+    (TailCall (f ast) params))
 
   (map [x f embed]
-    (for [new-ast (f ast)
-          new-params (map params f embed)]
-      (TailCall new-ast new-params)))
+    (for [new-ast (f ast)]
+      (TailCall new-ast params)))
 
   ast/FileLineInfo
   (ast/file-name [_]
@@ -6033,7 +6034,6 @@
         Left)))
 
 (deftype TailEither [clause alt]
-
   Stringable
   (string-list [expr]
     (list "(TailEither " (str clause) "\n" (str alt) ")"))
@@ -8235,28 +8235,24 @@
           _ (ana constrain-all-syms (ParamConstraintPair (.params ast)
                                                          (.param-consts ast))
                  se/state-error)]
-      (.body ast (remove (.body ast) (partial instance? ast/block-comment-ast)))))
+      (.body ast (comp (filter (.body ast) (partial instance? c/Constraints))
+                       (-> (.body ast)
+                           (remove (partial instance? c/Constraints))
+                           (remove (partial instance? ast/block-comment-ast))
+                           (tail-call []))))))
 
   (type-check [ast old-ast]
     (for [pts (get-param-types (.params old-ast))
-          result-c (se/try
-                     (get-type-constraint (symbol "#result"))
-                     (fn [_]
-                       (se/state-error (ConstrainedAST (symbol "#result") c/top-type))))
           _ (recover-type-constraint (symbol "#result"))
           _ (recover-types (.params old-ast))
           _ (nip-types)]
       (let [loc (ast/location old-ast)
-            result-c (-> (.constraint result-c)
-                         (c/update-path loc)
-                         (c/intersect (.result-const ast))
-                         (c/intersect (either (map (last (.body ast)) .constraint)
-                                              c/top-type)))
+            result-c (either (map (last (.body ast)) .constraint)
+                             c/top-type)
             pts (-> pts
                     (c/intersect (.param-consts ast))
                     (c/update-path loc))]
-        (either (map (or (= c/bottom-type result-c)
-                         (= c/bottom-type pts))
+        (either (map (= c/bottom-type pts)
                      (fn [failure-c]
                        (c/conflicting-assertions failure-c (.file loc) (.line loc))
                        (abort)))
@@ -8827,6 +8823,105 @@
                                                                       empty-list (symbol "reified value at")
                                                                       ;; TODO: add location
                                                                       nothing "")))))))))
+
+(extend-type TailHashMap
+  TypeChecker
+  (type-check [ast old-ast]
+    ;; TODO: finish when we can extract a constraint describing a literal hash-map
+    (se/state-error (ConstrainedAST ast c/top-type))))
+
+(extend-type TailExpr
+  TypeChecker
+  (type-check [ast old-ast]
+    (for [result-c (se/try
+                     (map (get-type-constraint (symbol "#result")) .constraint)
+                     (fn [_]
+                       (se/state-error c/top-type)))
+          new-inner (update-constraint (.ast ast) result-c (ast/location old-ast))]
+      (ConstrainedAST (.ast ast new-inner)
+                      (.constraint new-inner)))))
+
+(extend-type TailCall
+  TypeChecker
+  (type-check [ast old-ast]
+    (for [result-c (se/try
+                     (map (get-type-constraint (symbol "#result")) .constraint)
+                     (fn [_]
+                       (se/state-error c/top-type)))
+          new-inner (update-constraint (.ast ast) result-c (ast/location old-ast))]
+      (ConstrainedAST (.ast ast new-inner)
+                      (.constraint new-inner)))))
+
+(extend-type TailEither
+  TypeChecker
+  (type-check [ast old-ast]
+    (for [result-c (se/try
+                     (map (get-type-constraint (symbol "#result")) .constraint)
+                     (fn [_]
+                       (se/state-error c/top-type)))
+          new-clause (update-constraint (.clause ast) (c/intersect (c/InferredInner result-c
+                                                                                    empty-list nothing "")
+                                                                   maybe-constraint)
+                                        (ast/location (.clause ast)))
+          new-alt (update-constraint (.alt ast) result-c (ast/location (.alt ast)))]
+      (ConstrainedAST (-> ast
+                          (.clause new-clause)
+                          (.alt new-alt))
+                      (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
+                                   (.constraint new-alt)])))))
+
+(extend-type TailOr
+  TypeChecker
+  (type-check [ast old-ast]
+    (for [result-c (se/try
+                     (map (get-type-constraint (symbol "#result")) .constraint)
+                     (fn [_]
+                       (se/state-error c/top-type)))
+          new-clauses (se/traverse (.clauses ast)
+                                   (fn [clause]
+                                     (update-constraint clause result-c (ast/location clause))))]
+      (ConstrainedAST (.clauses ast new-clauses)
+                      (c/sum-type (map new-clauses .constraint))))))
+
+(extend-type TailAnd
+  TypeChecker
+  (type-check [ast old-ast]
+    (let [idx (dec (count (.clauses ast)))]
+      (for [result-c (se/try
+                       (map (get-type-constraint (symbol "#result")) .constraint)
+                       (fn [_]
+                         (se/state-error c/top-type)))
+            new-clauses (either (map (get (.clauses ast) idx)
+                                     (fn [last-clause]
+                                       (map (update-constraint last-clause result-c
+                                                               (ast/location last-clause))
+                                            (fn [new-clause]
+                                              (either (store (.clauses ast) idx new-clause)
+                                                      (.clauses ast))))))
+                                (se/state-error (.clauses ast)))]
+        (ConstrainedAST (.clauses ast new-clauses)
+                        (either (map (get new-clauses idx) .constraint)
+                                c/top-type))))))
+
+(extend-type TailCond
+  TypeChecker
+  (type-check [ast old-ast]
+    (for [result-c (se/try
+                     (map (get-type-constraint (symbol "#result")) .constraint)
+                     (fn [_]
+                       (se/state-error c/top-type)))
+          new-conds (se/traverse (.conditionals ast)
+                                 (fn [clause]
+                                   (map (update-constraint (.ast clause) result-c
+                                                           (ast/location clause))
+                                        (partial .ast clause))))
+          new-default (update-constraint (.default ast) result-c (ast/location (.default ast)))]
+      (ConstrainedAST (-> ast
+                          (.conditionals new-conds)
+                          (.default new-default))
+                      (c/sum-type (conj (map new-conds (fn [cond-val]
+                                                         (.constraint (.ast cond-val))))
+                                        (.constraint new-default)))))))
 
 (extend-type ast/call-ast
   TypeChecker
