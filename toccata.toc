@@ -8073,7 +8073,22 @@
     (let [constrained (either (last (.value-exprs ast))
                               (ConstrainedAST old-ast c/top-type))]
       (flat-map
-       ;; (se-debug 'def (.sym old-ast) (.constraint constrained))
+       ;; (cond (= (.file (ast/location (.sym old-ast))) 'core)
+       ;;       se-nop
+       ;;       (se-debug 'def (.sym old-ast) (either (map (instance? ast/fn-ast (.ast constrained))
+       ;;                                                  (fn [f]
+       ;;                                                    (to-str
+       ;;                                                     (list* 'fn " " (.fn-sym f) "\n"
+       ;;                                                            (-> (.arities f)
+       ;;                                                                (map (fn [arity]
+       ;;                                                                       (str
+       ;;                                                                        'arity (.params arity) "\n"
+       ;;                                                                        'param-consts " "
+       ;;                                                                        (.param-consts arity) "\n"
+       ;;                                                                        'result-const " "
+       ;;                                                                        (.result-const arity))))
+       ;;                                                                (interpose "\n\n"))))))
+       ;;                                             constrained)))
        se-nop
        (fn [_]
          (either (map (instance? c/Constraints (.ast constrained))
@@ -8156,15 +8171,17 @@
 
   (let [[param param-c] (type-args tup)]
     (cond (instance? Tagged param)
-          (map (set-type-constraint param (ConstrainedAST param param-c))
-               (fn [_]
-                 tup))
+          (-> param
+              (set-type-constraint (ConstrainedAST param param-c))
+              (map (fn [_]
+                     tup)))
+
           (let [loc (ast/location param)
-                new-param-cs  (-> param
-                                  (.variadic (or (.variadic param)
-                                                 (maybe '_)))
-                                  ast/new-param-constraints
-                                  (c/intersect param-c))
+                new-param-cs (-> param
+                                 (.variadic (or (.variadic param)
+                                                (maybe '_)))
+                                 ast/new-param-constraints
+                                 (c/intersect param-c))
                 new-param-cs (either (or (= c/bottom-type new-param-cs)
                                          (and (instance? c/TypeConstraint param-c)
                                               (maybe (ast/new-param-constraints param))))
@@ -8207,8 +8224,8 @@
                                                 (ConstrainedAST var-sym
                                                                 (-> list-constraint
                                                                     (c/update-path (ast/location var-sym)))))]
-                     old-ast)))
-            (se/state-error old-ast))))
+                     (ConstrainedAST old-ast c/top-type))))
+            (se/state-error (ConstrainedAST old-ast c/top-type)))))
 
 (extend-type ast/fn-arity-ast
   TypeChecker
@@ -8452,6 +8469,7 @@
     (or (some (.arities ast) (fn [arity]
                                (and (-> arity
                                         .params
+                                        .ast
                                         .fixed
                                         count
                                         (= arg-count))
@@ -8459,9 +8477,11 @@
         (some (.arities ast) (fn [arity]
                                (and (-> arity
                                         .params
+                                        .ast
                                         .variadic)
                                     (-> arity
                                         .params
+                                        .ast
                                         .fixed
                                         count
                                         (<= arg-count))
@@ -8714,7 +8734,7 @@
   (assert (instance? ast/tagged-symbol proto-sym))
   (assert (instance? ast/tagged-symbol fn-sym))
 
-  (let [arg-count (count (.fixed (.params arity)))]
+  (let [arg-count (count (.fixed (.ast (.params arity))))]
     (for [prototype (find-prototype proto-sym fn-sym arg-count)
           :let [proto-sym (ast/untag proto-sym)
                 fn-sym (ast/untag fn-sym)
@@ -8769,6 +8789,7 @@
                     arity (some invoke-arities (fn [arity]
                                                  (and (-> arity
                                                           .params
+                                                          .ast
                                                           .fixed
                                                           count
                                                           (=* num-args))
@@ -8868,12 +8889,16 @@
         se/state-error))
 
   (type-check [ast old-ast]
-    (map (se/traverse (reverse (.bindings old-ast))
+    (map (se/traverse (reverse (.bindings ast))
                       (fn [binding-ast]
-                        (for [_ (se/traverse (all-syms (.binding binding-ast))
-                                             recover-type-constraint)
-                              _ (nip-types)]
-                          '_)))
+                        (let [binding (.ast (.binding binding-ast))
+                              val (.val binding-ast)]
+                          (for [c (cata param-types binding se/state-error)
+                                _ (se/traverse (all-syms binding)
+                                               recover-type-constraint)
+                                _ (update-constraint val c (ast/location c))
+                                _ (nip-types)]
+                            '_))))
          (fn [_]
            (let [result-c (either (map (last (.body ast)) .constraint)
                                   c/top-type)]
