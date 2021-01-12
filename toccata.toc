@@ -8851,52 +8851,6 @@
           new (update-constraint (.ast ast) result-c (ast/location old-ast))]
       new)))
 
-(extend-type TailEither
-  TypeChecker
-  (type-check [ast old-ast]
-    (for [result-c (se/try
-                     (map (get-type-constraint (symbol "#result")) .constraint)
-                     (fn [_]
-                       (se/state-error c/top-type)))
-          new-clause (update-constraint (.clause ast) (c/intersect (c/InferredInner result-c
-                                                                                    empty-list nothing "")
-                                                                   maybe-constraint)
-                                        (ast/location (.clause ast)))
-          new-alt (update-constraint (.alt ast) result-c (ast/location (.alt ast)))]
-      (ConstrainedAST (-> ast
-                          (.clause new-clause)
-                          (.alt new-alt))
-                      (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
-                                   (.constraint new-alt)])))))
-
-(extend-type TailAnd
-  TypeChecker
-  (pre-check [ast]
-    (flat-map (append-type-constraint _LINE_ (symbol "#result")
-                                      (c/update-path maybe-constraint (ast/location ast)))
-              (fn [_]
-                (pre-check (ast/and-ast (.clauses ast)))))))
-
-(extend-type TailCond
-  TypeChecker
-  (type-check [ast old-ast]
-    (for [result-c (se/try
-                     (map (get-type-constraint (symbol "#result")) .constraint)
-                     (fn [_]
-                       (se/state-error c/top-type)))
-          new-conds (se/traverse (.conditionals ast)
-                                 (fn [clause]
-                                   (map (update-constraint (.ast clause) result-c
-                                                           (ast/location clause))
-                                        (partial .ast clause))))
-          new-default (update-constraint (.default ast) result-c (ast/location (.default ast)))]
-      (ConstrainedAST (-> ast
-                          (.conditionals new-conds)
-                          (.default new-default))
-                      (c/sum-type (conj (map new-conds (fn [cond-val]
-                                                         (.constraint (.ast cond-val))))
-                                        (.constraint new-default)))))))
-
 (extend-type ast/call-ast
   TypeChecker
   (find-arity [_ type-num n]
@@ -8998,23 +8952,6 @@
                   se-nop)]
       (.binding ast (.binding old-ast)))))
 
-(extend-type ast/either-ast
-  TypeChecker
-  (type-check [ast old-ast]
-    (for [new-clause (update-constraint (.clause ast) (-> maybe-constraint
-                                                          (c/update-path (ast/location old-ast)))
-                                        (ast/location old-ast))]
-      (-> ast
-          (.clause new-clause)
-          (ConstrainedAST (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
-                                           (.constraint (.alt ast))])
-                              (c/update-path (ast/location old-ast))))))))
-
-(extend-type ast/declaration-ast
-  TypeChecker
-  (type-check [ast old-ast]
-    (set-type-constraint (.sym ast) (ConstrainedAST c/top-type c/top-type))))
-
 (deftype CheckedCondVal [ast types]
   Stringable
   (string-list [_]
@@ -9024,7 +8961,22 @@
   (ast/location [_]
     (ast/location ast)))
 
-(extend-type ast/cond-val-ast
+(deftype OrClause [clause]
+  Stringable
+  (string-list [_]
+    (list "(OrClause " (str clause) ")"))
+
+  Container
+  (map [_ f]
+    (OrClause (f clause)))
+
+  (map [_ f embed]
+    (map (f clause) OrClause))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
   TypeChecker
   (pre-check [ast]
     (map (push-types)
@@ -9032,29 +8984,173 @@
            ast)))
 
   (type-check [ast old-ast]
-    (for [new-conditional (update-constraint (.conditional ast) (-> maybe-constraint
-                                                                    (c/update-path (ast/location old-ast)))
-                                             (ast/location old-ast))
+    (for [new-clause (update-constraint (.clause ast) (-> maybe-constraint
+                                                          (c/update-path (ast/location clause)))
+                                        (ast/location clause))
           types (pop-types)]
+      (CheckedCondVal new-clause types))))
+
+(extend-type ast/either-ast
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clause (OrClause (.clause ast)))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (for [_ (pop-types)
+          _ (push-types (.types (.clause ast)))
+          new-clause (update-constraint (.ast (.clause ast))
+                                        (-> maybe-constraint
+                                            (c/update-path (ast/location (.ast (.clause ast)))))
+                                        (ast/location (.ast (.clause ast))))]
       (-> ast
-          (.conditional new-conditional)
-          (ConstrainedAST (-> (.constraint (.value ast))
-                              (c/update-path (ast/location old-ast))))
-          (CheckedCondVal types)))))
+          (.clause new-clause)
+          (ConstrainedAST (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
+                                           (.constraint (.alt ast))])
+                              (c/update-path (ast/location old-ast))))))))
+
+(extend-type TailEither
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clause (OrClause (.clause ast)))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (for [_ (pop-types)
+          _ (push-types (.types (.clause ast)))
+          :let [new-clause (.ast (.clause ast))]
+          result-c (se/try
+                     (map (get-type-constraint (symbol "#result")) .constraint)
+                     (fn [_]
+                       (se/state-error c/top-type)))
+          new-clause (update-constraint (.ast (.clause ast))
+                                        (c/intersect (c/InferredInner result-c empty-list nothing "")
+                                                     (-> maybe-constraint
+                                                         (c/update-path (ast/location (.ast (.clause ast))))))
+                                        (ast/location (.ast (.clause ast))))
+          new-alt (update-constraint (.alt ast) result-c (ast/location (.alt ast)))]
+      (-> ast
+          (.clause new-clause)
+          (.alt new-alt)
+          (ConstrainedAST (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
+                                           (.constraint (.alt ast))])
+                              (c/update-path (ast/location old-ast))))))))
+
+(extend-type ast/declaration-ast
+  TypeChecker
+  (type-check [ast old-ast]
+    (set-type-constraint (.sym ast) (ConstrainedAST c/top-type c/top-type))))
+
+(deftype CondValCond [clause]
+  Stringable
+  (string-list [_]
+    (list "(CondValCond " (str clause) ")"))
+
+  Container
+  (map [_ f]
+    (CondValCond (f clause)))
+
+  (map [_ f embed]
+    (map (f clause) CondValCond))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
+  TypeChecker
+  (pre-check [ast]
+    (map (push-types)
+         (fn [_]
+           ast)))
+
+  (type-check [ast old-ast]
+    (for [new-clause (update-constraint (.clause ast) (-> maybe-constraint
+                                                          (c/update-path (ast/location clause)))
+                                        (ast/location clause))
+          types (get-types)]
+      (CheckedCondVal new-clause types))))
+
+(deftype CondValVal [clause]
+  Stringable
+  (string-list [_]
+    (list "(CondValVal " (str clause) ")"))
+
+  Container
+  (map [_ f]
+    (CondValVal (f clause)))
+
+  (map [_ f embed]
+    (map (f clause) CondValVal))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
+  TypeChecker
+  (type-check [ast old-ast]
+    (for [_ (pop-types)]
+      (.clause ast))))
+
+(extend-type ast/cond-val-ast
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error (ast/cond-val-ast (CondValCond (.conditional ast))
+                                      (CondValVal (.value ast)))))
+
+  (type-check [ast old-ast]
+    (se/state-error (ConstrainedAST ast (.constraint (.value ast))))))
 
 (extend-type ast/cond-ast
   TypeChecker
   (type-check [ast old-ast]
-    (let [conditionals (either nothing (vec (map (.conditionals ast) .ast)))]
-      (either (map (first (.conditionals ast))
+    (let [conditionals (vec (map (.conditionals ast) .ast))]
+      (either (map (first conditionals)
                    (fn [first-cond]
                      (for [_ (pop-types)
-                           _ (push-types (.types first-cond))]
+                           _ (push-types (.types (.conditional first-cond)))
+                           _ (se/traverse conditionals
+                                          (fn [cond-val]
+                                            (update-constraint (.ast (.conditional cond-val))
+                                                               (-> maybe-constraint
+                                                                   (c/update-path (ast/location cond-val)))
+                                                               (ast/location cond-val))))]
                        (ConstrainedAST (.conditionals ast conditionals)
-                                       (-> conditionals
+                                       (-> (.conditionals ast)
                                            (map .constraint)
                                            (conj (.constraint (.default ast)))
                                            c/sum-type)))))
+              (se/state-error (ConstrainedAST ast (.constraint (.default ast))))))))
+
+(extend-type TailCond
+  TypeChecker
+  (type-check [ast old-ast]
+    (let [conditionals (map (.conditionals ast) .ast)]
+      (either (map (first conditionals)
+                   (fn [first-cond]
+                     (for [_ (pop-types)
+                           _ (push-types (.types (.conditional first-cond)))
+                           result-c (se/try
+                                      (map (get-type-constraint (symbol "#result")) .constraint)
+                                      (fn [_]
+                                        (se/state-error c/top-type)))
+                           _ (se/traverse conditionals
+                                          (fn [cond-val]
+                                            (for [_ (update-constraint (.ast (.conditional cond-val))
+                                                                       (-> maybe-constraint
+                                                                           (c/update-path (ast/location cond-val)))
+                                                                       (ast/location cond-val))
+                                                  _ (update-constraint (.value cond-val) result-c
+                                                                       (ast/location cond-val))]
+                                              '_)))
+                           _ (update-constraint (.default ast) result-c (ast/location (.default ast)))]
+                       (ConstrainedAST ast
+                                       (-> (.conditionals ast)
+                                           (map .constraint)
+                                           (conj (.constraint (.default ast)))
+                                           c/sum-type
+                                           (c/intersect result-c))))))
               (se/state-error (ConstrainedAST ast (.constraint (.default ast))))))))
 
 (extend-type ast/integer-ast
@@ -9120,34 +9216,13 @@
             (se/state-error (ConstrainedAST ast (-> maybe-constraint
                                                     (c/update-path (ast/location old-ast))))))))
 
-(deftype OrClause [clause]
-  Stringable
-  (string-list [_]
-    (list "(OrClause " (str clause) ")"))
-
-  Container
-  (map [_ f]
-    (OrClause (f clause)))
-
-  (map [_ f embed]
-    (map (f clause) OrClause))
-
-  ast/FileLoc
-  (ast/location [_]
-    (ast/location clause))
-
+(extend-type TailAnd
   TypeChecker
   (pre-check [ast]
-    (map (push-types)
-         (fn [_]
-           ast)))
-
-  (type-check [ast old-ast]
-    (for [new-clause (update-constraint (.clause ast) (-> maybe-constraint
-                                                          (c/update-path (ast/location clause)))
-                                        (ast/location clause))
-          types (pop-types)]
-      (CheckedCondVal new-clause types))))
+    (flat-map (append-type-constraint _LINE_ (symbol "#result")
+                                      (c/update-path maybe-constraint (ast/location ast)))
+              (fn [_]
+                (pre-check (ast/and-ast (.clauses ast)))))))
 
 (extend-type ast/or-ast
   TypeChecker
@@ -9213,6 +9288,7 @@
                                        (-> new-clauses
                                            (map .constraint)
                                            c/sum-type
+                                           (c/intersect result-c)
                                            (c/update-path (cata ast/location old-ast)))))))
               (do
                 (print-err "Compiler error at toccata.toc" _LINE_)
