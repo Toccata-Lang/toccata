@@ -5977,8 +5977,8 @@
 
   Stringable
   (string-list [expr]
-    (comp (list "<TailOr ")
-          (flat-map (vec clauses) string-list)
+    (comp (list "<TailOr\n")
+          (flat-map (interpose clauses "\n") string-list)
           (list ">")))
 
   Container
@@ -8848,9 +8848,8 @@
                      (map (get-type-constraint (symbol "#result")) .constraint)
                      (fn [_]
                        (se/state-error c/top-type)))
-          new-inner (update-constraint (.ast ast) result-c (ast/location old-ast))]
-      (ConstrainedAST (.ast ast new-inner)
-                      (.constraint new-inner)))))
+          new (update-constraint (.ast ast) result-c (ast/location old-ast))]
+      new)))
 
 (extend-type TailEither
   TypeChecker
@@ -8870,56 +8869,13 @@
                       (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
                                    (.constraint new-alt)])))))
 
-(extend-type TailOr
-  TypeChecker
-  (type-check [ast old-ast]
-    (let [loc (either (map (first (.clauses old-ast))
-                           ast/location)
-                      (ast/location old-ast))]
-      (for [result-c (se/try
-                       (map (get-type-constraint (symbol "#result"))
-                            (fn [result-c]
-                              (c/intersect (.constraint result-c)
-                                           (c/update-path maybe-constraint loc))))
-                       (fn [_]
-                         (se/state-error (c/update-path maybe-constraint loc))))
-            new-clauses (se/traverse (.clauses ast)
-                                     (fn [clause]
-                                       (update-constraint clause result-c (ast/location clause))))]
-        (ConstrainedAST (.clauses ast new-clauses)
-                        (c/sum-type (map new-clauses .constraint)))))))
-
 (extend-type TailAnd
   TypeChecker
-  (type-check [ast old-ast]
-    (let [idx (dec (count (.clauses ast)))
-          loc (either (map (first (.clauses old-ast))
-                           ast/location)
-                      (ast/location old-ast))]
-      (for [result-c (se/try
-                       (map (get-type-constraint (symbol "#result"))
-                            (fn [result-c]
-                              (-> (c/intersect (.constraint result-c)
-                                               maybe-constraint)
-                                  (c/update-path loc))))
-                       (fn [_]
-                         (se/state-error (c/update-path maybe-constraint loc))))
-            new-clauses (se/traverse (.clauses ast)
-                                     (fn [clause]
-                                       (update-constraint clause (c/update-path maybe-constraint
-                                                                                (ast/location loc))
-                                                          (ast/location clause))))
-            new-clauses (either (map (get new-clauses idx)
-                                     (fn [last-clause]
-                                       (map (update-constraint last-clause result-c
-                                                               (ast/location last-clause))
-                                            (fn [new-clause]
-                                              (either (store (.clauses ast) idx new-clause)
-                                                      (.clauses ast))))))
-                                (se/state-error (.clauses ast)))]
-        (ConstrainedAST (.clauses ast new-clauses)
-                        (either (map (get new-clauses idx) .constraint)
-                                c/top-type))))))
+  (pre-check [ast]
+    (flat-map (append-type-constraint _LINE_ (symbol "#result")
+                                      (c/update-path maybe-constraint (ast/location ast)))
+              (fn [_]
+                (pre-check (ast/and-ast (.clauses ast)))))))
 
 (extend-type TailCond
   TypeChecker
@@ -9141,7 +9097,9 @@
   TypeChecker
   (pre-check [ast]
     (-> ast
-        (.clauses (map (.clauses ast) AndClause))
+        (.clauses (-> (.clauses ast)
+                      (remove (partial instance? ast/NoCode))
+                      (map AndClause)))
         se/state-error))
 
   (type-check [ast old-ast]
@@ -9151,7 +9109,11 @@
                     _ (push-types (.types first-clause))
                     ;; TODO: when the ast of the first clause is a call to instance?,
                     ;; recover the type of the symbol in the second arg
-                    ]
+                    _ (se/traverse (.clauses ast)
+                                   (fn [checked-clause]
+                                     (let [clause (.ast checked-clause)]
+                                       (update-constraint clause (.constraint clause)
+                                                          (ast/location (.ast clause))))))]
                 (-> ast
                     (.clauses (map (.clauses ast) .ast))
                     (ConstrainedAST (.constraint (.ast last-clause))))))
@@ -9191,7 +9153,9 @@
   TypeChecker
   (pre-check [ast]
     (-> ast
-        (.clauses (map (.clauses ast) OrClause))
+        (.clauses (-> (.clauses ast)
+                      (remove (partial instance? ast/NoCode))
+                      (map OrClause)))
         se/state-error))
 
   (type-check [ast old-ast]
@@ -9201,15 +9165,59 @@
                          _ (push-types (.types first-clause))
                          ;; TODO: when the ast of the first clause is a call to instance?,
                          ;; recover the type of the symbol in the second arg
-                         ]
+                         new-clauses (se/traverse (.clauses ast)
+                                                  (fn [checked-clause]
+                                                    (let [clause (.ast checked-clause)]
+                                                      (update-constraint clause
+                                                                         (c/update-path maybe-constraint
+                                                                                        (ast/location clause))
+                                                                         (ast/location clause)))))]
                      (-> ast
                          (.clauses (map (.clauses ast) .ast))
                          (ConstrainedAST (-> (.clauses ast)
                                              (map (comp .constraint .ast))
                                              c/sum-type
                                              (c/update-path (cata ast/location old-ast))))))))
+
             (se/state-error (ConstrainedAST ast (-> maybe-constraint
                                                     (c/update-path (cata ast/location old-ast))))))))
+
+(extend-type TailOr
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clauses (map (.clauses ast) OrClause))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (let [loc (either (map (first (.clauses old-ast))
+                           ast/location)
+                      (ast/location old-ast))]
+      (either (map (first (.clauses ast))
+                   (fn [first-clause ]
+                     (for [_ (pop-types)
+                           _ (push-types (.types first-clause))
+                           ;; TODO: when the ast of the first clause is a call to instance?,
+                           ;; recover the type of the symbol in the second arg
+                           _ (append-type-constraint _LINE_ (symbol "#result")
+                                                     (c/update-path maybe-constraint loc))
+                           result-c (se/try
+                                      (map (get-type-constraint (symbol "#result")) .constraint)
+                                      (fn [_]
+                                        (se/state-error (c/update-path maybe-constraint loc))))
+                           new-clauses (se/traverse (.clauses ast)
+                                                    (fn [checked-clause]
+                                                      (let [clause (.ast checked-clause)]
+                                                        (update-constraint clause result-c (ast/location clause)))))]
+                       (ConstrainedAST (ast/or-ast new-clauses)
+                                       (-> new-clauses
+                                           (map .constraint)
+                                           c/sum-type
+                                           (c/update-path (cata ast/location old-ast)))))))
+              (do
+                (print-err "Compiler error at toccata.toc" _LINE_)
+                (abort)
+                se-nop)))))
 
 (extend-type String
   TypeChecker
