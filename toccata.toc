@@ -7665,6 +7665,7 @@
   (strip-asts [ast]
     ast)
 
+  ;; TODO: need to make sure every possible call target ast is implemented
   (check-call-site [ast args target]
     (assert-result x (instance? se/new-se x)))
 
@@ -8209,11 +8210,8 @@
 
                   (let [curr-tail (c/extract-tail-constraint new-param-cs)
                         new-tail (cond (= curr-tail c/bottom-type)
-                                       (c/TypeConstraint {c/ListType #{}} empty-list
-                                                         'List nothing "")
-                                       (c/intersect (c/TypeConstraint {c/ListType #{}}
-                                                                      empty-list 'List nothing "")
-                                                    curr-tail))]
+                                       list-constraint
+                                       (c/intersect list-constraint curr-tail))]
                     (-> (zip-lists (.fixed param) (c/extract-items-constraints new-param-cs))
                         (map (fn [[x y]]
                                (ParamConstraintPair x y)))
@@ -8518,22 +8516,27 @@
 
   (check-call-site [ast args target]
     (let [arg-count (count args)]
-      (either (map (find-arity ast c/top-type arg-count)
-                   (fn [arity]
-                     (-> (.param-consts arity)
-                         (c/extract-items-constraints arg-count)
-                         (zip-lists args)
-                         vec
-                         (se/traverse (fn [[c arg]]
-                                        (update-constraint arg c (ast/location target))))
-                         (flat-map (fn [args]
-                                     (either (map (get special-call-targets target)
-                                                  (fn [f]
-                                                    (f target arity args)))
-                                             (se/state-error (Left (.result-const arity)))))))))
+      (either (flat-map (find-arity ast c/top-type arg-count)
+                        (fn [arity]
+                          (and (<= (count (c/extract-items-constraints (.param-consts arity)))
+                                   arg-count)
+                               (maybe (-> (.param-consts arity)
+                                          (c/extract-items-constraints arg-count)
+                                          (zip-lists args)
+                                          vec
+                                          (se/traverse (fn [[c arg]]
+                                                         (update-constraint arg c (ast/location target))))
+                                          (flat-map (fn [args]
+                                                      (either (map (get special-call-targets target)
+                                                                   (fn [f]
+                                                                     (f target arity args)))
+                                                              (se/state-error (Left (.result-const arity)))))))))))
               (se/throw (str "Could not find implementation of " (str "'" (either (.fn-sym ast)
                                                                                   "<anon>") "'")
-                             " at " (ast/location args)
+                             " at " (either (map (empty? args)
+                                                 (fn [_]
+                                                   (ast/location target)))
+                                            (ast/location args))
                              " with " arg-count " arguments.")))))
 
   (pre-check [ast]
