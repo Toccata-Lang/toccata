@@ -7752,13 +7752,18 @@
   (assert (instance? Tagged sym))
   (assert (instance? ConstrainedAST constraint))
 
-  (se/update-in-val [.module .value-types]
-                    (fn [types-list]
-                      (either (map (first types-list)
-                                   (fn [value-types]
-                                     (cons (assoc value-types (ast/untag sym) constraint)
-                                           (rest types-list))))
-                              (list {(ast/untag sym) constraint})))))
+  (map (se/update-in-val [.module .value-types]
+                         (fn [types-list]
+                           (either (map (first types-list)
+                                        (fn [value-types]
+                                          (cons (assoc value-types (ast/untag sym) constraint)
+                                                (rest types-list))))
+                                   (list {(ast/untag sym) constraint}))))
+       (fn [_]
+         ;; TODO:
+         'poop
+         ;; (ConstrainedAST sym c/top-type)
+         )))
 
 (defn add-getter [sym types-list]
   (let [loc (ast/location sym)
@@ -7928,11 +7933,22 @@
              (abort))
 
            (let [new-c (c/update-path new-c loc)]
-             (either (map (instance? Tagged (.ast constrained))
-                          (fn [sym]
-                            (map (append-type-constraint _LINE_ sym constraint)
-                                 (fn [_]
-                                   (.constraint constrained new-c)))))
+             (either (or (map (instance? Tagged (.ast constrained))
+                              (fn [sym]
+                                (map (append-type-constraint _LINE_ sym constraint)
+                                     (fn [_]
+                                       (.constraint constrained new-c)))))
+                         (for [call-ast (instance? ast/call-ast (.ast constrained))
+                               :when (and (instance? Tagged (.call-target call-ast))
+                                          (get #{'list 'maybe 'vector} (ast/untag (.call-target call-ast))))]
+                           (let [loc (ast/location (.call-target call-ast))]
+                             (-> (.args call-ast)
+                                 (zip-lists (c/extract-items-constraints constraint
+                                                                         (count (.args call-ast))))
+                                 (se/traverse (fn [[arg c]]
+                                                (update-constraint arg c)))
+                                 (map (fn [_]
+                                        (.constraint constrained new-c)))))))
                      (se/state-error (.constraint constrained new-c))))))))
 
 (defn get-types []
@@ -8231,7 +8247,18 @@
   TypeChecker
   (pre-check [ast]
     (for [_ (push-types)
-          _ (set-type-constraint (symbol "#result") (ConstrainedAST c/top-type c/top-type))
+          result-c (se/try
+                     (map (get-type-constraint (.fn-sym ast))
+                          (fn [got]
+                            (let [arity (find-arity (.ast got) 0 (count (.params ast)))
+                                  loc (ast/location (.fn-sym ast))
+                                  result-c (either (map arity .result-const)
+                                                   c/top-type)]
+                              result-c)))
+                     (fn [_]
+                       (se/state-error c/top-type)))
+
+          _ (set-type-constraint (symbol "#result") (ConstrainedAST (symbol "#result") result-c))
           _ (ana constrain-all-syms (ParamConstraintPair (.params ast)
                                                          (.param-consts ast))
                  se/state-error)]
@@ -8506,11 +8533,13 @@
   (pre-check [ast]
     (either (map (.fn-sym ast)
                  (fn [sym]
-                   (map (set-type-constraint sym (ConstrainedAST sym fn-constraint))
-                        (fn [_]
-                          (.arities ast (map (.arities ast)
-                                             (fn [arity]
-                                               (.fn-sym arity sym))))))))
+                   (for [_ (se/try
+                             (get-type-constraint sym)
+                             (fn [_]
+                               (set-type-constraint sym (ConstrainedAST sym fn-constraint))))]
+                     (.arities ast (map (.arities ast)
+                                        (fn [arity]
+                                          (.fn-sym arity sym)))))))
             (se/state-error ast)))
 
   (type-check [ast old-ast]
@@ -9041,7 +9070,7 @@
 (extend-type ast/declaration-ast
   TypeChecker
   (type-check [ast old-ast]
-    (set-type-constraint (.sym ast) (ConstrainedAST c/top-type c/top-type))))
+    (set-type-constraint (.sym ast) (ConstrainedAST (.sym ast) c/top-type))))
 
 (deftype CondValCond [clause]
   Stringable
