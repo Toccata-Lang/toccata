@@ -4264,7 +4264,8 @@
 ;; TODO: add inner constraint to Strings
 ;; TODO: insert InferredInner into anon fn passed to higher order fn
 
-(def returns-inner #{'seq 'vec 'rest 'butlast 'reverse 'vals 'last 'nth 'get 'first})
+(def returns-inner #{'seq 'vec 'rest 'butlast 'reverse 'vals 'last 'nth 'get 'first ;; 'second
+                     })
 
 (defn propogate-inner-constraint [result-var ast args]
   (let [file-name (ast/file-name ast)
@@ -7948,7 +7949,7 @@
                                  (zip-lists (c/extract-items-constraints constraint
                                                                          (count (.args call-ast))))
                                  (se/traverse (fn [[arg c]]
-                                                (update-constraint arg c)))
+                                                (update-constraint arg c loc)))
                                  (map (fn [_]
                                         (.constraint constrained new-c)))))))
                      (se/state-error (.constraint constrained new-c))))))))
@@ -8327,13 +8328,47 @@
       (-> (c/InferredInner (either (map maybe-arity .result-const)
                                    c/top-type)
                            empty-list nothing "")
+          (c/intersect (.result-const arity))
           (c/update-path (ast/location target))
           Left))))
+
+(defn coll-inner-constraint [coll loc]
+  (-> coll
+      .constraint
+      c/extract-contents-constraint
+      (c/InferredInner empty-list nothing "")
+      (c/update-path loc)))
+
+(defn maybe-coll-inner [target arity [coll]]
+  (cond (= c/top-type (c/extract-contents-constraint (.result-const arity)))
+        (-> (coll-inner-constraint coll (ast/location target))
+            (c/intersect (c/update-path maybe-constraint
+                                        (ast/location target)))
+            Left 
+            se/state-error)
+
+        ;; TODO: write test for this
+        (-> arity
+            .result-const
+            (c/update-path (ast/location target))
+            Left
+            se/state-error)))
 
 ;; TODO: these all need to return args with updated constraints to be put into
 ;; the call site
 (def special-call-targets
-  {'vector (fn [target _ args]
+  {'map infer-coll-inner-constraint
+   'drop-while infer-coll-inner-constraint
+   'take-while infer-coll-inner-constraint
+   'filter infer-coll-inner-constraint
+   'split-with infer-coll-inner-constraint
+   'last maybe-coll-inner
+   'nth maybe-coll-inner
+   'second maybe-coll-inner
+
+;; 'rest 'butlast 'reverse 'vals 'get
+
+   'vector (fn [target _ args]
              (-> c/empty-items-constraint
                  (.items-constraints (map args .constraint))
                  (c/intersect vect-constraint)
@@ -8351,12 +8386,6 @@
                Left
                se/state-error))
 
-   'map infer-coll-inner-constraint
-   'drop-while infer-coll-inner-constraint
-   'take-while infer-coll-inner-constraint
-   'filter infer-coll-inner-constraint
-   'split-with infer-coll-inner-constraint
-
    'vec (fn [target _ [arg]]
           (se/state-error (Left (-> (c/set-type (.constraint arg) vect-constraint)
                                     (c/update-path (ast/location target))))))
@@ -8370,57 +8399,48 @@
               ;; TODO: check to see if coll has 'always-empty' or static length of 0
               (either (map (= c/top-type (.result-const arity))
                            (fn [_]
-                             (-> coll
-                                 .constraint
-                                 c/extract-contents-constraint
-                                 (c/InferredInner empty-list nothing "")
-                                 (c/update-path (ast/location target))
+                             (-> (coll-inner-constraint coll (ast/location target))
                                  Left 
                                  se/state-error)))
                       ;; TODO: write test for this
-                      (se/state-error (Left (.result-const arity)))))
+                      (-> arity
+                          .result-const
+                          (c/update-path (ast/location target))
+                          Left
+                          se/state-error)))
 
-   'last (fn [target arity [coll]]
-           (either (map (= c/top-type (c/extract-contents-constraint (.result-const arity)))
-                        (fn [_]
-                          (-> coll
-                              .constraint
-                              c/extract-contents-constraint
-                              (c/InferredInner empty-list nothing "")
-                              (c/intersect maybe-constraint)
-                              (c/update-path (ast/location target))
-                              Left 
-                              se/state-error)))
-                   ;; TODO: write test for this
-                   (se/state-error (Left (.result-const arity)))))
 
    'first (fn [target arity [coll]]
             (let [coll-c (.constraint coll)
-                  coll-type (constraint-type-num coll-c)
-                  item-c (either (map (or (= c/ListType coll-type)
-                                          (= c/VectorType coll-type))
-                                      (fn [_]
-                                        (let [[item-c] (c/extract-items-constraints coll-c 1)]
-                                          item-c)))
-                                 (c/extract-contents-constraint coll-c))]
-              (either (map (= c/top-type (c/extract-contents-constraint (.result-const arity)))
-                           (fn [_]
-                             (-> item-c
-                                 (c/InferredInner empty-list nothing "")
-                                 (c/intersect maybe-constraint)
-                                 (c/intersect (.result-const arity))
-                                 (c/update-path (ast/location target))
-                                 Left 
-                                 se/state-error)))
-                      ;; TODO: write test for this
-                      (se/state-error (Left (.result-const arity))))))
+                  coll-type (constraint-type-num coll-c)]
+              (cond (or (= c/ListType coll-type)
+                        (= c/VectorType coll-type))
+                    (let [[item-c] (c/extract-items-constraints coll-c 1)]
+                      (-> item-c
+                          (c/InferredInner empty-list nothing "")
+                          (c/intersect (c/update-path maybe-constraint (ast/location target)))
+                          (c/intersect (.result-const arity))
+                          (c/update-path (ast/location target))
+                          ((fn [c]
+                             (let [loc (ast/location target)]
+                               (or (= (.file loc) 'core)
+                                   (= (.line loc) 0)
+                                   (do
+                                     (print-err 'first loc c)
+                                     nothing)))
+                             c))
+                          Left 
+                          se/state-error))
+
+                    (maybe-coll-inner target arity [coll]))))
 
    'cons (fn [target _ [item-arg coll-arg]]
            (let [item (.constraint item-arg)
                  coll (.constraint coll-arg)]
              (for [_ (update-constraint item-arg (-> coll
                                                      c/extract-collection-of
-                                                     c/extract-contents-constraint))]
+                                                     c/extract-contents-constraint)
+                                        (ast/location target))]
                (Left (adding-to-list target item coll)))))
 
    'conj (fn [target _ [coll-arg item-arg]]
@@ -8441,7 +8461,8 @@
                                       (c/update-path (ast/location target))))]
              (for [_ (update-constraint item-arg (-> coll
                                                      c/extract-collection-of
-                                                     c/extract-contents-constraint))]
+                                                     c/extract-contents-constraint)
+                                        (ast/location target))]
                (Left new-coll))))
 
    'maybe (fn [target _ [item-arg]]
