@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "2868067"))
+                          :sha "4fc4f4f"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "c633cb6"))
+                            :sha "39ec84d"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "9f9dae1"))
+                            :sha "0be3f47"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -217,10 +217,6 @@
                nothing)))
 
 (defprotocol Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (assert-result r (instance? sm/new-sm r))
-    (sm/state-maybe c))
-
   ;; Unwrap the tail call
   (remove-tail [ast]
     ast)
@@ -1840,11 +1836,6 @@
 
 (extend-type c/DynamicFields
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (-> (c/ReifiedFields (rest param-exprs) (.path c) (.sym c) (.var c))
-        (c/update-path file-name line-number)
-        sm/state-maybe))
-
   (old-reify-c [c param-exprs file-name line-number]
     (-> (c/ReifiedFields (rest param-exprs) (.path c) (.sym c) (.var c))
         (c/update-path file-name line-number)
@@ -1852,17 +1843,6 @@
 
 (extend-type c/DynamicParamConstraint
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (either (map (get param-exprs (.param-index c))
-                 (fn [param-expr]
-                   (map (get-constraint (.c-var param-expr))
-                        (fn [param-c]
-                          (-> (reverse (.path c))
-                              (reduce param-c (fn [new-c [file line]]
-                                                (c/update-path new-c file line)))
-                              (c/set-type (.result-type c)))))))
-            (sm/state-maybe c/top-type)))
-
   (old-reify-c [c param-exprs file-name line-number]
     (either (map (get param-exprs (.param-index c))
                  (fn [param-expr]
@@ -1876,29 +1856,6 @@
 
 (extend-type c/DynamicItemConstraint
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (comp (for [param-expr (sm/when (get param-exprs (.param-index c)))
-                param-c (get-constraint (.c-var param-expr))
-                _ (debug 'dyn-item-param-c param-c)
-                item-expr (-> param-c
-                              c/extract-dynamic-fields
-                              ((fn [x]
-                                  (print-err 'dyn-fields x)
-                                  (print-err 'item-index (.item-index c)
-                                             (get x (.item-index c)))
-                                  x))
-                              (get (.item-index c))
-                              sm/when)
-                _ (debug 'dyn-item-item-expr item-expr)
-                item-c (get-constraint (.c-var item-expr))
-                _ (debug 'dyn-item-item-c item-c)]
-            (-> (.path c)
-                reverse
-                (reduce item-c
-                        (fn [new-c [file line]]
-                          (c/update-path new-c file line)))))
-          (sm/state-maybe c/top-type)))
-
   (old-reify-c [c param-exprs file-name line-number]
     (comp (for [param-expr (sm/when (get param-exprs (.param-index c)))
                 param-c (get-constraint (.c-var param-expr))
@@ -1917,30 +1874,6 @@
 
 (extend-type c/DynamicResultConstraint
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (-> c
-        .invokable-c
-        c/extract-dynamic-params
-        (sm/traverse (fn [dyn-c]
-                       (either (or (for [dyn-param (instance? c/DynamicParamConstraint dyn-c)
-                                         expr (get param-exprs (.param-index dyn-param))]
-                                     (get-result-constraint expr (.num-args c)))
-                                   (for [dyn-param (instance? c/DynamicItemConstraint dyn-c)
-                                         expr (get-in param-exprs [(.param-index dyn-param)])]
-                                     ;; TODO: there could be multiple dyn fields because of a SumConstraint
-                                     (for [dynamic-fields (map (get-constraint (.c-var expr))
-                                                               c/extract-dynamic-fields)
-                                           field-expr (sm/when (get dynamic-fields (.item-index dyn-param)))
-                                           rc (get-result-constraint field-expr (.num-args c))]
-                                       rc)))
-                               sm/zero-sm)))
-        (map (fn [dyn-param-cs]
-               (c/sum-type dyn-param-cs)))
-        (comp (sm/state-maybe c/top-type))
-        (map (fn [r]
-               (print-err 'dyn-result r)
-               r))))
-
   (old-reify-c [c param-exprs file-name line-number]
     (-> c
         .invokable-c
@@ -1972,13 +1905,6 @@
 
 (extend-type c/ItemsConstraint
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (sm/state-maybe (either (or (some (.items-constraints c) (partial = c/bottom-type))
-                                (and (= c/bottom-type (.tail-constraint c))
-                                     (first (.constraints (.tail-constraint c)))
-                                     (maybe (.tail-constraint c))))
-                            c)))
-
   (old-reify-c [c param-exprs file-name line-number]
     (for [new-items (sm/traverse (.items-constraints c)
                                  (fn [c]
@@ -2083,11 +2009,6 @@
 
 (extend-type c/InferredInner
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (sm/state-maybe (either (or (= c/bottom-type (.contents c))
-                                (= c/top-type (.contents c)))
-                            c)))
-
   (old-reify-c [c param-exprs file-name line-number]
     (map (old-reify-c (.contents c) param-exprs file-name line-number)
          (fn [new-contents]
@@ -2135,11 +2056,6 @@
 
 (extend-type c/CollectionOf
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (sm/state-maybe (either (or (= c/bottom-type (.contents c))
-                                (= c/top-type (.contents c)))
-                            c)))
-
   (old-reify-c [c param-exprs file-name line-number]
     (map (old-reify-c (.contents c) param-exprs file-name line-number)
          (fn [new-contents]
@@ -2332,20 +2248,6 @@
 
 (extend-type c/MultiConstraint
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (sm/state-maybe (either (some (.constraints c) (partial = c/bottom-type))
-                            (let [new-cs (-> (.constraints c)
-                                             (flat-map (fn [reified]
-                                                         (either (map (instance? c/MultiConstraint reified)
-                                                                      .constraints)
-                                                                 [reified])))
-                                             (remove (partial = c/top-type)))]
-                              (either (or (and (empty? new-cs)
-                                               (maybe c/top-type))
-                                          (and (= 1 (count new-cs))
-                                               (first new-cs)))
-                                      (reduce new-cs c/top-type c/intersect))))))
-
   (old-reify-c [constraint param-exprs file-name line-number]
     (for [new-cs (sm/traverse (.constraints constraint)
                               (fn [c]
@@ -2409,10 +2311,6 @@
 
 (extend-type c/ResultConstraint
   Emitter
-  (reify-c [c param-exprs file-name line-number]
-    (sm/state-maybe (either (= c/bottom-type (.assertion c))
-                            c)))
-
   (old-reify-c [c param-exprs file-name line-number]
     (map (old-reify-c (.assertion c) param-exprs file-name line-number)
          (fn [new-assertion]
@@ -2513,10 +2411,6 @@
   (write-str [v] (map v write-str))
 
   Emitter
-  (reify-c [v param-exprs file-name line-number]
-    (sm/state-maybe (either (some v (partial = c/bottom-type))
-                            v)))
-
   (old-reify-c [v param-exprs file-name line-number]
     (map (sm/traverse v (fn [x]
                           (old-reify-c x param-exprs file-name line-number)))
@@ -4021,7 +3915,7 @@
           :when (= c/FunctionType type-num)
           result-sym (genlocal "rslt")
           dyn-result-c (get-constraint (.c-var target))
-          _ (set-constraint result-sym (-> (c/DynamicResultConstraint dyn-result-c (count args)
+          _ (set-constraint result-sym (-> (c/DynamicResultConstraint 'nada dyn-result-c (count args)
                                                                       empty-list nothing result-sym)
                                            (c/update-path file-name line-number)))
           ;; _ (cond (= file-name "test.toc")
@@ -4334,17 +4228,6 @@
 
 (extend-type c/SumConstraint
   Emitter
-  (reify-c [ast param-exprs file-name line-number]
-    (sm/state-maybe (either (some (.alts ast) (partial = c/bottom-type))
-                            (let [new-alts (reduce (.alts ast) []
-                                                   (fn [new-alts new-c]
-                                                     (cond
-                                                      (some new-alts (partial = new-c)) new-alts
-                                                      (conj new-alts new-c))))]
-                              (either (and (= 1 (count new-alts))
-                                           (first new-alts))
-                                      (.alts ast new-alts))))))
-
   (old-reify-c [ast param-exprs file-name line-number]
     (for [new-alts (sm/traverse (.alts ast)
                                 (fn [alt-c]
@@ -5454,7 +5337,7 @@
                                           (flat-map (map (lookup-sym sym) .c-var)
                                                     (fn [var]
                                                       (set-constraint var (c/DynamicParamConstraint
-                                                                           index empty-list (maybe sym) var
+                                                                           'nada index empty-list (maybe sym) var
                                                                            c/top-type)))))))
                    _ (set-constraint "#result" c/top-type)
 
@@ -6115,6 +5998,8 @@
             cond-constraint (get-constraint (.c-var cond-val))
             alt-constraint (get-constraint (.c-var alt-val))
             _ (constrain-var file-name line-number result-var
+                             ;; TODO: at every call to sum-type, intersect the result with maybe-constraint
+                             ;; (where needed)
                              (c/sum-type [(c/extract-contents-constraint cond-constraint)
                                           alt-constraint]))]
         (let [cond-rslt (.c-var cond-val)
@@ -7152,7 +7037,7 @@
                                   "" 0)])
 
                 (let [field-constraint (-> field-constraint
-                                           (c/intersect (c/DynamicItemConstraint 0 field-index
+                                           (c/intersect (c/DynamicItemConstraint 'nada 0 field-index
                                                                                  empty-list nothing ""))
                                            c/clear-sym)]
                   (ast/fn-arity
@@ -7195,7 +7080,7 @@
                                                     (ConstrainVar
                                                      (c/intersect field-c
                                                                   (c/DynamicItemConstraint
-                                                                   0 field-index
+                                                                   'nada 0 field-index
                                                                    empty-list
                                                                    (maybe (ast/untag field-sym))
                                                                    (c/extract-var field-c))))))
@@ -7660,6 +7545,10 @@
                     '_)))
 
 (defprotocol TypeChecker
+  (reify-c [c arity param-exprs loc]
+    ;; c
+    )
+
   (find-arity [ast type-num args]
     (assert-result r (instance? Maybe r)))
 
@@ -7683,6 +7572,25 @@
 
   (type-check [ast old-ast]
     (assert-result r (instance? se/new-se r))))
+
+(defn reify-type-constraint [c arity param-cs loc]
+  ;; (print-err 'reifying loc c "\n"
+  ;;            'params (-> param-cs
+  ;;                        (interpose "\n")
+  ;;                        to-str))
+  (cata (fn [c]
+          (let [new-c (reify-c c arity param-cs loc)]
+            ;; TODO: might still want to do this
+            ;; (either (map (and (= c/bottom-type new-c)
+            ;;                   (first (.constraints new-c)))
+            ;;              (fn [_]
+            ;;                (print-err 'fail new-c)
+            ;;                (c/conflicting-assertions new-c (.file loc) (.line loc))
+            ;;                (abort)))
+            ;;         (c/trim new-c))
+            (c/trim new-c)
+            ))
+        c))
 
 (defn type-check-ast [ast]
   (flat-map (pre-check ast)
@@ -7992,6 +7900,28 @@
   (pre-check [c]
     (se-translate (lookup-constraint c))))
 
+(def TempCs (any-of c/TypeConstraint
+                    c/MultiConstraint
+                    c/ItemsConstraint
+                    c/SumConstraint
+                    c/AllValues
+                    c/NoValues
+                    c/StaticLengthConstraint
+                    c/StaticStrConstraint
+                    c/StaticIntConstraint
+                    c/InferredInner
+                    c/CollectionOf
+                    c/ReifiedFields
+                    c/FieldConstraint
+                    Vector
+                    Left
+                    Right))
+
+(extend-type TempCs
+  TypeChecker
+  (reify-c [c arity param-cs loc]
+    c))
+
 (extend-type c/AllValues
   TypeChecker
   (type-check [c old-c]
@@ -8010,9 +7940,46 @@
 
 (extend-type c/MultiConstraint
   TypeChecker
+  ;; (reify-c [c param-exprs loc]
+  ;;   (either (some (.constraints c) (partial = c/bottom-type))
+  ;;           (let [new-cs (-> (.constraints c)
+  ;;                            (flat-map (fn [reified]
+  ;;                                        (either (map (instance? c/MultiConstraint reified)
+  ;;                                                     .constraints)
+  ;;                                                [reified])))
+  ;;                            (remove (partial = c/top-type)))]
+  ;;             (either (or (and (empty? new-cs)
+  ;;                              (maybe c/top-type))
+  ;;                         (and (= 1 (count new-cs))
+  ;;                              (first new-cs)))
+  ;;                     (reduce new-cs c/top-type c/intersect)))))
+
   (type-check [c old-c]
     (let [c (map c .constraint)]
       (se/state-error (ConstrainedAST c c)))))
+
+;; (extend-type c/ItemsConstraint
+;;   TypeChecker
+;;   (reify-c [c param-exprs loc]
+;;     (either (or (some (.items-constraints c) (partial = c/bottom-type))
+;;                 (and (= c/bottom-type (.tail-constraint c))
+;;                      (first (.constraints (.tail-constraint c)))
+;;                      (maybe (.tail-constraint c))))
+;;             c)))
+
+;; (extend-type c/InferredInner
+;;   TypeChecker
+;;   (reify-c [c param-exprs loc]
+;;     (either (or (= c/bottom-type (.contents c))
+;;                 (= c/top-type (.contents c)))
+;;             c)))
+
+;; (extend-type c/CollectionOf
+;;   TypeChecker
+;;   (reify-c [c param-exprs loc]
+;;     (either (or (= c/bottom-type (.contents c))
+;;                 (= c/top-type (.contents c)))
+;;             c)))
 
 (deftype ConstrainedSum [alts path sym var]
   Stringable
@@ -8043,6 +8010,17 @@
 
 (extend-type c/SumConstraint
   TypeChecker
+  ;; (reify-c [ast param-exprs loc]
+  ;;   (either (some (.alts ast) (partial = c/bottom-type))
+  ;;           (let [new-alts (reduce (.alts ast) []
+  ;;                                  (fn [new-alts new-c]
+  ;;                                    (cond
+  ;;                                     (some new-alts (partial = new-c)) new-alts
+  ;;                                     (conj new-alts new-c))))]
+  ;;             (either (and (= 1 (count new-alts))
+  ;;                          (first new-alts))
+  ;;                     (.alts ast new-alts)))))
+
   (type-check [c old-c]
     (let [new-c (-> (map (.alts c) .constraint)
                     c/sum-type
@@ -8058,6 +8036,10 @@
 
 (extend-type c/ResultConstraint
   TypeChecker
+  ;; (reify-c [c param-exprs loc]
+  ;;   (either (= c/bottom-type (.assertion c))
+  ;;           c))
+
   (pre-check [c]
     (se/state-error (c/update-sym c (symbol "#result"))))
 
@@ -8065,6 +8047,83 @@
     (let [rc (.constraint (.assertion c))]
       (for [_ (append-type-constraint _LINE_ (symbol "#result") rc)]
         (ConstrainedAST (c/ResultConstraint rc) rc)))))
+
+(extend-type c/DynamicFields
+  TypeChecker
+  (reify-c [c arity param-cs loc]
+    ;; TODO: I bet we'll need to check the arity here
+    (-> (c/ReifiedFields (rest param-cs) (.path c) (.sym c) (.var c))
+        (c/update-path loc))))
+
+(extend-type c/DynamicParamConstraint
+  TypeChecker
+  (reify-c [c arity param-cs loc]
+    (either (map (and (= (address-of (.arity c))
+                         (address-of arity))
+                      (get param-cs (.param-index c)))
+                 (fn [param-c]
+                   (cond (= c param-c)
+                         (do
+                           (print-err 'implement-fixed-point-types loc)
+                           c/top-type)
+
+                         (let [r (-> (reverse (.path c))
+                                     (reduce param-c (fn [new-c [file line]]
+                                                       (c/update-path new-c file line)))
+                                     (c/set-type (.result-type c)))]
+                           (print-err 'reified loc r "\n\n" 'param-c param-c)
+                           r))))
+            c/top-type)))
+
+(extend-type c/DynamicItemConstraint
+  TypeChecker
+  (reify-c [c arity param-cs loc]
+    (either (for [_ (= (address-of (.arity c))
+                       (address-of arity))
+                  param-c (get param-cs (.param-index c))
+                  :let [_ (print-err 'dyn-item-param-c param-c)]
+                  item-c (-> param-c
+                             c/extract-dynamic-fields
+                             ((fn [x]
+                                (print-err 'dyn-fields x)
+                                (print-err 'item-index (.item-index c)
+                                           (get x (.item-index c)))
+                                x))
+                             (get (.item-index c)))]
+              (let [_ (print-err 'dyn-item-item-c item-c)]
+                (-> (.path c)
+                    reverse
+                    (reduce item-c
+                            (fn [new-c [file line]]
+                              (c/update-path new-c file line))))
+                c/top-type))
+            c/top-type)))
+
+;; (extend-type c/DynamicResultConstraint
+;;   TypeChecker
+;;   (reify-c [c param-cs loc]
+;;     (-> c
+;;         .invokable-c
+;;         c/extract-dynamic-params
+;;         (sm/traverse (fn [dyn-c]
+;;                        (either (or (for [dyn-param (instance? c/DynamicParamConstraint dyn-c)
+;;                                          expr (get param-cs (.param-index dyn-param))]
+;;                                      (get-result-constraint expr (.num-args c)))
+;;                                    (for [dyn-param (instance? c/DynamicItemConstraint dyn-c)
+;;                                          expr (get-in param-cs [(.param-index dyn-param)])]
+;;                                      ;; TODO: there could be multiple dyn fields because of a SumConstraint
+;;                                      (for [dynamic-fields (map (get-constraint (.c-var expr))
+;;                                                                c/extract-dynamic-fields)
+;;                                            field-expr (sm/when (get dynamic-fields (.item-index dyn-param)))
+;;                                            rc (get-result-constraint field-expr (.num-args c))]
+;;                                        rc)))
+;;                                sm/zero-sm)))
+;;         (map (fn [dyn-param-cs]
+;;                (c/sum-type dyn-param-cs)))
+;;         (comp (sm/state-maybe c/top-type))
+;;         (map (fn [r]
+;;                (print-err 'dyn-result r)
+;;                r)))))
 
 (extend-type ast/Annotated
   TypeChecker
@@ -8248,27 +8307,38 @@
 (extend-type ast/fn-arity-ast
   TypeChecker
   (pre-check [ast]
-    (for [_ (push-types)
-          result-c (se/try
-                     (map (get-type-constraint (.fn-sym ast))
-                          (fn [got]
-                            (let [arity (find-arity (.ast got) 0 (count (.params ast)))
-                                  loc (ast/location (.fn-sym ast))
-                                  result-c (either (map arity .result-const)
-                                                   c/top-type)]
-                              result-c)))
-                     (fn [_]
-                       (se/state-error c/top-type)))
+    (let [fixed-params (.fixed (.params ast))
+          arg-count (count (.params ast))]
+      (for [_ (push-types)
+            result-c (se/try
+                       (map (get-type-constraint (.fn-sym ast))
+                            (fn [got]
+                              (let [arity (find-arity (.ast got) 0 arg-count)
+                                    loc (ast/location (.fn-sym ast))
+                                    result-c (either (map arity .result-const)
+                                                     c/top-type)]
+                                result-c)))
+                       (fn [_]
+                         (se/state-error c/top-type)))
 
-          _ (set-type-constraint (symbol "#result") (ConstrainedAST (symbol "#result") result-c))
-          _ (ana constrain-all-syms (ParamConstraintPair (.params ast)
-                                                         (.param-consts ast))
-                 se/state-error)]
-      (.body ast (comp (filter (.body ast) (partial instance? c/Constraints))
-                       (-> (.body ast)
-                           (remove (partial instance? c/Constraints))
-                           (remove (partial instance? ast/block-comment-ast))
-                           (tail-call []))))))
+            _ (set-type-constraint (symbol "#result") (ConstrainedAST (symbol "#result") result-c))
+            _ (ana constrain-all-syms (ParamConstraintPair (.params ast)
+                                                           (.param-consts ast))
+                   se/state-error)
+            _ (se/traverse (zip-lists fixed-params (range arg-count))
+                           (fn [[sym index]]
+                             (cond (instance? ast/params-ast sym)
+                                   ;; TODO: have to deal with this as well
+                                   se-nop
+
+                                   (append-type-constraint _LINE_ sym
+                                                           (c/DynamicParamConstraint ast index empty-list
+                                                                                     (maybe sym) "" c/top-type)))))]
+        (.body ast (comp (filter (.body ast) (partial instance? c/Constraints))
+                         (-> (.body ast)
+                             (remove (partial instance? c/Constraints))
+                             (remove (partial instance? ast/block-comment-ast))
+                             (tail-call [])))))))
 
   (type-check [ast old-ast]
     (for [pts (get-param-types (.params old-ast))
@@ -8493,35 +8563,54 @@
                                                     (-> (.param-consts arity)
                                                         (c/extract-items-constraints 1)
                                                         first)))
-                                        c/top-type)]
+                                        c/top-type)
+                     loc (ast/location target)]
                  (for [coll (update-constraint coll (-> (c/CollectionOf inferred-c empty-list nothing "")
-                                                        (c/update-path (ast/location target)))
+                                                        (c/update-path loc))
                                                (ast/location target))]
                    (-> (c/InferredInner (either (map maybe-arity (fn [arity]
                                                                    (-> arity
                                                                        .result-const
+                                                                       (reify-type-constraint arity [coll-contents]
+                                                                                              loc)
                                                                        c/extract-contents-constraint)))
                                                 c/top-type)
                                         empty-list nothing "")
-                       (c/update-path (ast/location target))
+                       (c/update-path loc)
                        Left))))
 
    'reduce (fn [target arity [coll init-accum f]]
-             (let [f (.ast f)
+             (let [loc (ast/location target)
+                   coll-contents (c/extract-contents-constraint (.constraint coll))
+                   f (.ast f)
                    result-c (reduce-fixed-point f (.constraint init-accum))
+                   ;; TODO: move all this to 'reduce-fixed-point'
                    maybe-arity (find-arity f (constraint-type-num result-c) 2)
                    [accum-c inferred-c] (either (map maybe-arity
                                                      (fn [arity]
                                                        ;; TODO: arity could be an 'invoke' arity with 3 args
                                                        (c/extract-items-constraints (.param-consts arity) 2)))
-                                                [c/top-type c/top-type])]
+                                                [c/top-type c/top-type])
+                   ;; _ (print-err 'reduce-inferred inferred-c "\n\n" 'init-accum (.constraint init-accum) "\n\n"
+                   ;;              'coll-contents coll-contents)
+                   inferred-c (reify-type-constraint inferred-c (either maybe-arity 'no-arity)
+                                                     [(.constraint init-accum) coll-contents] loc)
+                   ;; _ (print-err 'inferred-c inferred-c)
+                   _ (print-err 'reduce-accum accum-c "\n\n"
+                                'init-accum (.constraint init-accum) "\n\n"
+                                'inferred-c inferred-c "\n\n"
+                                'coll-contents coll-contents)
+                   accum-c (reify-type-constraint accum-c (either maybe-arity 'no-arity)
+                                                  [(c/sum-type [(.constraint init-accum) inferred-c])
+                                                   coll-contents] loc)]
+               (print-err 'accum-c loc accum-c)
                (for [init-accum (update-constraint init-accum accum-c
                                                    (ast/location target))
                      coll (update-constraint coll (c/update-path (c/CollectionOf inferred-c empty-list nothing "")
-                                                                 (ast/location target))
-                                             (ast/location target))]
+                                                                 loc)
+                                             loc)]
                  (-> accum-c
-                     (c/update-path (ast/location target))
+                     (c/update-path loc)
                      Left))))
    })
 
@@ -8550,7 +8639,9 @@
                                     (maybe arity))))))
 
   (check-call-site [ast args target]
-    (let [arg-count (count args)]
+    (let [arg-count (count args)
+          arg-consts (map args .constraint)
+          loc (ast/location target)]
       (either (flat-map (find-arity ast c/top-type arg-count)
                         (fn [arity]
                           (and (<= (count (c/extract-items-constraints (.param-consts arity)))
@@ -8560,22 +8651,24 @@
                                           (zip-lists args)
                                           vec
                                           (se/traverse (fn [[c arg]]
-                                                         (update-constraint arg c (ast/location target))))
+                                                         (update-constraint arg c loc)))
                                           (flat-map (fn [args]
                                                       (either (map (get special-call-targets target)
                                                                    (fn [f]
                                                                      (f target arity args)))
                                                               (-> arity
                                                                   .result-const
-                                                                  (c/update-path (ast/location target))
+                                                                  (c/update-path loc)
                                                                   Left
-                                                                  se/state-error)))))))))
+                                                                  se/state-error))))
+                                          (map (fn [result-c]
+                                                 (reify-type-constraint result-c arity arg-consts loc))))))))
               (se/throw (str "Could not find implementation of " (str "'" (either (.fn-sym ast)
                                                                                   "<anon>") "'")
                              " at " (either (map (empty? args)
                                                  (fn [_]
-                                                   (ast/location target)))
-                                            (ast/location args))
+                                                   loc))
+                                            loc)
                              " with " arg-count " arguments.")))))
 
   (pre-check [ast]
@@ -8625,35 +8718,35 @@
         (get-in proto-impls [.impls c/UnknownType arg-count])))
 
   (check-call-site [proto-impls args target]
-    (let [num-args (count args)]
+    (let [num-args (count args)
+          arg-consts (map args .constraint)
+          loc (ast/location target)]
       (either (map (first args)
                    (fn [disp-arg]
                      (let [type-num (constraint-type-num (.constraint disp-arg))
                            arity (either (find-arity proto-impls type-num num-args)
                                          (do
                                            (print-err "Could not find arity for" (str "'" (.fn-sym proto-impls) "'")
-                                                      "with" num-args "arguments."
-                                                      ;; TODO: add location
-                                                      )
+                                                      "with" num-args "arguments at" loc)
                                            (abort)))]
                        (-> (.param-consts arity)
                            (c/extract-items-constraints num-args)
                            (zip-lists args)
                            vec
                            (se/traverse (fn [[c arg]]
-                                          (update-constraint arg c (ast/location target))))
+                                          (update-constraint arg c loc)))
                            (flat-map (fn [args]
                                        (either (map (get special-call-targets target)
                                                     (fn [f]
                                                       (f target arity args)))
                                                (-> arity
                                                    .result-const
-                                                   (c/update-path (ast/location target))
+                                                   (c/update-path loc)
                                                    Left
-                                                   se/state-error))))))))
-              (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at"
-                   ;; TODO: add location
-                   ]
+                                                   se/state-error))))
+                           (map (fn [result-c]
+                                  (reify-type-constraint result-c arity arg-consts loc)))))))
+              (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at" loc]
                   (interpose " ")
                   to-str
                   se/throw))))
@@ -8868,7 +8961,9 @@
 (extend-type ast/reify-ast
   TypeChecker
   (check-call-site [ast args target]
-    (let [num-args (inc (count args))]
+    (let [num-args (inc (count args))
+          arg-consts (map args .constraint)
+          loc (ast/location target)]
       (either (for [invoke-arities (get-in ast [.impls Function-sym invoke-sym])
                     arity (some invoke-arities (fn [arity]
                                                  (and (-> arity
@@ -8884,7 +8979,7 @@
                                     (fn [[arg c]]
                                       (update-constraint arg c (ast/location args))))
                        (fn [_]
-                         (Left result-c)))))
+                         (Left (reify-type-constraint result-c arity arg-consts loc))))))
               (-> ["No 'invoke' implementation found for"
                    (cond (instance? Tagged target)
                          (str "'" target "'")
@@ -8957,16 +9052,34 @@
     (se/state-error (Left c/top-type)))
 
   (type-check [ast old-ast]
-    (let [call-location (ast/location (.call-target old-ast))]
+    (let [loc (ast/location (.call-target old-ast))]
       (for [result-type (apo (fn [inner-ast]
+                               (or (= (.file loc) 'core)
+                                   (= (.line loc) 0)
+                                   (= (.call-target old-ast) 'print-err)
+                                   (and (= (.call-target old-ast) 'f)
+                                        (do
+                                          (print-err 'call loc (.call-target old-ast)
+                                                     (map (find-arity (.ast inner-ast) 0 1) .result-const) "\n"
+                                                     ;; (to-str (interpose (.args ast) "\n"))
+                                                     )
+                                          nothing)))
                                (check-call-site inner-ast (.args ast) (.call-target old-ast)))
                              (.call-target ast) se/state-error)
             ;; new-args (se/traverse (.args ast)
             ;;                       (fn [arg-ast]
-            ;;                         (add-to-path arg-ast call-location)))
+            ;;                         (add-to-path arg-ast loc)))
             ]
-        (ConstrainedAST (.args old-ast (.args ast))
-                        result-type)))))
+        (do
+          (either (map (and (= c/bottom-type result-type)
+                            (first (.constraints result-type)))
+                       (fn [_]
+                         (print-err 'fail result-type)
+                         (c/conflicting-assertions result-type (.file loc) (.line loc))
+                         (abort)))
+                  result-type)
+          (ConstrainedAST (.args old-ast (.args ast))
+                          result-type))))))
 
 (extend-type ast/extend-ast
   TypeChecker
@@ -9029,6 +9142,12 @@
         ast)))
 
   (type-check [ast old-ast]
+    (and (= c/bottom-type (.constraint (.val ast)))
+         (do
+           (print-err 'boom (ast/location old-ast) old-ast "\n\n"
+                      'ast ast)
+           (abort)
+           nothing))
     (for [_ (push-types)
           _ (ana constrain-all-syms (ParamConstraintPair (.binding old-ast)
                                                          (.constraint (.val ast)))
