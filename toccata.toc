@@ -1859,10 +1859,10 @@
   (old-reify-c [c param-exprs file-name line-number]
     (comp (for [param-expr (sm/when (get param-exprs (.param-index c)))
                 param-c (get-constraint (.c-var param-expr))
-                item-expr (-> param-c
-                              c/extract-dynamic-fields
-                              (get (.item-index c))
-                              sm/when)
+                item-expr (either (-> param-c
+                                      c/extract-reified-fields
+                                      (get-in [.field-cs (.item-index c)]))
+                                  c/top-type)
                 item-c (get-constraint (.c-var item-expr))]
             (-> (.path c)
                 reverse
@@ -1885,9 +1885,10 @@
                                    (for [dyn-param (instance? c/DynamicItemConstraint dyn-c)
                                          expr (get-in param-exprs [(.param-index dyn-param)])]
                                      ;; TODO: there could be multiple dyn fields because of a SumConstraint
-                                     (for [dynamic-fields (map (get-constraint (.c-var expr))
-                                                               c/extract-dynamic-fields)
-                                           field-expr (sm/when (get dynamic-fields (.item-index dyn-param)))
+                                     (for [reified-fields (map (get-constraint (.c-var expr))
+                                                               c/extract-reified-fields)
+                                           field-expr (sm/when (get-in reified-fields [.field-cs
+                                                                                       (.item-index dyn-param)]))
                                            rc (get-result-constraint field-expr (.num-args c))]
                                        rc)))
                                sm/zero-sm)))
@@ -3336,7 +3337,7 @@
           disp-c (get-constraint (.c-var dispatch-val))
           rslt (genlocal "rslt")]
       ;; TODO: there could be multiple dyn fields because of a SumConstraint
-      (either (flat-map (get (c/extract-dynamic-fields disp-c) field-index)
+      (either (flat-map (get-in (c/extract-reified-fields disp-c) [.field-cs field-index])
                         (fn [field-var]
                           (or (and (instance? c-static-fn field-var)
                                    ;; TODO: for some reason, static fn's don't work
@@ -7014,7 +7015,7 @@
                         (sm/state-maybe (extract prom))))]
           '_)))
 
-(defn create-getters [sym fields field-constraints]
+(defn create-getters [sym new-type-constraint fields field-constraints]
   (let [type-value (ast/tag "#value")
         field-arg (ast/tag "#field")
         file-name (ast/file-name sym)
@@ -7022,11 +7023,12 @@
     {Type-sym
      (map (zip-lists (seq fields) (range (count fields)) field-constraints)
           (fn [[field field-index field-constraint]]
-            (let [field-constraint (c/update-path field-constraint file-name line-number)]
+            (let [arity-id (symbol (str sym "-" field "-setter"))
+                  field-constraint (c/update-path field-constraint file-name line-number)]
               [(ast/tag (str "." field) file-name line-number)
-               [(ast/fn-arity
+               [(ast/fn-arity-ast
                  (ast/tag (str sym "_" field) file-name line-number)
-                 (ast/params [type-value field-arg]) ""
+                 arity-id (ast/params [type-value field-arg]) ""
                  [(c/update-sym field-constraint (ast/untag field-arg))
                   ;; TODO: add replacing of dynamic field constraint
                   (ast/inline-ast (ast/tag 'C)
@@ -7034,7 +7036,12 @@
                                       (c/update-path (ast/location sym)))
                                   (str "return(updateField(value_0, field_1, "
                                        field-index "));\n")
-                                  "" 0)])
+                                  "" 0)]
+                 (c/ItemsConstraint [c/top-type field-constraint]
+                                      c/bottom-type
+                                      empty-list nothing "")
+                 (c/MultiConstraint [(c/UpdateDynamicField arity-id field-index empty-list nothing "")
+                                     new-type-constraint]))
 
                 (let [arity-id (symbol (str sym "-" field "-getter"))
                       field-constraint (-> field-constraint
@@ -7051,7 +7058,7 @@
   return(result);
 ")
                                     "" 0)]
-                   (c/ItemsConstraint [c/top-type]
+                   (c/ItemsConstraint [new-type-constraint]
                                       c/bottom-type
                                       empty-list nothing "")
                    field-constraint))]])))}))
@@ -7198,7 +7205,7 @@
                                                     field-constraints)
 
                           field-constraints (cata promote-inferred field-constraints)
-                          getter-arities (create-getters (.sym ast) fields
+                          getter-arities (create-getters (.sym ast) new-type-constraint fields
                                                          (c/extract-items-constraints field-constraints))
                           getter-arities (for [[proto-sym impl-fns] (vec getter-arities)
                                                [fn-name arities] (vec impl-fns)
@@ -7554,6 +7561,9 @@
     ;; c
     )
 
+  (update-reified-field [c field-index new-field]
+    c)
+
   (find-arity [ast type-num args]
     (assert-result r (instance? Maybe r)))
 
@@ -7593,8 +7603,7 @@
             ;;                (c/conflicting-assertions new-c (.file loc) (.line loc))
             ;;                (abort)))
             ;;         (c/trim new-c))
-            (c/trim new-c)
-            ))
+            (c/trim new-c)))
         c))
 
 (defn type-check-ast [ast]
@@ -8053,11 +8062,36 @@
       (for [_ (append-type-constraint _LINE_ (symbol "#result") rc)]
         (ConstrainedAST (c/ResultConstraint rc) rc)))))
 
+(extend-type c/UpdateDynamicField
+  TypeChecker
+  (pre-check [c]
+    (print-err 'pre c)
+    (se/state-error c))
+
+  (type-check [c old-c]
+    (print-err 'dubl-wut c)
+    (se/state-error (ConstrainedAST c c)))
+
+  (reify-c [c arity [value new-field] loc]
+    (either (map (= arity (.arity-id c))
+                 (fn [_]
+                   (cata (fn [inner-c]
+                           ;; (print-err 'updating inner-c (.field-index c) new-field)
+                           (update-reified-field inner-c (.field-index c) new-field))
+                         value)))
+            value)))
+
 (extend-type c/DynamicFields
   TypeChecker
   (reify-c [c arity param-cs loc]
     (-> (c/ReifiedFields param-cs (.path c) (.sym c) (.var c))
         (c/update-path loc))))
+
+(extend-type c/ReifiedFields
+  TypeChecker
+  (update-reified-field [c field-index new-field]
+    (.field-cs c (either (store (.field-cs c) field-index new-field)
+                         (.field-cs c)))))
 
 (extend-type c/DynamicParamConstraint
   TypeChecker
@@ -8081,20 +8115,29 @@
 (extend-type c/DynamicItemConstraint
   TypeChecker
   (reify-c [c arity param-cs loc]
-    ;; (print-err 'test 1 loc c "\n\n"
-    ;;            'arity arity "\n\n"
-    ;;            'param-cs (interpose param-cs "\n"))
+    ;; (or (= (.file loc) 'core)
+    ;;     (= (.line loc) 0)
+    ;;     (do
+    ;;       (print-err 'test 1 loc c "\n\n"
+    ;;                  'arity arity "\n\n"
+    ;;                  'param-cs (interpose param-cs "\n"))
+    ;;       nothing))
     (let [r (either (or (for [_ (= (.arity c) arity)
                               param-c (get param-cs (.param-index c))
                               ;; :let [_ (print-err 'dyn-item-param-c param-c)]
                               item-c (-> param-c
-                                         c/extract-dynamic-fields
+                                         c/extract-reified-fields
                                          ;; ((fn [x]
-                                         ;;    (print-err 'dyn-fields x)
-                                         ;;    (print-err 'item-index (.item-index c)
-                                         ;;               (get x (.item-index c)))
+                                         ;;    (or (= (.file loc) 'core)
+                                         ;;        (= (.line loc) 0)
+                                         ;;        (do
+                                         ;;          (print-err 'param-c param-c)
+                                         ;;          (print-err 'dyn-fields x)
+                                         ;;          (print-err 'item-index (.item-index c)
+                                         ;;                     (get-in x [.field-cs (.item-index c)]))
+                                         ;;          nothing))
                                          ;;    x))
-                                         (get (.item-index c)))]
+                                         (get-in [.field-cs (.item-index c)]))]
                           (do
                             ;; let [_ (print-err 'dyn-item-item-c item-c)]
                             (-> (.path c)
@@ -8360,8 +8403,9 @@
           _ (recover-types (.params old-ast))
           _ (nip-types)]
       (let [loc (ast/location old-ast)
-            result-c (either (map (last (.body ast)) .constraint)
-                             c/top-type)
+            result-c (-> (either (map (last (.body ast)) .constraint)
+                                 c/top-type)
+                         (c/intersect (.result-const ast)))
             pts (-> pts
                     (c/intersect (.param-consts ast))
                     (c/update-path loc))]
@@ -8657,6 +8701,13 @@
           loc (ast/location target)]
       (either (flat-map (find-arity ast c/top-type arg-count)
                         (fn [arity]
+                          ;; (or (= (.file loc) 'core)
+                          ;;     (= (.line loc) 0)
+                          ;;     (do
+                          ;;       (print-err 'call-fn (.fn-sym ast) loc "\n"
+                          ;;                  'result-c (.result-const arity) "\n\n"
+                          ;;                  (interpose args "\n"))
+                          ;;       nothing))
                           (and (<= (count (c/extract-items-constraints (.param-consts arity)))
                                    arg-count)
                                (maybe (-> (.param-consts arity)
@@ -8749,6 +8800,13 @@
                                            (print-err "Could not find arity for" (str "'" (.fn-sym proto-impls) "'")
                                                       "with" num-args "arguments at" loc)
                                            (abort)))]
+                       ;; (or (= (.file loc) 'core)
+                       ;;     (= (.line loc) 0)
+                       ;;     (do
+                       ;;       (print-err 'call-proto loc (.fn-sym proto-impls) "\n"
+                       ;;                  'result-c (.result-const arity) "\n\n"
+                       ;;                  (interpose args "\n"))
+                       ;;       nothing))
                        (-> (.param-consts arity)
                            (c/extract-items-constraints num-args)
                            (zip-lists args)
@@ -8995,6 +9053,13 @@
                                                       (maybe arity))))]
                 (let [param-cs (.param-consts arity)
                       result-c (.result-const arity)]
+                  ;; (or (= (.file loc) 'core)
+                  ;;     (= (.line loc) 0)
+                  ;;     (do
+                  ;;       (print-err 'call-reify loc "\n"
+                  ;;                  'result-c result-c "\n\n"
+                  ;;                  (interpose args "\n"))
+                  ;;       nothing))
                   (map (se/traverse (zip-lists args (rest (c/extract-items-constraints param-cs num-args)))
                                     (fn [[arg c]]
                                       (update-constraint arg c (ast/location args))))
@@ -9074,16 +9139,6 @@
   (type-check [ast old-ast]
     (let [loc (ast/location (.call-target old-ast))]
       (for [result-type (apo (fn [inner-ast]
-                               ;; (or (= (.file loc) 'core)
-                               ;;     (= (.line loc) 0)
-                               ;;     (= (.call-target old-ast) 'print-err)
-                               ;;     (and (= (.call-target old-ast) 'f)
-                               ;;          (do
-                               ;;            (print-err 'call loc (.call-target old-ast)
-                               ;;                       (map (find-arity (.ast inner-ast) 0 1) .result-const) "\n"
-                               ;;                       ;; (to-str (interpose (.args ast) "\n"))
-                               ;;                       )
-                               ;;            nothing)))
                                (check-call-site inner-ast (.args ast) (.call-target old-ast)))
                              (.call-target ast) se/state-error)
             ;; new-args (se/traverse (.args ast)
@@ -9636,7 +9691,7 @@
   (type-check [ast old-ast]
     (se/state-error ast)))
 
-(deftype CreateGetters [sym fields loc]
+(deftype CreateGetters [sym new-type-constraint fields loc]
   Stringable
   (string-list [_]
     (list "(CreateGetters " (str sym) " " (to-str fields) " " (str loc) ")"))
@@ -9655,7 +9710,7 @@
                                      _ (set-type-constraint field (ConstrainedAST field field-c))]
                                  field-c)))
          (fn [field-cs]
-           (ast/extend-ast sym (create-getters sym fields field-cs))))))
+           (ast/extend-ast sym (create-getters sym new-type-constraint fields field-cs))))))
 
 (extend-type ast/type-ast
   TypeChecker
@@ -9743,7 +9798,7 @@
           [(map (.items-constraints field-assertions) TypeCheckOnly)
            (TypeCheckOnly (ast/extend-ast sym default-impls))
            (TypeCheckOnly (ast/extend-ast sym impls))
-           (CreateGetters sym fields loc)
+           (CreateGetters sym new-type-constraint fields loc)
            (cond (empty? hash-map-impls)
                  (ast/block-comment "" 0 [])
                  (ast/extend-ast sym hash-map-impls))
