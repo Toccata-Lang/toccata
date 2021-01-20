@@ -6757,7 +6757,7 @@
                                                   (to-str (interpose fields ", "))
                                                   "]>"])])]}})))
 
-(defn create-constructor [new-type-name type-num new-type-constraint fields]
+(defn create-constructor [new-type-name type-num new-type-constraint field-constraints fields]
   (assert (instance? ast/tagged-symbol new-type-name))
   (assert (instance? c/TypeConstraint new-type-constraint))
   (assert (instance? (vector-of Symbol) fields))
@@ -6775,7 +6775,11 @@
                            (cond (= k v)
                                  m
                                  (assoc m k v))))
-        reified-type-num (extract type-counter)]
+        reified-type-num (extract type-counter)
+        field-params (-> (comp ['_] args)
+                         (map (fn [arg]
+                                (ast/tag arg file-name line-number)))
+                         ast/params)]
     (ast/reified (maybe reified-type-num)
                  {(ast/tag Eq-sym file-name line-number)
                   {(ast/tag =*-sym file-name line-number)
@@ -6818,44 +6822,44 @@
 
                   Function-sym
                   {invoke-sym
-                   [(ast/fn-arity
+                   [(ast/fn-arity-ast
                      (ast/tag (str new-type-name "_invoke") file-name line-number)
-                     (-> (comp ['_] args)
-                         (map (fn [arg]
-                                (ast/tag arg file-name line-number)))
-                         ast/params )
-                     ""
-                     (comp [(c/ResultConstraint (-> (c/DynamicFields empty-list nothing "")
-                                                    (c/update-sym (symbol "#result"))))]
-                           [(c/update-var new-type-constraint "#result")
-                            (ast/inline-ast (ast/tag 'C)
-                                            new-type-constraint
-                                            (str "ReifiedVal *rv = malloc_reified("
-                                                 field-count ");\n"
-                                                 "#ifdef SINGLE_THREADED\n"
-                                                 "rv->refs = refsInit;\n#else\n"
-                                                 " __atomic_store(&rv->refs,"
-                                                 " &refsInit, __ATOMIC_RELAXED);\n"
-                                                 "#endif\n"
-                                                 "rv->type = " type-num ";\n"
-                                                 (to-str (map (range field-count)
-                                                              (fn [idx]
-                                                                (str "rv->impls[" idx "] = arg" idx
-                                                                     "_" (inc idx) ";\n"))))
-                                                 "return((Value *)rv);\n")
-                                            "" 0)]))]}
+                     "" field-params ""
+                     [(ast/inline-ast (ast/tag 'C)
+                                      new-type-constraint
+                                      (str "ReifiedVal *rv = malloc_reified("
+                                           field-count ");\n"
+                                           "#ifdef SINGLE_THREADED\n"
+                                           "rv->refs = refsInit;\n#else\n"
+                                           " __atomic_store(&rv->refs,"
+                                           " &refsInit, __ATOMIC_RELAXED);\n"
+                                           "#endif\n"
+                                           "rv->type = " type-num ";\n"
+                                           (to-str (map (range field-count)
+                                                        (fn [idx]
+                                                          (str "rv->impls[" idx "] = arg" idx
+                                                               "_" (inc idx) ";\n"))))
+                                           "return((Value *)rv);\n")
+                                      "" 0)]
+                     field-constraints
+                     (-> (c/DynamicFields empty-list nothing "")
+                         (c/intersect new-type-constraint)))]}
 
                   Container-sym
                   {apply-sym
-                   [(ast/fn-arity
+                   [(ast/fn-arity-ast
                      (ast/tag (str new-type-name "_apply_ST_") file-name line-number)
-                     (ast/params [(ast/tag '_ file-name line-number)
-                                  (ast/tag 'fields file-name line-number)])
+                     "" (ast/params [(ast/tag '_ file-name line-number)
+                                     (ast/tag 'fields file-name line-number)])
                      ""
                      [(ast/inline-ast (ast/tag 'C)
                                       new-type-constraint
                                       (str "return(newTypeValue(" type-num ", (Vector *)fields_1));")
-                                      "" 0)])]}
+                                      "" 0)]
+                     (-> c/empty-items-constraint
+                         (.items-constraints [c/top-type field-constraints]))
+                     (-> (c/DynamicFields empty-list nothing "")
+                         (c/intersect new-type-constraint)))]}
 
                   (ast/tag Stringable-sym file-name line-number)
                   {string-list-sym
@@ -8073,6 +8077,8 @@
     (se/state-error (ConstrainedAST c c)))
 
   (reify-c [c arity [value new-field] loc]
+    ;; (print-err 'wut value)
+    ;; (print-err 'new-field new-field)
     (either (map (= arity (.arity-id c))
                  (fn [_]
                    (cata (fn [inner-c]
@@ -8090,11 +8096,31 @@
 (extend-type c/ReifiedFields
   TypeChecker
   (update-reified-field [c field-index new-field]
+    ;; (print-err 'updating-reified c field-index new-field)
     (.field-cs c (either (store (.field-cs c) field-index new-field)
                          (.field-cs c)))))
 
 (extend-type c/DynamicParamConstraint
   TypeChecker
+  ;; (update-reified-field [c field-index new-field]
+  ;;   ;; (print-err 'updating-reified c field-index new-field)
+  ;;   (either (or (and (= (.arity c) arity)
+  ;;                    (map (get param-cs (.param-index c))
+  ;;                         (fn [param-c]
+  ;;                           (cond (= c param-c)
+  ;;                                 (do
+  ;;                                   (print-err 'implement-fixed-point-types loc)
+  ;;                                   c/top-type)
+
+  ;;                                 (let [param-c (c/UpdateDynamicField arity )]
+  ;;                                   (-> (reverse (.path c))
+  ;;                                       (reduce param-c (fn [new-c [file line]]
+  ;;                                                         (c/update-path new-c file line)))
+  ;;                                       (c/set-type (.result-type c))))))))
+  ;;               (and (= (.arity c) arity)
+  ;;                    (maybe c/top-type)))
+  ;;           c))
+
   (reify-c [c arity param-cs loc]
     (either (or (and (= (.arity c) arity)
                      (map (get param-cs (.param-index c))
@@ -8409,6 +8435,10 @@
             pts (-> pts
                     (c/intersect (.param-consts ast))
                     (c/update-path loc))]
+        (and (= (str (.fn-sym ast)) "AType x")
+             (do
+               (print-err 'checked-fn-arity (.fn-sym ast) (.params ast) (.result-const ast))
+               nothing))
         (either (map (= c/bottom-type pts)
                      (fn [failure-c]
                        (c/conflicting-assertions failure-c (.file loc) (.line loc))
@@ -9616,29 +9646,8 @@
           ;;                         (for [field-c (get-type-constraint field)]
           ;;                           (print-err 'field (.sym ast) field field-c))))
           _ (se/traverse fields recover-type-constraint)
-          _ (nip-types)
-
-          arg0-c (se/try
-                   (get-type-constraint 'arg0)
-                   (fn [_]
-                     (se/state-error 'arg0-not-found)))]
-      (let [ctor (create-constructor sym type-num new-type-constraint fields)
-            ctor (either (for [apply-impl (get-in ctor [.impls Container-sym apply-sym 0])
-                               invoke-impl (get-in ctor [.impls Function-sym invoke-sym 0])]
-                           (-> ctor
-                               (assoc-in [.impls Container-sym apply-sym]
-                                         [(-> apply-impl
-                                              (.param-consts (-> c/empty-items-constraint
-                                                                 (.items-constraints [c/top-type field-types])))
-                                              (.result-const new-type-constraint))])
-                               (assoc-in
-                                [.impls Function-sym invoke-sym]
-                                [(-> invoke-impl
-                                     (.param-consts (.items-constraints field-types
-                                                                        (comp [c/top-type]
-                                                                              (.items-constraints field-types))))
-                                     (.result-const new-type-constraint))])))
-                         ctor)]
+          _ (nip-types)]
+      (let [ctor (create-constructor sym type-num new-type-constraint field-types fields)]
         (ast/definition-ast sym [ctor])))))
 
 (defn add-prototype-assertions [dispatch-type [proto-sym fn-sym arity]]
