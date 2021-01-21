@@ -7569,7 +7569,7 @@
     ;; c
     )
 
-  (update-reified-field [c update-c]
+  (update-reified-field [c update-c loc]
     c)
 
   (find-arity [ast type-num args]
@@ -8079,11 +8079,12 @@
                        ;; (or (= (.file loc) 'core)
                        ;;     (= (.line loc) 0)
                        ;;     (do
-                       ;;       (print-err 'updating loc "\n"  'value value "\n\n" 'new-field (.new-field c))
+                       ;;       (print-err 'updating loc "\n"  'value value "\n\n"
+                       ;;                  'old-field (.new-field c) "\n\n"
+                       ;;                  'new-field new-field)
                        ;;       nothing))
                        (cata (fn [inner-c]
-                               ;; (print-err 'updating inner-c (.field-index c) new-field)
-                               (update-reified-field inner-c c))
+                               (update-reified-field inner-c c loc))
                              value)))
                 (map (= arity (.arity c))
                      c/top-type))
@@ -8097,28 +8098,41 @@
 
 (extend-type c/ReifiedFields
   TypeChecker
-  (update-reified-field [c update-c]
+  (update-reified-field [c update-c loc]
     ;; (print-err 'updating-reified c field-index new-field)
     (.field-cs c (either (store (.field-cs c) (.field-index update-c) (.new-field update-c))
                          (.field-cs c)))))
 
 (extend-type c/DynamicParamConstraint
   TypeChecker
-  (update-reified-field [c update-c]
-    (print-err 'updating-dpc c update-c)
-    (either (map (= (.param-index c) (.param-index update-c))
-                 (fn [_]
-                   (.arity update-c (.arity c))))
-            c))
+  (update-reified-field [c update-c loc]
+    ;; (print-err 'updating-dpc c update-c)
+    (either (-> (.new-field update-c)
+                (c/intersect (.result-type c))
+                (= c/bottom-type)
+                (map (fn [failure-c]
+                       (c/conflicting-assertions failure-c (.file loc) (.line loc))
+                       (abort))))
+            (cata (fn [inner-c]
+                    (c/set-arity inner-c (.arity c)))
+                  (.param-index update-c (.param-index c)))))
 
   (reify-c [c arity param-cs loc]
+    ;; (or (= (.file loc) 'core)
+    ;;     (= (.line loc) 0)
+    ;;     (do
+    ;;       (print-err 'reifying-dpc loc arity "\n"
+    ;;                  'c c "\n\n" 'param-cs (interpose param-cs "\n"))
+
+    ;;       nothing))
     (either (or (and (= (.arity c) arity)
                      (map (get param-cs (.param-index c))
                           (fn [param-c]
                             (cond (= c param-c)
                                   (do
-                                    (print-err 'implement-fixed-point-types loc)
-                                    c/top-type)
+                                    ;; TODO
+                                    ;; (print-err 'implement-fixed-point-types loc)
+                                    c)
 
                                   (-> (reverse (.path c))
                                       (reduce param-c (fn [new-c [file line]]
@@ -8751,7 +8765,9 @@
                                                    ;; (or (= (.file loc) 'core)
                                                    ;;     (= (.line loc) 0)
                                                    ;;     (maybe (print-err 'result-c loc (.fn-sym ast) result-c
-                                                   ;;                       "\n\n" 'args (to-str (interpose arg-consts "\n"))
+                                                   ;;                       "\n\n" 'args (-> arg-consts
+                                                   ;;                                        (interpose "\n")
+                                                   ;;                                        to-str)
                                                    ;;                       "\n\n" 'r r)))
                                                    r))))))))
               (se/throw (str "Could not find implementation of " (str "'" (either (.fn-sym ast)
