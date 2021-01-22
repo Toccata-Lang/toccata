@@ -7751,23 +7751,26 @@
   (let [loc (ast/location sym)]
     (for [mod-index (se/get-in-val [.module .index])
           _ (cond (= 0 mod-index)
-                  (for [_ (se/update-in-val [.module .value-types]
-                                            (partial add-getter sym))
-                        Type-protocol (se/get-in-val [.module .value-types 0 'Type])
-                        getter (se/get-in-val [.module .value-types 0 (ast/untag sym)])
-                        _ (se/update-in-val [.module .value-types]
-                                            (fn [types-list]
-                                              (map types-list
-                                                   (fn [value-types]
-                                                     (-> value-types
-                                                         (assoc (ast/untag sym) getter)
-                                                         (assoc 'Type Type-protocol))))))]
-                    '_)
+                  (comp (se/get-in-val [.module .value-types 0 sym])
+                        (for [_ (se/update-in-val [.module .value-types]
+                                                  (partial add-getter sym))
+                              Type-protocol (se/get-in-val [.module .value-types 0 'Type])
+                              getter (se/get-in-val [.module .value-types 0 (ast/untag sym)])
+                              _ (se/update-in-val [.module .value-types]
+                                                  (fn [types-list]
+                                                    (map types-list
+                                                         (fn [value-types]
+                                                           (-> value-types
+                                                               (assoc (ast/untag sym) getter)
+                                                               (assoc 'Type Type-protocol))))))]
+                          '_))
 
                   (do
                     (send core-agent
                           (fn [mod]
-                            (.value-types mod (add-getter sym (.value-types mod)))))
+                            (either (and (get-in mod [.value-types 0 sym])
+                                         (maybe mod))
+                                    (.value-types mod (add-getter sym (.value-types mod))))))
                     se-nop))]
       (ConstrainedAST sym (-> fn-constraint
                               (c/update-path loc))))))
@@ -8145,6 +8148,11 @@
 
 (extend-type c/DynamicItemConstraint
   TypeChecker
+  (update-reified-field [c update-c loc]
+    (print-err 'FAIL 'updating-items loc "\n" 'c c "\n" 'update-c update-c)
+    (abort)
+    c)
+
   (reify-c [c arity param-cs loc]
     ;; (or (= (.file loc) 'core)
     ;;     (= (.line loc) 0)
@@ -8542,6 +8550,9 @@
    ;; 'vals
    ;; 'get
 
+
+   ;; TODO: can do get-in if the first arg is a vector of PrototypeImpls
+
    'vector (fn [target arity args]
              (-> c/empty-items-constraint
                  (.items-constraints (map args .constraint))
@@ -8832,6 +8843,7 @@
       (either (map (first args)
                    (fn [disp-arg]
                      (let [type-num (constraint-type-num (.constraint disp-arg))
+                           ;; TODO: if finite set of type-nums, build SumConstraint
                            arity (either (find-arity proto-impls type-num num-args)
                                          (do
                                            (print-err "Could not find arity for" (str "'" (.fn-sym proto-impls) "'")
@@ -8840,8 +8852,10 @@
                        ;; (or (= (.file loc) 'core)
                        ;;     (= (.line loc) 0)
                        ;;     (do
-                       ;;       (print-err 'call-proto loc (.fn-sym proto-impls) "\n"
-                       ;;                  'result-c (.result-const arity) "\n\n"
+                       ;;       (print-err 'arities (keys (.impls proto-impls)))
+                       ;;       (print-err 'desired-arity (get-in proto-impls [.impls type-num num-args]))
+                       ;;       (print-err 'call-proto loc (.fn-sym proto-impls) 'type-num type-num
+                       ;;                  'arity-id (.fn-var arity) "\n" 'result-c (.result-const arity) "\n\n"
                        ;;                  (interpose args "\n"))
                        ;;       nothing))
                        (-> (.param-consts arity)
@@ -9061,11 +9075,11 @@
                                               (fn [_]
                                                 (.value-types
                                                  mod
-                                                 (let [[value-types & types-list] (.value-types mod)]
-                                                   (-> value-types
-                                                       (assoc-in [fn-sym .ast .impls type-num arg-count]
-                                                                 new-arity)
-                                                       (cons types-list))))))
+                                                 (map (.value-types mod)
+                                                      (fn [value-types]
+                                                        (-> value-types
+                                                            (assoc-in [fn-sym .ast .impls type-num arg-count]
+                                                                      new-arity)))))))
                                          mod)))
                          '_)))]
       [proto-sym fn-sym new-arity])))
