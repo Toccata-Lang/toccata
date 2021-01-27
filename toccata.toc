@@ -7566,8 +7566,8 @@
                     '_)))
 
 (defprotocol TypeChecker
-  (reify-c [c arity param-exprs loc]
-    ;; c
+  (reify-c [c arity loc]
+    ;; (se/state-error (Right c))
     )
 
   (update-reified-field [c update-c loc]
@@ -7598,22 +7598,17 @@
     (assert-result r (instance? se/new-se r))))
 
 (defn reify-type-constraint [c arity param-cs loc]
-  ;; (print-err 'reifying loc c "\n"
-  ;;            'params (-> param-cs
-  ;;                        (interpose "\n")
-  ;;                        to-str))
-  (cata (fn [c]
-          (let [new-c (reify-c c arity param-cs loc)]
-            ;; TODO: might still want to do this
-            ;; (either (map (and (= c/bottom-type new-c)
-            ;;                   (first (.constraints new-c)))
-            ;;              (fn [_]
-            ;;                (print-err 'fail new-c)
-            ;;                (c/conflicting-assertions new-c (.file loc) (.line loc))
-            ;;                (abort)))
-            ;;         (c/trim new-c))
-            (c/trim new-c)))
-        c))
+  (either (first ((se/try
+                    (comp (map (apo (fn [c]
+                                      (reify-c c arity loc))
+                                    c
+                                    se/state-error)
+                               (partial cata c/trim))
+                          (se/state-error c/top-type))
+                    (fn [_]
+                      (se/state-error c/top-type)))
+                  param-cs))
+          c))
 
 (defn type-check-ast [ast]
   (flat-map (pre-check ast)
@@ -7945,8 +7940,8 @@
 
 (extend-type TempCs
   TypeChecker
-  (reify-c [c arity param-cs loc]
-    c))
+  (reify-c [c arity loc]
+    (se/state-error (Right c))))
 
 (extend-type c/AllValues
   TypeChecker
@@ -8076,29 +8071,50 @@
 
 (extend-type c/UpdateDynamicField
   TypeChecker
-  (reify-c [c arity param-cs loc]
-    (either (or (map (and (= arity (.arity c))
-                          (get param-cs (.param-index c)))
-                     (fn [value]
-                       ;; (or (= (.file loc) 'core)
-                       ;;     (= (.line loc) 0)
-                       ;;     (do
-                       ;;       (print-err 'updating loc "\n"  'value value "\n\n"
-                       ;;                  'old-field (.new-field c) "\n\n"
-                       ;;                  'new-field new-field)
-                       ;;       nothing))
-                       (cata (fn [inner-c]
-                               (update-reified-field inner-c c loc))
-                             value)))
-                (map (= arity (.arity c))
-                     c/top-type))
-            c)))
+  (reify-c [c arity loc]
+    (either (and (= (.arity c) arity)
+                 (maybe (for [old-param (se/get-val (.param-index c))
+                              :let [new-param (either (c/extract-reified-field old-param c)
+                                                      c/top-type)]
+                              _ (se/update-state (fn [param-cs]
+                                                   (either (store param-cs (.param-index c) new-param)
+                                                           param-cs)))]
+                          (Right (reify
+                                   Type
+                                   (type-name [_]
+                                     (str "reified at " _LINE_))
+
+                                   Stringable
+                                   (string-list [_]
+                                     (list "reified at " (str _LINE_)))
+
+                                   Container
+                                   (map [_ f embed]
+                                     (map (f (.new-field c))
+                                          (fn [new-field]
+                                            (apo (fn [inner-c]
+                                                   (either (or (for [_ (instance? c/ReifiedFields inner-c)
+                                                                     new-fields (store (.field-cs inner-c)
+                                                                                       (.item-index c) new-field)]
+                                                                 (Left (.field-cs inner-c new-fields)))
+                                                               (and (instance? c/DynamicParamConstraint inner-c)
+                                                                    (-> c
+                                                                        (.param-index (.param-index inner-c))
+                                                                        (.arity (.arity inner-c))
+                                                                        (.new-field new-field)
+                                                                        Left
+                                                                        maybe)))
+                                                           (Right inner-c)))
+                                                 old-param)))))))))
+            (se/state-error (Right c)))))
 
 (extend-type c/DynamicFields
   TypeChecker
-  (reify-c [c arity param-cs loc]
-    (-> (c/ReifiedFields param-cs (.path c) (.sym c) (.var c))
-        (c/update-path loc))))
+  (reify-c [c arity loc]
+    (for [param-cs (se/update-state identity)]
+      (-> (c/ReifiedFields param-cs (.path c) (.sym c) (.var c))
+          (c/update-path loc)
+          Left))))
 
 (extend-type c/ReifiedFields
   TypeChecker
@@ -8121,30 +8137,31 @@
                     (c/set-arity inner-c (.arity c)))
                   (.param-index update-c (.param-index c)))))
 
-  (reify-c [c arity param-cs loc]
+  (reify-c [c arity loc]
     ;; (or (= (.file loc) 'core)
     ;;     (= (.line loc) 0)
     ;;     (do
     ;;       (print-err 'reifying-dpc loc arity "\n"
     ;;                  'c c "\n\n" 'param-cs (interpose param-cs "\n"))
-
     ;;       nothing))
-    (either (or (and (= (.arity c) arity)
-                     (map (get param-cs (.param-index c))
-                          (fn [param-c]
-                            (cond (= c param-c)
-                                  (do
-                                    ;; TODO
-                                    ;; (print-err 'implement-fixed-point-types loc)
-                                    c)
+    (for [param-cs (se/update-state identity)]
+      ;; TODO: maybe refactor this
+      (Left (either (or (and (= (.arity c) arity)
+                             (map (get param-cs (.param-index c))
+                                  (fn [param-c]
+                                    (cond (= c param-c)
+                                          (do
+                                            ;; TODO
+                                            ;; (print-err 'implement-fixed-point-types loc)
+                                            param-c)
 
-                                  (-> (reverse (.path c))
-                                      (reduce param-c (fn [new-c [file line]]
-                                                        (c/update-path new-c file line)))
-                                      (c/set-type (.result-type c)))))))
-                (and (= (.arity c) arity)
-                     (maybe c/top-type)))
-            c)))
+                                          (-> (reverse (.path c))
+                                              (reduce param-c (fn [new-c [file line]]
+                                                                (c/update-path new-c file line)))
+                                              (c/set-type (.result-type c)))))))
+                        (and (= (.arity c) arity)
+                             (maybe c/top-type)))
+                    c)))))
 
 (extend-type c/DynamicItemConstraint
   TypeChecker
@@ -8155,30 +8172,19 @@
                           update-c
                           (list [(.file loc) (.line loc)]) nothing ""))
 
-  (reify-c [c arity param-cs loc]
-    ;; (or (= (.file loc) 'core)
-    ;;     (= (.line loc) 0)
-    ;;     (do
-    ;;       (print-err 'test 1 loc c "\n\n"
-    ;;                  'arity arity "\n\n"
-    ;;                  'param-cs (interpose param-cs "\n"))
-    ;;       nothing))
-    (let [r (either (or (for [_ (= (.arity c) arity)
-                              param-c (get param-cs (.param-index c))
-                              ;; :let [_ (print-err 'dyn-item-param-c param-c)]
-                              item-c (c/extract-reified-field param-c c)]
-                          (do
-                            ;; let [_ (print-err 'dyn-item-item-c item-c)]
-                            (-> (.path c)
-                                reverse
-                                (reduce item-c
-                                        (fn [new-c [file line]]
-                                          (c/update-path new-c file line))))))
-                        (and (= (.arity c) arity)
-                             (maybe c/top-type)))
-                    c)]
-      ;; (print-err 'reified-dic r)
-      r)))
+  (reify-c [c arity loc]
+    (for [param-cs (se/update-state identity)]
+      (either (or (for [_ (= (.arity c) arity)
+                        param-c (get param-cs (.param-index c))
+                        item-c (c/extract-reified-field param-c c)]
+                    (-> (.path c)
+                        reverse
+                        (reduce item-c
+                                (fn [new-c [file line]]
+                                  (c/update-path new-c file line)))))
+                  (and (= (.arity c) arity)
+                       (maybe c/top-type)))
+              c))))
 
 ;; (extend-type c/DynamicResultConstraint
 ;;   TypeChecker
@@ -8742,7 +8748,7 @@
                           ;;     (do
                           ;;       (print-err 'call-fn (.fn-sym ast) loc "\n"
                           ;;                  'result-c (.result-const arity) "\n\n"
-                          ;;                  (interpose args "\n"))
+                          ;;                  (vec (interpose (map args .constraint) "\n")))
                           ;;       nothing))
                           (and (<= (count (c/extract-items-constraints (.param-consts arity)))
                                    arg-count)
@@ -8762,16 +8768,8 @@
                                                                   Left
                                                                   se/state-error))))
                                           (map (fn [result-c]
-                                                 (let [r (reify-type-constraint result-c (.fn-var arity)
-                                                                                arg-consts loc)]
-                                                   ;; (or (= (.file loc) 'core)
-                                                   ;;     (= (.line loc) 0)
-                                                   ;;     (maybe (print-err 'result-c loc (.fn-sym ast) result-c
-                                                   ;;                       "\n\n" 'args (-> arg-consts
-                                                   ;;                                        (interpose "\n")
-                                                   ;;                                        to-str)
-                                                   ;;                       "\n\n" 'r r)))
-                                                   r))))))))
+                                                 (reify-type-constraint result-c (.fn-var arity)
+                                                                        arg-consts loc))))))))
               (se/throw (str "Could not find implementation of " (str "'" (either (.fn-sym ast)
                                                                                   "<anon>") "'")
                              " at " (either (map (empty? args)
