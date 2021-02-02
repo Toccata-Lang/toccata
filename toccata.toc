@@ -7031,7 +7031,8 @@
             (let [arity-id (symbol (str sym "-" field "-setter"))
                   field-constraint (c/update-path field-constraint file-name line-number)]
               [(ast/tag (str "." field) file-name line-number)
-               [(ast/fn-arity-ast
+               [;; setter arity
+                (ast/fn-arity-ast
                  (ast/tag (str sym "_" field) file-name line-number)
                  arity-id (ast/params [type-value field-arg]) ""
                  [(c/update-sym field-constraint (ast/untag field-arg))
@@ -7052,6 +7053,7 @@
                                                            empty-list nothing "")
                                      new-type-constraint]))
 
+                ;; getter arity
                 (let [arity-id (symbol (str sym "-" field "-getter"))
                       field-constraint (-> field-constraint
                                            (c/intersect (c/DynamicItemConstraint arity-id 0 field-index
@@ -7598,17 +7600,38 @@
     (assert-result r (instance? se/new-se r))))
 
 (defn reify-type-constraint [c arity param-cs loc]
-  (either (first ((se/try
-                    (comp (map (apo (fn [c]
-                                      (reify-c c arity loc))
-                                    c
-                                    se/state-error)
-                               (partial cata c/trim))
-                          (se/state-error c/top-type))
-                    (fn [_]
-                      (se/state-error c/top-type)))
-                  param-cs))
-          c))
+  (assert (instance? c/Constraints c))
+
+  (let [r (either (first ((se/try
+                            (comp (map (apo (fn [c]
+                                              (let [r (reify-c c arity loc)]
+                                                (map r (fn [r]
+                                                         (or (= (.file loc) 'core)
+                                                             (= (.line loc) 0)
+                                                             (do
+                                                               (print-err 'inner arity loc "\n" c "\n\n" r)
+                                                               nothing))
+                                                         r))))
+                                            c
+                                            se/state-error)
+                                       (fn [c]
+                                         (or (= (.file loc) 'core)
+                                             (= (.line loc) 0)
+                                             (do
+                                               (print-err 'done arity loc "\n" c)
+                                               nothing))
+                                         (cata c/trim c)))
+                                  (se/state-error c/top-type))
+                            (fn [_]
+                              (se/state-error c/top-type)))
+                          param-cs))
+                  c)]
+    (or (= (.file loc) 'core)
+        (= (.line loc) 0)
+        (do
+          (print-err 'reified arity loc "\n" r)
+          nothing))
+    r))
 
 (defn type-check-ast [ast]
   (flat-map (pre-check ast)
@@ -8074,15 +8097,23 @@
   (reify-c [c arity loc]
     (either (and (= (.arity c) arity)
                  (maybe (for [old-param (se/get-val (.param-index c))
-                              :let [new-param (either (c/extract-reified-field old-param c)
-                                                      c/top-type)
-                                    ;; _ (print-err 'doing arity loc "\n"
-                                    ;;              old-param)
-                                    ]
 
                               ;; TODO: remove
                               param-cs (se/update-state identity)
 
+                              :let [new-param (either (c/extract-reified-field old-param c)
+                                                      c/top-type)
+                                    _ (or (= (.file loc) 'core)
+                                          (= (.line loc) 0)
+                                          (do
+                                            (print-err 'doing arity loc "\n"
+                                                       'udf c "\n\n"
+                                                       'params param-cs
+                                                       ;; 'old old-param "\n\n"
+                                                       ;; 'new new-param
+                                                       )
+                                            nothing))
+                                    ]
                               _ (se/update-state (fn [param-cs]
                                                    (either (store param-cs (.param-index c) new-param)
                                                            param-cs)))]
@@ -8104,50 +8135,53 @@
 
                                      Container
                                      (map [_ f embed]
-                                       (map (f (.new-field c))
+                                      (map (f (.new-field c))
                                             (fn [new-field]
-                                              (or (= (.file loc) 'core)
-                                                  (= (.line loc) 0)
-                                                  (do
-                                                    (print-err 'new-field loc arity "\n"
-                                                               new-field "\n\n" 'old-param old-param)
-                                                    nothing))
-                                              (let [new-c (apo (fn [inner-c]
-                                                                 ;; (or (= (.file loc) 'core)
-                                                                 ;;     (= (.line loc) 0)
-                                                                 ;;     (do
-                                                                 ;;       (print-err 'inner-c loc arity "\n"
-                                                                 ;;                  inner-c)
-                                                                 ;;       nothing))
-                                                                 (either (for [_ (instance? c/ReifiedFields inner-c)
-                                                                               new-fields (store (.field-cs inner-c)
-                                                                                                 (.item-index c)
-                                                                                                 new-field)]
-                                                                           (Left (.field-cs inner-c new-fields)))
-                                                                         (cond
-                                                                          (instance? c/DynamicParamConstraint inner-c)
-                                                                          (-> c
-                                                                              (.param-index (.param-index inner-c))
-                                                                              (.arity (.arity inner-c))
-                                                                              (.new-field new-field)
-                                                                              Left)
-
-                                                                          (instance? c/DynamicItemConstraint inner-c)
-                                                                          (-> c
-                                                                              (.param-index (.param-index inner-c))
-                                                                              (.arity (.arity inner-c))
-                                                                              (.new-field new-field)
-                                                                              Left)
-
-                                                                          (Right inner-c))))
-                                                               old-param)]
+                                              (let [new-c (.new-field c new-field)]
                                                 ;; (or (= (.file loc) 'core)
                                                 ;;     (= (.line loc) 0)
                                                 ;;     (do
-                                                ;;       (print-err 'updated-c loc arity "\n"
-                                                ;;                  new-c "\n\n" 'new-field new-field)
+                                                ;;       (print-err 'new-new-field loc arity "\n"
+                                                ;;                  new-field)
                                                 ;;       nothing))
-                                                new-c))))))))))
+                                                ;; (let [new-c (apo (fn [inner-c]
+                                                ;;                    (or (= (.file loc) 'core)
+                                                ;;                        (= (.line loc) 0)
+                                                ;;                        (do
+                                                ;;                          (print-err 'inner-c loc arity "\n"
+                                                ;;                                     inner-c)
+                                                ;;                          nothing))
+                                                ;;                    (either (for [_ (instance? c/ReifiedFields inner-c)
+                                                ;;                                  new-fields (store (.field-cs inner-c)
+                                                ;;                                                    (.item-index c)
+                                                ;;                                                    new-field)]
+                                                ;;                              (Left (.field-cs inner-c new-fields)))
+                                                ;;                            (cond
+                                                ;;                             (instance? c/DynamicItemConstraint inner-c)
+                                                ;;                             (-> c
+                                                ;;                                 (.param-index (.param-index inner-c))
+                                                ;;                                 (.arity (.arity inner-c))
+                                                ;;                                 (.new-field new-field)
+                                                ;;                                 Left)
+
+                                                ;;                             ;; (instance? c/DynamicParamConstraint inner-c)
+                                                ;;                             ;; (-> c
+                                                ;;                             ;;     (.param-index (.param-index inner-c))
+                                                ;;                             ;;     (.arity (.arity inner-c))
+                                                ;;                             ;;     (.new-field new-field)
+                                                ;;                             ;;     Left)
+
+                                                ;;                             (Right inner-c))))
+                                                ;;                  old-param)]
+                                                ;;   (or (= (.file loc) 'core)
+                                                ;;       (= (.line loc) 0)
+                                                ;;       (do
+                                                ;;         (print-err 'updated-c loc arity "\n"
+                                                ;;                    new-c)
+                                                ;;         nothing))
+                                                ;;   new-c)
+                                                (c/intersect old-param new-c)
+                                                ))))))))))
             (se/state-error (Right c)))))
 
 (extend-type c/DynamicFields
@@ -8538,8 +8572,7 @@
                                    c/top-type)
                            empty-list nothing "")
           (c/intersect (.result-const arity))
-          (c/update-path (ast/location target))
-          Left))))
+          (c/update-path (ast/location target))))))
 
 (defn coll-inner-constraint [coll loc]
   (-> coll
@@ -8553,20 +8586,17 @@
         (-> (coll-inner-constraint coll (ast/location target))
             (c/intersect (c/update-path maybe-constraint
                                         (ast/location target)))
-            Left 
             se/state-error)
 
         (-> arity
             .result-const
             (c/update-path (ast/location target))
-            Left
             se/state-error)))
 
 (defn pass-coll-constraint [target arity [coll]]
   (-> coll
       .constraint
       (c/update-path (ast/location target))
-      Left 
       se/state-error))
 
 ;; TODO: these all need to return args with updated constraints to be put into
@@ -8597,7 +8627,6 @@
                  (c/intersect vect-constraint)
                  (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
                  (c/update-path (ast/location target))
-                 Left
                  se/state-error))
 
    'list (fn [target _ args]
@@ -8606,30 +8635,27 @@
                (c/intersect list-constraint)
                (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
                (c/update-path (ast/location target))
-               Left
                se/state-error))
 
    'vec (fn [target _ [arg]]
-          (se/state-error (Left (-> (c/set-type (.constraint arg) vect-constraint)
-                                    (c/update-path (ast/location target))))))
+          (se/state-error (-> (c/set-type (.constraint arg) vect-constraint)
+                              (c/update-path (ast/location target)))))
 
    'seq (fn [target _ [arg]]
           (let [new-c (-> (c/set-type (.constraint arg) list-constraint)
                           (c/update-path (ast/location target)))]
-            (se/state-error (Left new-c))))
+            (se/state-error new-c)))
 
    'extract (fn [target arity [coll]]
               ;; TODO: check to see if coll has 'always-empty' or static length of 0
               (either (map (= c/top-type (.result-const arity))
                            (fn [_]
                              (-> (coll-inner-constraint coll (ast/location target))
-                                 Left 
                                  se/state-error)))
                       ;; TODO: write test for this
                       (-> arity
                           .result-const
                           (c/update-path (ast/location target))
-                          Left
                           se/state-error)))
 
 
@@ -8652,7 +8678,6 @@
                                      (print-err 'first loc c)
                                      nothing)))
                              c))
-                          Left 
                           se/state-error))
 
                     (maybe-coll-inner target arity [coll]))))
@@ -8664,7 +8689,7 @@
                                                      c/extract-collection-of
                                                      c/extract-contents-constraint)
                                         (ast/location target))]
-               (Left (adding-to-list target item coll)))))
+               (adding-to-list target item coll))))
 
    'conj (fn [target _ [coll-arg item-arg]]
            (let [coll (.constraint coll-arg)
@@ -8686,14 +8711,13 @@
                                                      c/extract-collection-of
                                                      c/extract-contents-constraint)
                                         (ast/location target))]
-               (Left new-coll))))
+               new-coll)))
 
    'maybe (fn [target _ [item-arg]]
             (-> (.constraint item-arg)
                 (c/CollectionOf empty-list nothing "")
                 (c/intersect maybe-constraint)
                 (c/update-path (ast/location target))
-                Left
                 se/state-error))
 
    'flat-map (fn [target arity [coll f]]
@@ -8718,8 +8742,7 @@
                                                                        c/extract-contents-constraint)))
                                                 c/top-type)
                                         empty-list nothing "")
-                       (c/update-path loc)
-                       Left))))
+                       (c/update-path loc)))))
 
    'reduce (fn [target arity [coll init-accum f]]
              (let [loc (ast/location target)
@@ -8751,8 +8774,7 @@
                                                                  loc)
                                              loc)]
                  (-> accum-c
-                     (c/update-path loc)
-                     Left))))
+                     (c/update-path loc)))))
    })
 
 (extend-type ast/fn-ast
@@ -8807,11 +8829,10 @@
                                                               (-> arity
                                                                   .result-const
                                                                   (c/update-path loc)
-                                                                  Left
                                                                   se/state-error))))
                                           (map (fn [result-c]
-                                                 (reify-type-constraint result-c (.fn-var arity)
-                                                                        arg-consts loc))))))))
+                                                 (Left (reify-type-constraint result-c (.fn-var arity)
+                                                                              arg-consts loc)))))))))
               (se/throw (str "Could not find implementation of " (str "'" (either (.fn-sym ast)
                                                                                   "<anon>") "'")
                              " at " (either (map (empty? args)
@@ -8886,7 +8907,7 @@
                        ;;       ;; (print-err 'desired-arity (get-in proto-impls [.impls type-num num-args]))
                        ;;       (print-err 'call-proto loc (.fn-sym proto-impls) 'type-num type-num
                        ;;                  'arity-id (.fn-var arity) "\n" 'result-c (.result-const arity) "\n\n"
-                       ;;                  (interpose args "\n"))
+                       ;;                  (vec (interpose args "\n")))
                        ;;       nothing))
                        (-> (.param-consts arity)
                            (c/extract-items-constraints num-args)
@@ -8901,10 +8922,9 @@
                                                (-> arity
                                                    .result-const
                                                    (c/update-path loc)
-                                                   Left
                                                    se/state-error))))
                            (map (fn [result-c]
-                                  (reify-type-constraint result-c (.fn-var arity) arg-consts loc)))))))
+                                  (Left (reify-type-constraint result-c (.fn-var arity) arg-consts loc))))))))
               (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at" loc]
                   (interpose " ")
                   to-str
