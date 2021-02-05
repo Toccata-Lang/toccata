@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "cd2bc62"))
+                          :sha "714b6e4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "b1c8a3c"))
+                            :sha "8ce5238"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "0277816"))
+                            :sha "2dac57a"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -1844,19 +1844,6 @@
 (extend-type c/DynamicParamConstraint
   Emitter
   (old-reify-c [c param-exprs file-name line-number]
-    (either (map (get param-exprs (.param-index c))
-                 (fn [param-expr]
-                   (map (get-constraint (.c-var param-expr))
-                        (fn [param-c]
-                          (-> (reverse (.path c))
-                              (reduce param-c (fn [new-c [file line]]
-                                                (c/update-path new-c file line)))
-                              (c/set-type (.result-type c)))))))
-            (sm/state-maybe c/top-type))))
-
-(extend-type c/DynamicItemConstraint
-  Emitter
-  (old-reify-c [c param-exprs file-name line-number]
     (comp (for [param-expr (sm/when (get param-exprs (.param-index c)))
                 param-c (get-constraint (.c-var param-expr))
                 item-expr (either (flat-map (first (.item-indices c))
@@ -1881,20 +1868,17 @@
         .invokable-c
         c/extract-dynamic-params
         (sm/traverse (fn [dyn-c]
-                       (either (or (for [dyn-param (instance? c/DynamicParamConstraint dyn-c)
-                                         expr (get param-exprs (.param-index dyn-param))]
-                                     (get-result-constraint expr (.num-args c)))
-                                   (for [dyn-param (instance? c/DynamicItemConstraint dyn-c)
-                                         expr (get-in param-exprs [(.param-index dyn-param)])]
-                                     ;; TODO: there could be multiple dyn fields because of a SumConstraint
-                                     (for [reified-fields (map (get-constraint (.c-var expr))
-                                                               c/extract-reified-fields)
-                                           field-expr (sm/when (flat-map (first (.item-indices dyn-param))
-                                                                         (fn [index]
-                                                                           (get-in reified-fields
-                                                                                   [.field-cs index]))))
-                                           rc (get-result-constraint field-expr (.num-args c))]
-                                       rc)))
+                       (either (for [dyn-param (instance? c/DynamicParamConstraint dyn-c)
+                                     expr (get-in param-exprs [(.param-index dyn-param)])]
+                                 ;; TODO: there could be multiple dyn fields because of a SumConstraint
+                                 (for [reified-fields (map (get-constraint (.c-var expr))
+                                                           c/extract-reified-fields)
+                                       field-expr (sm/when (flat-map (first (.item-indices dyn-param))
+                                                                     (fn [index]
+                                                                       (get-in reified-fields
+                                                                               [.field-cs index]))))
+                                       rc (get-result-constraint field-expr (.num-args c))]
+                                   rc))
                                sm/zero-sm)))
         (map (fn [dyn-param-cs]
                (c/sum-type dyn-param-cs)))
@@ -5341,7 +5325,7 @@
 
                                           (flat-map (map (lookup-sym sym) .c-var)
                                                     (fn [var]
-                                                      (set-constraint var (c/DynamicItemConstraint
+                                                      (set-constraint var (c/DynamicParamConstraint
                                                                            'nada index []
                                                                            empty-list (maybe sym) var)))))))
                    _ (set-constraint "#result" c/top-type)
@@ -7052,17 +7036,16 @@
                                       empty-list nothing "")
                  ;; TODO: does this DynParam do anything?
                  (c/MultiConstraint [(c/UpdateDynamicField arity-id 0 [field-index]
-                                                           (c/DynamicParamConstraint arity-id 1
-                                                                                     empty-list nothing ""
-                                                            c/top-type)
+                                                           (c/DynamicParamConstraint arity-id 1 []
+                                                                                     empty-list nothing "")
                                                            empty-list nothing "")
                                      new-type-constraint]))
 
                 ;; getter arity
                 (let [arity-id (symbol (str sym "-" field "-getter"))
                       field-constraint (-> field-constraint
-                                           (c/intersect (c/DynamicItemConstraint arity-id 0 [field-index]
-                                                                                 empty-list nothing ""))
+                                           (c/intersect (c/DynamicParamConstraint arity-id 0 [field-index]
+                                                                                  empty-list nothing ""))
                                            c/clear-sym)]
                   (ast/fn-arity-ast
                    (ast/tag (str sym "_" field) file-name line-number)
@@ -7107,7 +7090,7 @@
                                              (map (fn [[field-c field-sym field-index]]
                                                     (ConstrainVar
                                                      (c/intersect field-c
-                                                                  (c/DynamicItemConstraint
+                                                                  (c/DynamicParamConstraint
                                                                    'nada 0 [field-index]
                                                                    empty-list
                                                                    (maybe (ast/untag field-sym))
@@ -8078,43 +8061,19 @@
 (extend-type c/DynamicParamConstraint
   TypeChecker
   (reify-c [c arity loc]
-    ;; (or (= (.file loc) 'core)
-    ;;     (= (.line loc) 0)
-    ;;     (do
-    ;;       (print-err 'reifying-dpc loc arity "\n"
-    ;;                  'c c "\n\n" 'param-cs (interpose param-cs "\n"))
-    ;;       nothing))
-    (for [param-cs (se/update-state identity)]
-      (Left (either (and (= (.arity c) arity)
-                         (or (map (get param-cs (.param-index c))
-                                  (fn [param-c]
-                                    (cond (= c param-c)
-                                          (do
-                                            ;; TODO
-                                            ;; (print-err 'implement-fixed-point-types loc)
-                                            param-c)
-
-                                          (-> (reverse (.path c))
-                                              (reduce param-c (fn [new-c [file line]]
-                                                                (c/update-path new-c file line)))
-                                              (c/intersect (.result-type c))))))
-                             (maybe c/top-type)))
-                    c)))))
-
-(extend-type c/DynamicItemConstraint
-  TypeChecker
-  (reify-c [c arity loc]
     (for [param-cs (se/update-state identity)]
       (Left (either (and (= (.arity c) arity)
                          (or (flat-map (get param-cs (.param-index c))
                                        (fn [param-c]
-                                         (map (c/extract-reified-field param-c (.item-indices c))
-                                              (fn [item-c]
-                                                (-> (.path c)
-                                                    reverse
-                                                    (reduce item-c
-                                                            (fn [new-c [file line]]
-                                                              (c/update-path new-c file line))))))))
+                                         (or (and (empty? (.item-indices c))
+                                                  (maybe param-c))
+                                             (map (c/extract-reified-field param-c (.item-indices c))
+                                                  (fn [item-c]
+                                                    (-> (.path c)
+                                                        reverse
+                                                        (reduce item-c
+                                                                (fn [new-c [file line]]
+                                                                  (c/update-path new-c file line)))))))))
                              (maybe c/top-type)))
                     c)))))
 
@@ -8128,7 +8087,7 @@
 ;;                        (either (or (for [dyn-param (instance? c/DynamicParamConstraint dyn-c)
 ;;                                          expr (get param-cs (.param-index dyn-param))]
 ;;                                      (get-result-constraint expr (.num-args c)))
-;;                                    (for [dyn-param (instance? c/DynamicItemConstraint dyn-c)
+;;                                    (for [dyn-param (instance? c/DynamicParamConstraint dyn-c)
 ;;                                          expr (get-in param-cs [(.param-index dyn-param)])]
 ;;                                      ;; TODO: there could be multiple dyn fields because of a SumConstraint
 ;;                                      (for [dynamic-fields (map (get-constraint (.c-var expr))
@@ -8354,8 +8313,8 @@
                                    se-nop
 
                                    (append-type-constraint _LINE_ sym
-                                                           (c/DynamicParamConstraint arity-id index empty-list
-                                                                                     (maybe sym) "" c/top-type)))))]
+                                                           (c/DynamicParamConstraint arity-id index []
+                                                                                     empty-list (maybe sym) "")))))]
         (-> ast
             (.fn-var arity-id)
             (.body (comp (filter (.body ast) (partial instance? c/Constraints))
@@ -8668,7 +8627,7 @@
                           ;;     (do
                           ;;       (print-err 'call-fn (.fn-sym ast) loc "\n"
                           ;;                  'result-c (.result-const arity) "\n\n"
-                          ;;                  (vec (interpose (map args .constraint) "\n")))
+                          ;;                  (vec (interpose arg-consts "\n")))
                           ;;       nothing))
                           (and (<= (count (c/extract-items-constraints (.param-consts arity)))
                                    arg-count)
@@ -8687,8 +8646,20 @@
                                                                   (c/update-path loc)
                                                                   se/state-error))))
                                           (map (fn [result-c]
-                                                 (Left (reify-type-constraint result-c (.fn-var arity)
-                                                                              arg-consts loc)))))))))
+                                                 (Left
+                                                  (let [r (reify-type-constraint result-c (.fn-var arity)
+                                                                                 arg-consts loc)]
+                                                    ;; (or (= (.file loc) 'core)
+                                                    ;;     (= (.line loc) 0)
+                                                    ;;     (do
+                                                    ;;       (print-err 'call-fn (.fn-var arity) loc
+                                                    ;;                  "\n" 'result-c result-c
+                                                    ;;                  "\n\n" (-> arg-consts
+                                                    ;;                             (interpose  "\n")
+                                                    ;;                             vec)
+                                                    ;;                  "\n\n" 'fn-result r)
+                                                    ;;       nothing))
+                                                    r)))))))))
               (se/throw (str "Could not find implementation of " (str "'" (either (.fn-sym ast)
                                                                                   "<anon>") "'")
                              " at " (either (map (empty? args)
