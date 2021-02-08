@@ -3904,9 +3904,9 @@
           :when (= c/FunctionType type-num)
           result-sym (genlocal "rslt")
           dyn-result-c (get-constraint (.c-var target))
-          _ (set-constraint result-sym (-> (c/DynamicResultConstraint 'nada dyn-result-c (count args)
-                                                                      empty-list nothing result-sym)
-                                           (c/update-path file-name line-number)))
+          ;; _ (set-constraint result-sym (-> (c/DynamicResultConstraint 'nada dyn-result-c (count args)
+          ;;                                                             empty-list nothing result-sym)
+          ;;                                  (c/update-path file-name line-number)))
           ;; _ (cond (= file-name "test.toc")
           ;;         (for [result-c (get-constraint result-sym)
           ;;               _ (debug 'cdf file-name line-number (.call-target ast) (.c-var target) "\n\n"
@@ -5318,16 +5318,6 @@
                    _ (sm/traverse param-vars
                                   (fn [var]
                                     (set-constraint var c/top-type)))
-                   _ (sm/traverse (zip-lists (.fixed params) (range (count (.fixed params))))
-                                  (fn [[sym index]]
-                                    (cond (instance? ast/params-ast sym)
-                                          sm-nop
-
-                                          (flat-map (map (lookup-sym sym) .c-var)
-                                                    (fn [var]
-                                                      (set-constraint var (c/DynamicParamConstraint
-                                                                           'nada index []
-                                                                           empty-list (maybe sym) var)))))))
                    _ (set-constraint "#result" c/top-type)
 
                    syms get-syms
@@ -7088,13 +7078,7 @@
                             (ast/let-ast (-> (c/extract-items-constraints field-constraints)
                                              (zip-lists fields (range field-count))
                                              (map (fn [[field-c field-sym field-index]]
-                                                    (ConstrainVar
-                                                     (c/intersect field-c
-                                                                  (c/DynamicParamConstraint
-                                                                   'nada 0 [field-index]
-                                                                   empty-list
-                                                                   (maybe (ast/untag field-sym))
-                                                                   (c/extract-var field-c))))))
+                                                    (ConstrainVar field-c)))
                                              vec
                                              (comp body-exprs))))])]
     (-> arity
@@ -8332,20 +8316,24 @@
             result-c (-> (either (map (last (.body ast)) .constraint)
                                  c/top-type)
                          (c/intersect (.result-const ast)))
-            pts (-> pts
-                    (c/intersect (.param-consts ast))
-                    (c/update-path loc))]
-        (and (= (str (.fn-sym ast)) "AType x")
-             (do
-               (print-err 'checked-fn-arity (.fn-sym ast) (.params ast) (.result-const ast))
-               nothing))
-        (either (map (= c/bottom-type pts)
+            new-pts (-> pts
+                        (c/intersect (.param-consts ast))
+                        (c/update-path loc))
+            new-pts (cata (fn [c]
+                            (cond (and (or (instance? c/DynamicParamConstraint c)
+                                           (instance? c/UpdateDynamicField c))
+                                       (= (.arity c) (.fn-var ast)))
+                                  c/top-type
+
+                                  c))
+                          new-pts)]
+        (either (map (= c/bottom-type new-pts)
                      (fn [failure-c]
                        (c/conflicting-assertions failure-c (.file loc) (.line loc))
                        (abort)))
                 (-> ast
                     (.result-const result-c)
-                    (.param-consts pts)))))))
+                    (.param-consts new-pts)))))))
 
 (defn reduce-fixed-point
   ([f result] (reduce-fixed-point f [] result))
@@ -8370,7 +8358,7 @@
       c/trim
       (c/update-path (ast/location target))))
 
-(defn infer-coll-inner-constraint [target arity [coll f]]
+(defn infer-result-inner-constraint [target arity [coll f]]
   (let [coll-contents (c/extract-contents-constraint (.constraint coll))
         maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
         inferred-c (either (flat-map maybe-arity
@@ -8380,14 +8368,33 @@
                                            (c/extract-items-constraints 1)
                                            first)))
                            c/top-type)]
-    (for [coll (update-constraint coll (-> (c/CollectionOf inferred-c empty-list nothing "")
-                                           (c/update-path (ast/location target)))
-                                  (ast/location target))]
+    (for [_ (update-constraint coll (-> (c/CollectionOf inferred-c empty-list nothing "")
+                                        (c/update-path (ast/location target)))
+                               (ast/location target))]
       (-> (c/InferredInner (either (map maybe-arity .result-const)
                                    c/top-type)
                            empty-list nothing "")
           (c/intersect (.result-const arity))
           (c/update-path (ast/location target))))))
+
+(defn infer-coll-inner-constraint [target arity [coll f]]
+  (either (for [arity (find-arity (.ast f)
+                                  (-> coll
+                                      .constraint
+                                      c/extract-contents-constraint
+                                      constraint-type-num)
+                                  1)
+                ;; TODO: arity could be an 'invoke' arity with 3 args
+                inferred-c (-> (.param-consts arity)
+                               (c/extract-items-constraints 1)
+                               first)]
+            (let [new-coll-c (-> (c/CollectionOf inferred-c empty-list nothing "")
+                                 (c/update-path (ast/location target)))
+                  loc (ast/location target)]
+              (map (update-constraint coll new-coll-c loc)
+                   (fn [new-coll]
+                     (.constraint new-coll)))))
+          (.constraint coll)))
 
 (defn coll-inner-constraint [coll loc]
   (-> coll
@@ -8417,7 +8424,7 @@
 ;; TODO: these all need to return args with updated constraints to be put into
 ;; the call site
 (def special-call-targets
-  {'map infer-coll-inner-constraint
+  {'map infer-result-inner-constraint
    'drop-while infer-coll-inner-constraint
    'take-while infer-coll-inner-constraint
    'filter infer-coll-inner-constraint
@@ -8583,11 +8590,10 @@
                ;;            'inferred-c inferred-c "\n\n"
                ;;            'coll-contents coll-contents
                ;;            'accum-c loc accum-c)
-               (for [init-accum (update-constraint init-accum accum-c
-                                                   (ast/location target))
-                     coll (update-constraint coll (c/update-path (c/CollectionOf inferred-c empty-list nothing "")
-                                                                 loc)
-                                             loc)]
+               (for [init-accum (update-constraint init-accum accum-c (ast/location target))
+                     new-coll (update-constraint coll (c/update-path (c/CollectionOf inferred-c empty-list nothing "")
+                                                                     loc)
+                                                 loc)]
                  (-> accum-c
                      (c/update-path loc)))))
    })
