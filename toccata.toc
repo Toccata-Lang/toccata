@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "99c1ffd"))
+                          :sha "5fc8c70"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "dab4dbd"))
+                            :sha "a9b739a"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "83e8d48"))
+                            :sha "e6b5a69"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -4364,7 +4364,7 @@
         line-number (ast/line-number defined-sym)]
     (cond (= (.call-target fn-val) 'enum)
           (for [type-maps (sm/traverse (.args fn-val) (partial define-enum-element file-name line-number))
-                _ (debug 'type-maps type-maps)
+                _ (debug 'type-maps _FILE_ _LINE_ type-maps)
                 :let [type-map (comp* {} type-maps)
                       x* (ast/tag "#x")
                       y* (ast/tag "#y")
@@ -7549,6 +7549,15 @@
     ;; (se/state-error (Right c))
     )
 
+  (update-dyn-c [c]
+    (comp (flat-map (se/get-val .item-indices)
+                    (fn [item-indices]
+                      (cond (first item-indices)
+                            (se/state-error c)
+
+                            (se/get-val .new-field))))
+          (se/state-error c)))
+
   (find-arity [ast type-num args]
     (assert-result r (instance? Maybe r)))
 
@@ -7687,32 +7696,35 @@
          )))
 
 (defn add-getter [sym types-list]
+  ;; 'sym' already has ".' at front
   (let [loc (ast/location sym)
         sym (ast/untag sym)
         getter-field-c (-> (c/FieldConstraint (c/Field sym) "" empty-list nothing "")
                            (c/update-path loc))
-        getter (ConstrainedAST (PrototypeImpls
-                                sym
-                                {c/UnknownType {1 (ast/fn-arity-ast (ast/tag sym)
-                                                                    ""
-                                                                    (ast/params [(ast/tag "#x")])
-                                                                    ""
-                                                                    []
-                                                                    (-> (c/ItemsConstraint [getter-field-c]
-                                                                                           c/bottom-type
-                                                                                           empty-list nothing "")
-                                                                        (c/update-path loc))
-                                                                    c/top-type)
-                                                2 (ast/fn-arity-ast (ast/tag sym)
-                                                                    ""
-                                                                    (ast/params [(ast/tag "#x") (ast/tag "#y")])
-                                                                    ""
-                                                                    []
-                                                                    (-> (c/ItemsConstraint [getter-field-c c/top-type]
-                                                                                           c/bottom-type
-                                                                                           empty-list nothing "")
-                                                                        (c/update-path loc))
-                                                                    c/top-type)}})
+        getter-id (str "Default_" (rest (str sym)) "_getter")
+        getter-ast (ast/fn-arity-ast (ast/tag sym)
+                                     getter-id
+                                     (ast/params [(ast/tag "#x")])
+                                     ""
+                                     []
+                                     (-> (c/ItemsConstraint [getter-field-c] c/bottom-type empty-list nothing "")
+                                         (c/update-path loc))
+                                     (c/DynamicParamConstraint getter-id 0 [(c/Field sym)] empty-list nothing ""))
+        setter-id (str "Default_" (rest (str sym)) "_setter")
+        setter-ast (ast/fn-arity-ast (ast/tag sym)
+                                     setter-id
+                                     (ast/params [(ast/tag "#x") (ast/tag "#y")])
+                                     ""
+                                     []
+                                     (-> (c/ItemsConstraint [getter-field-c c/top-type] c/bottom-type
+                                                            empty-list nothing "")
+                                         (c/update-path loc))
+                                     (c/UpdateDynamicField setter-id 0 [(c/Field sym)]
+                                                           (c/DynamicParamConstraint setter-id 1 []
+                                                                                     empty-list nothing "")
+                                                           empty-list nothing ""))
+        getter (ConstrainedAST (PrototypeImpls sym {c/UnknownType {1 getter-ast
+                                                                   2 setter-ast}})
                                (-> c/fn-constraint
                                    (c/update-path loc)))
         Type-protocol (either (map (get-in types-list [0 'Type]) .ast)
@@ -7736,6 +7748,7 @@
                    'Type Type-protocol}))))
 
 (defn create-new-getter [sym]
+  ;; 'sym' already has ".' at front
   (let [loc (ast/location sym)]
     (for [mod-index (se/get-in-val [.module .index])
           _ (cond (= 0 mod-index)
@@ -7978,6 +7991,32 @@
            (fn [_]
              (ConstrainedAST c c))))))
 
+(extend-type c/TypeConstraint
+  TypeChecker
+  (update-dyn-c [c]
+    (comp (flat-map
+           (se/get-val .item-indices)
+           (fn [item-indices]
+             (either (map (first item-indices)
+                          (fn [item]
+                            (for [new-maps (contextual-map-vals
+                                            (.type-maps c)
+                                            (fn [fields-map]
+                                              (for [_ (se/set-val .item-indices (rest item-indices))
+                                                    new-maps (either (map (get fields-map item)
+                                                                          (fn [field-c]
+                                                                            (map (ana update-dyn-c field-c
+                                                                                      se/state-error)
+                                                                                 (fn [x]
+                                                                                   (assoc fields-map item x)))))
+                                                                     (se/state-error fields-map))
+                                                    _ (se/set-val .item-indices item-indices)]
+                                                new-maps))
+                                            se/state-error)]
+                              (.type-maps c new-maps))))
+                     (se/get-val .new-field))))
+          (se/state-error c))))
+
 (extend-type c/MultiConstraint
   TypeChecker
   (type-check [c old-c]
@@ -8039,31 +8078,23 @@
 (extend-type c/UpdateDynamicField
   TypeChecker
   (reify-c [c arity loc]
-    (either (and (= (.arity c) arity)
-                 (maybe (for [old-param (se/get-val (.param-index c))]
-                          (do
-                            ;; (or (= (.file loc) 'core)
-                            ;;       (= (.line loc) 0)
-                            ;;       (do
-                            ;;         (print-err 'upc loc arity "\n"
-                            ;;                    c "\n\n" 'params param-cs)
-                            ;;         nothing))
-                            (Right (reify
-                                     Type
-                                     (type-name [_]
-                                       (str "reified at " _LINE_))
-
-                                     Stringable
-                                     (string-list [_]
-                                       (list "reified at " (str _LINE_)))
-
-                                     Container
-                                     (map [_ f embed]
-                                       (map (f (.new-field c))
-                                            (fn [new-field]
-                                              (let [new-c (.new-field c new-field)]
-                                                (c/intersect old-param new-c)))))))))))
-            (se/state-error (Right c)))))
+    (cond (= (.arity c) arity)
+          (comp (for [param-c (se/get-val (.param-index c))
+                      new-field (map (apo (fn [c]
+                                            (reify-c c arity loc))
+                                          (.new-field c)
+                                          se/state-error)
+                                     (partial cata c/trim))
+                      ;; :let [_ (print-err 'param-c param-c
+                      ;;                    "\n\n" 'new-field new-field)]
+                      param-cs (se/update-state (fn [_]
+                                                  (.new-field c new-field)))
+                      new-param (ana update-dyn-c param-c se/state-error)
+                      ;; :let [_ (print-err 'new-param new-param)]
+                      param-cs (se/update-state (fn [_] param-cs))]
+                  (Left new-param))
+                (se/state-error (Left c/top-type)))
+          (se/state-error (Left c)))))
 
 (extend-type c/DynamicFields
   TypeChecker
@@ -8084,6 +8115,19 @@
 
 (extend-type c/DynamicParamConstraint
   TypeChecker
+  (update-dyn-c [c]
+    (map (se/update-state identity)
+         (fn [update-c]
+           (-> update-c
+               (.arity (.arity c))
+               (.param-index (.param-index c))
+               (.item-indices (comp (.item-indices c)
+                                    (.item-indices update-c)))
+               (.path (comp (.path update-c)
+                            (.path c)))
+               (.sym (.sym c))
+               (.var (.var c))))))
+
   (reify-c [c arity loc]
     (cond (= (.arity c) arity)
           (comp (for [param-c (se/get-val (.param-index c))
@@ -8682,17 +8726,17 @@
           loc (ast/location target)]
       (either (flat-map (find-arity ast c/top-type arg-count)
                         (fn [arity]
-                          ;; (or (= (.file loc) 'core)
-                          ;;     (= (.line loc) 0)
-                          ;;     (do
-                          ;;       (print-err 'call-fn (.fn-sym ast) loc "\n"
-                          ;;                  'result-c (.result-const arity) "\n\n"
-                          ;;                  'param-cs (-> (.param-consts arity)
-                          ;;                                c/extract-items-constraints
-                          ;;                                (interpose "\n")
-                          ;;                                vec) "\n\n"
-                          ;;                  'args (vec (interpose arg-consts "\n")))
-                          ;;       nothing))
+                          (or (= (.file loc) 'core)
+                              (= (.line loc) 0)
+                              (do
+                                (print-err 'call-fn (.fn-sym ast) loc "\n"
+                                           'result-c (.result-const arity) "\n\n"
+                                           'param-cs (-> (.param-consts arity)
+                                                         c/extract-items-constraints
+                                                         (interpose "\n")
+                                                         vec) "\n\n"
+                                           'args (vec (interpose arg-consts "\n")))
+                                nothing))
                           (and (<= (count (c/extract-items-constraints (.param-consts arity)))
                                    arg-count)
                                (maybe (-> (.param-consts arity)
@@ -8816,7 +8860,20 @@
                                                    (c/update-path loc)
                                                    se/state-error))))
                            (map (fn [result-c]
-                                  (Left (reify-type-constraint result-c (.fn-var arity) arg-consts loc))))))))
+                                  (or (= (.file loc) 'core)
+                                      (= (.line loc) 0)
+                                      (do
+                                        (print-err 'call-proto loc (.fn-sym proto-impls) "\n\n"
+                                                   'type-num type-num 'arity-id (.fn-var arity) "\n\n"
+                                                   'arity-result (.result-const arity) "\n\n"
+                                                   'arg-consts (vec (interpose arg-consts "\n")) "\n\n"
+                                                   'result-c result-c)
+                                        ;; (print-err 'arities (keys (.impls proto-impls)))
+                                        ;; (print-err 'desired-arity (get-in proto-impls [.impls type-num num-args]))
+                                        nothing))
+                                  (Left (let [r (reify-type-constraint result-c (.fn-var arity) arg-consts loc)]
+                                          (print-err 'reified r)
+                                          r))))))))
               (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at" loc]
                   (interpose " ")
                   to-str
