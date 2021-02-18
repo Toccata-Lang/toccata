@@ -7549,6 +7549,9 @@
     ;; (se/state-error (Right c))
     )
 
+  (wth [c dyn-c]
+    c)
+
   (update-dyn-c [c]
     (comp (flat-map (se/get-val .item-indices)
                     (fn [item-indices]
@@ -7993,6 +7996,25 @@
 
 (extend-type c/TypeConstraint
   TypeChecker
+  (wth [c dyn-c]
+    (either (for [field (first (.item-indices dyn-c))
+                  alts (apply (maybe vector) (-> (.type-maps c)
+                                                 vals
+                                                 (map (fn [fields]
+                                                        (get fields field)))
+                                                 (filter identity)))]
+              (cond (first alts)
+                    (ana (fn [c]
+                           (wth c (-> dyn-c
+                                      (.item-indices (rest (.item-indices dyn-c))))))
+                         (c/sum-type alts))
+
+                    c/top-type))
+            (-> (.path dyn-c)
+                reverse
+                (reduce c (fn [new-c [file line]]
+                            (c/update-path new-c file line))))))
+
   (update-dyn-c [c]
     (comp (flat-map
            (se/get-val .item-indices)
@@ -8115,6 +8137,11 @@
 
 (extend-type c/DynamicParamConstraint
   TypeChecker
+  (wth [c dyn-c]
+    (-> c
+        (.item-indices (.item-indices dyn-c))
+        ))
+
   (update-dyn-c [c]
     (map (se/update-state identity)
          (fn [update-c]
@@ -8131,34 +8158,11 @@
 
   (reify-c [c arity loc]
     (cond (= (.arity c) arity)
-          (comp (for [param-c (se/get-val (.param-index c))
-                      r (either (for [field (first (.item-indices c))
-                                      type-map (c/extract-type-map param-c)
-                                      alts (apply (maybe vector) (-> (vals type-map)
-                                                                     vec
-                                                                     (map (fn [fields]
-                                                                            (get fields field)))
-                                                                     (filter identity)))]
-                                  (cond (first alts)
-                                        (flat-map (se/update-state (fn [param-cs]
-                                                                     (either (store param-cs
-                                                                                    (.param-index c)
-                                                                                    (c/sum-type alts))
-                                                                             param-cs)))
-                                                  (fn [_]
-                                                    (reify-c (.item-indices c (rest (.item-indices c)))
-                                                             arity loc)))
-                                        (se/state-error (Left c/top-type))))
-                                (-> (.path c)
-                                    reverse
-                                    (reduce param-c (fn [new-c [file line]]
-                                                      (c/update-path new-c file line)))
-                                    Left
-                                    se/state-error))
-                      _ (se/update-state (fn [param-cs]
-                                           (either (store param-cs (.param-index c) param-c)
-                                                   param-cs)))]
-                  r)
+          (comp (for [param-c (se/get-val (.param-index c))]
+                  (let [r (ana (fn [inner-c]
+                                 (wth inner-c c))
+                               param-c)]
+                    (Left r)))
                 (se/state-error (Left c/top-type)))
           (se/state-error (Left c)))))
 
@@ -8727,17 +8731,6 @@
           loc (ast/location target)]
       (either (flat-map (find-arity ast c/top-type arg-count)
                         (fn [arity]
-                          ;; (or (= (.file loc) 'core)
-                          ;;     (= (.line loc) 0)
-                          ;;     (do
-                          ;;       (print-err 'call-fn (.fn-sym ast) loc "\n"
-                          ;;                  'result-c (.result-const arity) "\n\n"
-                          ;;                  'param-cs (-> (.param-consts arity)
-                          ;;                                c/extract-items-constraints
-                          ;;                                (interpose "\n")
-                          ;;                                vec) "\n\n"
-                          ;;                  'args (vec (interpose arg-consts "\n")))
-                          ;;       nothing))
                           (and (<= (count (c/extract-items-constraints (.param-consts arity)))
                                    arg-count)
                                (maybe (-> (.param-consts arity)
@@ -8836,16 +8829,6 @@
                                            (print-err "Could not find arity for" (str "'" (.fn-sym proto-impls) "'")
                                                       "with" num-args "arguments at" loc)
                                            (abort)))]
-                       ;; (or (= (.file loc) 'core)
-                       ;;     (= (.line loc) 0)
-                       ;;     (do
-                       ;;       (print-err 'call-proto loc (.fn-sym proto-impls) "\n\n"
-                       ;;                  'type-num type-num 'arity-id (.fn-var arity) "\n\n"
-                       ;;                  'result-c (.result-const arity) "\n\n"
-                       ;;                  'arg-consts (vec (interpose arg-consts "\n")))
-                       ;;       ;; (print-err 'arities (keys (.impls proto-impls)))
-                       ;;       ;; (print-err 'desired-arity (get-in proto-impls [.impls type-num num-args]))
-                       ;;       nothing))
                        (-> (.param-consts arity)
                            (c/extract-items-constraints num-args)
                            (zip-lists args)
