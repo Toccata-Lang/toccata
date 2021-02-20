@@ -6996,7 +6996,7 @@
                         (sm/state-maybe (extract prom))))]
           '_)))
 
-(defn create-getters [sym new-type-constraint fields field-constraints]
+(defn create-getters [sym type-num new-type-constraint fields field-constraints]
   (let [type-value (ast/tag "#value")
         field-arg (ast/tag "#field")
         file-name (ast/file-name sym)
@@ -7004,35 +7004,30 @@
     {Type-sym
      (map (zip-lists (seq fields) (range (count fields)) field-constraints)
           (fn [[field field-index field-constraint]]
-            (let [arity-id (symbol (str sym "-" field "-setter"))
-                  field-constraint (c/update-path field-constraint file-name line-number)
-                  field-vec (-> (str "." field)
-                                symbol
-                                c/Field
-                                vector)]
+            (let [field-sym (-> (str "." field) symbol c/Field)]
               [(ast/tag (str "." field) file-name line-number)
                [;; setter arity
-                (ast/fn-arity-ast
-                 (ast/tag (str sym "_" field) file-name line-number)
-                 arity-id (ast/params [type-value field-arg]) ""
-                 [(c/update-sym field-constraint (ast/untag field-arg))
-                  (ast/inline-ast (ast/tag 'C)
-                                  (-> (c/TypeConstraint {} empty-list sym nothing "")
-                                      (c/update-path (ast/location sym)))
-                                  (str "return(updateField(value_0, field_1, "
-                                       field-index "));\n")
-                                  "" 0)]
-                 (c/ItemsConstraint [c/top-type field-constraint] c/bottom-type empty-list nothing "")
-                 (c/MultiConstraint [(c/UpdateDynamicField arity-id 0 field-vec
-                                                           (c/DynamicParamConstraint arity-id 1 []
-                                                                                     empty-list nothing "")
-                                                           empty-list nothing "")
-                                     new-type-constraint]))
+                (let [arity-id (symbol (str sym "-" field "-setter"))
+                      field-constraint (c/update-path field-constraint file-name line-number)]
+                  (ast/fn-arity-ast
+                   (ast/tag (str sym "_" field) file-name line-number)
+                   arity-id (ast/params [type-value field-arg]) ""
+                   [(c/update-sym field-constraint (ast/untag field-arg))
+                    (ast/inline-ast (ast/tag 'C)
+                                    (-> (c/TypeConstraint {} empty-list sym nothing "")
+                                        (c/update-path (ast/location sym)))
+                                    (str "return(updateField(value_0, field_1, "
+                                         field-index "));\n")
+                                    "" 0)]
+                   (c/ItemsConstraint [c/top-type field-constraint] c/bottom-type empty-list nothing "")
+                   (assoc-in new-type-constraint [.type-maps type-num field-sym]
+                             (c/MultiConstraint [(c/DynamicParamConstraint arity-id 1 [] empty-list nothing "")
+                                                 field-constraint]))))
 
                 ;; getter arity
                 (let [arity-id (symbol (str sym "-" field "-getter"))
                       field-constraint (-> field-constraint
-                                           (c/intersect (c/DynamicParamConstraint arity-id 0 field-vec
+                                           (c/intersect (c/DynamicParamConstraint arity-id 0 [field-sym]
                                                                                   empty-list nothing ""))
                                            c/clear-sym)]
                   (ast/fn-arity-ast
@@ -7193,7 +7188,7 @@
                                                     field-constraints)
 
                           field-constraints (cata promote-inferred field-constraints)
-                          getter-arities (create-getters (.sym ast) new-type-constraint fields
+                          getter-arities (create-getters (.sym ast) type-num new-type-constraint fields
                                                          (c/extract-items-constraints field-constraints))
                           getter-arities (for [[proto-sym impl-fns] (vec getter-arities)
                                                [fn-name arities] (vec impl-fns)
@@ -8015,9 +8010,9 @@
                                                  (filter identity)))]
               (let [dyn-c (.item-indices dyn-c (rest (.item-indices dyn-c)))]
                 (cond (first alts)
-                      (ana (fn [c]
-                             (extract-dyn-field c dyn-c))
-                           (c/sum-type alts))
+                      (cata (fn [c]
+                              (extract-dyn-field c dyn-c))
+                            (c/sum-type alts))
 
                       c/top-type)))
             (-> (.path dyn-c)
@@ -8183,10 +8178,9 @@
   (reify-c [c arity loc]
     (cond (= (.arity c) arity)
           (comp (for [param-c (se/get-val (.param-index c))]
-                  (let [r (ana (fn [inner-c]
-                                 (extract-dyn-field inner-c c))
-                               param-c)]
-                    (Left r)))
+                  (Left (cata (fn [inner-c]
+                                (extract-dyn-field inner-c c))
+                              param-c)))
                 (se/state-error (Left c/top-type)))
           (se/state-error (Left c)))))
 
@@ -9745,7 +9739,7 @@
                                      _ (set-type-constraint field (ConstrainedAST field field-c))]
                                  field-c)))
          (fn [field-cs]
-           (ast/extend-ast sym (create-getters sym new-type-constraint fields field-cs))))))
+           (ast/extend-ast sym (create-getters sym type-num new-type-constraint fields field-cs))))))
 
 (extend-type ast/type-ast
   TypeChecker
