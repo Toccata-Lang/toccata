@@ -17,7 +17,7 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "5fc8c70"))
+                          :sha "3a20201"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "a9b739a"))
@@ -7698,10 +7698,19 @@
          ;; (ConstrainedAST sym c/top-type)
          )))
 
-(defn add-getter [sym types-list]
+(defn add-getter [sym type-num new-type-constraint types-list]
+  (assert (instance? c/TypeConstraint new-type-constraint))
+
   ;; 'sym' already has ".' at front
   (let [loc (ast/location sym)
         sym (ast/untag sym)
+        field-sym (c/Field sym)
+        value-c (either (get-in new-type-constraint [.type-maps type-num field-sym])
+                        (do
+                          (print-err "Compiler error at:" _FILE_ _LINE_
+                                     "\n\n" 'sym sym
+                                     "\n\n" 'new-type-constraint new-type-constraint)
+                          (abort)))
         getter-field-c (-> (c/FieldConstraint (c/Field sym) "" empty-list nothing "")
                            (c/update-path loc))
         getter-id (str "Default_" (rest (str sym)) "_getter")
@@ -7719,13 +7728,11 @@
                                      (ast/params [(ast/tag "#x") (ast/tag "#y")])
                                      ""
                                      []
-                                     (-> (c/ItemsConstraint [getter-field-c c/top-type] c/bottom-type
+                                     (-> (c/ItemsConstraint [getter-field-c value-c] c/bottom-type
                                                             empty-list nothing "")
                                          (c/update-path loc))
-                                     (c/UpdateDynamicField setter-id 0 [(c/Field sym)]
-                                                           (c/DynamicParamConstraint setter-id 1 []
-                                                                                     empty-list nothing "")
-                                                           empty-list nothing ""))
+                                     (assoc-in new-type-constraint [.type-maps type-num field-sym]
+                                               (c/DynamicParamConstraint setter-id 1 [] empty-list nothing "")))
         getter (ConstrainedAST (PrototypeImpls sym {c/UnknownType {1 getter-ast
                                                                    2 setter-ast}})
                                (-> c/fn-constraint
@@ -7750,14 +7757,14 @@
             (list {sym getter
                    'Type Type-protocol}))))
 
-(defn create-new-getter [sym]
+(defn create-new-getter [sym type-num new-type-constraint]
   ;; 'sym' already has ".' at front
   (let [loc (ast/location sym)]
     (for [mod-index (se/get-in-val [.module .index])
           _ (cond (= 0 mod-index)
                   (comp (se/get-in-val [.module .value-types 0 sym])
                         (for [_ (se/update-in-val [.module .value-types]
-                                                  (partial add-getter sym))
+                                                  (partial add-getter sym type-num new-type-constraint))
                               Type-protocol (se/get-in-val [.module .value-types 0 'Type])
                               getter (se/get-in-val [.module .value-types 0 (ast/untag sym)])
                               _ (se/update-in-val [.module .value-types]
@@ -7774,7 +7781,8 @@
                           (fn [mod]
                             (either (and (get-in mod [.value-types 0 sym])
                                          (maybe mod))
-                                    (.value-types mod (add-getter sym (.value-types mod))))))
+                                    (.value-types mod (add-getter sym type-num new-type-constraint
+                                                                  (.value-types mod))))))
                     se-nop))]
       (ConstrainedAST sym (-> c/fn-constraint
                               (c/update-path loc))))))
@@ -7805,7 +7813,9 @@
                                     se/Failure)))
                (cond (flat-map (first (str sym))
                                (partial = "."))
-                     (create-new-getter (ast/tag sym loc))
+                     (create-new-getter (ast/tag sym loc) 0
+                                        (c/TypeConstraint {0 {(c/Field sym) c/top-type}} empty-list
+                                                          'DefaultType nothing ""))
 
                      (-> ["Could not find type constraint for" (str "'" sym "'")
                           "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
@@ -8037,7 +8047,21 @@
                                             se/state-error)]
                               (Left (.type-maps c new-maps)))))
                      (map (se/get-val .new-field) Left))))
-          (se/state-error (Left c)))))
+          (se/state-error (Left c))))
+
+  (reify-c [c arity loc]
+    (map (contextual-map-vals (.type-maps c)
+                              (fn [type-fields]
+                                (contextual-map-vals type-fields
+                                                     (fn [c]
+                                                       (apo (fn [c]
+                                                              (reify-c c arity loc))
+                                                            c
+                                                            se/state-error))
+                                                     se/state-error))
+                              se/state-error)
+         (fn [new-maps]
+           (Left (.type-maps c new-maps))))))
 
 (extend-type c/MultiConstraint
   TypeChecker
@@ -9701,7 +9725,7 @@
   (type-check [ast old-ast]
     (se/state-error ast)))
 
-(deftype CreateGetters [sym new-type-constraint fields loc]
+(deftype CreateGetters [sym type-num new-type-constraint fields loc]
   Stringable
   (string-list [_]
     (list "(CreateGetters " (str sym) " " (to-str fields) " " (str loc) ")"))
@@ -9713,7 +9737,8 @@
   TypeChecker
   (pre-check [ast]
     (map (se/traverse fields (fn [field]
-                               (for [_ (create-new-getter (ast/tag (str "." field) loc))
+                               (for [_ (create-new-getter (ast/tag (str "." field) loc)
+                                                          type-num new-type-constraint)
                                      field-c (map (get-type-constraint field)
                                                   (fn [field-info]
                                                     (cata promote-inferred (.constraint field-info))))
@@ -9808,7 +9833,7 @@
           [(map (.items-constraints field-assertions) TypeCheckOnly)
            (TypeCheckOnly (ast/extend-ast sym default-impls))
            (TypeCheckOnly (ast/extend-ast sym impls))
-           (CreateGetters sym new-type-constraint fields loc)
+           (CreateGetters sym type-num new-type-constraint fields loc)
            (cond (empty? hash-map-impls)
                  (ast/block-comment "" 0 [])
                  (ast/extend-ast sym hash-map-impls))
