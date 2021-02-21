@@ -1,4 +1,14 @@
 
+/*
+  TODO: Possible major perf boost.
+The only way values can be passed between threads is by a closure arity being passed to an agent or
+a future. (Ponder this more).
+
+In those cases, a special bit could be set that would cause any ref updates to be done atomically.
+If the bit is not set, the ref update could be done immediately.
+Once a ref count gets down to 1, the thread bit could be cleared
+ */
+
 #include <stdlib.h>
 #include <stdatomic.h>
 #include "core.h"
