@@ -6,7 +6,7 @@ a future. (Ponder this more).
 
 In those cases, a special bit could be set that would cause any ref updates to be done atomically.
 If the bit is not set, the ref update could be done immediately.
-Once a ref count gets down to 1, the thread bit could be cleared
+Problems with values nested in others. And values delivered to Promises.
  */
 
 #include <stdlib.h>
