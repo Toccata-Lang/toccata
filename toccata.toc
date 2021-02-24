@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "3a20201"))
+                          :sha "5726a21"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "a9b739a"))
+                            :sha "1930db7"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "e6b5a69"))
+                            :sha "845b72b"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -5315,7 +5315,7 @@
                                           (flat-map (map (lookup-sym sym) .c-var)
                                                     (fn [var]
                                                       (set-constraint var (c/DynamicParamConstraint
-                                                                           'nada index []
+                                                                           'nada index [] c/top-type
                                                                            empty-list (maybe sym) var)))))))
                    _ (set-constraint "#result" c/top-type)
 
@@ -7021,13 +7021,14 @@
                                     "" 0)]
                    (c/ItemsConstraint [c/top-type field-constraint] c/bottom-type empty-list nothing "")
                    (assoc-in new-type-constraint [.type-maps type-num field-sym]
-                             (c/MultiConstraint [(c/DynamicParamConstraint arity-id 1 [] empty-list nothing "")
+                             (c/MultiConstraint [(c/DynamicParamConstraint arity-id 1 [] c/top-type
+                                                                           empty-list nothing "")
                                                  field-constraint]))))
 
                 ;; getter arity
                 (let [arity-id (symbol (str sym "-" field "-getter"))
                       field-constraint (-> field-constraint
-                                           (c/intersect (c/DynamicParamConstraint arity-id 0 [field-sym]
+                                           (c/intersect (c/DynamicParamConstraint arity-id 0 [field-sym] c/top-type
                                                                                   empty-list nothing ""))
                                            c/clear-sym)]
                   (ast/fn-arity-ast
@@ -7076,6 +7077,7 @@
                                                                                symbol
                                                                                c/Field
                                                                                vector)
+                                                                   c/top-type
                                                                    empty-list
                                                                    (maybe (ast/untag field-sym))
                                                                    (c/extract-var field-c))))))
@@ -7707,7 +7709,8 @@
                                      "\n\n" 'new-type-constraint new-type-constraint)
                           (abort)))
         getter-field-c (-> (c/FieldConstraint (c/Field sym) "" empty-list nothing "")
-                           (c/intersect new-type-constraint)
+                           ;; TODO: at some point, this might be used to eliminate need for FieldConstraint
+                           ;; (c/intersect new-type-constraint)
                            (c/update-path loc))
         getter-id (str "Default_" (rest (str sym)) "_getter")
         getter-ast (ast/fn-arity-ast (ast/tag sym)
@@ -7717,7 +7720,8 @@
                                      []
                                      (-> (c/ItemsConstraint [getter-field-c] c/bottom-type empty-list nothing "")
                                          (c/update-path loc))
-                                     (c/DynamicParamConstraint getter-id 0 [(c/Field sym)] empty-list nothing ""))
+                                     (c/DynamicParamConstraint getter-id 0 [(c/Field sym)] c/top-type
+                                                               empty-list nothing ""))
         setter-id (str "Default_" (rest (str sym)) "_setter")
         setter-ast (ast/fn-arity-ast (ast/tag sym)
                                      setter-id
@@ -7728,7 +7732,8 @@
                                                             empty-list nothing "")
                                          (c/update-path loc))
                                      (assoc-in new-type-constraint [.type-maps type-num field-sym]
-                                               (c/DynamicParamConstraint setter-id 1 [] empty-list nothing "")))
+                                               (c/DynamicParamConstraint setter-id 1 [] c/top-type
+                                                                         empty-list nothing "")))
         getter (ConstrainedAST (PrototypeImpls sym {c/UnknownType {1 getter-ast
                                                                    2 setter-ast}})
                                (-> c/fn-constraint
@@ -7811,7 +7816,7 @@
                                (partial = "."))
                      (create-new-getter (ast/tag sym loc) 0
                                         (c/TypeConstraint {0 {(c/Field sym) c/top-type}} empty-list
-                                                          'DefaultType nothing ""))
+                                                          (symbol (str "field " sym " required")) nothing ""))
 
                      (-> ["Could not find type constraint for" (str "'" sym "'")
                           "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
@@ -7848,6 +7853,7 @@
               :let [new-const (c/trim (c/intersect (.constraint curr-const) constraint))]
               _ (cond (= new-const c/bottom-type)
                       (do
+                        ;; TODO: see where all this might be called from
                         (c/conflicting-assertions new-const "type checker testing" line)
                         (se/throw new-const))
                       (set-type-constraint sym (.constraint curr-const new-const)))]
@@ -7878,8 +7884,8 @@
      ;;     (= (.line loc) 0)
      ;;     (do
      ;;       (print-err 'update-constraint loc "\n"
-     ;;                  'constrained (.constraint constrained) "\n\n"
-     ;;                  'constraint constraint "\n\n"
+     ;;                  'arg (.constraint constrained) "\n\n"
+     ;;                  'param constraint "\n\n"
      ;;                  'new new-c)
      ;;       nothing))
      (cond (= new-c c/bottom-type)
@@ -8179,9 +8185,11 @@
   (reify-c [c arity loc]
     (cond (= (.arity c) arity)
           (comp (for [param-c (se/get-val (.param-index c))]
-                  (Left (cata (fn [inner-c]
+                  (-> (cata (fn [inner-c]
                                 (extract-dyn-field inner-c c))
-                              param-c)))
+                             param-c)
+                      (c/set-type (.final-c c))
+                      Left))
                 (se/state-error (Left c/top-type)))
           (se/state-error (Left c)))))
 
@@ -8306,11 +8314,19 @@
                         (remove-type-constraint sym)))))
 
   (param-types [sym]
-    (for [c (get-type-constraint sym)]
-      (cond (instance? c/DynamicConstraint (.constraint c))
+    (for [c (map (get-type-constraint sym) .constraint)]
+      (cond (instance? c/DynamicConstraint c)
             c/top-type
 
-            (.constraint c))))
+            (instance? c/MultiConstraint c)
+            (c/trim (.constraints c (map (.constraints c)
+                                         (fn [inner-c]
+                                           (cond (instance? c/DynamicConstraint inner-c)
+                                                 c/top-type
+
+                                                 inner-c)))))
+
+            c)))
 
   (type-check [s old-s]
     (get-type-constraint s)))
@@ -8421,7 +8437,7 @@
                                    se-nop
 
                                    (append-type-constraint _LINE_ sym
-                                                           (c/DynamicParamConstraint arity-id index [] 
+                                                           (c/DynamicParamConstraint arity-id index [] c/top-type
                                                                                      empty-list (maybe sym) "")))))]
         (-> ast
             (.fn-var arity-id)
@@ -8443,10 +8459,6 @@
             pts (-> pts
                     (c/intersect (.param-consts ast))
                     (c/update-path loc))]
-        (and (= (str (.fn-sym ast)) "AType x")
-             (do
-               (print-err 'checked-fn-arity (.fn-sym ast) (.params ast) (.result-const ast))
-               nothing))
         (either (map (= c/bottom-type pts)
                      (fn [failure-c]
                        (c/conflicting-assertions failure-c (.file loc) (.line loc))
