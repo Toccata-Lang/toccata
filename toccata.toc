@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "377c9af"))
+                          :sha "eb924fe"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "bedc793"))
+                            :sha "3ea2c69"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "e39dd0a"))
+                            :sha "d2f9e8e"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -2177,46 +2177,6 @@
                      "' is too small %s\\n\", " sym-location ");" line-sep
                      "fprintf(stderr, \"Minimum allowed value is " (str (.min constraint))
                      ", got %\" PRId64 \"\\n\", ((Integer *)" (.var constraint) ")->numVal);" line-sep
-                     "fprintf(stderr, \""
-                     (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
-                     "\\n\");"
-                     ;; "\n#endif\n"
-                     "}}"])))))
-
-(extend-type c/FieldConstraint
-  Emitter
-  (emit [constraint]
-    (either (map (.sym constraint)
-                 (fn [sym]
-                   (let [sym (ast/tag sym)]
-                     (for [sym-info (lookup-sym sym)
-                           field-var (lookup-sym (ast/tag (.sym (.field constraint))))
-                           _ (constrain-var (ast/file-name constraint) (ast/line-number constraint)
-                                            (.c-var sym-info) (.field-var constraint (.c-var field-var)))]
-                       (.refs-map sym-info (dissoc (.refs-map sym-info) (.c-var sym-info)))))))
-            (wrap sm/zero-sm empty-c-code)))
-
-  (runtime-check [constraint value-info checked-var]
-    ["if(" checked-var ") {\n"
-     "Value *dork = hasField((FnArity *)0, incRef(" (.var constraint) ", 1), "
-     (.field-var constraint) ");\n" "if (isNothing(dork,\"\",0)) {"
-     checked-var " = 0;}" line-sep
-     "dec_and_free(dork, 1);}"])
-
-  (runtime-check [constraint value-info sym-location checked-var]
-    (cond (c/satisfied-by constraint value-info)
-          []
-
-          (let [rt-check (runtime-check constraint value-info checked-var)]
-            (either (empty? rt-check)
-                    ["if (" checked-var "){"
-                     rt-check
-                     "if(!" checked-var ") {\n"
-                     ;; "\n#ifndef EMBEDDED\n"
-                     "fprintf(stderr, \"Value '" (either (.sym constraint) "<unknown>")
-                     "' of type '%s' does not have field '"
-                     (.sym (.field constraint)) "' %s\\n\", extractStr(type_name((FnArity *)0, "
-                     (.var constraint) ")), " sym-location ");" line-sep
                      "fprintf(stderr, \""
                      (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
                      "\\n\");"
@@ -6950,15 +6910,11 @@
         arities [(ast/prototype tagged-getter
                                 (ast/params [(ast/tag "#x")])
                                 (ast/block-comment "" 0 [])
-                                [(c/FieldConstraint (c/Field getter-sym) "" empty-list (maybe (symbol "#x")) "")
-                                 ;; getter-c
-                                 ])
+                                [getter-c])
                  (ast/prototype tagged-getter
                                 (ast/params [(ast/tag "#x") (ast/tag "#y")])
                                 (ast/block-comment "" 0 [])
-                                [(c/FieldConstraint (c/Field getter-sym) "" empty-list (maybe (symbol "#x")) "")
-                                 ;; getter-c
-                                 ])]]
+                                [getter-c])]]
     (flat-map (sm/get-in-val [.module .index])
               (fn [curr-mod]
                 (comp (sm/get-in-val [.module .protocols 'Type tagged-getter])
@@ -7115,7 +7071,6 @@
                       'MultiConstraint c/MultiConstraintType
                       'ResultConstraint c/ResultConstraintType
                       'ItemsConstraint c/ItemsConstraintType
-                      'FieldConstraint c/FieldConstraintType
                       'StaticIntConstraint c/StaticIntConstraintType
                       'MinValue c/MinValueType
                       'MaxValue c/MaxValueType
@@ -7705,12 +7660,9 @@
                                      "\n\n" 'sym sym
                                      "\n\n" 'new-type-constraint new-type-constraint)
                           (abort)))
-        getter-field-c (-> (c/FieldConstraint (c/Field sym) "" empty-list nothing "")
-                           ;; TODO: at some point, this might be used to eliminate need for c/FieldConstraint
-                           ;; (c/intersect (c/TypeConstraint {0 {(c/Field sym) c/top-type}} empty-list
-                           ;;                                (symbol (str "field '" sym "' required"))
-                           ;;                                nothing ""))
-                           (c/update-path loc))
+        getter-field-c (c/TypeConstraint {0 {(c/Field sym) c/top-type}} empty-list
+                                         (symbol (str "field '" sym "' required"))
+                                         nothing "")
         getter-id (str "Default_" (rest (str sym)) "_getter")
         getter-ast (ast/fn-arity-ast (ast/tag sym)
                                      getter-id
@@ -8006,7 +7958,6 @@
                     c/StaticIntConstraint
                     c/InferredInner
                     c/CollectionOf
-                    c/FieldConstraint
                     Vector
                     Left
                     Right))
@@ -8032,11 +7983,6 @@
            (fn [_]
              (ConstrainedAST c c))))))
 
-(extend-type c/FieldConstraint
-  TypeChecker
-  (extract-dyn-field [c dyn-c]
-    c/top-type))
-
 (extend-type c/TypeConstraint
   TypeChecker
   (extract-dyn-field [c dyn-c]
@@ -8051,6 +7997,14 @@
                       (cata (fn [c]
                               (extract-dyn-field c dyn-c))
                             (c/sum-type alts))
+
+                      (instance? c/Field field)
+                      (cond (= (list c/UnknownType) (keys (.type-maps c)))
+                            (assoc-in c [.type-maps c/UnknownType field] c/top-type)
+
+                            (c/NoValues [c (c/TypeConstraint {0 {field c/top-type}} (.path dyn-c)
+                                                             (symbol (str "field '" (.sym field) "' required"))
+                                                             nothing "")]))
 
                       c/top-type)))
             (-> (.path dyn-c)
