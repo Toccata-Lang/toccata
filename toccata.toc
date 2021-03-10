@@ -7795,7 +7795,11 @@
   (assert (instance? c/Constraints constraint))
 
   (cond (= constraint c/top-type)
-        se-nop
+        (map (se/try
+               (get-type-constraint sym)
+               (fn [_]
+                 (se/state-error (ConstrainedAST sym c/top-type))))
+             .constraint)
 
         (for [curr-const (se/try
                            (get-type-constraint sym)
@@ -7851,7 +7855,7 @@
                                        ;; (or (= (.file loc) 'core)
                                        ;;     (= (.line loc) 0)
                                        ;;     (do
-                                       ;;       (print-err 'update-constraint sym loc
+                                       ;;       (print-err 'update-constraint 'sym sym loc
                                        ;;                  "\n" 'arg (.constraint constrained)
                                        ;;                  "\n\n" 'param constraint
                                        ;;                  "\n\n" 'orig-c orig-c
@@ -7886,7 +7890,7 @@
                                     ;; (or (= (.file loc) 'core)
                                     ;;     (= (.line loc) 0)
                                     ;;     (do
-                                    ;;       (print-err 'update-constraint param-sym loc
+                                    ;;       (print-err 'update-constraint 'param-sym param-sym loc
                                     ;;                  "\n" 'arg (.constraint constrained)
                                     ;;                  "\n\n" 'param constraint
                                     ;;                  "\n\n" 'orig-c orig-c
@@ -8381,6 +8385,14 @@
             pts (-> pts
                     (c/intersect (.param-consts ast))
                     (c/update-path loc))]
+        ;; (or (= (.file loc) 'core)
+        ;;     (= (.line loc) 0)
+        ;;     (do
+        ;;       (print-err 'fn-arity (.fn-sym old-ast) loc
+        ;;                  "\n" 'params (.params old-ast)
+        ;;                  "\n\n" 'param-cs (c/extract-items-constraints pts)
+        ;;                  "\n\n" 'result-c result-c)
+        ;;       nothing))
         (either (map (= c/bottom-type pts)
                      (fn [failure-c]
                        (c/conflicting-assertions failure-c (.file loc) (.line loc))
@@ -8412,6 +8424,13 @@
       c/trim
       (c/update-path (ast/location target))))
 
+(defn elim-items-constraint [c]
+  (c/trim (cata (fn [inner-c]
+                  (cond (instance? c/ItemsConstraint inner-c)
+                        c/top-type
+                        inner-c))
+                c)))
+
 (defn infer-coll-inner-constraint [target arity [coll f]]
   (either (for [arity (find-arity (.ast f)
                                   (-> coll
@@ -8423,17 +8442,17 @@
                 inferred-c (-> (.param-consts arity)
                                (c/extract-items-constraints 1)
                                first)]
-            (let [new-coll-c (-> (c/CollectionOf inferred-c empty-list nothing "")
-                                 (c/update-path (ast/location target)))
-                  loc (ast/location target)]
+            (let [loc (ast/location target)
+                  new-coll-c (-> (c/CollectionOf inferred-c empty-list nothing "")
+                                 (c/update-path loc))]
               (map (update-constraint coll new-coll-c loc)
                    (fn [new-coll]
-                     (.constraint new-coll)))))
-          (.constraint coll)))
-
+                     (elim-items-constraint (.constraint new-coll))))))
+          (elim-items-constraint (.constraint coll))))
 
 (defn infer-coll-result-constraint [target arity [coll f]]
   (let [coll-contents (c/extract-contents-constraint (.constraint coll))
+        ;; TODO: change to 'arity?' and see what happens
         maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
         inferred-c (either (flat-map maybe-arity
                                      (fn [arity]
@@ -8473,6 +8492,7 @@
 (defn pass-coll-constraint [target arity [coll]]
   (-> coll
       .constraint
+      elim-items-constraint
       (c/update-path (ast/location target))
       se/state-error))
 
@@ -8483,13 +8503,22 @@
    'drop-while infer-coll-inner-constraint
    'take-while infer-coll-inner-constraint
    'filter infer-coll-inner-constraint
-   'split-with infer-coll-inner-constraint
    'last maybe-coll-inner
    'nth maybe-coll-inner
    'second maybe-coll-inner
    'rest pass-coll-constraint
    'butlast pass-coll-constraint
    'reverse pass-coll-constraint
+
+   ;; TODO:
+   ;; 'split
+   ;; 'split-with (fn [target arity args]
+   ;;               (-> c/empty-items-constraint
+   ;;                   (.items-constraints (map args .constraint))
+   ;;                   (c/intersect c/vect-constraint)
+   ;;                   (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
+   ;;                   (c/update-path (ast/location target))
+   ;;                   se/state-error))
 
    ;; TODO: need hash-map constraints first
    ;; 'vals
