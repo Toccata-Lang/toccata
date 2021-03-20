@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "de79052"))
+                          :sha "4227f66"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "a57aa31"))
+                            :sha "6f0dd27"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "5716499"))
+                            :sha "65ec21a"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -2099,6 +2099,8 @@
                                (str (ast/file-name ast) ":") (ast/line-number ast)))))
 
   (runtime-check [constraint value-info checked-var]
+    ;; TODO: need to check for presence of hash-map keys and their types in value-info
+    ;; as well as static, min and max value
     (cond (c/satisfied-by constraint value-info)
           []
 
@@ -6486,7 +6488,7 @@
                                                                (drop (count (.fixed (.params ast))))
                                                                vec))))))
                                new-bindings)
-          ;; TODO: put this back in later, we're tryint to tag all the symbols in the arity for
+          ;; TODO: put this back in later, we're trying to tag all the symbols in the arity for
           ;; better error messages
           ;; tagged-bindings (reduce (all-symbols new-bindings) {}
           ;;                         (fn [m sym]
@@ -7513,9 +7515,6 @@
   (find-arity [ast type-num args]
     (assert-result r (instance? Maybe r)))
 
-  (strip-asts [ast]
-    ast)
-
   ;; TODO: need to make sure every possible call target ast is implemented
   (check-call-site [ast args target]
     (assert-result x (instance? se/new-se x)))
@@ -7589,9 +7588,6 @@
 
 (extend-type ConstrainedAST
   TypeChecker
-  (strip-asts [ast]
-    (.ast ast))
-
   (check-call-site [ast args target]
     (check-call-site (.ast ast) args target)))
 
@@ -7967,13 +7963,16 @@
   (type-check [c old-c]
     (se/state-error (ConstrainedAST c c))))
 
+(defn strip-asts [c]
+  (cata (fn [x]
+          (either (map (instance? ConstrainedAST x) .constraint)
+                  x))
+        c))
+
 (extend-type c/SymbolConstraints
   TypeChecker
   (type-check [c old-c]
-    (let [c (cata (fn [x]
-                    (either (map (instance? ConstrainedAST x) .constraint)
-                            x))
-                  c)]
+    (let [c (strip-asts c)]
       (map (either (map (.sym old-c)
                         (fn [sym]
                           (append-type-constraint sym c (ast/location old-c))))
@@ -8493,9 +8492,22 @@
    ;; TODO: need hash-map constraints first
    ;; 'vals
    ;; 'get
+   ;; 'assoc
 
 
    ;; TODO: can do get-in if the first arg is a vector of PrototypeImpls
+
+   'hash-map (fn [target arity args]
+               (-> (partition args 2)
+                   (reduce {} (fn [m [k v]]
+                                (assoc m (strip-asts k) (strip-asts v))))
+                   ((fn [kv-map]
+                      (-> c/hashmap-constraint
+                          (assoc-in [.type-maps c/BitmapIndexedType] kv-map)
+                          (assoc-in [.type-maps c/ArrayNodeType] kv-map)
+                          (assoc-in [.type-maps c/HashCollisionNodeType] kv-map))))
+                   (c/update-path (ast/location target))
+                   se/state-error))
 
    'vector (fn [target arity args]
              (-> c/empty-items-constraint
@@ -8514,10 +8526,12 @@
                se/state-error))
 
    'vec (fn [target _ [arg]]
+          ;; TODO: handle hash-maps correctly
           (se/state-error (-> (c/set-type (.constraint arg) c/vect-constraint)
                               (c/update-path (ast/location target)))))
 
    'seq (fn [target _ [arg]]
+          ;; TODO: handle hash-maps correctly
           (let [new-c (-> (c/set-type (.constraint arg) c/list-constraint)
                           (c/update-path (ast/location target)))]
             (se/state-error new-c)))
@@ -8741,6 +8755,13 @@
                              " with " arg-count " arguments.")))))
 
   (pre-check [ast]
+    ;; (let [loc (ast/location ast)]
+    ;;   (or (= (.file loc) 'core)
+    ;;       (= (.line loc) 0)
+    ;;       (do
+    ;;         (print-err 'fn-ast loc
+    ;;                    "\n" ast)
+    ;;         nothing)))
     (either (map (.fn-sym ast)
                  (fn [sym]
                    (for [_ (se/try
