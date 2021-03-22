@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "4227f66"))
+                          :sha "ef5b73f"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "6f0dd27"))
+                            :sha "cb620d6"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "65ec21a"))
+                            :sha "5403142"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -989,8 +989,6 @@
           (list ">"))))
 
 (deftype ConstrainedAST [ast constraint]
-  (assert (instance? c/Constraints constraint))
-
   Stringable
   (string-list [_]
     (list "(ConstrainedAST " (either (and (instance? ast/tagged-symbol ast)
@@ -7509,8 +7507,7 @@
 
 (defprotocol TypeChecker
   (reify-c [c arity loc]
-    ;; (se/state-error (Right c))
-    )
+    (se/state-error (Right c)))
 
   (find-arity [ast type-num args]
     (assert-result r (instance? Maybe r)))
@@ -7531,7 +7528,9 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (assert-result r (instance? se/new-se r))))
+    (assert-result r (instance? se/new-se r))
+
+    (se/state-error (ConstrainedAST ast ast))))
 
 (defn reify-type-constraint [c arity param-cs loc]
   (assert (instance? c/Constraints c))
@@ -7592,6 +7591,7 @@
     (check-call-site (.ast ast) args target)))
 
 (deftype PrototypeImpls [fn-sym impls]
+  (assert (instance? Symbol fn-sym))
   (assert (instance? (map-of Integer HashMap) impls))
 
   Stringable
@@ -7934,30 +7934,6 @@
   (pre-check [c]
     (se-translate (lookup-constraint c))))
 
-;; TODO: remove or do something
-(def TempCs (any-of c/TypeConstraint
-                    c/MultiConstraint
-                    c/ItemsConstraint
-                    c/SumConstraint
-                    c/AllValues
-                    c/NoValues
-                    c/StaticLengthConstraint
-                    c/InferredInner
-                    c/CollectionOf
-                    c/SetType
-                    c/GetField
-                    c/SetField
-                    Integer
-                    String
-                    Vector
-                    Left
-                    Right))
-
-(extend-type TempCs
-  TypeChecker
-  (reify-c [c arity loc]
-    (se/state-error (Right c))))
-
 (extend-type c/AllValues
   TypeChecker
   (type-check [c old-c]
@@ -8052,7 +8028,6 @@
             (.sym (.sym c))
             (.var (.var c))
             (c/update-path loc)
-            ;; ((fn [x] (print-err 'reified-fields x) x))
             Left)))))
 
 (extend-type c/ParamConstraint
@@ -8492,10 +8467,37 @@
    ;; TODO: need hash-map constraints first
    ;; 'vals
    ;; 'get
-   ;; 'assoc
 
 
    ;; TODO: can do get-in if the first arg is a vector of PrototypeImpls
+
+   'assoc (fn [target arity [coll-c key-c val-c]]
+            (let [coll-c (strip-asts coll-c)
+                  key-c (either (for [_ (instance? PrototypeImpls (.ast key-c))
+                                      impl-sym (get-in key-c [.ast .fn-sym])
+                                      :when (flat-map (first (str impl-sym))
+                                                      (partial = "."))]
+                                  (c/Field impl-sym))
+                                (strip-asts key-c))
+                  val-c (strip-asts val-c)]
+              (either (or (and (= key-c c/top-type)
+                               (maybe (se/state-error coll-c)))
+                          (for [coll-c (instance? c/ParamConstraint coll-c)]
+                            (se/state-error (c/mod-param coll-c (c/set-field key-c val-c))))
+                          (map (c/extract-type-map coll-c)
+                               (fn [type-map]
+                                 (-> type-map
+                                     seq
+                                     (reduce coll-c (fn [coll-c [type-num fields-map]]
+                                                      (cond (or (= type-num c/BitmapIndexedType)
+                                                                (= type-num c/ArrayNodeType)
+                                                                (= type-num c/HashCollisionNodeType))
+                                                            (assoc-in coll-c [.type-maps type-num key-c] val-c)
+                                                            coll-c)))
+                                     (c/update-path (ast/location target))
+                                     se/state-error))))
+                      (se/state-error coll-c))))
+
 
    'hash-map (fn [target arity args]
                (-> (partition args 2)
@@ -8560,14 +8562,6 @@
                           (c/intersect (c/update-path c/maybe-constraint (ast/location target)))
                           (c/intersect (.result-const arity))
                           (c/update-path (ast/location target))
-                          ((fn [c]
-                             (let [loc (ast/location target)]
-                               (or (= (.file loc) 'core)
-                                   (= (.line loc) 0)
-                                   (do
-                                     (print-err 'first loc c)
-                                     nothing)))
-                             c))
                           se/state-error))
 
                     (maybe-coll-inner target arity [coll]))))
@@ -8918,7 +8912,7 @@
                                                                      (assoc arities arg-count proto-arity)))
                                                         (maybe (assoc-in protos [(.fn-name proto)]
                                                                          (PrototypeImpls
-                                                                          (.fn-name proto)
+                                                                          (ast/untag (.fn-name proto))
                                                                           {c/UnknownType
                                                                            {arg-count proto-arity}}))))]
                                      new-protos)
@@ -8957,7 +8951,7 @@
                                                                 proto-arity)))
                                           (assoc impls (ast/untag (.fn-name proto))
                                                  (ConstrainedAST (PrototypeImpls
-                                                                  (.fn-name proto)
+                                                                  (ast/untag (.fn-name proto))
                                                                   {c/UnknownType
                                                                    {arg-count proto-arity}})
                                                                  c/fn-constraint))))))]
