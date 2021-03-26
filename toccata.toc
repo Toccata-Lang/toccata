@@ -17,7 +17,7 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "ab2c3d0"))
+                          :sha "152d4a5"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "1960300"))
@@ -6522,7 +6522,8 @@
                            fn-var (comp (map (lookup-declaration fn-sym) .c-var)
                                         (global-var fn-sym "fn"))
                            _ (declare ["\n// --------- " fn-sym " -------------\n"])
-                           _ (constrain-var file-name line-number fn-var c/fn-constraint)
+                           _ (constrain-var file-name line-number fn-var (-> c/fn-constraint
+                                                                             (c/update-sym fn-sym)))
                            arities (sm/traverse (map (.arities ast) (fn [arity]
                                                                       (-> arity
                                                                           (.fn-sym fn-sym)
@@ -6536,7 +6537,8 @@
               (let [fn-sym (symbol (str "anonymous function at " (ast/file-name ast) ": " (ast/line-number ast)))]
                 (for [fn-var (global-var "fn")
                       ;; _ (declare ["Value *" fn-var ";\n"])
-                      _ (constrain-var file-name line-number fn-var c/fn-constraint)
+                      _ (constrain-var file-name line-number fn-var (-> c/fn-constraint
+                                                                        (c/update-sym fn-sym)))
                       arities (sm/traverse (.arities ast) emit)
                       fn-expr (comp (closure-fn fn-sym fn-var arities)
                                     (static-fn fn-sym fn-var arities))]
@@ -8163,9 +8165,24 @@
   (check-call-site [ast args target]
     (map (get-type-constraint ast)
          (fn [c-ast]
-           ;; TODO: seems to be called on recursive calls.
-           ;; return the #result constraint
-           (Right c/top-type))))
+           (assert (instance? ConstrainedAST c-ast))
+
+           (cond (instance? c/ParamConstraint (.constraint c-ast))
+                 (Left (c/intersect (.constraint c-ast)
+                                    (c/CallValue (map args strip-asts))))
+
+                 ;; TODO: seems to be called on recursive calls.
+                 ;; return the #result constraint
+                 (let [loc (ast/location ast)]
+                   (or (= (.file loc) 'core)
+                       (= (.line loc) 0)
+                       (do
+                         (print-err 'called loc)
+                         (print-err  c-ast)
+                         (print-err 'args args)
+                         (print-err 'target target)
+                         nothing))
+                   (Right c/top-type))))))
 
   (recover-type-constraint [sym]
     (flat-map (se/get-in-val [.module .value-types])
@@ -8464,6 +8481,7 @@
    ;;                   (c/update-path (ast/location target))
    ;;                   se/state-error))
    ;; 'dissoc
+   ;; 'subs  for static strings
 
    ;; TODO: need hash-map constraints first
    ;; 'vals
@@ -8758,17 +8776,37 @@
                    (for [_ (se/try
                              (get-type-constraint sym)
                              (fn [_]
-                               (set-type-constraint sym (ConstrainedAST sym c/fn-constraint))))]
+                               (set-type-constraint sym (ConstrainedAST sym (-> c/fn-constraint
+                                                                                (c/update-sym (ast/untag sym)))))))]
                      (.arities ast (map (.arities ast)
                                         (fn [arity]
                                           (.fn-sym arity sym)))))))
             (se/state-error ast)))
 
   (type-check [ast old-ast]
-    (either (map (.fn-sym ast)
-                 (fn [_]
-                   (se/state-error (ConstrainedAST ast c/fn-constraint))))
-            (se/state-error (ConstrainedAST ast c/fn-constraint)))))
+    (let [fn-c (either (map (.fn-sym ast)
+                            (fn [sym]
+                              (c/update-sym c/fn-constraint (ast/untag sym))))
+                       c/fn-constraint)
+          fn-c (reduce (.arities ast) fn-c
+                       (fn [c arity]
+                         (assert (instance? ast/fn-arity-ast arity))
+                         (either (for [variadic (get-in arity [.param-consts .tail-constraint])
+                                       :when (= c/bottom-type variadic)
+                                       fixed-params (get-in arity [.param-consts .items-constraints])]
+                                   (assoc-in c [.arities (count fixed-params)]
+                                             (c/fn-arity (.param-consts arity)
+                                                         (.result-const arity))))
+                                 (assoc-in c [.arities 'variadic]
+                                             (c/fn-arity (.param-consts arity)
+                                                         (.result-const arity))))))]
+      ;; (let [loc (ast/location ast)]
+      ;;   (or (= (.file loc) 'core)
+      ;;       (= (.line loc) 0)
+      ;;       (do
+      ;;         (print-err 'fn-c (ast/location old-ast) "\n" fn-c)
+      ;;         nothing)))
+      (se/state-error (ConstrainedAST ast fn-c)))))
 
 (extend-type ast/prototype-ast
   TypeChecker
@@ -8947,11 +8985,11 @@
                                                                        c/UnknownType arg-count]
                                                                 proto-arity)))
                                           (assoc impls (ast/untag (.fn-name proto))
-                                                 (ConstrainedAST (PrototypeImpls
-                                                                  (ast/untag (.fn-name proto))
-                                                                  {c/UnknownType
-                                                                   {arg-count proto-arity}})
-                                                                 c/fn-constraint))))))]
+                                                 (ConstrainedAST (PrototypeImpls (ast/untag (.fn-name proto))
+                                                                                 {c/UnknownType
+                                                                                  {arg-count proto-arity}})
+                                                                 (c/update-sym c/fn-constraint
+                                                                               (ast/untag (.fn-name proto)))))))))]
       (for [_ (se/traverse (vec proto-impls)
                            (fn [[proto-name proto-impls]]
                              (set-type-constraint proto-name proto-impls)))
@@ -9471,10 +9509,13 @@
   TypeChecker
   (type-check [ast old-ast]
     (se/state-error (ConstrainedAST (.string old-ast)
-                                    (-> c/string-constraint
-                                        (.type-maps (map-vals (.type-maps c/string-constraint)
-                                                              (fn [attrs]
-                                                                (assoc attrs c/static-value (.string old-ast)))))
+                                    (-> (cata (fn [c]
+                                                (cond (or (instance? c/StrBuffConstraint c)
+                                                          (instance? c/SubStrConstraint c))
+                                                      (.static-value c (.string old-ast))
+
+                                                      c))
+                                              c/string-constraint)
                                         (c/update-path (ast/location old-ast)))))))
 
 (deftype AndClause [clause]
@@ -9612,10 +9653,13 @@
 (extend-type String
   TypeChecker
   (type-check [s _]
-    (se/state-error (ConstrainedAST s (-> c/string-constraint
-                                          (.type-maps (map-vals (.type-maps c/string-constraint)
-                                                                (fn [attrs]
-                                                                  (assoc attrs c/static-value s)))))))))
+    (se/state-error (ConstrainedAST s (cata (fn [c]
+                                              (cond (or (instance? c/StrBuffConstraint c)
+                                                        (instance? c/SubStrConstraint c))
+                                                    (.static-value c s)
+
+                                                    c))
+                                            c/string-constraint)))))
 
 (extend-type Integer
   TypeChecker
@@ -9755,6 +9799,7 @@
                                new-type-constraint)
             _ (se/assoc-in-val [.constants .type-names type-num] (str sym))
             _ (set-type-constraint sym (ConstrainedAST sym (-> c/fn-constraint
+                                                               (c/update-sym (ast/untag sym))
                                                                (c/update-path loc))))
             _ (push-types)
             _ (se/traverse fields (fn [sym]
