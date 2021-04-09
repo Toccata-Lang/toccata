@@ -8288,8 +8288,8 @@
                          (gensym "fn-arity")
                          (.fn-var ast))]
       ;; (let [loc (ast/location ast)]
-      ;;   (or (= (.file loc) 'core)
-      ;;       (= (.line loc) 0)
+      ;;   (or (= (.line loc) 0)
+      ;;       (= (.file loc) 'core)
       ;;       (do
       ;;         (print-err 'pre-fn-arity (.fn-sym ast) loc
       ;;                    "\n" 'params (.params ast)
@@ -8331,6 +8331,13 @@
                              (tail-call []))))))))
 
   (type-check [ast old-ast]
+    ;; (let [loc (ast/location old-ast)]
+    ;;   (or (= (.line loc) 0)
+    ;;       (= (.file loc) 'core)
+    ;;       (do
+    ;;         (print-err 'checking-fn-arity (.fn-sym old-ast) loc
+    ;;                    "\n" 'params (.params old-ast))
+    ;;         nothing)))
     (for [orig-pts (get-param-types (.params old-ast))
           _ (recover-type-constraint (symbol "#result"))
           _ (recover-types (.params old-ast))
@@ -8342,12 +8349,13 @@
             pts (-> orig-pts
                     (c/intersect (.param-consts ast))
                     (c/update-path loc))]
-        ;; (or (= (.file loc) 'core)
-        ;;     (= (.line loc) 0)
+        ;; (or (= (.line loc) 0)
+        ;;     (= (.file loc) 'core)
         ;;     (do
         ;;       (print-err 'fn-arity (.fn-sym old-ast) loc
         ;;                  "\n" 'params (.params old-ast)
         ;;                  "\n\n" 'old-param-cs (.param-consts old-ast)
+        ;;                  "\n\n" 'new-param-cs (.param-consts ast)
         ;;                  "\n\n" 'orig-pts orig-pts
         ;;                  "\n\n" 'pts pts
         ;;                  "\n\n" 'result-c result-c)
@@ -8575,31 +8583,34 @@
 
 
    'first (fn [target arity [coll]]
-            (let [coll-c (.constraint coll)
+            (let [loc (ast/location target)
+                  coll-c (.constraint coll)
                   coll-type (constraint-type-num coll-c)]
               (cond (or (= c/ListType coll-type)
                         (= c/VectorType coll-type))
                     (let [[item-c] (c/extract-items-constraints coll-c 1)]
                       (-> item-c
                           (c/InferredInner empty-list nothing "")
-                          (c/intersect (c/update-path c/maybe-constraint (ast/location target)))
+                          (c/intersect (c/update-path c/maybe-constraint loc))
                           (c/intersect (.result-const arity))
-                          (c/update-path (ast/location target))
+                          (c/update-path loc)
                           se/state-error))
 
                     (maybe-coll-inner target arity [coll]))))
 
    'cons (fn [target _ [item-arg coll-arg]]
-           (let [item (.constraint item-arg)
+           (let [loc (ast/location target)
+                 item (.constraint item-arg)
                  coll (.constraint coll-arg)]
              (for [_ (update-constraint item-arg (-> coll
                                                      c/extract-collection-of
                                                      c/extract-contents-constraint)
-                                        (ast/location target))]
+                                        loc)]
                (adding-to-list target item coll))))
 
    'conj (fn [target _ [coll-arg item-arg]]
-           (let [coll (.constraint coll-arg)
+           (let [loc (ast/location target)
+                 coll (.constraint coll-arg)
                  item (.constraint item-arg)
                  new-coll (either (or (map (= c/ListType (constraint-type-num coll))
                                            (fn [_]
@@ -8607,17 +8618,16 @@
                                       (map (= (c/intersect item (c/extract-contents-constraint coll))
                                               c/bottom-type)
                                            (fn [failure-c]
-                                             (let [loc (ast/location target)]
-                                               (c/conflicting-assertions failure-c (.file loc) (.line loc)))
+                                             (c/conflicting-assertions failure-c (.file loc) (.line loc))
                                              (abort))))
                                   (-> item
                                       (c/InferredInner empty-list nothing "")
                                       (c/intersect coll)
-                                      (c/update-path (ast/location target))))]
+                                      (c/update-path loc)))]
              (for [_ (update-constraint item-arg (-> coll
                                                      c/extract-collection-of
                                                      c/extract-contents-constraint)
-                                        (ast/location target))]
+                                        loc)]
                new-coll)))
 
    'maybe (fn [target _ [item-arg]]
@@ -8670,11 +8680,11 @@
                                                                   'no-arity)
                                                   [(c/sum-type [(.constraint init-accum) inferred-c])
                                                    coll-contents] loc)]
-               ;; (print-err 'reduce-accum accum-c "\n\n"
-               ;;            'init-accum (.constraint init-accum) "\n\n"
-               ;;            'inferred-c inferred-c "\n\n"
-               ;;            'coll-contents coll-contents
-               ;;            'accum-c loc accum-c)
+               ;; (print-err 'reduce-accum loc
+               ;;            "\n" accum-c
+               ;;            "\n\n" 'init-accum (.constraint init-accum)
+               ;;            "\n\n" 'inferred-c inferred-c
+               ;;            "\n\n" 'coll-contents coll-contents)
                (for [init-accum (update-constraint init-accum accum-c
                                                    (ast/location target))
                      coll (update-constraint coll (c/update-path (c/CollectionOf inferred-c empty-list nothing "")
@@ -8706,11 +8716,12 @@
           loc (ast/location target)]
       (either (flat-map (find-arity ast c/top-type arg-count)
                         (fn [arity]
-                          ;; (or (= (.file loc) 'core)
-                          ;;     (= (.line loc) 0)
+                          ;; (or (= (.line loc) 0)
+                          ;;     (= (.file loc) 'core)
                           ;;     (do
                           ;;       (print-err 'call-fn target (.fn-var arity) loc
-                          ;;                  "\n" 'param-cs (c/extract-items-constraints (.param-consts arity))
+                          ;;                  "\n" 'param-cs (c/extract-items-constraints (.param-consts arity)
+                          ;;                                                              arg-count)
                           ;;                  "\n\n" 'args (-> arg-consts
                           ;;                                   (interpose  "\n")
                           ;;                                   vec))
@@ -8722,8 +8733,8 @@
                                           (zip-lists args)
                                           vec
                                           (se/traverse (fn [[c arg]]
-                                                         ;; (or (= (.file loc) 'core)
-                                                         ;;     (= (.line loc) 0)
+                                                         ;; (or (= (.line loc) 0)
+                                                         ;;     (= (.file loc) 'core)
                                                          ;;     (do
                                                          ;;       (print-err 'call-fn (.fn-var arity) loc
                                                          ;;                  "\n" 'c c
@@ -8734,8 +8745,8 @@
                                                                                           arg-consts loc)
                                                                loc)
                                                               (fn [r]
-                                                                ;; (or (= (.file loc) 'core)
-                                                                ;;     (= (.line loc) 0)
+                                                                ;; (or (= (.line loc) 0)
+                                                                ;;     (= (.file loc) 'core)
                                                                 ;;     (do
                                                                 ;;       (print-err 'call-fn (.fn-var arity) loc
                                                                 ;;                  "\n\n" 'reified (reify-type-constraint c (.fn-var arity)
@@ -8755,8 +8766,8 @@
                                                  (Left 
                                                   (let [r (reify-type-constraint result-c (.fn-var arity)
                                                                                  arg-consts loc)]
-                                                    ;; (or (= (.file loc) 'core)
-                                                    ;;     (= (.line loc) 0)
+                                                    ;; (or (= (.line loc) 0)
+                                                    ;;     (= (.file loc) 'core)
                                                     ;;     (do
                                                     ;;       (print-err 'call-fn (.fn-var arity) loc
                                                     ;;                  "\n" 'result-c result-c
@@ -8858,7 +8869,7 @@
                                                       "with" num-args "arguments at" loc)
                                            (abort)))]
                        ;; (or (= (.line loc) 0)
-                       ;;     ;; (= (.file loc) 'core)
+                       ;;     (= (.file loc) 'core)
                        ;;     (do
                        ;;       (print-err 'call-proto loc (.fn-sym proto-impls)
                        ;;                  'type-num type-num 'arity-id (str "'" (.fn-var arity) "'")
@@ -8876,7 +8887,7 @@
                            (se/traverse (fn [[c arg]]
                                           (for [_ se-nop
                                                 ;; :let [_ (or (= (.line loc) 0)
-                                                ;;             ;; (= (.file loc) 'core)
+                                                ;;             (= (.file loc) 'core)
                                                 ;;             (do
                                                 ;;               (print-err 'call-proto loc
                                                 ;;                          "\n" 'c c
@@ -8896,7 +8907,7 @@
                            (map (fn [result-c]
                                   (Left (let [r (reify-type-constraint result-c (.fn-var arity) arg-consts loc)]
                                           ;; (or (= (.line loc) 0)
-                                          ;;     ;; (= (.file loc) 'core)
+                                          ;;     (= (.file loc) 'core)
                                           ;;     (do
                                           ;;       (print-err 'call-proto loc (.fn-sym proto-impls)
                                           ;;                  "\n" 'result-c result-c
@@ -9546,11 +9557,15 @@
 
   TypeChecker
   (type-check [ast old-ast]
-    (for [new-clause (update-constraint (.clause ast) (-> c/maybe-constraint
-                                                          (c/update-path (ast/location clause)))
-                                        (ast/location clause))
-          types (get-types)]
-      (CheckedCondVal new-clause types))))
+    ;; TODO: when "(.clause ast)" is replaced by "clause", it blows up. Because 'update-constraint'
+    ;; requires 'clause' be ConstrainedAST always, but that's only true when 'type-check' is called.
+    ;; Need better error message.
+    (let [loc (ast/location ast)]
+      (for [new-clause (update-constraint (.clause ast)
+                                          (c/update-path c/maybe-constraint loc)
+                                          loc)
+            types (get-types)]
+        (CheckedCondVal new-clause types)))))
 
 (extend-type ast/and-ast
   TypeChecker
@@ -9582,11 +9597,12 @@
 (extend-type TailAnd
   TypeChecker
   (pre-check [ast]
-    (flat-map (append-type-constraint (symbol "#result")
-                                      (c/update-path c/maybe-constraint (ast/location ast))
-                                      (ast/location ast))
-              (fn [_]
-                (pre-check (ast/and-ast (.clauses ast)))))))
+    (let [loc (ast/location ast)]
+      (flat-map (append-type-constraint (ast/tag (symbol "#result") loc)
+                                        (c/update-path c/maybe-constraint loc)
+                                        loc)
+                (fn [_]
+                  (pre-check (ast/and-ast (.clauses ast))))))))
 
 (extend-type ast/or-ast
   TypeChecker
