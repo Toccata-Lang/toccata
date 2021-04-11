@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "8f7bb99"))
+                          :sha "a8b3543"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "adf66bf"))
+                            :sha "241810e"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "01af576"))
+                            :sha "5ce01a0"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -2994,11 +2994,17 @@
 
   (let [file-name (ast/file-name target)
         line-number (ast/line-number target)]
-    (for [line (line-macro target "// call-list")
-          list-sym (genlocal "newList")
+    (for [list-sym (genlocal "newList")
           result-sym (genlocal "list")
-          _ (constrain-contents result-sym c/list-constraint (map args .c-var)
-                                file-name line-number)]
+          line (line-macro target "// call-list")
+          contents (sm/traverse (map args .c-var) get-constraint)
+          _ (append-constraint result-sym
+                               (-> c/list-constraint
+                                   (.items (vec contents))
+                                   (.tail-c c/bottom-type)
+                                   (c/update-var result-sym)
+                                   (c/update-path (ast/location target)))
+                               file-name line-number)]
       (c-init result-sym
               [line "List *" list-sym " = empty_list;" line-sep
                (map (reverse args)
@@ -8421,11 +8427,22 @@
       (c/update-path (ast/location target))))
 
 (defn elim-items-constraint [c]
-  (c/trim (cata (fn [inner-c]
-                  (cond (instance? c/ItemsConstraint inner-c)
-                        c/top-type
-                        inner-c))
-                c)))
+  ;; TODO: this fn is a hack. Can't we do better so we don't need it?
+  (cond (or (instance? c/VectorConstraint c)
+            (instance? c/ListConstraint c)
+            ;; TODO: should just be
+            ;; and what aboout SumConstraint with just SeqConstraints
+            ;; (instance? c/SeqConstraint inner-c)
+            )
+        (-> c
+            (.items [])
+            (.tail-c c/coll-of-any))
+
+        (c/trim (cata (fn [inner-c]
+                        (cond (instance? c/SeqConstraint inner-c)
+                              c/top-type
+                              inner-c))
+                      c))))
 
 (defn infer-coll-inner-constraint [target arity [coll f]]
   (either (for [arity (find-arity (.ast f)
@@ -8486,8 +8503,7 @@
             se/state-error)))
 
 (defn pass-coll-constraint [target arity [coll]]
-  (-> coll
-      .constraint
+  (-> (.constraint coll)
       elim-items-constraint
       (c/update-path (ast/location target))
       se/state-error))
@@ -8709,8 +8725,12 @@
                                                                   'no-arity)
                                                   [(c/sum-type [(.constraint init-accum) inferred-c])
                                                    coll-contents] loc)]
-               ;; (print-err 'reduce-accum loc
-               ;;            "\n" accum-c
+               ;; (print-err 'reduce loc
+               ;;            "\n" 'result-c result-c
+               ;;            "\n\n" 'result-c-type (constraint-type-num result-c)
+               ;;            "\n\n" 'arity maybe-arity
+               ;;            "\n\n" 'arity-params (c/extract-items-constraints (.param-consts arity) 2)
+               ;;            "\n\n" 'accum-c accum-c
                ;;            "\n\n" 'init-accum (.constraint init-accum)
                ;;            "\n\n" 'inferred-c inferred-c
                ;;            "\n\n" 'coll-contents coll-contents)
