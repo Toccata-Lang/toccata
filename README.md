@@ -17,7 +17,7 @@ Make sure you have `git` and `clang` installed. `clang` is part of the LLVM proj
 
 * Compile the Toccata compiler itself
 
-      clang -O3 -g -fno-objc-arc -o toccata -std=c99 core.o toccata.c -lpthread
+      clang -O3 -g -fno-objc-arc -o toccata -std=c99 core.o toccata.c -lpthread -latomic
     
 * Set the TOCCATA_DIR environment variable to the directory that contains `core.toc`
 
@@ -44,7 +44,7 @@ Make sure you have `git` and `clang` installed. `clang` is part of the LLVM proj
 
 * Compile the C code using `clang` and link with `core.o`
 
-      clang -g -fno-objc-arc -o hw -std=c99 $TOCCATA_DIR/core.o hw.c -lpthread
+      clang -g -fno-objc-arc -o hw -std=c99 $TOCCATA_DIR/core.o hw.c -lpthread -latomic
      
 * Run it
 
