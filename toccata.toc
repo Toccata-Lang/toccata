@@ -5453,10 +5453,14 @@
 
                        (sm/state-maybe ext-fn))
           :let [ext-fn (cond (= fn-sym 'instance?)
-                             (either (update-in ext-fn [.param-constraints .items-constraints]
-                                                (fn [cs]
-                                                  (either (store cs 1 c/top-type)
-                                                          cs)))
+                             (either (or (update-in ext-fn [.param-constraints .items]
+                                                    (fn [cs]
+                                                      (either (store cs 1 c/top-type)
+                                                              cs)))
+                                         (update-in ext-fn [.param-constraints .items-constraints]
+                                                    (fn [cs]
+                                                      (either (store cs 1 c/top-type)
+                                                              cs))))
                                      ext-fn)
 
                              ext-fn)]
@@ -8443,10 +8447,9 @@
                                  next-result)))))
 
 (defn adding-to-list [target item list-arg]
-  (-> c/empty-items-constraint
+  (-> c/list-constraint
       (set-items [item])
-      (.tail-constraint list-arg)
-      (c/intersect c/list-constraint)
+      (set-tail list-arg)
       c/trim
       (c/update-path (ast/location target))))
 
@@ -8612,18 +8615,14 @@
                    se/state-error))
 
    'vector (fn [target arity args]
-             (-> c/empty-items-constraint
+             (-> c/empty-vector-constraint
                  (set-items (map args .constraint))
-                 (c/intersect c/vect-constraint)
-                 (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
                  (c/update-path (ast/location target))
                  se/state-error))
 
    'list (fn [target _ args]
-           (-> c/empty-items-constraint
+           (-> c/empty-list-constraint
                (set-items (map args .constraint))
-               (c/intersect c/list-constraint)
-               (c/intersect (c/StaticLengthConstraint (count args) empty-list nothing ""))
                (c/update-path (ast/location target))
                se/state-error))
 
@@ -8887,12 +8886,18 @@
           fn-c (reduce (.arities ast) fn-c
                        (fn [c arity]
                          (assert (instance? ast/fn-arity-ast arity))
-                         (either (for [variadic (get-in arity [.param-consts .tail-constraint])
-                                       :when (= c/bottom-type variadic)
-                                       fixed-params (get-in arity [.param-consts .items-constraints])]
-                                   (assoc-in c [.arities (count fixed-params)]
-                                             (c/fn-arity (.param-consts arity)
-                                                         (.result-const arity))))
+                         (either (or (for [variadic (get-in arity [.param-consts .tail-c])
+                                           :when (= c/bottom-type variadic)
+                                           fixed-params (get-in arity [.param-consts .items])]
+                                       (assoc-in c [.arities (count fixed-params)]
+                                                 (c/fn-arity (.param-consts arity)
+                                                             (.result-const arity))))
+                                     (for [variadic (get-in arity [.param-consts .tail-constraint])
+                                           :when (= c/bottom-type variadic)
+                                           fixed-params (get-in arity [.param-consts .items-constraints])]
+                                       (assoc-in c [.arities (count fixed-params)]
+                                                 (c/fn-arity (.param-consts arity)
+                                                             (.result-const arity)))))
                                  (assoc-in c [.arities 'variadic]
                                              (c/fn-arity (.param-consts arity)
                                                          (.result-const arity))))))]
@@ -9817,6 +9822,8 @@
         (ast/definition-ast sym [ctor])))))
 
 (defn add-prototype-assertions [dispatch-type [proto-sym fn-sym arity]]
+  (assert (instance? c/ListConstraint dispatch-type))
+
   (for [prototype (find-prototype proto-sym fn-sym (count (.fixed (.params arity))))]
     (let [loc (ast/location arity)
           param-cs (c/intersect (.param-consts prototype)
@@ -9899,9 +9906,9 @@
                      .fixed
                      (map ast/untag))
           field-destruct (DestructFields fields)
-          field-assertions (-> c/empty-items-constraint
+          field-assertions (-> c/vect-constraint
                                (set-items (filter (.impls ast) (partial instance? c/ValueConstraint)))
-                               (.tail-constraint (c/CollectionOf c/top-type empty-list nothing ""))
+                               (set-tail (c/CollectionOf c/top-type empty-list nothing ""))
                                (c/update-path loc))
           type-num (new-type-number sym)
           type-map {type-num (reduce fields {}
@@ -9924,9 +9931,9 @@
             impls (-> (.impls ast)
                       (remove (partial instance? c/Constraints))
                       (flat-map impl-arities)
-                      (se/traverse (partial add-prototype-assertions (-> c/empty-items-constraint
+                      (se/traverse (partial add-prototype-assertions (-> c/list-constraint
                                                                          (set-items [new-type-constraint])
-                                                                         (.tail-constraint c/top-type)
+                                                                         (set-tail c/top-type)
                                                                          (c/update-path loc)))))]
         (let [impls (reduce impls {}
                             (fn [impls [proto-sym fn-sym arity]]
@@ -9974,7 +9981,7 @@
                                       (dissoc fns assoc-sym get-symb)))
                             impls)
               default-impls (dissoc default-impls Associative-sym)]
-          [(map (.items-constraints field-assertions) TypeCheckOnly)
+          [(map (.items field-assertions) TypeCheckOnly)
            (TypeCheckOnly (ast/extend-ast sym default-impls))
            (TypeCheckOnly (ast/extend-ast sym impls))
            (CreateGetters sym type-num new-type-constraint fields loc)
@@ -10022,10 +10029,10 @@
   (pre-check [ast]
     (for [_ (push-types)
           _ (ana constrain-all-syms (ParamConstraintPair (.params ast)
-                                                         (-> c/empty-items-constraint
-                                                             (.tail-constraint (c/CollectionOf c/string-constraint
-                                                                                               empty-list nothing
-                                                                                               ""))))
+                                                         (-> c/list-constraint
+                                                             (set-tail (c/CollectionOf c/string-constraint
+                                                                                       empty-list nothing
+                                                                                       ""))))
                  se/state-error)]
       (.body ast (remove (.body ast) (partial instance? ast/block-comment-ast)))))
 
