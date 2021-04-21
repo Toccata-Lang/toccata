@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "a8b3543"))
+                          :sha "601dd1f"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "241810e"))
+                            :sha "90be434"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "5ce01a0"))
+                            :sha "1f2ff12"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -150,9 +150,6 @@
          (cond (instance? ListOrVect c)
                (Left (.items c items))
 
-               (instance? c/ItemsConstraint c)
-               (Left (.items-constraints c items))
-
                (Right c)))
        c))
 
@@ -160,9 +157,6 @@
   (apo (fn [c]
          (cond (instance? ListOrVect c)
                (Left (.tail-c c tail))
-
-               (instance? c/ItemsConstraint c)
-               (Left (.tail-constraint c tail))
 
                (Right c)))
        c))
@@ -1288,7 +1282,10 @@
 
           (for [tail-const (get-constraint tail-var)
                 items-const (sm/traverse vars constrain-params)
-                :let [constraint (c/ItemsConstraint items-const tail-const empty-list nothing tail-var)]
+                :let [constraint (-> c/seq-constraint
+                                     (set-items items-const)
+                                     (set-tail tail-const)
+                                     (c/update-var tail-var))]
                 _ (append-constraint bound constraint "" 0)
                 ;; TODO: Probably should get the new constraint
                 ]
@@ -1902,112 +1899,6 @@
 
   (runtime-check [constraint value-info sym-location checked-var]
     []))
-
-(extend-type c/ItemsConstraint
-  Emitter
-  (old-reify-c [c param-exprs file-name line-number]
-    (for [new-items (sm/traverse (.items-constraints c)
-                                 (fn [c]
-                                   (old-reify-c c param-exprs file-name line-number)))
-          new-tail (old-reify-c (.tail-constraint c) param-exprs file-name line-number)]
-      (either (or (some new-items (partial = c/bottom-type))
-                  (and (= c/bottom-type new-tail)
-                       (first (.constraints (.tail-constraint c)))
-                       (maybe new-tail)))
-              (c/ItemsConstraint new-items
-                                 new-tail
-                                 (.path c) (.sym c) (.var c)))))
-
-  (update-syms [ast _]
-    (either (map (.sym ast)
-                 (fn [old-sym]
-                   (comp (map (sm/get-in-val [0 (ast/tag old-sym)])
-                              (fn [new-sym]
-                                (Right (.sym ast (maybe (ast/untag new-sym))))))
-                         (sm/state-maybe (Right ast)))))
-            (sm/state-maybe (Right ast))))
-
-  (runtime-check [constraint value-info checked-var]
-    (let [items-cs (c/extract-items-constraints constraint)]
-      (cond (or (c/satisfied-by constraint value-info)
-                (empty? items-cs))
-            []
-
-            [(let [rt-check (-> c/seq-constraint
-                                (c/update-var (.var constraint))
-                                (c/replace-path (.path constraint))
-                                (runtime-check value-info checked-var))]
-               (either (empty? rt-check)
-                       ["if (" checked-var "){" rt-check "}"]))
-             (let [min-count (str (count items-cs))]
-               ["if (" checked-var " && countSeq(incRef(" (.var constraint) ", 1)) < " min-count ") {"
-                checked-var "= 0;" line-sep "}"])
-             (let [items (map (range (inc (count items-cs)))
-                              (partial str (.var constraint) "_"))
-                   rt-checks (for [[constraints item] (zip-lists items-cs items)]
-                               (let [constraints (either (map (.sym constraint)
-                                                              (partial c/update-sym constraints))
-                                                         constraints)]
-                                 (-> constraints
-                                     (c/update-var item)
-                                     (runtime-check value-info checked-var))))]
-               (cond (every rt-checks empty?)
-                     []
-
-                     ["if (" checked-var ") {" line-sep
-                      "incRef(" (.var constraint) ", 1);" line-sep
-                      (destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
-                      rt-checks
-                      "if (" checked-var "){"
-                      (map items (fn [item]
-                                   (str "dec_and_free(" item ", 1);" line-sep)))
-                      "}}"]))
-             line-sep])))
-
-  (runtime-check [constraint value-info sym-location checked-var]
-    (let [items-cs (c/extract-items-constraints constraint)]
-      (cond (or (c/satisfied-by constraint value-info)
-                (empty? items-cs))
-            []
-
-            [(let [rt-check (-> c/seq-constraint
-                                (c/update-var (.var constraint))
-                                (c/replace-path (.path constraint))
-                                (runtime-check value-info sym-location checked-var))]
-               (either (empty? rt-check)
-                       ["if (" checked-var "){" rt-check "}"]))
-             (let [min-count (str (count items-cs))]
-               ["if (" checked-var " && countSeq(incRef(" (.var constraint) ", 1)) < " min-count ") {"
-                ;; "\n#ifndef EMBEDDED\n"
-                "fprintf(stderr, \"Insufficient values for '"
-                (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");" line-sep
-                "fprintf(stderr, \"Needed " min-count
-                ", got %\" PRId64 \"\\n\", ((Integer *)count((FnArity *)0, "
-                (.var constraint) "))->numVal);" line-sep
-                "fprintf(stderr, \"" (interpose (c/format-path constraint (inc (count (.path constraint))))
-                                                "\\n")
-                "\\n\");"
-                ;; "\n#endif\n"
-                checked-var "= 0;" line-sep "}"])
-             (let [items (map (range (inc (count items-cs)))
-                              (partial str (.var constraint) "_"))
-                   rt-checks (for [[constraints item] (zip-lists items-cs items)]
-                               (let [constraints (either (map (.sym constraint)
-                                                              (partial c/update-sym constraints))
-                                                         constraints)]
-                                 (-> constraints
-                                     (c/update-var item)
-                                     (runtime-check value-info sym-location checked-var))))]
-               (either (map (every rt-checks empty?) (fn [_] []))
-                       ["if (" checked-var ") {" line-sep
-                        "incRef(" (.var constraint) ", 1);" line-sep
-                        (destruct-seq (.var constraint) items (str (.var constraint) "_args") "" 9999)
-                        rt-checks
-                        "if (" checked-var "){"
-                        (map items (fn [item]
-                                     (str "dec_and_free(" item ", 1);" line-sep)))
-                        "}}"]))
-             line-sep]))))
 
 (extend-type c/InferredInner
   Emitter
@@ -3101,9 +2992,10 @@
                         coll-var (.c-var coll)]
                     (for [coll-const (get-constraint coll-var)
                           v-const (get-constraint v-var)
-                          _ (append-constraint result
-                                               (c/ItemsConstraint [v-const] coll-const
-                                                                  empty-list nothing result)
+                          _ (append-constraint result (-> c/seq-constraint
+                                                          (set-items [v-const])
+                                                          (set-tail coll-const)
+                                                          (c/update-var result))
                                                file-name line-number)]
                       '_)))
                 (for [_ (= target 'store)
@@ -3851,12 +3743,11 @@
                                     c/extract-items-constraints)
                         tail-c (sm/when (last arg-cs))
                         _ (constrain-var file-name line-number result-sym
-                                         (-> (c/ItemsConstraint (butlast arg-cs)
-                                                                (c/intersect tail-c c/list-constraint)
-                                                                empty-list nothing "")
-                                            (c/intersect c/list-constraint)
-                                            (c/update-var result-sym)
-                                            (c/update-path file-name line-number)))]
+                                         (-> c/list-constraint
+                                             (set-items (butlast arg-cs))
+                                             (set-tail (c/intersect tail-c c/list-constraint))
+                                             (c/update-var result-sym)
+                                             (c/update-path file-name line-number)))]
                     '_)
 
                   sm-nop)
@@ -5453,14 +5344,10 @@
 
                        (sm/state-maybe ext-fn))
           :let [ext-fn (cond (= fn-sym 'instance?)
-                             (either (or (update-in ext-fn [.param-constraints .items]
-                                                    (fn [cs]
-                                                      (either (store cs 1 c/top-type)
-                                                              cs)))
-                                         (update-in ext-fn [.param-constraints .items-constraints]
-                                                    (fn [cs]
-                                                      (either (store cs 1 c/top-type)
-                                                              cs))))
+                             (either (update-in ext-fn [.param-constraints .items]
+                                                (fn [cs]
+                                                  (either (store cs 1 c/top-type)
+                                                          cs)))
                                      ext-fn)
 
                              ext-fn)]
@@ -7110,7 +6997,6 @@
                       'AllValues c/AllValuesType
                       'MultiConstraint c/MultiConstraintType
                       'ResultConstraint c/ResultConstraintType
-                      'ItemsConstraint c/ItemsConstraintType
                       'InferredInner c/InferredInnerType
                       'StaticLengthConstraint c/StaticLengthConstraintType
                       'ContentsConstraint c/ContentsConstraintType
@@ -7182,9 +7068,9 @@
                                                            (-> fc
                                                                (c/update-var "")
                                                                (c/update-sym (symbol (str sym " fields")))
-                                                               (.items-constraints (map (.items-constraints fc)
-                                                                                        (fn [c]
-                                                                                          (c/update-var c "")))))))
+                                                               (.items (map (.items fc)
+                                                                            (fn [c]
+                                                                              (c/update-var c "")))))))
                                                     field-constraints)
 
                           field-constraints (cata promote-inferred field-constraints)
@@ -8886,18 +8772,12 @@
           fn-c (reduce (.arities ast) fn-c
                        (fn [c arity]
                          (assert (instance? ast/fn-arity-ast arity))
-                         (either (or (for [variadic (get-in arity [.param-consts .tail-c])
-                                           :when (= c/bottom-type variadic)
-                                           fixed-params (get-in arity [.param-consts .items])]
-                                       (assoc-in c [.arities (count fixed-params)]
-                                                 (c/fn-arity (.param-consts arity)
-                                                             (.result-const arity))))
-                                     (for [variadic (get-in arity [.param-consts .tail-constraint])
-                                           :when (= c/bottom-type variadic)
-                                           fixed-params (get-in arity [.param-consts .items-constraints])]
-                                       (assoc-in c [.arities (count fixed-params)]
-                                                 (c/fn-arity (.param-consts arity)
-                                                             (.result-const arity)))))
+                         (either (for [variadic (get-in arity [.param-consts .tail-c])
+                                       :when (= c/bottom-type variadic)
+                                       fixed-params (get-in arity [.param-consts .items])]
+                                   (assoc-in c [.arities (count fixed-params)]
+                                             (c/fn-arity (.param-consts arity)
+                                                         (.result-const arity))))
                                  (assoc-in c [.arities 'variadic]
                                              (c/fn-arity (.param-consts arity)
                                                          (.result-const arity))))))]
