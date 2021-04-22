@@ -2459,8 +2459,7 @@
           (for [m (encode-static (.set-map hs))
                 struct (global-var "set_")
                 var (global-var "set_")
-                _ (constrain-var "" 0 var (c/TypeConstraint {(get-type hs) {}}
-                                                            empty-list 'HashSet nothing ""))
+                _ (constrain-var "" 0 var c/set-constraint)
                 _ (declare ["ReifiedVal " struct " = {" (str (get-type hs))
                             ", -2, 0, 1, (Value *)&" (.c-struct m) "};\n"
                             "Value *" var " = (Value *)&" struct ";" line-sep])
@@ -4223,12 +4222,15 @@
         line-number (ast/line-number defined-sym)]
     (cond (= (.call-target fn-val) 'enum)
           (for [type-maps (sm/traverse (.args fn-val) (partial define-enum-element file-name line-number))
-                _ (debug 'type-maps _FILE_ _LINE_ type-maps)
                 :let [type-map (comp* {} type-maps)
                       x* (ast/tag "#x")
                       y* (ast/tag "#y")
                       reified-type-num (extract type-counter)
-                      constraint (-> (c/TypeConstraint type-map empty-list defined-sym nothing "")
+                      _ (do
+                          (print-err 'type-maps _FILE_ _LINE_ type-maps)
+                          (abort))
+                      ;; TODO: fill in call to sum-type
+                      constraint (-> (c/sum-type [])
                                      (c/update-path file-name line-number))]
                 _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)]
                                    constraint)
@@ -5289,9 +5291,8 @@
         line-number (ast/line-number fn-sym)
         disp-constraint (either (for [type-map (c/extract-type-map disp-constraint)
                                       fields (get type-map type-num)]
-                                  (c/TypeConstraint {type-num fields} empty-list
-                                                    (symbol type-str)
-                                                    (maybe (ast/untag disp-param)) ""))
+                                  (c/ReifiedConstraint type-num fields (symbol type-str)
+                                                       empty-list (ast/untag disp-param) ""))
                                 disp-constraint)]
     (for [;; _ (debug 'impl file-name line-number type-str fn-sym num-args "\n" disp-constraint)
           default-impl (get-proto-impl proto-sym fn-sym num-args 0)
@@ -5366,9 +5367,9 @@
           line (ast/line-number ast)
           reified-type-num (either (.type-num ast)
                                    (extract type-counter))
-          constraint (c/TypeConstraint {reified-type-num {}} (list [file line])
-                                       (symbol (str "reified at " file ": " line))
-                                       nothing "")]
+          constraint (c/ReifiedConstraint reified-type-num {}
+                                          (symbol (str "reified at " file ": " line))
+                                          (list [file line]) c/no-symbol "")]
       (for [reify-fn-index (sm/get-val .reify-fn-index)
             _ (sm/set-val .reify-fn-index 0)
             impl-fns (extend-type* ast constraint reified-type-num)
@@ -6459,7 +6460,8 @@
   Emitter
   (emit-definition [ast]
     (let [type-sym (.type ast)]
-      (comp (for [constraint (lookup-constraint (c/TypeConstraint {} empty-list type-sym nothing ""))
+      (comp (for [constraint (lookup-constraint (c/ReifiedConstraint c/UnknownType {} type-sym
+                                                                     empty-list nothing ""))
                   fns (flat-map (get-type-sym-info type-sym)
                                 (fn [constraint]
                                   (-> (either (c/extract-type-map constraint)
@@ -6802,9 +6804,9 @@
 
 (defn declare-getter [getter-sym]
   (let [tagged-getter (ast/tag getter-sym)
-        getter-c (c/TypeConstraint {c/UnknownType {(c/Field getter-sym) c/top-type}} empty-list
-                                   (symbol (str "field '" getter-sym "' required"))
-                                   (maybe (symbol "#x")) "")
+        getter-c (c/ReifiedConstraint c/UnknownType {(c/Field getter-sym) c/top-type}
+                                      (symbol (str "field '" getter-sym "' required"))
+                                      empty-list (symbol "#x") "")
         arities [(ast/prototype tagged-getter
                                 (ast/params [(ast/tag "#x")])
                                 (ast/block-comment "" 0 [])
@@ -6875,7 +6877,7 @@
                    arity-id (ast/params [type-value field-arg]) ""
                    [(c/update-sym field-constraint (ast/untag field-arg))
                     (ast/inline-ast (ast/tag 'C)
-                                    (-> (c/TypeConstraint {} empty-list sym nothing "")
+                                    (-> (c/ReifiedConstraint c/UnknownType {} sym empty-list nothing "")
                                         (c/update-path (ast/location sym)))
                                     (str "return(updateField(value_0, field_1, "
                                          field-index "));\n")
@@ -7001,11 +7003,12 @@
               "")
 
             (let [type-num (new-type-number sym)
-                  type-map {type-num (reduce fields {}
-                                             (fn [m name]
-                                               (assoc m
-                                                 (symbol (str "." name)) c/top-type)))}
-                  new-type-constraint (-> (c/TypeConstraint type-map empty-list (.sym ast) nothing "")
+                  fields-map (reduce fields {}
+                                     (fn [m name]
+                                       (assoc m
+                                         (symbol (str "." name)) c/top-type)))
+                  new-type-constraint (-> (c/ReifiedConstraint type-num fields-map (.sym ast)
+                                                               empty-list nothing "")
                                           (c/update-path file-name line-number))]
               (for [_ (emit-definition (ast/declaration-ast (.sym ast)))
                     _ (sm/assoc-in-val [.module .types sym] new-type-constraint)
