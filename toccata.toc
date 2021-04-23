@@ -1986,59 +1986,6 @@
                      "Value *inner_value = " (str "((Maybe *)" (.var constraint) ")->value") ";" line-sep
                      line-sep rt-check line-sep "}"])))))
 
-(extend-type c/TypeConstraint
-  Emitter
-  (to-constraint [ast]
-    (cond (empty? (.type-maps ast))
-          (map (get-type-sym-info (ast/tag (.type-sym ast)))
-               (fn [constraint]
-                 (-> (either (map (.sym ast)
-                                  (partial c/update-sym constraint))
-                             constraint)
-                     (c/update-var (.var ast))
-                     (c/replace-path (.path ast)))))
-
-          (sm/state-maybe ast)))
-
-  (emit [ast]
-    (let [untagged (ast/untag (.type-sym ast))]
-      (comp (emit-sym-constraint ast)
-            (compilation-error "Unknown type" (str "'" (.type-sym ast) "'") "at"
-                               (str (ast/file-name ast) ":") (ast/line-number ast)))))
-
-  (runtime-check [constraint value-info checked-var]
-    ;; TODO: need to check for presence of hash-map keys and their types in value-info
-    ;; as well as static, min and max value
-    (cond (c/satisfied-by constraint value-info)
-          []
-
-          ["if (" checked-var "){"
-           "switch (" (.var constraint) "->type) {"
-           (map (keys (.type-maps constraint)) (fn [type-num]
-                                                 ["case " type-num ": " ]))
-           "break;\ndefault:"
-           checked-var " = 0;}}"]))
-
-  (runtime-check [constraint value-info sym-location checked-var]
-    (cond (c/satisfied-by constraint value-info)
-          []
-
-          (let [rt-check (runtime-check constraint value-info checked-var)]
-            (either (empty? rt-check)
-                    ["if (" checked-var "){"
-                     rt-check
-                     "if (!" checked-var "){"
-                     ;; "\n#ifndef EMBEDDED\n"
-                     "fprintf(stderr, \"Invalid type of value for '"
-                     (either (.sym constraint) "<unknown>") "' %s\\n\", " sym-location ");" line-sep
-                     "fprintf(stderr, \"Needed " (str (.type-sym constraint))
-                     ", got %s\\n\", extractStr(type_name((FnArity *)0, " (.var constraint) ")));"
-                     "fprintf(stderr, \""
-                     (interpose (c/format-path constraint (inc (count (.path constraint)))) "\\n")
-                     "\\n\");"
-                     ;; "\n#endif\n"
-                     "}}"])))))
-
 ;; TODO: needs to be moved inside TypeConstraint
 ;; (extend-type c/MaxValue
 ;;   Emitter
@@ -2094,59 +2041,6 @@
 ;;                      "\\n\");"
 ;;                      ;; "\n#endif\n"
 ;;                      "}}"])))))
-
-(extend-type c/MultiConstraint
-  Emitter
-  (old-reify-c [constraint param-exprs file-name line-number]
-    (for [new-cs (sm/traverse (.constraints constraint)
-                              (fn [c]
-                                (old-reify-c c param-exprs file-name line-number)))]
-      (either (some new-cs (partial = c/bottom-type))
-              (let [new-cs (-> new-cs
-                               (flat-map (fn [reified]
-                                           (either (map (instance? c/MultiConstraint reified) .constraints)
-                                                   [reified])))
-                               (remove (partial = c/top-type)))]
-                (either (or (and (empty? new-cs)
-                                 (maybe c/top-type))
-                            (and (= 1 (count new-cs))
-                                 (first new-cs)))
-                        (reduce new-cs c/top-type c/intersect))))))
-
-  (validate-field [c m fields file-name line-number]
-    (either (for [first-c (first (.constraints c))
-                  c-sym (c/extract-sym first-c)]
-              (do
-                (either (some fields (partial = c-sym))
-                        (do
-                          (print-err "Invalid field"
-                                     (str "'" c-sym "'")
-                                     "at:" (str file-name ":")
-                                     line-number)
-                          (abort)))
-                (-> m
-                    (dissoc c-sym)
-                    (assoc c-sym (either (c/compose-constraints file-name line-number
-                                                                c
-                                                                (either (get m c-sym)
-                                                                        c/top-type))
-                                         (abort))))))
-            m))
-
-  (runtime-check [constraint value-info checked-var]
-    (map (.constraints constraint)
-         (fn [c]
-           (runtime-check c value-info checked-var))))
-
-  (runtime-check [constraint value-info sym-location checked-var]
-    (map (.constraints constraint)
-         (fn [c]
-           (runtime-check c value-info sym-location checked-var))))
-
-  (emit [constraint]
-    (map (sm/traverse (.constraints constraint) emit)
-         (fn [[expr & exprs]]
-           (comp* expr exprs)))))
 
 (extend-type c/ResultConstraint
   Emitter
@@ -6976,10 +6870,8 @@
 
 (def pre-defed-types {'HashSet c/HashSetType
                       'ProtoDispatcher c/ProtoDispatcherType
-                      'TypeConstraint c/TypeConstraintType
                       'NoValues c/NoValuesType
                       'AllValues c/AllValuesType
-                      'MultiConstraint c/MultiConstraintType
                       'ResultConstraint c/ResultConstraintType
                       'InferredInner c/InferredInnerType
                       'ContentsConstraint c/ContentsConstraintType
@@ -7779,10 +7671,7 @@
                                        ;;                  "\n\n" 'new new-c)
                                        ;;       nothing))
                                        (.constraint constrained new-c)))))
-                         (for [dyn-c (or (instance? c/ParamConstraint old-c)
-                                         (and (instance? c/MultiConstraint old-c)
-                                              (some (.constraints old-c)
-                                                    (partial instance? c/ParamConstraint))))
+                         (for [dyn-c (instance? c/ParamConstraint old-c)
                                param-sym (.sym dyn-c)]
                            (let [param-c (c/full-param-constraint (c/intersect old-c constraint))]
                              (cond (= c/bottom-type param-c)
@@ -7875,12 +7764,6 @@
                    se-nop)
            (fn [_]
              (ConstrainedAST c c))))))
-
-(extend-type c/MultiConstraint
-  TypeChecker
-  (type-check [c old-c]
-    (let [c (map c .constraint)]
-      (se/state-error (ConstrainedAST c c)))))
 
 (deftype ConstrainedSum [alts path sym var]
   Stringable
@@ -8114,9 +7997,7 @@
   (param-types [sym]
     (for [c (map (get-type-constraint sym) .constraint)]
       (let [loc (ast/location sym)]
-        (either (map (or (instance? c/ParamConstraint c)
-                         (and (instance? c/MultiConstraint c)
-                              (some (.constraints c) (partial instance? c/ParamConstraint))))
+        (either (map (instance? c/ParamConstraint c)
                      (fn [c]
                        (let [param-c (c/full-param-constraint c)]
                          (cond (= c/bottom-type param-c)
@@ -8166,11 +8047,6 @@
                                  (c/intersect param-c))
                 new-param-cs (either (or (= c/bottom-type new-param-cs)
                                          (and (instance? c/ReifiedConstraint param-c)
-                                              (do
-                                                (print-err 'kablooie _FILE_ _LINE_)
-                                                (abort)
-                                                (maybe (ast/new-param-constraints param))))
-                                         (and (instance? c/TypeConstraint param-c)
                                               (do
                                                 (print-err 'kablooie _FILE_ _LINE_)
                                                 (abort)
