@@ -1986,6 +1986,20 @@
                      "Value *inner_value = " (str "((Maybe *)" (.var constraint) ")->value") ";" line-sep
                      line-sep rt-check line-sep "}"])))))
 
+(extend-type c/ReifiedConstraint
+  Emitter
+  (to-constraint [ast]
+    (cond (empty? (.fields ast))
+          (map (get-type-sym-info (ast/tag (.type-sym ast)))
+               (fn [constraint]
+                 (-> (cond (= (.sym ast) c/no-symbol) 
+                           constraint
+                           (c/update-sym constraint (.sym ast)))
+                     (c/update-var (.var ast))
+                     (c/replace-path (.path ast)))))
+
+          (sm/state-maybe ast))))
+
 ;; TODO: needs to be moved inside TypeConstraint
 ;; (extend-type c/MaxValue
 ;;   Emitter
@@ -3541,10 +3555,10 @@
                                                                 (c/ListConstraint param-constraints
                                                                                   c/coll-of-any
                                                                                   empty-list
-                                                                                  nothing "")]
+                                                                                  c/no-symbol "")]
                                                                c/coll-of-any
                                                                empty-list
-                                                               nothing "")
+                                                               c/no-symbol "")
                                              (c/update-path file-name line-number))
                                          (c/update-path result-constraint file-name line-number)]))
                                     [(.param-constraints arity-info)
@@ -6359,7 +6373,7 @@
   (emit-definition [ast]
     (let [type-sym (.type ast)]
       (comp (for [constraint (lookup-constraint (c/ReifiedConstraint c/UnknownType {} type-sym
-                                                                     empty-list nothing ""))
+                                                                     empty-list c/no-symbol ""))
                   fns (flat-map (get-type-sym-info type-sym)
                                 (fn [constraint]
                                   (-> (either (c/extract-type-map constraint)
@@ -6779,7 +6793,7 @@
                    arity-id (ast/params [type-value field-arg]) ""
                    [(c/update-sym field-constraint (ast/untag field-arg))
                     (ast/inline-ast (ast/tag 'C)
-                                    (-> (c/ReifiedConstraint c/UnknownType {} sym empty-list nothing "")
+                                    (-> (c/ReifiedConstraint c/UnknownType {} sym empty-list c/no-symbol "")
                                         (c/update-path (ast/location sym)))
                                     (str "return(updateField(value_0, field_1, "
                                          field-index "));\n")
@@ -6908,7 +6922,7 @@
                                        (assoc m
                                          (symbol (str "." name)) c/top-type)))
                   new-type-constraint (-> (c/ReifiedConstraint type-num fields-map (.sym ast)
-                                                               empty-list nothing "")
+                                                               empty-list c/no-symbol "")
                                           (c/update-path file-name line-number))]
               (for [_ (emit-definition (ast/declaration-ast (.sym ast)))
                     _ (sm/assoc-in-val [.module .types sym] new-type-constraint)
@@ -6925,7 +6939,7 @@
                                                            (either (get field-map field)
                                                                    c/top-type)))
                                              c/coll-of-any
-                                             empty-list (maybe (symbol (str sym " fields"))) "")
+                                             empty-list (symbol (str sym " fields")) "")
                           impls (merge-with comp
                                             (default-type-impls sym fields)
                                             (destructure-fields new-type-constraint field-constraints ast))
@@ -7454,7 +7468,7 @@
                           (abort)))
         getter-field-c (c/ReifiedConstraint c/UnknownType {(c/Field sym) c/top-type}
                                             (symbol (str "field '" sym "' required"))
-                                            empty-list nothing "")
+                                            empty-list c/no-symbol "")
         getter-id (str "Default_" (rest (str sym)) "_getter")
         getter-ast (ast/fn-arity-ast (ast/tag sym)
                                      getter-id
@@ -7565,7 +7579,7 @@
                      (create-new-getter (ast/tag sym loc) 0
                                         (c/ReifiedConstraint c/UnknownType {(c/Field sym) c/top-type}
                                                              (symbol (str "field " sym " required"))
-                                                             empty-list nothing ""))
+                                                             empty-list c/no-symbol ""))
 
                      (-> ["Could not find type constraint for" (str "'" sym "'")
                           "at" (str (ast/file-name sym) ":") (ast/line-number sym)]
@@ -7933,13 +7947,13 @@
        (fn [_]
          (either (map (instance? c/Constraints (.ast constrained))
                       (fn [constraint]
-                        (let [c1 (c/update-type-name constraint (ast/untag (.sym old-ast)))
-                              constrained (ConstrainedAST c1 c1)]
+                        (let [constrained (ConstrainedAST constraint constraint)]
                           (for [;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
                                 ;; the updated version. Possibly a bug in assoc-in*
                                 _ (se/assoc-in-val [.module .types (ast/untag (.sym old-ast))]
-                                                   c1)
-                                _ (set-type-constraint (.sym old-ast) constrained)]
+                                                   constraint)
+                                _ (set-type-constraint (.sym old-ast)
+                                                       (ConstrainedAST constraint constraint))]
                             constrained))))
                  (map (set-type-constraint (.sym old-ast) constrained)
                       (fn [_]
@@ -9016,7 +9030,7 @@
                                                                       (symbol "reified value at")
                                                                       empty-list
                                                                       ;; TODO: add location
-                                                                      nothing "")))))))))
+                                                                      c/no-symbol "")))))))))
 
 (extend-type TailHashMap
   TypeChecker
@@ -9660,16 +9674,12 @@
                      .fixed
                      (map ast/untag))
           field-destruct (DestructFields fields)
-          field-assertions (-> c/vect-constraint
-                               (set-items (filter (.impls ast) (partial instance? c/ValueConstraint)))
-                               (set-tail (c/CollectionOf c/top-type empty-list nothing ""))
-                               (c/update-path loc))
           type-num (new-type-number sym)
           fields-map (reduce fields {}
                              (fn [m name]
                                (assoc m
                                  (c/Field (symbol (str "." name))) c/top-type)))
-          new-type-constraint (-> (c/ReifiedConstraint type-num fields-map sym empty-list nothing "")
+          new-type-constraint (-> (c/ReifiedConstraint type-num fields-map sym empty-list c/no-symbol "")
                                   (c/update-path loc))
           default-impls (default-type-impls (ast/tag sym loc) fields)]
       (for [_ (se/assoc-in-val [.module .types (ast/untag sym)]
@@ -9681,7 +9691,12 @@
             _ (push-types)
             _ (se/traverse fields (fn [sym]
                                     (set-type-constraint sym (ConstrainedAST sym c/top-type))))
-            field-assertions (se-translate (lookup-constraint field-assertions))
+            field-assertions (-> (.impls ast)
+                                 (filter (partial instance? c/ValueConstraint))
+                                 (map (fn [c]
+                                        (c/update-path c loc)))
+                                 (sm/traverse lookup-constraint)
+                                 se-translate)
             impls (-> (.impls ast)
                       (remove (partial instance? c/Constraints))
                       (flat-map impl-arities)
@@ -9735,16 +9750,16 @@
                                       (dissoc fns assoc-sym get-symb)))
                             impls)
               default-impls (dissoc default-impls Associative-sym)]
-          [(map (.items field-assertions) TypeCheckOnly)
-           (TypeCheckOnly (ast/extend-ast sym default-impls))
-           (TypeCheckOnly (ast/extend-ast sym impls))
-           (CreateGetters sym type-num new-type-constraint fields loc)
-           (cond (empty? hash-map-impls)
-                 (ast/block-comment "" 0 [])
-                 (ast/extend-ast sym hash-map-impls))
-           (ast/extend-ast sym default-impls)
-           (ast/extend-ast sym impls)
-           (CheckedTypeAST sym type-num new-type-constraint fields impls)])))))
+          (comp (map field-assertions TypeCheckOnly)
+                [(TypeCheckOnly (ast/extend-ast sym default-impls))
+                 (TypeCheckOnly (ast/extend-ast sym impls))
+                 (CreateGetters sym type-num new-type-constraint fields loc)
+                 (cond (empty? hash-map-impls)
+                       (ast/block-comment "" 0 [])
+                       (ast/extend-ast sym hash-map-impls))
+                 (ast/extend-ast sym default-impls)
+                 (ast/extend-ast sym impls)
+                 (CheckedTypeAST sym type-num new-type-constraint fields impls)]))))))
 
 (extend-type ast/quoted-ast
   TypeChecker
