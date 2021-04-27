@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "3458d01"))
+                          :sha "28d1365"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "9ebfd68"))
+                            :sha "611c918"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "89eb218"))
+                            :sha "fe98477"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -4043,8 +4043,12 @@
           y* (ast/tag "#y")]
       (for [constraint (lookup-constraint constraint)
             :let [constraint (c/update-type-name constraint defined-sym)
-                  types-info (either (c/extract-type-map constraint)
-                                     {})]
+                  ;; TODO: fix
+                  ;; types-info (either (c/extract-type-map constraint)
+                  ;;                    {})
+                  types-info []
+                  _ (abort)
+                  ]
             _ (sm/assoc-in-val [.module .types (ast/untag defined-sym)] constraint)
             exprs (emit-defined-value
                    (ast/reified
@@ -5198,11 +5202,15 @@
         num-args (count params)
         file-name (ast/file-name fn-sym)
         line-number (ast/line-number fn-sym)
-        disp-constraint (either (for [type-map (c/extract-type-map disp-constraint)
-                                      fields (get type-map type-num)]
-                                  (c/ReifiedConstraint type-num fields (symbol type-str)
-                                                       empty-list (ast/untag disp-param) ""))
-                                disp-constraint)]
+        ;; TODO: fix
+        disp-constraint ;; (either (for [type-map (c/extract-type-map disp-constraint)
+                        ;;               fields (get type-map type-num)]
+                        ;;           (c/ReifiedConstraint type-num fields (symbol type-str)
+                        ;;                                empty-list (ast/untag disp-param) ""))
+                        ;;         disp-constraint)
+        (c/ReifiedConstraint type-num {} (symbol type-str)
+                             empty-list (ast/untag disp-param) "")
+        _ (abort)]
     (for [;; _ (debug 'impl file-name line-number type-str fn-sym num-args "\n" disp-constraint)
           default-impl (get-proto-impl proto-sym fn-sym num-args 0)
           ext-fn (comp (emit-fn-arity (symbol (str type-str fn-sym))
@@ -6369,15 +6377,17 @@
   Emitter
   (emit-definition [ast]
     (let [type-sym (.type ast)]
-      (comp (for [constraint (lookup-constraint (c/ReifiedConstraint c/UnknownType {} type-sym
-                                                                     empty-list c/no-symbol ""))
+      (comp (for [constraint (lookup-constraint (c/ReifiedConstraint c/UnknownType {} (ast/untag type-sym) empty-list c/no-symbol ""))
                   fns (flat-map (get-type-sym-info type-sym)
                                 (fn [constraint]
-                                  (-> (either (c/extract-type-map constraint)
-                                              {})
-                                      keys
-                                      (sm/traverse (partial extend-type* ast constraint))
-                                      (map flatten))))]
+                                  ;; TODO: instead of extract-type-map, use recursion scheme
+                                  ;; (-> (either (c/extract-type-map constraint)
+                                  ;;             {})
+                                  ;;     keys
+                                  ;;     (sm/traverse (partial extend-type* ast constraint))
+                                  ;;     (map flatten))
+                                  (sm/state-maybe '_)
+                                  ))]
               fns)
             (compilation-error "Could not extend type: "
                                (str "'" type-sym "'") "at"
@@ -6915,7 +6925,7 @@
                                      (fn [m name]
                                        (assoc m
                                          (symbol (str "." name)) c/top-type)))
-                  new-type-constraint (-> (c/ReifiedConstraint type-num fields-map (.sym ast) empty-list c/no-symbol "")
+                  new-type-constraint (-> (c/ReifiedConstraint type-num fields-map sym empty-list c/no-symbol "")
                                           (c/update-path file-name line-number))]
               (for [_ (emit-definition (ast/declaration-ast (.sym ast)))
                     _ (sm/assoc-in-val [.module .types sym] new-type-constraint)
@@ -6957,7 +6967,7 @@
                                                     field-constraints)
 
                           field-constraints (cata promote-inferred field-constraints)
-                          getter-arities (create-getters (.sym ast) type-num new-type-constraint fields
+                          getter-arities (create-getters sym type-num new-type-constraint fields
                                                          (c/extract-items-constraints field-constraints))
                           getter-arities (for [[proto-sym impl-fns] (vec getter-arities)
                                                [fn-name arities] (vec impl-fns)
@@ -9095,7 +9105,10 @@
                                         (cond (instance? c/SumConstraint c)
                                               (reduce (.alts c) [] comp)
 
-                                              [(c/get-type-num c)]))
+                                              (let [type-num (c/get-type-num c)]
+                                                (cond (= type-num c/UnknownType)
+                                                      []
+                                                      [type-num]))))
                                       constraint)]
                 _ (se/traverse type-nums
                                (fn [type-num]
@@ -9655,7 +9668,7 @@
                                      _ (set-type-constraint field (ConstrainedAST field field-c))]
                                  field-c)))
          (fn [field-cs]
-           (ast/extend-ast sym (create-getters sym type-num new-type-constraint fields field-cs))))))
+           (ast/extend-ast sym (create-getters (ast/untag sym) type-num new-type-constraint fields field-cs))))))
 
 (extend-type ast/type-ast
   TypeChecker
@@ -9671,7 +9684,7 @@
                              (fn [m name]
                                (assoc m
                                  (c/Field (symbol (str "." name))) c/top-type)))
-          new-type-constraint (-> (c/ReifiedConstraint type-num fields-map sym empty-list c/no-symbol "")
+          new-type-constraint (-> (c/ReifiedConstraint type-num fields-map (ast/untag sym) empty-list c/no-symbol "")
                                   (c/update-path loc))
           default-impls (default-type-impls (ast/tag sym loc) fields)]
       (for [_ (se/assoc-in-val [.module .types (ast/untag sym)]
@@ -9745,7 +9758,7 @@
           (comp (map field-assertions TypeCheckOnly)
                 [(TypeCheckOnly (ast/extend-ast sym default-impls))
                  (TypeCheckOnly (ast/extend-ast sym impls))
-                 (CreateGetters sym type-num new-type-constraint fields loc)
+                 (CreateGetters (.sym ast) type-num new-type-constraint fields loc)
                  (cond (empty? hash-map-impls)
                        (ast/block-comment "" 0 [])
                        (ast/extend-ast sym hash-map-impls))
