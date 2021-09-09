@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "d634da3"))
+                          :sha "b7c19ca"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "8c55f36"))
+                            :sha "72f24e9"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "5321ab4"))
+                            :sha "7328a04"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -7291,7 +7291,7 @@
                     '_)))
 
 (defprotocol TypeChecker
-  (find-arity [ast type-num args]
+  (find-arity [ast type-num args-count]
     (assert-result r (instance? Maybe r)))
 
   ;; TODO: need to make sure every possible call target ast is implemented
@@ -7340,6 +7340,10 @@
 
 (extend-type ConstrainedAST
   TypeChecker
+  (find-arity [ast type-num n]
+    (or (find-arity (.constraint ast) type-num n)
+        (find-arity (.ast ast) type-num n)))
+
   (check-call-site [ast args target]
     (flat-map se-nop (fn [_]
                        (comp (check-call-site (.constraint ast) args target)
@@ -7700,6 +7704,9 @@
 
 (extend-type c/Constraints
   TypeChecker
+  (find-arity [c type-num args-count]
+    nothing)
+
   (check-call-site [ast args target]
     ;; (print-err 'not-checking (type-name ast))
     se/zero-se)
@@ -7732,27 +7739,46 @@
           ;;                            "\n\n" 'r r))))
           r)))))
 
-;; TODO: put this back in
-;; (extend-type c/FnConstraint
-;;   TypeChecker
-;;   (check-call-site [ast args target]
-;;     (let [loc (ast/location target)
-;;           tagged-invoke (ast/tag 'invoke loc)]
-;;       (for [
-;;             _ (se/when (or (= (.line loc) 0)
-;;                            (= (.file loc) 'core)
-;;                            (maybe (print-err 'checking-fn-constraint loc ast
-;;                                              "\n\n" 'args args))
-;;                            (maybe '_)))
-;;             :when nothing
-;;             ]
-;;         (do
-;;           ;; (or (= (.line loc) 0)
-;;           ;;     (= (.file loc) 'core)
-;;           ;;     (and (= target 'wrapper)
-;;           ;;          (maybe (print-err 'checked-reified loc ast
-;;           ;;                            "\n\n" 'r r))))
-;;           '_)))))
+(extend-type c/FnConstraint
+  TypeChecker
+  (find-arity [c type-num args-count]
+    (map (get-in c [.arities args-count])
+         (fn [arity-c]
+           (assert (instance? c/fn-arity arity-c))
+
+           (ast/fn-arity-ast (ast/tag 'anon)
+                             (.arity-id arity-c)
+                             (ast/params-ast (vec (repeat args-count '_)) nothing)
+                             (ast/block-comment "" 0 [])
+                             []
+                             (.param-consts arity-c)
+                             (.result-const arity-c)))))
+
+  ;; TODO: put this back in
+  ;; (check-call-site [ast args target]
+  ;;   (let [loc (ast/location target)
+  ;;         tagged-invoke (ast/tag 'invoke loc)]
+  ;;     (for [
+  ;;           _ (se/when (or (= (.line loc) 0)
+  ;;                          (= (.file loc) 'core)
+  ;;                          (maybe (print-err 'checking-fn-constraint loc ast
+  ;;                                            "\n\n" 'args args))
+  ;;                          (maybe '_)))
+  ;;           :when nothing]
+
+  ;;       (do
+  ;;         ;; (or (= (.line loc) 0)
+  ;;         ;;     (= (.file loc) 'core)
+  ;;         ;;     (and (= target 'wrapper)
+  ;;         ;;          (maybe (print-err 'checked-reified loc ast
+  ;;         ;;                            "\n\n" 'r r))))
+  ;;         '_))))
+  )
+
+(extend-type c/ParamConstraint
+  TypeChecker
+  (pre-check [ast]
+    (append-type-constraint (.sym ast) ast (ast/location ast))))
 
 (extend-type c/AllValues
   TypeChecker
@@ -7762,6 +7788,12 @@
 (defn strip-asts [c]
   (cata (fn [x]
           (either (map (instance? ConstrainedAST x) .constraint)
+                  x))
+        c))
+
+(defn strip-constraints [c]
+  (cata (fn [x]
+          (either (map (instance? ConstrainedAST x) .ast)
                   x))
         c))
 
@@ -8137,7 +8169,7 @@
             result-c (se/try
                        (map (get-type-constraint (.fn-sym ast))
                             (fn [got]
-                              (let [arity (find-arity (.ast got) 0 arg-count)
+                              (let [arity (find-arity got 0 arg-count)
                                     result-c (either (map arity .result-const)
                                                      c/top-type)]
                                 result-c)))
@@ -8226,7 +8258,14 @@
                        (map f embed))]
       (-> x
           (.params new-params)
-          (.body new-body)))))
+          (.body new-body))))
+
+  ast/FileLineInfo
+  (ast/file-name [_]
+    (.file fn-sym))
+
+  (ast/line-number [_]
+    (.line fn-sym)))
 
 ;; TODO: having to split these out to get past the type checker is probably bogus
 (extend-type ImplFnArity
@@ -8242,7 +8281,7 @@
             result-c (se/try
                        (map (get-type-constraint (.fn-sym ast))
                             (fn [got]
-                              (let [arity (find-arity (.ast got) 0 arg-count)
+                              (let [arity (find-arity got 0 arg-count)
                                     result-c (either (map arity .result-const)
                                                      c/top-type)]
                                 result-c)))
@@ -8252,28 +8291,16 @@
             _ (set-type-constraint (symbol "#result") (ConstrainedAST (symbol "#result") result-c))
             _ (ana constrain-all-syms (ParamConstraintPair (.params ast)
                                                            (.param-consts ast))
-                   se/state-error)
-            _ (se/traverse (zip-lists fixed-params (range arg-count))
-                           (fn [[sym index]]
-                             (cond (instance? ast/params-ast sym)
-                                   ;; TODO: have to deal with this as well
-                                   se-nop
-
-                                   (append-type-constraint sym
-                                                           (c/ParamConstraint arity-id index [] []
-                                                                              empty-list (ast/untag sym) "")
-                                                           loc))))
-            _ (se/traverse (.fields ast)
-                           (fn [field]
-                             (append-type-constraint field (-> (c/ParamConstraint
-                                                                arity-id 0 []
-                                                                [(c/get-field (c/Field (symbol (str "." field))))]
-                                                                empty-list field "")
-                                                               (c/update-path loc))
-                                                     loc)))]
+                   se/state-error)]
         (-> ast
             (.fn-var arity-id)
             (.body (comp (filter (.body ast) (partial instance? c/Constraints))
+                         (map (.fields ast)
+                              (fn [field]
+                                (-> (c/ParamConstraint arity-id 0 []
+                                                       [(c/get-field (c/Field (symbol (str "." field))))]
+                                                       empty-list field "")
+                                    (c/update-path loc))))
                          (-> (.body ast)
                              (remove (partial instance? c/Constraints))
                              (remove (partial instance? ast/block-comment-ast))
@@ -8345,11 +8372,10 @@
                       c))))
 
 (defn infer-coll-inner-constraint [target arity [coll f]]
-  (either (for [arity (find-arity (.ast f)
-                                  (-> coll
-                                      .constraint
-                                      c/extract-contents-constraint
-                                      constraint-type-num)
+  (either (for [arity (find-arity f (-> coll
+                                        .constraint
+                                        c/extract-contents-constraint
+                                        constraint-type-num)
                                   1)
                 ;; TODO: arity could be an 'invoke' arity with 3 args
                 inferred-c (-> (.param-consts arity)
@@ -8366,7 +8392,7 @@
 (defn infer-coll-result-constraint [target arity [coll f]]
   (let [coll-contents (c/extract-contents-constraint (.constraint coll))
         ;; TODO: change to 'arity?' and see what happens
-        maybe-arity (find-arity (.ast f) (constraint-type-num coll-contents) 1)
+        maybe-arity (find-arity f (constraint-type-num coll-contents) 1)
         inferred-c (either (flat-map maybe-arity
                                      (fn [arity]
                                        ;; TODO: arity could be an 'invoke' arity with 3 args
@@ -8602,17 +8628,21 @@
                                                                    (-> arity
                                                                        .result-const
                                                                        (c/reify-type-constraint (.fn-var arity)
-                                                                                              [coll-contents] loc)
+                                                                                                [coll-contents] loc)
                                                                        c/extract-contents-constraint)))
                                                 c/top-type)
                                         empty-list c/no-symbol "")
-                       (c/update-path loc)))))
+
+                       ;; TODO: where else does this need to be duplicated
+                       (c/intersect (.result-const arity))
+
+                       (c/update-path loc))))
+               )
 
    'reduce (fn [target arity [coll init-accum f]]
              (let [loc (ast/location target)
                    coll-contents (c/extract-contents-constraint (.constraint coll))
-                   f (.ast f)
-                   result-c (reduce-fixed-point f (.constraint init-accum))
+                   result-c (reduce-fixed-point (.ast f) (.constraint init-accum))
                    ;; TODO: move all this to 'reduce-fixed-point'
                    maybe-arity (find-arity f (constraint-type-num result-c) 2)
                    [accum-c inferred-c] (either (map maybe-arity
@@ -8854,12 +8884,10 @@
                                                 ;; _ (se/when
                                                 ;;       (or (= (.line loc) 0)
                                                 ;;           (= (.file loc) 'core)
-                                                ;;           (and (= target 'invoke)
-                                                ;;                (maybe
-                                                ;;                 (print-err 'call-proto loc target
-                                                ;;                            "\n\n" 'c c
-                                                ;;                            "\n\n" 'arg (.ast arg)
-                                                ;;                            "\n\n" 'arg-c (.constraint arg))))
+                                                ;;           (maybe (print-err 'call-proto loc target
+                                                ;;                       "\n\n" 'c c
+                                                ;;                       "\n\n" 'arg (.ast arg)
+                                                ;;                       "\n\n" 'arg-c (.constraint arg)))
                                                 ;;           (maybe '_)))
                                                 r (update-constraint arg c loc)]
                                             r)))
@@ -8867,16 +8895,14 @@
                                        (either (map (get special-call-targets target)
                                                     (fn [f]
                                                       (f target arity args)))
-                                               (-> arity
-                                                   .result-const
+                                               (-> (.result-const arity)
                                                    (c/update-path loc)
                                                    se/state-error))))
                            (map (fn [result-c]
                                   (Left (let [r (c/reify-type-constraint result-c (.fn-var arity) arg-consts loc)]
                                           ;; (or (= (.line loc) 0)
                                           ;;     (= (.file loc) 'core)
-                                          ;;     (and (= target 'invoke)
-                                          ;;          (= (.line loc) 17)
+                                          ;;     (and (= target 'flat-map)
                                           ;;          (do
                                           ;;            (print-err 'call-proto loc (.fn-sym proto-impls)
                                           ;;                       (str "'" (.fn-var arity))
@@ -9341,6 +9367,13 @@
   Stringable
   (string-list [_]
     (list "(CheckedCondVal " (str ast) "\n<types>)"))
+
+  Container
+  (map [_ f]
+    (CheckedCondVal (f ast) (f types)))
+
+  ;; (map [_ f embed]
+  ;;   (map (f clause) OrClause))
 
   ast/FileLoc
   (ast/location [_]
@@ -9863,19 +9896,20 @@
                                                                          (c/update-path loc)))))]
         (let [impls (reduce impls {}
                             (fn [impls [proto-sym fn-sym arity]]
-                              (either (or (map (some (all-syms (.params arity))
-                                                     (fn [param-sym]
-                                                       (and (some fields (partial = param-sym))
-                                                            (maybe param-sym))))
-                                               (fn [shadowing]
-                                                 (print-err "The parameter" (str "'" shadowing "'") "shadows a field"
-                                                            "of the same name at" (ast/location shadowing))
-                                                 (abort)))
-                                          (update-in impls [proto-sym fn-sym]
-                                                     (fn [arities]
-                                                       (conj arities (.body arity (comp [field-destruct]
-                                                                                        (.body arity)))))))
-                                      (assoc-in impls [proto-sym fn-sym] [arity]))))
+                              (let [arity (.body arity (comp [field-destruct]
+                                                             (.body arity)))]
+                                (either (or (map (some (all-syms (.params arity))
+                                                       (fn [param-sym]
+                                                         (and (some fields (partial = param-sym))
+                                                              (maybe param-sym))))
+                                                 (fn [shadowing]
+                                                   (print-err "The parameter" (str "'" shadowing "'") "shadows a field"
+                                                              "of the same name at" (ast/location shadowing))
+                                                   (abort)))
+                                            (update-in impls [proto-sym fn-sym]
+                                                       (fn [arities]
+                                                         (conj arities arity))))
+                                        (assoc-in impls [proto-sym fn-sym] [arity])))))
               ;; TODO: eliminate the named symbols
               impls-get (get-in impls [Associative-sym get-symb])
               default-get (get-in default-impls [Associative-sym get-symb])
