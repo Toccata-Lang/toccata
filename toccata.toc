@@ -7667,6 +7667,7 @@
                                                 (update-constraint arg c loc)))
                                  (map (fn [_]
                                         (.constraint constrained new-c)))))))
+
                      (se/state-error (.constraint constrained new-c))))))))
 
 (defn get-types []
@@ -7762,6 +7763,9 @@
   ;;           _ (se/when (or (= (.line loc) 0)
   ;;                          (= (.file loc) 'core)
   ;;                          (maybe (print-err 'checking-fn-constraint loc ast
+  ;;                                            "\n\n" 'result-c (either (map (find-arity ast 0 (count args))
+  ;;                                                                          .result-const)
+  ;;                                                           'not-found)
   ;;                                            "\n\n" 'args args))
   ;;                          (maybe '_)))
   ;;           :when nothing]
@@ -8073,6 +8077,21 @@
   (map [x f embed]
     (embed x)))
 
+(deftype DestructFields [fields]
+  (assert (instance? (vector-of Symbol) fields))
+
+  Stringable
+  (string-list [_]
+    (list "(DestructFields " (to-str fields) ")"))
+
+  Container
+  (map [x f] x)
+  (map [x f embed] (embed x))
+
+  TypeChecker
+  (type-check [ast old-ast]
+    (se/state-error ast)))
+
 (defn constrain-all-syms [tup]
   (assert (instance? ParamConstraintPair tup))
 
@@ -8163,6 +8182,7 @@
       ;;                    "\n" 'params (.params ast)
       ;;                    "\n\n" 'old-param-cs (.param-consts ast)
       ;;                    "\n\n" 'body (.body ast)
+      ;;                    "\n\n" 'field-cs field-cs
       ;;                    "\n\n" 'result-const (.result-const ast))
       ;;         nothing)))
       (for [_ (push-types)
@@ -8718,28 +8738,12 @@
                                           (c/extract-items-constraints arg-count)
                                           (zip-lists args)
                                           vec
+                                          ;; TODO: should use 'for' expression
                                           (se/traverse (fn [[c arg]]
-                                                         ;; (or (= (.line loc) 0)
-                                                         ;;     (= (.file loc) 'core)
-                                                         ;;     (do
-                                                         ;;       (print-err 'call-fn (.fn-var arity) loc
-                                                         ;;                  "\n" 'c c
-                                                         ;;                  "\n\n" 'arg arg)
-                                                         ;;       nothing))
-                                                         (map (update-constraint
-                                                               arg (c/reify-type-constraint c (.fn-var arity)
-                                                                                            arg-consts loc)
-                                                               loc)
-                                                              (fn [r]
-                                                                ;; (or (= (.line loc) 0)
-                                                                ;;     (= (.file loc) 'core)
-                                                                ;;     (do
-                                                                ;;       (print-err 'call-fn (.fn-var arity) loc
-                                                                ;;                  "\n\n" 'reified (c/reify-type-constraint c (.fn-var arity)
-                                                                ;;                                                           arg-consts loc)
-                                                                ;;                  "\n\n" 'updated r)
-                                                                ;;       nothing))
-                                                                r))))
+                                                         (update-constraint
+                                                          arg (c/reify-type-constraint c (.fn-var arity)
+                                                                                       arg-consts loc)
+                                                          loc)))
                                           (flat-map (fn [args]
                                                       (either (map (get special-call-targets target)
                                                                    (fn [f]
@@ -9402,11 +9406,17 @@
            ast)))
 
   (type-check [ast old-ast]
-    (for [new-clause (update-constraint (.clause ast) (-> c/maybe-constraint
-                                                          (c/update-path (ast/location clause)))
-                                        (ast/location clause))
-          types (pop-types)]
-      (CheckedCondVal new-clause types))))
+    (let [loc (ast/location old-ast)]
+      (for [new-clause (cond (instance? Tagged (.clause old-ast))
+                             (update-constraint (ConstrainedAST (.clause old-ast) c/top-type)
+                                                (c/update-path c/maybe-constraint loc)
+                                                loc)
+
+                             (update-constraint (.clause ast)
+                                                (c/update-path c/maybe-constraint loc)
+                                                loc))
+            types (pop-types)]
+        (CheckedCondVal new-clause types)))))
 
 (extend-type ast/either-ast
   TypeChecker
@@ -9614,9 +9624,14 @@
     ;; requires 'clause' be ConstrainedAST always, but that's only true when 'type-check' is called.
     ;; Need better error message.
     (let [loc (ast/location ast)]
-      (for [new-clause (update-constraint (.clause ast)
-                                          (c/update-path c/maybe-constraint loc)
-                                          loc)
+      (for [new-clause (cond (instance? Tagged (.clause old-ast))
+                             (update-constraint (ConstrainedAST (.clause old-ast) c/top-type)
+                                                (c/update-path c/maybe-constraint loc)
+                                                loc)
+
+                             (update-constraint (.clause ast)
+                                                (c/update-path c/maybe-constraint loc)
+                                                loc))
             types (get-types)]
         (CheckedCondVal new-clause types)))))
 
@@ -9816,21 +9831,6 @@
   (type-check [ast old-ast]
     (se/state-error (ConstrainedAST (ast/block-comment "" 0 [])
                                     c/top-type))))
-
-(deftype DestructFields [fields]
-  (assert (instance? (vector-of Symbol) fields))
-
-  Stringable
-  (string-list [_]
-    (list "(DestructFields " (to-str fields) ")"))
-
-  Container
-  (map [x f] x)
-  (map [x f embed] (embed x))
-
-  TypeChecker
-  (type-check [ast old-ast]
-    (se/state-error ast)))
 
 (deftype CreateGetters [sym type-num new-type-constraint fields loc]
   Stringable
