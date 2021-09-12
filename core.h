@@ -132,7 +132,8 @@ REFS_SIZE refsStatic;
 #define ProtoDispatcherType 36
 #define SumConstraintType 37
 #define KeysConstraintType 38
-#define TypeCount 39
+#define TypeOfConstraintType 39
+#define TypeCount 40
 
 FILE *outstream;
 List *empty_list;
