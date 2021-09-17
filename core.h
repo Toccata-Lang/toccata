@@ -133,7 +133,8 @@ REFS_SIZE refsStatic;
 #define SumConstraintType 37
 #define KeysConstraintType 38
 #define TypeOfConstraintType 39
-#define TypeCount 40
+#define InnerTypeOfConstraintType 40
+#define TypeCount 41
 
 FILE *outstream;
 List *empty_list;
