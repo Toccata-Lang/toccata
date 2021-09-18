@@ -61,8 +61,8 @@ typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *val; List* input; List *o
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int64_t implCount; Value* impls[];} ReifiedVal;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; void *ptr; Destructor *destruct;} Opaque;
 
-Integer const0;
-Value *const0Ptr;
+extern Integer const0;
+extern Value *const0Ptr;
 
 typedef struct {TYPE_SIZE type; Value *implFn;} ProtoImpl;
 typedef struct {int64_t implCount; ProtoImpl impls[];} ProtoImpls;
@@ -85,12 +85,12 @@ typedef struct {
 typedef struct {
   int64_t sym_counter;} intGenerator;
 
-Value *nothing;
-Maybe nothing_struct;
-Value *maybeNothing;
-REFS_SIZE refsInit;
-REFS_SIZE refsError;
-REFS_SIZE refsStatic;
+extern Value *nothing;
+extern Maybe nothing_struct;
+extern Value *maybeNothing;
+extern REFS_SIZE refsInit;
+extern REFS_SIZE refsError;
+extern REFS_SIZE refsStatic;
 
 #define IgnoreType -1
 #define UnknownType 0
@@ -136,27 +136,28 @@ REFS_SIZE refsStatic;
 #define InnerTypeOfConstraintType 40
 #define TypeCount 41
 
-FILE *outstream;
-List *empty_list;
-List empty_list_struct;
-Vector *empty_vect;
-Vector empty_vect_struct;
-BitmapIndexedNode emptyBMI;
-Value *universalProtoFn;
-int typeCount;
+extern FILE *outstream;
+extern List *empty_list;
+extern List empty_list_struct;
+extern Vector *empty_vect;
+extern Vector empty_vect_struct;
+extern BitmapIndexedNode emptyBMI;
+extern Value *universalProtoFn;
+extern int typeCount;
 
-ReifiedVal all_values_struct;
-Value *all_values;
+extern ReifiedVal all_values_struct;
+extern Value *all_values;
 
-struct {List* input; List* output;
-        pthread_mutex_t mutex; pthread_cond_t notEmpty;} futuresQueue;
-Future shutDown;
-int8_t mainThreadDone;
+typedef struct {List* input; List* output;
+                pthread_mutex_t mutex; pthread_cond_t notEmpty;} FuturesQueueStruct;
+extern FuturesQueueStruct futuresQueue;
+extern Future shutDown;
+extern int8_t mainThreadDone;
 
-int cleaningUp;
+extern int cleaningUp;
 
-int64_t malloc_count;
-int64_t free_count;
+extern int64_t malloc_count;
+extern int64_t free_count;
 void cleanupMemory(Value *the_final_answer, Value *maybeNothing, List *argList);
 void freeAll();
 void freeGlobal(Value *x);
@@ -172,26 +173,26 @@ void dec_and_free(Value *v, int deltaRefs);
 
 void prefs(char *tag, Value *v);
 
-Value *(*equalSTAR)(FnArity *, Value *, Value *);
-Value *(*dissoc)(FnArity *, Value *, Value *, Value *, Value *);
-Value *(*sha1)(FnArity *, Value *);
-Value *(*hashSeq)(FnArity *, Value*, Value *s);
-Value *(*count)(FnArity *, Value*);
-Value *(*vals)(FnArity *, Value*);
-Value *(*zero)(FnArity *, Value*);
-Value *(*invoke0Args)(FnArity *, Value *f);
-Value *(*invoke1Arg)(FnArity *, Value *f, Value* arg);
-Value *(*invoke2Args)(FnArity *, Value *f, Value* arg0, Value* arg1);
-Value *(*type_name)(FnArity *, Value *t);
-Value *(*seq)(FnArity *, Value *t);
-Value *(*newHashSet)(FnArity *, Value *t);
-Value *(*first)(FnArity *, Value *t);
-Value *(*rest)(FnArity *, Value *t);
-Value *(*showFn)(FnArity *, Value *t);
-Value *(*fn_apply)(FnArity *, Value *f, Value *args);
-Value *(*hasField)(FnArity *, Value *v, Value *field);
-Value *(*prErrSTAR)(Value *str);
-Value *(*prValue)(FnArity *, Value *v);
+extern Value *(*equalSTAR)(FnArity *, Value *, Value *);
+extern Value *(*dissoc)(FnArity *, Value *, Value *, Value *, Value *);
+extern Value *(*sha1)(FnArity *, Value *);
+extern Value *(*hashSeq)(FnArity *, Value*, Value *s);
+extern Value *(*count)(FnArity *, Value*);
+extern Value *(*vals)(FnArity *, Value*);
+extern Value *(*zero)(FnArity *, Value*);
+extern Value *(*invoke0Args)(FnArity *, Value *f);
+extern Value *(*invoke1Arg)(FnArity *, Value *f, Value* arg);
+extern Value *(*invoke2Args)(FnArity *, Value *f, Value* arg0, Value* arg1);
+extern Value *(*type_name)(FnArity *, Value *t);
+extern Value *(*seq)(FnArity *, Value *t);
+extern Value *(*newHashSet)(FnArity *, Value *t);
+extern Value *(*first)(FnArity *, Value *t);
+extern Value *(*rest)(FnArity *, Value *t);
+extern Value *(*showFn)(FnArity *, Value *t);
+extern Value *(*fn_apply)(FnArity *, Value *f, Value *args);
+extern Value *(*hasField)(FnArity *, Value *v, Value *field);
+extern Value *(*prErrSTAR)(Value *str);
+extern Value *(*prValue)(FnArity *, Value *v);
 
 Value *my_malloc(int64_t sz);
 List *malloc_list();
@@ -224,7 +225,7 @@ Value *updateField(Value *rval, Value *field, int64_t index);
 Value *vectorReverse(Value *arg0);
 List *listCons(Value *x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
-Value *maybe(FnArity *, Value *arg0, Value *arg1);
+Value *maybe(Vector *, Value *arg0, Value *arg1);
 int8_t isNothing(Value *v, char *fileName, int lineNumber);
 Value *strCount(Value *arg0);
 Value *strEQ(Value *arg0, Value *arg1);
