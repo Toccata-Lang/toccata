@@ -134,7 +134,8 @@ extern REFS_SIZE refsStatic;
 #define KeysConstraintType 38
 #define TypeOfConstraintType 39
 #define InnerTypeOfConstraintType 40
-#define TypeCount 41
+#define DebugConstraintType 41
+#define TypeCount 42
 
 extern FILE *outstream;
 extern List *empty_list;
