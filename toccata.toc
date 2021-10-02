@@ -17,10 +17,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "dc222e5"))
+                          :sha "6da0eaf"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "dec2605"))
+                            :sha "2c5dba5"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
@@ -41,7 +41,7 @@
 ;;                                :sha "29cf820"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "68546cc"))
+                            :sha "30af2a6"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "eccb64f"))
@@ -8839,15 +8839,14 @@
                                                                                      arg-consts loc)]
                                                       ;; (or (= (.line loc) 0)
                                                       ;;     ;; (= (.file loc) 'core)
-                                                      ;;     (and (= target 'vector)
-                                                      ;;          (do
-                                                      ;;            (print-err 'call-fn (.fn-sym arity) (.fn-var arity) loc
-                                                      ;;                       "\n" 'args (-> arg-consts
-                                                      ;;                                      (interpose  "\n")
-                                                      ;;                                      vec)
-                                                      ;;                       "\n\n" 'result-c result-c
-                                                      ;;                       "\n\n" 'fn-result r)
-                                                      ;;            nothing)))
+                                                      ;;     (do
+                                                      ;;       (print-err 'call-fn (.fn-sym arity) (.fn-var arity) loc
+                                                      ;;                  "\n" 'args (-> arg-consts
+                                                      ;;                                 (interpose  "\n")
+                                                      ;;                                 vec)
+                                                      ;;                  "\n\n" 'result-c result-c
+                                                      ;;                  "\n\n" 'fn-result r)
+                                                      ;;       nothing))
                                                       r))))))))))
               (se/throw (str "Could not find implementation of " (str "'" (either (.fn-sym ast)
                                                                                   "<anon>") "'")
@@ -9382,30 +9381,95 @@
           (ConstrainedAST (.args old-ast (.args ast))
                           result-type))))))
 
-(extend-type ast/extend-ast
+(deftype TypeExtension [type-constraint impls]
+  ;; TODO: type-constraint can be type-num
+  Container
+  (map [x f]
+    (.impls x (map-vals impls (fn [impl-fns]
+                                (map-vals impl-fns (fn [arities]
+                                                     (map arities f)))))))
+
+  (map [x f embed]
+    (map (contextual-map-vals impls (fn [impl-fns]
+                                      (contextual-map-vals impl-fns
+                                                           (fn [arities]
+                                                             (map arities f embed))
+                                                           embed))
+                              embed)
+         (partial .impls x)))
+
   TypeChecker
   (type-check [ast old-ast]
-    (comp (for [constraint (se-translate (get-type-sym-info (.type ast)))
-                :let [type-nums (cata (fn [c]
-                                        (cond (instance? c/SumConstraint c)
-                                              (reduce (.alts c) [] comp)
+    (for [_ (extend-prototypes (c/get-type-num type-constraint) (.impls ast))]
+      ast)))
 
-                                              (let [type-num (c/get-type-num c)]
-                                                (cond (= type-num c/UnknownType)
-                                                      []
-                                                      [type-num]))))
-                                      constraint)]
-                _ (se/traverse type-nums
-                               (fn [type-num]
-                                 (extend-prototypes type-num (.impls ast))))]
-            (do
-              ;; (print-err 'extended (.type ast))
-              ast))
-          (-> ["Could not find type" (str "'" (.type ast) "'")
-               "at" (str (ast/file-name (.type ast)) ":") (ast/line-number (.type ast))]
-              (interpose " ")
-              to-str
-              se/throw))))
+(defn add-prototype-assertions [dispatch-type [proto-sym fn-sym arity]]
+  (assert (instance? c/ListConstraint dispatch-type))
+
+  (for [prototype (find-prototype proto-sym fn-sym (count (.fixed (.params arity))))]
+    (let [loc (ast/location arity)
+          param-cs (c/intersect (.param-consts prototype)
+                                dispatch-type)
+          param-cs (c/intersect param-cs
+                                (.param-consts arity))
+          result-c (c/intersect (.result-const prototype)
+                                (.result-const arity))
+          _ (either (map (or (= c/bottom-type param-cs)
+                             (= c/bottom-type result-c))
+                         (fn [failure-c]
+                           (c/conflicting-assertions failure-c (.file loc) (.line loc))
+                           (abort)))
+                    '_)
+          new-arity (-> arity
+                        (.param-consts (c/clear-sym param-cs))
+                        (.result-const (c/clear-sym result-c)))]
+      [proto-sym fn-sym new-arity])))
+
+(extend-type ast/extend-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [arities (impl-arities (.impls ast))
+          loc (ast/location ast)]
+      (for [constraint (comp (se-translate (get-type-sym-info (.type ast)))
+                             (map se-nop
+                                  (fn [_]
+                                    ;; TODO: this should use se/throw
+                                    (-> ["Could not find type" (str "'" (.type ast) "'")
+                                         "at" (str (ast/file-name (.type ast)) ":") (ast/line-number (.type ast))]
+                                        (interpose " ")
+                                        to-str
+                                        print-err)
+                                    (abort))))
+            r (cond (instance? c/SumConstraint constraint)
+                    (se/traverse (.alts constraint)
+                                 (fn [c]
+                                   ;; TODO: much ugly duplicated code
+                                   (for [new-arities (se/traverse arities (partial add-prototype-assertions
+                                                                                   (-> c/list-constraint
+                                                                                       (set-items [c])
+                                                                                       (set-tail c/top-type)
+                                                                                       (c/update-path loc))))]
+                                     (let [impls (reduce new-arities {}
+                                                         (fn [impls [proto-sym fn-sym arity]]
+                                                           (either (update-in impls [proto-sym fn-sym]
+                                                                              (fn [arities]
+                                                                                (conj arities arity)))
+                                                                   (assoc-in impls [proto-sym fn-sym] [arity]))))]
+                                       (TypeExtension c impls)))))
+
+                    (for [new-arities (se/traverse arities (partial add-prototype-assertions
+                                                                    (-> c/list-constraint
+                                                                        (set-items [constraint])
+                                                                        (set-tail c/top-type)
+                                                                        (c/update-path loc))))]
+                      (let [impls (reduce new-arities {}
+                                          (fn [impls [proto-sym fn-sym arity]]
+                                            (either (update-in impls [proto-sym fn-sym]
+                                                               (fn [arities]
+                                                                 (conj arities arity)))
+                                                    (assoc-in impls [proto-sym fn-sym] [arity]))))]
+                        (TypeExtension constraint impls))))]
+        r))))
 
 (extend-type ast/let-ast
   TypeChecker
@@ -9894,28 +9958,6 @@
           _ (nip-types)]
       (ast/definition-ast sym [(create-constructor sym type-num new-type-constraint field-types fields)]))))
 
-(defn add-prototype-assertions [dispatch-type [proto-sym fn-sym arity]]
-  (assert (instance? c/ListConstraint dispatch-type))
-
-  (for [prototype (find-prototype proto-sym fn-sym (count (.fixed (.params arity))))]
-    (let [loc (ast/location arity)
-          param-cs (c/intersect (.param-consts prototype)
-                                dispatch-type)
-          param-cs (c/intersect param-cs
-                                (.param-consts arity))
-          result-c (c/intersect (.result-const prototype)
-                                (.result-const arity))
-          _ (either (map (or (= c/bottom-type param-cs)
-                             (= c/bottom-type result-c))
-                         (fn [failure-c]
-                           (c/conflicting-assertions failure-c (.file loc) (.line loc))
-                           (abort)))
-                    '_)
-          new-arity (-> arity
-                        (.param-consts (c/clear-sym param-cs))
-                        (.result-const (c/clear-sym result-c)))]
-      [proto-sym fn-sym new-arity])))
-
 (deftype TypeCheckOnly [x]
   Stringable
   (string-list [_]
@@ -9953,7 +9995,8 @@
                                      _ (set-type-constraint field (ConstrainedAST field field-c))]
                                  field-c)))
          (fn [field-cs]
-           (ast/extend-ast sym (create-getters (ast/untag sym) type-num new-type-constraint fields field-cs))))))
+           (TypeExtension new-type-constraint
+                          (create-getters (ast/untag sym) type-num new-type-constraint fields field-cs))))))
 
 (extend-type ast/type-ast
   TypeChecker
@@ -10004,8 +10047,9 @@
                                                          (and (some fields (partial = param-sym))
                                                               (maybe param-sym))))
                                                  (fn [shadowing]
-                                                   (print-err "The parameter" (str "'" shadowing "'") "shadows a field"
-                                                              "of the same name at" (ast/location shadowing))
+                                                   (print-err "The parameter" (str "'" shadowing "'")
+                                                              "shadows a field of the same name at"
+                                                              (ast/location shadowing))
                                                    (abort)))
                                             (update-in impls [proto-sym fn-sym]
                                                        (fn [arities]
@@ -10043,22 +10087,23 @@
                             impls)
               default-impls (dissoc default-impls Associative-sym)]
           (comp (map field-assertions TypeCheckOnly)
-                [(TypeCheckOnly (ast/extend-ast sym default-impls))
-                 (TypeCheckOnly (ast/extend-ast sym impls))
+                [(TypeCheckOnly (TypeExtension new-type-constraint default-impls))
+                 (TypeCheckOnly (TypeExtension new-type-constraint impls))
                  (CreateGetters (.sym ast) type-num new-type-constraint fields loc)
                  ;; TODO: why are the hash-map-impls done twice?
                  (cond (empty? hash-map-impls)
                        (ast/block-comment "" 0 [])
-                       (ast/extend-ast sym hash-map-impls))
-                 (ast/extend-ast sym default-impls)
+                       (TypeExtension new-type-constraint hash-map-impls))
+                 (TypeExtension new-type-constraint default-impls)
                  (cond (empty? hash-map-impls)
                        (ast/block-comment "" 0 [])
-                       (ast/extend-ast sym hash-map-impls))
-                 (ast/extend-ast sym (-> (impl-arities impls)
-                                         (reduce {} (fn [impls [proto-sym fn-sym arity]]
-                                                      (assoc-in impls [proto-sym fn-sym]
-                                                                [(apply ImplFnArity (conj (type-args arity)
-                                                                                          fields))])))))
+                       (TypeExtension new-type-constraint hash-map-impls))
+                 (TypeExtension new-type-constraint
+                                (-> (impl-arities impls)
+                                    (reduce {} (fn [impls [proto-sym fn-sym arity]]
+                                                 (assoc-in impls [proto-sym fn-sym]
+                                                           [(apply ImplFnArity (conj (type-args arity)
+                                                                                     fields))])))))
                  (CheckedTypeAST sym type-num new-type-constraint fields impls)]))))))
 
 (extend-type ast/quoted-ast
