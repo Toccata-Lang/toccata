@@ -8170,7 +8170,8 @@
                         new-tail (cond (= curr-tail c/bottom-type)
                                        c/list-constraint
                                        (c/intersect c/list-constraint curr-tail))]
-                    (-> (zip-lists (.fixed param) (c/extract-items-constraints new-param-cs))
+                    (-> (zip-lists (.fixed param) (c/extract-items-constraints new-param-cs
+                                                                               (count (.fixed param))))
                         (map (fn [[x y]]
                                (ParamConstraintPair x y)))
                         vec
@@ -8806,20 +8807,19 @@
                                    (apply print-err (map (cata c/show-full (c/update-path c loc))
                                                          (partial str  "\n  ")))))
                             ;; (or (= (.line loc) 0)
-                            ;;     ;; (= (.file loc) 'core)
-                            ;;     (and (= target 'vector)
-                            ;;          (do
-                            ;;            (print-err 'call-fn target (.fn-var arity) loc
-                            ;;                       "\n" 'param-consts (.param-consts arity)
-                            ;;                       "\n\n" 'extracted (-> (.param-consts arity)
-                            ;;                                             c/extract-items-constraints)
-                            ;;                       "\n\n" 'arg-count arg-count
-                            ;;                       "\n\n" 'param-cs (c/extract-items-constraints (.param-consts arity)
-                            ;;                                                                     arg-count)
-                            ;;                       "\n\n" 'args (-> arg-consts
-                            ;;                                        (interpose  "\n")
-                            ;;                                        vec))
-                            ;;            nothing)))
+                            ;;     (= (.file loc) 'core)
+                            ;;     (do
+                            ;;       (print-err 'call-fn target (.fn-var arity) loc
+                            ;;                  "\n" 'param-consts (.param-consts arity)
+                            ;;                  "\n\n" 'extracted (-> (.param-consts arity)
+                            ;;                                        c/extract-items-constraints)
+                            ;;                  "\n\n" 'arg-count arg-count
+                            ;;                  "\n\n" 'param-cs (c/extract-items-constraints (.param-consts arity)
+                            ;;                                                                arg-count)
+                            ;;                  "\n\n" 'args (-> arg-consts
+                            ;;                                   (interpose  "\n")
+                            ;;                                   vec))
+                            ;;       nothing))
                             (and (<= fn-param-count arg-count)
                                  (maybe (-> (.param-consts arity)
                                             (c/extract-items-constraints arg-count)
@@ -9491,57 +9491,56 @@
 
   (pre-check [ast]
     (-> ast
-        (.body (remove (.body ast) (partial instance? ast/block-comment-ast)))
+        (.body (remove (.body ast)
+                       (partial instance? ast/block-comment-ast)))
         se/state-error))
 
   (type-check [ast old-ast]
-    (map (se/traverse (reverse (.bindings ast))
-                      (fn [binding-ast]
-                        (let [binding (.binding binding-ast)
-                              val (.val binding-ast)]
-                          (for [c (cata param-types binding se/state-error)
-                                _ (se/traverse (all-syms binding)
-                                               recover-type-constraint)
-                                ;; :let [loc (ast/location old-ast)
-                                ;;       _ (or (= (.line loc) 0)
-                                ;;             (= (.file loc) 'core)
-                                ;;             (do
-                                ;;               (print-err 'let loc
-                                ;;                          "\n" 'binding binding
-                                ;;                          "\n\n" 'val val
-                                ;;                          "\n\n" 'binding-c c)
-                                ;;               nothing))]
-                                _ (update-constraint val c (ast/location binding))
-                                _ (nip-types)]
-                            '_))))
-         (fn [_]
-           (let [result-c (either (map (last (.body ast)) .constraint)
-                                  c/top-type)]
-             (ConstrainedAST ast (c/clear-sym result-c)))))))
+    (for [_ (se/traverse (reverse (.bindings ast))
+                         (fn [binding-ast]
+                           (let [binding (.binding binding-ast)
+                                 val (.val binding-ast)]
+                             (for [_ (se/traverse (all-syms binding)
+                                                  recover-type-constraint)
+                                   ;; :let [loc (ast/location old-ast)
+                                   ;;       _ (or (= (.line loc) 0)
+                                   ;;             (= (.file loc) 'core)
+                                   ;;             (do
+                                   ;;               (print-err 'let loc
+                                   ;;                          "\n" 'binding binding
+                                   ;;                          "\n\n" 'val val)
+                                   ;;               nothing))]
+                                   _ (nip-types)]
+                               '_))))]
+      (let [result-c (either (map (last (.body ast)) .constraint)
+                             c/top-type)]
+        (ConstrainedAST ast (c/clear-sym result-c))))))
 
 (extend-type ast/binding-ast
   TypeChecker
   (pre-check [ast]
-    (let [binding-syms (all-syms (.binding ast))]
-      (for [_ (se/traverse binding-syms
-                           (fn [sym]
-                             (se/try
-                               (get-type-constraint sym)
-                               (fn [_]
-                                 (set-type-constraint sym (ConstrainedAST sym c/top-type))))))]
-        ast)))
+    (se/state-error (.binding ast (reify
+                                    Container
+                                    (map [y f embed]
+                                      (embed y))
+
+                                    TypeChecker
+                                    (type-check [_ _]
+                                      (se/state-error (.binding ast)))))))
 
   (type-check [ast old-ast]
-    (for [_ (push-types)
-          _ (ana constrain-all-syms (ParamConstraintPair (.binding old-ast)
-                                                         (.constraint (.val ast)))
-                 se/state-error)
-          _ (cond (instance? Tagged (.binding old-ast))
-                  (flat-map (remove-type-constraint (.binding old-ast))
-                            (fn [_]
-                              (set-type-constraint (.binding old-ast) (.val ast))))
-                  se-nop)]
-      (.binding ast (.binding old-ast)))))
+    (let [loc (ast/location ast)]
+      (for [_ (push-types)
+            ;; :let [_ (or (= (.line loc) 0)
+            ;;             (= (.file loc) 'core)
+            ;;             (do
+            ;;               (print-err 'binding-type-check loc
+            ;;                          "\n\n" 'ast ast)
+            ;;               nothing))]
+            _ (ana constrain-all-syms (ParamConstraintPair (.binding ast)
+                                                           (.constraint (.val ast)))
+                   se/state-error)]
+        ast))))
 
 (deftype CheckedCondVal [ast types]
   Stringable
