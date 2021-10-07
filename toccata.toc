@@ -1035,6 +1035,18 @@
           new-constraint (f (.constraint x))]
       (ConstrainedAST new-ast new-constraint))))
 
+(defn remove-asts [c]
+  (cata (fn [x]
+          (either (map (instance? ConstrainedAST x) .constraint)
+                  x))
+        c))
+
+(defn remove-constraints [c]
+  (cata (fn [x]
+          (either (map (instance? ConstrainedAST x) .ast)
+                  x))
+        c))
+
 ;; information that must be tracked for each module
 (deftype Module [path index values protocols declarations namespaces types value-types]
   ;; path             path to file containing the modules source code (Symbol or String)
@@ -7764,41 +7776,86 @@
 
 (extend-type c/FnConstraint
   TypeChecker
-  (find-arity [c type-num args-count]
-    (map (get-in c [.arities args-count])
-         (fn [arity-c]
-           (assert (instance? c/fn-arity arity-c))
+  (check-call-site [ast args target]
+    (let [loc (ast/location target)
+          arg-count (count args)
+          arity (or (get-in ast [.arities arg-count])
+                    (get-in ast [.arities c/variadic]))]
+      (either (map arity
+                   (fn [arity]
+                     ;; (or (= (.line loc) 0)
+                     ;;     (= (.file loc) 'core)
+                     ;;     (maybe (print-err 'checking-fn-constraint target loc
+                     ;;                       "\n" 'ast ast
+                     ;;                       "\n\n" 'arity arity
+                     ;;                       "\n\n" 'result-c (.result-const arity)
+                     ;;                       "\n\n" 'args args
+                     ;;                       "\n\n" 'arg-count arg-count))
+                     ;;     (maybe '_))
+                     (let [required-args (-> (.param-consts arity)
+                                             c/extract-items-constraints
+                                             count)
+                           arg-consts (-> c/list-constraint
+                                          (.items (remove-asts args))
+                                          (.tail-c c/bottom-type))
+                           checked-args (c/intersect arg-consts (.param-consts arity))
+                           new-arg-cs (either (and (= c/bottom-type checked-args)
+                                                   (do
+                                                     (cond (< arg-count required-args)
+                                                           (print-err "Insufficient number of arguments to"
+                                                                      "function called at" loc)
 
-           (ast/fn-arity-ast (ast/tag 'anon)
-                             (.arity-id arity-c)
-                             (ast/params-ast (vec (repeat args-count '_)) nothing)
-                             (ast/block-comment "" 0 [])
-                             []
-                             (.param-consts arity-c)
-                             (.result-const arity-c)))))
-
-  ;; TODO: put this back in
-  ;; (check-call-site [ast args target]
-  ;;   (let [loc (ast/location target)
-  ;;         tagged-invoke (ast/tag 'invoke loc)]
-  ;;     (for [
-  ;;           _ (se/when (or (= (.line loc) 0)
-  ;;                          (= (.file loc) 'core)
-  ;;                          (maybe (print-err 'checking-fn-constraint loc ast
-  ;;                                            "\n\n" 'result-c (either (map (find-arity ast 0 (count args))
-  ;;                                                                          .result-const)
-  ;;                                                           'not-found)
-  ;;                                            "\n\n" 'args args))
-  ;;                          (maybe '_)))
-  ;;           arity (se/when (find-arity ast 0 (count args)))
-  ;;           r (check-call-site arity args target)]
-  ;;       (do
-  ;;         (or (= (.line loc) 0)
-  ;;             (= (.file loc) 'core)
-  ;;             (maybe (print-err 'checked-reified loc ast
-  ;;                               "\n\n" 'r r)))
-  ;;         r))))
-  )
+                                                           (c/conflicting-assertions checked-args loc))
+                                                     (abort)))
+                                              (c/extract-items-constraints checked-args arg-count))]
+                       (map (and (= target 'show-type)
+                                 (first arg-consts))
+                            (fn [c]
+                              (apply print-err (map (cata c/show-full (c/update-path c loc))
+                                                    (partial str  "\n  ")))))
+                       (for [_ (se/traverse (zip-lists new-arg-cs args)
+                                            (fn [[c arg]]
+                                              (update-constraint arg
+                                                                 (c/reify-type-constraint c (.arity-id arity)
+                                                                                          arg-consts loc)
+                                                                 loc)))
+                             ;; here's where 'special-call-targets' would be used
+                             ]
+                         (let [[fixed-args variadic-args] (split new-arg-cs required-args)
+                               param-cs (conj fixed-args
+                                              (-> c/list-constraint
+                                                  (.items variadic-args)
+                                                  (.tail-c c/bottom-type)))
+                               r (-> (.result-const arity)
+                                     (c/update-path loc)
+                                     (c/reify-type-constraint (.arity-id arity) param-cs loc))]
+                           ;; (or (= (.line loc) 0)
+                           ;;     (= (.file loc) 'core)
+                           ;;     (do
+                           ;;       (print-err 'call-fn target (.arity-id arity) loc
+                           ;;                  "\n" 'args (-> args
+                           ;;                                 remove-asts
+                           ;;                                 (interpose  "\n")
+                           ;;                                 vec)
+                           ;;                  "\n\n" 'result-const (.result-const arity)
+                           ;;                  "\n\n" 'fn-result r)
+                           ;;       nothing))
+                           (Left r))))))
+              (map se-nop
+                   (fn [_]
+                     (cond (empty? (.arities ast))
+                           (Left c/top-type)
+                           
+                           (do
+                             (print-err "Could not find arity for function call at" loc)
+                             (print-err 'target target
+                                        "\n" 'ast ast
+                                        "\n\n" 'arity arity
+                                        "\n\n" 'result-c (either (map arity .result-const)
+                                                                 'not-found)
+                                        "\n\n" 'args args
+                                        "\n\n" 'arg-count arg-count)
+                             (abort)))))))))
 
 (extend-type c/ParamConstraint
   TypeChecker
@@ -7810,22 +7867,10 @@
   (type-check [c old-c]
     (se/state-error (ConstrainedAST c c))))
 
-(defn strip-asts [c]
-  (cata (fn [x]
-          (either (map (instance? ConstrainedAST x) .constraint)
-                  x))
-        c))
-
-(defn strip-constraints [c]
-  (cata (fn [x]
-          (either (map (instance? ConstrainedAST x) .ast)
-                  x))
-        c))
-
 (extend-type c/SymbolConstraints
   TypeChecker
   (type-check [c old-c]
-    (let [c (strip-asts c)]
+    (let [c (remove-asts c)]
       (map (either (map (c/extract-sym old-c)
                         (fn [sym]
                           (flat-map (get-type-constraint sym)
@@ -8060,7 +8105,7 @@
            ;;         nothing)))
            (cond (instance? c/ParamConstraint (.constraint c-ast))
                  (Left (c/intersect (.constraint c-ast)
-                                    (-> (c/CallValue (map args strip-asts) empty-list (ast/untag target) "")
+                                    (-> (c/CallValue (map args remove-asts) empty-list (ast/untag target) "")
                                         (c/update-path (ast/location target)))))
 
                  ;; TODO: seems to be called on recursive calls.
@@ -8519,21 +8564,21 @@
 ;;    'nth maybe-coll-inner
 ;;    'second maybe-coll-inner
 ;;    'assoc (fn [target arity [coll-c key-c val-c]]
-;;             (let [coll-c (strip-asts coll-c)
+;;             (let [coll-c (remove-asts coll-c)
 ;;                   key-c (either (for [_ (instance? PrototypeImpls (.ast key-c))
 ;;                                       impl-sym (get-in key-c [.ast .fn-sym])
 ;;                                       :when (flat-map (first (str impl-sym))
 ;;                                                       (partial = "."))]
 ;;                                   (c/Field impl-sym))
-;;                                 (strip-asts key-c))
-;;                   val-c (strip-asts val-c)]
+;;                                 (remove-asts key-c))
+;;                   val-c (remove-asts val-c)]
 ;;               (se/state-error (either (= c/top-type coll-c)
 ;;                                       (c/intersect coll-c (c/set-field key-c val-c))))))
 
 ;;    'hash-map (fn [target arity args]
 ;;                (-> (partition args 2)
 ;;                    (reduce {} (fn [m [k v]]
-;;                                 (assoc m (strip-asts k) (strip-asts v))))
+;;                                 (assoc m (remove-asts k) (remove-asts v))))
 ;;                    ((fn [kv-map]
 ;;                       (cata (fn [c]
 ;;                               (cond (instance? c/HashMapConstraint c)
@@ -8623,20 +8668,20 @@
 ;;                ;;                        (fn [_]
 ;;                ;;                          se-nop))
 ;;                ;;                   (se-debug 'flat-map loc
-;;                ;;                             "\n" 'arity (strip-constraints arity)
+;;                ;;                             "\n" 'arity (remove-constraints arity)
 ;;                ;;                             "\n\n" 'arity-params (.param-consts arity)
 ;;                ;;                             "\n\n" 'arity-result (.result-const arity)
-;;                ;;                             "\n\n" 'arg-cs (strip-asts args)
+;;                ;;                             "\n\n" 'arg-cs (remove-asts args)
 ;;                ;;                             "\n\n" 'coll coll
 ;;                ;;                             "\n\n" 'f f))
-;;                ;;         :let [arg-params (c/intersect (.items c/list-constraint (strip-asts args))
+;;                ;;         :let [arg-params (c/intersect (.items c/list-constraint (remove-asts args))
 ;;                ;;                                       (.param-consts arity))]
 ;;                ;;         _ (either (map (or (= (.file loc) 'core)
 ;;                ;;                            (= (.line loc) 0))
 ;;                ;;                        (fn [_]
 ;;                ;;                          se-nop))
 ;;                ;;                   (se-debug 'flat-map loc "\n" 'arg-params arg-params))
-;;                ;;         checked (type-check-ast (-> (strip-constraints arity)
+;;                ;;         checked (type-check-ast (-> (remove-constraints arity)
 ;;                ;;                                     (.param-consts arg-params)))]
 ;;                ;;     (do
 ;;                ;;       (either (or (= (.file loc) 'core)
@@ -8710,6 +8755,12 @@
 
 (extend-type ast/fn-ast
   TypeChecker
+  (check-call-site [ast args target]
+    (map se-nop (fn [_]
+                  (print-err 'fn-ast 'check-call-site target (ast/location target)
+                             "\n" ast)
+                  c/top-type)))
+
   (find-arity [ast _ arg-count]
     (or (some (.arities ast) (fn [arity]
                                (and (-> arity
@@ -8723,77 +8774,6 @@
                                (and (-> arity .params .ast .variadic)
                                     (-> arity .params .ast .fixed count (<= arg-count))
                                     (maybe arity))))))
-
-  (check-call-site [ast args target]
-    (let [arg-count (count args)
-          loc (ast/location target)]
-      (either (flat-map (find-arity ast c/top-type arg-count)
-                        (fn [arity]
-                          (let [fn-param-count (count (c/extract-items-constraints (.param-consts arity)))
-                                [fixed-args variadic-args] (split (map args .constraint) fn-param-count)
-                                arg-consts (conj fixed-args (-> c/list-constraint
-                                                                (.items variadic-args)
-                                                                (.tail-c c/bottom-type)))]
-                            (map (and (= target 'show-type)
-                                      (first arg-consts))
-                                 (fn [c]
-                                   (apply print-err (map (cata c/show-full (c/update-path c loc))
-                                                         (partial str  "\n  ")))))
-                            ;; (or (= (.line loc) 0)
-                            ;;     (= (.file loc) 'core)
-                            ;;     (do
-                            ;;       (print-err 'call-fn target (.fn-var arity) loc
-                            ;;                  "\n" 'param-consts (.param-consts arity)
-                            ;;                  "\n\n" 'extracted (-> (.param-consts arity)
-                            ;;                                        c/extract-items-constraints)
-                            ;;                  "\n\n" 'arg-count arg-count
-                            ;;                  "\n\n" 'param-cs (c/extract-items-constraints (.param-consts arity)
-                            ;;                                                                arg-count)
-                            ;;                  "\n\n" 'args (-> arg-consts
-                            ;;                                   (interpose  "\n")
-                            ;;                                   vec))
-                            ;;       nothing))
-                            (and (<= fn-param-count arg-count)
-                                 (maybe (-> (.param-consts arity)
-                                            (c/extract-items-constraints arg-count)
-                                            (zip-lists args)
-                                            vec
-                                            ;; TODO: should use 'for' expression
-                                            (se/traverse (fn [[c arg]]
-                                                           (update-constraint
-                                                            arg (c/reify-type-constraint c (.fn-var arity)
-                                                                                         arg-consts loc)
-                                                            loc)))
-                                            (flat-map (fn [args]
-                                                        (either (map (get special-call-targets target)
-                                                                     (fn [f]
-                                                                       (f target arity args)))
-                                                                (-> arity
-                                                                    .result-const
-                                                                    (c/update-path loc)
-                                                                    se/state-error))))
-                                            (map (fn [result-c]
-                                                   (Left 
-                                                    (let [r (c/reify-type-constraint result-c (.fn-var arity)
-                                                                                     arg-consts loc)]
-                                                      ;; (or (= (.line loc) 0)
-                                                      ;;     ;; (= (.file loc) 'core)
-                                                      ;;     (do
-                                                      ;;       (print-err 'call-fn (.fn-sym arity) (.fn-var arity) loc
-                                                      ;;                  "\n" 'args (-> arg-consts
-                                                      ;;                                 (interpose  "\n")
-                                                      ;;                                 vec)
-                                                      ;;                  "\n\n" 'result-c result-c
-                                                      ;;                  "\n\n" 'fn-result r)
-                                                      ;;       nothing))
-                                                      r))))))))))
-              (se/throw (str "Could not find implementation of " (str "'" (either (.fn-sym ast)
-                                                                                  "<anon>") "'")
-                             " at " (either (map (empty? args)
-                                                 (fn [_]
-                                                   loc))
-                                            loc)
-                             " with " arg-count " arguments.")))))
 
   (pre-check [ast]
     (let [loc (ast/location ast)]
@@ -9287,12 +9267,11 @@
       (for [
             ;; _ (se/when (or (= (.line loc) 0)
             ;;                (= (.file loc) 'core)
-            ;;                (and (< 19 (.line loc) 21)
-            ;;                     (maybe (print-err 'calling-top (.call-target old-ast) loc
-            ;;                                       "\n\n" 'args (-> (.args ast)
-            ;;                                                        (map .constraint)
-            ;;                                                        (interpose  "\n")
-            ;;                                                        vec))))
+            ;;                (maybe (print-err 'calling-top (.call-target old-ast) loc
+            ;;                                  "\n\n" 'args (-> (.args ast)
+            ;;                                                   (map .constraint)
+            ;;                                                   (interpose  "\n")
+            ;;                                                   vec)))
             ;;                (maybe nothing)))
             result-type (apo (fn [inner-ast]
                                ;; (or (= (.line loc) 0)
@@ -9419,6 +9398,13 @@
             (se/state-error (Left c/top-type))))
 
   (pre-check [ast]
+    ;; (let [loc (ast/location ast)]
+    ;;   (or (= (.line loc) 0)
+    ;;       (= (.file loc) 'core)
+    ;;       (do
+    ;;         (print-err 'let loc
+    ;;                    "\n" ast)
+    ;;         nothing)))
     (-> ast
         (.body (remove (.body ast)
                        (partial instance? ast/block-comment-ast)))
