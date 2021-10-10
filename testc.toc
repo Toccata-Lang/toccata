@@ -1,0 +1,231 @@
+
+;; (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
+;;                            "state-error.toc"
+;;                            :sha "a1bad99"))
+;; (def se-nop (se/state-error '_))
+
+(add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
+                          "constraints.toc"
+                          :sha "e6bc862"))
+
+(extend-type Symbol
+  Container
+  (map [x f]
+    x)
+
+  (map [x f embed]
+    (embed x)))
+
+(extend-type Integer
+  Container
+  ;; TODO: remove these
+  (map [x f]
+    x)
+
+  (map [x f embed]
+    (embed x)))
+
+(extend-type String
+  Container
+  (map [s _] s)
+  (map [s _ embed] (embed s)))
+
+(deftype ConstrainedAST [ast constraint]
+  (assert (instance? c/Constraints constraint))
+
+  Stringable
+  (string-list [_]
+    (list "(ConstrainedAST " (str ast "\n")
+          (str constraint) ")"))
+
+  Container
+  (map [x f]
+    (ConstrainedAST (f ast) (f constraint)))
+
+  (map [x f embed]
+    (for [new-ast (f (.ast x))
+          new-constraint (f (.constraint x))]
+      (ConstrainedAST new-ast new-constraint))))
+
+(defprotocol TypeChecker
+  (param-types [_]))
+
+(def ListOrVect (any-of c/VectorConstraint
+                        c/ListConstraint))
+
+(defn set-items [c items]
+  (cata (fn [c]
+          (cond (instance? ListOrVect c)
+                (.items c items)
+
+                c))
+        c))
+
+(defn set-tail [c tail]
+  (cata (fn [c]
+          (cond (instance? ListOrVect c)
+                (.tail-c c tail)
+
+                c))
+        c))
+
+;; (def c1 (c/ParamConstraint 'AType-x-setter 0 []
+;;                            [(c/SetField (c/Field (symbol ".x")) (c/ParamConstraint 'AType-x-setter 1 []
+;;                                                                                    []
+;;                                                                                    (list) c/no-symbol ""))
+;;                             (c/ReifiedConstraint 65 {(c/Field (symbol ".x")) c/top-type}
+;;                                                  (symbol "AType") (list) c/no-symbol "")]
+;;                            (list) c/no-symbol ""))
+
+;; (def args [(c/ReifiedConstraint 65 {(c/Field (symbol ".x"))
+;;                                     (c/IntegerConstraint 9 2147483647 -2147483648 (list) c/no-symbol "")}
+;;                                 (symbol "AType") (list) c/no-symbol "")
+;;            (c/SymbolConstraint c/no-symbol (list) c/no-symbol "")])
+
+(def all-constraint-types [c/top-type
+                           c/bottom-type
+                           (c/InferredInner c/top-type empty-list c/no-symbol "")
+                           (c/CollectionOf c/top-type empty-list c/no-symbol "")
+                           c/int-constraint
+                           ;; TODO: put these back in and test
+                           ;; c/type-of-constraint
+                           ;; c/inner-type-of-constraint
+                           c/fn-constraint
+                           c/sym-constraint
+                           c/vect-constraint
+                           c/list-constraint
+                           c/substr-constraint
+                           c/strbuff-constraint
+                           c/string-constraint
+                           c/hash-coll-constraint
+                           c/hashmap-constraint
+                           c/maybe-constraint
+                           c/set-constraint
+                           c/agent-constraint
+                           c/promise-constraint
+                           c/future-constraint
+                           c/opaque-constraint
+                           c/arity-constraint
+                           (c/DebugConstraint c/top-type empty-list c/no-symbol "")
+                           (c/DynamicFields c/set-constraint [(c/Field 'set-map)]
+                                            empty-list c/no-symbol "")
+                           (c/ParamConstraint 'arity-id 0 [] [] empty-list c/no-symbol "")
+                           (c/ReifiedFields [] empty-list c/no-symbol "")
+                           (c/SetField 'set-map c/top-type)
+                           (c/GetField 'set-map)
+                           (c/GetInnerType empty-list)
+                           (c/CallValue [] empty-list c/no-symbol "")
+                          ])
+
+
+;; For testing UpdateDynamicField
+(def arity-sym 'fn-arity861)
+(def c1 (c/ListConstraint
+         []
+         (c/CollectionOf
+             (c/SumConstraint
+              [(c/ParamConstraint 'fn-arity861 0 []
+                                  [(c/IntegerConstraint c/no-int 2147483647 -2147483648 (list) c/no-symbol "")]
+                                  (list) 'y "")
+               (c/ParamConstraint 'fn-arity861 1 []
+                                  [(c/ListConstraint [] (c/CollectionOf c/top-type (list ) c/no-symbol "")
+                                                     (list) c/no-symbol "")
+                                   (c/GetInnerType empty-list)
+                                   (c/IntegerConstraint c/no-int 2147483647 -2147483648 (list) c/no-symbol "")]
+                                  (list) 'ys "")]
+              (list) 'a "")
+             (list ) c/no-symbol "")
+         (list) c/no-symbol ""))
+
+(def param-cs [(c/SymbolConstraint c/no-symbol (list) c/no-symbol ""), 
+               (c/ListConstraint [] (c/NoValues []) (list) c/no-symbol "")])
+
+(deftype PrototypeImpls [fn-sym impls]
+  (assert (instance? Symbol fn-sym))
+  (assert (instance? (map-of Integer HashMap) impls))
+
+  Stringable
+  (string-list [_]
+    (list "(PrototypeImpls " (str fn-sym) "\n" (str impls) ")"))
+
+  Container
+  (map [x f]
+    (PrototypeImpls fn-sym
+                    (map-vals impls (fn [impl-fns]
+                                      (map-vals impl-fns (fn [arities]
+                                                           (map arities f)))))))
+
+  (map [x f embed]
+    (map (contextual-map-vals impls (fn [impl-fns]
+                                      (contextual-map-vals impl-fns f embed))
+                              embed)
+         (partial PrototypeImpls fn-sym))))
+
+;; DynamicResultConstraint
+
+;; (def c1 (c/UpdateDynamicField 'AType-x-setter 0 [(c/Field (symbol ".x"))]
+;;                               (c/ParamConstraint 'AType-x-setter 1 [] (list) nothing "") (list)  nothing ""))
+;; (def c (c/SumConstraint
+;;         [(c/TypeConstraint {64 {(c/Field (symbol ".y")) (c/TypeConstraint {10 {}} (list) 'Final-Symbol nothing "")}
+;;                             67 {(c/Field (symbol ".x")) (c/TypeConstraint {1 {}} (list) 'Integer nothing "")}}
+;;                            (list) 'Integer nothing "")
+;;          (c/TypeConstraint {64 {(c/Field (symbol ".y")) (c/TypeConstraint {1 {}} (list) 'Final-Integer nothing "")}
+;;                             67 {(c/Field (symbol ".x")) (c/TypeConstraint {1 {}} (list) 'Integer nothing "")}}
+;;                            (list) 'Integer nothing "")] (list) nothing ""))
+
+(defn test-intersect [c1 c2]
+  (let [final-1 (c/intersect c1 c2)
+        ;; _ (print-err 'final-1 final-1)
+        final-2 (c/intersect c2 c1)]
+    ;; (print-err 'final-2 final-2)
+    (either (map (= final-2 final-1)
+                 (fn [c]
+                   'failed
+                   ;; (either (map (instance? c/NoValues c)
+                   ;;              (fn [_]
+                   ;;                (c/conflicting-assertions c _FILE_ _LINE_)
+                   ;;                (print-err 'c c)))
+                   ;;         (print-err 'final-c c))
+                   ))
+            (do
+              (print-err "FAIL!! 'c/intersect not commutative")
+              (print-err 'c1 c1)
+              (print-err 'c2 c2)
+              (print-err final-1)
+              (print-err final-2)))) )
+
+(defn drop-until [coll pred]
+  (cond (flat-map (first coll) pred)
+        coll
+
+        (drop-until (rest coll) pred)))
+
+(main [_]
+  ;; (print-err (c/reify-type-constraint c1 arity-sym param-cs (c/Location "burp" 33)))
+  ;; (print-err 'c (c/sum-type
+  ;;                [(c/extract-contents-constraint
+  ;;                  (c/ListConstraint [] (c/CollectionOf c/bottom-type (list ) c/no-symbol "")
+  ;;                                    (list) 'result ""))
+  ;;                 (c/IntegerConstraint c/no-int 2147483647 -2147483648 (list) c/no-symbol "")]))
+
+;; (c/ListConstraint [(c/MaybeConstraint c/top-type (list) c/no-symbol ""), c/top-type] (c/NoValues []) (list) c/no-symbol "")
+  
+  (for [c1 all-constraint-types
+        c2 (drop-until all-constraint-types (partial = c1))]
+    (test-intersect c1 c2))
+  
+  'done)
+
+;; Design
+
+;; Pass through of dynamic value with literal fields
+;; Pass through of dynamic value with updated fields
+;; Construct dyn value with apply
+;; Update field of dyn value with literal in fun
+;; Update field of dyn value with parameter in fun
+;; Constrain fields of dynamic param
+;; Update an updated field of dyn value with parameter in fun
+;; Return field of dyn param. Pass through or updated.
+;; All the above nested
+;; All the above with dyn values re-named in 'let'
+;; All the above for multiple fields in a dyn value on same call
