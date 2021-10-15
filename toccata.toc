@@ -7670,6 +7670,8 @@
 (extend-type c/ReifiedConstraint
   TypeChecker
   (find-arity [c type-num args-count]
+    ;; TODO: remove this whole impl if possible
+    (print-err 'BOOOOOOOOOMMMMM _FILE_ _LINE_)
     (let [args-count (inc args-count)]
       (map (get-in c [.invoke-arities args-count])
            (fn [arity-c]
@@ -7687,26 +7689,51 @@
 
   (check-call-site [ast args target]
     (let [loc (ast/location target)
+          args (comp [(ConstrainedAST target ast)] args)
+          num-args (count args)
           tagged-invoke (ast/tag 'invoke loc)]
-      (for [
-            ;; _ (se/when (or (= (.line loc) 0)
-            ;;                (= (.file loc) 'core)
-            ;;                (maybe (print-err 'checking-reified loc ast
-            ;;                                  "\n\n" 'args args))
-            ;;                (maybe '_)))
-            invoke-impls (get-type-constraint tagged-invoke)
-            ;; _ (se/when (and (= target 'wrapper)
-            ;;                 (maybe (print-err 'invoke-impls loc
-            ;;                                   (get-in invoke-impls [.ast .impls (.type-num ast)])))))
-            r (check-call-site (.ast invoke-impls) (comp [(ConstrainedAST target ast)] args)
-                               tagged-invoke)]
-        (do
-          ;; (or (= (.line loc) 0)
-          ;;     (= (.file loc) 'core)
-          ;;     (and (= target 'wrapper)
-          ;;          (maybe (print-err 'checked-reified loc ast
-          ;;                            "\n\n" 'r r))))
-          r)))))
+      (either (map (get-in ast [.invoke-arities num-args])
+                   (fn [invoke-arity]
+                     (let [args (-> (.param-consts invoke-arity)
+                                    (c/extract-items-constraints num-args)
+                                    (zip-lists (remove-asts args))
+                                    vec
+                                    (map (fn [[c arg]]
+                                           ;; (or (= (.line loc) 0)
+                                           ;;     (= (.file loc) 'core)
+                                           ;;     (maybe (print-err 'call-reified loc target
+                                           ;;                       "\n\n" 'c c
+                                           ;;                       "\n\n" 'arg arg))
+                                           ;;     (maybe '_))
+                                           (c/intersect c arg))))]
+                       (let [r (c/reify-type-constraint (c/update-path (.result-const invoke-arity) loc)
+                                                        (.arity-id invoke-arity) args loc)]
+                         ;; (or (= (.line loc) 0)
+                         ;;     (= (.file loc) 'core)
+                         ;;     (do
+                         ;;       (print-err 'call-reified loc target
+                         ;;                  (str "'" (.arity-id invoke-arity))
+                         ;;                  "\n" 'arity-result (.result-const invoke-arity)
+                         ;;                  "\n\n" 'result-c (.result-const invoke-arity)
+                         ;;                  "\n\n" 'arg-consts
+                         ;;                  "\n" (str "[" (to-str (interpose args "\n")) "]")
+                         ;;                  "\n\n" 'final-c r)
+                         ;;       nothing))
+                         (se/state-error (Left r))))))
+              (for [
+                    _ (se/when (or (= (.line loc) 0)
+                                   (= (.file loc) 'core)
+                                   (maybe (print-err 'checking-reified loc ast
+                                                     "\n\n" 'args args))
+                                   (maybe '_)))
+                    invoke-impls (get-type-constraint tagged-invoke)
+                    r (check-call-site (.ast invoke-impls) args tagged-invoke)]
+                (do
+                  (or (= (.line loc) 0)
+                      (= (.file loc) 'core)
+                      (maybe (print-err 'checked-reified loc ast
+                                        "\n\n" 'r r)))
+                  r))))))
 
 (extend-type c/FnConstraint
   TypeChecker
