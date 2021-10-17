@@ -2389,7 +2389,7 @@ Value *listConcat(Value *arg0) {
     dec_and_free((Value *)ls, 1);
     if (h != (Value *)0 && h->type == VectorType) {
        return(vectSeq((Vector *)h, 0));
-    } else if (h != (List *)0 && h->type != ListType) {
+    } else if (h != (Value *)0 && h->type != ListType) {
       // TODO: this test should be redundant when type checker is finished. Verify
       fprintf(stderr, "*** Could not concatenate non-list value with list\n");
       abort();
