@@ -2389,6 +2389,10 @@ Value *listConcat(Value *arg0) {
     dec_and_free((Value *)ls, 1);
     if (h != (Value *)0 && h->type == VectorType) {
        return(vectSeq((Vector *)h, 0));
+    } else if (h != (List *)0 && h->type != ListType) {
+      // TODO: this test should be redundant when type checker is finished. Verify
+      fprintf(stderr, "*** Could not concatenate non-list value with list\n");
+      abort();
     } else {
       return(h);
     }
@@ -2402,6 +2406,10 @@ Value *listConcat(Value *arg0) {
       if (l != (List *)0 && l->type == VectorType) {
         l = (List *)vectSeq((Vector *)incRef((Value *)l, 1), 0);
         discard = 1;
+      } else if (l != (List *)0 && l->type != ListType) {
+	// TODO: this test should be redundant when type checker is finished. Verify
+	fprintf(stderr, "*** Could not concatenate non-list value with list\n");
+	abort();
       }
       Value *x;
       for(; l != (List *)0 && l->head != (Value *)0; l = newL) {
