@@ -53,7 +53,7 @@
                            :sha "1e413ea"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
-                           :sha "a1bad99"))
+                           :sha "9e16fc9"))
 
 (def symbols-sym (ast/tag "#symbols"))
 (def protocols-sym (ast/tag "#protocols"))
@@ -103,7 +103,8 @@
     (print x)))
 
 (def sm-nop (sm/state-maybe '_))
-(def se-nop (se/state-error '_))
+(def se-nop (se/new-se (fn [s]
+                         ['_ s])))
 
 (def string-writer (agent ""))
 (defn write-strings [strs]
@@ -7228,21 +7229,21 @@
 
   ;; TODO: need to make sure every possible call target ast is implemented
   (check-call-site [ast args target]
-    (assert-result x (instance? se/new-se x)))
+    (assert-result x (instance? se/StateError x)))
 
   (recover-type-constraint [x]
     (se/state-error x))
 
   (param-types [_]
-    (assert-result x (instance? se/new-se x)))
+    (assert-result x (instance? se/StateError x)))
 
   (pre-check [ast]
-    (assert-result r (instance? se/new-se r))
+    (assert-result x (instance? se/StateError x))
 
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (assert-result r (instance? se/new-se r))
+    (assert-result x (instance? se/StateError x))
 
     (se/state-error (ConstrainedAST ast ast))))
 
@@ -7675,28 +7676,37 @@
           tagged-invoke (ast/tag 'invoke loc)]
       (either (map (get-in ast [.invoke-arities num-args])
                    (fn [invoke-arity]
+                     ;; (print-err 'call-reify-constraint target loc
+                     ;;            "\n" 'num-args num-args
+                     ;;            "\n\n" 'param-cs (.param-consts invoke-arity)
+                     ;;            "\n\n" 'args (-> args
+                     ;;                             (interpose  "\n")
+                     ;;                             vec)
+                     ;;            "\n\n" 'result-c (.result-const invoke-arity))
                      (for [args (-> (.param-consts invoke-arity)
                                     (c/extract-items-constraints num-args)
                                     (zip-lists args)
                                     vec
                                     (se/traverse (fn [[c arg]]
-                                                   ;; (or (= (.line loc) 0)
-                                                   ;;     (= (.file loc) 'core)
-                                                   ;;     (maybe (print-err 'call-reified loc target
-                                                   ;;                       "\n\n" 'c c
-                                                   ;;                       "\n\n" 'arg arg))
-                                                   ;;     (maybe '_))
-                                                   (update-constraint arg c loc))))]
+                                                   (flat-map se-nop
+                                                             (fn [_]
+                                                               ;; (or (= (.line loc) 0)
+                                                               ;;     (= (.file loc) 'core)
+                                                               ;;     (maybe (print-err 'call-reify-constraint
+                                                               ;;                       target loc
+                                                               ;;                       "\n\n" 'c c
+                                                               ;;                       "\n\n" 'arg arg))
+                                                               ;;     (maybe '_))
+                                                               (update-constraint arg c loc))))))]
                        (let [args (remove-asts args)
                              r (c/reify-type-constraint (c/update-path (.result-const invoke-arity) loc)
                                                         (.arity-id invoke-arity) args loc)]
                          ;; (or (= (.line loc) 0)
                          ;;     (= (.file loc) 'core)
                          ;;     (do
-                         ;;       (print-err 'call-reified loc target
+                         ;;       (print-err 'call-reify-constraint target loc
                          ;;                  (str "'" (.arity-id invoke-arity))
                          ;;                  "\n" 'arity-result (.result-const invoke-arity)
-                         ;;                  "\n\n" 'result-c (.result-const invoke-arity)
                          ;;                  "\n\n" 'arg-consts
                          ;;                  "\n" (str "[" (to-str (interpose args "\n")) "]")
                          ;;                  "\n\n" 'final-c r)
@@ -7704,16 +7714,18 @@
                          (Left r)))))
               (for [
                     _ (se/when (or (= (.line loc) 0)
-                                   (= (.file loc) 'core)
-                                   (maybe (print-err 'checking-reified loc ast
+                                   ;; (= (.file loc) 'core)
+                                   (maybe (print-err 'checking-reified target loc
+                                                     "\n" ast
                                                      "\n\n" 'args args))
                                    (maybe '_)))
                     invoke-impls (get-type-constraint tagged-invoke)
                     r (check-call-site (.ast invoke-impls) args tagged-invoke)]
                 (do
                   (or (= (.line loc) 0)
-                      (= (.file loc) 'core)
-                      (maybe (print-err 'checked-reified loc ast
+                      ;; (= (.file loc) 'core)
+                      (maybe (print-err 'checked-reified loc target
+                                        "\n" ast
                                         "\n\n" 'r r)))
                   r))))))
 
@@ -9091,9 +9103,9 @@
 (extend-type ast/reify-ast
   TypeChecker
   (check-call-site [ast args target]
-    (let [num-args (inc (count args))
-          arg-consts (map args .constraint)
-          loc (ast/location target)]
+    (let [loc (ast/location target)
+          arg-consts (remove-asts args)
+          num-args (inc (count args))]
       (either (for [invoke-arities (get-in ast [.impls Function-sym invoke-sym])
                     ;; :let [_ (or (= (.line loc) 0)
                     ;;             (= (.file loc) 'core)
@@ -9127,9 +9139,26 @@
                       result-c (.result-const arity)]
                   (map (se/traverse (zip-lists args (rest (c/extract-items-constraints param-cs num-args)))
                                     (fn [[arg c]]
-                                      (update-constraint arg c loc)))
-                       (fn [_]
-                         (Left (c/reify-type-constraint result-c (.fn-var arity) arg-consts loc))))))
+                                      (flat-map se-nop
+                                                (fn [_]
+                                                  (or (= (.line loc) 0)
+                                                      ;; (= (.file loc) 'core)
+                                                      (maybe (print-err 'call-reify-ast loc target
+                                                                        "\n\n" 'c c
+                                                                        "\n\n" 'arg arg))
+                                                      (maybe '_))
+                                                  (update-constraint arg c loc)))))
+                       (fn [arg-consts]
+                         (let [arg-consts (comp [c/top-type] (remove-asts arg-consts))]
+                           (print-err 'call-reify target loc
+                                      "\n" 'ast ast
+                                      "\n\n" 'num-args num-args
+                                      "\n\n" 'param-cs param-cs
+                                      "\n\n" 'result-c result-c
+                                      "\n\n" 'args (-> arg-consts
+                                                       (interpose  "\n")
+                                                       vec))
+                           (Left (c/reify-type-constraint result-c (.fn-var arity) arg-consts loc)))))))
               (do
                 (print-err "No 'invoke' implementation found for"
                            (cond (instance? Tagged target)
@@ -9245,9 +9274,6 @@
                                ;;       nothing))
                                (check-call-site inner-ast (.args ast) (.call-target old-ast)))
                              (.call-target ast) se/state-error)
-            ;; new-args (se/traverse (.args ast)
-            ;;                       (fn [arg-ast]
-            ;;                         (add-to-path arg-ast loc)))
             ]
         (do
           (either (map (and (= c/bottom-type result-type)
