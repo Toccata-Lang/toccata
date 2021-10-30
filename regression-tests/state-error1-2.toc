@@ -1,0 +1,385 @@
+
+;; state-error monad with lazy comp*
+
+(defprotocol StateError
+  (chain [v-s f])
+  (is-state-error [_]
+    nothing))
+
+(inline C "
+Value *maybeFailure = (Value *)0;
+")
+
+(def Failure (reify
+               Stringable
+               (string-list [_] 
+                 (list "<Failure>"))
+
+               Eq
+               (=* [x y]
+                 (inline C Maybe "
+if (x_0 == y_1) {
+  dec_and_free(x_0, 1);
+  dec_and_free(y_1, 1);
+  return(maybeFailure);
+} else {
+  dec_and_free(x_0, 1);
+  dec_and_free(y_1, 1);
+  return(nothing);
+}
+"))
+
+               StateError
+               (chain [e _]
+                 e)))
+
+(defn init [x]
+  (inline C Maybe
+          "
+if (maybeFailure != (Value *)0) {
+  fprintf(stderr, \"Trying to re-initialize 'maybe-failure'. Are you trying to use two different versions the state-error module.\");
+  abort();
+}
+maybeFailure = maybe((FnArity *)0, (Value *)0, x_0);
+return(maybeFailure);
+"))
+
+(def maybe-failure (init Failure))
+
+(deftype Error [val state]
+  Stringable
+  (string-list [_] 
+    (list "(Error " (str val) ")"))
+
+  StateError
+  (chain [e _]
+    e))
+
+;; TODO: can't treat reified values as types.
+;; (def InvokeFailure (any-of Failure
+;;                            Error))
+
+;; (def InvokeResult (any-of Vector
+;;                           Failure
+;;                           Error))
+
+(defn reduce-args [[arg & args] s final-result]
+  ;; (assert (instance? new-se arg))
+  ;; (assert (instance? (list-of new-se) args))
+  (assert (instance? Vector final-result))
+
+  (let [x (arg s)]
+    (either (or (= Failure x)
+                (instance? Error x))
+            (let [[result new-s] x]
+              (cond (= 0 (list-count args))
+                    [(conj final-result result) new-s]
+
+                    (reduce-args args new-s (conj final-result result)))))))
+
+(extend-type Vector
+  StateError
+  (chain [v-s f]
+    (let [[v new-s] v-s]
+      (f v new-s))))
+
+;; (deftype new-se [invoke-fn]
+;;   (assert (instance? Fn invoke-fn))
+
+;;   Stringable
+;;   (string-list [x]
+;;     (comp (list "<new-se ")
+;;           (string-list (.invoke-fn x))
+;;           (list ">")))
+
+;;   Function
+;;   (invoke [ev s]
+;;     (invoke-fn s))
+
+;;   Container
+;;   (map [ev f]
+;;     (new-se (fn [s]
+;;               (let [x (invoke-fn s)]
+;;                 (either (or (= Failure x)
+;;                             (instance? Error x))
+;;                         (let [[v new-s] x]
+;;                           [(f v) new-s]))))))
+
+;;   (wrap [_ v]
+;;     (new-se (fn [s]
+;;               [v s])))
+
+;;   (apply [fv args]
+;;     (new-se (fn [s]
+;;               (let [y (reduce-args args s [])]
+;;                 (either (or (= Failure y)
+;;                             (instance? Error y))
+;;                         (let [[results new-s] y]
+;;                           (let [x (fv new-s)]
+;;                             (either (or (= Failure x)
+;;                                         (instance? Error x))
+;;                                     (let [[f final-s] x]
+;;                                       (cond (empty? results)
+;;                                             [(f) final-s]
+
+;;                                             [(apply f results) new-s]))))))))))
+
+;;   (flat-map [ev f]
+;;     (new-se (fn [s]
+;;               (let [x (invoke-fn s)]
+;;                 (either (or (= Failure x)
+;;                             (instance? Error x))
+;;                         (let [[v new-s] x]
+;;                           ((f v) new-s)))))))
+
+;;   Composition
+;;   (zero [_] (new-se (fn [s]
+;;                       Failure)))
+
+;;   (comp* [mv ses]
+;;     (assert (instance? (list-of new-se) ses))
+
+;;     (new-se (fn [s]
+;;               (let [v-s ((.invoke-fn mv) s)]
+;;                 (cond (empty? ses)
+;;                       v-s
+                     
+;;                      (either (or (instance? Vector v-s)
+;;                                  (instance? Error v-s))
+;;                              ;; TODO: somehow, this length constraint leaks out
+;;                              ;; (let [[se & ses] (either nothing ses)]
+;;                              ;;   ((comp* se ses) s))
+;;                              ((comp* (extract (first ses)) (rest ses)) s))))))))
+
+(def state-error
+  (reify
+    Function
+    (invoke [state-error v]
+      (reify
+        Stringable
+        (string-list [_]
+          (list "state-error/state-error"))
+
+        Function
+        (invoke [_ s]
+          [v s])
+
+        ;; Composition
+        ;; (zero [_]
+        ;;   (zero state-error))
+
+        ;; (comp* [_ xs]
+        ;;   (either (map (first xs) (fn [x]
+        ;;                             (comp* x (rest xs))))
+        ;;           self))
+
+        Container
+        ;; (wrap [_ v]
+        ;;   (state-error v))
+
+        ;; (apply [_ _]
+        ;;   self)
+
+        ;; (map [_ f]
+        ;;   self)
+
+        (flat-map [_ f]
+          (f v))
+        ))
+
+    Composition
+    (zero [state-error]
+      (reify
+        Stringable
+        (string-list [_]
+          (list "state-error/zero"))
+
+        Function
+        (invoke [_ s]
+          Failure)
+
+        Composition
+        (zero [self]
+          self)
+
+        (comp* [self xs]
+          (either (map (first xs) (fn [x]
+                                    (comp* x (rest xs))))
+                  self))
+
+        Container
+        (wrap [_ v]
+          (state-error v))
+
+        (apply [self _]
+          self)
+
+        (map [self f]
+          self)
+
+        (flat-map [self f]
+          self)
+        ))
+
+    ;; (comp* [v vs]
+    ;;   )
+    ))
+
+(def zero-se (zero state-error))
+
+;; (defn throw [error-value]
+;;   (new-se (partial Error error-value)))
+
+;; (defn try [f catcher]
+;;   (new-se (fn [s]
+;;             (let [x (f s)]
+;;               (either (map (instance? Error x)
+;;                            (fn [err]
+;;                              ((catcher err) s)))
+;;                       x)))))
+
+;; (defn traverse [coll f]
+;;   (map coll f state-error))
+
+;; (defn lift [f]
+;;   (fn [& args]
+;;     (new-se (fn [s]
+;;               [(apply f args) s]))))
+
+;; (defn update-state [f]
+;;   (new-se (fn [s]
+;;             [s (f s)])))
+
+;; (defn get-val
+;;   ([k]
+;;      (new-se (fn [s]
+;;                (either (map (get s k)
+;;                             (fn [v]
+;;                               [v s]))
+;;                        Failure))))
+;;   ([k nf]
+;;      (new-se (fn [s]
+;;                (either (map (get s k)
+;;                             (fn [v]
+;;                               [v s]))
+;;                        [nf s])))))
+
+;; (defn set-val [k v]
+;;   (new-se (fn [s]
+;;             [s (assoc s k v)])))
+
+;; (defn get-in-val
+;;   ([path]
+;;      (new-se (fn [s]
+;;                (either (map (get-in s path)
+;;                             (fn [v]
+;;                               [v s]))
+;;                        Failure))))
+;;   ([path nf]
+;;      (new-se (fn [s]
+;;                (either (map (get-in s path)
+;;                             (fn [v]
+;;                               [v s]))
+;;                        [nf s])))))
+
+;; (defn assoc-in-val [path v]
+;;   (new-se (fn [s]
+;;             [v (assoc-in s path v)])))
+
+;; (defn update-val [key f]
+;;   (new-se (fn [s]
+;;             (either (for [v (get s key)
+;;                           new-s (update-in s [key] f)]
+;;                       [v new-s])
+;;                     Failure))))
+
+;; (defn update-in-val [path f]
+;;   (new-se (fn [s]
+;;             (either (for [v (get-in s path)
+;;                           new-s (update-in s path f)]
+;;                       [v new-s])
+;;                     Failure))))
+
+;; (deftype Stupid [values])
+
+;; (defn recur-fn [f as s]
+;;   (assert (instance? Vector as))
+;;   (let [x (f s)]
+;;     (either (or (instance? Error x)
+;;                 (map (= Failure x) (fn [_]
+;;                                      [as s])))
+;;             (let [[v ss] x]
+;;               (recur-fn f (conj as v) ss)))))
+
+;; (defn recur [mv]
+;;   (assert (instance? new-se mv))
+;;   (new-se (fn [s]
+;;             (let [x (mv s)]
+;;               (either (or (= Failure x)
+;;                           (instance? Error x))
+;;                       (let [[v ss] x]
+;;                         (recur-fn (.invoke-fn mv) [v] ss)))))))
+
+;; (defn when [val]
+;;   (assert (instance? Maybe val))
+
+;;   (new-se (fn [s]
+;;             (either (map val (fn [v] [v s]))
+;;                     Failure))))
+
+;; (defn when-not [val]
+;;   (assert (instance? Maybe val))
+
+;;   (new-se (fn [s]
+;;             (cond (= nothing val)
+;;                   [nothing s]
+
+;;                   Failure))))
+
+(main [_]
+  (let [double (fn [x]
+                 (* 2 x))]
+    ;; check the functor and applicative laws for free-monad
+    (println)
+    (println ((state-error 'v) 'state))
+    ;; (println 'functor-1 (= ((map (state-error 5) identity) 'state)
+    ;;                        ((state-error 5) 'state)))
+    ;; (println 'functor-2 (= ((map (map (state-error 2) inc) double) 'state)
+    ;;                        ((map (state-error 2) (comp double inc)) 'state)))
+    ;; (println 'functor-3 (= ((map zero-se (comp double inc)) 'state)
+    ;;                        (Failure 'state)))
+    ;; (println 'apply-1 (= ((map (state-error 5) inc) 'state)
+    ;;                      ((apply-to inc (state-error 5)) 'state)))
+    ;; (println 'apply-2 (= ((state-error 5) 'state)
+    ;;                      ((apply-to identity (state-error 5)) 'state)))
+    ;; (let [v1 (state-error "first ")
+    ;;       v2 (state-error "second ")
+    ;;       v3 (state-error "third")]
+    ;;   (println 'apply-3 (= ((apply-to comp (apply (state-error comp) (list v1 v2)) v3) 'state)
+    ;;                        ((apply-to comp v1 (apply (state-error comp) (list v2 v3))) 'state)
+    ;;                        ((apply (state-error comp) (list v1 v2 v3)) 'state))))
+
+    (let [f-inc (fn [x] (state-error (inc x)))
+          f-dbl (fn [x] (state-error (double x)))]
+      (println 'flat-map-1 (= ((flat-map (state-error 4) f-inc) 'state)
+                              ((f-inc 4) 'state)))
+      ;; (println 'flat-map-2 (= ((flat-map (state-error 4) state-error) 'state)
+      ;;                         ((state-error 4) 'state)))
+      ;; (println 'flat-map-3 (= ((flat-map (flat-map (state-error 4) f-inc) f-dbl) 'state)
+      ;;                         ((flat-map (state-error 4) (fn [x] (flat-map (f-inc x) f-dbl))) 'state)))
+      )
+
+    ;; (println 'comp-1 ((comp zero-se
+    ;;                         (state-error 'a))
+    ;;                   'state))
+
+    ;; (println 'comp-2 ((comp (state-error 'a)
+    ;;                         zero-se)
+    ;;                   'state))
+
+    ;; (println 'comp-3 ((comp zero-se
+    ;;                         zero-se
+    ;;                         (state-error 'a))
+    ;;                   'state))
+    (println)
+    ))
