@@ -7685,6 +7685,8 @@
                      ;;                             vec)
                      ;;            "\n\n" 'result-c (.result-const invoke-arity))
                      (for [args (-> (.param-consts invoke-arity)
+                                    (c/reify-type-constraint (.arity-id invoke-arity)
+                                                             (remove-asts args) loc)
                                     (c/extract-items-constraints num-args)
                                     (zip-lists args)
                                     vec
@@ -7735,6 +7737,7 @@
   (check-call-site [ast args target]
     (let [loc (ast/location target)
           arg-count (count args)
+          arg-consts (remove-asts args)
           arity (or (get-in ast [.arities arg-count])
                     (get-in ast [.arities c/variadic]))]
       (either (map arity
@@ -7751,19 +7754,60 @@
                      (let [required-args (-> (.param-consts arity)
                                              c/extract-items-constraints
                                              count)
-                           arg-consts (-> c/list-constraint
-                                          (.items (remove-asts args))
-                                          (.tail-c c/bottom-type))
-                           checked-args (c/intersect arg-consts (.param-consts arity))
+                           _ (and (< arg-count required-args)
+                                  (do
+                                    (print-err "Insufficient number of arguments to function called at" loc)
+                                    (abort)))
+                           [fixed-args var-args] (split arg-consts required-args)
+                           var-args (-> c/list-constraint
+                                        (.items var-args)
+                                        (.tail-c c/bottom-type))
+                           ;; _ (and (= target 'g)
+                           ;;        (do
+                           ;;          (print-err 'fixed-args fixed-args)
+                           ;;          (print-err 'var-args var-args)
+                           ;;          nothing))
+                           fixed-params (-> (.param-consts arity)
+                                            c/extract-items-constraints
+                                            (map (fn [c]
+                                                   ;; (and (= target 'g)
+                                                   ;;      (maybe (print-err 'fixed-c c)))
+                                                   (c/reify-type-constraint c (.arity-id arity)
+                                                                            (conj fixed-args var-args)
+                                                                            loc))))
+                           var-params (either (= (.tail-c (.param-consts arity)) c/bottom-type)
+                                              (do
+                                                ;; (and (= target 'g)
+                                                ;;      (maybe (print-err 'var-c (.tail-c (.param-consts arity)))))
+                                                (-> (.tail-c (.param-consts arity))
+                                                    (c/reify-type-constraint (.arity-id arity)
+                                                                             (conj fixed-args var-args)
+                                                                             loc))))
+                           arg-cs (-> c/list-constraint
+                                      (.items fixed-args)
+                                      (.tail-c var-args))
+                           param-cs (-> c/list-constraint
+                                        (.items fixed-params)
+                                        (.tail-c var-params))
+                           ;; _ (and (= target 'g)
+                           ;;        (do
+                           ;;          (print-err 'param-cs param-cs)
+                           ;;          (print-err 'arg-cs arg-cs)
+                           ;;          nothing))
+                           checked-args (c/intersect arg-cs param-cs)
+                           ;; _ (and (= target 'g)
+                           ;;        (do
+                           ;;          (print-err 'checked-args checked-args)
+                           ;;          nothing))
                            new-arg-cs (either (and (= c/bottom-type checked-args)
                                                    (do
-                                                     (cond (< arg-count required-args)
-                                                           (print-err "Insufficient number of arguments to"
-                                                                      "function called at" loc)
-
-                                                           (c/conflicting-assertions checked-args loc))
+                                                     (c/conflicting-assertions checked-args loc)
                                                      (abort)))
                                               (c/extract-items-constraints checked-args arg-count))]
+                       ;; (and (= target 'g)
+                       ;;      (do
+                       ;;        (print-err 'new-arg-cs new-arg-cs)
+                       ;;        nothing))
                        (map (and (= target 'show-type)
                                  (first new-arg-cs))
                             (fn [c]
@@ -7866,6 +7910,14 @@
            ;;         nothing)))
            (let [inner-c (c/extract-contents-constraint (.constraint const-c))]
              (ConstrainedAST inner-c inner-c))))))
+
+(extend-type c/ArgOf
+  TypeChecker
+  (type-check [c old-c]
+    (let [loc (ast/location (.fn-sym old-c))]
+      (for [fn-c (get-type-constraint (.fn-sym old-c))]
+        (let [r (c/intersect (.constraint fn-c) c)]
+          (ConstrainedAST r r))))))
 
 (deftype ConstrainedSum [alts path sym var]
   (assert (instance? (any-of Symbol
@@ -8196,7 +8248,7 @@
   (param-types [params]
     (-> c/seq-constraint
         (c/set-tail (either (.variadic params)
-                          c/bottom-type))
+                            c/bottom-type))
         (c/set-items (.fixed params))
         se/state-error))
 
@@ -8823,7 +8875,7 @@
 
   (check-call-site [proto-impls args target]
     (let [num-args (count args)
-          arg-consts (map args .constraint)
+          arg-consts (remove-asts args)
           loc (ast/location target)]
       (either (map (first args)
                    (fn [disp-arg]
@@ -9135,7 +9187,8 @@
                                                           count
                                                           (=* num-args))
                                                       (maybe arity))))]
-                (let [param-cs (.param-consts arity)
+                (let [param-cs (c/reify-type-constraint (.param-consts arity) (.fn-var arity)
+                                                        (remove-asts args) loc)
                       result-c (.result-const arity)]
                   (map (se/traverse (zip-lists args (rest (c/extract-items-constraints param-cs num-args)))
                                     (fn [[arg c]]
@@ -9681,15 +9734,9 @@
 (extend-type ast/string-ast
   TypeChecker
   (type-check [ast old-ast]
-    (se/state-error (ConstrainedAST (.string old-ast)
-                                    (-> (cata (fn [c]
-                                                (cond (or (instance? c/StrBuffConstraint c)
-                                                          (instance? c/SubStrConstraint c))
-                                                      (.static-value c (.string old-ast))
-
-                                                      c))
-                                              c/string-constraint)
-                                        (c/update-path (ast/location old-ast)))))))
+    (let [str-val (.string old-ast)]
+      (se/state-error (ConstrainedAST str-val
+                                      (.static-value c/strbuff-constraint str-val))))))
 
 (deftype AndClause [clause]
   Stringable
@@ -10071,6 +10118,7 @@
                       TypeChecker
                       (type-check [ast old-ast]
                         (se/state-error (ConstrainedAST ast (-> c/sym-constraint
+                                                                (.static-value (symbol (rest (str ast))))
                                                                 (c/update-path (ast/location ast))))))))))
 
 (extend-type ast/main-ast
