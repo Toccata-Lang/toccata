@@ -1,0 +1,1061 @@
+
+;; TODO: stupid that I need this
+(deftype Dummy [values])
+
+(add-ns sh (git-dependency "https://github.com/Toccata-Lang/shell-proc.git"
+                           "shell-proc.toc"
+                           :sha "1e413ea"))
+(add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
+                            "file-io.toc"
+                            :sha "36fa952"))
+(add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
+                            "system.toc"
+                            :sha "13097ff"))
+(add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
+                           "state-maybe.toc"
+                           :sha "4f87b5e"))
+(add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
+                           "state-error.toc"
+                           :sha "3928103"))
+(add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
+                          "constraints.toc"
+                          :sha "ad576e3"))
+(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
+                            "ast.toc"
+                            :sha "f854f65"))
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "4846add"))
+(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
+                           "recursive-descent.toc"
+                           :sha "22982cd"))
+(add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
+                            "reader.toc"
+                            :sha "5f48eeb"))
+
+(def Tagged (any-of Symbol
+                    ast/tagged-symbol))
+
+(def symbols-sym (ast/tag "#symbols"))
+(def protocols-sym (ast/tag "#protocols"))
+
+(def sm-nop (sm/state-maybe '_))
+(def se-nop (se/new-se (fn [s]
+                         ['_ s])))
+
+;; useful for debugging the compiler
+(defn sm-debug [& args]
+  (map sm-nop (fn [_]
+                (apply print-err args))))
+
+(defn se-debug [& args]
+  (se/new-se (fn [s]
+               (apply print-err args)
+               ['_ s])))
+
+;; for when a fatal error occurs
+(defn compilation-error [& msg]
+  (sm/new-sm (fn [s]
+               (apply print-err msg)
+               nothing)))
+
+(def type-names {c/IntegerType "Integer"
+                 c/StringBufferType "String"
+                 c/SubStringType "String"
+                 c/FnArityType "FnArity"
+                 c/FunctionType "Fn"
+                 c/ListType "List"
+                 c/MaybeType "Maybe"
+                 c/VectorType "Vector"
+                 c/VectorNodeType "VectorNode"
+                 c/SymbolType "Symbol"
+                 c/BitmapIndexedType "BitmapIndexNode"
+                 c/ArrayNodeType "ArrayNode"
+                 c/HashCollisionNodeType "HashCollisionNode"
+                 c/HashSetType "Set"
+                 c/PromiseType "Promise"
+                 c/FutureType "Future"
+                 c/AgentType "Agent"
+                 c/OpaqueType "Opaque"
+                 c/UnknownType "UnknownType"})
+
+(defprotocol C-Code
+  (clear-init [expr]
+    ;; TODO: re-arrange code to make this possible
+    ;; (assert (instance? BindingValue expr))
+    )
+
+  (expr-constraints [expr]
+    (assert-result x (instance? c/Constraints x)))
+
+  (expr-constraints [expr new-const]
+    (assert (instance? c/Constraints new-const))
+
+    expr)
+
+  (collapse-expressions* [x y]
+    (assert-result r (instance? sm/new-sm r))))
+
+(deftype empty-code [c-var init refs-map]
+  (assert (instance? String c-var))
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+
+  Stringable
+  (string-list [_]
+    (list "<Empty-C-Code>"))
+
+  Collection
+  (empty? [c]
+    (maybe c)))
+
+(def empty-c-code (empty-code "" [] {}))
+
+(deftype c-code [c-var init refs-map constraints]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+  (assert (instance? c/Constraints constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<c-code " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ", "
+          (str constraints) ">"))
+
+  C-Code
+  (clear-init [expr]
+    (c-code (.c-var expr) [] {(.c-var expr) 1} c/top-type)))
+
+(deftype c-static-reified [type-num c-var init refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+  (assert (instance? c/Constraints constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Reified " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ", "
+          (str constraints) ", " (str c-struct) ">")))
+
+(deftype c-constructor [c-var init refs-map constraints c-struct type-num fields]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+  (assert (instance? c/Constraints constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Type-Constructor " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ", "
+          (str constraints) ", " (str c-struct) ", " (str type-num) ">")))
+
+(deftype c-static-str [c-var init refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+  (assert (instance? c/Constraints constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-String " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ", "
+          (str constraints) ", " (str c-struct) ">")))
+
+(deftype c-static-int [c-var init refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+  (assert (instance? c/Constraints constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Int " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ", "
+          (str constraints) ", " (str c-struct) ">")))
+
+(deftype c-static-sym [c-var init refs-map constraints c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+  (assert (instance? c/Constraints constraints))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Symbol " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ", "
+          (str constraints) ", " (str c-struct) ">")))
+
+(deftype c-vector-fn [c-var init refs-map c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+
+  C-Code
+  (expr-constraints [_]
+    c/fn-constraint)
+
+  Stringable
+  (string-list [_]
+    (list "<C-Vector-Function " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ">")))
+
+(deftype c-maybe-fn [c-var init refs-map c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+
+  C-Code
+  (expr-constraints [_]
+    c/fn-constraint)
+
+  Stringable
+  (string-list [_]
+    (list "<C-Maybe-Function " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ">")))
+
+(deftype c-list-fn [c-var init refs-map c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+
+  C-Code
+  (expr-constraints [_]
+    c/fn-constraint)
+
+  Stringable
+  (string-list [_]
+    (list "<C-List-Function " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ">")))
+
+(deftype c-protocol-fn [c-var init refs-map c-struct proto-sym arities]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+  (assert (instance? HashMap arities))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Protocol-Function " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ">")))
+
+(deftype c-static-arity [c-var init refs-map c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+
+  Stringable
+  (string-list [_]
+    (list "(c-static-arity " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ")")))
+
+(deftype c-static-fn [c-var init refs-map c-struct arities]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+
+  Stringable
+  (string-list [_]
+    (list "(c-static-fn " (str c-var) ", " (str (count init)) ", "
+          (str refs-map) ", " (str arities) ")")))
+
+(deftype c-static-val [c-var init refs-map c-struct]
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Static-Value " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ">")))
+
+(def C-Static-Value (any-of c-static-arity
+                            c-static-val
+                            c-static-reified
+                            c-constructor
+                            c-static-str
+                            c-static-int
+                            c-static-fn
+                            c-static-sym
+                            c-maybe-fn
+                            c-list-fn
+                            c-vector-fn
+                            c-protocol-fn))
+
+(def DefExprs (any-of c-code
+                      c-static-reified
+                      c-constructor
+                      c-static-str
+                      c-static-int
+                      c-static-fn
+                      c-static-sym
+                      c-maybe-fn
+                      c-list-fn
+                      c-vector-fn
+                      c-protocol-fn))
+
+;; same as 'c-code', but defines a function parameter
+(deftype c-param [c-var init refs-map constraints file-name line-number]
+  (assert (instance? String c-var))
+  (assert (instance? Sequence init))
+  (assert (instance? (map-of String Integer) refs-map))
+
+  Stringable
+  (string-list [_]
+    (list "<C-Param " (str c-var) ", "
+          (str (count init)) ", " (str refs-map) ">"))
+
+  Collection
+  (empty? [c] nothing))
+
+(deftype ConstantValues [numbers strings symbols type-names encoded other]
+  ;; numbers                static numbers
+  (assert (instance? (map-of Integer String) numbers))
+  ;; strings                static strings
+  (assert (instance? (map-of String String) strings))
+  ;; symbols                static symbols
+  (assert (instance? (map-of Symbol String) symbols))
+  ;; type-names             map of type numbers to type names
+  (assert (instance? (map-of Integer String) type-names))
+  ;; encoded                cache of values that have been statically encoded
+  (assert (instance? HashMap encoded)))
+
+(deftype Closures [closures refs-map]
+  (assert (instance? (vector-of Vector) closures))
+  (assert (instance? (map-of String Integer) refs-map)))
+
+(def empty-closures (Closures [] {}))
+
+(deftype FnSpec [arity-info param-vars]
+  (assert (instance? HashMap arity-info))
+  (assert (instance? (map-of String c-param) param-vars)))
+
+;; Every function arity has some information that's local to it
+(deftype FunctionArityContext [fn-spec sym-count syms context-syms closed-over decl subs field-constrs]
+  ;; fn-spec       info about the function arity being emitted
+  (assert (instance? FnSpec fn-spec))
+  ;; sym-count     number of local symbols that have been defined
+  (assert (instance? Integer sym-count))
+  ;; syms               the symbols local to the function that are currently interned
+  (assert (instance? HashMap syms))
+  ;; context-syms  the symbols in the context of the function being emitted
+  (assert (instance? HashMap context-syms))
+  ;; closed-over   symbols that this function closes over
+  (assert (instance? Closures closed-over))
+  ;; C code to declare stuff needed for fn arity
+  (assert (instance? Vector decl))
+  ;; Substitutions for checking types
+  (assert (instance? (map-of String c/ValueConstraint) subs))
+  ;; constraints for fields in type-ast implementations
+  (assert (instance? (maybe-of c/ListConstraint) field-constrs))
+
+  Stringable
+  (string-list [_]
+    (comp (list "<FunctionArityContext ")
+          (string-list syms)
+          (list ">"))))
+
+;; information that must be tracked for each module
+(deftype Module [path index values protocols declarations namespaces types value-types]
+  ;; path             path to file containing the modules source code (Symbol or String)
+  ;; index            this module's index
+  (assert (instance? Integer index))
+  ;; values           map of value symbols to defined values
+  (assert (instance? HashMap values))
+  ;; protocols        set of protocol symbols
+  (assert (instance? HashMap protocols))
+  ;; declarations     map of symbols to C vars that have not been defined
+  (assert (instance? HashMap declarations))
+  ;; namespaces      imported namespaces
+  (assert (instance? (map-of Symbol Module) namespaces))
+  ;; types           map of symbols (type names) to type constraints
+  (assert (instance? (map-of Symbol c/ValueConstraint) types))
+  ;; value-types     map of symbols (values) to type constraints
+  (assert (instance? (list-of (map-of Symbol c/ValueConstraint)) value-types))
+
+  Stringable
+  (string-list [_] (list "<Module '" (str path) "'>")))
+
+(deftype ModuleSetup [init cleanup]
+  ;; init               strings to initialize the module
+  (assert (instance? Vector init))
+  ;; cleanup            strings to initialize the module
+  (assert (instance? Vector cleanup)))
+
+;; There's a bunch of information to keep track of while compiling
+(deftype GlobalContext [fn-context rt-init module constants reify-fn-index loaded setup mod-files]
+  ;; fn-context             context for the fn currently being compiled
+  (assert (instance? FunctionArityContext fn-context))
+  ;; init                   context for the runtime initialization
+  (assert (instance? FunctionArityContext rt-init))
+  ;; module                info for each module compiled
+  (assert (instance? Module module))
+  ;; constants              the various constants encountered
+  (assert (instance? ConstantValues constants))
+  ;; reify-fn-index         index of reified fn being compiled
+  (assert (instance? Integer reify-fn-index))
+  ;; loaded                 promise to hold finished module
+  (assert (instance? Promise loaded))
+  ;; setup               strings to initialize the module
+  (assert (instance? ModuleSetup setup))
+  ;; mod-files              map from filename to module
+  (assert (instance? (map-of String Module) mod-files))
+
+  Stringable
+  (string-list [_] (list "<GlobalContext "
+                         (str module) ">")))
+
+(def global-context (GlobalContext (FunctionArityContext (FnSpec {} {}) 0 {} {} empty-closures [] {} nothing)
+                                   (FunctionArityContext (FnSpec {} {}) 0 {} {} empty-closures [] {} nothing)
+                                   (Module 'core 0 {} {} {} {} {} empty-list)
+                                   (ConstantValues {} {} {} type-names {} {})
+                                   0                        ;; reify-fn-index
+                                   (promise)                ;; loaded
+                                   (ModuleSetup [] [])      ;; setup
+                                   {}                       ;; mod-files
+                                   ))
+
+(deftype ConstrainedAST [ast constraint]
+  Stringable
+  (string-list [_]
+    (list "(ConstrainedAST " (either (and (instance? ast/tagged-symbol ast)
+                                          (maybe (str "'" ast " ")))
+                                     (str ast "\n"))
+          (str constraint) ")"))
+
+  ast/FileLineInfo
+  (ast/file-name [_]
+    (ast/file-name ast))
+
+  (ast/line-number [_]
+    (ast/line-number ast))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location ast))
+
+  Container
+  (map [x f]
+    (ConstrainedAST (f ast) (f constraint)))
+
+  (map [x f embed]
+    (for [new-ast (f (.ast x))
+          new-constraint (f (.constraint x))]
+      (ConstrainedAST new-ast new-constraint))))
+
+(defn remove-asts [c]
+  (cata (fn [x]
+          (either (map (instance? ConstrainedAST x) .constraint)
+                  x))
+        c))
+
+(defn remove-constraints [c]
+  (cata (fn [x]
+          (either (map (instance? ConstrainedAST x) .ast)
+                  x))
+        c))
+
+(def core-agent (agent (Module 'core 0 {} {} {} {} {} empty-list)))
+
+(def modules (agent {}))
+
+(defn update-context [context update]
+  (assert (instance? Maybe context))
+  (flat-map (flat-map context update) second))
+
+(defn init-core-module [context]
+  (update-context
+   context
+   (sm/assoc-in-val [.module .types]
+                    c/core-type-constraints)))
+
+(defprotocol TypeChecker
+  (to-constraint [c]
+    (sm/state-maybe c))
+
+  (load-module [ast root-dir proj-dir]
+    (assert-result r (instance? Promise r)))
+
+  (find-arity [ast type-num args-count]
+    (assert-result r (instance? Maybe r)))
+
+  ;; TODO: need to make sure every possible call target ast is implemented
+  (check-call-site [ast args target]
+    (assert-result x (instance? se/StateError x)))
+
+  (recover-type-constraint [x]
+    (se/state-error x))
+
+  (param-types [_]
+    (assert-result x (instance? se/StateError x)))
+
+  (pre-check [ast]
+    (assert-result x (instance? se/StateError x))
+
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (assert-result x (instance? se/StateError x))
+
+    (se/state-error (ConstrainedAST ast ast))))
+
+(defn type-check-ast [ast]
+  (flat-map (se-debug 'typing ast)
+            (fn [_]
+              (flat-map (pre-check ast)
+                        (fn [new-ast]
+                          (flat-map (map new-ast type-check-ast se/state-error)
+                                    (fn [newer-ast]
+                                      (type-check newer-ast new-ast))))))))
+
+(defn sm-translate [se-val]
+  (sm/new-sm (fn [s]
+               (let [se-result (se-val s)]
+                 (cond (= se/Failure se-result)
+                       nothing
+
+                       (instance? se/Error se-result)
+                       ((compilation-error (.val se-result))
+                        (.state se-result))
+
+                       (maybe se-result))))))
+
+(defn se-translate [sm-val]
+  (se/new-se (fn [s]
+               (either (sm-val s)
+                       se/Failure))))
+
+(defn namespace-index [sym]
+  (either (map (ast/namespace sym)
+               (fn [ns-sym]
+                 (sm/get-in-val [.module .namespaces ns-sym .index])))
+          (sm/get-in-val [.module .index])))
+
+(defn redef-proto-fn-error [sym]
+  (for [ns-index (namespace-index sym)
+        path (comp (for [protos (sm/get-in-val [.module .protocols])
+                         :when (some (vals protos) (fn [proto] (get proto (ast/untag sym))))
+                         path (sm/get-in-val [.module .path])]
+                     path)
+                   (sm/when (-> (extract core-agent)
+                                .protocols
+                                vals
+                                (some (fn [proto]
+                                        (and (get proto (ast/untag sym))
+                                             (maybe 'core)))))))
+        _ (compilation-error "Redefining" (str "'" sym "'") "at"
+                             (str (ast/file-name sym) ":") (ast/line-number sym)
+                             "which is a protocol function in" path)]
+    ""))
+
+(defn new-module-def [sym value]
+  (assert (instance? ast/tagged-symbol sym))
+  (assert (instance? DefExprs value))
+
+  (comp (redef-proto-fn-error sym)
+        (flat-map (sm/assoc-in-val [.module .declarations sym] nothing)
+                  (fn [_]
+                    (sm/assoc-in-val [.module .values sym] value)))))
+
+(defn emit-ast [context ast]
+  (update-context context
+                  (comp (sm-translate (type-check-ast ast))
+                        (compilation-error "Could not emit code for expression at "
+                                           (ast/file-name ast) (ast/line-number ast)))))
+
+(defn add-module-file [module]
+  (for [_ (sm/assoc-in-val [.mod-files (.path module)] module)
+        _ (sm/traverse (vals (.namespaces module)) add-module-file)]
+    '_))
+
+(defn parse-module-import [ast-emitter]
+  (grmr/one-or-more
+   (apply-to (fn [ast root-dir proj-dir]
+               (let [ns-sym (ast/untag (.ns-sym ast))
+                     waiter-prom (load-module (.mod ast) root-dir proj-dir)]
+                 (send ast-emitter
+                       (fn [context]
+                         (update-context
+                          context
+                          (let [module (extract waiter-prom)]
+                            (for [_ (sm/assoc-in-val [.module .namespaces ns-sym]
+                                                     module)
+                                  _ (sm/update-in-val [.setup .init]
+                                                      (fn [mod-init]
+                                                        (conj mod-init
+                                                              (c-code ""
+                                                                      ["init_module_"
+                                                                       (str (.index module))
+                                                                       "();\n"]
+                                                                      {} c/top-type))))
+                                  _ (add-module-file module)]
+                              '_)))))))
+             rdr/read-add-ns
+             (grmr/get-value 'root-directory)
+             (grmr/get-value 'project-directory))))
+
+(defn analyze-forms [ast-emitter]
+  (rd/parser
+   (grmr/catch-error (fn [error curr-state]
+                       (abort))
+                     (grmr/none-or-more
+                      (grmr/any
+                       (parse-module-import ast-emitter)
+                       (apply-to (fn [ast]
+                                   (send ast-emitter emit-ast ast))
+                                 rdr/top-level))))))
+
+(def C-var-punct (grmr/any (map (grmr/ignore "*") (constantly "_STAR_"))
+                           (map (grmr/ignore ".") (constantly ""))
+                           (map (grmr/ignore "#") (constantly "_HASH_"))
+                           (map (grmr/ignore "+") (constantly "_PLUS_"))
+                           (map (grmr/ignore "?") (constantly "_QM_"))
+                           (map (grmr/ignore "!") (constantly "_BANG_"))
+                           (map (grmr/ignore "=") (constantly "_EQ_"))
+                           (map (grmr/ignore "<") (constantly "_LT_"))
+                           (map (grmr/ignore ">") (constantly "_GT_"))))
+
+(def C-var-remaining
+  (grmr/none-or-more (grmr/any "_"
+                               (map (grmr/ignore "-") (constantly "_"))
+                               grmr/alpha
+                               grmr/digit
+                               C-var-punct)))
+
+(def C-var (apply-to (fn [start remaining]
+                       (to-str (comp [start] remaining)))
+                     (grmr/any grmr/alpha
+                               (map (grmr/ignore "#") (fn [] ""))
+                               (map (grmr/ignore "-") (fn [] "_MINUS_"))
+                               C-var-punct)
+                     C-var-remaining))
+
+(def C-var (rd/parser C-var))
+
+(defn check-C-var [var-name alt-var]
+  (let [parse-result (C-var var-name)]
+
+    ;; TODO: this form doesn't work. 'instance?' fails
+    ;; (either (and (instance? se/Failure parse-result)
+    ;;              (maybe alt-var))
+
+    ;;       (let [[c-var] parse-result]
+    ;;         c-var))
+
+    (cond (instance? Vector parse-result)
+          (let [[c-var] parse-result]
+            c-var)
+
+          alt-var)))
+
+(defn genlocal
+  ([pre]
+   (sm/new-sm (fn [s]
+                (assert (instance? GlobalContext s))
+                (let [ctxt (.fn-context s)
+                      sym-count (.sym-count ctxt)
+                      new-ctxt (.fn-context s (.sym-count ctxt (inc sym-count)))]
+                  (maybe [(str pre sym-count) new-ctxt])))))
+  ([sym arg-name]
+   (sm/new-sm (fn [s]
+                (assert (instance? GlobalContext s))
+                (let [ctxt (.fn-context s)
+                      sym-count (.sym-count ctxt)
+                      new-ctxt (.fn-context s (.sym-count ctxt (inc sym-count)))]
+                  (maybe [(str (check-C-var (str sym "_") arg-name)
+                               sym-count)
+                          new-ctxt]))))))
+
+;; generate symbols that are available globally inside the 'state-maybe' container
+(defn make-global-var
+  ([module-index arg-name]
+   (str (gensym (str "m" module-index "_" arg-name))))
+  ([module-index sym arg-name]
+   (str (gensym (str "m" module-index "_" (check-C-var (str sym "_") arg-name))))))
+
+(defn global-var
+  ([arg-name]
+   (for [module-index (sm/get-in-val [.module .index])]
+     (make-global-var module-index arg-name)))
+  ([sym arg-name]
+   (for [module-index (sm/get-in-val [.module .index])]
+     (make-global-var module-index sym arg-name))))
+
+(defn declare [new-decl]
+  (sm/update-in-val [.fn-context .decl] (fn [decl]
+                                          (conj decl new-decl))))
+
+(defn new-module [context module-name module-index]
+  (update-context context
+                  (for [_ (sm/set-val .module (Module module-name module-index {} {} {} {} {} empty-list))
+                        protos-var (global-var "protos_")
+                        _ (new-module-def protocols-sym (c-code protos-var [] {} c/top-type))
+                        symbols-var (global-var "symbols_")
+                        _ (new-module-def symbols-sym (c-code symbols-var [] {} c/top-type))
+                        _ (declare ["Value *" protos-var " = (Value *)&emptyBMI;\n"
+                                    "Value *" symbols-var " = (Value *)&emptyBMI;\n"])]
+                    '_)))
+
+;; TODO: use 'either' here
+(def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
+                                    (fn [toc-dir]
+                                      (str toc-dir "/new-core.toc")))
+                               (do
+                                 (print-err "Could not read environnment variable"
+                                            "TOCCATA_DIR")
+                                 (abort)))))
+
+(defn fixup-native-symbols [context]
+  (update-context context
+                  (comp (for [_ (map (sm/get-val .module)
+                                     (fn [core-mod]
+                                       (send core-agent (fn [_]
+                                                          core-mod))))]
+                          '_)
+                        (compilation-error "Compilation error (Could not fixup native symbols.)"))))
+
+(defn fixup-generated-symbols [context file-name protocols-sym symbols-sym]
+  ;; TODO: make sure .declarations is empty
+  (update-context context
+                  (for [protocols-var (sm/get-in-val [.module .values protocols-sym])
+                        _ (sm/assoc-in-val [.module .values 'protocols]
+                                           protocols-var)
+                        symbols-var (sm/get-in-val [.module .values symbols-sym])
+                        _ (sm/assoc-in-val [.module .values 'symbols]
+                                           symbols-var)
+                        mod-init (sm/get-in-val [.setup .init])
+                        cleanup (sm/get-in-val [.setup .cleanup])
+                        module (sm/get-val .module)
+                        :let [mod-index (.index module)]
+                        _ (sm/assoc-in-val [.setup .cleanup] ["cleanup_module_" (str mod-index) "();\n"])
+                        _ (sm/update-val .loaded (fn [loaded-prom]
+                                                   (deliver loaded-prom module)))]
+                    '_)))
+
+(defn compile-module [module-agents file-name waiter-prom root-dir proj-dir]
+  (assert (instance? (map-of String Agent) module-agents))
+
+  (either (map (get module-agents file-name)
+               (fn [ast-emitter]
+                 (send ast-emitter
+                       (fn [ctxt]
+                         (update-context ctxt
+                                         (sm/update-val .loaded (fn [mod-prom]
+                                                                  (map mod-prom (partial deliver waiter-prom))
+                                                                  mod-prom)))))
+                 module-agents))
+          (let [core-prom (promise)
+                module-agents (cond (= file-name 'core)
+                                    module-agents
+                                    (compile-module module-agents 'core core-prom root-dir proj-dir))
+                ast-emitter (-> global-context
+                                (.loaded waiter-prom)
+                                maybe
+                                agent)
+                module-index (count module-agents)]
+            (send ast-emitter new-module file-name module-index)
+            (cond (= file-name 'core)
+                  (send ast-emitter init-core-module)
+                  (send ast-emitter
+                        (fn [context]
+                          (extract core-prom)
+                          context)))
+            (future (fn []
+                      (either (map (fio/file-in (cond (= file-name 'core)
+                                                      path-to-core
+                                                      file-name))
+                                   (fn [file-in]
+                                     (do
+                                       ((analyze-forms ast-emitter)
+                                        {'file-name file-name
+                                         'root-directory root-dir
+                                         'project-directory proj-dir
+                                         'line-number 1}
+                                        (lazy-list file-in))
+                                       (and (= file-name 'core)
+                                            (maybe (send ast-emitter fixup-native-symbols)))
+                                       (send ast-emitter
+                                             fixup-generated-symbols file-name
+                                             protocols-sym symbols-sym))))
+                              (do
+                                (print-err "Could not compile" file-name)
+                                (abort)))))
+            (assoc module-agents file-name ast-emitter))))
+
+(extend-type ast/module-ast
+  TypeChecker
+  (load-module [ast root-dir proj-dir]
+    (let [waiter (promise)
+          file-path (str root-dir (.file-path ast))]
+      (send modules compile-module file-path waiter root-dir proj-dir)
+      waiter)))
+
+(def repo-cloner (agent {}))
+
+(defn clone-repo* [ast proj-dir]
+  (let [opts (.args ast)
+        checkout (either (or (get opts 'tag)
+                             (get opts 'sha)
+                             (get opts 'branch))
+                         "master")
+        branch (either (or (get opts 'tag)
+                           (get opts 'branch))
+                       "master")
+        dep-path (str proj-dir "dependencies/git/" (.repo ast) "/" checkout)]
+    (either (and (sh/command "/usr/bin/git" (list "clone" "--branch" branch
+                                                  (.repo ast) dep-path))
+                 (or (map (get opts 'sha)
+                          (fn [sha]
+                            ;; working with the OS. Give it a chance to catch up
+                            (sys/sleep 3)
+                            (or (sh/command "/usr/bin/git"
+                                            (list "-C" dep-path "checkout" sha))
+                                (do
+                                  (print-err "Failed checkout of" sha "in" dep-path)
+                                  (abort)))
+                            (sys/sleep 3)))
+                     (maybe (sys/sleep 3))))
+            (do
+              (print-err "Cloning git dependency" (.repo ast) "failed.")
+              (abort)))
+    dep-path))
+
+(defn clone-repo [cloned ast waiter proj-dir]
+  (assert (instance? HashMap cloned))
+  (let [opts (.args ast)
+        checkout (either (or (get opts 'tag)
+                             (get opts 'sha)
+                             (get opts 'branch))
+                         "master")
+        dep-path (str proj-dir "dependencies/git/" (.repo ast) "/" checkout)
+        module-path (str dep-path "/" (.file ast))]
+    (either (or (map (sys/access module-path) (fn [_]
+                                                (deliver waiter dep-path)
+                                                cloned))
+                (and (sys/access dep-path)
+                     (do
+                       (print-err "Dependency file" (.file ast)
+                                  "missing from existing copy of repository"
+                                  (.repo ast) ":" (ast/file-name ast) (ast/line-number ast))
+                       (abort)))
+                (update cloned dep-path (fn [cloning-future]
+                                          (map cloning-future (partial deliver waiter))
+                                          cloning-future)))
+            (assoc cloned dep-path (future (fn []
+                                             (let [dep-path (clone-repo* ast proj-dir)]
+                                               (deliver waiter dep-path)
+                                               dep-path)))))))
+
+(extend-type ast/git-dep-ast
+  TypeChecker
+  (load-module [ast root-dir proj-dir]
+    (let [file (.file ast)]
+      (or (-> file
+              seq
+              (filter (partial = "/"))
+              empty?)
+          (do
+            (print-err "For git dependencies,"
+                       "files may only be imported from root of repository,"
+                       file "is invalid.")
+            (abort)))
+
+      (let [clone-waiter (promise)
+            dep-path (do
+                       (send repo-cloner clone-repo ast clone-waiter proj-dir)
+                       (extract clone-waiter))
+            waiter (promise)
+            module-path (str dep-path "/" file)]
+        (or (sys/access module-path)
+            (do
+              (print-err "Dependency file" file "missing from cloned repository"
+                         (.repo ast) ":" (ast/file-name ast) (ast/line-number ast))
+              (abort)))
+        (send modules compile-module module-path waiter (str dep-path "/") proj-dir)
+        waiter))))
+
+(defn map-modules [operation]
+  (assert (instance? sm/new-sm operation))
+
+  (let [results-prom (promise)
+        _ (send modules
+                (fn [mods]
+                  (deliver results-prom
+                           (map (vec mods)
+                                (fn [[_ ast-emitter]]
+                                  (let [result-prom (promise)]
+                                    (send ast-emitter
+                                          (fn [ctxt]
+                                            (update-context ctxt
+                                                            (map (comp operation
+                                                                       (sm/state-maybe ""))
+                                                                 (partial deliver result-prom)))))
+                                    result-prom))))
+                  mods))]
+    ;; TODO: this probably doesn't work
+    ;; (extract (apply (promise vector)
+    ;;                 (extract results-prom)))
+
+    ;; 'results-prom' is a promise where a vector of promises will be delivered
+    ;; we have to wait for all those promises to be delivered as well
+    (map (extract results-prom) extract)))
+
+(defn get-constraint [var]
+  ;; TODO: this doesn't get promoted up through append-constraint it seems
+  (assert (instance? String var))
+
+  (sm/new-sm (fn [s]
+               (assert (instance? GlobalContext s))
+               ;; TODO: this doesn't get promoted up through append-constraint it seems
+               ;; assuming the one above is not there
+               ;; and it should come from update-var anyway
+               (assert (instance? String var))
+
+               (-> (either (-> s
+                               .fn-context
+                               .subs
+                               (get var))
+                           c/top-type)
+                   (c/update-var var)
+                   (vector s)
+                   maybe))))
+
+(defn set-constraint [var constraint]
+  (cond (= c/top-type constraint)
+        sm-nop
+        (sm/new-sm (fn [s]
+                     (assert (instance? GlobalContext s))
+                     (let [constraint (c/update-var constraint var)]
+                       (maybe [constraint (assoc-in s [.fn-context .subs var] constraint)]))))))
+
+(defn append-constraint [var constraint file-name line-number]
+  (let [constraint (c/update-path constraint file-name line-number)]
+    (cond (= constraint c/top-type)
+          sm-nop
+          (flat-map (get-constraint var)
+                    (fn [curr-const]
+                      (set-constraint var (either (c/compose-constraints file-name line-number
+                                                                         constraint curr-const)
+                                                  (abort))))))))
+
+(defn lookup-constraint [c]
+  (hylo to-constraint (comp sm/state-maybe c/trim)
+        c sm/state-maybe))
+
+(defn lookup-closure-sym [sym]
+  (let [file-name (ast/file-name sym)
+        line-number (ast/line-number sym)]
+    (for [sym-info (sm/get-in-val [.fn-context .context-syms sym])
+          closures (sm/get-in-val [.fn-context .closed-over .closures])
+          expr (either (some closures
+                             (fn [[closure-var sym-literal]]
+                               (for [_ (= sym sym-literal)]
+                                 ;; already added to closures
+                                 (map (sm/update-in-val [.fn-context .closed-over .refs-map closure-var]
+                                                        inc)
+                                      (fn [_]
+                                        (-> sym-info
+                                            clear-init
+                                            (.c-var closure-var)
+                                            (.refs-map {closure-var 1})))))))
+                       ;; first time sym is closed over
+                       (for [sym-count (sm/get-in-val [.fn-context .sym-count])
+                             _ (sm/update-in-val [.fn-context .sym-count] inc)
+                             :let [constraint (expr-constraints sym-info)
+                                   closure-var (str "val" sym-count)]
+                             _ (set-constraint closure-var constraint)
+                             _ (sm/update-in-val [.fn-context .closed-over .closures]
+                                                 (fn [closures]
+                                                   (conj closures [closure-var sym])))
+                             _ (sm/assoc-in-val [.fn-context .closed-over .refs-map closure-var]
+                                                1)]
+                         (-> sym-info
+                             clear-init
+                             (.c-var closure-var)
+                             (.refs-map {closure-var 1}))))]
+      expr)))
+
+(defn get-sym [sym]
+  (assert (instance? ast/tagged-symbol sym))
+
+  (let [file-name (ast/file-name sym)
+        line-number (ast/line-number sym)]
+    (either (map (ast/namespace sym)
+                 (fn [ns-sym]
+                   ;; lookup namespace-qual sym
+                   (comp (sm/get-in-val [.module .namespaces ns-sym
+                                         .values (ast/tag (.base sym))])
+                         (sm/get-in-val [.mod-files file-name .namespaces ns-sym
+                                         .values (ast/tag (.base sym))]))))
+            (comp
+             ;; lookup sym in local fn context
+             (sm/get-in-val [.fn-context .syms sym])
+
+             ;; lookup symbol in enclosing context of fn
+             (lookup-closure-sym sym)
+
+             ;; lookup in current module
+             (comp (sm/get-in-val [.module .values sym])
+                   (sm/get-in-val [.module .declarations sym '_]))
+
+             ;; lookup in core module
+             (sm/new-sm (fn [s]
+                          (map (get-in (extract core-agent) [.values sym])
+                               (fn [expr]
+                                 [expr s]))))
+
+             ;; lookup in imported module by filename of sym
+             (sm/get-in-val [.mod-files file-name .values sym])
+
+             ;; last ditch effort to find it in core module
+             (sm/new-sm (fn [s]
+                          (let [core-prom (promise)]
+                            (send core-agent (fn [mod]
+                                               (deliver core-prom (get-in mod [.values sym]))
+                                               mod))
+                            (map (extract core-prom)
+                                 (fn [expr]
+                                   [expr s])))))))))
+
+(defn constrain-var [file-name line-number var constraint]
+  (cond (or (= "" var)
+            (instance? c/AllValues constraint))
+        sm-nop
+
+        (append-constraint var constraint file-name line-number)))
+
+(defn lookup-sym [sym]
+  (assert (instance? ast/tagged-symbol sym))
+
+  (let [file-name (ast/file-name sym)
+        line-number (ast/line-number sym)]
+    (for [expr (comp (get-sym sym)
+                     (either (map (ast/namespace sym)
+                                  (fn [ns-sym]
+                                    (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                                                       (str file-name ":") line-number)))
+                             (compilation-error "Undefined symbol" (str "'" sym "'") "at"
+                                                (str file-name ":") line-number)))
+          _ (comp (constrain-var file-name line-number (.c-var expr) (expr-constraints expr))
+                  sm-nop)
+
+          constraint (get-constraint (.c-var expr))]
+      (expr-constraints expr constraint))))
+
+(defn emit-sym-constraint [constraint]
+  (let [file-name (ast/file-name constraint)
+        line-number (ast/line-number constraint)]
+    (flat-map (lookup-constraint constraint)
+              (fn [constraint]
+                (either (for [_ (= "" (c/extract-var constraint))
+                              sym (c/extract-sym constraint)]
+                          (for [expr (lookup-sym (ast/tag sym file-name line-number))
+                                curr-c (get-constraint (.c-var expr))
+                                _ (append-constraint (.c-var expr) constraint "" 0)
+                                checked-var (genlocal 'checked)]
+                            (cond (instance? c-param expr)
+                                  empty-c-code
+                                  (c-code (.c-var expr) [] {}
+                                          ;; TODO: change 'c/top-type' to 'constraint'
+                                          ;; (and in all other calls to c-code
+                                          c/top-type))))
+                        (map (constrain-var "" 0 (c/extract-var constraint) constraint)
+                             (fn [_]
+                               empty-c-code)))))))
+
+(main [params]
+  (map params (fn [file-name]
+                (let [waiter (promise)]
+                  (map (sys/file-directory file-name)
+                       (fn [root-dir]
+                         (send modules compile-module file-name waiter root-dir root-dir)))
+                  (extract waiter)
+                  (map-modules sm-nop)))))
