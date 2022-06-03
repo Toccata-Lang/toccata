@@ -1615,14 +1615,15 @@
                            param-cs (-> c/list-constraint
                                         (.items fixed-params)
                                         (.tail-c var-params))
-                           checked-args (c/intersect arg-cs param-cs)
-                           new-arg-cs (either (and (= c/bottom-type checked-args)
-                                                   (do
-                                                     (c/conflicting-assertions checked-args loc)
-                                                     (print-err 'at _FILE_ _LINE_)
-                                                     (abort)))
-                                              (c/extract-items-constraints checked-args arg-count))]
-                       (for [_ (se/traverse (zip-lists new-arg-cs args)
+                           checked-args (c/intersect arg-cs param-cs)]
+                       (for [new-arg-cs (cond (= c/bottom-type checked-args)
+                                              (do
+                                                (print-err 'throwing _LINE_)
+                                                (se/throw (conflicting-assertions checked-args loc)))
+
+                                              (se/state-error (c/extract-items-constraints checked-args
+                                                                                           arg-count)))
+                             _ (se/traverse (zip-lists new-arg-cs args)
                                             (fn [[c arg]]
                                               (update-constraint arg
                                                                  (c/reify-type-constraint c (.arity-id arity)
@@ -3065,6 +3066,59 @@
                  ;;     (se/state-error (ast/block-comment-ast [] "poop" 99))))
                  (CheckedTypeAST sym type-num new-type-constraint fields impls)]))))))
 
+(extend-type ast/quoted-ast
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error (reify
+                      Type
+                      (type-name [_]
+                        (str "reified at " _LINE_))
+
+                      Stringable
+                      (string-list [_]
+                        (list (str "'" (.q-val ast))))
+
+                      Eq
+                      (=* [_ y]
+                        (= y (.q-val ast)))
+
+                      Container
+                      (map [x f]
+                        x)
+
+                      (map [x f embed]
+                        (embed x))
+
+                      ast/FileLoc
+                      (ast/location [_]
+                        (ast/location ast))
+
+                      TypeChecker
+                      (type-check [ast old-ast]
+                        (se/state-error (b/ConstrainedAST ast (-> c/sym-constraint
+                                                                  (.static-value (symbol (rest (str ast))))
+                                                                  (c/update-path (ast/location ast))))))))))
+
+(extend-type ast/main-ast
+  TypeChecker
+  (pre-check [ast]
+    (for [_ (push-types)
+          _ (ana constrain-all-syms
+                 (ParamConstraintPair (.params ast)
+                                      (-> c/list-constraint
+                                          (c/set-tail (c/CollectionOf c/string-constraint
+                                                                      empty-list c/no-symbol ""))))
+                 se/state-error)]
+      (.body ast (remove (.body ast) (partial instance? ast/block-comment-ast)))))
+
+  (type-check [ast old-ast]
+    (se/state-error (b/ConstrainedAST ast c/top-type))))
+
+(extend-type ast/block-comment-ast
+  TypeChecker
+  (type-check [ast old-ast]
+    (se/state-error (b/ConstrainedAST ast c/top-type))))
+
 (defn analyze-forms [ast-checker result-prom]
   (rd/parser
    (grmr/none-or-more
@@ -3128,10 +3182,8 @@
                                                                             'project-directory proj-dir
                                                                             'line-number 1}
                                                                            (lazy-list file-in))]
-                                                    (status 'sending _LINE_)
-                                                    (send ast-checker (fn [_]
-                                                                        (status 'done-checking)
-                                                                        (deliver result-prom 'checked)))
+                                                    (send ast-checker (fn [s]
+                                                                        (deliver result-prom (.module s))))
                                                     (either (map (instance? se/Error analyzed)
                                                                  (fn [err]
                                                                    (se/throw (.val err))))
@@ -3157,21 +3209,35 @@
                     (fn [loaded]
                       ((se/try
                          (comp (map loaded (fn [core-module]
-                                             (status 'cm core-module)
+                                             (print-err 'cm core-module)
+                                             (let [p (promise)]
+                                               (send modules (fn [_]
+                                                               (deliver p '_)
+                                                               {'core core-module}))
+                                               (extract p))
                                              (status "loaded core"))) 
                                (se/throw "Could not load Toccata core"))
                          (fn [err]
-                           (status (.val err))
                            (se/throw (.val err))))
-                       'dummy-state)))]
-    (extract loaded))
+                       'dummy-state)))
+        _ (extract loaded)
+        mods (extract modules)]
 
-  (print-err 'done _LINE_)
+    (map (rest params) (fn [file-name]
+                                  (let [waiter (promise)]
+                                    (send modules (fn [_]
+                                                    mods))
+                                    (map (sys/file-directory file-name)
+                                         (fn [root-dir]
+                                           (-> (compile-module file-name root-dir root-dir)
+                                               (map (fn [loaded]
+                                                      ((se/try
+                                                         (comp (map loaded (fn [core-module]
+                                                                             (status "loaded" file-name))) 
+                                                               (se/throw (str "Could not load " file-name)))
+                                                         (fn [err]
+                                                           (se/throw (.val err))))
+                                                       'dummy-state)))
+                                               extract)))))))
 
-  ;; (map params (fn [file-name]
-  ;;               (let [waiter (promise)]
-  ;;                 (map (sys/file-directory file-name)
-  ;;                      (fn [root-dir]
-  ;;                        (send modules compile-module file-name waiter root-dir root-dir)))
-  ;;                 (extract waiter))))
-  )
+  (print-err 'done _LINE_))
