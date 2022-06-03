@@ -37,10 +37,8 @@
 (def output (agent 0))
 
 (defn status [& msg]
-  ;; (send output (fn [_]
-  ;;                (apply print-err msg)))
-  (apply print-err msg)
-  )
+  (send output (fn [_]
+                 (apply print-err msg))))
 
 (defn compilation-error [& msg]
   (let [msg (to-str (interpose msg " "))]
@@ -356,6 +354,7 @@
 
 (defn add-getter [sym new-type-constraint types-list]
   (assert (instance? c/ReifiedConstraint new-type-constraint))
+  (assert (instance? List types-list))
 
   ;; 'sym' already has ".' at front
   (let [loc (ast/location sym)
@@ -439,14 +438,15 @@
                           '_))
 
                   (do
-                    (status 'sending _LINE_)
                     (send modules
                           (fn [mods]
-                            (either (and (get-in mods ['core .value-types 0 sym])
-                                         (maybe mods))
-                                    (let [val-types (get-in mods ['core .value-types])]
-                                      (assoc-in mods ['core .value-types]
-                                                (add-getter sym new-type-constraint val-types))))))
+                            (either (or (and (get-in mods ['core .value-types 0 sym])
+                                             (maybe mods))
+                                        (map (get-in mods ['core .value-types])
+                                             (fn [val-types]
+                                               (assoc-in mods ['core .value-types]
+                                                         (add-getter sym new-type-constraint val-types)))))
+                                    mods)))
                     se-nop))]
       (b/ConstrainedAST sym (-> c/fn-constraint
                                 (c/update-path loc))))))
@@ -470,9 +470,7 @@
                                                              (symbol (str "field " sym " required"))
                                                              {} empty-list c/no-symbol ""))
 
-                     (-> ["Could not find type constraint for '" sym "' at " loc]
-                         to-str
-                         se/throw)))
+                     (compilation-error "Could not find type constraint for '" sym "' at " loc)))
          (fn [ast]
            (cond (instance? Tagged (.ast ast))
                  (.ast ast (ast/tag (.ast ast) loc))
@@ -513,7 +511,7 @@
                                                 (maybe (ast/new-param-constraints param)))))
                                      new-param-cs)]
             (cond (= c/bottom-type new-param-cs)
-                  (se/throw (conflicting-assertions new-param-cs loc))
+                  (compilation-error (conflicting-assertions new-param-cs loc))
 
                   (let [curr-tail (c/extract-tail-constraint new-param-cs)
                         new-tail (cond (= curr-tail c/bottom-type)
@@ -569,7 +567,7 @@
                     ;;           nothing)))
                     ]
               _ (cond (= new-const c/bottom-type)
-                      (se/throw (conflicting-assertions new-const loc))
+                      (compilation-error (conflicting-assertions new-const loc))
                       (set-type-constraint sym (.constraint curr-const new-const)))]
           new-const)))
 
@@ -639,8 +637,8 @@
                                            (maybe (se/state-error prototype)))))
                               se/zero-se)))
 
-          (se/throw (str "Could not find prototype '" proto-sym "/" fn-sym "' " arg-count " "
-                         _FILE_ " " _LINE_)))))
+          (compilation-error "Could not find prototype '" proto-sym "/" fn-sym "' " arg-count " "
+                             _FILE_ " " _LINE_))))
 
 (defn add-prototype-assertions [dispatch-type [proto-sym fn-sym arity]]
   (assert (instance? c/ListConstraint dispatch-type))
@@ -655,7 +653,9 @@
         _ (either (map (or (= c/bottom-type param-cs)
                            (= c/bottom-type result-c))
                        (fn [failure-c]
-                         (se/throw (conflicting-assertions failure-c (ast/location arity)))))
+                         (do
+                           (print-err 'throwing _LINE_)
+                           (se/throw (conflicting-assertions failure-c (ast/location arity))))))
                   se-nop)]
     [proto-sym fn-sym (-> arity
                           (.param-consts (c/clear-sym param-cs))
@@ -695,7 +695,7 @@
              ;;            "\n" 'old-c old-c
              ;;            "\n\n" 'constraint constraint
              ;;            "\n\n" 'new-c new-c)
-             (se/throw (conflicting-assertions new-c loc)))
+             (compilation-error (conflicting-assertions new-c loc)))
 
            (let [new-c (c/update-path new-c loc)]
              (either (or (map (instance? Tagged (.ast constrained))
@@ -851,7 +851,9 @@
           _ (either (map (or (= c/bottom-type param-cs)
                              (= c/bottom-type result-c))
                          (fn [failure-c]
-                           (se/throw (conflicting-assertions failure-c (ast/location (.params arity))))))
+                           (do
+                             (print-err 'throwing _LINE_)
+                             (se/throw (conflicting-assertions failure-c (ast/location (.params arity)))))))
 
                     se-nop)
                 
@@ -865,7 +867,6 @@
                     '_)
                   (map se-nop
                        (fn [_]
-                         (status 'sending _LINE_)
                          (send modules
                                (fn [mods]
                                  (either (and (get-in mods ['core .value-types 0 fn-sym .ast .impls])
@@ -1130,68 +1131,70 @@
                    (fn [disp-arg]
                      (let [type-num (c/get-type-num (.constraint disp-arg))
                            ;; TODO: if finite set of type-nums, build SumConstraint
-                           arity (either (find-arity proto-impls type-num num-args)
-                                         (do
-                                           (print-err "Could not find arity for" (str "'" (.fn-sym proto-impls) "'")
-                                                      "with" num-args "arguments at" loc)
-                                           (print-err 'at _FILE_ _LINE_)
-                                           (abort)))]
-                       ;; (or (= (.line loc) 0)
-                       ;;     (= (.file loc) 'core)
-                       ;;     (do
-                       ;;       (print-err 'call-proto loc (.fn-sym proto-impls)
-                       ;;                  'type-num type-num 'arity-id (str "'" (.fn-var arity) "'")
-                       ;;                  "\n" 'arity arity
-                       ;;                  "\n\n" 'arity-result (.result-const arity)
-                       ;;                  "\n\n" 'param-consts "\n" (str "[" (-> (.param-consts arity)
-                       ;;                                                         (c/extract-items-constraints num-args)
-                       ;;                                                         (interpose "\n")
-                       ;;                                                         to-str) "]")
-                       ;;                  "\n\n" 'arg-consts "\n" (str "[" (to-str (interpose arg-consts "\n")) "]")
-                       ;;                  "\n\n" 'arity-list (map (get-in proto-impls [.impls])
-                       ;;                                          keys))
-                       ;;       nothing))
-                       (-> (.param-consts arity)
-                           (c/reify-type-constraint (.fn-var arity) arg-consts loc)
-                           (c/extract-items-constraints num-args)
-                           (zip-lists args)
-                           vec
-                           (se/traverse (fn [[c arg]]
-                                          (for [
-                                                ;; _ (se/when
-                                                ;;       (or (= (.line loc) 0)
-                                                ;;           (= (.file loc) 'core)
-                                                ;;           (maybe (print-err 'call-proto loc target
-                                                ;;                       "\n\n" 'c c
-                                                ;;                       "\n\n" 'arg (.ast arg)
-                                                ;;                       "\n\n" 'arg-c (.constraint arg)))
-                                                ;;           (maybe '_)))
-                                                r (update-constraint arg c loc)]
-                                            r)))
-                           (flat-map (fn [args]
-                                       (either (map (get special-call-targets target)
-                                                    (fn [f]
-                                                      (f target arity args)))
-                                               (-> (.result-const arity)
-                                                   (c/update-path loc)
-                                                   se/state-error))))
-                           (map (fn [result-c]
-                                  (Left (let [r (c/reify-type-constraint result-c (.fn-var arity) arg-consts loc)]
-                                          ;; (or (= (.line loc) 0)
-                                          ;;     (= (.file loc) 'core)
-                                          ;;     (do
-                                          ;;       (print-err 'call-proto loc (.fn-sym proto-impls)
-                                          ;;                  (str "'" (.fn-var arity))
-                                          ;;                  "\n" 'arity-result (.result-const arity)
-                                          ;;                  "\n\n" 'result-c result-c
-                                          ;;                  "\n\n" 'arg-consts "\n" (str "[" (to-str (interpose arg-consts "\n")) "]")
-                                          ;;                  "\n\n" 'final-c r)
-                                          ;;       nothing))
-                                          r))))))))
-              (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at" loc]
-                  (interpose " ")
-                  to-str
-                  se/throw))))
+]
+                       (either (map (find-arity proto-impls type-num num-args)
+                                    (fn [arity]
+                                      ;; (or (= (.line loc) 0)
+                                      ;;     (= (.file loc) 'core)
+                                      ;;     (do
+                                      ;;       (print-err 'call-proto loc (.fn-sym proto-impls)
+                                      ;;                  'type-num type-num 'arity-id (str "'" (.fn-var arity) "'")
+                                      ;;                  "\n" 'arity arity
+                                      ;;                  "\n\n" 'arity-result (.result-const arity)
+                                      ;;                  "\n\n" 'param-consts "\n" (str "[" (-> (.param-consts arity)
+                                      ;;                                                         (c/extract-items-constraints num-args)
+                                      ;;                                                         (interpose "\n")
+                                      ;;                                                         to-str) "]")
+                                      ;;                  "\n\n" 'arg-consts "\n" (str "[" (to-str (interpose arg-consts "\n")) "]")
+                                      ;;                  "\n\n" 'arity-list (map (get-in proto-impls [.impls])
+                                      ;;                                          keys))
+                                      ;;       nothing))
+                                      (-> (.param-consts arity)
+                                          (c/reify-type-constraint (.fn-var arity) arg-consts loc)
+                                          (c/extract-items-constraints num-args)
+                                          (zip-lists args)
+                                          vec
+                                          (se/traverse (fn [[c arg]]
+                                                         (for [
+                                                               ;; _ (se/when
+                                                               ;;       (or (= (.line loc) 0)
+                                                               ;;           (= (.file loc) 'core)
+                                                               ;;           (maybe (print-err 'call-proto loc target
+                                                               ;;                       "\n\n" 'c c
+                                                               ;;                       "\n\n" 'arg (.ast arg)
+                                                               ;;                       "\n\n" 'arg-c (.constraint arg)))
+                                                               ;;           (maybe '_)))
+                                                               r (update-constraint arg c loc)]
+                                                           r)))
+                                          (flat-map (fn [args]
+                                                      (either (map (get special-call-targets target)
+                                                                   (fn [f]
+                                                                     (f target arity args)))
+                                                              (-> (.result-const arity)
+                                                                  (c/update-path loc)
+                                                                  se/state-error))))
+                                          (map (fn [result-c]
+                                                 (Left (let [r (c/reify-type-constraint result-c (.fn-var arity)
+                                                                                        arg-consts loc)]
+                                                         ;; (or (= (.line loc) 0)
+                                                         ;;     (= (.file loc) 'core)
+                                                         ;;     (do
+                                                         ;;       (print-err 'call-proto loc (.fn-sym proto-impls)
+                                                         ;;                  (str "'" (.fn-var arity))
+                                                         ;;                  "\n" 'arity-result (.result-const arity)
+                                                         ;;                  "\n\n" 'result-c result-c
+                                                         ;;                  "\n\n" 'arg-consts "\n" (str "[" (to-str (interpose arg-consts "\n")) "]")
+                                                         ;;                  "\n\n" 'final-c r)
+                                                         ;;       nothing))
+                                                         r)))))))
+                               (compilation-error "Could not find arity for" (str "'" (.fn-sym proto-impls) "'")
+                                                  "with" num-args "arguments at" loc)))))
+              (do
+                (print-err 'throwing _LINE_)
+                (-> [(str "'" (.fn-sym proto-impls) "'") "requires at least one argument at" loc]
+                    (interpose " ")
+                    to-str
+                    se/throw)))))
 
   (find-arity [proto-impls type-num arg-count]
     (or (get-in proto-impls [.impls type-num arg-count])
@@ -1464,7 +1467,9 @@
     (for [base-c (map (get-type-constraint (.base-sym old-c)) .constraint)
           :let [new-c (c/intersect c base-c)]
           _ (cond (= c/bottom-type new-c)
-                  (se/throw (conflicting-assertions new-c (ast/location old-c)))
+                  (do
+                    (print-err 'throwing _LINE_)
+                    (se/throw (conflicting-assertions new-c (ast/location old-c))))
 
                   se-nop)]
 
@@ -1580,97 +1585,81 @@
                      ;;     (maybe '_))
                      (let [required-args (-> (.param-consts arity)
                                              c/extract-items-constraints
-                                             count)
-                           _ (and (< arg-count required-args)
-                                  (do
-                                    (print-err "Insufficient number of arguments to function called at" loc)
-                                    (print-err 'at _FILE_ _LINE_)
-                                    (abort)))
-                           [fixed-args var-args] (split arg-consts required-args)
-                           var-args (-> c/list-constraint
-                                        (.items var-args)
-                                        (.tail-c c/bottom-type))
-                           fixed-params (-> (.param-consts arity)
-                                            c/extract-items-constraints
-                                            (map (fn [c]
-                                                   (c/reify-type-constraint c (.arity-id arity)
-                                                                            (conj fixed-args var-args)
-                                                                            loc))))
-                           var-params (either (= (.tail-c (.param-consts arity)) c/bottom-type)
-                                              (-> (.tail-c (.param-consts arity))
-                                                  (c/reify-type-constraint (.arity-id arity)
-                                                                           (conj fixed-args var-args)
-                                                                           loc)))
-                           _ (cond (and (= var-params c/bottom-type)
-                                        (first (.constraints var-params)))
-                                   (do
-                                     (c/conflicting-assertions var-params loc)
-                                     (print-err 'at _FILE_ _LINE_)
-                                     (abort))
+                                             count)]
+                       (cond (< arg-count required-args)
+                             (compilation-error "Insufficient number of arguments to function called at" loc)
 
-                                   '_)
-                           arg-cs (-> c/list-constraint
-                                      (.items fixed-args)
-                                      (.tail-c var-args))
-                           param-cs (-> c/list-constraint
-                                        (.items fixed-params)
-                                        (.tail-c var-params))
-                           checked-args (c/intersect arg-cs param-cs)]
-                       (for [new-arg-cs (cond (= c/bottom-type checked-args)
-                                              (do
-                                                (print-err 'throwing _LINE_)
-                                                (se/throw (conflicting-assertions checked-args loc)))
+                             (let [[fixed-args var-args] (split arg-consts required-args)
+                                   var-args (-> c/list-constraint
+                                                (.items var-args)
+                                                (.tail-c c/bottom-type))
+                                   fixed-params (-> (.param-consts arity)
+                                                    c/extract-items-constraints
+                                                    (map (fn [c]
+                                                           (c/reify-type-constraint c (.arity-id arity)
+                                                                                    (conj fixed-args var-args)
+                                                                                    loc))))
+                                   var-params (either (= (.tail-c (.param-consts arity)) c/bottom-type)
+                                                      (-> (.tail-c (.param-consts arity))
+                                                          (c/reify-type-constraint (.arity-id arity)
+                                                                                   (conj fixed-args var-args)
+                                                                                   loc)))
+                                   arg-cs (-> c/list-constraint
+                                              (.items fixed-args)
+                                              (.tail-c var-args))
+                                   param-cs (-> c/list-constraint
+                                                (.items fixed-params)
+                                                (.tail-c var-params))
+                                   checked-args (c/intersect arg-cs param-cs)]
+                               (for [new-arg-cs (cond (= c/bottom-type checked-args)
+                                                      (compilation-error (conflicting-assertions checked-args loc))
 
-                                              (se/state-error (c/extract-items-constraints checked-args
-                                                                                           arg-count)))
-                             _ (se/traverse (zip-lists new-arg-cs args)
-                                            (fn [[c arg]]
-                                              (update-constraint arg
-                                                                 (c/reify-type-constraint c (.arity-id arity)
-                                                                                          new-arg-cs loc)
-                                                                 loc)))]
-                         (let [[fixed-args variadic-args] (split new-arg-cs required-args)
-                               param-cs (conj fixed-args
-                                              (-> c/list-constraint
-                                                  (.items variadic-args)
-                                                  (.tail-c c/bottom-type)))
-                               r (either (map (and (= target 'show-type)
-                                                   (first new-arg-cs))
-                                              (fn [c]
-                                                (apply print-err (map (cata c/show-full (c/update-path c loc))
-                                                                      (partial str  "\n  ")))
-                                                c))
-                                         (-> (.result-const arity)
-                                             (c/update-path loc)
-                                             (c/reify-type-constraint (.arity-id arity) param-cs loc)))]
-                           ;; (or (= (.line loc) 0)
-                           ;;     (= (.file loc) 'core)
-                           ;;     (do
-                           ;;       (print-err 'call-fn target (.arity-id arity) loc
-                           ;;                  "\n" 'args (-> args
-                           ;;                                 b/remove-asts
-                           ;;                                 (interpose  "\n")
-                           ;;                                 vec)
-                           ;;                  "\n\n" 'result-const (.result-const arity)
-                           ;;                  "\n\n" 'fn-result r)
-                           ;;       nothing))
-                           (Left r))))))
+                                                      (se/state-error (c/extract-items-constraints checked-args
+                                                                                                   arg-count)))
+                                     _ (se/traverse (zip-lists new-arg-cs args)
+                                                    (fn [[c arg]]
+                                                      (update-constraint arg
+                                                                         (c/reify-type-constraint c (.arity-id arity)
+                                                                                                  new-arg-cs loc)
+                                                                         loc)))]
+                                 (let [[fixed-args variadic-args] (split new-arg-cs required-args)
+                                       param-cs (conj fixed-args
+                                                      (-> c/list-constraint
+                                                          (.items variadic-args)
+                                                          (.tail-c c/bottom-type)))
+                                       r (either (map (and (= target 'show-type)
+                                                           (first new-arg-cs))
+                                                      (fn [c]
+                                                        (apply print-err (map (cata c/show-full (c/update-path c loc))
+                                                                              (partial str  "\n  ")))
+                                                        c))
+                                                 (-> (.result-const arity)
+                                                     (c/update-path loc)
+                                                     (c/reify-type-constraint (.arity-id arity) param-cs loc)))]
+                                   ;; (or (= (.line loc) 0)
+                                   ;;     (= (.file loc) 'core)
+                                   ;;     (do
+                                   ;;       (print-err 'call-fn target (.arity-id arity) loc
+                                   ;;                  "\n" 'args (-> args
+                                   ;;                                 b/remove-asts
+                                   ;;                                 (interpose  "\n")
+                                   ;;                                 vec)
+                                   ;;                  "\n\n" 'result-const (.result-const arity)
+                                   ;;                  "\n\n" 'fn-result r)
+                                   ;;       nothing))
+                                   (Left r))))))))
               (cond (empty? (.arities ast))
                     se/zero-se
 
-                    (map se-nop
-                         (fn [_]
-                           (do
-                             (print-err "Could not find arity for function call at" loc)
-                             (print-err 'target target
-                                        "\n" 'ast ast
-                                        "\n\n" 'arity arity
-                                        "\n\n" 'result-c (either (map arity .result-const)
-                                                                 'not-found)
-                                        "\n\n" 'args args
-                                        "\n\n" 'arg-count arg-count)
-                             (print-err 'at _FILE_ _LINE_)
-                             (abort)))))))))
+                    (do
+                      ;; (print-err 'target target
+                      ;;            "\n" 'ast ast
+                      ;;            "\n\n" 'arity arity
+                      ;;            "\n\n" 'result-c (either (map arity .result-const)
+                      ;;                                     'not-found)
+                      ;;            "\n\n" 'args args
+                      ;;            "\n\n" 'arg-count arg-count)
+                      (compilation-error "Could not find arity for function call at" loc)))))))
 
 (extend-type Tagged
   TypeChecker
@@ -1681,7 +1670,7 @@
                              (fn [c]
                                (let [param-c (c/full-param-constraint c)]
                                  (cond (= c/bottom-type param-c)
-                                       (se/throw (conflicting-assertions param-c (ast/location sym)))
+                                       (compilation-error (conflicting-assertions param-c (ast/location sym)))
 
                                        (se/state-error c)))))
                         (se/state-error c)))))
@@ -1980,9 +1969,10 @@
             ;;                  "\n\n" 'pts pts
             ;;                  "\n\n" 'result-c result-c)
             ;;       nothing))
-            r (either (map (= c/bottom-type pts)
+            r (either (map (or (= c/bottom-type pts)
+                               (= c/bottom-type result-c))
                            (fn [failure-c]
-                             (se/throw (conflicting-assertions failure-c loc))))
+                             (compilation-error (conflicting-assertions failure-c loc))))
                       (-> ast
                           (.result-const result-c)
                           (.param-consts pts)
@@ -2144,8 +2134,11 @@
       (se/try
         (flat-map (get-type-constraint (.protocol-sym ast))
                   (fn [_]
-                    (se/throw (str "Duplicate protocol '" (.protocol-sym ast) "' at "
-                                   (ast/location (.protocol-sym ast))))))
+
+                    (-> (str "Duplicate protocol '" (.protocol-sym ast) "' at "
+                             (ast/location (.protocol-sym ast)))
+                        (status "at" (str _FILE_ ":") _LINE_)
+                        se/throw)))
         (fn [_]
           (se/state-error (either (map prototypes
                                        (partial ProtocolWithImpls new-protocol))
@@ -2238,7 +2231,7 @@
             _ (either (map (and (= c/bottom-type result-type)
                                 (first (.constraints result-type)))
                            (fn [_]
-                             (se/throw (conflicting-assertions result-type loc))))
+                             (compilation-error (conflicting-assertions result-type loc))))
                       se-nop)]
         (b/ConstrainedAST (.args old-ast (.args ast))
                           result-type)))))
@@ -2289,7 +2282,7 @@
                                     (fn [[arg c]]
                                       (either (map (= c/bottom-type c)
                                                    (fn [_]
-                                                     (se/throw (conflicting-assertions c loc))))
+                                                     (compilation-error (conflicting-assertions c loc))))
                                               (flat-map se-nop
                                                         (fn [_]
                                                           ;; (or (= (.line loc) 0)
@@ -2310,15 +2303,11 @@
                            ;;                             (interpose  "\n")
                            ;;                             vec))
                            (Left (c/reify-type-constraint result-c (.fn-var arity) arg-consts loc)))))))
-              (do
-                (print-err "No 'invoke' implementation found for"
-                           (cond (instance? Tagged target)
-                                 (str "'" target "'")
-                                 "value")
-                           "at\n" loc)
-                (print-err 'at _FILE_ _LINE_)
-                (abort)
-                (se/state-error '_)))))
+              (compilation-error "No 'invoke' implementation found for"
+                                 (cond (instance? Tagged target)
+                                       (str "'" target "'")
+                                       "value")
+                                 "at\n" loc))))
 
   (type-check [ast old-ast]
     (let [reified-type-num (either (.type-num ast)
@@ -2984,23 +2973,27 @@
                       (se/traverse (partial add-prototype-assertions (-> c/list-constraint
                                                                          (c/set-items [new-type-constraint])
                                                                          (c/set-tail c/top-type)
-                                                                         (c/update-path loc)))))]
+                                                                         (c/update-path loc)))))
+            impls (se/traverse impls 
+                               (fn [[proto-sym fn-sym arity]]
+                                 (let [arity (.body arity (comp [field-destruct]
+                                                                (.body arity)))]
+                                   (either (map (some (all-syms (.params arity))
+                                                      (fn [param-sym]
+                                                        (and (some fields (partial = param-sym))
+                                                             (maybe param-sym))))
+                                                (fn [shadowing]
+                                                  (compilation-error "The parameter" (str "'" shadowing "'")
+                                                                     "shadows a field of the same name at"
+                                                                     (ast/location shadowing))))
+                                           (se/state-error [proto-sym fn-sym arity])))))]
         (let [impls (reduce impls {}
                             (fn [impls [proto-sym fn-sym arity]]
                               (let [arity (.body arity (comp [field-destruct]
                                                              (.body arity)))]
-                                (either (or (map (some (all-syms (.params arity))
-                                                       (fn [param-sym]
-                                                         (and (some fields (partial = param-sym))
-                                                              (maybe param-sym))))
-                                                 (fn [shadowing]
-                                                   (print-err "The parameter" (str "'" shadowing "'")
-                                                              "shadows a field of the same name at"
-                                                              (ast/location shadowing))
-                                                   (abort)))
-                                            (update-in impls [proto-sym fn-sym]
-                                                       (fn [arities]
-                                                         (conj arities arity))))
+                                (either (update-in impls [proto-sym fn-sym]
+                                                   (fn [arities]
+                                                     (conj arities arity)))
                                         (assoc-in impls [proto-sym fn-sym] [arity])))))
               ;; TODO: eliminate the named symbols
               impls-get (get-in impls [Associative-sym get-symb])
@@ -3144,7 +3137,7 @@
                                (compilation-error "Could not type check code for expression at "
                                                   (ast/location ast)))
                          (fn [err]
-                           (deliver result-prom err)
+                           (deliver result-prom (se/throw (.val err)))
                            (se/throw (.val err)))))
                  ast)
                rdr/top-level)))))
@@ -3183,11 +3176,12 @@
                                                                             'line-number 1}
                                                                            (lazy-list file-in))]
                                                     (send ast-checker (fn [s]
-                                                                        (deliver result-prom (.module s))))
+                                                                        (deliver result-prom
+                                                                                 (se/state-error (.module s)))))
                                                     (either (map (instance? se/Error analyzed)
                                                                  (fn [err]
                                                                    (se/throw (.val err))))
-                                                            (se/state-error (extract result-prom))))))
+                                                            (extract result-prom)))))
                                            ;; or tell everyone it couldn't be
                                            (se/throw (str "Could not find/open " file-name))))))]
             ;; pass the loader to the waiter
@@ -3218,26 +3212,31 @@
                                              (status "loaded core"))) 
                                (se/throw "Could not load Toccata core"))
                          (fn [err]
+                           (print-err 'err _LINE_ "\n" err)
                            (se/throw (.val err))))
                        'dummy-state)))
         _ (extract loaded)
         mods (extract modules)]
 
-    (map (rest params) (fn [file-name]
-                                  (let [waiter (promise)]
-                                    (send modules (fn [_]
-                                                    mods))
-                                    (map (sys/file-directory file-name)
-                                         (fn [root-dir]
-                                           (-> (compile-module file-name root-dir root-dir)
-                                               (map (fn [loaded]
-                                                      ((se/try
-                                                         (comp (map loaded (fn [core-module]
-                                                                             (status "loaded" file-name))) 
-                                                               (se/throw (str "Could not load " file-name)))
-                                                         (fn [err]
-                                                           (se/throw (.val err))))
-                                                       'dummy-state)))
-                                               extract)))))))
+    (map (rest params)
+         (fn [file-name]
+           (let [waiter (promise)]
+             (map (sys/file-directory file-name)
+                  (fn [root-dir]
+                    (-> (compile-module file-name root-dir root-dir)
+                        (map (fn [loaded]
+                               ((se/try
+                                  (comp (map loaded (fn [core-module]
+                                                      (status "loaded" file-name))) 
+                                        (se/throw (str "Could not load " file-name)))
+                                  (fn [err]
+                                    (status (.val err))
+                                    (se/throw (.val err))))
+                                'dummy-state)))
+                        extract)))))))
 
+  (let [p (promise)]
+    (send output (fn [_]
+                   (deliver p '_)))
+    (extract p))
   (print-err 'done _LINE_))
