@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "060be51"))
+                          :sha "6abe8b4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "7f5918a"))
+                            :sha "83228ac"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "c41d812"))
+                            :sha "663efeb"))
 (add-ns b (module "base.toc"))
 
 (def Tagged (any-of Symbol
@@ -396,8 +396,10 @@
                                                                                           empty-list c/no-symbol "")
                                                                        (c/intersect value-c))))))
         getter (b/ConstrainedAST (PrototypeImpls sym {c/UnknownType {1 getter-ast
-                                                                   2 setter-ast}})
-                               (c/update-path c/fn-constraint loc))
+                                                                     2 setter-ast}})
+                                 (-> c/fn-constraint
+                                     ;; (.arities (select-keys (.arities c/fn-constraint) [1 2]))
+                                     (c/update-path loc)))
         Type-protocol (either (map (get-in types-list [0 'Type]) .ast)
                               (ast/protocol-ast Type-sym []))
         Type-protocol (-> Type-protocol
@@ -449,6 +451,7 @@
                                     mods)))
                     se-nop))]
       (b/ConstrainedAST sym (-> c/fn-constraint
+                                ;; (.arities (select-keys (.arities c/fn-constraint) [1 2]))
                                 (c/update-path loc))))))
 
 (defn get-type-constraint [sym]
@@ -719,14 +722,12 @@
                            (let [param-c (c/full-param-constraint new-c)]
                              (cond (= c/bottom-type param-c)
                                    (do
-                                     (c/conflicting-assertions param-c loc)
                                      ;; (print-err 'update-constraint 'param-sym param-sym loc
                                      ;;            "\n" 'old-c old-c
                                      ;;            "\n\n" 'constraint constraint
                                      ;;            "\n\n" 'new-c new-c
                                      ;;            "\n\n" 'param-c param-c)
-                                     (print-err 'at _FILE_ _LINE_)
-                                     (abort))
+                                     (compilation-error (conflicting-assertions param-c loc)))
 
                                    (map (append-type-constraint param-sym param-c loc)
                                         (fn [orig-c]
@@ -757,6 +758,13 @@
                      (se/state-error (.constraint constrained new-c))))))))
 
 (defprotocol TypeChecker
+  ;; Mark this AST node as the final (or tail) expression in a function body
+  (wrap-tail [ast params]
+    (assert-result r (instance? Either r))
+
+    ;; (Right ast)
+    )
+
   (to-constraint [c]
     (se/state-error c))
 
@@ -798,6 +806,11 @@
 
     ;; (se/state-error ast)
     ))
+
+(defn tail-call [ast params]
+  (apo (fn [ast]
+         (wrap-tail ast params))
+       ast))
 
 (defn all-syms [params]
   (assert (instance? ast/BindingTarget params))
@@ -886,6 +899,10 @@
 
 (extend-type Integer
   TypeChecker
+  (wrap-tail [ast params]
+    ;; TODO: remove
+    (Right ast))
+
   (pre-check [ast]
     ;; TODO: remove
     (se/state-error ast))
@@ -896,6 +913,10 @@
 
 (extend-type String
   TypeChecker
+  (wrap-tail [ast params]
+    ;; TODO: remove
+    (Right ast))
+
   (pre-check [ast]
     ;; TODO: remove
     (se/state-error ast))
@@ -911,11 +932,21 @@
 
 (extend-type Vector
   TypeChecker
+  (wrap-tail [asts params]
+    (Left (either (flat-map (last asts)
+                            (fn [tail]
+                              (store asts (dec (count asts))
+                                     (tail-call tail params))))
+                  asts)))
+
   (type-check [ast old-ast]
     (se/state-error ast)))
 
 (extend-type HashMap
   TypeChecker
+  (wrap-tail [m params]
+    (Left (b/TailHashMap m)))
+
   (recover-type-constraint [x]
     (se/state-error x)))
 
@@ -1254,6 +1285,155 @@
   (type-check [ast old-ast]
     (for [_ (extend-prototypes (c/get-type-num (.type-constraint ast)) (.impls ast))]
       ast)))
+
+(extend-type b/TailCond
+  TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (let [conditionals (map (.conditionals ast) .ast)]
+      (either (map (first conditionals)
+                   (fn [first-cond]
+                     (for [_ (pop-types)
+                           _ (push-types (.types (.conditional first-cond)))
+                           result-c (se/try
+                                      (map (get-type-constraint (symbol "#result")) .constraint)
+                                      (fn [_]
+                                        (se/state-error c/top-type)))
+                           _ (se/traverse conditionals
+                                          (fn [cond-val]
+                                            (for [_ (update-constraint (.ast (.conditional cond-val))
+                                                                       (-> c/maybe-constraint
+                                                                           (c/update-path (ast/location cond-val)))
+                                                                       (ast/location cond-val))
+                                                  _ (update-constraint (.value cond-val) result-c
+                                                                       (ast/location cond-val))]
+                                              '_)))
+                           _ (update-constraint (.default ast) result-c (ast/location (.default ast)))]
+                       (b/ConstrainedAST ast
+                                         (-> (.conditionals ast)
+                                             (map .constraint)
+                                             (conj (.constraint (.default ast)))
+                                             c/sum-type
+                                             (c/intersect result-c))))))
+              (se/state-error (b/ConstrainedAST ast (.constraint (.default ast))))))))
+
+(extend-type b/TailEither
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clause (OrClause (.clause ast)))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (for [_ (pop-types)
+          _ (push-types (.types (.clause ast)))
+          :let [new-clause (.ast (.clause ast))]
+          result-c (se/try
+                     (map (get-type-constraint (symbol "#result")) .constraint)
+                     (fn [_]
+                       (se/state-error c/top-type)))
+          new-clause (update-constraint new-clause
+                                        (c/intersect (c/InferredInner result-c empty-list c/no-symbol "")
+                                                     (-> c/maybe-constraint
+                                                         (c/update-path (ast/location new-clause))))
+                                        (ast/location new-clause))
+          new-alt (update-constraint (.alt ast) result-c (ast/location (.alt ast)))]
+      (-> ast
+          (.clause new-clause)
+          (.alt new-alt)
+          (b/ConstrainedAST (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
+                                           (.constraint (.alt ast))])
+                              (c/update-path (ast/location old-ast))))))))
+
+(extend-type b/TailAnd
+  TypeChecker
+  (pre-check [ast]
+    (let [loc (ast/location ast)]
+      (flat-map (append-type-constraint (ast/tag (symbol "#result") loc)
+                                        (c/update-path c/maybe-constraint loc)
+                                        loc)
+                (fn [_]
+                  (pre-check (ast/and-ast (.clauses ast))))))))
+
+(extend-type b/TailOr
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clauses (map (.clauses ast) OrClause))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (let [loc (either (map (first (.clauses old-ast))
+                           ast/location)
+                      (ast/location old-ast))]
+      (either (map (first (.clauses ast))
+                   (fn [first-clause ]
+                     (for [_ (pop-types)
+                           _ (push-types (.types first-clause))
+                           ;; TODO: when the ast of the first clause is a call to instance?,
+                           ;; recover the type of the symbol in the second arg
+                           _ (append-type-constraint (symbol "#result")
+                                                     (c/update-path c/maybe-constraint loc)
+                                                     loc)
+                           result-c (se/try
+                                      (map (get-type-constraint (symbol "#result")) .constraint)
+                                      (fn [_]
+                                        (se/state-error (c/update-path c/maybe-constraint loc))))
+                           new-clauses (se/traverse (.clauses ast)
+                                                    (fn [checked-clause]
+                                                      (let [clause (.ast checked-clause)]
+                                                        (update-constraint clause result-c (ast/location clause)))))]
+                       (b/ConstrainedAST (ast/or-ast new-clauses)
+                                       (-> new-clauses
+                                           (map .constraint)
+                                           c/sum-type
+                                           (c/intersect result-c)
+                                           (c/update-path (cata ast/location old-ast)))))))
+              (do
+                (print-err "Compiler error at" _FILE_ _LINE_)
+                (abort)
+                se-nop)))))
+
+(extend-type b/TailHashMap
+  TypeChecker
+  (pre-check [ast]
+    ;; TODO: remove
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    ;; TODO: finish when we can extract a constraint describing a literal hash-map
+    (se/state-error (b/ConstrainedAST ast c/top-type))))
+
+(extend-type b/TailExpr
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (for [result-c (se/try
+                     (map (get-type-constraint (symbol "#result")) .constraint)
+                     (fn [_]
+                       (se/state-error c/top-type)))
+          new-inner (update-constraint (.ast ast) result-c (ast/location old-ast))]
+      (b/ConstrainedAST (.ast ast new-inner)
+                      (.constraint new-inner)))))
+
+(extend-type b/TailCall
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (let [loc (ast/location old-ast)]
+      (for [result-c (se/try
+                       (map (get-type-constraint (symbol "#result")) .constraint)
+                       (fn [_]
+                         (se/state-error c/top-type)))
+            new (update-constraint (.ast ast) result-c loc)]
+        new))))
 
 (extend-type b/ConstrainedAST
   TypeChecker
@@ -1663,6 +1843,10 @@
 
 (extend-type Tagged
   TypeChecker
+  (wrap-tail [ast params]
+    ;; TODO: remove
+    (Right ast))
+
   (param-types [sym]
     (flat-map (map (get-type-constraint sym) .constraint)
               (fn [c]
@@ -1725,21 +1909,6 @@
                               prev-constraint (get value-types (ast/untag sym))]
                           (set-type-constraint sym prev-constraint))
                         (remove-type-constraint sym)))))
-
-  ;; (param-types [sym]
-  ;;   (for [c (map (get-type-constraint sym) .constraint)]
-  ;;     (let [loc (ast/location sym)]
-  ;;       (either (map (instance? c/ParamConstraint c)
-  ;;                    (fn [c]
-  ;;                      (let [param-c (c/full-param-constraint c)]
-  ;;                        (cond (= c/bottom-type param-c)
-  ;;                              (do
-  ;;                                (c/conflicting-assertions param-c loc)
-  ;;                                (abort))
-
-  ;;                              c))))
-
-  ;;               c))))
 
   (pre-check [ast]
     ;; TODO: remove this eventually
@@ -1811,6 +1980,9 @@
 
 (extend-type ast/inline-ast
   TypeChecker
+  (wrap-tail [ast params]
+    (Left (b/TailExpr ast)))
+
   (pre-check [ast]
     ;; TODO: remove this eventually
     (se/state-error ast))
@@ -1918,26 +2090,11 @@
                          (-> (.body ast)
                              (remove (partial instance? c/Constraints))
                              (remove (partial instance? ast/block-comment-ast))
-                             ;; TODO: maybe I can get away with not having this in the checker
-                             ;; (tail-call [])
-                             )))))))
+                             (tail-call []))))))))
 
   (type-check [ast old-ast]
     (let [loc (ast/location old-ast)]
-      (for [
-            ;; _ (map se-nop
-            ;;        (fn [_]
-            ;;          (let [loc (ast/location old-ast)]
-            ;;            (or (= (.line loc) 0)
-            ;;                (= (.file loc) 'core)
-            ;;                (do
-            ;;                  (print-err 'checking-fn-arity (.fn-sym old-ast) loc
-            ;;                             "\n" 'params (.params old-ast))
-
-            ;;                  (print-err 'old-ast old-ast)
-            ;;                  (print-err 'ast ast)
-            ;;                  nothing)))))
-            orig-pts (get-param-types (.params old-ast))
+      (for [orig-pts (get-param-types (.params old-ast))
             _ (recover-type-constraint (symbol "#result"))
             _ (recover-types (.params old-ast))
             _ (nip-types)
@@ -1958,17 +2115,6 @@
                                           (apply print-err (cons "Result type" (drop (show c) 2)))
                                           (.constraint c)))
                                    result-c)]
-            ;; (or (= (.line loc) 0)
-            ;;     (= (.file loc) 'core)
-            ;;     (do
-            ;;       (print-err 'fn-arity (.fn-sym old-ast) (.fn-var ast) loc
-            ;;                  "\n" 'params (.params old-ast)
-            ;;                  "\n\n" 'old-param-cs (.param-consts old-ast)
-            ;;                  "\n\n" 'new-param-cs (.param-consts ast)
-            ;;                  "\n\n" 'orig-pts orig-pts
-            ;;                  "\n\n" 'pts pts
-            ;;                  "\n\n" 'result-c result-c)
-            ;;       nothing))
             r (either (map (or (= c/bottom-type pts)
                                (= c/bottom-type result-c))
                            (fn [failure-c]
@@ -1981,6 +2127,9 @@
 
 (extend-type ast/fn-ast
   TypeChecker
+  (wrap-tail [x params]
+    (Left (b/TailCall x params)))
+
   (check-call-site [ast args target]
     (map se-nop (fn [_]
                   (status 'fn-ast 'check-call-site target (ast/location target)
@@ -2014,7 +2163,7 @@
                                   (c/update-sym (ast/untag sym)))))
                        c/fn-constraint)
           fn-c (c/update-path fn-c (ast/location old-ast))
-          fn-c (reduce (.arities ast) fn-c
+          fn-c (reduce (.arities ast) (.arities fn-c {})
                        (fn [c arity]
                          (assert (instance? ast/fn-arity-ast arity))
                          (either (for [variadic (get-in arity [.param-consts .tail-c])
@@ -2161,11 +2310,15 @@
                                                                        c/UnknownType arg-count]
                                                                 proto-arity)))
                                           (assoc impls (ast/untag (.fn-name proto))
-                                                 (b/ConstrainedAST (PrototypeImpls (ast/untag (.fn-name proto))
+                                                 (b/ConstrainedAST
+                                                  (PrototypeImpls (ast/untag (.fn-name proto))
                                                                                  {c/UnknownType
                                                                                   {arg-count proto-arity}})
-                                                                 (c/update-sym c/fn-constraint
-                                                                               (ast/untag (.fn-name proto)))))))))]
+                                                  (-> c/fn-constraint
+                                                      (c/update-sym (ast/untag (.fn-name proto)))
+                                                      ;; (.arities (select-keys (.arities c/fn-constraint)
+                                                      ;;                        [arg-count]))
+                                                      )))))))]
       (for [_ (se/traverse (vec proto-impls)
                            (fn [[proto-name proto-impls]]
                              (set-type-constraint proto-name proto-impls)))
@@ -2185,6 +2338,9 @@
 
 (extend-type ast/call-ast
   TypeChecker
+  (wrap-tail [ast params]
+    (Left (b/TailCall ast params)))
+
   (pre-check [ast]
     ;; TODO: remove this eventually
     (se/state-error ast))
@@ -2238,6 +2394,9 @@
 
 (extend-type ast/reify-ast
   TypeChecker
+  (wrap-tail [ast params]
+    (Left (b/TailCall ast params)))
+
   (pre-check [ast]
     ;; TODO: remove
     (se/state-error ast))
@@ -2248,7 +2407,7 @@
           num-args (inc (count args))]
       (either (for [invoke-arities (get-in ast [.impls Function-sym invoke-sym])
                     ;; :let [_ (or (= (.line loc) 0)
-                    ;;             ;; (= (.file loc) 'core)
+                    ;;             (= (.file loc) 'core)
                     ;;             (do
                     ;;               (print-err 'call-reify _LINE_ target loc
                     ;;                          "\n" 'num-args num-args
@@ -2259,7 +2418,7 @@
                     ;;               nothing))]
                     arity (some invoke-arities (fn [arity]
                                                  ;; (or (= (.line loc) 0)
-                                                 ;;     ;; (= (.file loc) 'core)
+                                                 ;;     (= (.file loc) 'core)
                                                  ;;     (do
                                                  ;;       (print-err 'call-reify _LINE_ target loc
                                                  ;;                  "\n" 'num-args num-args
@@ -2277,6 +2436,16 @@
                                                       (maybe arity))))]
                 (let [param-cs (c/reify-type-constraint (.param-consts arity) (.fn-var arity)
                                                         (comp [c/top-type] arg-consts) loc)
+                      ;; _ (or (= (.line loc) 0)
+                      ;;       (= (.file loc) 'core)
+                      ;;       (do
+                      ;;         (print-err 'call-reify _LINE_ target loc
+                      ;;                    "\n\n" 'param-consts (.param-consts arity)
+                      ;;                    "\n\n" 'args (-> arg-consts
+                      ;;                                     (interpose  "\n")
+                      ;;                                     vec)
+                      ;;                    "\n\n" 'param-cs param-cs)
+                      ;;         nothing))
                       result-c (.result-const arity)]
                   (map (se/traverse (zip-lists args (rest (c/extract-items-constraints param-cs num-args)))
                                     (fn [[arg c]]
@@ -2286,22 +2455,27 @@
                                               (flat-map se-nop
                                                         (fn [_]
                                                           ;; (or (= (.line loc) 0)
-                                                          ;;     ;; (= (.file loc) 'core)
+                                                          ;;     (= (.file loc) 'core)
                                                           ;;     (maybe (print-err 'call-reify-ast _LINE_ loc target
                                                           ;;                       "\n\n" 'c c
-                                                          ;;                       "\n\n" 'arg arg))
+                                                          ;;                       "\n\n" 'arg arg
+                                                          ;;                       "\n\n" 'arg-c (b/remove-asts arg)
+                                                          ;;                       ))
                                                           ;;     (maybe '_))
                                                           (update-constraint arg c loc))))))
                        (fn [arg-consts]
                          (let [arg-consts (comp [c/top-type] (b/remove-asts arg-consts))]
-                           ;; (print-err 'call-reify target loc
-                           ;;            "\n" 'ast ast
-                           ;;            "\n\n" 'num-args num-args
-                           ;;            "\n\n" 'param-cs param-cs
-                           ;;            "\n\n" 'result-c result-c
-                           ;;            "\n\n" 'args (-> arg-consts
-                           ;;                             (interpose  "\n")
-                           ;;                             vec))
+                           ;; (or (= (.line loc) 0)
+                           ;;     (= (.file loc) 'core)
+                           ;;     (maybe (print-err 'call-reify target loc
+                           ;;                       "\n" 'ast ast
+                           ;;                       "\n\n" 'num-args num-args
+                           ;;                       "\n\n" 'param-cs param-cs
+                           ;;                       "\n\n" 'result-c result-c
+                           ;;                       "\n\n" 'args (-> arg-consts
+                           ;;                                        (interpose  "\n")
+                           ;;                                        vec)))
+                           ;;     (maybe '_))
                            (Left (c/reify-type-constraint result-c (.fn-var arity) arg-consts loc)))))))
               (compilation-error "No 'invoke' implementation found for"
                                  (cond (instance? Tagged target)
@@ -2349,6 +2523,10 @@
 
 (extend-type ast/either-ast
   TypeChecker
+  (wrap-tail [ast params]
+    (Left (b/TailEither (.clause ast)
+                        (tail-call (.alt ast) params))))
+
   (pre-check [ast]
     (-> ast
         (.clause (OrClause (.clause ast)))
@@ -2369,6 +2547,16 @@
 
 (extend-type ast/let-ast
   TypeChecker
+  (wrap-tail [ast params]
+    ;; TODO: move this filtering of the body to the Vector implementation of wrap-tail
+    (-> ast
+        (.body (comp (filter (.body ast) (partial instance? c/Constraints))
+                     (-> ast
+                         .body
+                         (filter ast/generates-code?)
+                         (tail-call params))))
+        Left))
+
   (check-call-site [ast args target]
     (either (map (last (.body ast)) (fn [last-ast]
                                       (check-call-site last-ast args target)))
@@ -2425,6 +2613,14 @@
   TypeChecker
   (pre-check [ast]
     (se/state-error (.binding ast (reify
+                                    Type
+                                    (type-name [_]
+                                      (str "reified at " _FILE_ ": " _LINE_))
+
+                                    Stringable
+                                    (string-list [_]
+                                      (string-list ast))
+
                                     Container
                                     (map [y f embed]
                                       (embed y))
@@ -2453,6 +2649,14 @@
 
 (extend-type ast/and-ast
   TypeChecker
+  (wrap-tail [ast params]
+    (-> (.clauses ast)
+        ;; TODO: move this filtering to the Vector wrap-tail
+        (filter ast/generates-code?)
+        (tail-call params)
+        b/TailAnd
+        Left))
+
   (pre-check [ast]
     (-> ast
         (.clauses (-> (.clauses ast)
@@ -2480,6 +2684,10 @@
 
 (extend-type ast/integer-ast
   TypeChecker
+  (wrap-tail [ast params]
+    ;; TODO: remove
+    (Right ast))
+
   (pre-check [ast]
     ;; TODO: remove
     (se/state-error ast))
@@ -2492,6 +2700,10 @@
 
 (extend-type ast/string-ast
   TypeChecker
+  (wrap-tail [ast params]
+    ;; TODO: remove
+    (Right ast))
+
   (pre-check [ast]
     ;; TODO: remove
     (se/state-error ast))
@@ -2512,6 +2724,10 @@
 
 (extend-type ast/cond-ast
   TypeChecker
+  (wrap-tail [ast params]
+    (Left (b/TailCond (.conditionals ast)
+                      (tail-call (.default ast) params))))
+
   (pre-check [ast]
     ;; TODO: remove
     (se/state-error ast))
@@ -2537,6 +2753,14 @@
 
 (extend-type ast/or-ast
   TypeChecker
+  (wrap-tail [ast params]
+    (-> (.clauses ast)
+        ;; TODO: move this filtering to the Vector wrap-tail
+        (filter ast/generates-code?)
+        (tail-call params)
+        b/TailOr
+        Left))
+
   (pre-check [ast]
     (-> ast
         (.clauses (-> (.clauses ast)
@@ -3061,6 +3285,10 @@
 
 (extend-type ast/quoted-ast
   TypeChecker
+  (wrap-tail [ast params]
+    ;; TODO: remove
+    (Right ast))
+
   (pre-check [ast]
     (se/state-error (reify
                       Type
@@ -3212,7 +3440,8 @@
                                              (status "loaded core"))) 
                                (se/throw "Could not load Toccata core"))
                          (fn [err]
-                           (print-err 'err _LINE_ "\n" err)
+                           (print-err 'core-error _LINE_ "\n" err)
+                           (abort)
                            (se/throw (.val err))))
                        'dummy-state)))
         _ (extract loaded)
