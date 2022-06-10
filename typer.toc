@@ -3062,35 +3062,37 @@
   (type-check [ast old-ast]
     (se/state-error (b/ConstrainedAST ast c/top-type))))
 
-(defn analyze-forms [ast-checker result-prom]
-  (rd/parser
-   (grmr/none-or-more
-    (grmr/any
-     (fr/pure (reify
-                Type
-                (type-name [_]
-                  (str "Reified at: " _FILE_ ": " _LINE_))
+(def analyze-forms (rd/parser
+                    (grmr/none-or-more
+                     (grmr/any
+                      (fr/pure (reify
+                                 Type
+                                 (type-name [_]
+                                   (str "Reified at: " _FILE_ ": " _LINE_))
 
-                rd/RecursiveDescent
-                (rd/recursive-descent [p]
-                  (se/state-error
-                   (se/new-se (fn [_]
-                                (cond (delivered result-prom)
-                                      (extract result-prom)
-                                      se/Failure)))))))
-     ;; (parse-module-import ast-checker)
-     (apply-to (fn [ast]
-                 ;; (status 'ast ast)
-                 (send ast-checker update-context
-                       (se/try
-                         (comp (type-check-ast ast)
-                               (compilation-error "Could not type check code for expression at "
-                                                  (ast/location ast)))
-                         (fn [err]
-                           (deliver result-prom (se/throw (.val err)))
-                           (se/throw (.val err)))))
-                 ast)
-               rdr/top-level)))))
+                                 rd/RecursiveDescent
+                                 (rd/recursive-descent [p]
+                                   (se/state-error
+                                    (se/new-se (fn [s]
+                                                 (either (for [result-prom (get-in s [.values 'result-prom])
+                                                               :when (delivered result-prom)]
+                                                           (extract result-prom))
+                                                         se/Failure)))))))
+                      ;; (parse-module-import ast-checker)
+                      (apply-to (fn [type-checker result-prom ast]
+                                  ;; (status 'ast ast)
+                                  (send type-checker update-context
+                                        (se/try
+                                          (comp (type-check-ast ast)
+                                                (compilation-error "Could not type check code for expression at "
+                                                                   (ast/location ast)))
+                                          (fn [err]
+                                            (deliver result-prom (se/throw (.val err)))
+                                            (se/throw (.val err)))))
+                                  ast)
+                                (grmr/get-value 'type-checker)
+                                (grmr/get-value 'result-prom)
+                                rdr/top-level)))))
 
 (defn load-module [loader-futs file-name waiter-prom root-dir proj-dir]
   (assert (instance? (map-of c/SymbolOrString Future) loader-futs))
@@ -3119,12 +3121,13 @@
                                                                    file-name))
                                                 (fn [file-in]
                                                   ;; if so, parse and type check it
-                                                  (let [analyzer (analyze-forms ast-checker result-prom)
-                                                        analyzed (analyzer {'file-name file-name
-                                                                            'root-directory root-dir
-                                                                            'project-directory proj-dir
-                                                                            'line-number 1}
-                                                                           (lazy-list file-in))]
+                                                  (let [analyzed (analyze-forms {'file-name file-name
+                                                                                 'root-directory root-dir
+                                                                                 'project-directory proj-dir
+                                                                                 'line-number 1
+                                                                                 'type-checker ast-checker
+                                                                                 'result-prom result-prom}
+                                                                                (lazy-list file-in))]
                                                     (send ast-checker (fn [s]
                                                                         (deliver result-prom
                                                                                  (se/state-error (.module s)))))
@@ -3153,7 +3156,6 @@
                     (fn [loaded]
                       ((se/try
                          (comp (map loaded (fn [core-module]
-                                             (print-err 'cm core-module)
                                              (let [p (promise)]
                                                (send modules (fn [_]
                                                                (deliver p '_)
@@ -3176,20 +3178,19 @@
 
     (map (rest params)
          (fn [file-name]
-           (let [waiter (promise)]
-             (map (sys/file-directory file-name)
-                  (fn [root-dir]
-                    (-> (compile-module file-name root-dir root-dir)
-                        (map (fn [loaded]
-                               ((se/try
-                                  (comp (map loaded (fn [core-module]
-                                                      (status "loaded" file-name))) 
-                                        (se/throw (str "Could not load " file-name)))
-                                  (fn [err]
-                                    (status (.val err))
-                                    (se/throw (.val err))))
-                                'dummy-state)))
-                        extract)))))))
+           (map (sys/file-directory file-name)
+                (fn [root-dir]
+                  (-> (compile-module file-name root-dir root-dir)
+                      (map (fn [loaded]
+                             ((se/try
+                                (comp (map loaded (fn [core-module]
+                                                    (status "loaded" file-name))) 
+                                      (se/throw (str "Could not load " file-name)))
+                                (fn [err]
+                                  (status (.val err))
+                                  (se/throw (.val err))))
+                              'dummy-state)))
+                      extract))))))
 
   (let [p (promise)]
     (send output (fn [_]
