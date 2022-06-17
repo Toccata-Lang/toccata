@@ -2,11 +2,19 @@
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "f3a18dc"))
-;; (def se-nop (se/state-error '_))
+(def se-nop (se/state-error '_))
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "d43061f"))
+                          :sha "9358528"))
+(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
+                            "ast.toc"
+                            :sha "267b32f"))
+(add-ns b (module "base.toc"))
+
+(defn compilation-error [& msg]
+  (let [msg (to-str (interpose msg " "))]
+    (se/throw msg)))
 
 (extend-type Symbol
   Container
@@ -24,25 +32,16 @@
   (map [s _] s)
   (map [s _ embed] (embed s)))
 
-(deftype ConstrainedAST [ast constraint]
-  (assert (instance? c/Constraints constraint))
-
-  Stringable
-  (string-list [_]
-    (list "(ConstrainedAST " (str ast "\n")
-          (str constraint) ")"))
-
-  Container
-  (map [x f]
-    (ConstrainedAST (f ast) (f constraint)))
-
-  (map [x f embed]
-    (for [new-ast (f (.ast x))
-          new-constraint (f (.constraint x))]
-      (ConstrainedAST new-ast new-constraint))))
-
 (defprotocol TypeChecker
-  (param-types [_]))
+  (find-arity [ast type-num args-count]
+    (assert-result r (instance? Maybe r)))
+
+  (check-call-site [ast args target]
+    (assert (instance? (vector-of b/ConstrainedAST) args))
+    (assert-result x (instance? se/StateError x)))
+
+  (call-site-checked [ast]
+    (assert-result x (instance? se/StateError x))))
 
 (def ListOrVect (any-of c/VectorConstraint
                         c/ListConstraint))
@@ -148,45 +147,37 @@
 ;;              c2 (drop-until all-constraint-types (partial = c1))]
 ;;          (test-intersect c1 c2)))
   
-(def _
-  (-> (test-intersect
-       (c/ReifiedConstraint
-        0 {(c/Field (symbol ".nougie-fn"))
-           (c/FnConstraint {1 (c/fn-arity 'a
-                               (c/ListConstraint [c/top-type] c/bottom-type (list) c/no-symbol "")
-                               c/top-type)}
-                           (list) 'nougie-fn "")}
-        (symbol "(c/Field (symbol \".nougie-fn\"))")
-        (dissoc (.arities c/fn-constraint) 0 c/variadic)
-        (list)  c/no-symbol "")
-       c/fn-constraint)
-      print-err))
+;; (def _
+;;   (-> (test-intersect
+;;        c/vect-constraint
+;;        (c/CollectionOf c/int-constraint empty-list c/no-symbol ""))
+;;       print-err))
 
 ;; (def _ (print-err (-> c/fn-constraint
 ;;                       (.arities (select-keys (.arities c/fn-constraint)
 ;;                                              [5])))))
 
-(def arity-sym 'fn-arity18)
-(def c1 (c/ListConstraint
-         [] (c/CollectionOf
-             (c/ParamConstraint 'fn-arity18 1
-                                [(c/CallValue c/no-args (list) c/no-symbol "")]
-                                (list) 'lf "") (list ) c/no-symbol "") (list) c/no-symbol ""))
+;; (def arity-sym 'fn-arity18)
+;; (def c1 (c/ListConstraint
+;;          [] (c/CollectionOf
+;;              (c/ParamConstraint 'fn-arity18 1
+;;                                 [(c/CallValue c/no-args (list) c/no-symbol "")]
+;;                                 (list) 'lf "") (list ) c/no-symbol "") (list) c/no-symbol ""))
 
-(def param-cs
-  [(c/ParamConstraint 'fn-arity843 0
-                      [(c/ListConstraint [] (c/CollectionOf c/top-type (list ) c/no-symbol "") (list) 'x "")]
-                      (list) 'x "") 
-   (c/FnConstraint
-    {c/variadic (c/fn-arity 'fn-arity152
-                            (c/ListConstraint
-                             [] (c/ParamConstraint 'fn-arity152 0
-                                                   [(c/ListConstraint [] (c/CollectionOf c/top-type (list )
-                                                                                         c/no-symbol "")
-                                                                      (list) c/no-symbol "")
-                                                    (c/CollectionOf c/top-type (list ) c/no-symbol "")]
-                                                   (list) 'vs "") (list) c/no-symbol "")
-                            (c/StrBuffConstraint c/no-string (list) c/no-symbol ""))} (list) 'str "")])
+;; (def param-cs
+;;   [(c/ParamConstraint 'fn-arity843 0
+;;                       [(c/ListConstraint [] (c/CollectionOf c/top-type (list ) c/no-symbol "") (list) 'x "")]
+;;                       (list) 'x "") 
+;;    (c/FnConstraint
+;;     {c/variadic (c/fn-arity 'fn-arity152
+;;                             (c/ListConstraint
+;;                              [] (c/ParamConstraint 'fn-arity152 0
+;;                                                    [(c/ListConstraint [] (c/CollectionOf c/top-type (list )
+;;                                                                                          c/no-symbol "")
+;;                                                                       (list) c/no-symbol "")
+;;                                                     (c/CollectionOf c/top-type (list ) c/no-symbol "")]
+;;                                                    (list) 'vs "") (list) c/no-symbol "")
+;;                             (c/StrBuffConstraint c/no-string (list) c/no-symbol ""))} (list) 'str "")])
 
 ;; (def _ (print-err (c/reify-type-constraint c1 arity-sym param-cs (c/Location "burp" 33))))
 
@@ -195,6 +186,295 @@
 ;;                      'fn-arity83 1
 ;;                      []
 ;;                      (list) 'mf ""))))
+
+(extend-type b/ConstrainedAST
+  TypeChecker
+  (find-arity [ast type-num n]
+    (or (find-arity (.constraint ast) type-num n)
+        (find-arity (.ast ast) type-num n)))
+
+  (check-call-site [ast args target]
+    (flat-map se-nop (fn [_]
+                       (comp (check-call-site (.constraint ast) args target)
+                             ;; TODO: would really like to remove this clause
+                             (check-call-site (.ast ast) args target))))))
+
+(extend-type c/Constraints
+  TypeChecker
+  (check-call-site [ast args target]
+    ;; (print-err 'not-checking (type-name ast))
+    se/zero-se))
+
+(extend-type c/SumConstraint
+  TypeChecker
+  (check-call-site [c args target]
+    (let [c (c/update-path c (ast/location target))]
+      (-> (either (update c .alts (fn [alts]
+                                    (map alts (fn [alt]
+                                                (reify
+                                                  Type
+                                                  (type-name [_]
+                                                    (str "\"reified at " (str _FILE_ ": ") _LINE_ "\""))
+
+                                                  Stringable
+                                                  (string-list [x]
+                                                    (list "(" (type-name x) "\n" (str alt) ")"))
+
+                                                  TypeChecker
+                                                  (check-call-site [_ args target]
+                                                    (se/try
+                                                      (check-call-site alt args target)
+                                                      (fn [err]
+                                                        (se/state-error (Left err))))))))))
+                  c)
+          ((fn [x]
+             (let [loc (ast/location target)]
+               (or ;; (= (.file loc) 'core)
+                   ;; (= (.line loc) 0)
+                   (do
+                     (print-err 'checking _LINE_ (ast/location target)
+                                "\n" x
+                                "\n\n" 'disp-arg (interpose (b/remove-asts args) "\n\n")
+                             )
+                     nothing))
+               x)))
+          ((fn [x]
+             (let [loc (ast/location target)]
+               (or ;; (= (.file loc) 'core)
+                   ;; (= (.line loc) 0)
+                   (do
+                     (apply print-err (interpose (c/format-path x 0) "\n"))
+                     nothing)))
+             x))
+          Right
+          se/state-error)))
+
+  (call-site-checked [c]
+    (flat-map se-nop
+              (fn [_]
+                (cond (every (.alts c) (partial instance? se/Error))
+                      (-> (.alts c)
+                          first
+                          extract
+                          .val
+                          se/throw)
+
+                      (let [[file line] (either (first (.path c))
+                                                ['core 0])]
+                        (or ;; (= file 'core)
+                            ;; (= line 0)
+                            (do
+                              (print-err 'checked-call _LINE_ (str file ": ") line
+                                      "\n" c)
+                              nothing))
+                        (se/state-error (c/trim c))))))))
+
+(extend-type c/fn-arity
+  TypeChecker
+  (check-call-site [arity args target]
+    ;; (or ;; (= (.line loc) 0)
+    ;;     ;; (= (.file loc) 'core)
+    ;;  (maybe (print-err 'checking-fn-constraint _LINE_ target (ast/location target)
+    ;;                    "\n" 'arity arity
+    ;;                    "\n\n" 'args args)))
+    (let [loc (ast/location target)
+          arg-consts (b/remove-asts args)
+          arg-count (count args)
+          required-args (-> (.param-consts arity)
+                            c/extract-items-constraints
+                            count)]
+      (cond (< arg-count required-args)
+            (compilation-error "Insufficient number of arguments to function called at" loc)
+
+            (let [[fixed-args var-args] (split arg-consts required-args)
+                  var-args (-> c/list-constraint
+                               (.items var-args)
+                               (.tail-c c/bottom-type))
+                  fixed-params (-> (.param-consts arity)
+                                   c/extract-items-constraints
+                                   (map (fn [c]
+                                          (c/reify-type-constraint c (.arity-id arity)
+                                                                   (conj fixed-args var-args)
+                                                                   loc))))
+                  var-params (either (= (.tail-c (.param-consts arity)) c/bottom-type)
+                                     (-> (.tail-c (.param-consts arity))
+                                         (c/reify-type-constraint (.arity-id arity)
+                                                                  (conj fixed-args var-args)
+                                                                  loc)))
+                  arg-cs (-> c/list-constraint
+                             (.items fixed-args)
+                             (.tail-c var-args))
+                  param-cs (-> c/list-constraint
+                               (.items fixed-params)
+                               (.tail-c var-params))
+                  checked-args (c/intersect arg-cs param-cs)]
+              (for [new-arg-cs (cond (= c/bottom-type checked-args)
+                                     (flat-map se-nop
+                                               (fn [_]
+                                                 (print-err 'err-at _LINE_ (ast/location target)
+                                                            "\n" target)
+                                                 (compilation-error (c/conflicting-assertions checked-args loc))))
+
+                                     (se/state-error (c/extract-items-constraints checked-args arg-count)))
+                    _ (se/traverse (zip-lists new-arg-cs args)
+                                   (fn [[c arg]]
+                                     (update-constraint arg
+                                                        (c/reify-type-constraint c (.arity-id arity)
+                                                                                 new-arg-cs loc)
+                                                        loc)))]
+                (let [_ (print-err 'call-fn _LINE_)
+                      [fixed-args variadic-args] (split new-arg-cs required-args)
+                      param-cs (conj fixed-args
+                                     (-> c/list-constraint
+                                         (.items variadic-args)
+                                         (.tail-c c/bottom-type)))
+                      r (either (map (and (= target 'show-type)
+                                          (first new-arg-cs))
+                                     (fn [c]
+                                       (apply print-err (map (cata c/show-full (c/update-path c loc))
+                                                             (partial str  "\n  ")))
+                                       c))
+                                (-> (.result-const arity)
+                                    (c/update-path loc)
+                                    (c/reify-type-constraint (.arity-id arity) param-cs loc)))]
+                  ;; (or ;; (= (.line loc) 0)
+                  ;;     ;; (= (.file loc) 'core)
+                  ;;     (do
+                  ;;       (print-err 'call-fn target (.arity-id arity) loc
+                  ;;                  "\n" 'args (-> args
+                  ;;                                 b/remove-asts
+                  ;;                                 (interpose  "\n")
+                  ;;                                 vec)
+                  ;;                  "\n\n" 'result-const (.result-const arity)
+                  ;;                  "\n\n" 'fn-result r)
+                  ;;       nothing))
+                  (Left r))))))))
+
+(extend-type c/FnConstraint
+  TypeChecker
+  (find-arity [c type-num args-count]
+    (or (get-in c [.arities args-count])
+        (get-in c [.arities c/variadic])))
+
+  (check-call-site [ast args target]
+    (either (map (find-arity ast 0 (count args))
+                 (fn [arity]
+                   (check-call-site arity args target)))
+
+            (cond (empty? (.arities ast))
+                  se/zero-se
+
+                  (flat-map se-nop
+                            (fn [_]
+                              ;; (print-err 'target _LINE_ target
+                              ;;            "\n" 'ast ast
+                              ;;            "\n\n" 'arity arity
+                              ;;            "\n\n" 'result-c (either (map arity .result-const)
+                              ;;                                     'not-found)
+                              ;;            "\n\n" 'args args
+                              ;;            "\n\n" 'arg-count arg-count)
+                              (compilation-error "Could not find arity for function call at"
+                                                 (ast/location target))))))))
+
+(def c1 (c/SumConstraint
+         [(c/FnConstraint
+           {2 (c/fn-arity 'a
+                          (c/ListConstraint [c/top-type
+                                             c/top-type]
+                                            (c/NoValues [])
+                                            (list) c/no-symbol "")
+                          c/top-type)}
+           (list) c/no-symbol "")
+          (c/FnConstraint
+           {2 (c/fn-arity 'flat-map
+                          (c/ListConstraint
+                           [(c/ParamConstraint 'fn-arity68 0
+                                               [(c/MaybeConstraint c/top-type (list) c/no-symbol "")
+                                                (c/MaybeConstraint (c/ParamConstraint 'fn-arity68 1
+                                                                                      [(c/ArgOf 'f 0 (list)
+                                                                                                c/no-symbol "")]
+                                                                                      (list) 'f "")
+                                                                   (list) 'mv "")
+                                                (c/MaybeConstraint c/top-type (list) c/no-symbol "")]
+                                               (list) 'mv "")
+                            (c/ParamConstraint 'fn-arity68 1
+                                               [(c/FnConstraint
+                                                 {1 (c/fn-arity 'a
+                                                                (c/ListConstraint
+                                                                 [c/top-type]
+                                                                 (c/CollectionOf c/top-type (list ) c/no-symbol "")
+                                                                 (list) c/no-symbol "")
+                                                                (c/MaybeConstraint c/top-type (list)
+                                                                                   c/no-symbol ""))}
+                                                 (list) c/no-symbol "")]
+                                               (list) 'f "")]
+                           (c/NoValues []) (list) c/no-symbol "")
+                          (c/ParamConstraint 'fn-arity68 1
+                                             [(c/CallValue [c/top-type] (list) 'f "")
+                                              (c/MaybeConstraint c/top-type (list) c/no-symbol "")]
+                                             (list) 'f ""))}
+           (list) c/no-symbol "")
+          (c/FnConstraint
+           {2 (c/fn-arity 'flat-map
+                          (c/ListConstraint
+                           [(c/ParamConstraint 'fn-arity82 0
+                                               [(c/ListConstraint [] (c/CollectionOf c/top-type (list )
+                                                                                     c/no-symbol "")
+                                                                  (list) c/no-symbol "")
+                                                (c/ListConstraint
+                                                 []
+                                                 (c/CollectionOf (c/ParamConstraint 'fn-arity82 1
+                                                                                    [(c/ArgOf 'lf 0 (list)
+                                                                                              c/no-symbol "")]
+                                                                                    (list) 'mf "")
+                                                                 (list) c/no-symbol "")
+                                                 (list) 'boogity "")
+                                                (c/ListConstraint
+                                                 []
+                                                 (c/CollectionOf c/top-type (list ) c/no-symbol "")
+                                                 (list) c/no-symbol "")]
+                                               (list) 'l "")
+                            (c/ParamConstraint 'fn-arity82 1
+                                               [(c/FnConstraint
+                                                 {c/variadic
+                                                  (c/fn-arity 'a (c/ListConstraint
+                                                                  []
+                                                                  (c/CollectionOf c/top-type (list ) c/no-symbol "")
+                                                                                   (list) c/no-symbol "")
+                                                              (c/ListConstraint
+                                                               []
+                                                               (c/CollectionOf c/top-type (list ) c/no-symbol "")
+                                                               (list) c/no-symbol ""))}
+                                                 (list) c/no-symbol "")]
+                                               (list) 'mf "")]
+                           (c/NoValues []) (list) c/no-symbol "")
+                          (c/ParamConstraint 'fn-arity82 1
+                                             [(c/CallValue c/no-args (list) c/no-symbol "")
+                                              (c/SumConstraint
+                                               [(c/ListConstraint
+                                                 []
+                                                 (c/CollectionOf c/top-type (list ) c/no-symbol "")
+                                                 (list) c/no-symbol "")
+                                                (c/VectorConstraint
+                                                 []
+                                                 (c/CollectionOf c/top-type (list ) c/no-symbol "") (list)
+                                                 c/no-symbol "")]
+                                               (list) 'a "")
+                                              (c/ListConstraint [] (c/CollectionOf c/top-type (list ) c/no-symbol "")
+                                                                (list) c/no-symbol "")]
+                                             (list) 'mf ""))}
+           (list) c/no-symbol "")]
+         (list) 'flat-map ""))
+
+(def args [(c/ParamConstraint 'fn-arity98 0 [] (list) 'prev "") 
+           (c/FnConstraint {1 (c/fn-arity 'fn-arity99
+                                          (c/ListConstraint [(c/ParamConstraint 'fn-arity99 0 [] (list) 'prev "")]
+                                                            (c/NoValues []) (list) c/no-symbol "")
+                                          (c/MaybeConstraint (c/ParamConstraint 'fn-arity98 1 [] (list) 'v "")
+                                                             (list) c/no-symbol ""))}
+                           (list) c/no-symbol "")])
+
+(def _ (print-err 'c1 c1))
 
 (main [_]
   ;; (let [c (c/ParamConstraint 'IntGenerator_invoke 1 [] (list) c/no-symbol "")
