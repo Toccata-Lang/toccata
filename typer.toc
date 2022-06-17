@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "9358528"))
+                          :sha "9414a82"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "267b32f"))
+                            :sha "89cce90"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,14 +25,11 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "72addea"))
+                            :sha "42390ea"))
 (add-ns b (module "base.toc"))
 
 (def Tagged (any-of Symbol
                     ast/tagged-symbol))
-
-(def se-nop (se/new-se (fn [s]
-                         ['_ s])))
 
 (def flag (agent nothing))
 
@@ -46,6 +43,14 @@
   (let [p (promise)]
     (send output (partial deliver p))
     (extract p)))
+
+(defn se-debug [& args]
+  (se/new-se (fn [s]
+               (apply status args)
+               ['_ s])))
+
+(def se-nop (se/new-se (fn [s]
+                         ['_ s])))
 
 (defn update-context [context update]
   (assert (instance? se/StateError update))
@@ -237,7 +242,7 @@
 
 (defn set-value-type [sym constraint]
   (assert (instance? Tagged sym))
-  (assert (instance? (any-of c/AllValues c/SymbolConstraints) constraint))
+  (assert (instance? (any-of c/AllValues c/SymbolConstraints ProtoImpls) constraint))
 
   (map (se/update-in-val [.value-types]
                          (fn [types-list]
@@ -315,8 +320,8 @@
   (type-check [ast old-ast]
     (assert-result x (instance? se/StateError x))
 
-    (compilation-error "Could not find implementation of 'type-check' for" (type-name old-ast) old-ast
-                       "at" (ast/location old-ast))
+    (compilation-error "Could not find implementation of 'type-check' at" (ast/location old-ast) "for:"
+                       "\n" (type-name old-ast) old-ast)
     ;; (se/state-error ast)
     ))
 
@@ -353,6 +358,22 @@
 (defn reify-constraint [c]
   (status 'reify-constraint _LINE_ c)
   (se/state-error c))
+
+(extend-type c/SymbolConstraints
+  TypeChecker
+  (type-check [c old-c]
+    (map (either (map (c/extract-sym old-c)
+                      (fn [sym]
+                        (append-value-type sym c (ast/location old-c))))
+                 se-nop)
+         (fn [_]
+           c))))
+
+(extend-type c/AllValues
+  TypeChecker
+  (type-check [ast old-ast]
+    ;; TODO: remove this eventually
+    (se/state-error ast)))
 
 (extend-type ast/tagged-symbol
   TypeChecker
@@ -522,59 +543,140 @@
                            (fn [failure-c]
                              (compilation-error (conflicting-assertions failure-c loc))))
                       se-nop)]
+        (.constraint ast (c/fn-arity (.fn-var ast) pts result-c))))))
+
+(extend-type ast/fn-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [loc (ast/location ast)]
+      ;; (or (= (.line loc) 0)
+      ;;     (= (.file loc) 'core)
+      ;;     (do
+      ;;       (print-err 'fn-ast loc
+      ;;                  "\n" ast)
+      ;;       nothing))
+      (either (map (.fn-sym ast)
+                   (fn [sym]
+                     (for [_ (push-types)
+                           _ (set-value-type sym (-> c/fn-constraint
+                                                     (c/update-path loc)
+                                                     (c/update-sym (ast/untag sym))))]
+                       (.arities ast (map (.arities ast)
+                                          (fn [arity]
+                                            (.fn-sym arity sym)))))))
+              (se/state-error ast))))
+
+  (type-check [ast old-ast]
+    (let [fn-c (either (map (.fn-sym ast)
+                            (fn [sym]
+                              (-> c/fn-constraint
+                                  (c/update-path (ast/location sym))
+                                  (c/update-sym (ast/untag sym)))))
+                       c/fn-constraint)
+          fn-c (reduce (.arities ast) (.arities fn-c {})
+                       (fn [c arity]
+                         (assert (instance? ast/fn-arity-ast arity))
+                         (let [arity-c (.constraint arity)]
+                           (either (for [variadic (get-in arity-c [.param-consts .tail-c])
+                                         :when (= c/bottom-type variadic)
+                                         fixed-params (get-in arity-c [.param-consts .items])]
+                                     (assoc-in c [.arities (count fixed-params)] arity-c))
+                                   (assoc-in c [.arities c/variadic] arity-c)))))
+          fn-c (c/update-path fn-c (ast/location old-ast))]
+      (let [loc (ast/location ast)]
+        (or ;; (= (.file loc) 'core)
+            ;; (= (.line loc) 0)
+            (do
+              (print-err 'fn-c (ast/location old-ast) "\n" fn-c)
+              nothing)))
+      (se/state-error (.constraint ast fn-c)))))
+
+(extend-type ast/definition-ast
+  TypeChecker
+  (pre-check [ast]
+    ;; (let [loc (ast/location ast)]
+    ;;   (or (= (.line loc) 0)
+    ;;       ;; (= (.file loc) 'core)
+    ;;       (do
+    ;;         (print-err 'checking ast)
+    ;;         nothing)))
+    (for [_ (push-types)]
+      (.value-exprs ast (-> (.value-exprs ast)
+                            (remove (partial instance? ast/block-comment-ast))
+                            (map (fn [inner-ast]
+                                   (cond (instance? ast/fn-ast inner-ast)
+                                         (.fn-sym inner-ast (maybe (.sym ast)))
+
+                                         (instance? c/SumConstraint inner-ast)
+                                         (b/ConstrainedSum (.alts inner-ast) (.path inner-ast)
+                                                           (ast/untag (.sym ast)) (.var inner-ast))
+
+                                         inner-ast)))))))
+
+  (type-check [ast old-ast]
+    (let [loc (ast/location (.sym old-ast))]
+      (for [_ (pop-types)
+            c (either (map (last (.value-exprs ast))
+                           (fn [val]
+                             (cond (instance? c/Constraints val)
+                                   ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
+                                   ;; the updated version. Possibly a bug in assoc-in*
+                                   (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
+                                             (set-value-type (.sym old-ast) val))
+
+                                   (set-value-type (.sym old-ast) (.constraint val)))))
+                      (set-value-type (.sym old-ast) c/top-type))]
         (do
-          (se/state-error (.constraint ast (c/fn-arity (.fn-var ast) pts result-c))))))))
+          (status 'def _LINE_ loc (.sym old-ast) "\n" c)
+          ast)))))
 
-;; (extend-type ast/fn-ast
-;;   TypeChecker
-;;   (pre-check [ast]
-;;     (let [loc (ast/location ast)]
-;;       ;; (or (= (.line loc) 0)
-;;       ;;     (= (.file loc) 'core)
-;;       ;;     (do
-;;       ;;       (print-err 'fn-ast loc
-;;       ;;                  "\n" ast)
-;;       ;;       nothing))
-;;       (either (map (.fn-sym ast)
-;;                    (fn [sym]
-;;                      (for [_ (se/try
-;;                                (get-value-type sym)
-;;                                (fn [_]
-;;                                  (set-value-type sym (c/update-sym c/fn-constraint
-;;                                                                    (ast/untag sym)))))]
-;;                        (.arities ast (map (.arities ast)
-;;                                           (fn [arity]
-;;                                             (.fn-sym arity sym)))))))
-;;               (se/state-error ast))))
+(extend-type ast/Annotated
+  TypeChecker
+  (pre-check [ast]
+    (pre-check (.ast ast))))
 
-;;   (type-check [ast old-ast]
-;;     (let [fn-c (either (map (.fn-sym ast)
-;;                             (fn [sym]
-;;                               (-> c/fn-constraint
-;;                                   (c/update-sym (ast/untag sym)))))
-;;                        c/fn-constraint)
-;;           fn-c (c/update-path fn-c (ast/location old-ast))
-;;           fn-c (reduce (.arities ast) (.arities fn-c {})
-;;                        (fn [c arity]
-;;                          (assert (instance? ast/fn-arity-ast arity))
-;;                          (either (for [variadic (get-in arity [.param-consts .tail-c])
-;;                                        :when (= c/bottom-type variadic)
-;;                                        fixed-params (get-in arity [.param-consts .items])]
-;;                                    (assoc-in c [.arities (count fixed-params)]
-;;                                              (c/fn-arity (.fn-var arity)
-;;                                                          (.param-consts arity)
-;;                                                          (.result-const arity))))
-;;                                  (assoc-in c [.arities c/variadic]
-;;                                            (c/fn-arity (.fn-var arity)
-;;                                                        (.param-consts arity)
-;;                                                        (.result-const arity))))))]
-;;       ;; (let [loc (ast/location ast)]
-;;       ;;   (or (= (.file loc) 'core)
-;;       ;;       (= (.line loc) 0)
-;;       ;;       (do
-;;       ;;         (print-err 'fn-c (ast/location old-ast) "\n" fn-c)
-;;       ;;         nothing)))
-;;       (se/state-error (b/ConstrainedAST ast fn-c)))))
+(extend-type ast/prototype-ast
+  TypeChecker
+  (pre-check [ast]
+    (for [_ (comp (se/get-in-val [.value-types 0 (ast/untag (.fn-name ast)) .default-impl])
+                  (set-value-type (.fn-name ast)
+                                  (ProtoImpls (ast/untag (.fn-name ast)) (.arities c/fn-constraint {}) {})))
+          _ (push-types)
+          _ (set-value-type ast/result-sym c/top-type)
+          _ (se/traverse (all-syms (.params ast))
+                         (fn [sym]
+                           (set-value-type sym c/top-type)))]
+      ast))
+
+  (type-check [ast old-ast]
+    (let [arg-count (count (.fixed (.params old-ast)))]
+      (for [pts (get-param-types (.params old-ast))
+            result-c (se/try
+                       (get-value-type ast/result-sym)
+                       (fn [_]
+                         (se/state-error c/top-type)))
+            :let [impl-c (c/fn-arity (ast/untag (.fn-name old-ast)) pts result-c)]
+            _ (remove-value-type ast/result-sym)
+            _ (recover-types (.params old-ast))
+            _ (nip-types)
+            _ (se/update-in-val [.value-types]
+                                (fn [types-list]
+                                  (let [sym (ast/untag (.fn-name ast))]
+                                    (either (map (first types-list)
+                                                 (fn [value-types]
+                                                   (cons (assoc-in value-types
+                                                                   [sym .default-impl .arities arg-count]
+                                                                   impl-c)
+                                                         (rest types-list))))
+                                            (list {sym (ProtoImpls sym
+                                                                   (.arities c/fn-constraint {arg-count impl-c})
+                                                                   {})})))))]
+        (.constraint ast impl-c)))))
+
+(extend-type ast/protocol-ast
+  TypeChecker
+  (type-check [ast old-ast]
+    ast))
 
 (def parse-forms
   (rd/parser
