@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "38d72f3"))
+                          :sha "26534ac"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "d6123ff"))
+                            :sha "69955a0"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "9aaa82e"))
+                            :sha "b404f86"))
 (add-ns b (module "base.toc"))
 
 (def Tagged (any-of Symbol
@@ -61,6 +61,8 @@
             ;; or keep the existing context
             context)))
 
+(def type-counter (int-generator c/TypeCount))
+
 ;; modules holds a map from filenames to either a Module or a Promise
 (def modules (agent {}))
 
@@ -85,6 +87,16 @@
                  (-> failing-constraint
                      ;; TODO: add file-name/line-number to empty paths
                      (c/format-path 0)))))
+
+(deftype ProtoArity [type-num arity]
+  Stringable
+  (string-list [_]
+    (list "(ProtoArity " (str type-num) " " (str arity) ")"))
+
+  Container
+  (map [x f embed]
+    (map (f arity)
+         (partial .arity x))))
 
 (deftype ProtoImpls [fn-sym default-impl impls]
   (assert (instance? Symbol fn-sym))
@@ -170,7 +182,7 @@
   ;; 'sym' already has '.' at front
   (let [required-field (c/ReifiedConstraint c/UnknownType {(c/Field sym) c/top-type}
                                             (symbol (str "field " (rest sym) " required"))
-                                            {} empty-list c/no-symbol "")
+                                            (.arities c/fn-constraint {}) empty-list c/no-symbol "")
         arities {1 (c/fn-arity (symbol "") (c/ListConstraint [required-field]
                                                              c/bottom-type empty-list c/no-symbol "")
                              c/top-type)
@@ -295,21 +307,30 @@
                                            (rest types-list))))
                               types-list))))
 
+(defn add-proto-impl [type-num fn-name arg-count arity-c]
+  (assert (instance? c/fn-arity arity-c))
+
+  (flat-map (get-value-type fn-name)
+            (fn [proto-impls]
+              (assert (instance? ProtoImpls proto-impls))
+
+              (status 'add-impl _LINE_ (ast/location fn-name) fn-name type-num arg-count "\n" arity-c)
+              (comp (se/update-in-val [fn-name .impls type-num]
+                                      (fn [fn-c]
+                                        (assert (instance? c/FnConstraint fn-c))
+
+                                        (assoc-in fn-c [.arities arg-count] arity-c)))
+                    (se/assoc-in-val [fn-name .impls type-num]
+                                     (.arities c/fn-constraint {arg-count arity-c}))))))
+
 (defprotocol TypeChecker
   (update-constraint [ast constraint loc])
 
   (check-call-site [ast args target]
-    (assert (instance? (vector-of b/ConstrainedAST) args))
     (assert-result x (instance? se/StateError x)))
 
   (call-site-checked [ast args target]
-    (assert-result x (instance? se/StateError x))
-
-    ;; (flat-map se-nop
-    ;;           (fn [_]
-    ;;             (status 'checked-call _LINE_ ast)
-    ;;             (se/state-error ast)))
-    )
+    (assert-result x (instance? se/StateError x)))
 
   (recover-val-type [x]
     (assert-result x (instance? se/StateError x))
@@ -482,6 +503,7 @@
                        (get (.arities fc) c/variadic))
                    se/state-error)
               (do
+                ;; TODO: fix up
                 (print-err 'blewey 'core _LINE_)
                 (abort)
                 (compilation-error "Could not call" target))))))
@@ -564,8 +586,8 @@
 (extend-type ast/inline-ast
   TypeChecker
   (type-check [ast old-ast]
-    (map (reify-constraint (.result-type ast))
-         (partial b/ConstrainedAST ast))))
+    (map (reify-constraint (.constraint ast))
+         (partial .constraint ast))))
 
 (defn get-param-types [params]
   (assert (instance? ast/params-ast params))
@@ -840,6 +862,42 @@
         (-> old-ast 
             (.args (.args ast))
             (.constraint result-type))))))
+
+(extend-type ProtoArity
+  TypeChecker
+  (type-check [ast old-ast]
+    (map (add-proto-impl (.type-num ast)
+                         (-> old-ast .arity .fn-sym)
+                         (-> old-ast .arity .params .fixed count)
+                         (.constraint (.arity ast)))
+         (fn [_]
+           ast))))
+
+(extend-type ast/reify-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [reified-type-num (either (.type-num ast)
+                                   (extract type-counter))]
+      (-> ast
+          (.type-num (maybe reified-type-num))
+          (map (fn [arity]
+                 (ProtoArity reified-type-num arity)))
+          se/state-error)))
+
+  (type-check [ast old-ast]
+    (let [invoke-arities (either (map (get-in ast [.impls (ast/tag 'Fn) (ast/tag 'invoke)])
+                                      (fn [arities]
+                                        (reduce arities {}
+                                                (fn [m arity]
+                                                  (assoc m (count (.fixed (.params (.arity arity))))
+                                                         (.constraint (.arity arity)))))))
+                                 {})]
+      (se/state-error (.constraint (map ast .arity)
+                                   (c/ReifiedConstraint (extract (.type-num ast)) {}
+                                                        (symbol (str "reified value at "
+                                                                     (ast/location ast)))
+                                                        (.arities c/fn-constraint invoke-arities)
+                                                        empty-list c/no-symbol ""))))))
 
 (def parse-forms
   (rd/parser
