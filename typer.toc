@@ -16,7 +16,7 @@
                           :sha "26534ac"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "69955a0"))
+                            :sha "07b7412"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "b404f86"))
+                            :sha "0885281"))
 (add-ns b (module "base.toc"))
 
 (def Tagged (any-of Symbol
@@ -110,13 +110,13 @@
   Container
   (map [x f]
     (ProtoImpls fn-sym
-                (f default-impl)
+                (map default-impl f)
                 (map-vals impls (fn [impl-fns]
                                   (map-vals impl-fns (fn [arities]
                                                        (map arities f)))))))
 
   (map [x f embed]
-    (for [def-impl (f default-impl)
+    (for [def-impl (map default-impl f embed)
           impl-fns (contextual-map-vals impls
                                         (fn [impl-fns]
                                           (contextual-map-vals impl-fns f embed))
@@ -314,7 +314,6 @@
             (fn [proto-impls]
               (assert (instance? ProtoImpls proto-impls))
 
-              (status 'add-impl _LINE_ (ast/location fn-name) fn-name type-num arg-count "\n" arity-c)
               (comp (se/update-in-val [fn-name .impls type-num]
                                       (fn [fn-c]
                                         (assert (instance? c/FnConstraint fn-c))
@@ -323,8 +322,14 @@
                     (se/assoc-in-val [fn-name .impls type-num]
                                      (.arities c/fn-constraint {arg-count arity-c}))))))
 
+(defn get-type-info [type-sym]
+  (se/get-in-val [.types (ast/untag type-sym)]))
+
 (defprotocol TypeChecker
-  (update-constraint [ast constraint loc])
+  (update-constraint [ast constraint loc]
+    (compilation-error "Could not find implementation of 'update-constraint' at" loc "for:"
+                       "\n" (type-name ast) ast
+                       "\n\n" constraint))
 
   (check-call-site [ast args target]
     (assert-result x (instance? se/StateError x)))
@@ -425,10 +430,15 @@
     (let [loc (ast/location target)
           arg-count (count args)
           fixed-params (-> (.param-consts arity)
-                            c/extract-items-constraints)
+                           c/extract-items-constraints)
           required-args (count fixed-params)]
       (cond (< arg-count required-args)
-            (compilation-error "Insufficient number of arguments to function called at" loc)
+            (compilation-error "Insufficient number of arguments to function"
+                               (either (map (instance? Tagged target)
+                                            (fn [_]
+                                              (str "'" target "' called at")))
+                                       "called at")
+                               loc)
 
             (let [[fixed-args var-args] (-> args
                                             (map (fn [arg]
@@ -455,7 +465,11 @@
                                (.tail-c var-params))
                   checked-args (c/intersect arg-cs param-cs)]
               (for [new-arg-cs (cond (= c/bottom-type checked-args)
-                                     (compilation-error (conflicting-assertions checked-args loc))
+                                     (do
+                                       (status 'site _LINE_ loc "\n" target
+                                                  "\n\n" 'args args
+                                                  "\n\n" 'arity arity)
+                                       (compilation-error (conflicting-assertions checked-args loc)))
 
                                      (se/state-error (c/extract-items-constraints checked-args arg-count)))
                     _ (se/traverse (zip-lists new-arg-cs args)
@@ -490,12 +504,30 @@
                   ;;               "\n\n" 'result-const (.result-const arity)
                   ;;               "\n\n" 'fn-result r)
                   ;;       nothing))
-                  (Left r))))))))
+                  (Left r)))))))
+
+  (type-check [ast old-ast]
+    ;; TODO: remove this eventually
+    (se/state-error ast)))
 
 (extend-type c/FnConstraint
   TypeChecker
   (check-call-site [ast args target]
-    (se/state-error (Right ast)))
+    (either (map (or (map (get (.arities ast) (count args))
+                          (fn [arity]
+                            (.arities ast {(count args) arity})))
+                     (map (get (.arities ast) c/variadic)
+                          (fn [arity]
+                            (.arities ast {c/variadic arity}))))
+                 (fn [ast]
+                   (se/state-error (Right ast))))
+            (compilation-error "Could not find valid arity for function"
+                               (either (map (instance? Tagged target)
+                                            (fn [_]
+                                              (str "to '" target "' called at")))
+                                       "called at")
+                               (ast/location target)
+                               "with" (count args) "arguments.")))
 
   (call-site-checked [fc args target]
     (let [arg-count (count args)]
@@ -511,7 +543,8 @@
 (extend-type ast/tagged-symbol
   TypeChecker
   (update-constraint [ast constraint loc]
-    (append-value-type ast constraint loc))
+    (map (append-value-type ast constraint loc)
+         (partial .constraint ast)))
 
   (check-call-site [ast args target]
     (se/state-error (Right ast)))
@@ -689,6 +722,13 @@
 
 (extend-type ast/fn-ast
   TypeChecker
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conflicting-assertions new-c loc))))
+              (se/state-error (.constraint ast new-c)))))
+
   (pre-check [ast]
     (let [loc (ast/location ast)]
       ;; (or (= (.line loc) 0)
@@ -822,38 +862,49 @@
 
 (extend-type ast/call-ast
   TypeChecker
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conflicting-assertions new-c loc))))
+              (se/state-error (.constraint ast new-c)))))
+
   (type-check [ast old-ast]
     (let [loc (ast/location (.call-target old-ast))]
       (for [
             ;; _ (se/when (or ;; (= (.line loc) 0)
             ;;                ;; (= (.file loc) 'core)
-            ;;                (maybe (status 'calling-top _LINE_ loc
+            ;;             (maybe (print-err 'calling-top _LINE_ loc
             ;;                               "\n" 'target (.call-target ast)
-            ;;                               "\n\n" 'args (-> (.args ast)
-            ;;                                                (map .constraint)
-            ;;                                                (interpose  "\n")
-            ;;                                                vec)))
+            ;;                               "\n\n" 'target-c (.constraint (.call-target ast))
+            ;;                               "\n\n" 'args (str "[" (-> (.args ast)
+            ;;                                                         (map .constraint)
+            ;;                                                         (interpose  "\n")
+            ;;                                                         to-str)
+            ;;                                                 "]")))
             ;;                (maybe nothing)))
             result-type (elgot (fn [inner-ast]
                                  ;; (or ;; (= (.line loc) 0)
                                  ;;     ;; (= (.file loc) 'core)
                                  ;;     (do
                                  ;;       (status 'calling _LINE_ loc "\n" (type-name inner-ast) inner-ast
-                                 ;;               "\n\n" 'args (-> (.args ast)
-                                 ;;                                (map .constraint)
-                                 ;;                                (interpose  "\n")
-                                 ;;                                vec)
+                                 ;;               "\n" 'target (.call-target old-ast)
+                                 ;;               "\n\n" 'args (str "[" (-> (.args ast)
+                                 ;;                                         (map .constraint)
+                                 ;;                                         (interpose  "\n")
+                                 ;;                                         to-str)
+                                 ;;                                 "]")
                                  ;;               "\n\n" 'old-args (.args old-ast))
                                  ;;       nothing))
                                  (check-call-site inner-ast (.args ast) (.call-target old-ast)))
                                (fn [c]
                                  (call-site-checked c (.args ast) (.call-target old-ast)))
                                (.call-target ast) se/state-error)
-            _ (se/when (or ;; (= (.line loc) 0)
-                           ;; (= (.file loc) 'core)
-                           (maybe (status 'calling-result _LINE_ loc
-                                          "\n" 'result-type result-type))
-                           (maybe nothing)))
+            ;; _ (se/when (or ;; (= (.line loc) 0)
+            ;;                ;; (= (.file loc) 'core)
+            ;;                (maybe (status 'calling-result _LINE_ loc
+            ;;                               "\n" 'result-type result-type))
+            ;;                (maybe nothing)))
             _ (either (map (and (= c/bottom-type result-type)
                                 (first (.constraints result-type)))
                            (fn [_]
@@ -892,12 +943,125 @@
                                                   (assoc m (count (.fixed (.params (.arity arity))))
                                                          (.constraint (.arity arity)))))))
                                  {})]
-      (se/state-error (.constraint (map ast .arity)
-                                   (c/ReifiedConstraint (extract (.type-num ast)) {}
-                                                        (symbol (str "reified value at "
-                                                                     (ast/location ast)))
-                                                        (.arities c/fn-constraint invoke-arities)
-                                                        empty-list c/no-symbol ""))))))
+      (-> ast
+          (map .arity)
+          (.constraint (c/ReifiedConstraint (extract (.type-num ast)) {}
+                                            (symbol (str "reified value at "
+                                                         (ast/location ast)))
+                                            (.arities c/fn-constraint invoke-arities)
+                                            empty-list c/no-symbol ""))
+          se/state-error))))
+
+;; TODO: for extend-ast, fn-ast, type-ast, etc
+;; the type checking should run recursively until the fixed point
+(extend-type ast/extend-ast
+  TypeChecker
+  (pre-check [ast]
+    (for [type-info (get-type-info (.type ast))
+          :let [type-num (c/get-type-num type-info)]]
+      (map ast (fn [arity]
+                 (ProtoArity type-num arity)))))
+
+  (type-check [ast old-ast]
+    (se/state-error (map ast .arity))))
+
+(extend-type ProtoImpls
+  TypeChecker
+  (check-call-site [ast args target]
+    (either (map (first args)
+                 (fn [disp-arg]
+                   (let [disp-type (c/get-type-num (.constraint disp-arg))
+                         fn-c (either (get-in ast [.impls disp-type])
+                                 (.default-impl ast))]
+                     (either (map (get (.arities fn-c) (count args))
+                                  (fn [arity]
+                                    (se/state-error (Right (.arities fn-c {(count args) arity})))))
+                             (compilation-error "Could not find valid arity for function"
+                                                (either (map (instance? Tagged target)
+                                                             (fn [_]
+                                                               (str "to '" target "' called at")))
+                                                        "called at")
+                                                (ast/location target)
+                                                "with" (count args) "arguments.")))))
+            (compilation-error "The call to" (str "'" (.fn-sym ast) "'") "at" (ast/location target)
+                               "requires at least one argument."))))
+
+(extend-type ast/binding-ast
+  TypeChecker
+  (pre-check [ast]
+    (for [_ (push-types)
+          ;; :let [loc (ast/location ast)
+          ;;       _ (or (= (.line loc) 0)
+          ;;             (= (.file loc) 'core)
+          ;;             (do
+          ;;               (print-err 'binding-type-check _LINE_ loc
+          ;;                          "\n" 'ast ast)
+          ;;               nothing))]
+          _ (se/traverse (all-syms (.binding ast)) (fn [sym]
+                                                     (set-value-type sym c/top-type)))]
+      ast))
+
+  (type-check [ast old-ast]
+    (for [_ (push-types)
+          ;; :let [loc (ast/location ast)
+          ;;       _ (or (= (.line loc) 0)
+          ;;             (= (.file loc) 'core)
+          ;;             (do
+          ;;               (print-err 'binding-type-check loc
+          ;;                          "\n\n" 'ast ast)
+          ;;               nothing))]
+          new-binding (update-constraint (.binding ast) (.constraint (.val ast)) (ast/location old-ast))]
+      (.binding ast new-binding))))
+
+(extend-type ast/let-ast
+  TypeChecker
+  (pre-check [ast]
+    ;; (let [loc (ast/location ast)]
+    ;;   (or ;; (= (.line loc) 0)
+    ;;       ;; (= (.file loc) 'core)
+    ;;       (do
+    ;;         (status 'let _LINE_ loc
+    ;;                    "\n" ast)
+    ;;         nothing)))
+    (-> ast
+        (.body (remove (.body ast)
+                       (partial instance? ast/block-comment-ast)))
+        se/state-error))
+
+  ;; (type-check [ast old-ast]
+  ;;   (for [_ (se/traverse (reverse (.bindings ast))
+  ;;                        (fn [binding-ast]
+  ;;                          (let [binding (.binding binding-ast)
+  ;;                                val (.val binding-ast)]
+  ;;                            (for [val-c (either (or (map (instance? Tagged binding)
+  ;;                                                         (partial get-type-constraint))
+  ;;                                                    (map (instance? ast/params-ast binding)
+  ;;                                                         (fn [_]
+  ;;                                                           (map (get-param-types binding)
+  ;;                                                                (fn [binding-c]
+  ;;                                                                  (assert (instance? c/ListConstraint binding-c))
+  ;;                                                                  (-> c/seq-constraint
+  ;;                                                                      (c/set-items (.items binding-c))
+  ;;                                                                      (c/set-tail (.tail-c binding-c))))))))
+  ;;                                                (se/state-error c/top-type))
+  ;;                                  _ (se/traverse (all-syms binding)
+  ;;                                                 recover-type-constraint)
+  ;;                                  _ (update-constraint val (b/remove-asts val-c) (ast/location binding))
+  ;;                                  ;; :let [loc (ast/location old-ast)
+  ;;                                  ;;       _ (or (= (.line loc) 0)
+  ;;                                  ;;             (= (.file loc) 'core)
+  ;;                                  ;;             (do
+  ;;                                  ;;               (print-err 'let loc
+  ;;                                  ;;                          "\n" 'binding (type-name binding) binding
+  ;;                                  ;;                          "\n\n" 'val val
+  ;;                                  ;;                          "\n\n" 'val-c val-c)
+  ;;                                  ;;               nothing))]
+  ;;                                  _ (nip-types)]
+  ;;                              '_))))]
+  ;;     (let [result-c (either (map (last (.body ast)) .constraint)
+  ;;                            c/top-type)]
+  ;;       (b/ConstrainedAST ast (c/clear-sym result-c)))))
+  )
 
 (def parse-forms
   (rd/parser
