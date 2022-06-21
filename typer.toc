@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "26534ac"))
+                          :sha "2eaf733"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "07b7412"))
+                            :sha "ae24525"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "0885281"))
+                            :sha "33f1c41"))
 (add-ns b (module "base.toc"))
 
 (def Tagged (any-of Symbol
@@ -504,7 +504,7 @@
                   ;;               "\n\n" 'result-const (.result-const arity)
                   ;;               "\n\n" 'fn-result r)
                   ;;       nothing))
-                  (Left r)))))))
+                  (RecurseWith r)))))))
 
   (type-check [ast old-ast]
     ;; TODO: remove this eventually
@@ -520,7 +520,7 @@
                           (fn [arity]
                             (.arities ast {c/variadic arity}))))
                  (fn [ast]
-                   (se/state-error (Right ast))))
+                   (se/state-error (RecurseReturn ast))))
             (compilation-error "Could not find valid arity for function"
                                (either (map (instance? Tagged target)
                                             (fn [_]
@@ -540,6 +540,51 @@
                 (abort)
                 (compilation-error "Could not call" target))))))
 
+(deftype CheckedCondVal [ast types]
+  Stringable
+  (string-list [_]
+    (list "(CheckedCondVal " (str ast) "\n<types>)"))
+
+  Container
+  (map [_ f]
+    (CheckedCondVal (map ast f) (map types f)))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location ast)))
+
+(deftype OrClause [clause]
+  Stringable
+  (string-list [_]
+    (list "(OrClause " (str clause) ")"))
+
+  Container
+  (map [_ f]
+    (OrClause (map clause f)))
+
+  (map [_ f embed]
+    (map (map clause f embed)
+         OrClause))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
+  TypeChecker
+  (pre-check [ast]
+    (map (push-types)
+         (fn [_]
+           (status 'or-pre _LINE_ ast)
+           ast)))
+
+  (type-check [ast old-ast]
+    (status 'tc-or _LINE_ (ast/location old-ast))
+    (let [loc (ast/location old-ast)]
+      (for [_ (se-debug 'or-tc _LINE_ ast)
+            new-clause (update-constraint (.clause ast) c/maybe-constraint loc)
+            types (pop-types)]
+        (OrClause new-clause)))))
+
 (extend-type ast/tagged-symbol
   TypeChecker
   (update-constraint [ast constraint loc]
@@ -547,7 +592,7 @@
          (partial .constraint ast)))
 
   (check-call-site [ast args target]
-    (se/state-error (Right ast)))
+    (se/state-error (RecurseReturn ast)))
 
   (call-site-checked [c _ _]
     (se/state-error (.constraint c)))
@@ -972,10 +1017,10 @@
                  (fn [disp-arg]
                    (let [disp-type (c/get-type-num (.constraint disp-arg))
                          fn-c (either (get-in ast [.impls disp-type])
-                                 (.default-impl ast))]
+                                      (.default-impl ast))]
                      (either (map (get (.arities fn-c) (count args))
                                   (fn [arity]
-                                    (se/state-error (Right (.arities fn-c {(count args) arity})))))
+                                    (se/state-error (RecurseReturn (.arities fn-c {(count args) arity})))))
                              (compilation-error "Could not find valid arity for function"
                                                 (either (map (instance? Tagged target)
                                                              (fn [_]
@@ -1062,6 +1107,28 @@
   ;;                            c/top-type)]
   ;;       (b/ConstrainedAST ast (c/clear-sym result-c)))))
   )
+
+(extend-type ast/either-ast
+  TypeChecker
+  (pre-check [ast]
+    (flat-map (se-debug 'either-pre _LINE_ (ast/location ast))
+              (fn [_]
+                (-> ast
+                    (.clause (OrClause (.clause ast)))
+                    se/state-error))))
+
+  (type-check [ast old-ast]
+    (for [_ (se-debug 'either-tc _LINE_ (ast/location old-ast))
+          _ (pop-types)
+          ;; _ (push-types (.types (.clause ast)))
+          new-clause (update-constraint (.clause ast)
+                                        c/maybe-constraint
+                                        (ast/location (.clause ast)))]
+      (-> ast
+          (.clause new-clause)
+          (.constraint (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
+                                        (.constraint (.alt ast))])
+                           (c/update-path (ast/location old-ast))))))))
 
 (def parse-forms
   (rd/parser
