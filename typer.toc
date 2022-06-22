@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "dcff0f2"))
+                          :sha "69c64b9"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "f7c128f"))
+                            :sha "4a55b5f"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "d4b7712"))
+                            :sha "0783561"))
 (add-ns b (module "base.toc"))
 
 (def Tagged (any-of Symbol
@@ -79,8 +79,8 @@
   (let [msg (to-str (interpose msg " "))]
     (se/throw msg)))
 
-(defn conflicting-assertions [failing-constraint loc]
-  (to-str (list* "Conflicting assertions"
+(defn conf-ass [line failing-constraint loc]
+  (to-str (list* "Conflicting assertions" (str " (" line ") ")
                  (either (= "" (.file loc))
                          (str " at " loc))
                  "\n"
@@ -121,7 +121,15 @@
                                         (fn [impl-fns]
                                           (contextual-map-vals impl-fns f embed))
                                         embed)]
-      (ProtoImpls fn-sym def-impl impl-fns))))
+      (ProtoImpls fn-sym def-impl impl-fns)))
+
+  c/Constraint
+  (c/intersect [x y]
+    (either (= c/bottom-type default-impl y)
+            x)))
+
+(def ConstraintOrProto (any-of c/Constraints
+                               ProtoImpls))
 
 (deftype Module [path index protocols namespaces types value-types]
   ;; path             path to file containing the modules source code (Symbol or String)
@@ -201,6 +209,7 @@
 
 (defn get-core-value-type [sym]
   (assert (instance? Symbol sym))
+
   (se/new-se (fn [s]
                (either (or (and (= 0 (.index s))
                                 (or (map (get-in s [.value-types 0 sym])
@@ -254,7 +263,7 @@
 
 (defn set-value-type [sym constraint]
   (assert (instance? Tagged sym))
-  (assert (instance? (any-of c/AllValues c/SymbolConstraints ProtoImpls) constraint))
+  (assert (instance? ConstraintOrProto constraint))
 
   (map (se/update-in-val [.value-types]
                          (fn [types-list]
@@ -269,7 +278,7 @@
 
 (defn append-value-type [sym constraint loc]
   (assert (instance? Tagged sym))
-  (assert (instance? c/Constraints constraint))
+  (assert (instance? ConstraintOrProto constraint))
 
   (let [curr-const (se/try
                      (get-value-type sym)
@@ -293,7 +302,7 @@
                         ;;         nothing)))
 
                         (cond (= new-const c/bottom-type)
-                              (compilation-error (conflicting-assertions new-const loc))
+                              (compilation-error (conf-ass _LINE_ new-const loc))
 
                               (set-value-type sym (c/update-path new-const loc)))))))))
 
@@ -332,7 +341,11 @@
                        "\n\n" constraint))
 
   (check-call-site [ast args target]
-    (assert-result x (instance? se/StateError x)))
+    (assert-result x (instance? se/StateError x))
+
+    (compilation-error "Could not find implementation of 'check-call-site' at" (ast/location ast)
+                       "for target:" target
+                       "\n" (type-name ast) ast))
 
   (call-site-checked [ast args target]
     (assert-result x (instance? se/StateError x)))
@@ -378,16 +391,19 @@
 
 (defn type-check-ast [ast]
   (cond (= c/bottom-type ast)
-        (compilation-error (conflicting-assertions ast (ast/location ast)))
+        (compilation-error (conf-ass _LINE_ ast (ast/location ast)))
 
         (for [new-ast (pre-check ast)
+              ;; :let [loc (ast/location ast)
+              ;;       _ (and (instance? ast/either-ast ast)
+              ;;              (maybe (status 'type-checking _LINE_ loc
+              ;;                                "\n" 'ast ast
+              ;;                                "\n\n" 'new-ast new-ast)))]
               newer-ast (map new-ast type-check-ast se/state-error)
               ;; :let [loc (ast/location ast)
-              ;;       _ (and (extract flag)
-              ;;              (maybe (print-err 'type-checking _LINE_ loc
-              ;;                                "\n" 'ast ast
-              ;;                                "\n\n" 'new-ast new-ast
-              ;;                                "\n\n" 'newer-ast newer-ast)))]
+              ;;       _ (and (instance? ast/either-ast ast)
+              ;;              (maybe (status 'type-checking _LINE_ loc
+              ;;                             "\n\n" 'newer-ast newer-ast)))]
               final-ast (type-check newer-ast new-ast)]
           (do
             ;; (let [loc (ast/location ast)]
@@ -402,6 +418,12 @@
 
 (extend-type c/SymbolConstraints
   TypeChecker
+  (all-symbols [c]
+    [])
+
+  (param-types [c]
+    (se/state-error c))
+
   (type-check [c old-c]
     (map (either (map (c/extract-sym old-c)
                       (fn [sym]
@@ -410,14 +432,73 @@
          (fn [_]
            c))))
 
+(extend-type c/ParamConstraint
+  TypeChecker
+  (check-call-site [c args target]
+    (-> c
+        (c/intersect (-> (c/CallValue args empty-list (ast/untag target) "")
+                         (c/update-path (ast/location target))))
+        RecurseFinal
+        se/state-error))
+
+  ;; (pre-check [ast]
+  ;;   (append-value-type (.sym ast) ast (ast/location ast)))
+  )
+
 (extend-type c/AllValues
   TypeChecker
+  (all-symbols [c]
+    [])
+
   (param-types [c]
     (se/state-error c))
 
   (type-check [ast old-ast]
     ;; TODO: remove this eventually
     (se/state-error ast)))
+
+;; (extend-type c/ModSeqType
+;;   TypeChecker
+;;   (type-check [c old-c]
+;;     (for [base-c (map (get-value-type (.base-sym old-c)) .constraint)]
+;;       (let [new-c (c/intersect c base-c)]
+;;         (cond (= c/bottom-type new-c)
+;;               (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))
+
+;;               new-c)))))
+
+(extend-type c/TypeOfConstraint
+  TypeChecker
+  (type-check [c old-c]
+    ;; TODO: restrict use to fn params only
+    (get-value-type (.param-sym old-c))))
+
+(extend-type c/InnerTypeOfConstraint
+  TypeChecker
+  (type-check [c old-c]
+    (map (get-value-type (.param-sym old-c))
+         (fn [const-c]
+           ;; (let [loc (ast/location (.param-sym old-c))]
+           ;;   (or (= (.line loc) 0)
+           ;;       (do
+           ;;         (print-err 'getting-inner (.constraint const-c))
+           ;;         (print-err 'inner (c/extract-contents-constraint (.constraint const-c)))
+           ;;         nothing)))
+           (c/extract-contents-constraint const-c)))))
+
+;; (extend-type c/ArgOf
+;;   TypeChecker
+;;   (type-check [c old-c]
+;;     (let [loc (ast/location (.fn-sym old-c))]
+;;       (for [fn-c (get-value-type (.fn-sym old-c))]
+;;         (c/intersect fn-c c)))))
+
+;; (extend-type c/ResultOf
+;;   TypeChecker
+;;   (type-check [c old-c]
+;;     (let [loc (ast/location (.fn-sym old-c))]
+;;       (for [fn-c (get-value-type (.fn-sym old-c))]
+;;         (c/intersect fn-c (c/CallValue c/no-args (.path c) (.sym c) (.var c)))))))
 
 (extend-type c/fn-arity
   TypeChecker
@@ -448,15 +529,15 @@
                   var-args (-> c/list-constraint
                                (.items var-args)
                                (.tail-c c/bottom-type))
+                  all-args (conj fixed-args var-args)
                   fixed-params (map fixed-params (fn [c]
-                                                   (c/reify-type-constraint c (.arity-id arity)
-                                                                            (conj fixed-args var-args)
-                                                                            loc)))
+                                                   (let [r (c/reify-type-constraint c (.arity-id arity) all-args loc)]
+                                                     (and (= c/bottom-type r)
+                                                          (maybe (status 'c _LINE_ c "\n\n" 'all all-args "\n\n" 'r r)))
+                                                     r)))
                   var-params (either (= (.tail-c (.param-consts arity)) c/bottom-type)
                                      (-> (.tail-c (.param-consts arity))
-                                         (c/reify-type-constraint (.arity-id arity)
-                                                                  (conj fixed-args var-args)
-                                                                  loc)))
+                                         (c/reify-type-constraint (.arity-id arity) all-args loc)))
                   arg-cs (-> c/list-constraint
                              (.items fixed-args)
                              (.tail-c var-args))
@@ -466,10 +547,12 @@
                   checked-args (c/intersect arg-cs param-cs)]
               (for [new-arg-cs (cond (= c/bottom-type checked-args)
                                      (do
-                                       (status 'site _LINE_ loc "\n" target
-                                                  "\n\n" 'args args
-                                                  "\n\n" 'arity arity)
-                                       (compilation-error (conflicting-assertions checked-args loc)))
+                                       ;; (status 'site _LINE_ loc "\n" target
+                                       ;;            "\n\n" 'args args
+                                       ;;            "\n\n" 'arg-cs arg-cs
+                                       ;;            "\n\n" 'params param-cs
+                                       ;;            "\n\n" 'arity arity)
+                                       (compilation-error (conf-ass _LINE_ checked-args loc)))
 
                                      (se/state-error (c/extract-items-constraints checked-args arg-count)))
                     _ (se/traverse (zip-lists new-arg-cs args)
@@ -540,51 +623,6 @@
                 (abort)
                 (compilation-error "Could not call" target))))))
 
-(deftype CheckedCondVal [ast types]
-  Stringable
-  (string-list [_]
-    (list "(CheckedCondVal " (str ast) "\n<types>)"))
-
-  Container
-  (map [_ f]
-    (CheckedCondVal (map ast f) (map types f)))
-
-  ast/FileLoc
-  (ast/location [_]
-    (ast/location ast)))
-
-(deftype OrClause [clause]
-  Stringable
-  (string-list [_]
-    (list "(OrClause " (str clause) ")"))
-
-  Container
-  (map [_ f]
-    (OrClause (map clause f)))
-
-  (map [_ f embed]
-    (map (map clause f embed)
-         OrClause))
-
-  ast/FileLoc
-  (ast/location [_]
-    (ast/location clause))
-
-  TypeChecker
-  (pre-check [ast]
-    (map (push-types)
-         (fn [_]
-           (status 'or-pre _LINE_ ast)
-           ast)))
-
-  (type-check [ast old-ast]
-    (status 'tc-or _LINE_ (ast/location old-ast))
-    (let [loc (ast/location old-ast)]
-      (for [_ (se-debug 'or-tc _LINE_ ast)
-            new-clause (update-constraint (.clause ast) c/maybe-constraint loc)
-            types (pop-types)]
-        (OrClause new-clause)))))
-
 (extend-type ast/tagged-symbol
   TypeChecker
   (update-constraint [ast constraint loc]
@@ -622,7 +660,7 @@
                                (fn [c]
                                  (let [param-c (c/full-param-constraint c)]
                                    (cond (= c/bottom-type param-c)
-                                         (compilation-error (conflicting-assertions param-c (ast/location sym)))
+                                         (compilation-error (conf-ass _LINE_ param-c (ast/location sym)))
 
                                          (se/state-error c)))))
                           (se/state-error c))))))
@@ -761,7 +799,7 @@
             _ (either (map (or (= c/bottom-type pts)
                                (= c/bottom-type result-c))
                            (fn [failure-c]
-                             (compilation-error (conflicting-assertions failure-c loc))))
+                             (compilation-error (conf-ass _LINE_ failure-c loc))))
                       se-nop)]
         (.constraint ast (c/fn-arity (.fn-var ast) pts result-c))))))
 
@@ -771,7 +809,7 @@
     (let [new-c (c/intersect (.constraint ast) constraint)]
       (either (map (= c/bottom-type new-c)
                    (fn [_]
-                     (compilation-error (conflicting-assertions new-c loc))))
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
               (se/state-error (.constraint ast new-c)))))
 
   (pre-check [ast]
@@ -911,7 +949,7 @@
     (let [new-c (c/intersect (.constraint ast) constraint)]
       (either (map (= c/bottom-type new-c)
                    (fn [_]
-                     (compilation-error (conflicting-assertions new-c loc))))
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
               (se/state-error (.constraint ast new-c)))))
 
   (type-check [ast old-ast]
@@ -953,7 +991,7 @@
             _ (either (map (and (= c/bottom-type result-type)
                                 (first (.constraints result-type)))
                            (fn [_]
-                             (compilation-error (conflicting-assertions result-type loc))))
+                             (compilation-error (conf-ass _LINE_ result-type loc))))
                       se-nop)]
         (-> old-ast 
             (.args (.args ast))
@@ -1060,6 +1098,13 @@
 
 (extend-type ast/let-ast
   TypeChecker
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
+              (se/state-error (.constraint ast new-c)))))
+
   (pre-check [ast]
     ;; (let [loc (ast/location ast)]
     ;;   (or ;; (= (.line loc) 0)
@@ -1073,62 +1118,206 @@
                        (partial instance? ast/block-comment-ast)))
         se/state-error))
 
-  ;; (type-check [ast old-ast]
-  ;;   (for [_ (se/traverse (reverse (.bindings ast))
-  ;;                        (fn [binding-ast]
-  ;;                          (let [binding (.binding binding-ast)
-  ;;                                val (.val binding-ast)]
-  ;;                            (for [val-c (either (or (map (instance? Tagged binding)
-  ;;                                                         (partial get-type-constraint))
-  ;;                                                    (map (instance? ast/params-ast binding)
-  ;;                                                         (fn [_]
-  ;;                                                           (map (get-param-types binding)
-  ;;                                                                (fn [binding-c]
-  ;;                                                                  (assert (instance? c/ListConstraint binding-c))
-  ;;                                                                  (-> c/seq-constraint
-  ;;                                                                      (c/set-items (.items binding-c))
-  ;;                                                                      (c/set-tail (.tail-c binding-c))))))))
-  ;;                                                (se/state-error c/top-type))
-  ;;                                  _ (se/traverse (all-syms binding)
-  ;;                                                 recover-type-constraint)
-  ;;                                  _ (update-constraint val (b/remove-asts val-c) (ast/location binding))
-  ;;                                  ;; :let [loc (ast/location old-ast)
-  ;;                                  ;;       _ (or (= (.line loc) 0)
-  ;;                                  ;;             (= (.file loc) 'core)
-  ;;                                  ;;             (do
-  ;;                                  ;;               (print-err 'let loc
-  ;;                                  ;;                          "\n" 'binding (type-name binding) binding
-  ;;                                  ;;                          "\n\n" 'val val
-  ;;                                  ;;                          "\n\n" 'val-c val-c)
-  ;;                                  ;;               nothing))]
-  ;;                                  _ (nip-types)]
-  ;;                              '_))))]
-  ;;     (let [result-c (either (map (last (.body ast)) .constraint)
-  ;;                            c/top-type)]
-  ;;       (b/ConstrainedAST ast (c/clear-sym result-c)))))
-  )
+  (type-check [ast old-ast]
+    (for [_ (se/traverse (reverse (.bindings ast))
+                         (fn [binding-ast]
+                           (let [binding (.binding binding-ast)
+                                 val (.val binding-ast)]
+                             (for [val-c (cata param-types binding se/state-error)
+                                   _ (se/traverse (all-syms binding) recover-val-type)
+                                   _ (update-constraint val val-c (ast/location binding))
+                                   :let [loc (ast/location old-ast)
+                                         _ (or ;; (= (.line loc) 0)
+                                            ;; (= (.file loc) 'core)
+                                            (do
+                                              (status 'let _LINE_ loc
+                                                      "\n" 'binding (type-name binding) binding
+                                                      "\n\n" 'val val
+                                                      "\n\n" 'val-c val-c)
+                                              nothing))]
+                                   _ (nip-types)]
+                               '_))))]
+      (let [result-c (either (map (last (.body ast)) .constraint)
+                             c/top-type)]
+        (.constraint ast (c/clear-sym result-c))))))
+
+(deftype AndClause [clause types]
+  Stringable
+  (string-list [_]
+    (list "(AndClause " (str clause) ")"))
+
+  Container
+  (map [_ f]
+    (AndClause (f clause) types))
+
+  (map [c f embed]
+    (map (f clause)
+         (partial .clause c)))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
+  TypeChecker
+  (type-check [ast old-ast]
+    (for [new-clause (update-constraint (.clause ast) c/maybe-constraint (ast/location old-ast))
+          types (get-types)]
+      (AndClause new-clause types))))
+
+(deftype OrClause [clause types]
+  Stringable
+  (string-list [_]
+    (list "(OrClause " (str clause) " {})"))
+
+  Container
+  (map [_ f]
+    (OrClause (f clause) types))
+
+  (map [c f embed]
+    (map (f clause)
+         (partial .clause c)))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
+  TypeChecker
+  (pre-check [ast]
+    (map (push-types)
+         (fn [_]
+           ast)))
+
+  (type-check [ast old-ast]
+    (let [loc (ast/location old-ast)]
+      (for [new-clause (update-constraint (.clause ast) c/maybe-constraint loc)
+            types (pop-types)]
+        (OrClause new-clause types)))))
+
+(extend-type ast/or-ast
+  TypeChecker
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
+              (se/state-error (.constraint ast new-c)))))
+
+  (pre-check [ast]
+    (-> ast
+        (.clauses (-> (.clauses ast)
+                      (remove (partial instance? ast/NoCode))
+                      (map (fn [clause]
+                             (OrClause clause c/top-type)))))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (either (map (first (.clauses ast))
+                 (fn [first-clause]
+                   (for [_ (pop-types)
+                         _ (push-types (.types first-clause))
+                         ;; TODO: when the ast of the first clause is a call to instance?,
+                         ;; recover the type of the symbol in the second arg
+                         ]
+                     (-> ast
+                         (.clauses (map (.clauses ast) .clause))
+                         (.constraint (-> (.clauses ast)
+                                          (map (comp .constraint .clause))
+                                          c/sum-type
+                                          (c/update-path (cata ast/location old-ast))))))))
+
+            (se/state-error (.constraint ast (c/update-path c/maybe-constraint (cata ast/location old-ast)))))))
+
+(extend-type ast/and-ast
+  TypeChecker
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
+              (se/state-error (.constraint ast new-c)))))
+
+  (pre-check [ast]
+    (-> ast
+        (.clauses (-> (.clauses ast)
+                      (remove (partial instance? ast/NoCode))
+                      (map (fn [clause]
+                             (AndClause clause c/top-type)))))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (either (for [first-clause (first (.clauses ast))
+                  last-clause (last (.clauses ast))]
+              (for [_ (pop-types)
+                    _ (push-types (.types first-clause))
+                    ;; TODO: when the ast of the first clause is a call to instance?,
+                    ;; recover the type of the symbol in the second arg
+                    ]
+                (-> ast
+                    (.clauses (map (.clauses ast) .clause))
+                    (.constraint (.constraint (.clause last-clause))))))
+            (se/state-error (.constraint ast (-> c/maybe-constraint
+                                                 (c/update-path (ast/location old-ast))))))))
 
 (extend-type ast/either-ast
   TypeChecker
   (pre-check [ast]
-    (flat-map (se-debug 'either-pre _LINE_ (ast/location ast))
-              (fn [_]
-                (-> ast
-                    (.clause (OrClause (.clause ast)))
-                    se/state-error))))
+    (-> ast
+        (.clause (OrClause (.clause ast) {}))
+        se/state-error))
 
   (type-check [ast old-ast]
-    (for [_ (se-debug 'either-tc _LINE_ (ast/location old-ast))
-          _ (pop-types)
-          ;; _ (push-types (.types (.clause ast)))
-          new-clause (update-constraint (.clause ast)
-                                        c/maybe-constraint
-                                        (ast/location (.clause ast)))]
-      (-> ast
-          (.clause new-clause)
-          (.constraint (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
-                                        (.constraint (.alt ast))])
-                           (c/update-path (ast/location old-ast))))))))
+    (for [_ (pop-types)
+          _ (push-types (.types (.clause ast)))]
+      (let [new-clause (.clause (.clause ast))]
+        (-> ast
+            (.clause new-clause)
+            (.constraint (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
+                                          (.constraint (.alt ast))])
+                             (c/update-path (ast/location old-ast)))))))))
+
+(extend-type ast/integer-ast
+  TypeChecker
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
+              (se/state-error (.constraint ast new-c)))))
+
+  (type-check [ast old-ast]
+    (se/state-error (.constraint ast (-> c/int-constraint
+                                         (.static-value (.int old-ast))
+                                         (c/update-path (ast/location old-ast)))))))
+
+(extend-type ast/cond-val-ast
+  TypeChecker
+  (pre-check [ast]
+    (map (push-types)
+         (fn [_]
+           ast)))
+
+  (type-check [ast old-ast]
+    (for [new-condit (update-constraint (.conditional ast) c/maybe-constraint (ast/location old-ast))
+          types (pop-types)]
+      ;; TODO: not convinced this is right
+      ;; (.conditional ast new-condit)
+      (.types ast types))))
+
+(extend-type ast/cond-ast
+  TypeChecker
+  (type-check [ast old-ast]
+    (let [conditionals (.conditionals ast)]
+      ;; TODO: will break when there's only the default clause in the cond
+      (either (map (first conditionals)
+                   (fn [first-cond]
+                     (for [_ (pop-types)
+                           _ (push-types (.types first-cond))]
+                       (.constraint ast (-> (.conditionals ast)
+                                            (map (fn [c]
+                                                   (.constraint (.value c))))
+                                            (conj (.constraint (.default ast)))
+                                            c/sum-type)))))
+              (se/state-error (.constraint ast (.constraint (.default ast))))))))
 
 (def parse-forms
   (rd/parser
