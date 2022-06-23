@@ -16,7 +16,7 @@
                           :sha "69c64b9"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "4a55b5f"))
+                            :sha "a89f692"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "0783561"))
+                            :sha "34b60c5"))
 (add-ns b (module "base.toc"))
 
 (def Tagged (any-of Symbol
@@ -80,6 +80,7 @@
     (se/throw msg)))
 
 (defn conf-ass [line failing-constraint loc]
+  (status 'conf-ass line)
   (to-str (list* "Conflicting assertions" (str " (" line ") ")
                  (either (= "" (.file loc))
                          (str " at " loc))
@@ -292,14 +293,14 @@
                     (fn [curr-const]
                       (let [new-const (c/trim (c/intersect curr-const constraint))]
                         ;; (let [loc (ast/location sym)]
-                        ;;   (or (= (.file loc) 'core)
-                        ;;       (= (.line loc) 0)
-                        ;;       (do
-                        ;;         (print-err 'appending _LINE_ loc sym
-                        ;;                    "\n" 'constraint constraint
-                        ;;                    "\n\n" 'curr curr-const
-                        ;;                    "\n\n" 'new-const new-const)
-                        ;;         nothing)))
+                        ;;   (or ;; (= (.file loc) 'core)
+                        ;;    ;; (= (.line loc) 0)
+                        ;;    (do
+                        ;;      (print-err 'appending _LINE_ loc (str "\"" sym "\"")
+                        ;;                 "\n" 'constraint constraint
+                        ;;                 "\n\n" 'curr curr-const
+                        ;;                 "\n\n" 'new-const new-const)
+                        ;;      nothing)))
 
                         (cond (= new-const c/bottom-type)
                               (compilation-error (conf-ass _LINE_ new-const loc))
@@ -684,6 +685,13 @@
         (c/set-items (.fixed params))
         se/state-error))
 
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
+              (se/state-error (.constraint ast new-c)))))
+
   (type-check [ast old-ast]
     (let [c (-> c/list-constraint
                 (c/set-items (map (.fixed ast) .constraint))
@@ -872,9 +880,8 @@
                                    (cond (instance? ast/fn-ast inner-ast)
                                          (.fn-sym inner-ast (maybe (.sym ast)))
 
-                                         (instance? c/SumConstraint inner-ast)
-                                         (b/ConstrainedSum (.alts inner-ast) (.path inner-ast)
-                                                           (ast/untag (.sym ast)) (.var inner-ast))
+                                         (instance? c/SymbolConstraints inner-ast)
+                                         (c/update-sym inner-ast (ast/untag (.sym ast)))
 
                                          inner-ast)))))))
 
@@ -886,8 +893,14 @@
                              (cond (instance? c/Constraints val)
                                    ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
                                    ;; the updated version. Possibly a bug in assoc-in*
+
+                                   ;; TODO: this version produces a very cryptic error message
+                                   ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
+                                   ;;           (set-value-type (.sym old-ast) val))
+
                                    (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
-                                             (set-value-type (.sym old-ast) val))
+                                             (fn [_]
+                                               (set-value-type (.sym old-ast) val)))
 
                                    (set-value-type (.sym old-ast) (.constraint val)))))
                       (set-value-type (.sym old-ast) c/top-type))]
@@ -1126,15 +1139,15 @@
                              (for [val-c (cata param-types binding se/state-error)
                                    _ (se/traverse (all-syms binding) recover-val-type)
                                    _ (update-constraint val val-c (ast/location binding))
-                                   :let [loc (ast/location old-ast)
-                                         _ (or ;; (= (.line loc) 0)
-                                            ;; (= (.file loc) 'core)
-                                            (do
-                                              (status 'let _LINE_ loc
-                                                      "\n" 'binding (type-name binding) binding
-                                                      "\n\n" 'val val
-                                                      "\n\n" 'val-c val-c)
-                                              nothing))]
+                                   ;; :let [loc (ast/location old-ast)
+                                   ;;       _ (or ;; (= (.line loc) 0)
+                                   ;;          ;; (= (.file loc) 'core)
+                                   ;;          (do
+                                   ;;            (status 'let _LINE_ loc
+                                   ;;                    "\n" 'binding (type-name binding) binding
+                                   ;;                    "\n\n" 'val val
+                                   ;;                    "\n\n" 'val-c val-c)
+                                   ;;            nothing))]
                                    _ (nip-types)]
                                '_))))]
       (let [result-c (either (map (last (.body ast)) .constraint)
@@ -1274,6 +1287,18 @@
             (.constraint (-> (c/sum-type [(c/extract-contents-constraint (.constraint new-clause))
                                           (.constraint (.alt ast))])
                              (c/update-path (ast/location old-ast)))))))))
+(extend-type ast/string-ast
+  TypeChecker
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
+              (se/state-error (.constraint ast new-c)))))
+
+  (type-check [ast old-ast]
+    (let [str-val (.string old-ast)]
+      (se/state-error (.constraint ast (.static-value c/strbuff-constraint str-val))))))
 
 (extend-type ast/integer-ast
   TypeChecker
