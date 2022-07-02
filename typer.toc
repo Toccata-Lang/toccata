@@ -1439,12 +1439,13 @@
 
 (defn default-type-impls [type-sym fields]
   (let [loc (ast/location type-sym)]
+    ;; TODO: make sure the constraints on all these fn's are as specific as possible
     {Type-sym
      {type-name-sym
       {1 (ast/fn-arity
           (ast/tag type-name-sym loc)
           (ast/params [x*]) ""
-          [(ast/string-ast (str type-sym) (.file loc) (.line loc) c/top-type)])}
+          [(ast/string-ast (str type-sym) (.file loc) (.line loc) c/string-constraint)])}
 
       has-field-sym
       {2 (ast/fn-arity
@@ -1513,6 +1514,7 @@
   (let [type-value (ast/tag "#value")
         field-arg (ast/tag "#field")
         loc (ast/location sym)]
+    ;; TODO: make sure the constraints on all these fn's are as specific as possible
     {Type-sym
      (-> (zip-lists (seq fields) (range (count fields)) field-constraints)
          (map (fn [[field field-index field-constraint]]
@@ -1581,6 +1583,14 @@
                   (fn [arity]
                     (ProtoArity type-num arity))))))))
 
+(extend-type c/CallValue
+  ;; TODO: remove
+  TypeChecker
+  (param-types [c]
+    (print-err 'boomity _LINE_ c)
+    (abort)
+    se/zero-se))
+
 (defn create-constructor [new-type-name type-num new-type-constraint field-constraints fields]
   (assert (instance? ast/tagged-symbol new-type-name))
   (assert (instance? c/ReifiedConstraint new-type-constraint))
@@ -1597,24 +1607,39 @@
                          (map (fn [arg]
                                 (ast/tag arg loc)))
                          ast/params)]
+    ;; TODO: this causes a parsing error
+    ;; (ast/reified (maybe reified-type-num)
+    ;;              {
+    ;;               })
+
+    ;; TODO: make sure the constraints on all these fn's are as specific as possible
     (ast/reified (maybe reified-type-num)
-                 {(ast/tag Eq-sym loc)
+                 {Eq-sym
                   {(ast/tag =*-sym loc)
                    [(ast/fn-arity
                      (ast/tag =*-sym loc)
                      (ast/params [x* y*]) ""
                      [(ast/and-expr
-                       [(ast/call-expr [=*-sym
-                                        type-num
+                       [(ast/call-expr [=*-sym (ast/integer-ast type-num "" 0
+                                                                (-> c/int-constraint
+                                                                    (.static-value type-num)
+                                                                    (c/update-path loc)))
                                         (ast/call-expr [get-type-sym y*])])
                         (ast/call-expr [maybe-sym y*])])])]}
 
-                  (ast/tag Type-sym loc)
+                  Type-sym
                   {type-name-sym
                    [(ast/fn-arity
                      (ast/tag type-name-sym loc)
                      (ast/params [(ast/tag '_)]) ""
-                     [(str "* " new-type-name " constructor at " (.file loc) ": " (.line loc) " *")])]
+                     (let [s (str "* " new-type-name " constructor at " (.file loc) ": " (.line loc) " *")]
+                       [(ast/string-ast s "" 0 (cata (fn [c]
+                                                       (cond (or (instance? c/StrBuffConstraint c)
+                                                                 (instance? c/SubStrConstraint c))
+                                                             (.static-value c s)
+
+                                                             c))
+                                                     c/string-constraint))]))]
 
                    ;; TODO: put back in
                    ;; type-mapping-sym
@@ -1626,19 +1651,29 @@
                    ;;                (map (keys field-set) ast/quoted-ast)))])]
 
                    instance?-sym
-                   [(ast/fn-arity
-                     (ast/tag instance?-sym loc)
+                   [(ast/fn-arity-ast
+                     (ast/tag instance?-sym loc) ""
                      (ast/params [x* y*]) ""
                      [;; TODO: remove all inline assertions
                       ;; add constraints to arity struct
-                      (-> c/maybe-constraint
-                          (c/intersect (c/InferredInner new-type-constraint empty-list c/no-symbol ""))
-                          c/ResultConstraint)
                       (ast/and-expr
                        [(ast/call-expr [=*-sym
-                                        type-num
+                                        (ast/integer-ast type-num "" 0
+                                                         (-> c/int-constraint
+                                                             (.static-value type-num)
+                                                             (c/update-path loc)))
                                         (ast/call-expr [get-type-sym y*])])
-                        (ast/call-expr [maybe-sym y*])])])]}
+                        (ast/call-expr [maybe-sym y*])])]
+                     (let [arity-id (symbol (str new-type-name "_instance_QM_"))]
+                       (c/fn-arity
+                        arity-id
+                        (.items field-constraints [c/top-type c/top-type])
+                        (-> new-type-constraint
+                            (c/intersect (c/ParamConstraint
+                                          arity-id 1 []
+                                          empty-list c/no-symbol ""))
+                            (c/InferredInner empty-list c/no-symbol "")
+                            (c/intersect c/maybe-constraint)))))]}
 
                   Function-sym
                   {invoke-sym
@@ -1702,13 +1737,22 @@
                                                                       arity-id 1 [(c/GetField idx)]
                                                                       empty-list c/no-symbol "")))))))))])}
 
-                  (ast/tag Stringable-sym loc)
-                  {string-list-sym
-                   [(ast/fn-arity (ast/params [(ast/tag 'z)]) ""
-                                  [(ast/call-expr [list-sym
-                                                   "<ValueConstructor " (str new-type-name) " ["
-                                                   (to-str (interpose fields ", "))
-                                                   "]>"])])]}})))
+                  Stringable-sym
+                  (let [s (str "<ValueConstructor " new-type-name " ["
+                               (to-str (interpose fields ", "))
+                               "]>")]
+                    {string-list-sym
+                     [(ast/fn-arity
+                       (ast/tag string-list-sym loc)
+                       (ast/params [(ast/tag 'z)]) ""
+                       [(ast/call-expr [list-sym
+                                        (ast/string-ast s "" 0 (cata (fn [c]
+                                                                       (cond (or (instance? c/StrBuffConstraint c)
+                                                                                 (instance? c/SubStrConstraint c))
+                                                                             (.static-value c s)
+
+                                                                             c))
+                                                                     c/string-constraint))])])]})})))
 
 (deftype CheckedTypeAST [sym type-num new-type-constraint fields impls]
   Stringable
@@ -1803,61 +1847,16 @@
               impls (map-vals impls (fn [protos]
                                       (map-vals protos (fn [impl-fns]
                                                          (vec (vals impl-fns))))))
-              _ (print-err 'impls _LINE_ impls)
-              
               ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
               ;; and parameter, respectively
               ]
           (comp field-assertions
-                [(reify
-                   Container
-                   (map [y f embed]
-                     (embed y))
-
-                   TypeChecker
-                   (pre-check [ast]
-                     (for [ft (get-param-types (ast/params-ast fields nothing c/top-type))]
-                       (do
-                         (status 'test _LINE_ "\n" ft)
-                         ast)))
-
-                   (type-check [_ _]
-                     (se/state-error (ast/block-comment-ast [] "poop" 99))))
-                 (ast/extend-ast (.sym ast) impls)
-                 (reify
-                   Container
-                   (map [y f embed]
-                     (embed y))
-
-                   TypeChecker
-                   (pre-check [ast]
-                     (for [ft (get-param-types (ast/params-ast fields nothing c/top-type))]
-                       (do
-                         (status 'test _LINE_ "\n" ft)
-                         ast)))
-
-                   (type-check [_ _]
-                     (se/state-error (ast/block-comment-ast [] "poop" 99))))
+                [(ast/extend-ast (.sym ast) impls)
                  (CreateGetters (.sym ast) type-num new-type-constraint fields loc)
                  ;; TODO: why are the hash-map-impls done twice?
                  ;; (cond (empty? hash-map-impls)
                  ;;       (ast/block-comment "" 0 [])
                  ;;       (b/TypeExtension new-type-constraint hash-map-impls))
-                 
-                 (reify
-                   Container
-                   (map [y f embed]
-                     (embed y))
-
-                   TypeChecker
-                   (pre-check [ast]
-                     (for [ft (get-param-types (ast/params-ast fields nothing c/top-type))]
-                       (do
-                         (status 'test _LINE_ "\n" ft)
-                         ast)))
-
-                   (type-check [_ _]
-                     (se/state-error (ast/block-comment-ast [] "poop" 99))))
                  (CheckedTypeAST (.sym ast) type-num new-type-constraint fields impls)
                  (reify
                    Container
@@ -1872,7 +1871,8 @@
                          ast)))
 
                    (type-check [_ _]
-                     (se/state-error (ast/block-comment-ast [] "poop" 99))))]))))))
+                     (se/state-error (ast/block-comment-ast [] "poop" 99))))
+                 ]))))))
 
 (def parse-forms
   (rd/parser
