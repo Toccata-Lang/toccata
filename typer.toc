@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "69c64b9"))
+                          :sha "bdace96"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "a89f692"))
+                            :sha "4645330"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "384e478"))
+                            :sha "ec68830"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -308,8 +308,10 @@
                            (let [sym (ast/untag sym)]
                              (either (map (first types-list)
                                           (fn [value-types]
-                                            (cons (assoc value-types sym constraint)
-                                                  (rest types-list))))
+                                            (-> value-types
+                                                (dissoc sym)
+                                                (assoc sym constraint)
+                                                (cons (rest types-list)))))
                                      (list {sym constraint})))))
        (fn [_]
          constraint)))
@@ -340,7 +342,11 @@
                         ;;      nothing)))
 
                         (cond (= new-const c/bottom-type)
-                              (compilation-error (conf-ass _LINE_ new-const loc))
+                              (do
+                                (print-err 'avt _LINE_ loc
+                                           "\n" curr-const
+                                           "\n\n" constraint)
+                                (compilation-error (conf-ass _LINE_ new-const loc)))
 
                               (set-value-type sym (c/update-path new-const loc)))))))))
 
@@ -909,7 +915,9 @@
                        (.arities ast (map (.arities ast)
                                           (fn [arity]
                                             (.fn-sym arity sym)))))))
-              (se/state-error ast))))
+              (map (push-types)
+                   (fn [_]
+                     ast)))))
 
   (type-check [ast old-ast]
     (let [fn-c (either (map (.fn-sym ast)
@@ -934,7 +942,9 @@
       ;;       (do
       ;;         (print-err 'fn-c _LINE_ (ast/location old-ast) "\n" fn-c)
       ;;         nothing)))
-      (se/state-error (.constraint ast fn-c)))))
+      (flat-map (pop-types)
+                (fn [_]
+                  (se/state-error (.constraint ast fn-c)))))))
 
 (extend-type ast/definition-ast
   TypeChecker
@@ -962,19 +972,31 @@
       (for [_ (pop-types)
             c (either (map (last (.value-exprs ast))
                            (fn [val]
-                             (cond (instance? c/Constraints val)
-                                   ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
-                                   ;; the updated version. Possibly a bug in assoc-in*
+                             (let [sym (.sym old-ast)]
+                               (cond (instance? c/Constraints val)
+                                     ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
+                                     ;; the updated version. Possibly a bug in assoc-in*
 
-                                   ;; TODO: this version produces a very cryptic error message
-                                   ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
-                                   ;;           (set-value-type (.sym old-ast) val))
+                                     ;; TODO: this version produces a very cryptic error message
+                                     ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
+                                     ;;           (set-value-type (.sym old-ast) val))
 
-                                   (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
-                                             (fn [_]
-                                               (set-value-type (.sym old-ast) val)))
+                                     (flat-map (se/assoc-in-val [.types (ast/untag sym)] val)
+                                               (fn [_]
+                                                 (set-value-type sym val)))
 
-                                   (set-value-type (.sym old-ast) (.constraint val)))))
+                                     (and (= c/top-type (.constraint val))
+                                          (or (= sym 'empty-list)
+                                              (= sym 'empty-vector)
+                                              (= sym 'int-max)
+                                              (= sym 'int-min)
+                                              ;; (= sym 'nothing)
+                                              ))
+                                     (flat-map (get-value-type sym)
+                                               (fn [c]
+                                                 (set-value-type sym (c/update-path c loc))))
+
+                                     (set-value-type sym (.constraint val))))))
                       (set-value-type (.sym old-ast) c/top-type))]
         (do
           ;; (status 'def _LINE_ loc (.sym old-ast) "\n" c)
@@ -1043,42 +1065,45 @@
   (type-check [ast old-ast]
     (let [loc (ast/location (.call-target old-ast))]
       (for [
-            ;; _ (se/when (or (= (.line loc) 0)
-            ;;                (= (.file loc) 'core)
-            ;;                (do
-            ;;                  (status 'calling-top _LINE_ loc
-            ;;                          "\n" 'target (.call-target ast)
-            ;;                          "\n\n" 'target-c (.constraint (.call-target ast))
-            ;;                          "\n\n" 'args (str "[" (-> (.args ast)
-            ;;                                                    (map .constraint)
-            ;;                                                    (interpose  "\n")
-            ;;                                                    to-str)
-            ;;                                            "]"))
-            ;;                  nothing)
+            ;; _ (se/when (or ;; (= (.line loc) 0)
+            ;;                ;; (= (.file loc) 'core)
+            ;;                (and (= (.call-target old-ast) 'mutate-vect-conj)
+            ;;                     (do
+            ;;                       (status 'calling-top _LINE_ loc
+            ;;                               "\n" 'target (.call-target ast)
+            ;;                               "\n\n" 'target-c (.constraint (.call-target ast))
+            ;;                               "\n\n" 'args (str "[" (-> (.args ast)
+            ;;                                                         (map .constraint)
+            ;;                                                         (interpose  "\n")
+            ;;                                                         to-str)
+            ;;                                                 "]"))
+            ;;                       nothing))
             ;;                (maybe '_)))
             result-type (elgot (fn [inner-ast]
-                                 ;; (or (= (.line loc) 0)
-                                 ;;     (= (.file loc) 'core)
-                                 ;;     (do
-                                 ;;       (status 'calling _LINE_ loc "\n" (type-name inner-ast) inner-ast
-                                 ;;               "\n" 'target (.call-target old-ast)
-                                 ;;               "\n\n" 'args (str "[" (-> (.args ast)
-                                 ;;                                         (map .constraint)
-                                 ;;                                         (interpose  "\n")
-                                 ;;                                         to-str)
-                                 ;;                                 "]")
-                                 ;;               "\n\n" 'old-args (.args old-ast))
-                                 ;;       nothing))
+                                 ;; (or ;; (= (.line loc) 0)
+                                 ;;     ;; (= (.file loc) 'core)
+                                 ;;     (and (= (.call-target old-ast) 'mutate-vect-conj)
+                                 ;;          (do
+                                 ;;            (status 'calling _LINE_ loc "\n" (type-name inner-ast) inner-ast
+                                 ;;                    "\n" 'target (.call-target old-ast)
+                                 ;;                    "\n\n" 'args (str "[" (-> (.args ast)
+                                 ;;                                              (map .constraint)
+                                 ;;                                              (interpose  "\n")
+                                 ;;                                              to-str)
+                                 ;;                                      "]")
+                                 ;;                    "\n\n" 'old-args (.args old-ast))
+                                 ;;            nothing)))
                                  (check-call-site inner-ast (.args ast) (.call-target ast)))
                                (fn [c]
                                  (call-site-checked c (.args ast) (.call-target ast)))
                                (.call-target ast) se/state-error)
-            ;; _ (se/when (or (= (.line loc) 0)
-            ;;                (= (.file loc) 'core)
-            ;;                (do
-            ;;                  (status 'calling-result _LINE_ loc
-            ;;                          "\n" 'result-type result-type)
-            ;;                  nothing)
+            ;; _ (se/when (or ;; (= (.line loc) 0)
+            ;;                ;; (= (.file loc) 'core)
+            ;;                (and (= (.call-target old-ast) 'mutate-vect-conj)
+            ;;                     (do
+            ;;                       (status 'calling-result _LINE_ loc
+            ;;                               "\n" 'result-type result-type)
+            ;;                       nothing))
             ;;                (maybe '_)))
             _ (either (map (and (= c/bottom-type result-type)
                                 (first (.constraints result-type)))
@@ -1997,16 +2022,26 @@
                                            result))
                           ;; init an agent with an empty module context
                           ast-checker (agent (Module file-name module-index {} {}
-                                                     c/core-type-constraints empty-list))
+                                                     c/core-type-constraints
+                                                     (list {'empty-list (c/update-sym c/empty-list-constraint
+                                                                                      'empty-list)
+                                                            'empty-vector (c/update-sym c/empty-vector-constraint
+                                                                                        'empty-vector)
+                                                            'int-max (.static-value c/int-constraint int-max)
+                                                            'int-min (.static-value c/int-constraint int-min)
+                                                            ;; 'nothing (c/MaybeConstraint c/bottom-type
+                                                            ;;                             empty-list 'nothing "")
+                                                            })))
                           ;; kick off a thread to load and check the module
                           _ (future (fn []
                                       (status "Loading" file-name)
 
+                                      ;; try to open file for reading
                                       (either (map (fio/file-in (cond (= file-name 'core)
                                                                       path-to-core
                                                                       file-name))
                                                    (fn [file-in]
-                                                     ;; if so, parse and type check it
+                                                     ;; if opened, parse and type check it
                                                      (let [parse-result (parse-forms {'file-name file-name
                                                                                       'root-directory root-dir
                                                                                       'project-directory proj-dir
