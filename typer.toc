@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "bdace96"))
+                          :sha "b0328fb"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "4645330"))
+                            :sha "39c965a"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "ec68830"))
+                            :sha "620b27e"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -162,6 +162,10 @@
       (ProtoImpls fn-sym def-impl impl-fns)))
 
   c/Constraint
+  (c/show-full [c]
+    (comp (list (str "prototype " fn-sym))
+          (c/show-full (.default-impl c))))
+
   (c/intersect [x y]
     (either (= c/bottom-type default-impl y)
             x)))
@@ -556,19 +560,34 @@
            ;;         nothing)))
            (c/extract-contents-constraint const-c)))))
 
-;; (extend-type c/ArgOf
-;;   TypeChecker
-;;   (type-check [c old-c]
-;;     (let [loc (ast/location (.fn-sym old-c))]
-;;       (for [fn-c (get-value-type (.fn-sym old-c))]
-;;         (c/intersect fn-c c)))))
+(extend-type c/ArgOf
+  TypeChecker
+  (type-check [c old-c]
+    (let [loc (ast/location (.fn-sym old-c))]
+      (flat-map (get-value-type (.fn-sym old-c))
+                (fn [fn-c]
+                  (let [new-c (c/intersect fn-c c)]
+                    (either (map (instance? Symbol (.sym c))
+                                 (fn [sym]
+                                   (append-value-type sym (c/update-sym new-c sym) loc)))
+                            (se/state-error new-c))))))))
 
-;; (extend-type c/ResultOf
-;;   TypeChecker
-;;   (type-check [c old-c]
-;;     (let [loc (ast/location (.fn-sym old-c))]
-;;       (for [fn-c (get-value-type (.fn-sym old-c))]
-;;         (c/intersect fn-c (c/CallValue c/no-args (.path c) (.sym c) (.var c)))))))
+(extend-type c/ResultOf
+  TypeChecker
+  (type-check [c old-c]
+    (let [loc (ast/location (.fn-sym old-c))]
+      (flat-map (get-value-type (.fn-sym old-c))
+                (fn [fn-c]
+                  (let [new-c (c/intersect fn-c (c/CallValue c/no-args (.path c) (.sym c) (.var c)))]
+                    (either (map (instance? Symbol (.sym c))
+                                 (fn [sym]
+                                   ;; TODO: this produces a weird runtime error
+                                   ;; (let [new-c (c/update-sym new-c sym)]
+                                   ;;   (map (append-value-type sym new-c loc)
+                                   ;;        (fn [_]
+                                   ;;          new-c)))
+                                   (append-value-type sym (c/update-sym new-c sym) loc)))
+                            (se/state-error new-c))))))))
 
 (extend-type c/fn-arity
   TypeChecker
@@ -776,9 +795,9 @@
                 (c/update-path (ast/location old-ast)))]
       (either (for [var-param (.variadic old-ast)
                     :when (instance? Tagged var-param)]
-                (let [var-c (-> c/seq-constraint
+                (let [var-c (-> c/list-constraint
                                 (c/update-path (ast/location var-param)))]
-                  (map (set-value-type var-param var-c)
+                  (map (append-value-type var-param var-c (ast/location var-param))
                        (fn [_]
                          (-> ast
                              (.constraint (c/set-tail c c/coll-of-any))
@@ -840,8 +859,7 @@
                                                       (c/ParamConstraint arity-id index []
                                                                          empty-list (ast/untag sym) "")
                                                       loc))))
-            _ (either (for [variadic-sym (.variadic (.params ast))
-                            :when (instance? ast/params-ast variadic-sym)]
+            _ (either (for [variadic-sym (.variadic (.params ast))]
                         (append-value-type variadic-sym
                                            (c/ParamConstraint arity-id arg-count []
                                                               empty-list
@@ -1010,15 +1028,26 @@
 (extend-type ast/prototype-ast
   TypeChecker
   (pre-check [ast]
-    (for [_ (comp (se/get-in-val [.value-types 0 (ast/untag (.fn-name ast)) .default-impl])
-                  (set-value-type (.fn-name ast)
-                                  (ProtoImpls (ast/untag (.fn-name ast)) (.arities c/fn-constraint {}) {})))
-          _ (push-types)
-          _ (set-value-type ast/result-sym c/top-type)
-          _ (se/traverse (all-syms (.params ast))
-                         (fn [sym]
-                           (set-value-type sym c/top-type)))]
-      ast))
+    (let [fixed-params (-> ast .params .fixed)
+          arg-count (count fixed-params)]
+      (for [_ (comp (se/get-in-val [.value-types 0 (ast/untag (.fn-name ast)) .default-impl])
+                    (set-value-type (.fn-name ast)
+                                    (ProtoImpls (ast/untag (.fn-name ast)) (.arities c/fn-constraint {}) {})))
+            _ (push-types)
+            _ (set-value-type ast/result-sym c/top-type)
+            _ (se/traverse (all-syms (.params ast))
+                           (fn [sym]
+                             (set-value-type sym c/top-type)))
+            _ (se/traverse (zip-lists fixed-params (range arg-count))
+                           (fn [[sym index]]
+                             (cond (instance? ast/params-ast sym)
+                                   se-nop
+
+                                   (append-value-type sym
+                                                      (c/ParamConstraint (.fn-name ast) index []
+                                                                         empty-list (ast/untag sym) "")
+                                                      (ast/location ast)))))]
+        ast)))
 
   (type-check [ast old-ast]
     (let [arg-count (count (.fixed (.params old-ast)))]
@@ -2098,4 +2127,12 @@
                                         (status "Could not load Toccata file:" file-name)))))))))))
 
   (wait-for-output))
+
+;; (main [_]
+;;   (print-err (cata c/show-full
+;;                    (ProtoImpls
+;;                     'wut
+;;                     (.arities c/fn-constraint
+;;                               (select-keys (.arities c/fn-constraint) [2]))
+;;                     {}))))
 
