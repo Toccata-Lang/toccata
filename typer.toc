@@ -136,29 +136,24 @@
     (map (f arity)
          (partial .arity x))))
 
-(deftype ProtoImpls [fn-sym default-impl impls]
+(deftype ProtoImpls [fn-sym default-impl impl-fns]
   (assert (instance? Symbol fn-sym))
   (assert (instance? c/FnConstraint default-impl))
-  (assert (instance? (map-of Integer c/FnConstraint) impls))
+  (assert (instance? (map-of Integer c/FnConstraint) impl-fns))
 
   Stringable
   (string-list [_]
-    (list "(ProtoImpls " (str fn-sym) "\n" (str default-impl) "\n" (str impls) ")"))
+    (list "(ProtoImpls " (str fn-sym) "\n" (str default-impl) "\n\n" (str impl-fns) ")"))
 
   Container
   (map [x f]
     (ProtoImpls fn-sym
                 (map default-impl f)
-                (map-vals impls (fn [impl-fns]
-                                  (map-vals impl-fns (fn [arities]
-                                                       (map arities f)))))))
+                (map-vals impl-fns f)))
 
   (map [x f embed]
     (for [def-impl (map default-impl f embed)
-          impl-fns (contextual-map-vals impls
-                                        (fn [impl-fns]
-                                          (contextual-map-vals impl-fns f embed))
-                                        embed)]
+          impl-fns (contextual-map-vals impl-fns f embed)]
       (ProtoImpls fn-sym def-impl impl-fns)))
 
   c/Constraint
@@ -371,13 +366,14 @@
             (fn [proto-impls]
               (assert (instance? ProtoImpls proto-impls))
 
-              (comp (se/update-in-val [fn-name .impls type-num]
-                                      (fn [fn-c]
-                                        (assert (instance? c/FnConstraint fn-c))
+              (let [new-proto (either (update-in proto-impls [.impl-fns type-num]
+                                                 (fn [fn-c]
+                                                   (assert (instance? c/FnConstraint fn-c))
 
-                                        (assoc-in fn-c [.arities arg-count] arity-c)))
-                    (se/assoc-in-val [fn-name .impls type-num]
-                                     (.arities c/fn-constraint {arg-count arity-c}))))))
+                                                   (assoc-in fn-c [.arities arg-count] arity-c)))
+                                      (assoc-in proto-impls [.impl-fns type-num]
+                                                (.arities c/fn-constraint {arg-count arity-c})))]
+                (set-value-type fn-name new-proto)))))
 
 (defn get-type-info [type-sym]
   (se/get-in-val [.types (ast/untag type-sym)]))
@@ -531,15 +527,16 @@
     ;; TODO: remove this eventually
     (se/state-error ast)))
 
-;; (extend-type c/ModSeqType
-;;   TypeChecker
-;;   (type-check [c old-c]
-;;     (for [base-c (map (get-value-type (.base-sym old-c)) .constraint)]
-;;       (let [new-c (c/intersect c base-c)]
-;;         (cond (= c/bottom-type new-c)
-;;               (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))
+(extend-type c/ModSeqType
+  TypeChecker
+  (type-check [c old-c]
+    (flat-map (get-value-type (.base-sym old-c))
+              (fn [base-c]
+                (let [new-c (c/intersect c base-c)]
+                  (cond (= c/bottom-type new-c)
+                        (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))
 
-;;               new-c)))))
+                        (append-value-type (.sym old-c) new-c (ast/location old-c))))))))
 
 (extend-type c/TypeOfConstraint
   TypeChecker
@@ -895,11 +892,11 @@
             _ (nip-types)
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-sym ast) 'maybe-apply)
+            ;;          (and (= (.fn-sym ast) 'vec)
             ;;               (do
-            ;;                 (print-err 'check-fn-arity _LINE_ (.fn-sym ast) loc
-            ;;                            "\n" 'pts pts
-            ;;                            "\n\n" 'result result-c)
+            ;;                 (status 'check-fn-arity _LINE_ (.fn-sym ast) loc
+            ;;                         "\n" 'pts pts
+            ;;                         "\n\n" 'result result-c)
             ;;                 nothing)))]
             :let [result-c (-> (either (map (last (.body ast)) .constraint)
                                        c/top-type)
@@ -1224,8 +1221,13 @@
     (either (map (first args)
                  (fn [disp-arg]
                    (let [disp-type (c/get-type-num (.constraint disp-arg))
-                         fn-c (either (get-in ast [.impls disp-type])
+                         fn-c (either (get-in ast [.impl-fns disp-type])
                                       (.default-impl ast))]
+                     ;; (cond (= target 'vec)
+                     ;;       (status 'call-proto _LINE_ target (ast/location target)
+                     ;;               "\n" 'ast ast
+                     ;;               "\n\n" 'fn-c fn-c)
+                     ;;       '_)
                      (either (map (get (.arities fn-c) (count args))
                                   (fn [arity]
                                     (se/state-error (RecurseWith (.arities fn-c {(count args) arity})))))
@@ -2132,7 +2134,7 @@
                          (abort)))]
     (-> (rest params)
         ;; TODO: empty-defn causes mem leaks
-        (remove (partial = "assertion-tests/empty-defn.toc"))
+        ;; (remove (partial = "assertion-tests/empty-defn.toc"))
         (map (fn [file-name]
                (map (sys/file-directory file-name)
                     (fn [root-dir]
