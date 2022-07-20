@@ -370,18 +370,21 @@
 (defn add-proto-impl [type-num fn-name arg-count arity-c]
   (assert (instance? c/fn-arity arity-c))
 
-  (flat-map (get-value-type fn-name)
-            (fn [proto-impls]
-              (assert (instance? ProtoImpls proto-impls))
+  (cond (> 1 type-num)
+        (compilation-error "Invalide prototype implementation type-num for" (str "'" fn-name "'") "at"
+                           (ast/location fn-name))
+        (flat-map (get-value-type fn-name)
+                  (fn [proto-impls]
+                    (assert (instance? ProtoImpls proto-impls))
 
-              (let [new-proto (either (update-in proto-impls [.impl-fns type-num]
-                                                 (fn [fn-c]
-                                                   (assert (instance? c/FnConstraint fn-c))
+                    (let [new-proto (either (update-in proto-impls [.impl-fns type-num]
+                                                       (fn [fn-c]
+                                                         (assert (instance? c/FnConstraint fn-c))
 
-                                                   (assoc-in fn-c [.arities arg-count] arity-c)))
-                                      (assoc-in proto-impls [.impl-fns type-num]
-                                                (.arities c/fn-constraint {arg-count arity-c})))]
-                (set-value-type fn-name new-proto)))))
+                                                         (assoc-in fn-c [.arities arg-count] arity-c)))
+                                            (assoc-in proto-impls [.impl-fns type-num]
+                                                      (.arities c/fn-constraint {arg-count arity-c})))]
+                      (set-value-type fn-name new-proto))))))
 
 (defn get-type-info [type-sym]
   (se/get-in-val [.types (ast/untag type-sym)]))
@@ -499,6 +502,9 @@
     [])
 
   (param-types [c]
+    (se/state-error c))
+
+  (type-check [c old-c]
     (se/state-error c)))
 
 (extend-type c/SymbolConstraints
@@ -1137,10 +1143,12 @@
             ;;                                                 "]"))
             ;;                       nothing))
             ;;                (maybe '_)))
+
+            ;; TODO: replace all this garbage using ArgOf and ResultOf
             result-type (elgot (fn [inner-ast]
                                  ;; (or ;; (= (.line loc) 0)
                                  ;;     ;; (= (.file loc) 'core)
-                                 ;;     (and (= (.call-target old-ast) 'mutate-vect-conj)
+                                 ;;     (and (= (.call-target old-ast) 'maybe-map)
                                  ;;          (do
                                  ;;            (status 'calling _LINE_ loc "\n" (type-name inner-ast) inner-ast
                                  ;;                    "\n" 'target (.call-target old-ast)
@@ -1216,9 +1224,27 @@
   TypeChecker
   (pre-check [ast]
     (for [type-info (get-type-info (.type ast))
-          :let [type-num (c/get-type-num type-info)]]
-      (map ast (fn [arity]
-                 (ProtoArity type-num arity)))))
+          :let [type-num (c/get-type-num type-info)]
+          new-ast (map ast
+                       (fn [arity]
+                         (assert (instance? ast/fn-arity-ast arity))
+                         (either (-> (.params arity)
+                                     .fixed
+                                     first 
+                                     (map (fn [first-param]
+                                            ;; (print-err 'params _LINE_ (ast/location first-param) first-param)
+                                            (-> (ProtoArity type-num
+                                                            (.body arity
+                                                                   (comp [(c/update-sym type-info
+                                                                                        (ast/untag first-param))]
+                                                                         (.body arity))))
+                                                (se/state-error)))))
+                                 (compilation-error "Prototype implentation for "
+                                                    (str "'" (.fn-sym arity) "'")
+                                                    "must have at least one parameter at"
+                                                    (ast/location (.fn-sym arity)))))
+                       se/state-error)]
+      new-ast))
 
   (type-check [ast old-ast]
     (se/state-error (map ast .arity))))
