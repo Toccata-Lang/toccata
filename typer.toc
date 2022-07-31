@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "104c7ad"))
+                          :sha "61c5944"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "79c9bb5"))
+                            :sha "fa135b5"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "4abc419"))
+                            :sha "0350793"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -302,63 +302,76 @@
 (defn get-value-type [sym]
   (assert (instance? Tagged sym))
 
-  (let [loc (ast/location sym)
-        sym (ast/untag sym)]
-    ;; TODO: this does not look up namespaced symbols
-    (comp (se/get-in-val [.value-types 0 sym])
-          (get-core-value-type sym)
-          (compilation-error "Could not find type constraint for '" sym "' at " loc))))
+  (cond (= (str sym) "")
+        (do
+          (print-err 'compiler-error _LINE_)
+          (se/state-error c/top-type))
+
+        (let [loc (ast/location sym)
+              sym (ast/untag sym)]
+          ;; TODO: this does not look up namespaced symbols
+          (comp (se/get-in-val [.value-types 0 sym])
+                (get-core-value-type sym)
+                (compilation-error "Could not find type constraint for '" sym "' at " loc)))))
 
 (defn set-value-type [sym constraint]
   (assert (instance? Tagged sym))
   (assert (instance? ConstraintOrProto constraint))
 
-  (map (se/update-in-val [.value-types]
-                         (fn [types-list]
-                           (let [sym (ast/untag sym)]
-                             (either (map (first types-list)
-                                          (fn [value-types]
-                                            (-> value-types
-                                                (dissoc sym)
-                                                (assoc sym constraint)
-                                                (cons (rest types-list)))))
-                                     (list {sym constraint})))))
-       (fn [_]
-         constraint)))
+  (cond (= (str sym) "")
+        (do
+          (print-err 'compiler-error _LINE_ constraint)
+          se-nop)
+
+        (map (se/update-in-val [.value-types]
+                               (fn [types-list]
+                                 (let [sym (ast/untag sym)]
+                                   (either (map (first types-list)
+                                                (fn [value-types]
+                                                  (-> value-types
+                                                      (dissoc sym)
+                                                      (assoc sym constraint)
+                                                      (cons (rest types-list)))))
+                                           (list {sym constraint})))))
+             (fn [_]
+               constraint))))
 
 (defn append-value-type [sym constraint loc]
   (assert (instance? Tagged sym))
   (assert (instance? ConstraintOrProto constraint))
 
-  (let [curr-const (se/try
-                     (get-value-type sym)
-                     (fn [_]
-                       (se/state-error c/top-type)))]
+  (cond (= (str sym) "")
+        se-nop
 
-    (cond (= constraint c/top-type)
-          curr-const
+        (let [curr-const (se/try
+                           (get-value-type sym)
+                           (fn [_]
+                             (se/state-error c/top-type)))]
 
-          (flat-map curr-const
-                    (fn [curr-const]
-                      (let [new-const (c/trim (c/intersect curr-const constraint))]
-                        ;; (let [loc (ast/location sym)]
-                        ;;   (or ;; (= (.file loc) 'core)
-                        ;;    ;; (= (.line loc) 0)
-                        ;;    (and (instance? ProtoImpls curr-const)
-                        ;;         (do
-                        ;;           (status 'appending _LINE_ loc (str "\"" sym "\"")
-                        ;;                      "\n" 'constraint constraint
-                        ;;                      "\n\n" 'curr curr-const
-                        ;;                      "\n\n" 'new-const new-const)
-                        ;;           nothing))))
+          (cond (= constraint c/top-type)
+                curr-const
 
-                        (cond (= new-const c/bottom-type)
-                              (compilation-error (conf-ass _LINE_ new-const loc))
+                (flat-map curr-const
+                          (fn [curr-const]
+                            (let [new-const (c/trim (c/intersect curr-const constraint))]
+                              ;; (let [loc (ast/location sym)]
+                              ;;   (or ;; (= (.file loc) 'core)
+                              ;;    ;; (= (.line loc) 0)
+                              ;;    (and (instance? ProtoImpls curr-const)
+                              ;;         (do
+                              ;;           (status 'appending _LINE_ loc (str "\"" sym "\"")
+                              ;;                      "\n" 'constraint constraint
+                              ;;                      "\n\n" 'curr curr-const
+                              ;;                      "\n\n" 'new-const new-const)
+                              ;;           nothing))))
 
-                              (instance? ProtoImpls curr-const)
-                              se-nop
+                              (cond (= new-const c/bottom-type)
+                                    (compilation-error (conf-ass _LINE_ new-const loc))
 
-                              (set-value-type sym (c/update-path new-const loc)))))))))
+                                    (instance? ProtoImpls curr-const)
+                                    se-nop
+
+                                    (set-value-type sym (c/update-path new-const loc))))))))))
 
 (defn remove-value-type [sym]
   (assert (instance? Tagged sym))
@@ -370,16 +383,22 @@
                                            (rest types-list))))
                               types-list))))
 
-(defn add-proto-impl [type-num fn-name arg-count arity-c]
+(defn add-proto-impl [type-num fn-sym arg-count arity-c]
   (assert (instance? c/fn-arity arity-c))
 
   (cond (> 1 type-num)
-        (compilation-error "Invalide prototype implementation type-num for" (str "'" fn-name "'") "at"
-                           (ast/location fn-name))
+        (compilation-error "Invalide prototype implementation type-num for" (str "'" fn-sym "'") "at"
+                           (ast/location fn-sym))
 
-        (flat-map (get-value-type fn-name)
+        (= (str fn-sym) "")
+        (do
+          (print-err 'compiler-error _LINE_ (str "'" fn-sym "'") (ast/location fn-sym)
+                     "\n\n" arity-c)
+          (abort))
+
+        (flat-map (get-value-type fn-sym)
                   (fn [proto-impls]
-                    (assert (instance? ProtoImpls proto-impls))
+                    (instance? ProtoImpls proto-impls)
 
                     (let [new-proto (either (update-in proto-impls [.impl-fns type-num]
                                                        (fn [fn-c]
@@ -388,7 +407,7 @@
                                                          (assoc-in fn-c [.arities arg-count] arity-c)))
                                             (assoc-in proto-impls [.impl-fns type-num]
                                                       (.arities c/fn-constraint {arg-count arity-c})))]
-                      (set-value-type fn-name new-proto))))))
+                      (set-value-type fn-sym new-proto))))))
 
 (defn get-type-info [type-sym]
   (se/get-in-val [.types (ast/untag type-sym)]))
@@ -516,7 +535,10 @@
   (type-check [c old-c]
     (map (either (map (c/extract-sym old-c)
                       (fn [sym]
-                        (append-value-type sym c (ast/location old-c))))
+                        (cond (= (str sym) "")
+                              se-nop
+
+                              (append-value-type sym c (ast/location old-c)))))
                  se-nop)
          (fn [_]
            c))))
@@ -1721,6 +1743,7 @@
          (reduce {} (fn [m [k v]]
                       (assoc m k v))))}))
 
+;; TODO: every place that calls this needs to refactored
 (defn constrain-first-param [type-info c]
   (cond (instance? ast/fn-arity-ast c)
         (either (-> (.params c)
@@ -2029,11 +2052,20 @@
               impls (map-vals impls (fn [protos]
                                       (map-vals protos (fn [impl-fns]
                                                          (vec (vals impl-fns))))))
+
+              impls (-> (ast/extend-ast (.sym ast) impls)
+                        (map (fn [c]
+                               (constrain-first-param new-type-constraint c)))
+                        .impls
+                        vals
+                        vec
+                        (map (comp vec vals)))
+
               ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
               ;; and parameter, respectively
               ]
           (comp field-assertions
-                [(ast/extend-ast (.sym ast) impls)
+                [impls
                  (CreateGetters (.sym ast) type-num new-type-constraint fields loc)
                  ;; TODO: why are the hash-map-impls done twice?
                  ;; (cond (empty? hash-map-impls)
