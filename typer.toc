@@ -132,6 +132,9 @@
     (list "(ProtoArity " (str type-num) " " (str arity) ")"))
 
   Container
+  (map [x f]
+    (.arity x (f arity)))
+
   (map [x f embed]
     (map (f arity)
          (partial .arity x))))
@@ -373,6 +376,7 @@
   (cond (> 1 type-num)
         (compilation-error "Invalide prototype implementation type-num for" (str "'" fn-name "'") "at"
                            (ast/location fn-name))
+
         (flat-map (get-value-type fn-name)
                   (fn [proto-impls]
                     (assert (instance? ProtoImpls proto-impls))
@@ -576,6 +580,14 @@
            ;;         nothing)))
            (c/extract-contents-constraint const-c)))))
 
+(extend-type c/GetInnerType
+  TypeChecker
+  (all-symbols [c]
+    [])
+
+  (param-types [c]
+    (se/state-error c)))
+
 (extend-type c/CallValue
   TypeChecker
   (type-check [c old-c]
@@ -625,12 +637,7 @@
                            c/extract-items-constraints)
           required-args (count fixed-params)]
       (cond (< arg-count required-args)
-            (compilation-error "Insufficient number of arguments to function"
-                               (either (map (instance? Tagged target)
-                                            (fn [_]
-                                              (str "'" target "' called at")))
-                                       "called at")
-                               loc)
+            se/zero-se
 
             (let [[fixed-args var-args] (-> args
                                             (map (fn [arg]
@@ -799,7 +806,7 @@
   (param-types [params]
     (-> c/seq-constraint
         (c/set-tail (either (.variadic params)
-                            c/bottom-type))
+                            c/coll-of-any))
         (c/set-items (.fixed params))
         se/state-error))
 
@@ -861,11 +868,11 @@
       (for [_ (push-types)
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-sym ast) 'seq)
+            ;;          (and (= (.fn-sym ast) 'apply)
             ;;               (do
             ;;                 (print-err 'pre-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                            "\n" 'params (.params ast)
-            ;;                            "\n\n" 'body (.body ast)
+            ;;                            "\n\n" 'body "[" (to-str (interpose (.body ast) "\n\n")) "]"
             ;;                            "\n\n" 'const (.constraint ast))
             ;;                 nothing)))]
             _ (set-value-type ast/result-sym c/top-type)
@@ -906,7 +913,7 @@
             _ (nip-types)
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-sym ast) 'vec)
+            ;;          (and (= (.fn-sym ast) 'subs)
             ;;               (do
             ;;                 (status 'check-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                         "\n" 'pts pts
@@ -1224,7 +1231,9 @@
   TypeChecker
   (pre-check [ast]
     (for [type-info (get-type-info (.type ast))
-          :let [type-num (c/get-type-num type-info)]
+          :let [type-infos (cond (instance? c/SumConstraint type-info)
+                                 (.alts type-info)
+                                 [type-info])]
           new-ast (map ast
                        (fn [arity]
                          (assert (instance? ast/fn-arity-ast arity))
@@ -1232,19 +1241,27 @@
                                      .fixed
                                      first 
                                      (map (fn [first-param]
-                                            ;; (print-err 'params _LINE_ (ast/location first-param) first-param)
-                                            (-> (ProtoArity type-num
-                                                            (.body arity
-                                                                   (comp [(c/update-sym type-info
-                                                                                        (ast/untag first-param))]
-                                                                         (.body arity))))
-                                                (se/state-error)))))
+                                            ;; (print-err 'params _LINE_ (ast/location first-param)
+                                            ;; first-param)
+                                            (let [disp-param (ast/untag first-param)]
+                                              (-> type-infos
+                                                  (map (fn [type-info]
+                                                         (let [type-info (c/update-sym type-info disp-param)
+                                                               new-bod (comp [type-info] (.body arity))]
+                                                           (ProtoArity (c/get-type-num type-info)
+                                                                       (.body arity new-bod)))))
+                                                  se/state-error)))))
                                  (compilation-error "Prototype implentation for "
                                                     (str "'" (.fn-sym arity) "'")
                                                     "must have at least one parameter at"
                                                     (ast/location (.fn-sym arity)))))
                        se/state-error)]
-      new-ast))
+      (-> (either (get new-ast .impls)
+                  {})
+          vals
+          vec
+          (map vals)
+          (map vec))))
 
   (type-check [ast old-ast]
     (se/state-error (map ast .arity))))
