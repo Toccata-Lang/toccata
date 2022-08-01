@@ -4365,6 +4365,8 @@ Value *addPromiseAction(Promise *p, Value *action) {
 }
 
 Value *deliverPromise(Value *arg0, Value *arg1) {
+  // TODO: Must check for refs to arg0 in arg1
+  // also for agents and maybe futures
   Promise *p = (Promise *)arg0;
   if (p->result == (Value *)0) {
     pthread_mutex_lock(&p->access);
