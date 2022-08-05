@@ -649,14 +649,14 @@
   (check-call-site [arity args target]
     ;; (or ;; (= (.line loc) 0)
     ;;     ;; (= (.file loc) 'core)
-    ;;  (and (= target 'Attr)
+    ;;  (and (= target 'maybe-map)
     ;;       (maybe (status 'checking-fn-constraint _LINE_ target (ast/location target)
     ;;                      "\n" 'arity arity
-    ;;                      "\n\n" 'args args))))
+    ;;                      "\n\n" 'args args
+    ;;                      "\n\n" 'arg-cs (map args .constraint)))))
     (let [loc (ast/location target)
           arg-count (count args)
-          fixed-params (-> (.param-consts arity)
-                           c/extract-items-constraints)
+          fixed-params (c/extract-items-constraints (.param-consts arity))
           required-args (count fixed-params)]
       (cond (< arg-count required-args)
             se/zero-se
@@ -664,7 +664,9 @@
             (let [[fixed-args var-args] (-> args
                                             (map (fn [arg]
                                                    (either (get arg .constraint)
-                                                           c/top-type)))
+                                                           (do
+                                                             (status 'no-constraint-arg _LINE_ arg)
+                                                             c/top-type))))
                                             (split required-args))
                   var-args (-> c/list-constraint
                                (.items var-args)
@@ -675,6 +677,11 @@
                   var-params (either (= (.tail-c (.param-consts arity)) c/bottom-type)
                                      (-> (.tail-c (.param-consts arity))
                                          (c/reify-type-constraint (.arity-id arity) all-args loc)))
+                  _ (and (= target 'maybe-map)
+                         (maybe (status 'args _LINE_ target (ast/location target)
+                                        "\n" 'all-args all-args
+                                        "\n\n" 'fixed-params fixed-params
+                                        "\n\n" 'var-params var-params)))
                   arg-cs (-> c/list-constraint
                              (.items fixed-args)
                              (.tail-c var-args))
@@ -682,6 +689,13 @@
                                (.items fixed-params)
                                (.tail-c var-params))
                   checked-args (c/intersect arg-cs param-cs)]
+              (cond (= target 'maybe-map)
+                    (status 'site _LINE_ loc "\n" target
+                            "\n\n" 'arg-cs arg-cs
+                            "\n\n" 'params param-cs
+                            "\n\n" 'arity arity
+                            "\n\n" 'checked checked-args)
+                    '_)
               (for [new-arg-cs (cond (= c/bottom-type checked-args)
                                      (do
                                        ;; (status 'site _LINE_ loc "\n" target
@@ -713,18 +727,18 @@
                                 (-> (.result-const arity)
                                     (c/update-path loc)
                                     (c/reify-type-constraint (.arity-id arity) param-cs loc)))]
-                  ;; (or ;; (= (.line loc) 0)
-                  ;;     ;; (= (.file loc) 'core)
-                  ;;  (and (= target 'Attr)
-                  ;;       (do
-                  ;;         (status 'call-fn _LINE_ target (.arity-id arity) loc
-                  ;;                 "\n" 'args (-> args
-                  ;;                                b/remove-asts
-                  ;;                                (interpose  "\n")
-                  ;;                                vec)
-                  ;;                 "\n\n" 'result-const (.result-const arity)
-                  ;;                 "\n\n" 'fn-result r)
-                  ;;         nothing)))
+                  (or ;; (= (.line loc) 0)
+                      ;; (= (.file loc) 'core)
+                   (and (= target 'maybe-map)
+                        (do
+                          (status 'call-fn _LINE_ target (.arity-id arity) loc
+                                  "\n" 'args (-> args
+                                                 b/remove-asts
+                                                 (interpose  "\n")
+                                                 vec)
+                                  "\n\n" 'result-const (.result-const arity)
+                                  "\n\n" 'fn-result r)
+                          nothing)))
                   (RecurseFinal r)))))))
 
   (type-check [ast old-ast]
@@ -930,12 +944,16 @@
             _ (recover-val-type ast/result-sym)
             pts (map (get-param-types (.params old-ast))
                      (fn [c]
-                       (c/update-path c loc)))
+                       (let [c (cond (.variadic (.params old-ast))
+                                     c
+
+                                     (.tail-c c c/bottom-type))]
+                         (c/update-path c loc))))
             _ (recover-types (.params old-ast))
             _ (nip-types)
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-sym ast) 'subs)
+            ;;          (and (= (.fn-sym ast) 'inca)
             ;;               (do
             ;;                 (status 'check-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                         "\n" 'pts pts
