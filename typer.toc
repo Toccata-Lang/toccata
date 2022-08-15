@@ -409,8 +409,10 @@
                                                       (.arities c/fn-constraint {arg-count arity-c})))]
                       (set-value-type fn-sym new-proto))))))
 
-(defn get-type-info [type-sym]
-  (se/get-in-val [.types (ast/untag type-sym)]))
+(defn get-type-info [type-sym loc]
+  (comp (se/get-in-val [.types (ast/untag type-sym)])
+        (compilation-error "No type named" (str "'" type-sym "'")
+                           "was found. Used at" loc)))
 
 (defprotocol TypeChecker
   ;; Change any InferredInner constraint to a CollectionOf
@@ -719,7 +721,20 @@
   (call-with-args [c args target]
     (flat-map (get-value-type invoke-sym)
               (fn [invoke-impls]
-                (call-with-args invoke-impls (comp [target] args) target)))))
+                (call-with-args invoke-impls (comp [target] args) target))))
+
+  (type-check [c old-c]
+    (for [t (get-type-info (.type-sym old-c) (ast/location old-c))
+          :let [t (c/replace-path t (.path c))]
+          t (either (map (c/extract-sym old-c)
+                         (fn [sym]
+                           (cond (= (str sym) "")
+                                 (se/state-error t)
+                                 (append-value-type sym
+                                                    (c/update-sym t sym)
+                                                    (ast/location old-c)))))
+                    (se/state-error t))]
+      t)))
 
 (extend-type Tagged
   TypeChecker
@@ -1182,7 +1197,8 @@
 (extend-type ast/extend-ast
   TypeChecker
   (pre-check [ast]
-    (for [type-info (get-type-info (.type ast))
+    (for [type-info (get-type-info (.type ast) (ast/location ast))
+          ;; TODO: for SumConstraint, don't allow re def of proto impl
           :let [type-infos (cond (instance? c/SumConstraint type-info)
                                  (.alts type-info)
                                  [type-info])]
