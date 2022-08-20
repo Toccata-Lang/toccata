@@ -152,6 +152,7 @@
   l)
 
 (defn list-map [l lf]
+  ! (required-arities 1) f
   ! (list-of (type-of-arg lf 0)) l
   !returns (list-of (type-of-result lf))
   (inline C List "return(listMap(l_0, lf_1));"))
@@ -595,6 +596,8 @@
   ;; get the second element from the sequable `coll`
   ;; TODO: this assertion shouldn't be needed
   !returns (maybe-of (inner-type-of coll))
+  ;; TODO: this should also work
+  ;; !returns (first-of (rest-of coll))
 
   (first (rest coll)))
 
@@ -747,7 +750,7 @@
     (maybe-map mv f))
 
   (map [mv f embed]
-    ;; TODO: is this right?
+    ;; TODO: this is not right
     (embed (maybe-map mv f)))
 
   (extract [mv]
@@ -773,14 +776,12 @@
 
   Eq
   (=* [x y]
-    (inline C (maybe-of Maybe) "return(maybeEQ(x_0, y_1));"))
+    !returns (maybe-of (type-of x))
+    (inline C Maybe "return(maybeEQ(x_0, y_1));"))
 
   Associative
   (get [m _]
     m)
-
-  (get [m _ not-found]
-    (either m not-found))
 
   (assoc [x y v]
     (maybe v)))
@@ -798,8 +799,12 @@
 
   (conj [l v] (cons v l))
 
-  (filter [coll f]
-    (inline C List "return(listFilter(coll_0, f_1));"))
+  (filter [coll pook]
+    ! (required-arities 1) pook
+    ! (function-returns Maybe) pook
+    ! (list-of (type-of-arg pook 0)) coll
+    !returns (list-of (inner-type-of (type-of-result pook)))
+    (inline C List "return(listFilter(coll_0, pook_1));"))
 
   Container
   (map [l f]
@@ -823,6 +828,7 @@
     (list-concat ls))
 
   (flat-map [l mf]
+    !returns (type-of-result mf)
     (list-concat (list-map l mf)))
 
   Composition
@@ -850,6 +856,9 @@
   (rest [l]
     !returns (rest-of l)
     (inline C List "return(cdr(l_0));")))
+(def _ (show-type (filter '(1 2 a 3) (fn [x]
+                                       !returns (maybe-of Symbol) x
+                                       (instance? Symbol x)))))
 
 (defn list-reduce [l result f]
   (cond
@@ -973,8 +982,8 @@
   return((Value *)strVal);\n"))
 
 (defn str-append [dest src]
-  ! StringBuffer dest))
-  ! String src))
+  ! StringBuffer dest
+  ! String src
   (inline C StringBuffer "
   String *s_1 = (String *)dest_0;
   if (src_1->type == StringBufferType) {
@@ -990,20 +999,20 @@
   return(dest_0);"))
 
 (defn pr* [str]
-  ! String str))
+  ! String str
   (inline C Integer "return(prSTAR(str_0));"))
 
 (defn pr-err* [str]
-  ! String str))
+  ! String str
   (inline C Integer "return((*prErrSTAR)(str_0));"))
 
 (defn escape-chars [s]
-  ! String s))
+  ! String s
   (inline C StringBuffer "return(escapeChars(s_0));"))
 
 (defn char [n]
   ;; Convert an integer to a one-character string
-  ! Integer n))
+  ! Integer n
   (inline C StringBuffer "
   String *strVal = malloc_string(2);
   strVal->len = 1;
@@ -1014,7 +1023,7 @@
 
 (defn char-code [c]
   ;; Convert the first character of a string to an integer
-  ! String c))
+  ! String c
   (inline C Integer "
    if (c_0->type == StringBufferType) {
      String *s = (String *)c_0;
@@ -1031,18 +1040,18 @@
 (defn subs
   ;; Take a substring of a larger string
   ([src index]
-   ! String src))
-   ! Integer index))
+   ! String src
+   ! Integer index
    (inline C SubString "return(subs2(src_0, index_1));"))
   ([src index length]
-   ! String src))
-   ! Integer index))
-   ! Integer length))
+   ! String src
+   ! Integer index
+   ! Integer length
    (inline C SubString "return(subs3(src_0, index_1, length_2));")))
 
 (defn symbol [sym-str]
   ;; Convert a string to a symbol
-  ! String sym-str))
+  ! String sym-str
   (inline C Symbol "return(symbol(sym_str_0));"))
 
 (extend-type String
@@ -1072,10 +1081,12 @@
 
 (def FnOrArity (any-of Fn FnArity))
 
-(defn fn-apply [x args]
-  ! FnOrArity x
+(defn fn-apply [f args]
+  ! FnOrArity f
   ! List args
-  (inline C "return(fnApply(x_0, args_1));"))
+  !returns (type-of-result f)
+  ;; TODO: implement ArgsOf
+  (inline C "return(fnApply(f_0, args_1));"))
 
 (extend-type Fn
   Type
@@ -1099,6 +1110,7 @@
 
   Composition
   (comp* [f fs]
+    !returns (type-of-result f)
     (let [[f & fs] (reverse (cons f fs))]
       (fn [& xs]
         (reduce fs (apply f xs)
@@ -1108,6 +1120,7 @@
 (defn interpose [coll sep]
   ;; build list by inserting `sep` between each of the elements of `coll`
   (rest (flat-map (seq coll) (partial list sep))))
+;; (def _ (show-type interpose))
 
 (defn print [& vs]
   (-> vs
@@ -1280,6 +1293,7 @@
     (to-str (reverse (seq s))))
 
   (split-with [s pred prefix]
+    ;; TODO: should limit the fn-constraint for 'pred' to only 1 arity and variadic
     ;; ! Vector prefix))
     (or (flat-map (first s) (fn [head]
                               (and (pred head)
@@ -1674,53 +1688,61 @@
     (split l n empty-list))
 
   (split-with [l pred prefix]
-    ;; ! List prefix
-    ;; ! (function-returns Maybe) pred
-    ;; !returns (maybe-of (vector-of (list-of (inner-type-of l))))
+    ;; TODO: should limit the fn-constraint for 'pred' to only 1 arity and variadic
+    ! List prefix
+    ! (function-returns Maybe) pred
+    ;; TODO: first value of result should be vector of inner type of result of pred
+    !returns (maybe-of (vector-of (list-of (inner-type-of l))))
+    ;; !returns (maybe-of (vector-of [(list-of (inner-type-of (type-of-result pred)))
+    ;;                                (list-of (inner-type-of l))]))
     (or (flat-map (first l) (fn [head]
                               (and (pred head)
                                    (split-with (rest l) pred (cons head prefix)))))
         (maybe [(reverse prefix) l])))
 
   (split-with [l pred]
-    ;; ! (function-returns Maybe) pred
-    ;; !returns (vector-of (list-of (inner-type-of l)))
-
     (either (split-with l pred empty-list)
             [empty-list l]))
 
   (take [coll n]
-    ;; (assert-result m (instance? (list-of (inner-type-of coll)) m))
+    !returns (list-of (inner-type-of coll))
+
     (let [[prefix _] (split coll n)]
       prefix))
 
   (drop [coll n]
-    ;; (assert-result m (instance? (list-of (inner-type-of coll)) m))
+    !returns (list-of (inner-type-of coll))
     (let [[_ tail] (split coll n)]
       tail))
 
   (drop-while [coll pred]
-    ;; (assert-result m (instance? (list-of (inner-type-of coll)) m))
+    !returns (list-of (inner-type-of coll))
+
     (let [[_ tail] (split-with coll pred)]
       tail))
 
   (take-while [coll pred]
-    ;; (assert-result m (instance? (list-of (inner-type-of coll)) m))
+    !returns (list-of (inner-type-of coll))
+
     (let [[prefix _] (split-with coll pred)]
       prefix))
 
   Indexed
   (nth [coll n]
+    ;; TODO: do I need this?
+    ;; !returns (maybe-of (inner-type-of coll))
     (or (and (= n 0) (first coll))
         (and (< 0 n) (nth (rest coll) (dec n)))))
 
   Associative
   (get [l k]
+    ;; TODO: show-type this
     (nth l k)))
 
 (defn vec= [x y n]
-  ;; ! Vector x
-  ;; ! Integer n
+  ! Vector x
+  ! Integer n
+  ;; TODO: show-type this
   (or (= 0 n)
       (let [n (dec n)]
         (and (= (get x n) (get y n))
