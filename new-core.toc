@@ -34,6 +34,8 @@
 (def empty-list (inline C "(Value *)&empty_list_struct"))
 (def empty-vector (inline C "(Value *)&empty_vect_struct"))
 
+(def _ (show-type empty-list))
+
 ;; TODO: 'nothing' doesn't work right if it has bottom-type for contents
 (def nothing (inline C Maybe "(Value *)&(Maybe){MaybeType, -2, 0}"))
 
@@ -467,7 +469,7 @@
 (defn cons [x l]
   ;; Add a value `x` to the head of list `l`
   ! List l
-  !returns (list-of [(type-of x)] (type-of l))
+  !returns (list-of [(type-of x)] (inner-type-of l))
   (inline C List "
    Value *listVal = (Value *)listCons(x_0, (List *)l_1);
    return(listVal);\n"))
@@ -476,6 +478,10 @@
   ;; send a function `f` to a value `v`. `f` will be applied to the contents of
   ;; `v` and the list of values in `args`
   (send* v (cons f args)))
+
+;; TODO: putting this after it's use crashes the compiler
+(def Predicate (all-of (required-arities 1)
+                       (function-returns Maybe)))
 
 ;; For types that contain values. Focus is on the contained values.
 ;; No sense of ordering for contents required by this interface
@@ -502,8 +508,9 @@
   (filter [coll f]
     ;; Create a new collection of same type as `coll` with only the values
     ;; for which `f` does not return `nothing`.
-    ! (required-arities 1) f
-    ! (function-returns Maybe) f
+
+    ;; TODO: this does not get added to the impls
+    ! Predicate f
     )
 
   (reduce [coll x f]
@@ -526,7 +533,7 @@
   (first [coll]
     ;; Return the first element in the `coll` (wrapped in a `Maybe`) if `coll`
     ;; is not empty. Returns 'nothing', if `coll` is empty.
-    !returns Maybe
+    ;; !returns Maybe
     )
 
   (rest [coll]
@@ -555,13 +562,11 @@
     )
 
   (split-with [coll pred]
-    ! (required-arities 1) pred
-    ! (function-returns Maybe) pred
+    ! Predicate pred
     )
 
   (split-with [coll pred prefix]
-    ! (required-arities 1) pred
-    ! (function-returns Maybe) pred
+    ! Predicate pred
     )
 
   (take [coll n]
@@ -573,13 +578,11 @@
     )
 
   (drop-while [coll pred]
-    ! (required-arities 1) pred
-    ! (function-returns Maybe) pred
+    ! Predicate pred
     )
 
   (take-while [coll pred]
-    ! (required-arities 1) pred
-    ! (function-returns Maybe) pred
+    ! Predicate pred
     )
 
   (reverse [coll]
@@ -607,14 +610,15 @@
     ;; Retrieve the `n`th value from `coll`, wrapped in a Maybe, if there are
     ;; enough values in `coll`. Otherwise, returns `nothing`.
     ! Integer n
-    !returns Maybe
+    !returns (maybe-of (inner-type-of coll))
     )
 
   (store [coll n v]
     ;; Create a new copy of `coll` (wrapped in a Maybe)  with `v` at index `n`
     ;; if `coll` is at least size of `n` - 1. Otherwise, return `nothing`.
     ! Integer n
-    !returns Maybe
+    !returns (maybe-of (any-of (inner-type-of coll)
+                               (type-of v)))
     ))
 
 ;; For types whose values can be hashed to an integer
@@ -799,12 +803,10 @@
 
   (conj [l v] (cons v l))
 
-  (filter [coll pook]
-    ! (required-arities 1) pook
-    ! (function-returns Maybe) pook
-    ! (list-of (type-of-arg pook 0)) coll
-    !returns (list-of (inner-type-of (type-of-result pook)))
-    (inline C List "return(listFilter(coll_0, pook_1));"))
+  (filter [coll f]
+    ! (list-of (type-of-arg f 0)) coll
+    !returns (list-of (inner-type-of (type-of-result f)))
+    (inline C List "return(listFilter(coll_0, f_1));"))
 
   Container
   (map [l f]
@@ -856,9 +858,9 @@
   (rest [l]
     !returns (rest-of l)
     (inline C List "return(cdr(l_0));")))
-(def _ (show-type (filter '(1 2 a 3) (fn [x]
-                                       !returns (maybe-of Symbol) x
-                                       (instance? Symbol x)))))
+
+;; (def _ (show-type (first '(a b c))))
+;; (def _ (show-type (filter '(a 1 3 b) inc)))
 
 (defn list-reduce [l result f]
   (cond
@@ -872,6 +874,8 @@
     !returns (type-of-result f)
 
     (list-reduce l result f)))
+;; (def _ (show-type (reduce (seq ['(a 9)]) emptyBMI (fn [m [x y]]
+;;                                               (assoc m x [(inc x) y])))))
 
 (defn +
   ([] 0)
@@ -1096,7 +1100,8 @@
   (=* [x y] nothing)
 
   Stringable
-  (string-list [_] (list "<Fn " (fn-name _) ">"))
+  (string-list [_]
+    (list "<Fn " (fn-name _) ">"))
 
   (show* [x _]
     (string-list x))
@@ -1395,6 +1400,8 @@
   (sha1 [s]
     (inline C Integer "return(integerValue(strSha1(s_0)));")))
 
+;; (def _ (show-type (show* 'a "  ")))
+
 (defn sha1-update-type [x ctxt]
   (inline C Integer "
   Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->type, 8);
@@ -1661,8 +1668,8 @@
               (seq (apply-to-vectors f
                                      (rest lists)
                                      (map first-list vector))))
-            empty-list))
-
+            (show-type empty-list)))
+ 
   Seqable
   (last [coll]
     !returns (last-of coll)
@@ -1677,15 +1684,16 @@
     ! List prefix
     ! Integer n
     !returns (vector-of (list-of (inner-type-of l)))
-    (either (for [head (and (< 0 n)
-                            (first l))]
-              (split (rest l) (dec n) (cons head prefix)))
+    (either (map (and (< 0 n)
+                      (first l))
+                 (fn [head]
+                   (split (rest l) (dec n) (cons head prefix))))
             [(reverse prefix) l]))
 
   (split [l n]
-    ! Integer n
-    !returns (vector-of (list-of (inner-type-of l)))
-    (split l n empty-list))
+    ;; ! Integer n
+    ;; !returns (vector-of (list-of (inner-type-of l)))
+    (split l n (show-type empty-list)))
 
   (split-with [l pred prefix]
     ;; TODO: should limit the fn-constraint for 'pred' to only 1 arity and variadic
@@ -1701,8 +1709,8 @@
         (maybe [(reverse prefix) l])))
 
   (split-with [l pred]
-    (either (split-with l pred empty-list)
-            [empty-list l]))
+    (either (split-with l pred (show-type empty-list))
+            [(show-type empty-list) l]))
 
   (take [coll n]
     !returns (list-of (inner-type-of coll))
@@ -1738,6 +1746,8 @@
   (get [l k]
     ;; TODO: show-type this
     (nth l k)))
+
+(def _ (show-type (apply (list add-numbers) '((1 2) (4)))))
 
 (defn vec= [x y n]
   ! Vector x
@@ -1867,6 +1877,10 @@
 
   Collection
   (filter [v f]
+    ! Predicate f
+    ! (list-of (type-of-arg f 0)) coll
+    !returns (list-of (inner-type-of (type-of-result f)))
+
     ;; (assert-result v (instance? Vector v
     (reduce v empty-vector
             (fn [result x]
