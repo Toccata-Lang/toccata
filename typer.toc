@@ -387,7 +387,6 @@
                               types-list))))
 
 (defn merge-constraints [[c1 c2]]
-  ;; TODO: bad intersect. But maybe not
   (cond (and (instance? c/ComputedConstraint c1)
              (instance? c/ComputedConstraint c2))
         (c/merge-mods (.mods c2)
@@ -422,7 +421,8 @@
                        new-arity-c (-> arity-c
                                        (assoc-in [.param-consts .items] (vec new-params))
                                        (.result-const new-result))
-                       new-proto (either (or (= c/bottom-type new-arity-c)
+                       new-proto (either (or (some new-params (partial = c/bottom-type))
+                                             (= new-result c/bottom-type)
                                              (update-in proto-impls [.impl-fns type-num]
                                                         (fn [fn-c]
                                                           (assert (instance? c/FnConstraint fn-c))
@@ -790,19 +790,21 @@
   TypeChecker
   (call-with-args [c args target]
     (-> c
-        ;; TODO: check for bottom type
-        (c/intersect (-> (c/CallValue (map args .constraint) empty-list c/no-symbol "")
-                         (c/update-path (ast/location target))))
+        ;; will never fail
+        (c/intersect (c/CallValue (map args .constraint) empty-list c/no-symbol ""))
+        (c/update-path (ast/location target))
         se/state-error)))
 
 (extend-type c/ComputedConstraint
   TypeChecker
   (call-with-args [c args target]
-    ;; TODO: bad intersect.
-    (-> c
-        (c/intersect (-> (c/CallValue (map args .constraint) empty-list c/no-symbol "")
-                         (c/update-path (ast/location target))))
-        se/state-error)))
+    (let [new-c (-> c
+                    (c/intersect (c/CallValue (map args .constraint) empty-list c/no-symbol ""))
+                    (c/update-path (ast/location target)))]
+      (either (map (= new-c c/bottom-type)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c (ast/location target)))))
+              (se/state-error new-c)))))
 
 (extend-type c/AllValues
   TypeChecker
@@ -820,7 +822,6 @@
   (type-check [c old-c]
     (flat-map (get-value-type (.base-sym old-c))
               (fn [base-c]
-                ;; TODO: bad intersect.
                 (let [new-c (c/intersect c base-c)]
                   (cond (= c/bottom-type new-c)
                         (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))
@@ -847,15 +848,20 @@
     (cond (instance? Tagged (.param-sym old-c))
           (flat-map (get-value-type (.param-sym old-c))
                     (fn [const-c]
-                      ;; TODO: bad intersect.
                       (let [new-c (c/intersect const-c (c/GetInnerType (.path old-c)))]
-                        (either (map (c/extract-sym old-c)
-                                     (fn [sym]
-                                       (append-value-type sym new-c (ast/location old-c))))
+                        (either (or (map (= new-c c/bottom-type)
+                                         (fn [_]
+                                           (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))))
+                                    (map (c/extract-sym old-c)
+                                         (fn [sym]
+                                           (append-value-type sym new-c (ast/location old-c)))))
                                 (se/state-error new-c)))))
 
-          (let [x (c/intersect (.param-sym c) (c/GetInnerType (.path old-c)))]
-            (se/state-error x)))))
+          (let [new-c (c/intersect (.param-sym c) (c/GetInnerType (.path old-c)))]
+            (either (map (= new-c c/bottom-type)
+                         (fn [_]
+                           (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))))
+                    (se/state-error new-c))))))
 
 (extend-type c/GetInnerType
   TypeChecker
@@ -876,11 +882,13 @@
     (let [loc (ast/location (.fn-sym old-c))]
       (flat-map (get-value-type (.fn-sym old-c))
                 (fn [fn-c]
-                  ;; TODO: bad intersect.
                   (let [new-c (c/intersect fn-c c)]
-                    (either (map (c/extract-sym c)
-                                 (fn [sym]
-                                   (append-value-type sym new-c loc)))
+                    (either (or (map (= new-c c/bottom-type)
+                                     (fn [_]
+                                       (compilation-error (conf-ass _LINE_ new-c loc))))
+                                (map (c/extract-sym c)
+                                     (fn [sym]
+                                       (append-value-type sym new-c loc))))
                             (se/state-error new-c))))))))
 
 (extend-type c/ResultOf
@@ -889,17 +897,18 @@
     (let [loc (ast/location (.fn-sym old-c))]
       (flat-map (get-value-type (.fn-sym old-c))
                 (fn [fn-c]
-                  ;; TODO: bad intersect.
                   (let [new-c (c/intersect fn-c (c/CallValue c/no-args (.path c) (.sym c) (.var c)))]
-                    ;; TODO: needs to check for bottom-type
-                    (either (map (c/extract-sym c)
-                                 (fn [sym]
-                                   ;; TODO: this produces a weird runtime error
-                                   ;; (let [new-c (c/update-sym new-c sym)]
-                                   ;;   (map (append-value-type sym new-c loc)
-                                   ;;        (fn [_]
-                                   ;;          new-c)))
-                                   (append-value-type sym (c/update-sym new-c sym) loc)))
+                    (either (or (map (= new-c c/bottom-type)
+                                     (fn [_]
+                                       (compilation-error (conf-ass _LINE_ new-c loc))))
+                                (map (c/extract-sym c)
+                                     (fn [sym]
+                                       ;; TODO: this produces a weird runtime error
+                                       ;; (let [new-c (c/update-sym new-c sym)]
+                                       ;;   (map (append-value-type sym new-c loc)
+                                       ;;        (fn [_]
+                                       ;;          new-c)))
+                                       (append-value-type sym (c/update-sym new-c sym) loc))))
                             (se/state-error new-c))))))))
 
 (extend-type c/ReifiedConstraint
