@@ -160,6 +160,13 @@
       (ProtoImpls fn-sym def-impl impl-fns)))
 
   c/Constraint
+  (c/is-bottom [c]
+    (either (or (= c/bottom-type (c/is-bottom default-impl))
+                (-> (vals impl-fns)
+                    (map c/is-bottom)
+                    (some (partial = c/bottom-type))))
+            c))
+
   (c/show-full [c]
     (comp (list (str "prototype " fn-sym))
           (c/show-full (.default-impl c))
@@ -444,6 +451,7 @@
                              "arguments at" loc)))
 
 (defn add-proto-impl [type-num fn-sym arg-count arity-c]
+  (assert (instance? Integer type-num))
   (assert (instance? c/fn-arity arity-c))
 
   (let [loc (ast/location fn-sym)]
@@ -462,8 +470,13 @@
                            (fn [proto-impls]
                              (let [new-proto (add-impl proto-impls type-num arg-count arity-c loc)]
                                (cond (instance? ProtoImpls new-proto)
-                                     (set-value-type fn-sym new-proto)
+                                     (for [vts (se/get-val .value-types)
+                                           _ (se/set-val .value-types
+                                                         (map vts (fn [m]
+                                                                    (assoc m (ast/untag fn-sym) new-proto))))]
+                                       new-proto)
 
+                                     ;; add-impl might return a compilation error
                                      new-proto))))
 
                  (flat-map se-nop
@@ -478,13 +491,15 @@
                                                                val-types (first val-types-list)
                                                                proto-impls (get val-types sym)]
                                                            (let [new-proto (add-impl proto-impls type-num
-                                                                                     arg-count arity-c loc)]
+                                                                                     arg-count arity-c loc)
+                                                                 val-types-list (map val-types-list
+                                                                                     (fn [m]
+                                                                                       (assoc m sym new-proto)))]
                                                              (cond (instance? ProtoImpls new-proto)
                                                                    (do
                                                                      (deliver core-prom se-nop)
                                                                      (assoc-in mods ['core .value-types]
-                                                                               (cons (assoc val-types sym new-proto)
-                                                                                     (rest val-types-list))))
+                                                                               val-types-list))
 
                                                                    (do
                                                                      (deliver core-prom new-proto)
@@ -700,9 +715,9 @@
                                                   (.tail-c c/bottom-type))
                                    all-arg-cs (conj fixed-arg-cs var-args-c)
                                    reified-arity (c/reify-type-constraint arity arity-id all-arg-cs loc)]
-                               ;; (cond (= target 'drop-while)
+                               ;; (cond (= target 'Tester)
                                ;;       (status 'site _LINE_ loc "\n" target arity-id
-                               ;;               "\n\n" 'arity arity
+                               ;;               "\n" 'arity arity
                                ;;               "\n\n" 'all-args all-arg-cs
                                ;;               "\n\n" 'reified reified-arity)
 
@@ -718,9 +733,8 @@
                                                       reified-arity)
                                                 (= c/bottom-type))
                                             (fn [bad-c]
-                                              ;; (status 'site _LINE_ loc "\n" target
-                                              ;;         "\n\n" 'arity-id arity-id
-                                              ;;         "\n\n" 'arity arity
+                                              ;; (status 'site _LINE_ loc "\n" target arity-id
+                                              ;;         "\n" 'arity arity
                                               ;;         "\n\n" 'all-args all-arg-cs
                                               ;;         "\n\n" 'reified reified-arity)
                                               (compilation-error (conf-ass _LINE_ bad-c loc))))
@@ -933,12 +947,12 @@
   (type-check [c old-c]
     (let [loc (ast/location old-c)]
       (for [t (get-type-info (.type-sym old-c) loc)
-            :let [_ (or (= (.file loc) 'core)
-                        (= (.line loc) 0)
-                        (do
-                          (status 'checking _LINE_ loc (.type-sym old-c)
-                                  "\n" t)
-                          (maybe '_)))]
+            ;; :let [_ (or ;; (= (.file loc) 'core)
+            ;;             ;; (= (.line loc) 0)
+            ;;             (do
+            ;;               (status 'checking _LINE_ loc (.type-sym old-c)
+            ;;                       "\n" t)
+            ;;               (maybe '_)))]
             :let [t (c/replace-path t (.path c))]
             t (either (map (c/extract-sym old-c)
                            (fn [sym]
@@ -1242,33 +1256,43 @@
 (extend-type ast/prototype-ast
   TypeChecker
   (pre-check [ast]
-    (let [fixed-params (-> ast .params .fixed)
-          arg-count (count fixed-params)]
-      (for [_ (comp (se/get-in-val [.value-types 0 (ast/untag (.fn-name ast)) .default-impl])
-                    (set-value-type (.fn-name ast)
-                                    (ProtoImpls (ast/untag (.fn-name ast)) (.arities c/fn-constraint {}) {})))
-            _ (push-types)
-            _ (set-value-type ast/result-sym c/top-type)
-            ;; :let [_ (or ;; (= (.line loc) 0)
-            ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-name ast) 'hash-seq)
-            ;;               (do
-            ;;                 (print-err 'pre-prototype _LINE_ (.fn-name ast) (ast/location ast)
-            ;;                            "\n" 'body (.default-body ast))
-            ;;                 nothing)))]
-            _ (se/traverse (all-syms (.params ast))
-                           (fn [sym]
-                             (set-value-type sym c/top-type)))
-            _ (se/traverse (zip-lists fixed-params (range arg-count))
-                           (fn [[sym index]]
-                             (cond (instance? ast/params-ast sym)
-                                   se-nop
+    (let [loc (ast/location ast)
+          fixed-params (-> ast .params .fixed)
+          arg-count (count fixed-params)
+          all-param-syms (remove (all-syms (.params ast))
+                                 (partial = (ast/tag '_)))]
+      (cond (< (count (set all-param-syms)) (count all-param-syms))
+            (compilation-error "Duplicate parameter names in prototyp at" loc)
 
-                                   (append-value-type sym
-                                                      (c/ParamConstraint (.fn-name ast) index
-                                                                  empty-list (ast/untag sym) "")
-                                                      (ast/location ast)))))]
-        ast)))
+            (for [_ (comp (se/get-in-val [.value-types 0 (ast/untag (.fn-name ast)) .default-impl])
+                          (set-value-type (.fn-name ast)
+                                          (ProtoImpls (ast/untag (.fn-name ast)) (.arities c/fn-constraint {}) {})))
+                  _ (push-types)
+                  _ (set-value-type ast/result-sym c/top-type)
+                  ;; :let [_ (or ;; (= (.line loc) 0)
+                  ;;             ;; (= (.file loc) 'core)
+                  ;;          (and (= (.fn-name ast) 'hash-seq)
+                  ;;               (do
+                  ;;                 (print-err 'pre-prototype _LINE_ (.fn-name ast) (ast/location ast)
+                  ;;                            "\n" 'body (.default-body ast))
+                  ;;                 nothing)))]
+                  _ (se/traverse all-param-syms
+                                 (fn [sym]
+                                   (set-value-type sym c/top-type)))
+                  _ (se/traverse (zip-lists fixed-params (range arg-count))
+                                 (fn [[sym index]]
+                                   (cond (instance? ast/params-ast sym)
+                                         ;; TODO: this probably needs expanding
+                                         se-nop
+
+                                         (= sym '_)
+                                         (set-value-type sym c/top-type) 
+
+                                         (append-value-type sym
+                                                            (c/ParamConstraint (.fn-name ast) index
+                                                                               empty-list (ast/untag sym) "")
+                                                            loc))))]
+              ast))))
 
   (type-check [ast old-ast]
     (let [arg-count (count (.fixed (.params old-ast)))]
@@ -1279,7 +1303,8 @@
                          (se/state-error c/top-type)))
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-name ast) 'hash-seq)
+            ;;          (and (= (.fn-name ast) 'invoke)
+            ;;               (= arg-count 2)
             ;;               (do
             ;;                 (print-err 'check-prototype _LINE_ (.fn-name ast) (ast/location ast)
             ;;                            "\n" 'pts pts
@@ -1354,7 +1379,7 @@
       pa))
 
   (type-check [ast old-ast]
-    (for [_ (pop-types);
+    (for [_ (pop-types)
           _ (add-proto-impl (.type-num ast)
                             (-> old-ast .arity .fn-sym)
                             (-> old-ast .arity .params .fixed count)
@@ -2155,6 +2180,21 @@
                  ;;       (ast/block-comment "" 0 [])
                  ;;       (b/TypeExtension new-type-constraint hash-map-impls))
                  (CheckedTypeAST (.sym ast) type-num new-type-constraint fields impls)
+                 (reify
+                   Container
+                   (map [y f embed]
+                     (embed y))
+
+                   TypeChecker
+                   (type-check [_ _]
+                     (for [const-c (get-value-type (.sym ast))
+                           :let [const-c (-> const-c
+                                             (c/update-type-name (symbol (str (.sym ast)
+                                                                              " constructor")))
+                                             (c/update-path loc))]
+                           _ (set-value-type (.sym ast) const-c)]
+                       (ast/block-comment-ast [] "poop" 99 c/top-type))))
+
                  ;; (reify
                  ;;   Container
                  ;;   (map [y f embed]
@@ -2228,13 +2268,15 @@
       (cond disp-arg
             (either (for [disp-type (map disp-arg (fn [ast]
                                                     (-> ast .constraint c/get-type-num)))
-                          ;; _ (or (= (.file loc) 'core)
-                          ;;       (= (.line loc) 0)
-                          ;;       (do
-                          ;;         (status 'call _LINE_ loc disp-type
-                          ;;                 "\n\n" 'args args
-                          ;;                 "\n\n" 'ast (get-in ast [.impl-fns disp-type]))
-                          ;;         (maybe '_)))
+                          ;; _ (or ;; (= (.file loc) 'core)
+                          ;;       ;; (= (.line loc) 0)
+                          ;;    (and (= target 'Tester)
+                          ;;         (do
+                          ;;           (status 'call _LINE_ loc disp-type
+                          ;;                   "\n\n" 'args args
+                          ;;                   "\n\n" 'ast (get-in ast [.impl-fns disp-type]))
+                          ;;           (maybe '_)))
+                          ;;    (maybe '_))
                           f (or (get-in ast [.impl-fns disp-type])
                                 (get ast .default-impl))]
                       (call-with-args f args target))
