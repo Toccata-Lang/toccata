@@ -37,6 +37,15 @@
 ;; TODO: 'nothing' doesn't work right if it has bottom-type for contents
 (def nothing (inline C Maybe "(Value *)&(Maybe){MaybeType, -2, 0}"))
 
+(def FnOrArity (any-of Fn FnArity))
+
+(defn fn-apply [f args]
+  ! FnOrArity f
+  ! List args
+  !returns (type-of-result f)
+  ;; TODO: implement ArgsOf
+  (inline C "return(fnApply(f_0, args_1));"))
+
 (defn default-type-name [value]
   ;; Return the string of the name of the type of `value`
   (inline C StringBuffer "
@@ -328,12 +337,12 @@
   ;; Take a substring of a larger string
   ([src index]
    ! String src
-   ! Integer index
+   ! (all-of Integer (min-value 0)) index
    (inline C SubString "return(subs2(src_0, index_1));"))
   ([src index length]
    ! String src
-   ! Integer index
-   ! Integer length
+   ! (all-of Integer (min-value 0)) index
+   ! (all-of Integer (min-value 0)) length
    (inline C SubString "return(subs3(src_0, index_1, length_2));")))
 
 (defn symbol [sym-str]
@@ -559,31 +568,6 @@ abort();
     !returns (maybe-of (type-of x))
     ))
 
-;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
-(defn list [& l]
-  ;; construct a list of values from the arguments
-  l)
-
-(defn inc [x]
-  ;; Add 1 to an integer
-  (add-numbers 1 x))
-
-(defn dec [x]
-  ;; Subtract 1 from an integer
-  ;; ! Integer x
-
-  (subtract-numbers x 1))
-
-(defn identity [x]
-  x)
-
-; For types that have some notion of equality between their values
-(defprotocol Eq
-  (=* [x y]
-    ;; Compare two values for equality
-    !returns (maybe-of (type-of x))
-    ))
-
 ;; Definitions for the 'built-in' types
 (def Integer
   (reify
@@ -643,12 +627,27 @@ abort();
 ;; A type does not have to implement all the protocols or even all of the
 ;; protocol functions of a given protocol. In fact, most won't
 
+;; For types whose values can be converted to human-readable strings
+(defprotocol Stringable
+  (string-list [x]
+    ;; Create a list of strings of that comprise the representation of `x`
+    !returns (list-of String)
+    )
+
+  (show* [x indent]
+    ! String indent
+
+    ;; Create a string list to show the value `x`
+    !returns (list-of String)
+    ))
+
 ;; For types whose values can be composed
 (defprotocol Composition
   (zero [x]
     ;; Produce a value with 'same' type as `x` that can be `comp`d with any value
     ;;`y` of the same type to return `y`
     )
+
   (comp* [x xs]
     ! Sequence xs
     ;; Compose a number of values of the 'same' type to produce a single value of
@@ -802,26 +801,29 @@ abort();
 
   (vec [coll]
     ;; Create a vector of the contents
-    !returns Vector
+    !returns (vector-of (inner-type-of coll))
     )
 
   (first [coll]
     ;; Return the first element in the `coll` (wrapped in a `Maybe`) if `coll`
     ;; is not empty. Returns 'nothing', if `coll` is empty.
-    ;; !returns Maybe
+    !returns (first-of coll)
     )
 
   (rest [coll]
     ;; Returns a new collection with all but the first value of `coll`
+    !returns (rest-of coll)
     )
 
   (last [coll]
     ;; Return the last element in the `coll` (wrapped in a `Maybe`) if `coll`
     ;; is not empty. Returns 'nothing', if `coll` is empty.
+    !returns (last-of coll)
     )
 
   (butlast [coll]
     ;; Returns a new collection with all but the last value of `coll`
+    !returns (butlast-of coll)
     )
 
   (split [coll n]
@@ -839,6 +841,9 @@ abort();
 
   (split-with [coll pred prefix]
     ! Predicate pred
+    ! Vector prefix
+    !returns (vector-of [(contains (inner-type-of coll))
+                         (contains (inner-type-of coll))])
     )
 
   (take [coll n]
@@ -851,15 +856,18 @@ abort();
 
   (drop-while [coll pred]
     ! Predicate pred
+    !returns (contains (inner-type-of coll))
     )
 
   (take-while [coll pred]
     ! Predicate pred
+    !returns (contains (inner-type-of (type-of-result pred)))
     )
 
   (reverse [coll]
     ;; Create a new collection of same type as `coll` with the contents
     ;; in reverse order
+    !returns (contains (inner-type-of coll))
     )
 
   (to-str [coll]
@@ -869,11 +877,6 @@ abort();
 
 (defn second [coll]
   ;; get the second element from the sequable `coll`
-  ;; TODO: this assertion shouldn't be needed
-  !returns (maybe-of (inner-type-of coll))
-  ;; TODO: this should also work
-  ;; !returns (first-of (rest-of coll))
-
   (first (rest coll)))
 
 ;; For collections whose contents can be indexed by integers
@@ -944,6 +947,13 @@ abort();
   (invoke [_ _ _ _ _ _ _ _])
   (invoke [_ _ _ _ _ _ _ _ _]))
 
+; For types that have some notion of equality between their values
+(defprotocol Eq
+  (=* [x y]
+    ;; Compare two values for equality
+    !returns (maybe-of (type-of x))
+    ))
+
 ;; For types that have some notion of order of their values
 (defprotocol Ord
   (<* [x y]
@@ -951,17 +961,455 @@ abort();
     !returns (maybe-of (type-of x))
     ))
 
+(defn list-reduce [l result f]
+  ! (list-of (type-of-arg f 1)) l
+  ! (required-arities 2) f
+  !returns (any-of (type-of result) (type-of-result f))
+
+  (cond
+   (empty? l) result
+   (list-reduce (rest l) (f result (extract (first l))) f)))
+
+;; interface to low-level List functions
+(extend-type List
+  Eq
+  (=* [x y]
+    !returns (maybe-of (type-of x))
+    (inline C (maybe-of List) "return(listEQ(x_0, y_1));"))
+
+  Collection
+  (filter [coll f]
+    ! Predicate f
+    ! (list-of (type-of-arg f 0)) coll
+    !returns (list-of (inner-type-of (type-of-result f)))
+    (inline C List "return(listFilter(coll_0, f_1));"))
+  
+  Sequable
+  (reverse [l]
+    !returns (list-of (inner-type-of l))
+    (inline C List "return((Value *)reverseList((List *)l_0));"))
+
+  (first [l]
+    (inline C Maybe "return(car(l_0));"))
+
+  (rest [l]
+    (inline C List "return(cdr(l_0));"))
+
+  (vec [l]
+    !returns (vector-from l)
+    (inline C Vector "return((Value *)listVec(l_0));")))
+
+(defn identity [x]
+  x)
+
+(defn partial [f & args]
+  ;; paritally apply `f` to `args` creating a new function that expects more arguments
+  (fn [& more-args]
+    (apply f (comp args more-args))))
+
+;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
+(defn list [& l]
+  ;; construct a list of values from the arguments
+  l)
+
+;; This is the declaration of the 'vector' function. Calls to 'vector' are inlined by the compiler
+(defn vector [& l]
+  ;; construct a vector of values from the arguments
+  (vec l))
+
 ;; TODO: implement Float as well.
 ;; pay attention to https://blog.acolyer.org/2020/09/28/fpspy/
 (extend-type Integer
+  Type
+  (type-args [n]
+    [n])
+
+  (type-name [_]
+    "Integer")
+
+  Stringable
+  (string-list [n]
+    (inline C "return((Value *)listCons(integer_str(n_0), empty_list));\n"))
+
+  (show* [x indent]
+    (string-list x))
+
   Eq
   (=* [x y]
-    (inline C (maybe-of Integer) "return(integer_EQ(x_0, y_1));")))
+    (inline C (maybe-of Integer) "return(integer_EQ(x_0, y_1));"))
 
-;; (def _ (show-type maybe-map))
-;; (defn f [x]
-;;   (maybe-map x inc)
-;;   (show-type x))
+  Ord
+  (<* [x y]
+    (inline C (maybe-of Integer) "return(integerLT(x_0, y_1));"))
+
+  Hashable
+  (sha1-update [x ctxt]
+    (inline C Opaque "
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->type, 8);
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->numVal, 8);
+  dec_and_free(x_0, 1);
+  return(ctxt_1);
+"))
+
+  (sha1 [x]
+    (inline C Integer "return(integerValue(integerSha1(x_0)));")))
+
+(defn inc [x]
+  ;; Add 1 to an integer
+  (add-numbers 1 x))
+
+(defn dec [x]
+  ;; Subtract 1 from an integer
+  ;; ! Integer x
+
+  (subtract-numbers x 1))
+
+(extend-type String
+  Type
+  (type-name [_]
+    "String")
+
+  (type-args [s]
+    [s])
+
+  Stringable
+  (string-list [s]
+    (list s))
+
+  (show* [s indent]
+    (list "\"" s "\""))
+
+  Composition
+  (zero [_]
+    "")
+
+  (comp* [s ss]
+    (to-str (cons s ss)))
+
+  Collection
+  (count [s]
+    (inline C Integer "return(strCount(s_0));"))
+
+  (empty? [coll]
+    (and (=* 0 (count coll))
+         (maybe "")))
+
+  (empty [coll]
+    "")
+
+  (reduce [s x f]
+    (inline C "return(strReduce(s_0, x_1, f_2));"))
+
+  Seqable
+  (seq [coll]
+    !returns (all-of (list-from coll) (contains (inner-type-of coll)))
+    (inline C "return(strSeq(coll_0));"))
+
+  (vec [coll]
+    !returns (all-of (vector-from coll) (contains (inner-type-of coll)))
+    (inline C "return(strVec(coll_0));"))
+
+  (first [s]
+    (map (<* 0 (count s))
+         (fn [_]
+           (subs s 0 1))))
+
+  (rest [s]
+    (subs s 1))
+
+  (last [s]
+    (let [n (count s)]
+      (map (<* 0 n)
+           (fn [_]
+             (subs s (dec n))))))
+
+  (butlast [s]
+    (subs s 0 (dec (count s))))
+
+  (reverse [s]
+    (to-str (reverse (seq s))))
+
+  (split-with [s pred prefix]
+    !returns (vector-of [String String])
+    (either (map (first s) (fn [head]
+                             (either (pred head)
+                                     (split-with (rest s) pred (conj prefix head)))))
+            [(to-str prefix) s]))
+
+  (split-with [s pred]
+    (cond (=* "" s)
+          ["" ""]
+
+          (split-with s pred [])))
+
+  (split [s n]
+    [(subs s 0 n) (subs s n)])
+
+  (take [s n]
+    (subs s 0 n))
+
+  (drop [s n]
+    (subs s n))
+
+  Eq
+  (=* [x y] (inline C (maybe-of String) "return(strEQ(x_0, y_1));"))
+
+  Indexed
+  (nth [s n]
+    (map (<* n (count s))
+         (fn [_]
+           (subs s n 1))))
+
+  Ord
+  (<* [x y] (inline C (maybe-of String) "return(strLT(x_0, y_1));"))
+
+  Hashable
+  (sha1-update [x ctxt]
+    (inline C Opaque "
+  strSha1Update(((Opaque *)ctxt_1)->ptr, x_0);
+  dec_and_free(x_0, 1);
+  return(ctxt_1);
+"))
+
+  (sha1 [s]
+    (inline C Integer "return(integerValue(strSha1(s_0)));")))
+
+(extend-type String
+  Seqable
+  (drop-while [coll pred]
+    (let [[_ tail] (split-with coll pred)]
+      tail))
+
+  (take-while [coll pred]
+    (let [[prefix _] (split-with coll pred)]
+      prefix)))
+
+(def _ (show-type (let [[_ tail] (split-with "123" (fn [x]
+                                                     (=* "1" x)))]
+                    tail)))
+(def _ (show-type (reverse "123")))
+
+(def _ (inc 'stop))
+
+(extend-type StringBuffer
+  Seqable
+  (to-str [s]
+    s))
+
+(extend-type SubString
+  Seqable
+  (to-str [s]
+    (str-append (str-malloc (count s)) s)))
+
+(defn apply-to-vectors [f vects arg-vects]
+  (either (for [vect (first vects)]
+            (apply-to-vectors f (rest vects)
+                              (reduce vect [] (fn [new-args v]
+                                                (reduce arg-vects new-args
+                                                        (fn [new-args arg-vect]
+                                                          (conj new-args (conj arg-vect v))))))))
+          (map arg-vects (fn [args]
+                           (apply f (seq args))))))
+
+(defn interpose [coll sep]
+  ;; build list by inserting `sep` between each of the elements of `coll`
+  (rest (flat-map (seq coll) (partial list sep))))
+;; (def _ (show-type interpose))
+
+;; (def _ (show-type (reduce (seq ['(a 9)]) emptyBMI (fn [m [x y]]
+;;                                               (assoc m x [(inc x) y])))))
+
+
+(defn list*
+  ([] empty-list)
+  ([arg]
+   ! Sequence arg
+   !returns (list-from arg)
+   (seq arg))
+  ([arg & args]
+   !returns List
+
+   (let [[arg-list & args] (reverse (cons arg args))]
+     ! Sequence arg-list
+
+     (list-reduce args (seq arg-list) conj))))
+
+;; TODO: pull all the defs from good-core. Don't worry about efficiency yet
+(extend-type List
+  Type
+  (type-name [_]
+    "List")
+  (type-args [l]
+    (vec l))
+
+  Stringable
+  (string-list [l]
+    (list "(" (to-str (list-concat (list-map (interpose l ", ") string-list))) ")"))
+
+  (show* [x indent]
+    (either (map (empty? x) string-list)
+            (let [[h & tail] x]
+              (comp (cons "(" (show* h (comp indent " ")))
+                    (flat-map tail (fn [x]
+                                     (list* ",\n" indent " "
+                                            (show* x (comp indent " ")))))
+                    (list ")")))))
+
+  Collection
+  (count [l]
+    (list-count l))
+
+  (empty? [l]
+    (and (=* 0 (list-count l))
+         (maybe empty-list)))
+
+  (empty [_]
+    empty-list)
+
+  (conj [l v]
+    (cons v l))
+
+  (reduce [l result f]
+    (list-reduce l result f))
+
+  Container
+  (map [l f]
+    (list-map l f))
+
+  (map [l f embed]
+    (-> l
+        reverse
+        (reduce (embed empty-list)
+                (fn [v x]
+                  (flat-map (f x)
+                            (fn [y]
+                              (map v (fn [v]
+                                       (conj v y)))))))
+        (map reverse)))
+
+  (wrap [x v]
+    (cons empty-list v))
+
+  (flatten [ls]
+    (list-concat ls))
+
+  (flat-map [l mf]
+    !returns (type-of-result mf)
+    (list-concat (list-map l mf)))
+
+  Composition
+  (zero [_]
+    empty-list)
+
+  (comp* [l ls]
+    (list-concat (cons l (map (seq ls) seq))))
+
+  Seqable
+  (to-str [coll]
+    (let [ss-list (flatten (list-map coll string-list))
+          new-len (list-reduce ss-list 0 (fn [len s]
+                                           (add-numbers len (count s))))]
+      (list-reduce ss-list (str-malloc new-len) str-append)))
+
+  (seq [l]
+    l)
+
+  Hashable
+  (sha1-update [l ctxt]
+    (sha1-update-type l ctxt)
+    (reduce l ctxt (fn [ctxt x]
+                     (sha1-update x ctxt))))
+
+  (sha1 [l]
+    (let [ctxt (sha1-init)]
+      (sha1-update l ctxt)
+      (sha1-finalize ctxt)))
+
+  Container
+  (apply [mf lists]
+    (either (for [f (first mf)
+                  first-list (first lists)]
+              (seq (apply-to-vectors f
+                                     (rest lists)
+                                     (map first-list vector))))
+            empty-list))
+ 
+  Seqable
+  (last [coll]
+    !returns (last-of coll)
+    (nth coll (dec (count coll))))
+
+  (butlast [coll]
+    !returns (butlast-of coll)
+    (let [[r _] (split coll (dec (count coll)))]
+      r))
+
+  (split [l n prefix]
+    ! List prefix
+    ! Integer n
+    !returns (vector-of (list-of (inner-type-of l)))
+    (either (map (and (<* 0 n)
+                      (first l))
+                 (fn [head]
+                   (split (rest l) (dec n) (cons head prefix))))
+            [(reverse prefix) l]))
+
+  (split [l n]
+    ;; ! Integer n
+    ;; !returns (vector-of (list-of (inner-type-of l)))
+    (split l n empty-list))
+
+  (split-with [l pred prefix]
+    ;; TODO: should limit the fn-constraint for 'pred' to only 1 arity and variadic
+    ! List prefix
+    ! (function-returns Maybe) pred
+    ;; TODO: first value of result should be vector of inner type of result of pred
+    !returns (maybe-of (vector-of (list-of (inner-type-of l))))
+    ;; !returns (maybe-of (vector-of [(list-of (inner-type-of (type-of-result pred)))
+    ;;                                (list-of (inner-type-of l))]))
+    (or (flat-map (first l) (fn [head]
+                              (and (pred head)
+                                   (split-with (rest l) pred (cons head prefix)))))
+        (maybe [(reverse prefix) l])))
+
+  (split-with [l pred]
+    (either (split-with l pred empty-list)
+            [empty-list l]))
+
+  (take [coll n]
+    !returns (list-of (inner-type-of coll))
+
+    (let [[prefix _] (split coll n)]
+      prefix))
+
+  (drop [coll n]
+    !returns (list-of (inner-type-of coll))
+    (let [[_ tail] (split coll n)]
+      tail))
+
+  (drop-while [coll pred]
+    !returns (list-of (inner-type-of coll))
+
+    (let [[_ tail] (split-with coll pred)]
+      tail))
+
+  (take-while [coll pred]
+    !returns (list-of (inner-type-of coll))
+
+    (let [[prefix _] (split-with coll pred)]
+      prefix))
+
+  Indexed
+  (nth [coll n]
+    ;; TODO: do I need this?
+    ;; !returns (maybe-of (inner-type-of coll))
+    (or (and (=* n 0) (first coll))
+        (and (<* 0 n) (nth (rest coll) (dec n)))))
+
+  Associative
+  (get [l k]
+    ;; TODO: show-type this
+    (nth l k)))
 
 (defn maybe-apply [mv m-args args]
   ! Maybe mv
@@ -977,17 +1425,6 @@ abort();
           (map mv (fn [f]
                     (apply f args)))))
  
-(extend-type List
-  Seqable
-  (vec [l]
-    !returns (vector-from l)
-    (inline C Vector "return((Value *)listVec(l_0));")))
-
-;; This is the declaration of the 'vector' function. Calls to 'vector' are inlined by the compiler
-(defn vector [& l]
-  ;; construct a vector of values from the arguments
-  (vec l))
-
 (extend-type Maybe
   Container
   (map [mv f]
@@ -1030,32 +1467,79 @@ abort();
   (assoc [x y v]
     (maybe v)))
 
-(extend-type List
-  Collection
-  (count [l]
-    (list-count l))
+(defn vec= [x y n]
+  ! Vector x
+  ! Integer n
+  ;; TODO: show-type this
+  (or (=* 0 n)
+      (let [n (dec n)]
+        (and (=* (get x n) (get y n))
+             (vec= x y n)))))
 
-  (empty? [l]
-    (and (=* 0 (count l))
-         (maybe empty-list)))
+(defn comp-vect [v vs]
+  ;; ! Vector v
+  ;; ! (list-of Sequence) vs
+  ;; !returns (vector-of (any-of (inner-type-of v)
+  ;;                             (inner-type-of (inner-type-of vs))))
 
-  (empty [_] empty-list)
 
-  (conj [l v] (cons v l))
+  ;; TODO: I wonder if this could be streamlined
+  ;; or even an inline fn
+  (reduce (cons v vs) empty-vector
+          (fn [v next-v]
+            (reduce next-v v mutate-vect-conj))))
 
-  (filter [coll f]
-    ! (list-of (type-of-arg f 0)) coll
-    !returns (list-of (inner-type-of (type-of-result f)))
-    (inline C List "return(listFilter(coll_0, f_1));"))
+;; (def _ (show-type maybe-map))
+;; (defn f [x]
+;;   (maybe-map x inc)
+;;   (show-type x))
+
+(extend-type Vector
+  Type
+  (type-name [_] "Vector")
+  (type-args [v] v)
+
+  Stringable
+  (string-list [v]
+    (list "[" (to-str (interpose (seq v) ", ")) "]"))
+
+  (show* [x indent]
+    (either (map (empty? x) string-list)
+            (let [[h & tail] (seq x)]
+              (comp (cons "[" (show* h (comp indent " ")))
+                    (flat-map tail (fn [x]
+                                     (list* ",\n" indent " "
+                                            (show* x (comp indent " ")))))
+                    (list "]")))))
+
+  Hashable
+  (sha1-update [x ctxt]
+    (sha1-update-type x ctxt)
+    (reduce x ctxt (fn [ctxt x]
+                     (sha1-update x ctxt))))
+
+  (sha1 [v]
+    (let [ctxt (sha1-init)]
+      (sha1-update v ctxt)
+      (sha1-finalize ctxt)))
+
+  Composition
+  (zero [_] empty-vector)
+  (comp* [v vs]
+    (comp-vect v vs))
 
   Container
-  (map [l f]
-    (list-map l f))
+  (map [v vf]
+    ;; TODO: should use 'doAssoc' or whatever it gets renamed to
+    ! (vector-of (type-of-arg vf 0)) v
+    !returns (vector-of (type-of-result vf))
+    (reduce v empty-vector (fn [v x]
+                             (mutate-vect-conj v (vf x)))))
 
-  (map [l f embed]
-    (-> l
+  (map [v f embed]
+    (-> v
         reverse
-        (reduce (embed empty-list)
+        (reduce (embed empty-vector)
                 (fn [v x]
                   (flat-map (f x)
                             (fn [y]
@@ -1063,59 +1547,165 @@ abort();
                                        (conj v y)))))))
         (map reverse)))
 
-  (wrap [x v]
-    (list v))
+  (wrap [v x]
+    [x])
 
-  (flatten [ls]
-    (list-concat ls))
+  (apply [mf vects]
+    (either (for [f (first mf)
+                  vect (first vects)]
+              (apply-to-vectors f
+                                (rest vects)
+                                (map vect vector)))
+            []))
 
-  (flat-map [l mf]
+  (flat-map [v mf]
+    ! (vector-of (type-of-arg mf 0)) v
     !returns (type-of-result mf)
-    (list-concat (list-map l mf)))
+    (reduce v empty-vector
+            (fn [result x]
+              (reduce (mf x) result mutate-vect-conj))))
 
-  Composition
-  (zero [_] empty-list)
+  (flatten [v]
+    (either (empty? v)
+            (vec (apply comp v))))
 
-  (comp* [l ls]
-    (list-concat (cons l (map (seq ls) seq))))
+  Collection
+  (filter [v f]
+    ! Predicate f
+    ! (list-of (type-of-arg f 0)) coll
+    !returns (list-of (inner-type-of (type-of-result f)))
+
+    ;; (assert-result v (instance? Vector v
+    (reduce v empty-vector
+            (fn [result x]
+              (cond (f x)
+                    (mutate-vect-conj result x)
+
+                    result))))
+
+  (reduce [v result f]
+    ! (vector-of (type-of-arg f 1)) v
+    (vect-reduce v 0 result f))
+
+  ;; TODO: having a second 'Seqable' clause erases the first one
+  Seqable
+  (vec [v]
+    v)
+
+  (first [v]
+    !returns (first-of v)
+    (get v 0))
+
+  (rest [v]
+    !returns (rest-of v)
+    (subvec v 1))
+
+  (last [v]
+    !returns (last-of v)
+    (and (< 0 (count v))
+         (get v (dec (count v)))))
+
+  (butlast [v]
+    !returns (butlast-of v)
+    (subvec v 0 (dec (count v))))
+
+  (reverse [v]
+    !returns (vector-of (inner-type-of v))
+    (inline C Vector "return(vectorReverse(v_0));"))
+
+  (split [v n prefix]
+    (either (for [head (and (< 0 n)
+                            (first v))]
+              (split (rest v) (dec n) (conj prefix head)))
+            [prefix v]))
+
+  (split [l n]
+    (split l n []))
+
+  (split-with [v pred prefix]
+    (or (flat-map (first v) (fn [head]
+                              (and (pred head)
+                                   (split-with (rest v) pred (conj prefix head)))))
+        (maybe [prefix v])))
+
+  (split-with [v pred]
+    (either (split-with v pred [])
+            [[] v]))
+
+  (take [coll n]
+    (let [[prefix _] (split coll n)]
+      prefix))
+
+  (drop [coll n]
+    (let [[_ tail] (split coll n)]
+      tail))
+
+  (drop-while [coll pred]
+    ! (vector-of (type-of-arg pred 0)) coll
+
+    (let [[_ tail] (split-with coll pred)]
+      tail))
+
+  (take-while [coll pred]
+    (let [[prefix _] (split-with coll pred)]
+      prefix))
+
+  Indexed
+  (nth [v n]
+    (get v n))
+
+  (store [v n x]
+    (inline C (maybe-of Vector) "
+  Value *result = vectStore((Vector *)v_0, ((Integer *)n_1)->numVal, (Value *)x_2);
+  dec_and_free(v_0, 1);
+  dec_and_free(n_1, 1);
+  return(result);"))
 
   Eq
   (=* [x y]
-    !returns (maybe-of (type-of x))
-    (inline C (maybe-of List) "return(listEQ(x_0, y_1));"))
+    (and (instance? Vector y)
+         (=* (count x) (count y))
+         (vec= x y (count x))
+         (maybe x)))
+
+  Associative
+  (get [v n]
+    ! Integer n
+    ;; TODO
+    ;; (assert (<= 0 n))
+    !returns (maybe-of (inner-type-of v))
+    (inline C Maybe "return(vectorGet(v_0, n_1));"))
+
+  Collection
+  (empty? [v]
+    (and (=* 0 (count v))
+         (maybe empty-vector)))
+
+  (empty [coll] empty-vector)
+
+  (count [l]
+    (vect-count l))
+
+  (conj [vect v]
+    !returns (vector-of (any-of (inner-type-of vect)
+                                (type-of v)))
+    (inline C Vector "
+  Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
+  dec_and_free(vect_0, 1);
+  return(result);"))
 
   Seqable
-  (seq [l] l)
+  (seq [v]
+    !returns (list-from v)
+    (inline C List "return(vectSeq((Vector *)v_0, 0));\n"))
 
-  (reverse [l]
-    !returns (list-of (inner-type-of l))
-    (inline C List "return((Value *)reverseList((List *)l_0));"))
+  (to-str [coll]
+    (to-str (seq coll))))
 
-  (first [l]
-    !returns (first-of l)
-    (inline C Maybe "return(car(l_0));"))
 
-  (rest [l]
-    !returns (rest-of l)
-    (inline C List "return(cdr(l_0));")))
-
-;; (def _ (show-type (first '(a b c))))
+;; TODO: this is incorrect when the constraint is only on the Vector implementation
+(def _ (show-type (first '[a b c])))
 ;; (def _ (show-type (filter '(a 1 3 b) inc)))
-
-(defn list-reduce [l result f]
-  (cond
-   (empty? l) result
-   (list-reduce (rest l) (f result (extract (first l))) f)))
-
-(extend-type List
-  Collection
-  (reduce [l result f]
-    ! (list-of (type-of-arg f 1)) l
-    !returns (type-of-result f)
-
-    (list-reduce l result f)))
-;; (def _ (show-type (reduce (seq ['(a 9)]) emptyBMI (fn [m [x y]]
-;;                                               (assoc m x [(inc x) y])))))
 
 (defn +
   ([] 0)
@@ -1157,41 +1747,8 @@ abort();
        (or (flat-map (first coll) f)
            (some (rest coll) f))))
 
-(defn partial [f & args]
-  ;; paritally apply `f` to `args` creating a new function that expects more arguments
-  (fn [& more-args]
-    (apply f (comp args more-args))))
-
-;; For types whose values can be converted to human-readable strings
-(defprotocol Stringable
-  (string-list [x]
-    ;; Create a list of strings of that comprise the representation of `x`
-    !returns (list-of String)
-    )
-
-  (show* [x indent]
-    ! String indent
-
-    ;; Create a string list to show the value `x`
-    !returns (list-of String)
-    ))
-
 (defn show [x]
   (show* x ""))
-
-(defn list*
-  ([] empty-list)
-  ([arg]
-   ! Sequence arg
-   !returns (list-from arg)
-   (seq arg))
-  ([arg & args]
-   !returns List
-
-   (let [[arg-list & args] (reverse (cons arg args))]
-     ! Sequence arg-list
-
-     (reduce args (seq arg-list) conj))))
 
 (defn <=
   ;; Test whether each value is greater than or equal to the preceding one.
@@ -1216,19 +1773,6 @@ abort();
    (and (=* x y)
         (apply = (list* y ys)))))
 
-(extend-type String
-  Collection
-  (count [s]
-    (inline C Integer "return(strCount(s_0));")))
-
-(extend-type List
-  Seqable
-  (to-str [coll]
-    (let [ss-list (flat-map coll string-list)
-          new-len (reduce ss-list 0 (fn [len s]
-                                      (+ len (count s))))]
-      (reduce ss-list (str-malloc new-len) str-append))))
-
 (extend-type FnArity
   Type
   (type-name [_] "FnArity")
@@ -1240,15 +1784,6 @@ abort();
   Stringable
   (string-list [_]
     (list "<FnArity>")))
-
-(def FnOrArity (any-of Fn FnArity))
-
-(defn fn-apply [f args]
-  ! FnOrArity f
-  ! List args
-  !returns (type-of-result f)
-  ;; TODO: implement ArgsOf
-  (inline C "return(fnApply(f_0, args_1));"))
 
 (extend-type Fn
   Type
@@ -1279,11 +1814,6 @@ abort();
         (reduce fs (apply f xs)
                 (fn [x f]
                   (f x)))))))
-
-(defn interpose [coll sep]
-  ;; build list by inserting `sep` between each of the elements of `coll`
-  (rest (flat-map (seq coll) (partial list sep))))
-;; (def _ (show-type interpose))
 
 (defn print [& vs]
   (-> vs
@@ -1330,176 +1860,6 @@ abort();
   Stringable
   (string-list [_]
     (list "<Opaque Pointer>")))
-
-(extend-type Integer
-  Type
-  (type-args [n] [n])
-  (type-name [_] "Integer")
-
-  Stringable
-  (string-list [n]
-    (inline C "return((Value *)listCons(integer_str(n_0), empty_list));\n"))
-
-  (show* [x indent]
-    (string-list x))
-
-  Ord
-  (<* [x y]
-    (inline C (maybe-of Integer) "return(integerLT(x_0, y_1));"))
-
-  Hashable
-  (sha1-update [x ctxt]
-    (inline C Opaque "
-  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->type, 8);
-  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->numVal, 8);
-  dec_and_free(x_0, 1);
-  return(ctxt_1);
-"))
-
-  (sha1 [x]
-    (inline C Integer "return(integerValue(integerSha1(x_0)));")))
-
-(extend-type Vector
-  Associative
-  (get [v n]
-    ! Integer n
-    ;; TODO
-    ;; (assert (<= 0 n))
-    !returns (maybe-of (inner-type-of v))
-    (inline C Maybe "return(vectorGet(v_0, n_1));"))
-
-  Collection
-  (empty? [v]
-    (and (= 0 (count v))
-         (maybe empty-vector)))
-
-  (empty [coll] empty-vector)
-
-  (count [l]
-    (vect-count l))
-
-  (conj [vect v]
-    !returns (vector-of (any-of (inner-type-of vect)
-                                (type-of v)))
-    (inline C Vector "
-  Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
-  dec_and_free(vect_0, 1);
-  return(result);"))
-
-  Seqable
-  (seq [v]
-    !returns (list-from v)
-    (inline C List "return(vectSeq((Vector *)v_0, 0));\n"))
-
-  (to-str [coll]
-    (to-str (seq coll))))
-
-(extend-type String
-  Type
-  (type-name [_] "String")
-  (type-args [s] [s])
-
-  Stringable
-  (string-list [s] (list s))
-
-  (show* [s indent]
-    (list* "\"" s (list "\"")))
-
-  Composition
-  (zero [_] "")
-
-  (comp* [s ss]
-    (to-str (cons s ss)))
-
-  Collection
-  (empty? [coll]
-    (and (= 0 (count coll))
-         (maybe "")))
-
-  (empty [coll]
-    "")
-
-  (reduce [s x f]
-    (inline C "return(strReduce(s_0, x_1, f_2));"))
-
-  Seqable
-  (seq [coll]
-    !returns (list-from coll)
-    (inline C "return(strSeq(coll_0));"))
-
-  (vec [coll]
-    !returns (vector-from coll)
-    (inline C "return(strVec(coll_0));"))
-
-  (first [s]
-    !returns (first-of s)
-
-    (map (< 0 (count s))
-         (fn [_]
-           (subs s 0 1))))
-
-  (rest [s]
-    !returns (rest-of s)
-    (subs s 1))
-
-  (last [s]
-    !returns (last-of s)
-    (let [n (count s)]
-      (map (< 0 n)
-           (fn [_]
-             (subs s (dec n))))))
-
-  (butlast [s]
-    !returns (butlast-of s)
-    (subs s 0 (dec (count s))))
-
-  (reverse [s]
-    (to-str (reverse (seq s))))
-
-  (split-with [s pred prefix]
-    ;; TODO: should limit the fn-constraint for 'pred' to only 1 arity and variadic
-    ;; ! Vector prefix))
-    (or (flat-map (first s) (fn [head]
-                              (and (pred head)
-                                   (split-with (rest s) pred (conj prefix head)))))
-        (maybe [(to-str prefix) s])))
-
-  (split-with [s pred]
-    (either (split-with s pred [])
-            ["" s]))
-
-  Eq
-  (=* [x y] (inline C (maybe-of String) "return(strEQ(x_0, y_1));"))
-
-  Indexed
-  (nth [s n]
-    (map (< n (count s))
-         (fn [_]
-           (subs s n 1))))
-
-  Ord
-  (<* [x y] (inline C (maybe-of String) "return(strLT(x_0, y_1));"))
-
-  Hashable
-  (sha1-update [x ctxt]
-    (inline C Opaque "
-  strSha1Update(((Opaque *)ctxt_1)->ptr, x_0);
-  dec_and_free(x_0, 1);
-  return(ctxt_1);
-"))
-
-  (sha1 [s]
-    (inline C Integer "return(integerValue(strSha1(s_0)));")))
-
-(extend-type StringBuffer
-  Seqable
-  (to-str [s]
-    s))
-
-(extend-type SubString
-  Seqable
-  (to-str [s]
-    (str-append (str-malloc (count s)) s)))
 
 (defn split-string
   ([s pred] (split-string s
@@ -1771,16 +2131,6 @@ abort();
 (defn range [n]
   (range* (dec n) empty-list))
 
-(defn apply-to-vectors [f vects arg-vects]
-  (either (for [vect (first vects)]
-            (apply-to-vectors f (rest vects)
-                              (reduce vect [] (fn [new-args v]
-                                                (reduce arg-vects new-args
-                                                        (fn [new-args arg-vect]
-                                                          (conj new-args (conj arg-vect v))))))))
-          (map arg-vects (fn [args]
-                           (apply f (seq args))))))
-
 (extend-type List
   Type
   (type-name [_] "List")
@@ -1901,15 +2251,6 @@ abort();
 
 ;; (def _ (show-type (apply (list add-numbers) '((1 2) (4)))))
 
-(defn vec= [x y n]
-  ! Vector x
-  ! Integer n
-  ;; TODO: show-type this
-  (or (= 0 n)
-      (let [n (dec n)]
-        (and (= (get x n) (get y n))
-             (vec= x y n)))))
-
 (defn subvec* [v curr-index max-index result]
   ;; ! Vector v
   ;; ! Integer curr-index
@@ -1936,193 +2277,6 @@ abort();
                (fn [x]
                  (vect-reduce v (inc n) (f result x) f)))
           result))
-
-(defn comp-vect [v vs]
-  ;; ! Vector v
-  ;; ! (list-of Sequence) vs
-  ;; !returns (vector-of (any-of (inner-type-of v)
-  ;;                             (inner-type-of (inner-type-of vs))))
-
-
-  ;; TODO: I wonder if this could be streamlined
-  ;; or even an inline fn
-  (reduce (cons v vs) empty-vector
-          (fn [v next-v]
-            (reduce next-v v mutate-vect-conj))))
-
-(extend-type Vector
-  Type
-  (type-name [_] "Vector")
-  (type-args [v] v)
-
-  Stringable
-  (string-list [v]
-    (comp (list "[")
-          (interpose (map (seq v) str) ", ")
-          (list "]")))
-
-  (show* [x indent]
-    (either (map (empty? x) string-list)
-            (let [[h & tail] (seq x)]
-              (comp (cons "[" (show* h (comp indent " ")))
-                    (flat-map tail (fn [x]
-                                     (list* ",\n" indent " "
-                                            (show* x (comp indent " ")))))
-                    (list "]")))))
-
-  Hashable
-  (sha1-update [x ctxt]
-    (sha1-update-type x ctxt)
-    (reduce x ctxt (fn [ctxt x]
-                     (sha1-update x ctxt))))
-
-  (sha1 [v]
-    (let [ctxt (sha1-init)]
-      (sha1-update v ctxt)
-      (sha1-finalize ctxt)))
-
-  Composition
-  (zero [_] empty-vector)
-  (comp* [v vs]
-    (comp-vect v vs))
-
-  Container
-  (map [v vf]
-    ;; TODO: should use 'doAssoc' or whatever it gets renamed to
-    ! (vector-of (type-of-arg vf 0)) v
-    !returns (vector-of (type-of-result vf))
-    (reduce v empty-vector (fn [v x]
-                             (mutate-vect-conj v (vf x)))))
-
-  (map [v f embed]
-    (-> v
-        reverse
-        (reduce (embed empty-vector)
-                (fn [v x]
-                  (flat-map (f x)
-                            (fn [y]
-                              (map v (fn [v]
-                                       (conj v y)))))))
-        (map reverse)))
-
-  (wrap [v x]
-    [x])
-
-  (apply [mf vects]
-    (either (for [f (first mf)
-                  vect (first vects)]
-              (apply-to-vectors f
-                                (rest vects)
-                                (map vect vector)))
-            []))
-
-  (flat-map [v mf]
-    ! (vector-of (type-of-arg mf 0)) v
-    !returns (type-of-result mf)
-    (reduce v empty-vector
-            (fn [result x]
-              (reduce (mf x) result mutate-vect-conj))))
-
-  (flatten [v]
-    (either (empty? v)
-            (vec (apply comp v))))
-
-  Collection
-  (filter [v f]
-    ! Predicate f
-    ! (list-of (type-of-arg f 0)) coll
-    !returns (list-of (inner-type-of (type-of-result f)))
-
-    ;; (assert-result v (instance? Vector v
-    (reduce v empty-vector
-            (fn [result x]
-              (cond (f x)
-                    (mutate-vect-conj result x)
-
-                    result))))
-
-  (reduce [v result f]
-    ! (vector-of (type-of-arg f 1)) v
-    (vect-reduce v 0 result f))
-
-  Seqable
-  (vec [v] v)
-
-  (first [v]
-    !returns (first-of v)
-    (get v 0))
-
-  (rest [v]
-    !returns (rest-of v)
-    (subvec v 1))
-
-  (last [v]
-    !returns (last-of v)
-    (and (< 0 (count v))
-         (get v (dec (count v)))))
-
-  (butlast [v]
-    !returns (butlast-of v)
-    (subvec v 0 (dec (count v))))
-
-  (reverse [v]
-    !returns (vector-of (inner-type-of v))
-    (inline C Vector "return(vectorReverse(v_0));"))
-
-  (split [v n prefix]
-    (either (for [head (and (< 0 n)
-                            (first v))]
-              (split (rest v) (dec n) (conj prefix head)))
-            [prefix v]))
-
-  (split [l n]
-    (split l n []))
-
-  (split-with [v pred prefix]
-    (or (flat-map (first v) (fn [head]
-                              (and (pred head)
-                                   (split-with (rest v) pred (conj prefix head)))))
-        (maybe [prefix v])))
-
-  (split-with [v pred]
-    (either (split-with v pred [])
-            [[] v]))
-
-  (take [coll n]
-    (let [[prefix _] (split coll n)]
-      prefix))
-
-  (drop [coll n]
-    (let [[_ tail] (split coll n)]
-      tail))
-
-  (drop-while [coll pred]
-    ! (vector-of (type-of-arg pred 0)) coll
-
-    (let [[_ tail] (split-with coll pred)]
-      tail))
-
-  (take-while [coll pred]
-    (let [[prefix _] (split-with coll pred)]
-      prefix))
-
-  Indexed
-  (nth [v n]
-    (get v n))
-
-  (store [v n x]
-    (inline C (maybe-of Vector) "
-  Value *result = vectStore((Vector *)v_0, ((Integer *)n_1)->numVal, (Value *)x_2);
-  dec_and_free(v_0, 1);
-  dec_and_free(n_1, 1);
-  return(result);"))
-
-  Eq
-  (=* [x y]
-    (and (instance? Vector y)
-         (= (count x) (count y))
-         (vec= x y (count x))
-         (maybe x))))
 
 (defn partitioner [coll n]
   ! Integer n
@@ -2953,30 +3107,6 @@ abort();
 
 (defn zip-lists [l & lists]
   (list-zipper (cons l lists) empty-list))
-
-(extend-type String
-  ;; TODO: implement 'split'
-
-  Seqable
-  (take [coll n]
-    ;; (assert-result l (instance? String l))
-    (let [[prefix _] (split coll n)]
-      prefix))
-
-  (drop [coll n]
-    ;; (assert-result l (instance? String l))
-    (let [[_ tail] (split coll n)]
-      tail))
-
-  (drop-while [coll pred]
-    ;; (assert-result l (instance? String l))
-    (let [[_ tail] (split-with coll pred)]
-      tail))
-
-  (take-while [coll pred]
-    ;; (assert-result l (instance? String l))
-    (let [[prefix _] (split-with coll pred)]
-      prefix)))
 
 (def CoreTypes (any-of Integer
                        String
