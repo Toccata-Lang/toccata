@@ -16,7 +16,7 @@
                           :sha "66cf8a8"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "6e6d171"))
+                            :sha "3bb8018"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "72459fc"))
+                            :sha "a2f81db"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -1025,6 +1025,33 @@
 
 (extend-type ast/params-ast
   TypeChecker
+  (update-constraint [ast constraint loc]
+    (either (map (flat-map (.variadic ast) (partial instance? c/ListConstraint))
+                 (fn [_]
+                   (status "Compiler error:" _FILE_ _LINE_ "\n" 'variadic (.variadic ast))))
+            '_)
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
+              (let [item-cs (c/extract-items-constraints new-c (count (.fixed ast)))
+                    tail-item-cs (-> new-c
+                                     c/extract-items-constraints
+                                     (drop (count (.fixed ast))))
+                    tail-c (-> c/list-constraint
+                               (c/set-items tail-item-cs)
+                               (c/set-tail (c/extract-tail-constraint new-c))
+                               (c/replace-path (.path new-c)))]
+                (for [_ (se/traverse (zip-lists (seq (.fixed ast)) item-cs)
+                                     (fn [[ast c]]
+                                       (update-constraint ast c loc)))
+                      _ (either (map (.variadic ast)
+                                     (fn [v-ast]
+                                       (assert (instance? ast/ParamType v-ast))
+                                       (update-constraint v-ast tail-c loc)))
+                                se-nop)]
+                  (.constraint ast new-c))))))
+
   (all-symbols [params]
     (comp* (either (.variadic params)
                    [])
@@ -1049,7 +1076,7 @@
                        (fn [_]
                          (-> ast
                              (.constraint (c/set-tail c c/coll-of-any))
-                             (assoc-in [.variadic .constraint] var-c))))))
+                             (.variadic (maybe (.constraint (ast/tag var-param) var-c))))))))
               (se/state-error (.constraint ast c))))))
 
 (defn get-param-types [params]
@@ -1476,7 +1503,7 @@
           ;;            (or (= (.line loc) 0)
           ;;                (= (.file loc) 'core)
           ;;                (do
-          ;;                  (print-err 'binding-type-check _LINE_ loc
+          ;;                  (status 'binding-type-check _LINE_ loc
           ;;                             "\n" 'ast ast)
           ;;                  nothing)))))
           _ (se/traverse (all-syms (.binding ast)) (fn [sym]
@@ -1486,11 +1513,12 @@
   (type-check [ast old-ast]
     (for [_ (push-types)
           ;; :let [loc (ast/location ast)
-          ;;       _ (or (= (.line loc) 0)
-          ;;             (= (.file loc) 'core)
+          ;;       _ (or ;; (= (.line loc) 0)
+          ;;             ;; (= (.file loc) 'core)
           ;;             (do
-          ;;               (print-err 'binding-type-check loc
-          ;;                          "\n\n" 'ast ast)
+          ;;               (status 'binding-type-check _LINE_ loc
+          ;;                          "\n" 'binding-ast (type-name (.binding ast)) (.binding ast)
+          ;;                          "\n\n" 'val-c (.constraint (.val ast)))
           ;;               nothing))]
           new-binding (update-constraint (.binding ast) (.constraint (.val ast)) (ast/location old-ast))]
       (.binding ast new-binding))))
@@ -1520,11 +1548,12 @@
                                    _ (update-constraint val val-c (ast/location binding))
                                    ;; :let [loc (ast/location old-ast)
                                    ;;       _ (or ;; (= (.line loc) 0)
-                                   ;;          ;; (= (.file loc) 'core)
+                                   ;;             ;; (= (.file loc) 'core)
                                    ;;          (do
                                    ;;            (status 'let _LINE_ loc
                                    ;;                    "\n" 'binding (type-name binding) binding
                                    ;;                    "\n\n" 'val val
+                                   ;;                    "\n\n" 'orig-val-c (.constraint val)
                                    ;;                    "\n\n" 'val-c val-c)
                                    ;;            nothing))]
                                    _ (nip-types)]
