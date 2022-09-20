@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "ca8b498"))
+                          :sha "b1ec78a"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "635b2dd"))
+                            :sha "12cbba2"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "4846add"))
@@ -25,7 +25,7 @@
                            :sha "ff13fae"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "5981281"))
+                            :sha "d374174"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -258,11 +258,11 @@
                                             (.arities c/fn-constraint {}) empty-list c/no-symbol "")
         arities {1 (c/fn-arity (symbol (str sym "_getter"))
                                (c/ListConstraint [required-field]
-                                                 c/bottom-type empty-list c/no-symbol "")
+                                                 c/no-tail empty-list c/no-symbol "")
                              c/top-type)
                  2 (c/fn-arity (symbol (str sym "_setter"))
                                (c/ListConstraint [required-field c/top-type]
-                                                 c/bottom-type empty-list c/no-symbol "")
+                                                 c/no-tail empty-list c/no-symbol "")
                              c/top-type)}
         getter (ProtoImpls sym (.arities c/fn-constraint arities) {})]
     (cond (empty? types-list)
@@ -722,12 +722,11 @@
                                                         c/top-type))))
                                        (split required-args))
 
-                                   var-args-c (-> c/list-constraint
-                                                  (.items var-arg-cs)
-                                                  (.tail-c c/bottom-type))
+                                   var-args-c (-> c/empty-list-constraint
+                                                  (c/set-items var-arg-cs))
                                    all-arg-cs (conj fixed-arg-cs var-args-c)
                                    reified-arity (c/reify-type-constraint arity arity-id all-arg-cs loc)]
-                               ;; (cond (= target 'split-with)
+                               ;; (cond (= target 'cons)
                                ;;       (status 'site _LINE_ loc "\n" target arity-id
                                ;;               "\n" 'arity arity
                                ;;               "\n\n" 'all-args all-arg-cs
@@ -979,6 +978,11 @@
                       (se/state-error t))]
         t))))
 
+(extend-type c/NoTail
+  TypeChecker
+  (type-check [x _]
+    (se/state-error x)))
+
 (extend-type Tagged
   TypeChecker
   (param-types [sym]
@@ -1065,7 +1069,7 @@
   (param-types [params]
     (-> c/seq-constraint
         (c/set-tail (either (.variadic params)
-                            c/coll-of-any))
+                            c/no-tail))
         (c/set-items (.fixed params))
         se/state-error))
 
@@ -1144,13 +1148,7 @@
     (let [loc (ast/location old-ast)]
       (for [result-c (get-value-type ast/result-sym)
             _ (recover-val-type ast/result-sym)
-            pts (map (get-param-types (.params old-ast))
-                     (fn [c]
-                       (let [c (cond (.variadic (.params old-ast))
-                                     c
-
-                                     (.tail-c c c/bottom-type))]
-                         (c/update-path c loc))))
+            pts (get-param-types (.params old-ast))
             _ (recover-types (.params old-ast))
             _ (nip-types)
             ;; :let [_ (or ;; (= (.line loc) 0)
@@ -1219,7 +1217,7 @@
                          (assert (instance? ast/fn-arity-ast arity))
                          (let [arity-c (.constraint arity)]
                            (either (for [variadic (get-in arity-c [.param-consts .tail-c])
-                                         :when (= c/bottom-type variadic)
+                                         :when (= c/no-tail variadic)
                                          fixed-params (get-in arity-c [.param-consts .items])]
                                      (assoc-in c [.arities (count fixed-params)] arity-c))
                                    (assoc-in c [.arities c/variadic] arity-c)))))
@@ -2309,9 +2307,14 @@
 (extend-type ast/IsType
   TypeChecker
   (type-check [ast old-ast]
-    (either (map (= (.expected ast) (-> ast .ast .constraint))
-                 (fn [_]
-                   (se/state-error (ast/block-comment "" 0 []))))
+    (either (or (map (= (.ast ast) '_)
+                     (fn [_]
+                       (print-err "Type at:" (ast/location (.ast ast))
+                                  (.expected ast))
+                       (se/state-error (ast/block-comment "" 0 []))))
+                (map (= (.expected ast) (-> ast .ast .constraint))
+                     (fn [_]
+                       (se/state-error (ast/block-comment "" 0 [])))))
             (compilation-error "Type Error:" (ast/location (.ast ast))
                                "\n" 'ast (.ast ast)
                                "\n\n" 'expected (.expected ast)
