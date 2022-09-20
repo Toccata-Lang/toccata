@@ -346,3 +346,189 @@
    ! (min-value 0) index
    ! (min-value 0) length
    (inline C SubString "return(subs3(src_0, index_1, length_2));")))
+
+(defn symbol [sym-str]
+  ;; Convert a string to a symbol
+  ! String sym-str
+  (inline C Symbol "return(symbol(sym_str_0));"))
+
+(defn add-promise-action [p f]
+  ! Promise p
+  ;; !returns (promise-of (result-of f))
+  (inline C Promise "return(addPromiseAction((Promise *)p_0, f_1));"))
+
+(defn promise
+  ([] (inline C Promise "return((Value *)malloc_promise());\n"))
+  ([v]
+   ;; !returns (promise-of (type-of v))
+   (deliver (promise) v)))
+
+(defn future
+  ([]
+   (inline C Future "return(makeFuture((Value *)0));"))
+  ([f]
+   ! (required-arities 0) f
+   (inline C Future "return(makeFuture(f_0));")))
+
+(defn thread-id []
+  (inline C Integer "return(integerValue((int64_t)pthread_self()));"))
+
+(defn deliver-future [fut val]
+  ! Future fut
+  (inline C Future "return(deliverFuture(fut_0, val_1));"))
+
+(defn add-future-action [fut f]
+  ! Future fut
+  (inline C Future "return(addFutureAction((Future *)fut_0, f_1));"))
+
+(defn agent [v]
+  (inline C Agent "return(makeAgent(v_0));"))
+
+(defn integer-gen [x]
+  (inline C Opaque "
+  if (x_0->type != IntegerType) {
+    fprintf(stderr, \"Invalid argument passed to 'integer-gen'\\n\");
+    abort();
+  }
+  intGenerator *intGen = (intGenerator *)my_malloc(sizeof(intGenerator));
+#ifdef CHECK_MEM_LEAK
+  incTypeMalloc(14, 1);
+#endif
+  intGen->sym_counter = ((Integer *)x_0)->numVal;
+  dec_and_free(x_0, 1);
+  return((Value *)opaqueValue((void *)intGen, freeIntGenerator));
+"))
+
+(defn new-int [gen]
+  ! Opaque gen
+  (inline C Integer "
+  intGenerator *gen = (intGenerator *)((Opaque *)gen_0)->ptr;
+  dec_and_free(gen_0, 1);
+  return(integerValue(gen->sym_counter++));
+"))
+
+(defn create-lazy []
+  ;; private function used for implementing LazyList
+  (inline C Opaque "
+  extractCache *newCache = (extractCache *)my_malloc(sizeof(extractCache));
+#ifdef CHECK_MEM_LEAK
+  incTypeMalloc(14, 1);
+#endif
+  newCache->tail = malloc_list();
+  pthread_mutex_init(&newCache->access, NULL);
+  return((Value *)opaqueValue((void *)newCache, freeExtractCache));
+"))
+
+(defn get-lazy [lazy-struct]
+  ! Opaque lazy-struct
+  ;; private function used for implementing LazyList
+  (inline C List "
+  extractCache *cache = (extractCache *)((Opaque *)lazy_struct_0)->ptr;
+  incRef((Value *)cache->tail, 1);
+  dec_and_free(lazy_struct_0, 1);
+  return((Value *)cache->tail);
+"))
+
+(defn first-lazy [lazy tail]
+  ! List lazy
+  ! Opaque tail
+  ;; private function used for implementing LazyList
+  (inline C Maybe "
+  List *cache = (List *)lazy_0;
+  extractCache *tail = (extractCache *)((Opaque *)tail_1)->ptr;
+  if (cache->head == (Value *)0) {
+    pthread_mutex_lock(&tail->access);
+    if (cache->head == (Value *)0) {
+      // leave the mutex locked and return nothing
+      dec_and_free(lazy_0, 1);
+      dec_and_free(tail_1, 1);
+      return(nothing);
+    } else {
+// TODO: untested code path
+fprintf(stderr, \"first-lazy 4\\n\");
+abort();
+      pthread_mutex_unlock(&tail->access);
+      incRef(cache->head, 1);
+      dec_and_free(lazy_0, 1);
+      dec_and_free(tail_1, 1);
+      return(maybe((FnArity *)0, (Value *)0, cache->head));
+    }
+  } else {
+    Value *head = cache->head;
+    incRef(head, 1);
+    dec_and_free(lazy_0, 1);
+    dec_and_free(tail_1, 1);
+    return(maybe((FnArity *)0, (Value *)0, head));
+  }
+"))
+
+(defn append-to-lazy-tail [tail value]
+  ! Opaque tail
+  ;; private function used for implementing LazyList
+  (inline C Maybe "
+  extractCache *cacheTail = (extractCache *)((Opaque *)tail_0)->ptr;
+  cacheTail->tail->head = value_1;
+  cacheTail->tail->tail = malloc_list();
+  List *original = cacheTail->tail;
+  cacheTail->tail = cacheTail->tail->tail;
+  incRef((Value *)cacheTail->tail, 1);
+  dec_and_free(tail_0, 1);
+  dec_and_free((Value *)original, 1);
+  pthread_mutex_unlock(&cacheTail->access);
+  return(nothing);
+"))
+
+(defn rest-of-lazy [lazy]
+  ! List lazy
+  ;; private function used for implementing LazyList
+  (inline C List "
+  List *cache = (List *)lazy_0;
+  Value *result;
+  result = (Value *)cache->tail;
+  incRef(result, 1);
+  dec_and_free(lazy_0, 1);
+  return(result);
+"))
+
+(defn null-term [s]
+  ! String s
+  (inline C StringBuffer "return((Value *)nullTerm(s_0));\n"))
+
+;; protocol for implementing the hash map type
+(defprotocol HashMapNode
+  (hash-seq [m l]
+    ! HashMap m
+    ! List l
+    ;; TODO: add key/val type to result type
+    !returns List
+    )
+
+  (hash-vec [m v]
+    ! HashMap m
+    ! Vector v
+    !returns Vector
+    )
+
+  (get* [m k v hash shift]
+    ! HashMap m
+    ! Integer hash
+    ! Integer shift
+    ;; TODO: add val type to result type
+    !returns Maybe
+    )
+
+  (assoc* [m k v hash shift]
+    ! HashMap m
+    ! Integer hash
+    ! Integer shift
+    ;; TODO: add key/val type to result type
+    !returns HashMap
+    )
+
+  (dissoc* [m k hash shift]
+    ! HashMap m
+    ;; TODO: if k is a literal, remove from return type
+    ! Integer hash
+    ! Integer shift
+    !returns HashMap
+    ))
