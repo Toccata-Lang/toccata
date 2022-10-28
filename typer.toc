@@ -353,11 +353,16 @@
                constraint))))
 
 (defn append-value-type [sym constraint loc]
-  (assert (instance? ast/Tagged sym))
+  (assert (instance? ast/OptionalTagged sym))
   (assert (instance? ConstraintOrProto constraint))
 
-  (cond (= (str sym) "")
-        se-nop
+  (cond (= sym c/no-symbol)
+        (se/state-error constraint)
+
+        (= (str sym) "")
+        (map se-nop (fn [_]
+                      (status "Bad call to append-value-type" _LINE_ loc "\n" constraint)
+                      '_))
 
         (let [curr-const (se/try
                            (get-value-type sym)
@@ -716,13 +721,6 @@
                                                   (c/set-items var-arg-cs))
                                    all-arg-cs (conj fixed-arg-cs var-args-c)
                                    reified-arity (c/reify-type-constraint arity arity-id all-arg-cs loc)]
-                               ;; (cond (= target 'maybe)
-                               ;;       (status 'site _LINE_ loc "\n" target arity-id
-                               ;;               "\n" 'arity arity
-                               ;;               "\n\n" 'all-args all-arg-cs
-                               ;;               "\n\n" 'reified reified-arity)
-
-                               ;;       '_)
                                (cond (= (c/is-bottom reified-arity) c/bottom-type)
                                      (do
                                        ;; (status 'site _LINE_ loc arity-id
@@ -795,13 +793,7 @@
 (extend-type c/SymbolConstraints
   TypeChecker
   (type-check [c old-c]
-    (map (either (map (c/extract-sym old-c)
-                      (fn [sym]
-                        (cond (= (str sym) "")
-                              se-nop
-
-                              (append-value-type sym c (ast/location old-c)))))
-                 se-nop)
+    (map (append-value-type (.sym c) c (ast/location old-c))
          (fn [_]
            c))))
 
@@ -945,28 +937,28 @@
     ;; TODO: restrict use to fn params only
     (get-value-type (.param-sym old-c))))
 
-(extend-type c/InnerTypeOfConstraint
-  TypeChecker
-  (type-check [c old-c]
-    (cond (instance? ast/Tagged (.param old-c))
-          ;; TODO: this whole thing should probably just be a call to append-value-type
-          (flat-map (get-value-type (.param old-c))
-                    (fn [const-c]
-                      (let [new-c (c/intersect const-c c)]
-                        (cond (= new-c c/bottom-type)
-                              (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))
+;; (extend-type c/InnerTypeOfConstraint
+;;   TypeChecker
+;;   (type-check [c old-c]
+;;     (cond (instance? ast/Tagged (.param old-c))
+;;           ;; TODO: this whole thing should probably just be a call to append-value-type
+;;           (flat-map (get-value-type (.param old-c))
+;;                     (fn [const-c]
+;;                       (let [new-c (c/intersect const-c c)]
+;;                         (cond (= new-c c/bottom-type)
+;;                               (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))
 
-                              (either (map (c/extract-sym old-c)
-                                           (fn [sym]
-                                             (append-value-type sym new-c (ast/location old-c))))
-                                      (se/state-error new-c))))))
+;;                               (either (map (c/extract-sym old-c)
+;;                                            (fn [sym]
+;;                                              (append-value-type sym new-c (ast/location old-c))))
+;;                                       (se/state-error new-c))))))
 
-          ;; TODO: this is wrong. This should be done in the reader or something
-          (let [new-c (c/intersect (.param c) c)]
-            (either (map (= new-c c/bottom-type)
-                         (fn [_]
-                           (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))))
-                    (se/state-error new-c))))))
+;;           ;; TODO: this is wrong. This should be done in the reader or something
+;;           (let [new-c (c/intersect (.param c) c)]
+;;             (either (map (= new-c c/bottom-type)
+;;                          (fn [_]
+;;                            (compilation-error (conf-ass _LINE_ new-c (ast/location old-c)))))
+;;                     (se/state-error new-c))))))
 
 (extend-type c/CallValue
   TypeChecker
@@ -1089,8 +1081,7 @@
 
   (type-check [s old-s]
     (map (get-value-type s)
-         (fn [c]
-           (.constraint s c)))))
+         (partial .constraint s))))
 
 (extend-type ast/params-ast
   TypeChecker
@@ -1136,15 +1127,12 @@
     (let [c (-> c/seq-constraint
                 (c/set-items (map (.fixed ast) .constraint))
                 (c/update-path (ast/location old-ast)))]
-      (either (for [var-param (.variadic old-ast)
-                    :when (instance? ast/Tagged var-param)]
-                (let [var-c (-> c/list-constraint
-                                (c/update-path (ast/location var-param)))]
-                  (map (append-value-type var-param var-c (ast/location var-param))
-                       (fn [_]
-                         (-> ast
-                             (.constraint (c/set-tail c c/coll-of-any))
-                             (.variadic (maybe (.constraint (ast/tag var-param) var-c))))))))
+      (either (for [var-param (.variadic ast)]
+                (map (append-value-type var-param c/list-constraint (ast/location var-param))
+                     (fn [appended-var]
+                       (-> ast
+                           (.constraint (c/set-tail c c/coll-of-any))
+                           (.variadic (maybe (.constraint (ast/tag var-param) appended-var)))))))
               (se/state-error (.constraint ast c))))))
 
 (defn get-param-types [params]
@@ -1188,9 +1176,11 @@
             _ (either (for [variadic-sym (.variadic (.params ast))]
                         (append-value-type variadic-sym
                                            (c/ParamConstraint arity-id arg-count
-                                                       empty-list (ast/untag variadic-sym) "")
+                                                              empty-list (ast/untag variadic-sym) "")
                                            loc))
-                      se-nop)]
+                      se-nop)
+            ;; TODO: should use cata to make all the variadic syms be lists
+            ]
         (-> ast
             (.fn-var arity-id)
             (.body (comp (filter (.body ast) (partial instance? c/Constraints))
@@ -1209,7 +1199,7 @@
             _ (nip-types)
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-sym ast) 'list-map)
+            ;;          (and (= (.fn-sym ast) 'extract)
             ;;               (do
             ;;                 (status 'check-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                         "\n" 'pts pts
@@ -1319,7 +1309,7 @@
 
                                      (flat-map (se/assoc-in-val [.types (ast/untag sym)] val)
                                                (fn [_]
-                                                 (set-value-type sym val)))
+                                                 (set-value-type sym (c/trim val))))
 
                                      (and (= c/top-type (.constraint val))
                                           (or (= sym 'empty-list)
@@ -1332,7 +1322,7 @@
                                                (fn [c]
                                                  (set-value-type sym (c/update-path c loc))))
 
-                                     (set-value-type sym (.constraint val))))))
+                                     (set-value-type sym (.constraint (c/trim val)))))))
                       (set-value-type (.sym old-ast) c/top-type))]
         (do
           ;; (status 'def _LINE_ loc (.sym old-ast) "\n" c)
@@ -1362,7 +1352,7 @@
                   _ (set-value-type ast/result-sym c/top-type)
                   ;; :let [_ (or ;; (= (.line loc) 0)
                   ;;             ;; (= (.file loc) 'core)
-                  ;;          (and (= (.fn-name ast) 'hash-seq)
+                  ;;          (and (= (.fn-name ast) 'extract)
                   ;;               (do
                   ;;                 (print-err 'pre-prototype _LINE_ (.fn-name ast) (ast/location ast)
                   ;;                            "\n" 'body (.default-body ast))
@@ -1394,8 +1384,7 @@
                          (se/state-error c/top-type)))
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-name ast) 'invoke)
-            ;;               (= arg-count 2)
+            ;;          (and (= (.fn-name ast) 'extract)
             ;;               (do
             ;;                 (print-err 'check-prototype _LINE_ (.fn-name ast) (ast/location ast)
             ;;                            "\n" 'pts pts
@@ -2394,9 +2383,7 @@
           disp-arg (first args)]
       (cond disp-arg
             (either (for [disp-type (map disp-arg (fn [ast]
-                                                    (cond (instance? c/ParamConstraint (.constraint ast))
-                                                          c/UnknownType
-                                                          (-> ast .constraint c/type-num))))
+                                                    (-> ast .constraint c/type-num)))
                           ;; _ (or ;; (= (.file loc) 'core)
                           ;;       ;; (= (.line loc) 0)
                           ;;    (and (= target 'Tester)
