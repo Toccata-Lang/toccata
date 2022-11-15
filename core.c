@@ -964,6 +964,7 @@ Promise *malloc_promise() {
 void freePromise(Value *v) {
   // TODO: make sure this is thread safe
   Promise *p = (Promise *)v;
+  p->refs = refsConstant;
   if (p->actions != (List *)0) {
     Value *action = ((List *)p->actions)->head;
     dec_and_free((Value *)(p->actions), 1);
@@ -971,6 +972,7 @@ void freePromise(Value *v) {
   if (p->result != (Value *)0) {
     dec_and_free(p->result, 1);
   }
+  p->refs = refsError;
   v->next = freePromises.head;
   freePromises.head = v;
 }
@@ -1113,6 +1115,118 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeFuture,
 				       &freeAgent,
 				       &freeOpaquePtr};
+
+void breakCycle(Value *val, Value *cycVal);
+
+void cyclePromise(Value *val, Value *cycVal) {
+  if (val == cycVal) {
+    decRefs(val, 1);
+  } else {
+    breakCycle(((Promise *)val)->result, cycVal);
+    breakCycle((Value *)(((Promise *)val)->actions), cycVal);
+  }
+}
+
+void cycleMaybe(Value *val, Value *cycVal) {
+  breakCycle(((Maybe *)val)->value, cycVal);
+}
+
+void cycleList(Value *val, Value *cycVal) {
+  List *lval = (List *)val;
+  breakCycle((Value *)lval->head, cycVal);
+  if (lval->tail != (List *)NULL) {
+    cycleList((Value *)lval->tail, cycVal);
+  }
+}
+
+void cycleFnArity(Value *val, Value *cycVal) {
+  FnArity *arity = (FnArity *)val;
+  breakCycle((Value *)arity->closures, cycVal);
+}
+
+void cycleFunction(Value *val, Value* cycVal) {
+  Function *f = (Function *)val;
+  for (int i = 0; i < f->arityCount; i++) {
+    if (f->arities[i] != NULL) {
+      cycleFnArity((Value *)f->arities[i], cycVal);
+    }
+  }
+}
+
+void cycleVector(Value *v, Value* cycVal) {
+  Value *root = (Value *)((Vector *)v)->root;
+  if (root != (Value *)NULL) {
+    breakCycle((Value *)root, cycVal);
+  }
+
+  for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
+    if (((Vector *)v)->tail[i] != (Value *)NULL)
+      breakCycle(((Vector *)v)->tail[i], cycVal);
+  }
+}
+
+void cycleVectorNode(Value *v, Value* cycVal) {
+  for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
+    if (((VectorNode *)v)->array[i] != (Value *)NULL) {
+      breakCycle(((VectorNode *)v)->array[i], cycVal);
+    }
+  }
+}
+
+typedef void (*cycleValFn)(Value *, Value *);
+
+void noCycle(Value *val, Value *cycVal){
+  // fprintf(stderr, "val: %p\n", val);
+  // need no op
+  int x = 1;
+}
+
+cycleValFn cycleJmpTbl[CoreTypeCount] = {NULL,
+                                         &noCycle, //
+				         &noCycle, //
+				         &cycleFnArity, //
+				         &cycleFunction, //
+				         &noCycle, //
+				         &cycleList, //
+				         &cycleMaybe, //
+				         &cycleVector, //
+				         &cycleVectorNode, //
+				         &noCycle, //
+				         NULL, // &freeBitmapNode,
+				         NULL, // &freeArrayNode,
+				         NULL, // &freeHashCollisionNode,
+				         NULL,
+				         &cyclePromise, //
+				         NULL, // &freeFuture,
+				         NULL, // &freeAgent,
+				         NULL};
+
+void breakCycle(Value *val, Value *cycVal) {
+  if (val != (Value *)NULL && val->type < CoreTypeCount) {
+    fprintf(stderr, "breaking: %p %ld\n", val, val->type);
+    // incTypeFree(v->type, 1);
+    cycleJmpTbl[val->type](val, cycVal);
+    /*
+      } else {
+      ReifiedVal *rv = (ReifiedVal *)v;
+      for (int i = 0; i < rv->implCount; i++) {
+      dec_and_free(rv->impls[i], 1);
+      }
+
+      // incTypeFree(0, 1);
+      if (rv->implCount < 20) {
+      int64_t implCount = rv->implCount;
+      v->next = freeReified[implCount].head;
+      freeReified[implCount].head = v;
+      } else {
+      #ifdef CHECK_MEM_LEAK
+      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+      #endif
+      if (!cleaningUp)
+      free(v);
+    */
+  }
+}
 
 void dec_and_free(Value *v, int deltaRefs) {
   if (v == (Value *)0 ||
@@ -4370,6 +4484,7 @@ Value *deliverPromise(Value *arg0, Value *arg1) {
   Promise *p = (Promise *)arg0;
   if (p->result == (Value *)0) {
     pthread_mutex_lock(&p->access);
+    breakCycle(arg1, arg0);
     if (p->result == (Value *)0) {
       p->result = arg1;
       pthread_cond_broadcast(&p->delivered);
