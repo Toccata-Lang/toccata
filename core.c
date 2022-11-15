@@ -1173,6 +1173,34 @@ void cycleVectorNode(Value *v, Value* cycVal) {
   }
 }
 
+void cycleBitmapNode(Value *v, Value* cycVal) {
+  BitmapIndexedNode *node = (BitmapIndexedNode *)v;
+  int cnt = __builtin_popcount(node->bitmap);
+  for (int i = 0; i < (2 * cnt); i++) {
+    if (node->array[i] != (Value *)0) {
+      breakCycle(node->array[i], cycVal);
+    }
+  }
+}
+
+void cycleArrayNode(Value *v, Value* cycVal) {
+  ArrayNode *node = (ArrayNode *)v;
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+    if (node->array[i] != (Value *)0) {
+      breakCycle(node->array[i], cycVal);
+    }
+  }
+}
+
+void cycleHashCollisionNode(Value *v, Value* cycVal) {
+  HashCollisionNode *node = (HashCollisionNode *)v;
+  for (int i = 0; i < node->count; i++) {
+    if (node->array[i] != (Value *)0) {
+      breakCycle(node->array[i], cycVal);
+    }
+  }
+}
+
 typedef void (*cycleValFn)(Value *, Value *);
 
 void noCycle(Value *val, Value *cycVal){
@@ -1192,39 +1220,28 @@ cycleValFn cycleJmpTbl[CoreTypeCount] = {NULL,
 				         &cycleVector, //
 				         &cycleVectorNode, //
 				         &noCycle, //
-				         NULL, // &freeBitmapNode,
-				         NULL, // &freeArrayNode,
-				         NULL, // &freeHashCollisionNode,
+				         &cycleBitmapNode, //
+				         &cycleArrayNode, //
+				         &cycleHashCollisionNode,
 				         NULL,
 				         &cyclePromise, //
+					 // TODO: need to finish these
 				         NULL, // &freeFuture,
 				         NULL, // &freeAgent,
 				         NULL};
 
 void breakCycle(Value *val, Value *cycVal) {
-  if (val != (Value *)NULL && val->type < CoreTypeCount) {
-    fprintf(stderr, "breaking: %p %ld\n", val, val->type);
-    // incTypeFree(v->type, 1);
-    cycleJmpTbl[val->type](val, cycVal);
-    /*
-      } else {
-      ReifiedVal *rv = (ReifiedVal *)v;
+  if (val != (Value *)NULL) {
+    if (val->type < CoreTypeCount) {
+      fprintf(stderr, "breaking: %p %ld\n", val, val->type);
+      // incTypeFree(v->type, 1);
+      cycleJmpTbl[val->type](val, cycVal);
+    } else {
+      ReifiedVal *rv = (ReifiedVal *)val;
       for (int i = 0; i < rv->implCount; i++) {
-      dec_and_free(rv->impls[i], 1);
+	breakCycle(rv->impls[i], cycVal);
       }
-
-      // incTypeFree(0, 1);
-      if (rv->implCount < 20) {
-      int64_t implCount = rv->implCount;
-      v->next = freeReified[implCount].head;
-      freeReified[implCount].head = v;
-      } else {
-      #ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-      #endif
-      if (!cleaningUp)
-      free(v);
-    */
+    }
   }
 }
 

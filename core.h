@@ -326,3 +326,6 @@ Value *hashMapVec(Value *m);
 void incTypeMalloc(TYPE_SIZE type, int delta);
 void incTypeFree(TYPE_SIZE type, int delta);
 Value *hashVec(Value* n, Value *s);
+
+ArrayNode *malloc_arrayNode();
+HashCollisionNode *malloc_hashCollisionNode(int itemCount);
