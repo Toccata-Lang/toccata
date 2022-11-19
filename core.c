@@ -202,6 +202,7 @@ int decRefs(Value *v, int deltaRefs) {
     v->refs -= deltaRefs;
   return(v->refs);
 #else
+  // not SINGLE_THREADED
   if (v->refs == refsConstant || v->refs == refsStatic)
     return(v->refs);
 
@@ -218,6 +219,7 @@ int decRefs(Value *v, int deltaRefs) {
   return(refsError);
 #endif
 #else
+  // FAST_DECS
   if (v->refs == refsConstant ||
       v->refs == refsStatic)
     return(v->refs);
@@ -506,8 +508,9 @@ List *malloc_list() {
 void freeList(Value *v) {
   List *l = (List *)v;
   Value *head = l->head;
-  if (head != (Value *)0)
+  if (head != (Value *)NULL) {
     dec_and_free(head, 1);
+  }
   List *tail = l->tail;
   l->tail = (List *)0;
   v->next = freeLists.head;
@@ -964,13 +967,15 @@ Promise *malloc_promise() {
 void freePromise(Value *v) {
   // TODO: make sure this is thread safe
   Promise *p = (Promise *)v;
-  p->refs = refsConstant;
   if (p->actions != (List *)0) {
-    Value *action = ((List *)p->actions)->head;
-    dec_and_free((Value *)(p->actions), 1);
+    Value *acts = (Value *)p->actions;
+    p->actions = (Value *)0;
+    dec_and_free(acts, 1);
   }
   if (p->result != (Value *)0) {
-    dec_and_free(p->result, 1);
+    Value *res = p->result;
+    p->result = (Value *)0;
+    dec_and_free(res, 1);
   }
   p->refs = refsError;
   v->next = freePromises.head;
@@ -1210,21 +1215,21 @@ void noCycle(Value *val, Value *cycVal){
 }
 
 cycleValFn cycleJmpTbl[CoreTypeCount] = {NULL,
-                                         &noCycle, //
-				         &noCycle, //
-				         &cycleFnArity, //
-				         &cycleFunction, //
-				         &noCycle, //
-				         &cycleList, //
-				         &cycleMaybe, //
-				         &cycleVector, //
-				         &cycleVectorNode, //
-				         &noCycle, //
-				         &cycleBitmapNode, //
-				         &cycleArrayNode, //
-				         &cycleHashCollisionNode,
+                                         &noCycle, // 1
+				         &noCycle, // 2
+				         &cycleFnArity, // 3
+				         &cycleFunction, // 4
+				         &noCycle, // 5
+				         &cycleList, // 6
+				         &cycleMaybe, // 7
+				         &cycleVector, // 8
+				         &cycleVectorNode, // 9
+				         &noCycle, // 10
+				         &cycleBitmapNode, // 11
+				         &cycleArrayNode, // 12
+				         &cycleHashCollisionNode, // 13
 				         NULL,
-				         &cyclePromise, //
+				         &cyclePromise, // 15
 					 // TODO: need to finish these
 				         NULL, // &freeFuture,
 				         NULL, // &freeAgent,
@@ -1233,7 +1238,7 @@ cycleValFn cycleJmpTbl[CoreTypeCount] = {NULL,
 void breakCycle(Value *val, Value *cycVal) {
   if (val != (Value *)NULL) {
     if (val->type < CoreTypeCount) {
-      fprintf(stderr, "breaking: %p %ld\n", val, val->type);
+      // fprintf(stderr, "breaking: %p %ld\n", val, val->type);
       // incTypeFree(v->type, 1);
       cycleJmpTbl[val->type](val, cycVal);
     } else {
@@ -4501,7 +4506,6 @@ Value *deliverPromise(Value *arg0, Value *arg1) {
   Promise *p = (Promise *)arg0;
   if (p->result == (Value *)0) {
     pthread_mutex_lock(&p->access);
-    breakCycle(arg1, arg0);
     if (p->result == (Value *)0) {
       p->result = arg1;
       pthread_cond_broadcast(&p->delivered);
@@ -4509,6 +4513,12 @@ Value *deliverPromise(Value *arg0, Value *arg1) {
     List *l = p->actions;
     List *head = l;
     p->actions = (List *)0;
+
+    // int refs = arg0->refs;
+    // breakCycle(arg1, arg0);
+    // fprintf(stderr, "cycle refs: %d\n", p->cycleRefs);
+    // arg0->refs = refs;
+
     pthread_mutex_unlock(&p->access);
 
     // perform actions
