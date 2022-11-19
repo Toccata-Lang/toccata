@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "0f848e9"))
+                          :sha "98a3708"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "241b256"))
+                            :sha "1b90da5"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -25,7 +25,7 @@
                            :sha "022bfa3"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "4594bf1"))
+                            :sha "ebedf65"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -331,10 +331,13 @@
                 (compilation-error "Could not find type constraint for '" sym "' at " loc)))))
 
 (defn set-value-type [sym constraint]
-  (assert (instance? ast/Tagged sym))
+  (assert (instance? ast/OptionalTagged sym))
   (assert (instance? ConstraintOrProto constraint))
 
-  (cond (= (str sym) "")
+  (cond (= c/no-symbol sym)
+        (se/state-error constraint)
+
+        (= (str sym) "")
         (do
           (print-err 'compiler-error _LINE_ constraint)
           se-nop)
@@ -1057,33 +1060,27 @@
 (extend-type ast/fn-ast
   TypeChecker
   (pre-check [ast]
-    (let [loc (ast/location ast)]
+    (let [loc (ast/location ast)
+          sym (.fn-sym ast)]
       ;; (or (= (.line loc) 0)
       ;;     (= (.file loc) 'core)
       ;;     (do
       ;;       (print-err 'fn-ast loc
       ;;                  "\n" ast)
       ;;       nothing))
-      (either (map (.fn-sym ast)
-                   (fn [sym]
-                     (for [_ (push-types)
-                           _ (set-value-type sym (-> c/fn-constraint
-                                                     (c/update-path loc)
-                                                     (c/update-sym (ast/untag sym))))]
-                       (.arities ast (map (.arities ast)
-                                          (fn [arity]
-                                            (.fn-sym arity sym)))))))
-              (map (push-types)
-                   (fn [_]
-                     ast)))))
+      (for [_ (push-types)
+            _ (set-value-type sym (-> c/fn-constraint
+                                      (c/update-path loc)
+                                      (c/update-sym (ast/untag sym))))]
+        (.arities ast (map (.arities ast)
+                           (fn [arity]
+                             (.fn-sym arity sym)))))))
 
   (type-check [ast old-ast]
-    (let [fn-c (either (map (.fn-sym ast)
-                            (fn [sym]
-                              (-> c/fn-constraint
-                                  (c/update-path (ast/location sym))
-                                  (c/update-sym (ast/untag sym)))))
-                       c/fn-constraint)
+    (let [sym (.fn-sym ast)
+          fn-c (-> c/fn-constraint
+                   (c/update-path (ast/location sym))
+                   (c/update-sym (ast/untag sym)))
           fn-c (reduce (.arities ast) (.arities fn-c {})
                        (fn [c arity]
                          (assert (instance? ast/fn-arity-ast arity))
@@ -1118,7 +1115,7 @@
                             (remove (partial instance? ast/block-comment-ast))
                             (map (fn [inner-ast]
                                    (cond (instance? ast/fn-ast inner-ast)
-                                         (.fn-sym inner-ast (maybe (.sym ast)))
+                                         (.fn-sym inner-ast (.sym ast))
 
                                          (instance? c/SymbolConstraints inner-ast)
                                          (c/update-sym inner-ast (ast/untag (.sym ast)))
@@ -1306,10 +1303,10 @@
 (extend-type ast/reify-ast
   TypeChecker
   (pre-check [ast]
-    (let [reified-type-num (either (.type-num ast)
+    (let [reified-type-num (either (instance? Integer (.type-num ast))
                                    (extract type-counter))]
       (-> ast
-          (.type-num (maybe reified-type-num))
+          (.type-num reified-type-num)
           (map (fn [arity]
                  (ProtoArity reified-type-num arity)))
           se/state-error)))
@@ -1324,8 +1321,8 @@
                                  {})]
       (-> ast
           (map .arity)
-          (.constraint (c/ReifiedConstraint (extract (.type-num ast)) (symbol (str "reified value at "
-                                                                                   (ast/location ast)))
+          (.constraint (c/ReifiedConstraint (.type-num ast) (symbol (str "reified value at "
+                                                                         (ast/location ast)))
                                             {} {}
                                             (.arities c/fn-constraint invoke-arities)
                                             empty-list c/no-symbol ""))
@@ -1841,7 +1838,7 @@
     ;;               })
 
     ;; TODO: make sure the constraints on all these fn's are as specific as possible
-    (ast/reified (maybe reified-type-num)
+    (ast/reified reified-type-num
                  {Eq-sym
                   {(ast/tag =*-sym loc)
                    [(ast/fn-arity
