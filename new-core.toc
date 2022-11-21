@@ -591,6 +591,18 @@ abort();
     (instance? [_ x]
       (inline C (maybe-of Symbol) "return(checkInstance(SymbolType, x_1));"))))
 
+(def StringBuffer
+  (reify
+    Type
+    (instance? [_ x]
+      (inline C (maybe-of Symbol) "return(checkInstance(StringBufferType, x_1));"))))
+
+(def SubString
+  (reify
+    Type
+    (instance? [_ x]
+      (inline C (maybe-of Symbol) "return(checkInstance(SubStringType, x_1));"))))
+
 (def Vector
   (reify
     Type
@@ -986,7 +998,7 @@ abort();
 
         (list-reduce (rest l) (f result (extract (first l))) f)))
 
-;; interface to low-level List functions
+;; interface to low-level functions
 (extend-type List
   Eq
   (=* [x y]
@@ -994,11 +1006,11 @@ abort();
 
   Collection
   (filter [coll f]
-    (inline C "return(listFilter(coll_0, f_1));"))
+    (inline C List "return(listFilter(coll_0, f_1));"))
   
   Sequable
   (reverse [l]
-    (inline C "return((Value *)reverseList((List *)l_0));"))
+    (inline C List "return((Value *)reverseList((List *)l_0));"))
 
   (first [l]
     (inline C "return(car(l_0));"))
@@ -1013,7 +1025,7 @@ abort();
 (extend-type Vector
   Seqable
   (reverse [v]
-    (inline C "return(vectorReverse(v_0));"))
+    (inline C Vector "return(vectorReverse(v_0));"))
 
   (seq [v]
     !returns (list-from v)
@@ -1043,3 +1055,292 @@ abort();
   Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
   dec_and_free(vect_0, 1);
   return(result);")))
+
+(defn identity [x]
+  x)
+
+(defn partial [f & args]
+  ;; paritally apply `f` to `args` creating a new function that expects more arguments
+  ;; TODO: needs the 'Args' typeop
+  (fn [& more-args]
+    (apply f (comp args more-args))))
+
+;; This is the declaration of the 'list' function. Calls to 'list' are inlined by the compiler
+(defn list [& l]
+  ;; construct a list of values from the arguments
+  l)
+
+;; This is the declaration of the 'vector' function. Calls to 'vector' are inlined by the compiler
+(defn vector [& l]
+  ;; construct a vector of values from the arguments
+  (vec l))
+
+;; TODO: implement Float as well.
+;; pay attention to https://blog.acolyer.org/2020/09/28/fpspy/
+(extend-type Integer
+  Type
+  (type-args [n]
+    [n])
+
+  (type-name [_]
+    "Integer")
+
+  Stringable
+  (string-list [n]
+    (inline C "return((Value *)listCons(integer_str(n_0), empty_list));\n"))
+
+  (show* [x indent]
+    (string-list x))
+
+  Eq
+  (=* [x y]
+    (inline C "return(integer_EQ(x_0, y_1));"))
+
+  Ord
+  (<* [x y]
+    (inline C "return(integerLT(x_0, y_1));"))
+
+  Hashable
+  (sha1-update [x ctxt]
+    (inline C Opaque "
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->type, 8);
+  Sha1Update(((Opaque *)ctxt_1)->ptr, (void *)&((Integer *)x_0)->numVal, 8);
+  dec_and_free(x_0, 1);
+  return(ctxt_1);
+"))
+
+  (sha1 [x]
+    (inline C Integer "return(integerValue(integerSha1(x_0)));")))
+
+(defn inc [x]
+  ;; Add 1 to an integer
+  (add-numbers 1 x))
+
+(defn dec [x]
+  ;; Subtract 1 from an integer
+  ;; ! Integer x
+
+  (subtract-numbers x 1))
+
+(extend-type String
+  Type
+  (type-name [_]
+    "String")
+
+  (type-args [s]
+    [s])
+
+  Stringable
+  (string-list [s]
+    (list s))
+
+  (show* [s indent]
+    (list "\"" s "\""))
+
+  Composition
+  (zero [_]
+    "")
+
+  (comp* [s ss]
+    (to-str (cons s ss)))
+
+  Collection
+  (count [s]
+    (inline C Integer "return(strCount(s_0));"))
+
+  (empty? [coll]
+    (and (=* 0 (count coll))
+         (maybe "")))
+
+  (empty [coll]
+    "")
+
+  (reduce [s x f]
+    (inline C "return(strReduce(s_0, x_1, f_2));"))
+
+  Seqable
+  (seq [coll]
+    !returns (list-from coll)
+    (inline C "return(strSeq(coll_0));"))
+
+  (vec [coll]
+    !returns (vector-from coll)
+    (inline C "return(strVec(coll_0));"))
+
+  (first [s]
+    (map (<* 0 (count s))
+         (fn [_]
+           (subs s 0 1))))
+
+  (rest [s]
+    (subs s 1))
+
+  (last [s]
+    (let [n (count s)]
+      (map (<* 0 n)
+           (fn [_]
+             (subs s (dec n))))))
+
+  (butlast [s]
+    (subs s 0 (dec (count s))))
+
+  (reverse [s]
+    (to-str (reverse (seq s))))
+
+  ;; TODO: the order these two implementations appear in matters. And shouldn't
+  (split-with [s pred prefix]
+    ! prefix Vector
+    !returns (vector-of String)
+
+    (either (for [head (first s)
+                  :when (pred head)]
+              (split-with (subs s 1) pred (conj prefix head)))
+            [(to-str prefix) s]))
+
+  (split-with [s pred]
+    (split-with s pred []))
+
+  (split [s n]
+    [(subs s 0 n) (subs s n)])
+
+  (take [s n]
+    (subs s 0 n))
+
+  (drop [s n]
+    (subs s n))
+
+  Eq
+  (=* [x y]
+    (inline C "return(strEQ(x_0, y_1));"))
+
+  Indexed
+  (nth [s n]
+    (map (<* n (count s))
+         (fn [_]
+           (subs s n 1))))
+
+  Ord
+  (<* [x y]
+    (inline C "return(strLT(x_0, y_1));"))
+
+  Hashable
+  (sha1-update [x ctxt]
+    (inline C Opaque "
+  strSha1Update(((Opaque *)ctxt_1)->ptr, x_0);
+  dec_and_free(x_0, 1);
+  return(ctxt_1);
+"))
+
+  (sha1 [s]
+    (inline C Integer "return(integerValue(strSha1(s_0)));")))
+
+;; Separated because their impls use 'split-with'
+(extend-type String
+  Seqable
+  (drop-while [coll pred]
+    (let [[_ tail] (split-with coll pred)]
+      tail))
+
+  (take-while [coll pred]
+    (let [[prefix _] (split-with coll pred)]
+      prefix)))
+
+(extend-type StringBuffer
+  Seqable
+  (to-str [s]
+    s))
+
+(extend-type SubString
+  Seqable
+  (to-str [s]
+    (str-append (str-malloc (count s)) s)))
+
+(defn maybe-apply [mv m-args args]
+  ! mv Maybe
+  ! m-args (sequence-of Maybe)
+  ! args Vector
+  !returns (maybe-of (type-of-result (inner-type-of mv)))
+
+  ;; TODO: rewrite using maybe-map
+  (either (for [m-arg (first m-args)]
+            (either (map m-arg (fn [arg]
+                                 (maybe-apply mv (rest m-args) (conj args arg))))
+                    nothing))
+          (map mv (fn [f]
+                    (apply f args)))))
+
+(extend-type Maybe
+  Type
+  (type-args [v]
+    (either (maybe-map v vector)
+            empty-vector))
+
+  (type-name [_] "Maybe")
+
+  Hashable
+  (sha1-update [x ctxt]
+    (sha1-update-type x ctxt)
+    (either (map x (fn [v]
+                     (sha1-update v ctxt)))
+            ctxt))
+
+  (sha1 [x]
+    (let [ctxt (sha1-init)]
+      (sha1-update x ctxt)
+      (sha1-finalize ctxt)))
+
+  Stringable
+  (string-list [mv]
+    (either (maybe-map mv (fn [v]
+                            (comp (list "<maybe ")
+                                  (string-list v)
+                                  (list ">"))))
+            (list "<nothing>")))
+
+  (show* [x indent]
+    (either (maybe-map x (fn [v]
+                           (comp (list "(maybe ")
+                                 (show* v (comp indent "       "))
+                                 (list ")"))))
+            (list "nothing")))
+
+  Eq
+  (=* [x y]
+    (inline C Maybe "return(maybeEQ(x_0, y_1));"))
+
+  Container
+  (map [mv f]
+    (maybe-map mv f))
+
+  ;; (map [mv f embed]
+  ;;   (either (map mv (fn [v]
+  ;;                     (map (f v) maybe)))
+  ;;           (embed nothing)))
+
+  (extract [mv]
+    !returns (inner-type-of mv)
+
+    (inline C "return(maybeExtract(mv_0));"))
+
+  (wrap [_ mv]
+    (maybe mv))
+
+  (apply [mv args]
+    (maybe-apply mv (seq args) []))
+
+  (flat-map [mv f]
+    ! mv (maybe-of (type-of-arg f 0))
+    !returns (type-of-result f)
+
+    (and mv (f (extract mv))))
+
+  Composition
+  (zero [mv]
+    nothing)
+
+  Associative
+  (get [m _]
+    m)
+
+  (assoc [x y v]
+    (maybe v)))
