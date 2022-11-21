@@ -789,8 +789,7 @@ abort();
 
     ! f Predicate
     ! coll (contains (type-of-arg f 0))
-    !returns (all-of (type-of coll)
-                     (contains (inner-type-of (type-of-result f))))
+    !returns (contains (type-of-arg f 0))
     )
 
   (reduce [coll x f]
@@ -837,30 +836,210 @@ abort();
   (split [coll n]
     ;; divides a sequence into to parts with at most 'n' elements being in the first part
     ! n Integer
+    !returns (vector-of [(contains (inner-type-of coll))
+                         (contains (inner-type-of coll))])
     )
 
-  (split-with [coll pred])
+  (split-with [coll pred]
+    ! pred Predicate
+    !returns (vector-of [(contains (inner-type-of coll))
+                         (contains (inner-type-of coll))])
+    )
 
-  (split-with [coll pred prefix])
+  (split-with [coll pred prefix]
+    ! pred Predicate
+    ! prefix Sequence
+    !returns (vector-of [(contains (inner-type-of coll))
+                         (contains (inner-type-of coll))])
+    )
 
   (take [coll n]
-    ;; (assert (instance? Integer n))
+    ! n Integer
+    !returns (contains (inner-type-of coll))
     )
 
   (drop [coll n]
-    ;; (assert (instance? Integer n))
+    ! n Integer
+    !returns (contains (inner-type-of coll))
     )
 
-  (drop-while [coll pred])
+  (drop-while [coll pred]
+    ! pred Predicate
+    !returns (contains (inner-type-of coll))
+    )
 
-  (take-while [coll pred])
+  (take-while [coll pred]
+    ! pred Predicate
+    !returns (contains (inner-type-of coll))
+    ;; TODO: this can further restrict the return value
+    ;; !returns (contains (inner-type-of (type-of-result pred)))
+    )
 
   (reverse [coll]
     ;; Create a new collection of same type as `coll` with the contents
     ;; in reverse order
+    !returns (contains (inner-type-of coll))
     )
 
   (to-str [coll]
     ;; Builds a string from the string representation of all the values in `coll`
-    ;; (assert-result a (instance? StringBuffer a))
+    !returns StringBuffer
     ))
+
+(defn second [coll]
+  ;; get the second element from the sequable `coll`
+  (first (rest coll)))
+
+;; For collections whose contents can be indexed by integers
+(defprotocol Indexed
+  (nth [coll n]
+    ;; Retrieve the `n`th value from `coll`, wrapped in a Maybe, if there are
+    ;; enough values in `coll`. Otherwise, returns `nothing`.
+    ! n Integer
+    !returns (maybe-of (inner-type-of coll))
+    )
+
+  (store [coll n v]
+    ;; Create a new copy of `coll` (wrapped in a Maybe)  with `v` at index `n`
+    ;; if `coll` is at least size of `n` - 1. Otherwise, return `nothing`.
+    ! n Integer
+    !returns (maybe-of (any-of (inner-type-of coll)
+                               (type-of v)))
+    ))
+
+;; For types whose values can be hashed to an integer
+(defprotocol Hashable
+  (sha1-update [x context]
+    ! context Opaque
+    )
+
+  (sha1 [x]
+    ;; Compute the SHA1 hash of `x`
+    !returns Integer
+    ))
+
+;; For types that emulate a key/value store
+(defprotocol Associative
+  (assoc [m k v]
+    ;; TODO: update key and value types
+    )
+
+  (get [m k]
+    ;; Retrieve the value associated with `k` in `m`, wrapped in a `Maybe` if it exists.
+    ;; Otherwise, return `nothing`
+    ;; TODO: add value type to result
+    !returns Maybe
+    )
+
+  ;; TODO: Remove this arity. Should use 'either' instead
+  (get [m k not-found]
+    ;; Retrieve the value associated with `k` in `m` if it exists.
+    ;; Otherwise, return `not-found`
+    )
+
+  (keys [m]
+    ;; Get a list of the keys from `m`
+    ;; TODO: add key type to result
+    !returns List
+    )
+
+  (vals [m]
+    ;; Get a list of the vals from `m`
+    ;; TODO: add value type to result
+    !returns List
+    ))
+
+;; For types whose values may be invoked like functions
+(defprotocol Function
+  (invoke [_])
+  (invoke [_ _])
+  (invoke [_ _ _])
+  (invoke [_ _ _ _])
+  (invoke [_ _ _ _ _])
+  (invoke [_ _ _ _ _ _])
+  (invoke [_ _ _ _ _ _ _])
+  (invoke [_ _ _ _ _ _ _ _])
+  (invoke [_ _ _ _ _ _ _ _ _]))
+
+; For types that have some notion of equality between their values
+(defprotocol Eq
+  (=* [x y]
+    ;; Compare two values for equality
+    !returns (maybe-of (type-of x))
+    ))
+
+;; For types that have some notion of order of their values
+(defprotocol Ord
+  (<* [x y]
+    ;; Compare two values for order
+    !returns (maybe-of (type-of x))
+    ))
+
+(defn list-reduce [l result f]
+  ! l (list-of (type-of-arg f 1))
+  ! f (required-arities 2)
+  !returns (any-of (type-of result)
+                   (type-of-result f))
+
+  (cond (empty? l)
+        result
+
+        (list-reduce (rest l) (f result (extract (first l))) f)))
+
+;; interface to low-level List functions
+(extend-type List
+  Eq
+  (=* [x y]
+    (inline C "return(listEQ(x_0, y_1));"))
+
+  Collection
+  (filter [coll f]
+    (inline C "return(listFilter(coll_0, f_1));"))
+  
+  Sequable
+  (reverse [l]
+    (inline C "return((Value *)reverseList((List *)l_0));"))
+
+  (first [l]
+    (inline C "return(car(l_0));"))
+
+  (rest [l]
+    (inline C "return(cdr(l_0));"))
+
+  (vec [l]
+    !returns (vector-from l)
+    (inline C "return((Value *)listVec(l_0));")))
+
+(extend-type Vector
+  Seqable
+  (reverse [v]
+    (inline C "return(vectorReverse(v_0));"))
+
+  (seq [v]
+    !returns (list-from v)
+    (inline C "return(vectSeq((Vector *)v_0, 0));\n"))
+
+  Indexed
+  (store [v n x]
+    (inline C "
+  Value *result = vectStore((Vector *)v_0, ((Integer *)n_1)->numVal, (Value *)x_2);
+  dec_and_free(v_0, 1);
+  dec_and_free(n_1, 1);
+  return(result);"))
+
+  Associative
+  (get [v n]
+    ! n Integer
+    ;; TODO
+    ;; (assert (<= 0 n))
+    !returns (maybe-of (inner-type-of v))
+    (inline C Maybe "return(vectorGet(v_0, n_1));"))
+
+  Collection
+  (conj [vect v]
+    !returns (vector-of (any-of (inner-type-of vect)
+                                (type-of v)))
+    (inline C Vector "
+  Value *result = (Value *)vectConj((Vector *)vect_0, v_1);
+  dec_and_free(vect_0, 1);
+  return(result);")))
