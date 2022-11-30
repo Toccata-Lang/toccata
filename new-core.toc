@@ -97,7 +97,6 @@
   (inline C "return(listConcat(l_0));"))
 
 (defn add-numbers [x y]
-  ;; TODO: reuse one of the parameters for the result if possible
   ! x Integer
   ! y Integer
   (inline C Integer "
@@ -808,7 +807,9 @@ abort();
     ! f (required-arities 2)
     ! coll (contains (type-of-arg f 1))
     !returns (any-of (type-of x)
-                     (type-of-result f))
+                     (type-of-result f (any-of (type-of x)
+                                               (type-of-result f))
+                                     (inner-type-of coll)))
     ))
 
 ;; Collection types that have some sense of ordering of their contents
@@ -989,7 +990,9 @@ abort();
   ! l (list-of (type-of-arg f 1))
   ! f (required-arities 2)
   !returns (any-of (type-of result)
-                   (type-of-result f (type-of result) (inner-type-of l)))
+                   (type-of-result f (any-of (type-of result)
+                                             (type-of-result f))
+                                   (inner-type-of l)))
 
   (cond (empty? l)
         result
@@ -1343,6 +1346,203 @@ abort();
 
   (assoc [x y v]
     (maybe v)))
+
+(defn apply-to-vectors [f vects arg-vects]
+  (either (for [vect (first vects)]
+            (apply-to-vectors f (rest vects)
+                              (reduce vect [] (fn [new-args v]
+                                                (reduce arg-vects new-args
+                                                        (fn [new-args arg-vect]
+                                                          (conj new-args (conj arg-vect v))))))))
+          (map arg-vects (fn [args]
+                           (apply f (seq args))))))
+
+(defn interpose [coll sep]
+  ! coll Sequence
+  !returns (sequence-of (any-of (inner-type-of coll)
+                                (type-of sep)))
+
+  ;; build list by inserting `sep` between each of the elements of `coll`
+  (rest (flat-map coll (partial list sep))))
+
+(defn list*
+  ([] empty-list)
+
+  ([arg]
+   ! arg Sequence
+
+   (seq arg))
+
+  ([arg & args]
+   !returns List
+
+   (let [[arg-list & args] (reverse (cons arg args))]
+     ! arg-list Sequence
+
+     (list-reduce args (seq arg-list) conj))))
+
+(defn chop-list [l n prefix]
+    ! prefix List
+    !returns (vector-of List)
+
+    (either (map (and (<* 0 n)
+                      (first l))
+                 (fn [head]
+                   (chop-list (rest l) (dec n) (cons head prefix))))
+            [prefix l]))
+
+;; TODO: Make efficient. Move dependent impls out
+(extend-type List
+  Type
+  (type-name [_]
+    "List")
+
+  (type-args [l]
+    (vec l))
+
+  Stringable
+  (string-list [l]
+    (list "(" (to-str (list-concat (list-map (interpose l ", ") string-list))) ")"))
+
+  (show* [x indent]
+    (either (map (empty? x) string-list)
+            (let [[h & tail] x]
+              (comp (cons "(" (show* h (comp indent " ")))
+                    (flat-map tail (fn [x]
+                                     (list* ",\n" indent " "
+                                            (show* x (comp indent " ")))))
+                    (list ")")))))
+
+  Hashable
+  (sha1-update [l ctxt]
+    (sha1-update-type l ctxt)
+    (reduce l ctxt (fn [ctxt x]
+                     (sha1-update x ctxt))))
+
+  (sha1 [l]
+    (let [ctxt (sha1-init)]
+      (sha1-update l ctxt)
+      (sha1-finalize ctxt)))
+
+  Composition
+  (zero [_]
+    empty-list)
+
+  (comp* [l ls]
+    (list-concat (cons l (map (seq ls) seq))))
+
+  Collection
+  (count [l]
+    (list-count l))
+
+  (empty? [l]
+    (and (=* 0 (list-count l))
+         (maybe empty-list)))
+
+  (empty [_]
+    empty-list)
+
+  (conj [l v]
+    (cons v l))
+
+  (reduce [l result f]
+    (list-reduce l result f))
+
+  ;; Container
+  ;; (map [l f]
+  ;;   (list-map l f))
+
+  ;; (map [l f embed]
+  ;;   (-> l
+  ;;       reverse
+  ;;       (reduce (embed empty-list)
+  ;;               (fn [v x]
+  ;;                 (flat-map (f x)
+  ;;                           (fn [y]
+  ;;                             (map v (fn [v]
+  ;;                                      (conj v y)))))))))
+
+  ;; (wrap [x v]
+  ;;   (list v))
+
+  ;; (flatten [ls]
+  ;;   (list-concat ls))
+
+  ;; (flat-map [l mf]
+  ;;   !returns (type-of-result mf)
+
+  ;;   (list-concat (list-map l mf)))
+
+  ;; (apply [mf lists]
+  ;;   !returns (list-of (type-of-result (inner-type-of mf)))
+
+  ;;   (either (for [f (first mf)
+  ;;                 first-list (first lists)]
+  ;;             (seq (apply-to-vectors f
+  ;;                                    (rest lists)
+  ;;                                    (map first-list vector))))
+  ;;           empty-list))
+ 
+  ;; Seqable
+  ;; (split-with [l pred prefix]
+  ;;   ! List prefix
+  ;;   !returns (vector-of [List List])
+
+  ;;   (either (for [head (first l)
+  ;;                 :when (pred head)]
+  ;;             (split-with (rest l) pred (cons head prefix)))
+  ;;           [(reverse prefix) l]))
+
+  ;; (split-with [l pred]
+  ;;   (split-with (rest l) pred empty-list))
+
+  ;; (to-str [coll]
+  ;;   (let [ss-list (list-concat (list-map coll string-list))
+  ;;         new-len (list-reduce ss-list 0 (fn [len s]
+  ;;                                          (add-numbers len (count s))))]
+  ;;     (list-reduce ss-list (str-malloc new-len) str-append)))
+
+  ;; (seq [l]
+  ;;   l)
+
+  ;; (last [coll]
+  ;;   ;; TODO: remove use of 'nth'
+  ;;   (nth coll (dec (count coll))))
+
+  ;; (butlast [coll]
+  ;;   (let [[before _] (chop-list coll (dec (count coll)) empty-list)]
+  ;;     (reverse before)))
+
+  ;; (split [l n]
+  ;;   (let [[before after] (chop-list l n empty-list)]
+  ;;     [(reverse before) after]))
+
+  ;; (take [coll n]
+  ;;   (let [[prefix _] (split coll n)]
+  ;;     prefix))
+
+  ;; (drop [coll n]
+  ;;   (let [[_ tail] (split coll n)]
+  ;;     tail))
+
+  ;; (drop-while [coll pred]
+  ;;   (let [[_ tail] (split-with coll pred)]
+  ;;     tail))
+
+  ;; (take-while [coll pred]
+  ;;   (let [[prefix _] (split-with coll pred)]
+  ;;     prefix))
+
+  ;; Indexed
+  ;; (nth [coll n]
+  ;;   (or (and (=* n 0) (first coll))
+  ;;       (and (<* 0 n) (nth (rest coll) (dec n)))))
+
+  ;; Associative
+  ;; (get [l k]
+  ;;   ;; TODO: show-type this
+  ;;   (nth l k))
+  )
 
 (defn str [& vs]
   ;; Converts the list of arguments into a single string of characters. Every argument
