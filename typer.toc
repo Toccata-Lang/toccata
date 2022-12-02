@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "6b2f470"))
+                          :sha "df4c94c"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "93abb3f"))
+                            :sha "b6320af"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -25,7 +25,7 @@
                            :sha "022bfa3"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "f59a058"))
+                            :sha "b8d9d38"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -367,34 +367,56 @@
                       (status "Bad call to append-value-type" _LINE_ loc "\n" constraint)
                       '_))
 
-        (let [curr-const (se/try
-                           (get-value-type sym)
-                           (fn [_]
-                             (se/state-error c/top-type)))]
+        (let [get-curr-const (se/try
+                               (get-value-type sym)
+                               (fn [_]
+                                 (se/state-error c/top-type)))]
           (cond (= constraint c/top-type)
-                curr-const
+                get-curr-const
 
-                (flat-map curr-const
+                (flat-map get-curr-const
                           (fn [curr-const]
-                            (let [new-const (c/trim (c/intersect curr-const constraint))]
-                              ;; (let [loc (ast/location sym)]
-                              ;;   (or ;; (= (.file loc) 'core)
-                              ;;    ;; (= (.line loc) 0)
-                              ;;    (and (= sym 'String)
-                              ;;         (do
-                              ;;           (status 'appending _LINE_ loc (str "\"" sym "\"")
-                              ;;                      "\n" 'constraint constraint
-                              ;;                      "\n\n" 'curr curr-const
-                              ;;                      "\n\n" 'new-const new-const)
-                              ;;           nothing))))
+                            (cond (= curr-const c/top-type)
+                                  (set-value-type sym (c/trim (c/update-path constraint loc)))
 
-                              (cond (= new-const c/bottom-type)
-                                    (compilation-error (conf-ass _LINE_ new-const loc))
+                                  (instance? c/TypeOp constraint)
+                                  (compilation-error "Compiler error at" (str _FILE_ ":") _LINE_
+                                                     "\n for sym" sym "at" loc
+                                                     "\n" 'curr curr-const
+                                                     "\n\n" 'const constraint)
 
-                                    (instance? ProtoImpls curr-const)
-                                    se-nop
+                                  (let [new-const (c/trim (c/intersect curr-const constraint))]
+                                    ;; (let [loc (ast/location sym)]
+                                    ;;   (or ;; (= (.file loc) 'core)
+                                    ;;    ;; (= (.line loc) 0)
+                                    ;;    (and (= sym 'String)
+                                    ;;         (do
+                                    ;;           (status 'appending _LINE_ loc (str "\"" sym "\"")
+                                    ;;                      "\n" 'constraint constraint
+                                    ;;                      "\n\n" 'curr curr-const
+                                    ;;                      "\n\n" 'new-const new-const)
+                                    ;;           nothing))))
 
-                                    (set-value-type sym (c/update-path new-const loc))))))))))
+                                    (cond (= new-const c/bottom-type)
+                                          (compilation-error (conf-ass _LINE_ new-const loc))
+
+                                          (instance? ProtoImpls curr-const)
+                                          se-nop
+
+                                          ;; TODO: remove this clause after testing
+                                          (instance? c/ComputedConstraint constraint)
+                                          (cond (or (= new-const curr-const)
+                                                    (= new-const constraint)
+                                                    (instance? c/ParamConstraint curr-const))
+                                                (set-value-type sym (c/update-path new-const loc))
+
+                                                (compilation-error "Compiler error at" (str _FILE_ ":") _LINE_
+                                                                   "\n for sym" sym "at" loc
+                                                                   "\n" 'curr curr-const
+                                                                   "\n\n" 'const constraint
+                                                                   "\n\n" 'new new-const))
+
+                                          (set-value-type sym (c/update-path new-const loc)))))))))))
 
 (defn remove-value-type [sym]
   (assert (instance? ast/Tagged sym))
@@ -413,6 +435,7 @@
                       (.mods c1)
                       (.mods c2 []))
 
+        ;; TODO: interesting intersect
         (c/intersect c1 c2)))
 
 (defn add-impl [proto-impls type-num arg-count arity-c loc]
@@ -450,6 +473,12 @@
                                                           (assoc-in fn-c [.arities arg-count] new-arity-c))))
                                          (assoc-in proto-impls [.impl-fns type-num]
                                                    (.arities c/fn-constraint {arg-count new-arity-c})))]
+                   ;; (cond (= (.fn-sym proto-impls) 'split-with)
+                   ;;       (status 'proto-result _LINE_ new-result
+                   ;;               "\n\n" 'def (.result-const default-arity)
+                   ;;               "\n\n" 'arity (.result-const arity-c))
+
+                   ;;       '_)
                    (cond (= new-proto c/bottom-type)
                          (do
                            ;; (status 'impl _LINE_
@@ -622,6 +651,7 @@
 (extend-type ConstrainedAST
   TypeChecker
   (update-constraint [ast constraint loc]
+    ;; TODO: interesting intersect
     (let [new-c (c/intersect (.constraint ast) constraint)]
       (either (map (= c/bottom-type new-c)
                    (fn [_]
@@ -728,6 +758,13 @@
                                                   (c/set-items var-arg-cs))
                                    all-arg-cs (conj fixed-arg-cs var-args-c)
                                    reified-arity (c/reify-type-constraint arity arity-id all-arg-cs loc)]
+                               ;; (cond (= target 'list-reduce)
+                               ;;       (print-err 'call _LINE_ loc target
+                               ;;                  "\n" 'arity arity
+                               ;;                  "\n\n" 'args all-arg-cs
+                               ;;                  "\n\n" 'reified reified-arity)
+
+                               ;;       '_)
                                (cond (= (c/is-bottom reified-arity) c/bottom-type)
                                      (do
                                        ;; (status 'site _LINE_ loc arity-id
@@ -762,7 +799,6 @@
                                             (fn [new-args]
                                               (let [result (.result-const reified-arity)]
                                                 (cond (instance? c/ComputedConstraint result)
-                                                      ;; TODO: shouldn't this be deriv?
                                                       (reduce (.mods result) c/top-type c/intersect)
 
                                                       result))))))))))
@@ -821,6 +857,7 @@
   TypeChecker
   (call-with-args [c args target]
     (let [new-c (-> c
+                    ;; will never fail
                     (c/intersect (c/TypeOp c/call-value-op (map args .constraint) empty-list))
                     (c/update-path (ast/location target)))]
       (either (map (= new-c c/bottom-type)
@@ -930,6 +967,7 @@
                            (c/derive constraint c/seq-constraint)
 
                            c/seq-constraint)
+          ;; TODO: interesting intersect
           new-c (c/intersect (.constraint ast) (c/update-path constraint loc))]
       (either (map (= c/bottom-type new-c)
                    (fn [_]
@@ -1047,6 +1085,7 @@
             ;;                 nothing)))]
             :let [body-c (either (map (last (.body ast)) .constraint)
                                  c/top-type)
+                  ;; TODO: interesting intersect
                   final-c (c/intersect result-c body-c)]
             _ (either (map (or (= c/bottom-type pts)
                                (= c/bottom-type final-c))
@@ -1752,6 +1791,7 @@
                     (let [arity-id (symbol (str sym "-" field "-getter"))
                           field-constraint (-> (c/ParamConstraint arity-id 0 empty-list c/no-symbol "")
                                                (c/intersect (c/TypeOp c/get-from-op [field-sym] empty-list))
+                                               ;; TODO: interesting intersect
                                                (c/intersect field-constraint))]
                       (ast/fn-arity-ast
                        (ast/tag (str "." field) loc)
@@ -1933,6 +1973,7 @@
                         (.items field-constraints (comp [c/top-type]
                                                         (.items field-constraints)))
                         (.fields new-type-constraint
+                                 ;; TODO: interesting intersect
                                  (merge-with c/intersect
                                              (.fields new-type-constraint)
                                              (-> (zip-lists fields (range (count fields)))
@@ -1959,6 +2000,7 @@
                         (-> c/list-constraint
                             (c/set-items [c/top-type field-constraints]))
                         (.fields new-type-constraint
+                                 ;; TODO: interesting intersect
                                  (merge-with c/intersect
                                              (.fields new-type-constraint)
                                              (-> (zip-lists fields (range (count fields)))
@@ -2264,6 +2306,8 @@
                                      "at")
                                loc)))))
 
+(def _ (print-err 'creating-parser))
+
 (def parse-forms
   (rd/parser
    (grmr/none-or-more
@@ -2299,6 +2343,7 @@
                         (grmr/get-value 'type-checker)
                         (grmr/get-value 'result-prom)
                         rdr/top-level)))))
+(def _ (print-err 'parser-created))
 
 (defn compile-module [file-name root-dir proj-dir]
   (let [mod-prom (promise)]
