@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "b06a5aa"))
+                          :sha "0206d6e"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "f971f3d"))
+                            :sha "50cf27f"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -25,7 +25,7 @@
                            :sha "022bfa3"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "d0258ed"))
+                            :sha "4082bbf"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -367,56 +367,47 @@
                       (status "Bad call to append-value-type" _LINE_ loc "\n" constraint)
                       '_))
 
-        (let [get-curr-const (se/try
-                               (get-value-type sym)
-                               (fn [_]
-                                 (se/state-error c/top-type)))]
-          (cond (= constraint c/top-type)
-                get-curr-const
+        (= constraint c/top-type)
+        (se/try
+          (get-value-type sym)
+          (fn [_]
+            (se/state-error c/top-type)))
 
-                (flat-map get-curr-const
-                          (fn [curr-const]
-                            (cond (= curr-const c/top-type)
-                                  (set-value-type sym (c/trim (c/update-path constraint loc)))
+        (flat-map (se/try
+                    (get-value-type sym)
+                    (fn [_]
+                      (se/state-error c/top-type)))
+                  (fn [curr-const]
+                    (cond (= curr-const c/top-type)
+                          (set-value-type sym (c/trim (c/update-path constraint loc)))
 
-                                  (instance? c/TypeOp constraint)
+                          (let [new-const (c/trim (c/intersect curr-const constraint))]
+                            ;; (let [loc (ast/location sym)]
+                            ;;   (or ;; (= (.file loc) 'core)
+                            ;;    ;; (= (.line loc) 0)
+                            ;;    (and (= sym 'String)
+                            ;;         (do
+                            ;;           (status 'appending _LINE_ loc (str "\"" sym "\"")
+                            ;;                      "\n" 'constraint constraint
+                            ;;                      "\n\n" 'curr curr-const
+                            ;;                      "\n\n" 'new-const new-const)
+                            ;;           nothing))))
+
+                            (cond (= new-const c/bottom-type)
+                                  (compilation-error (conf-ass _LINE_ new-const loc))
+
+                                  (instance? ProtoImpls curr-const)
+                                  se-nop
+
+                                  ;; TODO: remove this clause after testing
+                                  (instance? c/ComputedConstraint constraint)
                                   (compilation-error "Compiler error at" (str _FILE_ ":") _LINE_
                                                      "\n for sym" sym "at" loc
                                                      "\n" 'curr curr-const
-                                                     "\n\n" 'const constraint)
+                                                     "\n\n" 'const constraint
+                                                     "\n\n" 'new new-const)
 
-                                  (let [new-const (c/trim (c/intersect curr-const constraint))]
-                                    ;; (let [loc (ast/location sym)]
-                                    ;;   (or ;; (= (.file loc) 'core)
-                                    ;;    ;; (= (.line loc) 0)
-                                    ;;    (and (= sym 'String)
-                                    ;;         (do
-                                    ;;           (status 'appending _LINE_ loc (str "\"" sym "\"")
-                                    ;;                      "\n" 'constraint constraint
-                                    ;;                      "\n\n" 'curr curr-const
-                                    ;;                      "\n\n" 'new-const new-const)
-                                    ;;           nothing))))
-
-                                    (cond (= new-const c/bottom-type)
-                                          (compilation-error (conf-ass _LINE_ new-const loc))
-
-                                          (instance? ProtoImpls curr-const)
-                                          se-nop
-
-                                          ;; TODO: remove this clause after testing
-                                          (instance? c/ComputedConstraint constraint)
-                                          (cond (or (= new-const curr-const)
-                                                    (= new-const constraint)
-                                                    (instance? c/ParamConstraint curr-const))
-                                                (set-value-type sym (c/update-path new-const loc))
-
-                                                (compilation-error "Compiler error at" (str _FILE_ ":") _LINE_
-                                                                   "\n for sym" sym "at" loc
-                                                                   "\n" 'curr curr-const
-                                                                   "\n\n" 'const constraint
-                                                                   "\n\n" 'new new-const))
-
-                                          (set-value-type sym (c/update-path new-const loc)))))))))))
+                                  (set-value-type sym (c/update-path new-const loc)))))))))
 
 (defn remove-value-type [sym]
   (assert (instance? ast/Tagged sym))
@@ -428,67 +419,57 @@
                                            (rest types-list))))
                               types-list))))
 
-(defn merge-constraints [[c1 c2]]
-  (cond (and (instance? c/ComputedConstraint c1)
-             (instance? c/ComputedConstraint c2))
-        (c/merge-mods (.mods c2)
-                      (.mods c1)
-                      (.mods c2 []))
-
-        ;; TODO: interesting intersect
-        (c/intersect c1 c2)))
-
 (defn add-impl [proto-impls type-num arg-count arity-c loc]
   (instance? ProtoImpls proto-impls)
 
   (either (map (get-in proto-impls [.default-impl .arities arg-count])
                (fn [default-arity]
-                 (let [new-params (->  (.param-consts default-arity)
-                                       .items
-                                       count
-                                       range
-                                       vec
-                                       (map (fn [n]
-                                              (c/ParamConstraint (.arity-id arity-c) n
-                                                                 empty-list c/no-symbol ""))))
+                 (let [new-params (-> (.param-consts default-arity)
+                                      .items
+                                      count
+                                      range
+                                      vec
+                                      (map (fn [n]
+                                             (c/ParamConstraint (.arity-id arity-c) n
+                                                                empty-list c/no-symbol ""))))
                        default-arity (cond (= (str (.arity-id default-arity)) "")
                                            default-arity
 
-                                           (c/reify-type-constraint default-arity (.arity-id default-arity)
-                                                                    new-params loc))
-                       new-params (map (zip-lists (.items (.param-consts arity-c))
-                                                  (.items (.param-consts default-arity)))
-                                       merge-constraints)
-                       new-result (merge-constraints [(.result-const arity-c)
-                                                      (.result-const default-arity)])
-                       new-arity-c (-> arity-c
-                                       (assoc-in [.param-consts .items] (vec new-params))
-                                       (.result-const new-result))
-                       new-proto (either (or (some new-params (partial = c/bottom-type))
-                                             (= new-result c/bottom-type)
-                                             (update-in proto-impls [.impl-fns type-num]
-                                                        (fn [fn-c]
-                                                          (assert (instance? c/FnConstraint fn-c))
-
-                                                          (assoc-in fn-c [.arities arg-count] new-arity-c))))
-                                         (assoc-in proto-impls [.impl-fns type-num]
-                                                   (.arities c/fn-constraint {arg-count new-arity-c})))]
-                   ;; (cond (= (.fn-sym proto-impls) 'split-with)
-                   ;;       (status 'proto-result _LINE_ new-result
-                   ;;               "\n\n" 'def (.result-const default-arity)
-                   ;;               "\n\n" 'arity (.result-const arity-c))
+                                           (let [def-ar (c/reify-type-constraint default-arity
+                                                                                 (.arity-id default-arity)
+                                                                                 new-params loc)]
+                                             (cond (= c/bottom-type def-ar)
+                                                   (do
+                                                     (print-err (conf-ass _LINE_ def-ar loc)
+                                                                "\n\n" 'default-arity default-arity
+                                                                "\n\n" 'params new-params)
+                                                     (abort))
+                                                   def-ar)))
+                       new-arity-c (c/intersect arity-c default-arity)]
+                   ;; (cond (and (or (= c/StringBufferType type-num)
+                   ;;                (= c/SubStringType type-num))
+                   ;;            (= (.fn-sym proto-impls) 'split-with))
+                   ;;       (status 'proto-result _LINE_ loc
+                   ;;               "\n\n" 'def default-arity
+                   ;;               "\n\n" 'arity arity-c
+                   ;;               "\n\n" 'new new-arity-c)
 
                    ;;       '_)
-                   (cond (= new-proto c/bottom-type)
-                         (do
-                           ;; (status 'impl _LINE_
-                           ;;         "\n" 'def default-arity
-                           ;;         "\n\n" 'arity arity-c
-                           ;;         "\n\n" 'new new-arity-c)
-                           (compilation-error (conf-ass _LINE_ new-proto loc)))
+                   (cond (= new-arity-c c/bottom-type)
+                         (compilation-error 'impl _LINE_
+                                            "\n" 'def default-arity
+                                            "\n\n" 'arity arity-c
+                                            "\n\n" 'new new-arity-c
+                                            "\n\n" (conf-ass _LINE_ new-arity-c loc))
 
                          ;; happy path
-                         new-proto))))
+                         (either (update-in proto-impls [.impl-fns type-num]
+                                            (fn [fn-c]
+                                              (assert (instance? c/FnConstraint fn-c))
+
+                                              (assoc-in fn-c [.arities arg-count] new-arity-c)))
+                                 (assoc-in proto-impls [.impl-fns type-num]
+                                           (.arities c/fn-constraint {arg-count new-arity-c})))))))
           (compilation-error "No prototype for" (str "'" (.fn-sym proto-impls) "'") "with" (str arg-count)
                              "arguments at" loc)))
 
@@ -651,7 +632,6 @@
 (extend-type ConstrainedAST
   TypeChecker
   (update-constraint [ast constraint loc]
-    ;; TODO: interesting intersect
     (let [new-c (c/intersect (.constraint ast) constraint)]
       (either (map (= c/bottom-type new-c)
                    (fn [_]
@@ -758,22 +738,23 @@
                                                   (c/set-items var-arg-cs))
                                    all-arg-cs (conj fixed-arg-cs var-args-c)
                                    reified-arity (c/reify-type-constraint arity arity-id all-arg-cs loc)]
-                               ;; (cond (= target 'list-reduce)
-                               ;;       (print-err 'call _LINE_ loc target
-                               ;;                  "\n" 'arity arity
-                               ;;                  "\n\n" 'args all-arg-cs
-                               ;;                  "\n\n" 'reified reified-arity)
-
+                               ;; (cond (and  (= "core-types.toc" (.file loc))
+                               ;;             (= target 'reverse))
+                               ;;       (status 'site _LINE_ loc arity-id
+                               ;;               "\n" (str "(" (to-str (interpose (cons target (seq args))
+                               ;;                                                " ")) ")")
+                               ;;               "\n\n" 'arity arity
+                               ;;               "\n\n" 'all-args all-arg-cs
+                               ;;               "\n\n" 'reified reified-arity)
                                ;;       '_)
                                (cond (= (c/is-bottom reified-arity) c/bottom-type)
-                                     (do
-                                       ;; (status 'site _LINE_ loc arity-id
-                                       ;;         "\n" (str "(" (to-str (interpose (cons target (seq args))
-                                       ;;                                          " ")) ")")
-                                       ;;         "\n\n" 'arity arity
-                                       ;;         "\n\n" 'all-args all-arg-cs
-                                       ;;         "\n\n" 'reified reified-arity)
-                                       (compilation-error (conf-ass _LINE_ reified-arity loc)))
+                                     (compilation-error 'site _LINE_ loc arity-id
+                                                        "\n" (str "(" (to-str (interpose (cons target (seq args))
+                                                                                         " ")) ")")
+                                                        "\n\n" 'arity arity
+                                                        "\n\n" 'all-args all-arg-cs
+                                                        "\n\n" 'reified reified-arity
+                                                        "\n\n" (conf-ass _LINE_ reified-arity loc))
 
                                        (map (-> (zip-lists args
                                                            (c/get-items (.param-consts reified-arity) num-args)
@@ -831,9 +812,6 @@
     [])
 
   (param-types [c]
-    (se/state-error c))
-
-  (type-check [c old-c]
     (se/state-error c)))
 
 ;; (extend-type c/DebugConstraint
@@ -847,18 +825,21 @@
 (extend-type c/ParamConstraint
   TypeChecker
   (call-with-args [c args target]
-    (-> c
-        ;; will never fail
-        (c/intersect (c/TypeOp c/call-value-op (map args .constraint) empty-list))
+    (-> (c/type-op c/call-value-op c (map args .constraint))
         (c/update-path (ast/location target))
         se/state-error)))
+
+(extend-type c/MultiConstraint
+  TypeChecker
+  (call-with-args [c args target]
+    (let [new-c (-> (c/type-op c/call-value-op c (map args .constraint))
+                    (c/update-path (ast/location target)))]
+      (se/state-error new-c))))
 
 (extend-type c/ComputedConstraint
   TypeChecker
   (call-with-args [c args target]
-    (let [new-c (-> c
-                    ;; will never fail
-                    (c/intersect (c/TypeOp c/call-value-op (map args .constraint) empty-list))
+    (let [new-c (-> (c/type-op c/call-value-op c (map args .constraint))
                     (c/update-path (ast/location target)))]
       (either (map (= new-c c/bottom-type)
                    (fn [_]
@@ -875,7 +856,9 @@
   TypeChecker
   (type-check [c old-c]
     ;; TODO: restrict use to fn params only
-    (get-value-type (.param-sym old-c))))
+    (flat-map (get-value-type (.param-sym old-c))
+              (fn [type-c]
+                (append-value-type (.sym c) type-c (ast/location c))))))
 
 (extend-type c/NoValues
   TypeChecker
@@ -967,17 +950,17 @@
                            (c/derive constraint c/seq-constraint)
 
                            c/seq-constraint)
-          ;; TODO: interesting intersect
-          new-c (c/intersect (.constraint ast) (c/update-path constraint loc))]
+          new-c (-> (.constraint ast)
+                    (c/intersect c/seq-constraint)
+                    (c/intersect (c/update-path constraint loc)))]
       (either (map (= c/bottom-type new-c)
                    (fn [_]
                      (compilation-error (conf-ass _LINE_ new-c loc))))
-              (let [item-cs (c/get-items new-c (count (.fixed ast)))
-                    tail-item-cs (-> (.items new-c)
-                                     (drop (count (.fixed ast))))
+              (let [[item-cs tail-item-cs] (-> (c/get-items new-c)
+                                               (split (count (.fixed ast))))
                     tail-c (-> c/list-constraint
                                (c/set-items tail-item-cs)
-                               (c/set-tail (.tail-c new-c))
+                               (c/set-tail (c/get-tail new-c))
                                (c/replace-path (.path new-c)))]
                 (for [_ (se/traverse (zip-lists (seq (.fixed ast)) item-cs)
                                      (fn [[ast c]]
@@ -1032,7 +1015,7 @@
       (for [_ (push-types)
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-sym ast) 'maybe)
+            ;;          (and (= (.fn-sym ast) 'split-with)
             ;;               (do
             ;;                 (status 'pre-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                         "\n" 'params (.params ast)
@@ -1075,18 +1058,20 @@
             pts (get-param-types (.params old-ast))
             _ (recover-types (.params old-ast))
             _ (nip-types)
+            :let [body-c (either (map (last (.body ast)) .constraint)
+                                 c/top-type)
+                  final-c (c/intersect result-c body-c)]
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;          ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-sym ast) 'maybe)
+            ;;          (and (= (.fn-sym ast) 'split-with)
             ;;               (do
             ;;                 (status 'check-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                         "\n" 'pts pts
-            ;;                         "\n\n" 'result result-c)
+            ;;                         "\n\n" 'result result-c
+            ;;                         "\n\n" 'body body-c
+            ;;                         "\n\n" 'final final-c
+            ;;                         "\n\n" 'body-exprs (str "[" (to-str (interpose (.body ast) "\n")) "]"))
             ;;                 nothing)))]
-            :let [body-c (either (map (last (.body ast)) .constraint)
-                                 c/top-type)
-                  ;; TODO: interesting intersect
-                  final-c (c/intersect result-c body-c)]
             _ (either (map (or (= c/bottom-type pts)
                                (= c/bottom-type final-c))
                            (fn [failure-c]
@@ -1100,8 +1085,8 @@
                              (compilation-error (conf-ass _LINE_ failure-c loc))))
                       se-nop)]
         ;; TODO: use update-constraint here
-        (.constraint ast (c/intersect (.constraint ast)
-                                      (c/fn-arity (.fn-var ast) pts final-c)))))))
+        (.constraint ast (c/trim (c/intersect (.constraint ast)
+                                              (c/fn-arity (.fn-var ast) pts final-c))))))))
 
 (extend-type ast/fn-ast
   TypeChecker
@@ -1116,6 +1101,7 @@
       ;;       nothing))
       (for [_ (push-types)
             _ (set-value-type sym (-> c/fn-constraint
+                                      (c/intersect (c/coll-of-c c/empty-reified))
                                       (c/update-path loc)
                                       (c/update-sym (ast/untag sym))))]
         (.arities ast (map (.arities ast)
@@ -1153,9 +1139,10 @@
     ;; (let [loc (ast/location ast)]
     ;;   (or (= (.line loc) 0)
     ;;       ;; (= (.file loc) 'core)
-    ;;       (do
-    ;;         (status 'checking _LINE_ ast)
-    ;;         nothing)))
+    ;;       (and (= (.sym ast) 'Predicate)
+    ;;            (do
+    ;;              (status 'checking _LINE_ ast)
+    ;;              nothing))))
     (for [_ (push-types)]
       (.value-exprs ast (-> (.value-exprs ast)
                             (remove (partial instance? ast/block-comment-ast))
@@ -1232,7 +1219,7 @@
                   _ (set-value-type ast/result-sym c/top-type)
                   ;; :let [_ (or ;; (= (.line loc) 0)
                   ;;             ;; (= (.file loc) 'core)
-                  ;;          (and (= (.fn-name ast) 'extract)
+                  ;;          (and (= (.fn-name ast) 'vec)
                   ;;               (do
                   ;;                 (print-err 'pre-prototype _LINE_ (.fn-name ast) (ast/location ast)
                   ;;                            "\n" 'body (.default-body ast))
@@ -1264,7 +1251,7 @@
                          (se/state-error c/top-type)))
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) 'core)
-            ;;          (and (= (.fn-name ast) 'extract)
+            ;;          (and (= (.fn-name ast) 'vec)
             ;;               (do
             ;;                 (print-err 'check-prototype _LINE_ (.fn-name ast) (ast/location ast)
             ;;                            "\n" 'pts pts
@@ -1781,17 +1768,16 @@
                         arity-id
                         (-> c/list-constraint
                             (c/set-items [new-type-constraint field-constraint]))
-                        (-> (c/ParamConstraint arity-id 0 empty-list c/no-symbol "")
-                            (c/intersect (c/TypeOp c/set-to-op
-                                                   [[field-sym]
-                                                    (c/ParamConstraint arity-id 1 empty-list c/no-symbol "")]
-                                                    empty-list))))))
+                        (c/type-op c/set-to-op
+                                   (c/ParamConstraint arity-id 0 empty-list c/no-symbol "")
+                                   [[field-sym]
+                                    (c/ParamConstraint arity-id 1 empty-list c/no-symbol "")]))))
 
                     ;; getter arity
                     (let [arity-id (symbol (str sym "-" field "-getter"))
-                          field-constraint (-> (c/ParamConstraint arity-id 0 empty-list c/no-symbol "")
-                                               (c/intersect (c/TypeOp c/get-from-op [field-sym] empty-list))
-                                               ;; TODO: interesting intersect
+                          field-constraint (-> (c/type-op c/get-from-op
+                                                          (c/ParamConstraint arity-id 0 empty-list c/no-symbol "")
+                                                          [field-sym])
                                                (c/intersect field-constraint))]
                       (ast/fn-arity-ast
                        (ast/tag (str "." field) loc)
@@ -1973,7 +1959,6 @@
                         (.items field-constraints (comp [c/top-type]
                                                         (.items field-constraints)))
                         (.fields new-type-constraint
-                                 ;; TODO: interesting intersect
                                  (merge-with c/intersect
                                              (.fields new-type-constraint)
                                              (-> (zip-lists fields (range (count fields)))
@@ -2000,17 +1985,14 @@
                         (-> c/list-constraint
                             (c/set-items [c/top-type field-constraints]))
                         (.fields new-type-constraint
-                                 ;; TODO: interesting intersect
                                  (merge-with c/intersect
                                              (.fields new-type-constraint)
                                              (-> (zip-lists fields (range (count fields)))
                                                  (reduce {} (fn [m [fld idx]]
                                                               (assoc m (c/Field (symbol (str "." fld)))
-                                                                     (c/intersect
-                                                                      (c/ParamConstraint arity-id 1 empty-list
-                                                                                         c/no-symbol "")
-                                                                      (c/TypeOp c/get-from-op [idx]
-                                                                                empty-list))))))))))])}
+                                                                     (c/type-op c/get-from-op
+                                                                                (c/param arity-id 1)
+                                                                                [idx])))))))))])}
 
                   Stringable-sym
                   (let [s (str "<ValueConstructor " new-type-name " ["
