@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "2ce5f25"))
+                          :sha "2da4190"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "2f738df"))
+                            :sha "8d3a71e"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -25,7 +25,7 @@
                            :sha "d61aa1e"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "01416e1"))
+                            :sha "051e3c6"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -145,48 +145,6 @@
     (map (f arity)
          (partial .arity x))))
 
-(deftype ProtoImpls [fn-sym default-impl impl-fns]
-  (assert (instance? Symbol fn-sym))
-  (assert (instance? c/FnConstraint default-impl))
-  (assert (instance? (map-of Integer c/FnConstraint) impl-fns))
-
-  Stringable
-  (string-list [_]
-    (list "(ProtoImpls '" (str fn-sym) "\n" (str default-impl) "\n\n" (str impl-fns) ")"))
-
-  Container
-  (map [x f]
-    (ProtoImpls fn-sym
-                (map default-impl f)
-                (map-vals impl-fns f)))
-
-  (map [x f embed]
-    (for [def-impl (map default-impl f embed)
-          impl-fns (contextual-map-vals impl-fns f embed)]
-      (ProtoImpls fn-sym def-impl impl-fns)))
-
-  c/Constraint
-  (c/show-full [c]
-    (comp (list (str "prototype " fn-sym))
-          (c/show-full (.default-impl c))
-          (list (str (map-vals impl-fns (fn [x]
-                                          (to-str (interpose x "\n"))))))))
-
-  (c/format-path [_ n]
-    (c/format-path default-impl n))
-
-  (c/assertion-path [_]
-    (c/assertion-path default-impl))
-
-  (c/intersect [x y]
-    (cond (instance? ProtoImpls y)
-          (c/intersect default-impl (.default-impl y))
-
-          (c/intersect default-impl y))))
-
-(def ConstraintOrProto (any-of c/Constraints
-                               ProtoImpls))
-
 (deftype Module [path index protocols namespaces types value-types]
   ;; path             path to file containing the modules source code (Symbol or String)
   ;; index            this module's index
@@ -196,7 +154,7 @@
   ;; namespaces      imported namespaces
   (assert (instance? (map-of Symbol Module) namespaces))
   ;; types           map of symbols (type names) to type constraints
-  ;; TODO: wrong. needs to include ProtoImpls
+  ;; TODO: wrong. needs to include c/ProtoImpls
   (assert (instance? (map-of Symbol c/ValueConstraint) types))
   ;; value-types     map of symbols (values) to type constraints
   ;; (assert (instance? (list-of (map-of Symbol c/ValueConstraint)) value-types))
@@ -253,7 +211,7 @@
                                (c/ListConstraint [required-field c/top-type]
                                                  c/no-tail empty-list c/no-symbol "")
                              c/top-type)}
-        getter (ProtoImpls sym (.arities c/fn-constraint arities) {})]
+        getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})]
     (cond (empty? types-list)
           (list {sym getter})
 
@@ -325,7 +283,7 @@
 
 (defn set-value-type [sym constraint]
   (assert (instance? ast/OptionalTagged sym))
-  (assert (instance? ConstraintOrProto constraint))
+  (assert (instance? c/Constraints constraint))
 
   (cond (= c/no-symbol sym)
         (se/state-error constraint)
@@ -350,7 +308,7 @@
 
 (defn append-value-type [sym constraint loc]
   (assert (instance? ast/OptionalTagged sym))
-  (assert (instance? ConstraintOrProto constraint))
+  (assert (instance? c/Constraints constraint))
 
   (cond (= sym c/no-symbol)
         (se/state-error constraint)
@@ -389,7 +347,7 @@
                             (cond (= new-const c/bottom-type)
                                   (compilation-error (conf-ass _LINE_ new-const loc))
 
-                                  (instance? ProtoImpls curr-const)
+                                  (instance? c/ProtoImpls curr-const)
                                   se-nop
 
                                   (set-value-type sym (c/update-path new-const loc)))))))))
@@ -405,7 +363,7 @@
                               types-list))))
 
 (defn add-impl [proto-impls type-num arg-count arity-c loc]
-  (instance? ProtoImpls proto-impls)
+  (instance? c/ProtoImpls proto-impls)
 
   (either (map (get-in proto-impls [.default-impl .arities arg-count])
                (fn [default-arity]
@@ -484,7 +442,7 @@
           (comp (flat-map (se/get-in-val [.value-types 0 (ast/untag fn-sym)])
                           (fn [proto-impls]
                             (let [new-proto (add-impl proto-impls type-num arg-count arity-c loc)]
-                              (cond (instance? ProtoImpls new-proto)
+                              (cond (instance? c/ProtoImpls new-proto)
                                     (for [vts (se/get-val .value-types)
                                           _ (se/set-val .value-types
                                                         (map vts (fn [m]
@@ -510,7 +468,7 @@
                                                                 val-types-list (map val-types-list
                                                                                     (fn [m]
                                                                                       (assoc m sym new-proto)))]
-                                                            (cond (instance? ProtoImpls new-proto)
+                                                            (cond (instance? c/ProtoImpls new-proto)
                                                                   (do
                                                                     (deliver core-prom se-nop)
                                                                     (assoc-in mods ['core .value-types]
@@ -1202,7 +1160,7 @@
 
             (for [_ (comp (se/get-in-val [.value-types 0 (ast/untag (.fn-name ast)) .default-impl])
                           (set-value-type (.fn-name ast)
-                                          (ProtoImpls (ast/untag (.fn-name ast))
+                                          (c/ProtoImpls (ast/untag (.fn-name ast))
                                                       (.arities c/fn-constraint {}) {})))
                   _ (push-types)
                   _ (set-value-type ast/result-sym c/top-type)
@@ -1260,7 +1218,7 @@
                                                                    [sym .default-impl .arities arg-count]
                                                                    impl-c)
                                                          (rest types-list))))
-                                            (list {sym (ProtoImpls sym
+                                            (list {sym (c/ProtoImpls sym
                                                                    (.arities c/fn-constraint {arg-count impl-c})
                                                                    {})})))))]
         (.constraint ast impl-c)))))
@@ -2245,7 +2203,7 @@
                                                                                   "' (" type-num ")")
                                                    "at" (ast/location (.type-sym ast))))))))))
 
-(extend-type ProtoImpls
+(extend-type c/ProtoImpls
   TypeChecker
   (call-with-args [ast args target]
     (let [loc (ast/location target)
@@ -2433,7 +2391,7 @@
 
 ;; (main [_]
 ;;   (print-err (cata c/show-full
-;;                    (ProtoImpls
+;;                    (c/ProtoImpls
 ;;                     'wut
 ;;                     (.arities c/fn-constraint
 ;;                               (select-keys (.arities c/fn-constraint) [2]))
