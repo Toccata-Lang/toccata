@@ -529,14 +529,6 @@
                        "\n" (type-name ast) ast
                        "\n\n" constraint))
 
-  (call-with-args [ast args target]
-    (assert (instance? Vector args))
-    (assert-result x (instance? se/StateError x))
-
-    (compilation-error "Could not find implementation of 'call-with-args' at" (ast/location target)
-                       "for target:" target
-                       "\n" (type-name ast) ast))
-
   (recover-val-type [x]
     (assert-result x (instance? se/StateError x))
 
@@ -660,113 +652,6 @@
     ;; TODO: remove this eventually
     (se/state-error ast)))
 
-(extend-type c/FnConstraint
-  TypeChecker
-  (call-with-args [fn-c args target]
-    (let [loc (ast/location target)
-          num-args (count args)]
-      (either (map (and (= target 'show-type)
-                        (first args))
-                   (fn [arg]
-                     (status (c/update-path (.constraint arg) loc)
-                             ;; (map (cata c/show-full (c/update-path (.constraint arg) loc))
-                             ;;             (partial str  "\n  "))
-                             )))
-              '_)
-      ;; get the arity
-      (either (map (or (get-in fn-c [.arities num-args])
-                       (get-in fn-c [.arities c/variadic]))
-                   (fn [arity]
-                     (assert (instance? c/fn-arity arity))
-                     (let [arity-id (.arity-id arity)
-                           required-args (count (.items (.param-consts arity)))]
-                       ;; make sure there are enough args for the arity
-                       (cond (< num-args required-args)
-                             (compilation-error "Insufficient arguments for call"
-                                                (cond (instance? ast/Tagged target)
-                                                      (str "to '" target "' at")
-
-                                                      "at")
-                                                loc)
-
-                             ;; split the required and rest args
-                             (let [[fixed-arg-cs var-arg-cs] (-> args
-                                                                 (map (fn [arg]
-                                                                        (either (get arg .constraint)
-                                                                                (do
-                                                                                  ;; TODO: just for testing.
-                                                                                  ;; Remove
-                                                                                  (status 'no-constraint-arg
-                                                                                          loc _LINE_ arg)
-                                                                                  c/top-type))))
-                                                                 (split required-args))
-
-                                   ;; construct the args list to reify with
-                                   var-args-c (-> c/empty-list-constraint
-                                                  (c/set-items var-arg-cs))
-                                   all-arg-cs (conj fixed-arg-cs var-args-c)
-
-                                   ;; rewrite the arity with the args
-                                   reified-arity (c/reify-type-constraint arity arity-id
-                                                                          all-arg-cs loc)]
-                               ;; (cond (and  ;; (= "core-types.toc" (.file loc))
-                               ;;             (= target 'list-map))
-                               ;;       (status 'debug-site _LINE_ loc arity-id
-                               ;;               "\n" (str "(" (to-str (interpose (cons target (seq args))
-                               ;;                                                " ")) ")")
-                               ;;               "\n\n" 'arity arity
-                               ;;               "\n\n" 'all-args all-arg-cs
-                               ;;               "\n\n" 'reified reified-arity)
-                               ;;       '_)
-
-                               ;; did it fail
-                               (cond (= (c/is-bottom reified-arity) c/bottom-type)
-                                     (compilation-error 'site _LINE_ loc arity-id
-                                                        "\n" (str "(" (to-str (interpose (cons target (seq args))
-                                                                                         " ")) ")")
-                                                        "\n\n" 'arity arity
-                                                        "\n\n" 'all-args all-arg-cs
-                                                        "\n\n" 'reified reified-arity
-                                                        "\n\n" (conf-ass _LINE_ (c/is-bottom reified-arity) loc))
-
-                                     ;; update all the arg ast constraints
-                                     (map (-> (zip-lists args
-                                                         (c/get-items (.param-consts reified-arity) num-args)
-                                                         ;; TODO: only needed for debugging. Remove
-                                                         ;; (c/get-items (.param-consts arity) num-args)
-                                                         )
-                                              (se/traverse
-                                               (fn [[arg param ;; orig-p
-                                                     ]]
-                                                 ;; (let [p (fn [_]
-                                                 ;;          (status 'as-arg _LINE_ loc arity-id
-                                                 ;;                 "\n" 'arg arg
-                                                 ;;                 "\n\n" 'orig-p orig-p
-                                                 ;;                 "\n\n" 'arg-c (.constraint arg)
-                                                 ;;                 "\n\n" 'param param))]
-                                                 ;;   (either (or (map (= target 'maybe-map) p)
-                                                 ;;               (= param c/top-type)
-                                                 ;;               (= param (.constraint arg))
-                                                 ;;               (instance? c/ParamConstraint (.constraint arg))
-                                                 ;;               )
-
-                                                 ;;           '_))
-                                                 (update-constraint arg param loc))))
-                                          (fn [_]
-                                            ;; and return the result constraint
-                                            (.result-const reified-arity)))))))))
-              (compilation-error "No arity found for" (count args) "args for call"
-                                 (cond (instance? ast/Tagged target)
-                                       (str "to '" target "' at")
-
-                                       "at")
-                                 loc)))))
-
-(extend-type c/AllValues
-  TypeChecker
-  (call-with-args [c args target]
-    (se/state-error c/top-type)))
-
 (extend-type c/Field
   TypeChecker
   (all-symbols [c]
@@ -794,20 +679,6 @@
 ;;                    (append-value-type (ast/tag sym) c (ast/location old-c))))
 ;;             (se/state-error c))))
 
-(extend-type c/ParamConstraint
-  TypeChecker
-  (call-with-args [c args target]
-    (-> (c/type-op c/call-value-op c (map args .constraint))
-        (c/update-path (ast/location target))
-        se/state-error)))
-
-(extend-type c/MultiConstraint
-  TypeChecker
-  (call-with-args [c args target]
-    (let [new-c (-> (c/type-op c/call-value-op c (map args .constraint))
-                    (c/update-path (ast/location target)))]
-      (se/state-error new-c))))
-
 (extend-type c/AllValues
   TypeChecker
   (type-check [ast old-ast]
@@ -829,11 +700,6 @@
 
 (extend-type c/ReifiedConstraint
   TypeChecker
-  (call-with-args [c args target]
-    (flat-map (get-value-type invoke-sym)
-              (fn [invoke-impls]
-                (call-with-args invoke-impls (comp [target] args) target))))
-
   (type-check [c old-c]
     (let [loc (ast/location old-c)]
       (flat-map (cond (= c/UnknownType (c/type-num c))
@@ -1269,8 +1135,6 @@
             :let [result-type (c/trim (c/do-call-value target-c
                                                        (map (.args ast) .constraint)
                                                        (list [(.file loc) (.line loc)])))]
-            ;; result-type (call-with-args (-> ast .call-target .constraint) (.args ast) (.call-target ast))
-
             ;; _ (se/when (or (< (.line loc) 1160)
             ;;                (= (.file loc) 'core)
             ;;                (and (= (.call-target old-ast) 'map)
@@ -2227,40 +2091,6 @@
                                 (compilation-error "Could not find impl for" (str "'" (.type-sym ast)
                                                                                   "' (" type-num ")")
                                                    "at" (ast/location (.type-sym ast))))))))))
-
-(extend-type c/ProtoImpls
-  TypeChecker
-  (call-with-args [ast args target]
-    (let [loc (ast/location target)
-          disp-arg (first args)]
-      (cond disp-arg
-            (either (for [disp-type (map disp-arg (fn [ast]
-                                                    (-> ast .constraint c/type-num)))
-                          ;; _ (or ;; (= (.file loc) 'core)
-                          ;;       ;; (= (.line loc) 0)
-                          ;;    (and (= target 'Tester)
-                          ;;         (do
-                          ;;           (status 'call _LINE_ loc disp-type
-                          ;;                   "\n\n" 'args args
-                          ;;                   "\n\n" 'ast (get-in ast [.impl-fns disp-type]))
-                          ;;           (maybe '_)))
-                          ;;    (maybe '_))
-                          f (or (get-in ast [.impl-fns disp-type])
-                                (get ast .default-impl))]
-                      (call-with-args f args target))
-                    (compilation-error "Invalid prototype call"
-                                       (cond (instance? ast/Tagged target)
-                                             (str "to '" target "' at")
-
-                                             "at")
-                                       loc))
-
-            (compilation-error "At least one argument requred for call"
-                               (cond (instance? ast/Tagged target)
-                                     (str "to '" target "' at")
-
-                                     "at")
-                               loc)))))
 
 (def _ (print-err 'creating-parser))
 
