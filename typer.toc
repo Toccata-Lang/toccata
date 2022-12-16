@@ -13,10 +13,10 @@
                             :sha "13097ff"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "2da4190"))
+                          :sha "536a861"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "8d3a71e"))
+                            :sha "f5b0c54"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -25,7 +25,7 @@
                            :sha "d61aa1e"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "051e3c6"))
+                            :sha "0232d59"))
 (add-ns b (module "base.toc"))
 
 (def symbols-sym (ast/tag "#symbols"))
@@ -396,7 +396,7 @@
                                                                 "\n\n" (conf-ass _LINE_ def-ar loc))
                                                      (abort))
                                                    def-ar)))
-                       new-arity-c (c/intersect arity-c default-arity)]
+                       new-arity-c (c/trim (c/intersect arity-c default-arity))]
                    ;; (cond (and (= c/MaybeType type-num)
                    ;;            (= (.fn-sym proto-impls) 'type-args))
                    ;;       (status 'proto-result _LINE_ loc
@@ -673,12 +673,14 @@
                              ;;             (partial str  "\n  "))
                              )))
               '_)
-      (either (map (or (get-in fn-c [.arities (count args)])
+      ;; get the arity
+      (either (map (or (get-in fn-c [.arities num-args])
                        (get-in fn-c [.arities c/variadic]))
                    (fn [arity]
                      (assert (instance? c/fn-arity arity))
                      (let [arity-id (.arity-id arity)
                            required-args (count (.items (.param-consts arity)))]
+                       ;; make sure there are enough args for the arity
                        (cond (< num-args required-args)
                              (compilation-error "Insufficient arguments for call"
                                                 (cond (instance? ast/Tagged target)
@@ -687,21 +689,24 @@
                                                       "at")
                                                 loc)
 
-                             (let [[fixed-arg-cs var-arg-cs]
-                                   (-> args
-                                       (map (fn [arg]
-                                              (either (get arg .constraint)
-                                                      (do
-                                                        ;; TODO: just for testing.
-                                                        ;; Remove
-                                                        (status 'no-constraint-arg
-                                                                loc _LINE_ arg)
-                                                        c/top-type))))
-                                       (split required-args))
+                             ;; split the required and rest args
+                             (let [[fixed-arg-cs var-arg-cs] (-> args
+                                                                 (map (fn [arg]
+                                                                        (either (get arg .constraint)
+                                                                                (do
+                                                                                  ;; TODO: just for testing.
+                                                                                  ;; Remove
+                                                                                  (status 'no-constraint-arg
+                                                                                          loc _LINE_ arg)
+                                                                                  c/top-type))))
+                                                                 (split required-args))
 
+                                   ;; construct the args list to reify with
                                    var-args-c (-> c/empty-list-constraint
                                                   (c/set-items var-arg-cs))
                                    all-arg-cs (conj fixed-arg-cs var-args-c)
+
+                                   ;; rewrite the arity with the args
                                    reified-arity (c/reify-type-constraint arity arity-id
                                                                           all-arg-cs loc)]
                                ;; (cond (and  ;; (= "core-types.toc" (.file loc))
@@ -713,6 +718,8 @@
                                ;;               "\n\n" 'all-args all-arg-cs
                                ;;               "\n\n" 'reified reified-arity)
                                ;;       '_)
+
+                               ;; did it fail
                                (cond (= (c/is-bottom reified-arity) c/bottom-type)
                                      (compilation-error 'site _LINE_ loc arity-id
                                                         "\n" (str "(" (to-str (interpose (cons target (seq args))
@@ -722,29 +729,32 @@
                                                         "\n\n" 'reified reified-arity
                                                         "\n\n" (conf-ass _LINE_ (c/is-bottom reified-arity) loc))
 
-                                       (map (-> (zip-lists args
-                                                           (c/get-items (.param-consts reified-arity) num-args)
-                                                           ;; TODO: only needed for debugging. Remove
-                                                           (c/get-items (.param-consts arity) num-args))
-                                                (se/traverse
-                                                 (fn [[arg param orig-p]]
-                                                   ;; (let [p (fn [_]
-                                                   ;;          (status 'as-arg _LINE_ loc arity-id
-                                                   ;;                 "\n" 'arg arg
-                                                   ;;                 "\n\n" 'orig-p orig-p
-                                                   ;;                 "\n\n" 'arg-c (.constraint arg)
-                                                   ;;                 "\n\n" 'param param))]
-                                                   ;;   (either (or (map (= target 'maybe-map) p)
-                                                   ;;               (= param c/top-type)
-                                                   ;;               (= param (.constraint arg))
-                                                   ;;               (instance? c/ParamConstraint (.constraint arg))
-                                                   ;;               )
+                                     ;; update all the arg ast constraints
+                                     (map (-> (zip-lists args
+                                                         (c/get-items (.param-consts reified-arity) num-args)
+                                                         ;; TODO: only needed for debugging. Remove
+                                                         ;; (c/get-items (.param-consts arity) num-args)
+                                                         )
+                                              (se/traverse
+                                               (fn [[arg param ;; orig-p
+                                                     ]]
+                                                 ;; (let [p (fn [_]
+                                                 ;;          (status 'as-arg _LINE_ loc arity-id
+                                                 ;;                 "\n" 'arg arg
+                                                 ;;                 "\n\n" 'orig-p orig-p
+                                                 ;;                 "\n\n" 'arg-c (.constraint arg)
+                                                 ;;                 "\n\n" 'param param))]
+                                                 ;;   (either (or (map (= target 'maybe-map) p)
+                                                 ;;               (= param c/top-type)
+                                                 ;;               (= param (.constraint arg))
+                                                 ;;               (instance? c/ParamConstraint (.constraint arg))
+                                                 ;;               )
 
-                                                   ;;           '_))
-                                                   (update-constraint arg param loc))))
-                                            (fn [new-args]
-                                              (let [result (.result-const reified-arity)]
-                                                result)))))))))
+                                                 ;;           '_))
+                                                 (update-constraint arg param loc))))
+                                          (fn [_]
+                                            ;; and return the result constraint
+                                            (.result-const reified-arity)))))))))
               (compilation-error "No arity found for" (count args) "args for call"
                                  (cond (instance? ast/Tagged target)
                                        (str "to '" target "' at")
@@ -1140,7 +1150,7 @@
                                                (fn [c]
                                                  (set-value-type sym (c/update-path c loc))))
 
-                                     (set-value-type sym (.constraint (c/trim val))))))
+                                     (set-value-type sym (c/trim (.constraint val))))))
                         (set-value-type (.sym old-ast) c/top-type))]
           (do
             ;; (status 'def _LINE_ loc (.sym old-ast) "\n" c)
@@ -1235,11 +1245,12 @@
 (extend-type ast/call-ast
   TypeChecker
   (type-check [ast old-ast]
-    (let [loc (ast/location (.call-target old-ast))]
+    (let [loc (ast/location (.call-target old-ast))
+          target-c (.constraint (.call-target ast))]
       (for [
-            ;; _ (se/when (or (< (.line loc) 1160)
+            ;; _ (se/when (or (= (.line loc) 0)
             ;;                (= (.file loc) 'core)
-            ;;                (and (= (.call-target old-ast) 'map)
+            ;;                (and (= (.call-target old-ast) 'f2)
             ;;                     (do
             ;;                       (status 'calling-top _LINE_ loc
             ;;                               "\n" 'target (.call-target ast)
@@ -1252,8 +1263,14 @@
             ;;                       nothing))
             ;;                (maybe '_)))
 
-            ;; TODO: replace all this garbage using ArgOf and ResultOf
-            result-type (call-with-args (-> ast .call-target .constraint) (.args ast) (.call-target ast))
+            _ (se/traverse (zip-lists (range (count (.args ast))) (.args ast))
+                           (fn [[idx ast]]
+                             (update-constraint ast (c/type-op c/arg-of-op target-c idx) loc)))
+            :let [result-type (c/trim (c/do-call-value target-c
+                                                       (map (.args ast) .constraint)
+                                                       (list [(.file loc) (.line loc)])))]
+            ;; result-type (call-with-args (-> ast .call-target .constraint) (.args ast) (.call-target ast))
+
             ;; _ (se/when (or (< (.line loc) 1160)
             ;;                (= (.file loc) 'core)
             ;;                (and (= (.call-target old-ast) 'map)
@@ -1265,7 +1282,12 @@
             _ (either (map (and (= c/bottom-type result-type)
                                 (first (.constraints result-type)))
                            (fn [_]
-                             (compilation-error (conf-ass _LINE_ result-type loc))))
+                             (compilation-error 'site _LINE_ loc
+                                                "\n" old-ast
+                                                "\n\n" 'target-c target-c
+                                                "\n\n" 'arg-cs (map (.args ast) .constraint)
+                                                "\n\n" 'result-type result-type
+                                                "\n\n" (conf-ass _LINE_ result-type loc))))
                       se-nop)]
         (-> ast
             (.args (.args ast))
@@ -1283,7 +1305,7 @@
                             (-> old-ast .arity .fn-sym)
                             (-> old-ast .arity .params .fixed count)
                             (.constraint (.arity ast)))]
-      ast)))
+      (c/trim ast))))
 
 (extend-type ast/reify-ast
   TypeChecker
