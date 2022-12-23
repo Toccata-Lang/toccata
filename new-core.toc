@@ -86,7 +86,7 @@
   (inline C List "return(listMap(l_0, lf_1));"))
 
 (defn list-concat [l]
-  ! l (list-of Sequence)
+  ! l (list-of (any-of String Sequence))
   !returns (concat l)
   (inline C "return(listConcat(l_0));"))
 
@@ -925,8 +925,7 @@ abort();
   (get [m k]
     ;; Retrieve the value associated with `k` in `m`, wrapped in a `Maybe` if it exists.
     ;; Otherwise, return `nothing`
-    ;; TODO: add value type to result
-    !returns Maybe
+    !returns (maybe-of (inner-type-of m))
     )
 
   (keys [m]
@@ -1520,7 +1519,8 @@ abort();
 
   Seqable
   (last [coll]
-    (chop-list coll (dec (count coll))))
+    (let [[_ tail] (chop-list coll (dec (count coll)) empty-list)]
+      (first tail)))
 
   (take [coll n]
     (let [[prefix _] (split coll n)]
@@ -1582,3 +1582,225 @@ abort();
                 (fn [x f]
                   (f x)))))))
 
+(defn vec= [x y n]
+  ! x Vector
+  ! y Vector
+  ! n Integer
+
+  (or (=* 0 n)
+      (let [n (dec n)]
+        (and (=* (get x n) (get y n))
+             (vec= x y n)))))
+
+(defn comp-vect [v vs]
+  ! v Vector
+  ! vs (sequence-of Sequence)
+  !returns (concat (list-as [(type-of v)] (type-of vs)))
+
+  ;; TODO: I wonder if this could be streamlined
+  ;; or even an inline fn
+  (reduce (cons v (seq vs)) empty-vector
+          (fn [v next-v]
+            (reduce next-v v mutate-vect-conj))))
+
+(defn vect-reduce [v n result f]
+  ;; TODO: could these be inferrred?
+  ! v (vector-of (type-of-arg f 1))
+  !returns (call-fn f result (inner-type-of v))
+
+  (either (map (get v n)
+               (fn [x]
+                 (vect-reduce v (inc n) (f result x) f)))
+          result))
+
+(defn subvec* [v curr-index max-index result]
+  ! v Vector
+  ! result Vector
+  !returns (vector-of (inner-type-of v))
+
+  (either (and (<* curr-index (inc max-index))
+               (map (get v curr-index)
+                    (fn [x]
+                      (subvec* v (inc curr-index) max-index (mutate-vect-conj result x)))))
+          result))
+
+(defn subvec
+  ;; Extract a smaller vector from a larger one
+  ([v start]
+   (subvec* v start (count v) empty-vector))
+  ([v start len]
+   (subvec* v start (dec (add-numbers start len)) empty-vector)))
+
+(extend-type Vector
+  Type
+  (type-name [_] "Vector")
+  (type-args [v] v)
+
+  Stringable
+  (string-list [v]
+    (list "[" (to-str (interpose (seq v) ", ")) "]"))
+
+  Hashable
+  (sha1-update [v ctxt]
+    (sha1-update-type v ctxt)
+    (vect-reduce v 0 ctxt (fn [ctxt x]
+                            (sha1-update x ctxt))))
+
+  (sha1 [v]
+    (let [ctxt (sha1-init)]
+      (sha1-update v ctxt)
+      (sha1-finalize ctxt)))
+
+  Composition
+  (zero [_] empty-vector)
+  (comp* [v vs]
+    (comp-vect v vs))
+
+  Container
+  (wrap [v x]
+    [x])
+
+  (map [v vf]
+    ! v (vector-of (type-of-arg vf 0))
+    !returns (vector-of (call-fn vf (inner-type-of v)))
+
+    (vect-reduce v 0 empty-vector (fn [v x]
+                                    (mutate-vect-conj v (vf x)))))
+
+  ;; TODO: when there are two subsections for a protocol such as Container, the first one gets blown away
+  ;; Container
+  (map [v f embed]
+    (-> v
+        reverse
+        (vect-reduce 0 (embed empty-vector)
+                     (fn [v x]
+                       (flat-map (f x)
+                                 (fn [y]
+                                   (map v (fn [v]
+                                            (conj v y)))))))
+        (map reverse)))
+
+  (flat-map [v mf]
+    (vect-reduce v 0 empty-vector
+                 (fn [result x]
+                   (vect-reduce (mf x) 0 result mutate-vect-conj))))
+
+  (flatten [v]
+    (comp-vect [] v))
+
+  Collection
+  (empty? [v]
+    (and (=* 0 (vect-count v))
+         (maybe empty-vector)))
+
+  (filter [v f]
+    !returns Vector
+
+    (vect-reduce v 0 empty-vector
+                 (fn [result x]
+                   (cond (f x)
+                         (mutate-vect-conj result x)
+
+                         result))))
+
+  (reduce [v result f]
+    (vect-reduce v 0 result f))
+
+  (empty [coll] empty-vector)
+
+  (count [l]
+    (vect-count l))
+
+  Seqable
+  (rest [v]
+    (subvec v 1))
+
+  (split-with [v pred prefix]
+    ! prefix Vector
+    !returns (vector-of [Vector Vector])
+
+    (either (for [head (first v)
+                  :when (pred head)]
+              (split-with (rest v) pred (conj prefix head)))
+            [prefix v]))
+
+  (vec [v]
+    v)
+
+  (first [v]
+    (get v 0))
+
+  (last [v]
+    (and (<* 0 (vect-count v))
+         (get v (dec (vect-count v)))))
+
+  (butlast [v]
+    (subvec v 0 (dec (vect-count v))))
+
+  (split [v n]
+    !returns (vector-of [Vector Vector])
+
+    [(subvec v 0 n) (subvec v n)])
+
+  Indexed
+  (nth [v n]
+    (get v n))
+
+  Eq
+  (=* [x y]
+    (and (instance? Vector y)
+         (=* (vect-count x) (count y))
+         (vec= x y (vect-count x))
+         (maybe x))))
+
+(extend-type Vector
+  Seqable
+  (split-with [v pred]
+    (split-with v pred [])))
+
+(extend-type Vector
+  Stringable
+  (show* [x indent]
+    (either (map (empty? x) string-list)
+            (let [[h & tail] (seq x)]
+              (comp (cons "[" (show* h (comp indent " ")))
+                    (flat-map tail (fn [x]
+                                     (list* ",\n" indent " "
+                                            (show* x (comp indent " ")))))
+                    (list "]")))))
+
+  Container
+  (apply [mf vects]
+    !returns (vector-of (result-of (inner-type-of mf)))
+
+    (either (for [f (first mf)
+                  vect (first vects)]
+              (apply-to-vectors f
+                                (rest vects)
+                                (map vect vector)))
+            []))
+
+  Seqable
+  (take [coll n]
+    (let [[prefix _] (split coll n)]
+      prefix))
+
+  (drop [coll n]
+    (let [[_ tail] (split coll n)]
+      tail))
+
+  (drop-while [coll pred]
+    ! coll (vector-of (type-of-arg pred 0))
+
+    (let [[_ tail] (split-with coll pred)]
+      tail))
+
+  (take-while [coll pred]
+    (let [[prefix _] (split-with coll pred)]
+      prefix))
+
+  (to-str [coll]
+    (to-str (seq coll))))
+
+;; TODO: come back to check this
+;; (def _ (show-type (comp* [1] '([a b] ["wut"]))))
