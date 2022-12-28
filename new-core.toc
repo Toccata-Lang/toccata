@@ -346,14 +346,17 @@
   (inline C Symbol "return(symbol(sym_str_0));"))
 
 (defn add-promise-action [p f]
-  ! p Promise
-  ;; !returns (promise-of (result-of f))
+  ! p (promise-of (type-of-arg f 0))
+  ! f (required-arities 1)
+  !returns (promise-of (call-fn f (inner-type-of p)))
+
   (inline C Promise "return(addPromiseAction((Promise *)p_0, f_1));"))
 
 (defn promise
   ([] (inline C Promise "return((Value *)malloc_promise());\n"))
   ([v]
-   ;; !returns (promise-of (type-of v))
+   !returns (promise-of (type-of v))
+
    (deliver (promise) v)))
 
 (defn future
@@ -1962,3 +1965,70 @@ abort();
   Stringable
   (string-list [_]
     (list "<Opaque Pointer>")))
+
+(extend-type Promise
+  Type
+  (type-name [_] "Promise")
+
+  Stringable
+  (string-list [p]
+    (either (map (delivered p) (fn [x]
+                                 (list "<Promise "
+                                       (to-str (string-list x)) " "
+                                       (str (address-of p)) ">")))
+            (list "<Promise " (str (address-of p)) ">")))
+
+  (show* [p indent]
+    (either (for [x (delivered p)]
+              (comp (list* "<Promise " (show* x (comp indent "         ")))
+                    (list ">")))
+            (list "<Promise>")))
+
+  Composition
+  (comp* [p ps]
+    ! ps (list-of Promise)
+
+    (let [new-p (promise)
+          f (fn [x] (deliver new-p x))]
+      (map (cons p ps) (fn [p]
+                         (add-promise-action p f)))
+      new-p))
+
+  Container
+  (extract [prom]
+    !returns (inner-type-of prom)
+
+    (inline C "return(extractPromise(prom_0));"))
+
+  (map [p f]
+    (let [new-p (promise)]
+      (add-promise-action p (fn [x]
+                              (deliver new-p (f x))))
+      new-p))
+
+  (wrap [_ v]
+    !returns (promise-of (type-of v))
+
+    (promise v))
+
+  (flat-map [p f]
+    (let [new-p (promise)]
+      (add-promise-action p (fn [x]
+                              (add-promise-action (f x) (fn [y]
+                                                          (deliver new-p y)))))
+      new-p)))
+
+(extend-type Promise
+  Container
+  (apply [p-f p-vs]
+    (let [new-p (promise)
+          p-vlist (reduce (reverse p-vs) (promise empty-list)
+                          (fn [p-list p-v]
+                            (flat-map p-list (fn [l]
+                                               (map p-v (fn [v]
+                                                          (cons v l)))))))]
+      (add-promise-action p-vlist (fn [vs]
+                                    (deliver new-p (apply (extract p-f) vs))))
+      new-p)))
+
+  
