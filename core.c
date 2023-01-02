@@ -969,7 +969,7 @@ void freePromise(Value *v) {
   Promise *p = (Promise *)v;
   if (p->actions != (List *)0) {
     Value *acts = (Value *)p->actions;
-    p->actions = (Value *)0;
+    p->actions = (List *)0;
     dec_and_free(acts, 1);
   }
   if (p->result != (Value *)0) {
