@@ -7,10 +7,10 @@
                           :sha "d1d3464"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "79a7f0c"))
+                            :sha "b9c6dfa"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "5e16192"))
+                            :sha "0ca7f06"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -30,10 +30,14 @@
 (defprotocol Evaluation
   (pre-eval [ast env]
     [ast env])
+
   (eval [ast env]
     ;; (print-err 'ast _LINE_ ast
     ;;            "\n\n" 'env env)
-    ))
+    )
+
+  (eval-app [f call env]
+    (.call-target call f)))
 
 (extend-type Vector
   Evaluation
@@ -94,43 +98,45 @@
 (extend-type ast/fn-ast
   Evaluation
   (eval [ast _]
-    ast))
+    ast)
 
-(extend-type ast/call-ast
-  Evaluation
-  ;; (pre-eval [ast env]
-  ;;   [(.args ast (map (.args ast) Skip))
-  ;;    env])
-
-  (eval [expr env]
-    (let [args (.args expr)
+  (eval-app [tgt call env]
+    (let [args (.args call)
           arg-count (count args)]
-      (either (for [tgt (instance? ast/fn-ast (.call-target expr))
-                    arity (or (some (.arities tgt)
+      (either (for [arity (or (some (.arities tgt)
                                     (fn [arity]
                                       (and (= (count (.params arity)) arg-count)
                                            (maybe arity))))
                               (do
-                                (print-err 'no-arity-found (ast/location expr) arg-count
+                                (print-err 'no-arity-found (ast/location call) arg-count
                                            "\n\n" tgt)
                                 nothing))]
                 (let [new-env (-> arity
                                   .params
                                   .fixed
                                   (zip-lists args)
-                                  (reduce env (fn [m [k v]]
-                                                (assoc m k v))))
-                      r (either (last (hylo-env pre-eval eval
-                                                new-env
-                                                (.body arity)))
-                                expr)]
-                  ;; (print-err 'expr _LINE_ expr
-                  ;;            "\n\n" 'env env
-                  ;;            "\n\n" 'new-env new-env
+                                  (reduce {} (fn [m [k v]]
+                                               (assoc m k v))))
+                      new-body (ast/simple-replace (.body arity) new-env)
+                      r (either (last (hylo-env pre-eval eval env new-body))
+                                call)]
+                  ;; (print-err 'expr _LINE_ (.call-target call)
+                  ;;            "\n\n" 'args (.args call)
+                  ;;            "\n\n" 'env (keys env)
+                  ;;            ;; "\n\n" 'new-env new-env
                   ;;            "\n\n" 'result r)
                   ;; (abort)
                   r))
-              expr))))
+              (.call-target call tgt)))))
+
+(extend-type ast/call-ast
+  Evaluation
+  (pre-eval [ast env]
+    [(.args ast (map (.args ast) Skip))
+     env])
+
+  (eval [expr env]
+    (eval-app (.call-target expr) expr env)))
 
 (extend-type ast/tagged-symbol
   Evaluation
@@ -141,6 +147,12 @@
 (def parse-forms
   (rd/parser
    (grmr/none-or-more rdr/top-level)))
+
+(defn eval-expr [expr defs]
+  (print-err 'expr _LINE_ expr)
+  (let [new-expr (hylo-env pre-eval eval defs expr)]
+    (either (= new-expr expr)
+            (eval-expr new-expr defs))))
 
 (defn eval-exprs [exprs]
   (let [defs (-> (.value exprs)
@@ -155,8 +167,7 @@
         expr (either (last (remove (.value exprs)
                                    (partial instance? ast/definition-ast)))
                       ast/no-comment)]
-    (print-err 'expr _LINE_ expr)
-    (hylo-env pre-eval eval defs expr)))
+    (eval-expr expr defs)))
 
 (main [args]
   (let [[_ file-name] args]
@@ -170,7 +181,7 @@
                                   (fn [r]
                                     (print-err (.msg r))
                                     (abort)))
-                             (print-err 'result _LINE_ (eval-exprs parse-result))))))
+                             (eval-exprs parse-result)))))
 
             ;; or tell everyone it couldn't be
             (print-err str "Could not find/open " file-name)))
