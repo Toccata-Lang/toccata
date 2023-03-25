@@ -7,10 +7,10 @@
                           :sha "d1d3464"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "b9c6dfa"))
+                            :sha "3e2ef7f"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "0ca7f06"))
+                            :sha "95b258c"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -39,6 +39,28 @@
   (eval-app [f call env]
     (.call-target call f)))
 
+(def CoreType (any-of Integer))
+
+(extend-type Fn
+  Container
+  (map [f _] f)
+  (map [f _ embed] (embed f))
+
+  Evaluation
+  (eval-app [f app-expr env]
+    (cond (every (.args app-expr) (partial instance? CoreType))
+          (apply f (.args app-expr))
+
+          (.call-target app-expr f)))
+
+  (eval [f _]
+    f))
+
+(extend-type Integer
+  Evaluation
+  (eval [n _]
+    n))
+
 (extend-type Vector
   Evaluation
   (eval [ast env]
@@ -61,31 +83,33 @@
   (map [e f embed]
     (embed expr)))
 
+(defn church [n]
+  (let [fn-sym (ast/tag (symbol (str n)))
+        x (ast/tag (gensym "x"))
+        y (ast/tag (gensym "y"))
+        ;; dups (-> (range (.int n))
+        ;;          (map (fn [n]
+        ;;                 (ast/tag (symbol (str 'a (inc n))) loc)))
+        ;;          vec)
+        ]
+    (ast/fn-ast fn-sym
+                [(ast/fn-arity
+                  fn-sym
+                  (ast/params [x])
+                  ast/no-comment
+                  [(ast/fn-ast c/no-symbol
+                               [(ast/fn-arity
+                                 c/no-symbol
+                                 (ast/params [y])
+                                 ast/no-comment
+                                 [(reduce (range n) y
+                                          (fn [expr _]
+                                            (ast/call-ast x [expr])))])])])])))
+
 (extend-type ast/integer-ast
   Evaluation
   (eval [n env]
-    (let [loc (ast/location n)
-          fn-sym (ast/tag (symbol (str n)) loc)
-          x (ast/tag (gensym "x") loc)
-          y (ast/tag (gensym "y") loc)
-          ;; dups (-> (range (.int n))
-          ;;          (map (fn [n]
-          ;;                 (ast/tag (symbol (str 'a (inc n))) loc)))
-          ;;          vec)
-          ]
-      (ast/fn-ast fn-sym
-                  [(ast/fn-arity
-                    fn-sym
-                    (ast/params [x])
-                    ast/no-comment
-                    [(ast/fn-ast c/no-symbol
-                                 [(ast/fn-arity
-                                   c/no-symbol
-                                   (ast/params [y])
-                                   ast/no-comment
-                                   [(reduce (range (.int n)) y
-                                            (fn [expr _]
-                                              (ast/call-ast x [expr])))])])])]))))
+    (.int n)))
 
 (extend-type ast/fn-arity-ast
   Evaluation
@@ -154,16 +178,20 @@
     (either (= new-expr expr)
             (eval-expr new-expr defs))))
 
+(def core-env {(ast/tag 'church) church
+               (ast/tag 'inc) inc})
+
 (defn eval-exprs [exprs]
   (let [defs (-> (.value exprs)
                  (filter (partial instance? ast/definition-ast))
-                 (reduce {} (fn [defs def]
-                              (either (-> (.value-exprs def)
-                                          (remove (partial instance? ast/NoCode))
-                                          last
-                                          (map (fn [val-ast]
-                                                 (assoc defs (.sym def) val-ast))))
-                                      defs))))
+                 (reduce core-env
+                         (fn [defs def]
+                           (either (-> (.value-exprs def)
+                                       (remove (partial instance? ast/NoCode))
+                                       last
+                                       (map (fn [val-ast]
+                                              (assoc defs (.sym def) val-ast))))
+                                   defs))))
         expr (either (last (remove (.value exprs)
                                    (partial instance? ast/definition-ast)))
                       ast/no-comment)]
