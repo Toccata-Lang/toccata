@@ -7,10 +7,10 @@
                           :sha "d1d3464"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "34d588c"))
+                            :sha "332c97a"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "1800bc1"))
+                            :sha "03830a1"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -36,6 +36,10 @@
     ;;            "\n\n" 'env env)
     )
 
+  (eval-bind [val binding env]
+    (print-err 'binding-val _LINE_ (type-name val) val)
+    (abort))
+
   (eval-app [f call env]
     (.call-target call f)))
 
@@ -54,6 +58,12 @@
             (apply f new-args)
 
             (ast/call-ast f new-args))))
+
+  (eval-bind [f binding env]
+    (either (last (ast/simple-replace (.cont binding) {(.id binding) f}))
+            (do
+              (print-err 'compiler-error _FILE_ _LINE_)
+              (abort))))
 
   (eval [f _]
     f))
@@ -92,6 +102,7 @@
 
 (defn church [n]
   (let [fn-sym (ast/tag (symbol (str n)))
+        param-x (ast/tag (gensym "px"))
         x (ast/tag (gensym "x"))
         y (ast/tag (gensym "y"))
         ;; dups (-> (range (.int n))
@@ -100,23 +111,40 @@
         ;;          vec)
         ]
     (ast/fn-ast fn-sym
-                [(ast/fn-arity
+                [(ast/fn-arity-ast
                   fn-sym
-                  (ast/params [x])
+                  (ast/params [param-x])
                   ast/no-comment
                   [(ast/fn-ast c/no-symbol
-                               [(ast/fn-arity
+                               [(ast/fn-arity-ast
                                  c/no-symbol
                                  (ast/params [y])
                                  ast/no-comment
-                                 [(reduce (range n) y
-                                          (fn [expr _]
-                                            (ast/call-ast x [expr])))])])])])))
+                                 [(ast/binding-ast x param-x
+                                                    [(reduce (range n) y
+                                                             (fn [expr _]
+                                                               (ast/call-ast x [expr])))])]
+                                 {param-x 1})])]
+                  {})])))
 
 (extend-type ast/integer-ast
   Evaluation
   (eval [n env]
     (.int n)))
+
+(extend-type ast/binding-ast
+  Evaluation
+  (pre-eval [ast env]
+    [(.cont ast (either (instance? ast/binding-ast (.cont ast))
+                        (Skip (.cont ast))))
+     (dissoc-all env (ast/all-syms (.id ast)))])
+
+  (eval-bind [expr binding env]
+    (.expr binding expr))
+
+  (eval [ast env]
+    ;; (print-err 'eval-binding _LINE_ ast)
+    (eval-bind (.expr ast) ast env)))
 
 (extend-type ast/fn-arity-ast
   Evaluation
@@ -130,6 +158,14 @@
   Evaluation
   (eval [ast _]
     ast)
+
+  (eval-bind [f binding env]
+    ;; todo: temporary hack. expand later
+    ;; what if there are free-vars in some, all or none of the arities
+    (either (last (ast/simple-replace (.cont binding) {(.id binding) f}))
+            (do
+              (print-err 'compiler-error _FILE_ _LINE_)
+              (abort))))
 
   (eval-app [tgt call env]
     (let [args (.args call)
@@ -166,11 +202,17 @@
     [(.args ast (map (.args ast) Skip))
      env])
 
+  (eval-bind [ast binding env]
+    (.expr binding ast))
+
   (eval [expr env]
     (eval-app (.call-target expr) expr env)))
 
 (extend-type ast/tagged-symbol
   Evaluation
+  (eval-bind [s binding env]
+    (.expr binding s))
+
   (eval [s env]
     (either (get env s)
              s)))
