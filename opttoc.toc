@@ -7,10 +7,10 @@
                           :sha "d1d3464"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "332c97a"))
+                            :sha "cb3f470"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "03830a1"))
+                            :sha "9750c7e"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -20,6 +20,9 @@
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "36fa952"))
+(add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
+                           "state-error.toc"
+                           :sha "43bc6f4"))
 
 (defn hylo-env [descend ascend env x]
   (let [[y new-env] (descend x env)]
@@ -43,7 +46,80 @@
   (eval-app [f call env]
     (.call-target call f)))
 
-(def CoreType (any-of Integer))
+(deftype Self []
+  Stringable
+  (string-list [_]
+    (list "self")))
+
+(def self (Self))
+
+(defprotocol DotOut
+  (grph-down [expr]
+    (assert-result r (instance? se/StateError r))
+    (se/state-error expr))
+
+  (grph-up [expr]
+    (assert-result r (instance? se/StateError r))))
+
+(defn grph
+  ([expr] (grph expr {}))
+  ([expr env]
+   ;; _ (print-err 'expr _LINE_ expr
+   ;;              "\n\n" 'env env)
+   ((hylo grph-down grph-up expr se/state-error) (list env))))
+
+(defn get-val [k]
+  (se/get-in-val [0 k]))
+
+(defn dissoc-val [k]
+  (se/update-state (fn [st]
+                     (cons (either (map (first st) (fn [m]
+                                                     (dissoc m k)))
+                                   {})
+                           (rest st)))))
+
+(defn set-val [k v]
+  (map (se/update-state (fn [st]
+                          (cons (either (map (first st) (fn [m]
+                                                          (assoc m k v)))
+                                        {k v})
+                                (rest st))))
+       (fn [_]
+         v)))
+
+(defn fresh-vars [vs]
+  (fn [expr]
+    (reify
+      Container
+      (map [_ f embed]
+        (f expr))
+
+      DotOut
+      (grph-down [this]
+        (map (se/traverse vs
+                          (fn [s]
+                            (let [node-id (gensym (str s))]
+                              (println node-id (str "[label=\"" s "\"]"))
+                              (set-val s node-id))))
+             (fn [_]
+               this))))))
+
+(defn push-env []
+  (se/update-state (fn [st]
+                     (cons (either (first st)
+                                   {})
+                           st))))
+
+(defn pop-env []
+  (se/update-state rest))
+
+(defn nip-env [vs]
+  (se/update-state (fn [[head snd & tail]]
+                     (-> (reduce vs head dissoc)
+                         (comp (select-keys snd vs))
+                         (cons tail)))))
+
+(def CoreType (any-of Integer Fn))
 
 (extend-type Fn
   Container
@@ -66,7 +142,28 @@
               (abort))))
 
   (eval [f _]
-    f))
+    f)
+
+  ;; DotOut
+  ;; (grph-up [expr]
+  ;;   (let [node-id (gensym "fn")
+  ;;         x-end (str node-id ":sw")
+  ;;         y-end (str node-id ":se")]
+  ;;     (println node-id (str "[label=\"" (fn-name expr) "\", ordering=out]"))
+  ;;     (for [_ (cond (instance? String x)
+  ;;                   (se/state-error (println x-end "--" x))
+
+  ;;                   (comp (for [endpoint (get-val x)]
+  ;;                           (println x-end "--" endpoint))
+  ;;                         (set-val x x-end)))
+  ;;           _ (cond (instance? String y)
+  ;;                   (se/state-error (println y-end "--" y))
+
+  ;;                   (comp (for [endpoint (get-val y)]
+  ;;                           (println y-end "--" endpoint))
+  ;;                         (set-val y y-end)))]
+  ;;       (str node-id ":n"))))
+  )
 
 (extend-type Integer
   Container
@@ -81,7 +178,11 @@
 (extend-type Vector
   Evaluation
   (eval [ast env]
-    ast))
+    ast)
+
+  DotOut
+  (grph-up [v]
+    (se/state-error v)))
 
 (extend-type c/NoSymbol
   Evaluation
@@ -130,7 +231,13 @@
 (extend-type ast/integer-ast
   Evaluation
   (eval [n env]
-    (.int n)))
+    (.int n))
+
+  DotOut
+  (grph-up [n]
+    (let [node-id (gensym "int")]
+      (println node-id (str "[label=\"" (str (.int n)) "\", ordering=out]"))
+      (se/state-error (str node-id)))))
 
 (extend-type ast/binding-ast
   Evaluation
@@ -144,7 +251,54 @@
 
   (eval [ast env]
     ;; (print-err 'eval-binding _LINE_ ast)
-    (eval-bind (.expr ast) ast env)))
+    (eval-bind (.expr ast) ast env))
+
+  DotOut
+  (grph-down [expr]
+    (let [node-id (gensym "bnd")
+          endpoint (str node-id ":n")]
+      (println node-id (str "[label=\"\",")
+               "height=0.4, width=0.4, fixedsize=true, shape=triangle, orientation=180]")
+      (for [_ (push-env)
+            _ (set-val self node-id)
+            _ (se/traverse (ast/all-syms (.id expr))
+                           (fn [id]
+                             (set-val id endpoint)))]
+        expr)))
+
+  (grph-up [expr]
+    (for [node-id (get-val self)
+          :let [arg-end (str node-id ":sw")
+                new-ids (reduce (ast/all-syms (.id expr)) [self]
+                                (fn [new-ids id]
+                                  (cond (instance? ast/tagged-symbol id)
+                                        (conj new-ids id)
+
+                                        (comp new-ids id))))]
+          _ (nip-env new-ids)
+          _ (cond (instance? Sequence (.expr expr))
+                  ;; (se/traverse (.expr expr)
+                  ;;              (fn [v]
+                  ;;                (cond (instance? String v)
+                  ;;                      (se/state-error (println arg-end "--" v))
+
+                  ;;                      (comp (map (get-val v)
+                  ;;                                 (fn [endp]
+                  ;;                                   (println arg-end "--" endp)))
+                  ;;                            (set-val v arg-end)))))
+                  (do
+                    (print-err 'graphing-error _LINE_ expr)
+                    (abort))
+
+                  (instance? String (.expr expr))
+                  (se/state-error (println arg-end "--" (.expr expr)))
+
+                  (comp (map (get-val (.expr expr))
+                             (fn [endp]
+                               (println arg-end "--" endp)))
+                        (set-val (.expr expr) arg-end)))]
+      (either (last (.cont expr))
+              ""))))
 
 (extend-type ast/fn-arity-ast
   Evaluation
@@ -152,7 +306,32 @@
     [ast (dissoc-all env (ast/all-syms (.params ast)))])
 
   (eval [ast env]
-    ast))
+    ast)
+
+  DotOut
+  (grph-down [f]
+    (let [node-id (gensym "fn")]
+      (println node-id (str "[label=\"λ\"]"))
+      (for [_ (push-env)
+            _ (set-val self node-id)
+            _ (se/traverse (ast/all-syms (.params f))
+                           (fn [v]
+                             (set-val v (str node-id ":sw"))))]
+        f)))
+
+  (grph-up [f]
+    (for [node-id (get-val self)
+          :let [body (either (last (.body f))
+                             (ast/tag '_))]
+          _ (cond (instance? ast/tagged-symbol body)
+                  (comp (for [body-node (get-val body)]
+                          (println (str node-id ":s") "--" body-node))
+
+                        ;; (set-val body (str node-id ":s"))
+                        (se/state-error '_))
+                  (se/state-error (println (str node-id ":s") "--" body)))
+          _ (pop-env)]
+      (str node-id ":n"))))
 
 (extend-type ast/fn-ast
   Evaluation
@@ -194,7 +373,12 @@
                   ;;            "\n\n" 'result r)
                   ;; (abort)
                   r))
-              (.call-target call tgt)))))
+              (.call-target call tgt))))
+
+  DotOut
+  (grph-up [expr]
+    (se/state-error (either (first (.arities expr))
+                            ""))))
 
 (extend-type ast/call-ast
   Evaluation
@@ -206,7 +390,37 @@
     (.expr binding ast))
 
   (eval [expr env]
-    (eval-app (.call-target expr) expr env)))
+    (eval-app (.call-target expr) expr env))
+
+  DotOut
+  (grph-down [expr]
+    (let [node-id (gensym "app")]
+      (println node-id (str "[label=\"@\", ordering=out]"))
+      (for [_ (push-env)
+            _ (set-val self node-id)]
+        expr)))
+
+  (grph-up [expr]
+    (for [node-id (get-val self)
+          :let [tgt (.call-target expr)
+                tgt-end (str node-id ":sw")
+                arg-end (str node-id ":se")]
+          _ (pop-env)
+          _ (cond (instance? String tgt)
+                  (se/state-error (println tgt-end "--" tgt))
+
+                  (comp (for [endpoint (get-val tgt)]
+                          (println tgt-end "--" endpoint))
+                        (set-val tgt tgt-end)))
+          _ (se/traverse (.args expr) (fn [arg]
+                                       (cond (instance? String arg)
+                                             (se/state-error (println arg-end "--" arg))
+
+                                             (comp (for [endpoint (get-val arg)]
+                                                     (println arg-end "--" endpoint))
+                                                   (set-val arg arg-end)))))]
+      (str node-id ":n"))))
+
 
 (extend-type ast/tagged-symbol
   Evaluation
@@ -215,20 +429,25 @@
 
   (eval [s env]
     (either (get env s)
-             s)))
+            s))
+
+  DotOut
+  (grph-up [s]
+    (se/state-error s)))
 
 (def parse-forms
   (rd/parser
    (grmr/none-or-more rdr/top-level)))
 
 (defn eval-expr [expr defs]
-  (print-err 'expr _LINE_ expr)
+  ;; (print-err 'expr _LINE_ expr)
   (let [new-expr (hylo-env pre-eval eval defs expr)]
     (either (= new-expr expr)
             (eval-expr new-expr defs))))
 
 (def core-env {(ast/tag 'church) church
-               (ast/tag 'inc) inc})
+               (ast/tag 'inc) inc
+               (ast/tag 'grph) grph})
 
 (defn eval-exprs [exprs]
   (let [defs (-> (.value exprs)
@@ -246,9 +465,12 @@
         expr (either (last (remove (.value exprs)
                                    (partial instance? ast/definition-ast)))
                       ast/no-comment)]
-    (eval-expr expr defs)))
+    (grph (eval-expr expr defs))))
 
 (main [args]
+  (println "graph sharing {")
+  (println "node [shape=none, height=0, width=0]"
+           "\nedge [arrowhead=none]")
   (let [[_ file-name] args]
     (either (map (fio/file-in file-name)
                  (fn [file-in]
@@ -264,4 +486,5 @@
 
             ;; or tell everyone it couldn't be
             (print-err str "Could not find/open " file-name)))
+  (println  "}\n")
   (print-err 'done))
