@@ -7,7 +7,7 @@
                           :sha "d1d3464"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "cb3f470"))
+                            :sha "33cbe78"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
                             :sha "9750c7e"))
@@ -31,6 +31,22 @@
             new-env)))
 
 (defprotocol Evaluation
+  (head [expr])
+
+  (strong-norm [expr])
+
+  (do-app [expr app-expr]
+    ;; (.call-target app-expr expr)
+    )
+
+  (do-dup [expr dup-expr]
+    ;; (.expr dup-expr expr)
+    )
+
+  (lazy-redex [expr]
+    ;; expr
+    )
+
   (pre-eval [ast env]
     [ast env])
 
@@ -45,6 +61,12 @@
 
   (eval-app [f call env]
     (.call-target call f)))
+
+(defn eval-expr [expr defs]
+  (print-err 'expr _LINE_ expr)
+  (let [new-expr (hylo-env pre-eval eval defs expr)]
+    (either (= new-expr expr)
+            (eval-expr new-expr defs))))
 
 (deftype Self []
   Stringable
@@ -64,9 +86,8 @@
 (defn grph
   ([expr] (grph expr {}))
   ([expr env]
-   ;; _ (print-err 'expr _LINE_ expr
-   ;;              "\n\n" 'env env)
-   ((hylo grph-down grph-up expr se/state-error) (list env))))
+   ((hylo grph-down grph-up expr se/state-error) (list env))
+   expr))
 
 (defn get-val [k]
   (se/get-in-val [0 k]))
@@ -114,8 +135,8 @@
   (se/update-state rest))
 
 (defn nip-env [vs]
-  (se/update-state (fn [[head snd & tail]]
-                     (-> (reduce vs head dissoc)
+  (se/update-state (fn [[fst snd & tail]]
+                     (-> (reduce vs fst dissoc)
                          (comp (select-keys snd vs))
                          (cons tail)))))
 
@@ -130,7 +151,8 @@
   (eval-app [f app-expr env]
     (let [new-args (map (.args app-expr) (fn [arg]
                                            (hylo-env pre-eval eval env arg)))]
-      (cond (every new-args (partial instance? CoreType))
+      (cond (or (= f grph)
+                (every new-args (partial instance? CoreType)))
             (apply f new-args)
 
             (ast/call-ast f new-args))))
@@ -173,7 +195,13 @@
 
   Evaluation
   (eval [n _]
-    n))
+    n)
+
+  DotOut
+  (grph-up [n]
+    (let [node-id (gensym "int")]
+      (println node-id (str "[label=\"" (str n) "\", ordering=out]"))
+      (se/state-error (str node-id)))))
 
 (extend-type Vector
   Evaluation
@@ -239,8 +267,78 @@
       (println node-id (str "[label=\"" (str (.int n)) "\", ordering=out]"))
       (se/state-error (str node-id)))))
 
+(defn replace [expr new-exprs]
+  (hylo-env (fn [v env]
+              (cond (instance? ast/fn-arity-ast v)
+                    [v env]
+
+                    (instance? ast/binding-ast v)
+                    (let [new-expr (replace (.expr v) env)]
+                      [(.expr v new-expr) env])
+
+                    (instance? Symbol v)
+                    [(either (get env v)
+                             v)
+                     env]
+
+                    [v env]))
+            (fn [v env]
+              (cond (instance? ast/call-ast v)
+                    (let [new-v (do-app (.call-target v) v)]
+                      ;; (print-err 'replace-app _LINE_ (.lam v)
+                      ;;            "\n\n" 'args (.args v)
+                      ;;            "\n\n" 'new-v new-v)
+                      new-v)
+
+                    (instance? ast/binding-ast v)
+                    (let [new-v (do-dup (.expr v) v)]
+                      ;; (print-err 'replace-dup _LINE_ v
+                      ;;            "\n\n" 'env env
+                      ;;            "\n\n" 'new-v new-v)
+                      new-v)
+
+                    v)
+              )
+            new-exprs expr))
+
 (extend-type ast/binding-ast
   Evaluation
+  (do-dup [x dup-expr]
+    (let [new-id (gensym "d")
+          ;; 'new-cont' only needed when 'replace' doesn't reduce as it replaces
+          new-cont (replace (.cont x) {(.id x) new-id})
+          new-expr (-> x
+                       (.id new-id)
+                       (.cont (.expr dup-expr new-cont)))]
+      ;; (println "subgraph" (gensym "cluster") "{")
+      ;; (println (str "graph [color=none, label=\"Dup - Dup " _LINE_ "\"]"))
+      ;; (grph (hist new-expr))
+      ;; ;; (grph (hist dup-expr))
+      ;; (println "}")
+      new-expr))
+
+  (do-app [x app-expr]
+    (let [new-expr (.cont x (.call-target app-expr (.cont x)))]
+      ;; (println "subgraph" (gensym "cluster") "{")
+      ;; (println (str "graph [color=none, label=\"Dup -- App " _LINE_ "\"]"))
+      ;; (grph (hist new-expr))
+      ;; ;; (grph (hist dup-expr))
+      ;; (println "}")
+      new-expr))
+
+  (head [expr]
+    (-> expr
+        (.cont (RecurseFinal (.cont expr)))
+        RecurseWith))
+
+  (strong-norm [dup-expr]
+    (-> (.expr dup-expr)
+        lazy-redex
+        (do-dup dup-expr)))
+
+  (lazy-redex [expr]
+    (do-dup (.expr expr) expr))
+
   (pre-eval [ast env]
     [(.cont ast (either (instance? ast/binding-ast (.cont ast))
                         (Skip (.cont ast))))
@@ -300,8 +398,73 @@
       (either (last (.cont expr))
               ""))))
 
+(defn free-vars [expr]
+  (cata (fn [v]
+          (cond (instance? ast/fn-arity-ast v)
+                (reduce (ast/all-syms (.params v)) (.body v) dissoc)
+
+                (instance? ast/binding-ast v)
+                (-> (merge-with + (.expr v) (.cont v))
+                    (dissoc (.id v)))
+
+                (instance? ast/call-ast v)
+                (reduce (.args v) (.call-target v) (partial merge-with +))
+
+                (instance? Symbol v)
+                {v 1}
+
+                {}))
+        expr))
+
 (extend-type ast/fn-arity-ast
   Evaluation
+  (head [expr]
+    (RecurseFinal expr))
+
+  ;; App - Lam interaction
+  (do-app [expr app-expr]
+    (let [args (.args app-expr)
+          new-env (reduce (zip-lists (.fixed (.params expr)) args) {}
+                          (fn [m [k v]]
+                            (assoc m k v)))]
+      ;; (println "subgraph" (gensym "cluster") "{")
+      ;; (println (str "graph [color=none, label=\"App - Lam " _LINE_ "\"]"))
+      ;; (let [root (gensym "r")]
+      ;;   (println root "[label=\"App - Lam" _LINE_ "\"]")
+      ;;   (map (first (grph (hist new-expr)))
+      ;;        (fn [node]
+      ;;          (println root "--" node))))
+      ;; (grph (hist app-expr))
+      ;; (println "}")
+      (replace (.body expr) new-env)))
+
+  ;; Dup - Lam interaction
+  (do-dup [expr dup-expr]
+    ;; duplicating a lambda expression
+    (let [fvs (free-vars expr)]
+      (cond (empty? fvs)
+            (let [id (.id dup-expr)
+                  new-expr (ast/simple-replace (.cont dup-expr) {id expr})]
+              ;; (println "subgraph" (gensym "cluster") "{")
+              ;; (println (str "graph [color=none, label=\"Dup - Lam " _LINE_ "\"]"))
+              ;; (grph (hist new-expr))
+              ;; ;; (grph (hist dup-expr))
+              ;; (println "}")
+              new-expr)
+
+            (either (map (and (= expr (.expr dup-expr))
+                              (first (keys fvs)))
+                         (fn [fv]
+                           (ast/binding-ast fv fv dup-expr)))
+                    (.expr dup-expr expr)))))
+
+  (strong-norm [expr]
+    (let [new-bod (lazy-redex (.body expr))]
+      (.body expr new-bod)))
+
+  (lazy-redex [expr]
+    expr)
+
   (pre-eval [ast env]
     [ast (dissoc-all env (ast/all-syms (.params ast)))])
 
@@ -380,8 +543,29 @@
     (se/state-error (either (first (.arities expr))
                             ""))))
 
+(def debugging {(ast/tag 'grph) grph})
+
 (extend-type ast/call-ast
   Evaluation
+  (head [expr]
+    (RecurseWith (.args expr (RecurseFinal (.args expr)))))
+
+  (do-dup [expr dup-expr]
+    (.expr dup-expr expr))
+
+  (do-app [expr app-expr]
+    (.call-target app-expr expr))
+
+  (strong-norm [expr]
+    (let [normd-lam (lazy-redex (.call-target expr))
+          args (.args expr)
+          new-args (map args (fn [inner]
+                               (lazy-redex inner)))]
+      (do-app normd-lam (.args expr new-args))))
+
+  (lazy-redex [expr]
+    (do-app (.call-target expr) expr))
+
   (pre-eval [ast env]
     [(.args ast (map (.args ast) Skip))
      env])
@@ -390,7 +574,13 @@
     (.expr binding ast))
 
   (eval [expr env]
-    (eval-app (.call-target expr) expr env))
+    (either (map (get debugging (.call-target expr))
+                 (fn [debug-fn]
+                   (apply debug-fn (map (.args expr)
+                                        (fn [x]
+                                          (eval-expr x env))))))
+
+            (eval-app (.call-target expr) expr env)))
 
   DotOut
   (grph-down [expr]
@@ -439,15 +629,29 @@
   (rd/parser
    (grmr/none-or-more rdr/top-level)))
 
-(defn eval-expr [expr defs]
-  ;; (print-err 'expr _LINE_ expr)
-  (let [new-expr (hylo-env pre-eval eval defs expr)]
-    (either (= new-expr expr)
-            (eval-expr new-expr defs))))
-
 (def core-env {(ast/tag 'church) church
-               (ast/tag 'inc) inc
-               (ast/tag 'grph) grph})
+               (ast/tag 'inc) inc})
+
+(defn weak-norm [expr]
+  (let [new-head (head expr)]
+    (cond (instance? RecurseFinal new-head)
+          (.x new-head)
+
+          (-> (.x new-head)
+              (map (fn [inner]
+                     (weak-norm inner)))
+              lazy-redex))))
+
+(defn lazy [expr]
+  ;; (print-err 'lazy _LINE_ expr)
+  ;; (println "subgraph" (gensym "cluster") "{")
+  ;; (println "graph [color=none, label=\"I\"]")
+  ;; (println (gensym "i") "[label=\"\"]")
+  ;; (println "}")
+  ;; (println (gensym "sg") "[color=none, label=\"I\"]")
+  (let [new-expr (strong-norm (weak-norm expr))]
+    (either (= new-expr expr)
+            (lazy new-expr))))
 
 (defn eval-exprs [exprs]
   (let [defs (-> (.value exprs)
@@ -465,7 +669,7 @@
         expr (either (last (remove (.value exprs)
                                    (partial instance? ast/definition-ast)))
                       ast/no-comment)]
-    (grph (eval-expr expr defs))))
+    (print-err 'final _LINE_ (eval-expr expr defs))))
 
 (main [args]
   (println "graph sharing {")
