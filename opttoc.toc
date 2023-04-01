@@ -1,7 +1,4 @@
 
-(add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
-                           "state-error.toc"
-                           :sha "43bc6f4"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
                           :sha "d1d3464"))
@@ -31,12 +28,13 @@
             new-env)))
 
 (defprotocol Evaluation
-  (strict [expr])
+  ;; Term.reduce Line 430
+  (redex [expr])
 
-  (head [expr])
-
+  ;; Term.normal.go Line 467
   (strong-norm [expr])
 
+  ;; Term.rule.app Line 222
   (do-app [expr app-expr]
     ;; (.call-target app-expr expr)
     )
@@ -45,29 +43,52 @@
     ;; (.expr dup-expr expr)
     )
 
-  (lazy-redex [expr]
-    ;; expr
-    )
+  ;; (head [expr])
 
-  (pre-eval [ast env]
-    [ast env])
+  ;; (strict [expr])
 
-  (eval [ast env]
-    ;; (print-err 'ast _LINE_ ast
-    ;;            "\n\n" 'env env)
-    )
+  ;; (lazy-redex [expr]
+  ;;   ;; expr
+  ;;   )
 
-  (eval-bind [val binding env]
-    (print-err 'binding-val _LINE_ (type-name val) val)
-    (abort))
+  ;; (pre-eval [ast env]
+  ;;   [ast env])
 
-  (eval-app [f call env]
-    (.call-target call f)))
+  ;; (eval [ast env]
+  ;;   ;; (print-err 'ast _LINE_ ast
+  ;;   ;;            "\n\n" 'env env)
+  ;;   )
 
-(defn eval-expr [expr defs]
-  (let [new-expr (hylo-env pre-eval eval defs expr)]
-    (either (= new-expr expr)
-            (eval-expr new-expr defs))))
+  ;; (eval-bind [val binding env]
+  ;;   (print-err 'binding-val _LINE_ (type-name val) val)
+  ;;   (abort))
+
+  ;; (eval-app [f call env]
+  ;;   (.call-target call f))
+  )
+
+;; (defn eval-expr [expr defs]
+;;   (let [new-expr (hylo-env pre-eval eval defs expr)]
+;;     (either (= new-expr expr)
+;;             (eval-expr new-expr defs))))
+
+(defn lazy [expr]
+  (print-err 'expr _LINE_ expr)
+  ;; (println "subgraph" (gensym "cluster") "{")
+  ;; (println "graph [color=none, label=\"I\"]")
+  ;; (println (gensym "i") "[label=\"\"]")
+  ;; (println "}")
+  ;; (println (gensym "sg") "[color=none, label=\"I\"]")
+  (let [new-expr (strong-norm (redex expr))]
+    (either (or (instance? Fn new-expr)
+                (= new-expr expr))
+            (lazy new-expr))))
+
+(extend-type Symbol
+  Evaluation
+  (redex [s]
+    (print-err 'interp-err _LINE_ s)
+    (abort)))
 
 (deftype Self []
   Stringable
@@ -141,52 +162,191 @@
                          (comp (select-keys snd vs))
                          (cons tail)))))
 
-(def CoreType (any-of Integer Fn))
+(def CoreType (any-of Integer Fn Vector))
+
+(defn replace [expr new-exprs]
+  (print-err 'replacing _LINE_ (type-name expr) expr
+             "\n\n" 'env new-exprs) 
+  (hylo-env (fn [v env]
+              (cond (instance? ast/fn-arity-ast v)
+                    [v (dissoc-all env (ast/all-syms (.params v)))]
+
+                    (instance? ast/binding-ast v)
+                    (let [new-expr (replace (.expr v) env)
+                          new-env (dissoc env (.id v))]
+                      (print-err 'new-expr _LINE_ new-expr
+                                 "\n\n" 'new-env new-env)
+                      [(.expr v new-expr) new-env])
+
+                    ;; (instance? ast/tagged-symbol v)
+                    ;; (either (get env v)
+                    ;;         [v env])
+
+                    (or (instance? ast/integer-ast v)
+                        (instance? ast/fn-ast v)
+                        (instance? ast/call-ast v)
+                        (instance? CoreType v))
+                    [v env]
+
+                    (do
+                      (print-err 'replacing _LINE_ (type-name v) v
+                                 "\n\n" 'env env)
+                      [v env])))
+            (fn [v env]
+              (cond nothing
+                    (abort)
+                    
+                    ;; (instance? ast/call-ast v)
+                    ;; (do-app (.call-target v) v)
+
+                    ;; (instance? ast/binding-ast v)
+                    ;; (do-dup (.expr v) v)
+
+                    (or (instance? ast/integer-ast v)
+                        (instance? ast/fn-ast v)
+                        (instance? ast/fn-arity-ast v)
+                        (instance? ast/tagged-symbol v)
+                        (instance? ast/call-ast v)
+                        (instance? CoreType v))
+                    v
+
+                    (do
+                      (print-err 'replaced _LINE_ (type-name v) v)
+                      v))
+              )
+            new-exprs expr))
+
+(extend-type ast/tagged-symbol
+  Evaluation
+  ;; Equivalent to line 431
+  ;; except we're not doing this in a monad, so a symbol will only be replaced
+  ;; in calls to 'replace' or 'ast/simple-replace'
+  (redex [ast]
+    ast)
+  
+  ;; Line 468
+  (strong-norm [ast]
+    ast)
+
+  ;; Line 255
+  (do-app [ast app-expr]
+    (.call-target app-expr ast))
+
+  ;; (strict [s]
+  ;;   s)
+
+  ;; (do-dup [s dup-expr]
+  ;;   (.expr dup-expr s))
+
+  ;; (lazy-redex [s]
+  ;;   s)
+
+  ;; (head [expr]
+  ;;   (RecurseFinal expr))
+
+  ;; (eval-bind [s binding env]
+  ;;   (.expr binding s))
+
+  ;; (eval [s env]
+  ;;   (either (get env s)
+  ;;           s))
+
+  DotOut
+  (grph-up [s]
+    (se/state-error s)))
+
+(extend-type ast/integer-ast
+  Evaluation
+  (redex [ast]
+    (.int ast))
+
+  ;; (do-app [ast call]
+  ;;   (print-err 'wth _LINE_ ast
+  ;;              "\n\n" 'call call)
+  ;;   (abort))
+
+  ;; (head [n]
+  ;;   (RecurseFinal (.int n)))
+
+  ;; (lazy-redex [n]
+  ;;   (.int n))
+
+  ;; (strong-norm [n]
+  ;;   (.int n))
+
+  ;; (eval [n env]
+  ;;   (.int n))
+
+  DotOut
+  (grph-up [n]
+    (let [node-id (gensym "int")]
+      (println node-id (str "[label=\"" (str (.int n)) "\", ordering=out]"))
+      (se/state-error (str node-id)))))
 
 (extend-type Fn
   Container
-  (map [f _] f)
-  (map [f _ embed] (embed f))
+  (map [f _]
+    f)
+  (map [f _ embed]
+    (embed f))
 
-  Hashable
-  (sha1-update [f ctxt]
-    (sha1-update-type (address-of f) ctxt))
+  ;; Hashable
+  ;; (sha1-update [f ctxt]
+  ;;   (sha1-update-type (address-of f) ctxt))
 
   Evaluation
-  (head [f]
-    (RecurseFinal f))
+  ;; Line 434
+  (redex [expr]
+    expr)
 
-  (strict [f]
-    f)
-
-  (lazy-redex [f]
-    f)
-
+  ;; Line 228
   (do-app [f app-expr]
-    (let [new-args (map (.args app-expr) lazy-redex)]
-      (cond (or (= f grph)
+    ;; a Fn can only be applied to CoreType values, so the args
+    ;; have to be completely reduced with no free variables
+    ;; 'grpbh' is the exception as it can be applied to ast's as well.
+    (let [new-args (map (.args app-expr) lazy)]
+      (cond (or (identical f grph)
                 (every new-args (partial instance? CoreType)))
             (apply f new-args)
 
             (ast/call-ast f new-args))))
 
-  (eval-app [f app-expr env]
-    (let [new-args (map (.args app-expr) (fn [arg]
-                                           (hylo-env pre-eval eval env arg)))]
-      (cond (or (= f grph)
-                (every new-args (partial instance? CoreType)))
-            (apply f new-args)
-
-            (ast/call-ast f new-args))))
-
-  (eval-bind [f binding env]
-    (either (last (ast/simple-replace (.cont binding) {(.id binding) f}))
-            (do
-              (print-err 'compiler-error _FILE_ _LINE_)
-              (abort))))
-
-  (eval [f _]
+  (strong-norm [f]
     f)
+
+  ;; (head [f]
+  ;;   (RecurseFinal f))
+
+  ;; (lazy-redex [f]
+  ;;   f)
+
+  ;; (do-dup [f dup-expr]
+  ;;   (either (last (replace (.cont dup-expr) {(.id dup-expr) f}))
+  ;;           (do
+  ;;             (print-err 'interp-error _LINE_ f
+  ;;                        "\n\n" 'dup dup-expr)
+  ;;             (abort))))
+
+  ;; (strict [f]
+  ;;   f)
+
+  ;; (eval-app [f app-expr env]
+  ;;   (let [new-args (map (.args app-expr) (fn [arg]
+  ;;                                          (hylo-env pre-eval eval env arg)))]
+  ;;     (cond (or (= f grph)
+  ;;               (every new-args (partial instance? CoreType)))
+  ;;           (apply f new-args)
+
+  ;;           (ast/call-ast f new-args))))
+
+  ;; (eval-bind [f binding env]
+  ;;   (either (last (ast/simple-replace (.cont binding) {(.id binding) f}))
+  ;;           (do
+  ;;             (print-err 'compiler-error _FILE_ _LINE_)
+  ;;             (abort))))
+
+  ;; (eval [f _]
+  ;;   f)
 
   DotOut
   (grph-up [expr]
@@ -203,20 +363,31 @@
     (embed n))
 
   Evaluation
+  (redex [n]
+    n)
+
   (strong-norm [n]
     n)
+  
+  ;; (do-app [ast call]
+  ;;   (print-err 'wth _LINE_ ast
+  ;;              "\n\n" 'call call)
+  ;;   (abort))
 
-  (lazy-redex [n]
-    n)
+  ;; (strong-norm [n]
+  ;;   n)
 
-  (head [n]
-    (RecurseFinal n))
+  ;; (lazy-redex [n]
+  ;;   n)
 
-  (strict [n]
-    n)
+  ;; (head [n]
+  ;;   (RecurseFinal n))
 
-  (eval [n _]
-    n)
+  ;; (strict [n]
+  ;;   n)
+
+  ;; (eval [n _]
+  ;;   n)
 
   DotOut
   (grph-up [n]
@@ -225,29 +396,29 @@
       (se/state-error (str node-id)))))
 
 (extend-type Vector
-  Evaluation
-  (eval [ast env]
-    ast)
+  ;; Evaluation
+  ;; (eval [ast env]
+  ;;   ast)
 
-  (do-app [v call]
-    (print-err 'wut _LINE_ v)
-    (abort)
-    call)
+  ;; (do-app [v call]
+  ;;   (print-err 'wut _LINE_ v)
+  ;;   (abort)
+  ;;   call)
 
-  (head [v]
-    (RecurseWith v))
+  ;; (head [v]
+  ;;   (RecurseWith v))
 
-  (lazy-redex [v]
-    (map v lazy-redex))
+  ;; (lazy-redex [v]
+  ;;   (map v lazy-redex))
 
   DotOut
   (grph-up [v]
     (se/state-error v)))
 
-(extend-type c/NoSymbol
-  Evaluation
-  (eval [x _]
-    x))
+;; (extend-type c/NoSymbol
+;;   Evaluation
+;;   (eval [x _]
+;;     x))
 
 (deftype Skip [expr]
   Stringable
@@ -288,122 +459,95 @@
                                  {param-x 1})])]
                   {})])))
 
-(extend-type RecurseFinal
-  Evaluation
-  (head [x]
-    x))
+(defn free-vars [expr]
+  (cata (fn [v]
+          (cond (instance? ast/fn-arity-ast v)
+                (reduce (ast/all-syms (.params v))
+                        (reduce (.body v) {} (partial merge-with +))
+                        dissoc)
 
-(extend-type ast/integer-ast
-  Evaluation
-  (eval [n env]
-    (.int n))
+                (instance? ast/fn-ast v)
+                (reduce (.arities v) {} (partial merge-with +))
 
-  (do-app [ast call]
-    (print-err 'wth _LINE_ ast
-               "\n\n" 'call call)
-    (abort))
+                (instance? ast/binding-ast v)
+                (-> (.cont v)
+                    (reduce (.expr v) (partial merge-with +))
+                    (dissoc (.id v)))
 
-  (head [n]
-    (RecurseFinal n))
+                (instance? ast/call-ast v)
+                (reduce (.args v) (.call-target v) (partial merge-with +))
 
-  (lazy-redex [n]
-    (.int n))
+                (instance? ast/tagged-symbol v)
+                {v 1}
 
-  (strong-norm [n]
-    (.int n))
-
-  DotOut
-  (grph-up [n]
-    (let [node-id (gensym "int")]
-      (println node-id (str "[label=\"" (str (.int n)) "\", ordering=out]"))
-      (se/state-error (str node-id)))))
-
-(defn replace [expr new-exprs]
-  (hylo-env (fn [v env]
-              (cond (instance? ast/fn-arity-ast v)
-                    [v env]
-
-                    (instance? ast/binding-ast v)
-                    (let [new-expr (replace (.expr v) env)]
-                      [(.expr v new-expr) env])
-
-                    (instance? ast/tagged-symbol v)
-                    [(either (get env v)
-                             v)
-                     env]
-
-                    [v env]))
-            (fn [v env]
-              (cond (instance? ast/call-ast v)
-                    (let [new-v (do-app (.call-target v) v)]
-                      ;; (print-err 'replace-app _LINE_ (.lam v)
-                      ;;            "\n\n" 'args (.args v)
-                      ;;            "\n\n" 'new-v new-v)
-                      new-v)
-
-                    (instance? ast/binding-ast v)
-                    (let [new-v (do-dup (.expr v) v)]
-                      new-v)
-
-                    v)
-              )
-            new-exprs expr))
+                {}))
+        expr))
 
 (extend-type ast/binding-ast
   Evaluation
-  (strict [dup-expr]
-    (-> (.expr dup-expr)
-        strict
-        (do-dup dup-expr)))
+  ;; Line 444
+  (redex [expr]
+    ;; here we deviate from .kind. If there are no free vars left in (.expr expr)
+    ;; it can be substituted (and possibly duped) in cont and then cont can be
+    ;; reduced
+    (let [new-expr (lazy (.expr expr))]
+      (cond (empty? (free-vars new-expr))
+            (let [new-cont (ast/simple-replace (.cont expr)
+                                               {(.id expr) new-expr})]
+              (-> new-cont
+                  butlast
+                  (map lazy))
+              (either (map (last new-cont) redex)
+                      (do
+                        (print-err 'interp-err _LINE_ expr
+                                   "\n\n" 'new-cont new-cont)
+                        (abort))))
+            (.expr expr new-expr))))
 
-  (do-dup [x dup-expr]
-    (let [new-id (gensym "d")
-          ;; 'new-cont' only needed when 'replace' doesn't reduce as it replaces
-          new-cont (map (.cont x) (fn [expr]
-                                    (replace expr {(.id x) new-id})))
-          new-expr (-> x
-                       (.id new-id)
-                       (.cont (.expr dup-expr new-cont)))]
-      ;; (println "subgraph" (gensym "cluster") "{")
-      ;; (println (str "graph [color=none, label=\"Dup - Dup " _LINE_ "\"]"))
-      ;; (grph (hist new-expr))
-      ;; ;; (grph (hist dup-expr))
-      ;; (println "}")
-      new-expr))
-
-  (do-app [x app-expr]
-    (let [new-expr (.cont x (.call-target app-expr (.cont x)))]
-      ;; (println "subgraph" (gensym "cluster") "{")
-      ;; (println (str "graph [color=none, label=\"Dup -- App " _LINE_ "\"]"))
-      ;; (grph (hist new-expr))
-      ;; ;; (grph (hist dup-expr))
-      ;; (println "}")
-      new-expr))
-
-  (head [expr]
+  ;; Line 485
+  (strong-norm [expr]
     (-> expr
-        (.cont (RecurseFinal (.cont expr)))
-        RecurseWith))
+        (.expr (lazy (.expr expr)))
+        (.cont (map (.cont expr) lazy))))
 
-  (strong-norm [dup-expr]
-    (-> (.expr dup-expr)
-        lazy-redex
-        (do-dup dup-expr)))
+  ;; Line 250
+  (do-app [expr app-expr]
+    (let [init-cont (butlast (.cont expr))
+          last-cont (either (last (.cont expr))
+                            (do
+                              (print-err 'interp-err _LINE_ expr
+                                         "\n\n" 'app-expr app-expr)
+                              (abort)))
+          new-cont (comp init-cont [(.call-target app-expr last-cont)])]
+      (redex (.cont expr new-cont))))
 
-  (lazy-redex [expr]
-    (do-dup (.expr expr) expr))
+  ;; (do-dup [x dup-expr]
+  ;;   (.expr dup-expr x))
 
-  (pre-eval [ast env]
-    [(.cont ast (either (instance? ast/binding-ast (.cont ast))
-                        (Skip (.cont ast))))
-     (dissoc-all env (ast/all-syms (.id ast)))])
+  ;; (strict [dup-expr]
+  ;;   (-> (.expr dup-expr)
+  ;;       strict
+  ;;       (do-dup dup-expr)))
 
-  (eval-bind [expr binding env]
-    (.expr binding expr))
+  ;; (head [expr]
+  ;;   (-> expr
+  ;;       (.cont (RecurseFinal (.cont expr)))
+  ;;       RecurseWith))
 
-  (eval [ast env]
-    ;; (print-err 'eval-binding _LINE_ ast)
-    (eval-bind (.expr ast) ast env))
+  ;; (lazy-redex [expr]
+  ;;   (do-dup (.expr expr) expr))
+
+  ;; (pre-eval [ast env]
+  ;;   [(.cont ast (either (instance? ast/binding-ast (.cont ast))
+  ;;                       (Skip (.cont ast))))
+  ;;    (dissoc-all env (ast/all-syms (.id ast)))])
+
+  ;; (eval-bind [expr binding env]
+  ;;   (.expr binding expr))
+
+  ;; (eval [ast env]
+  ;;   ;; (print-err 'eval-binding _LINE_ ast)
+  ;;   (eval-bind (.expr ast) ast env))
 
   DotOut
   (grph-down [expr]
@@ -452,69 +596,42 @@
       (either (last (.cont expr))
               ""))))
 
-(defn free-vars [expr]
-  (cata (fn [v]
-          (cond (instance? ast/fn-arity-ast v)
-                (reduce (ast/all-syms (.params v))
-                        (reduce (.body v) {} (partial merge-with +))
-                        dissoc)
-
-                (instance? ast/fn-ast v)
-                (reduce (.arities v) {} (partial merge-with +))
-
-                (instance? ast/binding-ast v)
-                (-> (merge-with + (.expr v) (.cont v))
-                    (dissoc (.id v)))
-
-                (instance? ast/call-ast v)
-                (reduce (.args v) (.call-target v) (partial merge-with +))
-
-                (instance? Symbol v)
-                {v 1}
-
-                {}))
-        expr))
-
 (extend-type ast/fn-arity-ast
   Evaluation
-  (strict [expr]
-    (.body expr (strict (.body expr))))
+  ;; Line 471
+  (strong-norm [expr]
+    (let [new-bod (map (.body expr) lazy)]
+      (.body expr new-bod)))
 
-  (head [expr]
-    (RecurseFinal expr))
-
-  ;; App - Lam interaction
+  ;; Line 228
   (do-app [expr app-expr]
     (let [args (.args app-expr)
           new-env (reduce (zip-lists (.fixed (.params expr)) args) {}
                           (fn [m [k v]]
                             (assoc m k v)))]
-      ;; (println "subgraph" (gensym "cluster") "{")
-      ;; (println (str "graph [color=none, label=\"App - Lam " _LINE_ "\"]"))
-      ;; (let [root (gensym "r")]
-      ;;   (println root "[label=\"App - Lam" _LINE_ "\"]")
-      ;;   (map (first (grph (hist new-expr)))
-      ;;        (fn [node]
-      ;;          (println root "--" node))))
-      ;; (grph (hist app-expr))
-      ;; (println "}")
-      (either (last (map (.body expr)
-                         (fn [expr]
-                           (replace expr new-env))))
+      ;; fully reduce all but the last expression for any side effects
+      (-> (.body expr)
+          butlast
+          (map lazy))
+      (either (map (last (.body expr))
+                   (fn [expr]
+                     (redex (ast/simple-replace expr new-env))))
               app-expr)))
 
-  (strong-norm [expr]
-    (let [new-bod (map (.body expr) lazy-redex)]
-      (.body expr new-bod)))
+  ;; (strict [expr]
+  ;;   (.body expr (strict (.body expr))))
 
-  (lazy-redex [expr]
-    expr)
+  ;; (head [expr]
+  ;;   (RecurseFinal expr))
 
-  (pre-eval [ast env]
-    [ast (dissoc-all env (ast/all-syms (.params ast)))])
+  ;; (lazy-redex [expr]
+  ;;   expr)
 
-  (eval [ast env]
-    ast)
+  ;; (pre-eval [ast env]
+  ;;   [ast (dissoc-all env (ast/all-syms (.params ast)))])
+
+  ;; (eval [ast env]
+  ;;   ast)
 
   DotOut
   (grph-down [f]
@@ -543,87 +660,88 @@
 
 (extend-type ast/fn-ast
   Evaluation
-  (lazy-redex [expr]
+  ;; Line 434
+  (redex [expr]
     expr)
-
-  (head [expr]
-    (RecurseFinal expr))
-
+  
   (strong-norm [ast]
-    ast)
-
-  ;; Dup - Lam interaction
-  (do-dup [expr dup-expr]
-    ;; duplicating a lambda expression
-    (let [fvs (free-vars expr)]
-      (cond (empty? fvs)
-            (let [id (.id dup-expr)
-                  new-expr (ast/simple-replace (.cont dup-expr) {id expr})]
-              ;; (println "subgraph" (gensym "cluster") "{")
-              ;; (println (str "graph [color=none, label=\"Dup - Lam " _LINE_ "\"]"))
-              ;; (grph (hist new-expr))
-              ;; ;; (grph (hist dup-expr))
-              ;; (println "}")
-              (either (last new-expr)
-                      (do
-                        (print-err 'interp-error _LINE_ dup-expr)
-                        (abort))))
-
-            (.expr dup-expr expr))))
+    ;; must apply strong-norm to each of the arities
+    (.arities ast (map (.arities ast) strong-norm)))
 
   (do-app [tgt call]
+    ;; find the correct arity and call do-app on it
     (let [args (.args call)
           arg-count (count args)]
-      (either (for [arity (or (some (.arities tgt)
-                                    (fn [arity]
-                                      (and (= (count (.params arity)) arg-count)
-                                           (maybe arity))))
-                              (do
-                                (print-err 'no-arity-found (ast/location call) arg-count
-                                           "\n\n" tgt)
-                                nothing))]
-                (do-app arity call))
-              (.call-target call tgt))))
+      (either (map (some (.arities tgt)
+                          (fn [arity]
+                            ;; TODO: variadic will be handled here
+                            (and (= (count (.params arity)) arg-count)
+                                 (maybe arity))))
+                   (fn [arity]
+                     (do-app arity call)))
+              (do
+                (print-err 'no-arity-found (ast/location call) arg-count
+                           "\n\n" tgt)
+                (.call-target call tgt)))))
 
-  (eval [ast _]
-    ast)
+  ;; (head [ast]
+  ;;   (RecurseFinal ast))
 
-  (eval-bind [f binding env]
-    ;; todo: temporary hack. expand later
-    ;; what if there are free-vars in some, all or none of the arities
-    (either (last (ast/simple-replace (.cont binding) {(.id binding) f}))
-            (do
-              (print-err 'compiler-error _FILE_ _LINE_)
-              (abort))))
+  ;; ;; Dup - Lam interaction
+  ;; (do-dup [expr dup-expr]
+  ;;   ;; duplicating a lambda expression
+  ;;   (let [fvs (free-vars expr)]
+  ;;     (cond (empty? fvs)
+  ;;           (either (last (replace (.cont dup-expr) {(.id dup-expr) expr}))
+  ;;                   (do
+  ;;                     (print-err 'interp-error _LINE_ expr
+  ;;                                "\n\n" dup-expr)
+  ;;                     (abort)))
 
-  (eval-app [tgt call env]
-    (let [args (.args call)
-          arg-count (count args)]
-      (either (for [arity (or (some (.arities tgt)
-                                    (fn [arity]
-                                      (and (= (count (.params arity)) arg-count)
-                                           (maybe arity))))
-                              (do
-                                (print-err 'no-arity-found (ast/location call) arg-count
-                                           "\n\n" tgt)
-                                nothing))]
-                (let [new-env (-> arity
-                                  .params
-                                  .fixed
-                                  (zip-lists args)
-                                  (reduce {} (fn [m [k v]]
-                                               (assoc m k v))))
-                      new-body (ast/simple-replace (.body arity) new-env)
-                      r (either (last (hylo-env pre-eval eval env new-body))
-                                call)]
-                  ;; (print-err 'expr _LINE_ (.call-target call)
-                  ;;            "\n\n" 'args (.args call)
-                  ;;            "\n\n" 'env (keys env)
-                  ;;            ;; "\n\n" 'new-env new-env
-                  ;;            "\n\n" 'result r)
-                  ;; (abort)
-                  r))
-              (.call-target call tgt))))
+  ;;           (.expr dup-expr expr))))
+
+  ;; (lazy-redex [ast]
+  ;;   ast)
+
+  ;; (eval [ast _]
+  ;;   ast)
+
+  ;; (eval-bind [f binding env]
+  ;;   ;; todo: temporary hack. expand later
+  ;;   ;; what if there are free-vars in some, all or none of the arities
+  ;;   (either (last (ast/simple-replace (.cont binding) {(.id binding) f}))
+  ;;           (do
+  ;;             (print-err 'compiler-error _FILE_ _LINE_)
+  ;;             (abort))))
+
+  ;; (eval-app [tgt call env]
+  ;;   (let [args (.args call)
+  ;;         arg-count (count args)]
+  ;;     (either (for [arity (or (some (.arities tgt)
+  ;;                                   (fn [arity]
+  ;;                                     (and (= (count (.params arity)) arg-count)
+  ;;                                          (maybe arity))))
+  ;;                             (do
+  ;;                               (print-err 'no-arity-found (ast/location call) arg-count
+  ;;                                          "\n\n" tgt)
+  ;;                               nothing))]
+  ;;               (let [new-env (-> arity
+  ;;                                 .params
+  ;;                                 .fixed
+  ;;                                 (zip-lists args)
+  ;;                                 (reduce {} (fn [m [k v]]
+  ;;                                              (assoc m k v))))
+  ;;                     new-body (ast/simple-replace (.body arity) new-env)
+  ;;                     r (either (last (hylo-env pre-eval eval env new-body))
+  ;;                               call)]
+  ;;                 ;; (print-err 'expr _LINE_ (.call-target call)
+  ;;                 ;;            "\n\n" 'args (.args call)
+  ;;                 ;;            "\n\n" 'env (keys env)
+  ;;                 ;;            ;; "\n\n" 'new-env new-env
+  ;;                 ;;            "\n\n" 'result r)
+  ;;                 ;; (abort)
+  ;;                 r))
+  ;;             (.call-target call tgt))))
 
   DotOut
   (grph-up [expr]
@@ -634,48 +752,55 @@
 
 (extend-type ast/call-ast
   Evaluation
-  (strict [expr]
-    (cond (instance? Symbol (.call-target expr))
-          expr
+  (redex [expr]
+    ;; Line 437
+    (do-app (redex (.call-target expr)) expr))
 
-          (let [new-lam (strict (.call-target expr))
-                new-expr (do-app new-lam expr)]
-            new-expr)))
+  ;; Line 475
+  (strong-norm [expr]
+    (let [normd-lam (redex (.call-target expr))
+          args (.args expr)
+          new-args (map args redex)]
+      (-> expr
+          (.call-target normd-lam)
+          (.args new-args))))
 
-  (head [expr]
-    (RecurseWith expr))
-
-  (do-dup [expr dup-expr]
-    (.expr dup-expr expr))
-
+  ;; Line 255
   (do-app [expr app-expr]
     (.call-target app-expr expr))
 
-  (strong-norm [expr]
-    (let [normd-lam (lazy-redex (.call-target expr))
-          args (.args expr)
-          new-args (map args (fn [inner]
-                               (lazy-redex inner)))]
-      (do-app normd-lam (.args expr new-args))))
+  ;; (head [expr]
+  ;;   (RecurseWith (.args expr (Skip (.args expr)))))
 
-  (lazy-redex [expr]
-    (do-app (.call-target expr) expr))
+  ;; (do-dup [expr dup-expr]
+  ;;   (.expr dup-expr expr))
 
-  (pre-eval [ast env]
-    [(.args ast (map (.args ast) Skip))
-     env])
+  ;; (lazy-redex [expr]
+  ;;   (do-app (.call-target expr) expr))
 
-  (eval-bind [ast binding env]
-    (.expr binding ast))
+  ;; (strict [expr]
+  ;;   (cond (instance? Symbol (.call-target expr))
+  ;;         expr
 
-  (eval [expr env]
-    (either (map (get debugging (.call-target expr))
-                 (fn [debug-fn]
-                   (apply debug-fn (map (.args expr)
-                                        (fn [x]
-                                          (eval-expr x env))))))
+  ;;         (let [new-lam (strict (.call-target expr))
+  ;;               new-expr (do-app new-lam expr)]
+  ;;           new-expr)))
 
-            (eval-app (.call-target expr) expr env)))
+  ;; (pre-eval [ast env]
+  ;;   [(.args ast (map (.args ast) Skip))
+  ;;    env])
+
+  ;; (eval-bind [ast binding env]
+  ;;   (.expr binding ast))
+
+  ;; (eval [expr env]
+  ;;   (either (map (get debugging (.call-target expr))
+  ;;                (fn [debug-fn]
+  ;;                  (apply debug-fn (map (.args expr)
+  ;;                                       (fn [x]
+  ;;                                         (eval-expr x env))))))
+
+  ;;           (eval-app (.call-target expr) expr env)))
 
   DotOut
   (grph-down [expr]
@@ -707,83 +832,42 @@
       (str node-id ":n"))))
 
 
-(extend-type ast/tagged-symbol
-  Evaluation
-  (strict [s]
-    s)
-
-  (eval-bind [s binding env]
-    (.expr binding s))
-
-  (eval [s env]
-    (either (get env s)
-            s))
-
-  (do-app [s app-expr]
-    (.call-target app-expr s))
-
-  (do-dup [s dup-expr]
-    (.expr dup-expr s))
-
-  (lazy-redex [s]
-    s)
-
-  (strong-norm [s]
-    s)
-
-  (head [expr]
-    (RecurseFinal expr))
-
-  DotOut
-  (grph-up [s]
-    (se/state-error s)))
-
 (def core-env {(ast/tag 'church) church
-               (ast/tag 'inc) inc})
+               (ast/tag 'inc) inc
+               (ast/tag 'grph) grph})
 
-(defn weak-norm [expr]
-  (let [new-head (head expr)]
-    (cond (instance? RecurseFinal new-head)
-          (.x new-head)
+;; (defn weak-norm [expr]
+;;   (let [new-head (head expr)]
+;;     (cond (instance? RecurseFinal new-head)
+;;           (.x new-head)
 
-          (-> (.x new-head)
-              (map (fn [inner]
-                     (weak-norm inner)))
-              lazy-redex))))
+;;           (-> (.x new-head)
+;;               (map (fn [inner]
+;;                      (weak-norm inner)))
+;;               lazy-redex))))
 
-(defn lazy [expr]
-  ;; (print-err 'lazy _LINE_ expr)
-  ;; (println "subgraph" (gensym "cluster") "{")
-  ;; (println "graph [color=none, label=\"I\"]")
-  ;; (println (gensym "i") "[label=\"\"]")
-  ;; (println "}")
-  ;; (println (gensym "sg") "[color=none, label=\"I\"]")
-  (let [new-expr (strong-norm (weak-norm expr))]
-    (either (= new-expr expr)
-            (lazy new-expr))))
+;; (defn all-strict [expr]
+;;   ;; (print-err 'all-strict _LINE_)
+;;   ;; (println "subgraph" (gensym "cluster") "{")
+;;   ;; (println "graph [color=none, label=\"I\"]")
+;;   ;; (println (gensym "i") "[label=\"\"]")
+;;   ;; (println "}")
+;;   (let [result (strict expr)]
+;;     (cond (= result expr)
+;;           (do
+;;             (print-err 'final _LINE_ result)
+;;             result)
 
-(defn all-strict [expr]
-  ;; (print-err 'all-strict _LINE_)
-  ;; (println "subgraph" (gensym "cluster") "{")
-  ;; (println "graph [color=none, label=\"I\"]")
-  ;; (println (gensym "i") "[label=\"\"]")
-  ;; (println "}")
-  (let [result (strict expr)]
-    (cond (= result expr)
-          (do
-            (print-err 'final _LINE_ result)
-            result)
+;;           ;; (or (instance? Cr result)
+;;           ;;     (instance? Dup result)
+;;           ;;     (instance? App result)
+;;           ;;     (instance? Add result)
+;;           ;;     (instance? Sub result)
+;;           ;;     (instance? Lam result))
+;;           (all-strict result)
 
-          ;; (or (instance? Cr result)
-          ;;     (instance? Dup result)
-          ;;     (instance? App result)
-          ;;     (instance? Add result)
-          ;;     (instance? Sub result)
-          ;;     (instance? Lam result))
-          (all-strict result)
-
-          ;; (print-err 'strict-final _LINE_ result)
-          )))
+;;           ;; (print-err 'strict-final _LINE_ result)
+;;           )))
 
 (defn eval-exprs [exprs]
   (let [defs (-> (.value exprs)
