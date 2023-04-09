@@ -36,7 +36,7 @@ Value *(*prErrSTAR)(Value *str);
 
 void prefs(char *tag, Value *v) {
   if (v != (Value *)0)
-    fprintf(stderr, "%s: %p %d\n", tag, v, v->refs);
+    fprintf(stderr, "%s: %p type: %ld %d\n", tag, v, v->type, v->refs);
   else
     fprintf(stderr, "%s: %p\n", tag, v);
 }
@@ -149,9 +149,9 @@ Value *removeFreeValue(FreeValList *freeList) {
     return((Value *)0);
   } else {
     next.head = item->next;
-    freeList = &next;
+    freeList->head = item->next;
     if (item->refs != refsError) {
-      fprintf(stderr, "failure in removeFreeValue: %d\n", item->refs);
+      fprintf(stderr, "failure in removeFreeValue: %p %d %ld\n", item, item->refs, item->type);
       abort();
     }
     return(item);
@@ -848,6 +848,7 @@ void freeBitmapNode(Value *v) {
     if (!cleaningUp)
       free(v);
   } else {
+    v->refs = refsError;
     v->next = freeBMINodes[cnt].head;
     freeBMINodes[cnt].head = v;
   }
