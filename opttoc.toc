@@ -4,10 +4,10 @@
                           :sha "d1d3464"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "954a236"))
+                            :sha "321aa0b"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "b19575f"))
+                            :sha "12ce161"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -20,12 +20,21 @@
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "43bc6f4"))
+(add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
+                            "system.toc"
+                            :sha "13097ff"))
 
 (def redex-count (agent 0))
 
 (defprotocol Evaluation
-  ;; Term.reduce Line 430
   (redex [expr defs])
+
+  (redex-binding [expr defs bindings]
+    (let [new-expr (ast/simple-replace expr bindings)]
+      ;; (print-err 'rb _LINE_ expr
+      ;;            "\n\n" bindings
+      ;;            "\n\n" 'new new-expr)
+      (redex new-expr defs)))
 
   ;; Term.normal.go Line 467
   (strong-norm [expr defs])
@@ -128,17 +137,29 @@
   (strong-norm [x defs]
     x))
 
+(extend-type Integer
+  Container
+  (map [n _] n)
+  (map [n _ embed]
+    (embed n))
+
+  DotOut
+  (grph-up [n]
+    (let [node-id (gensym "int")]
+      (println node-id (str "[label=\"" (str n) "\", ordering=out]"))
+      (se/state-error (str node-id)))))
+
 (extend-type ast/tagged-symbol
   Evaluation
   ;; Equivalent to line 431
-  ;; except we're not doing this in a monad, so a symbol will only be replaced
-  ;; in calls to 'replace' or 'ast/simple-replace'
   (redex [ast defs]
-    ast)
-  
+    (either (get defs ast)
+            ast))
+
   ;; Line 468
   (strong-norm [ast defs]
-    ast)
+    (either (get defs ast)
+            ast))
 
   ;; Line 255
   (do-app [ast app-expr defs]
@@ -151,6 +172,9 @@
 (extend-type ast/integer-ast
   Evaluation
   (redex [ast defs]
+    (.int ast))
+
+  (strong-norm [ast defs]
     (.int ast))
 
   DotOut
@@ -168,11 +192,6 @@
     (embed f))
 
   Evaluation
-  ;; Line 434
-  (redex [expr defs]
-    expr)
-
-  ;; Line 228
   (do-app [f app-expr defs]
     ;; a Fn can only be applied to CoreType values, so the args
     ;; have to be completely reduced with no free variables
@@ -187,9 +206,6 @@
 
             (ast/call-ast f new-args))))
 
-  (strong-norm [f defs]
-    f)
-
   DotOut
   (grph-up [expr]
     (let [node-id (gensym "fn")
@@ -197,18 +213,6 @@
           y-end (str node-id ":se")]
       (println node-id (str "[label=\"" (fn-name expr) "\", ordering=out]"))
       (se/state-error (str node-id ":n")))))
-
-(extend-type Integer
-  Container
-  (map [n _] n)
-  (map [n _ embed]
-    (embed n))
-
-  DotOut
-  (grph-up [n]
-    (let [node-id (gensym "int")]
-      (println node-id (str "[label=\"" (str n) "\", ordering=out]"))
-      (se/state-error (str node-id)))))
 
 (defn church [n]
   (let [fn-sym (ast/tag (symbol (str n)))
@@ -238,11 +242,17 @@
                                       (ast/fn-arity-ast c/no-symbol
                                                         (ast/params [y])
                                                         ast/no-comment
-                                                        [(ast/binding-ast
+                                                        [
+                                                         ;; (reduce (range n) y
+                                                         ;;         (fn [expr _]
+                                                         ;;           (ast/call-ast param-x [expr])))
+
+                                                         (ast/binding-ast
                                                           x param-x
                                                           [(reduce (range n) y
                                                                    (fn [expr _]
-                                                                     (ast/call-ast x [expr])))])]
+                                                                     (ast/call-ast x [expr])))])
+                                                         ]
                                                         {param-x 1}))])]
                   {})])))
 
@@ -256,39 +266,60 @@
 
 (extend-type ast/binding-ast
   Evaluation
-  ;; Line 444
-  (redex [expr defs]
+  (redex-binding [expr defs bindings]
     ;; here we deviate from .kind. If there are no free vars left in (.expr expr)
     ;; it can be substituted (and possibly duped) in cont and then cont can be
     ;; reduced
-    ;; TODO: instead of reducing (.expr expr) immediately, create a value that will
-    ;; cache the result the first time it gets used
-    (let [new-expr (lazy (.expr expr) defs)]
-      (cond (or (= new-expr (.id expr))
-                (empty? (ast/free-vars new-expr)))
-            (let [new-cont (ast/simple-replace (.cont expr)
-                                               {(.id expr) new-expr})]
+    (let [curr-expr (redex (ast/simple-replace (.expr expr) bindings) defs)]
+      ;; (either (empty? bindings)
+      ;;         (print-err 'expr _LINE_ (.expr expr)
+      ;;                    "\n\n" bindings
+      ;;                    "\n\n" 'curr curr-expr))
+      (cond (or (instance? CoreType curr-expr)
+                (flat-map (instance? ast/fn-ast curr-expr)
+                          (fn [f]
+                            (every (.arities f) (comp empty? .free-vars)))))
+            (let [bindings (assoc bindings (.id expr) curr-expr)
+                  ;; new-cont (map (.cont expr) (fn [cont-expr]
+                  ;;                              (ast/simple-replace cont-expr id-env)))
+                  new-cont (.cont expr)]
+              (send redex-count inc)
               (-> new-cont
                   butlast
                   (map (fn [expr]
-                         (lazy expr defs))))
-              (either (map (last new-cont) (fn [expr]
-                                             (redex expr defs)))
-                      (do
-                        (print-err 'interp-err _LINE_ expr
-                                   "\n\n" 'new-cont new-cont)
-                        (abort))))
+                         (print-err 'boomerity _LINE_)
+                         (abort)
+                         (lazy (ast/simple-replace expr bindings) defs))))
+              (let [r (either (map (last new-cont)
+                                   (fn [expr]
+                                     (redex-binding expr defs bindings)))
+                              (do
+                                (print-err 'interp-err _LINE_ expr
+                                           "\n\n" 'new-cont new-cont)
+                                (abort)))]
+                ;; (print-err 'curr-expr _LINE_ (.id expr) curr-expr
+                ;;            "\n\n" 'fvs (either (for [_ (instance? ast/fn-ast curr-expr)
+                ;;                                      arity (first (.arities curr-expr))]
+                ;;                                  (dissoc-all (merge-maps + (map (.body arity)
+                ;;                                                                 ast/free-vars))
+                ;;                                              (comp (keys defs)
+                ;;                                                    (ast/all-syms (.params arity)))))
+                ;;                                'nada)
+                ;;            ;; "\n\n" 'cont (.cont expr)
+                ;;            "\n\n" 'r r)
+                r))
 
-            (.expr expr new-expr))))
+            (.expr expr curr-expr))))
 
-  ;; Line 485
+  (redex [expr defs]
+    (redex-binding expr defs {}))
+
   (strong-norm [expr defs]
     (-> expr
         (.expr (lazy (.expr expr) defs))
         (.cont (map (.cont expr) (fn [expr]
                                    (lazy expr defs))))))
 
-  ;; Line 250
   (do-app [expr app-expr defs]
     (let [init-cont (butlast (.cont expr))
           last-cont (either (last (.cont expr))
@@ -339,12 +370,11 @@
 
 (extend-type ast/fn-arity-ast
   Evaluation
-  ;; Line 471
   (strong-norm [expr defs]
     (let [new-bod (map (.body expr) (fn [expr]
                                       (lazy expr defs)))
           new-expr (.body expr new-bod)]
-      (.free-vars new-expr (ast/free-vars new-expr))))
+      new-expr))
 
   DotOut
   (grph-down [f]
@@ -373,11 +403,13 @@
 
 ;; Line 228
 (defn apply-arity [expr app-expr defs]
-  (send redex-count inc)
   (let [args (.args app-expr)
-        new-env (reduce (zip-lists (.fixed (.params expr)) args) defs
+        new-env (reduce (zip-lists (.fixed (.params expr)) args) {}
                         (fn [m [k v]]
                           (assoc m k v)))]
+    (send redex-count inc)
+    ;; (print-err 'applying _LINE_ (str "(fn " (.fn-sym expr) expr ")")
+    ;;            "\n\n" 'args args)
     ;; fully reduce all but the last expression for any side effects
     ;; TODO: but what if they have free-vars
     (-> (.body expr)
@@ -395,7 +427,7 @@
   ;; Line 434
   (redex [expr defs]
     expr)
-  
+
   (strong-norm [ast defs]
     ;; must apply strong-norm to each of the arities
     (.arities ast (map (.arities ast) (fn [arity]
@@ -441,9 +473,9 @@
   Evaluation
   (redex [expr defs]
     ;; Line 437
-    (do-app (redex (.call-target expr) defs) expr defs))
+    (let [ct (redex (.call-target expr) defs)]
+      (do-app ct expr defs)))
 
-  ;; Line 475
   (strong-norm [expr defs]
     (let [normd-lam (redex (.call-target expr) defs)
           args (.args expr)
@@ -490,6 +522,7 @@
 (def core-env {(ast/tag 'church) church
                (ast/tag 'print-err) print-err
                (ast/tag 'inc) inc
+               (ast/tag 'dec) dec
                (ast/tag '+) +
                (ast/tag '-) -
                (ast/tag '*) *
@@ -501,10 +534,44 @@
                (ast/tag 'empty?) empty?
                (ast/tag 'nil) nothing
                (ast/tag '=) =
+               (ast/tag 'bit-shift-right) bit-shift-right
+               (ast/tag 'bit-and) bit-and
                (ast/tag 'grph) grph})
 
+(deftype GlobalVar [var]
+  Stringable
+  (string-list [_]
+    (list (str "<" var ">")))
+
+  Container
+  (map [x f]
+    x)
+
+  (map [x f embed]
+    (embed x))
+
+  ast/AST
+  (ast/vars [_]
+    {})
+
+  Evaluation
+  (redex [ast defs]
+    (either (get defs var)
+            ast))
+
+  (strong-norm [ast defs]
+    (either (get defs var)
+            ast))
+
+  (do-app [ast app-expr defs]
+    (.call-target app-expr ast))
+
+  DotOut
+  (grph-up [s]
+    (se/state-error var)))
+
 (defn eval-exprs [exprs]
-  (let [defs (-> (.value exprs)
+  (let [defs (-> exprs
                  (filter (partial instance? ast/definition-ast))
                  (reduce core-env
                          (fn [defs def]
@@ -513,13 +580,23 @@
                                        last
                                        (map (fn [val-ast]
                                               (assoc defs (.sym def)
-                                                     (ast/simple-replace val-ast defs)))))
+                                                     ;; (ast/simple-replace val-ast defs)
+                                                     val-ast))))
                                    defs))))
-        expr (either (last (remove (.value exprs)
-                                   (partial instance? ast/definition-ast)))
+        def-syms (keys defs)
+        global-syms (reduce def-syms {} (fn [m s]
+                                          (assoc m s (GlobalVar s))))
+        defs (map-vals defs (fn [def]
+                              (either (instance? CoreType def)
+                                      (let [new-def (ast/simple-replace def global-syms)]
+                                        (print-err 'new-def _LINE_ new-def)
+                                        new-def))))
+        expr (either (last (remove exprs (partial instance? ast/definition-ast)))
                      ast/no-comment)
-        expr (ast/simple-replace expr defs)]
-    (print-err 'final _LINE_ (lazy expr defs))))
+        expr (ast/simple-replace expr global-syms)]
+    (print-err 'final _LINE_ (lazy expr defs))
+    ;; (lazy expr defs)
+    ))
 
 (def parse-forms
   (rd/parser
@@ -529,7 +606,11 @@
   ;; (println "graph sharing {")
   ;; (println "node [shape=none, height=0, width=0]"
   ;;          "\nedge [arrowhead=none]")
-  (let [[_ file-name] args]
+  (let [start-time (sys/clock_gettime)
+        [_ file-name & cnt-str] args
+        test-cnt (either (map (first cnt-str) str-to-int)
+                         3)
+        p (promise)]
     (either (map (fio/file-in file-name)
                  (fn [file-in]
                    ;; if opened, parse and evaluate
@@ -540,12 +621,14 @@
                                   (fn [r]
                                     (print-err (.msg r))
                                     (abort)))
-                             (eval-exprs parse-result)))))
+                             (eval-exprs (comp [(ast/definition (ast/tag (symbol "$1"))
+                                                  (list test-cnt))]
+                                               (.value parse-result)))))))
 
             ;; or tell everyone it couldn't be
-            (print-err str "Could not find/open " file-name)))
-  ;; (println  "}\n")
-  (let [p (promise)]
+            (print-err str "Could not find/open " file-name))
+    ;; (println  "}\n")
     (send redex-count (partial deliver p))
-    (print-err 'redexes (extract p)))
+    (let [elapsed (sys/time-delta start-time (sys/clock_gettime))]
+      (println 'stats (str test-cnt ", " elapsed ", " (extract p)))))
   (print-err 'done))
