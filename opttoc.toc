@@ -26,15 +26,13 @@
 
 (def redex-count (agent 0))
 
-(defprotocol Evaluation
-  (redex [expr defs])
+(defn reduction [n line expr]
+  ;; (print-err 'reduction _LINE_ line expr)
+  (inc n))
 
-  (redex-binding [expr defs bindings]
-    (let [new-expr (ast/simple-replace expr bindings)]
-      ;; (print-err 'rb _LINE_ expr
-      ;;            "\n\n" bindings
-      ;;            "\n\n" 'new new-expr)
-      (redex new-expr defs)))
+(defprotocol Evaluation
+  ;; Term.reduce Line 430
+  (redex [expr defs])
 
   ;; Term.normal.go Line 467
   (strong-norm [expr defs])
@@ -155,7 +153,7 @@
   (redex [ast defs]
     (either (get defs ast)
             ast))
-
+  
   ;; Line 468
   (strong-norm [ast defs]
     (either (get defs ast)
@@ -198,7 +196,7 @@
     ;; 'grpbh' is the exception as it can be applied to ast's as well.
     (let [new-args (map (.args app-expr) (fn [arg]
                                            (lazy arg defs)))]
-      (send redex-count inc)
+      (send redex-count reduction _LINE_ (ast/call-ast f (.args app-expr)))
       (cond (or (identical f grph)
                 (identical f print-err)
                 (every new-args (partial instance? CoreType)))
@@ -298,35 +296,27 @@
 
 (extend-type ast/binding-ast
   Evaluation
-  (redex-binding [expr defs bindings]
+  ;; Line 444
+  (redex [expr defs]
     ;; here we deviate from .kind. If there are no free vars left in (.expr expr)
     ;; it can be substituted (and possibly duped) in cont and then cont can be
     ;; reduced
-    (let [curr-expr (either (instance? GlobalVar (.expr expr))
-                            (redex (ast/simple-replace (.expr expr) bindings) defs))]
-      ;; (either (empty? bindings)
-      ;;         (print-err 'expr _LINE_ (.expr expr)
-      ;;                    "\n\n" bindings
-      ;;                    "\n\n" 'curr curr-expr))
+    ;; TODO: instead of reducing (.expr expr) immediately, create a value that will
+    ;; cache the result the first time it gets used
+    (let [curr-expr (.expr expr)]
       (cond (or (instance? CoreType curr-expr)
                 (instance? GlobalVar curr-expr)
-                (flat-map (instance? ast/fn-ast curr-expr)
-                          (fn [f]
-                            (every (.arities f) (comp empty? .free-vars)))))
-            (let [bindings (assoc bindings (.id expr) curr-expr)
-                  ;; new-cont (map (.cont expr) (fn [cont-expr]
-                  ;;                              (ast/simple-replace cont-expr id-env)))
-                  new-cont (.cont expr)]
-              (send redex-count inc)
+                (instance? ast/fn-ast curr-expr))
+            (let [id-env {(.id expr) curr-expr}
+                  new-cont (map (.cont expr) (fn [cont-expr]
+                                               (ast/simple-replace cont-expr id-env)))]
+              (send redex-count reduction _LINE_ expr)
               (-> new-cont
                   butlast
                   (map (fn [expr]
-                         (print-err 'boomerity _LINE_)
-                         (abort)
-                         (lazy (ast/simple-replace expr bindings) defs))))
-              (let [r (either (map (last new-cont)
-                                   (fn [expr]
-                                     (redex-binding expr defs bindings)))
+                         (lazy expr defs))))
+              (let [r (either (map (last new-cont) (fn [expr]
+                                                     (redex expr defs)))
                               (do
                                 (print-err 'interp-err _LINE_ expr
                                            "\n\n" 'new-cont new-cont)
@@ -343,10 +333,8 @@
                 ;;            "\n\n" 'r r)
                 r))
 
-            (.expr expr curr-expr))))
-
-  (redex [expr defs]
-    (redex-binding expr defs {}))
+            (let [new-expr (redex (.expr expr) defs)]
+              (.expr expr new-expr)))))
 
   (strong-norm [expr defs]
     (-> expr
@@ -441,7 +429,7 @@
         new-env (reduce (zip-lists (.fixed (.params expr)) args) {}
                         (fn [m [k v]]
                           (assoc m k v)))]
-    (send redex-count inc)
+    (send redex-count reduction _LINE_ expr)
     ;; (print-err 'applying _LINE_ (str "(fn " (.fn-sym expr) expr ")")
     ;;            "\n\n" 'args args)
     ;; fully reduce all but the last expression for any side effects
@@ -591,14 +579,12 @@
         defs (map-vals defs (fn [def]
                               (either (instance? CoreType def)
                                       (let [new-def (ast/simple-replace def global-syms)]
-                                        (print-err 'new-def _LINE_ new-def)
+                                        ;; (print-err 'new-def _LINE_ new-def)
                                         new-def))))
         expr (either (last (remove exprs (partial instance? ast/definition-ast)))
                      ast/no-comment)
         expr (ast/simple-replace expr global-syms)]
-    (print-err 'final _LINE_ (lazy expr defs))
-    ;; (lazy expr defs)
-    ))
+    (lazy expr defs)))
 
 (def parse-forms
   (rd/parser
@@ -623,14 +609,17 @@
                                   (fn [r]
                                     (print-err (.msg r))
                                     (abort)))
-                             (eval-exprs (comp [(ast/definition (ast/tag (symbol "$1"))
-                                                  (list test-cnt))]
-                                               (.value parse-result)))))))
+                             (let [final (eval-exprs (comp [(ast/definition (ast/tag (symbol "$1"))
+                                                              (list test-cnt))]
+                                                           (.value parse-result)))
+                                   elapsed (sys/time-delta start-time (sys/clock_gettime))
+                                   _ (send redex-count (partial deliver p))
+                                   redexes (extract p)]
+                               (print-err 'final _LINE_ final)
+                               (println 'stats (str test-cnt ", " elapsed ", " redexes)))))))
 
             ;; or tell everyone it couldn't be
             (print-err str "Could not find/open " file-name))
     ;; (println  "}\n")
-    (send redex-count (partial deliver p))
-    (let [elapsed (sys/time-delta start-time (sys/clock_gettime))]
-      (println 'stats (str test-cnt ", " elapsed ", " (extract p)))))
+    )
   (print-err 'done))
