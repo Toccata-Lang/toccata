@@ -801,17 +801,21 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
       bmiNode = (BitmapIndexedNode *)removeFreeValue(&centralFreeBMINodes[itemCount]);
       if (bmiNode == (BitmapIndexedNode *)0) {
 	BitmapIndexedNode *bmiNodes;
-	bmiNodes = (BitmapIndexedNode *)my_malloc(nodeSize * 10);
+	// fprintf(stderr, "mallocing BMI %d\n", itemCount);
+	int mallocCnt = 10;
+	// if (itemCount == 1)
+	// mallocCnt = 100;
+	bmiNodes = (BitmapIndexedNode *)my_malloc(nodeSize * mallocCnt);
 #ifdef CHECK_MEM_LEAK
-	__atomic_fetch_add(&malloc_count, 9, __ATOMIC_ACQ_REL);
+	__atomic_fetch_add(&malloc_count, mallocCnt - 1, __ATOMIC_ACQ_REL);
 #endif
 	bmiNode = (BitmapIndexedNode *)((void *)bmiNodes + nodeSize);
-	for (int i = 1; i < 9; i++) {
+	for (int i = 1; i < mallocCnt - 1; i++) {
 	  bmiNode->refs = refsError;
 	  ((Value *)bmiNode)->next = (Value *)((void *)bmiNode +  nodeSize);
 	  bmiNode = (BitmapIndexedNode *)((Value *)bmiNode)->next;
 	}
-	bmiNode = (BitmapIndexedNode *)((void *)bmiNodes + (9 * nodeSize));
+	bmiNode = (BitmapIndexedNode *)((void *)bmiNodes + ((mallocCnt - 1) * nodeSize));
 	bmiNode->refs = refsError;
 	((Value *)bmiNode)->next = (Value *)0;
 	freeBMINodes[itemCount].head = (Value *)((void *)bmiNodes + nodeSize);
@@ -1888,6 +1892,7 @@ Value *integer_EQ(Value *arg0, Value *arg1) {
   }
 }
 
+/*
 Value *isInstance(Value *arg0, Value *arg1) {
   TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   if (typeNum == arg1->type) {
@@ -1907,6 +1912,7 @@ Value *isInstance(Value *arg0, Value *arg1) {
      return(nothing);
   }
 }
+// */
 
 List *listCons(Value *x, List *l) {
   List *newList = malloc_list();
@@ -2170,6 +2176,8 @@ Value *updateField(Value *rval, Value *field, int64_t idx) {
     abort();
   }
   if (rval->refs == 1) {
+    // TODO: This may be horribly wrong. Imagine an rval that's only ref'd by another rval
+    // which has multiple refs. Will this discard data?
     dec_and_free(template->impls[idx], 1);
     template->impls[idx] = field;
 
