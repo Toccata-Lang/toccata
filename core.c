@@ -4232,8 +4232,6 @@ Value *collisionSeq(Value *arg0, Value *arg1) {
 Value *collisionVec(Value *arg0, Value *arg1) {
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Vector *vec = (Vector *)arg1;
-  // TODO: remove
-fprintf(stderr, "collisionNodeVec\n");
   for (int i = 0; i < node->count / 2; i++) {
     if (node->array[2 * i] != (Value *)0 && node->array[2 * i + 1] != (Value *)0) {
       incRef(node->array[2 * i], 1);
