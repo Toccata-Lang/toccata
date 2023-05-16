@@ -67,8 +67,7 @@
     ;; (.call-target app-expr expr)
     )
 
-  (copy [x num-uses defs hist]
-    (assert-result r (instance? Copies r)))
+  (copy [x num-uses defs hist])
 
   (replace-copy [x env defs hist]
     (ast/replace-sym x env)))
@@ -86,6 +85,15 @@
   ([expr env]
    ((hylo grph-down grph-up expr se/state-error) (list env))
    expr))
+
+(deftype NoGraph [node-id]
+  Container
+  (map [x f embed]
+    (embed x))
+
+  DotOut
+  (grph-up [_]
+    (se/state-error node-id)))
 
 (deftype Self []
   Stringable
@@ -446,7 +454,7 @@
 
   Evaluation
   (copy [x num-uses defs hist]
-    (Copies (int-generator) (vec (repeat num-uses x))))
+    x)
 
   (redex [ast defs hist]
     ast)
@@ -584,8 +592,8 @@
 
 (deftype Sup [poss]
   Stringable
-  (string-list [_]
-    (list "(Sup " (str poss) ")"))
+  (string-list [x]
+    (list "(Sup " (str (address-of x)) "\n" (str poss) ")"))
 
   Container
   (map [x f]
@@ -597,7 +605,7 @@
 
   Evaluation
   (copy [x num-uses defs hist]
-    (Copies (int-generator) (repeat num-uses x)))
+    x)
 
   (do-app [s app-expr defs hist]
     ;; TODO: hist is wrong here, skips levels because of the cata (or hylo, etc)
@@ -612,18 +620,27 @@
     x)
 
   DotOut
-  (grph-up [x]
+  (grph-down [x]
     (comp (map (get-val (address-of x))
                (fn [node-id]
-                 (str node-id ":n")))
-          (for [node-id (set-all-vals (address-of x) (gensym "sup"))]
+                 (NoGraph (str node-id ":n"))))
+          (for [node-id (set-all-vals (address-of x) (gensym "sup"))
+                _ (push-env)
+                _ (set-val self x)]
             (do
               (println node-id "[label=\"\", xlabel=\"" (mod (address-of x) 1000) "\""
                        " height=0.3, width=0.3, fixedsize=true,"
                        " shape=triangle, orientation=0]")
-              (map (vals poss) (fn [x]
-                                 (println (str node-id ":s") "--" x)))
-              (str node-id ":n"))))))
+              x))))
+
+  (grph-up [x]
+    (for [old-x (get-val self)
+          _ (pop-env)
+          node-id (get-val (address-of old-x))]
+      (do
+        (map (vals poss) (fn [x]
+                           (println (str node-id ":s") "--" x)))
+        (str node-id ":n")))))
 
 (defn copy-arity [arity num-uses defs hist]
   (let [sups (reduce (ast/all-syms (.params arity)) {}
@@ -683,15 +700,6 @@
                                    (redex expr defs
                                           (comp hist (partial .body arity) vector))))]
       (vec (map new-params (partial .params (.body arity new-body)))))))
-
-(deftype NoGraph [node-id]
-  Container
-  (map [x f embed]
-    (embed x))
-
-  DotOut
-  (grph-up [_]
-    (se/state-error node-id)))
 
 (extend-type ast/fn-arity-ast
   DotOut
@@ -777,33 +785,43 @@
     (either (map (last (.body expr))
                  (fn [body]
                    ;; TODO: totally needs to be refactored
-                   (let [[new-bod] ((rscheme (fn [x]
-                                               (comp (map (se/get-val (address-of x)) RecurseFinal)
-                                                     (map se-nop
-                                                          (fn [_]
-                                                            (RecurseWith
-                                                             (either (and (instance? Sup x)
-                                                                          (get-in x [.poss (.params expr)]))
-                                                                     x))))))
-                                             (fn [p old-p]
-                                               (flat-map (cond (instance? ast/param-sym p)
-                                                               (comp (map (se/get-val p)
-                                                                          (fn [v]
-                                                                            (either (map (instance? Copies v)
-                                                                                         extract)
-                                                                                    v)))
-                                                                     (se/state-error p))
-                                                               (se/state-error p))
-                                                         (fn [p]
-                                                           (se/set-val (address-of old-p) p))))
-                                             body
-                                             se/state-error)
-                                    new-env)]
-
+                   (print-err 'scheming _LINE_ (type-name (.call-target app-expr))
+                              lflf body
+                              lflf new-env)
+                   (let [[new-bod]
+                         ((rscheme (fn [x]
+                                     (either (and (instance? Sup x)
+                                                  (map (get-in x [.poss (.params expr)])
+                                                       (fn [v]
+                                                         (se/state-error (RecurseWith v)))))
+                                             (comp (map (se/get-val (address-of x))
+                                                        RecurseFinal)
+                                                   (se/state-error (RecurseWith x)))))
+                                   (fn [p old-p]
+                                     (flat-map (cond (instance? ast/param-sym p)
+                                                     (comp (map (se/get-val p)
+                                                                (fn [v]
+                                                                  (either (map (instance? Copies v)
+                                                                               (fn [v]
+                                                                                 (extract v)))
+                                                                          v)))
+                                                           (se/state-error p))
+                                                     (se/state-error p))
+                                               (fn [p]
+                                                 (se/set-val (address-of old-p) p))))
+                                   body
+                                   se/state-error)
+                          new-env)]
                      (println "subgraph" (gensym "cluster") "{")
                      (println (str "graph [color=none, label=\"apply-arity "
-                                   (either (map (instance? GlobalFn (.call-target app-expr))
-                                                (comp str .var))
+                                   (either (or (map (instance? GlobalFn (.call-target app-expr))
+                                                    (comp str .var))
+                                               (map (instance? ast/fn-ast (.call-target app-expr))
+                                                    (fn [f]
+                                                      (let [fn-sym (.fn-sym f)]
+                                                        (cond (instance? ast/tagged-symbol fn-sym)
+                                                              (str fn-sym)
+                                                              "")))))
                                            (type-name (.call-target app-expr)))
                                    " " _LINE_ "\"]"))
                      (grph (hist new-bod) defs)
@@ -884,7 +902,7 @@
 
   Evaluation
   (copy [x num-uses defs hist]
-    (Copies (int-generator) (vec (repeat num-uses x))))
+    x)
 
   (redex [expr defs hist]
     (let [new-tgt (redex (.call-target expr) defs
