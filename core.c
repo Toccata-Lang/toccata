@@ -1130,6 +1130,8 @@ void breakCycle(Value *val, Value *cycVal);
 
 void cyclePromise(Value *val, Value *cycVal) {
   if (val == cycVal) {
+    fprintf(stderr, "cycle\n");
+    abort();
     decRefs(val, 1);
   } else {
     breakCycle(((Promise *)val)->result, cycVal);

@@ -4,10 +4,10 @@
                           :sha "d1d3464"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "694473d"))
+                            :sha "dc7a1e0"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "cb14682"))
+                            :sha "83fd876"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -64,13 +64,26 @@
   (redex [expr defs hist])
 
   (do-app [expr app-expr defs hist]
-    ;; (.call-target app-expr expr)
-    )
+    (ast/call-expr (comp [expr] (.args app-expr))))
 
   (copy [x num-uses defs hist])
 
   (replace-copy [x env defs hist]
     (ast/replace-sym x env)))
+
+;; TODO: causes incRef error
+;; (defn redex-f [expr prev-expr defs]
+;;   (either (= expr prev-expr)
+;;           (redex-f (redex expr defs identity)
+;;                    expr defs)))
+
+(defn redex-f
+  ([expr defs] (redex-f expr defs identity))
+  ([expr defs hist]
+   (print-err 'from-the-top _LINE_)
+   (let [new-expr (redex expr defs hist)]
+     (either (= expr new-expr)
+             (redex-f new-expr defs)))))
 
 (defprotocol DotOut
   (grph-down [expr]
@@ -182,9 +195,6 @@
 
   (redex [x defs hist]
     x)
-
-  (do-app [x app-expr defs hist]
-    (.call-target app-expr x))
 
   DotOut
   ;; (map (get-val (address-of x))
@@ -336,9 +346,6 @@
     (redex [this defs hist]
       this)
 
-    (do-app [x app-expr defs hist]
-      (.call-target app-expr x))
-
     DotOut
     (grph-up [_]
       (let [node-id (gensym (str x))]
@@ -374,16 +381,21 @@
     (either (get defs ast)
             ast))
 
-  (do-app [ast app-expr defs hist]
-    (.call-target app-expr ast))
+  (copy [x num-uses defs hist]
+    x)
 
   DotOut
   (grph-up [sym]
     (comp (get-val sym)
-          (se/state-error sym))))
+          (let [node-id (gensym "sym")]
+            (println node-id (str "[label=\"" (str sym) "\", ordering=out]"))
+            (se/state-error (str node-id))))))
 
 (extend-type ast/integer-ast
   Evaluation
+  (copy [x num-uses defs hist]
+    x)
+
   (redex [ast defs hist]
     (.int ast))
 
@@ -402,6 +414,9 @@
     (embed f))
 
   Evaluation
+  (copy [x num-uses defs hist]
+    x)
+
   (do-app [f app-expr defs hist]
     ;; a Fn can only be applied to CoreType values, so the args
     ;; have to be completely reduced with no free variables
@@ -409,12 +424,12 @@
     (let [args (.args app-expr)
           new-args (map (zip-lists args (range (count args)))
                         (fn [[arg idx]]
-                          (redex arg defs (comp hist (fn [new-arg]
-                                                       (either (map (store (vec args) idx new-arg)
-                                                                    (partial .args app-expr))
-                                                               (do
-                                                                 (print-err 'boom _LINE_)
-                                                                 (abort))))))))]
+                          (redex-f arg defs (comp hist (fn [new-arg]
+                                                         (either (map (store (vec args) idx new-arg)
+                                                                      (partial .args app-expr))
+                                                                 (do
+                                                                   (print-err 'boom _LINE_)
+                                                                   (abort))))))))]
       (cond (or (identical f grph)
                 (identical f print-err)
                 (identical f fresh)
@@ -429,7 +444,7 @@
               ;; (println "}")
               r)
 
-            (.call-target app-expr f))))
+            (ast/call-expr (comp [f] (.args app-expr))))))
 
   DotOut
   (grph-up [expr]
@@ -466,7 +481,7 @@
     (either (map (get defs var)
                  (fn [f]
                    (do-app f app-expr defs hist)))
-            (.call-target app-expr ast)))
+            (ast/call-expr (comp [ast] (.args app-expr)))))
 
   DotOut
   (grph-up [g]
@@ -551,7 +566,7 @@
                               (print-err 'interp-err _LINE_ expr
                                          lflf 'app-expr app-expr)
                               (abort)))
-          new-cont (comp init-cont [(.call-target app-expr last-cont)])]
+          new-cont (comp init-cont [(ast/call-expr (comp [last-cont] (.args app-expr)))])]
       ;; TODO: don't know about plain 'hist' here
       (redex (.cont expr new-cont) defs hist)))
 
@@ -612,10 +627,11 @@
 
   (do-app [s app-expr defs hist]
     ;; TODO: hist is wrong here, skips levels because of the cata (or hylo, etc)
-    (let [new-s (map s (partial .call-target app-expr))]
+    (let [new-s (map s (fn [new-tgt]
+                         (ast/call-expr (comp [new-tgt] (.args app-expr)))))]
       ;; (println "subgraph" (gensym "cluster") "{")
       ;; (println (str "graph [color=none, label=\"Call - Sup " _LINE_ "\"]"))
-      ;; (grph (hist new-s) defs)
+      ;; (grph new-s defs)
       ;; (println "}")
       new-s))
 
@@ -798,38 +814,49 @@
                                                                 (for [_ (se/set-val (address-of x) v)]
                                                                   (RecurseWith v))))
                                                          (se/state-error (RecurseWith x))))
+
+                                           (instance? ast/call-ast x)
+                                           (either (map (delivered (.reduced x))
+                                                        (fn [d]
+                                                          ;; TODO: ever get called?
+                                                          (print-err 'delivered _LINE_ d)
+                                                          (this-fn d)))
+                                                   (comp (map (se/get-val (address-of x))
+                                                              RecurseFinal)
+                                                         (se/state-error (RecurseWith x))))
+
                                            (comp (map (se/get-val (address-of x))
                                                       RecurseFinal)
                                                  (se/state-error (RecurseWith x)))))
                                    (fn [p old-p]
                                      (cond (instance? ast/param-sym p)
-                                                    (comp (flat-map
-                                                           (se/get-val p)
+                                           (comp (flat-map (se/get-val p)
                                                            (fn [v]
                                                              (either (map (instance? Copies v)
                                                                           (fn [v]
                                                                             (se/state-error (extract v))))
                                                                      (se/set-val (address-of old-p)
                                                                                  v))))
-                                                          (se/set-val (address-of old-p) p))
-                                                    (se/set-val (address-of old-p) p)))
+                                                 (se/set-val (address-of old-p) p))
+                                           (se/set-val (address-of old-p) p)))
                                    body
                                    se/state-error)
                           new-env)]
-                     ;; (println "subgraph" (gensym "cluster") "{")
-                     ;; (println (str "graph [color=none, label=\"apply-arity "
-                     ;;               (either (or (map (instance? GlobalFn (.call-target app-expr))
-                     ;;                                (comp str .var))
-                     ;;                           (map (instance? ast/fn-ast (.call-target app-expr))
-                     ;;                                (fn [f]
-                     ;;                                  (let [fn-sym (.fn-sym f)]
-                     ;;                                    (cond (instance? ast/tagged-symbol fn-sym)
-                     ;;                                          (str fn-sym)
-                     ;;                                          "")))))
-                     ;;                       (type-name (.call-target app-expr)))
-                     ;;               " " _LINE_ "\"]"))
-                     ;; (grph (hist new-bod) defs)
-                     ;; (println "}")
+                     (println "subgraph" (gensym "cluster") "{")
+                     (println (str "graph [color=none, label=\"apply-arity "
+                                   (either (or (map (instance? GlobalFn (.call-target app-expr))
+                                                    (comp str .var))
+                                               (map (instance? ast/fn-ast (.call-target app-expr))
+                                                    (fn [f]
+                                                      (let [fn-sym (.fn-sym f)]
+                                                        (cond (instance? ast/tagged-symbol fn-sym)
+                                                              (str fn-sym)
+                                                              "")))))
+                                           (type-name (.call-target app-expr)))
+                                   " " _LINE_ "\"]"))
+                     (grph (hist new-bod) defs)
+                     (println "}")
+
                      new-bod)))
             app-expr)))
 
@@ -862,7 +889,7 @@
               (do
                 (print-err 'no-arity-found (ast/location call) arg-count
                            lflf tgt)
-                (.call-target call tgt)))))
+                (ast/call-expr (comp [tgt] args))))))
 
   DotOut
   (grph-up [expr]
@@ -909,15 +936,15 @@
     x)
 
   (redex [expr defs hist]
-    (let [new-tgt (redex (.call-target expr) defs
-                         (comp hist (partial .call-target expr)))]
-      (do-app new-tgt
-              (.args expr (cata (fn [x]
-                                  (cond (= x (.call-target expr))
-                                        new-tgt
-                                        x))
-                                (.args expr)))
-              defs hist)))
+    (either (delivered (.reduced expr))
+            (let [new-tgt (redex (.call-target expr) defs
+                                 (comp hist (partial .call-target expr)))
+                  reduced (do-app new-tgt expr defs hist)]
+              ;; (print-err 'reduced _LINE_ reduced
+              ;;            lflf expr
+              ;;            lflf (address-of (.reduced expr)))
+              (deliver (.reduced expr) reduced)
+              reduced)))
 
   (replace-copy [expr env defs hist]
     (cond (instance? Sup (.call-target expr))
@@ -925,22 +952,20 @@
 
           expr))
 
-  (do-app [expr app-expr defs hist]
-    (.call-target app-expr expr))
-
   DotOut
   (grph-down [expr]
-    (comp (for [node-id (get-val (address-of expr))]
-            (NoGraph (str node-id ":n")))
-          (for [_ se-nop
-                :let [node-id (gensym "app")]
-                _ (set-all-vals (address-of expr) node-id)
-                _ (push-env)
-                _ (set-val self node-id)]
-            (do
-              (println node-id (str "[label=\"@" ;; " " (mod (address-of expr) 1000)
-                                    "\", ordering=out]"))
-              expr))))
+    (either (map (delivered (.reduced expr)) grph-down)
+            (comp (for [node-id (get-val (address-of expr))]
+                    (NoGraph (str node-id ":n")))
+                  (for [_ se-nop
+                        :let [node-id (gensym "app")]
+                        _ (set-all-vals (address-of expr) node-id)
+                        _ (push-env)
+                        _ (set-val self node-id)]
+                    (do
+                      (println node-id (str "[label=\"@" ;; " " (mod (address-of expr) 1000)
+                                            "\", ordering=out]"))
+                      expr)))))
 
   (grph-up [expr]
     (for [node-id (get-val self)
@@ -975,17 +1000,6 @@
                (ast/tag 'bit-shift-right) bit-shift-right
                (ast/tag 'bit-and) bit-and
                (ast/tag 'grph) grph})
-
-(defn redex-f [expr defs]
-  (let [new-expr (redex expr defs identity)]
-    (either (= expr new-expr)
-            (redex-f new-expr defs))))
-
-;; TODO: causes incRef error
-;; (defn redex-f [expr prev-expr defs]
-;;   (either (= expr prev-expr)
-;;           (redex-f (redex expr defs identity)
-;;                    expr defs)))
 
 (defn eval-exprs [exprs]
   (let [defs (-> exprs
@@ -1031,17 +1045,17 @@
                  (let [start-time (sys/clock_gettime)
                        p (promise)]
                    (send redex-count (fn [_] 0))
-                   ;; (println "subgraph" (gensym "cluster") "{")
-                   ;; (println (str "graph [color=none, label=\"initial " _LINE_ "\"]"))
-                   ;; (grph expr defs)
-                   ;; (println "}")
+                   (println "subgraph" (gensym "cluster") "{")
+                   (println (str "graph [color=none, label=\"initial " _LINE_ "\"]"))
+                   (grph expr defs)
+                   (println "}")
 
-                   (let [final (redex-f expr defs)
-                         ;; _ (do
-                         ;;     (println "subgraph" (gensym "cluster") "{")
-                         ;;     (println (str "graph [color=none, label=\"final " _LINE_ "\"]"))
-                         ;;     (grph final defs)
-                         ;;     (println "}"))
+                   (let [final (redex-f expr defs identity)
+                         _ (do
+                             (println "subgraph" (gensym "cluster") "{")
+                             (println (str "graph [color=none, label=\"final " _LINE_ "\"]"))
+                             (grph final defs)
+                             (println "}"))
                          elapsed (sys/time-delta start-time (sys/clock_gettime))
                          _ (send redex-count (partial deliver p))
                          redexes (extract p)]
@@ -1049,10 +1063,10 @@
                                 "\n" (str elapsed ", " redexes))
                      (either (map (get defs (ast/tag (symbol "$1")))
                                   (fn [test-cnt]
-                                    ;; (println (str "comment=\"stats " test-cnt ", "
-                                    ;;               elapsed ", " redexes "\""))
-                                    (println (str "stats " test-cnt ", "
-                                                  elapsed ", " redexes))
+                                    (println (str "comment=\"stats " test-cnt ", "
+                                                  elapsed ", " redexes "\""))
+                                    ;; (println (str "stats " test-cnt ", "
+                                    ;;               elapsed ", " redexes))
                                     ))
                              '_)))))))
 
@@ -1061,9 +1075,9 @@
    (grmr/none-or-more rdr/top-level)))
 
 (main [args]
-  ;; (println "graph sharing {")
-  ;; (println "node [shape=none, height=0, width=0]"
-  ;;          "\nedge [arrowhead=none]")
+  (println "graph sharing {")
+  (println "node [shape=none, height=0, width=0]"
+           "\nedge [arrowhead=none]")
   (let [[_ file-name & cnt-str] args
         test-cnt (either (map (first cnt-str) str-to-int)
                          3)]
@@ -1092,6 +1106,6 @@
 
             ;; or tell everyone it couldn't be
             (print-err str "Could not find/open " file-name))
-    ;; (println  "}\n")
+    (println  "}\n")
     )
   (print-err 'done))
