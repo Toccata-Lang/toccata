@@ -39,6 +39,8 @@
   (inc n))
 
 (deftype Copies [idx copies]
+  (assert (instance? Vector copies))
+
   Stringable
   (string-list [x]
     (list "(Copies " ;; (str (curr-int idx))
@@ -46,8 +48,9 @@
 
   Container
   (map [x f embed]
-    (either (map (first copies) f)
-            x))
+    (map (map copies f embed)
+         (fn [new-copies]
+           (Copies (int-generator) new-copies))))
 
   (extract [x]
     (either (get copies (extract idx))
@@ -98,6 +101,15 @@
   ([expr env]
    ((hylo grph-down grph-up expr se/state-error) (list env))
    expr))
+
+(extend-type Copies
+  DotOut
+  (grph-down [x]
+    (se/state-error (extract x)))
+
+  ;; (grph-up [x]
+  ;;   (se/state-error (extract x)))
+  )
 
 (deftype NoGraph [node-id]
   Container
@@ -388,7 +400,7 @@
   (grph-up [sym]
     (comp (get-val sym)
           (let [node-id (gensym "sym")]
-            (println node-id (str "[label=\"" (str sym) "\", ordering=out]"))
+            (println node-id (str "[label=\"" (str sym) "\"]"))
             (se/state-error (str node-id))))))
 
 (extend-type ast/integer-ast
@@ -497,7 +509,7 @@
     (ast/fn-ast fn-sym
                 [(ast/fn-arity-ast
                   fn-sym
-                  (ast/params [param-x])
+                  (ast/params [x])
                   ast/no-comment
                   [(ast/fn-ast (ast/tag (symbol (str "inner-" n)))
                                [(cond (= 0 n)
@@ -511,22 +523,22 @@
                                       (ast/fn-arity-ast c/no-symbol
                                                         (ast/params [y])
                                                         ast/no-comment
-                                                        [(ast/call-expr [param-x y])]
+                                                        [(ast/call-expr [x y])]
                                                         {})
 
                                       (ast/fn-arity-ast c/no-symbol
                                                         (ast/params [y])
                                                         ast/no-comment
                                                         [
-                                                         ;; (reduce (range n) y
-                                                         ;;         (fn [expr _]
-                                                         ;;           (ast/call-ast param-x [expr])))
+                                                         (reduce (range n) y
+                                                                 (fn [expr _]
+                                                                   (ast/call-expr [x expr])))
 
-                                                         (ast/binding-ast
-                                                          x param-x
-                                                          [(reduce (range n) y
-                                                                   (fn [expr _]
-                                                                     (ast/call-expr [x expr])))])
+                                                         ;; (ast/binding-ast
+                                                         ;;  x param-x
+                                                         ;;  [(reduce (range n) y
+                                                         ;;           (fn [expr _]
+                                                         ;;             (ast/call-expr [x expr])))])
                                                          ]
                                                         {}))])]
                   {})])))
@@ -574,7 +586,7 @@
   (grph-down [expr]
     (let [node-id (gensym "bnd")
           endpoint (str node-id ":n")]
-      (println node-id (str "[label=\"\",")
+      (println node-id (str "[label=\"b\",")
                "height=0.3, width=0.3, fixedsize=true, shape=triangle, orientation=180]")
       (for [_ (push-env)
             _ (set-val self node-id)
@@ -647,7 +659,8 @@
                 _ (push-env)
                 _ (set-val self x)]
             (do
-              (println node-id "[label=\"\", xlabel=\"" (mod (address-of x) 1000) "\""
+              (println node-id "[label=\"\","
+                       ;; (str " xlabel=\"" (mod (address-of x) 1000) "\",")
                        " height=0.3, width=0.3, fixedsize=true,"
                        " shape=triangle, orientation=0]")
               x))))
@@ -669,7 +682,7 @@
                                                (fn [_]
                                                  (ast/param-sym (.sym param-sym)
                                                                 (.uses param-sym)))))))
-        new-params (map (range num-uses)
+        new-params (map (vec (range num-uses))
                         (fn [idx]
                           (cata (fn [x]
                                   (either (and (instance? ast/param-sym x)
@@ -688,39 +701,60 @@
                                                             (fn [params]
                                                               (assoc m params alt)))
                                                        m))))))
-        ;; _ (do
-        ;;     (println "subgraph" (gensym "cluster") "{")
-        ;;     (println (str "graph [color=none, label=\"copying " _LINE_ "\"]"))
-        ;;     (grph (hist (.body arity (map (.body arity)
-        ;;                                   (fn [expr]
-        ;;                                     ;; TODO: fine for now, but replace if you
-        ;;                                     ;; keep this code
-        ;;                                     (ast/simple-replace expr supers)))))
-        ;;           defs)
-        ;;     (println "}"))
+        grph-body (map (.body arity)
+                       (fn [expr]
+                         ;; TODO: fine for now, but replace if you
+                         ;; keep this code
+                         (ast/simple-replace expr supers)))
+        _ (do
+            (println "subgraph" (gensym "cluster") "{")
+            (println (str "graph [color=none, label=\"copying " _LINE_ "\"]"))
+            (-> (map new-params (fn [params]
+                                  (-> arity
+                                      (.params params)
+                                      (.body grph-body))))
+                (hist)
+                (grph defs))
+            (println "}"))
         new-body (ast/elgot-env (fn [x env]
                                   (cond (empty? env)
                                         [(RecurseFinal x) env]
 
                                         (ast/prep-replace x env)))
                                 (fn [x env]
-                                  (replace-copy x env defs (fn [x]
-                                                             (hist (.body arity [x])))))
+                                  (replace-copy x env defs
+                                                (fn [x]
+                                                  (hist (map new-params (fn [params]
+                                                                          (-> arity
+                                                                              (.params params)
+                                                                              (.body x))))))))
                                 (.body arity)
                                 supers)]
 
-    ;; (println "subgraph" (gensym "cluster") "{")
-    ;; (println (str "graph [color=none, label=\"copying " _LINE_ "\"]"))
-    ;; (grph (hist (.body arity new-body))
-    ;;       defs)
-    ;; (println "}")
+    (println "subgraph" (gensym "cluster") "{")
+    (println (str "graph [color=none, label=\"copying " _LINE_ "\"]"))
+    (grph (hist (map new-params (fn [params]
+                                  (-> arity
+                                      (.params params)
+                                      (.body new-body)))))
+          defs)
+    (println "}")
 
     (let [new-body (map new-body (fn [expr]
                                    (redex expr defs
-                                          (comp hist (partial .body arity) vector))))]
-      (vec (map new-params (partial .params (.body arity new-body)))))))
+                                          (comp hist
+                                                (fn [x]
+                                                  (map new-params (fn [params]
+                                                                    (-> arity
+                                                                        (.params params)
+                                                                        (.body [x])))))))))]
+      (map new-params (partial .params (.body arity new-body))))))
 
 (extend-type ast/fn-arity-ast
+  Evaluation
+  (redex [expr defs hist]
+    expr)
+
   DotOut
   (grph-down [f]
     (comp (for [node-id (get-val (address-of f))]
@@ -777,24 +811,139 @@
                               (fn [new-x]
                                 (algebra new-x x)))))))
 
+(defn graph-title [tgt]
+  (either (or (map (instance? GlobalFn tgt)
+                   (comp str .var))
+              (map (instance? ast/fn-ast tgt)
+                   (fn [f]
+                     (let [fn-sym (.fn-sym f)]
+                       (cond (instance? ast/tagged-symbol fn-sym)
+                             (str fn-sym)
+                             "")))))
+          (type-name tgt)))
+
+(deftype param-arg [param arg]
+  Stringable
+  (string-list [_]
+    (list "(param-arg " (type-name param) " " (str arg) ")"))
+
+  Container
+  (map [x f embed]
+    (for [new-param (f param)
+          new-arg (f arg)]
+      (param-arg new-param new-arg)))
+
+  DotOut
+  (grph-down [x]
+    (comp (get-val (address-of x))
+          (for [_ (push-env)
+                _ (cond (< (.uses param) 2)
+                        (do
+                          (print-err 'graphing-error _LINE_ param
+                                     lflf arg)
+                          (abort))
+
+                        (cond (instance? Sup arg)
+                              se-nop
+
+                              (for [param-id (comp (get-val param)
+                                                   (set-all-vals param (gensym (str (.sym param)))))]
+                                (println param-id "[label=\"\","
+                                         " height=0.3, width=0.3, fixedsize=true,"
+                                         " shape=triangle, orientation=180]"))))
+                _ (set-val self x)]
+            x)))
+
+  (grph-up [x]
+    (flat-map (get-val self)
+              (fn [old-x]
+                (cond (instance? Sup (.arg old-x))
+                      (for [_ (pop-env)
+                            ;; _ (set-all-vals (address-of old-x) arg)
+                            ]
+                        arg)
+
+                      (for [param-id (get-val (.param old-x))
+                            _ (pop-env)
+                            _ (set-all-vals (address-of old-x) (.param old-x))]
+                        (do
+                          (println (str param-id ":s") "--" arg)
+                          param)))))))
+
+(defn reduce-body [params app-expr body defs hist]
+  ;; TODO: totally needs to be refactored
+  (let [args (.args app-expr)
+        idxs (int-generator)
+        new-env (reduce (zip-lists (.fixed params) args) {}
+                        (fn [m [param arg]]
+                          (cond (< 0 (.uses param))
+                                (let [p-arg (param-arg param arg)
+                                      ;; _ (do
+                                      ;;     (println "subgraph" (gensym "cluster") "{")
+                                      ;;     (println (str "graph [color=none, label=\"apply-arity "
+                                      ;;                   (graph-title (.call-target app-expr))
+                                      ;;                   " " _LINE_ "\"]"))
+                                      ;;     (-> (cata (fn [x]
+                                      ;;                 (cond (= x param)
+                                      ;;                       (cond (< (.uses param) 2)
+                                      ;;                             arg
+                                      ;;                             p-arg)
+                                      ;;                       x))
+                                      ;;               body)
+                                      ;;         (hist)
+                                      ;;         (grph defs))
+                                      ;;     (println "}"))
+                                      dupes (copy arg (.uses param) defs
+                                                  (fn [new-arg]
+                                                    (hist (cata (fn [x]
+                                                                  (cond (= x param)
+                                                                        new-arg
+                                                                        x))
+                                                                body))))]
+                                  (assoc m param dupes))
+
+                                m)))
+        [new-bod] ((rscheme (fn this-fn [x]
+                              (cond (instance? Sup x)
+                                    (comp (for [v (se/get-val (address-of x))]
+                                            (RecurseFinal v))
+                                          (either (map (get-in x [.poss params])
+                                                       (fn [v]
+                                                         (for [_ (se/set-val (address-of x) v)]
+                                                           (RecurseWith v))))
+                                                  (se/state-error (RecurseWith x))))
+
+                                    (instance? ast/call-ast x)
+                                    (either (map (delivered (.reduced x))
+                                                 (fn [d]
+                                                   ;; TODO: ever get called?
+                                                   (print-err 'delivered _LINE_ d)
+                                                   (this-fn d)))
+                                            (comp (map (se/get-val (address-of x))
+                                                       RecurseFinal)
+                                                  (se/state-error (RecurseWith x))))
+
+                                    (comp (map (se/get-val (address-of x))
+                                               RecurseFinal)
+                                          (se/state-error (RecurseWith x)))))
+                            (fn [p old-p]
+                              (cond (instance? ast/param-sym p)
+                                    (comp (flat-map (se/get-val p)
+                                                    (fn [v]
+                                                      (either (map (instance? Copies v)
+                                                                   (fn [v]
+                                                                     (se/state-error (extract v))))
+                                                              (se/set-val (address-of old-p) v))))
+                                          (se/set-val (address-of old-p) p))
+                                    (se/set-val (address-of old-p) p)))
+                            body
+                            se/state-error)
+                   new-env)]
+    new-bod))
+
 (defn apply-arity [expr app-expr defs hist]
   (let [args (.args app-expr)
-        new-env (reduce (zip-lists (.fixed (.params expr)) args (range (count args))) {}
-                        (fn [m [k v arg-idx]]
-                          (cond (< 0 (.uses k))
-                                (let [dupes (copy v (.uses k) defs
-                                                  (fn [new-arg]
-                                                    (-> app-expr
-                                                        (.args (either (store args arg-idx new-arg)
-                                                                       args))
-                                                        hist)))]
-                                  (assoc m k dupes))
-
-                                m)))]
-    (send redex-count reduction _LINE_ (ast/call-expr [expr args]))
-    ;; (print-err 'applying _LINE_ (str "(fn " (.fn-sym expr) expr ")")
-    ;;            lflf 'args args
-    ;;            lflf 'free (.free-vars expr))
+        params (.params expr)]
     ;; fully reduce all but the last expression for any side effects
     ;; TODO: but what if they have free-vars
     ;; (-> (.body expr)
@@ -803,60 +952,15 @@
     ;;            (lazy expr defs))))
     (either (map (last (.body expr))
                  (fn [body]
-                   ;; TODO: totally needs to be refactored
-                   (let [[new-bod]
-                         ((rscheme (fn this-fn [x]
-                                     (cond (instance? Sup x)
-                                           (comp (for [v (se/get-val (address-of x))]
-                                                   (RecurseFinal v))
-                                                 (either (map (get-in x [.poss (.params expr)])
-                                                              (fn [v]
-                                                                (for [_ (se/set-val (address-of x) v)]
-                                                                  (RecurseWith v))))
-                                                         (se/state-error (RecurseWith x))))
-
-                                           (instance? ast/call-ast x)
-                                           (either (map (delivered (.reduced x))
-                                                        (fn [d]
-                                                          ;; TODO: ever get called?
-                                                          (print-err 'delivered _LINE_ d)
-                                                          (this-fn d)))
-                                                   (comp (map (se/get-val (address-of x))
-                                                              RecurseFinal)
-                                                         (se/state-error (RecurseWith x))))
-
-                                           (comp (map (se/get-val (address-of x))
-                                                      RecurseFinal)
-                                                 (se/state-error (RecurseWith x)))))
-                                   (fn [p old-p]
-                                     (cond (instance? ast/param-sym p)
-                                           (comp (flat-map (se/get-val p)
-                                                           (fn [v]
-                                                             (either (map (instance? Copies v)
-                                                                          (fn [v]
-                                                                            (se/state-error (extract v))))
-                                                                     (se/set-val (address-of old-p)
-                                                                                 v))))
-                                                 (se/set-val (address-of old-p) p))
-                                           (se/set-val (address-of old-p) p)))
-                                   body
-                                   se/state-error)
-                          new-env)]
+                   (send redex-count reduction _LINE_ (ast/call-expr [expr args]))
+                   (let [new-bod (reduce-body params app-expr
+                                              body defs hist)]
                      (println "subgraph" (gensym "cluster") "{")
                      (println (str "graph [color=none, label=\"apply-arity "
-                                   (either (or (map (instance? GlobalFn (.call-target app-expr))
-                                                    (comp str .var))
-                                               (map (instance? ast/fn-ast (.call-target app-expr))
-                                                    (fn [f]
-                                                      (let [fn-sym (.fn-sym f)]
-                                                        (cond (instance? ast/tagged-symbol fn-sym)
-                                                              (str fn-sym)
-                                                              "")))))
-                                           (type-name (.call-target app-expr)))
+                                   (graph-title (.call-target app-expr))
                                    " " _LINE_ "\"]"))
                      (grph (hist new-bod) defs)
                      (println "}")
-
                      new-bod)))
             app-expr)))
 
@@ -866,14 +970,21 @@
     expr)
 
   (copy [f num-uses defs hist]
-    (cond (= 1 num-uses)
-          (Copies (int-generator) [f])
+    (cond (< num-uses 2)
+          f
 
           (let [arity-vects (apply zip-lists
                                    (map (.arities f)
                                         (fn [arity]
                                           (copy-arity arity num-uses defs
-                                                      (comp hist (fn [x] (.arities f [x])))))))
+                                                      (comp hist
+                                                            (fn [arities]
+                                                              (assert (instance? Vector arities))
+
+                                                              (Copies (int-generator)
+                                                                      (map arities
+                                                                           (fn [x]
+                                                                             (.arities f [x]))))))))))
                 dupes (vec (map arity-vects (fn [arities]
                                               (.arities f (vec arities)))))]
             (Copies (int-generator) dupes))))
@@ -933,7 +1044,7 @@
 
   Evaluation
   (copy [x num-uses defs hist]
-    x)
+    (redex x defs hist))
 
   (redex [expr defs hist]
     (either (delivered (.reduced expr))
