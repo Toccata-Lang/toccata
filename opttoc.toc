@@ -64,10 +64,9 @@
          (maybe x))))
 
 (defprotocol Evaluation
-  (redex [expr defs hist])
+  (redex [expr defs hist call-stack])
 
-  (do-app [expr app-expr defs hist]
-    (ast/call-expr (comp [expr] (.args app-expr))))
+  (apply-args [expr args defs hist call-stack])
 
   (copy [x num-uses env hist])
 
@@ -84,7 +83,7 @@
   ([expr defs] (redex-f expr defs identity))
   ([expr defs hist]
    (print-err 'from-the-top _LINE_ expr)
-   (let [new-expr (redex expr defs hist)]
+   (let [new-expr (redex expr defs hist [])]
      (either (= expr new-expr)
              (redex-f new-expr defs)))))
 
@@ -205,8 +204,14 @@
   (copy [x num-uses env hist]
     x)
 
-  (redex [x defs hist]
-    x)
+  (redex [x defs hist call-stack]
+    (either (map (get defs x)
+                 (fn [v]
+                   (redex (either (map (instance? Copies v)
+                                       extract)
+                                  v)
+                          defs hist call-stack)))
+            x))
 
   DotOut
   ;; (map (get-val (address-of x))
@@ -355,7 +360,7 @@
     (ast/vars [_] {})
 
     Evaluation
-    (redex [this defs hist]
+    (redex [this defs hist call-stack]
       this)
 
     DotOut
@@ -372,7 +377,7 @@
     {})
 
   Evaluation
-  (redex [x defs hist]
+  (redex [x defs hist call-stack]
     x))
 
 (extend-type Integer
@@ -389,9 +394,8 @@
 
 (extend-type ast/tagged-symbol
   Evaluation
-  (redex [ast defs hist]
-    (either (get defs ast)
-            ast))
+  (redex [ast defs hist call-stack]
+    ast)
 
   (copy [x num-uses env hist]
     x)
@@ -409,7 +413,7 @@
   (copy [x num-uses env hist]
     x)
 
-  (redex [ast defs hist]
+  (redex [ast defs hist call-stack]
     (.int ast))
 
   DotOut
@@ -430,19 +434,13 @@
   (copy [x num-uses env hist]
     x)
 
-  (do-app [f app-expr defs hist]
+  (apply-args [f args defs hist call-stack]
     ;; a Fn can only be applied to CoreType values, so the args
     ;; have to be completely reduced with no free variables
-    ;; 'grpbh' is the exception as it can be applied to ast's as well.
-    (let [args (.args app-expr)
-          new-args (map (zip-lists args (range (count args)))
+    ;; 'grph' is the exception as it can be applied to ast's as well.
+    (let [new-args (map (zip-lists args (range (count args)))
                         (fn [[arg idx]]
-                          (redex-f arg defs (comp hist (fn [new-arg]
-                                                         (either (map (store (vec args) idx new-arg)
-                                                                      (partial .args app-expr))
-                                                                 (do
-                                                                   (print-err 'boom _LINE_)
-                                                                   (abort))))))))]
+                          (redex-f arg defs hist)))]
       (cond (or (identical f grph)
                 (identical f print-err)
                 (identical f fresh)
@@ -457,7 +455,7 @@
               ;; (println "}")
               r)
 
-            (ast/call-expr (comp [f] (.args app-expr))))))
+            (ast/call-expr (comp [f] args)))))
 
   DotOut
   (grph-up [expr]
@@ -487,14 +485,14 @@
   (copy [x num-uses env hist]
     x)
 
-  (redex [ast defs hist]
+  (redex [ast defs hist call-stack]
     ast)
 
-  (do-app [ast app-expr defs hist]
+  (apply-args [ast args defs hist call-stack]
     (either (map (get defs var)
                  (fn [f]
-                   (do-app f app-expr defs hist)))
-            (ast/call-expr (comp [ast] (.args app-expr)))))
+                   (apply-args f args defs hist call-stack)))
+            (ast/call-expr (comp [ast] args))))
 
   DotOut
   (grph-up [g]
@@ -545,84 +543,8 @@
 
 (extend-type ast/block-comment-ast
   Evaluation
-  (redex [expr defs hist]
+  (redex [expr defs hist call-stack]
     expr))
-
-(def apply-arity)
-
-(extend-type ast/binding-ast
-  ;; ast/AST
-  ;; (ast/prep-replace [x env]
-  ;;   (let [expr (.expr x)]
-  ;;     (either (for [new-expr (and (instance? ast/tagged-symbol expr)
-  ;;                                 (get env expr))
-  ;;                   ;; TODO: don't discard side-effecting expressions in the continuation
-  ;;                   cont-result (last (.cont x))]
-  ;;               (let [new-env (assoc env (.id x) (defer new-expr))]
-  ;;                 (send redex-count reduction _LINE_ (.expr x new-expr))
-  ;;                 [(RecurseWith cont-result) new-env]))
-  ;;             [(RecurseWith x) env])))
-
-  Evaluation
-  (redex [expr defs hist]
-    (print-err 'binding _LINE_ (.id expr) (.uses (.id expr))
-               lflf expr)
-    (let [arity (ast/fn-arity-ast c/no-symbol
-                                  (ast/params [(.id expr)])
-                                  ast/no-comment
-                                  (.cont expr)
-                                  {})]
-      (apply-arity arity (ast/call-expr [arity (.expr expr)])
-                   defs hist)))
-
-  (do-app [expr app-expr defs hist]
-    (let [init-cont (butlast (.cont expr))
-          last-cont (either (last (.cont expr))
-                            (do
-                              (print-err 'interp-err _LINE_ expr
-                                         lflf 'app-expr app-expr)
-                              (abort)))
-          new-cont (comp init-cont [(ast/call-expr (comp [last-cont] (.args app-expr)))])]
-      ;; TODO: don't know about plain 'hist' here
-      (redex (.cont expr new-cont) defs hist)))
-
-  DotOut
-  (grph-down [expr]
-    (let [node-id (gensym "bnd")
-          endpoint (str node-id ":n")]
-      (println node-id (str "[label=\"b\",")
-               "height=0.3, width=0.3, fixedsize=true, shape=triangle, orientation=180]")
-      (for [_ (push-env)
-            _ (set-val self node-id)
-            _ (se/traverse (ast/all-syms (.id expr))
-                           (fn [id]
-                             (set-val id endpoint)))]
-        expr)))
-
-  (grph-up [expr]
-    (for [node-id (get-val self)
-          :let [arg-end (str node-id ":sw")
-                new-ids (reduce (ast/all-syms (.id expr)) [self]
-                                (fn [new-ids id]
-                                  (cond (instance? ast/param-sym id)
-                                        (conj new-ids id)
-
-                                        (comp new-ids id))))]
-          _ (nip-env new-ids)
-          _ (cond (instance? Sequence (.expr expr))
-                  (do
-                    (print-err 'graphing-error _LINE_ expr)
-                    (abort))
-
-                  (instance? String (.expr expr))
-                  (se/state-error (println arg-end "--" (.expr expr)))
-
-                  (comp (map (get-val (.expr expr))
-                             (fn [endp]
-                               (println arg-end "--" endp)))
-                        (set-val (.expr expr) arg-end)))]
-      (either (last (.cont expr))
-              ""))))
 
 (deftype Sup [poss]
   Stringable
@@ -639,28 +561,28 @@
 
   Evaluation
   (copy [x num-uses env hist]
-    ;; TODO: finish
-    (print-err 'finish _LINE_)
+    (cond (< 1 num-uses)
+          (do
+            ;; TODO: finish
+            (print-err 'finish _LINE_ num-uses
+                       lflf x)
 
-    (println "}")
-    (exit 0)
-    x)
+            (println "}")
+            (exit 0))
+          x))
 
-  (do-app [s app-expr defs hist]
-    ;; TODO: hist is wrong here, skips levels because of the cata (or hylo, etc)
-    ;; (let [new-s (map s (fn [new-tgt]
-    ;;                      (ast/call-expr (comp [new-tgt] (.args app-expr)))))]
-    ;;   ;; (println "subgraph" (gensym "cluster") "{")
-    ;;   ;; (println (str "graph [color=none, label=\"Call - Sup " _LINE_ "\"]"))
-    ;;   ;; (grph new-s defs)
-    ;;   ;; (println "}")
-    ;;   new-s)
-    (cond (identical s (.call-target app-expr))
-          app-expr
-          (.call-target app-expr s)))
+  (redex [x defs hist call-stack]
+    (either (reduce call-stack nothing
+                    (fn [found params]
+                      (for [expr (get poss params)]
+                        (cond found
+                              (do
+                                (print-err 'ambiguous-superposition _LINE_ call-stack
+                                           lflf poss)
+                                (abort))
 
-  (redex [x defs hist]
-    x)
+                              (redex expr defs hist call-stack)))))
+            x))
 
   DotOut
   (grph-down [x]
@@ -686,7 +608,7 @@
                            (println (str node-id ":s") "--" x)))
         (str node-id ":n")))))
 
-(defn copy-arity [arity num-uses defs hist]
+(defn copy-arity [arity num-uses defs hist call-stack]
   (let [sups (reduce (ast/all-syms (.params arity)) {}
                      (fn [m param-sym]
                        (assert (instance? ast/param-sym param-sym))
@@ -765,21 +687,103 @@
                                                   (map new-params (fn [params]
                                                                     (-> arity
                                                                         (.params params)
-                                                                        (.body [x])))))))))]
+                                                                        (.body [x]))))))
+                                          call-stack)))]
       (map new-params (partial .params (.body arity new-body))))))
+
+(deftype param-arg [param arg]
+  Stringable
+  (string-list [_]
+    (list "(param-arg " (type-name param) " " (str arg) ")"))
+
+  Container
+  (map [x f embed]
+    (for [new-param (f param)
+          new-arg (f arg)]
+      (param-arg new-param new-arg)))
+
+  DotOut
+  (grph-down [x]
+    (comp (get-val (address-of x))
+          (for [_ (push-env)
+                _ (cond (< (.uses param) 2)
+                        (do
+                          (print-err 'graphing-error _LINE_ param
+                                     lflf arg)
+                          (abort))
+
+                        (cond (instance? Sup arg)
+                              se-nop
+
+                              (for [param-id (comp (get-val param)
+                                                   (set-all-vals param (gensym (str (.sym param)))))]
+                                (println param-id "[label=\"\","
+                                         " height=0.3, width=0.3, fixedsize=true,"
+                                         " shape=triangle, orientation=180]"))))
+                _ (set-val self x)]
+            x)))
+
+  (grph-up [x]
+    (flat-map (get-val self)
+              (fn [old-x]
+                (cond (instance? Sup (.arg old-x))
+                      (for [_ (pop-env)
+                            ;; _ (set-all-vals (address-of old-x) arg)
+                            ]
+                        arg)
+
+                      (for [param-id (get-val (.param old-x))
+                            _ (pop-env)
+                            _ (set-all-vals (address-of old-x) (.param old-x))]
+                        (do
+                          (println (str param-id ":s") "--" arg)
+                          param)))))))
 
 (extend-type ast/fn-arity-ast
   Evaluation
   (copy [x num-uses env hist]
-    ;; TODO: finish
-    (print-err 'finish _LINE_)
+    (cond (< 1 num-uses)
+          (do
+            ;; TODO: finish
+            (print-err 'finish _LINE_ num-uses
+                       lflf x)
 
-    (println "}")
-    (exit 0)
-    x)
+            (println "}")
+            (exit 0))
+          x))
 
-  (redex [expr defs hist]
-    expr)
+  (apply-args [arity args defs hist call-stack]
+    (let [params (.params arity)]
+      ;; fully reduce all but the last expression for any side effects
+      ;; TODO: but what if they have free-vars
+      ;; (-> (.body expr)
+      ;;     butlast
+      ;;     (map (fn [expr]
+      ;;            (lazy expr defs))))
+      (either (map (last (.body arity))
+                   (fn [body]
+                     (send redex-count reduction _LINE_ [arity args])
+                     (let [new-bod (redex body
+                                          (reduce (zip-lists (.fixed params) args)
+                                                  defs
+                                                  (fn [defs [param arg]]
+                                                    (cond (< 0 (.uses param))
+                                                          (let [p-arg (param-arg param arg)]
+                                                            (assoc defs param
+                                                                   (copy arg (.uses param) defs hist)))
+
+                                                          defs)))
+                                          hist
+                                          (conj call-stack params))]
+                       ;; (println "subgraph" (gensym "cluster") "{")
+                       ;; (println (str "graph [color=none, label=\"apply-arity "
+                       ;;               (graph-title (.call-target app-expr))
+                       ;;               " " _LINE_ "\"]"))
+                       ;; (grph (hist new-bod) defs)
+                       ;; (println "}")
+                       new-bod)))
+              (ast/call-expr (comp [arity] args)))))
+
 
   DotOut
   (grph-down [f]
@@ -848,53 +852,10 @@
                              "")))))
           (type-name tgt)))
 
-(deftype param-arg [param arg]
-  Stringable
-  (string-list [_]
-    (list "(param-arg " (type-name param) " " (str arg) ")"))
-
-  Container
-  (map [x f embed]
-    (for [new-param (f param)
-          new-arg (f arg)]
-      (param-arg new-param new-arg)))
-
-  DotOut
-  (grph-down [x]
-    (comp (get-val (address-of x))
-          (for [_ (push-env)
-                _ (cond (< (.uses param) 2)
-                        (do
-                          (print-err 'graphing-error _LINE_ param
-                                     lflf arg)
-                          (abort))
-
-                        (cond (instance? Sup arg)
-                              se-nop
-
-                              (for [param-id (comp (get-val param)
-                                                   (set-all-vals param (gensym (str (.sym param)))))]
-                                (println param-id "[label=\"\","
-                                         " height=0.3, width=0.3, fixedsize=true,"
-                                         " shape=triangle, orientation=180]"))))
-                _ (set-val self x)]
-            x)))
-
-  (grph-up [x]
-    (flat-map (get-val self)
-              (fn [old-x]
-                (cond (instance? Sup (.arg old-x))
-                      (for [_ (pop-env)
-                            ;; _ (set-all-vals (address-of old-x) arg)
-                            ]
-                        arg)
-
-                      (for [param-id (get-val (.param old-x))
-                            _ (pop-env)
-                            _ (set-all-vals (address-of old-x) (.param old-x))]
-                        (do
-                          (println (str param-id ":s") "--" arg)
-                          param)))))))
+;; replace params
+;; cache reduced exprs
+;; reify Sup's
+;; don't descend unnecessarily
 
 (defn reduce-body [params app-expr body defs hist]
   ;; TODO: totally needs to be refactored
@@ -967,73 +928,32 @@
                    new-env)]
     new-bod))
 
-(defn apply-arity [expr app-expr defs hist]
-  (let [args (.args app-expr)
-        params (.params expr)]
-    ;; fully reduce all but the last expression for any side effects
-    ;; TODO: but what if they have free-vars
-    ;; (-> (.body expr)
-    ;;     butlast
-    ;;     (map (fn [expr]
-    ;;            (lazy expr defs))))
-    (either (map (last (.body expr))
-                 (fn [body]
-                   (send redex-count reduction _LINE_ (ast/call-expr [expr args]))
-                   (let [new-bod (reduce-body params app-expr
-                                              body defs hist)]
-                     (println "subgraph" (gensym "cluster") "{")
-                     (println (str "graph [color=none, label=\"apply-arity "
-                                   (graph-title (.call-target app-expr))
-                                   " " _LINE_ "\"]"))
-                     (grph (hist new-bod) defs)
-                     (println "}")
-                     new-bod)))
-            app-expr)))
-
 (extend-type ast/fn-ast
   Evaluation
-  (redex [expr defs hist]
+  (redex [expr defs hist call-stack]
     expr)
 
-  (copy [f num-uses env hist]
-    ;; TODO: finish
-    (print-err 'finish _LINE_)
+  (copy [x num-uses env hist]
+    (cond (< 1 num-uses)
+          (do
+            ;; TODO: finish
+            (print-err 'finish _LINE_ num-uses
+                       lflf x)
 
-    (println "}")
-    (exit 0)
-    f
-    ;; (cond (< num-uses 2)
-    ;;       f
+            (println "}")
+            (exit 0))
+          x))
 
-    ;;       (let [arity-vects (apply zip-lists
-    ;;                                (map (.arities f)
-    ;;                                     (fn [arity]
-    ;;                                       (copy-arity arity num-uses defs
-    ;;                                                   (comp hist
-    ;;                                                         (fn [arities]
-    ;;                                                           (assert (instance? Vector arities))
-
-    ;;                                                           (Copies (int-generator)
-    ;;                                                                   (map arities
-    ;;                                                                        (fn [x]
-    ;;                                                                          (.arities f [x]))))))))))
-    ;;             dupes (vec (map arity-vects (fn [arities]
-    ;;                                           (.arities f (vec arities)))))]
-    ;;         (Copies (int-generator) dupes)))
-    )
-
-  (do-app [tgt call defs hist]
-    (let [args (.args call)
-          arg-count (count args)]
-      (either (some (.arities tgt)
-                    (fn [arity]
-                      ;; TODO: variadic will be handled here
-                      (and (= (count (.params arity)) arg-count)
-                           (maybe (apply-arity arity call defs hist)))))
-              (do
-                (print-err 'no-arity-found (ast/location call) arg-count
-                           lflf tgt)
-                (ast/call-expr (comp [tgt] args))))))
+  (apply-args [tgt args defs hist call-stack]
+    (either (some (.arities tgt)
+                  (fn [arity]
+                    ;; TODO: variadic will be handled here
+                    (and (= (count (.params arity)) (count args))
+                         (maybe (apply-args arity args defs hist call-stack)))))
+            (do
+              (print-err 'no-arity-found (ast/location tgt) (count args)
+                         lflf tgt)
+              (ast/call-expr (comp [tgt] args)))))
 
   DotOut
   (grph-up [expr]
@@ -1077,29 +997,31 @@
 
   Evaluation
   (copy [x num-uses env hist]
-    ;; TODO: finish
-    (print-err 'finish _LINE_)
+    (cond (< 1 num-uses)
+          (do
+            ;; TODO: finish
+            (print-err 'finish _LINE_ num-uses
+                       lflf x)
 
-    (println "}")
-    (exit 0)
-    ;; (redex x defs hist)
-    x
-    )
+            (println "}")
+            (exit 0))
+          x))
 
-  (redex [expr defs hist]
+  (redex [expr defs hist call-stack]
     (either (delivered (.reduced expr))
             (let [new-tgt (redex (.call-target expr) defs
-                                 (comp hist (partial .call-target expr)))
-                  reduced (do-app new-tgt expr defs hist)]
-              (or (identical expr reduced)
+                                 (comp hist (partial .call-target expr))
+                                 call-stack)
+                  reduced (apply-args new-tgt (.args expr) defs hist call-stack)]
+              (or (identical new-tgt reduced)
                   (maybe (deliver (.reduced expr) reduced)))
               reduced)))
 
-  (replace-copy [expr env defs hist]
-    (cond (instance? Sup (.call-target expr))
-          (do-app (.call-target expr) expr defs hist)
+  ;; (replace-copy [expr env defs hist]
+  ;;   (cond (instance? Sup (.call-target expr))
+  ;;         (do-app (.call-target expr) expr defs hist)
 
-          expr))
+  ;;         expr))
 
   DotOut
   (grph-down [expr]
@@ -1191,23 +1113,21 @@
                                            s))
                                  expr)))))]
     (map exprs (fn [expr]
-                 (let [start-time (sys/clock_gettime)
-                       p (promise)]
-                   (send redex-count (fn [_] 0))
-                   (println "subgraph" (gensym "cluster") "{")
-                   (println (str "graph [color=none, label=\"initial " _LINE_ "\"]"))
-                   (grph expr defs)
-                   (println "}")
+                 (send redex-count (fn [_] 0))
+                 (println "subgraph" (gensym "cluster") "{")
+                 (println (str "graph [color=none, label=\"initial " _LINE_ "\"]"))
+                 (grph expr defs)
+                 (println "}")
 
-                   (let [final (cata (fn [x]
-                                       (copy x 2 {} identity))
-                                     expr)
+                 (let [p (promise)
+                       start-time (sys/clock_gettime)]
+                   (let [final (redex expr defs identity [])
+                         elapsed (sys/time-delta start-time (sys/clock_gettime))
                          _ (do
                              (println "subgraph" (gensym "cluster") "{")
                              (println (str "graph [color=none, label=\"final " _LINE_ "\"]"))
                              (grph final defs)
                              (println "}"))
-                         elapsed (sys/time-delta start-time (sys/clock_gettime))
                          _ (send redex-count (partial deliver p))
                          redexes (extract p)]
                      (print-err 'final _LINE_ final
