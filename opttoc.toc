@@ -39,10 +39,10 @@
   (inc n))
 
 (defprotocol Evaluation
-  (redex [expr defs hist call-stack]
+  (redex [expr defs hist]
     expr)
 
-  (apply-args [expr args defs hist call-stack]))
+  (apply-args [expr args defs hist]))
 
 ;; TODO: causes incRef error
 ;; (defn redex-f [expr prev-expr defs]
@@ -53,7 +53,7 @@
 (defn redex-f
   ([expr defs] (redex-f expr defs identity))
   ([expr defs hist]
-   (let [new-expr (redex expr defs hist [])]
+   (let [new-expr (redex expr defs hist)]
      (either (= expr new-expr)
              (redex-f new-expr defs)))))
 
@@ -140,16 +140,13 @@
 
 (extend-type ast/param-sym
   Evaluation
-  (apply-args [x args defs hist call-stack]
+  (apply-args [x args defs hist]
     (ast/call-expr (list* x args)))
 
-  (redex [x defs hist call-stack]
+  (redex [x defs hist]
     (either (map (get defs x)
                  (fn [v]
-                   (redex (either (map (instance? Copies v)
-                                       extract)
-                                  v)
-                          defs hist call-stack)))
+                   (redex v defs hist)))
             x))
 
   DotOut
@@ -186,7 +183,7 @@
     (ast/vars [_] {})
 
     Evaluation
-    (redex [this defs hist call-stack]
+    (redex [this defs hist]
       this)
 
     DotOut
@@ -211,10 +208,10 @@
 
 (extend-type ast/tagged-symbol
   Evaluation
-  (apply-args [s args defs hist call-stack]
+  (apply-args [s args defs hist]
     (ast/call-expr (list* s args)))
 
-  (redex [s defs hist call-stack]
+  (redex [s defs hist]
     (either (get defs s)
             s))
 
@@ -228,7 +225,7 @@
 
 (extend-type ast/integer-ast
   Evaluation
-  (redex [ast defs hist call-stack]
+  (redex [ast defs hist]
     (.int ast))
 
   DotOut
@@ -246,7 +243,7 @@
     (embed f))
 
   Evaluation
-  (apply-args [f args defs hist call-stack]
+  (apply-args [f args defs hist]
     ;; a Fn can only be applied to CoreType values, so the args
     ;; have to be completely reduced with no free variables
     ;; 'grph' is the exception as it can be applied to ast's as well.
@@ -288,11 +285,14 @@
   (map [x f embed]
     (embed x))
 
+  ast/AST
+  (ast/vars [_] {})
+
   Evaluation
-  (apply-args [ast args defs hist call-stack]
+  (apply-args [ast args defs hist]
     (either (map (get defs var)
                  (fn [f]
-                   (apply-args f args defs hist call-stack)))
+                   (apply-args f args defs hist)))
             (ast/call-expr (list* ast args))))
 
   DotOut
@@ -356,13 +356,11 @@
 
 (extend-type ast/fn-arity-ast
   Evaluation
-  (redex [arity defs hist call-stack]
+  (redex [arity defs hist]
     (.body arity (map (.body arity) (fn [expr]
-                                      (redex expr defs hist call-stack)))))
+                                      (redex expr defs hist)))))
 
-  (apply-args [arity args defs hist call-stack]
-    (print-err 'applying _LINE_ (.fn-sym arity)
-               lflf 'args args)
+  (apply-args [arity args defs hist]
     (let [params (.params arity)]
       ;; fully reduce all but the last expression for any side effects
       ;; TODO: but what if they have free-vars
@@ -395,17 +393,6 @@
                            ;;                     se/state-error)
                            ;;            {})
 
-                           ;; new-bod (redex body
-                           ;;                (reduce (zip-lists (.fixed params) args)
-                           ;;                        defs
-                           ;;                        (fn [defs [param arg]]
-                           ;;                          (cond (< 0 (.uses param))
-                           ;;                                (assoc defs param arg)
-
-                           ;;                                defs)))
-                           ;;                hist
-                           ;;                call-stack)
-
                            subs (reduce (zip-lists (.fixed params) args)
                                         {}
                                         (fn [subs [param arg]]
@@ -421,12 +408,12 @@
 
                            _ (do
                                (println "subgraph" (gensym "cluster") "{")
-                               (println (str "graph [color=none, label=\"applying "
-                                             (.fn-sym arity) "\"]"))
+                               (println (str "graph [color=none, label=\"applied "
+                                          (.fn-sym arity) " " (mod (address-of arity) 1000) "\"]"))
                                (grph (hist new-bod))
                                (println "}"))
 
-                           new-bod (redex new-bod defs hist call-stack)
+                           new-bod (redex new-bod defs hist)
                            ]
                        ;; (println "subgraph" (gensym "cluster") "{")
                        ;; (println (str "graph [color=none, label=\"apply-arity "
@@ -468,7 +455,8 @@
             (do
               (println node-id (str "[label=\"λ " (cond (= c/no-symbol (.fn-sym f))
                                                         (mod (address-of f) 1000)
-                                                        (.fn-sym f))
+                                                        (str (.fn-sym f) " "
+                                                             (mod (address-of f) 1000)))
                                     "\"]"))
               f))))
 
@@ -495,16 +483,12 @@
 
 (extend-type ast/fn-ast
   Evaluation
-  ;; (redex [ast defs hist call-stack]
-  ;;   (.arities ast (map (.arities ast) (fn [arity]
-  ;;                                        (redex arity defs hist call-stack)))))
-
-  (apply-args [tgt args defs hist call-stack]
+  (apply-args [tgt args defs hist]
     (either (some (.arities tgt)
                   (fn [arity]
                     ;; TODO: variadic will be handled here
                     (and (= (count (.params arity)) (count args))
-                         (maybe (apply-args arity args defs hist call-stack)))))
+                         (maybe (apply-args arity args defs hist)))))
             (do
               (print-err 'no-arity-found (ast/location tgt) (count args)
                          lflf tgt)
@@ -528,12 +512,17 @@
 
 (extend-type ast/call-ast
   Evaluation
-  (apply-args [expr args defs hist call-stack]
+  (apply-args [expr args defs hist]
     (ast/call-expr (list* expr args)))
 
-  (redex [expr defs hist call-stack]
+  (redex [expr defs hist]
     (let [tgt (.call-target expr)]
-      (either (delivered (.reduced expr))
+      (either (map (delivered (.reduced expr))
+                   (fn [reduced]
+                     (let [r (redex reduced defs hist)]
+                       ;; (print-err 'cached _LINE_ (mod (address-of expr) 1000) expr
+                       ;;            lflf r)
+                       r)))
               (let [
                     ;; _ (do
                     ;;     (println "subgraph" (gensym "cluster") "{")
@@ -542,12 +531,14 @@
                     ;;     (grph (hist expr))
                     ;;     (println "}"))
                     new-tgt (redex tgt defs
-                                   (comp hist (partial .call-target expr))
-                                   call-stack)
-                    reduced (apply-args new-tgt (.args expr) defs hist call-stack)]
-                (print-err 'delivering _LINE_ (mod (address-of expr) 1000)
-                           lflf reduced)
-                (deliver (.reduced expr) reduced)
+                                   (comp hist (partial .call-target expr)))
+                    reduced (apply-args new-tgt (.args expr) defs hist)]
+                (either (identical expr reduced)
+                        (do
+                          ;; (print-err 'delivering _LINE_ (mod (address-of expr) 1000) expr
+                          ;;            lflf (mod (address-of reduced) 1000) reduced
+                          ;;            lflf (= expr reduced))
+                          (deliver (.reduced expr) reduced)))
                 reduced))))
 
   DotOut
@@ -648,7 +639,7 @@
 
                  (let [p (promise)
                        start-time (sys/clock_gettime)]
-                   (let [final (redex expr {} identity [])
+                   (let [final (redex expr defs identity)
                          elapsed (sys/time-delta start-time (sys/clock_gettime))
                          ;; _ (do
                          ;;     (println "subgraph" (gensym "cluster") "{")
@@ -663,8 +654,8 @@
                                                "\n" (str elapsed
                                                          ", redexes: " redexes
                                                          ", test-cnt: " test-cnt))
-                                    (println (str "comment=\"stats " test-cnt ", "
-                                                  elapsed ", " redexes "\""))
+                                    ;; (println (str "comment=\"stats " test-cnt ", "
+                                    ;;               elapsed ", " redexes "\""))
                                     ;; (println (str "stats " test-cnt ", "
                                     ;;               elapsed ", " redexes))
                                     ))
