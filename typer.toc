@@ -7,7 +7,7 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "1ec77e5"))
+                          :sha "08ab461"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -16,10 +16,10 @@
                            :sha "43bc6f4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "dad9d56"))
+                            :sha "018d5b7"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "1d50297"))
+                            :sha "a56a7fc"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -221,7 +221,7 @@
                        se/Failure))))
 
 (defn get-value-type [sym]
-  (assert (instance? ast/Tagged sym))
+  (assert (instance? ast/tagged-symbol sym))
 
   (cond (= (str sym) "")
         (do
@@ -313,7 +313,7 @@
                                   (set-value-type sym (c/update-path new-const loc)))))))))
 
 (defn remove-value-type [sym]
-  (assert (instance? ast/Tagged sym))
+  (assert (instance? ast/tagged-symbol sym))
   (se/update-in-val [.value-types]
                     (fn [types-list]
                       (either (map (first types-list)
@@ -321,6 +321,39 @@
                                      (cons (dissoc value-types (ast/untag sym))
                                            (rest types-list))))
                               types-list))))
+
+(defn get-type-info [type-sym loc]
+  ;; TODO: needs to handled namespaced type-sym
+  ;; (or ;; (= (.file loc) 'core)
+  ;;     ;; (= (.line loc) 0)
+  ;;  (and ( = type-sym 'BitmapIndexedNode)
+  ;;       (do
+  ;;         (status 'get-type _LINE_ loc type-sym)
+  ;;         (maybe '_))))
+  (comp (se/get-in-val [.types (ast/untag type-sym)])
+        (flat-map se-nop
+                  (fn [_]
+                    ;; Look in the core module
+                    (let [core-prom (promise)]
+                      (send modules (fn [mods]
+                                      ;; (or ;; (= (.file loc) 'core)
+                                      ;;  ;; (= (.line loc) 0)
+                                      ;;  (and ( = type-sym 'BitmapIndexedNode)
+                                      ;;       (do
+                                      ;;         (status 'get-type _LINE_ loc type-sym "\n"
+                                      ;;                 (get-in mods ['core .types (ast/untag type-sym)]))
+                                      ;;         (maybe '_))))
+                                      (either (or (for [core-mod (get mods 'core)
+                                                        _ (instance? Promise core-mod)]
+                                                    (deliver core-prom se/zero-se))
+                                                  (map (get-in mods ['core .types (ast/untag type-sym)])
+                                                       (fn [type-inf]
+                                                         (deliver core-prom (se/state-error type-inf)))))
+                                              (deliver core-prom se/zero-se))
+                                      mods))
+                      (extract core-prom))))
+        (compilation-error "No type named" (str "'" type-sym "'")
+                           "was found. Used at" loc)))
 
 (defprotocol TypeChecker
   ;; Change any InferredInner constraint to a CollectionOf
@@ -383,6 +416,8 @@
 ;; TODO: remove when done
 (def DefaultPreCheck (any-of c/AllValues
                              c/NoSymbol
+                             c/ReifiedConstraint
+                             c/FnConstraint
                              ast/inline-ast
                              ast/tagged-symbol
                              ast/params-ast))
@@ -425,6 +460,16 @@
                       (get-value-type (ast/tag (.sym c) loc)))
                 (fn [_]
                   (append-value-type (.sym c) c loc))))))
+
+(extend-type c/ReifiedConstraint
+  TypeChecker
+  (type-check [c old-c]
+    (let [loc (ast/location old-c)]
+      (flat-map (cond (= c/UnknownType (c/type-num c))
+                      (get-type-info (c/type-sym c) loc)
+                      (se/state-error c))
+                (fn [type-c]
+                  (append-value-type (.sym c) type-c loc))))))
 
 (extend-type c/NoSymbol
   TypeChecker
