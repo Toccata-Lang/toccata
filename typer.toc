@@ -7,7 +7,7 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "90b9152"))
+                          :sha "1ec77e5"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -16,10 +16,10 @@
                            :sha "43bc6f4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "792416c"))
+                            :sha "dad9d56"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "f8eb07a"))
+                            :sha "1d50297"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -56,6 +56,16 @@
     (extract p)))
 
 (def core (c/ToccataCore path-to-core))
+
+(def lflf "\n\n")
+
+(defn se-debug [& args]
+  (se/new-se (fn [s]
+               (apply status args)
+               ['_ s])))
+
+(def se-nop (se/new-se (fn [s]
+                         ['_ s])))
 
 (defn compilation-error [& msg]
   (let [msg (to-str (interpose msg " "))]
@@ -104,6 +114,214 @@
                                     [.fields 'contents]
                                     c/no-contents)})))
 
+;; modules holds a map from filenames to either a Module or a Promise
+(def modules (agent {}))
+
+(defn get-types []
+  (se/get-in-val [.value-types 0]))
+
+(defn push-types
+  ([]
+   (flat-map (se/get-in-val [.value-types])
+             (fn [types-list]
+               (se/assoc-in-val [.value-types]
+                                (either (map (first types-list)
+                                             (fn [value-types]
+                                               (conj types-list value-types)))
+                                        (conj types-list {}))))))
+  ([value-types]
+   (flat-map (se/get-in-val [.value-types])
+             (fn [types-list]
+               (se/assoc-in-val [.value-types]
+                                (conj types-list value-types))))))
+
+(defn pop-types []
+  (for [curr-types (get-types)
+        _ (se/update-in-val [.value-types] rest)]
+    curr-types))
+
+(defn nip-types []
+  ;; Bringing the Forth to Toccata
+  (flat-map (se/get-in-val [.value-types])
+            (fn [types-list]
+              (se/assoc-in-val [.value-types]
+                               (either (map (first types-list)
+                                            (fn [value-types]
+                                              (cons value-types (drop types-list 2))))
+                                       types-list)))))
+
+(defn add-getter [sym types-list]
+  (assert (instance? Symbol sym))
+  (assert (instance? (list-of HashMap) types-list))
+  (assert-result r (instance? (list-of HashMap) r))
+
+  ;; 'sym' already has '.' at front
+  (let [required-field (.sym c/empty-reified (symbol (str "field '" (rest (str sym)) "' required")))
+        arities {1 (c/fn-arity (symbol (str sym "_getter"))
+                               (c/ListConstraint [required-field]
+                                                 c/no-tail empty-list c/no-symbol "")
+                             c/top-type)
+                 2 (c/fn-arity (symbol (str sym "_setter"))
+                               (c/ListConstraint [required-field c/top-type]
+                                                 c/no-tail empty-list c/no-symbol "")
+                             c/top-type)}
+        getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})]
+    (cond (empty? types-list)
+          (list {sym getter})
+
+          (get-in types-list [0 sym])
+          types-list
+
+          (map types-list (fn [value-types]
+                            (assoc value-types sym getter))))))
+
+(defn get-core-value-type [sym]
+  (assert (instance? Symbol sym))
+
+  (se/new-se (fn [s]
+               (either (or (and (= 0 (.index s))
+                                (or (map (get-in s [.value-types 0 sym])
+                                         (fn [val-type]
+                                           [val-type s]))
+                                    (for [first-char (first (str sym))
+                                          _ (= first-char ".")
+                                          new-s (update-in s [.value-types]
+                                                           (fn [val-types]
+                                                             (add-getter sym val-types)))
+                                          val-type  (get-in new-s [.value-types 0 sym])]
+                                      [val-type new-s])
+                                    (maybe se/Failure)))
+                           (map (get-in (extract modules) [core .value-types 0 sym])
+                                (fn [expr]
+                                  [expr s]))
+                           ;; last ditch effort
+                           (let [core-prom (promise)]
+                             ;; (status 'sending sym _LINE_)
+                             (send modules (fn [mods]
+                                             (assert-result r (instance? HashMap r))
+                                             (either (or (map (get-in mods [core .value-types 0 sym])
+                                                              (fn [val-type]
+                                                                (deliver core-prom (maybe val-type))
+                                                                mods))
+                                                         (for [first-char (first (str sym))
+                                                               _ (= first-char ".")
+                                                               new-mods (update-in mods [core .value-types]
+                                                                                   (fn [val-types]
+                                                                                     (add-getter sym val-types)))
+                                                               val-type (get-in new-mods [core .value-types 0 sym])]
+                                                           (do
+                                                             (deliver core-prom (maybe val-type))
+                                                             new-mods)))
+                                                     (do
+                                                       (deliver core-prom nothing)
+                                                       mods))))
+                             (map (extract core-prom)
+                                  (fn [expr]
+                                    [expr s]))))
+                       se/Failure))))
+
+(defn get-value-type [sym]
+  (assert (instance? ast/Tagged sym))
+
+  (cond (= (str sym) "")
+        (do
+          (print-err 'compiler-error _LINE_)
+          (se/state-error c/top-type))
+
+        (let [loc (ast/location sym)
+              sym (ast/untag sym)]
+          ;; TODO: this does not look up namespaced symbols
+          (comp (se/get-in-val [.value-types 0 sym])
+                (get-core-value-type sym)
+                (compilation-error "Could not find type constraint for" (str "'" sym "'") "at" loc)))))
+
+(defn set-value-type [sym constraint]
+  (assert (instance? ast/OptionalTagged sym))
+  (assert (instance? c/Constraints constraint))
+
+  (cond (= c/no-symbol sym)
+        (se/state-error constraint)
+
+        (= (str sym) "")
+        (do
+          (print-err 'compiler-error _LINE_ constraint)
+          se-nop)
+
+        (map (se/update-in-val [.value-types]
+                               (fn [types-list]
+                                 (let [sym (ast/untag sym)]
+                                   (either (map (first types-list)
+                                                (fn [value-types]
+                                                  (-> value-types
+                                                      (dissoc sym)
+                                                      (assoc sym constraint)
+                                                      (cons (rest types-list)))))
+                                           (list {sym constraint})))))
+             (fn [_]
+               constraint))))
+
+(defn append-value-type [sym constraint loc]
+  (assert (instance? ast/OptionalTagged sym))
+  (assert (instance? c/Constraints constraint))
+
+  (cond (= sym c/no-symbol)
+        (se/state-error constraint)
+
+        (= (str sym) "")
+        (map se-nop (fn [_]
+                      (status "Bad call to append-value-type" _LINE_ loc sym "\n" constraint)
+                      '_))
+
+        (= constraint c/top-type)
+        (se/try
+          (get-value-type sym)
+          (fn [_]
+            (se/state-error c/top-type)))
+
+        (flat-map (se/try
+                    (get-value-type sym)
+                    (fn [_]
+                      (se/state-error c/top-type)))
+                  (fn [curr-const]
+                    (cond (= curr-const c/top-type)
+                          (set-value-type sym (c/trim (c/update-path constraint loc)))
+
+                          (let [new-const (c/trim (c/intersect curr-const constraint))]
+                            ;; (let [loc (ast/location sym)]
+                            ;;   (or ;; (= (.file loc) core)
+                            ;;    ;; (= (.line loc) 0)
+                            ;;    (and (= sym 'loufa)
+                            ;;         (do
+                            ;;           (print-err 'appending _LINE_ loc (str "\"" sym "\"")
+                            ;;                      "\n" 'constraint constraint
+                            ;;                      "\n\n" 'curr curr-const
+                            ;;                      "\n\n" 'untrimmed (c/intersect curr-const constraint)
+                            ;;                      "\n\n" 'new-const new-const)
+                            ;;           nothing))))
+
+                            (cond (= new-const c/bottom-type)
+                                  (compilation-error 'site _LINE_ loc 'appending sym
+                                                     "\n" 'curr curr-const
+                                                     "\n\n" 'constraint constraint
+                                                     "\n\n" 'new-const new-const
+
+                                                     "\n\n" (conf-ass _LINE_ new-const loc))
+
+                                  (instance? c/ProtoImpls curr-const)
+                                  se-nop
+
+                                  (set-value-type sym (c/update-path new-const loc)))))))))
+
+(defn remove-value-type [sym]
+  (assert (instance? ast/Tagged sym))
+  (se/update-in-val [.value-types]
+                    (fn [types-list]
+                      (either (map (first types-list)
+                                   (fn [value-types]
+                                     (cons (dissoc value-types (ast/untag sym))
+                                           (rest types-list))))
+                              types-list))))
+
 (defprotocol TypeChecker
   ;; Change any InferredInner constraint to a CollectionOf
   (promote-inferred [c]
@@ -117,7 +335,7 @@
   (recover-val-type [x]
     (assert-result x (instance? se/StateError x))
 
-    (se/state-error x))
+    (se/state-error (RecurseFinal x)))
 
   (all-symbols [ast]
     (assert-result l (instance? (vector-of ast/ParamType) l))
@@ -133,7 +351,9 @@
   (pre-check [ast]
     (assert-result x (instance? se/StateError x))
 
-    (se/state-error ast))
+    ;; TODO: put back in when done
+    ;; (se/state-error ast)
+    )
 
   (type-check [ast old-ast]
     (assert-result x (instance? se/StateError x))
@@ -142,6 +362,77 @@
                        "\n" (type-name old-ast) old-ast)
     ;; (se/state-error ast)
     ))
+
+(defn all-syms [params]
+  (assert (instance? ast/ParamType params))
+
+  (cata all-symbols params))
+
+(defn recover-types [params]
+  (assert (instance? ast/params-ast params))
+
+  (apo recover-val-type params se/state-error))
+
+(defn get-param-types [params]
+  (assert (instance? ast/params-ast params))
+
+  (map (cata param-types params se/state-error)
+       (fn [c]
+         (c/trim (c/intersect c c/list-constraint)))))
+
+;; TODO: remove when done
+(def DefaultPreCheck (any-of c/AllValues
+                             c/NoSymbol
+                             ast/inline-ast
+                             ast/tagged-symbol
+                             ast/params-ast))
+
+;; TODO: remove when done
+(def DefaultTypeCheck (any-of c/AllValues
+                              c/NoSymbol
+                              ast/inline-ast))
+
+;; TODO: remove when done
+(extend-type DefaultPreCheck
+  TypeChecker
+  (pre-check [ast]
+    (assert-result x (instance? se/StateError x))
+
+    (se/state-error ast)))
+
+;; TODO: remove when done
+(extend-type DefaultTypeCheck
+  TypeChecker
+  (type-check [ast old-ast]
+    (assert-result x (instance? se/StateError x))
+
+    (se/state-error ast)))
+
+(extend-type c/Constraints
+  TypeChecker
+  (all-symbols [c]
+    [])
+
+  (param-types [c]
+    (se/state-error c)))
+
+(extend-type c/SymbolConstraints
+  TypeChecker
+  (type-check [c old-c]
+    (let [loc (ast/location old-c)]
+      (flat-map (cond (= (.sym c) c/no-symbol)
+                      (se/state-error '_)
+                      (get-value-type (ast/tag (.sym c) loc)))
+                (fn [_]
+                  (append-value-type (.sym c) c loc))))))
+
+(extend-type c/NoSymbol
+  TypeChecker
+  (param-types [sym]
+    (se/state-error c/no-tail))
+
+  (all-symbols [_]
+    []))
 
 (defn type-check-ast [ast]
   (cond (and (= c/bottom-type ast)
@@ -166,6 +457,278 @@
             ;;                          "\n" final-ast))))
             final-ast))))
 
+(extend-type ast/definition-ast
+  TypeChecker
+  (pre-check [ast]
+    (for [_ (push-types)
+          _ (set-value-type (.sym ast) c/top-type)]
+      (do
+        ;; (let [loc (ast/location ast)]
+        ;;   (or (= (.line loc) 0)
+        ;;       ;; (= (.file loc) 'core)
+        ;;       (and ;; (= (.sym ast) 'HashMap)
+        ;;        (do
+        ;;          (print-err 'checking _LINE_ loc ast)
+        ;;          nothing))))
+        (.value-exprs ast (-> (.value-exprs ast)
+                              (remove (partial instance? ast/block-comment-ast))
+                              (map (fn [inner-ast]
+                                     (cond (instance? ast/fn-ast inner-ast)
+                                           (.fn-sym inner-ast (.sym ast))
+
+                                           (instance? c/SymbolConstraints inner-ast)
+                                           (c/update-sym inner-ast (ast/untag (.sym ast)))
+
+                                           inner-ast))))))))
+
+  (type-check [ast old-ast]
+    (let [loc (ast/location (.sym old-ast))]
+      (let [sym (.sym old-ast)]
+        (for [_ (pop-types)
+              c (either (map (last (.value-exprs ast))
+                             (fn [val]
+                               (cond (instance? c/Constraints val)
+                                     ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
+                                     ;; the updated version. Possibly a bug in assoc-in*
+
+                                     ;; TODO: this version produces a very cryptic error message
+                                     ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
+                                     ;;           (set-value-type (.sym old-ast) val))
+
+                                     (flat-map (se/assoc-in-val [.types (ast/untag sym)] val)
+                                               (fn [_]
+                                                 (set-value-type sym (c/trim val))))
+
+                                     (and (= c/top-type (.constraint val))
+                                          (or (= sym 'empty-list)
+                                              (= sym 'empty-vector)
+                                              (= sym 'int-max)
+                                              (= sym 'int-min)
+                                              (= sym 'nothing)))
+                                     (flat-map (get-value-type sym)
+                                               (fn [c]
+                                                 (set-value-type sym (c/update-path c loc))))
+
+                                     (set-value-type sym (c/trim (.constraint val))))))
+                        (set-value-type (.sym old-ast) c/top-type))]
+          (do
+            ;; (print-err 'defed _LINE_ loc (.sym old-ast) ;; "\n" c
+            ;;            )
+            ast))))))
+
+(extend-type ast/fn-arity-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [fixed-params (.fixed (.params ast))
+          arg-count (count (.params ast))
+          arity-id (cond (= (.fn-var ast) "")
+                         (gensym "fn-arity")
+                         (.fn-var ast))
+          loc (ast/location ast)]
+      (for [_ (push-types)
+            ;; :let [_ (or ;; (= (.line loc) 0)
+            ;;             ;; (= (.file loc) 'core)
+            ;;          (and (= (.fn-sym ast) 'fn-apply)
+            ;;               (do
+            ;;                 (status 'pre-fn-arity _LINE_ (.fn-sym ast) loc
+            ;;                         "\n" 'params (.params ast)
+            ;;                         "\n\n" 'body "[" (to-str (interpose (.body ast) "\n\n")) "]"
+            ;;                         "\n\n" 'const (.constraint ast))
+            ;;                 nothing)))]
+            _ (set-value-type ast/result-sym c/top-type)
+            _ (se/traverse (all-syms (.params ast)) (fn [sym]
+                                                      (set-value-type sym c/top-type)))
+            _ (se/traverse (zip-lists fixed-params (range arg-count))
+                           (fn [[sym index]]
+                             (cond (instance? ast/params-ast sym)
+                                   se-nop
+
+                                   (append-value-type sym
+                                                      (c/ParamConstraint arity-id index
+                                                                  empty-list (ast/untag sym) "")
+                                                      loc))))
+            _ (append-value-type (.variadic (.params ast))
+                                 (c/ParamConstraint arity-id arg-count
+                                                    empty-list
+                                                    (ast/untag (.variadic (.params ast)))
+                                                    "")
+                                 loc)
+            ;; TODO: should use cata to make all the variadic syms be lists
+            ]
+        (-> ast
+            (.fn-var arity-id)
+            (.body (comp (filter (.body ast) (partial instance? c/Constraints))
+                         (-> (.body ast)
+                             (remove (partial instance? c/Constraints))
+                             (remove (partial instance? ast/block-comment-ast)))))))))
+
+  (type-check [ast old-ast]
+    (assert (instance? ast/fn-arity-ast old-ast))
+
+    (let [loc (ast/location old-ast)]
+      (for [result-c (get-value-type ast/result-sym)
+            _ (recover-val-type ast/result-sym)
+            pts (get-param-types (.params old-ast))
+            _ (recover-types (.params old-ast))
+            _ (nip-types)
+            :let [body-c (either (map (last (.body ast)) .constraint)
+                                 c/top-type)
+                  final-c (elgot c/descend?
+                                 (fn [c]
+                                   (cond (= c c/empty-reified)
+                                         c/top-type
+
+                                         c))
+                                 (c/intersect result-c body-c))]
+            ;; :let [_ (or ;; (= (.line loc) 0)
+            ;;          ;; (= (.file loc) 'core)
+            ;;          (and (= (.fn-sym ast) 'cross-lists)
+            ;;               (do
+            ;;                 (status 'check-fn-arity _LINE_ (.fn-sym ast) loc
+            ;;                         "\n" 'pts pts
+            ;;                         "\n\n" 'result-c result-c
+            ;;                         "\n\n" 'body-c body-c
+            ;;                         "\n\n" 'final-c final-c
+            ;;                         "\n\n" 'body-exprs (str "[" (to-str (interpose (.body ast) "\n")) "]"))
+            ;;                 nothing)))]
+            _ (either (map (or (= c/bottom-type pts)
+                               (= c/bottom-type final-c))
+                           (fn [failure-c]
+                             (compilation-error 'arity _LINE_ loc (.fn-sym old-ast)
+                                                "\n" 'pts pts
+                                                "\n\n" 'result-c result-c
+                                                "\n\n" 'body-c body-c
+                                                "\n\n" 'final-c final-c
+                                                "\n\n" 'body (either (map (last (.body ast)) .constraint)
+                                                                     c/top-type)
+                                                "\n\n" (conf-ass _LINE_ failure-c loc))))
+                      se-nop)]
+        ;; TODO: use update-constraint here
+        (.constraint ast (c/trim (c/intersect (.constraint ast)
+                                              (c/fn-arity (.fn-var ast) pts final-c))))))))
+
+(extend-type ast/fn-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [loc (ast/location ast)
+          sym (.fn-sym ast)]
+      ;; (or (= (.line loc) 0)
+      ;;     (= (.file loc) 'core)
+      ;;     (do
+      ;;       (print-err 'fn-ast loc
+      ;;                  "\n" ast)
+      ;;       nothing))
+      (for [_ (push-types)
+            _ (set-value-type sym (-> c/fn-constraint
+                                      (c/intersect (c/coll-of-c c/empty-reified))
+                                      (c/update-path loc)
+                                      (c/update-sym (ast/untag sym))))]
+        (.arities ast (map (.arities ast)
+                           (fn [arity]
+                             (.fn-sym arity sym)))))))
+
+  (type-check [ast old-ast]
+    (let [sym (.fn-sym ast)
+          fn-c (-> c/fn-constraint
+                   (c/update-path (ast/location sym))
+                   (c/update-sym (ast/untag sym)))
+          fn-c (reduce (.arities ast) (.arities fn-c {})
+                       (fn [c arity]
+                         (assert (instance? ast/fn-arity-ast arity))
+                         (let [arity-c (.constraint arity)]
+                           (either (for [variadic (get-in arity-c [.param-consts .tail-c])
+                                         :when (= c/no-tail variadic)
+                                         fixed-params (get-in arity-c [.param-consts .items])]
+                                     (assoc-in c [.arities (count fixed-params)] arity-c))
+                                   (assoc-in c [.arities c/variadic] arity-c)))))
+          fn-c (c/update-path fn-c (ast/location old-ast))]
+      ;; (let [loc (ast/location ast)]
+      ;;   (or ;; (= (.file loc) 'core)
+      ;;       ;; (= (.line loc) 0)
+      ;;       (do
+      ;;         (print-err 'fn-c _LINE_ (ast/location old-ast) "\n" fn-c)
+      ;;         nothing)))
+      (flat-map (nip-types)
+                (fn [_]
+                  (se/state-error (.constraint ast fn-c)))))))
+
+(extend-type ast/tagged-symbol
+  TypeChecker
+  (param-types [sym]
+    (get-value-type sym))
+
+  (update-constraint [ast constraint loc]
+    (map (append-value-type ast constraint loc)
+         (partial .constraint ast)))
+
+  (all-symbols [ast]
+    [ast])
+
+  (recover-val-type [sym]
+    (flat-map (se/get-in-val [.value-types])
+              (fn [types-list]
+                (assert (instance? List types-list))
+                (map (either (for [value-types (nth types-list 1)
+                                   prev-constraint (get value-types sym)]
+                               (set-value-type sym prev-constraint))
+                             (remove-value-type sym))
+                     RecurseFinal))))
+
+  (type-check [s old-s]
+    (map (get-value-type s)
+         (partial .constraint s))))
+
+(extend-type ast/params-ast
+  TypeChecker
+  (recover-val-type [x]
+    (se/state-error (RecurseWith x)))
+
+  (update-constraint [ast constraint loc]
+    (either (map (instance? c/ListConstraint (.variadic ast))
+                 (fn [_]
+                   (status "Compiler error:" _FILE_ _LINE_ "\n" 'variadic (.variadic ast))))
+            '_)
+    (let [new-c (-> (.constraint ast)
+                    (c/intersect c/seq-constraint)
+                    (c/intersect (c/update-path constraint loc)))]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (compilation-error (conf-ass _LINE_ new-c loc))))
+              (let [[item-cs tail-item-cs] (-> (c/get-items new-c)
+                                               (split (count (.fixed ast))))
+                    tail-c (-> c/list-constraint
+                               (c/set-items tail-item-cs)
+                               (c/set-tail (c/get-tail new-c))
+                               (c/replace-path (.path new-c)))]
+                (for [_ (se/traverse (zip-lists (seq (.fixed ast)) item-cs)
+                                     (fn [[ast c]]
+                                       (update-constraint ast c loc)))
+                      _ (update-constraint (.variadic ast) tail-c loc)]
+                  (.constraint ast new-c))))))
+
+  (all-symbols [params]
+    (comp* (.variadic params)
+           (seq (.fixed params))))
+
+  (param-types [params]
+    (-> c/seq-constraint
+        (c/set-tail (.variadic params))
+        (c/set-items (.fixed params))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (let [c (-> c/seq-constraint
+                (c/set-items (map (.fixed ast) .constraint))
+                (c/update-path (ast/location old-ast)))]
+      (map (append-value-type (.variadic ast) c/list-constraint
+                              (ast/location (.variadic ast)))
+           (fn [appended-var]
+             (-> ast
+                 (.constraint (c/set-tail c c/coll-of-any))
+                 (.variadic (either (= c/no-symbol (.variadic ast))
+                                    (.constraint (ast/tag (.variadic ast))
+                                                 appended-var)))))))))
+
 (def _ (print-err 'creating-parser))
 
 (defn update-context [context update]
@@ -188,9 +751,11 @@
                               (compilation-error "Could not type check code for expression at "
                                                  (ast/location ast)))
                         (fn [err]
+                          (send output (fn [_]
+                                         (print-err (.val err))
+                                         (abort)))
                           (wait-for-output)
-                          (print-err (.val err))
-                          (abort))))
+                          se-nop)))
                 ast)
               (grmr/get-value 'type-checker)
               rdr/top-level))))
@@ -214,9 +779,10 @@
                                                  (lazy-list file-in))]
                    (cond (instance? rd/ParserError parse-result)
                          (do
-                           (status (.msg parse-result))
-                           (wait-for-output)
-                           (abort))
+                           (send output (fn [_]
+                                            (print-err (.msg parse-result))
+                                            (abort)))
+                           (wait-for-output))
 
                          ;; after all expressions have been checked,
                          ;; deliver the resulting Module
@@ -225,14 +791,16 @@
 
           ;; or tell everyone it couldn't be
           (do
-            (status "Could not find/open " file-name)
-            (wait-for-output)
-            (abort)))
-  )
+            (send output (fn [_]
+                           (print-err "Could not find/open " file-name)
+                           (abort)))
+            (wait-for-output))))
 
 (main [params]
   (let [core-start (sys/clock_gettime)
         core-mod (extract (compile-module core toccata-dir toccata-dir 0))]
+    (send modules (fn [_]
+                    {core core-mod}))
     (status 'time-for-core (div (sys/time-delta core-start (sys/clock_gettime)) 1000))
     ;; (-> (rest params)
     ;;     ;; TODO: empty-defn causes mem leaks
@@ -241,7 +809,7 @@
     ;;            (map (sys/file-directory file-name)
     ;;                 (fn [root-dir]
     ;;                   (send modules (fn [_]
-    ;;                                   {'core core-mod}))
+    ;;                                   {core core-mod}))
     ;;                   (let [_ (send output (fn [_]
     ;;                                          (fio/file-out (str file-name ".err"))))
     ;;                         core-result (compile-module file-name toccata-dir toccata-dir)
