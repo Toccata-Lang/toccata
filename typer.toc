@@ -7,7 +7,7 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "08ab461"))
+                          :sha "93536de"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -16,10 +16,10 @@
                            :sha "43bc6f4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "018d5b7"))
+                            :sha "2385903"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "a56a7fc"))
+                            :sha "07b068c"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -417,7 +417,15 @@
 (def DefaultPreCheck (any-of c/AllValues
                              c/NoSymbol
                              c/ReifiedConstraint
+                             c/SumConstraint
+                             c/VectorConstraint
+                             c/ListConstraint
+                             c/CollectionOf
+                             c/TypeOfConstraint
                              c/FnConstraint
+                             c/TypeOp
+                             c/fn-arity
+                             c/NoTail
                              ast/inline-ast
                              ast/tagged-symbol
                              ast/params-ast))
@@ -425,6 +433,8 @@
 ;; TODO: remove when done
 (def DefaultTypeCheck (any-of c/AllValues
                               c/NoSymbol
+                              c/NoTail
+                              c/fn-arity
                               ast/inline-ast))
 
 ;; TODO: remove when done
@@ -459,7 +469,7 @@
                       (se/state-error '_)
                       (get-value-type (ast/tag (.sym c) loc)))
                 (fn [_]
-                  (append-value-type (.sym c) c loc))))))
+                  (append-value-type (ast/tag (.sym c) loc) c loc))))))
 
 (extend-type c/ReifiedConstraint
   TypeChecker
@@ -469,7 +479,8 @@
                       (get-type-info (c/type-sym c) loc)
                       (se/state-error c))
                 (fn [type-c]
-                  (append-value-type (.sym c) type-c loc))))))
+                  (append-value-type (ast/tag (.sym c) loc)
+                                     type-c loc))))))
 
 (extend-type c/NoSymbol
   TypeChecker
@@ -478,6 +489,22 @@
 
   (all-symbols [_]
     []))
+
+(extend-type c/NoTail
+  TypeChecker
+  (all-symbols [c]
+    [])
+
+  (param-types [c]
+    (se/state-error c)))
+
+(extend-type c/fn-arity
+  TypeChecker
+  (all-symbols [c]
+    [])
+
+  (param-types [c]
+    (se/state-error c)))
 
 (defn type-check-ast [ast]
   (cond (and (= c/bottom-type ast)
@@ -491,16 +518,21 @@
               ;;                 "\n\n" 'new-ast new-ast)]
               newer-ast (map new-ast type-check-ast se/state-error)
               ;; :let [loc (ast/location ast)
-              ;;       _ (and (instance? ast/either-ast ast)
+              ;;       _ (and ;; (instance? ast/either-ast ast)
               ;;              (maybe (status 'type-checking _LINE_ loc
               ;;                             "\n\n" 'newer-ast newer-ast)))]
               final-ast (type-check newer-ast new-ast)]
           (do
             ;; (let [loc (ast/location ast)]
-            ;;   (and (extract flag)
-            ;;        (maybe (print-err 'final-ast _LINE_ loc
+            ;;   (and ;; (extract flag)
+            ;;        (maybe (status 'final-ast _LINE_ loc
             ;;                          "\n" final-ast))))
             final-ast))))
+
+(extend-type ast/Annotated
+  TypeChecker
+  (pre-check [ast]
+    (pre-check (.ast ast))))
 
 (extend-type ast/definition-ast
   TypeChecker
@@ -789,18 +821,21 @@
   (rd/parser
    (grmr/none-or-more
     (apply-to (fn [type-checker ast]
-                (status 'ast _LINE_ ast)
+                ;; (status 'ast _LINE_ ast)
                 (send type-checker update-context
-                      (se/try
-                        (comp (type-check-ast ast)
-                              (compilation-error "Could not type check code for expression at "
-                                                 (ast/location ast)))
-                        (fn [err]
-                          (send output (fn [_]
-                                         (print-err (.val err))
-                                         (abort)))
-                          (wait-for-output)
-                          se-nop)))
+                      (flat-map se-nop
+                                (fn [_]
+                                  (print-err 'checking _LINE_ ast)
+                                  (se/try
+                                    (comp (type-check-ast ast)
+                                          (compilation-error "Could not type check code for expression at "
+                                                             (ast/location ast)))
+                                    (fn [err]
+                                      (send output (fn [_]
+                                                     (print-err (.val err))
+                                                     (abort)))
+                                      (wait-for-output)
+                                      se-nop)))))
                 ast)
               (grmr/get-value 'type-checker)
               rdr/top-level))))
