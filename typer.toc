@@ -16,10 +16,10 @@
                            :sha "43bc6f4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "c400d2e"))
+                            :sha "f37de03"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "702db0e"))
+                            :sha "23209d9"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -550,7 +550,7 @@
                             ;; ast/and-ast
                             ;; ast/either-ast
                             ;; ast/string-ast
-                            ;; ast/integer-ast
+                            ast/integer-ast
                             ;; ast/cond-ast
                             ;; ast/quoted-ast
                             ;; ast/tagged-symbol
@@ -590,7 +590,8 @@
          (c/trim (c/intersect c c/list-constraint)))))
 
 ;; TODO: remove when done
-(def DefaultPreCheck (any-of c/AllValues
+(def DefaultPreCheck (any-of Vector
+                             c/AllValues
                              c/NoSymbol
                              c/ReifiedConstraint
                              c/SumConstraint
@@ -603,6 +604,8 @@
                              c/MultiConstraint
                              c/fn-arity
                              c/NoTail
+                             ast/string-ast
+                             ast/integer-ast
                              ast/call-ast
                              ast/inline-ast
                              ast/tagged-symbol
@@ -610,7 +613,8 @@
                              ast/params-ast))
 
 ;; TODO: remove when done
-(def DefaultTypeCheck (any-of c/AllValues
+(def DefaultTypeCheck (any-of Vector
+                              c/AllValues
                               c/NoSymbol
                               c/NoTail
                               c/fn-arity
@@ -680,7 +684,8 @@
     ;; TODO: restrict use to fn params only
     (flat-map (get-value-type (.param-sym old-c))
               (fn [type-c]
-                (append-value-type (.sym c) type-c (ast/location c))))))
+                (let [loc (ast/location c)]
+                  (append-value-type (ast/tag (.sym c) loc) type-c loc))))))
 
 (extend-type ProtoArity
   TypeChecker
@@ -864,7 +869,7 @@
                                    (cata (fn [inner]
                                            ;; Get the current type info for any proto impls
                                            (cond (instance? c/ProtoImpls inner)
-                                                 (get-value-type (.fn-sym inner))
+                                                 (get-value-type (ast/tag (.fn-sym inner) loc))
 
                                                  (se/state-error inner)))
                                          target-c
@@ -1191,6 +1196,62 @@
                  (.variadic (either (= c/no-symbol (.variadic ast))
                                     (.constraint (ast/tag (.variadic ast))
                                                  appended-var)))))))))
+
+;; TODO: for extend-ast, fn-ast, type-ast, etc
+;; the type checking should run recursively until the fixed point
+(extend-type ast/extend-ast
+  TypeChecker
+  (pre-check [ast]
+    (for [
+          ;; _ (map se-nop (fn [_]
+          ;;                 (print-err 'extending _LINE_ (ast/location ast) (.type ast))))
+          type-info (get-type-info (.type ast) (ast/location ast))
+          ;; TODO: don't allow extension of refined types
+          :let [type-infos (cond (instance? c/SumConstraint type-info)
+                                 (.alts type-info)
+                                 [type-info])]
+          new-ast (map ast
+                       (fn [arity]
+                         (assert (instance? ast/fn-arity-ast arity))
+                         (either (-> (.params arity)
+                                     .fixed
+                                     first 
+                                     (map (fn [first-param]
+                                            ;; (print-err 'params _LINE_ (ast/location first-param)
+                                            ;; first-param)
+                                            (let [disp-param (ast/untag first-param)]
+                                              (-> type-infos
+                                                  (map (fn [type-info]
+                                                         (let [type-info (c/update-sym type-info disp-param)
+                                                               new-bod (comp [type-info] (.body arity))]
+                                                           (ProtoArity (c/type-num type-info)
+                                                                       (.body arity new-bod)))))
+                                                  se/state-error)))))
+                                 (compilation-error "Prototype implentation for "
+                                                    (str "'" (.fn-sym arity) "'")
+                                                    "must have at least one parameter at"
+                                                    (ast/location (.fn-sym arity)))))
+                       se/state-error)]
+      (-> (either (get new-ast .impls)
+                  {})
+          vals
+          vec
+          (map vals)
+          (map vec)))))
+
+(extend-type ast/string-ast
+  TypeChecker
+  (type-check [ast old-ast]
+    (let [str-val (.string old-ast)]
+      (-> (.constraint ast (assoc-in c/strbuff-constraint [.fields 'static-value] str-val))
+          se/state-error ))))
+
+(extend-type ast/integer-ast
+  TypeChecker
+  (type-check [ast old-ast]
+    (-> (.constraint ast (-> (assoc-in c/int-constraint [.fields 'static-value] (.int old-ast))
+                             (c/update-path (ast/location old-ast))))
+        se/state-error)))
 
 (def _ (print-err 'creating-parser))
 
