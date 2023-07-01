@@ -16,10 +16,10 @@
                            :sha "43bc6f4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "f37de03"))
+                            :sha "2bd7ad4"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "23209d9"))
+                            :sha "d65b759"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -95,7 +95,11 @@
 
   (map [x f embed]
     (map (f arity)
-         (partial .arity x))))
+         (partial .arity x)))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location arity)))
 
 (deftype Module [path index protocols namespaces types value-types]
   ;; path             path to file containing the modules source code (Symbol or String)
@@ -543,13 +547,13 @@
 
 (def ConstrainedAST (any-of ast/call-ast
                             ;; ast/params-ast
-                            ;; ast/fn-ast
+                            ast/fn-ast
                             ;; ast/fn-arity-ast
                             ;; ast/let-ast
                             ;; ast/or-ast
                             ;; ast/and-ast
                             ;; ast/either-ast
-                            ;; ast/string-ast
+                            ast/string-ast
                             ast/integer-ast
                             ;; ast/cond-ast
                             ;; ast/quoted-ast
@@ -626,8 +630,6 @@
 (extend-type DefaultPreCheck
   TypeChecker
   (pre-check [ast]
-    (assert-result x (instance? se/StateError x))
-
     (se/state-error ast)))
 
 ;; TODO: remove when done
@@ -1252,6 +1254,142 @@
     (-> (.constraint ast (-> (assoc-in c/int-constraint [.fields 'static-value] (.int old-ast))
                              (c/update-path (ast/location old-ast))))
         se/state-error)))
+
+(deftype AndClause [clause types]
+  Stringable
+  (string-list [_]
+    (list "(AndClause " (str clause) ")"))
+
+  Container
+  (map [_ f]
+    (AndClause (f clause) types))
+
+  (map [c f embed]
+    (map (f clause)
+         (partial .clause c)))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (for [new-clause (update-constraint (.clause ast) c/maybe-constraint (ast/location old-ast))
+          types (get-types)]
+      (AndClause new-clause types))))
+
+(deftype OrClause [clause types]
+  Stringable
+  (string-list [_]
+    (list "(OrClause " (str clause) " {})"))
+
+  Container
+  (map [_ f]
+    (OrClause (f clause) types))
+
+  (map [c f embed]
+    (map (f clause)
+         (partial .clause c)))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location clause))
+
+  TypeChecker
+  (pre-check [ast]
+    (map (push-types)
+         (fn [_]
+           ast)))
+
+  (type-check [ast old-ast]
+    (let [loc (ast/location old-ast)]
+      (for [new-clause (update-constraint (.clause ast) c/maybe-constraint loc)
+            types (pop-types)]
+        (OrClause new-clause types)))))
+
+(extend-type ast/either-ast
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clause (OrClause (.clause ast) {}))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (for [_ (pop-types)
+          _ (push-types (.types (.clause ast)))]
+      (let [new-clause (.clause (.clause ast))]
+        (-> ast
+            (.clause new-clause)
+            (.constraint (-> (c/sum-type [(.base c/inner-type-of (.constraint new-clause))
+                                          (.constraint (.alt ast))])
+                             (c/update-path (ast/location old-ast)))))))))
+
+(extend-type ast/binding-ast
+  TypeChecker
+  (pre-check [ast]
+    (for [_ (push-types)
+          ;; _ (map se-nop
+          ;;        (fn [_]
+          ;;          (let [loc (ast/location ast)]
+          ;;            (or (= (.line loc) 0)
+          ;;                (= (.file loc) 'core)
+          ;;                (do
+          ;;                  (status 'checking-binding _LINE_ loc
+          ;;                             "\n" 'ast ast)
+          ;;                  nothing)))))
+          _ (se/traverse (all-syms (.binding ast)) (fn [sym]
+                                                     (set-value-type sym c/top-type)))]
+      ast))
+
+  (type-check [ast old-ast]
+    (let [binding (.binding ast)
+          val (.val ast)
+          cont (.cont ast)
+          loc (ast/location old-ast)]
+      (for [binding-c (cata param-types binding se/state-error)
+            _ (se/traverse (all-syms binding) recover-val-type)
+            val-c (update-constraint val binding-c loc)
+            ;; :let [loc (ast/location old-ast)
+            ;;       _ (or ;; (= (.line loc) 0)
+            ;;             ;; (= (.file loc) 'core)
+            ;;          (do
+            ;;            (status 'let _LINE_ loc
+            ;;                    "\n" 'binding (type-name binding) binding
+            ;;                    "\n\n" 'val val
+            ;;                    "\n\n" 'orig-val-c (.constraint val)
+            ;;                    "\n\n" 'val-c val-c)
+            ;;            nothing))]
+            _ (nip-types)]
+        (.constraint ast (either (and (instance? Vector cont)
+                                      (map (last cont) .constraint))
+                                 (.constraint (.cont ast))))))))
+
+(extend-type ast/and-ast
+  TypeChecker
+  (pre-check [ast]
+    (-> ast
+        (.clauses (-> (.clauses ast)
+                      (remove (partial instance? ast/NoCode))
+                      (map (fn [clause]
+                             (AndClause clause c/top-type)))))
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (either (for [first-clause (first (.clauses ast))
+                  last-clause (last (.clauses ast))]
+              (for [_ (pop-types)
+                    _ (push-types (.types first-clause))
+                    ;; TODO: when the ast of the first clause is a call to instance?,
+                    ;; recover the type of the symbol in the second arg
+                    ]
+                (-> ast
+                    (.clauses (map (.clauses ast) .clause))
+                    (.constraint (.constraint (.clause last-clause))))))
+            (se/state-error (.constraint ast (-> c/maybe-constraint
+                                                 (c/update-path (ast/location old-ast))))))))
 
 (def _ (print-err 'creating-parser))
 
