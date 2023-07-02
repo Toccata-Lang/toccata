@@ -16,10 +16,10 @@
                            :sha "43bc6f4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "f613e93"))
+                            :sha "160df7a"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "5b5acfb"))
+                            :sha "9fc325a"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -138,6 +138,12 @@
 (def modules (agent {}))
 
 (def type-counter (int-generator c/TypeCount))
+
+(defn report-type-stack [& msg]
+  (map (se/get-val .value-types)
+       (fn [vts]
+         (status 'type-depth (to-str (interpose msg " "))
+                 (count vts)))))
 
 (defn get-types []
   (se/get-in-val [.value-types 0]))
@@ -515,7 +521,7 @@
                        lflf constraint))
 
   (recover-val-type [x]
-    (assert-result x (instance? se/StateError x))
+    (assert-result r (instance? se/StateError r))
 
     (se/state-error (RecurseFinal x)))
 
@@ -551,7 +557,7 @@
                             ;; ast/fn-arity-ast
                             ;; ast/let-ast
                             ;; ast/or-ast
-                            ;; ast/and-ast
+                            ast/and-ast
                             ;; ast/either-ast
                             ast/string-ast
                             ast/integer-ast
@@ -642,6 +648,14 @@
     (se/state-error ast)))
 
 (def DefaultConst (any-of c/AllValues
+                          c/ParamConstraint
+                          c/FnConstraint
+                          c/ReifiedConstraint
+                          c/MultiConstraint
+                          c/CollectionOf
+                          c/ListConstraint
+                          c/VectorConstraint
+                          c/SumConstraint
                           c/NoSymbol))
 
 (extend-type DefaultConst ;; c/Constraints
@@ -1264,51 +1278,26 @@
                              (c/update-path (ast/location old-ast))))
         se/state-error)))
 
-(deftype OrClause [clause types]
-  Stringable
-  (string-list [_]
-    (list "(OrClause " (str clause) " {})"))
-
-  Container
-  (map [_ f]
-    (OrClause (f clause) types))
-
-  (map [c f embed]
-    (map (f clause)
-         (partial .clause c)))
-
-  ast/FileLoc
-  (ast/location [_]
-    (ast/location clause))
-
+(deftype PushTypes [expr]
   TypeChecker
-  (pre-check [ast]
-    (map (push-types)
-         (fn [_]
-           ast)))
-
-  (type-check [ast old-ast]
-    (let [loc (ast/location old-ast)]
-      (for [new-clause (update-constraint (.clause ast) c/maybe-constraint loc)
-            types (pop-types)]
-        (OrClause new-clause types)))))
+  (pre-check [_]
+    (flat-map (push-types)
+              (fn [_]
+                (pre-check expr)))))
 
 (extend-type ast/either-ast
   TypeChecker
   (pre-check [ast]
     (-> ast
-        (.clause (OrClause (.clause ast) {}))
+        (.alt (PushTypes (.alt ast)))
         se/state-error))
 
   (type-check [ast old-ast]
     (for [_ (pop-types)
-          _ (push-types (.types (.clause ast)))]
-      (let [new-clause (.clause (.clause ast))]
-        (-> ast
-            (.clause new-clause)
-            (.constraint (-> (c/sum-type [(.base c/inner-type-of (.constraint new-clause))
-                                          (.constraint (.alt ast))])
-                             (c/update-path (ast/location old-ast)))))))))
+          new-clause (update-constraint (.clause ast) c/maybe-constraint (ast/location old-ast))]
+      (.constraint ast (-> (c/sum-type [(.base c/inner-type-of (.constraint new-clause))
+                                        (.constraint (.alt ast))])
+                           (c/update-path (ast/location old-ast)))))))
 
 (extend-type ast/binding-ast
   TypeChecker
@@ -1350,17 +1339,32 @@
                                       (map (last cont) .constraint))
                                  (.constraint (.cont ast))))))))
 
-(extend-type ast/and-ast
+(extend-type ast/or-ast
   TypeChecker
   (pre-check [ast]
-    (for [types (get-types)]
-      (.types ast types)))
+    (se/state-error (.cont ast (PushTypes (.cont ast)))))
 
   (type-check [ast old-ast]
     (let [clause (.clause ast)
           cont (.cont ast)]
       (for [_ (pop-types)
-            _ (push-types (.types ast))
+            ;; TODO: when the ast of the clause is a call to instance?,
+            ;; recover the type of the symbol in the second arg
+            ]
+        (-> ast
+            (.clause (update-constraint clause c/maybe-constraint (ast/location old-ast)))
+            (.constraint (c/trim (c/sum-type [(.constraint clause)
+                                              (.constraint cont)]))))))))
+
+(extend-type ast/and-ast
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error (.cont ast (PushTypes (.cont ast)))))
+
+  (type-check [ast old-ast]
+    (let [clause (.clause ast)
+          cont (.cont ast)]
+      (for [_ (pop-types)
             ;; TODO: when the ast of the clause is a call to instance?,
             ;; recover the type of the symbol in the second arg
             ]
@@ -1371,15 +1375,13 @@
 (extend-type ast/cond-ast
   TypeChecker
   (pre-check [ast]
-    (for [types (get-types)]
-      (.types ast types)))
+    (se/state-error (.value ast (PushTypes (.value ast)))))
 
   (type-check [ast old-ast]
     (let [clause (.clause ast)
           val (.value ast)
           cont (.cont ast)]
       (for [_ (pop-types)
-            _ (push-types (.types ast))
             ;; TODO: when the ast of the clause is a call to instance?,
             ;; recover the type of the symbol in the second arg
             ]
@@ -1430,7 +1432,7 @@
                 (send type-checker update-context
                       (flat-map se-nop
                                 (fn [_]
-                                  (status 'checking _LINE_ ast)
+                                  ;; (status 'checking _LINE_ ast)
                                   (se/try
                                     (comp (type-check-ast ast)
                                           (compilation-error "Could not type check code for expression at "
