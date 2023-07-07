@@ -7,7 +7,7 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "b554de9"))
+                          :sha "68e9de4"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -16,10 +16,10 @@
                            :sha "43bc6f4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "168fb4d"))
+                            :sha "2ed6c2c"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "3801cdf"))
+                            :sha "95d7aee"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -36,17 +36,19 @@
 
 (def path-to-core (str toccata-dir "/new-core.toc"))
 
-(def output (agent nothing))
+(def output (agent (maybe nothing)))
 
 (defn status [& msg]
   (send output (fn [out-file?]
                  (assert (instance? Maybe out-file?))
 
-                 (apply print-err msg)
-                 (map out-file?
-                      (fn [out-file]
-                        (fio/write out-file (str (to-str (interpose msg " ")) "\n"))
-                        out-file)))))
+                 (and out-file?
+                      (maybe (apply print-err msg)))
+                 ;; (map out-file?
+                 ;;      (fn [out-file]
+                 ;;        (fio/write out-file (str (to-str (interpose msg " ")) "\n"))
+                 ;;        out-file))
+                 )))
 
 (defn wait-for-output []
   (let [p (promise)]
@@ -256,6 +258,9 @@
           (print-err 'compiler-error _LINE_)
           (se/state-error c/top-type))
 
+        (= sym c/no-symbol)
+        c/top-type
+
         (let [loc (ast/location sym)
               sym (ast/untag sym)]
           ;; TODO: this does not look up namespaced symbols
@@ -312,20 +317,28 @@
                       (se/state-error c/top-type)))
                   (fn [curr-const]
                     (cond (= curr-const c/top-type)
-                          (set-value-type sym (c/trim (c/update-path constraint loc)))
+                          (let [new-const (c/update-path constraint loc)]
+                            (cond (= new-const c/bottom-type)
+                                  (compilation-error 'site _LINE_ loc 'appending sym
+                                                     "\n" 'curr curr-const
+                                                     lflf 'constraint constraint
+                                                     lflf 'new-const new-const
 
-                          (let [new-const (c/trim (c/intersect curr-const constraint))]
+                                                     lflf (conf-ass _LINE_ new-const loc))
+
+                                  (set-value-type sym (c/update-path new-const loc))))
+
+                          (let [new-const (c/intersect curr-const constraint)]
                             ;; (let [loc (ast/location sym)]
                             ;;   (or ;; (= (.file loc) core)
-                            ;;    ;; (= (.line loc) 0)
-                            ;;    (and (= sym 'loufa)
-                            ;;         (do
-                            ;;           (print-err 'appending _LINE_ loc (str "\"" sym "\"")
-                            ;;                      "\n" 'constraint constraint
-                            ;;                      lflf 'curr curr-const
-                            ;;                      lflf 'untrimmed (c/intersect curr-const constraint)
-                            ;;                      lflf 'new-const new-const)
-                            ;;           nothing))))
+                            ;;       ;; (= (.line loc) 0)
+                            ;;       (do
+                            ;;         (status 'appending _LINE_ loc (str "\"" sym "\"")
+                            ;;                 "\n" 'constraint constraint
+                            ;;                 lflf 'curr curr-const
+                            ;;                 lflf 'untrimmed (c/intersect curr-const constraint)
+                            ;;                 lflf 'new-const new-const)
+                            ;;         nothing)))
 
                             (cond (= new-const c/bottom-type)
                                   (compilation-error 'site _LINE_ loc 'appending sym
@@ -385,7 +398,7 @@
                                                      (abort))
                                                    def-ar)))
 
-                       new-arity-c (c/trim (c/intersect arity-c default-arity))]
+                       new-arity-c (c/intersect arity-c default-arity)]
                    ;; (cond (and (= c/StringBufferType type-num)
                    ;;            (= (.fn-sym proto-impls) 'drop-while))
                    ;;       (status 'proto-result _LINE_ loc
@@ -557,17 +570,23 @@
                             ast/fn-ast
                             ;; ast/fn-arity-ast
                             ;; ast/let-ast
-                            ;; ast/or-ast
+                            ast/or-ast
                             ast/and-ast
                             ;; ast/either-ast
                             ast/string-ast
                             ast/integer-ast
                             ;; ast/cond-ast
-                            ;; ast/quoted-ast
+                            ast/binding-ast
+                            ast/quoted-ast
                             ;; ast/tagged-symbol
                             ;; ast/prototype-ast
                             ;; ast/reify-ast
                             ast/block-comment-ast))
+
+(extend-type Opaque
+  Eq
+  (=* [x y]
+    nothing))
 
 (extend-type ConstrainedAST
   TypeChecker
@@ -598,7 +617,7 @@
 
   (map (cata param-types params se/state-error)
        (fn [c]
-         (c/trim (c/intersect c c/list-constraint)))))
+         (c/intersect c c/list-constraint))))
 
 ;; TODO: remove when done
 (def DefaultPreCheck (any-of Vector
@@ -632,7 +651,8 @@
                               c/fn-arity
                               c/MultiConstraint
                               ast/protocol-ast
-                              ast/inline-ast))
+                              ast/inline-ast
+                              ast/block-comment-ast))
 
 ;; TODO: remove when done
 (extend-type DefaultPreCheck
@@ -672,6 +692,7 @@
                              c/ListConstraint
                              c/VectorConstraint
                              c/SumConstraint
+                             c/MultiConstraint
                              c/TypeOp
                              c/FnConstraint))
 
@@ -679,11 +700,12 @@
   TypeChecker
   (type-check [c old-c]
     (let [loc (ast/location old-c)]
-      (flat-map (cond (= (.sym c) c/no-symbol)
-                      (se/state-error '_)
-                      (get-value-type (ast/tag (.sym c) loc)))
-                (fn [_]
-                  (append-value-type (ast/tag (.sym c) loc) c loc))))))
+      (append-value-type (ast/tag (.sym c) loc) c loc))))
+
+(extend-type c/NoValues
+  TypeChecker
+  (type-check [c old-c]
+    (compilation-error (conf-ass _LINE_ c (ast/location c)))))
 
 (extend-type c/ReifiedConstraint
   TypeChecker
@@ -709,30 +731,15 @@
   TypeChecker
   (pre-check [pa]
     (for [_ (push-types)]
-      (do
-        (cond (= (.fn-sym (.arity pa)) 'apply)
-              (status 'checking-pa _LINE_ (.type-num pa) (ast/location pa) (.fn-sym (.arity pa)))
-              '_)
-        pa)))
+      pa))
 
   (type-check [ast old-ast]
     (for [_ (pop-types)
-          :let [_ (cond (= (.fn-sym (.arity ast)) 'apply)
-                        (status 'adding-impl _LINE_ (.type-num ast) (ast/location ast) (.fn-sym (.arity ast))
-                                   ast)
-                        '_)
-                t1 (sys/clock_gettime)]
           _ (add-proto-impl (.type-num ast)
                             (-> old-ast .arity .fn-sym)
                             (-> old-ast .arity .params .fixed count)
                             (-> ast .arity .constraint))]
-      (do
-        (cond (= (.fn-sym (.arity ast)) 'apply)
-              (status 'checked-pa _LINE_ (.type-num ast) (ast/location ast) (.fn-sym (.arity ast))
-                      "\n" ast
-                      "\n\n" 'time (sys/time-delta t1 (sys/clock_gettime)))
-              '_)
-        (c/trim ast)))))
+      ast)))
 
 (extend-type ast/reify-ast
   TypeChecker
@@ -789,10 +796,11 @@
                   _ (set-value-type ast/result-sym c/top-type)
                   ;; :let [_ (or ;; (= (.line loc) 0)
                   ;;             ;; (= (.file loc) core)
-                  ;;          (and (= (.fn-name ast) 'vec)
+                  ;;          (and (= (.fn-name ast) 'first)
                   ;;               (do
-                  ;;                 (print-err 'pre-prototype _LINE_ (.fn-name ast) (ast/location ast)
-                  ;;                            "\n" 'body (.default-body ast))
+                  ;;                 (send output (fn [_] (maybe nothing)))
+                  ;;                 (status 'pre-prototype _LINE_ (.fn-name ast) (ast/location ast)
+                  ;;                         "\n" 'body (.default-body ast))
                   ;;                 nothing)))]
                   _ (se/traverse all-param-syms
                                  (fn [sym]
@@ -821,12 +829,13 @@
                          (se/state-error c/top-type)))
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) core)
-            ;;          (and (= (.fn-name ast) 'reduce)
+            ;;          (and (= (.fn-name ast) 'first)
             ;;               (do
             ;;                 (status 'check-prototype _LINE_ (.fn-name ast) (ast/location ast)
             ;;                         "\n" ast
-            ;;                         "\n\n" 'pts pts
-            ;;                         "\n\n" 'result result-c)
+            ;;                         lflf 'pts pts
+            ;;                         lflf 'result result-c)
+            ;;                 (send output (fn [_] nothing))
             ;;                 nothing)))]
             :let [pts (.tail-c pts c/no-tail)
                   impl-c (c/fn-arity (ast/untag (.fn-name old-ast)) pts result-c)]
@@ -854,7 +863,7 @@
                  (map (first (.args ast))
                       (fn [arg]
                         (status 'showing (ast/location (.call-target old-ast)) arg
-                                "\n" (.constraint arg))
+                                "\n" (c/trim (.constraint arg)))
                         (se/state-error arg))))
 
           (let [loc (ast/location (.call-target old-ast))
@@ -912,8 +921,10 @@
                           ;;                                               to-str)
                           ;;                                       "]")
                           ;;                     )))
+
                           [result-type arg-cs] (c/do-call-value target-c arg-cs (list loc))
-                          result-type (c/trim result-type)
+                          ;; result-type (c/trim result-type)
+
                           ;; _ (map print-info?
                           ;;        (fn [_]
                           ;;          (print-err 'call-site _LINE_ loc (.call-target ast)
@@ -923,8 +934,7 @@
                     _ (update-constraint (.call-target ast)
                                          (.required-arities c/fn-constraint [arg-count])
                                          loc)
-                    _ (either (map (and (= c/bottom-type result-type)
-                                        (first (.constraints result-type)))
+                    _ (either (map (= c/bottom-type result-type)
                                    (fn [_]
                                      (compilation-error 'site _LINE_ loc
                                                         "\n" old-ast
@@ -989,9 +999,10 @@
                                      ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
                                      ;;           (set-value-type (.sym old-ast) val))
 
-                                     (flat-map (se/assoc-in-val [.types (ast/untag sym)] val)
-                                               (fn [_]
-                                                 (set-value-type sym (c/trim val))))
+                                     (let [val (c/trim val)]
+                                       (flat-map (se/assoc-in-val [.types (ast/untag sym)] val)
+                                                 (fn [_]
+                                                   (set-value-type sym val))))
 
                                      (and (= c/top-type (.constraint val))
                                           (or (= sym 'empty-list)
@@ -1094,12 +1105,12 @@
                                                 lflf 'body-c body-c
                                                 lflf 'final-c final-c
                                                 lflf 'body (either (map (last (.body ast)) .constraint)
-                                                                     c/top-type)
+                                                                   c/top-type)
                                                 lflf (conf-ass _LINE_ failure-c loc))))
                       se-nop)]
         ;; TODO: use update-constraint here
-        (.constraint ast (c/trim (c/intersect (.constraint ast)
-                                              (c/fn-arity (.fn-var ast) pts final-c))))))))
+        (.constraint ast (c/intersect (.constraint ast)
+                                      (c/fn-arity (.fn-var ast) pts final-c)))))))
 
 (extend-type ast/fn-ast
   TypeChecker
@@ -1141,10 +1152,16 @@
       ;;       ;; (= (.line loc) 0)
       ;;       (do
       ;;         (print-err 'fn-c _LINE_ (ast/location old-ast) "\n" fn-c)
-      ;;         nothing)))
+      ;;         nothLing)))
       (flat-map (nip-types)
                 (fn [_]
                   (se/state-error (.constraint ast fn-c)))))))
+
+(extend-type Symbol
+  TypeChecker
+  (pre-check [s]
+    (print-err 'wut _LINE_ s)
+    (se/state-error (abort))))
 
 (extend-type ast/tagged-symbol
   TypeChecker
@@ -1206,7 +1223,9 @@
 
   (param-types [params]
     (-> c/seq-constraint
-        (c/set-tail (.variadic params))
+        (c/set-tail (cond (= c/no-symbol (.variadic params))
+                          c/no-tail
+                          (.variadic params)))
         (c/set-items (.fixed params))
         se/state-error))
 
@@ -1296,8 +1315,8 @@
   (type-check [ast old-ast]
     (for [_ (pop-types)
           new-clause (update-constraint (.clause ast) c/maybe-constraint (ast/location old-ast))]
-      (.constraint ast (-> (c/sum-type [(.base c/inner-type-of (.constraint new-clause))
-                                        (.constraint (.alt ast))])
+      (.constraint ast (-> (c/sum-c [(.base c/inner-type-of (.constraint new-clause))
+                                     (.constraint (.alt ast))])
                            (c/update-path (ast/location old-ast)))))))
 
 (extend-type ast/binding-ast
@@ -1354,8 +1373,8 @@
             ]
         (-> ast
             (.clause (update-constraint clause c/maybe-constraint (ast/location old-ast)))
-            (.constraint (c/sum-type [(.constraint clause)
-                                      (.constraint cont)])))))))
+            (.constraint (c/sum-c [(.constraint clause)
+                                   (.constraint cont)])))))))
 
 (extend-type ast/and-ast
   TypeChecker
@@ -1388,10 +1407,11 @@
             ]
         (-> ast
             (.clause (update-constraint clause c/maybe-constraint (ast/location old-ast)))
-            (.constraint (c/sum-type [(.constraint val)
-                                      (.constraint cont)])))))))
+            (.constraint (c/sum-c [(.constraint val)
+                                   (.constraint cont)])))))))
 
 (def _ (print-err 'creating-parser))
+(def t1 (sys/clock_gettime))
 
 (defn update-context [context update]
   (assert (instance? se/StateError update))
@@ -1403,10 +1423,35 @@
             context)))
 
 (defn type-check-ast [ast]
-  (cond (and (= c/bottom-type ast)
-             (first (.constraints ast)))
-        (compilation-error (conf-ass _LINE_ ast (ast/location ast)))
+  (cond nothing
+        '_
+        
+        ;; (instance? c/Constraints ast)
+        ;; (cond (instance? c/SymbolConstraints ast)
+        ;;       ;; (do
+        ;;       ;;   ;; (status 'sym-c _LINE_ (ast/location ast) ast)
+        ;;       ;;   (elgot (fn [ast]
+        ;;       ;;            (cond (or (instance? c/ProtoImpls ast)
+        ;;       ;;                      (instance? c/FnConstraint ast))
+        ;;       ;;                  (do
+        ;;       ;;                    (status 'proto-c _LINE_ (ast/location ast))
+        ;;       ;;                    (se/state-error (RecurseFinal ast)))
 
+        ;;       ;;                  (instance? c/SymbolConstraints ast)
+        ;;       ;;                  (se/state-error (RecurseWith ast))
+
+        ;;       ;;                  (se/state-error (RecurseFinal ast))))
+        ;;       ;;          (fn [ast]
+        ;;       ;;            (type-check ast ast))
+        ;;       ;;          ast se/state-error)
+        ;;       ;;   )
+        ;;       (type-check ast ast)
+
+        ;;       (se/state-error ast))
+
+        (instance? c/ProtoImpls ast)
+        (se/state-error ast)
+        
         (for [new-ast (pre-check ast)
               ;; :let [loc (ast/location ast)
               ;;       _ (status 'type-checking _LINE_ loc
@@ -1447,7 +1492,7 @@
                 ast)
               (grmr/get-value 'type-checker)
               rdr/top-level))))
-(def _ (print-err 'parser-created))
+(def _ (print-err 'parser-created (sys/time-delta t1 (sys/clock_gettime))))
 
 (defn compile-module [file-name root-dir proj-dir module-index]
   ;; kick off a thread to load and check the module
@@ -1484,12 +1529,92 @@
                            (abort)))
             (wait-for-output))))
 
+(extend-type ast/quoted-ast
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error (reify
+                      Type
+                      (type-name [_]
+                        (str "reified at " _LINE_))
+
+                      Stringable
+                      (string-list [_]
+                        (list (str "'" (.q-val ast))))
+
+                      Eq
+                      (=* [_ y]
+                        (= y (.q-val ast)))
+
+                      Container
+                      (map [x f]
+                        x)
+
+                      (map [x f embed]
+                        (embed x))
+
+                      ast/FileLoc
+                      (ast/location [_]
+                        (ast/location ast))
+
+                      TypeChecker
+                      (type-check [_ old-ast]
+                        (se/state-error (.constraint ast (-> c/sym-constraint
+                                                             (assoc-in [.fields  'static-value]
+                                                                       (symbol (rest (str ast))))
+                                                             (c/update-path (ast/location ast))))))))))
+
+(extend-type ast/IsType
+  TypeChecker
+  (pre-check [ast]
+    (for [_ (push-types)
+          _ (either (map (= (.ast ast) '_)
+                         (fn [_]
+                           (status "Type at:" (ast/location (.ast ast))
+                                   (.expected ast))
+                           se-nop))
+                    (flat-map (se/try
+                                (type-check-ast (.ast ast))
+                                (fn [err]
+                                  (status (.val err))
+                                  (se/state-error (.constraint (.ast ast) c/bottom-type))))
+                              (fn [c]
+                                (either (map (= (c/trim (.constraint c)) (.expected ast))
+                                             se/state-error)
+                                        (compilation-error "Type Error:" (ast/location (.ast ast))
+                                                           "\n" 'ast (.ast ast)
+                                                           "\n\n" 'expected (.expected ast)
+                                                           "\n\n" 'actual (either (get c .constraint)
+                                                                                  c))))))
+          _ (pop-types)]
+      (ast/block-comment "" 0 []))))
+
+(extend-type ast/GetImpl
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (cond (= c/no-symbol (.type-sym ast))
+          (se/state-error (.constraint ast (-> ast .impl-sym .constraint .default-impl)))
+
+          (flat-map (get-type-info (.type-sym ast) (ast/location (.type-sym ast)))
+                    (fn [c]
+                      (let [type-num (c/type-num c)]
+                        (either (map (get-in ast [.impl-sym .constraint .impl-fns type-num])
+                                     (fn [impl-c]
+                                       (se/state-error (.constraint ast impl-c))))
+                                (compilation-error "Could not find impl for" (str "'" (.type-sym ast)
+                                                                                  "' (" type-num ")")
+                                                   "at" (ast/location (.type-sym ast))))))))))
+
+
 (main [params]
   (let [core-start (sys/clock_gettime)
         core-mod (extract (compile-module core toccata-dir toccata-dir 0))]
     (send modules (fn [_]
                     {core core-mod}))
     (status 'time-for-core (div (sys/time-delta core-start (sys/clock_gettime)) 1000))
+    (compile-module "core-types.toc" toccata-dir toccata-dir 1)
     ;; (-> (rest params)
     ;;     ;; TODO: empty-defn causes mem leaks
     ;;     ;; (remove (partial = "assertion-tests/empty-defn.toc"))
