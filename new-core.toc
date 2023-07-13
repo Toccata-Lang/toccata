@@ -2261,16 +2261,18 @@ abort();
                  []))
 
 ;; TODO: combine these two fn's as different arities of 'range'
-(defn range* [n l]
-  ! n Integer
-  ! l List
-  !returns (list-of Integer)
-  (cond (= n 0) (cons 0 l)
-        (< n 0) l
-        (range* (dec n) (cons n l))))
 
-(defn range [n]
-  (range* (dec n) empty-list))
+
+(defn range
+  ([n]
+   (range (dec n) empty-list))
+  ([n l]
+   ! n Integer
+   ! l List
+   !returns (list-of Integer)
+   (cond (= n 0) (cons 0 l)
+         (< n 0) l
+         (range (dec n) (cons n l)))))
 
 (defn partitioner [coll n]
   ! n (min-value 0)
@@ -2287,90 +2289,238 @@ abort();
                     [result part])))))
 
 (defn partition [coll n]
+  !returns (vector-of (vector-of (inner-type-of coll)))
+
   (let [[partitioned] (partitioner coll n)]
     partitioned))
 
 (defn partition-all [coll n]
+  !returns (vector-of (vector-of (inner-type-of coll)))
+
   (let [[partitioned remainder] (partitioner coll n)]
     (conj partitioned remainder)))
 
+(defn remove [l f]
+  ! f Predicate
+  ! coll (contains (type-of-arg f 0))
+  !returns (contains (type-of-arg f 0))
+
+  ;; remove all elements of 'l' for which 'f' returns true
+  (filter l (fn [v]
+              (= nothing (f v)))))
+
 (defn every [coll f]
-  ;; TODO: reverses order if coll is Vector
-  (or (empty? coll)
-      ;; (flat-map (first coll)
-      ;;           (fn [head]
-      ;;             (flat-map (f head)
-      ;;                       (fn [head]
-      ;;                         (map (every (rest coll) f)
-      ;;                              (fn [tail]
-      ;;                                (conj tail head)))))))
-      (for [head (flat-map (first coll) f)
-            tail (every (rest coll) f)]
-        (conj tail head))))
+  ! coll (sequence-of (type-of-arg f 0))
+  ! f Predicate
+  !returns (maybe-of (type-of coll))
 
-(defn dissoc [m & ks]
-  ;; Create a new copy of `m` without the associations of `ks`
-  (reduce ks m (fn [m k]
-                 ;; TODO: make inline fn that uses nakedSha1
-                 (dissoc* m k (sha1 k) 0))))
+  (and (empty? (remove coll f))
+       (maybe coll)))
 
-(defn assoc-all [m & kv-pairs]
-  ;; Create a new copy of `m` that adds an association for all the key/value pairs
-  ;; ex. (assoc {'a 1} 'b 2 'c 3 'd 4)
-  (reduce (partition kv-pairs 2) m (fn [m [k v]]
-                                     (assoc m k v))))
+(defn spaces [n]
+  ! n Integer
+  !returns (contains " ")
 
-(defn hash-map [& kv-pairs]
-  ;; create a hash-map from a number of key/value pairs
+  (to-str (map (range n) (fn [_] " "))))
 
-  (assert-result x (instance? HashMap x))
-  (reduce (partition kv-pairs 2) emptyBMI
-          (fn [m [k v]]
-            (assoc m k v))))
+(defn show-kv [[k v] indent]
+  ! indent String
+  
+  (let [k-str (apply str (show* k indent))]
+    (comp (list k-str " ")
+          (show* v (comp indent (spaces (+ 2 (count k-str))))))))
 
-(defn filter-keys [m f]
-  ;; create a new hash-map from `m` that only contains key/value pairs
-  ;; where applying `f` to the key does not return `nothing`
-  ;; (assert-result x (instance? HashMap x))
+(deftype Sorting [k v]
+  Eq
+  (=* [x y]
+    (=* k (.k y)))
 
-  (reduce (seq m) {}
-          (fn [m [k v]]
-            (either (map (f k) (fn [_] (assoc m k v)))
-                    m))))
+  Ord
+  (<* [x y]
+    (<* k (.k y))))
 
-(defn remove-keys [m f]
-  ;; create a new hash-map from `m` that only contains key/value pairs
-  ;; where applying `f` to the key returns `nothing`
-  ;; (assert-result x (instance? HashMap x))
-  (reduce (seq m) {}
-          (fn [m [k v]]
-            (either (map (f k) (fn [_] m))
-                    (assoc m k v)))))
+;; TODO: not effecient. But will be when implemented as C code
+(defn sort* [v p r]
+  (either (and (< p r)
+               (map (get v r)
+                    (fn [pivot]
+                      (let [[v q] (reduce (range (- r p))
+                                          [v p]
+                                          (fn [curr-state j]
+                                            (let [[v q] curr-state
+                                                  j (+ p j)]
+                                              (either (for [x (get v j)
+                                                            :when (<= x pivot)
+                                                            y (get v q)
+                                                            v1 (store v j y)
+                                                            v2 (store v1 q x)]
+                                                        [v2 (inc q)])
+                                                      curr-state))))]
+                        (extract (for [q-val (get v q)
+                                       v1 (store v q pivot)
+                                       v2 (store v1 r q-val)]
+                                   (let [[v3] (sort* v2 p (dec q))]
+                                     (sort* v3 (inc q) r))))))))
+          [v r]))
 
-(defn map-vals [m f]
-  ;; create a new hash-map from `m` with `f` applied to each value
-  ;; (assert-result x (instance? HashMap x))
-  (reduce (seq m) {}
-          (fn [m [k v]]
-            (assoc m k (f v)))))
+(defn sort
+  ([vs]
+   !returns (sequence-of (inner-type-of vs))
 
-(defn contextual-map-vals [m f embed]
-  ;; (map (map (vec m)
-  ;;           (fn [[k v]]
-  ;;             (print-err 'k k 'v v)
-  ;;             (map (f v)
-  ;;                  (partial vector k)))
-  ;;           embed)
-  ;;      (fn [x]
-  ;;        (print-err 'cmv-done)
-  ;;        x))
-  (-> m
-      vec
-      (map (fn [[k v]]
-             (map (f v)
-                  (partial vector k)))
-           embed)
-      (map (fn [kv-pairs]
-             (reduce kv-pairs {}
-                     (fn [m [k v]]
-                       (assoc m k v)))))))
+   (let [[vs] (sort* vs 0 (dec (count vs)))]
+     vs))
+  ;; ([vs f]
+  ;;  (-> vs
+  ;;      (map (fn [v]
+  ;;             (Sorting (f v) v)))
+  ;;      sort
+  ;;      (reduce [] (fn [vs v]
+  ;;                   (conj vs (.v v))))))
+  )
+
+;; ;; TODO: many of these impls are non-optimal. Converting to seq's and the like
+;; (extend-type HashMap
+;;   Composition
+;;   (zero [_] emptyBMI)
+;;   (comp* [mval mvals]
+;;     (reduce mvals mval
+;;             (fn [acc mval]
+;;               (reduce (vec mval) acc
+;;                       (fn [acc [k v]]
+;;                         (assoc acc k v))))))
+
+;;   Collection
+;;   (empty? [x]
+;;     (and (= 0 (count x))
+;;          (maybe emptyBMI)))
+
+;;   (conj [m [k v]]
+;;     (assoc m k v))
+
+;;   Stringable
+;;   (string-list [n]
+;;     (let [kv-strs (map (seq n) (fn [[k v]]
+;;                                  (comp (string-list k) (list " ") (string-list v))))]
+;;       (comp (list "{")
+;;             (flatten (interpose kv-strs (list ", ")))
+;;             (list "}"))))
+
+;;   (show* [m indent]
+;;     (either (map (empty? m) string-list)
+;;             (let [[h & tail] (seq m)]
+;;               (comp (cons "{" (show-kv h indent))
+;;                     (flat-map tail (fn [kv]
+;;                                      (list* ",\n" indent " "
+;;                                             (show-kv kv indent))))
+;;                     (list "}")))))
+
+;;   Hashable
+;;   (sha1-update [x ctxt]
+;;     (sha1-update-type x ctxt)
+;;     (-> (vec x)
+;;         (sort (fn [[k v]] k))
+;;         (reduce ctxt (fn [ctxt x]
+;;                        (sha1-update x ctxt)))))
+
+;;   (sha1 [v]
+;;     (let [ctxt (sha1-init)]
+;;       (sha1-update v ctxt)
+;;       (sha1-finalize ctxt)))
+
+;;   Seqable
+;;   (seq [n]
+;;     (hash-seq n empty-list))
+
+;;   (vec [m]
+;;     (hash-vec m []))
+
+;;   Eq
+;;   (=* [x y]
+;;     (and (instance? HashMap y)
+;;          (= (count x) (count y))
+;;          (every (seq x) (fn [[k v]]
+;;                           (flat-map (get y k)
+;;                                     (partial = v))))
+;;          (maybe x)))
+
+;;   HashMapNode
+;;   (hash-vec [m s]
+;;     (inline C (vector-of Vector) "return(hashVec(m_0, s_1));"))
+
+;;   Associative
+;;   (assoc [m k v]
+;;     (inline C "return(mutateAssoc(m_0, k_1, v_2, nakedSha1(incRef(k_1, 1)), 0));"))
+
+;;   (keys [m]
+;;     (map (seq m) (fn [[k v]] k)))
+;;   (vals [m]
+;;     (map (seq m) (fn [[k v]] v)))
+;;   (get [m k]
+;;     (inline C Maybe "return(hashMapGet(m_0, k_1));")))
+
+;; (defn dissoc [m & ks]
+;;   ;; Create a new copy of `m` without the associations of `ks`
+;;   (reduce ks m (fn [m k]
+;;                  ;; TODO: make inline fn that uses nakedSha1
+;;                  (dissoc* m k (sha1 k) 0))))
+
+;; (defn assoc-all [m & kv-pairs]
+;;   ;; Create a new copy of `m` that adds an association for all the key/value pairs
+;;   ;; ex. (assoc {'a 1} 'b 2 'c 3 'd 4)
+;;   (reduce (partition kv-pairs 2) m (fn [m [k v]]
+;;                                      (assoc m k v))))
+
+;; (defn hash-map [& kv-pairs]
+;;   ;; create a hash-map from a number of key/value pairs
+
+;;   (assert-result x (instance? HashMap x))
+;;   (reduce (partition kv-pairs 2) emptyBMI
+;;           (fn [m [k v]]
+;;             (assoc m k v))))
+
+;; (defn filter-keys [m f]
+;;   ;; create a new hash-map from `m` that only contains key/value pairs
+;;   ;; where applying `f` to the key does not return `nothing`
+;;   ;; (assert-result x (instance? HashMap x))
+
+;;   (reduce (seq m) {}
+;;           (fn [m [k v]]
+;;             (either (map (f k) (fn [_] (assoc m k v)))
+;;                     m))))
+
+;; (defn remove-keys [m f]
+;;   ;; create a new hash-map from `m` that only contains key/value pairs
+;;   ;; where applying `f` to the key returns `nothing`
+;;   ;; (assert-result x (instance? HashMap x))
+;;   (reduce (seq m) {}
+;;           (fn [m [k v]]
+;;             (either (map (f k) (fn [_] m))
+;;                     (assoc m k v)))))
+
+;; (defn map-vals [m f]
+;;   ;; create a new hash-map from `m` with `f` applied to each value
+;;   ;; (assert-result x (instance? HashMap x))
+;;   (reduce (seq m) {}
+;;           (fn [m [k v]]
+;;             (assoc m k (f v)))))
+
+;; (defn contextual-map-vals [m f embed]
+;;   ;; (map (map (vec m)
+;;   ;;           (fn [[k v]]
+;;   ;;             (print-err 'k k 'v v)
+;;   ;;             (map (f v)
+;;   ;;                  (partial vector k)))
+;;   ;;           embed)
+;;   ;;      (fn [x]
+;;   ;;        (print-err 'cmv-done)
+;;   ;;        x))
+;;   (-> m
+;;       vec
+;;       (map (fn [[k v]]
+;;              (map (f v)
+;;                   (partial vector k)))
+;;            embed)
+;;       (map (fn [kv-pairs]
+;;              (reduce kv-pairs {}
+;;                      (fn [m [k v]]
+;;                        (assoc m k v)))))))
