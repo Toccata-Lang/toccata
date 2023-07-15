@@ -2469,6 +2469,11 @@ abort();
                  ;; TODO: make inline fn that uses nakedSha1
                  (dissoc* m k (sha1 k) 0))))
 
+(defn dissoc-all [m ks]
+  (reduce ks m (fn [m k]
+                 ;; TODO: make inline fn that uses nakedSha1
+                 (dissoc* m k (sha1 k) 0))))
+
 (defn assoc-all [m & kv-pairs]
   ;; Create a new copy of `m` that adds an association for all the key/value pairs
   ;; ex. (assoc {'a 1} 'b 2 'c 3 'd 4)
@@ -2534,3 +2539,491 @@ abort();
              (reduce kv-pairs {}
                      (fn [m [k v]]
                        (assoc m k v)))))))
+
+(deftype RecurseNext
+   (RecurseFinal [x]
+     Stringable
+     (string-list [_]
+                  (list "(RecurseFinal " (str x) ")"))
+
+     Container
+     (map [_ f]
+          (RecurseFinal (f x)))
+
+     (map [_ f embed]
+          (map (f x) RecurseFinal)))
+
+   (RecurseWith [x]
+     Stringable
+     (string-list [_]
+                  (list "(RecurseWith " (str x) ")"))
+
+     Container
+     (map [_ f]
+          (RecurseWith (f x)))
+
+     (map [_ f embed]
+          (map (f x) RecurseWith))))
+
+(defn cata
+  ([f x]
+   (f (map x (partial cata f))))
+  ([f v embed]
+   (flat-map (map v (fn [inner-v]
+                      (cata f inner-v embed))
+                  embed)
+             f)))
+
+(defn ana
+  ([f x]
+   (map (f x) (partial ana f)))
+  ([f v embed]
+   (flat-map (f v)
+             (fn [new-v]
+               (map new-v (fn [v]
+                            (ana f v embed))
+                    embed)))))
+
+(defn para
+  ([f x]
+   (-> x
+       (map (partial para f))
+       (f x)))
+  ([f x embed]
+   (flat-map (map x (fn [mapped-x]
+                      (para f mapped-x embed))
+                  embed)
+             (fn [new-x]
+               (f new-x x)))))
+
+(defn apo
+  ([f v]
+   (let [x (f v)]
+     (assert (instance? RecurseNext x))
+
+     (either (map (instance? RecurseFinal x) .x)
+             (map (.x x) (partial apo f)))))
+
+  ([f v embed]
+   (flat-map (f v) (fn [x]
+                     (either (map (instance? RecurseFinal x)
+                                  (fn [left-x]
+                                    (embed (.x left-x))))
+                             (map (.x x)
+                                  (fn [inner-x]
+                                    (apo f inner-x embed))
+                                  embed))))))
+
+(deftype Attr [attribute hole]
+  Stringable
+  (string-list [_]
+    (list "(Attr " (str attribute) "\n" (str hole) ")"))
+
+  Container
+  (map [_ f]
+    (map hole f)))
+
+(defprotocol FromCoFree
+  (from-cofree [x cv-coalg]))
+
+(deftype Free
+   (Pure [a]
+     Stringable
+     (string-list [_]
+                  (list "(Pure " (str a) ")")))
+
+   (Impure [val]
+     Stringable
+     (string-list [_]
+                  (list "(Impure " (str val) ")"))
+
+     FromCoFree
+     (from-cofree [_ cv-coalg]
+                  (map val (fn [x]
+                             (from-cofree x cv-coalg))))))
+
+;; (defn to-cofree [t cv-alg]
+;;   (assert-result r (instance? Attr r))
+
+;;   (let [y (map t (fn [x]
+;;                    (to-cofree x cv-alg)))]
+;;     (Attr (cv-alg y) y)))
+
+;; ;; TODO: add embed and test
+;; (defn histo [cv-alg x]
+;;   (-> x
+;;       (to-cofree cv-alg)
+;;       .attribute))
+
+;; (defn futu [cv-coalg x]
+;;   (-> (cv-coalg x)
+;;       (map (fn [y]
+;;              (assert (instance? Free y))
+;;              (from-cofree y cv-coalg)))))
+
+;; (extend-type Pure
+;;   FromCoFree
+;;   (from-cofree [pure-v cv-coalg]
+;;     (futu cv-coalg (.a pure-v))))
+
+;; (defn hylo
+;;   ([co-algebra algebra x]
+;;    (-> x
+;;        co-algebra
+;;        (map (partial hylo co-algebra algebra))
+;;        algebra))
+;;   ([co-algebra algebra x embed]
+;;    ;; TODO: using contextual hylo as the first expression in a 'for' doesn't work
+;;    (flat-map (co-algebra x)
+;;              (fn [new-x]
+;;                (flat-map (map new-x (fn [y]
+;;                                       (hylo co-algebra algebra y embed))
+;;                               embed)
+;;                          algebra)))))
+
+;; (defn elgot
+;;   ([co-algebra algebra x]
+;;    (let [new-x (co-algebra x)]
+;;      (cond (instance? RecurseFinal new-x)
+;;            (.x new-x)
+
+;;            (-> (.x new-x)
+;;                (map (partial elgot co-algebra algebra))
+;;                algebra))))
+;;   ([co-algebra algebra x embed]
+;;    (flat-map (co-algebra x)
+;;              (fn [new-x]
+;;                (cond (instance? RecurseFinal new-x)
+;;                      (embed (.x new-x))
+
+;;                      (flat-map (map (.x new-x) (fn [y]
+;;                                                  (elgot co-algebra algebra y embed))
+;;                                     embed)
+;;                                algebra))))))
+
+(defn get-in* [m path]
+  (assert (instance? List path))
+  ;; TODO: try alternate formulation
+  ;; probably works but not any faster
+  ;; (or (flat-map (first path)
+  ;;               (fn [k]
+  ;;                 (flat-map (get m k)
+  ;;                           (fn [sub-m] 
+  ;;                             (get-in* sub-m (rest path))))))
+  ;;     (and (empty? path)
+  ;;          (maybe m)))
+
+  ;; this seems to work, I think can be optimized more
+  ;; probably hard to gain perf, though
+  (or (and (empty? path)
+           (maybe m))
+      (let [[k & tail] path]
+        (flat-map (get m k)
+                  (fn [sub-m]
+                    (get-in* sub-m tail)))))
+
+  ;; (or (and (empty? path)
+  ;;          (maybe m))
+  ;;     (for [k (first path)
+  ;;           sub-m (get m k)
+  ;;           v (get-in* sub-m (rest path))]
+  ;;       v))
+  )
+
+(defn get-in [m path]
+  (and (< 0 (count path))
+       (get-in* m (seq path))))
+
+(defn update-in [m path f]
+  (or (and (empty? path)
+           (maybe m))
+      (and (= 1 (count path))
+           (for [k (first path)
+                 v (get m k)]
+             (assoc m k (f v))))
+      (for [k (first path)
+            sub-m (get m k)
+            new-m (update-in sub-m (rest path) f)]
+        (assoc m k new-m))))
+
+;; TODO: make this a protocol fn and implement for getters automatically
+(defn update [m key f]
+  (map (get m key)
+       (fn [v]
+         (assoc m key (f v)))))
+
+(defn assoc-in* [m path v]
+  (assert (instance? List path))
+  (or (and (empty? path)
+           (maybe m))
+      (for [_ (= 1 (count path))
+            k (first path)]
+        (assoc m k v))
+      (for [k (first path)
+            sub-m (or (get m k)
+                      (maybe {}))
+            new-m (assoc-in* sub-m (rest path) v)]
+        (assoc m k new-m))))
+
+(defn assoc-in [m path v]
+  (extract (assoc-in* m (seq path) v)))
+
+(defn merge-with [merge-fn hm & ms]
+  (reduce ms hm
+          (fn [hm m]
+            (reduce (seq m) hm
+                    (fn [hm [k v]]
+                      (either (map (get hm k)
+                                   (fn [old-v]
+                                     (let [new-v (merge-fn old-v v)]
+                                       (-> hm
+                                           (dissoc k)
+                                           (assoc k new-v)))))
+                              (assoc hm k v)))))))
+
+(defn merge-maps [merge-fn ms]
+  (reduce ms {}
+          (fn [hm m]
+            (reduce (seq m) hm
+                    (fn [hm [k v]]
+                      (either (map (get hm k)
+                                   (fn [old-v]
+                                     (let [new-v (merge-fn old-v v)]
+                                       (-> hm
+                                           (dissoc k)
+                                           (assoc k new-v)))))
+                              (assoc hm k v)))))))
+
+(defn repeat [n v]
+  (assert (instance? Integer n))
+  (assert-result z (instance? Vector z))
+
+  (either (map (<= n 0) (fn [_] []))
+          (conj (repeat (dec n) v) v)))
+
+(defn constantly [v]
+  (fn
+    ([] v)
+    ([_] v)
+    ([_ _] v)
+    ([_ _ _] v)
+    ([_ _ _ _] v)
+    ([_ _ _ _ _] v)
+    ([_ _ _ _ _ _] v)
+    ([_ _ _ _ _ _ _] v)
+    ([_ _ _ _ _ _ _ _] v)
+    ([_ _ _ _ _ _ _ _ _] v)
+    ([& args] v)))
+
+
+(def code-0 (char-code "0"))
+(def code-9 (char-code "9"))
+;; (defn str-to-int [int-str]
+;;   (assert (instance? String int-str))
+;;   (let [[negate int-str] (cond (flat-map (first int-str) (partial = "-"))
+;;                                [-1 (rest int-str)]
+
+;;                                [1 int-str])]
+;;     (* negate (-> int-str
+;;                   (take-while (fn [c]
+;;                                 (<= code-0 (char-code c) code-9)))
+;;                   (reduce 0 (fn [n c]
+;;                               (+ (* n 10) (- (char-code c) code-0))))))))
+
+;; (deftype HashSet [set-map]
+;;   (assert (instance? HashMap set-map))
+
+;;   Stringable
+;;   (string-list [_]
+;;     (comp (list "#{")
+;;           (interpose (flat-map (vals set-map) string-list)
+;;                      " ")
+;;           (list "}")))
+
+;;   Function
+;;   (invoke [_ v]
+;;     (get set-map v))
+
+;;   Hashable
+;;   (sha1-update [x ctxt]
+;;     (sha1-update-type x ctxt)
+;;     (-> (vec set-map)
+;;         (sort (fn [[k v]] k))
+;;         (reduce ctxt (fn [ctxt x]
+;;                        (sha1-update x ctxt)))))
+
+;;   (sha1 [s]
+;;     (let [ctxt (sha1-init)]
+;;       (sha1-update s ctxt)
+;;       (sha1-finalize ctxt)))
+
+;;   Associative
+;;   (get [m k]
+;;     (get set-map k))
+
+;;   Collection
+;;   (empty? [coll]
+;;     (and (empty? set-map)
+;;          (maybe coll)))
+;;   (empty [coll]
+;;     (HashSet {}))
+;;   (count [coll]
+;;     (count set-map))
+;;   (conj [coll value]
+;;     (HashSet (assoc set-map value value)))
+;;   (reduce [coll result f]
+;;     (reduce (vals set-map) result f))
+
+;;   Composition
+;;   (zero [_]
+;;     (HashSet {}))
+;;   (comp* [mval mvals]
+;;     (HashSet (comp* set-map (map mvals .set-map))))
+
+;;   Container
+;;   (flat-map [mval func]
+;;     (HashSet (comp* {} (map (vals set-map)
+;;                             (fn [v]
+;;                               (.set-map (func v)))))))
+;;   (wrap [x v]
+;;     (HashSet {v v}))
+
+;;   (map [v f]
+;;     (HashSet (reduce (vals set-map)
+;;                      {}
+;;                      (fn [m v]
+;;                        (let [new-v (f v)]
+;;                          (assoc m new-v new-v))))))
+
+;;   Seqable
+;;   (vec [coll]
+;;     (vec (vals set-map)))
+
+;;   (seq [coll]
+;;     (vals set-map)))
+
+;; (defn set [val-list]
+;;   (HashSet (reduce val-list {} (fn [m v] (assoc m v v)))))
+
+;; (defn hash-set [& values]
+;;   (set values))
+
+;; (defn new-hash-set [hash-map]
+;;   (assert (instance? HashMap hash-map))
+
+;;   (HashSet hash-map))
+
+;; (defn disj [set val]
+;;   (assert (instance? HashSet set))
+;;   (HashSet (dissoc (.set-map set) val)))
+
+;; (defn subset [super sub]
+;;   (assert (instance? HashSet super))
+;;   (assert (instance? HashSet sub))
+;;   (map (every (keys (.set-map sub))
+;;               (partial get super))
+;;        (fn [_] sub)))
+
+;; (defn union [set1 set2]
+;;   (assert (instance? HashSet set1))
+;;   (assert (instance? HashSet set2))
+;;   (reduce (keys (.set-map set2)) set1 conj))
+
+;; (defn intersection [set1 & sets]
+;;   (assert (instance? HashSet set1))
+;;   (assert (instance? (list-of HashSet) sets))
+
+;;   (reduce sets set1 (fn [set1 set2]
+;;                       (reduce (keys (.set-map set2)) #{}
+;;                               (fn [inter x]
+;;                                 (either (map (set1 x) (partial conj inter))
+;;                                         inter))))))
+
+;; (defn difference [set1 set2]
+;;   (assert (instance? HashSet set1))
+;;   (assert (instance? HashSet set2))
+;;   (reduce (keys (.set-map set1)) #{}
+;;           (fn [diff x]
+;;             (cond (get (.set-map set2) x)
+;;                   diff
+
+;;                   (conj diff x)))))
+
+;; TODO: wut?
+;; (defn select-keys [m ks]
+;;   (filter-keys m (set ks)))
+
+(deftype IntGenerator [gen]
+  ;; Seqable
+  ;; (rest [x]
+  ;;   x)
+
+  Container
+  (extract [_]
+    (new-int gen)))
+
+(defn int-generator
+  ([] (int-generator 0))
+  ;; ([x] (IntGenerator (integer-gen x)))
+  )
+
+(def sym-counter (int-generator))
+
+(defn gensym [prefix]
+  (assert (instance? String prefix))
+  ;; TODO: make sure the call to 'extract' is type-known
+  (symbol (str prefix (extract sym-counter))))
+
+(deftype LazyList [container lazy tail]
+  ;; (assert (instance? List lazy))
+
+  Stringable
+  (string-list [_] (list "<LazyList>"))
+
+  Collection
+  (empty? [_]
+    (empty? container))
+
+  Seqable
+  (first [c]
+    ;; 'first-lazy' leaves the mutex locked if the lazy list remains empty
+    ;; after acquiring it. 'append-to-lazy' then frees it
+    (or (first-lazy lazy tail)
+        (maybe (let [v (extract container)]
+                 (append-to-lazy-tail tail v)
+                 v))))
+
+  (rest [c]
+    ;; make sure that there's at least one item in the lazy list
+    (first c)
+    (LazyList container (rest-of-lazy lazy) tail)))
+
+;; (defn lazy-list [container]
+;;   (let [lazy-struct (create-lazy)]
+;;     (LazyList container (get-lazy lazy-struct) lazy-struct)))
+
+(defn list-zipper [lists zipped]
+  (assert (instance? List zipped))
+
+  (either (or (and (empty? lists)
+                   (maybe zipped))
+              (map (every lists first)
+                   (fn [firsts]
+                     (list-zipper (map lists rest) (cons firsts zipped)))))
+          (reverse zipped)))
+
+(defn zip-lists [l & lists]
+  (list-zipper (cons l lists) empty-list))
+
+;; (def CoreTypes (any-of Integer
+;;                        String
+;;                        Symbol
+;;                        Maybe
+;;                        List
+;;                        Vector
+;;                        HashMap
+;;                        Fn
+;;                        Promise
+;;                        Agent
+;;                        Future))
+
