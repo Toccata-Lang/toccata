@@ -38,6 +38,7 @@
 
 (def output (agent (maybe nothing)))
 
+(def core-start (promise))
 ;; (def max-time (agent 0))
 ;; (def start-time (agent 0))
 
@@ -1540,27 +1541,35 @@
 
 (def parse-forms
   (rd/parser
-   (grmr/none-or-more
-    (apply-to (fn [type-checker ast]
-                ;; (status 'ast _LINE_ ast)
-                (send type-checker update-context
-                      (flat-map se-nop
-                                (fn [_]
-                                  ;; (status 'checking _LINE_ ast)
-                                  (se/try
-                                    (comp (type-check-ast ast)
-                                          (compilation-error "Could not type check code for expression at "
-                                                             (ast/location ast)))
-                                    (fn [err]
-                                      (send output (fn [_]
-                                                     (print-err (.val err))
-                                                     (abort)))
-                                      (wait-for-output)
-                                      se-nop)))))
-                ast)
-              (grmr/get-value 'type-checker)
-              rdr/top-level))))
-(def _ (print-err 'parser-created (sys/time-delta t1 (sys/clock_gettime))))
+   (grmr/all
+    (grmr/none-or-more
+     (apply-to (fn [type-checker ast]
+                 ;; (status 'ast _LINE_ ast)
+                 (send type-checker update-context
+                       (flat-map se-nop
+                                 (fn [_]
+                                   ;; (status 'checking _LINE_ ast)
+                                   (se/try
+                                     (comp (type-check-ast ast)
+                                           (compilation-error "Could not type check code for expression at "
+                                                              (ast/location ast)))
+                                     (fn [err]
+                                       (send output (fn [_]
+                                                      (print-err (.val err))
+                                                      (abort)))
+                                       (wait-for-output)
+                                       se-nop)))))
+                 ast)
+               (grmr/get-value 'type-checker)
+               rdr/top-level))
+    (apply-to (fn [file-name]
+                (status 'parsing-time file-name (div (sys/time-delta (extract core-start)
+                                                                     (sys/clock_gettime))
+                                                     1000))
+                file-name)
+              (grmr/get-value 'file-name)))))
+(def _ (print-err 'parser-created (div (sys/time-delta t1 (sys/clock_gettime))
+                                       1000)))
 
 (defn compile-module [file-name root-dir proj-dir module-index]
   ;; kick off a thread to load and check the module
@@ -2243,11 +2252,11 @@
                             (.types ast))))))
 
 (main [params]
-  (let [core-start (sys/clock_gettime)
-        core-mod (extract (compile-module core toccata-dir toccata-dir 0))]
+  (deliver core-start (sys/clock_gettime))
+  (let [core-mod (extract (compile-module core toccata-dir toccata-dir 0))]
     (send modules (fn [_]
                     {core core-mod}))
-    (status 'time-for-core (div (sys/time-delta core-start (sys/clock_gettime)) 1000))
+    (status 'time-for-core (div (sys/time-delta (extract core-start) (sys/clock_gettime)) 1000))
     (extract (compile-module "core-types.toc" toccata-dir toccata-dir 1))
     ;; (-> (rest params)
     ;;     ;; TODO: empty-defn causes mem leaks
