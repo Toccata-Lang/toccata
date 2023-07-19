@@ -7,7 +7,7 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "2dfd6af"))
+                          :sha "3df0a67"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -334,11 +334,6 @@
                       (status "Bad call to append-value-type" _LINE_ loc sym "\n" constraint)
                       '_))
 
-        (= constraint c/bottom-type)
-        (compilation-error 'site _LINE_ loc 'appending sym
-                           lflf 'constraint constraint
-                           lflf (conf-ass _LINE_ constraint loc))
-
         (= constraint c/top-type)
         (se/try
           (get-value-type sym)
@@ -352,7 +347,15 @@
                   (fn [curr-const]
                     (cond (= curr-const c/top-type)
                           (let [new-const (c/update-path constraint loc)]
-                            (set-value-type sym (c/update-path new-const loc)))
+                            (cond (= new-const c/bottom-type)
+                                  (compilation-error 'site _LINE_ loc 'appending sym
+                                                     "\n" 'curr curr-const
+                                                     lflf 'constraint constraint
+                                                     lflf 'new-const new-const
+
+                                                     lflf (conf-ass _LINE_ new-const loc))
+
+                                  (set-value-type sym (c/update-path new-const loc))))
 
                           (let [new-const (c/intersect curr-const constraint)]
                             ;; (let [loc (ast/location sym)]
@@ -621,13 +624,12 @@
     (let [new-c (c/intersect (.constraint ast) constraint)]
       (either (map (= c/bottom-type new-c)
                    (fn [_]
-                     (compilation-error ;; 'site _LINE_ loc
-                                        ;; "\n" 'ast ast
-                                        ;; lflf 'ast-constraint (.constraint ast)
-                                        ;; lflf 'constraint constraint
-                                        ;; lflf 'new-c new-c
-                                        ;; lflf
-                                        (conf-ass _LINE_ new-c loc))))
+                     (compilation-error 'site _LINE_ loc
+                                        "\n" 'ast ast
+                                        "\n\n" 'ast-constraint (.constraint ast)
+                                        "\n\n" 'constraint constraint
+                                        "\n\n" 'new-c new-c
+                                        "\n\n" (conf-ass _LINE_ new-c loc))))
               (se/state-error (.constraint ast (c/update-path new-c loc)))))))
 
 (defn all-syms [params]
@@ -649,7 +651,6 @@
 
 ;; TODO: remove when done
 (def DefaultPreCheck (any-of Vector
-                             ProtoArity
                              c/AllValues
                              c/NoSymbol
                              c/ReifiedConstraint
@@ -2291,10 +2292,36 @@
 (main [params]
   (deliver core-start (sys/clock_gettime))
   (let [core-mod (extract (compile-module core toccata-dir toccata-dir 0))]
+    (cond (instance? Module core-mod)
+          (status "Loaded Core")
+
+          (do
+            (either (map (instance? se/Error core-mod)
+                         (fn [err]
+                           (status (.val err))
+                           (wait-for-output)
+                           (abort)))
+                    (do
+                      (status "Could not load Core")
+                      (wait-for-output)
+                      (abort)))))
     (send modules (fn [_]
                     {core core-mod}))
     (status 'time-for-core (div (sys/time-delta (extract core-start) (sys/clock_gettime)) 1000))
-    ;; (extract (compile-module "core-types.toc" toccata-dir toccata-dir 1))
+    (let [core-types (extract (compile-module "core-types.toc" toccata-dir toccata-dir 1))]
+      (cond (instance? Module core-types)
+            (status "Loaded core-types")
+
+            (do
+              (either (map (instance? se/Error core-types)
+                           (fn [err]
+                             (status (.val err))
+                             (wait-for-output)
+                             (abort)))
+                      (do
+                        (status "Could not load core-types")
+                        (wait-for-output)
+                        (abort))))))
     (-> (rest params)
         ;; TODO: empty-defn causes mem leaks
         ;; (remove (partial = "assertion-tests/empty-defn.toc"))
