@@ -796,15 +796,17 @@
   (pre-check [ast]
     (let [reified-type-num (either (instance? Integer (.type-num ast))
                                    (extract type-counter))]
-      (-> ast
-          (.type-num reified-type-num)
-          (.impls (map-vals (.impls ast)
-                            (fn [impl-fns]
-                              (map-vals impl-fns
-                                        (fn [arities]
-                                          (map arities
-                                               (partial ProtoArity reified-type-num)))))))
-          se/state-error)))
+      (flat-map (push-types)
+                (fn [_]
+                  (-> ast
+                      (.type-num reified-type-num)
+                      (.impls (map-vals (.impls ast)
+                                        (fn [impl-fns]
+                                          (map-vals impl-fns
+                                                    (fn [arities]
+                                                      (map arities
+                                                           (partial ProtoArity reified-type-num)))))))
+                      se/state-error)))))
 
   (type-check [ast old-ast]
     (let [invoke-arities (either (map (get-in ast [.impls Function-sym invoke-sym])
@@ -819,14 +821,16 @@
                                      {} {}
                                      (.arities c/fn-constraint invoke-arities)
                                      empty-list c/no-symbol "")]
-      (-> ast
-          (.impls (map-vals (.impls ast)
-                            (fn [impl-fns]
-                              (map-vals impl-fns
-                                        (fn [arities]
-                                          (map arities .arity))))))
-          (.constraint new-c)
-          se/state-error))))
+      (flat-map (pop-types)
+                (fn [_]
+                  (-> ast
+                      (.impls (map-vals (.impls ast)
+                                        (fn [impl-fns]
+                                          (map-vals impl-fns
+                                                    (fn [arities]
+                                                      (map arities .arity))))))
+                      (.constraint new-c)
+                      se/state-error))))))
 
 (extend-type ast/prototype-ast
   TypeChecker
@@ -930,7 +934,7 @@
             ;;   (status 'call-proto _LINE_ loc
             ;;           "\n" ast
             ;;           "\n\n" 'disp val-num disp-arg))
-            (let [print-info? (and (= (.call-target old-ast) (symbol ".not-there"))
+            (let [print-info? (and (= (.call-target old-ast) '.not-there)
                                    ;; (= (.file loc) "assertion-tests/bad-constructor-param-2.toc")
                                    ;; (= (.line loc) 1414)
                                    ;; nothing
@@ -965,22 +969,22 @@
                     :let [arg-cs (map (.args ast) .constraint)
                           ;; _ (map print-info?
                           ;;        (fn [_]
-                          ;;          (print-err 'call-site _LINE_ loc (.call-target old-ast)
-                          ;;                     "\n" 'target-c target-c
-                          ;;                     "\n\n" 'args (str "[" (-> arg-cs
-                          ;;                                               (interpose "\n ")
-                          ;;                                               to-str)
-                          ;;                                       "]")
-                          ;;                     )))
+                          ;;          (status 'call-site _LINE_ loc (.call-target old-ast)
+                          ;;                  "\n" 'target-c target-c
+                          ;;                  "\n\n" 'args (str "[" (-> arg-cs
+                          ;;                                            (interpose "\n ")
+                          ;;                                            to-str)
+                          ;;                                    "]")
+                          ;;                  )))
 
                           [result-type arg-cs] (c/do-call-value target-c arg-cs (list loc))
                           ;; result-type (c/trim result-type)
 
                           ;; _ (map print-info?
                           ;;        (fn [_]
-                          ;;          (print-err 'call-site _LINE_ loc (.call-target ast)
-                          ;;                     "\n" 'result (c/trim result-type)
-                          ;;                     )))
+                          ;;          (status 'call-site _LINE_ loc (.call-target ast)
+                          ;;                  "\n" 'result (c/trim result-type)
+                          ;;                  )))
                           ]
                     _ (update-constraint (.call-target ast)
                                          (.required-arities c/fn-constraint [(count arg-cs)])
@@ -996,6 +1000,12 @@
                                                         (conf-ass _LINE_ result-type loc))))
                               (se/traverse (zip-lists (.args ast) arg-cs)
                                            (fn [[ast arg-c]]
+                                             ;; (map print-info?
+                                             ;;      (fn [_]
+                                             ;;        (status 'updating-arg _LINE_ loc
+                                             ;;                lflf 'ast ast
+                                             ;;                lflf 'ast-c (.constraint ast)
+                                             ;;                lflf 'arg-c arg-c)))
                                              (update-constraint ast arg-c loc))))]
                 (let [t4 (sys/clock_gettime)]
                   ;; (cond print-info?
@@ -1102,7 +1112,7 @@
 
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) core)
-            ;;          (and (= (.fn-sym ast) 'pook)
+            ;;          (and (= (.fn-sym ast) 'fogity)
             ;;               (do
             ;;                 (status 'pre-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                         "\n" 'params (.params ast)
@@ -1151,7 +1161,7 @@
                   final-c (c/intersect result-c body-c)]
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;          ;; (= (.file loc) core)
-            ;;          (and (= (.fn-sym ast) 'pook)
+            ;;          (and (= (.fn-sym ast) 'fogity)
             ;;               (do
             ;;                 (status 'check-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                         "\n" 'pts pts
@@ -1316,7 +1326,7 @@
 (extend-type ast/extend-ast
   TypeChecker
   (pre-check [ast]
-    (for [
+    (for [_ (push-types)
           ;; _ (map se-nop (fn [_]
           ;;                 (print-err 'extending _LINE_ (ast/location ast) (.type ast))))
           type-info (get-type-info (.type ast) (ast/location ast))
@@ -1351,7 +1361,22 @@
           vals
           vec
           (map vals)
-          (map vec)))))
+          (map vec)
+          (conj (reify
+                  Type
+                  (type-name [_]
+                    (str "reified at " (c/Location _FILE_ _LINE_)))
+
+                  Container
+                  (map [y f embed]
+                    (embed y))
+
+                  TypeChecker
+                  (pre-check [x]
+                    (flat-map (pop-types)
+                              (fn [_]
+                                (se/state-error (ast/block-comment-ast [] c/no-loc
+                                                                       c/top-type)))))))))))
 
 (extend-type ast/string-ast
   TypeChecker
@@ -2152,13 +2177,12 @@
 
                        ;;   TypeChecker
                        ;;   (pre-check [ast]
-                       ;;     (for [ft (se/get-val .value-types)]
+                       ;;     (for [ft (se/get-val .value-types)
+                       ;;           mby (get-value-type maybe-sym)]
                        ;;       (do
-                       ;;         (status 'test _LINE_ "\n" (count ft))
-                       ;;         ast)))
-
-                       ;;   (type-check [_ _]
-                       ;;     (se/state-error (ast/block-comment-ast [] "poop" 99 c/top-type))))
+                       ;;         (status 'test _LINE_ sym (count ft)
+                       ;;                 lflf 'maybe mby)
+                       ;;         (ast/block-comment-ast [] c/no-loc c/top-type)))))
                        ])))))))
 
 (def parse-forms
