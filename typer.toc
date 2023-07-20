@@ -133,13 +133,15 @@
     (ast/location arity)))
 
 (deftype Module [path index protocols namespaces types value-types]
-  ;; path             path to file containing the modules source code (Symbol or String)
+  ;; path             path to file containing the modules source code
+  (assert (instance? c/FileName path))
   ;; index            this module's index
   (assert (instance? Integer index))
   ;; protocols        set of protocol symbols
   (assert (instance? HashMap protocols))
   ;; namespaces      imported namespaces
-  (assert (instance? (map-of Symbol Module) namespaces))
+  (assert (instance? (map-of (any-of c/ToccataCore Symbol)
+                             Module) namespaces))
   ;; types           map of symbols (type names) to type constraints
   ;; TODO: wrong. needs to include c/ProtoImpls
   (assert (instance? (map-of Symbol c/ValueConstraint) types))
@@ -150,23 +152,31 @@
   Stringable
   (string-list [_] (list "<Module '" (str path) "'>")))
 
-(defn new-module [file-name module-index]
-  (Module file-name module-index {} {}
-          c/core-type-constraints
-          (list {'empty-list (c/update-sym c/empty-list-constraint
-                                           'empty-list)
-                 'empty-vector (c/update-sym c/empty-vect-constraint
-                                             'empty-vector)
-                 'int-max (assoc-in c/int-constraint
-                                    [.fields 'static-value] int-max)
-                 'int-min (assoc-in c/int-constraint
-                                    [.fields 'static-value] int-min)
-                 'nothing (assoc-in c/maybe-constraint
-                                    [.fields c/contents]
-                                    c/no-contents)})))
-
 ;; modules holds a map from filenames to either a Module or a Promise
 (def modules (agent {}))
+
+(defn new-module [file-name module-index]
+  (let [core-prom (promise)]
+    (send modules (fn [mods]
+                    (map (get mods core)
+                         (partial deliver core-prom))
+                    mods))
+    (Module file-name module-index {}
+            (cond (= module-index 0)
+                  {}
+                  {core (extract core-prom)})
+            c/core-type-constraints
+            (list {'empty-list (c/update-sym c/empty-list-constraint
+                                             'empty-list)
+                   'empty-vector (c/update-sym c/empty-vect-constraint
+                                               'empty-vector)
+                   'int-max (assoc-in c/int-constraint
+                                      [.fields 'static-value] int-max)
+                   'int-min (assoc-in c/int-constraint
+                                      [.fields 'static-value] int-min)
+                   'nothing (assoc-in c/maybe-constraint
+                                      [.fields c/contents]
+                                      c/no-contents)}))))
 
 (def type-counter (int-generator c/TypeCount))
 
@@ -252,36 +262,53 @@
                                           new-s (update-in s [.value-types]
                                                            (fn [val-types]
                                                              (add-getter sym val-types)))
-                                          val-type  (get-in new-s [.value-types 0 sym])]
+                                          val-type (get-in new-s [.value-types 0 sym])]
                                       [val-type new-s])
                                     (maybe se/Failure)))
-                           (map (get-in (extract modules) [core .value-types 0 sym])
+                           (map (get-in s [.namespaces core .value-types 0 sym])
                                 (fn [expr]
                                   [expr s]))
+                           (for [first-char (first (str sym))
+                                 _ (= first-char ".")
+                                 new-s (update-in s [.namespaces core .value-types]
+                                                  (fn [val-types]
+                                                    (add-getter sym val-types)))
+                                 val-type (get-in new-s [.namespaces core .value-types 0 sym])]
+                             (do
+                               (send modules
+                                     (fn [mods]
+                                       (assert-result r (instance? HashMap r))
+                                       (either (or (get-in mods [core .value-types 0 sym])
+                                                   (update-in mods [core .value-types]
+                                                              (fn [val-types]
+                                                                (add-getter sym val-types))))
+                                               mods)))
+                               [val-type new-s]))
                            ;; last ditch effort
-                           (let [core-prom (promise)]
-                             ;; (status 'sending sym _LINE_)
-                             (send modules (fn [mods]
-                                             (assert-result r (instance? HashMap r))
-                                             (either (or (map (get-in mods [core .value-types 0 sym])
-                                                              (fn [val-type]
-                                                                (deliver core-prom (maybe val-type))
-                                                                mods))
-                                                         (for [first-char (first (str sym))
-                                                               _ (= first-char ".")
-                                                               new-mods (update-in mods [core .value-types]
-                                                                                   (fn [val-types]
-                                                                                     (add-getter sym val-types)))
-                                                               val-type (get-in new-mods [core .value-types 0 sym])]
-                                                           (do
-                                                             (deliver core-prom (maybe val-type))
-                                                             new-mods)))
-                                                     (do
-                                                       (deliver core-prom nothing)
-                                                       mods))))
-                             (map (extract core-prom)
-                                  (fn [expr]
-                                    [expr s]))))
+                           ;; (let [core-prom (promise)]
+                           ;;   ;; (status 'sending sym _LINE_)
+                           ;;   (send modules (fn [mods]
+                           ;;                   (assert-result r (instance? HashMap r))
+                           ;;                   (either (or (map (get-in mods [core .value-types 0 sym])
+                           ;;                                    (fn [val-type]
+                           ;;                                      (deliver core-prom (maybe val-type))
+                           ;;                                      mods))
+                           ;;                               (for [first-char (first (str sym))
+                           ;;                                     _ (= first-char ".")
+                           ;;                                     new-mods (update-in mods [core .value-types]
+                           ;;                                                         (fn [val-types]
+                           ;;                                                           (add-getter sym val-types)))
+                           ;;                                     val-type (get-in new-mods [core .value-types 0 sym])]
+                           ;;                                 (do
+                           ;;                                   (deliver core-prom (maybe val-type))
+                           ;;                                   new-mods)))
+                           ;;                           (do
+                           ;;                             (deliver core-prom nothing)
+                           ;;                             mods))))
+                           ;;   (map (extract core-prom)
+                           ;;        (fn [expr]
+                           ;;          [expr s])))
+                           )
                        se/Failure))))
 
 (defn get-value-type [sym]
@@ -460,14 +487,39 @@
           (compilation-error "No prototype for" (str "'" (.fn-sym proto-impls) "'") "with" (str arg-count)
                              "arguments at" loc)))
 
+(defn add-ns-impl [ns ut-sym type-num arg-count arity-c loc]
+  (fn [mods]
+    (assert (instance? HashMap mods))
+    (assert-result r (instance? HashMap r))
+
+    (either (for [val-types-list (get-in mods [ns .value-types])
+                  val-types (first val-types-list)
+                  proto-impls (get val-types ut-sym)]
+              (let [new-proto (add-impl proto-impls type-num
+                                        arg-count arity-c loc)
+                    val-types-list (map val-types-list
+                                        (fn [m]
+                                          (assoc m ut-sym new-proto)))]
+                (cond (instance? c/ProtoImpls new-proto)
+                      (assoc-in mods [ns .value-types]
+                                val-types-list)
+
+                      ;; add-impl might return a compilation error
+                      (do
+                        (status (.val new-proto))
+                        (wait-for-output)
+                        (abort)))))
+            mods)))
+
 (defn add-proto-impl [type-num fn-sym arg-count arity-c]
   (assert (instance? Integer type-num))
   (assert (instance? c/fn-arity arity-c))
 
-  (let [loc (ast/location fn-sym)]
+  (let [loc (ast/location fn-sym)
+        ut-sym (ast/untag fn-sym)]
     (cond (> 1 type-num)
-          (compilation-error "Invalide prototype implementation type-num for" (str "'" fn-sym "'") "at"
-                             (ast/location fn-sym))
+          (compilation-error "Invalide prototype implementation type-num for"
+                             (str "'" fn-sym "'") "at" loc)
 
           (= (str fn-sym) "")
           (do
@@ -475,56 +527,55 @@
                        "\n\n" arity-c)
             (abort))
 
-          ;; TODO: test for namespaced fn-sym
-          (comp (flat-map (se/get-in-val [.value-types 0 (ast/untag fn-sym)])
+          (comp (flat-map (se/get-in-val [.value-types 0 ut-sym])
                           (fn [proto-impls]
                             (cond (get-in proto-impls [.impl-fns type-num .arities arg-count])
-                                  (compilation-error "An implementation for" (str "'" fn-sym "'") "already exists\n"
-                                                     "Redefinition attempted at" (ast/location fn-sym))
-                                  (let [new-proto (add-impl proto-impls type-num arg-count arity-c loc)]
+                                  (compilation-error "An implementation for" (str "'" fn-sym "'")
+                                                     "already exists\n"
+                                                     "Redefinition attempted at" loc)
+                                  (let [new-proto (add-impl proto-impls type-num
+                                                            arg-count arity-c loc)]
                                     (cond (instance? c/ProtoImpls new-proto)
                                           (for [vts (se/get-val .value-types)
                                                 _ (se/set-val .value-types
                                                               (map vts (fn [m]
-                                                                         (assoc m (ast/untag fn-sym) new-proto))))]
+                                                                         (assoc m ut-sym new-proto))))]
                                             new-proto)
 
                                           ;; add-impl might return a compilation error
-                                          ;; TODO: this obviously never gets called. It should be se/state-error
                                           new-proto)))))
-
-                (flat-map se-nop
-                          (fn [x]
-                            (let [core-prom (promise)]
-                              (send modules (fn [mods]
-                                              (assert (instance? HashMap mods))
-                                              (assert-result r (instance? HashMap r))
-
-                                              (let [sym (ast/untag fn-sym)]
-                                                (either (for [val-types-list (get-in mods [core .value-types])
-                                                              val-types (first val-types-list)
-                                                              proto-impls (get val-types sym)]
-                                                          (let [new-proto (add-impl proto-impls type-num
-                                                                                    arg-count arity-c loc)
-                                                                val-types-list (map val-types-list
-                                                                                    (fn [m]
-                                                                                      (assoc m sym new-proto)))]
-                                                            (cond (instance? c/ProtoImpls new-proto)
-                                                                  (do
-                                                                    (deliver core-prom se-nop)
-                                                                    (assoc-in mods [core .value-types]
-                                                                              val-types-list))
-
-                                                                  (do
-                                                                    (deliver core-prom new-proto)
-                                                                    mods))))
-                                                        (do
-                                                          (deliver core-prom 
-                                                                   (compilation-error "Could not find protocol for"
-                                                                                      (str "'" fn-sym "'")
-                                                                                      "at" (ast/location fn-sym)))
-                                                          mods)))))
-                              (extract core-prom))))))))
+                ;; TODO: test for namespaced fn-sym
+                (let [ns core]
+                  (flat-map (se/get-in-val [.namespaces core .value-types 0 ut-sym])
+                            (fn [proto-impls]
+                              (cond (get-in proto-impls [.impl-fns type-num .arities arg-count])
+                                    (compilation-error "An implementation for" (str "'" fn-sym "'")
+                                                       "already exists\n"
+                                                       "Redefinition attempted at" loc)
+                                    (let [new-proto (add-impl proto-impls type-num
+                                                              arg-count arity-c loc)]
+                                      (cond (instance? c/ProtoImpls new-proto)
+                                            (for [vts (se/get-in-val [.namespaces core .value-types])
+                                                  :let [new-vts (map vts
+                                                                     (fn [m]
+                                                                       (assoc m ut-sym new-proto)))]
+                                                  _ (se/assoc-in-val [.namespaces core .value-types]
+                                                                     new-vts)]
+                                              (do
+                                                (send modules (add-ns-impl ut-sym core type-num
+                                                                           arg-count arity-c loc))
+                                                new-proto))
+                                            new-proto))))))
+                (for [nss (se/get-in-val [.namespaces core .value-types 0])
+                      _ (se-debug 'ns-keys (keys nss)
+                                  lflf 'untagged (map (get nss ut-sym)
+                                                      (fn [p]
+                                                        (.impl-fns p {})))
+                                  lflf 'tagged (map (get nss fn-sym)
+                                                    (fn [p]
+                                                      (.impl-fns p {}))))
+                      _ (compilation-error 'wth _LINE_ ut-sym loc)]
+                  '_)))))
 
 (defn get-type-info [type-sym loc]
   ;; TODO: needs to handled namespaced type-sym
@@ -535,27 +586,28 @@
   ;;         (status 'get-type _LINE_ loc type-sym)
   ;;         (maybe '_))))
   (comp (se/get-in-val [.types (ast/untag type-sym)])
-        (flat-map se-nop
-                  (fn [_]
-                    ;; Look in the core module
-                    (let [core-prom (promise)]
-                      (send modules (fn [mods]
-                                      ;; (or ;; (= (.file loc) core)
-                                      ;;  ;; (= (.line loc) 0)
-                                      ;;  (and ( = type-sym 'BitmapIndexedNode)
-                                      ;;       (do
-                                      ;;         (status 'get-type _LINE_ loc type-sym "\n"
-                                      ;;                 (get-in mods [core .types (ast/untag type-sym)]))
-                                      ;;         (maybe '_))))
-                                      (either (or (for [core-mod (get mods core)
-                                                        _ (instance? Promise core-mod)]
-                                                    (deliver core-prom se/zero-se))
-                                                  (map (get-in mods [core .types (ast/untag type-sym)])
-                                                       (fn [type-inf]
-                                                         (deliver core-prom (se/state-error type-inf)))))
-                                              (deliver core-prom se/zero-se))
-                                      mods))
-                      (extract core-prom))))
+        (se/get-in-val [.namespaces core .types (ast/untag type-sym)])
+        ;; (flat-map se-nop
+        ;;           (fn [_]
+        ;;             ;; Look in the core module
+        ;;             (let [core-prom (promise)]
+        ;;               (send modules (fn [mods]
+        ;;                               ;; (or ;; (= (.file loc) core)
+        ;;                               ;;  ;; (= (.line loc) 0)
+        ;;                               ;;  (and ( = type-sym 'BitmapIndexedNode)
+        ;;                               ;;       (do
+        ;;                               ;;         (status 'get-type _LINE_ loc type-sym "\n"
+        ;;                               ;;                 (get-in mods [core .types (ast/untag type-sym)]))
+        ;;                               ;;         (maybe '_))))
+        ;;                               (either (or (for [core-mod (get mods core)
+        ;;                                                 _ (instance? Promise core-mod)]
+        ;;                                             (deliver core-prom se/zero-se))
+        ;;                                           (map (get-in mods [core .types (ast/untag type-sym)])
+        ;;                                                (fn [type-inf]
+        ;;                                                  (deliver core-prom (se/state-error type-inf)))))
+        ;;                                       (deliver core-prom se/zero-se))
+        ;;                               mods))
+        ;;               (extract core-prom))))
         (compilation-error "No type named" (str "'" type-sym "'")
                            "was found. Used at" loc)))
 
@@ -1047,56 +1099,52 @@
   (pre-check [ast]
     (for [_ (push-types)
           _ (set-value-type (.sym ast) c/top-type)]
-      (do
-        ;; (cond (= (.sym ast) 'maybe)
-        ;;       (send output maybe)
-        ;;       (send output (fn [_] nothing)))
-        (.value-exprs ast (-> (.value-exprs ast)
-                              (remove (partial instance? ast/block-comment-ast))
-                              (map (fn [inner-ast]
-                                     (cond (instance? ast/fn-ast inner-ast)
-                                           (.fn-sym inner-ast (.sym ast))
+      (.value-exprs ast (-> (.value-exprs ast)
+                            (remove (partial instance? ast/block-comment-ast))
+                            (map (fn [inner-ast]
+                                   (cond (instance? ast/fn-ast inner-ast)
+                                         (.fn-sym inner-ast (.sym ast))
 
-                                           (instance? c/SymbolConstraints inner-ast)
-                                           (c/update-sym inner-ast (ast/untag (.sym ast)))
+                                         (instance? c/SymbolConstraints inner-ast)
+                                         (c/update-sym inner-ast (ast/untag (.sym ast)))
 
-                                           inner-ast))))))))
+                                         inner-ast)))))))
 
   (type-check [ast old-ast]
-    (let [loc (ast/location (.sym old-ast))]
-      (let [sym (.sym old-ast)]
-        (for [_ (pop-types)
-              c (either (map (last (.value-exprs ast))
-                             (fn [val]
-                               (cond (instance? c/Constraints val)
-                                     ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
-                                     ;; the updated version. Possibly a bug in assoc-in*
+    (let [loc (ast/location (.sym old-ast))
+          sym (.sym old-ast)]
+      (for [_ (pop-types)
+            c (either (map (last (.value-exprs ast))
+                           (fn [val]
+                             (cond (instance? c/Constraints val)
+                                   ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
+                                   ;; the updated version. Possibly a bug in assoc-in*
 
-                                     ;; TODO: this version produces a very cryptic error message
-                                     ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
-                                     ;;           (set-value-type (.sym old-ast) val))
+                                   ;; TODO: this version produces a very cryptic error message
+                                   ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
+                                   ;;           (set-value-type (.sym old-ast) val))
 
-                                     (let [val (c/trim val)]
-                                       (flat-map (se/assoc-in-val [.types (ast/untag sym)] val)
-                                                 (fn [_]
-                                                   (set-value-type sym val))))
+                                   (let [val (c/trim val)]
+                                     (flat-map (se/assoc-in-val [.types (ast/untag sym)] val)
+                                               (fn [_]
+                                                 (set-value-type sym val))))
 
-                                     (and (= c/top-type (.constraint val))
-                                          (or (= sym 'empty-list)
-                                              (= sym 'empty-vector)
-                                              (= sym 'int-max)
-                                              (= sym 'int-min)
-                                              (= sym 'nothing)))
-                                     (flat-map (get-value-type sym)
-                                               (fn [c]
-                                                 (set-value-type sym (c/update-path c loc))))
+                                   (and (= c/top-type (.constraint val))
+                                        (or (= sym 'empty-list)
+                                            (= sym 'empty-vector)
+                                            (= sym 'int-max)
+                                            (= sym 'int-min)
+                                            (= sym 'nothing)))
+                                   (flat-map (get-value-type sym)
+                                             (fn [c]
+                                               (set-value-type sym (c/update-path c loc))))
 
-                                     (set-value-type sym (c/trim (.constraint val))))))
-                        (set-value-type (.sym old-ast) c/top-type))]
-          (do
-            ;; (status 'defed _LINE_ loc (.sym old-ast)
-            ;;            lflf c)
-            ast))))))
+                                   (set-value-type sym (c/trim (.constraint val))))))
+                      (set-value-type (.sym old-ast) c/top-type))]
+        (do
+          ;; (status 'defed _LINE_ loc (.sym old-ast)
+          ;;            lflf c)
+          ast)))))
 
 (extend-type ast/fn-arity-ast
   TypeChecker
@@ -1934,7 +1982,7 @@
     (for [field-types (get-param-types (ast/params fields c/no-symbol))
           _ (se/traverse fields recover-val-type)
           invoke-impls (get-value-type invoke-sym)
-          _ (nip-types)
+          _ (pop-types)
           _ (push-types)]
       (let [invoke-fn (either (get-in invoke-impls [.impl-fns type-num])
                               c/empty-fn-constraint)
@@ -2177,10 +2225,11 @@
 
                        ;;   TypeChecker
                        ;;   (pre-check [ast]
+                       ;;  report-type-stack
                        ;;     (for [ft (se/get-val .value-types)
                        ;;           mby (get-value-type maybe-sym)]
                        ;;       (do
-                       ;;         (status 'test _LINE_ sym (count ft)
+                       ;;         (status 'vts _LINE_ sym (count ft)
                        ;;                 lflf 'maybe mby)
                        ;;         (ast/block-comment-ast [] c/no-loc c/top-type)))))
                        ])))))))
