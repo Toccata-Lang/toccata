@@ -44,10 +44,12 @@
 
 (defn status [& msg]
   (send output (fn [out-file?]
-                 (assert (instance? Maybe out-file?))
+                 ;; (assert (instance? Maybe out-file?))
 
-                 (and out-file?
-                      (maybe (apply print-err msg)))
+                 ;; (and out-file?
+                 ;;      (maybe (apply print-err msg)))
+
+                 (apply print-err msg)
                  ;; (map out-file?
                  ;;      (fn [out-file]
                  ;;        (fio/write out-file (str (to-str (interpose msg " ")) "\n"))
@@ -155,16 +157,16 @@
 ;; modules holds a map from filenames to either a Module or a Promise
 (def modules (agent {}))
 
-(defn new-module [file-name module-index]
+(defn new-module [file-name module-index core-mod]
   (let [core-prom (promise)]
-    (send modules (fn [mods]
-                    (map (get mods core)
-                         (partial deliver core-prom))
-                    mods))
+    ;; (send modules (fn [mods]
+    ;;                 (map (get mods core)
+    ;;                      (partial deliver core-prom))
+    ;;                 mods))
     (Module file-name module-index {}
             (cond (= module-index 0)
                   {}
-                  {core (extract core-prom)})
+                  {core core-mod})
             c/core-type-constraints
             (list {'empty-list (c/update-sym c/empty-list-constraint
                                              'empty-list)
@@ -275,14 +277,14 @@
                                                     (add-getter sym val-types)))
                                  val-type (get-in new-s [.namespaces core .value-types 0 sym])]
                              (do
-                               (send modules
-                                     (fn [mods]
-                                       (assert-result r (instance? HashMap r))
-                                       (either (or (get-in mods [core .value-types 0 sym])
-                                                   (update-in mods [core .value-types]
-                                                              (fn [val-types]
-                                                                (add-getter sym val-types))))
-                                               mods)))
+                               ;; (send modules
+                               ;;       (fn [mods]
+                               ;;         (assert-result r (instance? HashMap r))
+                               ;;         (either (or (get-in mods [core .value-types 0 sym])
+                               ;;                     (update-in mods [core .value-types]
+                               ;;                                (fn [val-types]
+                               ;;                                  (add-getter sym val-types))))
+                               ;;                 mods)))
                                [val-type new-s]))
                            ;; last ditch effort
                            ;; (let [core-prom (promise)]
@@ -372,24 +374,21 @@
           (fn [_]
             (se/state-error c/top-type)))
 
+        (= constraint c/bottom-type)
+        (compilation-error 'site _LINE_ loc 'appending sym
+                           lflf 'constraint constraint
+                           lflf (conf-ass _LINE_ constraint loc))
+
         (flat-map (se/try
                     (get-value-type sym)
                     (fn [_]
                       (se/state-error c/top-type)))
                   (fn [curr-const]
                     (cond (= curr-const c/top-type)
-                          (let [new-const (c/update-path constraint loc)]
-                            (cond (= new-const c/bottom-type)
-                                  (compilation-error 'site _LINE_ loc 'appending sym
-                                                     "\n" 'curr curr-const
-                                                     lflf 'constraint constraint
-                                                     lflf 'new-const new-const
+                          (set-value-type sym (c/update-path constraint loc))
 
-                                                     lflf (conf-ass _LINE_ new-const loc))
-
-                                  (set-value-type sym (c/update-path new-const loc))))
-
-                          (let [new-const (c/intersect curr-const constraint)]
+                          (let [new-const (c/intersect (c/update-path constraint loc)
+                                                       curr-const)]
                             ;; (let [loc (ast/location sym)]
                             ;;   (or ;; (= (.file loc) core)
                             ;;       ;; (= (.line loc) 0)
@@ -469,11 +468,11 @@
 
                    ;;       '_)
                    (cond (= new-arity-c c/bottom-type)
-                         (compilation-error ;; 'impl _LINE_
-                                            ;; "\n" 'def default-arity
-                                            ;; lflf 'arity arity-c
-                                            ;; lflf 'new new-arity-c
-                                            ;; lflf
+                         (compilation-error 'impl _LINE_
+                                            "\n" 'def dflt-arity
+                                            lflf 'arity arity-c
+                                            lflf 'new new-arity-c
+                                            lflf
                                             (conf-ass _LINE_ new-arity-c loc))
 
                          ;; happy path
@@ -562,8 +561,8 @@
                                                   _ (se/assoc-in-val [.namespaces core .value-types]
                                                                      new-vts)]
                                               (do
-                                                (send modules (add-ns-impl ut-sym core type-num
-                                                                           arg-count arity-c loc))
+                                                ;; (send modules (add-ns-impl ut-sym core type-num
+                                                ;;                            arg-count arity-c loc))
                                                 new-proto))
                                             new-proto))))))
                 (for [nss (se/get-in-val [.namespaces core .value-types 0])
@@ -612,10 +611,6 @@
                            "was found. Used at" loc)))
 
 (defprotocol TypeChecker
-  ;; Change any InferredInner constraint to a CollectionOf
-  (promote-inferred [c]
-    c)
-
   (update-constraint [ast constraint loc]
     (compilation-error "Could not find implementation of 'update-constraint' at" loc "for:"
                        "\n" (type-name ast) ast
@@ -987,9 +982,9 @@
             ;;   (status 'call-proto _LINE_ loc
             ;;           "\n" ast
             ;;           "\n\n" 'disp val-num disp-arg))
-            (let [print-info? (and (= (.call-target old-ast) '.not-there)
+            (let [print-info? (and (= (.call-target old-ast) '.extract)
                                    ;; (= (.file loc) "assertion-tests/bad-constructor-param-2.toc")
-                                   ;; (= (.line loc) 1414)
+                                   (= (.line loc) 2958)
                                    ;; nothing
                                    )]
               (for [
@@ -1020,24 +1015,24 @@
 
                                    (se/state-error target-c))
                     :let [
-                          ;; _ (map print-info?
-                          ;;        (fn [_]
-                          ;;          (status 'call-site _LINE_ loc (.call-target old-ast)
-                          ;;                  "\n" 'target-c target-c
-                          ;;                  "\n\n" 'args (str "[" (-> arg-cs
-                          ;;                                            (interpose "\n ")
-                          ;;                                            to-str)
-                          ;;                                    "]")
-                          ;;                  )))
+                          _ (map print-info?
+                                 (fn [_]
+                                   (status 'call-site _LINE_ loc (.call-target old-ast)
+                                           "\n" 'target-c target-c
+                                           "\n\n" 'args (str "[" (-> arg-cs
+                                                                     (interpose "\n ")
+                                                                     to-str)
+                                                             "]")
+                                           )))
 
                           [result-type arg-cs] (c/do-call-value target-c arg-cs (list loc))
                           ;; result-type (c/trim result-type)
 
-                          ;; _ (map print-info?
-                          ;;        (fn [_]
-                          ;;          (status 'call-site _LINE_ loc (.call-target ast)
-                          ;;                  "\n" 'result (c/trim result-type)
-                          ;;                  )))
+                          _ (map print-info?
+                                 (fn [_]
+                                   (status 'call-site _LINE_ loc (.call-target ast)
+                                           "\n" 'result (c/trim result-type)
+                                           )))
                           ]
                     _ (update-constraint (.call-target ast)
                                          (.required-arities c/fn-constraint [(count arg-cs)])
@@ -1045,12 +1040,13 @@
                     new-args (either (map (= c/bottom-type result-type)
                                           (fn [_]
                                             (compilation-error ;; 'site _LINE_ loc
-                                             ;; "\n" old-ast
-                                             ;; "\n\n" 'target-c target-c
-                                             ;; "\n\n" 'arg-cs (map (.args ast) .constraint)
-                                             ;; "\n\n" 'result-type result-type
-                                             ;; "\n\n"
-                                             (conf-ass _LINE_ result-type loc))))
+                                                               ;; "\n" old-ast
+                                                               ;; "\n\n" 'target-c target-c
+                                                               ;; "\n\n" 'arg-cs (map (.args ast)
+                                                               ;;                     .constraint)
+                                                               ;; "\n\n" 'result-type result-type
+                                                               ;; "\n\n"
+                                                               (conf-ass _LINE_ result-type loc))))
                                      (se/traverse (zip-lists (.args ast) arg-cs)
                                                   (fn [[ast arg-c]]
                                                     ;; (map print-info?
@@ -1228,8 +1224,11 @@
                               )))
                       se-nop)]
         ;; TODO: use update-constraint here
-        (.constraint ast (c/intersect (.constraint ast)
-                                      (c/fn-arity (.fn-var ast) pts final-c)))))))
+        (cond (= c/bottom-type pts)
+              '_
+
+              (.constraint ast (c/intersect (.constraint ast)
+                                            (c/fn-arity (.fn-var ast) pts final-c))))))))
 
 (extend-type ast/fn-ast
   TypeChecker
@@ -1624,70 +1623,72 @@
           (ast/params [x*]) ""
           [(ast/string-ast (str type-sym) loc c/string-constraint)])}
 
-      has-field-sym
-      {2 (ast/fn-arity
-          (ast/tag has-field-sym loc)
-          (ast/params [x* field*]) ""
-          [(ast/and-expr
-            [(ast/or-expr
-               (conj (map fields
-                          (fn [field]
-                            (ast/call-expr [identical-sym
-                                            (ast/tag (str "." field) loc)
-                                            field*])))
-                     nothing-sym))
-             (ast/call-expr [maybe-sym x*])])])}}
+      ;; has-field-sym
+      ;; {2 (ast/fn-arity
+      ;;     (ast/tag has-field-sym loc)
+      ;;     (ast/params [x* field*]) ""
+      ;;     [(ast/and-expr
+      ;;       [(ast/or-expr
+      ;;          (conj (map fields
+      ;;                     (fn [field]
+      ;;                       (ast/call-expr [identical-sym
+      ;;                                       (ast/tag (str "." field) loc)
+      ;;                                       field*])))
+      ;;                nothing-sym))
+      ;;        (ast/call-expr [maybe-sym x*])])])}
+      }
 
-     Eq-sym
-     {=*-sym
-      {2 (ast/fn-arity
-          (ast/tag =*-sym loc)
-          (ast/params [x* y*]) ""
-          [(ast/and-expr
-            [(ast/call-expr [=*-sym (ast/call-expr [get-type-sym x*])
-                             (ast/call-expr [get-type-sym y*])])
-             (ast/call-expr [=*-sym (ast/call-expr [default-type-args-sym x*])
-                             (ast/call-expr [default-type-args-sym y*])])
-             (ast/call-expr [maybe-sym x*])])])}}
+     ;; Eq-sym
+     ;; {=*-sym
+     ;;  {2 (ast/fn-arity
+     ;;      (ast/tag =*-sym loc)
+     ;;      (ast/params [x* y*]) ""
+     ;;      [(ast/and-expr
+     ;;        [(ast/call-expr [=*-sym (ast/call-expr [get-type-sym x*])
+     ;;                         (ast/call-expr [get-type-sym y*])])
+     ;;         (ast/call-expr [=*-sym (ast/call-expr [default-type-args-sym x*])
+     ;;                         (ast/call-expr [default-type-args-sym y*])])
+     ;;         (ast/call-expr [maybe-sym x*])])])}}
 
-     Associative-sym
-     {get-symb
-      {2 (ast/fn-arity
-          (ast/tag get-symb loc)
-          (ast/params [x* field*]) ""
-          [ ;; (c-code "" ["// TODO: this seems to do runtime checks for 'has-field' result\n// and the result returned\n"]
-           ;;         {} c/top-type)
-           (ast/and-expr
-            [(ast/call-expr [(ast/tag has-field-sym loc) x* field*])
-             (ast/call-expr [maybe-sym
-                             (ast/call-expr [field* x*])])])])}
+     ;; Associative-sym
+     ;; {get-symb
+     ;;  {2 (ast/fn-arity
+     ;;      (ast/tag get-symb loc)
+     ;;      (ast/params [x* field*]) ""
+     ;;      [ ;; (c-code "" ["// TODO: this seems to do runtime checks for 'has-field' result\n// and the result returned\n"]
+     ;;       ;;         {} c/top-type)
+     ;;       (ast/and-expr
+     ;;        [(ast/call-expr [(ast/tag has-field-sym loc) x* field*])
+     ;;         (ast/call-expr [maybe-sym
+     ;;                         (ast/call-expr [field* x*])])])])}
 
-      assoc-sym
-      {3 (ast/fn-arity
-          (ast/tag assoc-sym loc)
-          (ast/params [x* field* (ast/tag 'new-value)]) ""
-          [(ast/cond-expr
-            [(ast/cond-val-expr (ast/call-expr [(ast/tag has-field-sym loc) x* field*])
-                                (ast/call-expr [field* x* (ast/tag 'new-value)]))]
-            x*)])}}
+     ;;  assoc-sym
+     ;;  {3 (ast/fn-arity
+     ;;      (ast/tag assoc-sym loc)
+     ;;      (ast/params [x* field* (ast/tag 'new-value)]) ""
+     ;;      [(ast/cond-expr
+     ;;        [(ast/cond-val-expr (ast/call-expr [(ast/tag has-field-sym loc) x* field*])
+     ;;                            (ast/call-expr [field* x* (ast/tag 'new-value)]))]
+     ;;        x*)])}}
 
-     Hashable-sym
-     {sha1-update-sym
-      {2 (ast/fn-arity
-          (ast/tag sha1-update-sym loc)
-          (ast/params [x* ctxt*]) ""
-          [(ast/call-expr [sha1-update-type-sym x* ctxt*])
-           (ast/call-expr [sha1-update-sym (ast/call-expr [default-type-args-sym x*]) ctxt*])])}
+     ;; Hashable-sym
+     ;; {sha1-update-sym
+     ;;  {2 (ast/fn-arity
+     ;;      (ast/tag sha1-update-sym loc)
+     ;;      (ast/params [x* ctxt*]) ""
+     ;;      [(ast/call-expr [sha1-update-type-sym x* ctxt*])
+     ;;       (ast/call-expr [sha1-update-sym (ast/call-expr [default-type-args-sym x*]) ctxt*])])}
 
-      sha1-sym
-      {1 (ast/fn-arity
-          (ast/tag sha1-sym loc)
-          (ast/params [x*]) ""
-          [(ast/call-expr
-            [sha1-finalize-sym
-             (ast/call-expr
-              [sha1-update-sym x*
-               (ast/call-expr [sha1-init-sym])])])])}}}))
+     ;;  sha1-sym
+     ;;  {1 (ast/fn-arity
+     ;;      (ast/tag sha1-sym loc)
+     ;;      (ast/params [x*]) ""
+     ;;      [(ast/call-expr
+     ;;        [sha1-finalize-sym
+     ;;         (ast/call-expr
+     ;;          [sha1-update-sym x*
+     ;;           (ast/call-expr [sha1-init-sym])])])])}}
+     }))
 
 (defn create-getters [sym type-num new-type-constraint fields field-constraints]
   (let [type-value (ast/tag "#value")
@@ -1753,6 +1754,7 @@
                            ;; first-param)
                            (let [disp-param (ast/untag first-param)]
                              (let [type-info (c/update-sym type-info disp-param)
+                                  ;; TODO: wut is type-info updated with the disp-param
                                    new-bod (comp [type-info] (.body c))]
                                (ProtoArity (c/type-num type-info)
                                            (.body c new-bod)))))))
@@ -1785,7 +1787,7 @@
     (map (se/traverse fields (fn [field]
                                (for [_ (get-value-type (ast/tag (str "." field) loc))
                                      field-info (get-value-type field)]
-                                 (cata promote-inferred field-info))))
+                                 field-info)))
          (fn [field-cs]
            (let [impls (-> (create-getters (ast/untag sym) type-num new-type-constraint
                                            fields field-cs)
@@ -1794,6 +1796,73 @@
              (cata (fn [c]
                      (constrain-first-param new-type-constraint c))
                    impls))))))
+
+(defn constructor-constraints [new-type-constraint new-type-sym const-fn]
+  (assert (instance? c/ReifiedConstraint new-type-constraint))
+  (assert (instance? ast/tagged-symbol new-type-sym))
+  (assert (instance? c/FnConstraint const-fn))
+
+  (let [reified-type-num (extract type-counter)
+        field-count (count (.fields new-type-constraint))
+        const-arity (either (get-in const-fn [.arities field-count])
+                            (do
+                              (status 'compiler-error _LINE_ new-type-sym
+                                      lflf new-type-constraint
+                                      lflf const-fn)
+                              (wait-for-output)
+                              (abort)))
+        const-fn (.arities const-fn (reduce (vec (.arities const-fn)) {}
+                                            (fn [arities [rank arity]]
+                                              (either (map (update-in arity [.param-consts .items]
+                                                                      (fn [cs]
+                                                                        (comp [c/top-type] cs)))
+                                                           (partial assoc arities (inc rank)))
+                                                      arities))))
+        const-name (str "* " new-type-sym " constructor at " (ast/location new-type-sym)" *")
+        reified-c (c/ReifiedConstraint reified-type-num
+                                       (symbol const-name)
+                                       {} {} const-fn
+                                       empty-list c/no-symbol "")]
+    (for [_ (se/assoc-in-val [.types (ast/untag new-type-sym)] new-type-constraint)
+          _ (set-value-type new-type-sym reified-c)
+          ;; TODO: need instance? constraint
+          _ (add-proto-impl reified-type-num
+                            apply-sym
+                            2
+                            (c/fn-arity (symbol (str new-type-sym "_apply"))
+                                        (.items c/list-constraint
+                                                [reified-c (.param-consts const-arity)])
+                                        new-type-constraint))
+          _ (se/traverse (vec (.field-consts new-type-constraint))
+                         (fn [[field fld-c]]
+                           (let [sym (.sym field)
+                                 type-num (.type-number new-type-constraint)
+                                 getter-id (symbol (str new-type-sym "-" sym "-getter"))
+                                 getter-param (c/ParamConstraint getter-id 0
+                                                                 empty-list c/no-symbol "")
+                                 setter-id (symbol (str new-type-sym "-" sym "-setter"))
+                                 setter-param-0 (c/ParamConstraint setter-id 0
+                                                                   empty-list c/no-symbol "")
+                                 setter-param-1 (c/ParamConstraint setter-id 1
+                                                                   empty-list c/no-symbol "")]
+                             (for [_ (get-value-type (ast/tag sym))
+                                   _ (add-proto-impl type-num sym 1
+                                                     (c/fn-arity
+                                                      getter-id
+                                                      (-> c/empty-list-constraint
+                                                          (c/set-items [new-type-constraint]))
+                                                      (-> (c/type-op c/get-from-op getter-param
+                                                                     [field])
+                                                          (c/intersect fld-c))))
+                                   _ (add-proto-impl type-num sym 2
+                                                     (c/fn-arity
+                                                      setter-id
+                                                      (-> c/empty-list-constraint
+                                                          (c/set-items [new-type-constraint fld-c]))
+                                                      (c/type-op c/set-to-op setter-param-0
+                                                                 [[field] setter-param-1])))]
+                               '_))))]
+      '_)))
 
 (defn create-constructor [new-type-name type-num new-type-constraint field-constraints fields]
   (assert (instance? ast/tagged-symbol new-type-name))
@@ -1817,6 +1886,8 @@
     ;;               })
 
     ;; TODO: make sure the constraints on all these fn's are as specific as possible
+
+    ;; TODO: add 'comp*' implementation
     (ast/reified reified-type-num
                  {Eq-sym
                   {(ast/tag =*-sym loc)
@@ -1961,7 +2032,7 @@
                                                                       c))
                                                               c/string-constraint))])])]})})))
 
-(deftype CheckedTypeAST [sym type-num new-type-constraint fields impls]
+(deftype CheckedTypeAST [sym type-num new-type-constraint const-fn-c fields impls]
   Stringable
   (string-list [_]
     (list "(CheckedTypeAST " (str sym) " " (str fields) ")"))
@@ -1979,13 +2050,19 @@
           _ (se/traverse fields recover-val-type)
           invoke-impls (get-value-type invoke-sym)
           _ (pop-types)
-          _ (push-types)]
-      (let [invoke-fn (either (get-in invoke-impls [.impl-fns type-num])
-                              c/empty-fn-constraint)
-            constr-c (create-constructor sym type-num
-                                         (.invoke-fn new-type-constraint invoke-fn)
-                                         field-types fields)]
-        (ast/definition-ast sym [constr-c])))))
+          _ (push-types)
+          _ (-> new-type-constraint
+                (.invoke-fn (either (get-in invoke-impls [.impl-fns type-num])
+                                    c/empty-fn-constraint))
+                (constructor-constraints sym const-fn-c))]
+      ;; (let [invoke-fn (either (get-in invoke-impls [.impl-fns type-num])
+      ;;                         c/empty-fn-constraint)
+      ;;       constr-c (create-constructor sym type-num
+      ;;                                    (.invoke-fn new-type-constraint invoke-fn)
+      ;;                                    field-types fields)]
+      ;;   (ast/definition-ast sym [constr-c]))
+      (ast/block-comment-ast [] c/no-loc c/top-type)
+      )))
 
 (extend-type ast/rec-type-ast
   TypeChecker
@@ -2104,131 +2181,223 @@
                                                       c/fn-constraint
                                                       empty-list c/no-symbol "")
                                  (c/update-path loc))))
-          (let [loc (ast/location (.sym ast))
-                type-num (new-type-number (.sym ast))
-                sym (.sym ast)
+          (let [sym (.sym ast)
+                loc (ast/location sym)
+                type-num (new-type-number sym)
                 fields (-> ast .fields .fixed)
-                field-destruct (DestructFields fields)
-                fields-map (reduce fields {}
-                                   (fn [m name]
-                                     (assoc m
-                                       (c/Field (symbol (str "." name))) c/top-type)))]
+                field-destruct (DestructFields fields)]
             (for [_ (push-types)
+                  ;; clear previous constraints for the fields
                   _ (se/traverse fields (fn [sym]
                                           (set-value-type sym c/top-type)))
-                  field-assertions (-> (.impls ast)
-                                       (filter (partial instance? c/SymbolConstraints))
-                                       (se/traverse
-                                        (fn [c]
-                                          (let [sym (c/extract-sym c)]
-                                            (cond (= sym c/no-symbol)
-                                                  c/top-type
 
-                                                  (flat-map (type-check-ast c)
-                                                            (fn [new-c]
-                                                              (update-constraint (ast/tag sym loc)
-                                                                                 new-c loc))))))))
+                  _ (-> (.impls ast)
+                        (filter (partial instance? c/SymbolConstraints))
+                        (se/traverse type-check-ast))
                   field-cs (se/traverse fields get-value-type)
-                  :let [const-arity-map (-> (.arities c/fn-constraint)
-                                            (select-keys [(count fields)])
-                                            (map-vals (fn [arity]
-                                                        (assoc-in arity [.param-consts .items] field-cs))))
+                  :let [fields-map (-> (zip-lists fields field-cs)
+                                       (reduce {}
+                                               (fn [m [name c]]
+                                                 (assoc m
+                                                   (c/Field (symbol (str "." name))) c))))
                         new-type-constraint (-> (c/ReifiedConstraint type-num
                                                                      (ast/untag sym)
                                                                      fields-map fields-map
-                                                                     (.arities c/fn-constraint
-                                                                               const-arity-map)
+                                                                     c/empty-fn-constraint
                                                                      empty-list c/no-symbol "")
-                                                (c/update-path loc))]
+                                                (c/update-path loc))
+                        const-fn-c (-> c/fn-constraint
+                                       (.arities {(count fields)
+                                                  (c/fn-arity c/no-symbol
+                                                              (.items c/list-constraint field-cs)
+                                                              new-type-constraint)})
+                                       (c/update-sym (ast/untag sym))
+                                       (c/update-path loc))]
                   _ (se/assoc-in-val [.types (ast/untag sym)] new-type-constraint)
+                  _ (set-value-type sym const-fn-c)]
+              (let [impls (apo (fn [ast]
+                                 (cond (instance? HashMap ast)
+                                       (RecurseWith (vec (vals ast)))
 
-                  _ (set-value-type sym (-> c/fn-constraint
-                                            (.arities const-arity-map)
-                                            (c/update-sym (ast/untag sym))
-                                            (c/update-path loc)))]
-              (let [impls (-> (.impls ast)
-                              (remove (partial instance? c/SymbolConstraints))
-                              (map (fn [proto-impls]
-                                     (map-vals proto-impls
-                                               (fn [proto-fns]
-                                                 (map-vals proto-fns
-                                                           (fn [proto-arities]
-                                                             (reduce proto-arities {}
-                                                                     (fn [m arity]
-                                                                       (assoc m (-> arity .params
-                                                                                    .fixed count)
-                                                                              arity))))))))))
-                    impls (apply merge-with (comp [(partial merge-with comp)
-                                                   (default-type-impls (ast/tag sym loc) fields)]
-                                                  impls))
-                    impls (map-vals impls
-                                    (fn [protocol]
-                                      (map-vals protocol (fn [arities]
-                                                           (map-vals arities
-                                                                     (fn [arity]
-                                                                       ;; TODO: just doing this for testing
-                                                                       ;; (assert (instance? ast/fn-arity-ast arity))
-                                                                       (.body arity (comp [field-destruct]
-                                                                                          (.body arity)))))))))
-                    impls (map-vals impls (fn [protos]
-                                            (map-vals protos (fn [impl-fns]
-                                                               (vec (vals impl-fns))))))
+                                       (instance? ast/fn-arity-ast ast)
+                                       (RecurseFinal
+                                        (constrain-first-param new-type-constraint
+                                                               (.body ast (comp [field-destruct]
+                                                                                (.body ast)))))
 
-                    impls (-> (ast/extend-ast (.sym ast) impls)
-                              (map (fn [c]
-                                     (constrain-first-param new-type-constraint c)))
-                              .impls
-                              vals
-                              vec
-                              (map (comp vec vals)))
-
+                                       (RecurseWith ast)))
+                                (.impls ast))
                     ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
                     ;; and parameter, respectively
                     ]
-                (comp field-assertions
-                      [impls
-                       (CreateGetters (.sym ast) type-num new-type-constraint fields loc)
-                       ;; TODO: why are the hash-map-impls done twice?
-                       ;; (cond (empty? hash-map-impls)
-                       ;;       (ast/block-comment "" 0 [])
-                       ;;       (b/TypeExtension new-type-constraint hash-map-impls))
-                       (CheckedTypeAST (.sym ast) type-num new-type-constraint fields impls)
-                       (reify
-                         Type
-                         (type-name [_]
-                           (str "reified at " (c/Location _FILE_ _LINE_)))
+                [impls
+                 ;; (CreateGetters (.sym ast) type-num new-type-constraint fields loc)
+                 ;; TODO: why are the hash-map-impls done twice?
+                 ;; (cond (empty? hash-map-impls)
+                 ;;       (ast/block-comment "" 0 [])
+                 ;;       (b/TypeExtension new-type-constraint hash-map-impls))
+                 (CheckedTypeAST (.sym ast) type-num new-type-constraint const-fn-c fields impls)
+                 (reify
+                   Type
+                   (type-name [_]
+                     (str "reified at " (c/Location _FILE_ _LINE_)))
 
-                         Container
-                         (map [y f embed]
-                           (embed y))
+                   Container
+                   (map [y f embed]
+                     (embed y))
 
-                         TypeChecker
-                         (pre-check [x]
-                           (se/state-error x))
+                   TypeChecker
+                   (pre-check [x]
+                     (se/state-error x))
 
-                         (type-check [_ _]
-                           (for [const-c (get-value-type (.sym ast))
-                                 :let [const-c (-> const-c
-                                                   (.type-symbol (symbol (str (.sym ast) " constructor")))
-                                                   (c/update-path loc))]
-                                 _ (set-value-type (.sym ast) const-c)]
-                             (ast/block-comment-ast [] c/no-loc c/top-type))))
+                   (type-check [_ _]
+                     (for [const-c (get-value-type (.sym ast))
+                           :let [const-c (-> const-c
+                                             (.type-symbol (symbol (str (.sym ast) " constructor")))
+                                             (c/update-path loc))]
+                           _ (set-value-type (.sym ast) const-c)]
+                       (ast/block-comment-ast [] c/no-loc c/top-type))))
 
-                       ;; (reify
-                       ;;   Container
-                       ;;   (map [y f embed]
-                       ;;     (embed y))
+                 ;; (reify
+                 ;;   Container
+                 ;;   (map [y f embed]
+                 ;;     (embed y))
 
-                       ;;   TypeChecker
-                       ;;   (pre-check [ast]
-                       ;;  report-type-stack
-                       ;;     (for [ft (se/get-val .value-types)
-                       ;;           mby (get-value-type maybe-sym)]
-                       ;;       (do
-                       ;;         (status 'vts _LINE_ sym (count ft)
-                       ;;                 lflf 'maybe mby)
-                       ;;         (ast/block-comment-ast [] c/no-loc c/top-type)))))
-                       ])))))))
+                 ;;   TypeChecker
+                 ;;   (pre-check [ast]
+                 ;;  report-type-stack
+                 ;;     (for [ft (se/get-val .value-types)
+                 ;;           mby (get-value-type maybe-sym)]
+                 ;;       (do
+                 ;;         (status 'vts _LINE_ sym (count ft)
+                 ;;                 lflf 'maybe mby)
+                 ;;         (ast/block-comment-ast [] c/no-loc c/top-type)))))
+                 ]))))))
+
+;; (extend-type ast/type-ast
+;;   TypeChecker
+;;   (pre-check [ast]
+;;     (cond (= (.fields ast) c/no-fields)
+;;           (let [sym (.sym ast)
+;;                 loc (ast/location sym)]
+;;             (se/assoc-in-val [.types (ast/untag sym)]
+;;                              (-> (c/ReifiedConstraint (new-type-number sym)
+;;                                                       (ast/untag sym)
+;;                                                       {} {c/contents c/top-type}
+;;                                                       c/fn-constraint
+;;                                                       empty-list c/no-symbol "")
+;;                                  (c/update-path loc))))
+;;           (let [loc (ast/location (.sym ast))
+;;                 type-num (new-type-number (.sym ast))
+;;                 sym (.sym ast)
+;;                 fields (-> ast .fields .fixed)
+;;                 field-destruct (DestructFields fields)
+;;                 fields-map (reduce fields {}
+;;                                    (fn [m name]
+;;                                      (assoc m
+;;                                        (c/Field (symbol (str "." name))) c/top-type)))]
+;;             (for [_ (push-types)
+;;                   _ (se/traverse fields (fn [sym]
+;;                                           (set-value-type sym c/top-type)))
+;;                   field-assertions (-> (.impls ast)
+;;                                        (filter (partial instance? c/SymbolConstraints))
+;;                                        (se/traverse
+;;                                         (fn [c]
+;;                                           (let [sym (c/extract-sym c)]
+;;                                             (cond (= sym c/no-symbol)
+;;                                                   c/top-type
+
+;;                                                   (flat-map (type-check-ast c)
+;;                                                             (fn [new-c]
+;;                                                               (update-constraint (ast/tag sym loc)
+;;                                                                                  new-c loc))))))))
+;;                   field-cs (se/traverse fields get-value-type)
+;;                   :let [const-arity-map (-> (.arities c/fn-constraint)
+;;                                             (select-keys [(count fields)])
+;;                                             (map-vals (fn [arity]
+;;                                                         (assoc-in arity [.param-consts .items] field-cs))))
+;;                         new-type-constraint (-> (c/ReifiedConstraint type-num
+;;                                                                      (ast/untag sym)
+;;                                                                      fields-map fields-map
+;;                                                                      (.arities c/fn-constraint
+;;                                                                                const-arity-map)
+;;                                                                      empty-list c/no-symbol "")
+;;                                                 (c/update-path loc))]
+;;                   _ (se/assoc-in-val [.types (ast/untag sym)] new-type-constraint)
+
+;;                   _ (set-value-type sym (-> c/fn-constraint
+;;                                             (.arities const-arity-map)
+;;                                             (c/update-sym (ast/untag sym))
+;;                                             (c/update-path loc)))]
+;;               (let [impls (apo (fn [ast]
+;;                                  (cond (instance? HashMap ast)
+;;                                        (RecurseWith (vec (vals ast)))
+
+;;                                        (instance? ast/fn-arity-ast ast)
+;;                                        (RecurseFinal
+;;                                         (constrain-first-param new-type-constraint
+;;                                                                (.body ast (comp [field-destruct]
+;;                                                                                 (.body ast)))))
+
+;;                                        ;; (instance? Sequence ast)
+;;                                        ;; (RecurseWith (reduce ast []
+;;                                        ;;                      (fn [result inner]
+;;                                        ;;                        (cond (instance? Sequence inner)
+;;                                        ;;                              (reduce inner result conj)
+
+;;                                        ;;                              (conj result inner)))))
+
+;;                                        (RecurseWith ast)))
+;;                                 (.impls ast))
+
+;;                     ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
+;;                     ;; and parameter, respectively
+;;                     ]
+;;                 (comp field-assertions
+;;                       [impls
+;;                        (CreateGetters (.sym ast) type-num new-type-constraint fields loc)
+;;                        ;; TODO: why are the hash-map-impls done twice?
+;;                        ;; (cond (empty? hash-map-impls)
+;;                        ;;       (ast/block-comment "" 0 [])
+;;                        ;;       (b/TypeExtension new-type-constraint hash-map-impls))
+;;                        (CheckedTypeAST (.sym ast) type-num new-type-constraint
+;;                                        c/fn-constraint fields impls)
+;;                        (reify
+;;                          Type
+;;                          (type-name [_]
+;;                            (str "reified at " (c/Location _FILE_ _LINE_)))
+
+;;                          Container
+;;                          (map [y f embed]
+;;                            (embed y))
+
+;;                          TypeChecker
+;;                          (pre-check [x]
+;;                            (se/state-error x))
+
+;;                          (type-check [_ _]
+;;                            (for [const-c (get-value-type (.sym ast))
+;;                                  :let [const-c (-> const-c
+;;                                                    (.type-symbol (symbol (str (.sym ast) " constructor")))
+;;                                                    (c/update-path loc))]
+;;                                  _ (set-value-type (.sym ast) const-c)]
+;;                              (ast/block-comment-ast [] c/no-loc c/top-type))))
+
+;;                        ;; (reify
+;;                        ;;   Container
+;;                        ;;   (map [y f embed]
+;;                        ;;     (embed y))
+
+;;                        ;;   TypeChecker
+;;                        ;;   (pre-check [ast]
+;;                        ;;  report-type-stack
+;;                        ;;     (for [ft (se/get-val .value-types)
+;;                        ;;           mby (get-value-type maybe-sym)]
+;;                        ;;       (do
+;;                        ;;         (status 'vts _LINE_ sym (count ft)
+;;                        ;;                 lflf 'maybe mby)
+;;                        ;;         (ast/block-comment-ast [] c/no-loc c/top-type)))))
+;;                        ])))))))
 
 (def parse-forms
   (rd/parser
@@ -2281,14 +2450,14 @@
 (def _ (print-err 'parser-created (div (sys/time-delta t1 (sys/clock_gettime))
                                        1000)))
 
-(defn compile-module [file-name root-dir proj-dir module-index]
+(defn compile-module [file-name root-dir proj-dir module-index core-mod]
   ;; kick off a thread to load and check the module
   (status "Loading" file-name)
   ;; try to open file for reading
   (either (map (fio/file-in (c/file-name file-name))
                (fn [file-in]
                  ;; if opened, parse and type check it
-                 (let [ast-checker (agent (new-module file-name module-index))
+                 (let [ast-checker (agent (new-module file-name module-index core-mod))
                        loading (promise)
                        parse-result (parse-forms {'file-name file-name
                                                   'root-directory root-dir
@@ -2362,7 +2531,7 @@
 
 (main [params]
   (deliver core-start (sys/clock_gettime))
-  (let [core-mod (extract (compile-module core toccata-dir toccata-dir 0))]
+  (let [core-mod (extract (compile-module core toccata-dir toccata-dir 0 'no-core))]
     (cond (instance? Module core-mod)
           (status "Loaded Core")
 
@@ -2379,40 +2548,46 @@
     (send modules (fn [_]
                     {core core-mod}))
     (status 'time-for-core (div (sys/time-delta (extract core-start) (sys/clock_gettime)) 1000))
-    (let [core-types (extract (compile-module "core-types.toc" toccata-dir toccata-dir 1))]
-      (cond (instance? Module core-types)
-            (status "Loaded core-types")
+    ;; (let [core-types (extract (compile-module "core-types.toc" toccata-dir toccata-dir 1))]
+    ;;   (cond (instance? Module core-types)
+    ;;         (status "Loaded core-types")
 
-            (do
-              (either (map (instance? se/Error core-types)
-                           (fn [err]
-                             (status (.val err))
-                             (wait-for-output)
-                             (abort)))
-                      (do
-                        (status "Could not load core-types")
-                        (wait-for-output)
-                        (abort))))))
+    ;;         (do
+    ;;           (either (map (instance? se/Error core-types)
+    ;;                        (fn [err]
+    ;;                          (status (.val err))
+    ;;                          (wait-for-output)
+    ;;                          (abort)))
+    ;;                   (do
+    ;;                     (status "Could not load core-types")
+    ;;                     (wait-for-output)
+    ;;                     (abort))))))
     (-> (rest params)
         ;; TODO: empty-defn causes mem leaks
         ;; (remove (partial = "assertion-tests/empty-defn.toc"))
         (map (fn [file-name]
                (map (sys/file-directory file-name)
                     (fn [root-dir]
-                      (send modules (fn [_]
-                                      {core core-mod}))
-                      (let [_ (send output (fn [_]
-                                             (fio/file-out (str file-name ".err"))))
-                            core-result (compile-module file-name toccata-dir toccata-dir 1)
-                            core-result (either (map (instance? Promise core-result) extract)
-                                                core-result)]
-                        (cond (instance? Module core-result)
-                              (status 'Loaded file-name)
+                      ;; (send modules (fn [_]
+                      ;;                 {core core-mod}))
+                      (future
+                        (fn []
+                          (let [
+                                ;; _ (send output (fn [_]
+                                ;;                  (fio/file-out (str file-name ".err"))))
+                                core-result (compile-module file-name toccata-dir toccata-dir 1
+                                                            core-mod)
+                                core-result (either (map (instance? Promise core-result) extract)
+                                                    core-result)]
+                            (cond (instance? Module core-result)
+                                  (status 'Loaded file-name)
 
-                              (do
-                                (either (map (instance? se/Error core-result)
-                                             (fn [err]
-                                               (status (.val err))))
-                                        (status "Could not load Toccata file:" file-name)))))))))))
+                                  (either (map (instance? se/Error core-result)
+                                               (fn [err]
+                                                 (status (.val err))))
+                                          (status "Could not load Toccata file:"
+                                                  file-name))))))))))
+        (map extract)
+        ))
 
   (wait-for-output))
