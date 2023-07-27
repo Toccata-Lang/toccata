@@ -7,7 +7,7 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "c8cba17"))
+                          :sha "142e0b1"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -16,10 +16,10 @@
                            :sha "43bc6f4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "03d0b91"))
+                            :sha "5290721"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "68013b1"))
+                            :sha "5bf4dfa"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -976,11 +976,12 @@
             ;;   (status 'call-proto _LINE_ loc
             ;;           lf ast
             ;;           lflf 'disp val-num disp-arg))
-            (let [print-info? (and ;; (= (.call-target old-ast) 'pook)
+            (let [print-info? (or (and ;; (= (.call-target old-ast) 'pook)
                                    (= (.file loc) "assertion-tests/bad-inner-14.toc")
-                                   ;; (< 2403 (.line loc) 2408)
+                                   ;; (< 2622 (.line loc) 2625)
                                    nothing
-                                   )]
+                                   )
+                                  )]
               (for [
                     ;; TODO: attempting to replace a ProtoImpls target-c using this code fails dramatically
                     ;; No idea why.
@@ -1020,37 +1021,44 @@
                                                            "]")
                                            )))
 
-                          [result-type arg-cs] (c/do-call-value target-c arg-cs (list loc))
+                          [result-type param-cs] (c/do-call-value target-c arg-cs (list loc))
                           ;; result-type (c/trim result-type)
 
                           _ (map print-info?
                                  (fn [_]
                                    (status 'call-site _LINE_ loc (.call-target ast)
                                            lf 'result (c/trim result-type)
-                                           lflf 'arg-cs arg-cs
+                                           lflf 'param-cs param-cs
                                            )))
                           ]
+                    ;; TODO: setting required-arities to the number of args returned is bogus
+                    ;; get the fixed params from param-cs instead
                     _ (update-constraint (.call-target ast)
-                                         (.required-arities c/fn-constraint [(count arg-cs)])
+                                         (.required-arities c/fn-constraint [(count param-cs)])
                                          loc)
                     new-args (either (map (= c/bottom-type result-type)
                                           (fn [_]
                                             (compilation-error ;; 'site _LINE_ loc
                                                                ;; lf old-ast
                                                                ;; lflf 'target-c target-c
-                                                               ;; lflf 'arg-cs (map (.args ast)
+                                                               ;; lflf 'param-cs (map (.args ast)
                                                                ;;                     .constraint)
                                                                ;; lflf 'result-type result-type
                                                                ;; lflf
                                                                (conf-ass _LINE_ result-type loc))))
-                                     (se/traverse (zip-lists (.args ast) arg-cs)
+                                     (se/traverse (zip-lists (.args ast) param-cs)
                                                   (fn [[ast arg-c]]
                                                     (map print-info?
                                                          (fn [_]
-                                                           (status 'updating-arg _LINE_ loc
-                                                                   lflf 'ast ast
-                                                                   lflf 'ast-c (.constraint ast)
-                                                                   lflf 'arg-c arg-c)))
+                                                           (let [dummy-args (repeat (count param-cs)
+                                                                                    c/top-type)]
+                                                             (status 'updating-arg _LINE_ loc
+                                                                     lflf 'ast ast
+                                                                     lflf 'ast-c (.constraint ast)
+                                                                     lflf 'arg-c arg-c
+                                                                     lflf 'inter
+                                                                     (-> (.constraint ast)
+                                                                         (c/intersect arg-c))))))
                                                     (update-constraint ast arg-c loc))))]
                 (-> ast
                     (.args (vec new-args))
@@ -1191,7 +1199,17 @@
             _ (nip-types)
             :let [body-c (either (map (last (.body ast)) .constraint)
                                  c/top-type)
-                  final-c (c/intersect result-c body-c)]
+                  final-c (c/intersect result-c body-c)
+                  arity-c (c/fn-arity (.fn-var ast) pts final-c)
+                  dummy-args (-> pts .items count (repeat c/top-type))
+                  checked-fnl (elgot (fn [c]
+                                       (either (map (instance? c/ProtoImpls c)
+                                                    RecurseFinal)
+                                               (RecurseWith c)))
+                                     (fn [c]
+                                       (c/reify-const c (.fn-var ast)
+                                                      dummy-args))
+                                     final-c)]
             ;; :let [_ (or (instance? c/ToccataCore (.file loc))
             ;;             (= (.file loc) c/no-loc)
             ;;             (= (.line loc) 0)
@@ -1202,19 +1220,22 @@
             ;;                       lflf 'result-c result-c
             ;;                       lflf 'body-c body-c
             ;;                       lflf 'final-c final-c
+            ;;                       lflf 'checked-fnl checked-fnl
             ;;                       lflf 'ast-c (.constraint ast)
             ;;                       lflf 'body-exprs (str "[" (to-str (interpose (.body ast) lf)) "]"))
             ;;               nothing))]
             _ (either (map (or (= c/bottom-type pts)
-                               (= c/bottom-type final-c))
+                               (= c/bottom-type checked-fnl))
                            (fn [failure-c]
                              (compilation-error ;; 'arity _LINE_ loc (.fn-sym old-ast)
                                                 ;; lflf 'pts pts
                                                 ;; lflf 'result-c result-c
                                                 ;; lflf 'body-c body-c
                                                 ;; lflf 'final-c final-c
-                                                ;; lflf 'body (either (map (last (.body ast)) .constraint)
-                                                ;;                    c/top-type)
+                                                ;; ;; lflf 'body (either (map (last (.body ast))
+                                                ;; ;;                         .constraint)
+                                                ;; ;;                    c/top-type)
+                                                ;; lflf 'failure-c failure-c
                                                 ;; lflf
                                                 (conf-ass _LINE_ failure-c loc)
                               )))
@@ -1224,7 +1245,7 @@
               '_
 
               (.constraint ast (c/intersect (.constraint ast)
-                                            (c/fn-arity (.fn-var ast) pts final-c))))))))
+                                            arity-c)))))))
 
 (extend-type ast/fn-ast
   TypeChecker
@@ -2080,7 +2101,14 @@
                                                                    (.sym type))))
                                  (list loc)
                                  c/no-symbol "")])]
-                            (.types ast))))))
+                            (.types ast)
+                            [(ast/definition (.sym ast)
+                               [(c/SumConstraint
+                                 (map (.types ast) (fn [type]
+                                                     (.type-symbol c/empty-reified
+                                                                   (.sym type))))
+                                 (list loc)
+                                 c/no-symbol "")])])))))
 
 (extend-type ast/quoted-ast
   TypeChecker
