@@ -90,6 +90,7 @@
                      ;; TODO: add file-name/line-number to empty paths
                      (c/format-path 0)))))
 
+(def curr-arity (c/tag "#curr-arity"))
 (def Function-sym (c/tag 'Function))
 (def invoke-sym (c/tag 'invoke))
 (def Type-sym (c/tag 'Type))
@@ -1003,8 +1004,8 @@
             ;;   (status 'call-proto _LINE_ loc
             ;;           lf ast
             ;;           lflf 'disp val-num disp-arg))
-            (let [print-info? (and (= (.call-target old-ast) 'inc)
-                                   (= (.file loc) "assertion-tests/dynamic-field-type-10.toc")
+            (let [print-info? (and (= (.call-target old-ast) 'wrapper)
+                                   ;; (= (.file loc) "assertion-tests/dynamic-field-type-10.toc")
                                    ;; nothing
                                    )]
               (for [
@@ -1200,6 +1201,9 @@
             ;;                            lflf 'body "[" (to-str (interpose (.body ast) lflf)) "]"
             ;;                            lflf 'const (.constraint ast))
             ;;                    nothing)))]
+            _ (set-value-type curr-arity
+                              (c/fn-c []
+                                      {c/variadic (c/fn-arity arity-id c/list-constraint c/top-type)}))
             _ (set-value-type ast/result-sym c/top-type)
             _ (se/traverse (all-syms (.params ast)) (fn [sym]
                                                       (set-value-type sym c/top-type)))
@@ -1233,6 +1237,7 @@
       (for [result-c (get-value-type ast/result-sym)
             ;; :let [_ (stop-clock ast)]
             _ (recover-val-type ast/result-sym)
+            _ (recover-val-type curr-arity)
             pts (get-param-types (.params old-ast))
             _ (recover-types (.params old-ast))
             _ (nip-types)
@@ -1650,12 +1655,13 @@
   (either (get pre-defed-types type-symbol)
           (extract type-counter)))
 
-(deftype DestructFields [fields]
+(deftype DestructFields [fields loc]
+  (assert (instance? c/Location loc))
   (assert (instance? (vector-of c/TaggedSymbol) fields))
 
   Stringable
   (string-list [_]
-    (list "(DestructFields " (to-str fields) ")"))
+    (list "(DestructFields " (to-str fields) " " (str loc) ")"))
 
   Container
   (map [x f] x)
@@ -1666,8 +1672,17 @@
     (se/state-error ast))
   
   (type-check [ast old-ast]
-    ;; TODO: need to destructure the fields here
-    (se/state-error ast)))
+    (for [arity (get-value-type curr-arity)
+          :let [param (c/param (either (get-in arity [.arities c/variadic .arity-id])
+                                       (c/tag ""))
+                               0)]
+          _ (se/traverse fields
+                         (fn [fld]
+                           (append-value-type fld
+                                              (c/type-op c/get-from-op param
+                                                         [(c/Field (c/tag (str "." fld) loc))]) 
+                                              loc)))]
+      '_)))
 
 (def x* (c/tag "#x"))
 (def y* (c/tag "#y"))
@@ -1925,10 +1940,10 @@
 
                                          (instance? ast/fn-arity-ast ast)
                                          (RecurseFinal
-                                          (constrain-first-param new-type-constraint
-                                                                 (.body ast
-                                                                        (comp [(DestructFields fields)]
-                                                                              (.body ast)))))
+                                          (constrain-first-param
+                                           new-type-constraint
+                                           (.body ast (comp [(DestructFields fields loc)]
+                                                            (.body ast)))))
 
                                          (RecurseWith ast)))
                                  (fn [v]
