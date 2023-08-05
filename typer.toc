@@ -7,19 +7,19 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "f1b1b66"))
+                          :sha "c0936c5"))
+(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
+                            "ast.toc"
+                            :sha "299e0c5"))
+(add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
+                            "reader.toc"
+                            :sha "94fe6c6"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "43bc6f4"))
-(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
-                            "ast.toc"
-                            :sha "d0b942d"))
-(add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
-                            "reader.toc"
-                            :sha "dbf81d8"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
@@ -941,9 +941,13 @@
               ast))))
 
   (type-check [ast old-ast]
-    (let [arg-count (count (.fixed (.params old-ast)))]
+    (let [arg-count (count (.fixed (.params old-ast)))
+          variadic (.variadic (.params old-ast))]
       (for [pts (map (get-param-types (.params old-ast))
-                     (partial c/intersect c/list-constraint))
+                     (fn [pts]
+                       (-> pts
+                           (c/set-tail c/no-tail)
+                           (c/intersect c/list-constraint))))
             result-c (se/try
                        (get-value-type ast/result-sym)
                        (fn [_]
@@ -1002,8 +1006,8 @@
             ;;   (status 'call-proto _LINE_ loc
             ;;           lf ast
             ;;           lflf 'disp val-num disp-arg))
-            (let [print-info? (and (= (.call-target old-ast) 'inc)
-                                   (= (.file loc) "assertion-tests/bad-let.toc")
+            (let [print-info? (and (= (.call-target old-ast) 'map)
+                                   (= (.file loc) "assertion-tests/incompatible-tails.toc")
                                    nothing
                                    )]
               (for [
@@ -1237,7 +1241,11 @@
             _ (recover-val-type ast/result-sym)
             _ (recover-val-type curr-arity)
             pts (map (get-param-types (.params old-ast))
-                     (partial c/intersect c/list-constraint))
+                     (fn [pts]
+                       (-> (cond (= c/no-symbol (.variadic (.params old-ast)))
+                                 (c/set-tail pts c/no-tail)
+                                 pts)
+                           (c/intersect c/list-constraint))))
             _ (recover-types (.params old-ast))
             _ (nip-types)
             :let [body-c (either (map (last (.body ast)) .constraint)
@@ -1403,7 +1411,7 @@
   (param-types [params]
     (-> c/seq-constraint
         (c/set-tail (cond (= c/no-symbol (.variadic params))
-                          c/no-tail
+                          c/seq-constraint
                           (.variadic params)))
         (c/set-items (.fixed params))
         se/state-error))
@@ -1536,53 +1544,49 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (for [_ (push-types)
-          _ (se/traverse (all-syms (.binding ast)) (fn [sym]
-                                                     (set-value-type sym c/top-type)))
-          ;; TODO: see if this line can be removed
-          _ (update-constraint binding (.constraint val) (ast/location val))]
-      val)))
+    (let [loc (ast/location val)]
+      (for [_ (push-types)
+            _ (se/traverse (all-syms (.binding ast)) (fn [sym]
+                                                       (set-value-type sym c/top-type)))]
+        val))))
 
 (extend-type ast/binding-ast
   TypeChecker
   (pre-check [ast]
-    (for [_ se-nop
-          ;; _ (map se-nop
-          ;;        (fn [_]
-          ;;          (let [loc (ast/location ast)]
-          ;;            (or (= (.line loc) 0)
-          ;;                (= (.file loc) 'core)
-          ;;                (do
-          ;;                  (status 'checking-binding _LINE_ loc
-          ;;                             lf 'ast ast)
-          ;;                  nothing)))))
-         ]
-      (.val ast (Binder (.binding ast) (.val ast)))))
+    ;; (let [loc (ast/location ast)]
+    ;;   (or (= (.line loc) 0)
+    ;;       (= (.file loc) 'core)
+    ;;       (do
+    ;;         (status 'checking-binding _LINE_ loc
+    ;;                 lf 'ast ast)
+    ;;         nothing)))
+    (se/state-error (.val ast (Binder (.binding ast) (.val ast)))))
 
   (type-check [ast old-ast]
     (let [binding (.binding ast)
           val (.val ast)
           cont (.cont ast)
           loc (ast/location old-ast)]
-      (for [binding-c (get-param-types binding)
+      (for [orig-binding-c (get-param-types binding)
             :let [binding-c (cata (fn [c]
                                     (cond (= c c/no-tail)
                                           c/top-type
                                           c))
-                                  binding-c)]
+                                  orig-binding-c)]
             _ (se/traverse (all-syms binding) recover-val-type)
             _ (nip-types)
             val (update-constraint val binding-c loc)]
         (let [val-c (.constraint val)]
-          ;; (or ;; (= (.line loc) 0)
-          ;;     (= (.file loc) core)
-          ;;     (do
-          ;;       (status 'let _LINE_ loc
-          ;;               lflf 'binding (type-name binding) binding
-          ;;               lflf 'binding-c binding-c
-          ;;               lflf 'val val
-          ;;               lflf 'val-c (.constraint val))
-          ;;       nothing))
+          (or (= (.line loc) 0)
+              (= (.file loc) core)
+              (do
+                (status 'let _LINE_ loc
+                        lflf 'binding (type-name binding) binding
+                        lflf 'orig-binding-c orig-binding-c
+                        lflf 'binding-c binding-c
+                        lflf 'val val
+                        lflf 'val-c val-c)
+                nothing))
           (-> ast
               ;; TODO: this assumes that the last expression in 'cont' has a .constraint
               ;; field, but it might also be a constraint
