@@ -7,13 +7,13 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "e5d543a"))
+                          :sha "2927849"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "13dc8eb"))
+                            :sha "c390940"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "586ea6d"))
+                            :sha "27f15a3"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -238,16 +238,14 @@
         getter-sym (c/tag (str sym "_getter"))
         setter-sym (c/tag (str sym "_setter"))
         arities {1 (c/fn-arity getter-sym
-                               (c/ListConstraint [(c/multi [(c/param getter-sym 0)
-                                                            required-field])]
-                                                 c/no-tail empty-list c/no-symbol "")
+                               (c/seq-c [(c/multi [(c/param getter-sym 0)
+                                                   required-field])])
                                (c/type-op c/get-from-op (c/param getter-sym 0)
                                           [field-sym]))
                  2 (c/fn-arity setter-sym
-                               (c/ListConstraint [(c/multi [(c/param setter-sym 0)
-                                                            required-field])
-                                                  (c/param setter-sym 1)]
-                                                 c/no-tail empty-list c/no-symbol "")
+                               (c/seq-c [(c/multi [(c/param setter-sym 0)
+                                                   required-field])
+                                         (c/param setter-sym 1)])
                                (c/type-op c/set-to-op (c/param setter-sym 0)
                                           [[field-sym] (c/param setter-sym 1)]))}
         getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})]
@@ -473,11 +471,12 @@
   (either (map (get-in proto-impls [.default-impl .arities arg-count])
                (fn [dflt-arity]
                  (let [new-params (-> (.param-consts dflt-arity)
-                                      .items
+                                      c/get-items
                                       count
                                       range
                                       vec
                                       (map (partial c/param (.arity-id arity-c))))
+                       ;; TODO: need to account for destructuring of params
                        dflt-arity (cond (= (str (.arity-id dflt-arity)) "")
                                            dflt-arity
 
@@ -494,9 +493,10 @@
                                                    def-ar)))
                        new-arity-c (c/intersect arity-c dflt-arity)]
                    ;; (cond (and (= c/ListType type-num)
-                   ;;            (= (.fn-sym proto-impls) 'filter))
+                   ;;            (= (.fn-sym proto-impls) 'vec))
                    ;;       (status 'proto-result _LINE_ loc
                    ;;               lflf 'def dflt-arity
+                   ;;               lflf 'orig (get-in proto-impls [.default-impl .arities arg-count])
                    ;;               lflf 'arity arity-c
                    ;;               lflf 'new new-arity-c)
 
@@ -545,8 +545,9 @@
             mods)))
 
 (defn insert-invoke [type-num arity-c]
-  (let [arity-rank (either (map (get-in arity-c [.param-consts .items])
-                                count)
+  (let [arity-rank (either (map (get-in arity-c [.param-consts])
+                                (fn [params]
+                                  (count (c/get-items params))))
                            0)]
     (se/update-val .types
                    (fn [types-info]
@@ -727,8 +728,7 @@
                              c/NoSymbol
                              c/ReifiedConstraint
                              c/SumConstraint
-                             c/VectorConstraint
-                             c/ListConstraint
+                             c/SeqConstraint
                              c/CollectionOf
                              c/TypeOfConstraint
                              c/FnConstraint
@@ -783,8 +783,7 @@
                           c/ReifiedConstraint
                           c/MultiConstraint
                           c/CollectionOf
-                          c/ListConstraint
-                          c/VectorConstraint
+                          c/SeqConstraint
                           c/SumConstraint
                           c/NoSymbol))
 
@@ -798,8 +797,7 @@
 
 (def DefaultSymConst (any-of c/ReifiedConstraint
                              c/CollectionOf
-                             c/ListConstraint
-                             c/VectorConstraint
+                             c/SeqConstraint
                              c/SumConstraint
                              c/MultiConstraint
                              c/TypeOp
@@ -943,7 +941,7 @@
       (for [pts (map (get-param-types (.params old-ast))
                      (fn [pts]
                        (-> pts
-                           (c/set-tail c/no-tail)
+                           (c/set-seq-tail c/no-tail)
                            (c/intersect c/list-constraint))))
             result-c (se/try
                        (get-value-type ast/result-sym)
@@ -951,7 +949,7 @@
                          (se/state-error c/top-type)))
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) core)
-            ;;          (and (= (.fn-name ast) 'first)
+            ;;          (and (= (.fn-name ast) 'vec)
             ;;               (do
             ;;                 (status 'check-prototype _LINE_ (.fn-name ast) (ast/location ast)
             ;;                         lf ast
@@ -959,7 +957,7 @@
             ;;                         lflf 'result result-c)
             ;;                 (send output (fn [_] nothing))
             ;;                 nothing)))]
-            :let [pts (.tail-c pts c/no-tail)
+            :let [pts (c/set-seq-tail pts c/no-tail)
                   impl-c (c/fn-arity (.fn-name old-ast) pts result-c)]
             _ (remove-value-type ast/result-sym)
             _ (recover-types (.params old-ast))
@@ -1003,9 +1001,10 @@
             ;;   (status 'call-proto _LINE_ loc
             ;;           lf ast
             ;;           lflf 'disp val-num disp-arg))
-            (let [print-info? (and (= (.call-target old-ast) 'goober)
+            (let [print-info? (and ;; (= (.call-target old-ast) 'vector)
+                                   ;; (= (.line loc) 1170)
                                    ;; (= (.file loc) "assertion-tests/incompatible-tails.toc")
-                                   ;; nothing
+                                   nothing
                                    )]
               (for [
                     ;; TODO: attempting to replace a ProtoImpls target-c using this code fails dramatically
@@ -1077,8 +1076,7 @@
                                             (compilation-error ;; 'site _LINE_ loc
                                                                ;; lf old-ast
                                                                ;; lflf 'target-c target-c
-                                                               ;; lflf 'param-cs (map (.args ast)
-                                                               ;;                     .constraint)
+                                                               ;; lflf 'arg-cs arg-cs
                                                                ;; lflf 'result-type result-type
                                                                ;; lflf
                                                                (conf-ass _LINE_ result-type loc))))
@@ -1190,7 +1188,7 @@
 
             ;; :let [_ (or ;; (= (.line loc) 0)
             ;;             ;; (= (.file loc) core)
-            ;;             (and (= (.fn-sym ast) 'vect-reduce)
+            ;;             (and (= (.fn-sym ast) 'deliver)
             ;;                  (do
             ;;                    (status 'pre-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                            lf 'params (.params ast)
@@ -1233,10 +1231,9 @@
             _ (recover-val-type curr-arity)
             pts (map (get-param-types (.params old-ast))
                      (fn [pts]
-                       (-> (cond (= c/no-symbol (.variadic (.params old-ast)))
-                                 (c/set-tail pts c/no-tail)
-                                 pts)
-                           (c/intersect c/list-constraint))))
+                       (cond (= c/no-symbol (.variadic (.params old-ast)))
+                             (c/set-seq-tail pts c/no-tail)
+                             pts)))
             _ (recover-types (.params old-ast))
             _ (nip-types)
             :let [body-c (either (map (last (.body ast)) .constraint)
@@ -1246,13 +1243,13 @@
                                       (elgot c/skip-protoimpls
                                              (fn [c]
                                                (c/reify-const c (.fn-var ast)
-                                                              (-> pts .items count
+                                                              (-> pts c/get-items count
                                                                   (repeat c/top-type))))
                                              final-c))]
             ;; :let [_ (or ;; (instance? c/ToccataCore (.file loc))
             ;;             ;; (= (.file loc) c/no-loc)
             ;;             ;; (= (.line loc) 0)
-            ;;             (and (= (.fn-sym ast) 'vect-reduce)
+            ;;             (and (= (.fn-sym ast) 'deliver)
             ;;                  (do
             ;;                    (status 'check-fn-arity _LINE_ (.fn-sym ast) loc
             ;;                            lf 'pts pts
@@ -1316,9 +1313,11 @@
                        (fn [c arity]
                          (assert (instance? ast/fn-arity-ast arity))
                          (let [arity-c (.constraint arity)]
-                           (either (for [variadic (get-in arity-c [.param-consts .tail-c])
+                           (either (for [variadic (map (get-in arity-c [.param-consts])
+                                                       c/seq-tail)
                                          :when (= c/no-tail variadic)
-                                         fixed-params (get-in arity-c [.param-consts .items])]
+                                         fixed-params (map (get-in arity-c [.param-consts])
+                                                           c/get-items)]
                                      (assoc-in c [.arities (count fixed-params)] arity-c))
                                    (assoc-in c [.arities c/variadic] arity-c)))))
           fn-c (c/update-path fn-c (ast/location old-ast))]
@@ -1370,10 +1369,6 @@
     (se/state-error (RecurseWith x)))
 
   (update-constraint [ast constraint loc]
-    (either (map (instance? c/ListConstraint (.variadic ast))
-                 (fn [_]
-                   (status "Compiler error:" _FILE_ _LINE_ lf 'variadic (.variadic ast))))
-            '_)
     (let [new-c (-> (.constraint ast)
                     (c/intersect c/seq-constraint)
                     (c/intersect (c/update-path constraint loc)))]
@@ -1385,9 +1380,7 @@
                     item-cs (map (range (count (.fixed ast)))
                                  (fn [idx]
                                    (c/do-get-from new-c [idx] (list loc))))
-                    tail-c (-> c/list-constraint
-                               (c/set-items tail-item-cs)
-                               (c/set-tail (c/get-tail new-c))
+                    tail-c (-> (c/seq-c tail-item-cs (c/get-tail new-c))
                                (c/replace-path (.path new-c)))]
                 ;; TODO: these are possibly redundant intersects
                 (for [_ (se/traverse (zip-lists (seq (.fixed ast)) item-cs)
@@ -1401,22 +1394,19 @@
            (seq (.fixed params))))
 
   (param-types [params]
-    (-> c/seq-constraint
-        (c/set-tail (cond (= c/no-symbol (.variadic params))
-                          c/seq-constraint
-                          (.variadic params)))
-        (c/set-items (.fixed params))
+    (-> (c/seq-c (.fixed params) (cond (= c/no-symbol (.variadic params))
+                                       c/no-tail
+                                       (.variadic params)))
         se/state-error))
 
   (type-check [ast old-ast]
-    (let [c (-> c/seq-constraint
-                (c/set-items (map (.fixed ast) .constraint))
+    (let [c (-> (c/seq-c (map (.fixed ast) .constraint))
                 (c/update-path (ast/location old-ast)))]
       (map (append-value-type (.variadic ast) c/list-constraint
                               (ast/location (.variadic ast)))
            (fn [appended-var]
              (-> ast
-                 (.constraint (c/set-tail c c/coll-of-any))
+                 (.constraint (c/set-seq-tail c c/coll-of-any))
                  (.variadic (either (= c/no-symbol (.variadic ast))
                                     (.constraint (.variadic ast)
                                                  appended-var)))))))))
@@ -1573,13 +1563,11 @@
                             (flat-map (get-value-type (.binding ast))
                                       (fn [binding-c]
                                         (let [reified (c/reify-type-constraint
-                                                       (comp [binding-c] cont-cs)
-                                                       binding [val-c] loc)]
-                                          (either (or (map (some reified c/is-bottom)
-                                                           (fn [failure]
-                                                             (compilation-error
-                                                              (conf-ass _LINE_ failure loc))))
-                                                      (map (first reified) se/state-error))
+                                                       cont-cs binding [val-c] loc)]
+                                          (either (map (some reified c/is-bottom)
+                                                       (fn [failure]
+                                                         (compilation-error
+                                                          (conf-ass _LINE_ failure loc))))
                                                   (se/state-error binding-c)))))
 
                             (map (get-param-types binding)
@@ -1907,7 +1895,7 @@
                         ctor-sym (c/tag (str "* " sym " constructor at " loc" *") loc)
                         ctor-arity (c/fn-arity
                                     ctor-sym
-                                    (.items c/empty-list-constraint (comp [c/top-type] field-cs))
+                                    (c/seq-c (comp [c/top-type] field-cs))
                                     (-> c/empty-reified
                                         (.type-symbol sym)
                                         (.fields (reduce (zip-lists field-pairs
@@ -1926,15 +1914,12 @@
                                                                    {(inc field-count) ctor-arity})
                                                          empty-list c/no-symbol "")
                         ctor-apply-id (c/tag (str "apply-" sym "-constructor") loc)
-                        ctor-apply-fields (-> c/seq-constraint
-                                              (c/set-items field-cs)
-                                              (c/set-tail c/no-tail))
+                        ctor-apply-fields (c/seq-c field-cs)
                         ctor-apply (c/fn-arity ctor-apply-id
-                                               (.items c/empty-list-constraint
-                                                       [(c/multi [(c/param ctor-apply-id 0)
-                                                                  constructor])
-                                                        (c/multi [(c/param ctor-apply-id 1)
-                                                                  ctor-apply-fields])])
+                                               (c/seq-c [(c/multi [(c/param ctor-apply-id 0)
+                                                                   constructor])
+                                                         (c/multi [(c/param ctor-apply-id 1)
+                                                                   ctor-apply-fields])])
                                                (c/type-op c/apply-op constructor
                                                           (c/multi [(c/param ctor-apply-id 1)
                                                                     ctor-apply-fields])))]
@@ -1959,23 +1944,18 @@
                                            _ (add-proto-impl type-num fld-sym 1
                                                              (c/fn-arity
                                                               getter-id
-                                                              (-> c/empty-list-constraint
-                                                                  (c/set-items [(c/multi
-                                                                                 [getter-param
-                                                                                  new-type-constraint])]))
+                                                              (c/seq-c [(c/multi [new-type-constraint
+                                                                                  getter-param])])
                                                               (-> (c/type-op c/get-from-op getter-param
                                                                              [field])
                                                                   (c/intersect fld-c))))
                                            _ (add-proto-impl type-num fld-sym 2
                                                              (c/fn-arity
                                                               setter-id
-                                                              (-> c/empty-list-constraint
-                                                                  (c/set-items [(c/multi
-                                                                                 [setter-param-0
-                                                                                  new-type-constraint])
-                                                                                (c/multi
-                                                                                 [setter-param-1
-                                                                                  fld-c])]))
+                                                              (c/seq-c [(c/multi [new-type-constraint
+                                                                                  setter-param-0])
+                                                                        (c/multi [setter-param-1
+                                                                                  fld-c])])
                                                               (c/type-op c/set-to-op setter-param-0
                                                                          [[field] setter-param-1])))]
                                        '_))))]
