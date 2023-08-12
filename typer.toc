@@ -858,11 +858,11 @@
 (extend-type ProtoArity
   TypeChecker
   (pre-check [ast]
-    ;; (map (se-debug 'checking _LINE_ (ast/location ast))
+    ;; (map (se-debug 'checking _LINE_ (ast/location ast)
+    ;;                lflf (.arity ast))
     ;;      (fn [_]
     ;;        ast))
-    (se/state-error ast)
-    )
+    (se/state-error ast))
 
   (type-check [ast old-ast]
     (for [_ (add-proto-impl (.type-num ast)
@@ -1697,7 +1697,8 @@
   (either (get pre-defed-types type-symbol)
           (extract type-counter)))
 
-(deftype DestructFields [fields loc]
+(deftype DestructFields [type-info fields loc]
+  (assert (instance? c/ReifiedConstraint type-info))
   (assert (instance? c/Location loc))
   (assert (instance? (vector-of c/TaggedSymbol) fields))
 
@@ -1718,6 +1719,7 @@
           :let [param (c/param (either (get-in arity [.arities c/variadic .arity-id])
                                        (c/tag ""))
                                0)]
+          _ (append-value-type (.sym type-info) type-info loc)
           _ (se/traverse fields
                          (fn [fld]
                            (append-value-type fld
@@ -1731,36 +1733,27 @@
 (def field* (c/tag "#field"))
 (def ctxt* (c/tag "#ctxt"))
 
-;; TODO: every place that calls this needs to refactored
-(defn constrain-first-param [type-info c]
+(defn constrain-first-param [ast type-info fields loc]
+  (assert (instance? ast/fn-arity-ast ast))
   (assert (instance? c/ReifiedConstraint type-info))
 
-  (cond (instance? ast/fn-arity-ast c)
-        (either (-> (.params c)
-                    .fixed
-                    first
-                    (map (fn [first-param]
-                           ;; (print-err 'params _LINE_ (ast/location first-param)
-                           ;; first-param)
-                           (let [type-info (c/update-sym type-info first-param)
-                                 ;; TODO: wut is type-info updated with the first-param
-                                 new-bod (comp [type-info] (.body c))]
-                             (ProtoArity (c/type-num type-info)
-                                         (.body c new-bod))))))
+   (either (-> (.params ast)
+              .fixed
+              first
+              (map (fn [first-param]
+                     (ProtoArity (c/type-num type-info)
+                                 (.body ast (comp [(DestructFields (.sym type-info first-param)
+                                                                   fields loc)]
+                                                  (.body ast)))))))
 
-                (do
-                  ;; (compilation-error "Prototype implentation for "
-                  ;;                    (str "'" (.fn-sym c) "'")
-                  ;;                    "must have at least one parameter at"
-                  ;;                    (ast/location (.fn-sym c)))
-                  (print-err 'BOOOMMMM _LINE_ c)
-                  (abort)
-                  c))
-
-        (instance? List c)
-        (vec c)
-
-        c))
+          (do
+            ;; (compilation-error "Prototype implentation for "
+            ;;                    (str "'" (.fn-sym c) "'")
+            ;;                    "must have at least one parameter at"
+            ;;                    (ast/location (.fn-sym c)))
+            (print-err 'BOOOMMMM _LINE_ ast)
+            (abort)
+            ast)))
 
 (extend-type ast/rec-type-ast
   TypeChecker
@@ -1899,7 +1892,7 @@
                                           (set-value-type sym c/top-type)))
 
                   ;; then add all the explicit constraints for the fields
-                  ;; and collect them in in 'field-cs'
+                  ;; and collect them in 'field-cs'
                   _ (-> (.impls ast)
                         (filter (partial instance? c/SymbolConstraints))
                         (se/traverse (fn [field-c]
@@ -1998,10 +1991,8 @@
 
                                          (instance? ast/fn-arity-ast ast)
                                          (RecurseFinal
-                                          (constrain-first-param
-                                           new-type-constraint
-                                           (.body ast (comp [(DestructFields fields loc)]
-                                                            (.body ast)))))
+                                          (constrain-first-param ast new-type-constraint
+                                                                 fields loc))
 
                                          (RecurseWith ast)))
                                  (fn [v]
@@ -2013,15 +2004,18 @@
                                                          (conj new-v inner))))
 
                                          v))
-                                 (.impls ast))
+                                 (remove (.impls ast)
+                                         (partial instance? c/SymbolConstraints)))
                     ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
                     ;; and parameter, respectively
-                    ]
-                [(reduce impls [[] []] (fn [[invoke-fns others] pa]
-                                         (cond (flat-map (get-in pa [.arity .fn-sym])
-                                                         (partial = invoke-sym))
-                                               [(conj invoke-fns pa) others]
-                                               [invoke-fns (conj others pa)])))
+                    [invokes others] (reduce impls [[] []]
+                                             (fn [[invoke-fns others] pa]
+                                               (cond (flat-map (get-in pa [.arity .fn-sym])
+                                                               (partial = invoke-sym))
+                                                     [(conj invoke-fns pa) others]
+                                                     [invoke-fns (conj others pa)])))]
+                [invokes
+                 others
                  (reify
                    Type
                    (type-name [_]
@@ -2037,7 +2031,6 @@
 
                    (type-check [_ _]
                      (for [_ (pop-types)
-                           _ (push-types)
                            _ (comp (se/get-in-val [.value-types 0 get-symb .impl-fns type-num
                                                    .arities 2])
                                    (add-proto-impl type-num (c/tag get-symb loc) 2
