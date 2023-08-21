@@ -7,13 +7,13 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "128247c"))
+                          :sha "7d8b256"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "1bc447d"))
+                            :sha "c138b57"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "34cf63a"))
+                            :sha "5e1f946"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -38,9 +38,8 @@
 
 (def output (agent (maybe nothing)))
 
-(def core-start (promise))
-(def max-time (agent 0))
-(def start-time (agent 0))
+(def lf "\n")
+(def lflf "\n\n")
 
 (defn status [& msg]
   (send output (fn [out-file?]
@@ -56,6 +55,29 @@
                  ;;        out-file))
                  )))
 
+(def core-start (promise))
+(def max-time (agent 0))
+(def start-time (agent empty-list))
+
+(defn start-clock []
+  (let [start (sys/clock_gettime)]
+    (send start-time (fn [starts] (cons start starts)))))
+
+(defn stop-clock [ast]
+  (let [end (sys/clock_gettime)]
+    (send start-time (fn [[start & starts]]
+                       (let [delta (sys/time-delta start end)]
+                         (send max-time (fn [prev-max]
+                                          (cond (< prev-max delta)
+                                                (do
+                                                  (status 'slow _LINE_
+                                                          (div delta 1000)
+                                                          (ast/location ast)
+                                                          lflf ast)
+                                                  delta)
+                                                prev-max)))
+                         starts)))))
+
 (defn wait-for-output []
   (let [p (promise)]
     (send output (fn [outfile]
@@ -64,9 +86,6 @@
     (extract p)))
 
 (def core (c/ToccataCore path-to-core))
-
-(def lf "\n")
-(def lflf "\n\n")
 
 (defn se-debug [& args]
   (se/new-se (fn [s]
@@ -262,6 +281,8 @@
   (assert (instance? c/TaggedSymbol sym))
 
   (se/new-se (fn [s]
+               (assert (instance? Module s))
+
                (either (or (and (= 0 (.index s))
                                 (or (map (get-in s [.value-types 0 sym])
                                          (fn [val-type]
@@ -561,6 +582,66 @@
 
                                          type-info)))))))
 
+(defn add-getter-impls [sym type-num getter-impl setter-impl loc]
+  (se/new-se
+   (fn [s]
+     (assert (instance? Module s))
+
+     (let [[getter new-s]
+           ;; get current getter/setter or create new one
+           (cond (= 0 (.index s))
+                 (either (map (get-in s [.value-types 0 sym])
+                              (fn [getter]
+                                [getter s]))
+                         (let [new-s (.value-types s (add-getter sym (.value-types s)))]
+                           [(extract (get-in new-s [.value-types 0 sym]))
+                            new-s]))
+
+                 (either (or (map (get-in s [.namespaces core .value-types 0 sym])
+                                  (fn [getter]
+                                    [getter s]))
+                             (map (update-in s [.namespaces core .value-types]
+                                             (fn [val-types]
+                                               (add-getter sym val-types)))
+                                  (fn [new-s]
+                                    (do
+                                      ;; (send modules
+                                      ;;       (fn [mods]
+                                      ;;         (assert-result r (instance? HashMap r))
+                                      ;;         (either (or (get-in mods [core .value-types 0 sym])
+                                      ;;                     (update-in mods [core .value-types]
+                                      ;;                                (fn [val-types]
+                                      ;;                                  (add-getter sym val-types))))
+                                      ;;                 mods)))
+                                      [(extract (get-in new-s [.namespaces core .value-types 0 sym]))
+                                       new-s]))))
+                         (do
+                           (status 'compiler-error _LINE_ (str "'" sym "'") (ast/location sym))
+                           (wait-for-output)
+                           (abort))))
+           new-impls (-> getter
+                         (add-impl type-num 1 getter-impl loc)
+                         (add-impl type-num 2 setter-impl loc))]
+       (cond (instance? c/ProtoImpls new-impls)
+             [new-impls 
+              (either (cond (= 0 (.index s))
+                            (update-in new-s [.value-types]
+                                       (fn [value-types]
+                                         (map value-types (fn [val-types]
+                                                            (assoc val-types sym new-impls)))))
+
+                            (update-in new-s [.namespaces core .value-types]
+                                       (fn [value-types]
+                                         (map value-types (fn [val-types]
+                                                            (assoc val-types sym new-impls))))))
+                      (do
+                        (status 'compiler-error _LINE_ (str "'" sym "'") (ast/location sym))
+                        (wait-for-output)
+                        (abort)))]
+
+             ;; add-impl might return a compilation error
+             new-impls)))))
+
 (defn add-proto-impl [type-num fn-sym arg-count arity-c]
   (assert (instance? Integer type-num))
   (assert (instance? c/fn-arity arity-c))
@@ -571,8 +652,9 @@
   (let [loc (ast/location fn-sym)]
     (cond (= (str fn-sym) "")
           (do
-            (print-err 'compiler-error _LINE_ (str "'" fn-sym "'") (ast/location fn-sym)
+            (status 'compiler-error _LINE_ (str "'" fn-sym "'") (ast/location fn-sym)
                        lflf arity-c)
+            (wait-for-output)
             (abort))
 
           (comp (for [proto-impls (se/get-in-val [.value-types 0 fn-sym])
@@ -1121,29 +1203,11 @@
   (pre-check [ast]
     (pre-check (.ast ast))))
 
-(defn start-clock []
-  (let [start (sys/clock_gettime)]
-    (send start-time (fn [_] start))))
-
-(defn stop-clock [ast]
-  (let [end (sys/clock_gettime)]
-    (send start-time (fn [start]
-                       (let [delta (sys/time-delta start end)]
-                         (send max-time (fn [prev-max]
-                                          (cond (< prev-max delta)
-                                                (do
-                                                  (status 'slow _LINE_
-                                                          (div delta 1000)
-                                                          (ast/location ast)
-                                                          lflf ast)
-                                                  delta)
-                                                prev-max)))
-                         start)))))
-
 (extend-type ast/definition-ast
   TypeChecker
   (pre-check [ast]
     (for [_ (push-types)
+          ;; :let [_ (start-clock)]
           _ (set-value-type (.sym ast) c/top-type)]
       (.value-exprs ast (-> (.value-exprs ast)
                             (remove (partial instance? ast/block-comment-ast))
@@ -1160,6 +1224,7 @@
     (let [loc (ast/location (.sym old-ast))
           sym (.sym old-ast)]
       (for [_ (pop-types)
+            ;; :let [_ (stop-clock ast)]
             c (either (map (last (.value-exprs ast))
                            (fn [val]
                              (cond (instance? c/Constraints val)
@@ -1202,7 +1267,7 @@
                          (.fn-var ast))
           loc (ast/location ast)]
       (for [_ (push-types)
-            ;; :let [_ (start-clock)]
+            :let [_ (start-clock)]
 
             ;; :let [_ (or (= (.line loc) 0)
             ;;             (= core (.file loc))
@@ -1244,7 +1309,7 @@
 
     (let [loc (ast/location old-ast)]
       (for [result-c (get-value-type ast/result-sym)
-            ;; :let [_ (stop-clock ast)]
+            :let [_ (stop-clock ast)]
             _ (recover-val-type ast/result-sym)
             _ (recover-val-type curr-arity)
             pts (map (get-param-types (.params old-ast))
@@ -1825,11 +1890,13 @@
 (defn update-context [context update]
   (assert (instance? se/StateError update))
 
-  (let [new (update context)]
-    ;; either the update succeeds, so get the new context
-    (either (flat-map (instance? Vector new) second)
-            ;; or keep the existing context
-            context)))
+  (either (instance? se/Error context)
+          (let [new (update context)]
+            ;; either the update succeeds, so get the new context
+            (either (or (instance? se/Error new)
+                        (flat-map (instance? Vector new) second))
+                    ;; or keep the existing context
+                    context))))
 
 (defn type-check-ast [ast]
   (cond (instance? c/Constraints ast)
@@ -1965,28 +2032,23 @@
                                          setter-id (c/tag (str sym "-" fld-sym "-setter"))
                                          setter-param-0 (c/param setter-id 0)
                                          setter-param-1 (c/param setter-id 1)]
-                                     (for [;; this 'get-value-type' creates the getter/setter
-                                           ;; entry if needed
-                                           ;; TODO: how long does it take to add each getter/setter
-                                           _ (get-value-type fld-sym)
-                                           _ (add-proto-impl type-num fld-sym 1
-                                                             (c/fn-arity
-                                                              getter-id
-                                                              (c/seq-c [(c/multi [new-type-constraint
-                                                                                  getter-param])])
-                                                              (-> (c/type-op c/get-from-op getter-param
-                                                                             [field])
-                                                                  (c/intersect fld-c))))
-                                           _ (add-proto-impl type-num fld-sym 2
-                                                             (c/fn-arity
-                                                              setter-id
-                                                              (c/seq-c [(c/multi [new-type-constraint
-                                                                                  setter-param-0])
-                                                                        (c/multi [setter-param-1
-                                                                                  fld-c])])
-                                                              (c/type-op c/set-to-op setter-param-0
-                                                                         [[field] setter-param-1])))]
-                                       '_))))]
+                                     (add-getter-impls fld-sym type-num
+                                                       (c/fn-arity
+                                                        getter-id
+                                                        (c/seq-c [(c/multi [new-type-constraint
+                                                                            getter-param])])
+                                                        (-> (c/type-op c/get-from-op getter-param
+                                                                       [field])
+                                                            (c/intersect fld-c)))
+                                                       (c/fn-arity
+                                                        setter-id
+                                                        (c/seq-c [(c/multi [new-type-constraint
+                                                                            setter-param-0])
+                                                                  (c/multi [setter-param-1
+                                                                            fld-c])])
+                                                        (c/type-op c/set-to-op setter-param-0
+                                                                   [[field] setter-param-1]))
+                                                       loc))))]
               (let [impls (elgot (fn [ast]
                                    (cond (instance? HashMap ast)
                                          (RecurseWith (vec (vals ast)))
