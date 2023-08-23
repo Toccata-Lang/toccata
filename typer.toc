@@ -7,13 +7,13 @@
                             :sha "36fa952"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "7d8b256"))
+                          :sha "590bae4"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "c138b57"))
+                            :sha "f361869"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "5e1f946"))
+                            :sha "cb1b97e"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "e8eba87"))
@@ -71,8 +71,8 @@
                                           (cond (< prev-max delta)
                                                 (do
                                                   (status 'slow _LINE_
-                                                          (div delta 1000)
                                                           (ast/location ast)
+                                                          (div delta 1000) "ms"
                                                           lflf ast)
                                                   delta)
                                                 prev-max)))
@@ -878,8 +878,7 @@
   (param-types [c]
     (se/state-error c)))
 
-(def DefaultSymConst (any-of c/ReifiedConstraint
-                             c/CollectionOf
+(def DefaultSymConst (any-of c/CollectionOf
                              c/SeqConstraint
                              c/SumConstraint
                              c/MultiConstraint
@@ -923,7 +922,10 @@
   (type-check [c old-c]
     (let [loc (ast/location old-c)]
       (flat-map (cond (= c/UnknownType (c/type-num c))
-                      (get-type-info (.type-symbol c))
+                      (se/try
+                        (get-type-info (.type-symbol c))
+                        (fn [_]
+                          (se/state-error c)))
                       (se/state-error c))
                 (fn [type-c]
                   (append-value-type (.sym c) type-c loc))))))
@@ -1129,7 +1131,10 @@
                     result-type (either (for [reified-c (instance? c/ReifiedConstraint result-type)
                                               :when-not (= c/no-symbol (.type-symbol reified-c))
                                               _ (= c/UnknownType (.type-number reified-c))]
-                                          (map (get-type-info (.type-symbol reified-c))
+                                          (map (se/try
+                                                 (get-type-info (.type-symbol reified-c))
+                                                 (fn [_]
+                                                   (se/state-error reified-c)))
                                                (fn [type-info]
                                                  (let [result-type (c/intersect result-type
                                                                                 type-info)]
@@ -1463,12 +1468,29 @@
                                     (.constraint (.variadic ast)
                                                  appended-var)))))))))
 
+(deftype CheckOnly [sym c]
+  Stringable
+  (string-list [_]
+    (list (str "(CheckOnly " sym " " c ")")))
+
+  Container
+  (map [y f embed]
+    (embed y))
+
+  TypeChecker
+  (pre-check [x]
+    (se/state-error x))
+
+  (type-check [_ old-ast]
+    (append-value-type sym c (ast/location sym))))
+
 ;; TODO: for extend-ast, fn-ast, type-ast, etc
 ;; the type checking should run recursively until the fixed point
 (extend-type ast/extend-ast
   TypeChecker
   (pre-check [ast]
-    (let [type-sym (.type ast)]
+    (let [type-sym (.type ast)
+          loc (ast/location ast)]
       (for [_ (push-types)
             ;; _ (map se-nop (fn [_]
             ;;                 (print-err 'extending _LINE_ (ast/location ast) (.type ast))))
@@ -1488,9 +1510,10 @@
                                               ;; first-param)
                                               (-> type-infos
                                                   (map (fn [type-info]
-                                                         (let [type-info (c/update-sym type-info
-                                                                                       first-param)
-                                                               new-bod (comp [type-info] (.body arity))]
+                                                         (let [new-bod (comp
+                                                                        [(CheckOnly first-param
+                                                                                    type-info)]
+                                                                        (.body arity))]
                                                            (ProtoArity (c/type-num type-info)
                                                                        (.body arity new-bod)))))
                                                   se/state-error))))
@@ -1875,6 +1898,7 @@
         (cond (instance? c/SymbolConstraints ast)
               (cond (instance? c/TypeOfConstraint ast)
                     (type-check ast ast)
+
                     (flat-map (map ast type-check-ast se/state-error)
                               (fn [r]
                                 (type-check r ast))))
