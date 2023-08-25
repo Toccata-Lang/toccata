@@ -493,12 +493,12 @@
 
   (either (map (get-in proto-impls [.default-impl .arities arg-count])
                (fn [dflt-arity]
-                 (let [new-params (-> (.param-consts dflt-arity)
+                 (let [idxs (integer-gen 0)
+                       new-params (-> (.param-consts dflt-arity)
                                       c/get-items
-                                      count
-                                      range
-                                      vec
-                                      (map (partial c/param (.arity-id arity-c))))
+                                      (reduce [] (fn [params param]
+                                                   (conj params (c/param (.arity-id arity-c)
+                                                                         (new-int idxs))))))
                        ;; TODO: need to account for destructuring of params
                        dflt-arity (cond (= (str (.arity-id dflt-arity)) "")
                                            dflt-arity
@@ -1013,18 +1013,20 @@
                   _ (se/traverse all-param-syms
                                  (fn [sym]
                                    (set-value-type sym c/top-type)))
-                  _ (se/traverse (zip-lists fixed-params (range arg-count))
-                                 (fn [[sym index]]
-                                   (cond (instance? ast/params-ast sym)
-                                         ;; TODO: this probably needs expanding
-                                         se-nop
+                  :let [idxs (integer-gen 1)]
+                  _ (se/traverse fixed-params
+                                 (fn [sym]
+                                   (let [idx (- arg-count (new-int idxs))]
+                                     (cond (instance? ast/params-ast sym)
+                                           ;; TODO: this probably needs expanding
+                                           se-nop
 
-                                         (= sym '_)
-                                         (set-value-type sym c/top-type) 
+                                           (= sym '_)
+                                           (set-value-type sym c/top-type) 
 
-                                         (append-value-type sym
-                                                            (c/param (.fn-name ast) index)
-                                                            loc))))]
+                                           (append-value-type sym
+                                                              (c/param (.fn-name ast) idx)
+                                                              loc)))))]
               ast))))
 
   (type-check [ast old-ast]
@@ -1263,13 +1265,15 @@
             _ (set-value-type ast/result-sym c/top-type)
             _ (se/traverse (all-syms (.params ast)) (fn [sym]
                                                       (set-value-type sym c/top-type)))
-            _ (se/traverse (zip-lists fixed-params (range arg-count))
-                           (fn [[sym index]]
+            :let [idxs (integer-gen 1)]
+            _ (se/traverse fixed-params
+                           (fn [sym]
                              (cond (instance? ast/params-ast sym)
-                                   se-nop
+                                   (se/state-error (new-int idxs))
 
                                    (append-value-type sym
-                                                      (c/param arity-id index)
+                                                      (c/param arity-id
+                                                               (- arg-count (new-int idxs)))
                                                       loc))))
             _ (append-value-type (.variadic (.params ast))
                                  (c/param arity-id arg-count)
@@ -1973,9 +1977,12 @@
                                                                                    (c/tag (str "Field '" (.sym field-c) "' doesn't exist")))])
                                                         loc))))))
                   field-cs (se/traverse fields get-value-type)
-                  :let [field-pairs (map (zip-lists fields field-cs)
+                  :let [idxs (integer-gen 1)
+                        field-pairs (map (zip-lists fields field-cs)
                                          (fn [[fld-name fld-c]]
-                                           [(c/Field (c/tag (str "." fld-name))) fld-c]))
+                                           [(c/Field (c/tag (str "." fld-name)))
+                                            fld-c
+                                            (new-int idxs)]))
                         fields-map (reduce field-pairs {} conj)
                         new-type-constraint (-> (c/ReifiedConstraint type-num sym
                                                                      fields-map
@@ -1990,13 +1997,11 @@
                                     (c/seq-c (comp [c/top-type] field-cs))
                                     (-> c/empty-reified
                                         (.type-symbol sym)
-                                        (.fields (reduce (zip-lists field-pairs
-                                                                    (range field-count))
-                                                         {}
-                                                         (fn [fields-map [[fld fld-c] idx]]
+                                        (.fields (reduce field-pairs {}
+                                                         (fn [fields-map [fld fld-c idx]]
                                                            (assoc fields-map
                                                              fld
-                                                             (c/intersect (c/param ctor-sym (inc idx))
+                                                             (c/intersect (c/param ctor-sym idx)
                                                                           fld-c)))))
                                         (assoc-in [.fields c/contents] c/top-type)))
                         ctor-type-num (extract type-counter)
