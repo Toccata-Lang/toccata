@@ -33,8 +33,8 @@
                                 (print-err "Could not read environnment variable"
                                            "TOCCATA_DIR")
                                 (abort)))))
-
 (def path-to-core (str toccata-dir "/new-core.toc"))
+(def core (c/ToccataCore path-to-core))
 
 (def output (agent (maybe nothing)))
 
@@ -55,7 +55,6 @@
                  ;;        out-file))
                  )))
 
-(def core-start (promise))
 (def max-time (agent 0))
 (def start-time (agent empty-list))
 
@@ -84,8 +83,6 @@
                    (deliver p outfile)
                    outfile))
     (extract p)))
-
-(def core (c/ToccataCore path-to-core))
 
 (defn se-debug [& args]
   (se/new-se (fn [s]
@@ -2214,14 +2211,27 @@
                                                  (lazy-list file-in))]
                    (cond (instance? rd/ParserError parse-result)
                          (do
-                           (send output (fn [_]
-                                            (print-err (.msg parse-result))
-                                            (abort)))
-                           (wait-for-output))
+                           (status (.msg parse-result))
+                           (wait-for-output)
+                           (abort))
 
                          ;; after all expressions have been checked,
                          ;; deliver the resulting Module
-                         (send ast-checker (partial deliver loading)))
+                         (send ast-checker (fn [mod]
+                                             (cond (instance? Module mod)
+                                                   (status "Loaded" file-name)
+
+                                                   (either (map (instance? se/Error mod)
+                                                                (fn [err]
+                                                                  (status (.val err))
+                                                                  (wait-for-output)
+                                                                  (and (= core file-name)
+                                                                       (abort))))
+                                                           (status "Could not load Toccata file:"
+                                                                   file-name)))
+                                             (send modules (fn [modules]
+                                                             (assoc modules file-name mod)))
+                                             (deliver loading mod))))
                    loading)))
 
           ;; or tell everyone it couldn't be
@@ -2274,66 +2284,3 @@
                                 (compilation-error "Could not find impl for" (str "'" (.type-sym ast)
                                                                                   "' (" type-num ")")
                                                    "at" (ast/location (.type-sym ast))))))))))
-
-(main [params]
-  (deliver core-start (sys/clock_gettime))
-  (let [core-mod (extract (compile-module core toccata-dir toccata-dir 0 'no-core))]
-    (cond (instance? Module core-mod)
-          (status "Loaded Core")
-
-          (do
-            (either (map (instance? se/Error core-mod)
-                         (fn [err]
-                           (status (.val err))
-                           (wait-for-output)
-                           (abort)))
-                    (do
-                      (status "Could not load Core")
-                      (wait-for-output)
-                      (abort)))))
-    (send modules (fn [_]
-                    {core core-mod}))
-    (status 'time-for-core (div (sys/time-delta (extract core-start) (sys/clock_gettime)) 1000))
-    ;; (let [core-types (extract (compile-module "core-types.toc" toccata-dir toccata-dir 1 core-mod))]
-    ;;   (cond (instance? Module core-types)
-    ;;         (status "Loaded core-types")
-
-    ;;         (do
-    ;;           (either (map (instance? se/Error core-types)
-    ;;                        (fn [err]
-    ;;                          (status (.val err))
-    ;;                          (wait-for-output)
-    ;;                          (abort)))
-    ;;                   (do
-    ;;                     (status "Could not load core-types")
-    ;;                     (wait-for-output)
-    ;;                     (abort))))))
-    (-> (rest params)
-        ;; TODO: empty-defn causes mem leaks
-        ;; (remove (partial = "assertion-tests/empty-defn.toc"))
-        (map (fn [file-name]
-               (future
-                 (fn []
-                   (map (sys/file-directory file-name)
-                        (fn [root-dir]
-                          ;; (send modules (fn [_]
-                          ;;                 {core core-mod}))
-                          (let [
-                                ;; _ (send output (fn [_]
-                                ;;                  (fio/file-out (str file-name ".err"))))
-                                core-result (compile-module file-name toccata-dir toccata-dir 1
-                                                            core-mod)
-                                core-result (either (map (instance? Promise core-result) extract)
-                                                    core-result)]
-                            (cond (instance? Module core-result)
-                                  (status 'Loaded file-name)
-
-                                  (either (map (instance? se/Error core-result)
-                                               (fn [err]
-                                                 (status (.val err))))
-                                          (status "Could not load Toccata file:"
-                                                  file-name))))))))))
-        (map extract)
-        ))
-
-  (wait-for-output))
