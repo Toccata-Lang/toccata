@@ -9,16 +9,25 @@
                            "state-error.toc"
                            :sha "71dfbbe"))
 
+(extend-type String
+  Container
+  (map [s f]
+    s)
+
+  (map [s f embed]
+    (embed s)))
+
 ;; TODO: use 'either' here when the compiler supports it
 (def toccata-dir (extract (or (sys/get-environment "TOCCATA_DIR")
                               (do
                                 (print-err "Could not read environnment variable"
                                            "TOCCATA_DIR")
                                 (abort)))))
-(def path-to-core (str toccata-dir "/new-core.toc"))
+;; (def path-to-core (str toccata-dir "/new-core.toc"))
+(def path-to-core (str toccata-dir "/no-core.toc"))
 (def core (c/ToccataCore path-to-core))
 
-(def err-out (agent (maybe nothing)))
+(def err-out (agent (maybe 'err-out)))
 
 (def lf "\n")
 (def lflf "\n\n")
@@ -67,3 +76,65 @@
                  (-> failing-constraint
                      ;; TODO: add file-name/line-number to empty paths
                      (c/format-path 0)))))
+
+(def output (agent (maybe 'output)))
+
+(defn code-out [& code]
+  (send output (fn [out-file?]
+                 (cata (fn [x]
+                         (cond (instance? Sequence x)
+                               x
+
+                               (print x)))
+                       code)
+                 out-file?)))
+
+(defn wait-for-output []
+  (let [p (promise)]
+    (send output (fn [outfile]
+                   (deliver p outfile)
+                   outfile))
+    (extract p)))
+
+(deftype Module [path index protocols namespaces types value-types]
+  ;; path             path to file containing the modules source code
+  (assert (instance? c/FileName path))
+  ;; index            this module's index
+  (assert (instance? Integer index))
+  ;; protocols        set of protocol symbols
+  (assert (instance? HashMap protocols))
+  ;; namespaces      imported namespaces
+  (assert (instance? (map-of (any-of c/ToccataCore Symbol)
+                             Module) namespaces))
+  ;; types           map of symbols (type names) to type constraints
+  ;; TODO: wrong. needs to include c/ProtoImpls
+  (assert (instance? (map-of c/TaggedSymbol c/ValueConstraint) types))
+  ;; value-types     map of symbols (values) to type constraints
+  ;; (assert (instance? (list-of (map-of Symbol c/ValueConstraint)) value-types))
+  (assert (instance? List value-types))
+
+  Stringable
+  (string-list [_] (list "<Module '" (str path) "'>")))
+
+;; modules holds a map from filenames to either a Module or a Promise
+(def modules (agent {}))
+
+(defn new-module [file-name module-index core-mod]
+  (let [core-prom (promise)]
+    ;; (send modules (fn [mods]
+    ;;                 (map (get mods core)
+    ;;                      (partial deliver core-prom))
+    ;;                 mods))
+    (Module file-name module-index {}
+            (cond (= module-index 0)
+                  {}
+                  {core core-mod})
+            c/core-type-constraints
+            (list {'empty-list (c/update-sym c/empty-list-constraint
+                                             (c/tag 'empty-list))
+                   'empty-vector (c/update-sym c/empty-vect-constraint
+                                               (c/tag 'empty-vector))
+                   'int-max (.max c/int-constraint int-max)
+                   'int-min (.min c/int-constraint int-min)
+                   'nothing (c/update-sym c/nothing-constraint
+                                          (c/tag 'nothing))}))))
