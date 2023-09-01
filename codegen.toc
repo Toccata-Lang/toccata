@@ -7,6 +7,33 @@
                             :sha "7e0d62e"))
 (add-ns b (module "base.toc"))
 
+(def output (agent (maybe 'output)))
+
+(defn code-out [& code]
+  (send output (fn [out-file?]
+                 (hylo (fn [x]
+                         (cond (or (instance? String x)
+                                   (instance? Integer x))
+                               (do
+                                 (print x)
+                                 [])
+
+                               x))
+                       (fn [x]
+                         (cond (instance? Sequence x)
+                               x
+
+                               (print x)))
+                       code)
+                 out-file?)))
+
+(defn wait-for-output []
+  (let [p (promise)]
+    (send output (fn [outfile]
+                   (deliver p outfile)
+                   outfile))
+    (extract p)))
+
 (defprotocol CodeGen
   (pre-gen [_])
   (gen-code [_]))
@@ -22,14 +49,49 @@
 (extend-type ast/inline-ast
   CodeGen
   (gen-code [x]
-    (b/code-out (.txt x))))
+    (code-out (.txt x))))
+
+(def core-dispatchers (-> [(c/tag 'type-name) 1 "type_name"
+                           (c/tag 'zero) 1 "zero"
+                           (c/tag 'invoke) 1 "invoke0Args"
+                           (c/tag 'invoke) 2 "invoke1Arg"
+                           (c/tag 'invoke) 3 "invoke2Args"
+                           (c/tag '=*) 2 "equalSTAR"
+                           (c/tag 'hash-seq) 2 "hashSeq"
+                           (c/tag 'count) 1 "count"
+                           (c/tag 'vals) 1 "vals"
+                           (c/tag 'first) 1 "first"
+                           (c/tag 'rest) 1 "rest"
+                           (c/tag 'seq) 1 "seq"
+                           (c/tag 'sha1) 1 "sha1"
+                           (c/tag 'has-field) 2 "hasField"
+                           (c/tag 'show) 1 "showFn"
+                           (c/tag 'new-hash-set) 1 "newHashSet"
+                           (c/tag 'apply) 2 "fn_apply"
+                           (c/tag 'pr-value) 1 "prValue"]
+                          (partition 3)))
+
+(defn fixup-core-dispatchers [x core-mod]
+  (map core-dispatchers
+       (fn [[sym arg-count var]]
+         (let [arity-sym (either (map (get-in core-mod [.value-types 0 sym])
+                                      (fn [proto-impls]
+                                        '_))
+                                 ;; TODO: abort with message instead
+                                 (str "noImpl" arg-count))]
+           (code-out "Value *(*" var ")(FnArity *, "
+                     (-> (repeat arg-count "Value *")
+                         (interpose ","))
+                     ") = " arity-sym ";\n"))
+         ))
+  x)
 
 ;; (extend-type ast/main-ast
 ;;   CodeGen
 ;;   (gen-code [ast]
 ;;     (for [
 ;;           ;; TODO: add param assertions
-;;           fn-arity (emit-fn-arity (ast/tag main) "" (.params ast) (.body ast))
+;;           fn-arity (emit-fn-arity (c/tag main) "" (.params ast) (.body ast))
 ;;           fn-arity (cond (instance? StaticArity fn-arity)
 ;;                          (-> fn-arity
 ;;                              .var-info
@@ -85,65 +147,66 @@
         ;; _ (send rt-exprs (partial deliver values-prom))
         ;; values (extract values-prom)
         ]
-    ;; (b/code-out decls)
-    (b/code-out "\n#\n"
-                "\nint main (int argc, char **argv) {\n"
-                "prErrSTAR = &defaultPrErrSTAR;\n"
-                "#ifdef SINGLE_THREADED\n"
-                "#ifdef CHECK_MEM_LEAK\n"
-                "fprintf(stderr, \"Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK "
-                "at same time.\");\n "
-                "abort();\n"
-                "#endif\n"
-                "#endif\n"
-                "maybeNothing = maybe((Vector *)0, (Value *)0, nothing);\n"
-                "maybeNothing->refs = -1;\n"
-                "outstream = stdout;\n"
-                "__atomic_store(&futuresQueue.input, &empty_list, __ATOMIC_RELAXED);\n"
-                "futuresQueue.output = empty_list;\n"
-                "pthread_mutex_init(&futuresQueue.mutex, NULL);\n"
-                "pthread_cond_init(&futuresQueue.notEmpty, NULL);\n"
-                "pthread_mutex_init(&shutDown.access, NULL);\n"
-                "startWorkers();\n"
-                inits
-                ;; (map values .init)
-                "init_module_0();\n"
-                "init_module_1();\n"
-                "\n#\n"
-                "  List *argList = malloc_list();\n"
-                "  argList->len = 0;\n"
-                "  argList->head = (Value *)0;\n"
-                "  argList->tail = (List *)0;\n"
-                "  List *tail = argList;\n"
-                "  for(int i = 0; i < argc; i++) {\n"
-                "     List *newTail = malloc_list();\n"
-                "     newTail->len = 0;\n"
-                "     newTail->tail = (List *)0;\n"
-                "     newTail->head = (Value *)0;\n"
-                "     tail->head = stringValue(argv[i]);\n"
-                "     tail->tail = newTail;\n"
-                "     tail = newTail;\n"
-                "     argList->len++;\n}\n"
-                "  argList->refs = -1;\n"
-                ;; "Value *the_final_answer = " (.c-fn main-fn)
-                ;; "((FnArity *)0, (Value *)argList);\n\n"
-                "#ifdef CHECK_MEM_LEAK\n"
-                "cleaningUp = 1;\n"
-                "mainThreadDone = 1;\n"
-                "waitForWorkers();\n"
-                ;; (map-modules (for [expr (sm/get-in-val [.module .values symbols-sym])]
-                ;;                (free-global (c-init (.c-var expr) [] {} "" 0))))
-                ;; (map-modules (sm/get-in-val [.setup .cleanup]))
-                ;; (map values free-global)
-                "\n#\n"
-                "for(List *l = argList; l != (List *)0; l = l->tail) {\n"
-                "   l->refs = 1;\n"
-                "}\n"
-                "  cleanupMemory(the_final_answer, maybeNothing, argList);\n"
-                "  if (malloc_count - free_count != 0)\n"
-                "    return(1);\n"
-                "#endif"
-                "\n#\n"
-                "  return(0);\n};\n"
-                "\nint typeCount = " (extract b/type-counter) ";\n"))
-  )
+    ;; (code-out decls)
+    (code-out "\n#\n"
+              "\nint main (int argc, char **argv) {\n"
+              "prErrSTAR = &defaultPrErrSTAR;\n"
+              "#ifdef SINGLE_THREADED\n"
+              "#ifdef CHECK_MEM_LEAK\n"
+              "fprintf(stderr, \"Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK "
+              "at same time.\");\n "
+              "abort();\n"
+              "#endif\n"
+              "#endif\n"
+              "maybeNothing = maybe((Vector *)0, (Value *)0, nothing);\n"
+              "maybeNothing->refs = -1;\n"
+              "outstream = stdout;\n"
+              "__atomic_store(&futuresQueue.input, &empty_list, __ATOMIC_RELAXED);\n"
+              "futuresQueue.output = empty_list;\n"
+              "pthread_mutex_init(&futuresQueue.mutex, NULL);\n"
+              "pthread_cond_init(&futuresQueue.notEmpty, NULL);\n"
+              "pthread_mutex_init(&shutDown.access, NULL);\n"
+              "startWorkers();\n"
+              inits
+              ;; (map values .init)
+              ;; "init_module_0();\n"
+              ;; "init_module_1();\n"
+              "\n#\n"
+              "  List *argList = malloc_list();\n"
+              "  argList->len = 0;\n"
+              "  argList->head = (Value *)0;\n"
+              "  argList->tail = (List *)0;\n"
+              "  List *tail = argList;\n"
+              "  for(int i = 0; i < argc; i++) {\n"
+              "     List *newTail = malloc_list();\n"
+              "     newTail->len = 0;\n"
+              "     newTail->tail = (List *)0;\n"
+              "     newTail->head = (Value *)0;\n"
+              "     tail->head = stringValue(argv[i]);\n"
+              "     tail->tail = newTail;\n"
+              "     tail = newTail;\n"
+              "     argList->len++;\n}\n"
+              "  argList->refs = -1;\n"
+
+              "  fprintf(stderr, \"*** main works\\n\");\n"
+              ;; "Value *the_final_answer = " (.c-fn main-fn)
+              ;; "((FnArity *)0, (Value *)argList);\n\n"
+              "#ifdef CHECK_MEM_LEAK\n"
+              "cleaningUp = 1;\n"
+              "mainThreadDone = 1;\n"
+              "waitForWorkers();\n"
+              ;; (map-modules (for [expr (sm/get-in-val [.module .values symbols-sym])]
+              ;;                (free-global (c-init (.c-var expr) [] {} "" 0))))
+              ;; (map-modules (sm/get-in-val [.setup .cleanup]))
+              ;; (map values free-global)
+              "\n#\n"
+              "for(List *l = argList; l != (List *)0; l = l->tail) {\n"
+              "   l->refs = 1;\n"
+              "}\n"
+              "  cleanupMemory(the_final_answer, maybeNothing, argList);\n"
+              "  if (malloc_count - free_count != 0)\n"
+              "    return(1);\n"
+              "#endif"
+              "\n#\n"
+              "  return(0);\n};\n"
+              "\nint typeCount = " (extract b/type-counter) ";\n")))
