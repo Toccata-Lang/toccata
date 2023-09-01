@@ -8,6 +8,12 @@
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "e8eba87"))
+(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
+                           "recursive-descent.toc"
+                           :sha "d61aa1e"))
 
 ;; TODO: use 'either' here when the compiler supports it
 (def toccata-dir (extract (or (sys/get-environment "TOCCATA_DIR")
@@ -99,13 +105,11 @@
                    outfile))
     (extract p)))
 
-(deftype Module [path index protocols namespaces types value-types]
+(deftype Module [path index namespaces types value-types]
   ;; path             path to file containing the modules source code
   (assert (instance? c/FileName path))
   ;; index            this module's index
   (assert (instance? Integer index))
-  ;; protocols        set of protocol symbols
-  (assert (instance? HashMap protocols))
   ;; namespaces      imported namespaces
   (assert (instance? (map-of (any-of c/ToccataCore Symbol)
                              Module) namespaces))
@@ -128,7 +132,7 @@
     ;;                 (map (get mods core)
     ;;                      (partial deliver core-prom))
     ;;                 mods))
-    (Module file-name module-index {}
+    (Module file-name module-index
             (cond (= module-index 0)
                   {}
                   {core core-mod})
@@ -141,3 +145,55 @@
                    'int-min (.min c/int-constraint int-min)
                    'nothing (c/update-sym c/nothing-constraint
                                           (c/tag 'nothing))}))))
+
+(def C-var-punct (grmr/any (map (grmr/ignore "*") (constantly "_STAR_"))
+                           (map (grmr/ignore ".") (constantly ""))
+                           (map (grmr/ignore "#") (constantly "_HASH_"))
+                           (map (grmr/ignore "+") (constantly "_PLUS_"))
+                           (map (grmr/ignore "?") (constantly "_QM_"))
+                           (map (grmr/ignore "!") (constantly "_BANG_"))
+                           (map (grmr/ignore "=") (constantly "_EQ_"))
+                           (map (grmr/ignore "<") (constantly "_LT_"))
+                           (map (grmr/ignore ">") (constantly "_GT_"))))
+
+(def C-var-remaining
+  (grmr/none-or-more (grmr/any "_"
+                               (map (grmr/ignore "-") (constantly "_"))
+                               grmr/alpha
+                               grmr/digit
+                               C-var-punct)))
+
+(def C-var (apply-to (fn [start remaining]
+                       (to-str (comp [start] remaining)))
+                     (grmr/any grmr/alpha
+                               (map (grmr/ignore "#") (constantly ""))
+                               (map (grmr/ignore "-") (constantly "_MINUS_"))
+                               C-var-punct)
+                     C-var-remaining))
+
+(def C-var (rd/parser C-var))
+
+(defn check-C-var [var-name alt-var]
+  ;; TODO: put this in after the original works
+  ;; (either (map (instance? Vector (C-var var-name))
+  ;;              (fn [[c-var]]
+  ;;                c-var))
+
+  ;;         alt-var)
+  (let [parse-result (C-var var-name)]
+
+    (cond (instance? Vector parse-result)
+          (let [[c-var] parse-result]
+            c-var)
+
+          alt-var)))
+
+(defn make-global-var [module-index sym arg-name]
+  (str (gensym (str "m" module-index "_" (check-C-var (str sym "_") arg-name)))))
+
+(defn global-var
+  ([arg-name]
+   (global-var c/no-symbol arg-name))
+  ([sym arg-name]
+   (for [module-index (se/get-val .index)]
+     (make-global-var module-index sym arg-name))))
