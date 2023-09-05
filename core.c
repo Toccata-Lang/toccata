@@ -82,7 +82,7 @@ Value *nothing = (Value *)&nothing_struct;
 List empty_list_struct = (List){ListType,-2,0,0,0,0};
 List *empty_list = &empty_list_struct;
 Vector empty_vect_struct = (Vector){VectorType,-2,0,0,5,0,0};
-Vector *empty_vect = &empty_vect_struct;;
+Vector *empty_vect = &empty_vect_struct;
 
 ReifiedVal all_values_struct = {AllValuesType, -2, 0};
 Value *all_values = (Value *)&all_values_struct;
@@ -127,10 +127,11 @@ Value *my_malloc(int64_t sz) {
   return(val);
 }
 
-void cleanupMemory (Value *the_final_answer, Value *maybeNothing, List *argList) {
+void cleanupMemory (Value *the_final_answer, Value *maybeNothing, List *argVect) {
+  // TODO: change the type of argVect to Vector eventually
 #ifdef CHECK_MEM_LEAK
   dec_and_free(the_final_answer, 1);
-  freeGlobal((Value *)argList);
+  freeGlobal((Value *)argVect);
   freeGlobal(maybeNothing);
   freeAll();
 #endif
