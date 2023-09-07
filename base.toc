@@ -5,6 +5,9 @@
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
                           :sha "45e2277"))
+(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
+                            "ast.toc"
+                            :sha "b616620"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
@@ -86,7 +89,7 @@
   (assert (instance? (map-of (any-of c/ToccataCore Symbol)
                              Module) namespaces))
   ;; types           map of symbols (type names) to type constraints
-  ;; TODO: wrong. needs to include c/ProtoImpls
+  ;; TODO: wrong. needs to include c/ProtoImpls and static values
   (assert (instance? (map-of c/TaggedSymbol c/ValueConstraint) types))
   ;; value-types     map of symbols (values) to type constraints
   ;; (assert (instance? (list-of (map-of Symbol c/ValueConstraint)) value-types))
@@ -118,19 +121,53 @@
                    'nothing (c/update-sym c/nothing-constraint
                                           (c/tag 'nothing))}))))
 
-(def C-var-punct (grmr/any (map (grmr/ignore "*") (constantly "_STAR_"))
-                           (map (grmr/ignore ".") (constantly ""))
-                           (map (grmr/ignore "#") (constantly "_HASH_"))
-                           (map (grmr/ignore "+") (constantly "_PLUS_"))
-                           (map (grmr/ignore "?") (constantly "_QM_"))
-                           (map (grmr/ignore "!") (constantly "_BANG_"))
-                           (map (grmr/ignore "=") (constantly "_EQ_"))
-                           (map (grmr/ignore "<") (constantly "_LT_"))
-                           (map (grmr/ignore ">") (constantly "_GT_"))))
+(deftype ModuleSetup [init cleanup]
+  ;; init               strings to initialize the module
+  (assert (instance? Vector init))
+  ;; cleanup            strings to initialize the module
+  (assert (instance? Vector cleanup)))
+
+(deftype CodeContext [constants mod-setups]
+  (assert (instance? HashMap constants))
+  (assert (instance? HashMap mod-setups))
+  )
+
+(deftype StaticArity [arity arity-var]
+  (assert (instance? ast/fn-arity-ast arity))
+  (assert (instance? String arity-var))
+
+  Stringable
+  (string-list [_]
+    (list "(b/StaticArity " (str arity) ")"))
+
+  Container
+  (map [x f]
+    (.arity x (f arity)))
+
+  (map [x f embed]
+    (map (f arity)
+         (fn [new-arity]
+           (.arity x new-arity)))))
+
+(def var-punct {"*" "_STAR_"
+                "." ""
+                "#" "_HASH_"
+                "+" "_PLUS_"
+                "?" "_QM_"
+                "!" "_BANG_"
+                "=" "_EQ_"
+                "<" "_LT_"
+                ">" "_GT_"})
+
+(def C-var-punct (apply-to (fn [punct-char]
+                             (either (get var-punct punct-char)
+                                     ""))
+                           (apply grmr/any (keys var-punct))))
 
 (def C-var-remaining
   (grmr/none-or-more (grmr/any "_"
-                               (map (grmr/ignore "-") (constantly "_"))
+                               (grmr/all (grmr/ignore "-")
+                                         (grmr/always "_"))
                                grmr/alpha
                                grmr/digit
                                C-var-punct)))
@@ -138,8 +175,10 @@
 (def C-var (apply-to (fn [start remaining]
                        (to-str (comp [start] remaining)))
                      (grmr/any grmr/alpha
-                               (map (grmr/ignore "#") (constantly ""))
-                               (map (grmr/ignore "-") (constantly "_MINUS_"))
+                               (grmr/all (grmr/ignore "#")
+                                         (grmr/always ""))
+                               (grmr/all (grmr/ignore "-")
+                                         (grmr/always "_MINUS_"))
                                C-var-punct)
                      C-var-remaining))
 
@@ -160,12 +199,11 @@
 
           alt-var)))
 
-(defn make-global-var [module-index sym arg-name]
-  (str (gensym (str "m" module-index "_" (check-C-var (str sym "_") arg-name)))))
+(def global-vars (int-generator 0))
 
 (defn global-var
   ([arg-name]
    (global-var c/no-symbol arg-name))
   ([sym arg-name]
-   (for [module-index (se/get-val .index)]
-     (make-global-var module-index sym arg-name))))
+   (str "glbl_" (check-C-var (str sym "_") arg-name)
+        "_" (extract global-vars))))

@@ -4,7 +4,10 @@
                           :sha "45e2277"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "f78608c"))
+                            :sha "b616620"))
+(add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
+                           "state-error.toc"
+                           :sha "71dfbbe"))
 (add-ns b (module "base.toc"))
 
 (def output (agent (maybe 'output)))
@@ -34,26 +37,78 @@
                    outfile))
     (extract p)))
 
+(deftype C-code [decl init]
+  (assert (instance? Vector decl))
+  (assert (instance? Vector init))
+  )
+
 (defprotocol CodeGen
-  (pre-gen [_])
-  (gen-code [_]))
+  (gen-code [ast mod]
+    (assert-result r (instance? se/state-error r))
+    )
 
-(def DefaultPreGen (any-of ast/inline-ast))
+  (gen-code [ast mod arity]
+    (assert-result r (instance? se/state-error r))
 
-(extend-type DefaultPreGen
-  CodeGen
-  (pre-gen [x]
-    x))
+    (gen-code ast mod)))
+
+(defn emit-code [ast mod]
+  (map (gen-code ast mod) 
+       (fn [code ]
+         (code-out (.decl code)
+                   (.init code)))))
 
 (extend-type ast/inline-ast
   CodeGen
-  (gen-code [x]
-    (code-out (.txt x))))
+  (gen-code [x mod]
+    (se/state-error (C-code [] [(.txt x)])))
 
-(defn emit-code [_ ast]
-  (hylo pre-gen
-        gen-code
-        ast))
+  (gen-code [x mod arity]
+    (gen-code x mod)))
+
+(extend-type ast/fn-arity-ast
+  CodeGen
+  (gen-code [ast mod]
+    (for [body-codes (se/traverse (.body ast) (fn [expr]
+                                                (gen-code expr mod ast)))]
+      (reduce body-codes (C-code [] [])
+              (fn [code expr-code]
+                (C-code (comp (.decl code) (.decl expr-code))
+                        (comp (.init code) (.init expr-code))))))))
+
+(extend-type b/StaticArity
+  CodeGen
+  (gen-code [ast mod]
+    (let [arity-code (gen-code (.arity ast) mod)]
+      arity-code)))
+
+(extend-type ast/fn-ast
+  CodeGen
+  (gen-code [ast mod]
+    (let [fn-sym (.fn-sym ast)
+          arities (.arities ast)]
+      ;; TODO: what if fn-sym is c/no-symbol
+      (cond (every arities (fn [arity]
+                             (instance? b/StaticArity arity)))
+            (for [code-vect (se/traverse arities
+                                         (fn [arity]
+                                           (gen-code arity mod)))]
+              (let [code (reduce code-vect (C-code ["\n// --------- " fn-sym " -------------\n"]
+                                                   [])
+                                 (fn [code arity-code]
+                                   (C-code (comp (.decl code) (.decl arity-code))
+                                           (comp (.init code) (.init arity-code)))))]
+                code))
+
+            (do
+              (print-err 'finish _FILE_ _LINE_)
+              (se/state-error (abort)))))))
+
+(extend-type ast/definition-ast
+  CodeGen
+  (gen-code [ast mod]
+    (let [[expr] (.value-exprs ast)]
+      (gen-code expr mod))))
 
 (defn emit-main [main-module]
   (let [main-fn (either (get-in main-module [.values ast/main])
@@ -183,3 +238,24 @@
                      ") = " arity-sym ";\n"))
          ))
   x)
+
+;; Notes:
+
+;; 2 kinds of arities static and closure with a variadic and fixed variant of each.
+
+;; All fn's have a 'c-fn' name which is the name of C function.
+;; The C function always returns a Value *.
+
+;; The c-fn has to be pointed to by a FnArity struct, which in turn is pointed to by a Function struct.
+
+;; Whether a fn is static or closure is only determined after it has been analyzed. Should happen in the type checker
+
+;; Have to handle tail-exprs
+
+;; For static fn's:
+
+;; There is also another C function that will first check the types of all the parameters
+;; and then call the other function to actually do the work.
+
+;; Emitting static arity
+;; collapse all the expressions
