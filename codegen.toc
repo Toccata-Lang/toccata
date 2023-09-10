@@ -10,6 +10,11 @@
                            :sha "71dfbbe"))
 (add-ns b (module "base.toc"))
 
+(def lf "\n")
+(def lflf "\n\n")
+
+(def line-sep "")
+
 (def output (agent (maybe 'output)))
 
 (defn code-out [& code]
@@ -56,7 +61,8 @@
   (map (gen-code ast mod) 
        (fn [code ]
          (code-out (.decl code)
-                   (.init code)))))
+                   (.init code))
+         (wait-for-output))))
 
 (extend-type ast/inline-ast
   CodeGen
@@ -79,8 +85,35 @@
 (extend-type b/StaticArity
   CodeGen
   (gen-code [ast mod]
-    (let [arity-code (gen-code (.arity ast) mod)]
-      arity-code)))
+    (for [arity-code (gen-code (.arity ast) mod)]
+      (cond (= (-> ast .arity .params .variadic)
+               c/no-symbol)
+            ;; fixed arity
+            (let [params (-> ast .arity .params .fixed)
+                  decl ["Value *" (.arity-var ast) "("
+                        (-> (reduce params ["FnArity *arity"]
+                                    (fn [args arg]
+                                      (conj args (str "Value *" (.var arg)))))
+                            (interpose ", "))
+                        ") {\nwhile (1) {\n"
+                        (.init arity-code)
+
+                        line-sep
+                        "};};\n"
+                        ;; (.init runtime-check-fn)
+                        "FnArity " (.fn-var (.arity ast)) " = {FnArityType, -2, "
+                        (count params)
+                        ", (Vector *)0, (Value *)0, 0"
+                        ", (Value *)0" ;; (.c-var runtime-check-fn)
+                        ", (Value *)0, (Value *)0"
+                        "};" line-sep]
+                  ]
+              (C-code decl []))
+
+            ;; variadic arity
+            (do
+              (print-err 'finish-this _LINE_)
+              (se/state-error (abort)))))))
 
 (extend-type ast/fn-ast
   CodeGen
@@ -111,9 +144,9 @@
       (gen-code expr mod))))
 
 (defn emit-main [main-module]
-  (let [main-fn (either (get-in main-module [.values ast/main])
+  (let [main-fn (either (get-in main-module [.values ast/main .arities 0 .arity-var])
                         (do
-                          (print-err "'main' function is missing")
+                          (b/status "'main' function is missing or malformed")
                           ;; TODO: make sure to abort
                           ;; (abort)
                           ))
@@ -178,9 +211,8 @@
               "  }\n"
               "  argVect->refs = -1;\n"
 
-              ;; "Value *the_final_answer = " (.c-fn main-fn)
-              ;; "((FnArity *)0, (Value *)argVect);\n\n"
-              "  fprintf(stderr, \"*** main works\\n\");\n"
+              "Value *the_final_answer = " main-fn
+              "((FnArity *)0, (Value *)argVect);\n\n"
 
               "#ifdef CHECK_MEM_LEAK\n"
               "cleaningUp = 1;\n"
