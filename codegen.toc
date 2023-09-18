@@ -4,7 +4,7 @@
                           :sha "dcba6be"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "888f38e"))
+                            :sha "b4d6ace"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
@@ -42,14 +42,26 @@
                    outfile))
     (extract p)))
 
-(deftype C-code [decl init]
+(deftype C-code [var decl init refs-map]
+  (assert (instance? String var))
   (assert (instance? Vector decl))
   (assert (instance? Vector init))
-  )
+  (assert (instance? HashMap refs-map))
+
+  Composition
+  (comp* [expr exprs]
+    (reduce exprs expr
+            (fn [code expr-code]
+              (C-code (.var expr-code)
+                      (comp (.decl code) (.decl expr-code))
+                      (comp (.init code) (.init expr-code))
+                      (merge-with + (.refs-map code) (.refs-map expr-code)))))))
+
+(def empty-c-code (C-code "" [] [] {}))
 
 (defprotocol CodeGen
   (gen-code [ast mod]
-    (assert-result r (instance? se/state-error r))
+    (assert-result r (instance? se/StateError r))
     )
 
   (gen-code [ast mod arity]
@@ -61,13 +73,17 @@
   (map (gen-code ast mod) 
        (fn [code ]
          (code-out (.decl code)
-                   (.init code))
+                   (.init code)
+                   lf)
          (wait-for-output))))
 
 (extend-type ast/inline-ast
   CodeGen
   (gen-code [x mod]
-    (se/state-error (C-code [] [(.txt x)])))
+    (cond (= (.var x) "")
+          (se/state-error (.init empty-c-code [(.txt x)]))
+
+          (se/state-error (.decl empty-c-code ["Value *" (.var x) " = " (.txt x) ";"]))))
 
   (gen-code [x mod arity]
     (gen-code x mod)))
@@ -75,12 +91,11 @@
 (extend-type ast/fn-arity-ast
   CodeGen
   (gen-code [ast mod]
-    (for [body-codes (se/traverse (.body ast) (fn [expr]
-                                                (gen-code expr mod ast)))]
-      (reduce body-codes (C-code [] [])
-              (fn [code expr-code]
-                (C-code (comp (.decl code) (.decl expr-code))
-                        (comp (.init code) (.init expr-code))))))))
+    (map (se/traverse (.body ast) (fn [expr]
+                                    (gen-code expr mod ast)))
+         (fn [body-exprs]
+           ;; TODO: add dec-refs
+           (comp* empty-c-code body-exprs)))))
 
 (extend-type b/StaticArity
   CodeGen
@@ -89,26 +104,26 @@
       (cond (= (-> ast .arity .params .variadic)
                c/no-symbol)
             ;; fixed arity
-            (let [params (-> ast .arity .params .fixed)
-                  decl ["Value *" (.arity-var ast) "("
-                        (-> (reduce params ["FnArity *arity"]
-                                    (fn [args arg]
-                                      (conj args (str "Value *" (.var arg)))))
-                            (interpose ", "))
-                        ") {\nwhile (1) {\n"
-                        (.init arity-code)
+            (let [params (-> ast .arity .params .fixed)]
+              (-> empty-c-code
+                  (.var (.arity-var ast))
+                  (.decl ["Value *" (.arity-var ast) "("
+                          (-> (reduce params ["FnArity *arity"]
+                                      (fn [args arg]
+                                        (conj args (str "Value *" (.var arg)))))
+                              (interpose ", "))
+                          ") {\nwhile (1) {\n"
+                          (.init arity-code)
 
-                        line-sep
-                        "};};\n"
-                        ;; (.init runtime-check-fn)
-                        "FnArity " (.fn-var (.arity ast)) " = {FnArityType, -2, "
-                        (count params)
-                        ", (Vector *)0, (Value *)0, 0"
-                        ", (Value *)0" ;; (.c-var runtime-check-fn)
-                        ", (Value *)0, (Value *)0"
-                        "};" line-sep]
-                  ]
-              (C-code decl []))
+                          line-sep
+                          "};};\n"
+                          ;; TODO: add runtime check fn
+                          "FnArity " (.fn-var (.arity ast)) " = {FnArityType, -2, "
+                          (count params)
+                          ", (Vector *)0, (Value *)0, 0"
+                          ", (Value *)0" ;; (.c-var runtime-check-fn)
+                          ", (Value *)0, (Value *)0"
+                          "};" line-sep])))
 
             ;; variadic arity
             (do
@@ -126,12 +141,10 @@
             (for [code-vect (se/traverse arities
                                          (fn [arity]
                                            (gen-code arity mod)))]
-              (let [code (reduce code-vect (C-code ["\n// --------- " fn-sym " -------------\n"]
-                                                   [])
-                                 (fn [code arity-code]
-                                   (C-code (comp (.decl code) (.decl arity-code))
-                                           (comp (.init code) (.init arity-code)))))]
-                code))
+              (comp* (C-code ""
+                             ["\n// --------- " fn-sym " -------------\n"]
+                             [] {})
+                     code-vect))
 
             (do
               (print-err 'finish _FILE_ _LINE_)
@@ -142,6 +155,22 @@
   (gen-code [ast mod]
     (let [[expr] (.value-exprs ast)]
       (gen-code expr mod))))
+
+(extend-type ast/integer-ast
+  CodeGen
+  (gen-code [ast mod]
+    (let [num (.int ast)]
+      (comp (se/get-in-val [.constants .numbers num])
+            (for [const-nums (se/get-in-val [.constants .numbers])
+                  :let [num-idx (count const-nums)
+                        num-sym (str "num" num-idx)
+                        num-ptr (str "numPtr" num-idx)]
+                  _ (se/assoc-in-val [.constants .numbers num]
+                                     (.var empty-c-code num-ptr))]
+              (-> empty-c-code
+                  (.decl ["Integer " num-sym " = {IntegerType, -2, " num "};\n"
+                          "Value *" num-ptr " = (Value *)&" num-sym ";\n"])
+                  (.var num-ptr)))))))
 
 (defn emit-main [main-module]
   (let [main-fn (either (get-in main-module [.values ast/main .arities 0 .arity-var])

@@ -7,7 +7,7 @@
                           :sha "dcba6be"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "888f38e"))
+                            :sha "b4d6ace"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
@@ -574,6 +574,8 @@
                   '_)))))
 
 (defprotocol TypeChecker
+  (set-var [ast])
+
   (update-constraint [ast constraint loc]
     (b/compilation-error "Could not find implementation of 'update-constraint' at" loc "for:"
                        lf (type-name ast) ast
@@ -816,9 +818,13 @@
 
 (extend-type ast/inline-ast
   TypeChecker
+  (set-var [ast]
+    (.var ast (b/global-var "val")))
+
   (type-check [ast old-ast]
     (map (type-check (.constraint ast) (.constraint ast))
-         (partial .constraint ast))))
+         (fn [c]
+           (.constraint ast c)))))
 
 (extend-type ast/reify-ast
   TypeChecker
@@ -1066,45 +1072,40 @@
           sym (.sym old-ast)]
       (for [_ (pop-types)
             ;; :let [_ (stop-clock ast)]
-            c (either (map (last (.value-exprs ast))
-                           (fn [val]
-                             (cond (instance? c/Constraints val)
-                                   ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
-                                   ;; the updated version. Possibly a bug in assoc-in*
+            val (either (map (last (.value-exprs ast))
+                             (fn [val]
+                               (cond (instance? c/Constraints val)
+                                     ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
+                                     ;; the updated version. Possibly a bug in assoc-in*
 
-                                   ;; TODO: this version produces a very cryptic error message
-                                   ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
-                                   ;;           (set-value-type (.sym old-ast) val))
+                                     ;; TODO: this version produces a very cryptic error message
+                                     ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
+                                     ;;           (set-value-type (.sym old-ast) val))
 
-                                   (let [val (c/trim val)]
-                                     (flat-map (se/assoc-in-val [.types sym] val)
-                                               (fn [_]
-                                                 (set-value-type sym val))))
+                                     (let [val (c/trim val)]
+                                       (for [_ (se/assoc-in-val [.types sym] val)
+                                             _ (set-value-type sym val)]
+                                         (ast/block-comment-ast [] c/no-loc c/top-type)))
 
-                                   (and (= c/top-type (.constraint val))
-                                        (or (= sym 'empty-list)
-                                            (= sym 'empty-vector)
-                                            (= sym 'int-max)
-                                            (= sym 'int-min)
-                                            (= sym 'nothing)))
-                                   (flat-map (get-value-type sym)
-                                             (fn [c]
-                                               (set-value-type sym (c/update-path c loc))))
+                                     (and (= c/top-type (.constraint val))
+                                          (or (= sym 'empty-list)
+                                              (= sym 'empty-vector)
+                                              (= sym 'int-max)
+                                              (= sym 'int-min)
+                                              (= sym 'nothing)))
+                                     (for [c (get-value-type sym)
+                                           _ (set-value-type sym (c/update-path c loc))]
+                                       val)
 
-                                   (flat-map (se/assoc-in-val [.values sym] val)
-                                             (fn [_]
-                                               (set-value-type sym (c/trim (.constraint val))))))))
-                      (set-value-type (.sym old-ast) c/top-type))]
+                                     (let [val (set-var val)]
+                                       (for [_ (se/assoc-in-val [.values sym] val)
+                                             _ (set-value-type sym (c/trim (.constraint val)))]
+                                         val)))))
+                        (set-value-type (.sym old-ast) c/top-type))]
         (do
           ;; (b/status 'defed _LINE_ loc (.sym old-ast)
           ;;            lflf c)
-          (either (map (last (.value-exprs ast))
-                       (fn [val]
-                         (cond (instance? c/Constraints val)
-                               (ast/block-comment-ast [] c/no-loc c/top-type)
-
-                               (.value-exprs ast [val]))))
-                  (ast/block-comment-ast [] c/no-loc c/top-type)))))))
+          (.value-exprs ast [val]))))))
 
 (extend-type ast/fn-arity-ast
   TypeChecker
@@ -1230,6 +1231,14 @@
 
 (extend-type ast/fn-ast
   TypeChecker
+  (set-var [ast]
+    (cond (every (.arities ast) (fn [arity]
+                                  (instance? b/StaticArity arity)))
+          (.var ast (b/global-var (.fn-sym ast) "fnStruct"))
+
+          ;; TODO: make a local var, or something
+          ast))
+
   (pre-check [ast]
     (let [loc (ast/location ast)
           sym (.fn-sym ast)]
@@ -1281,7 +1290,6 @@
                              (-> arity
                                  (.fn-var (b/global-var sym "arity"))
                                  (b/StaticArity (b/global-var sym "Cfun")))))
-                      (.var (b/global-var sym "fnStruct"))
                       se/state-error))))))
 
 (extend-type Symbol
@@ -1453,6 +1461,9 @@
 
 (extend-type ast/integer-ast
   TypeChecker
+  (set-var [ast]
+    ast)
+
   (type-check [ast old-ast]
     (-> (.constraint ast (-> (.static c/int-constraint (.int old-ast))
                              (c/update-path (ast/location old-ast))))
