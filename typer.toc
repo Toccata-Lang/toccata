@@ -71,47 +71,42 @@
          (b/status 'type-depth (to-str (interpose msg " "))
                  (count vts)))))
 
-(defn get-types []
-  (se/get-in-val [.value-types 0]))
-
 (defn push-types []
-  (flat-map (se/get-val .value-types)
-            (fn [types-list]
-              (se/set-val .value-types
-                          (either (map (first types-list)
-                                       (fn [value-types]
-                                         (conj types-list value-types)))
-                                  (list {}))))))
+  (for [types-list (se/get-val .value-types)
+        r (se/set-val .value-types
+                      (either (map (first types-list)
+                                   (fn [value-types]
+                                     (conj types-list value-types)))
+                              (list {})))
+        vals-list (se/get-val .values)
+        _ (se/set-val .values
+                      (either (map (first vals-list)
+                                   (fn [values]
+                                     (conj vals-list values)))
+                              (list {})))]
+    r))
 
 (defn pop-types []
-  (for [curr-types (get-types)
-        _ (se/update-val .value-types rest)]
+  (for [curr-types (se/get-in-val [.value-types 0])
+        _ (se/update-val .value-types rest)
+        _ (se/update-val .values rest)]
     curr-types))
 
 (defn nip-types []
   ;; Bringing the Forth to Toccata
-  (flat-map (se/get-val .value-types)
-            (fn [types-list]
-              (se/set-val .value-types
-                          (either (map (first types-list)
-                                       (fn [value-types]
-                                         (cons value-types (drop types-list 2))))
-                                  types-list)))))
-
-(defn push-values []
-  (flat-map (se/get-val .values)
-            (fn [vals-list]
-              (se/set-val .values
-                          (either (map (first vals-list)
-                                       (fn [values]
-                                         (conj vals-list values)))
-                                  (list {}))))))
-
-(defn pop-values []
-  (for [vals-list (se/get-val .values)
-        _ (se/update-val .values rest)]
-    (either (first vals-list)
-            {})))
+  (for [types-list (se/get-val .value-types)
+        r (se/set-val .value-types
+                      (either (map (first types-list)
+                                   (fn [value-types]
+                                     (cons value-types (drop types-list 2))))
+                              types-list))
+        vals-list (se/get-val .values)
+        _ (se/set-val .values
+                      (either (map (first vals-list)
+                                   (fn [values]
+                                     (cons values (drop vals-list 2))))
+                              vals-list))]
+    r))
 
 (defn add-getter [sym types-list]
   (assert (instance? c/TaggedSymbol sym))
@@ -242,17 +237,16 @@
           (print-err 'compiler-error _LINE_ constraint)
           b/se-nop)
 
-        (map (se/update-val .value-types
-                            (fn [types-list]
-                              (either (map (first types-list)
-                                           (fn [value-types]
-                                             (-> value-types
-                                                 (dissoc sym)
-                                                 (assoc sym constraint)
-                                                 (cons (rest types-list)))))
-                                      (list {sym constraint}))))
-             (fn [_]
-               constraint))))
+        (for [_ (se/update-val .value-types
+                               (fn [types-list]
+                                 (either (map (first types-list)
+                                              (fn [value-types]
+                                                (-> value-types
+                                                    (dissoc sym)
+                                                    (assoc sym constraint)
+                                                    (cons (rest types-list)))))
+                                         (list {sym constraint}))))]
+          constraint)))
 
 (defn append-value-type [sym constraint loc]
   (assert (instance? c/OptionalSym sym))
@@ -858,6 +852,11 @@
             (map .arity)
             (.constraint new-c))))))
 
+(defn local-var [prefix]
+  (map (se/get-in-val [.var-count 0])
+       (fn [var-count]
+         (str prefix (extract var-count)))))
+
 (extend-type ast/prototype-ast
   TypeChecker
   (pre-check [ast]
@@ -871,10 +870,14 @@
             (b/compilation-error "Duplicate parameter names in prototype at" loc)
 
             (for [_ (comp (se/get-in-val [.value-types 0 (.fn-name ast) .default-impl])
-                          (set-value-type (.fn-name ast)
-                                          (c/ProtoImpls (.fn-name ast)
-                                                      (.arities c/fn-constraint {}) {})))
+                          (flat-map (b/set-value (.fn-name ast) (.fn-name ast))
+                                    (fn [_]
+                                      (set-value-type (.fn-name ast)
+                                                      (c/ProtoImpls (.fn-name ast)
+                                                                    (.arities c/fn-constraint {}) {})))))
                   _ (push-types)
+                  result-var (local-var 'rslt)
+                  _ (b/set-value ast/result-sym (.var ast/result-sym result-var))
                   _ (set-value-type ast/result-sym c/top-type)
                   ;; :let [_ (or ;; (= (.line loc) 0)
                   ;;             ;; (= (.file loc) b/core)
@@ -886,7 +889,9 @@
                   ;;                 nothing)))]
                   _ (se/traverse all-param-syms
                                  (fn [sym]
-                                   (set-value-type sym c/top-type)))
+                                   (flat-map (b/set-value sym sym)
+                                             (fn [_]
+                                               (set-value-type sym c/top-type)))))
                   :let [idxs (integer-gen 1)]
                   _ (se/traverse fixed-params
                                  (fn [sym]
@@ -944,11 +949,6 @@
                                                                             {arg-count impl-c})
                                                                   {})})))))]
         (.constraint ast impl-c)))))
-
-(defn local-var [prefix]
-  (map (se/get-in-val [.var-count 0])
-       (fn [var-count]
-         (str prefix (extract var-count)))))
 
 (extend-type ast/call-ast
   TypeChecker
@@ -1073,6 +1073,7 @@
   (pre-check [ast]
     (for [
           ;; :let [_ (start-clock)]
+          _ (b/set-value (.sym ast) (.sym ast))
           _ (set-value-type (.sym ast) c/top-type)]
       (.value-exprs ast (-> (.value-exprs ast)
                             (remove (partial instance? ast/block-comment-ast))
@@ -1118,7 +1119,8 @@
                                            _ (set-value-type sym (c/update-path c loc))]
                                        val)
 
-                                     (let [val (set-global-var val)]
+                                     (let [val val ;; (set-global-var val)
+                                           ]
                                        (for [_ (b/set-value sym val)
                                              _ (set-value-type sym (c/trim (.constraint val)))]
                                          val)))))
@@ -1152,9 +1154,12 @@
             ;;                    nothing)))]
             _ (se/update-val .var-count (fn [var-counts]
                                           (cons (int-generator 0) var-counts)))
+            _ (b/set-value curr-arity curr-arity)
             _ (set-value-type curr-arity
                               (c/fn-c []
                                       {c/variadic (c/fn-arity arity-id c/list-constraint c/top-type)}))
+            result-var (local-var 'rslt)
+            _ (b/set-value ast/result-sym (.var ast/result-sym result-var))
             _ (set-value-type ast/result-sym c/top-type)
             new-params (cata (fn [x]
                                (cond (instance? c/TaggedSymbol x)
@@ -1303,6 +1308,7 @@
       ;;                  lf ast)
       ;;       nothing))
       (for [_ (push-types)
+            _ (b/set-value sym sym)
             _ (set-value-type sym (-> c/fn-constraint
                                       ;; TODO: worry about recursion later
                                       ;; (c/intersect (c/coll-of-c c/empty-reified))
@@ -1365,14 +1371,13 @@
     [ast])
 
   (recover-val-type [sym]
-    (flat-map (se/get-in-val [.value-types])
-              (fn [types-list]
-                (assert (instance? List types-list))
-                (map (either (for [value-types (nth types-list 1)
-                                   prev-constraint (get value-types sym)]
-                               (set-value-type sym prev-constraint))
-                             (remove-value-type sym))
-                     RecurseFinal))))
+    (for [types-list (se/get-in-val [.value-types])
+          vals-list (se/get-in-val [.values])
+          c (either (for [;; prev-val (get-in vals-list [1 sym])
+                          prev-constraint (get-in types-list [1 sym])]
+                      (set-value-type sym prev-constraint))
+                    (remove-value-type sym))]
+      (RecurseFinal c)))
 
   (pre-check [s]
     (se/try
@@ -1586,7 +1591,9 @@
       (for [_ (push-types)
             _ (se/traverse (all-syms (.binding ast))
                            (fn [sym]
-                             (set-value-type sym c/top-type)))]
+                             (flat-map (b/set-value sym sym)
+                                       (fn [_]
+                                         (set-value-type sym c/top-type)))))]
         val))))
 
 (extend-type ast/do-ast
@@ -1901,7 +1908,9 @@
             (for [_ (push-types)
                   ;; clear previous constraints for the fields
                   _ (se/traverse fields (fn [sym]
-                                          (set-value-type sym c/top-type)))
+                                          (flat-map (b/set-value sym sym)
+                                                    (fn [_]
+                                                      (set-value-type sym c/top-type)))))
 
                   ;; then add all the explicit constraints for the fields
                   ;; and collect them in 'field-cs'
@@ -1966,7 +1975,9 @@
                   _ (add-proto-impl ctor-type-num (c/tag 'apply) 2 ctor-apply)
                   ;; TODO: need instance? impl constraint
                   _ (se/assoc-in-val [.types sym] new-type-constraint)
-                  _ (set-value-type sym constructor)
+                  _ (flat-map (b/set-value sym sym)
+                              (fn [_]
+                                (set-value-type sym constructor)))
 
                   _ (se/traverse (vec fields-map)
                                  (fn [[field fld-c]]
@@ -2065,7 +2076,9 @@
                                                       (c/type-op c/set-to-op (c/param get-id 0)
                                                                  [[(c/param get-id 1)]
                                                                   (c/param get-id 2)])))))
-                           _ (set-value-type sym constructor)]
+                           _ (flat-map (b/set-value sym sym)
+                                       (fn [_]
+                                         (set-value-type sym constructor)))]
                        (ast/block-comment-ast [] c/no-loc c/top-type))))
 
                  ;; (reify
