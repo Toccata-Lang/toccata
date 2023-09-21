@@ -94,8 +94,8 @@
   ;; value-types     map of symbols (values) to type constraints
   ;; (assert (instance? (list-of (map-of Symbol c/ValueConstraint)) value-types))
   (assert (instance? List value-types))
-  ;; values          map of symbos to ast's
-  (assert (instance? HashMap values))
+  ;; values          list of maps of symbols to ast's
+  (assert (instance? (list-of HashMap) values))
   ;; var-count       stack of var counters
   (assert (instance? (list-of IntGenerator) var-count))
 
@@ -119,8 +119,64 @@
                  'int-min (.min c/int-constraint int-min)
                  'nothing (c/update-sym c/nothing-constraint
                                         (c/tag 'nothing))})
-          {}
+          (list {})
           (list (int-generator 0))))
+
+;; TODO: should these be in here? get-core-value, get-value, set-value
+(defn get-core-value [sym]
+  (assert (instance? c/TaggedSymbol sym))
+
+  ;; TODO: refactor this to make it pretty some day
+  (se/new-se (fn [s]
+               (assert (instance? Module s))
+
+               (either (or (and (= 0 (.index s))
+                                (map (get-in s [.values 0 sym])
+                                     (fn [val]
+                                       [val s])))
+                           (map (get-in s [.namespaces core .values 0 sym])
+                                (fn [val]
+                                  [val s])))
+                       se/Failure))))
+
+(defn get-value [sym]
+  (assert (instance? c/TaggedSymbol sym))
+
+  (cond (= (str sym) "")
+        (do
+          (print-err 'compiler-error _LINE_)
+          (se/state-error c/top-type))
+
+        (= sym c/no-symbol)
+        (do
+          (print-err 'compiler-error _LINE_)
+          (se/state-error c/top-type))
+
+        (let [loc (ast/location sym)]
+          ;; TODO: this does not look up namespaced symbols
+          (comp (se/get-in-val [.values 0 sym])
+                (get-core-value sym)
+                (compilation-error "Undefined symbol:" (str "'" sym "'") "at" loc)))))
+
+(defn set-value [sym val]
+  (assert (instance? c/TaggedSymbol sym))
+
+  (cond (= (str sym) "")
+        (do
+          (print-err 'compiler-error _LINE_ (ast/location val) val)
+          se-nop)
+
+        (map (se/update-val .values
+                            (fn [values-list]
+                              (either (map (first values-list)
+                                           (fn [values]
+                                             (-> values
+                                                 (dissoc sym)
+                                                 (assoc sym val)
+                                                 (cons (rest values-list)))))
+                                      (list {sym val}))))
+             (fn [_]
+               val))))
 
 (deftype ModuleSetup [init cleanup]
   ;; init               strings to initialize the module
