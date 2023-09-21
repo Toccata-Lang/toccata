@@ -4,7 +4,7 @@
                           :sha "dcba6be"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "1d5c3e6"))
+                            :sha "f93f741"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
@@ -98,6 +98,62 @@
   (gen-code [x mod arity]
     (gen-code x mod)))
 
+(defn checking-fn [params arity-fn-var]
+  (assert (instance? ast/params-ast params))
+  (let [loc (ast/location params)
+        checking-fn-var (b/global-var "checkerFn")]
+    (cond (instance? c/TaggedSymbol (.variadic params))
+          (do
+            ;; (c-code checking-fn-var
+            ;;         ["Value *" checking-fn-var
+            ;;          "(FnArity *arity, Value *args) {\n"
+            ;;          line
+            ;;          "int " checked-var "= 1;"
+            ;;          (-> constraints
+            ;;              (c/update-var "args")
+            ;;              ;; TODO: what if runtime-check is empty?
+            ;;              (runtime-check c/top-type file-name line-number checked-var))
+            ;;          "if(!" checked-var "){abort();}" line-sep
+            ;;          "return(" arity-fn-var
+            ;;          "(arity, args));\n};\n"]
+            ;;         {} c/top-type)
+            (print-err 'variadic-check-fn _LINE_)
+            (abort)
+            )
+
+          (every (.fixed params) (fn [param]
+                                   (and (instance? c/TaggedSymbol param)
+                                        (instance? c/ParamConstraint (.constraint param)))))
+          (.var empty-c-code arity-fn-var)
+
+          ;; (c-code checking-fn-var
+          ;;         ["Value *" checking-fn-var "("
+          ;;          (-> param-vars
+          ;;              (map (fn [param] (str "Value *" param)))
+          ;;              (seq)
+          ;;              (conj "FnArity *arity")
+          ;;              (interpose ", "))
+          ;;          ") {\n"
+          ;;          line
+          ;;          "int " checked-var "= 1;"
+          ;;          (for [[constraint var] (zip-lists constraints-list
+          ;;                                            param-vars)]
+          ;;            ;; TODO: what if runtime-check is empty?
+          ;;            (-> constraint
+          ;;                (c/update-var var)
+          ;;                (runtime-check c/top-type file-name line-number checked-var)))
+          ;;          "if(!" checked-var "){abort();}" line-sep
+          ;;          "return(" arity-fn-var "("
+          ;;          (-> param-vars
+          ;;              (seq)
+          ;;              (conj "arity")
+          ;;              (interpose ", "))
+          ;;          "));\n};\n"]
+          ;;         {} c/top-type)
+          (do
+            (print-err 'fixed-checked-fn _LINE_)
+            (abort)))))
+
 (extend-type ast/fn-arity-ast
   CodeGen
   (gen-code [ast mod]
@@ -110,35 +166,37 @@
 (extend-type b/StaticArity
   CodeGen
   (gen-code [ast mod]
-    (for [arity-code (gen-code (.arity ast) mod)]
-      (cond (= (-> ast .arity .params .variadic)
-               c/no-symbol)
-            ;; fixed arity
-            (let [params (-> ast .arity .params .fixed)]
-              (-> empty-c-code
-                  (.var (.arity-var ast))
-                  (.decl ["Value *" (.arity-var ast) "("
-                          (-> (reduce params ["FnArity *arity"]
-                                      (fn [args arg]
-                                        (conj args (str "Value *" (.var arg)))))
-                              (interpose ", "))
-                          ") {\nwhile (1) {\n"
-                          (.init arity-code)
+    (let [arity-var (.arity-var ast)]
+      (for [arity-code (gen-code (.arity ast) mod)]
+        (cond (= (-> ast .arity .params .variadic)
+                 c/no-symbol)
+              ;; fixed arity
+              (let [params (-> ast .arity .params .fixed)
+                    checker (checking-fn (-> ast .arity .params) arity-var)]
+                (-> empty-c-code
+                    (.var arity-var)
+                    (.decl ["Value *" arity-var "("
+                            (-> (reduce params ["FnArity *arity"]
+                                        (fn [args arg]
+                                          (conj args (str "Value *" (.var arg)))))
+                                (interpose ", "))
+                            ") {\nwhile (1) {\n"
+                            (.init arity-code)
 
-                          line-sep
-                          "};};\n"
-                          ;; TODO: add runtime check fn
-                          "FnArity " (.fn-var (.arity ast)) " = {FnArityType, -2, "
-                          (count params)
-                          ", (Vector *)0, (Value *)0, 0"
-                          ", (Value *)0" ;; (.c-var runtime-check-fn)
-                          ", (Value *)0, (Value *)0"
-                          "};" line-sep])))
+                            line-sep
+                            "};};\n"
+                            (.decl checker)
+                            "FnArity " (.fn-var (.arity ast)) " = {FnArityType, -2, "
+                            (count params)
+                            ", (Vector *)0, (Value *)0, 0"
+                            ", " (.var checker)
+                            ", (Value *)0, (Value *)0"
+                            "};" line-sep])))
 
-            ;; variadic arity
-            (do
-              (print-err 'finish-this _LINE_)
-              (se/state-error (abort)))))))
+              ;; variadic arity
+              (do
+                (print-err 'finish-this _LINE_)
+                (se/state-error (abort))))))))
 
 (extend-type ast/fn-ast
   CodeGen
