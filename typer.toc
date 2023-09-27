@@ -172,7 +172,9 @@
           vals-list
 
           (map vals-list (fn [values]
-                           (assoc values sym (.constraint sym getter)))))))
+                           (-> values
+                               (dissoc sym)
+                               (assoc sym (.constraint sym getter))))))))
 
 (defn get-core-value-type [sym]
   (assert (instance? c/TaggedSymbol sym))
@@ -181,7 +183,7 @@
                (assert (instance? b/Module s))
 
                (either (or (and (= 0 (.index s))
-                                (or (map (get-in s [.value-types 0 sym])
+                                (or (map (get-in s [.values 0 sym .constraint])
                                          (fn [val-type]
                                            [val-type s]))
                                     (for [first-char (first (str sym))
@@ -192,7 +194,7 @@
                                           new-s (update-in new-s [.value-types]
                                                            (fn [val-types]
                                                              (add-getter sym val-types)))
-                                          val-type (get-in new-s [.value-types 0 sym])]
+                                          val-type (get-in new-s [.values 0 sym .constraint])]
                                       [val-type new-s])
                                     (maybe se/Failure)))
                            (map (get-in s [.namespaces b/core .value-types 0 sym])
@@ -259,7 +261,7 @@
 
         (let [loc (ast/location sym)]
           ;; TODO: this does not look up namespaced symbols
-          (comp (se/get-in-val [.value-types 0 sym])
+          (comp (se/get-in-val [.values 0 sym .constraint])
                 (get-core-value-type sym)
                 (b/compilation-error "Could not find type constraint for"
                                      (str "'" sym "'") "at" loc)))))
@@ -561,8 +563,10 @@
                                (update-in new-s [.values]
                                           (fn [vals-list]
                                             (map vals-list (fn [values]
-                                                             (assoc values sym
-                                                                    (.constraint sym new-impls))))))))
+                                                             (-> values
+                                                                 (dissoc sym)
+                                                                 (assoc sym
+                                                                        (.constraint sym new-impls)))))))))
 
                             (flat-map
                              (update-in new-s [.namespaces b/core .value-types]
@@ -573,8 +577,10 @@
                                (update-in new-s [.namespaces b/core .values]
                                           (fn [vals-list]
                                             (map vals-list (fn [values]
-                                                             (assoc values sym
-                                                                    (.constraint sym new-impls)))))))))
+                                                             (-> values
+                                                                 (dissoc sym)
+                                                                 (assoc sym
+                                                                        (.constraint sym new-impls))))))))))
                       (do
                         (b/status 'compiler-error _LINE_ (str "'" sym "'") (ast/location sym))
                         (b/wait-for-err-out)
@@ -588,7 +594,10 @@
   (assert (instance? c/fn-arity arity-c))
 
   (cond (= type-num c/UnknownType)
-        (abort)
+        (do
+          (b/status 'bad-type-num _LINE_)
+          (b/wait-for-err-out)
+          (abort))
         '_)
   (let [loc (ast/location fn-sym)]
     (cond (= (str fn-sym) "")
@@ -613,13 +622,15 @@
                                                        (fn [vts]
                                                          (map vts (fn [m]
                                                                     (assoc m fn-sym new-proto)))))
-                                                    _ (se/update-val
-                                                       .values
-                                                       (fn [vals-list]
-                                                         (map vals-list
-                                                              (fn [m]
-                                                                (assoc m fn-sym
-                                                                       (.constraint fn-sym new-proto))))))]
+                                                    _ (let [new-impls (.constraint fn-sym new-proto)]
+                                                        (se/update-val
+                                                         .values
+                                                         (fn [vals-list]
+                                                           (map vals-list
+                                                                (fn [m]
+                                                                  (-> m
+                                                                      (dissoc fn-sym)
+                                                                      (assoc fn-sym new-impls)))))))]
                                                 new-proto)
 
                                               ;; add-impl might return a compilation error
@@ -958,7 +969,10 @@
             (b/compilation-error "Duplicate parameter names in prototype at" loc)
 
             (for [_ (comp (se/get-in-val [.value-types 0 (.fn-name ast) .default-impl])
-                          (for [_ (b/set-value (.fn-name ast) (.fn-name ast))
+                          (for [_ (b/set-value (.fn-name ast)
+                                               (.constraint (.fn-name ast)
+                                                            (c/ProtoImpls (.fn-name ast)
+                                                                          (.arities c/fn-constraint {}) {})))
                                 r (set-value-type (.fn-name ast)
                                                   (c/ProtoImpls (.fn-name ast)
                                                                 (.arities c/fn-constraint {}) {}))]
@@ -1031,10 +1045,20 @@
                                  ;; TODO: why not just add to all elements of vals-list
                                  (either (map (first vals-list)
                                               (fn [values]
-                                                (cons (assoc-in values
-                                                                [sym .constraint .default-impl .arities arg-count]
-                                                                impl-c)
-                                                      (rest vals-list))))
+                                                (-> (either (map (get values sym)
+                                                                 (fn [v]
+                                                                   (-> values
+                                                                       (dissoc sym)
+                                                                       (assoc sym
+                                                                              (assoc-in v
+                                                                                        [.constraint .default-impl .arities arg-count]
+                                                                                        impl-c)))))
+
+                                                            (assoc values sym (.constraint sym (c/ProtoImpls sym
+                                                                                                             (.arities c/fn-constraint
+                                                                                                                       {arg-count impl-c})
+                                                                                                             {}))))
+                                                    (cons (rest vals-list)))))
                                          (list {sym (.constraint sym (c/ProtoImpls sym
                                                                                    (.arities c/fn-constraint
                                                                                              {arg-count impl-c})
