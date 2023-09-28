@@ -93,74 +93,6 @@
                               vals-list))]
     '_))
 
-(defn add-getter [sym types-list]
-  (assert (instance? c/TaggedSymbol sym))
-  (assert (instance? (list-of HashMap) types-list))
-  (assert-result r (instance? (list-of HashMap) r))
-
-  ;; 'sym' already has '.' at front
-  (let [field-sym (c/Field sym)
-        required-field (-> c/empty-reified
-                           (.fields {field-sym c/top-type})
-                           (.type-symbol (c/tag (str "field '" (rest (str sym)) "' required"))))
-        getter-sym (c/tag (str sym "_getter"))
-        setter-sym (c/tag (str sym "_setter"))
-        arities {1 (c/fn-arity getter-sym
-                               (c/seq-c [(c/multi [(c/param getter-sym 0)
-                                                   required-field])])
-                               (c/type-op c/get-from-op (c/param getter-sym 0)
-                                          [field-sym]))
-                 2 (c/fn-arity setter-sym
-                               (c/seq-c [(c/multi [(c/param setter-sym 0)
-                                                   required-field])
-                                         (c/param setter-sym 1)])
-                               (c/type-op c/set-to-op (c/param setter-sym 0)
-                                          [[field-sym] (c/param setter-sym 1)]))}
-        getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})]
-    (cond (empty? types-list)
-          (list {sym getter})
-
-          (get-in types-list [0 sym])
-          types-list
-
-          (map types-list (fn [value-types]
-                            (assoc value-types sym getter))))))
-
-(defn add-getter-val [sym vals-list]
-  (assert (instance? c/TaggedSymbol sym))
-  (assert (instance? (list-of HashMap) vals-list))
-  (assert-result r (instance? (list-of HashMap) r))
-
-  ;; 'sym' already has '.' at front
-  (let [field-sym (c/Field sym)
-        required-field (-> c/empty-reified
-                           (.fields {field-sym c/top-type})
-                           (.type-symbol (c/tag (str "field '" (rest (str sym)) "' required"))))
-        getter-sym (c/tag (str sym "_getter"))
-        setter-sym (c/tag (str sym "_setter"))
-        arities {1 (c/fn-arity getter-sym
-                               (c/seq-c [(c/multi [(c/param getter-sym 0)
-                                                   required-field])])
-                               (c/type-op c/get-from-op (c/param getter-sym 0)
-                                          [field-sym]))
-                 2 (c/fn-arity setter-sym
-                               (c/seq-c [(c/multi [(c/param setter-sym 0)
-                                                   required-field])
-                                         (c/param setter-sym 1)])
-                               (c/type-op c/set-to-op (c/param setter-sym 0)
-                                          [[field-sym] (c/param setter-sym 1)]))}
-        getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})]
-    (cond (empty? vals-list)
-          (list {sym (.constraint sym getter)})
-
-          (get-in vals-list [0 sym])
-          vals-list
-
-          (map vals-list (fn [values]
-                           (-> values
-                               (dissoc sym)
-                               (assoc sym (.constraint sym getter))))))))
-
 (defn append-value-type [sym constraint loc]
   (assert (instance? c/OptionalSym sym))
   (assert (instance? c/Constraints constraint))
@@ -366,69 +298,25 @@
                                          type-info)))))))
 
 (defn add-getter-impls [sym type-num getter-impl setter-impl loc]
-  (se/new-se
-   (fn [s]
-     (assert (instance? b/Module s))
+  (flat-map (b/get-core-value sym)
+            (fn [getter-val]
+              (let [new-getter (-> getter-val
+                                   .constraint
+                                   (add-impl type-num 1 getter-impl loc)
+                                   (add-impl type-num 2 setter-impl loc))
+                    sym (.constraint sym new-getter)]
+                (cond (instance? c/ProtoImpls new-getter)
+                      (se/new-se (fn [s]
+                                   [sym (either (or (and (= 0 (.index s))
+                                                         (update s .values
+                                                                 (b/set-val-hist sym sym)))
 
-     (let [[getter new-s]
-           ;; get current getter/setter or create new one
-           (cond (= 0 (.index s))
-                 (either (map (get-in s [.values 0 sym .constraint])
-                              (fn [getter]
-                                [getter s]))
-                         (let [new-s (.values s (add-getter-val sym (.values s)))]
-                           [(extract (get-in new-s [.values 0 sym .constraint]))
-                            new-s]))
+                                                    (update-in s [.namespaces b/core .values]
+                                                               (b/set-val-hist sym sym)))
+                                                s)]))
 
-                 (either (or (map (get-in s [.namespaces b/core .values 0 sym .constraint])
-                                  (fn [getter]
-                                    [getter s]))
-                             (for [new-s (update-in s [.namespaces b/core .values]
-                                                    (fn [vals-list]
-                                                      (add-getter-val sym vals-list)))]
-                               (do
-                                 ;; (send b/modules
-                                 ;;       (fn [mods]
-                                 ;;         (assert-result r (instance? HashMap r))
-                                 ;;         (either (or (get-in mods [b/core .value-types 0 sym])
-                                 ;;                     (update-in mods [b/core .value-types]
-                                 ;;                                (fn [val-types]
-                                 ;;                                  (add-getter sym val-types))))
-                                 ;;                 mods)))
-                                 [(extract (get-in new-s [.namespaces b/core .values 0 sym .constraint]))
-                                  new-s])))
-                         (do
-                           (b/status 'compiler-error _LINE_ (str "'" sym "'") (ast/location sym))
-                           (b/wait-for-err-out)
-                           (abort))))
-           new-impls (-> getter
-                         (add-impl type-num 1 getter-impl loc)
-                         (add-impl type-num 2 setter-impl loc))]
-       (cond (instance? c/ProtoImpls new-impls)
-             [new-impls
-              (either (cond (= 0 (.index s))
-                            (update-in new-s [.values]
-                                       (fn [vals-list]
-                                         (map vals-list (fn [values]
-                                                          (-> values
-                                                              (dissoc sym)
-                                                              (assoc sym
-                                                                     (.constraint sym new-impls)))))))
-
-                            (update-in new-s [.namespaces b/core .values]
-                                       (fn [vals-list]
-                                         (map vals-list (fn [values]
-                                                          (-> values
-                                                              (dissoc sym)
-                                                              (assoc sym
-                                                                     (.constraint sym new-impls))))))))
-                      (do
-                        (b/status 'compiler-error _LINE_ (str "'" sym "'") (ast/location sym))
-                        (b/wait-for-err-out)
-                        (abort)))]
-
-             ;; add-impl might return a compilation error
-             new-impls)))))
+                      ;; TODO: add-impl might return a compilation error. Re-factor
+                      new-getter)))))
 
 (defn add-proto-impl [type-num fn-sym arg-count arity-c]
   (assert (instance? Integer type-num))

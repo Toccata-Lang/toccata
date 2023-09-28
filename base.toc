@@ -119,7 +119,53 @@
                               (.constraint c/nothing-constraint))})
           (list (int-generator 0))))
 
-;; TODO: should these be in here? get-core-value, get-value, set-value
+(defn add-getter-val [sym vals-list]
+  (assert (instance? c/TaggedSymbol sym))
+  (assert (instance? (list-of HashMap) vals-list))
+  (assert-result r (instance? (list-of HashMap) r))
+
+  ;; 'sym' already has '.' at front
+  (let [field-sym (c/Field sym)
+        required-field (-> c/empty-reified
+                           (.fields {field-sym c/top-type})
+                           (.type-symbol (c/tag (str "field '" (rest (str sym)) "' required"))))
+        getter-sym (c/tag (str sym "_getter"))
+        setter-sym (c/tag (str sym "_setter"))
+        arities {1 (c/fn-arity getter-sym
+                               (c/seq-c [(c/multi [(c/param getter-sym 0)
+                                                   required-field])])
+                               (c/type-op c/get-from-op (c/param getter-sym 0)
+                                          [field-sym]))
+                 2 (c/fn-arity setter-sym
+                               (c/seq-c [(c/multi [(c/param setter-sym 0)
+                                                   required-field])
+                                         (c/param setter-sym 1)])
+                               (c/type-op c/set-to-op (c/param setter-sym 0)
+                                          [[field-sym] (c/param setter-sym 1)]))}
+        getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})]
+    (cond (empty? vals-list)
+          (list {sym (.constraint sym getter)})
+
+          (get-in vals-list [0 sym])
+          vals-list
+
+          (map vals-list (fn [values]
+                           (-> values
+                               (dissoc sym)
+                               (assoc sym (.constraint sym getter))))))))
+
+(defn set-val-hist [sym val]
+  (fn [vals-list]
+    (assert (instance? List vals-list))
+
+    (cond (empty? vals-list)
+          (list {sym sym})
+
+          (map vals-list (fn [values]
+                           (-> values
+                               (dissoc sym)
+                               (assoc sym sym)))))))
+
 (defn get-core-value [sym]
   (assert (instance? c/TaggedSymbol sym))
 
@@ -133,7 +179,44 @@
                                        [val s])))
                            (map (get-in s [.namespaces core .values 0 sym])
                                 (fn [val]
-                                  [val s])))
+                                  [val s]))
+                           (for [dot (first (str sym))
+                                 _ (= "." dot)]
+                             (let [field-sym (c/Field sym)
+                                   type-sym (c/tag (str "field '" (rest (str sym)) "' required"))
+                                   required-field (-> c/empty-reified
+                                                      (.fields {field-sym c/top-type})
+                                                      (.type-symbol type-sym))
+                                   getter-sym (c/tag (str sym "_getter"))
+                                   setter-sym (c/tag (str sym "_setter"))
+                                   arities {1 (c/fn-arity getter-sym
+                                                          (c/seq-c [(c/multi [(c/param getter-sym 0)
+                                                                              required-field])])
+                                                          (c/type-op c/get-from-op
+                                                                     (c/param getter-sym 0)
+                                                                     [field-sym]))
+                                            2 (c/fn-arity setter-sym
+                                                          (c/seq-c [(c/multi [(c/param setter-sym 0)
+                                                                              required-field])
+                                                                    (c/param setter-sym 1)])
+                                                          (c/type-op c/set-to-op (c/param setter-sym 0)
+                                                                     [[field-sym]
+                                                                      (c/param setter-sym 1)]))}
+                                   getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})
+                                   sym (.constraint sym getter)
+                                   new-s (either (or (and (= 0 (.index s))
+                                                          (update s .values
+                                                                  (set-val-hist sym sym)))
+
+                                                     (update-in s [.namespaces core .values]
+                                                                (set-val-hist sym sym)))
+                                                 s)]
+                               (cond (instance? Module s)
+                                     '_
+                                     (do
+                                       (print-err 'wjoops _LINE_ s)
+                                       (abort)))
+                               [sym new-s])))
                        se/Failure))))
 
 (defn get-value [sym]
