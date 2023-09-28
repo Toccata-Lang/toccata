@@ -161,70 +161,6 @@
                                (dissoc sym)
                                (assoc sym (.constraint sym getter))))))))
 
-(defn get-core-value-type [sym]
-  (assert (instance? c/TaggedSymbol sym))
-
-  (se/new-se (fn [s]
-               (assert (instance? b/Module s))
-
-               (either (or (and (= 0 (.index s))
-                                (or (map (get-in s [.values 0 sym .constraint])
-                                         (fn [val-type]
-                                           [val-type s]))
-                                    (for [first-char (first (str sym))
-                                          _ (= first-char ".")
-                                          new-s (update-in s [.values]
-                                                           (fn [vals-list]
-                                                             (add-getter-val sym vals-list)))
-                                          val-type (get-in new-s [.values 0 sym .constraint])]
-                                      [val-type new-s])
-                                    (maybe se/Failure)))
-                           (map (get-in s [.namespaces b/core .values 0 sym .constraint])
-                                (fn [expr]
-                                  [expr s]))
-                           (for [first-char (first (str sym))
-                                 _ (= first-char ".")
-                                 new-s (update-in s [.namespaces b/core .values]
-                                                  (fn [vals-list]
-                                                    (add-getter-val sym vals-list)))
-                                 val-type (get-in new-s [.namespaces b/core .values 0 sym .constraint])]
-                             (do
-                               ;; (send b/modules
-                               ;;       (fn [mods]
-                               ;;         (assert-result r (instance? HashMap r))
-                               ;;         (either (or (get-in mods [b/core .value-types 0 sym])
-                               ;;                     (update-in mods [b/core .value-types]
-                               ;;                                (fn [val-types]
-                               ;;                                  (add-getter sym val-types))))
-                               ;;                 mods)))
-                               [val-type new-s]))
-                           ;; last ditch effort
-                           ;; (let [core-prom (promise)]
-                           ;;   ;; (b/status 'sending sym _LINE_)
-                           ;;   (send b/modules (fn [mods]
-                           ;;                   (assert-result r (instance? HashMap r))
-                           ;;                   (either (or (map (get-in mods [b/core .value-types 0 sym])
-                           ;;                                    (fn [val-type]
-                           ;;                                      (deliver core-prom (maybe val-type))
-                           ;;                                      mods))
-                           ;;                               (for [first-char (first (str sym))
-                           ;;                                     _ (= first-char ".")
-                           ;;                                     new-mods (update-in mods [b/core .value-types]
-                           ;;                                                         (fn [val-types]
-                           ;;                                                           (add-getter sym val-types)))
-                           ;;                                     val-type (get-in new-mods [b/core .value-types 0 sym])]
-                           ;;                                 (do
-                           ;;                                   (deliver core-prom (maybe val-type))
-                           ;;                                   new-mods)))
-                           ;;                           (do
-                           ;;                             (deliver core-prom nothing)
-                           ;;                             mods))))
-                           ;;   (map (extract core-prom)
-                           ;;        (fn [expr]
-                           ;;          [expr s])))
-                           )
-                       se/Failure))))
-
 (defn append-value-type [sym constraint loc]
   (assert (instance? c/OptionalSym sym))
   (assert (instance? c/Constraints constraint))
@@ -512,7 +448,7 @@
             (b/wait-for-err-out)
             (abort))
 
-          (comp (for [proto-impls (se/get-in-val [.values 0 fn-sym .constraint])
+          (comp (for [proto-impls (map (b/get-value fn-sym) .constraint)
                       new-proto (cond (get-in proto-impls [.impl-fns type-num .arities arg-count])
                                       (flat-map (b/se-debug 'proto _LINE_ type-num fn-sym arg-count)
                                                 (fn [_]
@@ -543,7 +479,7 @@
                   )
                 ;; TODO: test for namespaced fn-sym
                 (let [ns b/core]
-                  (for [proto-impls (se/get-in-val [.namespaces ns .values 0 fn-sym .constraint])
+                  (for [proto-impls (map (b/get-core-value fn-sym) .constraint)
                         new-proto (cond (get-in proto-impls [.impl-fns type-num .arities arg-count])
                                         ;; TODO: what about 'invoke' and 'apply' impls
                                         ;; especially 'apply'
@@ -571,7 +507,7 @@
 
                                 b/se-nop)]
                     new-proto))
-                (for [nss (se/get-in-val [.namespaces b/core .values 0 .constraint])
+                (for [nss (b/get-core-value fn-sym)
                       _ (b/compilation-error 'wth _LINE_ fn-sym loc)]
                   '_)))))
 
@@ -861,15 +797,19 @@
           arg-count (count fixed-params)
           all-param-syms (remove (all-syms (.params ast))
                                  (fn [s]
-                                   (= s '_)))]
+                                   (= s '_)))
+          sym (.constraint (.fn-name ast)
+                           (c/ProtoImpls (.fn-name ast)
+                                         (.arities c/fn-constraint
+                                                   {})
+                                         {}))]
       (cond (< (count (set all-param-syms)) (count all-param-syms))
             (b/compilation-error "Duplicate parameter names in prototype at" loc)
 
-            (for [_ (comp (se/get-in-val [.values 0 (.fn-name ast) .constraint .default-impl])
-                          (b/set-value (.fn-name ast)
-                                       (.constraint (.fn-name ast)
-                                                    (c/ProtoImpls (.fn-name ast)
-                                                                  (.arities c/fn-constraint {}) {}))))
+            (for [_ (se/try
+                      (b/get-value sym)
+                      (fn [_]
+                        (b/set-value sym sym)))
                   _ (push-types)
                   result-var (local-var 'rslt)
                   _ (b/set-value ast/result-sym (-> ast/result-sym
@@ -2050,8 +1990,7 @@
 
                    (type-check [_ _]
                      (for [_ (pop-types)
-                           _ (comp (se/get-in-val [.values 0 (c/tag 'get) .constraint .impl-fns type-num
-                                                   .arities 2])
+                           _ (comp (b/get-proto-impl (c/tag 'get) type-num 2)
                                    (add-proto-impl type-num (c/tag 'get loc) 2
                                                    (let [get-id (c/tag (str sym "_get") loc)]
                                                      (c/fn-arity
@@ -2063,9 +2002,7 @@
                                                        (c/type-op c/get-from-op (c/param get-id 0)
                                                                   [(c/param get-id 1)])
                                                        empty-list c/no-symbol)))))
-                           _ (comp (se/get-in-val [.values 0 (c/tag 'assoc) .constraint
-                                                   .impl-fns type-num
-                                                   .arities 3])
+                           _ (comp (b/get-proto-impl (c/tag 'assoc) type-num 3)
                                    (add-proto-impl type-num (c/tag 'assoc loc) 3
                                                    (let [get-id (c/tag (str sym "_get") loc)]
                                                      (c/fn-arity
