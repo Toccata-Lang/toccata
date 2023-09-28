@@ -225,51 +225,6 @@
                            )
                        se/Failure))))
 
-(defn get-value-type [sym]
-  (assert (instance? c/TaggedSymbol sym))
-
-  (cond (= (str sym) "")
-        (do
-          (print-err 'compiler-error _LINE_)
-          (se/state-error c/top-type))
-
-        (= sym c/no-symbol)
-        (do
-          (print-err 'compiler-error _LINE_)
-          (se/state-error c/top-type))
-
-        (let [loc (ast/location sym)]
-          ;; TODO: this does not look up namespaced symbols
-          (comp (se/get-in-val [.values 0 sym .constraint])
-                (get-core-value-type sym)
-                (b/compilation-error "Could not find type constraint for"
-                                     (str "'" sym "'") "at" loc)))))
-
-(defn set-value-type [sym constraint]
-  (assert (instance? c/OptionalSym sym))
-  (assert (instance? c/Constraints constraint))
-
-  (cond (= c/no-symbol sym)
-        (se/state-error constraint)
-
-        (= (str sym) "")
-        (do
-          (print-err 'compiler-error _LINE_ constraint)
-          b/se-nop)
-
-        (for [_ (se/update-val .values
-                               (fn [vals-list]
-                                 (either (map (first vals-list)
-                                              (fn [values]
-                                                (let [val (either (get values sym)
-                                                                      sym)]
-                                                  (-> values
-                                                      (dissoc sym)
-                                                      (assoc sym (.constraint val constraint))
-                                                      (cons (rest vals-list))))))
-                                         vals-list)))]
-          constraint)))
-
 (defn append-value-type [sym constraint loc]
   (assert (instance? c/OptionalSym sym))
   (assert (instance? c/Constraints constraint))
@@ -284,7 +239,7 @@
 
         (= constraint c/top-type)
         (se/try
-          (get-value-type sym)
+          (map (b/get-value sym) .constraint)
           (fn [_]
             (se/state-error c/top-type)))
 
@@ -295,15 +250,19 @@
                            (b/conf-ass _LINE_ constraint loc))
 
         (flat-map (se/try
-                    (get-value-type sym)
+                    (b/get-value sym)
                     (fn [_]
                       (se/state-error c/top-type)))
-                  (fn [curr-const]
-                    (cond (= curr-const c/top-type)
-                          (set-value-type sym (c/update-path constraint loc))
+                  (fn [curr-val]
+                    (cond (= (.constraint curr-val) c/top-type)
+                          (map (b/set-value sym (.constraint curr-val (c/update-path constraint loc)))
+                               .constraint)
+
+                          (instance? c/ProtoImpls (.constraint curr-val))
+                          b/se-nop
 
                           (let [new-const (c/intersect (c/update-path constraint loc)
-                                                       curr-const)]
+                                                       (.constraint curr-val))]
                             ;; (let [loc (ast/location sym)]
                             ;;   (or ;; (= (.file loc) b/core)
                             ;;       ;; (= (.line loc) 0)
@@ -323,10 +282,10 @@
                                                      ;; lflf
                                                      (b/conf-ass _LINE_ new-const loc))
 
-                                  (instance? c/ProtoImpls curr-const)
-                                  b/se-nop
-
-                                  (set-value-type sym (c/update-path new-const loc)))))))))
+                                  (map (b/set-value sym
+                                                    (.constraint curr-val
+                                                                 (c/update-path new-const loc)))
+                                       .constraint))))))))
 
 (defn remove-value-type [sym]
   (assert (instance? c/TaggedSymbol sym))
@@ -838,10 +797,10 @@
   TypeChecker
   (type-check [c old-c]
     ;; TODO: restrict use to fn params only
-    (flat-map (get-value-type (.param-sym old-c))
-              (fn [type-c]
+    (flat-map (b/get-value (.param-sym old-c))
+              (fn [val]
                 (let [loc (ast/location c)]
-                  (append-value-type (.sym c) type-c loc))))))
+                  (append-value-type (.sym c) (.constraint val) loc))))))
 
 (extend-type ProtoArity
   TypeChecker
@@ -907,18 +866,15 @@
             (b/compilation-error "Duplicate parameter names in prototype at" loc)
 
             (for [_ (comp (se/get-in-val [.values 0 (.fn-name ast) .constraint .default-impl])
-                          (for [_ (b/set-value (.fn-name ast)
-                                               (.constraint (.fn-name ast)
-                                                            (c/ProtoImpls (.fn-name ast)
-                                                                          (.arities c/fn-constraint {}) {})))
-                                r (set-value-type (.fn-name ast)
-                                                  (c/ProtoImpls (.fn-name ast)
-                                                                (.arities c/fn-constraint {}) {}))]
-                            r))
+                          (b/set-value (.fn-name ast)
+                                       (.constraint (.fn-name ast)
+                                                    (c/ProtoImpls (.fn-name ast)
+                                                                  (.arities c/fn-constraint {}) {}))))
                   _ (push-types)
                   result-var (local-var 'rslt)
-                  _ (b/set-value ast/result-sym (.var ast/result-sym result-var))
-                  _ (set-value-type ast/result-sym c/top-type)
+                  _ (b/set-value ast/result-sym (-> ast/result-sym
+                                                    (.constraint c/top-type)
+                                                    (.var result-var)))
                   ;; :let [_ (or ;; (= (.line loc) 0)
                   ;;             ;; (= (.file loc) b/core)
                   ;;          (and (= (.fn-name ast) 'first)
@@ -929,9 +885,7 @@
                   ;;                 nothing)))]
                   _ (se/traverse all-param-syms
                                  (fn [sym]
-                                   (for [_ (b/set-value sym sym)
-                                         r (set-value-type sym c/top-type)]
-                                     r)))
+                                   (b/set-value sym (.constraint sym c/top-type))))
                   :let [idxs (integer-gen 1)]
                   _ (se/traverse fixed-params
                                  (fn [sym]
@@ -941,9 +895,7 @@
                                            b/se-nop
 
                                            (= sym '_)
-                                           (for [_ (b/set-value sym sym)
-                                                 r (set-value-type sym c/top-type)]
-                                             r)
+                                           (b/set-value sym (.constraint sym c/top-type))
 
                                            (append-value-type sym
                                                               (c/param (.fn-name ast) idx)
@@ -959,7 +911,7 @@
                            (c/set-seq-tail c/no-tail)
                            (c/intersect c/list-constraint))))
             result-c (se/try
-                       (get-value-type ast/result-sym)
+                       (map (b/get-value ast/result-sym) .constraint)
                        (fn [_]
                          (se/state-error c/top-type)))
             ;; :let [_ (or ;; (= (.line loc) 0)
@@ -1126,8 +1078,8 @@
   (pre-check [ast]
     (for [
           ;; :let [_ (start-clock)]
-          _ (b/set-value (.sym ast) (.sym ast))
-          _ (set-value-type (.sym ast) c/top-type)]
+          _ (b/set-value (.sym ast) (.constraint (.sym ast) c/top-type))
+          ]
       (.value-exprs ast (-> (.value-exprs ast)
                             (remove (partial instance? ast/block-comment-ast))
                             (map (fn [inner-ast]
@@ -1159,7 +1111,7 @@
 
                                      (let [val (c/trim val)]
                                        (for [_ (se/assoc-in-val [.types sym] val)
-                                             _ (set-value-type sym val)]
+                                             _ (b/set-value sym (.constraint sym val))]
                                          (ast/block-comment-ast [] c/no-loc c/top-type)))
 
                                      (and (= c/top-type (.constraint val))
@@ -1168,16 +1120,15 @@
                                               (= sym 'int-max)
                                               (= sym 'int-min)
                                               (= sym 'nothing)))
-                                     (for [c (get-value-type sym)
-                                           _ (set-value-type sym (c/update-path c loc))]
+                                     (for [c (map (b/get-value sym) .constraint)
+                                           _ (b/set-value sym (.constraint sym (c/update-path c loc)))]
                                        val)
 
                                      (let [val val ;; (set-global-var val)
                                            ]
-                                       (for [_ (b/set-value sym val)
-                                             _ (set-value-type sym (c/trim (.constraint val)))]
+                                       (for [_ (b/set-value sym (.constraint val (c/trim (.constraint val))))]
                                          val)))))
-                        (set-value-type (.sym old-ast) c/top-type))]
+                        (b/set-value (.sym old-ast) (.constraint (.sym old-ast) c/top-type)))]
         (do
           ;; (b/status 'defed _LINE_ loc (.sym old-ast)
           ;;            lflf val)
@@ -1207,19 +1158,20 @@
             ;;                    nothing)))]
             _ (se/update-val .var-count (fn [var-counts]
                                           (cons (int-generator 0) var-counts)))
-            _ (b/set-value curr-arity curr-arity)
-            _ (set-value-type curr-arity
-                              (c/fn-c []
-                                      {c/variadic (c/fn-arity arity-id c/list-constraint c/top-type)}))
+            _ (b/set-value curr-arity (.constraint
+                                       curr-arity
+                                       (c/fn-c []
+                                               {c/variadic (c/fn-arity arity-id
+                                                                       c/list-constraint c/top-type)})))
             result-var (local-var 'rslt)
-            _ (b/set-value ast/result-sym (.var ast/result-sym result-var))
-            _ (set-value-type ast/result-sym c/top-type)
+            _ (b/set-value ast/result-sym (-> ast/result-sym
+                                              (.constraint c/top-type)
+                                              (.var result-var)))
             new-params (cata (fn [x]
                                (cond (instance? c/TaggedSymbol x)
                                      (for [var (local-var 'arg)
                                            :let [new-sym (.var x var)]
-                                           _ (b/set-value x new-sym)
-                                           _ (set-value-type x c/top-type)]
+                                           _ (b/set-value x (.constraint new-sym c/top-type))]
                                        new-sym)
 
                                      (instance? c/NoSymbol x)
@@ -1262,16 +1214,15 @@
     (assert (instance? ast/fn-arity-ast old-ast))
 
     (let [loc (ast/location old-ast)]
-      (for [result-c (get-value-type ast/result-sym)
+      (for [result-c (map (b/get-value ast/result-sym) .constraint)
             ;; :let [_ (stop-clock ast)]
             _ (recover-val-type ast/result-sym)
             _ (recover-val-type curr-arity)
             _ (se/update-val .var-count rest)
             args (se/traverse (all-syms (.params old-ast))
                               (fn [arg]
-                                (for [final-arg (b/get-value arg)
-                                      c (get-value-type arg)]
-                                  [arg (.constraint final-arg c)])))
+                                (for [final-arg (b/get-value arg)]
+                                  [arg final-arg])))
             pts (map (get-param-types (.params old-ast))
                      (fn [pts]
                        (cond (= c/no-symbol (.variadic (.params old-ast)))
@@ -1361,12 +1312,14 @@
       ;;                  lf ast)
       ;;       nothing))
       (for [_ (push-types)
-            _ (b/set-value sym sym)
-            _ (set-value-type sym (-> c/fn-constraint
-                                      ;; TODO: worry about recursion later
-                                      ;; (c/intersect (c/coll-of-c c/empty-reified))
-                                      (c/update-path loc)
-                                      (c/update-sym sym)))]
+            _ (cond (= c/no-symbol sym)
+                    b/se-nop
+
+                    (b/set-value sym (.constraint sym (-> c/fn-constraint
+                                                          ;; TODO: worry about recursion later
+                                                          ;; (c/intersect (c/coll-of-c c/empty-reified))
+                                                          (c/update-path loc)
+                                                          (c/update-sym sym)))))]
         (.arities ast (map (.arities ast)
                            (fn [arity]
                              (.fn-sym arity sym)))))))
@@ -1414,7 +1367,7 @@
 (extend-type c/TaggedSymbol
   TypeChecker
   (param-types [sym]
-    (get-value-type sym))
+    (map (b/get-value sym) .constraint))
 
   (update-constraint [ast constraint loc]
     (map (append-value-type ast constraint loc)
@@ -1443,8 +1396,9 @@
         (se/state-error s))))
 
   (type-check [s old-s]
-    (map (get-value-type s)
-         (partial .constraint s))))
+    (map (b/get-value s)
+         (fn [val]
+           (.constraint s (.constraint val))))))
 
 (extend-type ast/params-ast
   TypeChecker
@@ -1642,9 +1596,7 @@
       (for [_ (push-types)
             _ (se/traverse (all-syms (.binding ast))
                            (fn [sym]
-                             (flat-map (b/set-value sym sym)
-                                       (fn [_]
-                                         (set-value-type sym c/top-type)))))]
+                             (b/set-value sym (.constraint sym c/top-type))))]
         val))))
 
 (extend-type ast/do-ast
@@ -1803,8 +1755,8 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (for [arity (get-value-type curr-arity)
-          :let [param (c/param (either (get-in arity [.arities c/variadic .arity-id])
+    (for [arity-val (b/get-value curr-arity)
+          :let [param (c/param (either (get-in arity-val [.constraint .arities c/variadic .arity-id])
                                        (c/tag ""))
                                0)]
           _ (append-value-type (.sym type-info) type-info loc)
@@ -1959,9 +1911,7 @@
             (for [_ (push-types)
                   ;; clear previous constraints for the fields
                   _ (se/traverse fields (fn [sym]
-                                          (flat-map (b/set-value sym sym)
-                                                    (fn [_]
-                                                      (set-value-type sym c/top-type)))))
+                                          (b/set-value sym (.constraint sym c/top-type))))
 
                   ;; then add all the explicit constraints for the fields
                   ;; and collect them in 'field-cs'
@@ -1977,8 +1927,9 @@
                                                                      (.type-symbol c/empty-reified
                                                                                    (c/tag (str "Field '" (.sym field-c) "' doesn't exist")))])
                                                         loc))))))
-                  field-cs (se/traverse fields get-value-type)
-                  :let [idxs (integer-gen 1)
+                  field-vals (se/traverse fields b/get-value)
+                  :let [field-cs (map field-vals .constraint)
+                        idxs (integer-gen 1)
                         field-pairs (map (zip-lists fields field-cs)
                                          (fn [[fld-name fld-c]]
                                            [(c/Field (c/tag (str "." fld-name)))
@@ -2026,9 +1977,7 @@
                   _ (add-proto-impl ctor-type-num (c/tag 'apply) 2 ctor-apply)
                   ;; TODO: need instance? impl constraint
                   _ (se/assoc-in-val [.types sym] new-type-constraint)
-                  _ (flat-map (b/set-value sym sym)
-                              (fn [_]
-                                (set-value-type sym constructor)))
+                  _ (b/set-value sym (.constraint sym constructor))
 
                   _ (se/traverse (vec fields-map)
                                  (fn [[field fld-c]]
@@ -2128,9 +2077,7 @@
                                                       (c/type-op c/set-to-op (c/param get-id 0)
                                                                  [[(c/param get-id 1)]
                                                                   (c/param get-id 2)])))))
-                           _ (flat-map (b/set-value sym sym)
-                                       (fn [_]
-                                         (set-value-type sym constructor)))]
+                           _ (b/set-value sym (.constraint sym constructor))]
                        (ast/block-comment-ast [] c/no-loc c/top-type))))
 
                  ;; (reify
