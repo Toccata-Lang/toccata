@@ -194,11 +194,6 @@
                        lf (type-name ast) ast
                        lflf constraint))
 
-  (recover-val-type [x]
-    (assert-result r (instance? se/StateError r))
-
-    (se/state-error (RecurseFinal x)))
-
   (all-symbols [ast]
     (assert-result l (instance? (vector-of ast/ParamType) l))
     ;; ast
@@ -267,11 +262,6 @@
   (assert (instance? ast/ParamType params))
 
   (cata all-symbols params))
-
-(defn recover-types [params]
-  (assert (instance? ast/params-ast params))
-
-  (apo recover-val-type params se/state-error))
 
 (defn get-param-types [params]
   (assert (instance? (any-of c/TaggedSymbol ast/params-ast) params))
@@ -519,7 +509,8 @@
 
   (type-check [ast old-ast]
     (let [arg-count (count (.fixed (.params old-ast)))
-          variadic (.variadic (.params old-ast))]
+          variadic (.variadic (.params old-ast))
+          sym (.fn-name ast)]
       (for [pts (map (get-param-types (.params old-ast))
                      (fn [pts]
                        (-> pts
@@ -542,32 +533,21 @@
             :let [pts (c/set-seq-tail pts c/no-tail)
                   impl-c (c/fn-arity (.fn-name old-ast) pts result-c)]
             _ (b/remove-value-type ast/result-sym)
-            _ (recover-types (.params old-ast))
+            _ (se/traverse (all-syms (.params old-ast)) b/recover-val)
             _ (b/nip-types)
-            _ (se/update-val .values
-                             (fn [vals-list]
-                               (let [sym (.fn-name ast)]
-                                 ;; TODO: why not just add to all elements of vals-list
-                                 (either (map (first vals-list)
-                                              (fn [values]
-                                                (-> (either (map (get values sym)
-                                                                 (fn [v]
-                                                                   (-> values
-                                                                       (dissoc sym)
-                                                                       (assoc sym
-                                                                              (assoc-in v
-                                                                                        [.constraint .default-impl .arities arg-count]
-                                                                                        impl-c)))))
-
-                                                            (assoc values sym (.constraint sym (c/ProtoImpls sym
-                                                                                                             (.arities c/fn-constraint
-                                                                                                                       {arg-count impl-c})
-                                                                                                             {}))))
-                                                    (cons (rest vals-list)))))
-                                         (list {sym (.constraint sym (c/ProtoImpls sym
-                                                                                   (.arities c/fn-constraint
-                                                                                             {arg-count impl-c})
-                                                                                   {}))})))))]
+            proto-c (se/try
+                      (map (b/get-value sym)
+                           (fn [val]
+                             (assoc-in (.constraint val)
+                                       [.default-impl .arities arg-count]
+                                       impl-c)))
+                      (fn [_]
+                        (se/state-error (c/ProtoImpls sym
+                                                      (.arities c/fn-constraint
+                                                                {arg-count impl-c})
+                                                      {}))))
+            _ (b/se-debug 'proto _LINE_ sym proto-c)
+            _ (b/set-value sym (.constraint sym proto-c))]
         (.constraint ast impl-c)))))
 
 (extend-type ast/call-ast
@@ -831,8 +811,8 @@
     (let [loc (ast/location old-ast)]
       (for [result-c (map (b/get-value ast/result-sym) .constraint)
             ;; :let [_ (stop-clock ast)]
-            _ (recover-val-type ast/result-sym)
-            _ (recover-val-type curr-arity)
+            _ (b/recover-val ast/result-sym)
+            _ (b/recover-val curr-arity)
             _ (se/update-val .var-count rest)
             args (se/traverse (all-syms (.params old-ast))
                               (fn [arg]
@@ -843,7 +823,7 @@
                        (cond (= c/no-symbol (.variadic (.params old-ast)))
                              (c/set-seq-tail pts c/no-tail)
                              pts)))
-            _ (recover-types (.params old-ast))
+            _ (se/traverse (all-syms (.params old-ast)) b/recover-val)
             _ (b/nip-types)
             :let [args (reduce args {} conj)
                   body-c (either (map (last (.body ast)) .constraint)
@@ -991,14 +971,6 @@
   (all-symbols [ast]
     [ast])
 
-  (recover-val-type [sym]
-    (for [vals-list (se/get-val .values)
-          c (either (map (get-in vals-list [1 sym])
-                         (fn [prev-val]
-                           (b/set-value sym prev-val)))
-                    (b/remove-value-type sym))]
-      (RecurseFinal c)))
-
   (pre-check [s]
     (se/try
       (comp (map (b/get-value s) (fn [new-s]
@@ -1018,9 +990,6 @@
 
 (extend-type ast/params-ast
   TypeChecker
-  (recover-val-type [x]
-    (se/state-error (RecurseWith x)))
-
   (update-constraint [ast constraint loc]
     (let [new-c (-> (.constraint ast)
                     (c/intersect c/seq-constraint)
@@ -1257,7 +1226,7 @@
                                            c/top-type
                                            c))
                                    orig-binding-c)))
-            _ (se/traverse (all-syms binding) recover-val-type)
+            _ (se/traverse (all-syms binding) b/recover-val)
             _ (b/nip-types)
             val (update-constraint val binding-c loc)]
         (let [val-c (.constraint val)]
