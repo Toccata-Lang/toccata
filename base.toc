@@ -33,6 +33,7 @@
 
 (def lf "\n")
 (def lflf "\n\n")
+(def invoke-sym (c/tag 'invoke))
 
 (defn status [& msg]
   (send err-out (fn [out-file?]
@@ -119,52 +120,83 @@
                               (.constraint c/nothing-constraint))})
           (list (int-generator 0))))
 
-(defn add-getter-val [sym vals-list]
+(defn report-type-stack [& msg]
+  (map (se/get-val .values)
+       (fn [vts]
+         (status 'type-depth (to-str (interpose msg " "))
+                 (count vts)))))
+
+(defn push-types []
+  (se/update-val .values (fn [vals-list]
+                           (either (map (first vals-list)
+                                        (fn [values]
+                                          (conj vals-list values)))
+                                   (list {})))))
+
+(defn pop-types []
+  (se/update-val .values rest))
+
+(defn nip-types []
+  ;; Bringing the Forth to Toccata
+  (se/update-val .values (fn [vals-list]
+                           (either (map (first vals-list)
+                                        (fn [values]
+                                          (cons values (drop vals-list 2))))
+                                   vals-list))))
+
+(defn remove-value-type [sym]
   (assert (instance? c/TaggedSymbol sym))
-  (assert (instance? (list-of HashMap) vals-list))
-  (assert-result r (instance? (list-of HashMap) r))
-
-  ;; 'sym' already has '.' at front
-  (let [field-sym (c/Field sym)
-        required-field (-> c/empty-reified
-                           (.fields {field-sym c/top-type})
-                           (.type-symbol (c/tag (str "field '" (rest (str sym)) "' required"))))
-        getter-sym (c/tag (str sym "_getter"))
-        setter-sym (c/tag (str sym "_setter"))
-        arities {1 (c/fn-arity getter-sym
-                               (c/seq-c [(c/multi [(c/param getter-sym 0)
-                                                   required-field])])
-                               (c/type-op c/get-from-op (c/param getter-sym 0)
-                                          [field-sym]))
-                 2 (c/fn-arity setter-sym
-                               (c/seq-c [(c/multi [(c/param setter-sym 0)
-                                                   required-field])
-                                         (c/param setter-sym 1)])
-                               (c/type-op c/set-to-op (c/param setter-sym 0)
-                                          [[field-sym] (c/param setter-sym 1)]))}
-        getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})]
-    (cond (empty? vals-list)
-          (list {sym (.constraint sym getter)})
-
-          (get-in vals-list [0 sym])
-          vals-list
-
-          (map vals-list (fn [values]
-                           (-> values
-                               (dissoc sym)
-                               (assoc sym (.constraint sym getter))))))))
+  (se/update-val .values
+                 (fn [vals-list]
+                   (either (map (first vals-list)
+                                (fn [values]
+                                  (cons (dissoc values sym)
+                                        (rest vals-list))))
+                           vals-list))))
 
 (defn set-val-hist [sym val]
   (fn [vals-list]
     (assert (instance? List vals-list))
 
     (cond (empty? vals-list)
-          (list {sym sym})
+          (list {sym val})
 
           (map vals-list (fn [values]
                            (-> values
                                (dissoc sym)
-                               (assoc sym sym)))))))
+                               (assoc sym val)))))))
+
+(defn add-getter [sym s]
+  (let [field-sym (c/Field sym)
+        type-sym (c/tag (str "field '" (rest (str sym)) "' required"))
+        required-field (-> c/empty-reified
+                           (.fields {field-sym c/top-type})
+                           (.type-symbol type-sym))
+        getter-sym (c/tag (str sym "_getter"))
+        setter-sym (c/tag (str sym "_setter"))
+        arities {1 (c/fn-arity getter-sym
+                               (c/seq-c [(c/multi [(c/param getter-sym 0)
+                                                   required-field])])
+                               (c/type-op c/get-from-op
+                                          (c/param getter-sym 0)
+                                          [field-sym]))
+                 2 (c/fn-arity setter-sym
+                               (c/seq-c [(c/multi [(c/param setter-sym 0)
+                                                   required-field])
+                                         (c/param setter-sym 1)])
+                               (c/type-op c/set-to-op (c/param setter-sym 0)
+                                          [[field-sym]
+                                           (c/param setter-sym 1)]))}
+        getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})
+        sym (.constraint sym getter)
+        new-s (either (or (and (= 0 (.index s))
+                               (update s .values
+                                       (set-val-hist sym sym)))
+
+                          (update-in s [.namespaces core .values]
+                                     (set-val-hist sym sym)))
+                      s)]
+    [sym new-s]))
 
 (defn get-core-value [sym]
   (assert (instance? c/TaggedSymbol sym))
@@ -182,41 +214,7 @@
                                   [val s]))
                            (for [dot (first (str sym))
                                  _ (= "." dot)]
-                             (let [field-sym (c/Field sym)
-                                   type-sym (c/tag (str "field '" (rest (str sym)) "' required"))
-                                   required-field (-> c/empty-reified
-                                                      (.fields {field-sym c/top-type})
-                                                      (.type-symbol type-sym))
-                                   getter-sym (c/tag (str sym "_getter"))
-                                   setter-sym (c/tag (str sym "_setter"))
-                                   arities {1 (c/fn-arity getter-sym
-                                                          (c/seq-c [(c/multi [(c/param getter-sym 0)
-                                                                              required-field])])
-                                                          (c/type-op c/get-from-op
-                                                                     (c/param getter-sym 0)
-                                                                     [field-sym]))
-                                            2 (c/fn-arity setter-sym
-                                                          (c/seq-c [(c/multi [(c/param setter-sym 0)
-                                                                              required-field])
-                                                                    (c/param setter-sym 1)])
-                                                          (c/type-op c/set-to-op (c/param setter-sym 0)
-                                                                     [[field-sym]
-                                                                      (c/param setter-sym 1)]))}
-                                   getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})
-                                   sym (.constraint sym getter)
-                                   new-s (either (or (and (= 0 (.index s))
-                                                          (update s .values
-                                                                  (set-val-hist sym sym)))
-
-                                                     (update-in s [.namespaces core .values]
-                                                                (set-val-hist sym sym)))
-                                                 s)]
-                               (cond (instance? Module s)
-                                     '_
-                                     (do
-                                       (print-err 'wjoops _LINE_ s)
-                                       (abort)))
-                               [sym new-s])))
+                             (add-getter sym s)))
                        se/Failure))))
 
 (defn get-value [sym]
@@ -273,6 +271,154 @@
                                       (list {sym val}))))
              (fn [_]
                val))))
+
+(defn add-impl [proto-impls type-num arg-count arity-c loc]
+  (instance? c/ProtoImpls proto-impls)
+
+  (either (map (get-in proto-impls [.default-impl .arities arg-count])
+               (fn [dflt-arity]
+                 (let [idxs (integer-gen 0)
+                       new-params (-> (.param-consts dflt-arity)
+                                      c/get-items
+                                      (reduce [] (fn [params param]
+                                                   (conj params (c/param (.arity-id arity-c)
+                                                                         (new-int idxs))))))
+                       ;; TODO: need to account for destructuring of params
+                       dflt-arity (cond (= (str (.arity-id dflt-arity)) "")
+                                           dflt-arity
+
+                                           (c/reify-type-constraint dflt-arity
+                                                                    (.arity-id dflt-arity)
+                                                                    new-params loc))
+                       new-arity-c (c/intersect arity-c dflt-arity)]
+                   ;; (cond (and (= c/ListType type-num)
+                   ;;            (= (.fn-sym proto-impls) 'vec))
+                   ;;       (status 'proto-result _LINE_ loc
+                   ;;               lflf 'def dflt-arity
+                   ;;               lflf 'orig (get-in proto-impls [.default-impl .arities arg-count])
+                   ;;               lflf 'arity arity-c
+                   ;;               lflf 'new new-arity-c)
+
+                   ;;       '_)
+                   (cond (= c/bottom-type dflt-arity)
+                         (compilation-error ;; 'site _LINE_ loc type-num arg-count
+                                            ;; lflf 'dflt-arity dflt-arity
+                                            ;; lflf 'params new-params
+                                            ;; lflf
+                                            (conf-ass _LINE_ dflt-arity loc))
+
+                         (= new-arity-c c/bottom-type)
+                         (compilation-error ;; 'impl _LINE_
+                                            ;; lf 'def dflt-arity
+                                            ;; lflf 'arity arity-c
+                                            ;; lflf 'new new-arity-c
+                                            ;; lflf
+                                            (conf-ass _LINE_ new-arity-c loc))
+
+                         ;; happy path
+                         (se/state-error
+                          (either (update-in proto-impls [.impl-fns type-num]
+                                             (fn [fn-c]
+                                               (assert (instance? c/FnConstraint fn-c))
+
+                                               (assoc-in fn-c [.arities arg-count]
+                                                         new-arity-c)))
+                                  (assoc-in proto-impls [.impl-fns type-num]
+                                            (.arities c/fn-constraint
+                                                      {arg-count new-arity-c}))))))))
+          (compilation-error "No prototype for" (str "'" (.fn-sym proto-impls) "'") "with"
+                             (str arg-count) "arguments at" loc)))
+
+(defn add-getter-impls [sym type-num getter-impl setter-impl loc]
+  (for [getter-val (get-core-value sym)
+        new-getter (add-impl (.constraint getter-val) type-num 1 getter-impl loc)
+        new-getter (add-impl new-getter type-num 2 setter-impl loc)
+        mod-idx (se/get-val .index) 
+        :let [sym (.constraint sym new-getter)]
+        _ (cond (= 0 mod-idx)
+                (se/update-val .values (set-val-hist sym sym))
+
+                (se/update-in-val [.namespaces core .values]
+                                  (set-val-hist sym sym)))]
+    sym))
+
+(defn insert-invoke [type-num arity-c]
+  (let [arity-rank (either (map (get-in arity-c [.param-consts])
+                                (fn [params]
+                                  (count (c/get-items params))))
+                           0)]
+    (se/update-val .types
+                   (fn [types-info]
+                     (map-vals types-info
+                               (fn [type-info]
+                                 (either (for [_ (instance? c/ReifiedConstraint type-info)
+                                               _ (= (.type-number type-info) type-num)]
+                                           (.invoke-fn type-info
+                                                       (.arities c/fn-constraint
+                                                                 {arity-rank arity-c})))
+
+                                         type-info)))))))
+
+(defn add-proto-impl [type-num fn-sym arg-count arity-c]
+  (assert (instance? Integer type-num))
+  (assert (instance? c/fn-arity arity-c))
+
+  (cond (= type-num c/UnknownType)
+        (do
+          (status 'bad-type-num _LINE_)
+          (wait-for-err-out)
+          (abort))
+        '_)
+  (let [loc (ast/location fn-sym)]
+    (cond (= (str fn-sym) "")
+          (do
+            (status 'compiler-error _LINE_ (str "'" fn-sym "'") (ast/location fn-sym)
+                    lflf arity-c)
+            (wait-for-err-out)
+            (abort))
+
+          (comp (for [proto-impls (map (get-value fn-sym) .constraint)
+                      new-proto (cond (get-in proto-impls [.impl-fns type-num .arities arg-count])
+                                      (flat-map (se-debug 'proto _LINE_ type-num fn-sym arg-count)
+                                                (fn [_]
+                                                  (compilation-error "An implementation for"
+                                                                     (str "'" fn-sym "'")
+                                                                     "already exists\n"
+                                                                     "Redefinition attempted at" loc)))
+                                      (for [new-proto (add-impl proto-impls type-num
+                                                                arg-count arity-c loc)
+                                            _ (se/update-val
+                                               .values
+                                               (set-val-hist fn-sym (.constraint fn-sym new-proto)))]
+                                        new-proto))
+                      _ (cond (= invoke-sym fn-sym)
+                              (insert-invoke type-num arity-c)
+
+                              se-nop)]
+                  new-proto)
+                ;; TODO: test for namespaced fn-sym
+                (let [ns core]
+                  (for [proto-impls (map (get-core-value fn-sym) .constraint)
+                        new-proto (cond (get-in proto-impls [.impl-fns type-num .arities arg-count])
+                                        ;; TODO: what about 'invoke' and 'apply' impls
+                                        ;; especially 'apply'
+                                        (compilation-error "An implementation for" (str "'" fn-sym "'")
+                                                           "already exists\n"
+                                                           "Redefinition attempted at" loc)
+                                        (for [new-proto (add-impl proto-impls type-num
+                                                                  arg-count arity-c loc)
+                                              _ (se/update-in-val
+                                                 [.namespaces ns .values]
+                                                 (set-val-hist fn-sym (.constraint fn-sym new-proto)))]
+                                          new-proto))
+                        _ (cond (= invoke-sym fn-sym)
+                                (insert-invoke type-num arity-c)
+
+                                se-nop)]
+                    new-proto))
+                (for [nss (get-core-value fn-sym)
+                      _ (compilation-error 'wth _LINE_ fn-sym loc)]
+                  '_)))))
 
 (deftype ModuleSetup [init cleanup]
   ;; init               strings to initialize the module
