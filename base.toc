@@ -143,22 +143,24 @@
                  (count vts)))))
 
 (defn push-types []
-  (se/update-in-val [.namespaces c/no-symbol .values] (fn [vals-list]
-                                (either (map (first vals-list)
-                                             (fn [values]
-                                               (conj vals-list values)))
-                                        (list {})))))
+  (se/update-in-val [.namespaces c/no-symbol .values]
+                    (fn [vals-list]
+                      (either (map (first vals-list)
+                                   (fn [values]
+                                     (conj vals-list values)))
+                              (list {})))))
 
 (defn pop-types []
   (se/update-in-val [.namespaces c/no-symbol .values] rest))
 
 (defn nip-types []
   ;; Bringing the Forth to Toccata
-  (se/update-in-val [.namespaces c/no-symbol .values] (fn [vals-list]
-                                (either (map (first vals-list)
-                                             (fn [values]
-                                               (cons values (drop vals-list 2))))
-                                        vals-list))))
+  (se/update-in-val [.namespaces c/no-symbol .values]
+                    (fn [vals-list]
+                      (either (map (first vals-list)
+                                   (fn [values]
+                                     (cons values (drop vals-list 2))))
+                              vals-list))))
 
 (defn set-val-hist [sym val]
   (fn [vals-list]
@@ -195,12 +197,11 @@
                                            (c/param setter-sym 1)]))}
         getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})
         sym (.constraint sym getter)
-        new-s (either (or (and (= 0 (.index s))
-                               (update-in s [.namespaces c/no-symbol .values]
-                                          (set-val-hist sym sym)))
-
-                          (update-in s [.namespaces core .values]
-                                     (set-val-hist sym sym)))
+        new-s (either (update-in s [.namespaces (cond (= 0 (.index s))
+                                                      c/no-symbol
+                                                      core)
+                                    .values]
+                                 (set-val-hist sym sym))
                       s)]
     [sym new-s]))
 
@@ -211,11 +212,10 @@
   (se/new-se (fn [s]
                (assert (instance? Module s))
 
-               (either (or (and (= 0 (.index s))
-                                (map (get-in s [.namespaces c/no-symbol .values 0 sym])
-                                     (fn [val]
-                                       [val s])))
-                           (map (get-in s [.namespaces core .values 0 sym])
+               (either (or (map (get-in s [.namespaces (cond (= 0 (.index s))
+                                                             c/no-symbol
+                                                             core)
+                                           .values 0 sym])
                                 (fn [val]
                                   [val s]))
                            (for [dot (first (str sym))
@@ -236,11 +236,12 @@
           (print-err 'compiler-error _LINE_)
           (se/state-error c/top-type))
 
-        (let [loc (ast/location sym)]
-          ;; TODO: this does not look up namespaced symbols
-          (comp (se/get-in-val [.namespaces c/no-symbol .values 0 sym])
-                (get-core-value sym)
-                (compilation-error "Undefined symbol:" (str "'" sym "'") "at" loc)))))
+        (comp (cond (= c/no-symbol (.ns sym))
+                    (comp (se/get-in-val [.namespaces (.ns sym) .values 0 sym])
+                          (get-core-value sym))
+
+                    (se/get-in-val [.namespaces (.ns sym) .values 0 sym]))
+              (compilation-error "Undefined symbol:" (str "'" sym "'") "at" (ast/location sym)))))
 
 (defn get-proto-impl [sym type-num arity-rank]
   (se/try
@@ -266,7 +267,10 @@
           (print-err 'compiler-error _LINE_ (ast/location val) val)
           se-nop)
 
-        (map (se/update-in-val [.namespaces c/no-symbol .values]
+        ;; only allowed to update ProtoImpls for ns qualified symbols
+        (or (= c/no-symbol (.ns sym))
+            (instance? c/ProtoImpls (.constraint val)))
+        (map (se/update-in-val [.namespaces (.ns sym) .values]
                                (fn [values-list]
                                  (either (map (first values-list)
                                               (fn [values]
@@ -276,7 +280,9 @@
                                                     (cons (rest values-list)))))
                                          (list {sym val}))))
              (fn [_]
-               val))))
+               val))
+
+        (se/state-error val)))
 
 (defn add-impl [proto-impls type-num arg-count arity-c loc]
   (instance? c/ProtoImpls proto-impls)
@@ -341,11 +347,11 @@
         new-getter (add-impl new-getter type-num 2 setter-impl loc)
         mod-idx (se/get-val .index)
         :let [sym (.constraint sym new-getter)]
-        _ (cond (= 0 mod-idx)
-                (se/update-in-val [.namespaces c/no-symbol .values] (set-val-hist sym sym))
-
-                (se/update-in-val [.namespaces core .values]
-                                  (set-val-hist sym sym)))]
+        _ (se/update-in-val [.namespaces (cond (= 0 mod-idx)
+                                               c/no-symbol
+                                               core)
+                             .values]
+                            (set-val-hist sym sym))]
     sym))
 
 (defn insert-invoke [type-num arity-c]
@@ -462,8 +468,11 @@
   ;;       (do
   ;;         (status 'get-type _LINE_ loc type-sym)
   ;;         (maybe '_))))
-  (comp (se/get-in-val [.namespaces c/no-symbol .types type-sym])
-        (se/get-in-val [.namespaces core .types type-sym])
+  (comp (cond (= c/no-symbol (.ns type-sym))
+              (comp (se/get-in-val [.namespaces (.ns type-sym) .types type-sym])
+                    (se/get-in-val [.namespaces core .types type-sym]))
+
+              (se/get-in-val [.namespaces (.ns type-sym) .types type-sym]))
         ;; (flat-map se-nop
         ;;           (fn [_]
         ;;             ;; Look in the core module
@@ -487,6 +496,10 @@
         ;;               (extract core-prom))))
         (compilation-error "No type named" (str "'" type-sym "'")
                            "was found. Used at" (ast/location type-sym))))
+
+(defn set-type-info [type-sym type-info]
+  (se/assoc-in-val [.namespaces c/no-symbol .types type-sym]
+                   type-info))
 
 (deftype ModuleSetup [init cleanup]
   ;; init               strings to initialize the module

@@ -87,49 +87,44 @@
                              (b/conf-ass _LINE_ constraint loc))
 
         (= (.ns sym) c/no-symbol)
-        (comp (for [mod-idx (se/get-val .index)
-                    :when (< 0 mod-idx)
-                    core-val (b/get-core-value sym)]
-                (.constraint core-val))
+        (flat-map (se/try
+                    (b/get-value sym)
+                    (fn [_]
+                      (se/state-error c/top-type)))
+                  (fn [curr-val]
+                    (cond (= (.constraint curr-val) c/top-type)
+                          (map (b/set-value sym (.constraint curr-val
+                                                             (c/update-path constraint loc)))
+                               .constraint)
 
-              (flat-map (se/try
-                          (b/get-value sym)
-                          (fn [_]
-                            (se/state-error c/top-type)))
-                        (fn [curr-val]
-                          (cond (= (.constraint curr-val) c/top-type)
-                                (map (b/set-value sym (.constraint curr-val
-                                                                   (c/update-path constraint loc)))
-                                     .constraint)
+                          (instance? c/ProtoImpls (.constraint curr-val))
+                          b/se-nop
 
-                                (instance? c/ProtoImpls (.constraint curr-val))
-                                b/se-nop
+                          (let [new-const (c/intersect (c/update-path constraint loc)
+                                                       (.constraint curr-val))]
+                            ;; (let [loc (ast/location sym)]
+                            ;;   (or ;; (= (.file loc) b/core)
+                            ;;       ;; (= (.line loc) 0)
+                            ;;       (do
+                            ;;         (b/status 'appending _LINE_ loc (str "\"" sym "\"")
+                            ;;                 lf 'constraint constraint
+                            ;;                 lflf 'curr curr-const
+                            ;;                 lflf 'untrimmed (c/intersect curr-const constraint)
+                            ;;                 lflf 'new-const new-const)
+                            ;;         nothing)))
 
-                                (let [new-const (c/intersect (c/update-path constraint loc)
-                                                             (.constraint curr-val))]
-                                  ;; (let [loc (ast/location sym)]
-                                  ;;   (or ;; (= (.file loc) b/core)
-                                  ;;       ;; (= (.line loc) 0)
-                                  ;;       (do
-                                  ;;         (b/status 'appending _LINE_ loc (str "\"" sym "\"")
-                                  ;;                 lf 'constraint constraint
-                                  ;;                 lflf 'curr curr-const
-                                  ;;                 lflf 'untrimmed (c/intersect curr-const constraint)
-                                  ;;                 lflf 'new-const new-const)
-                                  ;;         nothing)))
+                            (cond (= new-const c/bottom-type)
+                                  (b/compilation-error ;; 'site _LINE_ loc 'appending sym
+                                   ;; lf 'curr curr-const
+                                   ;; lflf 'constraint constraint
+                                   ;; lflf 'new-const new-const
+                                   ;; lflf
+                                   (b/conf-ass _LINE_ new-const loc))
 
-                                  (cond (= new-const c/bottom-type)
-                                        (b/compilation-error ;; 'site _LINE_ loc 'appending sym
-                                         ;; lf 'curr curr-const
-                                         ;; lflf 'constraint constraint
-                                         ;; lflf 'new-const new-const
-                                         ;; lflf
-                                         (b/conf-ass _LINE_ new-const loc))
-
-                                        (map (b/set-value sym
-                                                          (.constraint curr-val
-                                                                       (c/update-path new-const loc)))
-                                             .constraint)))))))
+                                  (map (b/set-value sym
+                                                    (.constraint curr-val
+                                                                 (c/update-path new-const loc)))
+                                       .constraint))))))
 
         (se/state-error constraint)))
 
@@ -406,7 +401,7 @@
     (let [reified-type-num (either (instance? Integer (.type-num ast))
                                    (extract b/type-counter))
           type-sym (c/tag (str "reified value at " (ast/location ast)))]
-      (for [_ (se/assoc-in-val [.namespaces c/no-symbol .types type-sym]
+      (for [_ (b/set-type-info type-sym
                                (c/ReifiedConstraint reified-type-num type-sym {} {}
                                                     c/fn-constraint empty-list c/no-symbol))]
         (-> ast
@@ -682,7 +677,7 @@
                                      ;;           (set-value-type (.sym old-ast) val))
 
                                      (let [val (c/trim val)]
-                                       (for [_ (se/assoc-in-val [.namespaces c/no-symbol .types sym] val)
+                                       (for [_ (b/set-type-info sym val)
                                              _ (b/set-value sym (.constraint sym val))]
                                          (ast/block-comment-ast [] c/no-loc c/top-type)))
 
@@ -1460,7 +1455,7 @@
     (cond (= (.fields ast) c/no-fields)
           (let [sym (.sym ast)
                 loc (ast/location sym)]
-            (se/assoc-in-val [.namespaces c/no-symbol .types sym]
+            (b/set-type-info sym
                              (-> (c/ReifiedConstraint (new-type-number sym)
                                                       sym {} {c/contents c/top-type}
                                                       c/fn-constraint
@@ -1535,11 +1530,11 @@
                                                (c/type-op c/apply-op constructor
                                                           (c/multi [(c/param ctor-apply-id 1)
                                                                     ctor-apply-fields])))]
-                  _ (se/assoc-in-val [.namespaces c/no-symbol .types ctor-sym] constructor)
+                  _ (b/set-type-info ctor-sym constructor)
                   _ (b/add-proto-impl ctor-type-num b/invoke-sym (inc field-count) ctor-arity)
                   _ (b/add-proto-impl ctor-type-num (c/tag 'apply) 2 ctor-apply)
                   ;; TODO: need instance? impl constraint
-                  _ (se/assoc-in-val [.namespaces c/no-symbol .types sym] new-type-constraint)
+                  _ (b/set-type-info sym new-type-constraint)
                   _ (b/set-value sym (.constraint sym constructor))
 
                   _ (se/traverse (vec fields-map)
