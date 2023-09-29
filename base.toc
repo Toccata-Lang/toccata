@@ -92,67 +92,69 @@
   Stringable
   (string-list [_] (list "<SymTable '" (str path) "'>")))
 
-(deftype Module [index namespaces symbols var-count]
+(deftype Module [file-name index namespaces var-count]
   ;; index            this module's index
   (assert (instance? Integer index))
   ;; namespaces      imported namespaces
-  (assert (instance? (map-of (any-of c/ToccataCore Symbol)
+  (assert (instance? (map-of (any-of c/ToccataCore Symbol c/NoSymbol)
                              SymTable)
                      namespaces))
-  ;; symbols         maps of symbols to AST's
-  (assert (instance? SymTable symbols))
   ;; var-count       stack of var counters
   (assert (instance? (list-of IntGenerator) var-count))
 
   Stringable
-  (string-list [_] (list "<Module '" (str symbols) "'>")))
+  (string-list [_] (list "<Module '" (str file-name) "'>")))
 
 ;; modules holds a map from filenames to either a Module or a Promise
 (def modules (agent {}))
 
 (defn new-module [file-name module-index core-mod]
   (cond (= module-index 0)
-        (Module module-index
-                {}
-                (SymTable file-name
-                          c/core-type-constraints
-                          (list {'empty-list (-> (c/tag 'empty-list)
-                                                 (.constraint c/empty-list-constraint))
-                                 'empty-vector (-> (c/tag 'empty-vector)
-                                                   (.constraint c/empty-vect-constraint))
-                                 'int-max (-> (c/tag 'int-max)
-                                              (.constraint (.static c/int-constraint int-max)))
-                                 'int-min (-> (c/tag 'int-main)
-                                              (.constraint (.static c/int-constraint int-min)))
-                                 'nothing (-> (c/tag 'nothing)
-                                              (.constraint c/nothing-constraint))}))
+        (Module core module-index
+                {c/no-symbol (SymTable core
+                                       c/core-type-constraints
+                                       (list {'empty-list (-> (c/tag 'empty-list)
+                                                              (.constraint c/empty-list-constraint))
+                                              'empty-vector (-> (c/tag 'empty-vector)
+                                                                (.constraint c/empty-vect-constraint))
+                                              'int-max (-> (c/tag 'int-max)
+                                                           (.constraint (.static c/int-constraint
+                                                                                 int-max)))
+                                              'int-min (-> (c/tag 'int-main)
+                                                           (.constraint (.static c/int-constraint
+                                                                                 int-min)))
+                                              'nothing (-> (c/tag 'nothing)
+                                                           (.constraint c/nothing-constraint))}))}
                 (list (int-generator 0)))
-        (Module module-index
-                {core (.symbols core-mod)}
-                (SymTable file-name
-                          {}
-                          (list {}))
+        (Module file-name module-index
+                {core (either (get-in core-mod [.namespaces c/no-symbol])
+                              (SymTable core
+                                        {}
+                                        (list {})))
+                 c/no-symbol (SymTable file-name
+                                       {}
+                                       (list {}))}
                 (list (int-generator 0)))))
 
 (defn report-type-stack [& msg]
-  (map (se/get-in-val [.symbols .values])
+  (map (se/get-in-val [.namespaces c/no-symbol .values])
        (fn [vts]
          (status 'type-depth (to-str (interpose msg " "))
                  (count vts)))))
 
 (defn push-types []
-  (se/update-in-val [.symbols .values] (fn [vals-list]
+  (se/update-in-val [.namespaces c/no-symbol .values] (fn [vals-list]
                                 (either (map (first vals-list)
                                              (fn [values]
                                                (conj vals-list values)))
                                         (list {})))))
 
 (defn pop-types []
-  (se/update-in-val [.symbols .values] rest))
+  (se/update-in-val [.namespaces c/no-symbol .values] rest))
 
 (defn nip-types []
   ;; Bringing the Forth to Toccata
-  (se/update-in-val [.symbols .values] (fn [vals-list]
+  (se/update-in-val [.namespaces c/no-symbol .values] (fn [vals-list]
                                 (either (map (first vals-list)
                                              (fn [values]
                                                (cons values (drop vals-list 2))))
@@ -194,7 +196,7 @@
         getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})
         sym (.constraint sym getter)
         new-s (either (or (and (= 0 (.index s))
-                               (update-in s [.symbols .values]
+                               (update-in s [.namespaces c/no-symbol .values]
                                           (set-val-hist sym sym)))
 
                           (update-in s [.namespaces core .values]
@@ -210,7 +212,7 @@
                (assert (instance? Module s))
 
                (either (or (and (= 0 (.index s))
-                                (map (get-in s [.symbols .values 0 sym])
+                                (map (get-in s [.namespaces c/no-symbol .values 0 sym])
                                      (fn [val]
                                        [val s])))
                            (map (get-in s [.namespaces core .values 0 sym])
@@ -236,7 +238,7 @@
 
         (let [loc (ast/location sym)]
           ;; TODO: this does not look up namespaced symbols
-          (comp (se/get-in-val [.symbols .values 0 sym])
+          (comp (se/get-in-val [.namespaces c/no-symbol .values 0 sym])
                 (get-core-value sym)
                 (compilation-error "Undefined symbol:" (str "'" sym "'") "at" loc)))))
 
@@ -264,7 +266,7 @@
           (print-err 'compiler-error _LINE_ (ast/location val) val)
           se-nop)
 
-        (map (se/update-in-val [.symbols .values]
+        (map (se/update-in-val [.namespaces c/no-symbol .values]
                                (fn [values-list]
                                  (either (map (first values-list)
                                               (fn [values]
@@ -340,7 +342,7 @@
         mod-idx (se/get-val .index)
         :let [sym (.constraint sym new-getter)]
         _ (cond (= 0 mod-idx)
-                (se/update-in-val [.symbols .values] (set-val-hist sym sym))
+                (se/update-in-val [.namespaces c/no-symbol .values] (set-val-hist sym sym))
 
                 (se/update-in-val [.namespaces core .values]
                                   (set-val-hist sym sym)))]
@@ -351,7 +353,7 @@
                                 (fn [params]
                                   (count (c/get-items params))))
                            0)]
-    (se/update-in-val [.symbols .types]
+    (se/update-in-val [.namespaces c/no-symbol .types]
                       (fn [types-info]
                         (map-vals types-info
                                   (fn [type-info]
@@ -400,7 +402,7 @@
                                       (for [new-proto (add-impl proto-impls type-num
                                                                 arg-count arity-c loc)
                                             _ (se/update-in-val
-                                               [.symbols .values]
+                                               [.namespaces c/no-symbol .values]
                                                (set-val-hist fn-sym (.constraint fn-sym new-proto)))]
                                         new-proto))
                       _ (cond (= invoke-sym fn-sym)
@@ -434,7 +436,7 @@
 
 (defn remove-value-type [sym]
   (assert (instance? c/TaggedSymbol sym))
-  (se/update-in-val [.symbols .values]
+  (se/update-in-val [.namespaces c/no-symbol .values]
                     (fn [vals-list]
                       (either (map (first vals-list)
                                    (fn [values]
@@ -443,7 +445,7 @@
                               vals-list))))
 
 (defn recover-val [sym]
-  (for [vals-list (se/get-in-val [.symbols .values])
+  (for [vals-list (se/get-in-val [.namespaces c/no-symbol .values])
         c (either (map (get-in vals-list [1 sym])
                        (fn [prev-val]
                          (set-value sym prev-val)))
@@ -460,7 +462,7 @@
   ;;       (do
   ;;         (status 'get-type _LINE_ loc type-sym)
   ;;         (maybe '_))))
-  (comp (se/get-in-val [.symbols .types type-sym])
+  (comp (se/get-in-val [.namespaces c/no-symbol .types type-sym])
         (se/get-in-val [.namespaces core .types type-sym])
         ;; (flat-map se-nop
         ;;           (fn [_]
