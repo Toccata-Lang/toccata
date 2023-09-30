@@ -15,6 +15,20 @@
 
 (def line-sep "")
 
+(defn line-marker [loc marker]
+  (assert (instance? c/Location loc))
+
+  (cond (or (= "" (.file loc))
+            (and (= 'core (.file loc))
+                 (= 0 (.line loc))))
+        "\n#\n"
+        ["\n" marker "\n#line "
+         (str (.line loc)) " " "\""
+         (cond (= 'core (.file loc))
+               b/path-to-core
+               (.file loc))
+         "\"\n"]))
+
 (def output (agent (maybe 'output)))
 
 (defn code-out [& code]
@@ -60,9 +74,53 @@
 (def empty-c-code (C-code "" [] [] {}))
 
 (defprotocol CodeGen
-  (gen-call [tgt args]
+  (gen-call [tgt args mod result-var]
     (assert-result r (instance? se/StateError r))
-    )
+    ;; by providing impls for this, call sites can be optimized
+
+    (for [tgt-code (gen-code tgt mod)
+          arg-codes (se/traverse args (fn [arg]
+                                        (gen-code arg mod)))
+          :let [expr-code (comp* tgt-code arg-codes)
+                num-args (count args)]
+          final (se/when
+                    (update expr-code .init
+                            (fn [init]
+                              [init
+                               (line-marker (ast/location tgt) "// dynamic unknown type")
+                               "Value *" result-var ";" line-sep
+                               ;; TODO: handle non-function call targets
+                               ;; "if((" (.var tgt-code) ")->type != FunctionType) {" line-sep
+                               ;; result-var " = " invoke-arity-sym "("
+                               ;; (interpose (list* (str "(FnArity *)" (.c-var sym-location))
+                               ;;                   (.c-var target) args) ", ") ");"
+                               ;; line-sep "} else {" line-sep
+                               "if((" (.var tgt-code) ")->type == FunctionType) {" line-sep
+
+                               ;; look for static arity and call that
+                               "FnArity *arity = findFnArity(" (.var tgt-code) ", " num-args ");"
+                               line-sep
+                               "if(arity != (FnArity *)0 && !arity->variadic) {" line-sep
+                               "FnType" num-args " *fn = (FnType" num-args " *)arity->fn;" line-sep
+                               result-var " = fn(arity, " (-> arg-codes (map .var) (interpose ", "))
+                               ");" line-sep
+
+                               ;; TODO: handle variadic call
+                               ;; "} else if(" arity-sym " != (FnArity *)0 && " arity-sym "->variadic) {" line-sep
+                               ;; "FnType1 *" fn-sym " = (FnType1 *)" arity-sym "->fn;" line-sep
+                               ;; "List *" variadic-sym " = empty_list;" line-sep
+                               ;; (map (reverse (rest arg-syms))
+                               ;;      (fn [arg-sym]
+                               ;;        (str variadic-sym " = (List *)listCons("
+                               ;;             arg-sym ", " variadic-sym ");" line-sep)))
+                               ;; result-var " = " fn-sym "(" (str arity-sym) ", (Value *)"
+                               ;; variadic-sym ");" line-sep
+                               "} else {" line-sep
+                               "fprintf(stderr, \"\\n*** no arity found for '%s'.\\n\", "
+                               "((Function *)" (.var tgt-code) ")->name"
+                               ");" line-sep "  abort();" line-sep "}" line-sep
+                               "dec_and_free("(.var tgt-code) ", 1);" line-sep "}" line-sep])))]
+      final))
 
   (gen-code [ast mod]
     (assert-result r (instance? se/StateError r))
@@ -153,8 +211,8 @@
           ;;          "));\n};\n"]
           ;;         {} c/top-type)
           (do
-            (print-err 'fixed-checked-fn _LINE_)
-            (abort)))))
+            (b/status 'fixed-checked-fn _LINE_)
+            empty-c-code))))
 
 (extend-type ast/fn-arity-ast
   CodeGen
@@ -163,7 +221,10 @@
                                     (gen-code expr mod ast)))
          (fn [body-exprs]
            ;; TODO: add dec-refs
-           (comp* empty-c-code body-exprs)))))
+           (.var (comp* empty-c-code body-exprs)
+                 ;; TODO: handle recursion properly
+                 (either (map (last body-exprs) .var)
+                         ""))))))
 
 (extend-type b/StaticArity
   CodeGen
@@ -177,15 +238,16 @@
                     checker (checking-fn (-> ast .arity .params) arity-var)]
                 (-> empty-c-code
                     (.var arity-var)
-                    (.decl ["Value *" arity-var "("
+                    (.decl [(.decl arity-code)
+                            "Value *" arity-var "("
                             (-> (reduce params ["FnArity *arity"]
                                         (fn [args arg]
                                           (conj args (str "Value *" (.var arg)))))
                                 (interpose ", "))
                             ") {\nwhile (1) {\n"
-                            (.init arity-code)
-
-                            line-sep
+                            (.init arity-code) line-sep
+                            (either (= "" (.var arity-code))
+                                    ["return " (.var arity-code) ";"])
                             "};};\n"
                             (.decl checker)
                             "FnArity " (.fn-var (.arity ast)) " = {FnArityType, -2, "
@@ -204,6 +266,7 @@
   CodeGen
   (gen-code [ast mod]
     (let [fn-sym (.fn-sym ast)
+          fn-var (.var ast)
           arities (.arities ast)]
       ;; TODO: what if fn-sym is c/no-symbol
       (cond (every arities (fn [arity]
@@ -211,10 +274,21 @@
             (for [code-vect (se/traverse arities
                                          (fn [arity]
                                            (gen-code arity mod)))]
-              (comp* (C-code ""
-                             ["\n// --------- " fn-sym " -------------\n"]
-                             [] {})
-                     code-vect))
+              (let [struct-var (b/global-var "fnStruct")
+                    expr (comp* empty-c-code code-vect)]
+                (-> empty-c-code
+                    (.var fn-var)
+                    (.decl [(.decl expr)
+                            "\n// --------- " fn-sym " -------------\n"
+                            "Value *" fn-var ";" line-sep
+                            "Function " struct-var " = {FunctionType, -2, \""
+                            fn-sym "\", " (count arities) ", "
+                            "{"   (-> arities
+                                      (map (fn [static-arity]
+                                             (str "&" (-> static-arity .arity .fn-var))))
+                                      (interpose ", "))
+                            "}};\n"
+                            "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]))))
 
             (do
               (print-err 'finish _FILE_ _LINE_)
@@ -269,12 +343,7 @@
 (extend-type ast/call-ast
   CodeGen
   (gen-code [ast mod]
-    (for [tgt-expr (gen-code (.call-target ast) mod )
-          arg-exprs (se/traverse (.args ast) (fn [arg-ast]
-                                               (gen-code arg-ast mod)))
-          call-expr (gen-call (.call-target ast) (.args ast))]
-      (comp (comp* tgt-expr arg-exprs)
-            call-expr))))
+    (gen-call (.call-target ast) (.args ast) mod (.var ast))))
 
 (extend-type ast/block-comment-ast
   CodeGen
