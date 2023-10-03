@@ -26,6 +26,8 @@ extern void abort();
 #define REFS_SIZE int32_t
 #endif
 
+#define REFS_STATIC -2
+
 typedef struct
 {
  uint32_t        State[5];
@@ -90,6 +92,7 @@ extern Maybe nothing_struct;
 extern Value *maybeNothing;
 extern REFS_SIZE refsInit;
 extern REFS_SIZE refsError;
+extern REFS_SIZE refsConstant;
 extern REFS_SIZE refsStatic;
 
 #define IgnoreType -1
@@ -145,6 +148,7 @@ extern Vector empty_vect_struct;
 extern BitmapIndexedNode emptyBMI;
 extern Value *universalProtoFn;
 extern int typeCount;
+extern List *globals;
 
 extern ReifiedVal all_values_struct;
 extern Value *all_values;

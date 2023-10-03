@@ -16,11 +16,12 @@ Problems with values nested in others. And values delivered to Promises.
 REFS_SIZE refsInit = 1;
 REFS_SIZE refsError = -10;
 REFS_SIZE refsConstant = -1;
-REFS_SIZE refsStatic = -2;
+REFS_SIZE refsStatic = REFS_STATIC;
 
 Value *universalProtoFn = (Value *)0;
 Integer const0 = {IntegerType, -2, 0};
 Value *const0Ptr = (Value *)&const0;
+List *globals = &empty_list_struct;
 int cleaningUp = 0;
 
 // Immutable hash-map ported from Clojure
@@ -133,6 +134,11 @@ void cleanupMemory (Value *the_final_answer, Value *maybeNothing, List *argVect)
   dec_and_free(the_final_answer, 1);
   freeGlobal((Value *)argVect);
   freeGlobal(maybeNothing);
+  for (List *l = globals; l != (List *)0 && l->tail != (List *)0; l = l->tail) {
+    if (l->head->refs == refsConstant)
+      l->head->refs = 1;
+  }
+  dec_and_free((Value *)globals, 1);
   freeAll();
 #endif
 }
@@ -1554,6 +1560,7 @@ void waitForWorkers() {
   dec_and_free((Value *)l, 1);
   pthread_mutex_unlock (&futuresQueue.mutex);
 
+#ifdef WAIT_FOR_LINGERING
   int done = 0;
   do {
     pthread_mutex_lock (&lingeringAccess);
@@ -1570,6 +1577,9 @@ void waitForWorkers() {
       done = 1;
     dec_and_free((Value *)lingering, 1);
   } while(!done);
+#else
+  fprintf(stderr, "\n\n*** not waiting on lingering threads\n\n");
+#endif
 #endif
 }
 
