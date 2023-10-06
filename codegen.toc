@@ -191,6 +191,28 @@
   (gen-code [x mod arity]
     (gen-code x mod)))
 
+(defn destruct-seq [p]
+  (assert (instance? (any-of ast/ParamType c/NoSymbol) p))
+  (assert-result r (instance? Vector r))
+
+  (cond (or (= p c/no-symbol)
+            (instance? c/TaggedSymbol p))
+        []
+
+        (let [elem-count (inc (count (.fixed p)))
+              loc (ast/location p)]
+          [(map (.fixed p) (fn [inner]
+                             ["Value *" (.var inner) ";" line-sep]))
+           "if (1) {Value **destArgs [" elem-count "] = {"
+           (map (.fixed p) (fn [inner]
+                             ["&" (.var inner) ", "]))
+           (cond (= c/no-symbol (.variadic p))
+                 "(Value *)0"
+                 ["&" (.var (.variadic p))])
+           "};" line-sep "destructValue(\"" (.file loc) "\", \"" (.line loc)
+           "\", (Value *)" (.var p) ", " elem-count ", destArgs);" line-sep "}" line-sep
+           (map (.fixed p) destruct-seq) (destruct-seq (.variadic p))])))
+
 (defn checking-fn [params arity-fn-var]
   (assert (instance? ast/params-ast params))
   (let [loc (ast/location params)
@@ -214,9 +236,6 @@
             (abort)
             )
 
-          (every (.fixed params) (fn [param]
-                                   (and (instance? c/TaggedSymbol param)
-                                        (instance? c/ParamConstraint (.constraint param)))))
           (.var empty-c-code arity-fn-var)
 
           ;; (c-code checking-fn-var
@@ -243,9 +262,7 @@
           ;;              (interpose ", "))
           ;;          "));\n};\n"]
           ;;         {} c/top-type)
-          (do
-            (b/status 'fixed-checked-fn _LINE_)
-            empty-c-code))))
+          )))
 
 (extend-type ast/fn-arity-ast
   CodeGen
@@ -282,6 +299,7 @@
                                           (conj args (str "Value *" (.var arg)))))
                                 (interpose ", "))
                             ") {\nwhile (1) {"
+                            (map params destruct-seq)
                             (.init arity-code) line-sep
                             (either (= "" (.var arity-code))
                                     ["return " (.var arity-code) ";"])
@@ -412,7 +430,9 @@
           cont-codes (se/traverse (.cont ast)
                                   (fn [expr]
                                     (gen-code expr mod)))]
-      (let [code (comp* val-code cont-codes)]
+      (let [val-code (.init val-code [(.init val-code)
+                                      (destruct-seq (.binding ast))])
+            code (comp* val-code cont-codes)]
         (either (for [_ (is-glbl (.var ast))
                       last-expr (last (.cont ast))
                       :when-not (= (.var last-expr) (.var ast))
