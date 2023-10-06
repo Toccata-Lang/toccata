@@ -7,7 +7,7 @@
                           :sha "dcba6be"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "f93f741"))
+                            :sha "8456e85"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
@@ -158,7 +158,68 @@
 ;;                         (abort)))))
 ;;             mods)))
 
+;; TODO:
+;; (def C-var-punct (grmr/any (map (grmr/ignore "*") (constantly "_STAR_"))
+;;                            (map (grmr/ignore ".") (constantly ""))
+;;                            (map (grmr/ignore "#") (constantly "_HASH_"))
+;;                            (map (grmr/ignore "+") (constantly "_PLUS_"))
+;;                            (map (grmr/ignore "?") (constantly "_QM_"))
+;;                            (map (grmr/ignore "!") (constantly "_BANG_"))
+;;                            (map (grmr/ignore "=") (constantly "_EQ_"))
+;;                            (map (grmr/ignore "<") (constantly "_LT_"))
+;;                            (map (grmr/ignore ">") (constantly "_GT_"))))
+
+;; (def C-var-remaining
+;;   (grmr/none-or-more (grmr/any "_"
+;;                                (map (grmr/ignore "-") (constantly "_"))
+;;                                grmr/alpha
+;;                                grmr/digit
+;;                                C-var-punct)))
+
+;; (def C-var (apply-to (fn [start remaining]
+;;                        (to-str (comp [start] remaining)))
+;;                      (grmr/any grmr/alpha
+;;                                (map (grmr/ignore "#") (fn [] ""))
+;;                                (map (grmr/ignore "-") (fn [] "_MINUS_"))
+;;                                C-var-punct)
+;;                      C-var-remaining))
+
+;; (def C-var (rd/parser C-var))
+
+(defn check-C-var [var-name]
+  ;; (let [parse-result (C-var (str var-name))]
+
+  ;;   ;; TODO: this form doesn't work. 'instance?' fails
+  ;;   ;; (either (and (instance? se/Failure parse-result)
+  ;;   ;;              (maybe alt-var))
+
+  ;;   ;;       (let [[c-var] parse-result]
+  ;;   ;;         c-var))
+
+  ;;   (either (flat-map (instance? Vector parse-result)
+  ;;                     first)
+  ;;           'arg))
+  (cond (= "_" (str var-name))
+        "arg"
+        var-name)
+  )
+
+(defn local-var [prefix]
+  (map (se/get-in-val [.var-count 0])
+       (fn [var-count]
+         (str (check-C-var prefix) "_"
+              (extract var-count)))))
+
 (defprotocol TypeChecker
+  (set-local-var [ast]
+    (assert-result r (instance? se/StateError r))
+  
+    (cond (= (.var ast) "")
+          (map (local-var 'rslt)
+               (fn [new-var]
+                 (.var ast new-var)))
+          (se/state-error ast)))
+
   (set-global-var [ast])
 
   (update-constraint [ast constraint loc]
@@ -334,6 +395,9 @@
 
 (extend-type c/NoSymbol
   TypeChecker
+  (set-local-var [x]
+    (se/state-error x))
+
   (update-constraint [x _ _]
     (se/state-error x)))
 
@@ -421,58 +485,6 @@
             (map .arity)
             (.constraint new-c))))))
 
-;; TODO:
-;; (def C-var-punct (grmr/any (map (grmr/ignore "*") (constantly "_STAR_"))
-;;                            (map (grmr/ignore ".") (constantly ""))
-;;                            (map (grmr/ignore "#") (constantly "_HASH_"))
-;;                            (map (grmr/ignore "+") (constantly "_PLUS_"))
-;;                            (map (grmr/ignore "?") (constantly "_QM_"))
-;;                            (map (grmr/ignore "!") (constantly "_BANG_"))
-;;                            (map (grmr/ignore "=") (constantly "_EQ_"))
-;;                            (map (grmr/ignore "<") (constantly "_LT_"))
-;;                            (map (grmr/ignore ">") (constantly "_GT_"))))
-
-;; (def C-var-remaining
-;;   (grmr/none-or-more (grmr/any "_"
-;;                                (map (grmr/ignore "-") (constantly "_"))
-;;                                grmr/alpha
-;;                                grmr/digit
-;;                                C-var-punct)))
-
-;; (def C-var (apply-to (fn [start remaining]
-;;                        (to-str (comp [start] remaining)))
-;;                      (grmr/any grmr/alpha
-;;                                (map (grmr/ignore "#") (fn [] ""))
-;;                                (map (grmr/ignore "-") (fn [] "_MINUS_"))
-;;                                C-var-punct)
-;;                      C-var-remaining))
-
-;; (def C-var (rd/parser C-var))
-
-(defn check-C-var [var-name]
-  ;; (let [parse-result (C-var (str var-name))]
-
-  ;;   ;; TODO: this form doesn't work. 'instance?' fails
-  ;;   ;; (either (and (instance? se/Failure parse-result)
-  ;;   ;;              (maybe alt-var))
-
-  ;;   ;;       (let [[c-var] parse-result]
-  ;;   ;;         c-var))
-
-  ;;   (either (flat-map (instance? Vector parse-result)
-  ;;                     first)
-  ;;           'arg))
-  (cond (= "_" (str var-name))
-        "arg"
-        var-name)
-  )
-
-(defn local-var [prefix]
-  (map (se/get-in-val [.var-count 0])
-       (fn [var-count]
-         (str (check-C-var prefix) "_"
-              (extract var-count)))))
-
 (extend-type ast/prototype-ast
   TypeChecker
   (pre-check [ast]
@@ -495,10 +507,9 @@
                       (fn [_]
                         (b/set-value sym sym)))
                   _ (b/push-types)
-                  result-var (local-var 'rslt)
-                  _ (b/set-value ast/result-sym (-> ast/result-sym
-                                                    (.constraint c/top-type)
-                                                    (.var result-var)))
+                  _ (flat-map (set-local-var ast/result-sym)
+                              (fn [result-sym]
+                                (b/set-value ast/result-sym result-sym)))
                   ;; :let [_ (or ;; (= (.line loc) 0)
                   ;;             ;; (= (.file loc) b/core)
                   ;;          (and (= (.fn-name ast) 'first)
@@ -632,7 +643,7 @@
                     ;;                     se/state-error)
 
                     ;;                (se/state-error target-c))
-                    result-var (local-var 'rslt)
+                    ast (set-local-var ast)
                     result-type (either (for [reified-c (instance? c/ReifiedConstraint result-type)
                                               :when-not (= c/no-symbol (.type-symbol reified-c))
                                               _ (= c/UnknownType (.type-number reified-c))]
@@ -678,7 +689,6 @@
                                         (update-constraint ast arg-c loc))))]
                 (-> ast
                     (.args (vec new-args))
-                    (.var result-var)
                     (.constraint result-type)))))))
 
 (extend-type ast/Annotated
@@ -781,25 +791,16 @@
                                        (c/fn-c []
                                                {c/variadic (c/fn-arity arity-id
                                                                        c/list-constraint c/top-type)})))
-            new-params (cata (fn [x]
-                               (cond (instance? c/TaggedSymbol x)
-                                     (for [var (local-var x)
-                                           :let [new-sym (.var x var)]
-                                           _ (b/set-value x (.constraint new-sym c/top-type))]
-                                       new-sym)
-
-                                     (instance? c/NoSymbol x)
-                                     (se/state-error x)
-
-                                     (map (local-var 'seq)
-                                          (fn [var]
-                                            (.var x var)))))
-                             (.params ast)
-                             se/state-error)
+            new-params (set-local-var (.params ast))
+            _ (cata (fn [x]
+                      (cond (instance? c/TaggedSymbol x)
+                            (b/set-value x (.constraint x c/top-type))
+                            
+                            (se/state-error x)))
+                    new-params
+                    se/state-error)
             result-var (local-var 'rslt)
-            _ (b/set-value ast/result-sym (-> ast/result-sym
-                                              (.constraint c/top-type)
-                                              (.var result-var)))
+            _ (b/set-value ast/result-sym (.var ast/result-sym result-var))
             ;; _ (b/status 'new-params _LINE_
             ;;             (interpose (map (all-syms new-params)
             ;;                             (fn [s]
@@ -825,8 +826,9 @@
             (.params new-params)
             (.body (comp (filter (.body ast) (partial instance? c/Constraints))
                          (-> (.body ast)
-                             (remove (partial instance? c/Constraints))
-                             (remove (partial instance? ast/block-comment-ast)))))))))
+                             (remove (fn [ast]
+                                       (or (instance? c/Constraints ast)
+                                           (instance? ast/block-comment-ast ast)))))))))))
 
   (type-check [ast old-ast]
     (assert (instance? ast/fn-arity-ast old-ast))
@@ -913,6 +915,13 @@
 
 (extend-type ast/fn-ast
   TypeChecker
+  (set-local-var [ast]
+    (cond (= (.var ast) "")
+          (map (local-var 'fn)
+               (fn [new-var]
+                 (.var ast new-var)))
+          (se/state-error ast)))
+
   (set-global-var [ast]
     (cond (every (.arities ast) (fn [arity]
                                   (instance? b/StaticArity arity)))
@@ -966,9 +975,8 @@
       ;;         (print-err 'fn-c _LINE_ (ast/location old-ast) lf fn-c)
       ;;         nothLing)))
       (for [_ (b/nip-types)
-            var (local-var "fn")]
+            ast (set-local-var ast)]
         (-> ast
-            (.var var)
             (.constraint fn-c)
             (map (fn [arity]
                    ;; TODO: check for closure here
@@ -984,6 +992,13 @@
 
 (extend-type c/TaggedSymbol
   TypeChecker
+  (set-local-var [ast]
+    (cond (= (.var ast) "")
+          (map (local-var ast)
+               (fn [new-var]
+                 (.var ast new-var)))
+          (se/state-error ast)))
+
   (set-global-var [ast]
     ast)
 
@@ -1016,6 +1031,15 @@
 
 (extend-type ast/params-ast
   TypeChecker
+  (set-local-var [ast]
+    (flat-map (map ast set-local-var se/state-error)
+              (fn [new-ast]
+                (cond (= (.var new-ast) "")
+                      (map (local-var 'seq)
+                           (fn [new-var]
+                             (.var new-ast new-var)))
+                      (se/state-error new-ast)))))
+
   (update-constraint [ast constraint loc]
     (let [new-c (-> (.constraint ast)
                     (c/intersect c/seq-constraint)
@@ -1226,6 +1250,9 @@
 
 (extend-type ast/binding-ast
   TypeChecker
+  (set-global-var [ast]
+    (.var ast (b/global-var 'rslt)))
+
   (pre-check [ast]
     ;; (let [loc (ast/location (.cont ast))]
     ;;   (or ;; (= (.line loc) 0)
@@ -1238,18 +1265,25 @@
     ;;                   lflf 'val (.val ast)
     ;;                   lflf 'cont (.cont ast))
     ;;           nothing))))
-    (se/state-error (.val ast (Binder (.binding ast) (.val ast)))))
+    (for [new-binding (set-local-var (.binding ast))]
+      (let [new-val (.var (.val ast) (.var new-binding))]
+        (-> ast
+            (.binding new-binding)
+            (.val (Binder new-binding new-val))))))
 
   (type-check [ast old-ast]
     (let [binding (.binding ast)
           val (.val ast)
           val-c (.constraint val)
-          cont (.cont ast)
-          cont-cs (map cont (fn [ast]
-                              (cond (instance? c/ValueConstraint ast)
-                                    ast
+          cont (remove (.cont ast)
+                       (fn [ast]
+                         (or (instance? c/Constraints ast)
+                             (instance? ast/block-comment-ast ast))))
+          cont-cs (map (.cont ast) (fn [ast]
+                                     (cond (instance? c/ValueConstraint ast)
+                                           ast
 
-                                    (.constraint ast))))
+                                           (.constraint ast))))
           loc (ast/location old-ast)]
       (for [binding-c (map (get-param-types binding)
                            (fn [orig-binding-c]
@@ -1261,7 +1295,8 @@
             _ (se/traverse (all-syms binding) b/recover-val)
             _ (b/nip-types)
             val (update-constraint val binding-c loc)]
-        (let [val-c (.constraint val)]
+        (let [val-c (.constraint val)
+              last-expr (last cont)]
           ;; (or ;; (= (.line loc) 0)
           ;;     ;; (= (.file loc) b/core)
           ;;     (and (or (= (.binding ast) 'xtrap)
@@ -1274,9 +1309,9 @@
           ;;                    lflf 'val-c val-c)
           ;;            nothing)))
           (-> ast
-              ;; TODO: this assumes that the last expression in 'cont' has a .constraint
-              ;; field, but it might also be a constraint
-              (.constraint (either (map (last cont) .constraint)
+              (.var (either (map last-expr .var)
+                            ""))
+              (.constraint (either (map last-expr .constraint)
                                    c/top-type))
               (.val val)))))))
 

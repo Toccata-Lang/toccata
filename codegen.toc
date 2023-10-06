@@ -4,7 +4,7 @@
                           :sha "dcba6be"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "f93f741"))
+                            :sha "8456e85"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
@@ -97,13 +97,10 @@
 
 (def empty-c-code (C-code "" [] [] {}))
 
-(defn declare-result [code]
-  (cond (or (= (.var code) "")
-            (is-glbl (.var code)))
-        code
-
-        (.init code ["Value *" (.var code) ";" line-sep
-                     (.init code)])))
+(defn collapse-codes [codes]
+  (comp* empty-c-code
+         (map codes (fn [code]
+                      (.var code "")))))
 
 (defprotocol CodeGen
   (gen-call [tgt args mod result-var]
@@ -114,20 +111,19 @@
           arg-codes (se/traverse args (fn [arg]
                                         (map (gen-code arg mod)
                                              (fn [code]
-                                               (-> (either (or (map (is-glbl (.var code))
-                                                                    (fn [_]
-                                                                      code))
-                                                               (update code .refs-map
-                                                                       (fn [m]
-                                                                         (assoc m (.var code) 1))))
-                                                           code)
-                                                   declare-result)))))]
-      (let [expr-code (comp* tgt-code arg-codes)
+                                               (either (update code .refs-map
+                                                               (fn [m]
+                                                                 (assoc m (.var code) 1)))
+                                                       code)))))]
+      (let [expr-code (collapse-codes (list* tgt-code arg-codes))
             num-args (count args)]
         (-> expr-code
             (.var result-var)
             (.init [(.init expr-code)
                     (line-marker (ast/location tgt) "// dynamic unknown type")
+                    (cond (is-glbl result-var)
+                          ""
+                          ["Value *" result-var ";" line-sep])
                     ;; TODO: handle non-function call targets
                     ;; "if((" (.var tgt-code) ")->type != FunctionType) {" line-sep
                     ;; result-var " = " invoke-arity-sym "("
@@ -255,12 +251,9 @@
   CodeGen
   (gen-code [ast mod]
     (map (se/traverse (.body ast) (fn [expr]
-                                    (map (gen-code expr mod ast)
-                                         declare-result)))
+                                    (gen-code expr mod ast)))
          (fn [body-exprs]
            (let [code (comp* empty-c-code body-exprs)]
-             (b/status 'refs _LINE_ (.refs-map code)
-                       lf (map body-exprs .var))
              (-> code
                  (.init [(map (vec (.refs-map code))
                               (fn [[var refs]]
@@ -319,7 +312,7 @@
                                          (fn [arity]
                                            (gen-code arity mod)))]
               (let [struct-var (b/global-var "fnStruct")
-                    expr (comp* empty-c-code code-vect)]
+                    expr (collapse-codes code-vect)]
                 (-> empty-c-code
                     (.var fn-var)
                     (.decl [(.decl expr)
@@ -352,8 +345,10 @@
                                              (either (empty? (.init code))
                                                      [(map (vec (.refs-map code))
                                                            (fn [[var refs]]
-                                                             [line-sep "incRef(" var ", " (str refs)
-                                                              ");" line-sep]))
+                                                             (cond (is-glbl var)
+                                                                   ""
+                                                                   [line-sep "incRef(" var ", "
+                                                                    (str refs) ");" line-sep])))
                                                       (.init code)
                                                       add-global])))))]
         (-> code
@@ -409,6 +404,27 @@
   CodeGen
   (gen-code [ast mod]
     (gen-call (.call-target ast) (.args ast) mod (.var ast))))
+
+(extend-type ast/binding-ast
+  CodeGen
+  (gen-code [ast mod]
+    (for [val-code (gen-code (.val ast) mod)
+          cont-codes (se/traverse (.cont ast)
+                                  (fn [expr]
+                                    (gen-code expr mod)))]
+      (let [code (comp* val-code cont-codes)]
+        (either (for [_ (is-glbl (.var ast))
+                      last-expr (last (.cont ast))
+                      :when-not (= (.var last-expr) (.var ast))
+                      new-code (update code .decl
+                                       (fn [decl]
+                                         (conj decl ["Value *" (.var ast) ";"])))
+                      new-code (update new-code .init
+                                       (fn [init]
+                                         (conj init [(.var ast) " = " (.var last-expr)
+                                                     ";" line-sep])))]
+                  new-code)
+                code)))))
 
 (extend-type ast/block-comment-ast
   CodeGen
