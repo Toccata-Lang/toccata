@@ -102,8 +102,23 @@
          (map codes (fn [code]
                       (.var code "")))))
 
+(def generic-call)
 (defprotocol CodeGen
   (gen-call [tgt args mod result-var]
+    (assert-result r (instance? se/StateError r))
+
+    (generic-call tgt args mod result-var))
+
+  (gen-code [ast mod]
+    (assert-result r (instance? se/StateError r))
+    )
+
+  (gen-code [ast mod arity]
+    (assert-result r (instance? se/StateError r))
+
+    (gen-code ast mod)))
+
+(defn generic-call [tgt args mod result-var]
     (assert-result r (instance? se/StateError r))
     ;; by providing impls for this, call sites can be optimized
 
@@ -157,15 +172,6 @@
                           ["dec_and_free("(.var tgt-code) ", 1);" line-sep])
                     "}" line-sep])))))
 
-  (gen-code [ast mod]
-    (assert-result r (instance? se/StateError r))
-    )
-
-  (gen-code [ast mod arity]
-    (assert-result r (instance? se/StateError r))
-
-    (gen-code ast mod)))
-
 (defn emit-code [ast mod]
   (cond (instance? ast/inline-ast ast)
         (se/state-error (code-out (.txt ast)))
@@ -173,8 +179,57 @@
         (for [code (gen-code ast mod)]
           (code-out (.decl code)))))
 
+(defn call-vector [tgt args mod result-var]
+  (for [arg-codes (se/traverse args (fn [arg]
+                                      (gen-code arg mod)))]
+    (-> (conj arg-codes
+              (-> empty-c-code
+                  (.decl (cond (is-glbl result-var)
+                               ["Value *" result-var ";" line-sep]
+                               []))
+                  (.init [(cond (is-glbl result-var)
+                                ""
+                                ["Value *" result-var ";"])
+                          "if (1) {Vector *v = empty_vect;" line-sep
+                          (map arg-codes
+                               (fn [arg-code]
+                                 ["v = mutateVectConj(v, " (.var arg-code) ");"
+                                  line-sep]))
+                          result-var " = (Value *)v;}" line-sep])))
+        collapse-codes
+        (.var result-var))))
+
+(defn call-list [tgt args mod result-var]
+  (for [arg-codes (se/traverse args (fn [arg]
+                                      (gen-code arg mod)))]
+    (-> (conj arg-codes
+              (-> empty-c-code
+                  (.decl (cond (is-glbl result-var)
+                               ["Value *" result-var ";" line-sep]
+                               []))
+                  (.init [(cond (is-glbl result-var)
+                                ""
+                                ["Value *" result-var ";"])
+                          "if (1) {List *l = empty_list;" line-sep
+                          (map (reverse arg-codes)
+                               (fn [arg-code]
+                                 ["l = listCons(" (.var arg-code) ", l);"
+                                  line-sep]))
+                          result-var " = (Value *)l;}" line-sep])))
+        collapse-codes
+        (.var result-var))))
+
 (extend-type c/TaggedSymbol
   CodeGen
+  (gen-call [tgt args mod result-var]
+    (cond (= tgt 'vector)
+          (call-vector tgt args mod result-var)
+
+          (= tgt 'list)
+          (call-list tgt args mod result-var)
+
+          (generic-call tgt args mod result-var)))
+
   (gen-code [x mod]
     (se/state-error (.var empty-c-code (.var x)))))
 
@@ -380,7 +435,7 @@
                                                      [(map (vec (.refs-map code))
                                                            (fn [[var refs]]
                                                              (cond (is-glbl var)
-                                                                   ""
+                                                                   []
                                                                    [line-sep "incRef(" var ", "
                                                                     (str refs) ");" line-sep])))
                                                       (.init code)
@@ -389,9 +444,10 @@
             (.decl (cond (empty? (.init code))
                          ["// " (str (ast/location ast) "\n")
                           (.decl code)]
-                         (either (= (.var code) "")
-                                 ["Value *" (.var code) ";" line-sep
-                                  (.decl code)])))
+                         (cond (= (.var code) "")
+                               (.decl code)
+                               ["Value *" (.var code) ";" line-sep
+                                (.decl code)])))
             (.init []))))))
 
 (extend-type ast/integer-ast

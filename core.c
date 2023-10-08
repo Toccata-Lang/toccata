@@ -2255,8 +2255,9 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
       l->len = len;
       *tail = (Value *)l;
       incRef(*args[numArgs - 1], 1);
+    } else {
+      dec_and_free(val, 1);
     }
-    dec_and_free(val, 1);
   } else if (val->type == VectorType) {
     Vector *v = (Vector *)val;
     if (v->count < numArgs - 1) {
@@ -2272,6 +2273,8 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
     Value **tail = args[numArgs - 1];
     if (tail != (Value **)0) {
       *tail = vectSeq(v, numArgs - 1);
+    } else {
+      dec_and_free(val, 1);
     }
   } else {
     fprintf(stderr, "Could not unpack value at %s %s\n", fileName, lineNum);
