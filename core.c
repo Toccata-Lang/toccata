@@ -2250,9 +2250,12 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
       *args[i] = l->head; l = l->tail;
       incRef(*args[i], 1);
     }
-    l->len = len;
-    *args[numArgs - 1] = (Value *)l;
-    incRef(*args[numArgs - 1], 1);
+    Value **tail = args[numArgs - 1];
+    if (tail != (Value **)0) {
+      l->len = len;
+      *tail = (Value *)l;
+      incRef(*args[numArgs - 1], 1);
+    }
     dec_and_free(val, 1);
   } else if (val->type == VectorType) {
     Vector *v = (Vector *)val;
@@ -2266,7 +2269,10 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
       *args[i] = vectGet(v, i);
       incRef(*args[i], 1);
     }
-    *args[numArgs - 1] = vectSeq(v, numArgs - 1);
+    Value **tail = args[numArgs - 1];
+    if (tail != (Value **)0) {
+      *tail = vectSeq(v, numArgs - 1);
+    }
   } else {
     fprintf(stderr, "Could not unpack value at %s %s\n", fileName, lineNum);
     abort();

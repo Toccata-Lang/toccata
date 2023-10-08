@@ -140,16 +140,14 @@
                     result-var " = fn(arity, " (-> arg-codes (map .var) (interpose ", "))
                     ");" line-sep
 
-                    ;; TODO: handle variadic call
-                    ;; "} else if(" arity-sym " != (FnArity *)0 && " arity-sym "->variadic) {" line-sep
-                    ;; "FnType1 *" fn-sym " = (FnType1 *)" arity-sym "->fn;" line-sep
-                    ;; "List *" variadic-sym " = empty_list;" line-sep
-                    ;; (map (reverse (rest arg-syms))
-                    ;;      (fn [arg-sym]
-                    ;;        (str variadic-sym " = (List *)listCons("
-                    ;;             arg-sym ", " variadic-sym ");" line-sep)))
-                    ;; result-var " = " fn-sym "(" (str arity-sym) ", (Value *)"
-                    ;; variadic-sym ");" line-sep
+                    "} else if(arity != (FnArity *)0 && arity->variadic) {" line-sep
+                    "FnType1 *fn = (FnType1 *)arity->fn;" line-sep
+                    "List *args = empty_list;" line-sep
+                    (map (reverse arg-codes)
+                         (fn [arg]
+                           (str "args = (List *)listCons("
+                                (.var arg) ", args);" line-sep)))
+                    result-var " = fn(arity, (Value *)args);" line-sep
                     "} else {" line-sep
                     "fprintf(stderr, \"\\n*** no arity found for '%s'.\\n\", "
                     "((Function *)" (.var tgt-code) ")->name"
@@ -199,6 +197,10 @@
             (instance? c/TaggedSymbol p))
         []
 
+        (and (empty? (.fixed p))
+             (instance? c/TaggedSymbol (.variadic p)))
+        ["Value *" (.var (.variadic p)) " = " (.var p) ";" line-sep]
+
         (let [elem-count (inc (count (.fixed p)))
               loc (ast/location p)]
           [(map (.fixed p) (fn [inner]
@@ -207,7 +209,7 @@
            (map (.fixed p) (fn [inner]
                              ["&" (.var inner) ", "]))
            (cond (= c/no-symbol (.variadic p))
-                 "(Value *)0"
+                 "(Value **)0"
                  ["&" (.var (.variadic p))])
            "};" line-sep "destructValue(\"" (.file loc) "\", \"" (.line loc)
            "\", (Value *)" (.var p) ", " elem-count ", destArgs);" line-sep "}" line-sep
@@ -232,8 +234,7 @@
             ;;          "return(" arity-fn-var
             ;;          "(arity, args));\n};\n"]
             ;;         {} c/top-type)
-            (print-err 'variadic-check-fn _LINE_)
-            (abort)
+            (.var empty-c-code arity-fn-var)
             )
 
           (.var empty-c-code arity-fn-var)
@@ -313,9 +314,24 @@
                             "};" line-sep])))
 
               ;; variadic arity
-              (do
-                (print-err 'finish-this _LINE_)
-                (abort)))))))
+              (let [params (-> ast .arity .params)
+                    checker (checking-fn (-> ast .arity .params) arity-var)]
+                (-> empty-c-code
+                    (.var arity-var)
+                    (.decl [(.decl arity-code)
+                            "Value *" arity-var "(FnArity *arity, Value *" (.var params)
+                            ") {\nwhile (1) {"
+                            (destruct-seq params)
+                            (.init arity-code) line-sep
+                            (either (= "" (.var arity-code))
+                                    ["return " (.var arity-code) ";"])
+                            "};};\n"
+                            (.decl checker)
+                            "FnArity " (.fn-var (.arity ast)) " = {FnArityType, REFS_STATIC, "
+                            "1, (Vector *)0, (Value *)0, 1"
+                            ", " (.var checker)
+                            ", (Value *)0, (Value *)0"
+                            "};" line-sep]))))))))
 
 (extend-type ast/fn-ast
   CodeGen
@@ -431,8 +447,9 @@
                                   (fn [expr]
                                     (gen-code expr mod)))]
       (let [val-code (.init val-code [(.init val-code)
-                                      (destruct-seq (.binding ast))])
-            code (comp* val-code cont-codes)]
+                                      (destruct-seq (.var (.binding ast) (.var val-code)))])
+            code (comp* val-code (conj cont-codes
+                                       (.refs-map empty-c-code {(.var val-code) 1})))]
         (either (for [_ (is-glbl (.var ast))
                       last-expr (last (.cont ast))
                       :when-not (= (.var last-expr) (.var ast))
