@@ -48,7 +48,7 @@ typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *array[VECTOR_ARRAY_LEN];}
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int count; Vector *closures; Value *parent;
-                int variadic; void *fn; Value *paramConstraints; Value *resultConstraint;} FnArity;
+                int variadic; void *fn;} FnArity;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; char *name; int64_t arityCount; FnArity *arities[];} Function;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; Value* value;} Maybe;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int32_t bitmap; Value *array[];} BitmapIndexedNode;
