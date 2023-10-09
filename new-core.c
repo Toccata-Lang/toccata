@@ -11,16 +11,17 @@ Problems with values nested in others. And values delivered to Promises.
 
 #include <stdlib.h>
 #include <stdatomic.h>
-#include "core.h"
+#include "new-core.h"
 
 REFS_SIZE refsInit = 1;
 REFS_SIZE refsError = -10;
 REFS_SIZE refsConstant = -1;
-REFS_SIZE refsStatic = -2;
+REFS_SIZE refsStatic = REFS_STATIC;
 
 Value *universalProtoFn = (Value *)0;
 Integer const0 = {IntegerType, -2, 0};
 Value *const0Ptr = (Value *)&const0;
+List *globals = &empty_list_struct;
 int cleaningUp = 0;
 
 // Immutable hash-map ported from Clojure
@@ -133,6 +134,11 @@ void cleanupMemory (Value *the_final_answer, Value *maybeNothing, List *argVect)
   dec_and_free(the_final_answer, 1);
   freeGlobal((Value *)argVect);
   freeGlobal(maybeNothing);
+  for (List *l = globals; l != (List *)0 && l->tail != (List *)0; l = l->tail) {
+    if (l->head->refs == refsConstant)
+      l->head->refs = 1;
+  }
+  dec_and_free((Value *)globals, 1);
   freeAll();
 #endif
 }
@@ -1554,6 +1560,7 @@ void waitForWorkers() {
   dec_and_free((Value *)l, 1);
   pthread_mutex_unlock (&futuresQueue.mutex);
 
+#ifdef WAIT_FOR_LINGERING
   int done = 0;
   do {
     pthread_mutex_lock (&lingeringAccess);
@@ -1570,6 +1577,9 @@ void waitForWorkers() {
       done = 1;
     dec_and_free((Value *)lingering, 1);
   } while(!done);
+#else
+  fprintf(stderr, "\n\n*** not waiting on lingering threads\n\n");
+#endif
 #endif
 }
 
@@ -2240,10 +2250,14 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
       *args[i] = l->head; l = l->tail;
       incRef(*args[i], 1);
     }
-    l->len = len;
-    *args[numArgs - 1] = (Value *)l;
-    incRef(*args[numArgs - 1], 1);
-    dec_and_free(val, 1);
+    Value **tail = args[numArgs - 1];
+    if (tail != (Value **)0) {
+      l->len = len;
+      *tail = (Value *)l;
+      incRef(*args[numArgs - 1], 1);
+    } else {
+      dec_and_free(val, 1);
+    }
   } else if (val->type == VectorType) {
     Vector *v = (Vector *)val;
     if (v->count < numArgs - 1) {
@@ -2256,7 +2270,12 @@ void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value
       *args[i] = vectGet(v, i);
       incRef(*args[i], 1);
     }
-    *args[numArgs - 1] = vectSeq(v, numArgs - 1);
+    Value **tail = args[numArgs - 1];
+    if (tail != (Value **)0) {
+      *tail = vectSeq(v, numArgs - 1);
+    } else {
+      dec_and_free(val, 1);
+    }
   } else {
     fprintf(stderr, "Could not unpack value at %s %s\n", fileName, lineNum);
     abort();
