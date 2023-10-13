@@ -7,7 +7,7 @@
                           :sha "dcba6be"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "8456e85"))
+                            :sha "2a759e2"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
@@ -53,6 +53,7 @@
 (deftype ProtoArity [type-num arity]
   (assert (instance? (all-of Integer (min 1))
                      type-num))
+  (assert (instance? ast/fn-arity-ast arity))
 
   Stringable
   (string-list [_]
@@ -454,7 +455,7 @@
     (for [_ (b/add-proto-impl (.type-num ast)
                               (-> old-ast .arity .fn-sym)
                               (-> old-ast .arity .params .fixed count)
-                              (-> ast .arity .constraint))]
+                              (-> ast .arity))]
       ast)))
 
 (extend-type ast/inline-ast
@@ -496,18 +497,18 @@
           all-param-syms (remove (all-syms (.params ast))
                                  (fn [s]
                                    (= s '_)))
-          sym (.constraint (.fn-name ast)
-                           (c/ProtoImpls (.fn-name ast)
-                                         (.arities c/fn-constraint
-                                                   {})
-                                         {}))]
+          proto-fn (.constraint (ast/fn-expr (.fn-name ast) [])
+                                (c/ProtoImpls (.fn-name ast)
+                                              (.arities c/fn-constraint
+                                                        {})
+                                              {}))]
       (cond (< (count (set all-param-syms)) (count all-param-syms))
             (b/compilation-error "Duplicate parameter names in prototype at" loc)
 
             (for [_ (se/try
-                      (b/get-value sym)
+                      (b/get-value (.fn-name ast))
                       (fn [_]
-                        (b/set-value sym sym)))
+                        (b/set-value (.fn-name ast) proto-fn)))
                   _ (b/push-types)
                   _ (flat-map (set-local-var ast/result-sym)
                               (fn [result-sym]
@@ -1623,6 +1624,9 @@
                                                          (.arities c/fn-constraint
                                                                    {(inc field-count) ctor-arity})
                                                          empty-list c/no-symbol)
+                        ctor-params (.fixed (.fields ast)
+                                            (comp [(c/tag (symbol "#ctor"))]
+                                                  fields))
                         ctor-apply-id (c/tag (str "apply-" sym "-constructor") loc)
                         ctor-apply-fields (c/seq-c field-cs)
                         ctor-apply (c/fn-arity ctor-apply-id
@@ -1634,8 +1638,14 @@
                                                           (c/multi [(c/param ctor-apply-id 1)
                                                                     ctor-apply-fields])))]
                   _ (b/set-type-info ctor-sym constructor)
-                  _ (b/add-proto-impl ctor-type-num b/invoke-sym (inc field-count) ctor-arity)
-                  _ (b/add-proto-impl ctor-type-num (c/tag 'apply) 2 ctor-apply)
+                  _ (b/add-proto-impl ctor-type-num b/invoke-sym (inc field-count)
+                                      (ast/fn-arity-ast b/invoke-sym (b/global-var b/invoke-sym)
+                                                        ctor-params "" [] ctor-arity))
+                  _ (b/add-proto-impl ctor-type-num b/apply-sym 2
+                                      (ast/fn-arity-ast b/apply-sym (b/global-var b/apply-sym)
+                                                        (ast/params [(c/tag (symbol "#app"))
+                                                                     (c/tag (symbol "#fields"))])
+                                                        "" [] ctor-apply))
                   ;; TODO: need instance? impl constraint
                   _ (b/set-type-info sym new-type-constraint)
                   _ (b/set-value sym (.constraint sym constructor))
@@ -1710,33 +1720,44 @@
                      (se/state-error x))
 
                    (type-check [_ _]
-                     (for [_ (b/pop-types)
-                           _ (comp (b/get-proto-impl (c/tag 'get) type-num 2)
-                                   (b/add-proto-impl type-num (c/tag 'get loc) 2
-                                                     (let [get-id (c/tag (str sym "_get") loc)]
-                                                       (c/fn-arity
-                                                        get-id
-                                                        (c/seq-c [(c/multi [new-type-constraint
-                                                                            (c/param get-id 0)])
-                                                                  (c/param get-id 1)])
-                                                        (c/MaybeConstraint
-                                                         (c/type-op c/get-from-op (c/param get-id 0)
-                                                                    [(c/param get-id 1)])
-                                                         empty-list c/no-symbol)))))
-                           _ (comp (b/get-proto-impl (c/tag 'assoc) type-num 3)
-                                   (b/add-proto-impl type-num (c/tag 'assoc loc) 3
-                                                     (let [get-id (c/tag (str sym "_get") loc)]
-                                                       (c/fn-arity
-                                                        get-id
-                                                        (c/seq-c [(c/multi [new-type-constraint
-                                                                            (c/param get-id 0)])
-                                                                  (c/param get-id 1)
-                                                                  (c/param get-id 2)])
-                                                        (c/type-op c/set-to-op (c/param get-id 0)
-                                                                   [[(c/param get-id 1)]
-                                                                    (c/param get-id 2)])))))
-                           _ (b/set-value sym (.constraint sym constructor))]
-                       (ast/block-comment-ast [] c/no-loc c/top-type))))
+                     (let [get-id (c/tag (str sym "_get") loc)
+                           getter-ast (ast/fn-arity-ast b/apply-sym (b/global-var b/apply-sym)
+                                                        (ast/params [(c/tag (symbol "#field") loc)
+                                                                     (c/tag (symbol "#x") loc)])
+                                                        "" []
+                                                        (c/fn-arity
+                                                         get-id
+                                                         (c/seq-c [(c/multi [new-type-constraint
+                                                                             (c/param get-id 0)])
+                                                                   (c/param get-id 1)])
+                                                         (c/MaybeConstraint
+                                                          (c/type-op c/get-from-op (c/param get-id 0)
+                                                                     [(c/param get-id 1)])
+                                                          empty-list c/no-symbol)))
+                           set-id (c/tag (str sym "_set") loc)
+                           setter-ast (ast/fn-arity-ast b/apply-sym (b/global-var b/apply-sym)
+                                                        (ast/params [(c/tag (symbol "#field") loc)
+                                                                     (c/tag (symbol "#x") loc)
+                                                                     (c/tag (symbol "#val") loc)])
+                                                        "" []
+                                                        (c/fn-arity
+                                                         set-id
+                                                         (c/seq-c [(c/multi [new-type-constraint
+                                                                             (c/param set-id 0)])
+                                                                   (c/param set-id 1)
+                                                                   (c/param set-id 2)])
+                                                         (c/type-op c/set-to-op (c/param set-id 0)
+                                                                    [[(c/param set-id 1)]
+                                                                     (c/param set-id 2)])))]
+                       (for [_ (b/pop-types)
+                             _ (comp (b/get-proto-impl (c/tag 'get) type-num 2)
+                                     (b/add-proto-impl type-num (c/tag 'get loc) 2
+                                                       getter-ast))
+                             _ (comp (b/get-proto-impl (c/tag 'assoc) type-num 3)
+                                     (b/add-proto-impl type-num (c/tag 'assoc loc) 3
+                                                       setter-ast))
+                             _ (b/set-value sym (.constraint sym constructor))]
+                         (ast/block-comment-ast [] c/no-loc c/top-type)))))
 
                  ;; (reify
                  ;;   Container
