@@ -403,7 +403,6 @@ FnArity *malloc_fnArity() {
     freeFnArities.head = freeFnArities.head->next;
   }
   // incTypeMalloc(FnArityType, 1);
-  newFnArity->parent = (Value *)0;
   newFnArity->type = FnArityType;
   newFnArity->refs = refsInit;
   return(newFnArity);
@@ -1592,7 +1591,7 @@ Value *shutDown_impl(FnArity *arity) {
   return(nothing);
  };
 
-FnArity shutDown_arity = {FnArityType, -2, 0, (Vector *)0, (Value *)0, 0, shutDown_impl};
+FnArity shutDown_arity = {FnArityType, -2, 0, (Vector *)0, 0, shutDown_impl};
 Function shutDownFn = {FunctionType, -2, "shutdown-workers", 1, {&shutDown_arity}};
 Future shutDown = {FutureType, -2, (Value *)&shutDownFn, (Value *)0, (List *)0, (Value *)0, 0};
 
