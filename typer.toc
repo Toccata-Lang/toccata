@@ -513,6 +513,8 @@
                       (fn [_]
                         (b/set-value (.fn-name ast) proto-fn)))
                   _ (b/push-types)
+                  _ (se/update-val .var-count (fn [var-counts]
+                                                (cons (int-generator 0) var-counts)))
                   _ (flat-map (set-local-var ast/result-sym)
                               (fn [result-sym]
                                 (b/set-value ast/result-sym result-sym)))
@@ -524,6 +526,7 @@
                   ;;                 (b/status 'pre-prototype _LINE_ (.fn-name ast) (ast/location ast)
                   ;;                         lf 'body (.default-body ast))
                   ;;                 nothing)))]
+                  new-params (set-local-var (.params ast))
                   _ (se/traverse all-param-syms
                                  (fn [sym]
                                    (b/set-value sym (.constraint sym c/top-type))))
@@ -532,8 +535,7 @@
                                  (fn [sym]
                                    (let [idx (- arg-count (new-int idxs))]
                                      (cond (instance? ast/params-ast sym)
-                                           ;; TODO: this probably needs expanding
-                                           b/se-nop
+                                           (se/state-error (new-int idxs))
 
                                            (= sym '_)
                                            (b/set-value sym (.constraint sym c/top-type))
@@ -541,7 +543,8 @@
                                            (append-value-type sym
                                                               (c/param (.fn-name ast) idx)
                                                               loc)))))]
-              ast))))
+              (-> ast
+                  (.params new-params))))))
 
   (type-check [ast old-ast]
     (let [arg-count (count (.fixed (.params old-ast)))
@@ -572,6 +575,7 @@
             _ (b/remove-value-type ast/result-sym)
             _ (se/traverse (all-syms (.params old-ast)) b/recover-val)
             _ (b/nip-types)
+            _ (se/update-val .var-count rest)
             proto-c (se/try
                       (map (b/get-value sym)
                            (fn [val]
@@ -584,7 +588,11 @@
                                                                 {arg-count impl-c})
                                                       {}))))
             :let [ast (-> ast
+                          (.params (.params old-ast))
                           (.var arity-var)
+                          (.default-body (remove (.default-body ast)
+                                                 (fn [expr]
+                                                   (instance? c/Constraints expr))))
                           (.constraint proto-c))]
             _ (b/set-value sym ast)]
         ast))))
@@ -788,6 +796,7 @@
                          (c/tag (gensym "fn-arity"))
                          (.fn-var ast))
           loc (ast/location ast)]
+      ;; TODO: what about duplicate param names (like in prototype-ast)?
       (for [_ (b/push-types)
             ;; :let [_ (start-clock)]
 
@@ -813,11 +822,13 @@
                       (cond (instance? c/TaggedSymbol x)
                             (b/set-value x (.constraint x c/top-type))
                             
+                            ;; TODO: should use cata to make all the variadic syms be lists
                             (se/state-error x)))
                     new-params
                     se/state-error)
-            result-var (local-var 'rslt)
-            _ (b/set-value ast/result-sym (.var ast/result-sym result-var))
+            _ (flat-map (set-local-var ast/result-sym)
+                        (fn [result-sym]
+                          (b/set-value ast/result-sym result-sym)))
             ;; _ (b/status 'new-params _LINE_
             ;;             (interpose (map (all-syms new-params)
             ;;                             (fn [s]
@@ -835,9 +846,7 @@
                                                       loc))))
             _ (append-value-type (.variadic (.params ast))
                                  (c/param arity-id arg-count)
-                                 loc)
-            ;; TODO: should use cata to make all the variadic syms be lists
-            ]
+                                 loc)]
         (-> ast
             (.fn-var arity-id)
             (.params new-params)

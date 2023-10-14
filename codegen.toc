@@ -396,7 +396,7 @@
             (for [code-vect (se/traverse arities
                                          (fn [arity]
                                            (gen-code arity mod)))]
-              (let [struct-var (b/global-var "fnStruct")
+              (let [struct-var (b/global-var 'FnStruct)
                     expr (collapse-codes code-vect)]
                 (-> empty-c-code
                     (.var fn-var)
@@ -541,7 +541,31 @@
   (gen-code [ast mod]
     (se/state-error empty-c-code)))
 
-(defn emit-main [code-context main-module]
+(defn default-fn [val]
+  (assert (instance? ast/prototype-ast val))
+
+  (let [default-body (.default-body val)]
+    (ast/fn-ast (.fn-name val)
+                [(b/StaticArity (ast/fn-arity-ast
+                                 (.fn-name val) (b/global-var 'ArStruct) (.params val) (.doc val)
+                                 (cond (empty? default-body)
+                                       [(ast/inline-ast (c/tag 'C) c/top-type
+                                                        (str "
+   fprintf(stderr, \"*** Could not find implementation of '" (.fn-name val)
+"' for *finish this error message*\\n\");
+   abort();
+   return ((Value *)0);
+")
+                                                        (ast/location (.params val))
+                                                        "")]
+
+                                       default-body)
+                                 c/top-type)
+                                (b/global-var 'Arity))]
+                (b/global-var 'Fn)
+                c/top-type)))
+
+(defn emit-main [code-context done-promise main-module]
   (let [main-fn (either (get-in main-module [.namespaces c/no-symbol .values 0
                                              ast/main .arities 0 .arity-var])
                         (do
@@ -549,36 +573,35 @@
                           ;; TODO: make sure to abort
                           ;; (abort)
                           ))
-        ;; wait-prom (promise)
-        ;; _ (send modules
-        ;;         (fn [mods]
-        ;;           (map (get mods core)
-        ;;                (fn [ast-emitter]
-        ;;                  (send ast-emitter
-        ;;                        (fn [ctxt]
-        ;;                          (map ctxt
-        ;;                               (fn [ctxt]
-        ;;                                 (.module ctxt (extract core-agent))))))
-        ;;                  (send ast-emitter
-        ;;                        (fn [ctxt]
-        ;;                          (map ctxt
-        ;;                               (fn [ctxt]
-        ;;                                 (deliver wait-prom '_)
-        ;;                                 ctxt))))))
-        ;;           mods))
-        ;; _ (extract wait-prom)
-        ;; inits (map-modules (for [proto-expr gather-protocols
-        ;;                          ;; syms-expr gather-symbols
-        ;;                          ]
-        ;;                      (comp (.init proto-expr)
-        ;;                            ;; (.init syms-expr)
-        ;;                            )))
-        ;; decls (map-modules (sm/get-in-val [.fn-context .decl]))
-        ;; values-prom (promise)
-        ;; _ (send rt-exprs (partial deliver values-prom))
-        ;; values (extract values-prom)
-        ]
-    ;; (code-out decls)
+        mod-prom (promise)
+        _ (send b/modules (fn [mods]
+                            (deliver mod-prom mods)
+                            mods))
+        mods (extract mod-prom)]
+    (map (vec mods)
+         (fn [[_ mod]]
+           (assert (instance? b/Module mod))
+
+           (map (get-in mod [.namespaces c/no-symbol .values 0])
+                (fn [values]
+                  (map (vec values)
+                       (fn [[sym val]]
+                         (cond (instance? ast/prototype-ast val)
+                               ;; ((map (gen-code (default-fn val) mod)
+                               ;;       (fn [code]
+                               ;;         (code-out (.decl code))))
+                               ;;  code-context)
+                               ((se/try
+                                  (for [code (gen-code (default-fn val) mod)]
+                                    (code-out (.decl code)))
+                                  (fn [err]
+                                    (b/status (.val err))
+                                    (b/wait-for-err-out)
+                                    (abort)))
+                                code-context)
+
+                               '_)))))))
+
     (code-out "\n#\n"
               "\nint main (int argc, char **argv) {\n"
               "prErrSTAR = &defaultPrErrSTAR;\n"
@@ -626,6 +649,7 @@
               "\n#\n"
               "  return(0);\n};\n"
               "\nint typeCount = " (extract b/type-counter) ";\n")
+    (deliver done-promise 'done)
     code-context))
 
 (def core-dispatchers (-> [(c/tag 'type-name) 1 "type_name"
