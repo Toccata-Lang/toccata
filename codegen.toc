@@ -4,7 +4,7 @@
                           :sha "dcba6be"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "c41c707"))
+                            :sha "cd0abb2"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "71dfbbe"))
@@ -528,13 +528,14 @@
 (extend-type ast/prototype-ast
   CodeGen
   (gen-code [ast mod]
-    (let [arg-idx (int-generator 0)]
-      (se/state-error (.decl empty-c-code ["// prototype\n"
-                                           "Value *" (.var ast) "(FnArity *arity"
-                                           (map (.fixed (.params ast))
-                                                (fn [param]
-                                                  (str ", Value *arg" (extract arg-idx))))
-                                           ");" line-sep])))))
+    (-> empty-c-code
+        (.decl ["// prototype\n"
+                "Value *" (.var ast) "(FnArity *"
+                (map (.fixed (.params ast))
+                     (fn [_]
+                       ", Value *"))
+                ");" line-sep])
+        se/state-error)))
 
 (extend-type ast/block-comment-ast
   CodeGen
@@ -547,10 +548,9 @@
   (let [default-body (.default-body val)]
     (ast/fn-ast (.fn-name val)
                 [(b/StaticArity (ast/fn-arity-ast
-                                 (.fn-name val) (b/global-var 'ArStruct) (.params val) (.doc val)
+                                 (.fn-name val) (b/global-var b/ArStruct) (.params val) (.doc val)
                                  (cond (empty? default-body)
-                                       [(ast/inline-ast (c/tag 'C) c/top-type
-                                                        (str "
+                                       [(ast/inline-ast c/top-type (str "
    fprintf(stderr, \"*** Could not find implementation of '" (.fn-name val)
 "' for *finish this error message*\\n\");
    abort();
@@ -561,9 +561,56 @@
 
                                        default-body)
                                  c/top-type)
-                                (b/global-var 'Arity))]
+                                (b/global-var b/Arity))]
                 (b/global-var 'Fn)
                 c/top-type)))
+
+(defn dispatcher-fn [proto def-code]
+  (assert (instance? ast/prototype-ast proto))
+
+  (let [params (.params proto)
+        fn-var (.var proto)
+        disp-arg (either (map (first (.fixed params)) .var)
+                         "arg0")
+        arg-count (count (.fixed params))
+        c-fn (b/global-var b/CFn)
+        arity (b/global-var b/ArStruct)]
+    (.decl empty-c-code
+           ["Value *" c-fn "(FnArity *locStr"
+            (map (.fixed params)
+                 (fn [param]
+                   (str ", Value *" (.var param))))
+            ") {\nFnArity *arity;\n#\n"
+            "FnType" arg-count " *_fn;\n"
+            "switch (" disp-arg "->type) {\n"
+            ;; (-> impl-codes
+            ;;     vec
+            ;;     (map (fn [[type-num code]]
+            ;;            ["case " (str type-num) ": arity = "
+            ;;             (.var code) ";\n_fn = (FnType"
+            ;;             arg-count " *)" (.c-fn arity-info) ";\n"
+            ;;             (for [[constraint var] (-> (.param-constraints arity-info)
+            ;;                                        (c/extract-items-constraints arg-count)
+            ;;                                        (zip-lists (map (range arg-count)
+            ;;                                                        (partial str "arg")))
+            ;;                                        rest)]
+            ;;               (-> constraint
+            ;;                   (c/update-var var)
+            ;;                   (runtime-check c/top-type
+            ;;                                  (str "(closures == (FnArity *)0 ? \"\" : "
+            ;;                                       "((String *)closures)->buffer)")
+            ;;                                  checked-var)))
+            ;;             "\nclosures = arity;\nbreak;\n"])))
+            "default:\n"
+            "_fn = (FnType" arg-count
+            " *)" (.var def-code) ";\nbreak;\n"
+            "}\n"
+            "return(_fn(locStr" (map (.fixed params)
+                                     (fn [param]
+                                       (str ", " (.var param))))
+            "));\n}\n"
+            "FnArity " arity " = {FnArityType, -2, " arg-count
+            ", (Vector *)0, (Value *)0, 0, " c-fn ", (Value *)0, (Value *)0};\n"])))
 
 (defn emit-main [code-context done-promise main-module]
   (let [main-fn (either (get-in main-module [.namespaces c/no-symbol .values 0
@@ -578,29 +625,39 @@
                             (deliver mod-prom mods)
                             mods))
         mods (extract mod-prom)]
-    (map (vec mods)
-         (fn [[_ mod]]
-           (assert (instance? b/Module mod))
+    ;; (map (vec mods)
+    ;;      (fn [[_ mod]]
+    ;;        (assert (instance? b/Module mod))
 
-           (map (get-in mod [.namespaces c/no-symbol .values 0])
-                (fn [values]
-                  (map (vec values)
-                       (fn [[sym val]]
-                         (cond (instance? ast/prototype-ast val)
-                               ;; ((map (gen-code (default-fn val) mod)
-                               ;;       (fn [code]
-                               ;;         (code-out (.decl code))))
-                               ;;  code-context)
-                               ((se/try
-                                  (for [code (gen-code (default-fn val) mod)]
-                                    (code-out (.decl code)))
-                                  (fn [err]
-                                    (b/status (.val err))
-                                    (b/wait-for-err-out)
-                                    (abort)))
-                                code-context)
+    ;;        (map (get-in mod [.namespaces c/no-symbol .values 0])
+    ;;             (fn [values]
+    ;;               (map (vec values)
+    ;;                    (fn [[sym val]]
+    ;;                      (cond (instance? ast/prototype-ast val)
+    ;;                            ;; ((map (gen-code (default-fn val) mod)
+    ;;                            ;;       (fn [code]
+    ;;                            ;;         (code-out (.decl code))))
+    ;;                            ;;  code-context)
+    ;;                            ((se/try
+    ;;                               (for [def-code (gen-code (default-fn val) mod)
+    ;;                                     impl-codes (se/traverse (vec (.impls val))
+    ;;                                                             (fn [[type-num arity]]
+    ;;                                                               (map (gen-code arity mod)
+    ;;                                                                    (fn [code]
+    ;;                                                                      [type-num arity]))))]
+    ;;                                 (-> impl-codes
+    ;;                                     (conj def-code)
+    ;;                                     (conj (dispatcher-fn val def-code))
+    ;;                                     collapse-codes
+    ;;                                     .decl
+    ;;                                     code-out))
+    ;;                               (fn [err]
+    ;;                                 (b/status (.val err))
+    ;;                                 (b/wait-for-err-out)
+    ;;                                 (abort)))
+    ;;                             code-context)
 
-                               '_)))))))
+    ;;                            '_)))))))
 
     (code-out "\n#\n"
               "\nint main (int argc, char **argv) {\n"
@@ -675,8 +732,8 @@
 (defn fixup-core-dispatchers [code-context core-mod]
   (map core-dispatchers
        (fn [[sym arg-count var]]
-         (let [arity-var (either (map (get-in core-mod [.namespaces c/no-symbol .values 0 sym])
-                                      .var)
+         (let [arity-var (either (get-in core-mod [.namespaces c/no-symbol .values 0
+                                                   sym .arities 0 .var])
                                  ;; TODO: abort with message instead
                                  (str "noImpl" arg-count))]
            (code-out "Value *(*" var ")(FnArity *, "
