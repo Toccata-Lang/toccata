@@ -1829,11 +1829,11 @@ FnArity *findFnArity(Value *fnVal, int64_t argCount) {
   return(variadic);
 };
 
-int8_t isNothing(Value *v, char *fileName, int lineNumber) {
+int8_t isNothing(Value *v) {
   return(v->type == MaybeType && ((Maybe *)v)->value == (Value *)0);
 }
 
-Value *maybe(Vector *arity, Value *arg0, Value *arg1) {
+Value *maybe(FnArity *arity, Value *arg0, Value *arg1) {
   Maybe *mVal = malloc_maybe();
   mVal->value = arg1;
   return((Value *)mVal);
@@ -1893,7 +1893,7 @@ Value *integer_EQ(Value *arg0, Value *arg1) {
     return(nothing);
   } else {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   }
 }
 
@@ -1901,15 +1901,15 @@ Value *isInstance(Value *arg0, Value *arg1) {
   TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   if (typeNum == arg1->type) {
      dec_and_free(arg1, 1);
-     return(maybe((Vector *)0, (Value *)0, arg0));
+     return(maybe((FnArity *)0, (Value *)0, arg0));
   } else if (StringBufferType == typeNum && SubStringType == arg1->type) {
      dec_and_free(arg1, 1);
-     return(maybe((Vector *)0, (Value *)0, arg0));
+     return(maybe((FnArity *)0, (Value *)0, arg0));
   // } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
                                         // ArrayNodeType == arg1->type ||
                                         // HashCollisionNodeType == arg1->type)) {
      // dec_and_free(arg1, 1);
-     // return(maybe((Vector *)0, (Value *)0, arg0));
+     // return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
      dec_and_free(arg0, 1);
      dec_and_free(arg1, 1);
@@ -2126,7 +2126,7 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
       if (ret->root != (VectorNode *)0) {
         incRef((Value *)ret->root, 1);
       }
-      Value *mval = maybe((Vector *)0, (Value *)0, (Value *)ret);
+      Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
       return(mval);
     } else {
       Vector *ret = newVector(vect->tail, VECTOR_ARRAY_LEN);
@@ -2134,12 +2134,12 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
       ret->tailOffset = vect->tailOffset;
       ret->shift = vect->shift;
       ret->root = copyVectStore(vect->shift, vect->root, index, val);
-      Value *mval = maybe((Vector *)0, (Value *)0, (Value *)ret);
+      Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
       return(mval);
     }
   } else if (index == vect->count) {
     Value *ret = (Value *)vectConj(vect, val);
-    Value *mval = maybe((Vector *)0, (Value *)0, (Value *)ret);
+    Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
     return(mval);
   } else {
     dec_and_free(val, 1);
@@ -2158,7 +2158,7 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
     return((Value *)vect);
   } else {
     Value *result = vectStore(vect, index, val);
-    if (isNothing(result, "", 0)) {
+    if (isNothing(result)) {
       fprintf(stderr, "*** Improper use of fastVectStore\n");
       abort();
     } else {
@@ -2317,7 +2317,7 @@ Value *strEQ(Value *arg0, Value *arg1) {
 
   if (strncmp(s1, s2, len) == 0) {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
@@ -2378,7 +2378,7 @@ Value *strLT(Value *arg0, Value *arg1) {
   int cmp = strncmp(s1, s2, len);
   if (cmp < 0 || (cmp == 0 && s1Len < s2Len)) {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
@@ -2428,7 +2428,7 @@ Value *strList(Value *arg0) {
 Value *integer_LT(Value *arg0, Value *arg1) {
  if (((Integer *)arg0)->numVal < ((Integer *)arg1)->numVal) {
      dec_and_free(arg1, 1);
-     return(maybe((Vector *)0, (Value *)0, arg0));
+     return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
      dec_and_free(arg0, 1);
      dec_and_free(arg1, 1);
@@ -2438,13 +2438,13 @@ Value *integer_LT(Value *arg0, Value *arg1) {
 
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
   if (typeNum == arg1->type) {
-    return(maybe((Vector *)0, (Value *)0, arg1));
+    return(maybe((FnArity *)0, (Value *)0, arg1));
   } else if (StringBufferType == typeNum && SubStringType == arg1->type) {
-    return(maybe((Vector *)0, (Value *)0, arg1));
+    return(maybe((FnArity *)0, (Value *)0, arg1));
   } else if (HashMapType == typeNum && (BitmapIndexedType == arg1->type ||
                                         ArrayNodeType == arg1->type ||
                                         HashCollisionNodeType == arg1->type)) {
-    return(maybe((Vector *)0, (Value *)0, arg1));
+    return(maybe((FnArity *)0, (Value *)0, arg1));
   } else {
     dec_and_free(arg1, 1);
     return(nothing);
@@ -2608,7 +2608,7 @@ Value *car(Value *arg0) {
     Value *h = lst->head;
     incRef(h, 1);
     dec_and_free(arg0, 1);
-    return(maybe((Vector *)0, (Value *)0, h));
+    return(maybe((FnArity *)0, (Value *)0, h));
   }
 }
 
@@ -2629,7 +2629,7 @@ Value *cdr(Value *arg0) {
 Value *integerLT(Value *arg0, Value *arg1) {
   if (((Integer *)arg0)->numVal < ((Integer *)arg1)->numVal) {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
@@ -2889,7 +2889,7 @@ Value *listEQ(Value *arg0, Value *arg1) {
       }
     }
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   }
 }
 
@@ -2906,7 +2906,7 @@ int8_t equal(Value *v1, Value *v2) {
     equals = equalSTAR((FnArity *)0, v1, v2);
     break;
   }
-   int8_t notEquals = isNothing(equals, "", 0);
+   int8_t notEquals = isNothing(equals);
    dec_and_free(equals, 1);
    return(!notEquals);
 }
@@ -3100,14 +3100,14 @@ Value *maybeEQ(Value *arg0, Value *arg1) {
   if (arg1->type == MaybeType &&
       ((Maybe *)arg0)->value == ((Maybe *)arg1)->value) {
     dec_and_free(arg1, 1);
-    return(maybe((Vector *)0, (Value *)0, arg0));
+    return(maybe((FnArity *)0, (Value *)0, arg0));
   } else if (arg1->type == MaybeType &&
              ((Maybe *)arg0)->value != (Value *)0 &&
              ((Maybe *)arg1)->value != (Value *)0) {
     incRef(((Maybe *)arg0)->value, 1);
     incRef(((Maybe *)arg1)->value, 1);
     Value *eqResult = equalSTAR((FnArity *)0, ((Maybe *)arg0)->value, ((Maybe *)arg1)->value);
-    if (isNothing(eqResult, "", 0)) {
+    if (isNothing(eqResult)) {
       dec_and_free(eqResult, 1);
       dec_and_free(arg0, 1);
       dec_and_free(arg1, 1);
@@ -3115,7 +3115,7 @@ Value *maybeEQ(Value *arg0, Value *arg1) {
     } else {
       dec_and_free(eqResult, 1);
       dec_and_free(arg1, 1);
-      Value *result = maybe((Vector *)0, (Value *)0, arg0);
+      Value *result = maybe((FnArity *)0, (Value *)0, arg0);
       return(result);
     }
   } else {
@@ -3152,7 +3152,7 @@ Value *maybeMap(Value *arg0, Value *arg1) {
       abort();
     }
   }
-  Value *result = maybe((Vector *)0, (Value *)0, rslt6);
+  Value *result = maybe((FnArity *)0, (Value *)0, rslt6);
   dec_and_free(arg0, 1);
   dec_and_free(arg1, 1);
   return(result);
@@ -3498,7 +3498,7 @@ Value *vectorGet(Value *arg0, Value *arg1) {
   } else {
     Value *val = vectGet(vect, (unsigned)index->numVal);
     incRef(val, 1);
-    Value *result = maybe((Vector *)0, (Value *)0, val);
+    Value *result = maybe((FnArity *)0, (Value *)0, val);
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
@@ -3540,7 +3540,7 @@ Value *symEQ(Value *arg0, Value *arg1) {
     if (s1->len == s2->len &&
 	strncmp(s1->buffer, s2->buffer, s1->len) == 0) {
       dec_and_free(arg1, 1);
-      return(maybe((Vector *)0, (Value *)0, arg0));
+      return(maybe((FnArity *)0, (Value *)0, arg0));
     } else {
       dec_and_free(arg0, 1);
       dec_and_free(arg1, 1);
@@ -3566,7 +3566,7 @@ Value *symLT(Value *arg0, Value *arg1) {
     int cmp = strncmp(s0->buffer, s1->buffer, len);
     if (cmp < 0 || (cmp == 0 && s0->len < s1->len)) {
       dec_and_free(arg1, 1);
-      return(maybe((Vector *)0, (Value *)0, arg0));
+      return(maybe((FnArity *)0, (Value *)0, arg0));
     } else {
       dec_and_free(arg0, 1);
       dec_and_free(arg1, 1);
@@ -3609,7 +3609,7 @@ Value *listFilter(Value *arg0, Value *arg1) {
       }
 
       // 'y' is the filter maybe/nothing value
-      if (!isNothing(y, "", 0)) {
+      if (!isNothing(y)) {
 	incRef(x, 1);
 	if (head == empty_list) {
 	  // if we haven't started the new list yet
@@ -4450,7 +4450,7 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
   if (found == notFoundPtr) {
     return(nothing);
   } else {
-    return(maybe((Vector *)0, (Value *)0, found));
+    return(maybe((FnArity *)0, (Value *)0, found));
   }
 }
 
@@ -4587,7 +4587,7 @@ Value *promiseDelivered(Value *arg0) {
     dec_and_free(arg0, 1);
     return(nothing);
   } else {
-    Value *mv = maybe((Vector *)0, (Value *)0, p->result);
+    Value *mv = maybe((FnArity *)0, (Value *)0, p->result);
     incRef(p->result, 1);
     dec_and_free(arg0, 1);
     return((Value *)mv);

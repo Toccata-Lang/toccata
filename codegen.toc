@@ -133,6 +133,7 @@
     (let [expr-code (collapse-codes (list* tgt-code arg-codes))
           num-args (count args)]
       (-> expr-code
+          (.refs-map (dissoc-all (.refs-map expr-code) (map arg-codes .var)))
           (.var result-var)
           (.init [(.init expr-code)
                   (line-marker (ast/location tgt) "// dynamic unknown type")
@@ -612,6 +613,28 @@
                 "FnArity " arity " = {FnArityType, REFS_STATIC, " arg-count
                 ", (Vector *)0, 0, " (.var proto) "};\n"]))))
 
+(extend-type ast/and-ast
+  CodeGen
+  (gen-code [ast mod]
+    (let [loc (ast/location (.clause ast))]
+      (for [clause-code (gen-code (.clause ast) mod)
+            cont-code (gen-code (.cont ast) mod)]
+        (let [cont-refs (dissoc (.refs-map cont-code) (.var cont-code))]
+          (b/status 'clause _LINE_ (.var clause-code) (.refs-map clause-code)
+                    lf 'cont (.var cont-code) (.refs-map cont-code))
+          (-> empty-c-code
+              (.refs-map (comp (.refs-map clause-code)
+                               cont-refs))
+              (.var (.var ast))
+              (.decl (comp (.decl clause-code) (.decl cont-code)))
+              (.init [(.init clause-code)
+                      "Value *" (.var ast) "; if (isNothing(" (.var clause-code) ")) {"
+                      (map (vec cont-refs)
+                           (fn [[var refs]]
+                             [" dec_and_free(" var ", " refs "); "]))
+                      (.var ast) " = nothing; } else { dec_and_free(" (.var clause-code) ", 1); " 
+                      (.init cont-code) (.var ast) " = " (.var cont-code) ";}"])))))))
+
 (extend-type ast/prototype-ast
   CodeGen
   (gen-code [ast mod]
@@ -668,7 +691,7 @@
               "abort();\n"
               "#endif\n"
               "#endif\n"
-              "maybeNothing = maybe((Vector *)0, (Value *)0, nothing);\n"
+              "maybeNothing = maybe( (FnArity *)0, (Value *)0, nothing);\n"
               "maybeNothing->refs = -1;\n"
               "outstream = stdout;\n"
               "__atomic_store(&futuresQueue.input, &empty_list, __ATOMIC_RELAXED);\n"
