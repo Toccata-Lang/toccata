@@ -4,7 +4,7 @@
                           :sha "dcba6be"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "cd0abb2"))
+                            :sha "dc324ad"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -321,30 +321,38 @@
   (assert (instance? (any-of ast/ParamType c/NoSymbol) p))
   (assert-result r (instance? Vector r))
 
-  (cond (or (= p c/no-symbol)
-            (instance? c/TaggedSymbol p))
+  (cond (= p c/no-symbol)
         []
 
-        (and (empty? (.fixed p))
+        (instance? c/TaggedSymbol p)
+        [(C-init (.var p) [] [] {})]
+
+        (and (instance? ast/params-ast p)
+             (empty? (.fixed p))
              (instance? c/TaggedSymbol (.variadic p)))
-        ["Value *" (.var (.variadic p)) " = " (.var p) ";"]
+        [(C-init (.var (.variadic p))
+                 []
+                 ["Value *" (.var (.variadic p)) " = " (.var p) ";"]
+                 {})]
 
         (let [elem-count (inc (count (.fixed p)))
               loc (ast/location p)]
-          [(map (.fixed p) (fn [inner]
-                             ["Value *" (.var inner) ";"]))
-           (cond (= c/no-symbol (.variadic p))
-                 ""
-                 ["Value *" (.var (.variadic p)) ";"])
-           "if (1) {Value **destArgs [" elem-count "] = {"
-           (map (.fixed p) (fn [inner]
-                             ["&" (.var inner) ", "]))
-           (cond (= c/no-symbol (.variadic p))
-                 "(Value **)0"
-                 ["&" (.var (.variadic p))])
-           "};" "destructValue(\"" (.file loc) "\", \"" (.line loc)
-           "\", (Value *)" (.var p) ", " elem-count ", destArgs);}"
-           (map (.fixed p) destruct-seq) (destruct-seq (.variadic p))])))
+          (comp [(.init empty-c-code
+                        [(map (.fixed p) (fn [inner]
+                                           ["Value *" (.var inner) ";"]))
+                         (cond (= c/no-symbol (.variadic p))
+                               ""
+                               ["Value *" (.var (.variadic p)) ";"])
+                         "if (1) {Value **destArgs [" elem-count "] = {"
+                         (map (.fixed p) (fn [inner]
+                                           ["&" (.var inner) ", "]))
+                         (cond (= c/no-symbol (.variadic p))
+                               "(Value **)0"
+                               ["&" (.var (.variadic p))])
+                         "};" "destructValue(\"" (.file loc) "\", \"" (.line loc)
+                         "\", (Value *)" (.var p) ", " elem-count ", destArgs);}"])]
+                (flat-map (.fixed p) destruct-seq)
+                (destruct-seq (.variadic p))))))
 
 (defn checking-fn [params c-fn]
   (assert (instance? ast/params-ast params))
@@ -413,7 +421,8 @@
           (map (se/traverse (.body ast) (fn [expr]
                                           (gen-code expr mod ast)))
                (fn [body-exprs]
-                 (let [_ (b/status 'body _LINE_ (ast/location ast)
+                 (let [params (.params ast)
+                       _ (b/status 'body _LINE_ (ast/location ast)
                                    lf (str "[" (to-str (-> body-exprs
                                                            (map (fn [code]
                                                                   [(type-name code)
@@ -422,58 +431,63 @@
                                                            (interpose (str lf "  ")))) "]"))
                        [last-expr & body-exprs] (reverse body-exprs)
                        code (cond (= 0 (count body-exprs))
-                                  last-expr
+                                  (cond (flat-map (first (.body ast))
+                                                  (fn [ast]
+                                                    (instance? ast/inline-ast ast)))
+                                        (.refs-map last-expr
+                                                   (reduce (ast/all-syms params) {}
+                                                           (fn [rm s]
+                                                             (assoc rm (.var s) 1))))
+                                        last-expr)
 
                                   (reduce body-exprs last-expr
                                           (fn [final-code expr-code]
-                                            (comp-code expr-code final-code))))]
+                                            (comp-code expr-code final-code))))
+                       code (-> (cond (= (.variadic params) c/no-symbol)
+                                      (flat-map (.fixed params) destruct-seq)
+
+                                      (destruct-seq params))
+                                reverse
+                                (reduce code
+                                        (fn [final-code expr-code]
+                                          (comp-code expr-code final-code))))]
                    ;; TODO: handle recursion properly
-                   code))))))
+                   (-> code
+                       (.decl [(.decl code)])
+                       (.init [(cond (= (.variadic params) c/no-symbol)
+                                     (reduce (.fixed params) []
+                                             (fn [args arg]
+                                               (conj args (str ", Value *" (.var arg)))))
+
+                                     [", Value *" (.var params)])
+                               ") {\nwhile (1) {"
+                               (.init code)
+                               (either (= "" (.var code))
+                                       ["return " (.var code) ";"])
+                               "};};\n"]))))))))
 
 (extend-type b/StaticArity
   CodeGen
   (gen-code [ast mod]
-    (for [arity-code (gen-code (.arity ast) mod)]
-      (cond (= (-> ast .arity .params .variadic)
-               c/no-symbol)
-            ;; fixed arity
-            (let [c-fn (.c-fn ast)
-                  params (-> ast .arity .params .fixed)
-                  checker (checking-fn (-> ast .arity .params) c-fn)]
-              (-> empty-c-code
-                  (.var (.fn-var (.arity ast)))
-                  (.decl [(.decl arity-code)
-                          "Value *" c-fn "(FnArity *arity"
-                          (reduce params []
-                                  (fn [args arg]
-                                    (conj args (str ", Value *" (.var arg)))))
-                          ") {\nwhile (1) {"
-                          (map params destruct-seq)
-                          (.init arity-code) line-sep
-                          (either (= "" (.var arity-code))
-                                  ["return " (.var arity-code) ";"])
-                          "};};\n"
-                          (.decl checker)
-                          "FnArity " (.fn-var (.arity ast)) " = {FnArityType, REFS_STATIC, "
-                          (count params) ", (Vector *)0, 0, " (.var checker) "};" line-sep])))
+    (let [c-fn (.c-fn ast)
+          params (-> ast .arity .params)
+          checker (checking-fn (-> ast .arity .params) c-fn)]
+      (for [arity-code (gen-code (.arity ast) mod)]
+        (-> empty-c-code
+            (.var (.fn-var (.arity ast)))
+            (.decl [(.decl arity-code)
+                    "Value *" c-fn "(FnArity *arity"
+                    (.init arity-code)
+                    (.decl checker)
+                    "FnArity " (.fn-var (.arity ast)) " = {FnArityType, REFS_STATIC, "
+                    (cond (= (-> ast .arity .params .variadic)
+                             c/no-symbol)
+                          ;; fixed arity
+                          (count params)
 
-            ;; variadic arity
-            (let [c-fn (.c-fn ast)
-                  params (-> ast .arity .params)
-                  checker (checking-fn (-> ast .arity .params) c-fn)]
-              (-> empty-c-code
-                  (.var (.fn-var (.arity ast)))
-                  (.decl [(.decl arity-code)
-                          "Value *" c-fn "(FnArity *arity, Value *" (.var params)
-                          ") {\nwhile (1) {"
-                          (destruct-seq params)
-                          (.init arity-code) line-sep
-                          (either (= "" (.var arity-code))
-                                  ["return " (.var arity-code) ";"])
-                          "};};\n"
-                          (.decl checker)
-                          "FnArity " (.fn-var (.arity ast)) " = {FnArityType, REFS_STATIC, "
-                          "1, (Vector *)0, 1, " (.var checker) "};" line-sep])))))))
+                          ;; variadic arity
+                          1)
+                    ", (Vector *)0, 0, " (.var checker) "};"]))))))
 
 (def StaticOrProto (any-of b/StaticArity
                            ast/prototype-ast))
