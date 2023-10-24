@@ -321,11 +321,9 @@
   (assert (instance? (any-of ast/ParamType c/NoSymbol) p))
   (assert-result r (instance? Vector r))
 
-  (cond (= p c/no-symbol)
+  (cond (or (= p c/no-symbol)
+            (instance? c/TaggedSymbol p))
         []
-
-        (instance? c/TaggedSymbol p)
-        [(C-init (.var p) [] [] {})]
 
         (and (instance? ast/params-ast p)
              (empty? (.fixed p))
@@ -333,24 +331,30 @@
         [(C-init (.var (.variadic p))
                  []
                  ["Value *" (.var (.variadic p)) " = " (.var p) ";"]
-                 {})]
+                 {(.var p) 1})]
 
         (let [elem-count (inc (count (.fixed p)))
               loc (ast/location p)]
-          (comp [(.init empty-c-code
-                        [(map (.fixed p) (fn [inner]
-                                           ["Value *" (.var inner) ";"]))
-                         (cond (= c/no-symbol (.variadic p))
-                               ""
-                               ["Value *" (.var (.variadic p)) ";"])
-                         "if (1) {Value **destArgs [" elem-count "] = {"
-                         (map (.fixed p) (fn [inner]
-                                           ["&" (.var inner) ", "]))
-                         (cond (= c/no-symbol (.variadic p))
-                               "(Value **)0"
-                               ["&" (.var (.variadic p))])
-                         "};" "destructValue(\"" (.file loc) "\", \"" (.line loc)
-                         "\", (Value *)" (.var p) ", " elem-count ", destArgs);}"])]
+          (comp [(-> empty-c-code
+                     (.init [(map (.fixed p) (fn [inner]
+                                               ["Value *" (.var inner) ";"]))
+                             (cond (= c/no-symbol (.variadic p))
+                                   ""
+                                   ["Value *" (.var (.variadic p)) ";"])
+                             "if (1) {Value **destArgs [" elem-count "] = {"
+                             (map (.fixed p) (fn [inner]
+                                               ["&" (.var inner) ", "]))
+                             (cond (= c/no-symbol (.variadic p))
+                                   "(Value **)0"
+                                   ["&" (.var (.variadic p))])
+                             "};" "destructValue(\"" (.file loc) "\", \"" (.line loc)
+                             "\", (Value *)" (.var p) ", " elem-count ", destArgs);}"])
+                     (.refs-map {(.var p) 1}))]
+                (map (.fixed p) (fn [sym]
+                                  (C-init (.var sym) [] [] {})))
+                (cond (= c/no-symbol (.variadic p))
+                      []
+                      [(C-init (.var (.variadic p)) [] [] {})])
                 (flat-map (.fixed p) destruct-seq)
                 (destruct-seq (.variadic p))))))
 
@@ -410,7 +414,10 @@
     (map (se/traverse (.body ast) (fn [expr]
                                     (gen-code expr mod ast)))
          (fn [body-exprs]
-           (comp* empty-c-code body-exprs)))))
+           (let [[last-expr & body-exprs] (reverse body-exprs)]
+             (reduce body-exprs last-expr
+                     (fn [final-code expr-code]
+                       (comp-code expr-code final-code))))))))
 
 (extend-type ast/fn-arity-ast
   CodeGen
@@ -422,15 +429,30 @@
                                           (gen-code expr mod ast)))
                (fn [body-exprs]
                  (let [params (.params ast)
-                       _ (b/status 'body _LINE_ (ast/location ast)
+                       body-exprs (comp (cond (= (.variadic params) c/no-symbol)
+                                              (flat-map (.fixed params) destruct-seq)
+
+                                              (destruct-seq params))
+                                        body-exprs)
+                       [last-expr & body-exprs] (reverse body-exprs)
+                       last-expr (cond (flat-map (last (.body ast))
+                                                 (fn [last-ast]
+                                                   (instance? ast/inline-ast last-ast)))
+                                       (.refs-map last-expr
+                                                  (reduce (ast/all-syms params) {}
+                                                          (fn [rm s]
+                                                            (assoc rm (.var s) 1))))
+                                       last-expr)
+                       _ (b/status 'body _LINE_ (ast/location ast) 'params (ast/all-syms params)
                                    lf (str "[" (to-str (-> body-exprs
+                                                           reverse
+                                                           (conj last-expr)
                                                            (map (fn [code]
                                                                   [(type-name code)
                                                                    (.var code)
                                                                    (.refs-map code)]))
                                                            (interpose (str lf "  ")))) "]"))
-                       [last-expr & body-exprs] (reverse body-exprs)
-                       code (cond (= 0 (count body-exprs))
+                       code (cond (instance? ast/inline-ast last-expr)
                                   (cond (flat-map (first (.body ast))
                                                   (fn [ast]
                                                     (instance? ast/inline-ast ast)))
@@ -442,15 +464,7 @@
 
                                   (reduce body-exprs last-expr
                                           (fn [final-code expr-code]
-                                            (comp-code expr-code final-code))))
-                       code (-> (cond (= (.variadic params) c/no-symbol)
-                                      (flat-map (.fixed params) destruct-seq)
-
-                                      (destruct-seq params))
-                                reverse
-                                (reduce code
-                                        (fn [final-code expr-code]
-                                          (comp-code expr-code final-code))))]
+                                            (comp-code expr-code final-code))))]
                    ;; TODO: handle recursion properly
                    (-> code
                        (.decl [(.decl code)])
@@ -604,49 +618,46 @@
     (for [val-code (gen-code (.val ast) mod)
           cont-codes (se/traverse (.cont ast) (fn [expr]
                                                 (gen-code expr mod)))]
-      (let [val-code (-> val-code
-                         (.refs-map (cond (instance? c/TaggedSymbol (.binding ast))
-                                          (.refs-map val-code)
+      (let [cont-codes (comp [val-code]
+                             (destruct-seq (.var (.binding ast) (.var val-code)))
+                             cont-codes)
+            [last-code cont-codes] (either (map (last cont-codes)
+                                                (fn [last-code]
+                                                  (cond (is-glbl (.var ast))
+                                                        [(-> last-code
+                                                             (.var (.var ast))
+                                                             (.decl [(.decl last-code)
+                                                                     "Value *" (.var ast) ";"])
+                                                             (.init [(.init last-code)
+                                                                     (.var ast) " = "
+                                                                     (.var last-code) ";"]))
+                                                         (butlast cont-codes)]
 
-                                          (assoc (.refs-map val-code)
-                                                 (.var val-code) 1)))
-                         (.init [(.init val-code)
-                                 (destruct-seq (.var (.binding ast) (.var val-code)))]))
-            cont-codes (either (map (last cont-codes)
-                                    (fn [last-code]
-                                      (cond (is-glbl (.var ast))
-                                            (conj (rest cont-codes)
-                                                  (-> last-code
-                                                      (.var (.var ast))
-                                                      (.decl [(.decl last-code)
-                                                              "Value *" (.var ast) ";"])
-                                                      (.init [(.init last-code)
-                                                              (.var ast) " = " (.var last-code) ";"])))
+                                                        (= (.var last-code) (.var ast))
+                                                        [last-code (butlast cont-codes)]
 
-                                            (= (.var last-code) (.var ast))
-                                            cont-codes
-
-                                            (do
-                                              (b/status 'compiler-error (c/Location _FILE_ _LINE_)
-                                                        lf 'for-ast-ast (ast/location ast)
-                                                        lf (str "'" (.var last-code) "' '"
-                                                                (.var ast) "'"))
-                                              (b/wait-for-err-out)
-                                              (abort)))))
-                               empty-c-code)
-            code (comp-code val-code
-                            (reduce (reverse cont-codes) empty-c-code
-                                    (fn [final-code expr-code]
-                                      (cond (= final-code empty-c-code)
-                                            expr-code
-                                            (comp-code expr-code final-code)))))]
+                                                        (do
+                                                          (b/status 'compiler-error
+                                                                    (c/Location _FILE_ _LINE_)
+                                                                    lf 'for-ast-ast (ast/location ast)
+                                                                    lf (str "'" (.var last-code) "' '"
+                                                                            (.var ast) "'"))
+                                                          (b/wait-for-err-out)
+                                                          (abort)))))
+                                           [empty-c-code empty-vector])
+            code (reduce (reverse cont-codes) last-code
+                         (fn [final-code expr-code]
+                           (cond (= final-code empty-c-code)
+                                 expr-code
+                                 (comp-code expr-code final-code))))]
         (b/status 'binding _LINE_ 'val (ast/location ast) (.var ast)
-                  lf 'val (type-name val-code) (.var val-code) (.refs-map val-code)
+                  ;; lf 'val (type-name val-code) (.var val-code) (.refs-map val-code)
                   lf 'cont lf (str "[" (to-str (-> cont-codes
                                                 (map (fn [code]
                                                        [(type-name code)
                                                         (.var code)
-                                                        (.refs-map code)]))
+                                                        (.refs-map code)
+                                                        (count (.init code))]))
                                                 (interpose (str lf "  ")))) "]")
                   lf 'code (type-name code) (.var code) (.refs-map code))
         (make-init code)))))
