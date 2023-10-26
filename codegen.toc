@@ -444,8 +444,9 @@
 (extend-type ast/do-ast
   CodeGen
   (gen-code [ast mod]
-    (se/traverse (.body ast) (fn [expr]
-                               (gen-code expr mod ast)))))
+    (map (se/traverse (.body ast) (fn [expr]
+                                    (gen-code expr mod ast)))
+         comp-code)))
 
 (extend-type ast/fn-arity-ast
   CodeGen
@@ -635,41 +636,46 @@
       (let [cont-codes (comp [val-code]
                              (destruct-seq (.var (.binding ast) (.var val-code)))
                              cont-codes)
-            code (either (map (last cont-codes)
-                              (fn [last-code]
-                                (cond (is-glbl (.var ast))
-                                      (comp-code (butlast cont-codes)
-                                                 (-> last-code
-                                                     (.var (.var ast))
-                                                     (.decl [(.decl last-code)
-                                                             "Value *" (.var ast) ";"])
-                                                     (.init [(.init last-code)
-                                                             (.var ast) " = "
-                                                             (.var last-code) ";"])))
+            [last-code cont-codes] (either (map (last cont-codes)
+                                                (fn [last-code]
+                                                  (cond (is-glbl (.var ast))
+                                                        [(-> last-code
+                                                             (.var (.var ast))
+                                                             (.decl [(.decl last-code)
+                                                                     "Value *" (.var ast) ";"])
+                                                             (.init [(.init last-code)
+                                                                     (.var ast) " = "
+                                                                     (.var last-code) ";"]))
+                                                         (butlast cont-codes)]
 
-                                      (= (.var last-code) (.var ast))
-                                      (comp-code cont-codes)
+                                                        (= (.var last-code) (.var ast))
+                                                        [last-code (butlast cont-codes)]
 
-                                      (do
-                                        (b/status 'compiler-error
-                                                  (c/Location _FILE_ _LINE_)
-                                                  lf 'for-ast-ast (ast/location ast)
-                                                  lf (str "'" (.var last-code) "' '"
-                                                          (.var ast) "'"))
-                                        (b/wait-for-err-out)
-                                        (abort)))))
-                         [])]
-        ;; (b/status 'binding _LINE_ 'val (ast/location ast) (.var ast)
-        ;;           ;; lf 'val (type-name val-code) (.var val-code) (.refs-map val-code)
-        ;;           lf 'cont lf (str "[" (to-str (-> cont-codes
-        ;;                                         (map (fn [code]
-        ;;                                                [(type-name code)
-        ;;                                                 (.var code)
-        ;;                                                 (.refs-map code)
-        ;;                                                 (count (.init code))]))
-        ;;                                         (interpose (str lf "  ")))) "]")
-        ;;           lf 'code (type-name code) (.var code) (.refs-map code))
-        code))))
+                                                        (do
+                                                          (b/status 'compiler-error
+                                                                    (c/Location _FILE_ _LINE_)
+                                                                    lf 'for-ast-ast (ast/location ast)
+                                                                    lf (str "'" (.var last-code) "' '"
+                                                                            (.var ast) "'"))
+                                                          (b/wait-for-err-out)
+                                                          (abort)))))
+                                           [empty-c-code empty-vector])
+            code (reduce (reverse cont-codes) last-code
+                         (fn [final-code expr-code]
+                           (cond (= final-code empty-c-code)
+                                 expr-code
+                                 (comp-code expr-code final-code))))]
+        (b/status 'binding _LINE_ 'val (ast/location ast) (.var ast)
+                  ;; lf 'val (type-name val-code) (.var val-code) (.refs-map val-code)
+                  lf 'cont lf (str "[" (to-str (-> cont-codes
+                                                (map (fn [code]
+                                                       [(type-name code)
+                                                        (.var code)
+                                                        (.refs-map code)
+                                                        (count (.init code))]))
+                                                (interpose (str lf "  ")))) "]")
+                  lf 'code (type-name code) (.var code) (.refs-map code))
+        (make-init code)))))
 
 (extend-type ast/protocol-ast
   CodeGen
@@ -772,19 +778,18 @@
       (for [clause-code (gen-code (.clause ast) mod)
             cont-code (gen-code (.cont ast) mod)]
         (let [cont-refs (dissoc (.refs-map cont-code) (.var cont-code))]
-          (-> empty-c-code
-              (.refs-map (comp (.refs-map clause-code)
-                               cont-refs))
-              (.var (.var ast))
-              (.decl (comp (.decl clause-code) (.decl cont-code)))
-              (.init [(.init clause-code)
-                      "Value *" (.var ast) "; if (!isNothing(" (.var clause-code) ")) {"
-                      (map (vec cont-refs)
-                           (fn [[var refs]]
-                             [" dec_and_free(" var ", " refs "); "]))
-                      (.var ast) " = " (.var clause-code)
-                      "; } else { dec_and_free(" (.var clause-code) ", 1); " 
-                      (.init cont-code) (.var ast) " = " (.var cont-code) ";}"])))))))
+          (C-init (.var ast)
+                  (comp (.decl clause-code) (.decl cont-code))
+                  [(.init clause-code)
+                   "Value *" (.var ast) "; if (!isNothing(" (.var clause-code) ")) {"
+                   (map (vec cont-refs)
+                        (fn [[var refs]]
+                          [" dec_and_free(" var ", " refs "); "]))
+                   (.var ast) " = " (.var clause-code)
+                   "; } else { dec_and_free(" (.var clause-code) ", 1); " 
+                   (.init cont-code) (.var ast) " = " (.var cont-code) ";}"]
+                  (merge-with + (.refs-map clause-code)
+                              cont-refs)))))))
 
 (extend-type ast/and-ast
   CodeGen
@@ -793,22 +798,21 @@
       (for [clause-code (gen-code (.clause ast) mod)
             cont-code (gen-code (.cont ast) mod)]
         (let [cont-refs (dissoc (.refs-map cont-code) (.var cont-code))
-              refs-map (comp (.refs-map clause-code)
-                             cont-refs)
+              refs-map (merge-with + (.refs-map clause-code)
+                                   cont-refs)
               _ (b/status 'and _LINE_ (ast/location ast) 'clause (.refs-map clause-code)
                           lf 'cont (.refs-map cont-code)
                           lf 'refs-map refs-map)]
-          (-> empty-c-code
-              (.refs-map refs-map)
-              (.var (.var ast))
-              (.decl (comp (.decl clause-code) (.decl cont-code)))
-              (.init [(.init clause-code)
-                      "Value *" (.var ast) "; if (isNothing(" (.var clause-code) ")) {"
-                      (map (vec cont-refs)
-                           (fn [[var refs]]
-                             [" dec_and_free(" var ", " refs "); "]))
-                      (.var ast) " = nothing; } else { dec_and_free(" (.var clause-code) ", 1); " 
-                      (.init cont-code) (.var ast) " = " (.var cont-code) ";}"])))))))
+          (C-init (.var ast)
+                  (comp (.decl clause-code) (.decl cont-code))
+                  [(.init clause-code)
+                   "Value *" (.var ast) "; if (isNothing(" (.var clause-code) ")) {"
+                   (map (vec cont-refs)
+                        (fn [[var refs]]
+                          [" dec_and_free(" var ", " refs "); "]))
+                   (.var ast) " = nothing; } else { dec_and_free(" (.var clause-code) ", 1); " 
+                   (.init cont-code) (.var ast) " = " (.var cont-code) ";}"]
+                  refs-map))))))
 
 (extend-type ast/prototype-ast
   CodeGen
