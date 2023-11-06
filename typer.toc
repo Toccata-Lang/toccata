@@ -4,10 +4,10 @@
                             :sha "30b346e"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "dcba6be"))
+                          :sha "7df6fc3"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "dc324ad"))
+                            :sha "26542ef"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -786,15 +786,30 @@
 
 (extend-type ast/fn-arity-ast
   TypeChecker
+  (set-local-var [ast]
+    (assert-result r (instance? se/StateError r))
+
+    (b/status 'set-arity-local _LINE_ (str "'" (.var ast) "'"))
+    (cond (= (.var ast) "")
+          (map (local-var 'Arity)
+               (fn [new-var]
+                 (.var ast new-var)))
+          (se/state-error ast)))
+
+  (set-global-var [ast]
+    (.var ast (b/global-var (.fn-sym ast) b/Fn)))
+
   (pre-check [ast]
     (let [fixed-params (.fixed (.params ast))
           arg-count (count (.params ast))
-          arity-id (cond (= (.fn-var ast) "")
+          arity-id (cond (= (.arity-id ast) c/no-symbol)
                          (c/tag (gensym "fn-arity"))
-                         (.fn-var ast))
+                         (.arity-id ast))
+          ast (.arity-id ast arity-id)
           loc (ast/location ast)]
       ;; TODO: what about duplicate param names (like in prototype-ast)?
       (for [_ (b/push-types)
+            ast (set-local-var ast)
             ;; :let [_ (start-clock)]
 
             ;; :let [_ (or (= (.line loc) 0)
@@ -845,7 +860,6 @@
                                  (c/param arity-id arg-count)
                                  loc)]
         (-> ast
-            (.fn-var arity-id)
             (.params new-params)
             (.body (comp (filter (.body ast) (partial instance? c/Constraints))
                          (-> (.body ast)
@@ -880,12 +894,12 @@
                                  c/top-type)
                   final-c (c/intersect result-c body-c)
                   checked-fnl (either (= c/bottom-type pts)
-                                      (c/reify-type-constraint final-c (.fn-var ast)
+                                      (c/reify-type-constraint final-c (.arity-id ast)
                                                                (-> pts c/get-items count
                                                                    (repeat c/top-type))
                                                                loc))
                   arity-c (c/intersect (.constraint ast)
-                                       (c/fn-arity (.fn-var ast) pts final-c))]
+                                       (c/fn-arity (.arity-id ast) pts final-c))]
             ;; :let [_ (or (= b/core (.file loc))
             ;;             (= (.line loc) 0)
             ;;             (and (= (.fn-sym ast) 'tf)
@@ -917,7 +931,7 @@
                                                 (b/conf-ass _LINE_ failure-c loc)
                               )))
                       b/se-nop)]
-        (let [sym (.fn-var ast)
+        (let [sym (.fn-sym ast)
               ;; TODO: use update-constraint here
               ast (cond (= c/bottom-type pts)
                         (do
@@ -939,13 +953,10 @@
                             (.constraint arity-c)))
               closures (dissoc-all closures (ast/all-syms (.params ast)))]
           (cond (empty? closures)
-                (-> ast
-                    (.fn-var (b/global-var sym 'Arity))
+                (-> (set-global-var ast)
                     (b/StaticArity (b/global-var sym b/CFn)))
 
-                (-> ast
-                    (.fn-var (b/global-var sym 'Arity))
-                    (b/ClosureArity closures))))))))
+                (b/ClosureArity ast closures)))))))
 
 (extend-type ast/fn-ast
   TypeChecker
@@ -955,9 +966,9 @@
                       (.var ast new-var))
 
                     (se/state-error ast))
-          newer (cond (= (.struct-var ast) "")
+          newer (cond (= (.struct-var new) "")
                       (for [struct-var (local-var 'fnStruct)]
-                        (.struct-var ast struct-var))
+                        (.struct-var new struct-var))
 
                       (se/state-error new))]
       newer))
@@ -1020,8 +1031,7 @@
       ;;         nothLing)))
       (for [_ (b/nip-types)
             ast (set-local-var ast)]
-        (-> ast
-            (.constraint fn-c))))))
+        (.constraint ast fn-c)))))
 
 (extend-type Symbol
   TypeChecker
@@ -1067,6 +1077,7 @@
                                 (cond (instance? c/TaggedSymbol new-s)
                                       (for [newer-s (set-local-var (.var new-s ""))
                                             :let [newer-s (.arity-id newer-s arity-id)]
+                                            _ (b/se-debug 'closure _LINE_ (.var new-s) (.var newer-s))
                                             _ (b/set-value newer-s newer-s)
                                             _ (se/update-val .closures
                                                              (fn [[m & ms]]
@@ -1712,13 +1723,13 @@
                                                                     ctor-apply-fields])))]
                   _ (b/set-type-info ctor-sym constructor)
                   _ (b/add-proto-impl ctor-type-num b/invoke-sym (inc field-count)
-                                      (ast/fn-arity-ast b/invoke-sym (b/global-var b/invoke-sym)
-                                                        ctor-params "" [] ctor-arity))
+                                      (ast/fn-arity-ast b/invoke-sym c/no-symbol ctor-params
+                                                        "" [] (b/global-var b/invoke-sym) ctor-arity))
                   _ (b/add-proto-impl ctor-type-num b/apply-sym 2
-                                      (ast/fn-arity-ast b/apply-sym (b/global-var b/apply-sym)
+                                      (ast/fn-arity-ast b/apply-sym c/no-symbol
                                                         (ast/params [(c/tag (symbol "#app"))
                                                                      (c/tag (symbol "#fields"))])
-                                                        "" [] ctor-apply))
+                                                        "" [] (b/global-var b/apply-sym) ctor-apply))
                   ;; TODO: need instance? impl constraint
                   _ (b/set-type-info sym new-type-constraint)
                   _ (b/set-value sym (.constraint sym constructor))
@@ -1794,10 +1805,10 @@
 
                    (type-check [_ _]
                      (let [get-id (c/tag (str sym "_get") loc)
-                           getter-ast (ast/fn-arity-ast b/apply-sym (b/global-var b/apply-sym)
+                           getter-ast (ast/fn-arity-ast b/apply-sym c/no-symbol
                                                         (ast/params [(c/tag (symbol "#field") loc)
                                                                      (c/tag (symbol "#x") loc)])
-                                                        "" []
+                                                        "" [] (b/global-var b/apply-sym)
                                                         (c/fn-arity
                                                          get-id
                                                          (c/seq-c [(c/multi [new-type-constraint
@@ -1808,11 +1819,11 @@
                                                                      [(c/param get-id 1)])
                                                           empty-list c/no-symbol)))
                            set-id (c/tag (str sym "_set") loc)
-                           setter-ast (ast/fn-arity-ast b/apply-sym (b/global-var b/apply-sym)
+                           setter-ast (ast/fn-arity-ast b/apply-sym c/no-symbol
                                                         (ast/params [(c/tag (symbol "#field") loc)
                                                                      (c/tag (symbol "#x") loc)
                                                                      (c/tag (symbol "#val") loc)])
-                                                        "" []
+                                                        "" [] (b/global-var b/apply-sym)
                                                         (c/fn-arity
                                                          set-id
                                                          (c/seq-c [(c/multi [new-type-constraint

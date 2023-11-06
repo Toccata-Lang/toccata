@@ -1,10 +1,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "dcba6be"))
+                          :sha "7df6fc3"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "dc324ad"))
+                            :sha "26542ef"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -498,10 +498,11 @@
   (gen-code [ast mod]
     (let [c-fn (.c-fn ast)
           params (-> ast .arity .params)
+          arity-var (.var (.arity ast))
           checker (checking-fn (-> ast .arity .params) c-fn)]
       (for [arity-code (gen-code (.arity ast) mod)]
         (-> empty-c-code
-            (.var (.fn-var (.arity ast)))
+            (.var arity-var)
             (.decl [(.decl arity-code)
                     "Value *" c-fn "(FnArity *arity"
                     (cond (= (.variadic params) c/no-symbol)
@@ -513,7 +514,7 @@
                     ") {\nwhile (1) {"
                     (.init arity-code)
                     (.decl checker)
-                    "FnArity " (.fn-var (.arity ast)) " = {FnArityType, REFS_STATIC, "
+                    "FnArity " arity-var " = {FnArityType, REFS_STATIC, "
                     (count params)
                     ", (Vector *)0, "
                     (cond (= (-> ast .arity .params .variadic)
@@ -529,11 +530,12 @@
   CodeGen
   (gen-code [ast mod]
     (let [c-fn (b/global-var b/CFn)
-          arity-var (.fn-var (.arity ast))
+          arity-var (.var (.arity ast))
           params (-> ast .arity .params)
           [closed-over closure-vars] (reduce (vec (.closures ast)) [[] []]
                                              (fn [[closed-over closure-vars] [k v]]
                                                [(conj closed-over k) (conj closure-vars v)]))]
+      (b/status 'closure-arity _LINE_ (ast/location ast) arity-var)
       (for [arity-code (gen-code (.arity ast) mod)]
         (-> empty-c-code
             (.var arity-var)
@@ -585,7 +587,7 @@
   CodeGen
   (gen-code [ast mod]
     (let [fn-sym (.fn-sym ast)
-          fn-var (.var ast)
+          var (.var ast)
           arities (.arities ast)]
       ;; TODO: what if fn-sym is c/no-symbol
       (cond (every arities (fn [arity]
@@ -594,10 +596,10 @@
                                                    (gen-code arity mod)))]
               (let [struct-var (.struct-var ast)]
                 (-> empty-c-code
-                    (.var fn-var)
+                    (.var var)
                     (.decl [(map code-vect .decl)
                             "\n// --------- " fn-sym " -------------\n"
-                            ;; "Value *" fn-var ";" line-sep
+                            ;; "Value *" var ";" line-sep
                             "Function " struct-var " = {FunctionType, REFS_STATIC, \""
                             fn-sym "\", " (count arities) ", "
                             "{" (-> code-vect
@@ -605,23 +607,23 @@
                                            (str "&" (.var code))))
                                     (interpose ", "))
                             "}};\n"
-                            "Value *" fn-var " = (Value *)&" struct-var ";\n\n"]))))
+                            "Value *" var " = (Value *)&" struct-var ";\n\n"]))))
 
             (for [code-vect (se/traverse arities (fn [arity]
                                                    (gen-code arity mod)))]
               (let [arity-count (count arities)]
                 (-> empty-c-code
-                    (.var fn-var)
+                    (.var var)
                     (.decl (map code-vect .decl))
                     (.init [(map code-vect .init)
                             "Function *" (.struct-var ast) " = malloc_function(" arity-count ");"
-                            "Value *" fn-var " = (Value *)" (.struct-var ast) ";"
+                            "Value *" var " = (Value *)" (.struct-var ast) ";"
                             (.struct-var ast) "->name = \"" fn-sym "\";"
                             (.struct-var ast) "->arityCount = " arity-count ";"
                             (map (zip-lists (map code-vect .var)
                                             (range arity-count))
                                  (fn [[sym index]]
-                                   [sym "->parent = " fn-var ";"
+                                   [sym "->parent = " var ";"
                                     (.struct-var ast) "->arities[" index "] = " sym ";"]))])
                     (.refs-map (merge-maps + (map code-vect .refs-map))))))))))
 
@@ -784,10 +786,9 @@
 (defn default-fn [val c-fn]
   (assert (instance? ast/prototype-ast val))
 
-  (let [default-body (.default-body val)
-        arity-var (b/global-var b/Arity)]
+  (let [default-body (.default-body val)]
     (b/StaticArity (ast/fn-arity-ast
-                    (.fn-name val) arity-var (.params val) (.doc val)
+                    (.fn-name val) c/no-symbol (.params val) (.doc val)
                     (cond (empty? default-body)
                           [(ast/inline-ast c/top-type (str "
    fprintf(stderr, \"*** Could not find implementation of '" (.fn-name val)
@@ -799,6 +800,7 @@
                                            "")]
 
                           default-body)
+                    (b/global-var b/Arity)
                     c/top-type)
                    c-fn)))
 
