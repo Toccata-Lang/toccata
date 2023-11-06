@@ -48,8 +48,6 @@
                                                 prev-max)))
                          starts)))))
 
-(def curr-arity (c/tag "#curr-arity"))
-
 (deftype ProtoArity [type-num arity]
   (assert (instance? (all-of Integer (min 1))
                      type-num))
@@ -214,7 +212,7 @@
 (defprotocol TypeChecker
   (set-local-var [ast]
     (assert-result r (instance? se/StateError r))
-  
+
     (cond (= (.var ast) "")
           (map (local-var b/Rslt)
                (fn [new-var]
@@ -442,7 +440,10 @@
 (extend-type ast/inline-ast
   TypeChecker
   (set-global-var [ast]
-    (.var ast (b/global-var 'Val)))
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Val))))
 
   (type-check [ast old-ast]
     (map (type-check (.constraint ast) (.constraint ast))
@@ -452,7 +453,10 @@
 (extend-type ast/reify-ast
   TypeChecker
   (set-global-var [ast]
-    (.var ast (b/global-var 'Reified)))
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Reified))))
 
   (pre-check [ast]
     (let [reified-type-num (either (instance? Integer (.type-num ast))
@@ -489,6 +493,7 @@
                       (fn [_]
                         (b/set-value (.fn-name ast)
                                      (ast/fn-ast (.fn-name ast) [] (b/global-var b/Fn)
+                                                 (b/global-var b/FnStruct)
                                                  (c/ProtoImpls (.fn-name ast)
                                                                (.arities c/fn-constraint
                                                                          {})
@@ -574,6 +579,7 @@
                 (fn [_]
                   (b/status 'new-proto _LINE_ sym)
                   (b/set-value sym (ast/fn-ast sym [ast] (b/global-var b/Fn)
+                                               (b/global-var b/FnStruct)
                                                (c/ProtoImpls sym
                                                              (.arities c/fn-constraint
                                                                        {arg-count impl-c})
@@ -583,7 +589,10 @@
 (extend-type ast/call-ast
   TypeChecker
   (set-global-var [ast]
-    (.var ast (b/global-var b/Rslt)))
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var b/Rslt))))
 
   (type-check [ast old-ast]
     (either (and (= (.call-target old-ast) 'show-type)
@@ -765,7 +774,9 @@
                                          val))
 
                                      (let [val (set-global-var val)]
-                                       (for [_ (b/set-value sym (.constraint val (c/trim (.constraint val))))]
+                                       (for [_ (b/set-value sym
+                                                            (.constraint val
+                                                                         (c/trim (.constraint val))))]
                                          val)))))
                         (b/set-value (.sym old-ast) (.constraint (.sym old-ast) c/top-type)))]
         (do
@@ -798,16 +809,16 @@
             ;;                    nothing)))]
             _ (se/update-val .var-count (fn [var-counts]
                                           (cons (int-generator 0) var-counts)))
-            _ (b/set-value curr-arity (.constraint
-                                       curr-arity
-                                       (c/fn-c []
-                                               {c/variadic (c/fn-arity arity-id
-                                                                       c/list-constraint c/top-type)})))
+            _ (se/update-val .closures (fn [closures]
+                                         (cons {} closures)))
+            _ (b/set-value b/curr-arity arity-id)
             new-params (set-local-var (.params ast))
             _ (cata (fn [x]
                       (cond (instance? c/TaggedSymbol x)
-                            (b/set-value x (.constraint x c/top-type))
-                            
+                            (b/set-value x (-> x
+                                               (.arity-id arity-id)
+                                               (.constraint c/top-type)))
+
                             ;; TODO: should use cata to make all the variadic syms be lists
                             (se/state-error x)))
                     new-params
@@ -849,8 +860,10 @@
       (for [result-c (map (b/get-value ast/result-sym) .constraint)
             ;; :let [_ (stop-clock ast)]
             _ (b/recover-val ast/result-sym)
-            _ (b/recover-val curr-arity)
+            _ (b/recover-val b/curr-arity)
             _ (se/update-val .var-count rest)
+            closures (se/get-in-val [.closures 0])
+            _ (se/update-val .closures rest)
             args (se/traverse (ast/all-syms (.params old-ast))
                               (fn [arg]
                                 (for [final-arg (b/get-value arg)]
@@ -904,39 +917,57 @@
                                                 (b/conf-ass _LINE_ failure-c loc)
                               )))
                       b/se-nop)]
-        ;; TODO: use update-constraint here
-        (cond (= c/bottom-type pts)
-              (do
-                ;; TODO: should never happen
-                (print-err 'blewity _LINE_ loc)
-                (abort))
+        (let [sym (.fn-var ast)
+              ;; TODO: use update-constraint here
+              ast (cond (= c/bottom-type pts)
+                        (do
+                          ;; TODO: should never happen
+                          (print-err 'blewity _LINE_ loc)
+                          (abort))
 
-              ;; TODO: this cata is incomplete. It needs to go through the body
-              (-> (cata (fn [x]
-                          (either (for [_ (instance? c/TaggedSymbol x)
-                                        final-arg (get args x)
-                                        _ (identical (.var x) (.var final-arg))]
-                                    final-arg)
+                        ;; TODO: this cata is incomplete. It needs to go through the body
+                        (-> (cata (fn [x]
+                                    (either (for [_ (instance? c/TaggedSymbol x)
+                                                  final-arg (get args x)
+                                                  _ (identical (.var x) (.var final-arg))]
+                                              final-arg)
 
-                                  x))
-                        ast)
-                  (.body (remove (.body ast) (fn [x]
-                                               (instance? c/Constraints x))))
-                  (.constraint arity-c)))))))
+                                            x))
+                                  ast)
+                            (.body (remove (.body ast) (fn [x]
+                                                         (instance? c/Constraints x))))
+                            (.constraint arity-c)))
+              closures (dissoc-all closures (ast/all-syms (.params ast)))]
+          (cond (empty? closures)
+                (-> ast
+                    (.fn-var (b/global-var sym 'Arity))
+                    (b/StaticArity (b/global-var sym b/CFn)))
+
+                (-> ast
+                    (.fn-var (b/global-var sym 'Arity))
+                    (b/ClosureArity closures))))))))
 
 (extend-type ast/fn-ast
   TypeChecker
   (set-local-var [ast]
-    (cond (= (.var ast) "")
-          (map (local-var 'fn)
-               (fn [new-var]
-                 (.var ast new-var)))
-          (se/state-error ast)))
+    (for [new (cond (= (.var ast) "")
+                    (for [new-var (local-var 'fn)]
+                      (.var ast new-var))
+
+                    (se/state-error ast))
+          newer (cond (= (.struct-var ast) "")
+                      (for [struct-var (local-var 'fnStruct)]
+                        (.struct-var ast struct-var))
+
+                      (se/state-error new))]
+      newer))
 
   (set-global-var [ast]
     (cond (every (.arities ast) (fn [arity]
                                   (instance? b/StaticArity arity)))
-          (.var ast (b/global-var (.fn-sym ast) b/Fn))
+          (-> ast
+              (.struct-var (b/global-var (.fn-sym ast) b/FnStruct))
+              (.var (b/global-var (.fn-sym ast) b/Fn)))
 
           ast))
 
@@ -964,13 +995,15 @@
 
   (type-check [ast old-ast]
     (let [sym (.fn-sym ast)
+          loc (ast/location old-ast)
           fn-c (-> c/fn-constraint
-                   (c/update-path (ast/location sym))
+                   (c/update-path loc)
                    (c/update-sym sym))
           fn-c (reduce (.arities ast) (.arities fn-c {})
                        (fn [c arity]
-                         (assert (instance? ast/fn-arity-ast arity))
-                         (let [arity-c (.constraint arity)]
+                         (assert (instance? b/Arity arity))
+
+                         (let [arity-c (-> arity .arity .constraint)]
                            (either (for [variadic (map (get-in arity-c [.param-consts])
                                                        c/seq-tail)
                                          :when (= c/no-tail variadic)
@@ -978,7 +1011,7 @@
                                                            c/get-items)]
                                      (assoc-in c [.arities (count fixed-params)] arity-c))
                                    (assoc-in c [.arities c/variadic] arity-c)))))
-          fn-c (c/update-path fn-c (ast/location old-ast))]
+          fn-c (c/update-path fn-c loc)]
       ;; (let [loc (ast/location ast)]
       ;;   (or ;; (= (.file loc) b/core)
       ;;       ;; (= (.line loc) 0)
@@ -988,12 +1021,7 @@
       (for [_ (b/nip-types)
             ast (set-local-var ast)]
         (-> ast
-            (.constraint fn-c)
-            (map (fn [arity]
-                   ;; TODO: check for closure here
-                   (-> arity
-                       (.fn-var (b/global-var sym b/Arity))
-                       (b/StaticArity (b/global-var sym b/CFn))))))))))
+            (.constraint fn-c))))))
 
 (extend-type Symbol
   TypeChecker
@@ -1011,7 +1039,10 @@
           (se/state-error ast)))
 
   (set-global-var [ast]
-    ast)
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Val))))
 
   (param-types [sym]
     (map (b/get-value sym) .constraint))
@@ -1024,14 +1055,49 @@
     (se/state-error s))
 
   (type-check [s old-s]
-    (map (b/get-value s) (fn [new-s]
-                           (cond (and (instance? c/TaggedSymbol new-s)
-                                      (= (.sym s) (.sym new-s)))
-                                 new-s
+    ;; TODO: this is probably a hotspot since it gets called for every symbol.
+    (for [new-s (b/get-value s)
+          new-s (se/try
+                  (for [arity-id (b/get-value b/curr-arity)
+                        r (cond (or (b/is-glbl (.var new-s))
+                                    (and (instance? c/TaggedSymbol new-s)
+                                         (= (.arity-id new-s) arity-id)))
+                                (se/state-error new-s)
 
-                                 (-> s
-                                     (.constraint (.constraint new-s))
-                                     (.var (.var new-s))))))))
+                                (cond (instance? c/TaggedSymbol new-s)
+                                      (for [newer-s (set-local-var (.var new-s ""))
+                                            :let [newer-s (.arity-id newer-s arity-id)]
+                                            _ (b/set-value newer-s newer-s)
+                                            _ (se/update-val .closures
+                                                             (fn [[m & ms]]
+                                                               (cons (assoc m new-s newer-s)
+                                                                     ms)))]
+                                        newer-s)
+
+                                      (se/state-error new-s)))]
+                    r)
+                  (fn [err]
+                    (se/state-error new-s)))]
+      (cond (and (instance? c/TaggedSymbol new-s)
+                 (= (.sym s) (.sym new-s)))
+            (do
+              ;; (or (b/is-glbl (.var new-s))
+              ;;     (and (= (.arity-id new-s) c/no-symbol)
+              ;;          (do
+              ;;            (b/status 'no-arity-id _LINE_ (ast/location s) new-s
+              ;;                      (str "'" (.var new-s) "'"))
+              ;;            (b/wait-for-err-out)
+              ;;            (abort))))
+              new-s)
+
+            (do
+              ;; (or (b/is-glbl (.var new-s))
+              ;;     (do
+              ;;       (b/status 'sym _LINE_ (ast/location s) s)
+              ;;       (abort)))
+              (-> s
+                  (.constraint (.constraint new-s))
+                  (.var (.var new-s))))))))
 
 (extend-type ast/params-ast
   TypeChecker
@@ -1235,9 +1301,12 @@
   (type-check [ast old-ast]
     (let [loc (ast/location val)]
       (for [_ (b/push-types)
+            arity-id (b/get-value b/curr-arity)
             _ (se/traverse (ast/all-syms (.binding ast))
                            (fn [sym]
-                             (b/set-value sym (.constraint sym c/top-type))))]
+                             (b/set-value sym (-> sym
+                                                  (.arity-id arity-id)
+                                                  (.constraint c/top-type)))))]
         val))))
 
 (extend-type ast/do-ast
@@ -1253,7 +1322,10 @@
 (extend-type ast/binding-ast
   TypeChecker
   (set-global-var [ast]
-    (.var ast (b/global-var b/Rslt)))
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var b/Rslt))))
 
   (pre-check [ast]
     ;; (let [loc (ast/location (.cont ast))]
@@ -1268,10 +1340,9 @@
     ;;                   lflf 'cont (.cont ast))
     ;;           nothing))))
     (for [new-binding (set-local-var (.binding ast))]
-      (let [new-val (.var (.val ast) (.var new-binding))]
-        (-> ast
-            (.binding new-binding)
-            (.val (Binder new-binding new-val))))))
+      (-> ast
+          (.binding new-binding)
+          (.val (Binder new-binding (.val ast))))))
 
   (type-check [ast old-ast]
     (let [binding (.binding ast)
@@ -1415,10 +1486,8 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (for [arity-val (b/get-value curr-arity)
-          :let [param (c/param (either (get-in arity-val [.constraint .arities c/variadic .arity-id])
-                                       (c/tag ""))
-                               0)]
+    (for [arity-id (b/get-value b/curr-arity)
+          :let [param (c/param arity-id 0)]
           _ (append-value-type (.sym type-info) type-info loc)
           _ (se/traverse fields
                          (fn [fld]
@@ -1480,7 +1549,10 @@
 (extend-type ast/quoted-ast
   TypeChecker
   (set-global-var [ast]
-    (.var ast (b/global-var 'Quoted)))
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Quoted))))
 
   (pre-check [ast]
     (se/state-error (reify

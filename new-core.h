@@ -48,7 +48,7 @@ typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *array[VECTOR_ARRAY_LEN];}
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int32_t count; int8_t shift; int64_t tailOffset;
                 VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int count; Vector *closures;
-                int variadic; void *fn;} FnArity;
+                int variadic; void *fn; Value* parent;} FnArity;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; char *name; int64_t arityCount;
                 FnArity *arities[];} Function;
 typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; Value* value;} Maybe;

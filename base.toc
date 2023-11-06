@@ -36,9 +36,10 @@
 (def invoke-sym (c/tag 'invoke))
 (def apply-sym (c/tag 'apply))
 (def CFn "CFn")
-(def Arity "Arity")
 (def Rslt "Rslt")
 (def Fn "Fn")
+(def FnStruct "FnStruct")
+(def curr-arity (c/tag "#curr-arity"))
 
 (defn status [& msg]
   (send err-out (fn [out-file?]
@@ -97,7 +98,7 @@
   Stringable
   (string-list [_] (list "<SymTable '" (str path) "'>")))
 
-(deftype Module [file-name index namespaces var-count]
+(deftype Module [file-name index namespaces var-count closures]
   ;; index            this module's index
   (assert (instance? Integer index))
   ;; namespaces      imported namespaces
@@ -106,6 +107,8 @@
                      namespaces))
   ;; var-count       stack of var counters
   (assert (instance? (list-of IntGenerator) var-count))
+  ;; closures        stack of maps of syms used in fn arities
+  (assert (instance? (list-of HashMap) closures))
 
   Stringable
   (string-list [_] (list "<Module '" (str file-name) "'>")))
@@ -128,8 +131,10 @@
                                                            (.constraint (.static c/int-constraint
                                                                                  int-min)))
                                               'nothing (-> (c/tag 'nothing)
-                                                           (.constraint c/nothing-constraint))}))}
-                (list (int-generator 0)))
+                                                           (.constraint c/nothing-constraint))
+                                              curr-arity (c/tag "")}))}
+                (list (int-generator 0))
+                empty-list)
         (Module file-name module-index
                 {core (either (get-in core-mod [.namespaces c/no-symbol])
                               (SymTable core
@@ -138,7 +143,8 @@
                  c/no-symbol (SymTable file-name
                                        {}
                                        (list {}))}
-                (list (int-generator 0)))))
+                (list (int-generator 0))
+                empty-list)))
 
 (defn report-type-stack [& msg]
   (map (se/get-in-val [.namespaces c/no-symbol .values])
@@ -516,6 +522,26 @@
          (fn [new-arity]
            (.arity x new-arity)))))
 
+(deftype ClosureArity [arity closures]
+  (assert (instance? ast/fn-arity-ast arity))
+  (assert (instance? HashMap closures))
+
+  Stringable
+  (string-list [_]
+    (list "(b/StaticArity " (str arity) ")"))
+
+  Container
+  (map [x f]
+    (.arity x (f arity)))
+
+  (map [x f embed]
+    (map (f arity)
+         (fn [new-arity]
+           (.arity x new-arity)))))
+
+(def Arity (any-of ClosureArity
+                   StaticArity))
+
 (def var-punct {"*" "_STAR_"
                 "." ""
                 "#" "_HASH_"
@@ -569,6 +595,9 @@
 (def global-vars (int-generator 0))
 (def glbl "glbl")
 (def glbl-len (count glbl))
+
+(defn is-glbl [var]
+  (= (subs var 0 glbl-len) glbl))
 
 (defn global-var
   ([arg-name]
