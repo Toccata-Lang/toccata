@@ -17,6 +17,9 @@
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "d61aa1e"))
+(add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
+                            "file-io.toc"
+                            :sha "36fa952"))
 
 ;; TODO: use 'either' here when the compiler supports it
 (def toccata-dir (extract (or (sys/get-environment "TOCCATA_DIR")
@@ -43,16 +46,17 @@
 
 (defn status [& msg]
   (send err-out (fn [out-file?]
-                  ;; (assert (instance? Maybe out-file?))
+                  (assert (instance? Maybe out-file?))
 
                   ;; (and out-file?
                   ;;      (maybe (apply print-err msg)))
 
                   (apply print-err msg)
-                  ;; (map out-file?
-                  ;;      (fn [out-file]
-                  ;;        (fio/write out-file (str (to-str (interpose msg " ")) lf))
-                  ;;        out-file))
+                  (map out-file?
+                       (fn [out-file]
+                         (either (instance? Symbol out-file)
+                                 (fio/write out-file (str (to-str (interpose msg " ")) lf)))))
+                  out-file?
                   )))
 
 (defn wait-for-err-out []
@@ -115,6 +119,43 @@
 
 (def modules (agent {}))
 
+(deftype StaticArity [arity c-fn]
+  (assert (instance? ast/fn-arity-ast arity))
+  (assert (instance? String c-fn))
+
+  Stringable
+  (string-list [_]
+    (list "(b/StaticArity " (str arity) ")"))
+
+  Container
+  (map [x f]
+    (.arity x (f arity)))
+
+  (map [x f embed]
+    (map (f arity)
+         (fn [new-arity]
+           (.arity x new-arity)))))
+
+(deftype ClosureArity [arity closures]
+  (assert (instance? ast/fn-arity-ast arity))
+  (assert (instance? HashMap closures))
+
+  Stringable
+  (string-list [_]
+    (list "(b/StaticArity " (str arity) ")"))
+
+  Container
+  (map [x f]
+    (.arity x (f arity)))
+
+  (map [x f embed]
+    (map (f arity)
+         (fn [new-arity]
+           (.arity x new-arity)))))
+
+(def Arity (any-of ClosureArity
+                   StaticArity))
+
 (defn new-module [file-name module-index core-mod]
   (cond (= module-index 0)
         (Module core module-index
@@ -134,7 +175,7 @@
                                                            (.constraint c/nothing-constraint))
                                               curr-arity (c/tag "")}))}
                 (list (int-generator 0))
-                empty-list)
+                (list {}))
         (Module file-name module-index
                 {core (either (get-in core-mod [.namespaces c/no-symbol])
                               (SymTable core
@@ -144,7 +185,7 @@
                                        {}
                                        (list {}))}
                 (list (int-generator 0))
-                empty-list)))
+                (list {}))))
 
 (defn report-type-stack [& msg]
   (map (se/get-in-val [.namespaces c/no-symbol .values])
@@ -383,7 +424,7 @@
 
 (defn add-proto-impl [type-num fn-sym arg-count arity]
   (assert (instance? Integer type-num))
-  (assert (instance? ast/fn-arity-ast arity))
+  (assert (instance? Arity arity))
   (assert-result r (instance? se/StateError r))
 
   (cond (= type-num c/UnknownType)
@@ -393,7 +434,7 @@
           (abort))
         '_)
   (let [loc (ast/location fn-sym)
-        arity-c (.constraint arity)]
+        arity-c (.constraint (.arity arity))]
     (cond (= (str fn-sym) "")
           (do
             (status 'compiler-error _LINE_ (str "'" fn-sym "'") (ast/location fn-sym)
@@ -504,43 +545,6 @@
   ;; init   nested vector of strings
   (assert (instance? Vector init))
   )
-
-(deftype StaticArity [arity c-fn]
-  (assert (instance? ast/fn-arity-ast arity))
-  (assert (instance? String c-fn))
-
-  Stringable
-  (string-list [_]
-    (list "(b/StaticArity " (str arity) ")"))
-
-  Container
-  (map [x f]
-    (.arity x (f arity)))
-
-  (map [x f embed]
-    (map (f arity)
-         (fn [new-arity]
-           (.arity x new-arity)))))
-
-(deftype ClosureArity [arity closures]
-  (assert (instance? ast/fn-arity-ast arity))
-  (assert (instance? HashMap closures))
-
-  Stringable
-  (string-list [_]
-    (list "(b/StaticArity " (str arity) ")"))
-
-  Container
-  (map [x f]
-    (.arity x (f arity)))
-
-  (map [x f embed]
-    (map (f arity)
-         (fn [new-arity]
-           (.arity x new-arity)))))
-
-(def Arity (any-of ClosureArity
-                   StaticArity))
 
 (def var-punct {"*" "_STAR_"
                 "." ""
