@@ -745,6 +745,7 @@
     (let [loc (ast/location (.sym old-ast))
           sym (.sym old-ast)]
       (for [
+            ;; se-nop
             ;; :let [_ (stop-clock ast)]
             val (either (map (last (.value-exprs ast))
                              (fn [val]
@@ -789,7 +790,6 @@
   (set-local-var [ast]
     (assert-result r (instance? se/StateError r))
 
-    (b/status 'set-arity-local _LINE_ (str "'" (.var ast) "'"))
     (cond (= (.var ast) "")
           (map (local-var 'Arity)
                (fn [new-var]
@@ -1116,13 +1116,21 @@
 (extend-type ast/params-ast
   TypeChecker
   (set-local-var [ast]
-    (flat-map (map ast set-local-var se/state-error)
-              (fn [new-ast]
-                (cond (= (.var new-ast) "")
-                      (map (local-var 'seq)
-                           (fn [new-var]
-                             (.var new-ast new-var)))
-                      (se/state-error new-ast)))))
+    (cata (fn [inner]
+            (cond (instance? c/TaggedSymbol inner)
+                  (set-local-var inner)
+
+                  (instance? ast/params-ast inner)
+                  (cond (= (.var inner) "")
+                        (map (local-var 'seq)
+                             (fn [new-var]
+                               (.var inner new-var)))
+
+                        (se/state-error inner))
+
+                  (se/state-error inner)))
+          ast
+          se/state-error))
 
   (update-constraint [ast constraint loc]
     (let [new-c (-> (.constraint ast)
@@ -1313,10 +1321,11 @@
     (se/state-error ast))
 
   (type-check [ast old-ast]
-    (let [loc (ast/location val)]
+    (let [loc (ast/location val)
+          binding (.var (.binding ast) (.var val))]
       (for [_ (b/push-types)
             arity-id (b/get-value b/curr-arity)
-            _ (se/traverse (ast/all-syms (.binding ast))
+            _ (se/traverse (ast/all-syms binding)
                            (fn [sym]
                              (b/set-value sym (-> sym
                                                   (.arity-id arity-id)
@@ -1345,15 +1354,14 @@
     ;; (let [loc (ast/location (.cont ast))]
     ;;   (or ;; (= (.line loc) 0)
     ;;       ;; (= (.file loc) b/core)
-    ;;    (and (or (= (.binding ast) 'xtrap)
-    ;;             (= (.binding ast) 'flopper))
-    ;;         (do
-    ;;           (b/status 'checking-binding _LINE_ loc
-    ;;                   lf 'binding (.binding ast)
-    ;;                   lflf 'val (.val ast)
-    ;;                   lflf 'cont (.cont ast))
-    ;;           nothing))))
-    (for [new-binding (set-local-var (.binding ast))]
+    ;;    (do
+    ;;      (b/status 'checking-binding _LINE_ loc
+    ;;                lf 'binding (.binding ast) (.var (.binding ast))
+    ;;                lflf 'val (.val ast) (.var (.val ast))
+    ;;                ;; lflf 'cont (.cont ast)
+    ;;                )
+    ;;      nothing)))
+    (for [new-binding (set-local-var (.var (.binding ast) (.var (.val ast))))]
       (-> ast
           (.binding new-binding)
           (.val (Binder new-binding (.val ast))))))
@@ -1400,6 +1408,7 @@
                             ""))
               (.constraint (either (map last-expr .constraint)
                                    c/top-type))
+              (.binding (.var binding (.var val)))
               (.val val)))))))
 
 (extend-type ast/or-ast
