@@ -4,10 +4,10 @@
                             :sha "30b346e"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "7df6fc3"))
+                          :sha "c797d90"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "26542ef"))
+                            :sha "a2587de"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -1203,53 +1203,49 @@
             :let [type-infos (cond (instance? c/SumConstraint type-info)
                                    (.alts type-info)
                                    [type-info])]
-            new-ast (map ast
-                         (fn [arity]
-                           (assert (instance? ast/fn-arity-ast arity))
+            new-impls (-> (.impls ast)
+                          (filter (fn [arity]
+                                    (instance? ast/fn-arity-ast arity)))
+                          (se/traverse
+                           (fn [arity]
+                             (either (-> (.params arity)
+                                         .fixed
+                                         first
+                                         (map (fn [first-param]
+                                                ;; (print-err 'params _LINE_
+                                                ;;            (ast/location first-param)
+                                                ;;            first-param)
+                                                (-> type-infos
+                                                    (map (fn [type-info]
+                                                           (let [new-bod (comp
+                                                                          [(CheckOnly first-param
+                                                                                      type-info)]
+                                                                          (.body arity))]
+                                                             (ProtoArity (c/type-num type-info)
+                                                                         (.body arity new-bod)))))
+                                                    se/state-error))))
+                                     (b/compilation-error "Prototype implentation for "
+                                                          (str "'" (.fn-sym arity) "'")
+                                                          "must have at least one parameter at"
+                                                          (ast/location (.fn-sym arity)))))))]
+        (conj new-impls
+              (reify
+                Type
+                (type-name [_]
+                  (str "reified at " (c/Location _FILE_ _LINE_)))
 
-                           (either (-> (.params arity)
-                                       .fixed
-                                       first
-                                       (map (fn [first-param]
-                                              ;; (print-err 'params _LINE_ (ast/location first-param)
-                                              ;; first-param)
-                                              (-> type-infos
-                                                  (map (fn [type-info]
-                                                         (let [new-bod (comp
-                                                                        [(CheckOnly first-param
-                                                                                    type-info)]
-                                                                        (.body arity))]
-                                                           (ProtoArity (c/type-num type-info)
-                                                                       (.body arity new-bod)))))
-                                                  se/state-error))))
-                                   (b/compilation-error "Prototype implentation for "
-                                                      (str "'" (.fn-sym arity) "'")
-                                                      "must have at least one parameter at"
-                                                      (ast/location (.fn-sym arity)))))
-                         se/state-error)]
-        (-> (either (get new-ast .impls)
-                    {})
-            vals
-            vec
-            (map vals)
-            (map vec)
-            (conj (reify
-                    Type
-                    (type-name [_]
-                      (str "reified at " (c/Location _FILE_ _LINE_)))
+                Stringable
+                (string-list [_]
+                  (list (str "reified at " (c/Location _FILE_ _LINE_))))
 
-                    Stringable
-                    (string-list [_]
-                      (list (str "reified at " (c/Location _FILE_ _LINE_))))
+                Container
+                (map [y f embed]
+                  (embed y))
 
-                    Container
-                    (map [y f embed]
-                      (embed y))
-
-                    TypeChecker
-                    (pre-check [x]
-                      (se/state-error (ast/block-comment-ast [] c/no-loc
-                                                             c/top-type))))))))))
+                TypeChecker
+                (pre-check [x]
+                  (se/state-error (ast/block-comment-ast [] c/no-loc
+                                                         c/top-type)))))))))
 
 (extend-type ast/string-ast
   TypeChecker
@@ -1684,10 +1680,10 @@
 
                                              (b/compilation-error
                                               (b/conf-ass _LINE_
-                                                        (c/NoValues [field-c
-                                                                     (.type-symbol c/empty-reified
-                                                                                   (c/tag (str "Field '" (.sym field-c) "' doesn't exist")))])
-                                                        loc))))))
+                                                          (c/NoValues [field-c
+                                                                       (.type-symbol c/empty-reified
+                                                                                     (c/tag (str "Field '" (.sym field-c) "' doesn't exist")))])
+                                                          loc))))))
                   field-vals (se/traverse fields b/get-value)
                   :let [field-cs (map field-vals .constraint)
                         idxs (integer-gen 1)
@@ -1778,27 +1774,11 @@
                                                           (c/type-op c/set-to-op setter-param-0
                                                                      [[field] setter-param-1]))
                                                          loc))))]
-              (let [impls (elgot (fn [ast]
-                                   (cond (instance? HashMap ast)
-                                         (RecurseWith (vec (vals ast)))
-
-                                         (instance? ast/fn-arity-ast ast)
-                                         (RecurseFinal
-                                          (constrain-first-param ast new-type-constraint
-                                                                 fields loc))
-
-                                         (RecurseWith ast)))
-                                 (fn [v]
-                                   (cond (instance? Vector v)
-                                         (reduce v []
-                                                 (fn [new-v inner]
-                                                   (cond (instance? Vector inner)
-                                                         (comp new-v inner)
-                                                         (conj new-v inner))))
-
-                                         v))
-                                 (remove (.impls ast)
-                                         (partial instance? c/SymbolConstraints)))
+              (let [impls (map (remove (.impls ast)
+                                         (partial instance? c/SymbolConstraints))
+                                 (fn [ast]
+                                   (constrain-first-param ast new-type-constraint
+                                                          fields loc)))
                     ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
                     ;; and parameter, respectively
                     [invokes others] (reduce impls [[] []]
