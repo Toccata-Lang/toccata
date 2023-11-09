@@ -1,10 +1,10 @@
 
-#include <sys/types.h>
-#include <stdio.h>
-#include <string.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdint.h>
-#include <inttypes.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 
 #define CLOSURE_INFO 1
@@ -28,65 +28,185 @@ extern void abort();
 
 #define REFS_STATIC -2
 
-typedef struct
-{
- uint32_t        State[5];
- uint32_t        Count[2];
- uint8_t         Buffer[64];
- } Sha1Context;
+typedef struct {
+  uint32_t State[5];
+  uint32_t Count[2];
+  uint8_t Buffer[64];
+} Sha1Context;
 
-typedef void (Destructor)(void *);
+typedef void(Destructor)(void *);
 // TODO: add hash cache and meta data. And update 'make-static-*' as well
-typedef struct Value {TYPE_SIZE type; REFS_SIZE refs; struct Value* next;} Value;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t numVal;} Integer;
-typedef struct HashedValue {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal;} HashedValue;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int64_t len; char buffer[0];} String;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int64_t len; Value *source; char *buffer;} SubString;
-typedef struct List {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal;
-                     int64_t len; Value* head; struct List *tail;} List;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *array[VECTOR_ARRAY_LEN];} VectorNode;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int32_t count; int8_t shift; int64_t tailOffset;
-                VectorNode *root; Value *tail[VECTOR_ARRAY_LEN];} Vector;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int count; Vector *closures;
-                int variadic; void *fn; Value* parent;} FnArity;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; char *name; int64_t arityCount;
-                FnArity *arities[];} Function;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; Value* value;} Maybe;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int32_t bitmap; Value *array[];} BitmapIndexedNode;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; Value *array[ARRAY_NODE_LEN];} ArrayNode;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int16_t count; Value *array[];} HashCollisionNode;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *result; List *actions;
-                pthread_cond_t delivered; pthread_mutex_t access;} Promise;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *action; Value* errorCallback; List *actions;
-                Value *result; pthread_cond_t delivered; pthread_mutex_t access;} Future;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; Value *val; List* input; List *output;
-                pthread_mutex_t access;} Agent;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; int64_t hashVal; int64_t implCount; Value* impls[];} ReifiedVal;
-typedef struct {TYPE_SIZE type; REFS_SIZE refs; void *ptr; Destructor *destruct;} Opaque;
+typedef struct Value {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  struct Value *next;
+} Value;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t numVal;
+} Integer;
+typedef struct HashedValue {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+} HashedValue;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  int64_t len;
+  char buffer[0];
+} String;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  int64_t len;
+  Value *source;
+  char *buffer;
+} SubString;
+typedef struct List {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  int64_t len;
+  Value *head;
+  struct List *tail;
+} List;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  Value *array[VECTOR_ARRAY_LEN];
+} VectorNode;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  int32_t count;
+  int8_t shift;
+  int64_t tailOffset;
+  VectorNode *root;
+  Value *tail[VECTOR_ARRAY_LEN];
+} Vector;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int count;
+  Vector *closures;
+  int variadic;
+  void *fn;
+  Value *parent;
+} FnArity;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  char *name;
+  int64_t arityCount;
+  FnArity *arities[];
+} Function;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  Value *value;
+} Maybe;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  int32_t bitmap;
+  Value *array[];
+} BitmapIndexedNode;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  Value *array[ARRAY_NODE_LEN];
+} ArrayNode;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  int16_t count;
+  Value *array[];
+} HashCollisionNode;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  Value *result;
+  List *actions;
+  pthread_cond_t delivered;
+  pthread_mutex_t access;
+} Promise;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  Value *action;
+  Value *errorCallback;
+  List *actions;
+  Value *result;
+  pthread_cond_t delivered;
+  pthread_mutex_t access;
+} Future;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  Value *val;
+  List *input;
+  List *output;
+  pthread_mutex_t access;
+} Agent;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  int64_t hashVal;
+  int64_t implCount;
+  Value *impls[];
+} ReifiedVal;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
+  void *ptr;
+  Destructor *destruct;
+} Opaque;
 
 extern Integer const0;
 extern Value *const0Ptr;
 
-typedef struct {TYPE_SIZE type; Value *implFn;} ProtoImpl;
-typedef struct {int64_t implCount; ProtoImpl impls[];} ProtoImpls;
+typedef struct {
+  TYPE_SIZE type;
+  Value *implFn;
+} ProtoImpl;
+typedef struct {
+  int64_t implCount;
+  ProtoImpl impls[];
+} ProtoImpls;
 
 typedef Value *(FnType0)(FnArity *);
 typedef Value *(FnType1)(FnArity *, Value *);
 typedef Value *(FnType2)(FnArity *, Value *, Value *);
 typedef Value *(FnType3)(FnArity *, Value *, Value *, Value *);
 typedef Value *(FnType4)(FnArity *, Value *, Value *, Value *, Value *);
-typedef Value *(FnType5)(FnArity *, Value *, Value *, Value *, Value *, Value *);
-typedef Value *(FnType6)(FnArity *, Value *, Value *, Value *, Value *, Value *, Value *);
-typedef Value *(FnType7)(FnArity *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
-typedef Value *(FnType8)(FnArity *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
-typedef Value *(FnType9)(FnArity *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *, Value *);
+typedef Value *(FnType5)(FnArity *, Value *, Value *, Value *, Value *,
+                         Value *);
+typedef Value *(FnType6)(FnArity *, Value *, Value *, Value *, Value *, Value *,
+                         Value *);
+typedef Value *(FnType7)(FnArity *, Value *, Value *, Value *, Value *, Value *,
+                         Value *, Value *);
+typedef Value *(FnType8)(FnArity *, Value *, Value *, Value *, Value *, Value *,
+                         Value *, Value *, Value *);
+typedef Value *(FnType9)(FnArity *, Value *, Value *, Value *, Value *, Value *,
+                         Value *, Value *, Value *, Value *);
 
 typedef struct {
   List *tail;
-  pthread_mutex_t access;} extractCache;
+  pthread_mutex_t access;
+} extractCache;
 
 typedef struct {
-  int64_t sym_counter;} intGenerator;
+  int64_t sym_counter;
+} intGenerator;
 
 extern Value *nothing;
 extern Maybe nothing_struct;
@@ -154,8 +274,12 @@ extern List *globals;
 extern ReifiedVal all_values_struct;
 extern Value *all_values;
 
-typedef struct {List* input; List* output;
-                pthread_mutex_t mutex; pthread_cond_t notEmpty;} FuturesQueueStruct;
+typedef struct {
+  List *input;
+  List *output;
+  pthread_mutex_t mutex;
+  pthread_cond_t notEmpty;
+} FuturesQueueStruct;
 extern FuturesQueueStruct futuresQueue;
 extern Future shutDown;
 extern int8_t mainThreadDone;
@@ -182,13 +306,13 @@ void prefs(char *tag, Value *v);
 extern Value *(*equalSTAR)(FnArity *, Value *, Value *);
 extern Value *(*dissoc)(FnArity *, Value *, Value *, Value *, Value *);
 extern Value *(*sha1)(FnArity *, Value *);
-extern Value *(*hashSeq)(FnArity *, Value*, Value *s);
-extern Value *(*count)(FnArity *, Value*);
-extern Value *(*vals)(FnArity *, Value*);
-extern Value *(*zero)(FnArity *, Value*);
+extern Value *(*hashSeq)(FnArity *, Value *, Value *s);
+extern Value *(*count)(FnArity *, Value *);
+extern Value *(*vals)(FnArity *, Value *);
+extern Value *(*zero)(FnArity *, Value *);
 extern Value *(*invoke0Args)(FnArity *, Value *f);
-extern Value *(*invoke1Arg)(FnArity *, Value *f, Value* arg);
-extern Value *(*invoke2Args)(FnArity *, Value *f, Value* arg0, Value* arg1);
+extern Value *(*invoke1Arg)(FnArity *, Value *f, Value *arg);
+extern Value *(*invoke2Args)(FnArity *, Value *f, Value *arg0, Value *arg1);
 extern Value *(*type_name)(FnArity *, Value *t);
 extern Value *(*seq)(FnArity *, Value *t);
 extern Value *(*newHashSet)(FnArity *, Value *t);
@@ -230,7 +354,8 @@ Value *vectStore(Vector *vect, unsigned index, Value *val);
 Value *updateField(Value *rval, Value *field, int64_t index);
 Value *vectorReverse(Value *arg0);
 List *listCons(Value *x, List *l);
-void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]);
+void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
+                   Value **args[]);
 Value *maybe(FnArity *, Value *arg0, Value *arg1);
 int8_t isNothing(Value *v);
 Value *strCount(Value *arg0);
@@ -277,21 +402,28 @@ Value *listFilter(Value *arg0, Value *arg1);
 List *reverseList(List *input);
 Value *bmiHashSeq(Value *arg0, Value *arg1);
 Value *bmiCount(Value *arg0);
-Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
-Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
+Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
+                    int shift);
+Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
+                      int shift);
 Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
-Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift);
-Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
-Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
-Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
+Value *bmiDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
+Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
+                          int shift);
+Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
+                            int shift);
+Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
+                      int shift);
 Value *hashMapGet(Value *arg0, Value *arg1);
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2);
-Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
+Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
+                    int shift);
 Value *collisionCount(Value *arg0);
 Value *arrayNodeCount(Value *arg0);
 Value *collisionSeq(Value *arg0, Value *arg1);
 Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
-Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
+Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
+                    int shift);
 Value *arrayNodeSeq(Value *arg0, Value *arg1);
 Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 Value *deliverPromise(Value *arg0, Value *arg1);
@@ -313,12 +445,13 @@ void show(Value *v);
 int64_t countSeq(Value *seq);
 Value *malloc_sha1();
 Value *finalize_sha1(Value *ctxt);
-void Sha1Update (Sha1Context* Context, void* Buffer, int64_t BufferSize);
+void Sha1Update(Sha1Context *Context, void *Buffer, int64_t BufferSize);
 void strSha1Update(Sha1Context *ctxt, Value *arg0);
 Value *reifiedTypeArgs(Value *x);
-Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym, Value *dispValue, Value *args);
+Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym,
+                     Value *dispValue, Value *args);
 Value *get(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
-Value *baseDissoc(Value *arg0, Value* arg1, int64_t hash, int shift);
+Value *baseDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 int64_t nakedSha1(Value *v1);
 Value *copyAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift);
 Value *mutateAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift);
@@ -330,7 +463,7 @@ Value *vectGet(Vector *vect, unsigned index);
 Value *hashMapVec(Value *m);
 void incTypeMalloc(TYPE_SIZE type, int delta);
 void incTypeFree(TYPE_SIZE type, int delta);
-Value *hashVec(Value* n, Value *s);
+Value *hashVec(Value *n, Value *s);
 
 ArrayNode *malloc_arrayNode();
 HashCollisionNode *malloc_hashCollisionNode(int itemCount);
