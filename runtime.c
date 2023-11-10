@@ -11,7 +11,7 @@ Problems with values nested in others. And values delivered to Promises.
 
 #include <stdlib.h>
 #include <stdatomic.h>
-#include "new-core.h"
+#include "runtime.h"
 
 REFS_SIZE refsInit = 1;
 REFS_SIZE refsError = -10;
