@@ -27,7 +27,7 @@
                                 (print-err "Could not read environnment variable"
                                            "TOCCATA_DIR")
                                 (abort)))))
-(def path-to-core (str toccata-dir "/new-core.toc"))
+(def path-to-core (str toccata-dir "/no-core.toc"))
 (def core (c/ToccataCore path-to-core))
 
 (def type-counter (int-generator c/TypeCount))
@@ -254,6 +254,10 @@
                                     .values]
                                  (set-val-hist sym sym))
                       s)]
+    ;; TODO: send arities to mods agent
+    (status 'base-boom _LINE_)
+    (wait-for-err-out)
+    (abort)
     [sym new-s]))
 
 (defn get-core-value [sym]
@@ -296,11 +300,13 @@
 
 (defn get-proto-impl [sym type-num arity-rank]
   (se/try
-    (flat-map (get-value sym)
-              (fn [val]
-                (either (map (get-in val [.constraint .impl-fns type-num .arities arity-rank])
-                             se/state-error)
-                        se/zero-se)))
+    (comp (flat-map (get-value sym)
+                    (fn [val]
+                      (either (map (get-in val [.constraint .impl-fns type-num .arities arity-rank])
+                                   se/state-error)
+                              se/zero-se)))
+          ;; TODO: send request to mods, cache result
+          )
     (fn [_]
       se/zero-se)))
 
@@ -318,9 +324,8 @@
           (print-err 'compiler-error _LINE_ (ast/location val) val)
           se-nop)
 
-        ;; only allowed to update ProtoImpls for ns qualified symbols
-        (or (= c/no-symbol (.ns sym))
-            (instance? c/ProtoImpls (.constraint val)))
+        ;; for ns qualified symbols, only allowed to update ProtoImpls
+        (= c/no-symbol (.ns sym))
         (map (se/update-in-val [.namespaces (.ns sym) .values]
                                (fn [values-list]
                                  (either (map (first values-list)
@@ -424,7 +429,7 @@
 
 (defn add-proto-impl [type-num fn-sym arg-count arity]
   (assert (instance? Integer type-num))
-  (assert (instance? Arity arity))
+  (assert (instance? StaticArity arity))
   (assert-result r (instance? se/StateError r))
 
   (cond (= type-num c/UnknownType)
@@ -442,25 +447,54 @@
             (wait-for-err-out)
             (abort))
 
-          (comp (for [proto-val (get-value fn-sym)
+          (comp (cond (= c/no-symbol (.ns fn-sym))
+                      (for [mod-idx (se/get-val .index)
+                            :when-not (= 0 mod-idx)
+                            _ (get-core-value fn-sym)]
+                        (send modules
+                              (fn [mods]
+                                (either (map (get mods core)
+                                             (fn [core-mod]
+                                               (let [[_ new-core] ((add-proto-impl type-num fn-sym
+                                                                                   arg-count arity)
+                                                                   core-mod)]
+                                                 (assoc mods core new-core))))
+                                        mods))))
+
+                      ;; (instance? c/TaggedSymbol (.ns fn-sym))
+                      ;; (do
+                      ;;   (send modules (fn [mods]
+                      ;;                   (assoc-in mods []))))
+
+                      se/zero-se)
+
+                (for [proto-val (get-value fn-sym)
                       :let [proto-impls (.constraint proto-val)]
                       _ (cond (get-in proto-impls [.impl-fns type-num .arities arg-count])
                               (compilation-error "An implementation for" (str "'" fn-sym "'")
                                                  "already exists\n"
                                                  "Redefinition attempted at" loc)
-                              (for [new-proto (add-impl-c proto-impls type-num
-                                                          arg-count arity-c loc)
-                                    _ (se/update-in-val
-                                       [.namespaces c/no-symbol .values]
-                                       (set-val-hist fn-sym (.constraint proto-val new-proto)))]
-                                new-proto))
+                              (let [new-arities (map (.arities proto-val)
+                                                     (fn [proto-arity]
+                                                       (cond (= (count (.params proto-arity))
+                                                                arg-count)
+                                                             (assoc-in proto-arity [.impls type-num]
+                                                                       arity)
+
+                                                             proto-arity)))]
+                                (for [new-proto-c (add-impl-c proto-impls type-num
+                                                              arg-count arity-c loc)
+                                      :let [new-proto (-> proto-val
+                                                          (.constraint new-proto-c)
+                                                          (.arities new-arities))]
+                                      _ (se/update-in-val
+                                         [.namespaces c/no-symbol .values]
+                                         (set-val-hist fn-sym new-proto))]
+                                  new-proto-c)))
                       _ (cond (= invoke-sym fn-sym)
                               (insert-invoke type-num arity-c)
 
                               se-nop)]
-                  '_)
-                (for [nss (get-core-value fn-sym)
-                      _ (compilation-error 'wth _LINE_ fn-sym type-num)]
                   '_)))))
 
 (defn remove-value-type [sym]
