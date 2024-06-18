@@ -307,19 +307,21 @@ static inline bool should_swap(Port A, Port B) {
 }
 
 // Gets a rule's priority
-/*
-static inline bool is_high_priority(Rule rule) {
-  // #define LINK 0x0
-  // #define CALL 0x1
-  // #define VOID 0x2
-  // #define ERAS 0x3
-  // #define ANNI 0x4
-  // #define COMM 0x5
-  // #define OPER 0x6
-  // #define SWIT 0x7
-  return (bool)((0b00011101 >> rule) & 1);
+u8 interactionPriority[8][8] = {
+  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE}, // VAR
+  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE}, // REF
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE}, // ERA
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // NUM
+  {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE}, // CON
+  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE}, // DUP
+  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE}, // OPR
+  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE} // SWI
+};
+
+static inline bool is_high_priority(Pair AB) {
+  return interactionPriority[get_tag(get_fst(AB))][get_tag(get_snd(AB))];
 }
-//*/
 
 // Adjusts a newly allocated port.
 static inline Port adjust_port(Net* net, TM* tm, Port port) {
@@ -559,11 +561,11 @@ static inline Numb operate(Numb a, Numb b) {
 // FIXME: what about some bound checks?
 
 static inline void push_redex(Net* net, TM* tm, Pair redex) {
-  // if (is_high_priority(get_pair_rule(redex))) {
-  //   tm->hbag_buf[tm->hput++] = redex;
-  // } else {
-  atomic_store_explicit(&net->rbag_buf[tm->tid*(G_RBAG_LEN/TPC) + (tm->rput++)], redex, memory_order_relaxed);
-  // }
+  if (is_high_priority(redex)) {
+    tm->hbag_buf[tm->hput++] = redex;
+  } else {
+    atomic_store_explicit(&net->rbag_buf[tm->tid*(G_RBAG_LEN/TPC) + (tm->rput++)], redex, memory_order_relaxed);
+  }
 }
 
 static inline Pair pop_redex(Net* net, TM* tm) {
@@ -814,7 +816,7 @@ static inline void link_pair(Net* net, TM* tm, Pair AB) {
 // ------------
 
 // The Link Interaction.
-bool interact_link(Net* net, TM* tm, Port a, Port b) {
+bool LINK(Net* net, TM* tm, Port a, Port b) {
   // Allocates needed nodes and vars.
   if (!get_resources(net, tm, 1, 0, 0)) {
     return FALSE;
@@ -827,12 +829,12 @@ bool interact_link(Net* net, TM* tm, Port a, Port b) {
 }
 
 // Declared here for use in call interactions.
-static inline bool interact_eras(Net* net, TM* tm, Port a, Port b);
+static inline bool ERAS(Net* net, TM* tm, Port a, Port b);
 
 // The Call Interaction.
-bool interact_call_main(Net *net, TM *tm, Port a, Port b) {
+bool CALL_main(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -854,9 +856,9 @@ bool interact_call_main(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_down(Net *net, TM *tm, Port a, Port b) {
+bool CALL_down(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -969,7 +971,7 @@ bool interact_call_down(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_down__C0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_down__C0(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -1191,9 +1193,9 @@ bool interact_call_down__C0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_flow(Net *net, TM *tm, Port a, Port b) {
+bool CALL_flow(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -1306,7 +1308,7 @@ bool interact_call_flow(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_flow__C0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_flow__C0(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -1521,9 +1523,9 @@ bool interact_call_flow__C0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_gen(Net *net, TM *tm, Port a, Port b) {
+bool CALL_gen(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -1573,7 +1575,7 @@ bool interact_call_gen(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_gen__bend0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_gen__bend0(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -1653,7 +1655,7 @@ bool interact_call_gen__bend0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_gen__bend0__C0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_gen__bend0__C0(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -1931,9 +1933,9 @@ bool interact_call_gen__bend0__C0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_main__C0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_main__C0(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -1953,9 +1955,9 @@ bool interact_call_main__C0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_main__C1(Net *net, TM *tm, Port a, Port b) {
+bool CALL_main__C1(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -1979,9 +1981,9 @@ bool interact_call_main__C1(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_sort(Net *net, TM *tm, Port a, Port b) {
+bool CALL_sort(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -2094,7 +2096,7 @@ bool interact_call_sort(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_sort__C0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_sort__C0(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -2318,9 +2320,9 @@ bool interact_call_sort__C0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_sum(Net *net, TM *tm, Port a, Port b) {
+bool CALL_sum(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -2409,7 +2411,7 @@ bool interact_call_sum(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_sum__C0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_sum__C0(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -2551,9 +2553,9 @@ bool interact_call_sum__C0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_swap(Net *net, TM *tm, Port a, Port b) {
+bool CALL_swap(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -2660,9 +2662,9 @@ bool interact_call_swap(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_swap__C0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_swap__C0(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -2759,9 +2761,9 @@ bool interact_call_swap__C0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_swap__C1(Net *net, TM *tm, Port a, Port b) {
+bool CALL_swap__C1(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -2889,9 +2891,9 @@ bool interact_call_swap__C1(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_warp(Net *net, TM *tm, Port a, Port b) {
+bool CALL_warp(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
-    return interact_eras(net, tm, a, b);
+    return ERAS(net, tm, a, b);
   }
   u32 vl = 0;
   u32 nl = 0;
@@ -3028,7 +3030,7 @@ bool interact_call_warp(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_warp__C0(Net *net, TM *tm, Port a, Port b) {
+bool CALL_warp__C0(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -3255,7 +3257,7 @@ bool interact_call_warp__C0(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call_warp__C1(Net *net, TM *tm, Port a, Port b) {
+bool CALL_warp__C1(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -3597,40 +3599,40 @@ bool interact_call_warp__C1(Net *net, TM *tm, Port a, Port b) {
   return TRUE;
 }
 
-bool interact_call(Net *net, TM *tm, Port a, Port b) {
+bool CALL(Net *net, TM *tm, Port a, Port b) {
   u32 fid = get_val(a) & 0xFFFFFFF;
   switch (fid) {
-    case 0: return interact_call_main(net, tm, a, b);
-    case 1: return interact_call_down(net, tm, a, b);
-    case 2: return interact_call_down__C0(net, tm, a, b);
-    case 3: return interact_call_flow(net, tm, a, b);
-    case 4: return interact_call_flow__C0(net, tm, a, b);
-    case 5: return interact_call_gen(net, tm, a, b);
-    case 6: return interact_call_gen__bend0(net, tm, a, b);
-    case 7: return interact_call_gen__bend0__C0(net, tm, a, b);
-    case 8: return interact_call_main__C0(net, tm, a, b);
-    case 9: return interact_call_main__C1(net, tm, a, b);
-    case 10: return interact_call_sort(net, tm, a, b);
-    case 11: return interact_call_sort__C0(net, tm, a, b);
-    case 12: return interact_call_sum(net, tm, a, b);
-    case 13: return interact_call_sum__C0(net, tm, a, b);
-    case 14: return interact_call_swap(net, tm, a, b);
-    case 15: return interact_call_swap__C0(net, tm, a, b);
-    case 16: return interact_call_swap__C1(net, tm, a, b);
-    case 17: return interact_call_warp(net, tm, a, b);
-    case 18: return interact_call_warp__C0(net, tm, a, b);
-    case 19: return interact_call_warp__C1(net, tm, a, b);
+    case 0: return CALL_main(net, tm, a, b);
+    case 1: return CALL_down(net, tm, a, b);
+    case 2: return CALL_down__C0(net, tm, a, b);
+    case 3: return CALL_flow(net, tm, a, b);
+    case 4: return CALL_flow__C0(net, tm, a, b);
+    case 5: return CALL_gen(net, tm, a, b);
+    case 6: return CALL_gen__bend0(net, tm, a, b);
+    case 7: return CALL_gen__bend0__C0(net, tm, a, b);
+    case 8: return CALL_main__C0(net, tm, a, b);
+    case 9: return CALL_main__C1(net, tm, a, b);
+    case 10: return CALL_sort(net, tm, a, b);
+    case 11: return CALL_sort__C0(net, tm, a, b);
+    case 12: return CALL_sum(net, tm, a, b);
+    case 13: return CALL_sum__C0(net, tm, a, b);
+    case 14: return CALL_swap(net, tm, a, b);
+    case 15: return CALL_swap__C0(net, tm, a, b);
+    case 16: return CALL_swap__C1(net, tm, a, b);
+    case 17: return CALL_warp(net, tm, a, b);
+    case 18: return CALL_warp__C0(net, tm, a, b);
+    case 19: return CALL_warp__C1(net, tm, a, b);
     default: return FALSE;
   }
 }
 
 // The Void Interaction.
-static inline bool interact_void(Net* net, TM* tm, Port a, Port b) {
+static inline bool VOID(Net* net, TM* tm, Port a, Port b) {
   return TRUE;
 }
 
 // The Eras Interaction.
-static inline bool interact_eras(Net* net, TM* tm, Port a, Port b) {
+static inline bool ERAS(Net* net, TM* tm, Port a, Port b) {
   // Allocates needed nodes and vars.
   if (!get_resources(net, tm, 2, 0, 0)) {
     return FALSE;
@@ -3657,7 +3659,7 @@ static inline bool interact_eras(Net* net, TM* tm, Port a, Port b) {
 }
 
 // The Anni Interaction.
-static inline bool interact_anni(Net* net, TM* tm, Port a, Port b) {
+static inline bool ANNI(Net* net, TM* tm, Port a, Port b) {
   // Allocates needed nodes and vars.
   if (!get_resources(net, tm, 2, 0, 0)) {
     return FALSE;
@@ -3689,7 +3691,7 @@ static inline bool interact_anni(Net* net, TM* tm, Port a, Port b) {
 }
 
 // The Comm Interaction.
-static inline bool interact_comm(Net* net, TM* tm, Port a, Port b) {
+static inline bool COMM(Net* net, TM* tm, Port a, Port b) {
   // Allocates needed nodes and vars.
   if (!get_resources(net, tm, 4, 4, 4)) {
     return FALSE;
@@ -3734,7 +3736,7 @@ static inline bool interact_comm(Net* net, TM* tm, Port a, Port b) {
 }
 
 // The Oper Interaction.
-static inline bool interact_oper(Net* net, TM* tm, Port a, Port b) {
+static inline bool OPER(Net* net, TM* tm, Port a, Port b) {
   //printf("OPER %08x %08x\n", a, b);
 
   // Allocates needed nodes and vars.
@@ -3767,7 +3769,7 @@ static inline bool interact_oper(Net* net, TM* tm, Port a, Port b) {
 }
 
 // The Swit Interaction.
-static inline bool interact_swit(Net* net, TM* tm, Port a, Port b) {
+static inline bool SWIT(Net* net, TM* tm, Port a, Port b) {
   // Allocates needed nodes and vars.
   if (!get_resources(net, tm, 1, 2, 0)) {
     return FALSE;
@@ -3797,39 +3799,20 @@ static inline bool interact_swit(Net* net, TM* tm, Port a, Port b) {
   return TRUE;
 }
 
-// Given two tags, gets their interaction rule.
-/*
-    switch (rule) {
-      case LINK: success = interact_link(net, tm, a, b); break;
-      case CALL: success = interact_call(net, tm, a, b); break;
-      case VOID: success = interact_void(net, tm, a, b); break;
-      case ERAS: success = interact_eras(net, tm, a, b); break;
-      case ANNI: success = interact_anni(net, tm, a, b); break;
-      case COMM: success = interact_comm(net, tm, a, b); break;
-      case OPER: success = interact_oper(net, tm, a, b); break;
-      case SWIT: success = interact_swit(net, tm, a, b); break;
-    }
-//*/
-
-interactionFn table[8][8] = {
-  //VAR  REF  ERA  NUM  CON  DUP  OPR  SWI
-  {&interact_link,&interact_link,&interact_link,&interact_link,&interact_link,&interact_link,&interact_link,&interact_link}, // VAR
-  {&interact_link,&interact_void,&interact_void,&interact_void,&interact_call,&interact_call,&interact_call,&interact_call}, // REF
-  {&interact_link,&interact_void,&interact_void,&interact_void,&interact_eras,&interact_eras,&interact_eras,&interact_eras}, // ERA
-  {&interact_link,&interact_void,&interact_void,&interact_void,&interact_eras,&interact_eras,&interact_oper,&interact_swit}, // NUM
-  {&interact_link,&interact_call,&interact_eras,&interact_eras,&interact_anni,&interact_comm,&interact_comm,&interact_comm}, // CON
-  {&interact_link,&interact_call,&interact_eras,&interact_eras,&interact_comm,&interact_anni,&interact_comm,&interact_comm}, // DUP
-  {&interact_link,&interact_call,&interact_eras,&interact_oper,&interact_comm,&interact_comm,&interact_anni,&interact_comm}, // OPR
-  {&interact_link,&interact_call,&interact_eras,&interact_swit,&interact_comm,&interact_comm,&interact_comm,&interact_anni} // SWI
+interactionFn interactions[8][8] = {
+  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK}, // VAR
+  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL}, // REF
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS}, // ERA
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT}, // NUM
+  {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM}, // CON
+  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM}, // DUP
+  {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM}, // OPR
+  {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI} // SWI
 };
 
 interactionFn get_rule(Port a, Port b) {
-  return table[get_tag(a)][get_tag(b)];
-}
-
-// Same as above, but receiving a pair.
-interactionFn get_pair_rule(Pair AB) {
-  return get_rule(get_fst(AB), get_snd(AB));
+  return interactions[get_tag(a)][get_tag(b)];
 }
 
 // Pops a local redex and performs a single interaction.
@@ -3848,7 +3831,7 @@ static inline bool interact(Net* net, TM* tm) {
 
     // Used for root redex.
     if (get_tag(a) == REF && b == ROOT) {
-      rule = interact_call;
+      rule = CALL;
     // Swaps ports if necessary.
     } else if (should_swap(a,b)) {
       swap(&a, &b);
@@ -3859,7 +3842,7 @@ static inline bool interact(Net* net, TM* tm) {
       push_redex(net, tm, redex);
       return FALSE;
     // Else, increments the interaction count.
-    } else if (rule != interact_link) {
+    } else if (rule != LINK) {
       tm->itrs += 1;
     }
   }
