@@ -47,9 +47,6 @@ typedef u64 Pair; // Pair ::= Port + Port (fits a u64)
 typedef a32 APort; // atomic Port
 typedef a64 APair; // atomic Pair
 
-// Rules
-typedef u8 Rule; // Rule ::= 3-bit (rounded up to 8)
-
 // Numbs
 typedef u32 Numb; // Numb ::= 29-bit (rounded up to u32)
 
@@ -62,16 +59,6 @@ typedef u32 Numb; // Numb ::= 29-bit (rounded up to u32)
 #define DUP 0x5 // duplicator
 #define OPR 0x6 // operator
 #define SWI 0x7 // switch
-
-// Interaction Rule Values
-#define LINK 0x0
-#define CALL 0x1
-#define VOID 0x2
-#define ERAS 0x3
-#define ANNI 0x4
-#define COMM 0x5
-#define OPER 0x6
-#define SWIT 0x7
 
 // Numbers
 static const f32 U24_MAX = (f32) (1 << 24) - 1;
@@ -151,7 +138,7 @@ typedef struct TM {
   Pair hbag_buf[HLEN]; // high-priority redexes
 } TM;
 
-typedef bool *(interactionFn)(Net* net, TM* tm, Port a, Port b);
+typedef bool (*interactionFn)(Net* net, TM* tm, Port a, Port b);
 
 // Readback: λ-Encoded Ctr
 typedef struct Ctr {
@@ -185,7 +172,6 @@ typedef struct {
 
 void put_u16(char* B, u16 val);
 Show show_port(Port port);
-Show show_rule(Rule rule);
 //void print_rbag(RBag* rbag);
 void pretty_print_numb(Numb word);
 void pretty_print_port(Net* net, Port port);
@@ -315,36 +301,25 @@ static inline bool is_var(Port a) {
   return get_tag(a) == VAR;
 }
 
-// Given two tags, gets their interaction rule.
-static inline Rule get_rule(Port a, Port b) {
-  const u8 table[8][8] = {
-    //VAR  REF  ERA  NUM  CON  DUP  OPR  SWI
-    {LINK,LINK,LINK,LINK,LINK,LINK,LINK,LINK}, // VAR
-    {LINK,VOID,VOID,VOID,CALL,CALL,CALL,CALL}, // REF
-    {LINK,VOID,VOID,VOID,ERAS,ERAS,ERAS,ERAS}, // ERA
-    {LINK,VOID,VOID,VOID,ERAS,ERAS,OPER,SWIT}, // NUM
-    {LINK,CALL,ERAS,ERAS,ANNI,COMM,COMM,COMM}, // CON
-    {LINK,CALL,ERAS,ERAS,COMM,ANNI,COMM,COMM}, // DUP
-    {LINK,CALL,ERAS,OPER,COMM,COMM,ANNI,COMM}, // OPR
-    {LINK,CALL,ERAS,SWIT,COMM,COMM,COMM,ANNI}, // SWI
-  };
-  return table[get_tag(a)][get_tag(b)];
-}
-
-// Same as above, but receiving a pair.
-static inline Rule get_pair_rule(Pair AB) {
-  return get_rule(get_fst(AB), get_snd(AB));
-}
-
 // Should we swap ports A and B before reducing this rule?
 static inline bool should_swap(Port A, Port B) {
   return get_tag(B) < get_tag(A);
 }
 
 // Gets a rule's priority
+/*
 static inline bool is_high_priority(Rule rule) {
+  // #define LINK 0x0
+  // #define CALL 0x1
+  // #define VOID 0x2
+  // #define ERAS 0x3
+  // #define ANNI 0x4
+  // #define COMM 0x5
+  // #define OPER 0x6
+  // #define SWIT 0x7
   return (bool)((0b00011101 >> rule) & 1);
 }
+//*/
 
 // Adjusts a newly allocated port.
 static inline Port adjust_port(Net* net, TM* tm, Port port) {
@@ -584,11 +559,11 @@ static inline Numb operate(Numb a, Numb b) {
 // FIXME: what about some bound checks?
 
 static inline void push_redex(Net* net, TM* tm, Pair redex) {
-  if (is_high_priority(get_pair_rule(redex))) {
-    tm->hbag_buf[tm->hput++] = redex;
-  } else {
-    atomic_store_explicit(&net->rbag_buf[tm->tid*(G_RBAG_LEN/TPC) + (tm->rput++)], redex, memory_order_relaxed);
-  }
+  // if (is_high_priority(get_pair_rule(redex))) {
+  //   tm->hbag_buf[tm->hput++] = redex;
+  // } else {
+  atomic_store_explicit(&net->rbag_buf[tm->tid*(G_RBAG_LEN/TPC) + (tm->rput++)], redex, memory_order_relaxed);
+  // }
 }
 
 static inline Pair pop_redex(Net* net, TM* tm) {
@@ -839,7 +814,7 @@ static inline void link_pair(Net* net, TM* tm, Pair AB) {
 // ------------
 
 // The Link Interaction.
-static inline bool interact_link(Net* net, TM* tm, Port a, Port b) {
+bool interact_link(Net* net, TM* tm, Port a, Port b) {
   // Allocates needed nodes and vars.
   if (!get_resources(net, tm, 1, 0, 0)) {
     return FALSE;
@@ -3822,6 +3797,41 @@ static inline bool interact_swit(Net* net, TM* tm, Port a, Port b) {
   return TRUE;
 }
 
+// Given two tags, gets their interaction rule.
+/*
+    switch (rule) {
+      case LINK: success = interact_link(net, tm, a, b); break;
+      case CALL: success = interact_call(net, tm, a, b); break;
+      case VOID: success = interact_void(net, tm, a, b); break;
+      case ERAS: success = interact_eras(net, tm, a, b); break;
+      case ANNI: success = interact_anni(net, tm, a, b); break;
+      case COMM: success = interact_comm(net, tm, a, b); break;
+      case OPER: success = interact_oper(net, tm, a, b); break;
+      case SWIT: success = interact_swit(net, tm, a, b); break;
+    }
+//*/
+
+interactionFn table[8][8] = {
+  //VAR  REF  ERA  NUM  CON  DUP  OPR  SWI
+  {&interact_link,&interact_link,&interact_link,&interact_link,&interact_link,&interact_link,&interact_link,&interact_link}, // VAR
+  {&interact_link,&interact_void,&interact_void,&interact_void,&interact_call,&interact_call,&interact_call,&interact_call}, // REF
+  {&interact_link,&interact_void,&interact_void,&interact_void,&interact_eras,&interact_eras,&interact_eras,&interact_eras}, // ERA
+  {&interact_link,&interact_void,&interact_void,&interact_void,&interact_eras,&interact_eras,&interact_oper,&interact_swit}, // NUM
+  {&interact_link,&interact_call,&interact_eras,&interact_eras,&interact_anni,&interact_comm,&interact_comm,&interact_comm}, // CON
+  {&interact_link,&interact_call,&interact_eras,&interact_eras,&interact_comm,&interact_anni,&interact_comm,&interact_comm}, // DUP
+  {&interact_link,&interact_call,&interact_eras,&interact_oper,&interact_comm,&interact_comm,&interact_anni,&interact_comm}, // OPR
+  {&interact_link,&interact_call,&interact_eras,&interact_swit,&interact_comm,&interact_comm,&interact_comm,&interact_anni} // SWI
+};
+
+interactionFn get_rule(Port a, Port b) {
+  return table[get_tag(a)][get_tag(b)];
+}
+
+// Same as above, but receiving a pair.
+interactionFn get_pair_rule(Pair AB) {
+  return get_rule(get_fst(AB), get_snd(AB));
+}
+
 // Pops a local redex and performs a single interaction.
 static inline bool interact(Net* net, TM* tm) {
   // Pops a redex.
@@ -3834,37 +3844,22 @@ static inline bool interact(Net* net, TM* tm) {
     Port b = get_snd(redex);
 
     // Gets the rule type.
-    Rule rule = get_rule(a, b);
+    interactionFn rule = get_rule(a, b);
 
     // Used for root redex.
     if (get_tag(a) == REF && b == ROOT) {
-      rule = CALL;
+      rule = interact_call;
     // Swaps ports if necessary.
     } else if (should_swap(a,b)) {
       swap(&a, &b);
     }
 
-    //printf("[%04x] REDUCE %s ~ %s | %s\n", tm->tid, show_port(a).x, show_port(b).x, show_rule(rule).x);
-
-    // Dispatches interaction rule.
-    bool success;
-    switch (rule) {
-      case LINK: success = interact_link(net, tm, a, b); break;
-      case CALL: success = interact_call(net, tm, a, b); break;
-      case VOID: success = interact_void(net, tm, a, b); break;
-      case ERAS: success = interact_eras(net, tm, a, b); break;
-      case ANNI: success = interact_anni(net, tm, a, b); break;
-      case COMM: success = interact_comm(net, tm, a, b); break;
-      case OPER: success = interact_oper(net, tm, a, b); break;
-      case SWIT: success = interact_swit(net, tm, a, b); break;
-    }
-
     // If error, pushes redex back.
-    if (!success) {
+    if (!rule(net, tm, a, b)) {
       push_redex(net, tm, redex);
       return FALSE;
     // Else, increments the interaction count.
-    } else if (rule != LINK) {
+    } else if (rule != interact_link) {
       tm->itrs += 1;
     }
   }
