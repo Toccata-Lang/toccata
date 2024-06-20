@@ -40,7 +40,7 @@ typedef _Atomic(u64) a64;
 
 // Local Types
 typedef u8  Tag;  // Tag  ::= 3-bit (rounded up to u8)
-typedef u32 Val;  // Val  ::= 29-bit (rounded up to u32)
+typedef u64 Val;  // Val  ::= 29-bit (rounded up to u32)
 
 #define MAG 0x00000141
 // Constants
@@ -4100,7 +4100,7 @@ void pretty_print_port(Port port) {
         if (got != NONE) {
           stack[len++] = got;
         } else {
-          printf("x%x", get_val(cur));
+          printf("x%lx", get_val(cur));
         }
         break;
       }
