@@ -42,25 +42,18 @@ typedef _Atomic(u64) a64;
 typedef u8  Tag;  // Tag  ::= 3-bit (rounded up to u8)
 typedef u32 Val;  // Val  ::= 29-bit (rounded up to u32)
 
-// #ifdef BITS32
-
-typedef u32 Port; // Port ::= Tag + Val (fits a u32)
+#define MAG 0x00000141
 // Constants
+#define NONE 0xFFFFFFFF
 #define FREE 0x00000000
 #define ROOT 0xFFFFFFF8
-#define NONE 0xFFFFFFFF
 #define PAR_FLAG 0x10000000
 
-/*
+#ifdef BITS32
+typedef u32 Port; // Port ::= Tag + Val (fits a u32)
+//*
 #else
-
 typedef u64 Port; // Port ::= Tag + Val (fits a u32)
-// Constants
-#define FREE 0x0000000000000000
-#define ROOT 0xFFFFFFFFFFFFFFF8
-#define NONE 0xFFFFFFFFFFFFFFFF
-#define PAR_FLAG 0x100000000000000
-
 #endif
 // */
 
@@ -4200,6 +4193,7 @@ void hvm_c(u32* book_buffer) {
 }
 
 int main() {
+  printf("Port size: %lu\n", sizeof(Port));
   hvm_c((u32*)NULL);
   return 0;
 }
