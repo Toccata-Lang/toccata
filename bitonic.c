@@ -41,7 +41,29 @@ typedef _Atomic(u64) a64;
 // Local Types
 typedef u8  Tag;  // Tag  ::= 3-bit (rounded up to u8)
 typedef u32 Val;  // Val  ::= 29-bit (rounded up to u32)
+
+// #ifdef BITS32
+
 typedef u32 Port; // Port ::= Tag + Val (fits a u32)
+// Constants
+#define FREE 0x00000000
+#define ROOT 0xFFFFFFF8
+#define NONE 0xFFFFFFFF
+#define PAR_FLAG 0x10000000
+
+/*
+#else
+
+typedef u64 Port; // Port ::= Tag + Val (fits a u32)
+// Constants
+#define FREE 0x0000000000000000
+#define ROOT 0xFFFFFFFFFFFFFFF8
+#define NONE 0xFFFFFFFFFFFFFFFF
+#define PAR_FLAG 0x100000000000000
+
+#endif
+// */
+
 typedef struct {Port fst; Port snd;} Pair; // Pair ::= Port + Port (fits a u64)
 Pair emptyPair = {0, 0};
 
@@ -93,12 +115,6 @@ static const f32 I24_MIN = (f32) (i32) ((-1u) << 23);
 #define FP_SHL 0x14
 #define OP_SHR 0x15
 #define FP_SHR 0x16
-
-// Constants
-#define FREE 0x00000000
-#define ROOT 0xFFFFFFF8
-#define NONE 0xFFFFFFFF
-#define PAR_FLAG 0x10000000
 
 // Cache Padding
 #define CACHE_PAD 64
@@ -236,8 +252,8 @@ Pair clr_par_flag(Pair pair) {
 
 bool get_par_flag(Pair pair) {
   Port p1 = get_fst(pair);
-  if (get_tag(p1) == REF) {
-    return (get_val(p1) >> 28) == 1;
+  if (get_tag(p1) == REF && get_val(p1) & PAR_FLAG) {
+    return TRUE;
   } else {
     return FALSE;
   }
