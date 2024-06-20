@@ -98,6 +98,7 @@ static const f32 I24_MIN = (f32) (i32) ((-1u) << 23);
 #define FREE 0x00000000
 #define ROOT 0xFFFFFFF8
 #define NONE 0xFFFFFFFF
+#define PAR_FLAG 0x10000000
 
 // Cache Padding
 #define CACHE_PAD 64
@@ -217,7 +218,7 @@ Pair set_par_flag(Pair pair) {
   Port p1 = get_fst(pair);
   Port p2 = get_snd(pair);
   if (get_tag(p1) == REF) {
-    return new_pair(new_port(get_tag(p1), get_val(p1) | 0x10000000), p2);
+    return new_pair(new_port(get_tag(p1), get_val(p1) | PAR_FLAG), p2);
   } else {
     return pair;
   }
@@ -227,7 +228,7 @@ Pair clr_par_flag(Pair pair) {
   Port p1 = get_fst(pair);
   Port p2 = get_snd(pair);
   if (get_tag(p1) == REF) {
-    return new_pair(new_port(get_tag(p1), get_val(p1) & 0xFFFFFFF), p2);
+    return new_pair(new_port(get_tag(p1), get_val(p1) & ~PAR_FLAG), p2);
   } else {
     return pair;
   }
@@ -957,7 +958,7 @@ bool CALL_down(TM *tm, Port a, Port b) {
       k4 = new_port(CON,n7);
     }
   }
-  node_create(n4, new_pair(new_port(ERA,0x00000000),new_port(VAR,v0)));
+  node_create(n4, new_pair(new_port(ERA,FREE),new_port(VAR,v0)));
   node_create(n3, new_pair(new_port(VAR,v0),new_port(CON,n4)));
   node_create(n2, new_pair(new_port(CON,n3),new_port(REF,0x00000002)));
   node_create(n6, new_pair(new_port(VAR,v2),new_port(VAR,v3)));
@@ -1294,7 +1295,7 @@ bool CALL_flow(TM *tm, Port a, Port b) {
       k4 = new_port(CON,n7);
     }
   }
-  node_create(n4, new_pair(new_port(ERA,0x00000000),new_port(VAR,v0)));
+  node_create(n4, new_pair(new_port(ERA,FREE),new_port(VAR,v0)));
   node_create(n3, new_pair(new_port(VAR,v0),new_port(CON,n4)));
   node_create(n2, new_pair(new_port(CON,n3),new_port(REF,0x00000004)));
   node_create(n6, new_pair(new_port(VAR,v2),new_port(VAR,v3)));
@@ -1635,7 +1636,7 @@ bool CALL_gen__bend0(TM *tm, Port a, Port b) {
     k7 = new_port(VAR,v1);
   }
   node_create(n5, new_pair(new_port(VAR,v0),new_port(VAR,v0)));
-  node_create(n4, new_pair(new_port(ERA,0x00000000),new_port(CON,n5)));
+  node_create(n4, new_pair(new_port(ERA,FREE),new_port(CON,n5)));
   node_create(n3, new_pair(new_port(CON,n4),new_port(REF,0x00000007)));
   node_create(n6, new_pair(new_port(VAR,v1),new_port(VAR,v2)));
   node_create(n2, new_pair(new_port(CON,n3),new_port(CON,n6)));
@@ -1919,9 +1920,9 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     tm->itrs += 1;
   } else {
     if (k3 != NONE) {
-      link(tm, new_port(ERA,0x00000000), k3);
+      link(tm, new_port(ERA,FREE), k3);
     } else {
-      k3 = new_port(ERA,0x00000000);
+      k3 = new_port(ERA,FREE);
     }
   }
   if (!k1) {
@@ -2082,7 +2083,7 @@ bool CALL_sort(TM *tm, Port a, Port b) {
       k4 = new_port(CON,n7);
     }
   }
-  node_create(n4, new_pair(new_port(ERA,0x00000000),new_port(VAR,v0)));
+  node_create(n4, new_pair(new_port(ERA,FREE),new_port(VAR,v0)));
   node_create(n3, new_pair(new_port(VAR,v0),new_port(CON,n4)));
   node_create(n2, new_pair(new_port(CON,n3),new_port(REF,0x0000000b)));
   node_create(n6, new_pair(new_port(VAR,v2),new_port(VAR,v3)));
@@ -2883,9 +2884,9 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
     tm->itrs += 1;
   } else {
     if (k3 != NONE) {
-      link(tm, new_port(ERA,0x00000000), k3);
+      link(tm, new_port(ERA,FREE), k3);
     } else {
-      k3 = new_port(ERA,0x00000000);
+      k3 = new_port(ERA,FREE);
     }
   }
   if (!k1) {
@@ -3608,7 +3609,7 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
 }
 
 bool CALL(TM *tm, Port a, Port b) {
-  u32 fid = get_val(a) & 0xFFFFFFF;
+  u32 fid = get_val(a) & ~PAR_FLAG;
   switch (fid) {
   case 0: return CALL_main(tm, a, b);
   case 1: return CALL_down(tm, a, b);
