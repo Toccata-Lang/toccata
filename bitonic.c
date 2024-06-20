@@ -42,10 +42,15 @@ typedef _Atomic(u64) a64;
 typedef u8  Tag;  // Tag  ::= 3-bit (rounded up to u8)
 typedef u32 Val;  // Val  ::= 29-bit (rounded up to u32)
 typedef u32 Port; // Port ::= Tag + Val (fits a u32)
-typedef u64 Pair; // Pair ::= Port + Port (fits a u64)
+typedef struct {Port fst; Port snd;} Pair; // Pair ::= Port + Port (fits a u64)
+Pair emptyPair = {0, 0};
+
+static inline u8 isEmpty(Pair p) {
+  return p.fst == 0 && p.snd == 0;
+}
 
 typedef a32 APort; // atomic Port
-typedef a64 APair; // atomic Pair
+typedef _Atomic(Pair) APair; // atomic Pair
 
 // Numbs
 typedef u32 Numb; // Numb ::= 29-bit (rounded up to u32)
@@ -197,15 +202,15 @@ static inline Val get_val(Port port) {
 // -----------------------------
 
 static inline const Pair new_pair(Port fst, Port snd) {
-  return ((u64)snd << 32) | fst;
+  return (Pair){fst, snd};
 }
 
 static inline Port get_fst(Pair pair) {
-  return pair & 0xFFFFFFFF;
+  return pair.fst;
 }
 
 static inline Port get_snd(Pair pair) {
-  return pair >> 32;
+  return pair.snd;
 }
 
 Pair set_par_flag(Pair pair) {
@@ -573,9 +578,11 @@ static inline Pair pop_redex(TM* tm) {
   if (tm->hput > 0) {
     return tm->hbag_buf[--tm->hput];
   } else if (tm->rput > 0) {
-    return atomic_exchange_explicit(&globalNet->rbag_buf[tm->tid*(G_RBAG_LEN/TPC) + (--tm->rput)], 0, memory_order_relaxed);
+    return atomic_exchange_explicit(&globalNet->rbag_buf[tm->tid*(G_RBAG_LEN/TPC) + (--tm->rput)],
+				    emptyPair,
+				    memory_order_relaxed);
   } else {
-    return 0;
+    return emptyPair;
   }
 }
 
@@ -652,7 +659,7 @@ static inline Port vars_exchange(u32 var, Port val) {
 
 // Takes a node.
 static inline Pair node_take(u32 loc) {
-  return node_exchange(loc, 0);
+  return node_exchange(loc, emptyPair);
 }
 
 // Takes a var.
@@ -679,7 +686,7 @@ u32 node_alloc_1(TM* tm, u32* lps) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->nput%(G_NODE_LEN/TPC));
     Pair elem = globalNet->node_buf[lc];
     tm->nput += 1;
-    if (lc > 0 && elem == 0) {
+    if (lc > 0 && isEmpty(elem)) {
       return lc;
     }
     // FIXME: check this decently
@@ -707,7 +714,7 @@ u32 node_alloc(TM* tm, u32 num) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->nput%(G_NODE_LEN/TPC));
     Pair elem = globalNet->node_buf[lc];
     tm->nput += 1;
-    if (lc > 0 && elem == 0) {
+    if (lc > 0 && isEmpty(elem)) {
       tm->nloc[got++] = lc;
     }
     // FIXME: check this decently
@@ -884,11 +891,11 @@ bool CALL_down(TM *tm, Port a, Port b) {
   vars_create(v2, NONE);
   vars_create(v3, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -896,11 +903,11 @@ bool CALL_down(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -908,11 +915,11 @@ bool CALL_down(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -1008,11 +1015,11 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
   vars_create(v6, NONE);
   vars_create(v7, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -1020,11 +1027,11 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -1032,11 +1039,11 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -1044,11 +1051,11 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
     k12 = get_snd(k10);
   }
   bool k13 = 0;
-  Pair k14 = 0;
+  Pair k14 = emptyPair;
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && node_load(get_val(k12)) != 0) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
     tm->itrs += 1;
     k13 = 1;
     k14 = node_take(get_val(k12));
@@ -1110,11 +1117,11 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
     }
   }
   bool k20 = 0;
-  Pair k21 = 0;
+  Pair k21 = emptyPair;
   Port k22 = NONE;
   Port k23 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && node_load(get_val(k7)) != 0) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
     tm->itrs += 1;
     k20 = 1;
     k21 = node_take(get_val(k7));
@@ -1221,11 +1228,11 @@ bool CALL_flow(TM *tm, Port a, Port b) {
   vars_create(v2, NONE);
   vars_create(v3, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -1233,11 +1240,11 @@ bool CALL_flow(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -1245,11 +1252,11 @@ bool CALL_flow(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -1346,11 +1353,11 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
   vars_create(v6, NONE);
   vars_create(v7, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -1358,11 +1365,11 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -1370,11 +1377,11 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -1423,11 +1430,11 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
     }
   }
   bool k16 = 0;
-  Pair k17 = 0;
+  Pair k17 = emptyPair;
   Port k18 = NONE;
   Port k19 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && node_load(get_val(k7)) != 0) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
     tm->itrs += 1;
     k16 = 1;
     k17 = node_take(get_val(k7));
@@ -1541,11 +1548,11 @@ bool CALL_gen(TM *tm, Port a, Port b) {
   vars_create(v0, NONE);
   vars_create(v1, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -1596,11 +1603,11 @@ bool CALL_gen__bend0(TM *tm, Port a, Port b) {
   vars_create(v1, NONE);
   vars_create(v2, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -1690,11 +1697,11 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   vars_create(v4, NONE);
   vars_create(v5, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -1702,11 +1709,11 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -1714,11 +1721,11 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -1726,11 +1733,11 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     k12 = get_snd(k10);
   }
   bool k13 = 0;
-  Pair k14 = 0;
+  Pair k14 = emptyPair;
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && node_load(get_val(k12)) != 0) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
     tm->itrs += 1;
     k13 = 1;
     k14 = node_take(get_val(k12));
@@ -2009,11 +2016,11 @@ bool CALL_sort(TM *tm, Port a, Port b) {
   vars_create(v2, NONE);
   vars_create(v3, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -2021,11 +2028,11 @@ bool CALL_sort(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -2033,11 +2040,11 @@ bool CALL_sort(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -2139,11 +2146,11 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
   vars_create(v7, NONE);
   vars_create(v8, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -2151,11 +2158,11 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -2163,11 +2170,11 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -2193,11 +2200,11 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
     }
   }
   bool k13 = 0;
-  Pair k14 = 0;
+  Pair k14 = emptyPair;
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && node_load(get_val(k7)) != 0) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
     tm->itrs += 1;
     k13 = 1;
     k14 = node_take(get_val(k7));
@@ -2339,7 +2346,7 @@ bool CALL_sum(TM *tm, Port a, Port b) {
   vars_create(v0, NONE);
   vars_create(v1, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k5 = NONE;
   Port k3 = NONE;
   Port k4 = NONE;
@@ -2365,11 +2372,11 @@ bool CALL_sum(TM *tm, Port a, Port b) {
     }
   }
   bool k6 = 0;
-  Pair k7 = 0;
+  Pair k7 = emptyPair;
   Port k8 = NONE;
   Port k9 = NONE;
   // fast anni
-  if (get_tag(k3) == CON && node_load(get_val(k3)) != 0) {
+  if (get_tag(k3) == CON && !isEmpty(node_load(get_val(k3)))) {
     tm->itrs += 1;
     k6 = 1;
     k7 = node_take(get_val(k3));
@@ -2441,11 +2448,11 @@ bool CALL_sum__C0(TM *tm, Port a, Port b) {
   vars_create(v4, NONE);
   vars_create(v5, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -2453,11 +2460,11 @@ bool CALL_sum__C0(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -2470,11 +2477,11 @@ bool CALL_sum__C0(TM *tm, Port a, Port b) {
     k8 = new_port(VAR,v4);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && node_load(get_val(k7)) != 0) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k7));
@@ -2577,11 +2584,11 @@ bool CALL_swap(TM *tm, Port a, Port b) {
   vars_create(v1, NONE);
   vars_create(v2, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -2589,11 +2596,11 @@ bool CALL_swap(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -2601,11 +2608,11 @@ bool CALL_swap(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -2680,11 +2687,11 @@ bool CALL_swap__C0(TM *tm, Port a, Port b) {
   vars_create(v0, NONE);
   vars_create(v1, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -2692,11 +2699,11 @@ bool CALL_swap__C0(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -2704,11 +2711,11 @@ bool CALL_swap__C0(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -2780,11 +2787,11 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
   vars_create(v0, NONE);
   vars_create(v1, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -2792,11 +2799,11 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -2804,11 +2811,11 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -2816,11 +2823,11 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
     k12 = get_snd(k10);
   }
   bool k13 = 0;
-  Pair k14 = 0;
+  Pair k14 = emptyPair;
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && node_load(get_val(k12)) != 0) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
     tm->itrs += 1;
     k13 = 1;
     k14 = node_take(get_val(k12));
@@ -2919,11 +2926,11 @@ bool CALL_warp(TM *tm, Port a, Port b) {
   vars_create(v2, NONE);
   vars_create(v3, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -2931,11 +2938,11 @@ bool CALL_warp(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -2943,11 +2950,11 @@ bool CALL_warp(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -2955,11 +2962,11 @@ bool CALL_warp(TM *tm, Port a, Port b) {
     k12 = get_snd(k10);
   }
   bool k13 = 0;
-  Pair k14 = 0;
+  Pair k14 = emptyPair;
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && node_load(get_val(k12)) != 0) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
     tm->itrs += 1;
     k13 = 1;
     k14 = node_take(get_val(k12));
@@ -3062,11 +3069,11 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   vars_create(v4, NONE);
   vars_create(v5, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -3074,11 +3081,11 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -3086,11 +3093,11 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -3310,11 +3317,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   vars_create(va, NONE);
   vars_create(vb, NONE);
   bool k1 = 0;
-  Pair k2 = 0;
+  Pair k2 = emptyPair;
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && node_load(get_val(b)) != 0) {
+  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
     tm->itrs += 1;
     k1 = 1;
     k2 = node_take(get_val(b));
@@ -3322,11 +3329,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   bool k5 = 0;
-  Pair k6 = 0;
+  Pair k6 = emptyPair;
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && node_load(get_val(k4)) != 0) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
     tm->itrs += 1;
     k5 = 1;
     k6 = node_take(get_val(k4));
@@ -3334,11 +3341,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
     k8 = get_snd(k6);
   }
   bool k9 = 0;
-  Pair k10 = 0;
+  Pair k10 = emptyPair;
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && node_load(get_val(k8)) != 0) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
     tm->itrs += 1;
     k9 = 1;
     k10 = node_take(get_val(k8));
@@ -3346,11 +3353,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
     k12 = get_snd(k10);
   }
   bool k13 = 0;
-  Pair k14 = 0;
+  Pair k14 = emptyPair;
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && node_load(get_val(k12)) != 0) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
     tm->itrs += 1;
     k13 = 1;
     k14 = node_take(get_val(k12));
@@ -3358,11 +3365,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
     k16 = get_snd(k14);
   }
   bool k17 = 0;
-  Pair k18 = 0;
+  Pair k18 = emptyPair;
   Port k19 = NONE;
   Port k20 = NONE;
   // fast anni
-  if (get_tag(k16) == CON && node_load(get_val(k16)) != 0) {
+  if (get_tag(k16) == CON && !isEmpty(node_load(get_val(k16)))) {
     tm->itrs += 1;
     k17 = 1;
     k18 = node_take(get_val(k16));
@@ -3370,11 +3377,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
     k20 = get_snd(k18);
   }
   bool k21 = 0;
-  Pair k22 = 0;
+  Pair k22 = emptyPair;
   Port k23 = NONE;
   Port k24 = NONE;
   // fast anni
-  if (get_tag(k20) == CON && node_load(get_val(k20)) != 0) {
+  if (get_tag(k20) == CON && !isEmpty(node_load(get_val(k20)))) {
     tm->itrs += 1;
     k21 = 1;
     k22 = node_take(get_val(k20));
@@ -3400,11 +3407,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
     }
   }
   bool k25 = 0;
-  Pair k26 = 0;
+  Pair k26 = emptyPair;
   Port k27 = NONE;
   Port k28 = NONE;
   // fast anni
-  if (get_tag(k19) == CON && node_load(get_val(k19)) != 0) {
+  if (get_tag(k19) == CON && !isEmpty(node_load(get_val(k19)))) {
     tm->itrs += 1;
     k25 = 1;
     k26 = node_take(get_val(k19));
@@ -3474,11 +3481,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
     }
   }
   bool k32 = 0;
-  Pair k33 = 0;
+  Pair k33 = emptyPair;
   Port k34 = NONE;
   Port k35 = NONE;
   // fast anni
-  if (get_tag(k11) == CON && node_load(get_val(k11)) != 0) {
+  if (get_tag(k11) == CON && !isEmpty(node_load(get_val(k11)))) {
     tm->itrs += 1;
     k32 = 1;
     k33 = node_take(get_val(k11));
@@ -3512,11 +3519,11 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
     }
   }
   bool k36 = 0;
-  Pair k37 = 0;
+  Pair k37 = emptyPair;
   Port k38 = NONE;
   Port k39 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && node_load(get_val(k7)) != 0) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
     tm->itrs += 1;
     k36 = 1;
     k37 = node_take(get_val(k7));
@@ -3640,13 +3647,13 @@ static inline bool ERAS(TM* tm, Port a, Port b) {
   }
 
   // Checks availability
-  if (node_load(get_val(b)) == 0) {
+  if (isEmpty(node_load(get_val(b)))) {
     //printf("[%04x] unavailable0: %s\n", tid, show_port(b).x);
     return FALSE;
   }
 
   // Loads ports.
-  Pair B  = node_exchange(get_val(b), 0);
+  Pair B  = node_exchange(get_val(b), emptyPair);
   Port B1 = get_fst(B);
   Port B2 = get_snd(B);
 
@@ -3667,7 +3674,7 @@ static inline bool ANNI(TM* tm, Port a, Port b) {
   }
 
   // Checks availability
-  if (node_load(get_val(a)) == 0 || node_load(get_val(b)) == 0) {
+  if (isEmpty(node_load(get_val(a))) || isEmpty(node_load(get_val(b)))) {
     //printf("[%04x] unavailable1: %s | %s\n", tid, show_port(a).x, show_port(b).x);
     //printf("BBB\n");
     return FALSE;
@@ -3699,7 +3706,7 @@ static inline bool COMM(TM* tm, Port a, Port b) {
   }
 
   // Checks availability
-  if (node_load(get_val(a)) == 0 || node_load(get_val(b)) == 0) {
+  if (isEmpty(node_load(get_val(a))) || isEmpty(node_load(get_val(b)))) {
     //printf("[%04x] unavailable2: %s | %s\n", tid, show_port(a).x, show_port(b).x);
     return FALSE;
   }
@@ -3746,7 +3753,7 @@ static inline bool OPER(TM* tm, Port a, Port b) {
   }
 
   // Checks availability
-  if (node_load(get_val(b)) == 0) {
+  if (isEmpty(node_load(get_val(b)))) {
     return FALSE;
   }
 
@@ -3777,7 +3784,7 @@ static inline bool SWIT(TM* tm, Port a, Port b) {
   }
 
   // Checks availability
-  if (node_load(get_val(b)) == 0) {
+  if (isEmpty(node_load(get_val(b)))) {
     return FALSE;
   }
 
@@ -3822,7 +3829,7 @@ static inline bool interact(TM* tm) {
   Pair redex = pop_redex(tm);
 
   // If there is no redex, stop.
-  if (redex != 0) {
+  if (!isEmpty(redex)) {
     // Gets redex ports A and B.
     Port a = get_fst(redex);
     Port b = get_snd(redex);
@@ -3905,8 +3912,8 @@ void evaluator(TM* tm) {
 
       // Stealing Everything: this will steal all redexes
 
-      Pair got = atomic_exchange_explicit(&globalNet->rbag_buf[idx], 0, memory_order_relaxed);
-      if (got != 0) {
+      Pair got = atomic_exchange_explicit(&globalNet->rbag_buf[idx], emptyPair, memory_order_relaxed);
+      if (!isEmpty(got)) {
         //printf("[%04x] stolen one task from %04x | itrs=%d idle=%d | %s ~ %s\n", tm->tid, sid, tm->itrs, atomic_load_explicit(&net->idle, memory_order_relaxed),show_port(get_fst(got)).x, show_port(get_snd(got)).x);
         push_redex(tm, got);
         continue;
