@@ -43,6 +43,7 @@ typedef u8  Tag;  // Tag  ::= 3-bit (rounded up to u8)
 typedef u64 Val;  // Val  ::= 29-bit (rounded up to u32)
 
 #define MAG 0x00000141
+
 // Constants
 #define NONE 0xFFFFFFFF
 #define FREE 0x00000000
@@ -51,11 +52,9 @@ typedef u64 Val;  // Val  ::= 29-bit (rounded up to u32)
 
 #ifdef BITS32
 typedef u32 Port; // Port ::= Tag + Val (fits a u32)
-//*
 #else
-typedef u64 Port; // Port ::= Tag + Val (fits a u32)
+typedef u64 Port; // Port ::= Tag + Val (fits a u64)
 #endif
-// */
 
 typedef struct {Port fst; Port snd;} Pair; // Pair ::= Port + Port (fits a u64)
 Pair emptyPair = {0, 0};
@@ -64,7 +63,7 @@ static inline u8 isEmpty(Pair p) {
   return p.fst == 0 && p.snd == 0;
 }
 
-typedef a32 APort; // atomic Port
+typedef a64 APort; // atomic Port
 typedef _Atomic(Pair) APair; // atomic Pair
 
 // Numbs
@@ -200,6 +199,10 @@ static inline Port new_port(Tag tag, Val val) {
   return (val << 3) | tag;
 }
 
+static inline Port new_ref(interactionFn val) {
+  return (u64)val | REF;
+}
+
 static inline Tag get_tag(Port port) {
   return port & 7;
 }
@@ -213,35 +216,6 @@ static inline Val get_val(Port port) {
 
 static inline const Pair new_pair(Port fst, Port snd) {
   return (Pair){fst, snd};
-}
-
-Pair set_par_flag(Pair pair) {
-  Port p1 = pair.fst;
-  Port p2 = pair.snd;
-  if (get_tag(p1) == REF) {
-    return new_pair(new_port(get_tag(p1), get_val(p1) | PAR_FLAG), p2);
-  } else {
-    return pair;
-  }
-}
-
-Pair clr_par_flag(Pair pair) {
-  Port p1 = pair.fst;
-  Port p2 = pair.snd;
-  if (get_tag(p1) == REF) {
-    return new_pair(new_port(get_tag(p1), get_val(p1) & ~PAR_FLAG), p2);
-  } else {
-    return pair;
-  }
-}
-
-bool get_par_flag(Pair pair) {
-  Port p1 = pair.fst;
-  if (get_tag(p1) == REF && get_val(p1) & PAR_FLAG) {
-    return TRUE;
-  } else {
-    return FALSE;
-  }
 }
 
 // Utils
