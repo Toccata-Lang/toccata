@@ -15,10 +15,9 @@ typedef uint8_t bool;
 
 typedef  uint8_t  u8;
 typedef uint16_t u16;
-typedef  int32_t i32;
 typedef uint32_t u32;
+typedef  int64_t i64;
 typedef uint64_t u64;
-typedef    float f32;
 typedef   double f64;
 
 typedef _Atomic(u8) a8;
@@ -42,19 +41,14 @@ typedef _Atomic(u64) a64;
 typedef u8  Tag;  // Tag  ::= 3-bit (rounded up to u8)
 typedef u64 Val;  // Val  ::= 29-bit (rounded up to u32)
 
-#define MAG 0x00000141
-
+#define MAG 0x000001e1
 // Constants
-#define NONE 0xFFFFFFFF
-#define FREE 0x00000000
+#define NONE -1
+#define FREE 0
 #define ROOT 0xFFFFFFF8
 #define PAR_FLAG 0x10000000
 
-#ifdef BITS32
-typedef u32 Port; // Port ::= Tag + Val (fits a u32)
-#else
-typedef u64 Port; // Port ::= Tag + Val (fits a u64)
-#endif
+typedef u64 Port; // Port ::= Tag + Val (fits a u32)
 
 typedef struct {Port fst; Port snd;} Pair; // Pair ::= Port + Port (fits a u64)
 Pair emptyPair = {0, 0};
@@ -63,11 +57,11 @@ static inline u8 isEmpty(Pair p) {
   return p.fst == 0 && p.snd == 0;
 }
 
-typedef a64 APort; // atomic Port
+typedef _Atomic(Port) APort; // atomic Port
 typedef _Atomic(Pair) APair; // atomic Pair
 
 // Numbs
-typedef u32 Numb; // Numb ::= 29-bit (rounded up to u32)
+typedef u64 Numb; // Numb ::= 29-bit (rounded up to u64)
 
 // Tags
 #define VAR 0x0 // variable
@@ -79,11 +73,13 @@ typedef u32 Numb; // Numb ::= 29-bit (rounded up to u32)
 #define OPR 0x6 // operator
 #define SWI 0x7 // switch
 
+Port erase = FREE << 3 | ERA;
+
 // Numbers
-static const f32 U24_MAX = (f32) (1 << 24) - 1;
-static const f32 U24_MIN = 0.0;
-static const f32 I24_MAX = (f32) (1 << 23) - 1;
-static const f32 I24_MIN = (f32) (i32) ((-1u) << 23);
+static const u64 U24_MAX = ((u64)1 << 56) - 1;
+static const u64 U24_MIN = 0.0;
+static const i64 I24_MAX = ((i64)1 << 55) - 1;
+static const i64 I24_MIN = (i64) ((u64)-1 << 55);
 #define TY_SYM 0x00
 #define TY_U24 0x01
 #define TY_I24 0x02
@@ -108,9 +104,6 @@ static const f32 I24_MIN = (f32) (i32) ((-1u) << 23);
 #define OP_SHR 0x15
 #define FP_SHR 0x16
 
-// Cache Padding
-#define CACHE_PAD 64
-
 // Global Net
 #define HLEN (1ul << 16) // max 16k high-priority redexes
 #define RLEN (1ul << 24) // max 16m low-priority redexes
@@ -128,18 +121,6 @@ typedef struct Net {
 
 Net *globalNet;
 
-// Top-Level Definition
-typedef struct Def {
-  char name[256];
-  bool safe;
-  u32  rbag_len;
-  u32  node_len;
-  u32  vars_len;
-  Port root;
-  Pair rbag_buf[0xFFF];
-  Pair node_buf[0xFFF];
-} Def;
-
 // Local Thread Memory
 typedef struct TM {
   u32  tid; // thread id
@@ -155,21 +136,6 @@ typedef struct TM {
 } TM;
 
 typedef bool (*interactionFn)(TM* tm, Port a, Port b);
-
-// Readback: λ-Encoded Ctr
-typedef struct Ctr {
-  u32  tag;
-  u32  args_len;
-  Port args_buf[16];
-} Ctr;
-
-// Readback: λ-Encoded Str (UTF-32)
-// FIXME: this is actually ASCII :|
-// FIXME: remove len limit
-typedef struct Str {
-  u32  text_len;
-  char text_buf[256];
-} Str;
 
 // List Type
 #define LIST_NIL  0
@@ -195,8 +161,16 @@ void pretty_print_port(Port port);
 // Port: Constructor and Getters
 // -----------------------------
 
+static inline Port new_num(Val val) {
+  return (val << 3) | NUM;
+}
+
+static inline Val get_num(Port port) {
+  return port >> 3;
+}
+
 static inline Port new_port(Tag tag, Val val) {
-  return (val << 3) | tag;
+  return (u64)val | tag;
 }
 
 static inline Port new_ref(interactionFn val) {
@@ -205,10 +179,6 @@ static inline Port new_ref(interactionFn val) {
 
 static inline Tag get_tag(Port port) {
   return port & 7;
-}
-
-static inline Val get_val(Port port) {
-  return port >> 3;
 }
 
 // Pair: Constructor and Getters
@@ -226,12 +196,12 @@ static inline void swap(Port *a, Port *b) {
   Port x = *a; *a = *b; *b = x;
 }
 
-inline u32 min(u32 a, u32 b) {
+inline u64 min(u64 a, u64 b) {
   return (a < b) ? a : b;
 }
 
-f32 clamp(f32 x, f32 min, f32 max) {
-  const f32 t = x < min ? min : x;
+f64 clamp(f64 x, f64 min, f64 max) {
+  const f64 t = x < min ? min : x;
   return (t > max) ? max : t;
 }
 
@@ -305,57 +275,41 @@ static inline bool is_high_priority(Pair AB) {
   return interactionPriority[get_tag(AB.fst)][get_tag(AB.snd)];
 }
 
-// Adjusts a newly allocated port.
-static inline Port adjust_port(TM* tm, Port port) {
-  Tag tag = get_tag(port);
-  Val val = get_val(port);
-  if (is_nod(port)) return new_port(tag, tm->nloc[val]);
-  if (is_var(port)) return new_port(tag, tm->vloc[val]);
-  return new_port(tag, val);
-}
-
-// Adjusts a newly allocated pair.
-static inline Pair adjust_pair(TM* tm, Pair pair) {
-  Port p1 = adjust_port(tm, pair.fst);
-  Port p2 = adjust_port(tm, pair.snd);
-  return new_pair(p1, p2);
-}
-
 // Numbs
 // -----
 
 // Constructor and getters for SYM (operation selector)
-static inline Numb new_sym(u32 val) {
+static inline Numb new_sym(u64 val) {
   return (val << 5) | TY_SYM;
 }
 
-static inline u32 get_sym(Numb word) {
+static inline u64 get_sym(Numb word) {
   return (word >> 5);
 }
 
 // Constructor and getters for U24 (unsigned 24-bit integer)
-static inline Numb new_u24(u32 val) {
+static inline Numb new_u24(u64 val) {
   return (val << 5) | TY_U24;
 }
 
-static inline u32 get_u24(Numb word) {
+static inline u64 get_u24(Numb word) {
   return word >> 5;
 }
 
 // Constructor and getters for I24 (signed 24-bit integer)
-static inline Numb new_i24(i32 val) {
-  return ((u32)val << 5) | TY_I24;
+static inline Numb new_i24(i64 val) {
+  return ((u64)val << 5) | TY_I24;
 }
 
-static inline i32 get_i24(Numb word) {
-  return ((i32)word) << 3 >> 8;
+static inline i64 get_i24(Numb word) {
+  return ((i64)word) << 3 >> 8;
 }
 
 // Constructor and getters for F24 (24-bit float)
 static inline Numb new_f24(float val) {
-  u32 bits = *(u32*)&val;
-  u32 shifted_bits = bits >> 8;
-  u32 lost_bits = bits & 0xFF;
+  u64 bits = *(u64*)&val;
+  u64 shifted_bits = bits >> 8;
+  u64 lost_bits = bits & 0xFF;
   // round ties to even
   shifted_bits += (!isnan(val)) & ((lost_bits - ((lost_bits >> 7) & !shifted_bits)) >> 7);
   // ensure NaNs don't become infinities
@@ -363,9 +317,9 @@ static inline Numb new_f24(float val) {
   return (shifted_bits << 5) | TY_F24;
 }
 
-static inline float get_f24(Numb word) {
-  u32 bits = (word << 3) & 0xFFFFFF00;
-  return *(float*)&bits;
+static inline f64 get_f24(Numb word) {
+  u64 bits = (word << 3) & 0xFFFFFFFFFFFFFF00;
+  return *(f64*)&bits;
 }
 
 // Flip flag
@@ -398,40 +352,42 @@ static inline Numb cast(Numb a, Numb b) {
   if (get_sym(a) == TY_U24 && get_typ(b) == TY_U24) return b;
   if (get_sym(a) == TY_U24 && get_typ(b) == TY_I24) {
     // reinterpret bits
-    i32 val = get_i24(b);
-    return new_u24(*(u32*) &val);
+    i64 val = get_i24(b);
+    return new_u24(*(u64*) &val);
   }
   if (get_sym(a) == TY_U24 && get_typ(b) == TY_F24) {
-    f32 val = get_f24(b);
+    f64 val = get_f24(b);
     if (isnan(val)) {
       return new_u24(0);
     }
-    return new_u24((u32) clamp(val, U24_MIN, U24_MAX));
+    return new_u24((u64) clamp(val, U24_MIN, U24_MAX));
   }
 
   if (get_sym(a) == TY_I24 && get_typ(b) == TY_U24) {
     // reinterpret bits
-    u32 val = get_u24(b);
-    return new_i24(*(i32*) &val);
+    u64 val = get_u24(b);
+    return new_i24(*(i64*) &val);
   }
   if (get_sym(a) == TY_I24 && get_typ(b) == TY_I24) return b;
   if (get_sym(a) == TY_I24 && get_typ(b) == TY_F24) {
-    f32 val = get_f24(b);
+    f64 val = get_f24(b);
     if (isnan(val)) {
       return new_i24(0);
     }
-    return new_i24((i32) clamp(val, I24_MIN, I24_MAX));
+    return new_i24((i64) clamp(val, I24_MIN, I24_MAX));
   }
 
-  if (get_sym(a) == TY_F24 && get_typ(b) == TY_U24) return new_f24((f32) get_u24(b));
-  if (get_sym(a) == TY_F24 && get_typ(b) == TY_I24) return new_f24((f32) get_i24(b));
+  if (get_sym(a) == TY_F24 && get_typ(b) == TY_U24) return new_f24((f64) get_u24(b));
+  if (get_sym(a) == TY_F24 && get_typ(b) == TY_I24) return new_f24((f64) get_i24(b));
   if (get_sym(a) == TY_F24 && get_typ(b) == TY_F24) return b;
 
   return new_u24(0);
 }
 
 // Operate function
-static inline Numb operate(Numb a, Numb b) {
+static inline Numb operate(Port aP, Port bP) {
+  Numb a = aP >> 3;
+  Numb b = bP >> 3;
   Tag at = get_typ(a);
   Tag bt = get_typ(b);
   if (at == TY_SYM && bt == TY_SYM) {
@@ -464,8 +420,8 @@ static inline Numb operate(Numb a, Numb b) {
   }
   switch (ty) {
     case TY_U24: {
-      u32 av = get_u24(a);
-      u32 bv = get_u24(b);
+      u64 av = get_u24(a);
+      u64 bv = get_u24(b);
       switch (op) {
         case OP_ADD: return new_u24(av + bv);
         case OP_SUB: return new_u24(av - bv);
@@ -482,16 +438,16 @@ static inline Numb operate(Numb a, Numb b) {
         case OP_AND: return new_u24(av & bv);
         case OP_OR:  return new_u24(av | bv);
         case OP_XOR: return new_u24(av ^ bv);
-        case OP_SHL: return new_u24(av << (bv & 31));
-        case FP_SHL: return new_u24(bv << (av & 31));
-        case OP_SHR: return new_u24(av >> (bv & 31));
-        case FP_SHR: return new_u24(bv >> (av & 31));
+        case OP_SHL: return new_u24(av << (bv & 63));
+        case FP_SHL: return new_u24(bv << (av & 63));
+        case OP_SHR: return new_u24(av >> (bv & 63));
+        case FP_SHR: return new_u24(bv >> (av & 63));
         default:     return new_u24(0);
       }
     }
     case TY_I24: {
-      i32 av = get_i24(a);
-      i32 bv = get_i24(b);
+      i64 av = get_i24(a);
+      i64 bv = get_i24(b);
       switch (op) {
         case OP_ADD: return new_i24(av + bv);
         case OP_SUB: return new_i24(av - bv);
@@ -599,47 +555,47 @@ void free_static_tms() {
 // ----
 
 // Stores a new node on global.
-static inline void node_create(u32 loc, Pair val) {
-  atomic_store_explicit(&globalNet->node_buf[loc], val, memory_order_relaxed);
+static inline void node_create(Port loc, Pair val) {
+  atomic_store_explicit((APair*)((u64)loc & ~7), val, memory_order_relaxed);
 }
 
 // Stores a var on global.
-static inline void vars_create(u32 var, Port val) {
-  atomic_store_explicit(&globalNet->vars_buf[var], val, memory_order_relaxed);
+static inline void vars_create(Port var, Port val) {
+  atomic_store_explicit((APort*)((u64)var & ~7), val, memory_order_relaxed);
 }
 
 // Reads a node from global.
-static inline Pair node_load(u32 loc) {
-  return atomic_load_explicit(&globalNet->node_buf[loc], memory_order_relaxed);
+static inline Pair node_load(Port loc) {
+  return atomic_load_explicit((APair*)((u64)loc & ~7), memory_order_relaxed);
 }
 
 // Reads a var from global.
-static inline Port vars_load(u32 var) {
-  return atomic_load_explicit(&globalNet->vars_buf[var], memory_order_relaxed);
+static inline Port vars_load(Port var) {
+  return atomic_load_explicit((APort*)((u64)var & ~7), memory_order_relaxed);
 }
 
 // Stores a node on global.
-static inline void node_store(u32 loc, Pair val) {
-  atomic_store_explicit(&globalNet->node_buf[loc], val, memory_order_relaxed);
+static inline void node_store(Port loc, Pair val) {
+  atomic_store_explicit((APair*)((u64)loc & ~7), val, memory_order_relaxed);
 }
 
 // Exchanges a node on global by a value. Returns old.
-static inline Pair node_exchange(u32 loc, Pair val) {
-  return atomic_exchange_explicit(&globalNet->node_buf[loc], val, memory_order_relaxed);
+static inline Pair node_exchange(Port loc, Pair val) {
+  return atomic_exchange_explicit((APair*)((u64)loc & ~7), val, memory_order_relaxed);
 }
 
 // Exchanges a var on global by a value. Returns old.
-static inline Port vars_exchange(u32 var, Port val) {
-  return atomic_exchange_explicit(&globalNet->vars_buf[var], val, memory_order_relaxed);
+static inline Port vars_exchange(Port var, Port val) {
+  return atomic_exchange_explicit((APort*)((u64)var & ~7), val, memory_order_relaxed);
 }
 
 // Takes a node.
-static inline Pair node_take(u32 loc) {
+static inline Pair node_take(Port loc) {
   return node_exchange(loc, emptyPair);
 }
 
 // Takes a var.
-static inline Port vars_take(u32 var) {
+static inline Port vars_take(Port var) {
   return vars_exchange(var, 0);
 }
 
@@ -657,70 +613,30 @@ static inline void net_init() {
 // Allocator
 // ---------
 
-u32 node_alloc_1(TM* tm, u32* lps) {
+Port node_alloc_1(TM* tm, u32* lps) {
   while (TRUE) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->nput%(G_NODE_LEN/TPC));
-    Pair elem = globalNet->node_buf[lc];
+    Pair* elem = (Pair *)&globalNet->node_buf[lc];
     tm->nput += 1;
-    if (lc > 0 && isEmpty(elem)) {
-      return lc;
+    if (lc > 0 && isEmpty(*elem)) {
+      return (Port)elem;
     }
     // FIXME: check this decently
     if (++(*lps) >= G_NODE_LEN/TPC) printf("OOM\n");
   }
 }
 
-u32 vars_alloc_1(TM* tm, u32* lps) {
+Port vars_alloc_1(TM* tm, u32* lps) {
   while (TRUE) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->vput%(G_NODE_LEN/TPC));
-    Port elem = globalNet->vars_buf[lc];
+    Port* elem = (Port*)&globalNet->vars_buf[lc];
     tm->vput += 1;
-    if (lc > 0 && elem == 0) {
-      return lc;
+    if (lc > 0 && *elem == 0) {
+      return (Port)elem;
     }
     // FIXME: check this decently
     if (++(*lps) >= G_NODE_LEN/TPC) printf("OOM\n");
   }
-}
-
-u32 node_alloc(TM* tm, u32 num) {
-  u32 got = 0;
-  u32 lps = 0;
-  while (got < num) {
-    u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->nput%(G_NODE_LEN/TPC));
-    Pair elem = globalNet->node_buf[lc];
-    tm->nput += 1;
-    if (lc > 0 && isEmpty(elem)) {
-      tm->nloc[got++] = lc;
-    }
-    // FIXME: check this decently
-    if (++lps >= G_NODE_LEN/TPC) printf("OOM\n");
-  }
-  return got;
-}
-
-u32 vars_alloc(TM* tm, u32 num) {
-  u32 got = 0;
-  u32 lps = 0;
-  while (got < num) {
-    u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->vput%(G_NODE_LEN/TPC));
-    Port elem = globalNet->vars_buf[lc];
-    tm->vput += 1;
-    if (lc > 0 && elem == 0) {
-      tm->vloc[got++] = lc;
-    }
-    // FIXME: check this decently
-    if (++lps >= G_NODE_LEN/TPC) printf("OOM\n");
-  }
-  return got;
-}
-
-// Gets the necessary resources for an interaction. Returns success.
-static inline bool get_resources(TM* tm, u8 need_rbag, u8 need_node, u8 need_vars) {
-  u32 got_rbag = 0xFF; // FIXME: implement
-  u32 got_node = node_alloc(tm, need_node);
-  u32 got_vars = vars_alloc(tm, need_vars);
-  return got_rbag >= need_rbag && got_node >= need_node && got_vars >= need_vars;
 }
 
 // Linking
@@ -729,7 +645,7 @@ static inline bool get_resources(TM* tm, u8 need_rbag, u8 need_node, u8 need_var
 // Peeks a variable's final target without modifying it.
 static inline Port peek(Port var) {
   while (get_tag(var) == VAR) {
-    Port val = vars_load(get_val(var));
+    Port val = vars_load(var);
     if (val == NONE) break;
     if (val == 0) break;
     var = val;
@@ -742,13 +658,13 @@ static inline Port enter(Port var) {
   // While `B` is VAR: extend it (as an optimization)
   while (get_tag(var) == VAR) {
     // Takes the current `var` substitution as `val`
-    Port val = vars_exchange(get_val(var), NONE);
+    Port val = vars_exchange(var, NONE);
     // If there was no `val`, stop, as there is no extension
     if (val == NONE || val == 0) {
       break;
     }
     // Otherwise, delete `B` (we own both) and continue
-    vars_take(get_val(var));
+    vars_take(var);
     var = val;
   }
   return var;
@@ -777,14 +693,14 @@ static inline void link(TM* tm, Port A, Port B) {
     // Since `A` is VAR: point `A ~> B`.
     if (TRUE) {
       // Stores `A -> B`, taking the current `A` subst as `A'`
-      Port A_ = vars_exchange(get_val(A), B);
+      Port A_ = vars_exchange(A, B);
       // If there was no `A'`, stop, as we lost B's ownership
       if (A_ == NONE) {
         break;
       }
       //if (A_ == 0) { ? } // FIXME: must handle on the move-to-global algo
       // Otherwise, delete `A` (we own both) and link `A' ~ B`
-      vars_take(get_val(A));
+      vars_take(A);
       A = A_;
     }
   }
@@ -801,11 +717,6 @@ static inline void link_pair(TM* tm, Pair AB) {
 
 // The Link Interaction.
 bool LINK(TM* tm, Port a, Port b) {
-  // Allocates needed nodes and vars.
-  if (!get_resources(tm, 1, 0, 0)) {
-    return FALSE;
-  }
-
   // Links.
   link_pair(tm, new_pair(a, b));
 
@@ -816,6 +727,8 @@ bool LINK(TM* tm, Port a, Port b) {
 static inline bool ERAS(TM* tm, Port a, Port b);
 
 // The Call Interaction.
+bool CALL_main__C1(TM *tm, Port a, Port b);
+bool CALL_sum(TM *tm, Port a, Port b);
 bool CALL_main(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -834,12 +747,13 @@ bool CALL_main(TM *tm, Port a, Port b) {
   } else {
     b = new_port(VAR,v0);
   }
-  node_create(n1, new_pair(new_port(REF,0x00000009),new_port(VAR,v0)));
-  node_create(n0, new_pair(new_port(NUM,0x00000141),new_port(CON,n1)));
-  link(tm, new_port(REF,0x0000000c), new_port(CON,n0));
+  node_create(n1, new_pair(new_ref(CALL_main__C1),new_port(VAR,v0)));
+  node_create(n0, new_pair(new_num(MAG),new_port(CON,n1)));
+  link(tm, new_ref(CALL_sum), new_port(CON,n0));
   return TRUE;
 }
 
+bool CALL_down__C0(TM *tm, Port a, Port b);
 bool CALL_down(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -871,10 +785,10 @@ bool CALL_down(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -883,10 +797,10 @@ bool CALL_down(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -895,10 +809,10 @@ bool CALL_down(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -933,9 +847,9 @@ bool CALL_down(TM *tm, Port a, Port b) {
       k4 = new_port(CON,n7);
     }
   }
-  node_create(n4, new_pair(new_port(ERA,FREE),new_port(VAR,v0)));
+  node_create(n4, new_pair(erase,new_port(VAR,v0)));
   node_create(n3, new_pair(new_port(VAR,v0),new_port(CON,n4)));
-  node_create(n2, new_pair(new_port(CON,n3),new_port(REF,0x00000002)));
+  node_create(n2, new_pair(new_port(CON,n3),new_ref(CALL_down__C0)));
   node_create(n6, new_pair(new_port(VAR,v2),new_port(VAR,v3)));
   node_create(n5, new_pair(new_port(VAR,v1),new_port(CON,n6)));
   node_create(n1, new_pair(new_port(CON,n2),new_port(CON,n5)));
@@ -955,6 +869,7 @@ bool CALL_down(TM *tm, Port a, Port b) {
   return TRUE;
 }
 
+bool CALL_flow(TM *tm, Port a, Port b);
 bool CALL_down__C0(TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
@@ -995,10 +910,10 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -1007,10 +922,10 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -1019,10 +934,10 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -1031,10 +946,10 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(k12))) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = node_take(get_val(k12));
+    k14 = node_take(k12);
     k15 = k14.fst;
     k16 = k14.snd;
   }
@@ -1097,10 +1012,10 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
   Port k22 = NONE;
   Port k23 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(k7))) {
     tm->itrs += 1;
     k20 = 1;
-    k21 = node_take(get_val(k7));
+    k21 = node_take(k7);
     k22 = k21.fst;
     k23 = k21.snd;
   }
@@ -1169,14 +1084,15 @@ bool CALL_down__C0(TM *tm, Port a, Port b) {
   node_create(n9, new_pair(new_port(VAR,v2),new_port(VAR,v6)));
   node_create(n8, new_pair(new_port(VAR,v4),new_port(CON,n9)));
   node_create(n7, new_pair(new_port(VAR,v0),new_port(CON,n8)));
-  link(tm, new_port(REF,0x10000003), new_port(CON,n7));
+  link(tm, new_ref(CALL_flow), new_port(CON,n7));
   node_create(nc, new_pair(new_port(VAR,v3),new_port(VAR,v7)));
   node_create(nb, new_pair(new_port(VAR,v5),new_port(CON,nc)));
   node_create(na, new_pair(new_port(VAR,v1),new_port(CON,nb)));
-  link(tm, new_port(REF,0x10000003), new_port(CON,na));
+  link(tm, new_ref(CALL_flow), new_port(CON,na));
   return TRUE;
 }
 
+bool CALL_flow__C0(TM *tm, Port a, Port b);
 bool CALL_flow(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -1208,10 +1124,10 @@ bool CALL_flow(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -1220,10 +1136,10 @@ bool CALL_flow(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -1232,10 +1148,10 @@ bool CALL_flow(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -1270,9 +1186,9 @@ bool CALL_flow(TM *tm, Port a, Port b) {
       k4 = new_port(CON,n7);
     }
   }
-  node_create(n4, new_pair(new_port(ERA,FREE),new_port(VAR,v0)));
+  node_create(n4, new_pair(erase,new_port(VAR,v0)));
   node_create(n3, new_pair(new_port(VAR,v0),new_port(CON,n4)));
-  node_create(n2, new_pair(new_port(CON,n3),new_port(REF,0x00000004)));
+  node_create(n2, new_pair(new_port(CON,n3),new_ref(CALL_flow__C0)));
   node_create(n6, new_pair(new_port(VAR,v2),new_port(VAR,v3)));
   node_create(n5, new_pair(new_port(VAR,v1),new_port(CON,n6)));
   node_create(n1, new_pair(new_port(CON,n2),new_port(CON,n5)));
@@ -1292,6 +1208,7 @@ bool CALL_flow(TM *tm, Port a, Port b) {
   return TRUE;
 }
 
+bool CALL_warp(TM *tm, Port a, Port b);
 bool CALL_flow__C0(TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
@@ -1333,10 +1250,10 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -1345,10 +1262,10 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -1357,10 +1274,10 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -1410,10 +1327,10 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
   Port k18 = NONE;
   Port k19 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(k7))) {
     tm->itrs += 1;
     k16 = 1;
-    k17 = node_take(get_val(k7));
+    k17 = node_take(k7);
     k18 = k17.fst;
     k19 = k17.snd;
   }
@@ -1461,10 +1378,10 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
   bool k23 = 0;
   Port k24 = NONE;
   // fast oper
-  if (get_tag(k21) == NUM && get_tag(new_port(NUM,0x00000024)) == NUM) {
+  if (get_tag(k21) == NUM && get_tag(new_num(0x00000024)) == NUM) {
     tm->itrs += 1;
     k23 = 1;
-    k24 = new_port(NUM, operate(get_val(k21), get_val(new_port(NUM,0x00000024))));
+    k24 = new_num(operate(k21, new_num(0x00000024)));
   }
   if (k24 != NONE) {
     link(tm, new_port(VAR,v0), k24);
@@ -1472,7 +1389,7 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
     k24 = new_port(VAR,v0);
   }
   if (!k23) {
-    node_create(n2, new_pair(new_port(NUM,0x00000024),k24));
+    node_create(n2, new_pair(new_num(0x00000024),k24));
     if (k21 != NONE) {
       link(tm, new_port(OPR, n2), k21);
     } else {
@@ -1498,15 +1415,16 @@ bool CALL_flow__C0(TM *tm, Port a, Port b) {
   node_create(n9, new_pair(new_port(VAR,v7),new_port(VAR,v6)));
   node_create(n8, new_pair(new_port(VAR,v4),new_port(CON,n9)));
   node_create(n7, new_pair(new_port(VAR,v0),new_port(CON,n8)));
-  link(tm, new_port(REF,0x00000001), new_port(CON,n7));
+  link(tm, new_ref(CALL_down), new_port(CON,n7));
   node_create(nd, new_pair(new_port(VAR,v3),new_port(VAR,v7)));
   node_create(nc, new_pair(new_port(VAR,v2),new_port(CON,nd)));
   node_create(nb, new_pair(new_port(VAR,v5),new_port(CON,nc)));
   node_create(na, new_pair(new_port(VAR,v1),new_port(CON,nb)));
-  link(tm, new_port(REF,0x00000011), new_port(CON,na));
+  link(tm, new_ref(CALL_warp), new_port(CON,na));
   return TRUE;
 }
 
+bool CALL_gen__bend0(TM *tm, Port a, Port b);
 bool CALL_gen(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -1528,10 +1446,10 @@ bool CALL_gen(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -1553,12 +1471,13 @@ bool CALL_gen(TM *tm, Port a, Port b) {
       b = new_port(CON,n0);
     }
   }
-  node_create(n2, new_pair(new_port(NUM,0x00000001),new_port(VAR,v1)));
+  node_create(n2, new_pair(new_num(0x00000001),new_port(VAR,v1)));
   node_create(n1, new_pair(new_port(VAR,v0),new_port(CON,n2)));
-  link(tm, new_port(REF,0x00000006), new_port(CON,n1));
+  link(tm, new_ref(CALL_gen__bend0), new_port(CON,n1));
   return TRUE;
 }
 
+bool CALL_gen__bend0__C0(TM *tm, Port a, Port b);
 bool CALL_gen__bend0(TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
@@ -1583,10 +1502,10 @@ bool CALL_gen__bend0(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -1611,8 +1530,8 @@ bool CALL_gen__bend0(TM *tm, Port a, Port b) {
     k7 = new_port(VAR,v1);
   }
   node_create(n5, new_pair(new_port(VAR,v0),new_port(VAR,v0)));
-  node_create(n4, new_pair(new_port(ERA,FREE),new_port(CON,n5)));
-  node_create(n3, new_pair(new_port(CON,n4),new_port(REF,0x00000007)));
+  node_create(n4, new_pair(erase,new_port(CON,n5)));
+  node_create(n3, new_pair(new_port(CON,n4),new_ref(CALL_gen__bend0__C0)));
   node_create(n6, new_pair(new_port(VAR,v1),new_port(VAR,v2)));
   node_create(n2, new_pair(new_port(CON,n3),new_port(CON,n6)));
   if (k6 != NONE) {
@@ -1677,10 +1596,10 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -1689,10 +1608,10 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -1701,10 +1620,10 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -1713,10 +1632,10 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(k12))) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = node_take(get_val(k12));
+    k14 = node_take(k12);
     k15 = k14.fst;
     k16 = k14.snd;
   }
@@ -1751,10 +1670,10 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   bool k20 = 0;
   Port k21 = NONE;
   // fast oper
-  if (get_tag(k19) == NUM && get_tag(new_port(NUM,0x00000047)) == NUM) {
+  if (get_tag(k19) == NUM && get_tag(new_num(0x00000047)) == NUM) {
     tm->itrs += 1;
     k20 = 1;
-    k21 = new_port(NUM, operate(get_val(k19), get_val(new_port(NUM,0x00000047))));
+    k21 = new_num(operate(k19, new_num(0x00000047)));
   }
   if (k21 != NONE) {
     link(tm, new_port(VAR,v3), k21);
@@ -1762,7 +1681,7 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     k21 = new_port(VAR,v3);
   }
   if (!k20) {
-    node_create(n9, new_pair(new_port(NUM,0x00000047),k21));
+    node_create(n9, new_pair(new_num(0x00000047),k21));
     if (k19 != NONE) {
       link(tm, new_port(OPR, n9), k19);
     } else {
@@ -1772,18 +1691,18 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   bool k22 = 0;
   Port k23 = NONE;
   // fast oper
-  if (get_tag(k18) == NUM && get_tag(new_port(NUM,0x00000047)) == NUM) {
+  if (get_tag(k18) == NUM && get_tag(new_num(0x00000047)) == NUM) {
     tm->itrs += 1;
     k22 = 1;
-    k23 = new_port(NUM, operate(get_val(k18), get_val(new_port(NUM,0x00000047))));
+    k23 = new_num(operate(k18, new_num(0x00000047)));
   }
   bool k24 = 0;
   Port k25 = NONE;
   // fast oper
-  if (get_tag(k23) == NUM && get_tag(new_port(NUM,0x00000024)) == NUM) {
+  if (get_tag(k23) == NUM && get_tag(new_num(0x00000024)) == NUM) {
     tm->itrs += 1;
     k24 = 1;
-    k25 = new_port(NUM, operate(get_val(k23), get_val(new_port(NUM,0x00000024))));
+    k25 = new_num(operate(k23, new_num(0x00000024)));
   }
   if (k25 != NONE) {
     link(tm, new_port(VAR,v2), k25);
@@ -1791,7 +1710,7 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     k25 = new_port(VAR,v2);
   }
   if (!k24) {
-    node_create(n8, new_pair(new_port(NUM,0x00000024),k25));
+    node_create(n8, new_pair(new_num(0x00000024),k25));
     if (k23 != NONE) {
       link(tm, new_port(OPR, n8), k23);
     } else {
@@ -1799,7 +1718,7 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     }
   }
   if (!k22) {
-    node_create(n7, new_pair(new_port(NUM,0x00000047),k23));
+    node_create(n7, new_pair(new_num(0x00000047),k23));
     if (k18 != NONE) {
       link(tm, new_port(OPR, n7), k18);
     } else {
@@ -1835,10 +1754,10 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   bool k29 = 0;
   Port k30 = NONE;
   // fast oper
-  if (get_tag(k28) == NUM && get_tag(new_port(NUM,0x00000026)) == NUM) {
+  if (get_tag(k28) == NUM && get_tag(new_num(0x00000026)) == NUM) {
     tm->itrs += 1;
     k29 = 1;
-    k30 = new_port(NUM, operate(get_val(k28), get_val(new_port(NUM,0x00000026))));
+    k30 = new_num(operate(k28, new_num(0x00000026)));
   }
   if (k30 != NONE) {
     link(tm, new_port(VAR,v1), k30);
@@ -1846,7 +1765,7 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     k30 = new_port(VAR,v1);
   }
   if (!k29) {
-    node_create(n4, new_pair(new_port(NUM,0x00000026),k30));
+    node_create(n4, new_pair(new_num(0x00000026),k30));
     if (k28 != NONE) {
       link(tm, new_port(OPR, n4), k28);
     } else {
@@ -1856,10 +1775,10 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   bool k31 = 0;
   Port k32 = NONE;
   // fast oper
-  if (get_tag(k27) == NUM && get_tag(new_port(NUM,0x00000026)) == NUM) {
+  if (get_tag(k27) == NUM && get_tag(new_num(0x00000026)) == NUM) {
     tm->itrs += 1;
     k31 = 1;
-    k32 = new_port(NUM, operate(get_val(k27), get_val(new_port(NUM,0x00000026))));
+    k32 = new_num(operate(k27, new_num(0x00000026)));
   }
   if (k32 != NONE) {
     link(tm, new_port(VAR,v0), k32);
@@ -1867,7 +1786,7 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     k32 = new_port(VAR,v0);
   }
   if (!k31) {
-    node_create(n3, new_pair(new_port(NUM,0x00000026),k32));
+    node_create(n3, new_pair(new_num(0x00000026),k32));
     if (k27 != NONE) {
       link(tm, new_port(OPR, n3), k27);
     } else {
@@ -1895,9 +1814,9 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
     tm->itrs += 1;
   } else {
     if (k3 != NONE) {
-      link(tm, new_port(ERA,FREE), k3);
+      link(tm, erase, k3);
     } else {
-      k3 = new_port(ERA,FREE);
+      k3 = erase;
     }
   }
   if (!k1) {
@@ -1910,10 +1829,10 @@ bool CALL_gen__bend0__C0(TM *tm, Port a, Port b) {
   }
   node_create(nc, new_pair(new_port(VAR,v2),new_port(VAR,v4)));
   node_create(nb, new_pair(new_port(VAR,v0),new_port(CON,nc)));
-  link(tm, new_port(REF,0x10000006), new_port(CON,nb));
+  link(tm, new_ref(CALL_gen__bend0), new_port(CON,nb));
   node_create(ne, new_pair(new_port(VAR,v3),new_port(VAR,v5)));
   node_create(nd, new_pair(new_port(VAR,v1),new_port(CON,ne)));
-  link(tm, new_port(REF,0x10000006), new_port(CON,nd));
+  link(tm, new_ref(CALL_gen__bend0), new_port(CON,nd));
   return TRUE;
 }
 
@@ -1934,11 +1853,12 @@ bool CALL_main__C0(TM *tm, Port a, Port b) {
   } else {
     b = new_port(VAR,v0);
   }
-  node_create(n0, new_pair(new_port(NUM,0x00000141),new_port(VAR,v0)));
-  link(tm, new_port(REF,0x00000005), new_port(CON,n0));
+  node_create(n0, new_pair(new_num(MAG),new_port(VAR,v0)));
+  link(tm, new_ref(CALL_gen), new_port(CON,n0));
   return TRUE;
 }
 
+bool CALL_sort(TM *tm, Port a, Port b);
 bool CALL_main__C1(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -1958,13 +1878,14 @@ bool CALL_main__C1(TM *tm, Port a, Port b) {
   } else {
     b = new_port(VAR,v0);
   }
-  node_create(n2, new_pair(new_port(REF,0x00000008),new_port(VAR,v0)));
-  node_create(n1, new_pair(new_port(NUM,0x00000001),new_port(CON,n2)));
-  node_create(n0, new_pair(new_port(NUM,0x00000141),new_port(CON,n1)));
-  link(tm, new_port(REF,0x0000000a), new_port(CON,n0));
+  node_create(n2, new_pair(new_ref(CALL_main__C0),new_port(VAR,v0)));
+  node_create(n1, new_pair(new_num(0x00000001),new_port(CON,n2)));
+  node_create(n0, new_pair(new_num(MAG),new_port(CON,n1)));
+  link(tm, new_ref(CALL_sort), new_port(CON,n0));
   return TRUE;
 }
 
+bool CALL_sort__C0(TM *tm, Port a, Port b);
 bool CALL_sort(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -1996,10 +1917,10 @@ bool CALL_sort(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -2008,10 +1929,10 @@ bool CALL_sort(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -2020,10 +1941,10 @@ bool CALL_sort(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -2058,9 +1979,9 @@ bool CALL_sort(TM *tm, Port a, Port b) {
       k4 = new_port(CON,n7);
     }
   }
-  node_create(n4, new_pair(new_port(ERA,FREE),new_port(VAR,v0)));
+  node_create(n4, new_pair(erase,new_port(VAR,v0)));
   node_create(n3, new_pair(new_port(VAR,v0),new_port(CON,n4)));
-  node_create(n2, new_pair(new_port(CON,n3),new_port(REF,0x0000000b)));
+  node_create(n2, new_pair(new_port(CON,n3),new_ref(CALL_sort__C0)));
   node_create(n6, new_pair(new_port(VAR,v2),new_port(VAR,v3)));
   node_create(n5, new_pair(new_port(VAR,v1),new_port(CON,n6)));
   node_create(n1, new_pair(new_port(CON,n2),new_port(CON,n5)));
@@ -2126,10 +2047,10 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -2138,10 +2059,10 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -2150,10 +2071,10 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -2180,10 +2101,10 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(k7))) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = node_take(get_val(k7));
+    k14 = node_take(k7);
     k15 = k14.fst;
     k16 = k14.snd;
   }
@@ -2254,10 +2175,10 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
   bool k23 = 0;
   Port k24 = NONE;
   // fast oper
-  if (get_tag(k18) == NUM && get_tag(new_port(NUM,0x00000024)) == NUM) {
+  if (get_tag(k18) == NUM && get_tag(new_num(0x00000024)) == NUM) {
     tm->itrs += 1;
     k23 = 1;
-    k24 = new_port(NUM, operate(get_val(k18), get_val(new_port(NUM,0x00000024))));
+    k24 = new_num(operate(k18, new_num(0x00000024)));
   }
   if (k24 != NONE) {
     link(tm, new_port(VAR,v0), k24);
@@ -2265,7 +2186,7 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
     k24 = new_port(VAR,v0);
   }
   if (!k23) {
-    node_create(n2, new_pair(new_port(NUM,0x00000024),k24));
+    node_create(n2, new_pair(new_num(0x00000024),k24));
     if (k18 != NONE) {
       link(tm, new_port(OPR, n2), k18);
     } else {
@@ -2292,18 +2213,19 @@ bool CALL_sort__C0(TM *tm, Port a, Port b) {
   node_create(n9, new_pair(new_port(CON,na),new_port(VAR,v6)));
   node_create(n8, new_pair(new_port(VAR,v5),new_port(CON,n9)));
   node_create(n7, new_pair(new_port(VAR,v0),new_port(CON,n8)));
-  link(tm, new_port(REF,0x00000003), new_port(CON,n7));
+  link(tm, new_ref(CALL_flow), new_port(CON,n7));
   node_create(nd, new_pair(new_port(VAR,v3),new_port(VAR,v7)));
-  node_create(nc, new_pair(new_port(NUM,0x00000001),new_port(CON,nd)));
+  node_create(nc, new_pair(new_num(0x00000001),new_port(CON,nd)));
   node_create(nb, new_pair(new_port(VAR,v1),new_port(CON,nc)));
-  link(tm, new_port(REF,0x1000000a), new_port(CON,nb));
+  link(tm, new_ref(CALL_sort), new_port(CON,nb));
   node_create(n10, new_pair(new_port(VAR,v4),new_port(VAR,v8)));
-  node_create(nf, new_pair(new_port(NUM,0x00000021),new_port(CON,n10)));
+  node_create(nf, new_pair(new_num(0x00000021),new_port(CON,n10)));
   node_create(ne, new_pair(new_port(VAR,v2),new_port(CON,nf)));
-  link(tm, new_port(REF,0x1000000a), new_port(CON,ne));
+  link(tm, new_ref(CALL_sort), new_port(CON,ne));
   return TRUE;
 }
 
+bool CALL_sum__C0(TM *tm, Port a, Port b);
 bool CALL_sum(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -2328,23 +2250,23 @@ bool CALL_sum(TM *tm, Port a, Port b) {
   Port k4 = NONE;
   //fast switch
   if (get_tag(b) == CON) {
-    k2 = node_load(get_val(b));
+    k2 = node_load(b);
     k5 = enter(k2.fst);
     if (get_tag(k5) == NUM) {
       tm->itrs += 3;
       vars_take(v1);
       k1 = 1;
-      if (get_u24(get_val(k5)) == 0) {
-        node_take(get_val(b));
+      if (get_u24(get_num(k5)) == 0) {
+        node_take(b);
         k3 = k2.snd;
-        k4 = new_port(ERA,0);
+        k4 = erase;
       } else {
-        node_store(get_val(b), new_pair(new_port(NUM,new_u24(get_u24(get_val(k5))-1)), k2.snd));
-        k3 = new_port(ERA,0);
+        node_store(b, new_pair(new_num(new_u24(get_u24(get_num(k5))-1)), k2.snd));
+        k3 = erase;
         k4 = b;
       }
     } else {
-      node_store(get_val(b), new_pair(k5,k2.snd));
+      node_store(b, new_pair(k5,k2.snd));
     }
   }
   bool k6 = 0;
@@ -2352,10 +2274,10 @@ bool CALL_sum(TM *tm, Port a, Port b) {
   Port k8 = NONE;
   Port k9 = NONE;
   // fast anni
-  if (get_tag(k3) == CON && !isEmpty(node_load(get_val(k3)))) {
+  if (get_tag(k3) == CON && !isEmpty(node_load(k3))) {
     tm->itrs += 1;
     k6 = 1;
-    k7 = node_take(get_val(k3));
+    k7 = node_take(k3);
     k8 = k7.fst;
     k9 = k7.snd;
   }
@@ -2378,9 +2300,9 @@ bool CALL_sum(TM *tm, Port a, Port b) {
     }
   }
   if (k4 != NONE) {
-    link(tm, new_port(REF,0x0000000d), k4);
+    link(tm, new_ref(CALL_sum__C0), k4);
   } else {
-    k4 = new_port(REF,0x0000000d);
+    k4 = new_ref(CALL_sum__C0);
   }
   if (!k1) {
     node_create(n0, new_pair(new_port(SWI,n1),new_port(VAR,v1)));
@@ -2428,10 +2350,10 @@ bool CALL_sum__C0(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -2440,10 +2362,10 @@ bool CALL_sum__C0(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -2457,10 +2379,10 @@ bool CALL_sum__C0(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(k7))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k7));
+    k10 = node_take(k7);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -2527,16 +2449,18 @@ bool CALL_sum__C0(TM *tm, Port a, Port b) {
     }
   }
   node_create(n7, new_pair(new_port(VAR,v5),new_port(VAR,v4)));
-  node_create(n6, new_pair(new_port(NUM,0x00000080),new_port(OPR,n7)));
+  node_create(n6, new_pair(new_num(0x00000080),new_port(OPR,n7)));
   node_create(n5, new_pair(new_port(VAR,v2),new_port(OPR,n6)));
   node_create(n4, new_pair(new_port(VAR,v0),new_port(CON,n5)));
-  link(tm, new_port(REF,0x1000000c), new_port(CON,n4));
+  link(tm, new_ref(CALL_sum), new_port(CON,n4));
   node_create(n9, new_pair(new_port(VAR,v3),new_port(VAR,v5)));
   node_create(n8, new_pair(new_port(VAR,v1),new_port(CON,n9)));
-  link(tm, new_port(REF,0x1000000c), new_port(CON,n8));
+  link(tm, new_ref(CALL_sum), new_port(CON,n8));
   return TRUE;
 }
 
+bool CALL_swap__C0(TM *tm, Port a, Port b);
+bool CALL_swap__C1(TM *tm, Port a, Port b);
 bool CALL_swap(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -2564,10 +2488,10 @@ bool CALL_swap(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -2576,10 +2500,10 @@ bool CALL_swap(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -2588,10 +2512,10 @@ bool CALL_swap(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -2626,7 +2550,7 @@ bool CALL_swap(TM *tm, Port a, Port b) {
       k4 = new_port(CON,n5);
     }
   }
-  node_create(n2, new_pair(new_port(REF,0x0000000f),new_port(REF,0x00000010)));
+  node_create(n2, new_pair(new_ref(CALL_swap__C0),new_ref(CALL_swap__C1)));
   node_create(n4, new_pair(new_port(VAR,v1),new_port(VAR,v2)));
   node_create(n3, new_pair(new_port(VAR,v0),new_port(CON,n4)));
   node_create(n1, new_pair(new_port(CON,n2),new_port(CON,n3)));
@@ -2667,10 +2591,10 @@ bool CALL_swap__C0(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -2679,10 +2603,10 @@ bool CALL_swap__C0(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -2691,10 +2615,10 @@ bool CALL_swap__C0(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -2767,10 +2691,10 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -2779,10 +2703,10 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -2791,10 +2715,10 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -2803,10 +2727,10 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(k12))) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = node_take(get_val(k12));
+    k14 = node_take(k12);
     k15 = k14.fst;
     k16 = k14.snd;
   }
@@ -2859,9 +2783,9 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
     tm->itrs += 1;
   } else {
     if (k3 != NONE) {
-      link(tm, new_port(ERA,FREE), k3);
+      link(tm, erase, k3);
     } else {
-      k3 = new_port(ERA,FREE);
+      k3 = erase;
     }
   }
   if (!k1) {
@@ -2875,6 +2799,8 @@ bool CALL_swap__C1(TM *tm, Port a, Port b) {
   return TRUE;
 }
 
+bool CALL_warp__C0(TM *tm, Port a, Port b);
+bool CALL_warp__C1(TM *tm, Port a, Port b);
 bool CALL_warp(TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return ERAS(tm, a, b);
@@ -2906,10 +2832,10 @@ bool CALL_warp(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -2918,10 +2844,10 @@ bool CALL_warp(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -2930,10 +2856,10 @@ bool CALL_warp(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -2942,10 +2868,10 @@ bool CALL_warp(TM *tm, Port a, Port b) {
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(k12))) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = node_take(get_val(k12));
+    k14 = node_take(k12);
     k15 = k14.fst;
     k16 = k14.snd;
   }
@@ -2993,7 +2919,7 @@ bool CALL_warp(TM *tm, Port a, Port b) {
       k4 = new_port(CON,n6);
     }
   }
-  node_create(n2, new_pair(new_port(REF,0x00000012),new_port(REF,0x00000013)));
+  node_create(n2, new_pair(new_ref(CALL_warp__C0),new_ref(CALL_warp__C1)));
   node_create(n5, new_pair(new_port(VAR,v2),new_port(VAR,v3)));
   node_create(n4, new_pair(new_port(VAR,v1),new_port(CON,n5)));
   node_create(n3, new_pair(new_port(VAR,v0),new_port(CON,n4)));
@@ -3049,10 +2975,10 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -3061,10 +2987,10 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -3073,10 +2999,10 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -3088,10 +3014,10 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   bool k13 = 0;
   Port k14 = NONE;
   // fast oper
-  if (get_tag(k11) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+  if (get_tag(k11) == NUM && get_tag(new_num(0x00000080)) == NUM) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = new_port(NUM, operate(get_val(k11), get_val(new_port(NUM,0x00000080))));
+    k14 = new_num(operate(k11, new_num(0x00000080)));
   }
   bool k15 = 0;
   Port k16 = NONE;
@@ -3099,7 +3025,7 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   if (get_tag(k14) == NUM && get_tag(new_port(VAR,v2)) == NUM) {
     tm->itrs += 1;
     k15 = 1;
-    k16 = new_port(NUM, operate(get_val(k14), get_val(new_port(VAR,v2))));
+    k16 = new_num(operate(k14, new_port(VAR,v2)));
   }
   if (k16 != NONE) {
     link(tm, new_port(VAR,v4), k16);
@@ -3115,7 +3041,7 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
     }
   }
   if (!k13) {
-    node_create(n7, new_pair(new_port(NUM,0x00000080),k14));
+    node_create(n7, new_pair(new_num(0x00000080),k14));
     if (k11 != NONE) {
       link(tm, new_port(OPR, n7), k11);
     } else {
@@ -3148,10 +3074,10 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   bool k20 = 0;
   Port k21 = NONE;
   // fast oper
-  if (get_tag(k18) == NUM && get_tag(new_port(NUM,0x000001e0)) == NUM) {
+  if (get_tag(k18) == NUM && get_tag(new_num(0x000001e0)) == NUM) {
     tm->itrs += 1;
     k20 = 1;
-    k21 = new_port(NUM, operate(get_val(k18), get_val(new_port(NUM,0x000001e0))));
+    k21 = new_num(operate(k18, new_num(0x000001e0)));
   }
   bool k22 = 0;
   Port k23 = NONE;
@@ -3159,7 +3085,7 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   if (get_tag(k21) == NUM && get_tag(new_port(VAR,v0)) == NUM) {
     tm->itrs += 1;
     k22 = 1;
-    k23 = new_port(NUM, operate(get_val(k21), get_val(new_port(VAR,v0))));
+    k23 = new_num(operate(k21, new_port(VAR,v0)));
   }
   if (k23 != NONE) {
     link(tm, new_port(VAR,v2), k23);
@@ -3175,7 +3101,7 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
     }
   }
   if (!k20) {
-    node_create(n4, new_pair(new_port(NUM,0x000001e0),k21));
+    node_create(n4, new_pair(new_num(0x000001e0),k21));
     if (k18 != NONE) {
       link(tm, new_port(OPR, n4), k18);
     } else {
@@ -3237,7 +3163,7 @@ bool CALL_warp__C0(TM *tm, Port a, Port b) {
   node_create(nb, new_pair(new_port(VAR,v1),new_port(VAR,v5)));
   node_create(na, new_pair(new_port(VAR,v3),new_port(CON,nb)));
   node_create(n9, new_pair(new_port(VAR,v4),new_port(CON,na)));
-  link(tm, new_port(REF,0x0000000e), new_port(CON,n9));
+  link(tm, new_ref(CALL_swap), new_port(CON,n9));
   return TRUE;
 }
 
@@ -3297,10 +3223,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k3 = NONE;
   Port k4 = NONE;
   // fast anni
-  if (get_tag(b) == CON && !isEmpty(node_load(get_val(b)))) {
+  if (get_tag(b) == CON && !isEmpty(node_load(b))) {
     tm->itrs += 1;
     k1 = 1;
-    k2 = node_take(get_val(b));
+    k2 = node_take(b);
     k3 = k2.fst;
     k4 = k2.snd;
   }
@@ -3309,10 +3235,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k7 = NONE;
   Port k8 = NONE;
   // fast anni
-  if (get_tag(k4) == CON && !isEmpty(node_load(get_val(k4)))) {
+  if (get_tag(k4) == CON && !isEmpty(node_load(k4))) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = node_take(get_val(k4));
+    k6 = node_take(k4);
     k7 = k6.fst;
     k8 = k6.snd;
   }
@@ -3321,10 +3247,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k11 = NONE;
   Port k12 = NONE;
   // fast anni
-  if (get_tag(k8) == CON && !isEmpty(node_load(get_val(k8)))) {
+  if (get_tag(k8) == CON && !isEmpty(node_load(k8))) {
     tm->itrs += 1;
     k9 = 1;
-    k10 = node_take(get_val(k8));
+    k10 = node_take(k8);
     k11 = k10.fst;
     k12 = k10.snd;
   }
@@ -3333,10 +3259,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k15 = NONE;
   Port k16 = NONE;
   // fast anni
-  if (get_tag(k12) == CON && !isEmpty(node_load(get_val(k12)))) {
+  if (get_tag(k12) == CON && !isEmpty(node_load(k12))) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = node_take(get_val(k12));
+    k14 = node_take(k12);
     k15 = k14.fst;
     k16 = k14.snd;
   }
@@ -3345,10 +3271,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k19 = NONE;
   Port k20 = NONE;
   // fast anni
-  if (get_tag(k16) == CON && !isEmpty(node_load(get_val(k16)))) {
+  if (get_tag(k16) == CON && !isEmpty(node_load(k16))) {
     tm->itrs += 1;
     k17 = 1;
-    k18 = node_take(get_val(k16));
+    k18 = node_take(k16);
     k19 = k18.fst;
     k20 = k18.snd;
   }
@@ -3357,10 +3283,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k23 = NONE;
   Port k24 = NONE;
   // fast anni
-  if (get_tag(k20) == CON && !isEmpty(node_load(get_val(k20)))) {
+  if (get_tag(k20) == CON && !isEmpty(node_load(k20))) {
     tm->itrs += 1;
     k21 = 1;
-    k22 = node_take(get_val(k20));
+    k22 = node_take(k20);
     k23 = k22.fst;
     k24 = k22.snd;
   }
@@ -3387,10 +3313,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k27 = NONE;
   Port k28 = NONE;
   // fast anni
-  if (get_tag(k19) == CON && !isEmpty(node_load(get_val(k19)))) {
+  if (get_tag(k19) == CON && !isEmpty(node_load(k19))) {
     tm->itrs += 1;
     k25 = 1;
-    k26 = node_take(get_val(k19));
+    k26 = node_take(k19);
     k27 = k26.fst;
     k28 = k26.snd;
   }
@@ -3461,10 +3387,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k34 = NONE;
   Port k35 = NONE;
   // fast anni
-  if (get_tag(k11) == CON && !isEmpty(node_load(get_val(k11)))) {
+  if (get_tag(k11) == CON && !isEmpty(node_load(k11))) {
     tm->itrs += 1;
     k32 = 1;
-    k33 = node_take(get_val(k11));
+    k33 = node_take(k11);
     k34 = k33.fst;
     k35 = k33.snd;
   }
@@ -3499,10 +3425,10 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   Port k38 = NONE;
   Port k39 = NONE;
   // fast anni
-  if (get_tag(k7) == CON && !isEmpty(node_load(get_val(k7)))) {
+  if (get_tag(k7) == CON && !isEmpty(node_load(k7))) {
     tm->itrs += 1;
     k36 = 1;
-    k37 = node_take(get_val(k7));
+    k37 = node_take(k7);
     k38 = k37.fst;
     k39 = k37.snd;
   }
@@ -3573,41 +3499,21 @@ bool CALL_warp__C1(TM *tm, Port a, Port b) {
   node_create(nd, new_pair(new_port(VAR,v5),new_port(CON,ne)));
   node_create(nc, new_pair(new_port(VAR,v7),new_port(CON,nd)));
   node_create(nb, new_pair(new_port(VAR,v1),new_port(CON,nc)));
-  link(tm, new_port(REF,0x10000011), new_port(CON,nb));
+  link(tm, new_ref(CALL_warp), new_port(CON,nb));
   node_create(n14, new_pair(new_port(VAR,v8),new_port(VAR,va)));
   node_create(n13, new_pair(new_port(VAR,v2),new_port(CON,n14)));
   node_create(n12, new_pair(new_port(VAR,v4),new_port(CON,n13)));
   node_create(n11, new_pair(new_port(VAR,v6),new_port(CON,n12)));
   node_create(n10, new_pair(new_port(VAR,v0),new_port(CON,n11)));
-  link(tm, new_port(REF,0x10000011), new_port(CON,n10));
+  link(tm, new_ref(CALL_warp), new_port(CON,n10));
   return TRUE;
 }
 
 bool CALL(TM *tm, Port a, Port b) {
-  u32 fid = get_val(a) & ~PAR_FLAG;
-  switch (fid) {
-  case 0: return CALL_main(tm, a, b);
-  case 1: return CALL_down(tm, a, b);
-  case 2: return CALL_down__C0(tm, a, b);
-  case 3: return CALL_flow(tm, a, b);
-  case 4: return CALL_flow__C0(tm, a, b);
-  case 5: return CALL_gen(tm, a, b);
-  case 6: return CALL_gen__bend0(tm, a, b);
-  case 7: return CALL_gen__bend0__C0(tm, a, b);
-  case 8: return CALL_main__C0(tm, a, b);
-  case 9: return CALL_main__C1(tm, a, b);
-  case 10: return CALL_sort(tm, a, b);
-  case 11: return CALL_sort__C0(tm, a, b);
-  case 12: return CALL_sum(tm, a, b);
-  case 13: return CALL_sum__C0(tm, a, b);
-  case 14: return CALL_swap(tm, a, b);
-  case 15: return CALL_swap__C0(tm, a, b);
-  case 16: return CALL_swap__C1(tm, a, b);
-  case 17: return CALL_warp(tm, a, b);
-  case 18: return CALL_warp__C0(tm, a, b);
-  case 19: return CALL_warp__C1(tm, a, b);
-  default: return FALSE;
-  }
+  interactionFn fnPtr;
+
+  fnPtr = (interactionFn)(a & ~3);
+  return fnPtr(tm, a, b);
 }
 
 // The Void Interaction.
@@ -3617,19 +3523,14 @@ static inline bool VOID(TM* tm, Port a, Port b) {
 
 // The Eras Interaction.
 static inline bool ERAS(TM* tm, Port a, Port b) {
-  // Allocates needed nodes and vars.
-  if (!get_resources(tm, 2, 0, 0)) {
-    return FALSE;
-  }
-
   // Checks availability
-  if (isEmpty(node_load(get_val(b)))) {
+  if (isEmpty(node_load(b))) {
     //printf("[%04x] unavailable0: %s\n", tid, show_port(b).x);
     return FALSE;
   }
 
   // Loads ports.
-  Pair B  = node_exchange(get_val(b), emptyPair);
+  Pair B  = node_exchange(b, emptyPair);
   Port B1 = B.fst;
   Port B2 = B.snd;
 
@@ -3644,23 +3545,18 @@ static inline bool ERAS(TM* tm, Port a, Port b) {
 
 // The Anni Interaction.
 static inline bool ANNI(TM* tm, Port a, Port b) {
-  // Allocates needed nodes and vars.
-  if (!get_resources(tm, 2, 0, 0)) {
-    return FALSE;
-  }
-
   // Checks availability
-  if (isEmpty(node_load(get_val(a))) || isEmpty(node_load(get_val(b)))) {
+  if (isEmpty(node_load(a)) || isEmpty(node_load(b))) {
     //printf("[%04x] unavailable1: %s | %s\n", tid, show_port(a).x, show_port(b).x);
     //printf("BBB\n");
     return FALSE;
   }
 
   // Loads ports.
-  Pair A  = node_take(get_val(a));
+  Pair A  = node_take(a);
   Port A1 = A.fst;
   Port A2 = A.snd;
-  Pair B  = node_take(get_val(b));
+  Pair B  = node_take(b);
   Port B1 = B.fst;
   Port B2 = B.snd;
 
@@ -3676,22 +3572,28 @@ static inline bool ANNI(TM* tm, Port a, Port b) {
 
 // The Comm Interaction.
 static inline bool COMM(TM* tm, Port a, Port b) {
-  // Allocates needed nodes and vars.
-  if (!get_resources(tm, 4, 4, 4)) {
-    return FALSE;
-  }
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(tm, &vl);
+  Val v1 = vars_alloc_1(tm, &vl);
+  Val v2 = vars_alloc_1(tm, &vl);
+  Val v3 = vars_alloc_1(tm, &vl);
+  Val n0 = node_alloc_1(tm, &nl);
+  Val n1 = node_alloc_1(tm, &nl);
+  Val n2 = node_alloc_1(tm, &nl);
+  Val n3 = node_alloc_1(tm, &nl);
 
   // Checks availability
-  if (isEmpty(node_load(get_val(a))) || isEmpty(node_load(get_val(b)))) {
+  if (isEmpty(node_load(a)) || isEmpty(node_load(b))) {
     //printf("[%04x] unavailable2: %s | %s\n", tid, show_port(a).x, show_port(b).x);
     return FALSE;
   }
 
   // Loads ports.
-  Pair A  = node_take(get_val(a));
+  Pair A  = node_take(a);
   Port A1 = A.fst;
   Port A2 = A.snd;
-  Pair B  = node_take(get_val(b));
+  Pair B  = node_take(b);
   Port B1 = B.fst;
   Port B2 = B.snd;
 
@@ -3699,22 +3601,22 @@ static inline bool COMM(TM* tm, Port a, Port b) {
   //if (B == 0) printf("[%04x] ERROR6: %s\n", tid, show_port(b).x);
 
   // Stores new vars.
-  vars_create(tm->vloc[0], NONE);
-  vars_create(tm->vloc[1], NONE);
-  vars_create(tm->vloc[2], NONE);
-  vars_create(tm->vloc[3], NONE);
+  vars_create(v0, NONE);
+  vars_create(v1, NONE);
+  vars_create(v2, NONE);
+  vars_create(v3, NONE);
 
   // Stores new nodes.
-  node_create(tm->nloc[0], new_pair(new_port(VAR, tm->vloc[0]), new_port(VAR, tm->vloc[1])));
-  node_create(tm->nloc[1], new_pair(new_port(VAR, tm->vloc[2]), new_port(VAR, tm->vloc[3])));
-  node_create(tm->nloc[2], new_pair(new_port(VAR, tm->vloc[0]), new_port(VAR, tm->vloc[2])));
-  node_create(tm->nloc[3], new_pair(new_port(VAR, tm->vloc[1]), new_port(VAR, tm->vloc[3])));
+  node_create(n0, new_pair(new_port(VAR, v0), new_port(VAR, v1)));
+  node_create(n1, new_pair(new_port(VAR, v2), new_port(VAR, v3)));
+  node_create(n2, new_pair(new_port(VAR, v0), new_port(VAR, v2)));
+  node_create(n3, new_pair(new_port(VAR, v1), new_port(VAR, v3)));
 
   // Links.
-  link_pair(tm, new_pair(new_port(get_tag(b), tm->nloc[0]), A1));
-  link_pair(tm, new_pair(new_port(get_tag(b), tm->nloc[1]), A2));
-  link_pair(tm, new_pair(new_port(get_tag(a), tm->nloc[2]), B1));
-  link_pair(tm, new_pair(new_port(get_tag(a), tm->nloc[3]), B2));
+  link_pair(tm, new_pair(new_port(get_tag(b), n0), A1));
+  link_pair(tm, new_pair(new_port(get_tag(b), n1), A2));
+  link_pair(tm, new_pair(new_port(get_tag(a), n2), B1));
+  link_pair(tm, new_pair(new_port(get_tag(a), n3), B2));
 
   return TRUE;
 }
@@ -3724,29 +3626,26 @@ static inline bool OPER(TM* tm, Port a, Port b) {
   //printf("OPER %08x %08x\n", a, b);
 
   // Allocates needed nodes and vars.
-  if (!get_resources(tm, 1, 1, 0)) {
-    return FALSE;
-  }
+  u32 nl = 0;
+  Val n0 = node_alloc_1(tm, &nl);
 
   // Checks availability
-  if (isEmpty(node_load(get_val(b)))) {
+  if (isEmpty(node_load(b))) {
     return FALSE;
   }
 
   // Loads ports.
-  Val  av = get_val(a);
-  Pair B  = node_take(get_val(b));
+  Pair B  = node_take(b);
   Port B1 = B.fst;
   Port B2 = enter(B.snd);
 
   // Performs operation.
   if (get_tag(B1) == NUM) {
-    Val  bv = get_val(B1);
-    Numb cv = operate(av, bv);
-    link_pair(tm, new_pair(new_port(NUM, cv), B2));
+    Numb cv = operate(a, B1);
+    link_pair(tm, new_pair(new_num(cv), B2));
   } else {
-    node_create(tm->nloc[0], new_pair(a, B2));
-    link_pair(tm, new_pair(B1, new_port(OPR, tm->nloc[0])));
+    node_create(n0, new_pair(a, B2));
+    link_pair(tm, new_pair(B1, new_port(OPR, n0)));
   }
 
   return TRUE;
@@ -3754,30 +3653,29 @@ static inline bool OPER(TM* tm, Port a, Port b) {
 
 // The Swit Interaction.
 static inline bool SWIT(TM* tm, Port a, Port b) {
-  // Allocates needed nodes and vars.
-  if (!get_resources(tm, 1, 2, 0)) {
-    return FALSE;
-  }
+  u32 nl = 0;
+  Val n0 = node_alloc_1(tm, &nl);
+  Val n1 = node_alloc_1(tm, &nl);
 
   // Checks availability
-  if (isEmpty(node_load(get_val(b)))) {
+  if (isEmpty(node_load(b))) {
     return FALSE;
   }
 
   // Loads ports.
-  u32  av = get_u24(get_val(a));
-  Pair B  = node_take(get_val(b));
+  u64  av = get_u24(get_num(a));
+  Pair B  = node_take(b);
   Port B1 = B.fst;
   Port B2 = B.snd;
 
   // Stores new nodes.
   if (av == 0) {
-    node_create(tm->nloc[0], new_pair(B2, new_port(ERA,0)));
-    link_pair(tm, new_pair(new_port(CON, tm->nloc[0]), B1));
+    node_create(n0, new_pair(B2, erase));
+    link_pair(tm, new_pair(new_port(CON, n0), B1));
   } else {
-    node_create(tm->nloc[0], new_pair(new_port(ERA,0), new_port(CON, tm->nloc[1])));
-    node_create(tm->nloc[1], new_pair(new_port(NUM, new_u24(av-1)), B2));
-    link_pair(tm, new_pair(new_port(CON, tm->nloc[0]), B1));
+    node_create(n0, new_pair(erase, new_port(CON, n1)));
+    node_create(n1, new_pair(new_num(new_u24(av-1)), B2));
+    link_pair(tm, new_pair(new_port(CON, n0), B1));
   }
 
   return TRUE;
@@ -3813,11 +3711,8 @@ static inline bool interact(TM* tm) {
     // Gets the rule type.
     interactionFn rule = get_rule(a, b);
 
-    // Used for root redex.
-    if (get_tag(a) == REF && b == ROOT) {
-      rule = CALL;
     // Swaps ports if necessary.
-    } else if (should_swap(a,b)) {
+    if (should_swap(a,b)) {
       swap(&a, &b);
     }
 
@@ -3929,12 +3824,6 @@ void* thread_func(void* arg) {
   return NULL;
 }
 
-// Sets the initial redex.
-void boot_redex(Pair redex) {
-  globalNet->vars_buf[get_val(ROOT)] = NONE;
-  globalNet->rbag_buf[0] = redex;
-}
-
 // Evaluates all redexes.
 // TODO: cache threads to avoid spawning overhead
 void normalize() {
@@ -3992,11 +3881,11 @@ void pretty_print_numb(Numb word) {
       break;
     }
     case TY_U24: {
-      printf("%u", get_u24(word));
+      printf("%lu", get_u24(word));
       break;
     }
     case TY_I24: {
-      printf("%+d", get_i24(word));
+      printf("%+ld", get_i24(word));
       break;
     }
     case TY_F24: {
@@ -4015,26 +3904,26 @@ void pretty_print_numb(Numb word) {
     }
     default: {
       switch (get_typ(word)) {
-        case OP_ADD: printf("[+0x%07X]", get_u24(word)); break;
-        case OP_SUB: printf("[-0x%07X]", get_u24(word)); break;
-        case FP_SUB: printf("[:-0x%07X]", get_u24(word)); break;
-        case OP_MUL: printf("[*0x%07X]", get_u24(word)); break;
-        case OP_DIV: printf("[/0x%07X]", get_u24(word)); break;
-        case FP_DIV: printf("[:/0x%07X]", get_u24(word)); break;
-        case OP_REM: printf("[%%0x%07X]", get_u24(word)); break;
-        case FP_REM: printf("[:%%0x%07X]", get_u24(word)); break;
-        case OP_EQ:  printf("[=0x%07X]", get_u24(word)); break;
-        case OP_NEQ: printf("[!0x%07X]", get_u24(word)); break;
-        case OP_LT:  printf("[<0x%07X]", get_u24(word)); break;
-        case OP_GT:  printf("[>0x%07X]", get_u24(word)); break;
-        case OP_AND: printf("[&0x%07X]", get_u24(word)); break;
-        case OP_OR:  printf("[|0x%07X]", get_u24(word)); break;
-        case OP_XOR: printf("[^0x%07X]", get_u24(word)); break;
-        case OP_SHL: printf("[<<0x%07X]", get_u24(word)); break;
-        case FP_SHL: printf("[:<<0x%07X]", get_u24(word)); break;
-        case OP_SHR: printf("[>>0x%07X]", get_u24(word)); break;
-        case FP_SHR: printf("[:>>0x%07X]", get_u24(word)); break;
-        default:     printf("[?0x%07X]", get_u24(word)); break;
+        case OP_ADD: printf("[+0x%07lX]", get_u24(word)); break;
+        case OP_SUB: printf("[-0x%07lX]", get_u24(word)); break;
+        case FP_SUB: printf("[:-0x%07lX]", get_u24(word)); break;
+        case OP_MUL: printf("[*0x%07lX]", get_u24(word)); break;
+        case OP_DIV: printf("[/0x%07lX]", get_u24(word)); break;
+        case FP_DIV: printf("[:/0x%07lX]", get_u24(word)); break;
+        case OP_REM: printf("[%%0x%07lX]", get_u24(word)); break;
+        case FP_REM: printf("[:%%0x%07lX]", get_u24(word)); break;
+        case OP_EQ:  printf("[=0x%07lX]", get_u24(word)); break;
+        case OP_NEQ: printf("[!0x%07lX]", get_u24(word)); break;
+        case OP_LT:  printf("[<0x%07lX]", get_u24(word)); break;
+        case OP_GT:  printf("[>0x%07lX]", get_u24(word)); break;
+        case OP_AND: printf("[&0x%07lX]", get_u24(word)); break;
+        case OP_OR:  printf("[|0x%07lX]", get_u24(word)); break;
+        case OP_XOR: printf("[^0x%07lX]", get_u24(word)); break;
+        case OP_SHL: printf("[<<0x%07lX]", get_u24(word)); break;
+        case FP_SHL: printf("[:<<0x%07lX]", get_u24(word)); break;
+        case OP_SHR: printf("[>>0x%07lX]", get_u24(word)); break;
+        case FP_SHR: printf("[:>>0x%07lX]", get_u24(word)); break;
+        default:     printf("[?0x%07lX]", get_u24(word)); break;
       }
       break;
     }
@@ -4051,67 +3940,67 @@ void pretty_print_port(Port port) {
     Port cur = stack[--len];
     switch (get_tag(cur)) {
       case CON: {
-        Pair node = node_load(get_val(cur));
+        Pair node = node_load(cur);
         Port p2   = node.snd;
         Port p1   = node.fst;
         printf("(");
-        stack[len++] = new_port(ERA, (u32)(')'));
+        stack[len++] = new_num((u32)(')'));
         stack[len++] = p2;
-        stack[len++] = new_port(ERA, (u32)(' '));
+        stack[len++] = new_num((u32)(' '));
         stack[len++] = p1;
         break;
       }
       case ERA: {
-        if (get_val(cur) != 0) {
-          printf("%c", (char)get_val(cur));
+        if ((cur & ~7) != 0) {
+          printf("%c", (char)cur & ~7);
         } else {
           printf("*");
         }
         break;
       }
       case VAR: {
-        Port got = vars_load(get_val(cur));
+        Port got = vars_load(cur);
         if (got != NONE) {
           stack[len++] = got;
         } else {
-          printf("x%lx", get_val(cur));
+          printf("x%lx", cur & ~7);
         }
         break;
       }
       case NUM: {
-        pretty_print_numb(get_val(cur));
+        pretty_print_numb(get_num(cur));
         break;
       }
       case DUP: {
-        Pair node = node_load(get_val(cur));
+        Pair node = node_load(cur);
         Port p2   = node.snd;
         Port p1   = node.fst;
         printf("{");
-        stack[len++] = new_port(ERA, (u32)('}'));
+        stack[len++] = new_num((u32)('}'));
         stack[len++] = p2;
-        stack[len++] = new_port(ERA, (u32)(' '));
+        stack[len++] = new_num((u32)(' '));
         stack[len++] = p1;
         break;
       }
       case OPR: {
-        Pair node = node_load(get_val(cur));
+        Pair node = node_load(cur);
         Port p2   = node.snd;
         Port p1   = node.fst;
         printf("$(");
-        stack[len++] = new_port(ERA, (u32)(')'));
+        stack[len++] = new_num((u32)(')'));
         stack[len++] = p2;
-        stack[len++] = new_port(ERA, (u32)(' '));
+        stack[len++] = new_num((u32)(' '));
         stack[len++] = p1;
         break;
       }
       case SWI: {
-        Pair node = node_load(get_val(cur));
+        Pair node = node_load(cur);
         Port p2   = node.snd;
         Port p1   = node.fst;
         printf("?(");
-        stack[len++] = new_port(ERA, (u32)(')'));
+        stack[len++] = new_num((u32)(')'));
         stack[len++] = p2;
-        stack[len++] = new_port(ERA, (u32)(' '));
+        stack[len++] = new_num((u32)(' '));
         stack[len++] = p1;
         break;
       }
@@ -4122,7 +4011,9 @@ void pretty_print_port(Port port) {
 // Main
 // ----
 
-void hvm_c(u32* book_buffer) {
+void hvm_c(u64* book_buffer) {
+  Port answer = NONE;
+  
   // Creates static TMs
   alloc_static_tms();
 
@@ -4134,14 +4025,14 @@ void hvm_c(u32* book_buffer) {
   net_init();
 
   // Creates an initial redex that calls main
-  boot_redex(new_pair(new_port(REF, 0), ROOT));
+  CALL_main(tm[0], new_ref(CALL_main), new_port(VAR, (Port)&answer));
 
   // Normalizes and runs IO
   normalize();
 
   // Prints the result
   printf("Result: ");
-  pretty_print_port(enter(ROOT));
+  pretty_print_port(enter(new_port(VAR, (Port)&answer)));
   printf("\n");
 
   // Stops the timer
@@ -4160,6 +4051,6 @@ void hvm_c(u32* book_buffer) {
 
 int main() {
   printf("Port size: %lu\n", sizeof(Port));
-  hvm_c((u32*)NULL);
+  hvm_c((u64*)NULL);
   return 0;
 }
