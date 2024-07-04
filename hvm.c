@@ -611,11 +611,13 @@ void link(TM* tm, Port A, Port B) {
       if (A_ == NONE) {
         break;
       } else if (get_tag(A_) == RDX) {
-	push_redex(tm, A_);
+	Pair rdx = node_take(A_);
+	push_redex(tm, rdx);
 	break;
       } else if (get_tag(B) == RDX && get_tag(A_) != VAR) {
 	vars_exchange(A, A_);
-	push_redex(tm, B);
+	Pair rdx = node_take(B);
+	push_redex(tm, rdx);
 	break;
       }
       //if (A_ == 0) { ? } // FIXME: must handle on the move-to-global algo
@@ -1149,7 +1151,7 @@ typedef struct {
   Port tail;
 } NativeArgs;
 
-Port argsNet(TM *tm, NariveArgs *args, unsigned argIdx) {
+Port argsNet(TM *tm, NativeArgs *args, unsigned argIdx) {
   if (argIdx == args->count) {
     return args->tail;
   } else if (argIdx < args->count) {
@@ -1160,7 +1162,7 @@ Port argsNet(TM *tm, NariveArgs *args, unsigned argIdx) {
     return new_port(CON, n0);
   } else {
     // should never reach here
-    fprintf(stderr, "Compiler bug; line %d\n", _LINE_);
+    fprintf(stderr, "Compiler bug; line %d\n", __LINE__);
     abort();
     return NONE;
   }
@@ -1173,16 +1175,16 @@ void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
   Port arg = argsNode.fst;
   Port newArgs = argsNode.snd;
   // save the arg
-  natives.args[natives.count++] = arg;
-  natives.tail = newArgs;
+  natives->args[natives->count++] = arg;
+  natives->tail = newArgs;
   if (argCount > 0 && get_tag(newArgs) == CON) {
     // TODO: test this
-    printf("logic error line: %d\n", _LINE_);
+    printf("logic error line: %d\n", __LINE__);
     abort();
     Tag argTag = get_tag(arg);
     if (argTag == NUM || argTag == VAL) {
       // TODO: test this
-      printf("logic error line: %d\n", _LINE_);
+      printf("logic error line: %d\n", __LINE__);
       abort();
       // recurse to get the rest of the args
       extractArgs(newArgs, argCount - 1, natives);
@@ -1194,28 +1196,30 @@ void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
 // extract the requested number of native args
 bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *natives) {
   natives->count = 0;
-  native->tail = NONE;
+  natives->tail = NONE;
 
   // try to get the correct number of arguments
-  extractArgs(args, argCount, &natives);
+  extractArgs(args, argCount, natives);
 
-  if (natives.count == argCount) {
+  if (natives->count == argCount) {
     // TODO: test this
-    printf("logic error line: %d\n", _LINE_);
+    printf("logic error line: %d\n", __LINE__);
     abort();
     // we got all the args requested, so return them and
     // the ptr to where to put the results
     return TRUE;
   } else {
-    Port out = natives.tail;
+    u32 nl = 0;
+    Port newArgs;
+    Port out = natives->tail;
+    Port arg;
     switch (get_tag(out)) {
     case VAR :
       // TODO: test this
-      printf("logic error line: %d\n", _LINE_);
+      printf("logic error line: %d\n", __LINE__);
       abort();
       // we need to wait on the rest of the args list
-      Port newArgs = argsNet(tm, natives, 0);
-      u32 nl = 0;
+      newArgs = argsNet(tm, natives, 0);
       Port rdx = node_alloc(tm, &nl);
       node_create(rdx, new_pair(ref, newArgs));
       link(tm, out, new_port(RDX, rdx));
@@ -1223,42 +1227,42 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
 
     case ERA :
       // TODO: test this
-      printf("logic error line: %d\n", _LINE_);
+      printf("logic error line: %d\n", __LINE__);
       abort();
       link(tm, argsNet(tm, natives, 0), erase);
-      nativeArgs.count = -1;
+      natives->count = -1;
       break;
 
     case DUP :
       // TODO: test this
-      printf("logic error line: %d\n", _LINE_);
+      printf("logic error line: %d\n", __LINE__);
       abort();
       u32 vl = 0;
-      u32 nl = 0;
+      nl = 0;
       Port out0 = new_port(VAR, vars_alloc(tm, &vl));
       Port out1 = new_port(VAR, vars_alloc(tm, &vl));
       Port result = node_alloc(tm, &nl);
 
       node_create(result, new_pair(out0, out1));
-      native->tail = out0;
-      Port newArgs = argsNet(tm, natives, 0);
+      natives->tail = out0;
+      newArgs = argsNet(tm, natives, 0);
       push_redex(tm, new_pair(ref, newArgs));
-      native->tail = out1;
+      natives->tail = out1;
       newArgs = argsNet(tm, natives, 0);
       push_redex(tm, new_pair(ref, newArgs));
       link(tm, new_port(DUP, result), out);
       break;
 
     case CON :
-      Port arg = natives->args[natives.count - 1];
+      arg = natives->args[natives->count - 1];
       switch (get_tag(arg)) {
       case VAR :
 	// TODO: test this
-	printf("logic error line: %d\n", _LINE_);
+	printf("logic error line: %d\n", __LINE__);
 	abort();
 	// we need to wait on the rest of the args list
-	Port newArgs = argsNet(tm, natives, 0);
-	u32 nl = 0;
+	newArgs = argsNet(tm, natives, 0);
+	nl = 0;
 	Port rdx = node_alloc(tm, &nl);
 	node_create(rdx, new_pair(ref, newArgs));
 	link(tm, arg, new_port(RDX, rdx));
@@ -1266,34 +1270,34 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
 
       case ERA :
 	// TODO: test this
-	printf("logic error line: %d\n", _LINE_);
+	printf("logic error line: %d\n", __LINE__);
 	abort();
 	link(tm, argsNet(tm, natives, 0), erase);
-	nativeArgs.count = -1;
+	natives->count = -1;
 	break;
 
       case CON :
 	// TODO: test this
-	printf("logic error line: %d\n", _LINE_);
+	printf("logic error line: %d\n", __LINE__);
 	abort();
 	Pair argPair = node_take(arg);
-	native->tail = argPair.fst;
-	Port newArgs = argsNet(tm, natives, 0);
+	natives->tail = argPair.fst;
+	newArgs = argsNet(tm, natives, 0);
 	push_redex(tm, new_pair(ref, newArgs));
-	native->tail = argPair.snd;
+	natives->tail = argPair.snd;
 	newArgs = argsNet(tm, natives, 0);
 	push_redex(tm, new_pair(ref, newArgs));
 	break;
 
       default:
-	printf("unhandled tag %d line: %d\n", get_tag(arg), _LINE_);
+	printf("unhandled tag %d line: %d\n", get_tag(arg), __LINE__);
 	abort();
 	break;
       }
       break;
 
     default:
-      printf("unhandled tag %d line: %d\n", get_tag(out), _LINE_);
+      printf("unhandled tag %d line: %d\n", get_tag(out), __LINE__);
       abort();
       break;
     }
