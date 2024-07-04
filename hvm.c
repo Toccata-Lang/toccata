@@ -35,7 +35,7 @@ typedef _Atomic(u64) a64;
 #define TAG_MASK 7
 
 Port erase = ERA;
-Pair emptyPair = {0, 0};
+Pair emptyPair = {FREE, FREE};
 u8 isEmpty(Pair p) {
   return p.fst == 0 && p.snd == 0;
 }
@@ -520,7 +520,7 @@ Pair node_take(Port loc) {
 
 // Takes a var.
 Port vars_take(Port var) {
-  return vars_exchange(var, 0);
+  return vars_exchange(var, FREE);
 }
 
 
@@ -573,7 +573,7 @@ Port enter(Port var) {
     // Takes the current `var` substitution as `val`
     Port val = vars_exchange(var, NONE);
     // If there was no `val`, stop, as there is no extension
-    if (val == NONE || val == 0) {
+    if (val == NONE || val == FREE) {
       break;
     }
     // Otherwise, delete `B` (we own both) and continue
@@ -610,6 +610,13 @@ void link(TM* tm, Port A, Port B) {
       // If there was no `A'`, stop, as we lost B's ownership
       if (A_ == NONE) {
         break;
+      } else if (get_tag(A_) == RDX) {
+	push_redex(tm, A_);
+	break;
+      } else if (get_tag(B) == RDX && get_tag(A_) != VAR) {
+	vars_exchange(A, A_);
+	push_redex(tm, B);
+	break;
       }
       //if (A_ == 0) { ? } // FIXME: must handle on the move-to-global algo
       // Otherwise, delete `A` (we own both) and link `A' ~ B`
@@ -1132,6 +1139,165 @@ void pretty_print_port(Port port) {
         break;
       }
     }
+  }
+}
+
+#define MAX_ARGS 9
+typedef struct {
+  int count;
+  Port args[MAX_ARGS];
+  Port tail;
+} NativeArgs;
+
+Port argsNet(TM *tm, NariveArgs *args, unsigned argIdx) {
+  if (argIdx == args->count) {
+    return args->tail;
+  } else if (argIdx < args->count) {
+    Port tail = argsNet(tm, args, argIdx + 1);
+    u32 nl;
+    Port n0 = node_alloc(tm, &nl);
+    node_create(n0, new_pair(args->args[argIdx], tail));
+    return new_port(CON, n0);
+  } else {
+    // should never reach here
+    fprintf(stderr, "Compiler bug; line %d\n", _LINE_);
+    abort();
+    return NONE;
+  }
+}
+
+void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
+  // get the args node
+  Pair argsNode = node_take(args);
+  // fst points to the arg
+  Port arg = argsNode.fst;
+  Port newArgs = argsNode.snd;
+  // save the arg
+  natives.args[natives.count++] = arg;
+  natives.tail = newArgs;
+  if (argCount > 0 && get_tag(newArgs) == CON) {
+    // TODO: test this
+    printf("logic error line: %d\n", _LINE_);
+    abort();
+    Tag argTag = get_tag(arg);
+    if (argTag == NUM || argTag == VAL) {
+      // TODO: test this
+      printf("logic error line: %d\n", _LINE_);
+      abort();
+      // recurse to get the rest of the args
+      extractArgs(newArgs, argCount - 1, natives);
+    }
+  }
+  return;
+}
+
+// extract the requested number of native args
+bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *natives) {
+  natives->count = 0;
+  native->tail = NONE;
+
+  // try to get the correct number of arguments
+  extractArgs(args, argCount, &natives);
+
+  if (natives.count == argCount) {
+    // TODO: test this
+    printf("logic error line: %d\n", _LINE_);
+    abort();
+    // we got all the args requested, so return them and
+    // the ptr to where to put the results
+    return TRUE;
+  } else {
+    Port out = natives.tail;
+    switch (get_tag(out)) {
+    case VAR :
+      // TODO: test this
+      printf("logic error line: %d\n", _LINE_);
+      abort();
+      // we need to wait on the rest of the args list
+      Port newArgs = argsNet(tm, natives, 0);
+      u32 nl = 0;
+      Port rdx = node_alloc(tm, &nl);
+      node_create(rdx, new_pair(ref, newArgs));
+      link(tm, out, new_port(RDX, rdx));
+      break;
+
+    case ERA :
+      // TODO: test this
+      printf("logic error line: %d\n", _LINE_);
+      abort();
+      link(tm, argsNet(tm, natives, 0), erase);
+      nativeArgs.count = -1;
+      break;
+
+    case DUP :
+      // TODO: test this
+      printf("logic error line: %d\n", _LINE_);
+      abort();
+      u32 vl = 0;
+      u32 nl = 0;
+      Port out0 = new_port(VAR, vars_alloc(tm, &vl));
+      Port out1 = new_port(VAR, vars_alloc(tm, &vl));
+      Port result = node_alloc(tm, &nl);
+
+      node_create(result, new_pair(out0, out1));
+      native->tail = out0;
+      Port newArgs = argsNet(tm, natives, 0);
+      push_redex(tm, new_pair(ref, newArgs));
+      native->tail = out1;
+      newArgs = argsNet(tm, natives, 0);
+      push_redex(tm, new_pair(ref, newArgs));
+      link(tm, new_port(DUP, result), out);
+      break;
+
+    case CON :
+      Port arg = natives->args[natives.count - 1];
+      switch (get_tag(arg)) {
+      case VAR :
+	// TODO: test this
+	printf("logic error line: %d\n", _LINE_);
+	abort();
+	// we need to wait on the rest of the args list
+	Port newArgs = argsNet(tm, natives, 0);
+	u32 nl = 0;
+	Port rdx = node_alloc(tm, &nl);
+	node_create(rdx, new_pair(ref, newArgs));
+	link(tm, arg, new_port(RDX, rdx));
+	break;
+
+      case ERA :
+	// TODO: test this
+	printf("logic error line: %d\n", _LINE_);
+	abort();
+	link(tm, argsNet(tm, natives, 0), erase);
+	nativeArgs.count = -1;
+	break;
+
+      case CON :
+	// TODO: test this
+	printf("logic error line: %d\n", _LINE_);
+	abort();
+	Pair argPair = node_take(arg);
+	native->tail = argPair.fst;
+	Port newArgs = argsNet(tm, natives, 0);
+	push_redex(tm, new_pair(ref, newArgs));
+	native->tail = argPair.snd;
+	newArgs = argsNet(tm, natives, 0);
+	push_redex(tm, new_pair(ref, newArgs));
+	break;
+
+      default:
+	printf("unhandled tag %d line: %d\n", get_tag(arg), _LINE_);
+	abort();
+	break;
+      }
+      break;
+
+    default:
+      printf("unhandled tag %d line: %d\n", get_tag(out), _LINE_);
+      abort();
+      break;
+    }
+    return FALSE;
   }
 }
 
