@@ -11,9 +11,11 @@ typedef uint64_t u64;
 typedef   double f64;
 
 typedef u64 Port; // Port ::= Tag + Val (fits a u32)
-
 typedef struct {Port fst; Port snd;} Pair; // Pair ::= Port + Port (fits a u64)
 extern Pair emptyPair;
+
+typedef _Atomic(Port) APort; // atomic Port
+typedef _Atomic(Pair) APair; // atomic Pair
 
 #define HLEN (1ul << 16) // max 16k high-priority redexes
 // Local Thread Memory
@@ -37,6 +39,8 @@ typedef bool (*interactionFn)(TM* tm, Port a, Port b);
 // Constants
 #define NONE -1
 #define FREE 0
+#define TAG_SIZE 4
+#define TAG_MASK 0xf
 
 // Local Types
 typedef u8  Tag;  // Tag  ::= 3-bit (rounded up to u8)
@@ -58,6 +62,13 @@ typedef u64 Numb; // Numb ::= 60-bit (rounded up to u64)
 #define VAL 0x9 // native value
 
 extern Port erase;
+
+#define MAX_ARGS 9
+typedef struct {
+  int count;
+  Port args[MAX_ARGS];
+  Port tail;
+} NativeArgs;
 
 // Port: Constructor and Getters
 // -----------------------------
@@ -86,4 +97,6 @@ Numb operate(Port aP, Port bP);
 Port enter(Port var);
 u64 get_u24(Numb word);
 Numb new_u24(u64 val);
-void hvm_c(interactionFn mainFn);
+bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *natives);
+void vars_create(Port var, Port val);
+void hvm_c(interactionFn mainFn, NativeArgs *args);

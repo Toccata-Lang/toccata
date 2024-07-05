@@ -30,18 +30,11 @@ typedef _Atomic(u64) a64;
 // -----
 
 
-// Constants
-#define TAG_SIZE 3
-#define TAG_MASK 7
-
 Port erase = ERA;
 Pair emptyPair = {FREE, FREE};
 u8 isEmpty(Pair p) {
   return p.fst == 0 && p.snd == 0;
 }
-
-typedef _Atomic(Port) APort; // atomic Port
-typedef _Atomic(Pair) APair; // atomic Pair
 
 // Numbers
 static const u64 U24_MAX = ((u64)1 << 56) - 1;
@@ -226,7 +219,7 @@ Numb new_i24(i64 val) {
 }
 
 i64 get_i24(Numb word) {
-  return ((i64)word) << TAG_SIZE >> 8;
+  return ((i64)word) << TAG_SIZE >> 5;
 }
 
 // Constructor and getters for F24 (24-bit float)
@@ -1144,13 +1137,6 @@ void pretty_print_port(Port port) {
   }
 }
 
-#define MAX_ARGS 9
-typedef struct {
-  int count;
-  Port args[MAX_ARGS];
-  Port tail;
-} NativeArgs;
-
 Port argsNet(TM *tm, NativeArgs *args, unsigned argIdx) {
   if (argIdx == args->count) {
     return args->tail;
@@ -1178,14 +1164,8 @@ void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
   natives->args[natives->count++] = arg;
   natives->tail = newArgs;
   if (argCount > 0 && get_tag(newArgs) == CON) {
-    // TODO: test this
-    printf("logic error line: %d\n", __LINE__);
-    abort();
     Tag argTag = get_tag(arg);
     if (argTag == NUM || argTag == VAL) {
-      // TODO: test this
-      printf("logic error line: %d\n", __LINE__);
-      abort();
       // recurse to get the rest of the args
       extractArgs(newArgs, argCount - 1, natives);
     }
@@ -1196,15 +1176,17 @@ void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
 // extract the requested number of native args
 bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *natives) {
   natives->count = 0;
-  natives->tail = NONE;
 
   // try to get the correct number of arguments
-  extractArgs(args, argCount, natives);
+  if (argCount == 0) {
+    natives->tail = args;
+    return TRUE;
+  } else {
+    natives->tail = NONE;
+    extractArgs(args, argCount, natives);
+  }
 
   if (natives->count == argCount) {
-    // TODO: test this
-    printf("logic error line: %d\n", __LINE__);
-    abort();
     // we got all the args requested, so return them and
     // the ptr to where to put the results
     return TRUE;
@@ -1305,29 +1287,27 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
   }
 }
 
-void hvm_c(interactionFn mainFn) {
-  Port answer = NONE;
-  
+void hvm_c(interactionFn mainFn, NativeArgs *args) {
   // Creates static TMs
   alloc_static_tms();
-
-  // Starts the timer
-  u64 start = time64();
 
   // GMem
   globalNet = malloc(sizeof(Net));
   net_init();
 
+  // Starts the timer
+  u64 start = time64();
+
   // Creates an initial redex that calls main
-  mainFn(tm[0], new_ref(mainFn), new_port(VAR, (Port)&answer));
+  mainFn(tm[0], new_ref(mainFn), argsNet(tm[0], args, 0));
 
   // Normalizes and runs IO
   normalize();
 
   // Prints the result
-  printf("Result: ");
-  pretty_print_port(enter(new_port(VAR, (Port)&answer)));
-  printf("\n");
+  // printf("Result: ");
+  // pretty_print_port(enter(args->tail));
+  // printf("\n");
 
   // Stops the timer
   double duration = (time64() - start) / 1000000000.0; // seconds
