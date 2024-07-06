@@ -58,8 +58,9 @@ typedef u64 Numb; // Numb ::= 60-bit (rounded up to u64)
 #define DUP 0x5 // duplicator
 #define OPR 0x6 // operator
 #define SWI 0x7 // switch
-#define RDX 0x8 // deferred redex
-#define VAL 0x9 // native value
+#define VR1 0x8 // variable alias
+#define RDX 0x9 // deferred redex
+#define VAL 0xA // native value
 
 extern Port erase;
 

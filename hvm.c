@@ -108,16 +108,27 @@ Val get_num(Port port) {
 }
 
 Port new_port(Tag tag, Port val) {
+  if (val & TAG_MASK) {
+    fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__); 
+    abort();
+  }
   return (u64)val | tag;
 }
 
 // Keep for type checking
 Port new_ref(interactionFn val) {
+  if ((u64)val & TAG_MASK) {
+    fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__); 
+    abort();
+  }
   return (u64)val | REF;
 }
 
 Tag get_tag(Port port) {
-  return port & TAG_MASK;
+  if (port & 7)
+    return port & TAG_MASK;
+  else
+    return VAR;
 }
 
 // Pair: Constructor and Getters
@@ -177,18 +188,19 @@ bool should_swap(Port A, Port B) {
 }
 
 // Gets a rule's priority
-u8 interactionPriority[10][10] = {
-  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   RDX   VAL
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // VAR
-  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // REF
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,TRUE }, // ERA
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE}, // NUM
-  {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,FALSE}, // CON
-  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE }, // DUP
-  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // OPR
-  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE}, // SWI
-  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // RDX
-  {FALSE,FALSE,TRUE ,FALSE,FALSE,TRUE ,FALSE,FALSE,FALSE,FALSE}  // VAL
+u8 interactionPriority[11][11] = {
+  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // VAR
+  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE}, // REF
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,TRUE }, // ERA
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE, FALSE,FALSE}, // NUM
+  {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,FALSE}, // CON
+  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE,TRUE, FALSE,TRUE }, // DUP
+  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,TRUE, FALSE,FALSE}, // OPR
+  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, TRUE, FALSE,FALSE}, // SWI
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // VAR
+  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // RDX
+  {FALSE,FALSE,TRUE ,FALSE,FALSE,TRUE ,FALSE,FALSE,FALSE,FALSE,FALSE}  // VAL
 };
 
 bool is_high_priority(Pair AB) {
@@ -481,7 +493,7 @@ void node_create(Port loc, Pair val) {
 
 // Stores a var on global.
 void vars_create(Port var, Port val) {
-  atomic_store_explicit((APort*)((u64)var & ~TAG_MASK), val, memory_order_relaxed);
+  atomic_store_explicit((APort*)var, val, memory_order_relaxed);
 }
 
 // Reads a node from global.
@@ -491,7 +503,7 @@ Pair node_load(Port loc) {
 
 // Reads a var from global.
 Port vars_load(Port var) {
-  return atomic_load_explicit((APort*)((u64)var & ~TAG_MASK), memory_order_relaxed);
+  return atomic_load_explicit((APort*)var, memory_order_relaxed);
 }
 
 // Stores a node on global.
@@ -506,7 +518,7 @@ Pair node_exchange(Port loc, Pair val) {
 
 // Exchanges a var on global by a value. Returns old.
 Port vars_exchange(Port var, Port val) {
-  return atomic_exchange_explicit((APort*)((u64)var & ~TAG_MASK), val, memory_order_relaxed);
+  return atomic_exchange_explicit((APort*)var, val, memory_order_relaxed);
 }
 
 // Takes a node.
@@ -604,7 +616,7 @@ void link(TM* tm, Port A, Port B) {
       // Stores `A -> B`, taking the current `A` subst as `A'`
       Port A_ = vars_exchange(A, B);
       // If there was no `A'`, stop, as we lost B's ownership
-      if (A_ == NONE) {
+      if (A_ == NONE || A_ == FREE) {
         break;
       } else if (get_tag(A_) == RDX) {
 	Pair rdx = node_take(A_);
@@ -739,10 +751,10 @@ bool COMM(TM* tm, Port a, Port b) {
   vars_create(v3, NONE);
 
   // Stores new nodes.
-  node_create(n0, new_pair(new_port(VAR, v0), new_port(VAR, v1)));
-  node_create(n1, new_pair(new_port(VAR, v2), new_port(VAR, v3)));
-  node_create(n2, new_pair(new_port(VAR, v0), new_port(VAR, v2)));
-  node_create(n3, new_pair(new_port(VAR, v1), new_port(VAR, v3)));
+  node_create(n0, new_pair(v0, v1));
+  node_create(n1, new_pair(v2, v3));
+  node_create(n2, new_pair(v0, v2));
+  node_create(n3, new_pair(v1, v3));
 
   // Links.
   link_pair(tm, new_pair(new_port(get_tag(b), n0), A1));
@@ -831,18 +843,19 @@ bool ABRT(TM* tm, Port a, Port b) {
   abort();
 }
 
-interactionFn interactions[10][10] = {
-  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   RDX   VAL
-  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT}, // VAR
-  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&ABRT,&ABRT}, // REF
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&ABRT,&DECF}, // ERA
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&ABRT,&ABRT}, // NUM
-  {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&ABRT,&ABRT}, // CON
-  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&ABRT,&DUPE}, // DUP
-  {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&ABRT,&ABRT}, // OPR
-  {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&ABRT,&ABRT}, // SWI
-  {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
-  {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT}  // VAL
+interactionFn interactions[11][11] = {
+  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT}, // VAR
+  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&LINK,&ABRT,&ABRT}, // REF
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF}, // ERA
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ABRT}, // NUM
+  {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT}, // CON
+  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE}, // DUP
+  {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT}, // OPR
+  {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT}, // SWI
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT}, // VAR
+  {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
+  {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}  // VAL
 };
 
 interactionFn get_rule(Port a, Port b) {
@@ -1178,19 +1191,23 @@ Port argsNet(TM *tm, NativeArgs *args, unsigned argIdx) {
 }
 
 void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
-  // get the args node
-  Pair argsNode = node_take(args);
-  // fst points to the arg
-  Port arg = argsNode.fst;
-  Port newArgs = argsNode.snd;
-  // save the arg
-  natives->args[natives->count++] = arg;
-  natives->tail = newArgs;
-  if (argCount > 0 && get_tag(newArgs) == CON) {
-    Tag argTag = get_tag(arg);
-    if (argTag == NUM || argTag == VAL) {
-      // recurse to get the rest of the args
-      extractArgs(newArgs, argCount - 1, natives);
+  if (argCount == 0 || get_tag(args) == VAR) {
+    natives->tail = args;
+  } else {
+    // get the args node
+    Pair argsNode = node_take(args);
+    // fst points to the arg
+    Port arg = argsNode.fst;
+    Port newArgs = argsNode.snd;
+    // save the arg
+    natives->args[natives->count++] = arg;
+    natives->tail = newArgs;
+    if (argCount > 0 && get_tag(newArgs) == CON) {
+      Tag argTag = get_tag(arg);
+      if (argTag == NUM || argTag == VAL) {
+	// recurse to get the rest of the args
+	extractArgs(newArgs, argCount - 1, natives);
+      }
     }
   }
   return;
@@ -1209,7 +1226,14 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
     extractArgs(args, argCount, natives);
   }
 
-  if (natives->count == argCount) {
+  Port arg;
+  if (natives->count == 0)
+    // pretend we got a number for the arg so we'll drop to the NUM case
+    arg = NUM;
+  else
+    arg = natives->args[natives->count - 1];
+  Tag argTag = get_tag(arg);
+  if (natives->count == argCount && (argTag == NUM || argTag == VAL)) {
     // we got all the args requested, so return them and
     // the ptr to where to put the results
     return TRUE;
@@ -1217,17 +1241,18 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
     u32 nl = 0;
     Port newArgs;
     Port out = natives->tail;
-    Port arg;
-    switch (get_tag(out)) {
+    Pair argPair;
+    switch (argTag) {
     case VAR :
       // TODO: test this
       printf("logic error line: %d\n", __LINE__);
       abort();
       // we need to wait on the rest of the args list
       newArgs = argsNet(tm, natives, 0);
+      nl = 0;
       Port rdx = node_alloc(tm, &nl);
       node_create(rdx, new_pair(ref, newArgs));
-      link(tm, out, new_port(RDX, rdx));
+      link(tm, arg, new_port(RDX, rdx));
       break;
 
     case ERA :
@@ -1238,39 +1263,25 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
       natives->count = -1;
       break;
 
-    case DUP :
-      // TODO: test this
-      printf("logic error line: %d\n", __LINE__);
-      abort();
-      u32 vl = 0;
-      nl = 0;
-      Port out0 = new_port(VAR, vars_alloc(tm, &vl));
-      Port out1 = new_port(VAR, vars_alloc(tm, &vl));
-      Port result = node_alloc(tm, &nl);
-
-      node_create(result, new_pair(out0, out1));
-      natives->tail = out0;
+    case CON :
+      argPair = node_take(arg);
+      natives->args[natives->count - 1] = argPair.fst;
       newArgs = argsNet(tm, natives, 0);
       push_redex(tm, new_pair(ref, newArgs));
-      natives->tail = out1;
+      natives->args[natives->count - 1] = argPair.snd;
       newArgs = argsNet(tm, natives, 0);
       push_redex(tm, new_pair(ref, newArgs));
-      link(tm, new_port(DUP, result), out);
       break;
 
-    case CON :
-      arg = natives->args[natives->count - 1];
-      switch (get_tag(arg)) {
+    case NUM :
+    case VAL :
+      switch (get_tag(out)) {
       case VAR :
-	// TODO: test this
-	printf("logic error line: %d\n", __LINE__);
-	abort();
 	// we need to wait on the rest of the args list
 	newArgs = argsNet(tm, natives, 0);
-	nl = 0;
 	Port rdx = node_alloc(tm, &nl);
 	node_create(rdx, new_pair(ref, newArgs));
-	link(tm, arg, new_port(RDX, rdx));
+	link(tm, out, new_port(RDX, rdx));
 	break;
 
       case ERA :
@@ -1281,28 +1292,35 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
 	natives->count = -1;
 	break;
 
-      case CON :
+      case DUP :
 	// TODO: test this
 	printf("logic error line: %d\n", __LINE__);
 	abort();
-	Pair argPair = node_take(arg);
-	natives->tail = argPair.fst;
+	u32 vl = 0;
+	nl = 0;
+	Port out0 = vars_alloc(tm, &vl);
+	Port out1 = vars_alloc(tm, &vl);
+	Port result = node_alloc(tm, &nl);
+
+	node_create(result, new_pair(out0, out1));
+	natives->tail = out0;
 	newArgs = argsNet(tm, natives, 0);
 	push_redex(tm, new_pair(ref, newArgs));
-	natives->tail = argPair.snd;
+	natives->tail = out1;
 	newArgs = argsNet(tm, natives, 0);
 	push_redex(tm, new_pair(ref, newArgs));
+	link(tm, new_port(DUP, result), out);
 	break;
 
       default:
-	printf("unhandled tag %d line: %d\n", get_tag(arg), __LINE__);
+	printf("unhandled tag %d line: %d\n", get_tag(out), __LINE__);
 	abort();
 	break;
       }
       break;
 
     default:
-      printf("unhandled tag %d line: %d\n", get_tag(out), __LINE__);
+      printf("unhandled tag %d line: %d\n", get_tag(arg), __LINE__);
       abort();
       break;
     }
@@ -1318,21 +1336,19 @@ void hvm_c(interactionFn mainFn, NativeArgs *args) {
   globalNet = malloc(sizeof(Net));
   net_init();
 
-  fprintf(stderr, "v1: %p\n", &globalNet->vars_buf[0]);
-  fprintf(stderr, "v1: %p\n", &globalNet->vars_buf[1]);
-  fprintf(stderr, "v1: %p\n", &globalNet->vars_buf[2]);
-
-  fprintf(stderr, "n1: %p\n", &globalNet->node_buf[0]);
-  fprintf(stderr, "n1: %p\n", &globalNet->node_buf[1]);
-  fprintf(stderr, "n1: %p\n", &globalNet->node_buf[2]);
-
   // Starts the timer
   u64 start = time64();
 
   // Creates an initial redex that calls main
   u32 vl = 0;
+  u32 nl = 0;
   Port v = vars_alloc(tm[0], &vl);
-  mainFn(tm[0], new_ref(mainFn), new_port(VAR, v));
+  Port n1 = node_alloc(tm[0], &nl);
+  node_create(n1, new_pair(args->args[0], args->args[0]));
+  args->args[0] = new_port(CON, n1);
+
+  mainFn(tm[0], new_ref(mainFn), v);
+  fprintf(stderr, "Now linking\n");
   link(tm[0], v, argsNet(tm[0], args, 0));
 
   // mainFn(tm[0], new_ref(mainFn), argsNet(tm[0], args, 0));
