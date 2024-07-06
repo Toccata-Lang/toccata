@@ -1198,19 +1198,40 @@ void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
     Pair argsNode = node_take(args);
     // fst points to the arg
     Port arg = argsNode.fst;
+    Tag argTag = get_tag(arg);
     Port newArgs = argsNode.snd;
+    Port varVal;
+    if (argTag == VAR) {
+      varVal = vars_take(arg);
+      if (varVal != NONE && varVal != FREE) {
+	arg = enter(varVal);
+      }
+    }
+
     // save the arg
     natives->args[natives->count++] = arg;
     natives->tail = newArgs;
     if (argCount > 0 && get_tag(newArgs) == CON) {
-      Tag argTag = get_tag(arg);
-      if (argTag == NUM || argTag == VAL) {
+      switch(argTag) {
+      case NUM:
+      case VAL:
 	// recurse to get the rest of the args
 	extractArgs(newArgs, argCount - 1, natives);
+	break;
+
+      default:
+	break;
       }
     }
   }
   return;
+}
+
+void eraseNatives(TM *tm, NativeArgs* args) {
+  args->count = -1;
+  for(int i = 0; i < args->count; i++) {
+    link(tm, erase, args->args[i]);
+  }
 }
 
 // extract the requested number of native args
@@ -1233,21 +1254,21 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
   else
     arg = natives->args[natives->count - 1];
   Tag argTag = get_tag(arg);
-  if (natives->count == argCount && (argTag == NUM || argTag == VAL)) {
+  Port out = natives->tail;
+  if (get_tag(out) == ERA) {
+    eraseNatives(tm, natives);
+    return FALSE;
+  } else if (natives->count == argCount && (argTag == NUM || argTag == VAL)) {
     // we got all the args requested, so return them and
     // the ptr to where to put the results
     return TRUE;
   } else {
     u32 nl = 0;
     Port newArgs;
-    Port out = natives->tail;
     Pair argPair;
     switch (argTag) {
     case VAR :
-      // TODO: test this
-      printf("logic error line: %d\n", __LINE__);
-      abort();
-      // we need to wait on the rest of the args list
+      // we need to wait on an arg
       newArgs = argsNet(tm, natives, 0);
       nl = 0;
       Port rdx = node_alloc(tm, &nl);
@@ -1256,11 +1277,7 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
       break;
 
     case ERA :
-      // TODO: test this
-      printf("logic error line: %d\n", __LINE__);
-      abort();
-      link(tm, argsNet(tm, natives, 0), erase);
-      natives->count = -1;
+      eraseNatives(tm, natives);
       break;
 
     case CON :
@@ -1282,34 +1299,6 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
 	Port rdx = node_alloc(tm, &nl);
 	node_create(rdx, new_pair(ref, newArgs));
 	link(tm, out, new_port(RDX, rdx));
-	break;
-
-      case ERA :
-	// TODO: test this
-	printf("logic error line: %d\n", __LINE__);
-	abort();
-	link(tm, argsNet(tm, natives, 0), erase);
-	natives->count = -1;
-	break;
-
-      case DUP :
-	// TODO: test this
-	printf("logic error line: %d\n", __LINE__);
-	abort();
-	u32 vl = 0;
-	nl = 0;
-	Port out0 = vars_alloc(tm, &vl);
-	Port out1 = vars_alloc(tm, &vl);
-	Port result = node_alloc(tm, &nl);
-
-	node_create(result, new_pair(out0, out1));
-	natives->tail = out0;
-	newArgs = argsNet(tm, natives, 0);
-	push_redex(tm, new_pair(ref, newArgs));
-	natives->tail = out1;
-	newArgs = argsNet(tm, natives, 0);
-	push_redex(tm, new_pair(ref, newArgs));
-	link(tm, new_port(DUP, result), out);
 	break;
 
       default:
@@ -1343,14 +1332,17 @@ void hvm_c(interactionFn mainFn, NativeArgs *args) {
   u32 vl = 0;
   u32 nl = 0;
   Port v = vars_alloc(tm[0], &vl);
-  Port n1 = node_alloc(tm[0], &nl);
-  node_create(n1, new_pair(args->args[0], args->args[0]));
-  args->args[0] = new_port(CON, n1);
-
-  mainFn(tm[0], new_ref(mainFn), v);
+  // Port n1 = node_alloc(tm[0], &nl);
+  // node_create(n1, new_pair(erase, args->args[0]));
+  // args->args[0] = new_port(CON, n1);
+  
+  Port argPort = args->args[0];
+  args->args[0] = v;
+  mainFn(tm[0], new_ref(mainFn), argsNet(tm[0], args, 0));
   fprintf(stderr, "Now linking\n");
-  link(tm[0], v, argsNet(tm[0], args, 0));
+  link(tm[0], v, argPort);
 
+  // args->tail = erase;
   // mainFn(tm[0], new_ref(mainFn), argsNet(tm[0], args, 0));
 
   // Normalizes and runs IO
