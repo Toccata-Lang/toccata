@@ -1329,21 +1329,7 @@ void hvm_c(interactionFn mainFn, NativeArgs *args) {
   u64 start = time64();
 
   // Creates an initial redex that calls main
-  u32 vl = 0;
-  u32 nl = 0;
-  Port v = vars_alloc(tm[0], &vl);
-  // Port n1 = node_alloc(tm[0], &nl);
-  // node_create(n1, new_pair(erase, args->args[0]));
-  // args->args[0] = new_port(CON, n1);
-  
-  Port argPort = args->args[0];
-  args->args[0] = v;
   mainFn(tm[0], new_ref(mainFn), argsNet(tm[0], args, 0));
-  fprintf(stderr, "Now linking\n");
-  link(tm[0], v, argPort);
-
-  // args->tail = erase;
-  // mainFn(tm[0], new_ref(mainFn), argsNet(tm[0], args, 0));
 
   // Normalizes and runs IO
   normalize();
