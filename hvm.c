@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "runtime.h"
 #include "hvm.h"
 
 
@@ -176,16 +177,18 @@ bool should_swap(Port A, Port B) {
 }
 
 // Gets a rule's priority
-u8 interactionPriority[8][8] = {
-  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE}, // VAR
-  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE}, // REF
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE}, // ERA
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // NUM
-  {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE}, // CON
-  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE}, // DUP
-  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE}, // OPR
-  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE} // SWI
+u8 interactionPriority[10][10] = {
+  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   RDX   VAL
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // VAR
+  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // REF
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // ERA
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE}, // NUM
+  {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,FALSE}, // CON
+  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE}, // DUP
+  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // OPR
+  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE}, // SWI
+  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // RDX
+  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}  // VAL
 };
 
 bool is_high_priority(Pair AB) {
@@ -810,16 +813,39 @@ bool SWIT(TM* tm, Port a, Port b) {
   return TRUE;
 }
 
-interactionFn interactions[8][8] = {
-  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI
-  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK}, // VAR
-  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL}, // REF
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS}, // ERA
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT}, // NUM
-  {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM}, // CON
-  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM}, // DUP
-  {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM}, // OPR
-  {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI} // SWI
+bool IREF(TM* tm, Port a, Port b) {
+  if (get_tag(b) == VAL) {
+    incRef((Value *)(b & ~TAG_MASK), 1);
+    fprintf(stderr, "finish IREF line: %d\n", __LINE__);
+    abort();
+  }
+  return TRUE;
+}
+
+bool DREF(TM* tm, Port a, Port b) {
+  if (get_tag(b) == VAL) {
+    dec_and_free((Value *)(b & ~TAG_MASK), 1);
+  }
+  return TRUE;
+}
+
+bool ABRT(TM* tm, Port a, Port b) {
+  fprintf(stderr, "Bad interaction: 0x%x 0x%x\n", get_tag(a), get_tag(b));
+  abort();
+}
+
+interactionFn interactions[10][10] = {
+  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   RDX   VAL
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT}, // VAR
+  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&ABRT,&ABRT}, // REF
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&ABRT,&DREF}, // ERA
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&ABRT,&ABRT}, // NUM
+  {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&ABRT,&ABRT}, // CON
+  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&ABRT,&IREF}, // DUP
+  {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&ABRT,&ABRT}, // OPR
+  {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&ABRT,&ABRT}, // SWI
+  {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
+  {&ABRT,&ABRT,&DREF,&ABRT,&ABRT,&IREF,&ABRT,&ABRT,&ABRT,&ABRT}  // VAL
 };
 
 interactionFn get_rule(Port a, Port b) {

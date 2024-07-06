@@ -453,6 +453,22 @@
                                     (gen-code expr mod ast)))
          comp-code)))
 
+(defn name-natives [params]
+  (cond (= (.variadic params) c/no-symbol)
+        (reduce (zip-lists (range (count (.fixed params)))
+                           (.fixed params))
+                ["  getNativeArgs(tm, ref, args, " (count (.fixed params))
+                 ", &natives);\n"]
+                (fn [args [idx arg]]
+                  (conj args (str "  Port "
+                                  (.var arg)
+                                  " = natives.args[" idx "];\n"))))
+
+        (do
+          (b/status "variadiac inline fn")
+          (abort)
+          [", Value *" (.var params)])))
+
 (extend-type ast/fn-arity-ast
   CodeGen
   (gen-code [ast mod]
@@ -471,10 +487,14 @@
                        code (either (for [last-ast (last (.body ast))
                                           :when (instance? ast/inline-ast last-ast)
                                           last-expr (last body-exprs)]
-                                      (.refs-map last-expr
-                                                 (reduce (ast/all-syms params) {}
-                                                         (fn [rm s]
-                                                           (assoc rm (.var s) 1)))))
+                                      (-> last-expr
+                                          (.init ["\n  NativeArgs natives;\n"
+                                                  (name-natives params)
+                                                  (.init last-expr)
+                                                  "\n  vars_create(natives.tail, result);\n"])
+                                          (.refs-map (reduce (ast/all-syms params) {}
+                                                             (fn [rm s]
+                                                               (assoc rm (.var s) 1))))))
 
                                     (comp-code body-exprs))]
                    ;; (b/status 'body _LINE_ (ast/location ast) 'params (ast/all-syms params)
@@ -487,11 +507,10 @@
                    ;;                           to-str) "]"))
                    ;; TODO: handle recursion properly
                    (-> code
-                       (.decl [(.decl code)])
+                       ;; TODO: don't think this does anything
+                       ;; (.decl [(.decl code)])
                        (.init [(.init code)
-                               (either (= "" (.var code))
-                                       ["return " (.var code) ";"])
-                               "};};\n"]))))))))
+                               "  return TRUE;\n};\n"]))))))))
 
 (extend-type b/StaticArity
   CodeGen
@@ -505,14 +524,7 @@
         (-> empty-c-code
             (.var arity-var)
             (.decl [(.decl arity-code)
-                    "Value *" c-fn "(FnArity *arity"
-                    (cond (= (.variadic params) c/no-symbol)
-                          (reduce (.fixed params) []
-                                  (fn [args arg]
-                                    (conj args (str ", Value *" (.var arg)))))
-
-                          [", Value *" (.var params)])
-                    ") {\nwhile (1) {"
+                    "bool " c-fn "(TM *tm, Port ref, Port args) {"
                     (.init arity-code)
                     (.decl checker)
                     "FnArity " arity-struct-var " = {FnArityType, REFS_STATIC, "
@@ -994,8 +1006,22 @@
               "  }\n"
               "  argVect->refs = -1;\n"
 
-              "Value *the_final_answer = " main-fn
-              "((FnArity *)0, (Value *)argVect);\n\n"
+              "  u32 vl = 0;\n"
+              "  APort resultVar;\n"
+              "  vars_create((Port)&resultVar, FREE);\n"
+              "  int bashResult = 0;\n"
+              "  Value *the_final_answer = nothing;\n"
+              "  NativeArgs natives;\n"
+              "  natives.count = 1;\n"
+              "  natives.args[0] = new_port(VAL, (Port)argVect);\n"
+              "  natives.tail = new_port(VAR, (Port)&resultVar);\n"
+              "  hvm_c(" main-fn ", &natives);\n"
+              "  Port result = vars_load((Port)&resultVar);\n"
+              "  if (get_tag(result) == NUM) {\n"
+              "  bashResult = (int)get_u24(get_num(result));\n"
+              "  } else if (get_tag(result) == VAL ) {\n"
+              "  the_final_answer = (Value *)(result & ~TAG_MASK);\n"
+              "  }\n"
 
               "#ifdef CHECK_MEM_LEAK\n"
               "cleaningUp = 1;\n"
@@ -1012,7 +1038,8 @@
               "    return(1);\n"
               "#endif"
               "\n#\n"
-              "  return(0);\n};\n"
+              "  printf(\"bashResult: %d\\n\", bashResult);\n"
+              "  return(bashResult);\n}\n"
               "\nint typeCount = " (extract b/type-counter) ";\n")
     (deliver done-promise 'done)
     code-context))
