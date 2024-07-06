@@ -181,14 +181,14 @@ u8 interactionPriority[10][10] = {
   //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   RDX   VAL
   {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // VAR
   {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // REF
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // ERA
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,TRUE }, // ERA
   {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE}, // NUM
   {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,FALSE}, // CON
-  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE}, // DUP
+  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE }, // DUP
   {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // OPR
   {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE}, // SWI
   {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // RDX
-  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}  // VAL
+  {FALSE,FALSE,TRUE ,FALSE,FALSE,TRUE ,FALSE,FALSE,FALSE,FALSE}  // VAL
 };
 
 bool is_high_priority(Pair AB) {
@@ -813,19 +813,16 @@ bool SWIT(TM* tm, Port a, Port b) {
   return TRUE;
 }
 
-bool IREF(TM* tm, Port a, Port b) {
-  if (get_tag(b) == VAL) {
-    incRef((Value *)(b & ~TAG_MASK), 1);
-    fprintf(stderr, "finish IREF line: %d\n", __LINE__);
-    abort();
-  }
+bool DUPE(TM* tm, Port a, Port b) {
+  incRef((Value *)(b & ~TAG_MASK), 1);
+  Pair dupes = node_load(a);
+  link(tm, dupes.fst, b);
+  link(tm, dupes.snd, b);
   return TRUE;
 }
 
-bool DREF(TM* tm, Port a, Port b) {
-  if (get_tag(b) == VAL) {
-    dec_and_free((Value *)(b & ~TAG_MASK), 1);
-  }
+bool DECF(TM* tm, Port a, Port b) {
+  dec_and_free((Value *)(b & ~TAG_MASK), 1);
   return TRUE;
 }
 
@@ -838,14 +835,14 @@ interactionFn interactions[10][10] = {
   //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   RDX   VAL
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT}, // VAR
   {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&ABRT,&ABRT}, // REF
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&ABRT,&DREF}, // ERA
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&ABRT,&DECF}, // ERA
   {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&ABRT,&ABRT}, // NUM
   {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&ABRT,&ABRT}, // CON
-  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&ABRT,&IREF}, // DUP
+  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&ABRT,&DUPE}, // DUP
   {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&ABRT,&ABRT}, // OPR
   {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&ABRT,&ABRT}, // SWI
   {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
-  {&ABRT,&ABRT,&DREF,&ABRT,&ABRT,&IREF,&ABRT,&ABRT,&ABRT,&ABRT}  // VAL
+  {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT}  // VAL
 };
 
 interactionFn get_rule(Port a, Port b) {
@@ -1321,11 +1318,24 @@ void hvm_c(interactionFn mainFn, NativeArgs *args) {
   globalNet = malloc(sizeof(Net));
   net_init();
 
+  fprintf(stderr, "v1: %p\n", &globalNet->vars_buf[0]);
+  fprintf(stderr, "v1: %p\n", &globalNet->vars_buf[1]);
+  fprintf(stderr, "v1: %p\n", &globalNet->vars_buf[2]);
+
+  fprintf(stderr, "n1: %p\n", &globalNet->node_buf[0]);
+  fprintf(stderr, "n1: %p\n", &globalNet->node_buf[1]);
+  fprintf(stderr, "n1: %p\n", &globalNet->node_buf[2]);
+
   // Starts the timer
   u64 start = time64();
 
   // Creates an initial redex that calls main
-  mainFn(tm[0], new_ref(mainFn), argsNet(tm[0], args, 0));
+  u32 vl = 0;
+  Port v = vars_alloc(tm[0], &vl);
+  mainFn(tm[0], new_ref(mainFn), new_port(VAR, v));
+  link(tm[0], v, argsNet(tm[0], args, 0));
+
+  // mainFn(tm[0], new_ref(mainFn), argsNet(tm[0], args, 0));
 
   // Normalizes and runs IO
   normalize();
