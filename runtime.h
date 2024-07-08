@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include "hvm.h"
 
 #define CLOSURE_INFO 1
 
@@ -95,7 +96,7 @@ typedef struct {
   int count;
   Vector *closures;
   int variadic;
-  void *fn;
+  interactionFn fn;
   Value *parent;
 } FnArity;
 typedef struct {

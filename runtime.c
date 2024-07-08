@@ -1582,114 +1582,8 @@ void waitForWorkers() {
 #endif
 }
 
-Value *shutDown_impl(FnArity *arity) {
-  Value *item;
-#ifdef CHECK_MEM_LEAK
-  moveFreeToCentral();
-#endif
-  pthread_exit(NULL);
-  return(nothing);
- };
-
-FnArity shutDown_arity = {FnArityType, -2, 0, (Vector *)0, 0, shutDown_impl};
-Function shutDownFn = {FunctionType, -2, "shutdown-workers", 1, {&shutDown_arity}};
-Future shutDown = {FutureType, -2, (Value *)&shutDownFn, (Value *)0, (List *)0, (Value *)0, 0};
-
-void stopWorkers() {
-  for (int32_t i = 0; i < NUM_WORKERS; i++)
-    scheduleFuture(&shutDown);
-}
-
 Value *readFuturesQueue() {
-  List *output;
-#ifdef SINGLE_THREADED
-  // do nothing with futures in a single threaded system
-  return((Value *)0);
-#else
-  __atomic_load(&futuresQueue.output, &output, __ATOMIC_RELAXED);
-  while (output != (List *)0 && output->len != 0 &&
-         !__atomic_compare_exchange(&futuresQueue.output,
-				    &output,
-				    &output->tail,
-				    1, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
-    ;
-
-  if (output != (List *)0 && output->len != 0) {
-    Value *item = output->head;
-    output->head = (Value *)0;
-    output->tail = (List *)0;
-    REFS_SIZE refs;
-    __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
-    if (refs != 1) {
-      fprintf(stderr, "error reading futures queue 1 %d\n", refs);
-      abort();
-    }
-    dec_and_free((Value *)output, 1);
-    return(item);
-  } else {
-    pthread_mutex_lock (&futuresQueue.mutex);
-    __atomic_load(&futuresQueue.output, &output, __ATOMIC_RELAXED);
-    while (output != (List *)0 && output->len != 0 &&
-           !__atomic_compare_exchange(&futuresQueue.output,
-				      &output,
-				      &output->tail,
-				      1, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
-      ;
-    if (output != (List *)0 && output->len != 0) {
-      Value *item = output->head;
-      output->head = (Value *)0;
-      output->tail = (List *)0;
-      REFS_SIZE refs;
-      __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
-      if (refs != 1) {
-        fprintf(stderr, "error reading futures queue 2\n");
-        abort();
-      }
-      dec_and_free((Value *)output, 1);
-      pthread_mutex_unlock (&futuresQueue.mutex);
-      return(item);
-    } else {
-      List *input;
-      __atomic_exchange((List **)&futuresQueue.input,
-			(List **)&empty_list,
-			(List **)&input,
-			__ATOMIC_RELAXED);
-
-      if (input == (List *)0 || input->len == 0) {
-        int32_t numRunning = __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
-        if (numRunning <= 1 && mainThreadDone) {
-          stopWorkers();
-        } else {
-#ifdef CHECK_MEM_LEAK
-	  moveFreeToCentral();
-#endif
-          pthread_cond_wait(&futuresQueue.notEmpty, &futuresQueue.mutex);
-          __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
-        }
-        pthread_mutex_unlock (&futuresQueue.mutex);
-        return(readFuturesQueue());
-      } else {
-        output = reverseList(input);
-
-        __atomic_store(&futuresQueue.output, &output->tail, __ATOMIC_RELAXED);
-        pthread_cond_signal(&futuresQueue.notEmpty);
-        pthread_mutex_unlock (&futuresQueue.mutex);
-
-        Value *item = output->head;
-        output->head = (Value *)0;
-        output->tail = (List *)0;
-        REFS_SIZE refs;
-        __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
-        if (refs != 1) {
-          fprintf(stderr, "error reading futures queue 3\n");
-          abort();
-        }
-        dec_and_free((Value *)output, 1);
-        return(item);
-      }
-    }
-  }
-#endif
+  return nothing;
 }
 
 Value *deliverFuture(Value *fut, Value *val) {
@@ -4757,39 +4651,6 @@ Value *updateAgent_impl(FnArity *arity) {
 };
 
 void scheduleAgent(Agent *agent, List *action) {
-#ifdef SINGLE_THREADED
-  Value *f = (Value *)action->head;
-  incRef((Value *)agent->val, 1);
-  List *args = listCons(agent->val, action->tail);
-  incRef((Value *)action->tail, 1);
-  agent->val = fn_apply((FnArity *)0, (Value *)f, (Value *)args);
-  action->head = (Value *)0;
-  dec_and_free((Value *)action, 1);
-#else
-  List *newList = malloc_list();
-  newList->head = (Value *)action;
-  List *input;
-  __atomic_load(&agent->input, &input, __ATOMIC_RELAXED);
-  do {
-    newList->len = input->len + 1;
-    newList->tail = input;
-  } while (!__atomic_compare_exchange(&agent->input, &input, &newList, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
-
-  FnArity *updateAgentArity = malloc_fnArity();
-  updateAgentArity->variadic = 0;
-  updateAgentArity->fn = updateAgent_impl;
-  updateAgentArity->count = 0;
-  incRef((Value *)agent, 1);
-  updateAgentArity->closures = mutateVectConj(empty_vect, (Value *)agent);
-  Function *updateAgentFn = malloc_function(1);
-  updateAgentFn->name = "update-agent";
-  updateAgentFn->arityCount = 1;
-  updateAgentFn->arities[0] = updateAgentArity;
-  Future *f = malloc_future(__LINE__);
-  f->action = (Value *)updateAgentFn;
-  f->actions = empty_list;
-  scheduleFuture(f);
-#endif
 }
 
 void freeExtractCache(void *cachePtr) {

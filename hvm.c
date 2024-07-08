@@ -7,29 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "runtime.h"
-#include "hvm.h"
-
 
 // Configuration
 // -------------
-
-// Threads per CPU
-#ifndef TPC_L2
-#define TPC_L2 4 // 16 cores
-#endif
-#define TPC (1ul << TPC_L2)
-
-// Integers
-// --------
-
-typedef _Atomic(u8) a8;
-typedef _Atomic(u16) a16;
-typedef _Atomic(u32) a32;
-typedef _Atomic(u64) a64;
-
-// Types
-// -----
-
 
 Port erase = ERA;
 Pair emptyPair = {FREE, FREE};
@@ -42,44 +22,8 @@ static const u64 U24_MAX = ((u64)1 << 56) - 1;
 static const u64 U24_MIN = 0.0;
 static const i64 I24_MAX = ((i64)1 << 55) - 1;
 static const i64 I24_MIN = (i64) ((u64)-1 << 55);
-#define TY_SYM 0x00
-#define TY_U24 0x01
-#define TY_I24 0x02
-#define TY_F24 0x03
-#define OP_ADD 0x04
-#define OP_SUB 0x05
-#define FP_SUB 0x06
-#define OP_MUL 0x07
-#define OP_DIV 0x08
-#define FP_DIV 0x09
-#define OP_REM 0x0A
-#define FP_REM 0x0B
-#define OP_EQ  0x0C
-#define OP_NEQ 0x0D
-#define OP_LT  0x0E
-#define OP_GT  0x0F
-#define OP_AND 0x10
-#define OP_OR  0x11
-#define OP_XOR 0x12
-#define OP_SHL 0x13
-#define FP_SHL 0x14
-#define OP_SHR 0x15
-#define FP_SHR 0x16
 
 // Global Net
-#define RLEN (1ul << 24) // max 16m low-priority redexes
-#define G_NODE_LEN (1ul << 29) // max 536m nodes
-#define G_VARS_LEN (1ul << 29) // max 536m vars
-#define G_RBAG_LEN (TPC * RLEN)
-
-typedef struct Net {
-  APair node_buf[G_NODE_LEN]; // global node buffer
-  APort vars_buf[G_VARS_LEN]; // global vars buffer
-  APair rbag_buf[G_RBAG_LEN]; // global rbag buffer
-  a64 itrs; // interaction count
-  a32 idle; // idle thread counter
-} Net;
-
 Net *globalNet;
 
 
@@ -457,7 +401,7 @@ u32 rbag_len(TM* tm) {
 // TM
 // --
 
-static TM* tm[TPC];
+TM* tms[TPC];
 
 TM* tm_new(u32 tid) {
   TM* tm   = malloc(sizeof(TM));
@@ -473,13 +417,13 @@ TM* tm_new(u32 tid) {
 
 void alloc_static_tms() {
   for (u32 t = 0; t < TPC; ++t) {
-    tm[t] = tm_new(t);
+    tms[t] = tm_new(t);
   }
 }
 
 void free_static_tms() {
   for (u32 t = 0; t < TPC; ++t) {
-    free(tm[t]);
+    free(tms[t]);
   }
 }
 
@@ -995,7 +939,7 @@ void normalize() {
   // Inits thread_arg objects
   ThreadArg thread_arg[TPC];
   for (u32 t = 0; t < TPC; ++t) {
-    thread_arg[t].tm   = tm[t];
+    thread_arg[t].tm = tms[t];
   }
 
   // Spawns the evaluation threads
@@ -1317,6 +1261,7 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
   }
 }
 
+/*
 void hvm_c(interactionFn mainFn, NativeArgs *args) {
   // Creates static TMs
   alloc_static_tms();
@@ -1352,3 +1297,4 @@ void hvm_c(interactionFn mainFn, NativeArgs *args) {
   free_static_tms();
   free(globalNet);
 }
+// */

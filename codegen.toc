@@ -180,6 +180,7 @@
 (defprotocol CodeGen
   (gen-call [tgt args mod result-var]
     (assert-result r (instance? se/StateError r))
+    ;; by providing impls for this, call sites can be optimized
 
     (generic-call tgt args mod result-var))
 
@@ -193,8 +194,7 @@
     (gen-code ast mod)))
 
 (defn generic-call [tgt args mod result-var]
-    (assert-result r (instance? se/StateError r))
-    ;; by providing impls for this, call sites can be optimized
+  (assert-result r (instance? se/StateError r))
 
   (for [tgt-code (gen-code tgt mod)
         arg-codes (se/traverse args (fn [arg]
@@ -225,33 +225,42 @@
                (line-marker (ast/location tgt) "// dynamic unknown type")
                (cond (b/is-glbl result-var)
                      ""
-                     ["Value *" result-var ";"])
+                     ["Port " result-var " = vars_alloc(tm, &vl);"])
                ;; TODO: handle non-function call targets
                ;; "if((" (.var tgt-code) ")->type != FunctionType) {" line-sep
                ;; result-var " = " invoke-arity-sym "("
                ;; (interpose (list* (str "(FnArity *)" (.c-var sym-location))
                ;;                   (.c-var target) args) ", ") ");"
                ;; line-sep "} else {" line-sep
-               "if(" (.var tgt-code) "->type == FunctionType) {" line-sep
+               "\nif(" (.var tgt-code) "->type == FunctionType) {" line-sep
 
                ;; look for static arity and call that
                "FnArity *arity = findFnArity(" (.var tgt-code) ", " num-args ");"
                line-sep
                "if(arity != (FnArity *)0 && !arity->variadic) {" line-sep
-               "FnType" num-args " *fn = (FnType" num-args " *)arity->fn;" line-sep
-               result-var " = fn(arity " (map arg-codes (fn [arg]
-                                                          [", " (.var arg)]))
-               ");" line-sep
+               "NativeArgs callArgs = {" num-args ", {"
+               ;; TODO: add dupe nodes if needed
+               (-> (map arg-codes .var)
+                   (interpose ", "))
+               "}, "
+               ;; TODO: hacky. Find a better solution
+               (cond (b/is-glbl result-var)
+                     "&"
+                     "")
+               result-var "};\n"
+               "link(tm, new_port(REF, (Port)arity->fn), argsNet(tm, &callArgs, 0));\n"
+               " } else {\n"
 
-               "} else if(arity != (FnArity *)0 && arity->variadic) {" line-sep
-               "FnType1 *fn = (FnType1 *)arity->fn;" line-sep
-               "List *args = empty_list;" line-sep
-               (map (reverse arg-codes)
-                    (fn [arg]
-                      (str "args = (List *)listCons("
-                           (.var arg) ", args);" line-sep)))
-               result-var " = fn(arity, (Value *)args);" line-sep
-               "} else {" line-sep
+               ;; TODO: for variadic calls
+               ;; "} else if(arity != (FnArity *)0 && arity->variadic) {" line-sep
+               ;; "FnType1 *fn = (FnType1 *)arity->fn;" line-sep
+               ;; "List *args = empty_list;" line-sep
+               ;; (map (reverse arg-codes)
+               ;;      (fn [arg]
+               ;;        (str "args = (List *)listCons("
+               ;;             (.var arg) ", args);" line-sep)))
+               ;; result-var " = fn(arity, (Value *)args);" line-sep
+               ;; "} else {" line-sep
                "fprintf(stderr, \"\\n*** No arity found for '%s'.\\n\", "
                "((Function *)" (.var tgt-code) ")->name"
                ");" line-sep "  abort();" line-sep "}" line-sep
@@ -350,7 +359,7 @@
     (cond (= (.var x) "")
           (se/state-error (.init empty-c-code [(.txt x)]))
 
-          (se/state-error (.decl empty-c-code ["Value *" (.var x) " = " (.txt x) ";"]))))
+          (se/state-error (.decl empty-c-code ["Port " (.var x) " = " (.txt x) ";"]))))
 
   (gen-code [x mod arity]
     (gen-code x mod)))
@@ -460,7 +469,7 @@
                  ["  if (getNativeArgs(tm, ref, args, " (count (.fixed params))
                   ", &natives)) {\n"]
                  (fn [args [idx arg]]
-                   (conj args (str "  Port "
+                   (conj args (str "    Port "
                                    (.var arg)
                                    " = natives.args[" idx "];\n"))))
          (flat-map (.fixed params) destruct-seq)]
@@ -492,11 +501,12 @@
                                           (.init ["\n  NativeArgs natives;\n"
                                                   (name-natives params)
                                                   (.init last-expr)
-                                                  "\n  vars_create(natives.tail, result);\n"])
+                                                  "\n    vars_create(natives.tail, result);\n  }\n"])
                                           (.refs-map (reduce (ast/all-syms params) {}
                                                              (fn [rm s]
                                                                (assoc rm (.var s) 1))))))
 
+                                    handle args and get result target
                                     (comp-code body-exprs))]
                    ;; (b/status 'body _LINE_ (ast/location ast) 'params (ast/all-syms params)
                    ;;           lf (str "[" (-> body-exprs
@@ -511,7 +521,7 @@
                        ;; TODO: don't think this does anything
                        ;; (.decl [(.decl code)])
                        (.init [(.init code)
-                               "  };\n  return TRUE;\n};\n"]))))))))
+                               "  return TRUE;\n};\n"]))))))))
 
 (extend-type b/StaticArity
   CodeGen
@@ -525,7 +535,7 @@
         (-> empty-c-code
             (.var arity-var)
             (.decl [(.decl arity-code)
-                    "bool " c-fn "(TM *tm, Port ref, Port args) {"
+                    "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;"
                     (.init arity-code)
                     (.decl checker)
                     "FnArity " arity-struct-var " = {FnArityType, REFS_STATIC, "
@@ -538,7 +548,7 @@
 
                           ;; variadic arity
                           1)
-                    ", " (.var checker) "};"
+                    ", " (.var checker) "};\n"
                     "FnArity *" arity-var " = &" arity-struct-var ";"]))))))
 
 (extend-type b/ClosureArity
@@ -736,9 +746,9 @@
       (for [code (gen-code expr mod)
             _ (se/update-val .init (fn [glbl-init]
                                      (let [add-global (either (= (.var code) "")
-                                                              [(.var code) "->refs = refsConstant;"
-                                                               "globals = listCons("
-                                                               (.var code) ", globals);\n"])]
+                                                              [;; "globals = listCons("
+                                                               ;; (.var code) ", globals);\n"
+                                                               ])]
                                        (conj glbl-init
                                              (either (empty? (.init code))
                                                      [(map (vec (.refs-map code))
@@ -755,25 +765,23 @@
                           (.decl code)]
                          (cond (= (.var code) "")
                                (.decl code)
-                               ["Value *" (.var code) ";"
+                               ["Port " (.var code) ";\n"
                                 (.decl code)])))
             (.init []))))))
 
 (extend-type ast/integer-ast
   CodeGen
   (gen-code [ast mod]
-    (let [num (.int ast)
-          num-ptr (.var ast)]
-      (comp (se/get-in-val [.constants .numbers num])
-            (for [const-nums (se/get-in-val [.constants .numbers])
-                  :let [num-idx (count const-nums)
-                        num-sym (str "num" num-idx)]
-                  _ (se/assoc-in-val [.constants .numbers num]
-                                     (.var empty-c-code num-ptr))]
-              (-> empty-c-code
-                  (.decl ["Integer " num-sym " = {IntegerType, REFS_STATIC, " num "};\n"
-                          "Value *" num-ptr " = (Value *)&" num-sym ";\n"])
-                  (.var num-ptr)))))))
+    (se/state-error
+     (.var empty-c-code (str "new_num_(new_i24_(" (.int ast) "))")))
+    ;; TODO: remove this after we know the above works
+    ;; (let [num (.int ast)
+    ;;       num-ptr (.var ast)]
+    ;;   (se/state-error
+    ;;     (-> empty-c-code
+    ;;         (.decl ["Port " num-ptr " = new_num_(new_i24_(" num "));\n"])
+    ;;         (.var num-ptr))))
+    ))
 
 (extend-type ast/string-ast
   CodeGen
@@ -786,7 +794,9 @@
                   :let [str-idx (count const-strs)
                         str-sym (str "str" str-idx)]
                   _ (se/assoc-in-val [.constants .strings str-val]
-                                     (.var empty-c-code str-ptr))]
+                                     (-> empty-c-code
+                                         (.init [str-ptr " = new_port_(VAL, (Port)&" str-sym ");\n"])
+                                         (.var str-ptr)))]
               (-> empty-c-code
                   (.decl ["struct {TYPE_SIZE type;
         REFS_SIZE refs;
@@ -796,7 +806,7 @@
                           (inc str-len)
                           "];\n} " str-sym " = {StringBufferType, REFS_STATIC, 0, "
                           str-len ", \"" (escape-chars str-val) "\"};\n"
-                          "Value *" str-ptr " = (Value *)&" str-sym ";\n"])
+                          "Port " str-ptr ";\n"])
                   (.var str-ptr)))))))
 
 (extend-type ast/call-ast
@@ -980,25 +990,25 @@
                           ;; (abort)
                           ))
         code-context (emit-protos code-context)]
-    (code-out "\n#\n"
-              "\nint main (int argc, char **argv) {\n"
-              "prErrSTAR = &defaultPrErrSTAR;\n"
-              "#ifdef SINGLE_THREADED\n"
-              "#ifdef CHECK_MEM_LEAK\n"
-              "fprintf(stderr, \"Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK "
-              "at same time.\");\n "
-              "abort();\n"
-              "#endif\n"
-              "#endif\n"
-              "maybeNothing = maybe( (FnArity *)0, (Value *)0, nothing);\n"
-              "maybeNothing->refs = -1;\n"
-              "outstream = stdout;\n"
-              "__atomic_store(&futuresQueue.input, &empty_list, __ATOMIC_RELAXED);\n"
-              "futuresQueue.output = empty_list;\n"
-              "pthread_mutex_init(&futuresQueue.mutex, NULL);\n"
-              "pthread_cond_init(&futuresQueue.notEmpty, NULL);\n"
-              "pthread_mutex_init(&shutDown.access, NULL);\n"
-              "startWorkers();\n"
+    (code-out "  \n#\n"
+              "  \nint main (int argc, char **argv) {\n"
+              "  prErrSTAR = &defaultPrErrSTAR;\n"
+              "  #ifdef SINGLE_THREADED\n"
+              "  #ifdef CHECK_MEM_LEAK\n"
+              "  fprintf(stderr, \"Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK "
+              "  at same time.\");\n "
+              "  abort();\n"
+              "  #endif\n"
+              "  #endif\n"
+              "  maybeNothing = maybe( (FnArity *)0, (Value *)0, nothing);\n"
+              "  maybeNothing->refs = -1;\n"
+              "  outstream = stdout;\n"
+              "  alloc_static_tms();\n"
+              "  globalNet = malloc(sizeof(Net));\n"
+              "  net_init();\n"
+              "  u64 start = time64();\n"
+              "  TM *tm = tms[0];\n"
+              (-> code-context .constants .strings vals (map .init))
               (.init code-context)
               "\n#\n"
               "  Vector *argVect = empty_vect;\n"
@@ -1016,7 +1026,15 @@
               "  natives.count = 1;\n"
               "  natives.args[0] = new_port(VAL, (Port)argVect);\n"
               "  natives.tail = (Port)&resultVar;\n"
-              "  hvm_c(" main-fn ", &natives);\n"
+              "  link(tm, new_ref(" main-fn "), argsNet(tm, &natives, 0));\n"
+              "  normalize();\n"
+              "  double duration = (time64() - start) / 1000000000.0; // seconds\n"
+              "  u64 itrs = atomic_load(&globalNet->itrs);\n"
+              "  printf(\"- ITRS: %\" PRIu64 \"\\n\", itrs);\n"
+              "  printf(\"- TIME: %.2fs\\n\", duration);\n"
+              "  printf(\"- MIPS: %.2f\\n\", (double)itrs / duration / 1000000.0);\n"
+              "  free_static_tms();\n"
+              "  free(globalNet);\n"
               "  Port result = vars_load((Port)&resultVar);\n"
               "  if (get_tag(result) == NUM) {\n"
               "  bashResult = (int)get_u24(get_num(result));\n"

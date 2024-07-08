@@ -1,6 +1,14 @@
 Toccata
 =======
 
+Maybe/Nothing are just special cases of types, can be eliminated
+cond/either/and/or can be implemented using deferred redex
+superposition makes miniKanren trivial
+also make parsing trivial. Eliminate grammar and recursive descent
+deferred redex makes esb's obsolete. May not even need that
+closures can be limited to single arity in the parser
+
+
 > "Pithy quote."
 > - Unknown
 
