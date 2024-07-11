@@ -1134,7 +1134,7 @@ Port argsNet(TM *tm, NativeArgs *args, unsigned argIdx) {
   }
 }
 
-void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
+void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
   if (argCount == 0 || get_tag(args) == VAR) {
     natives->tail = args;
   } else {
@@ -1160,7 +1160,7 @@ void extractArgs(Port args, unsigned argCount, NativeArgs *natives) {
       case NUM:
       case VAL:
 	// recurse to get the rest of the args
-	extractArgs(newArgs, argCount - 1, natives);
+	extractNativeArgs(newArgs, argCount - 1, natives);
 	break;
 
       default:
@@ -1188,7 +1188,7 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
     return TRUE;
   } else {
     natives->tail = NONE;
-    extractArgs(args, argCount, natives);
+    extractNativeArgs(args, argCount, natives);
   }
 
   Port arg;
@@ -1259,6 +1259,26 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
     }
     return FALSE;
   }
+}
+
+bool getArgs(Port args, unsigned argCount, NativeArgs *natives) {
+  if (argCount == 0 || get_tag(args) == VAR) {
+    natives->tail = args;
+  } else {
+    // get the args node
+    Pair argsNode = node_take(args);
+    // fst points to the arg
+    Port arg = argsNode.fst;
+    Port newArgs = argsNode.snd;
+
+    // save the arg
+    natives->args[natives->count++] = arg;
+    natives->tail = newArgs;
+    if (argCount > 0 && get_tag(newArgs) == CON) {
+      getArgs(newArgs, argCount - 1, natives);
+    }
+  }
+  return (natives->count == argCount);
 }
 
 /*

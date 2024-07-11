@@ -166,6 +166,7 @@ Port enter(Port var);
 u64 get_u24(Numb word);
 Numb new_u24(u64 val);
 bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *natives);
+bool getArgs(Port args, unsigned argCount, NativeArgs *natives);
 void vars_create(Port var, Port val);
 void hvm_c(interactionFn mainFn, NativeArgs *args);
 Port argsNet(TM *tm, NativeArgs *args, unsigned argIdx);
