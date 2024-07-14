@@ -1281,6 +1281,14 @@ bool getArgs(Port args, unsigned argCount, NativeArgs *natives) {
   return (natives->count == argCount);
 }
 
+Port dupeArg(TM *tm, Port arg, Port* dupeArg) {
+  u32 nl;
+  Port dupeNode = node_alloc(tm, &nl);
+  Port dupedVar = vars_alloc(tm, &nl);
+  node_create(dupeNode, new_pair(arg, dupedVar));
+  return new_port(DUP, dupeNode);
+}
+
 /*
 void hvm_c(interactionFn mainFn, NativeArgs *args) {
   // Creates static TMs

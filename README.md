@@ -1,6 +1,7 @@
 Toccata
 =======
 
+binding-ast can be replaced with fn-arity-ast
 Maybe/Nothing are just special cases of types, can be eliminated
 cond/either/and/or can be implemented using deferred redex
 superposition makes miniKanren trivial

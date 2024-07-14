@@ -176,110 +176,108 @@
                 (.init (comp (.init code1) (.init code2)))
                 (.decl (comp (.decl code1) (.decl code2)))))))
 
+(defn reset-code-context []
+  (for [_ (se/set-val .decl [])
+        _ (se/set-val .init [])
+        _ (se/set-val .refs-map {})]
+    '_))
+
 (def generic-call)
 (defprotocol CodeGen
+  (pre-gen [ast]
+    (assert-result r (instance? se/StateError r))
+    )
+
   (gen-call [tgt args mod result-var]
     (assert-result r (instance? se/StateError r))
     ;; by providing impls for this, call sites can be optimized
 
     (generic-call tgt args mod result-var))
 
-  (gen-code [ast mod]
+  (gen-code [ast]
     (assert-result r (instance? se/StateError r))
     )
 
   (gen-code [ast mod arity]
     (assert-result r (instance? se/StateError r))
 
-    (gen-code ast mod)))
+    (gen-code ast)))
 
 (defn generic-call [tgt args mod result-var]
   (assert-result r (instance? se/StateError r))
 
-  (for [tgt-code (gen-code tgt mod)
-        arg-codes (se/traverse args (fn [arg]
-                                      (map (gen-code arg mod)
-                                           comp-code)))]
-    (let [num-args (count args)
-          code (reduce (conj arg-codes tgt-code) empty-c-code
-                       (fn [final-code expr-code]
-                         (let [rm (merge-with + (.refs-map final-code)
-                                              (.refs-map expr-code))]
-                           (-> empty-c-code
-                               (.refs-map rm)
-                               (.decl (conj (.decl final-code) (.decl expr-code)))
-                               (.init (conj (.init final-code) (.init expr-code)))))))]
-      ;; (b/status 'call _LINE_ (ast/location tgt)
-      ;;           lf 'tgt (type-name tgt-code) (.var tgt-code) (.refs-map tgt-code)
-      ;;           lf 'args lf (str "[" (to-str (-> arg-codes
-      ;;                                            (map (fn [code]
-      ;;                                                   [(type-name code)
-      ;;                                                    (.var code)
-      ;;                                                    (.refs-map code)]))
-      ;;                                            (interpose (str lf "  ")))) "]")
-      ;;           lf 'refs-map (.refs-map code))
+  (cond (b/is-glbl result-var)
+        b/se-nop
+        (se/update-val .init
+                       (fn [init]
+                         (let [num-args (count args)]
+                           ;; (b/status 'call _LINE_ (ast/location tgt)
+                           ;;           lf 'tgt (type-name tgt-code) (.var tgt-code) (.refs-map tgt-code)
+                           ;;           lf 'args lf (str "[" (to-str (-> arg-codes
+                           ;;                                            (map (fn [code]
+                           ;;                                                   [(type-name code)
+                           ;;                                                    (.var code)
+                           ;;                                                    (.refs-map code)]))
+                           ;;                                            (interpose (str lf "  ")))) "]")
+                           ;;           lf 'refs-map (.refs-map code))
 
-      (C-init result-var
-              (.decl code)
-              [(.init code)
-               (line-marker (ast/location tgt) "// dynamic unknown type")
-               (cond (b/is-glbl result-var)
-                     ""
-                     ["Port " result-var " = vars_alloc(tm, &vl);"])
-               ;; TODO: handle non-function call targets
-               ;; "if((" (.var tgt-code) ")->type != FunctionType) {" line-sep
-               ;; result-var " = " invoke-arity-sym "("
-               ;; (interpose (list* (str "(FnArity *)" (.c-var sym-location))
-               ;;                   (.c-var target) args) ", ") ");"
-               ;; line-sep "} else {" line-sep
-               "\nif(" (.var tgt-code) "->type == FunctionType) {" line-sep
+                           [init
+                            (line-marker (ast/location tgt) "// dynamic unknown type")
+                            "Port " result-var " = vars_alloc(tm, &vl);"
+                            ;; TODO: handle non-function call targets
+                            ;; "if((" (.var tgt-code) ")->type != FunctionType) {" line-sep
+                            ;; result-var " = " invoke-arity-sym "("
+                            ;; (interpose (list* (str "(FnArity *)" (.c-var sym-location))
+                            ;;                   (.c-var target) args) ", ") ");"
+                            ;; line-sep "} else {" line-sep
+                            "\nif(" (.var tgt) "->type == FunctionType) {" line-sep
 
-               ;; look for static arity and call that
-               "FnArity *arity = findFnArity(" (.var tgt-code) ", " num-args ");"
-               line-sep
-               "if(arity != (FnArity *)0 && !arity->variadic) {" line-sep
-               "NativeArgs callArgs = {" num-args ", {"
-               ;; TODO: add dupe nodes if needed
-               (-> (map arg-codes .var)
-                   (interpose ", "))
-               "}, "
-               ;; TODO: hacky. Find a better solution
-               (cond (b/is-glbl result-var)
-                     "(Port)&"
-                     "")
-               result-var "};\n"
-               "link(tm, new_port(REF, (Port)arity->fn), argsNet(tm, &callArgs, 0));\n"
-               " } else {\n"
+                            ;; look for static arity and call that
+                            "FnArity *arity = findFnArity(" (.var tgt) ", " num-args ");"
+                            line-sep
+                            "if(arity != (FnArity *)0 && !arity->variadic) {" line-sep
+                            "NativeArgs callArgs = {" num-args ", {"
+                            (-> (map args .var)
+                                (interpose ", "))
+                            "}, "
+                            ;; TODO: hacky. Find a better solution
+                            (cond (b/is-glbl result-var)
+                                  "(Port)&"
+                                  "")
+                            result-var "};\n"
+                            "link(tm, new_port(REF, (Port)arity->fn), argsNet(tm, &callArgs, 0));\n"
+                            " } else {\n"
 
-               ;; TODO: for variadic calls
-               ;; "} else if(arity != (FnArity *)0 && arity->variadic) {" line-sep
-               ;; "FnType1 *fn = (FnType1 *)arity->fn;" line-sep
-               ;; "List *args = empty_list;" line-sep
-               ;; (map (reverse arg-codes)
-               ;;      (fn [arg]
-               ;;        (str "args = (List *)listCons("
-               ;;             (.var arg) ", args);" line-sep)))
-               ;; result-var " = fn(arity, (Value *)args);" line-sep
-               ;; "} else {" line-sep
-               "fprintf(stderr, \"\\n*** No arity found for '%s'.\\n\", "
-               "((Function *)" (.var tgt-code) ")->name"
-               ");" line-sep "  abort();" line-sep "}" line-sep
-               (cond (b/is-glbl (.var tgt-code))
-                     ""
-                     ["dec_and_free("(.var tgt-code) ", 1);" line-sep])
-               "}" line-sep]
-              (.refs-map code)))))
+                            ;; TODO: for variadic calls
+                            ;; "} else if(arity != (FnArity *)0 && arity->variadic) {" line-sep
+                            ;; "FnType1 *fn = (FnType1 *)arity->fn;" line-sep
+                            ;; "List *args = empty_list;" line-sep
+                            ;; (map (reverse arg-codes)
+                            ;;      (fn [arg]
+                            ;;        (str "args = (List *)listCons("
+                            ;;             (.var arg) ", args);" line-sep)))
+                            ;; result-var " = fn(arity, (Value *)args);" line-sep
+                            ;; "} else {" line-sep
+                            "fprintf(stderr, \"\\n*** No arity found for '%s'.\\n\", "
+                            "((Function *)" (.var tgt) ")->name"
+                            ");" line-sep "  abort();" line-sep "}" line-sep
+                            (cond (b/is-glbl (.var tgt))
+                                  ""
+                                  ["dec_and_free("(.var tgt) ", 1);" line-sep])
+                            "}" line-sep])))))
 
 (defn emit-code [ast mod]
   (cond (instance? ast/inline-ast ast)
         (se/state-error (code-out (.txt ast)))
 
-        (for [code (gen-code ast mod)]
-          (code-out (.decl code)))))
+        (for [_ (reset-code-context)
+              _ (se/set-val .module mod)
+              _ (cata gen-code ast se/state-error)
+              decl (se/get-val .decl)]
+          (code-out decl))))
 
 (defn call-vector [tgt args mod result-var]
-  (for [arg-codes (se/traverse args (fn [arg]
-                                      (gen-code arg mod)))]
+  (for [arg-codes (se/traverse args gen-code)]
     (let [num-args (count args)
           code (reduce arg-codes empty-c-code
                        (fn [final-code expr-code]
@@ -306,8 +304,7 @@
               (.refs-map code)))))
 
 (defn call-list [tgt args mod result-var]
-  (for [arg-codes (se/traverse args (fn [arg]
-                                      (gen-code arg mod)))]
+  (for [arg-codes (se/traverse args gen-code)]
     (let [num-args (count args)
           code (reduce arg-codes empty-c-code
                        (fn [final-code expr-code]
@@ -334,8 +331,30 @@
                result-var " = (Value *)l;}" line-sep]
               (.refs-map code)))))
 
+(extend-type c/NoSymbol
+  CodeGen
+  (gen-code [ast]
+    (se/state-error ast)))
+
+(extend-type b/TaggedParam
+  CodeGen
+  (gen-code [ast]
+    (se/state-error (.sym ast))))
+
 (extend-type c/TaggedSymbol
   CodeGen
+  (gen-code [ast]
+    (let [var (.var ast)]
+      (comp (for [refs (se/update-in-val [.refs-map var] inc)
+                  :let [dupe-var (str var "_" refs)]
+                  _ (se/update-val .init (fn [init]
+                                           ["Port " dupe-var ";\n"
+                                            var " = dupeArg(" var, "&" dupe-var ");\n"]))]
+              (.var ast dupe-var))
+            (map (se/assoc-in-val [.refs-map var] 1)
+                 (fn [_]
+                   ast)))))
+
   (gen-call [tgt args mod result-var]
     (cond (= tgt 'vector)
           (call-vector tgt args mod result-var)
@@ -343,67 +362,69 @@
           (= tgt 'list)
           (call-list tgt args mod result-var)
 
-          (generic-call tgt args mod result-var)))
-
-  (gen-code [x mod]
-    (-> empty-c-code
-        (.refs-map (cond (b/is-glbl (.var x))
-                         {}
-                         {(.var x) 1}))
-        (.var (.var x))
-        se/state-error)))
+          (generic-call tgt args mod result-var))))
 
 (extend-type ast/inline-ast
   CodeGen
-  (gen-code [x mod]
-    (cond (= (.var x) "")
-          (se/state-error (.init empty-c-code [(.txt x)]))
+  (gen-code [x]
+    (map (cond (= (.var x) "")
+               (se/update-val .init (fn [init]
+                                      [init (.txt x)]))
 
-          (se/state-error (.decl empty-c-code ["Port " (.var x) " = " (.txt x) ";"]))))
+               (se/update-val .decl (fn [decl]
+                                      ["Port " (.var x) " = " (.txt x) ";\n"])))
+         (fn [_]
+           x)))
 
   (gen-code [x mod arity]
-    (gen-code x mod)))
+    (gen-code x)))
 
 (defn destruct-seq [p]
   (assert (instance? (any-of ast/ParamType c/NoSymbol) p))
-  (assert-result r (instance? Vector r))
+  (assert-result r (instance? se/state-error r))
 
   (cond (or (= p c/no-symbol)
             (instance? c/TaggedSymbol p))
-        []
+        b/se-nop
 
         (and (instance? ast/params-ast p)
              (empty? (.fixed p))
              (instance? c/TaggedSymbol (.variadic p)))
-        [(C-init (.var (.variadic p))
-                 []
-                 ["Value *" (.var (.variadic p)) " = " (.var p) ";"]
-                 {(.var p) 1})]
+        (do
+          (print-err 'boom _FILE_ _LINE_)
+          (abort)
+          (se/state-error
+           [(C-init (.var (.variadic p))
+                    []
+                    ["Value *" (.var (.variadic p)) " = " (.var p) ";"]
+                    {(.var p) 1})]))
 
         (let [elem-count (inc (count (.fixed p)))
               loc (ast/location p)]
-          (comp [(-> empty-c-code
-                     (.init [(map (.fixed p) (fn [inner]
-                                               ["Value *" (.var inner) ";"]))
-                             (cond (= c/no-symbol (.variadic p))
-                                   ""
-                                   ["Value *" (.var (.variadic p)) ";"])
-                             "if (1) {Value **destArgs [" elem-count "] = {"
-                             (map (.fixed p) (fn [inner]
-                                               ["&" (.var inner) ", "]))
-                             (cond (= c/no-symbol (.variadic p))
-                                   "(Value **)0"
-                                   ["&" (.var (.variadic p))])
-                             "};" "destructValue(\"" (.file loc) "\", \"" (.line loc)
-                             "\", (Value *)" (.var p) ", " elem-count ", destArgs);}"])
-                     (.refs-map {(.var p) 1}))]
-                (map (.fixed p) (fn [sym]
-                                  (C-init (.var sym) [] [] {})))
-                (cond (= c/no-symbol (.variadic p))
-                      []
-                      [(C-init (.var (.variadic p)) [] [] {})])
-                (flat-map (.fixed p) destruct-seq)
-                (destruct-seq (.variadic p))))))
+          (print-err 'boom _FILE_ _LINE_)
+          (abort)
+          (se/state-error (comp [(-> empty-c-code
+                                     (.init [(map (.fixed p) (fn [inner]
+                                                               ["Value *" (.var inner) ";"]))
+                                             (cond (= c/no-symbol (.variadic p))
+                                                   ""
+                                                   ["Value *" (.var (.variadic p)) ";"])
+                                             "if (1) {Value **destArgs [" elem-count "] = {"
+                                             (map (.fixed p) (fn [inner]
+                                                               ["&" (.var inner) ", "]))
+                                             (cond (= c/no-symbol (.variadic p))
+                                                   "(Value **)0"
+                                                   ["&" (.var (.variadic p))])
+                                             "};" "destructValue(\"" (.file loc) "\", \"" (.line loc)
+                                             "\", (Value *)" (.var p) ", " elem-count ", destArgs);}"])
+                                     (.refs-map {(.var p) 1}))]
+                                (map (.fixed p) (fn [sym]
+                                                  (C-init (.var sym) [] [] {})))
+                                (cond (= c/no-symbol (.variadic p))
+                                      []
+                                      [(C-init (.var (.variadic p)) [] [] {})])
+                                (flat-map (.fixed p) destruct-seq)
+                                (destruct-seq (.variadic p)))))))
 
 (defn checking-fn [params c-fn]
   (assert (instance? ast/params-ast params))
@@ -457,9 +478,11 @@
 
 (extend-type ast/do-ast
   CodeGen
-  (gen-code [ast mod]
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
     (map (se/traverse (.body ast) (fn [expr]
-                                    (gen-code expr mod ast)))
+                                    (gen-code expr)))
          comp-code)))
 
 (defn name-natives [params]
@@ -468,151 +491,169 @@
                             (.fixed params))
                  []
                  (fn [args [idx arg]]
-                   (conj args (str "    Port "
-                                   (.var arg)
-                                   " = arityArgs.args[" idx "];\n"))))
-         (flat-map (.fixed params) destruct-seq)]
+                   (conj args (str "    Port " (.var arg)
+                                   " = arityArgs.args[" idx "];\n"))))]
 
         (do
           (b/status "variadiac inline fn")
           (abort)
           [", Value *" (.var params)])))
 
+(extend-type ast/params-ast
+  CodeGen
+  (gen-code [ast]
+    (se/state-error ast)))
+
 (extend-type ast/fn-arity-ast
   CodeGen
-  (gen-code [ast mod]
-    (cond (empty? (.body ast))
-          (b/compilation-error "Invalid function body at:" (ast/location ast))
+  (pre-gen [ast]
+    (se/state-error ast))
 
-          (map (se/traverse (.body ast) (fn [expr]
-                                          (gen-code expr mod ast)))
-               (fn [body-exprs]
-                 (let [params (.params ast)
-                       body-exprs (comp (cond (= (.variadic params) c/no-symbol)
-                                              (flat-map (.fixed params) destruct-seq)
+  (gen-code [ast]
+    (let [params (.params ast)]
+      (either (map (last (.body ast))
+                   (fn [last-ast]
+                     (for [;;  _ (cata destruct-seq params se/state-error)
+                           _ (se/update-val .init
+                                            (fn [init]
+                                              (cond (instance? ast/inline-ast last-ast)
+                                                    ["  NativeArgs arityArgs;\n"
+                                                     "  if (getNativeArgs(tm, ref, args, "
+                                                     (count (.fixed params))
+                                                     ", &arityArgs)) {\n"
+                                                     (name-natives params) init
+                                                     "\n    link(tm, arityArgs.tail, result);\n  }\n"
+                                                     "  return TRUE;\n};\n"]
 
-                                              (destruct-seq params))
-                                        body-exprs)
-                       code (either (for [last-ast (last (.body ast))
-                                          :when (instance? ast/inline-ast last-ast)
-                                          last-expr (last body-exprs)]
-                                      (-> last-expr
-                                          (.init ["  if (getNativeArgs(tm, ref, args, "
-                                                  (count (.fixed params))
-                                                  ", &arityArgs)) {\n"
-                                                  (name-natives params)
-                                                  (.init last-expr)
-                                                  "\n    link(tm, arityArgs.tail, result);\n  }\n"])
-                                          (.refs-map (reduce (ast/all-syms params) {}
-                                                             (fn [rm s]
-                                                               (assoc rm (.var s) 1))))))
+                                                    (let [arityArgs (str "arity" (.var ast) "Args")]
+                                                      [init
+                                                       "NativeArgs " arityArgs ";\n"
+                                                       "  if (getArgs(args, "
+                                                       (count (.fixed params))
+                                                       ", &" arityArgs ")) {\n"
+                                                       "\n    link(tm, (Port)&" (.var last-ast)
+                                                       ", " arityArgs ".tail);}\nreturn TRUE;}\n"]))))]
+                       ast)))
+              (b/compilation-error "Invalid function body at:" (ast/location ast)))
 
-                                    (let [body-code (comp-code body-exprs)]
-                                      (.init body-code ["  if (getArgs(args, "
-                                                        (count (.fixed params))
-                                                        ", &arityArgs)) {\n"
-                                                        (.init body-code)
-                                                        "\n    link(tm, (Port)&" (.var body-code)
-                                                        ", arityArgs.tail);\n  }\n"])))]
-                   ;; (b/status 'body _LINE_ (ast/location ast) 'params (ast/all-syms params)
-                   ;;           lf (str "[" (-> body-exprs
-                   ;;                           (map (fn [code]
-                   ;;                                  [(type-name code)
-                   ;;                                   (.var code)
-                   ;;                                   (.refs-map code)]))
-                   ;;                           (interpose (str lf "  "))
-                   ;;                           to-str) "]"))
-                   ;; TODO: handle recursion properly
-                   (-> code
-                       ;; TODO: don't think this does anything
-                       ;; (.decl [(.decl code)])
-                       (.init [ "\n  NativeArgs arityArgs;\n"
-                               (.init code)
-                               "  return TRUE;\n};\n"]))))))))
+      ;; (for [_ b/se-nop
+
+      ;;       ;; body-exprs (comp (cond (= (.variadic params) c/no-symbol)
+      ;;       ;;                        (flat-map (.fixed params) destruct-seq)
+
+      ;;       ;;                        (destruct-seq params))
+      ;;       ;;                  body-exprs)
+
+      ;;       code ]
+
+      ;;   ;; (b/status 'body _LINE_ (ast/location ast) 'params (ast/all-syms params)
+      ;;   ;;           lf (str "[" (-> body-exprs
+      ;;   ;;                           (map (fn [code]
+      ;;   ;;                                  [(type-name code)
+      ;;   ;;                                   (.var code)
+      ;;   ;;                                   (.refs-map code)]))
+      ;;   ;;                           (interpose (str lf "  "))
+      ;;   ;;                           to-str) "]"))
+      ;;   ;; TODO: handle recursion properly
+      ;;   (-> code
+      ;;       ;; TODO: don't think this does anything
+      ;;       ;; (.decl [(.decl code)])
+      ;;       (.init [ "\n  NativeArgs arityArgs;\n"
+      ;;               (.init code)
+      ;;               "  return TRUE;\n};\n"])))
+      )))
 
 (extend-type b/StaticArity
   CodeGen
-  (gen-code [ast mod]
+  (pre-gen [ast]
+    (se/state-error ast))
+
+  (gen-code [ast]
     (let [c-fn (.c-fn ast)
           params (-> ast .arity .params)
           arity-var (b/global-var 'Arity)
           arity-struct-var (.var (.arity ast))
-          checker (checking-fn (-> ast .arity .params) c-fn)]
-      (for [arity-code (gen-code (.arity ast) mod)]
-        (-> empty-c-code
-            (.var arity-var)
-            (.decl [(.decl arity-code)
-                    "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;"
-                    (.init arity-code)
-                    (.decl checker)
-                    "FnArity " arity-struct-var " = {FnArityType, REFS_STATIC, "
-                    (count params)
-                    ", (Vector *)0, "
-                    (cond (= (-> ast .arity .params .variadic)
-                             c/no-symbol)
-                          ;; fixed arity
-                          0
+          ;; checker (checking-fn (-> ast .arity .params) c-fn)
+          ]
+      (for [init (se/get-val .init)
+            _ (se/set-val .init [])
+            decl (se/get-val .decl)
+            _ (se/set-val .decl [decl
+                                 "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;"
+                                 init
+                                 "FnArity " arity-struct-var " = {FnArityType, REFS_STATIC, "
+                                 (count params)
+                                 ", (Vector *)0, "
+                                 (cond (= (-> ast .arity .params .variadic)
+                                          c/no-symbol)
+                                       ;; fixed arity
+                                       0
 
-                          ;; variadic arity
-                          1)
-                    ", " (.var checker) "};\n"
-                    "FnArity *" arity-var " = &" arity-struct-var ";"]))))))
+                                       ;; variadic arity
+                                       1)
+                                 ", " c-fn "};\n"
+                                 "FnArity *" arity-var " = &" arity-struct-var ";"])]
+        ast))))
 
 (extend-type b/ClosureArity
   CodeGen
-  (gen-code [ast mod]
-    (let [c-fn (b/global-var b/CFn)
-          arity-var (.var (.arity ast))
-          params (-> ast .arity .params)
-          [closed-over closure-vars] (reduce (vec (.closures ast)) [[] []]
-                                             (fn [[closed-over closure-vars] [k v]]
-                                               [(conj closed-over k) (conj closure-vars v)]))]
-      (for [arity-code (gen-code (.arity ast) mod)]
-        (-> empty-c-code
-            (.var arity-var)
-            (.decl [(.decl arity-code)
-                    "Value *" c-fn "(FnArity *arity"
-                    (cond (= (.variadic params) c/no-symbol)
-                          (reduce (.fixed params) []
-                                  (fn [args arg]
-                                    (conj args (str ", Value *" (.var arg)))))
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
+    ;; (let [c-fn (b/global-var b/CFn)
+    ;;       arity-var (.var (.arity ast))
+    ;;       params (-> ast .arity .params)
+    ;;       [closed-over closure-vars] (reduce (vec (.closures ast)) [[] []]
+    ;;                                          (fn [[closed-over closure-vars] [k v]]
+    ;;                                            [(conj closed-over k) (conj closure-vars v)]))]
+    ;;   (for [arity-code (gen-code (.arity ast))]
+    ;;     (-> empty-c-code
+    ;;         (.var arity-var)
+    ;;         (.decl [(.decl arity-code)
+    ;;                 "Value *" c-fn "(FnArity *arity"
+    ;;                 (cond (= (.variadic params) c/no-symbol)
+    ;;                       (reduce (.fixed params) []
+    ;;                               (fn [args arg]
+    ;;                                 (conj args (str ", Value *" (.var arg)))))
 
-                          [", Value *" (.var params)])
-                    ") {\nwhile (1) {"
+    ;;                       [", Value *" (.var params)])
+    ;;                 ") {\nwhile (1) {"
 
-                    ;; TODO: put in when runtime checking works
-                    ;; "if(1){int " checked-var " = 1;" line-sep
-                    ;; check-params
-                    ;; "if(!" checked-var "){abort();}}" line-sep
+    ;;                 ;; TODO: put in when runtime checking works
+    ;;                 ;; "if(1){int " checked-var " = 1;" line-sep
+    ;;                 ;; check-params
+    ;;                 ;; "if(!" checked-var "){abort();}}" line-sep
 
-                    "incRef((Value *)arity->closures, 1);"
-                    (-> (ast/params closure-vars)
-                        (.var "arity->closures")
-                        destruct-seq
-                        comp-code
-                        .init)
+    ;;                 "incRef((Value *)arity->closures, 1);"
+    ;;                 (-> (ast/params closure-vars)
+    ;;                     (.var "arity->closures")
+    ;;                     destruct-seq
+    ;;                     comp-code
+    ;;                     .init)
 
-                    (.init arity-code)])
-            (.init ["FnArity *" arity-var
-                    " = malloc_fnArity();"
-                    arity-var "->count = " (count params) ";"
-                    arity-var "->variadic = "
-                    (cond (= (-> ast .arity .params .variadic)
-                             c/no-symbol)
-                          ;; fixed arity
-                          0
+    ;;                 (.init arity-code)])
+    ;;         (.init ["FnArity *" arity-var
+    ;;                 " = malloc_fnArity();"
+    ;;                 arity-var "->count = " (count params) ";"
+    ;;                 arity-var "->variadic = "
+    ;;                 (cond (= (-> ast .arity .params .variadic)
+    ;;                          c/no-symbol)
+    ;;                       ;; fixed arity
+    ;;                       0
 
-                          ;; variadic arity
-                          1)
-                    ";"
-                    arity-var "->fn = " c-fn ";"
-                    arity-var "->closures = empty_vect;"
-                    (map closed-over (fn [closure]
-                                       [arity-var "->closures = mutateVectConj("
-                                        arity-var "->closures, (Value *)" (.var closure) ");"]))])
-            (.refs-map (reduce closed-over {}
-                               (fn [rm closure]
-                                 (assoc rm (.var closure) 1)))))))))
+    ;;                       ;; variadic arity
+    ;;                       1)
+    ;;                 ";"
+    ;;                 arity-var "->fn = " c-fn ";"
+    ;;                 arity-var "->closures = empty_vect;"
+    ;;                 (map closed-over (fn [closure]
+    ;;                                    [arity-var "->closures = mutateVectConj("
+    ;;                                     arity-var "->closures, (Value *)" (.var closure) ");"]))])
+    ;;         (.refs-map (reduce closed-over {}
+    ;;                            (fn [rm closure]
+    ;;                              (assoc rm (.var closure) 1)))))))
+    b/se-nop
+    ))
 
 (defn default-fn [val c-fn]
   (assert (instance? ast/prototype-ast val))
@@ -639,7 +680,9 @@
   (assert (instance? ast/prototype-ast proto))
 
   CodeGen
-  (gen-code [_ mod]
+  (gen-code [_]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
     (let [impls (.impls proto)
           params (.params proto)
           disp-arg (either (map (first (.fixed params)) .var)
@@ -690,7 +733,10 @@
 
 (extend-type ast/fn-ast
   CodeGen
-  (gen-code [ast mod]
+  (pre-gen [ast]
+    (se/state-error ast))
+
+  (gen-code [ast]
     (let [fn-sym (.fn-sym ast)
           var (.var ast)
           [defaults arities] (reduce (.arities ast) [[] []]
@@ -704,81 +750,85 @@
 
                                              [defs (conj arities arity)])))]
       ;; TODO: what if fn-sym is c/no-symbol
-      (for [code-vect (se/traverse (comp defaults arities)
-                                   (fn [arity]
-                                     (gen-code arity mod)))]
-        (cond (every arities (fn [arity]
-                               (instance? StaticOrDispatcher
-                                          arity)))
-              (let [struct-var (.struct-var ast)]
-                (-> empty-c-code
-                    (.var var)
-                    (.decl [(map code-vect .decl)
-                            "\n// --------- " fn-sym " -------------\n"
-                            ;; "Value *" var ";" line-sep
-                            "Function " struct-var " = {FunctionType, REFS_STATIC, \""
-                            fn-sym "\", " (count arities) ", "
-                            "{" (-> arities
-                                    (map (fn [arity]
-                                           (str "&"
-                                                (cond (instance? b/StaticArity arity)
-                                                      (.var (.arity arity))
+      (cond (every arities (partial instance? StaticOrDispatcher))
+            (let [struct-var (.struct-var ast)]
+              (for [_ (se/update-val .decl
+                                     (fn [decl]
+                                       [decl
+                                        "\n// --------- " fn-sym " -------------\n"
+                                        ;; "Value *" var ";" line-sep
+                                        "Function " struct-var " = {FunctionType, REFS_STATIC, \""
+                                        fn-sym "\", " (count arities) ", "
+                                        "{" (-> arities
+                                                (map (fn [arity]
+                                                       (str "&"
+                                                            (cond (instance? b/StaticArity arity)
+                                                                  (.var (.arity arity))
 
-                                                      (.arity-struct-var arity)))))
-                                    (interpose ", "))
-                            "}};\n"
-                            "Value *" var " = (Value *)&" struct-var ";\n\n"])))
+                                                                  (.arity-struct-var arity)))))
+                                                (interpose ", "))
+                                        "}};\n"
+                                        "Value *" var " = (Value *)&" struct-var ";\n\n"]))]
+                ast))
 
-              (let [arity-count (count arities)
-                    fn-ptr-var (.struct-var ast)]
-                (-> empty-c-code
-                    (.var var)
-                    (.decl (map code-vect .decl))
-                    (.init [(map code-vect .init)
-                            "Function *" fn-ptr-var " = malloc_function(" arity-count ");"
-                            "Value *" var " = (Value *)" fn-ptr-var ";"
-                            fn-ptr-var "->name = \"" fn-sym "\";"
-                            fn-ptr-var "->arityCount = " arity-count ";"
-                            (map (zip-lists (map code-vect .var)
-                                            (range arity-count))
-                                 (fn [[sym index]]
-                                   [sym "->parent = " var ";"
-                                    fn-ptr-var "->arities[" index "] = " sym ";"]))])
-                    (.refs-map (merge-maps + (map code-vect .refs-map))))))))))
+            (do
+              (print-err 'boom _FILE_ _LINE_)
+              (abort)
+              ;; (let [arity-count (count arities)
+              ;;       fn-ptr-var (.struct-var ast)]
+              ;;   (-> empty-c-code
+              ;;       (.var var)
+              ;;       (.decl (map code-vect .decl))
+              ;;       (.init [(map code-vect .init)
+              ;;               "Function *" fn-ptr-var " = malloc_function(" arity-count ");"
+              ;;               "Value *" var " = (Value *)" fn-ptr-var ";"
+              ;;               fn-ptr-var "->name = \"" fn-sym "\";"
+              ;;               fn-ptr-var "->arityCount = " arity-count ";"
+              ;;               (map (zip-lists (map code-vect .var)
+              ;;                               (range arity-count))
+              ;;                    (fn [[sym index]]
+              ;;                      [sym "->parent = " var ";"
+              ;;                       fn-ptr-var "->arities[" index "] = " sym ";"]))])
+              ;;       (.refs-map (merge-maps + (map code-vect .refs-map)))))
+              b/se-nop)))))
 
 (extend-type ast/definition-ast
   CodeGen
-  (gen-code [ast mod]
+  (pre-gen [ast]
+    (se/state-error ast))
+
+  (gen-code [ast]
     (let [[expr] (.value-exprs ast)]
-      (for [code (gen-code expr mod)
-            _ (se/update-val .init (fn [glbl-init]
-                                     (let [add-global (either (= (.var code) "")
-                                                              [;; "globals = listCons("
-                                                               ;; (.var code) ", globals);\n"
-                                                               ])]
-                                       (conj glbl-init
-                                             (either (empty? (.init code))
-                                                     [(map (vec (.refs-map code))
-                                                           (fn [[var refs]]
-                                                             (cond (or (b/is-glbl var)
-                                                                       (< refs 1))
-                                                                   []
-                                                                   ["incRef(" var ", " refs ");"])))
-                                                      (.init code)
-                                                      add-global])))))]
-        (-> code
-            (.decl (cond (empty? (.init code))
-                         ["// " (str (ast/location ast) "\n")
-                          (.decl code)]
-                         (cond (= (.var code) "")
-                               (.decl code)
-                               ["Port " (.var code) ";\n"
-                                (.decl code)])))
-            (.init []))))))
+      (for [init (se/get-val .init)
+            _ (se/update-val .glbl-init
+                             (fn [glbl-init]
+                               (let [add-global (either (= (.var expr) "")
+                                                        [;; "globals = listCons("
+                                                         ;; (.var code) ", globals);\n"
+                                                         ])]
+                                 (conj glbl-init
+                                       (either (empty? init)
+                                               [init add-global])))))
+            _ (se/set-val .init [])
+            _ (se/update-val .decl
+                             (fn [decl]
+                               ;; TODO: there used to be a problem with multiple 'cond' clauses
+                               (cond (empty? init)
+                                     ["// " (str (ast/location ast) "\n")
+                                      decl]
+
+                                     (cond (= (.var expr) "")
+                                           decl
+
+                                           ["Port " (.var expr) ";\n"
+                                            decl]))))]
+        ast))))
 
 (extend-type ast/integer-ast
   CodeGen
-  (gen-code [ast mod]
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
     (se/state-error
      (.var empty-c-code (str "new_num_(new_i24_(" (.int ast) "))")))
     ;; TODO: remove this after we know the above works
@@ -792,114 +842,135 @@
 
 (extend-type ast/string-ast
   CodeGen
-  (gen-code [ast mod]
+  (gen-code [ast]
     (let [str-val (.string ast)
           str-len (count str-val)
           str-ptr (.var ast)]
-      (comp (se/get-in-val [.constants .strings str-val])
+      (comp (map (se/get-in-val [.constants .strings str-val])
+                 (fn [_]
+                   ast))
             (for [const-strs (se/get-in-val [.constants .strings])
                   :let [str-idx (count const-strs)
                         str-sym (str "str" str-idx)]
                   _ (se/assoc-in-val [.constants .strings str-val]
                                      (-> empty-c-code
                                          (.init [str-ptr " = new_port_(VAL, (Port)&" str-sym ");\n"])
-                                         (.var str-ptr)))]
-              (-> empty-c-code
-                  (.decl ["struct {TYPE_SIZE type;
-        REFS_SIZE refs;
-        Integer *hash;
-        int64_t len;
-        char buffer["
-                          (inc str-len)
-                          "];\n} " str-sym " = {StringBufferType, REFS_STATIC, 0, "
-                          str-len ", \"" (escape-chars str-val) "\"};\n"
-                          "Port " str-ptr ";\n"])
-                  (.var str-ptr)))))))
+                                         (.var str-ptr)))
+                  _ (se/update-val .decl
+                                   (fn [decl]
+                                     [decl
+                                      "struct {TYPE_SIZE type;\n"
+                                      "        REFS_SIZE refs;\n"
+                                      "        Integer *hash;\n"
+                                      "        int64_t len;\n"
+                                      "        char buffer["
+                                      (inc str-len)
+                                      "];\n} " str-sym " = {StringBufferType, REFS_STATIC, 0, "
+                                      str-len ", \"" (escape-chars str-val) "\"};\n"
+                                      "Port " str-ptr ";\n"]))]
+              ast)))))
 
 (extend-type ast/call-ast
   CodeGen
-  (gen-code [ast mod]
-    (gen-call (.call-target ast) (.args ast) mod (.var ast))))
+  (pre-gen [ast]
+    (se/state-error ast))
+  
+  (gen-code [ast]
+    (map (gen-call (.call-target ast) (.args ast) mod (.var ast))
+         (fn [_]
+           ast))))
 
 (extend-type ast/binding-ast
   CodeGen
-  (gen-code [ast mod]
-    (for [val-code (gen-code (.val ast) mod)
-          cont-codes (se/traverse (.cont ast) (fn [expr]
-                                                (gen-code expr mod)))]
-      (let [cont-codes (comp [val-code]
-                             (destruct-seq (.binding ast))
-                             cont-codes)
-            [last-code cont-codes] (either (map (last cont-codes)
-                                                (fn [last-code]
-                                                  (cond (b/is-glbl (.var ast))
-                                                        [(-> last-code
-                                                             (.var (.var ast))
-                                                             (.decl [(.decl last-code)
-                                                                     "Value *" (.var ast) ";"])
-                                                             (.init [(.init last-code)
-                                                                     (.var ast) " = "
-                                                                     (.var last-code) ";"]))
-                                                         (butlast cont-codes)]
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
+    ;; (for [val-code (gen-code (.val ast))
+    ;;       cont-codes (se/traverse (.cont ast) (fn [expr]
+    ;;                                             (gen-code expr)))]
+    ;;   (let [cont-codes (comp [val-code]
+    ;;                          (destruct-seq (.binding ast))
+    ;;                          cont-codes)
+    ;;         [last-code cont-codes] (either (map (last cont-codes)
+    ;;                                             (fn [last-code]
+    ;;                                               (cond (b/is-glbl (.var ast))
+    ;;                                                     [(-> last-code
+    ;;                                                          (.var (.var ast))
+    ;;                                                          (.decl [(.decl last-code)
+    ;;                                                                  "Value *" (.var ast) ";"])
+    ;;                                                          (.init [(.init last-code)
+    ;;                                                                  (.var ast) " = "
+    ;;                                                                  (.var last-code) ";"]))
+    ;;                                                      (butlast cont-codes)]
 
-                                                        (= (.var last-code) (.var ast))
-                                                        [last-code (butlast cont-codes)]
+    ;;                                                     (= (.var last-code) (.var ast))
+    ;;                                                     [last-code (butlast cont-codes)]
 
-                                                        (do
-                                                          (b/status 'compiler-error
-                                                                    (c/Location _FILE_ _LINE_)
-                                                                    lf 'for-ast-ast (ast/location ast)
-                                                                    lf (str "'" (.var last-code) "' '"
-                                                                            (.var ast) "'"))
-                                                          (b/wait-for-err-out)
-                                                          (abort)))))
-                                           [empty-c-code empty-vector])
-            code (reduce (reverse cont-codes) last-code
-                         (fn [final-code expr-code]
-                           (cond (= final-code empty-c-code)
-                                 expr-code
-                                 (comp-code expr-code final-code))))]
-        ;; (b/status 'binding _LINE_ 'val (ast/location ast) (.var ast)
-        ;;           ;; lf 'val (type-name val-code) (.var val-code) (.refs-map val-code)
-        ;;           lf 'cont lf (str "[" (to-str (-> cont-codes
-        ;;                                         (map (fn [code]
-        ;;                                                [(type-name code)
-        ;;                                                 (.var code)
-        ;;                                                 (.refs-map code)
-        ;;                                                 (count (.init code))]))
-        ;;                                         (interpose (str lf "  ")))) "]")
-        ;;           lf 'code (type-name code) (.var code) (.refs-map code))
-        (make-init code)))))
+    ;;                                                     (do
+    ;;                                                       (b/status 'compiler-error
+    ;;                                                                 (c/Location _FILE_ _LINE_)
+    ;;                                                                 lf 'for-ast-ast (ast/location ast)
+    ;;                                                                 lf (str "'" (.var last-code) "' '"
+    ;;                                                                         (.var ast) "'"))
+    ;;                                                       (b/wait-for-err-out)
+    ;;                                                       (abort)))))
+    ;;                                        [empty-c-code empty-vector])
+    ;;         code (reduce (reverse cont-codes) last-code
+    ;;                      (fn [final-code expr-code]
+    ;;                        (cond (= final-code empty-c-code)
+    ;;                              expr-code
+    ;;                              (comp-code expr-code final-code))))]
+    ;;     ;; (b/status 'binding _LINE_ 'val (ast/location ast) (.var ast)
+    ;;     ;;           ;; lf 'val (type-name val-code) (.var val-code) (.refs-map val-code)
+    ;;     ;;           lf 'cont lf (str "[" (to-str (-> cont-codes
+    ;;     ;;                                         (map (fn [code]
+    ;;     ;;                                                [(type-name code)
+    ;;     ;;                                                 (.var code)
+    ;;     ;;                                                 (.refs-map code)
+    ;;     ;;                                                 (count (.init code))]))
+    ;;     ;;                                         (interpose (str lf "  ")))) "]")
+    ;;     ;;           lf 'code (type-name code) (.var code) (.refs-map code))
+    ;;     (make-init code)))
+    b/se-nop
+    ))
 
 (extend-type ast/protocol-ast
   CodeGen
-  (gen-code [ast mod]
-    (let [unique-protos (reduce (.prototypes ast) {}
-                                (fn [m proto-ast]
-                                  (assoc m (.fn-name proto-ast) proto-ast)))]
-      (-> empty-c-code
-          (.decl [(map (.prototypes ast)
-                       (fn [proto-ast]
-                         ["Value *" (.var proto-ast) "();"]))
-                  (map (keys unique-protos)
-                       (fn [sym]
-                         (either (map (get-in mod [.namespaces c/no-symbol .values 0 sym .var])
-                                      (fn [var]
-                                        ["Value *" var ";"]))
-                                 "")))])
-          se/state-error))))
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
+    ;; (let [unique-protos (reduce (.prototypes ast) {}
+    ;;                             (fn [m proto-ast]
+    ;;                               (assoc m (.fn-name proto-ast) proto-ast)))]
+    ;;   (-> empty-c-code
+    ;;       (.decl [(map (.prototypes ast)
+    ;;                    (fn [proto-ast]
+    ;;                      ["Value *" (.var proto-ast) "();"]))
+    ;;               (map (keys unique-protos)
+    ;;                    (fn [sym]
+    ;;                      (either (map (get-in mod [.namespaces c/no-symbol .values 0 sym .var])
+    ;;                                   (fn [var]
+    ;;                                     ["Value *" var ";"]))
+    ;;                              "")))])
+    ;;       se/state-error))
+    (se/state-error 'boom)
+    ))
 
 (extend-type ast/block-comment-ast
   CodeGen
-  (gen-code [ast mod]
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
     (se/state-error empty-c-code)))
 
 (extend-type ast/or-ast
   CodeGen
-  (gen-code [ast mod]
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
     (let [loc (ast/location (.clause ast))]
-      (for [clause-code (gen-code (.clause ast) mod)
-            cont-code (gen-code (.cont ast) mod)]
+      (for [clause-code (gen-code (.clause ast))
+            cont-code (gen-code (.cont ast))]
         (let [cont-refs (dissoc (.refs-map cont-code) (.var cont-code))]
           (C-init (.var ast)
                   (comp (.decl clause-code) (.decl cont-code))
@@ -916,10 +987,12 @@
 
 (extend-type ast/and-ast
   CodeGen
-  (gen-code [ast mod]
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
     (let [loc (ast/location (.clause ast))]
-      (for [clause-code (gen-code (.clause ast) mod)
-            cont-code (gen-code (.cont ast) mod)]
+      (for [clause-code (gen-code (.clause ast))
+            cont-code (gen-code (.cont ast))]
         (let [cont-refs (.refs-map cont-code)
               refs-map (merge-with + (.refs-map clause-code)
                                    cont-refs)
@@ -940,9 +1013,11 @@
 
 (extend-type ast/reify-ast
   CodeGen
-  (gen-code [ast mod]
+  (gen-code [ast]
+    (print-err 'boom _FILE_ _LINE_)
+    (abort)
     (for [code-vect (se/traverse (.impls ast) (fn [impl]
-                                                (gen-code impl mod)))]
+                                                (gen-code impl)))]
       (cond (every (.impls ast) (fn [impl]
                                   (assert (instance? b/Arity impl))
 
@@ -976,7 +1051,7 @@
           val)
         (se/traverse (fn [val]
                        (se/try
-                         (for [code (gen-code val mod)
+                         (for [code (gen-code val)
                                _ (se/update-val .init (fn [init]
                                                         (conj init (.init code))))]
                            (code-out (.decl code)))
@@ -1102,3 +1177,4 @@
                          (interpose ","))
                      ") = " arity-var ";\n"))))
   code-context)
+
