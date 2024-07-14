@@ -1117,11 +1117,11 @@ void pretty_print_port(Port port) {
   }
 }
 
-Port argsNet(TM *tm, NativeArgs *args, unsigned argIdx) {
+Port argsNet_(TM *tm, NativeArgs *args, unsigned argIdx) {
   if (argIdx == args->count) {
     return args->tail;
   } else if (argIdx < args->count) {
-    Port tail = argsNet(tm, args, argIdx + 1);
+    Port tail = argsNet_(tm, args, argIdx + 1);
     u32 nl;
     Port n0 = node_alloc(tm, &nl);
     node_create(n0, new_pair(args->args[argIdx], tail));
@@ -1132,6 +1132,10 @@ Port argsNet(TM *tm, NativeArgs *args, unsigned argIdx) {
     abort();
     return NONE;
   }
+}
+
+Port argsNet(TM *tm, NativeArgs *args) {
+  return argsNet_(tm, args, 0);
 }
 
 void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
@@ -1213,7 +1217,7 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
     switch (argTag) {
     case VAR :
       // we need to wait on an arg
-      newArgs = argsNet(tm, natives, 0);
+      newArgs = argsNet(tm, natives);
       nl = 0;
       Port rdx = node_alloc(tm, &nl);
       node_create(rdx, new_pair(ref, newArgs));
@@ -1227,10 +1231,10 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
     case CON :
       argPair = node_take(arg);
       natives->args[natives->count - 1] = argPair.fst;
-      newArgs = argsNet(tm, natives, 0);
+      newArgs = argsNet(tm, natives);
       push_redex(tm, new_pair(ref, newArgs));
       natives->args[natives->count - 1] = argPair.snd;
-      newArgs = argsNet(tm, natives, 0);
+      newArgs = argsNet(tm, natives);
       push_redex(tm, new_pair(ref, newArgs));
       break;
 
@@ -1239,7 +1243,7 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
       switch (get_tag(out)) {
       case VAR :
 	// we need to wait on the rest of the args list
-	newArgs = argsNet(tm, natives, 0);
+	newArgs = argsNet(tm, natives);
 	Port rdx = node_alloc(tm, &nl);
 	node_create(rdx, new_pair(ref, newArgs));
 	link(tm, out, new_port(RDX, rdx));

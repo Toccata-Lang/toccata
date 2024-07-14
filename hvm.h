@@ -169,7 +169,7 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
 bool getArgs(Port args, unsigned argCount, NativeArgs *natives);
 void vars_create(Port var, Port val);
 void hvm_c(interactionFn mainFn, NativeArgs *args);
-Port argsNet(TM *tm, NativeArgs *args, unsigned argIdx);
+Port argsNet(TM *tm, NativeArgs *args);
 u64 time64();
 void alloc_static_tms();
 void free_static_tms();
