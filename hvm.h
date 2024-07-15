@@ -133,13 +133,13 @@ typedef struct {
 #define OP_SHR 0x15
 #define FP_SHR 0x16
 
-#define new_i24_(x) (((u64)x << 5) | TY_I24)
-#define new_num_(x) ((x << TAG_SIZE) | NUM)
+// #define new_i24_(x) (((u64)x << 5) | TY_I24)
+// #define new_num_(x) ((x << TAG_SIZE) | NUM)
 
 // Port: Constructor and Getters
 // -----------------------------
 
-#define new_port_(tag, x) (((u64)x | tag))
+// #define new_port_(tag, x) (((u64)x | tag))
 
 Port new_num(Port val);
 Val get_num(Port port);
