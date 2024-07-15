@@ -468,3 +468,4 @@ Value *hashVec(Value *n, Value *s);
 
 ArrayNode *malloc_arrayNode();
 HashCollisionNode *malloc_hashCollisionNode(int itemCount);
+void moveFreeToCentral();

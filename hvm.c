@@ -930,12 +930,16 @@ typedef struct {
 void* thread_func(void* arg) {
   ThreadArg* data = (ThreadArg*)arg;
   evaluator(data->tm);
+  moveFreeToCentral();
   return NULL;
 }
 
 // Evaluates all redexes.
 // TODO: cache threads to avoid spawning overhead
 void normalize() {
+  if (TPC == 1) {
+    printf("*** runing single threaded\n");
+  }
   // Inits thread_arg objects
   ThreadArg thread_arg[TPC];
   for (u32 t = 0; t < TPC; ++t) {

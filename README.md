@@ -8,6 +8,7 @@ superposition makes miniKanren trivial
 also make parsing trivial. Eliminate grammar and recursive descent
 deferred redex makes esb's obsolete. May not even need that
 closures can be limited to single arity in the parser
+Because of optimality, deforestation might be trivial as would multi modules
 
 
 > "Pithy quote."
