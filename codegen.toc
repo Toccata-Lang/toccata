@@ -22,7 +22,8 @@
             (and (= 'core (.file loc))
                  (= 0 (.line loc)))
             (= line-sep lf))
-        ["\n// " loc "\n#\n"]
+        ;; ["\n// " loc "\n#\n"]
+        ["\n"]
         ["\n" marker "\n#line "
          (str (.line loc)) " " "\""
          (cond (= 'core (.file loc))
@@ -342,16 +343,20 @@
 (extend-type c/TaggedSymbol
   CodeGen
   (gen-code [ast]
-    (let [var (.var ast)]
-      (comp (for [refs (se/update-in-val [.refs-map var] inc)
-                  :let [dupe-var (str var "_" refs)]
-                  _ (se/update-val .init (fn [init]
-                                           ["Port " dupe-var ";\n"
-                                            var " = dupeArg(" var, "&" dupe-var ");\n"]))]
-              (.var ast dupe-var))
-            (map (se/assoc-in-val [.refs-map var] 1)
-                 (fn [_]
-                   ast)))))
+    (cond (b/is-glbl (.var ast))
+          (se/state-error ast)
+
+          (let [var (.var ast)]
+            (comp (for [refs (se/update-in-val [.refs-map var] inc)
+                        :let [dupe-var (str var "_" refs)]
+                        _ (se/update-val .init (fn [init]
+                                                 ["\nPort " dupe-var " = vars_alloc(tm, &vl);\n"
+                                                  var " = dupeArg(tm, " var, ", " dupe-var ");\n"
+                                                  init ]))]
+                    (.var ast dupe-var))
+                  (map (se/assoc-in-val [.refs-map var] 1)
+                       (fn [_]
+                         ast))))))
 
   (gen-call [tgt args mod result-var]
     (cond (= tgt 'vector)
@@ -489,7 +494,7 @@
                             (.fixed params))
                  []
                  (fn [args [idx arg]]
-                   (conj args (str "    Port " (.var arg)
+                   (conj args (str "  Port " (.var arg)
                                    " = arityArgs.args[" idx "];\n"))))]
 
         (do
@@ -516,21 +521,30 @@
                                             (fn [init]
                                               (cond (instance? ast/inline-ast last-ast)
                                                     ["  NativeArgs arityArgs;\n"
+                                                     "  Port result;\n"
                                                      "  if (getNativeArgs(tm, ref, args, "
                                                      (count (.fixed params))
                                                      ", &arityArgs)) {\n"
                                                      (name-natives params) init
-                                                     "\n    link(tm, arityArgs.tail, result);\n  }\n"
-                                                     "  return TRUE;\n};\n"]
+                                                     "    link(tm, arityArgs.tail, result);\n"
+                                                     "  }\n  return TRUE;\n};\n"]
 
-                                                    (let [arityArgs (str "arity" (.var ast) "Args")]
-                                                      [init
-                                                       "NativeArgs " arityArgs ";\n"
+                                                    (let [arityArgs (str (.var ast) "Args")]
+                                                      ["NativeArgs " arityArgs ";\n"
+                                                       "  " arityArgs ".count = 0;\n"
                                                        "  if (getArgs(args, "
                                                        (count (.fixed params))
                                                        ", &" arityArgs ")) {\n"
-                                                       "\n    link(tm, (Port)&" (.var last-ast)
-                                                       ", " arityArgs ".tail);}\nreturn TRUE;}\n"]))))]
+                                                       (-> (range (count (.fixed params)))
+                                                           (zip-lists (.fixed params))
+                                                           (map (fn [[idx p]]
+                                                                  ["Port " (.var p) " = "
+                                                                   arityArgs ".args[" (str idx)
+                                                                   "];\n"])))
+                                                       init
+                                                       "    link(tm, (Port)" (.var last-ast)
+                                                       ", " arityArgs
+                                                       ".tail);\n}\nreturn TRUE;\n}\n"]))))]
                        ast)))
               (b/compilation-error "Invalid function body at:" (ast/location ast)))
 
@@ -577,7 +591,7 @@
             _ (se/set-val .init [])
             decl (se/get-val .decl)
             _ (se/set-val .decl [decl
-                                 "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;"
+                                 "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;\n"
                                  init
                                  "FnArity " arity-struct-var " = {FnArityType, REFS_STATIC, "
                                  (count params)
@@ -875,7 +889,7 @@
   CodeGen
   (pre-gen [ast]
     (se/state-error ast))
-  
+
   (gen-code [ast]
     (map (gen-call (.call-target ast) (.args ast) mod (.var ast))
          (fn [_]
@@ -981,7 +995,7 @@
                         (fn [[var refs]]
                           [" dec_and_free(" var ", " refs "); "]))
                    (.var ast) " = " (.var clause-code)
-                   "; } else { dec_and_free(" (.var clause-code) ", 1); " 
+                   "; } else { dec_and_free(" (.var clause-code) ", 1); "
                    (.init cont-code) (.var ast) " = " (.var cont-code) ";}"]
                   (merge-with + (.refs-map clause-code)
                               cont-refs)))))))
@@ -1008,7 +1022,7 @@
                    (map (vec cont-refs)
                         (fn [[var refs]]
                           [" dec_and_free(" var ", " refs "); "]))
-                   (.var ast) " = nothing; } else { dec_and_free(" (.var clause-code) ", 1); " 
+                   (.var ast) " = nothing; } else { dec_and_free(" (.var clause-code) ", 1); "
                    (.init cont-code) (.var ast) " = " (.var cont-code) ";}"]
                   refs-map))))))
 

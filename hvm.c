@@ -938,7 +938,7 @@ void* thread_func(void* arg) {
 // TODO: cache threads to avoid spawning overhead
 void normalize() {
   if (TPC == 1) {
-    printf("*** runing single threaded\n");
+    printf("*** running single threaded\n");
   }
   // Inits thread_arg objects
   ThreadArg thread_arg[TPC];
@@ -1289,12 +1289,13 @@ bool getArgs(Port args, unsigned argCount, NativeArgs *natives) {
   return (natives->count == argCount);
 }
 
-Port dupeArg(TM *tm, Port arg, Port* dupeArg) {
+Port dupeArg(TM *tm, Port arg, Port dupeArg) {
   u32 nl;
   Port dupeNode = node_alloc(tm, &nl);
   Port dupedVar = vars_alloc(tm, &nl);
-  node_create(dupeNode, new_pair(arg, dupedVar));
-  return new_port(DUP, dupeNode);
+  node_create(dupeNode, new_pair(dupedVar, dupeArg));
+  link(tm, arg, new_port(DUP, dupeNode));
+  return dupedVar;
 }
 
 /*
