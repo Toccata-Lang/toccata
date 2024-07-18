@@ -1,10 +1,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "c797d90"))
+                          :sha "91611e8"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "a2587de"))
+                            :sha "a1eb8bb"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -332,31 +332,40 @@
 
 (extend-type c/NoSymbol
   CodeGen
+  (pre-gen [ast]
+    (se/state-error ast))
+
   (gen-code [ast]
     (se/state-error ast)))
 
 (extend-type b/TaggedParam
   CodeGen
+  (pre-gen [ast]
+    (se/state-error ast))
+
   (gen-code [ast]
     (se/state-error (.sym ast))))
 
 (extend-type c/TaggedSymbol
   CodeGen
-  (gen-code [ast]
-    (cond (b/is-glbl (.var ast))
-          (se/state-error ast)
+  (pre-gen [ast]
+    (se/state-error ast))
 
-          (let [var (.var ast)]
+  (gen-code [ast]
+    (let [var (.var ast)]
+      (cond (b/is-glbl var)
+            (se/state-error ast)
+
             (comp (for [refs (se/update-in-val [.refs-map var] inc)
+
                         :let [dupe-var (str var "_" refs)]
                         _ (se/update-val .init (fn [init]
                                                  ["\nPort " dupe-var " = vars_alloc(tm, &vl);\n"
                                                   var " = dupeArg(tm, " var, ", " dupe-var ");\n"
                                                   init ]))]
                     (.var ast dupe-var))
-                  (map (se/assoc-in-val [.refs-map var] 1)
-                       (fn [_]
-                         ast))))))
+                  (for [_ (se/assoc-in-val [.refs-map var] 1)]
+                    ast)))))
 
   (gen-call [tgt args mod result-var]
     (cond (= tgt 'vector)
@@ -369,6 +378,9 @@
 
 (extend-type ast/inline-ast
   CodeGen
+  (pre-gen [ast]
+    (se/state-error ast))
+
   (gen-code [x]
     (map (cond (= (.var x) "")
                (se/update-val .init (fn [init]
@@ -504,49 +516,104 @@
 
 (extend-type ast/params-ast
   CodeGen
+  (pre-gen [ast]
+    (se/state-error (cata (fn [p]
+                            (cond (instance? c/TaggedSymbol p)
+                                  (b/TaggedParam p)
+
+                                  p))
+                          ast)))
+
   (gen-code [ast]
     (se/state-error ast)))
 
 (extend-type ast/fn-arity-ast
   CodeGen
   (pre-gen [ast]
-    (se/state-error ast))
+    (for [_ (se/update-val .refs-map (fn [refs]
+                                       (either (map (first refs)
+                                                    (fn [refs-map]
+                                                      (cons refs-map refs)))
+                                               (list {}))))]
+      ast))
 
   (gen-code [ast]
-    (let [params (.params ast)]
+    (let [params (.params ast)
+          arity-args (str (.var ast) "Args")]
       (either (map (last (.body ast))
                    (fn [last-ast]
-                     (for [;;  _ (cata destruct-seq params se/state-error)
-                           _ (se/update-val .init
-                                            (fn [init]
-                                              (cond (instance? ast/inline-ast last-ast)
-                                                    ["  NativeArgs arityArgs;\n"
-                                                     "  Port result;\n"
-                                                     "  if (getNativeArgs(tm, ref, args, "
-                                                     (count (.fixed params))
-                                                     ", &arityArgs)) {\n"
-                                                     (name-natives params) init
-                                                     "    link(tm, arityArgs.tail, result);\n"
-                                                     "  }\n  return TRUE;\n};\n"]
+                     (cond (instance? ast/inline-ast last-ast)
+                           (se/state-error ast)
 
-                                                    (let [arityArgs (str (.var ast) "Args")]
-                                                      ["NativeArgs " arityArgs ";\n"
-                                                       "  " arityArgs ".count = 0;\n"
-                                                       "  if (getArgs(args, "
-                                                       (count (.fixed params))
-                                                       ", &" arityArgs ")) {\n"
-                                                       (-> (range (count (.fixed params)))
-                                                           (zip-lists (.fixed params))
-                                                           (map (fn [[idx p]]
-                                                                  ["Port " (.var p) " = "
-                                                                   arityArgs ".args[" (str idx)
-                                                                   "];\n"])))
-                                                       init
-                                                       "    link(tm, (Port)" (.var last-ast)
-                                                       ", " arityArgs
-                                                       ".tail);\n}\nreturn TRUE;\n}\n"]))))]
-                       ast)))
+                           (for [;;  _ (cata destruct-seq params se/state-error)
+                                 _ (se/update-val .init
+                                                  (fn [init]
+                                                    [(cata (fn [ast]
+                                                             (cond (instance? c/TaggedSymbol ast)
+                                                                   ["Port " (.var ast)
+                                                                    " = vars_alloc(tm, &vl);\n"]
+
+                                                                   (instance? ast/params-ast ast)
+                                                                   (.fixed ast)
+
+                                                                   ""))
+                                                           params)
+                                                     init
+                                                     "NativeArgs " arity-args ";\n"
+                                                     "  " arity-args ".count = "
+                                                     (count (.fixed params)) ";\n"
+                                                     (-> (range (count (.fixed params)))
+                                                         (zip-lists (.fixed params))
+                                                         (map (fn [[idx p]]
+                                                                [arity-args ".args[" (str idx)
+                                                                 "] = " (.var p) ";\n"])))
+                                                     arity-args ".tail = " (.var last-ast) ";\n"
+                                                     "Port " (.var ast) " = argsNet(tm, &"
+                                                     arity-args ");\n"]))]
+                             ast))))
               (b/compilation-error "Invalid function body at:" (ast/location ast)))
+;; =======
+;;     (let [params (.params ast)
+;;           arityArgs (str (.var ast) "Args")]
+;;       (either (for [last-ast (last (.body ast))
+;;                     :when-not (instance? ast/inline-ast last-ast)]
+;;                 (for [_ (cata (fn [p]
+;;                                 (cond (instance? c/TaggedSymbol p)
+;;                                       (comp (se/get-in-val [.refs-map (.var p)])
+;;                                             (se/update-val .init
+;;                                                            (fn [init]
+;;                                                              []))
+;;                                             (b/se-debug "p:" _LINE_ p))
+
+;;                                       b/se-nop))
+;;                               params se/state-error)
+;;                       _ (se/update-val .init
+;;                                        (fn [init]
+;;                                          [(cata (fn [ast]
+;;                                                   (cond (instance? c/TaggedSymbol ast)
+;;                                                         ["Port " (.var ast)
+;;                                                          " = vars_alloc(tm, &vl);\n"]
+
+;;                                                         (instance? ast/params-ast ast)
+;;                                                         (.fixed ast)
+
+;;                                                         ""))
+;;                                                 params)
+;;                                           init
+;;                                           "NativeArgs " arityArgs ";\n"
+;;                                           "  " arityArgs ".count = "
+;;                                           (count (.fixed params)) ";\n"
+;;                                           (-> (range (count (.fixed params)))
+;;                                               (zip-lists (.fixed params))
+;;                                               (map (fn [[idx p]]
+;;                                                      [arityArgs ".args[" (str idx)
+;;                                                       "] = " (.var p) ";\n"])))
+;;                                           arityArgs ".tail = " (.var last-ast) ";\n"
+;;                                           "Port " (.var ast) " = argsNet(tm, &"
+;;                                           arityArgs ");\n"]))]
+;;                   ast))
+;;               (se/state-error ast))
+;; >>>>>>> Stashed changes
 
       ;; (for [_ b/se-nop
 
@@ -573,7 +640,41 @@
       ;;       (.init [ "\n  NativeArgs arityArgs;\n"
       ;;               (.init code)
       ;;               "  return TRUE;\n};\n"])))
-      )))
+      ))
+
+  (gen-call [tgt args mod result-var]
+    (se/update-val .init
+                 (fn [init]
+                   (let [num-args (count args)]
+                     ;; (b/status 'call _LINE_ (ast/location tgt)
+                     ;;           lf 'tgt (type-name tgt-code) (.var tgt-code) (.refs-map tgt-code)
+                     ;;           lf 'args lf (str "[" (to-str (-> arg-codes
+                     ;;                                            (map (fn [code]
+                     ;;                                                   [(type-name code)
+                     ;;                                                    (.var code)
+                     ;;                                                    (.refs-map code)]))
+                     ;;                                            (interpose (str lf "  ")))) "]")
+                     ;;           lf 'refs-map (.refs-map code))
+                     [init
+                      (line-marker (ast/location tgt) "// call fn-arity")
+                      "Port " result-var " = vars_alloc(tm, &vl);\n"
+
+                      ;; look for static arity and call that
+                      line-sep
+                      "NativeArgs callArgs = {" num-args ", {"
+                      (-> (map args .var)
+                          (interpose ", "))
+                      "}, "
+                      ;; TODO: hacky. Find a better solution
+                      (cond (b/is-glbl result-var)
+                            "(Port)&"
+                            "")
+                      result-var "};\n"
+                      "link(tm, " (.var tgt) ", argsNet(tm, &callArgs));\n"
+                      ;; (cond (b/is-glbl (.var tgt))
+                      ;;       ""
+                      ;;       ["dec_and_free("(.var tgt) ", 1);" line-sep])
+                      line-sep])))))
 
 (extend-type b/StaticArity
   CodeGen
@@ -585,6 +686,9 @@
           params (-> ast .arity .params)
           arity-var (b/global-var 'Arity)
           arity-struct-var (.var (.arity ast))
+          inline? (flat-map (-> ast .arity .body last)
+                            (fn [last-ast]
+                              (instance? ast/inline-ast last-ast)))
           ;; checker (checking-fn (-> ast .arity .params) c-fn)
           ]
       (for [init (se/get-val .init)
@@ -592,7 +696,20 @@
             decl (se/get-val .decl)
             _ (se/set-val .decl [decl
                                  "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;\n"
+                                 (cond inline?
+                                       ["  NativeArgs arityArgs;\n"
+                                        "  Port result;\n"
+                                        "  if (getNativeArgs(tm, ref, args, "
+                                        (count (.fixed params))
+                                        ", &arityArgs)) {\n"
+                                        (name-natives params)]
+
+                                       "")
                                  init
+                                 (cond inline?
+                                       "\n    link(tm, arityArgs.tail, result);\n}\n"
+                                       ["link(tm, " arity-struct-var ", args);\n"])
+                                 "return TRUE;\n}\n"
                                  "FnArity " arity-struct-var " = {FnArityType, REFS_STATIC, "
                                  (count params)
                                  ", (Vector *)0, "
@@ -606,66 +723,6 @@
                                  ", " c-fn "};\n"
                                  "FnArity *" arity-var " = &" arity-struct-var ";"])]
         ast))))
-
-(extend-type b/ClosureArity
-  CodeGen
-  (gen-code [ast]
-    (print-err 'boom _FILE_ _LINE_)
-    (abort)
-    ;; (let [c-fn (b/global-var b/CFn)
-    ;;       arity-var (.var (.arity ast))
-    ;;       params (-> ast .arity .params)
-    ;;       [closed-over closure-vars] (reduce (vec (.closures ast)) [[] []]
-    ;;                                          (fn [[closed-over closure-vars] [k v]]
-    ;;                                            [(conj closed-over k) (conj closure-vars v)]))]
-    ;;   (for [arity-code (gen-code (.arity ast))]
-    ;;     (-> empty-c-code
-    ;;         (.var arity-var)
-    ;;         (.decl [(.decl arity-code)
-    ;;                 "Value *" c-fn "(FnArity *arity"
-    ;;                 (cond (= (.variadic params) c/no-symbol)
-    ;;                       (reduce (.fixed params) []
-    ;;                               (fn [args arg]
-    ;;                                 (conj args (str ", Value *" (.var arg)))))
-
-    ;;                       [", Value *" (.var params)])
-    ;;                 ") {\nwhile (1) {"
-
-    ;;                 ;; TODO: put in when runtime checking works
-    ;;                 ;; "if(1){int " checked-var " = 1;" line-sep
-    ;;                 ;; check-params
-    ;;                 ;; "if(!" checked-var "){abort();}}" line-sep
-
-    ;;                 "incRef((Value *)arity->closures, 1);"
-    ;;                 (-> (ast/params closure-vars)
-    ;;                     (.var "arity->closures")
-    ;;                     destruct-seq
-    ;;                     comp-code
-    ;;                     .init)
-
-    ;;                 (.init arity-code)])
-    ;;         (.init ["FnArity *" arity-var
-    ;;                 " = malloc_fnArity();"
-    ;;                 arity-var "->count = " (count params) ";"
-    ;;                 arity-var "->variadic = "
-    ;;                 (cond (= (-> ast .arity .params .variadic)
-    ;;                          c/no-symbol)
-    ;;                       ;; fixed arity
-    ;;                       0
-
-    ;;                       ;; variadic arity
-    ;;                       1)
-    ;;                 ";"
-    ;;                 arity-var "->fn = " c-fn ";"
-    ;;                 arity-var "->closures = empty_vect;"
-    ;;                 (map closed-over (fn [closure]
-    ;;                                    [arity-var "->closures = mutateVectConj("
-    ;;                                     arity-var "->closures, (Value *)" (.var closure) ");"]))])
-    ;;         (.refs-map (reduce closed-over {}
-    ;;                            (fn [rm closure]
-    ;;                              (assoc rm (.var closure) 1)))))))
-    b/se-nop
-    ))
 
 (defn default-fn [val c-fn]
   (assert (instance? ast/prototype-ast val))
@@ -856,6 +913,9 @@
 
 (extend-type ast/string-ast
   CodeGen
+  (pre-gen [ast]
+    (se/state-error ast))
+
   (gen-code [ast]
     (let [str-val (.string ast)
           str-len (count str-val)
@@ -1034,7 +1094,7 @@
     (for [code-vect (se/traverse (.impls ast) (fn [impl]
                                                 (gen-code impl)))]
       (cond (every (.impls ast) (fn [impl]
-                                  (assert (instance? b/Arity impl))
+                                  (assert (instance? b/StaticArity impl))
 
                                   (instance? b/StaticArity impl)))
             (let [reified-sym (b/global-var 'Reified)]
@@ -1113,7 +1173,7 @@
               "  for(int i = 0; i < argc; i++) {\n"
               "    argVect = mutateVectConj(argVect, stringValue(argv[i]));\n"
               "  }\n"
-              "  argVect->refs = -1;\n"
+              ;; "  argVect->refs = -1;\n"
 
               "  APort resultVar;\n"
               "  vars_create((Port)&resultVar, FREE);\n"
@@ -1149,7 +1209,10 @@
               ;; "   l->refs = 1;\n"
               ;; "}\n"
               ;; TODO: casting argVect to List * is a temp hack
-              "  cleanupMemory(the_final_answer, maybeNothing, (List *)argVect);\n"
+
+              ;; "  cleanupMemory(the_final_answer, maybeNothing, (List *)argVect);\n"
+              "  cleanupMemory(the_final_answer, maybeNothing, (List *)NULL);\n"
+
               "  if (malloc_count - free_count != 0)\n"
               "    return(1);\n"
               "#endif"
