@@ -6,6 +6,7 @@ Maybe/Nothing are just special cases of types, can be eliminated
 cond/either/and/or can be implemented using deferred redex
 superposition makes miniKanren trivial
 also make parsing trivial. Eliminate grammar and recursive descent
+deferred redex can be used to implement laziness
 deferred redex makes esb's obsolete. May not even need that
 closures can be limited to single arity in the parser
 Because of optimality, deforestation might be trivial as would multi modules
