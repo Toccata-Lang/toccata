@@ -133,8 +133,8 @@ typedef struct {
 #define OP_SHR 0x15
 #define FP_SHR 0x16
 
-// #define new_i24_(x) (((u64)x << 5) | TY_I24)
-// #define new_num_(x) ((x << TAG_SIZE) | NUM)
+#define new_i24_(x) (((u64)x << 5) | TY_I24)
+#define new_num_(x) ((x << TAG_SIZE) | NUM)
 
 // Port: Constructor and Getters
 // -----------------------------
