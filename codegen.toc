@@ -235,10 +235,10 @@
                       "FnArity *arity = findFnArity(" (.var tgt) ", " num-args ");"
                       line-sep
                       "if(arity != (FnArity *)0 && !arity->variadic) {" line-sep
-                      "NativeArgs callArgs = {" num-args ", {"
+                      "NativeArgs callArgs = {" (inc num-args) ", {"
                       (-> (map args .var)
                           (interpose ", "))
-                      "}, "
+                      ", new_port(ARG, 0)}, "
                       ;; TODO: hacky. Find a better solution
                       (cond (b/is-glbl result-var)
                             "(Port)&"
@@ -401,14 +401,14 @@
                                                          (dissoc rm (.var ast))))
                             _ (se/update-val .init
                                              (fn [init]
-                                               [init
-                                                (str "Port " (.var ast)
-                                                     " = vars_alloc(tm, &vl);\n")]))]
+                                               [(str "Port " (.var ast)
+                                                     " = vars_alloc(tm, &vl);\n")
+                                                init]))]
                         '_)
                       (se/update-val .init
                                      (fn [init]
-                                       [init
-                                        (str "Port " (.var ast) " = erase;\n")])))
+                                       [(str "Port " (.var ast) " = erase;\n")
+                                        init])))
 
                 (se/state-error '_)))
         params se/state-error))
@@ -517,9 +517,7 @@
                      (cond (instance? ast/inline-ast last-ast)
                            (se/state-error ast)
 
-                           (for [_ (b/se-debug "test" _LINE_)
-                                 _ (destruct-params params)
-                                 _ (b/se-debug "test" _LINE_)
+                           (for [_ (destruct-params params)
                                  _ (se/update-val .init
                                                   (fn [init]
                                                     [init
@@ -531,7 +529,7 @@
                                                          (map (fn [[idx p]]
                                                                 [arity-args ".args[" (str idx)
                                                                  "] = " (.var p) ";\n"])))
-                                                     arity-args ".tail = " (.var last-ast) ";\n"
+                                                     arity-args ".result = " (.var last-ast) ";\n"
                                                      "Port " (.var ast) " = argsNet(tm, &"
                                                      arity-args ");\n"]))]
                              ast))))
@@ -661,9 +659,12 @@
             _ (se/set-val .decl [decl
                                  "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;\n"
                                  (cond inline?
-                                       ["  NativeArgs arityArgs;\n"
-                                        "  Port result;\n"
-                                        "  if (getNativeArgs(tm, ref, args, "
+                                       ["  if (get_tag(args) == CON) {\n"
+                                        "    Pair pr = node_take(args);\n"
+                                        "    Port resultVar = pr.fst;\n"
+                                        "    Port result;\n"
+                                        "    NativeArgs arityArgs;\n"
+                                        "    if (getNativeArgs(tm, ref, pr.snd, "
                                         (count (.fixed params))
                                         ", &arityArgs)) {\n"
                                         (name-natives params)]
@@ -671,9 +672,15 @@
                                        "")
                                  init
                                  (cond inline?
-                                       "\n    link(tm, arityArgs.tail, result);\n}\n"
-                                       ["link(tm, " arity-struct-var ", args);\n"])
-                                 "return TRUE;\n}\n"
+                                       ["\nlink(tm, resultVar, result);\n}\n"
+                                        "return TRUE;\n"
+                                        "} else {\n"
+                                        "  fprintf(stderr, \"Compiler error at %s:%d\", __FILE__, __LINE__);\n"
+                                        "  abort();\n"
+                                        "  return FALSE;\n"
+                                        "}\n}\n"]
+                                       ["link(tm, " arity-struct-var ", args);\n"
+                                        "return TRUE;\n}\n"])
                                  "FnArity " arity-struct-var " = {FnArityType, REFS_STATIC, "
                                  (count params)
                                  ", (Vector *)0, "
@@ -1128,9 +1135,10 @@
               "  int bashResult = 0;\n"
               "  Value *the_final_answer = nothing;\n"
               "  NativeArgs natives;\n"
-              "  natives.count = 1;\n"
+              "  natives.count = 2;\n"
               "  natives.args[0] = new_port(VAL, (Port)argVect);\n"
-              "  natives.tail = (Port)&resultVar;\n"
+              "  natives.args[1] = new_port(ARG, (Port)0);\n"
+              "  natives.result = (Port)&resultVar;\n"
               "  link(tm, new_ref(" main-fn "), argsNet(tm, &natives));\n"
               "  normalize();\n"
               "  double duration = (time64() - start) / 1000000000.0; // seconds\n"

@@ -132,19 +132,20 @@ bool should_swap(Port A, Port B) {
 }
 
 // Gets a rule's priority
-u8 interactionPriority[11][11] = {
-  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // VAR
-  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE}, // REF
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,TRUE }, // ERA
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE, FALSE,FALSE}, // NUM
-  {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,FALSE}, // CON
-  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE,TRUE, FALSE,TRUE }, // DUP
-  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,TRUE, FALSE,FALSE}, // OPR
-  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, TRUE, FALSE,FALSE}, // SWI
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE}, // VAR
-  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // RDX
-  {FALSE,FALSE,TRUE ,FALSE,FALSE,TRUE ,FALSE,FALSE,FALSE,FALSE,FALSE}  // VAL
+u8 interactionPriority[12][12] = {
+  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL   ARG
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE}, // VAR
+  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // REF
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE }, // ERA
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // NUM
+  {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // CON
+  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE,TRUE, FALSE,FALSE,TRUE }, // DUP
+  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,TRUE, FALSE,FALSE,FALSE}, // OPR
+  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, TRUE, FALSE,FALSE,FALSE}, // SWI
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE}, // VAR
+  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // RDX
+  {FALSE,FALSE,TRUE ,FALSE,FALSE,TRUE ,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // VAL
+  {FALSE,FALSE,TRUE ,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,TRUE }  // ARG
 };
 
 bool is_high_priority(Pair AB) {
@@ -787,19 +788,20 @@ bool ABRT(TM* tm, Port a, Port b) {
   abort();
 }
 
-interactionFn interactions[11][11] = {
-  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL
-  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT}, // VAR
-  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&LINK,&ABRT,&ABRT}, // REF
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF}, // ERA
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ABRT}, // NUM
-  {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT}, // CON
-  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE}, // DUP
-  {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT}, // OPR
-  {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT}, // SWI
-  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT}, // VAR
-  {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
-  {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}  // VAL
+interactionFn interactions[12][12] = {
+  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL   ARG
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
+  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&LINK,&ABRT,&ABRT,&ABRT}, // REF
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF,&VOID}, // ERA
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ABRT,&ABRT}, // NUM
+  {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
+  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE,&ABRT}, // DUP
+  {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // OPR
+  {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT}, // SWI
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
+  {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
+  {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
+  {&ABRT,&ABRT,&VOID,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&VOID}  // ARG
 };
 
 interactionFn get_rule(Port a, Port b) {
@@ -1121,30 +1123,22 @@ void pretty_print_port(Port port) {
   }
 }
 
-Port argsNet_(TM *tm, NativeArgs *args, unsigned argIdx) {
-  if (argIdx == args->count) {
-    return args->tail;
-  } else if (argIdx < args->count) {
-    Port tail = argsNet_(tm, args, argIdx + 1);
-    u32 nl;
-    Port n0 = node_alloc(tm, &nl);
-    node_create(n0, new_pair(args->args[argIdx], tail));
-    return new_port(CON, n0);
-  } else {
-    // should never reach here
-    fprintf(stderr, "Compiler bug; line %d\n", __LINE__);
-    abort();
-    return NONE;
-  }
-}
-
 Port argsNet(TM *tm, NativeArgs *args) {
-  return argsNet_(tm, args, 0);
+  u32 nl;
+  Port n0 = node_alloc(tm, &nl);
+  Port tail = args->args[args->count - 1];
+  for (int i = args->count - 2; i >= 0; i--) {
+    node_create(n0, new_pair(args->args[i], tail));
+    tail = new_port(CON, n0);
+    n0 = node_alloc(tm, &nl);
+  }
+  node_create(n0, new_pair(args->result, tail));
+  return new_port(CON, n0);
 }
 
 void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
   if (argCount == 0 || get_tag(args) == VAR) {
-    natives->tail = args;
+    natives->result = args;
   } else {
     // get the args node
     Pair argsNode = node_take(args);
@@ -1162,7 +1156,7 @@ void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
 
     // save the arg
     natives->args[natives->count++] = arg;
-    natives->tail = newArgs;
+    natives->result = newArgs;
     if (argCount > 0 && get_tag(newArgs) == CON) {
       switch(argTag) {
       case NUM:
@@ -1180,10 +1174,11 @@ void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
 }
 
 void eraseNatives(TM *tm, NativeArgs* args) {
-  args->count = -1;
   for(int i = 0; i < args->count; i++) {
     link(tm, erase, args->args[i]);
   }
+  link(tm, erase, args->result);
+  args->count = -1;
 }
 
 // extract the requested number of native args
@@ -1191,11 +1186,17 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
   natives->count = 0;
 
   // try to get the correct number of arguments
-  if (argCount == 0) {
-    natives->tail = args;
-    return TRUE;
+  if (get_tag(args) != CON) {
+    return FALSE;
+  } else if (argCount == 0) {
+    Pair pr = node_take(args);
+    if (get_tag(pr.snd) != ARG) {
+    } else {
+      natives->result = pr.fst;
+      return TRUE;
+    }
   } else {
-    natives->tail = NONE;
+    natives->result = NONE;
     extractNativeArgs(args, argCount, natives);
   }
 
@@ -1206,7 +1207,7 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
   else
     arg = natives->args[natives->count - 1];
   Tag argTag = get_tag(arg);
-  Port out = natives->tail;
+  Port out = natives->result;
   if (get_tag(out) == ERA) {
     eraseNatives(tm, natives);
     return FALSE;
@@ -1221,6 +1222,8 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
     switch (argTag) {
     case VAR :
       // we need to wait on an arg
+      natives->args[natives->count] = new_port(ARG, 0);
+      natives->count++;
       newArgs = argsNet(tm, natives);
       nl = 0;
       Port rdx = node_alloc(tm, &nl);
@@ -1233,11 +1236,14 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
       break;
 
     case CON :
+      natives->args[natives->count] = new_port(ARG, 0);
+      int argsCount = natives->count;
+      natives->count++;
       argPair = node_take(arg);
-      natives->args[natives->count - 1] = argPair.fst;
+      natives->args[argsCount - 1] = argPair.fst;
       newArgs = argsNet(tm, natives);
       push_redex(tm, new_pair(ref, newArgs));
-      natives->args[natives->count - 1] = argPair.snd;
+      natives->args[argsCount - 1] = argPair.snd;
       newArgs = argsNet(tm, natives);
       push_redex(tm, new_pair(ref, newArgs));
       break;
@@ -1269,26 +1275,6 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
   }
 }
 
-bool getArgs(Port args, unsigned argCount, NativeArgs *natives) {
-  if (argCount == 0 || get_tag(args) == VAR) {
-    natives->tail = args;
-  } else {
-    // get the args node
-    Pair argsNode = node_take(args);
-    // fst points to the arg
-    Port arg = argsNode.fst;
-    Port newArgs = argsNode.snd;
-
-    // save the arg
-    natives->args[natives->count++] = arg;
-    natives->tail = newArgs;
-    if (argCount > 0 && get_tag(newArgs) == CON) {
-      getArgs(newArgs, argCount - 1, natives);
-    }
-  }
-  return (natives->count == argCount);
-}
-
 Port dupeArg(TM *tm, Port arg, Port dupeArg) {
   u32 nl;
   Port dupeNode = node_alloc(tm, &nl);
@@ -1318,7 +1304,7 @@ void hvm_c(interactionFn mainFn, NativeArgs *args) {
 
   // Prints the result
   // printf("Result: ");
-  // pretty_print_port(enter(args->tail));
+  // pretty_print_port(enter(args->result));
   // printf("\n");
 
   // Stops the timer

@@ -98,6 +98,7 @@ typedef u64 Numb; // Numb ::= 60-bit (rounded up to u64)
 #define VR1 0x8 // variable alias
 #define RDX 0x9 // deferred redex
 #define VAL 0xA // native value
+#define ARG 0xB // end of args list
 
 extern Port erase;
 
@@ -105,7 +106,7 @@ extern Port erase;
 typedef struct {
   int count;
   Port args[MAX_ARGS];
-  Port tail;
+  Port result;
 } NativeArgs;
 
 // Numbers
@@ -166,7 +167,6 @@ Port enter(Port var);
 u64 get_u24(Numb word);
 Numb new_u24(u64 val);
 bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *natives);
-bool getArgs(Port args, unsigned argCount, NativeArgs *natives);
 void vars_create(Port var, Port val);
 void hvm_c(interactionFn mainFn, NativeArgs *args);
 Port argsNet(TM *tm, NativeArgs *args);
