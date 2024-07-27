@@ -357,7 +357,6 @@
             (se/state-error ast)
 
             (comp (for [refs (se/update-in-val [.refs-map var] inc)
-
                         :let [dupe-var (str var "_" refs)]
                         _ (se/update-val .init (fn [init]
                                                  ["\nPort " dupe-var " = vars_alloc(tm, &vl);\n"
@@ -394,52 +393,25 @@
   (gen-code [x mod arity]
     (gen-code x)))
 
-(defn destruct-seq [p]
-  (assert (instance? (any-of ast/ParamType c/NoSymbol) p))
-  (assert-result r (instance? se/state-error r))
+(defn destruct-params [params]
+  (cata (fn [ast]
+          (cond (instance? c/TaggedSymbol ast)
+                (comp (for [refs (se/get-in-val [.refs-map (.var ast)])
+                            _ (se/update-val .refs-map (fn [rm]
+                                                         (dissoc rm (.var ast))))
+                            _ (se/update-val .init
+                                             (fn [init]
+                                               [init
+                                                (str "Port " (.var ast)
+                                                     " = vars_alloc(tm, &vl);\n")]))]
+                        '_)
+                      (se/update-val .init
+                                     (fn [init]
+                                       [init
+                                        (str "Port " (.var ast) " = erase;\n")])))
 
-  (cond (or (= p c/no-symbol)
-            (instance? c/TaggedSymbol p))
-        b/se-nop
-
-        (and (instance? ast/params-ast p)
-             (empty? (.fixed p))
-             (instance? c/TaggedSymbol (.variadic p)))
-        (do
-          (print-err 'boom _FILE_ _LINE_)
-          (abort)
-          (se/state-error
-           [(C-init (.var (.variadic p))
-                    []
-                    ["Value *" (.var (.variadic p)) " = " (.var p) ";"]
-                    {(.var p) 1})]))
-
-        (let [elem-count (inc (count (.fixed p)))
-              loc (ast/location p)]
-          (print-err 'boom _FILE_ _LINE_)
-          (abort)
-          (se/state-error (comp [(-> empty-c-code
-                                     (.init [(map (.fixed p) (fn [inner]
-                                                               ["Value *" (.var inner) ";"]))
-                                             (cond (= c/no-symbol (.variadic p))
-                                                   ""
-                                                   ["Value *" (.var (.variadic p)) ";"])
-                                             "if (1) {Value **destArgs [" elem-count "] = {"
-                                             (map (.fixed p) (fn [inner]
-                                                               ["&" (.var inner) ", "]))
-                                             (cond (= c/no-symbol (.variadic p))
-                                                   "(Value **)0"
-                                                   ["&" (.var (.variadic p))])
-                                             "};" "destructValue(\"" (.file loc) "\", \"" (.line loc)
-                                             "\", (Value *)" (.var p) ", " elem-count ", destArgs);}"])
-                                     (.refs-map {(.var p) 1}))]
-                                (map (.fixed p) (fn [sym]
-                                                  (C-init (.var sym) [] [] {})))
-                                (cond (= c/no-symbol (.variadic p))
-                                      []
-                                      [(C-init (.var (.variadic p)) [] [] {})])
-                                (flat-map (.fixed p) destruct-seq)
-                                (destruct-seq (.variadic p)))))))
+                (se/state-error '_)))
+        params se/state-error))
 
 (defn checking-fn [params c-fn]
   (assert (instance? ast/params-ast params))
@@ -545,20 +517,12 @@
                      (cond (instance? ast/inline-ast last-ast)
                            (se/state-error ast)
 
-                           (for [;;  _ (cata destruct-seq params se/state-error)
+                           (for [_ (b/se-debug "test" _LINE_)
+                                 _ (destruct-params params)
+                                 _ (b/se-debug "test" _LINE_)
                                  _ (se/update-val .init
                                                   (fn [init]
-                                                    [(cata (fn [ast]
-                                                             (cond (instance? c/TaggedSymbol ast)
-                                                                   ["Port " (.var ast)
-                                                                    " = vars_alloc(tm, &vl);\n"]
-
-                                                                   (instance? ast/params-ast ast)
-                                                                   (.fixed ast)
-
-                                                                   ""))
-                                                           params)
-                                                     init
+                                                    [init
                                                      "NativeArgs " arity-args ";\n"
                                                      "  " arity-args ".count = "
                                                      (count (.fixed params)) ";\n"
