@@ -191,6 +191,7 @@
 
   (gen-call [tgt args result-var]
     (assert-result r (instance? se/StateError r))
+    (assert (instance? Vector args))
     ;; by providing impls for this, call sites can be optimized
 
     (generic-call tgt args result-var))
@@ -376,28 +377,37 @@
 
             (comp (for [arities (se/get-in-val [.module .namespaces c/no-symbol
                                                 .values 0 tgt .arities])
-                        :let [arity? (some arities (fn [arity]
-                                                     (and (-> arity .arity .params .fixed
-                                                              count (= num-args))
-                                                          (maybe arity))))]
-                        :when arity?
+                        c-fn (either (-> arities
+                                         (some (fn [arity]
+                                                 (and (-> arity .arity .params .fixed
+                                                          count (= num-args))
+                                                      (-> arity .c-fn maybe))))
+                                         (map se/state-error))
+                                     se/zero-se)
                         _ (se/update-val .init
                                          (fn [init]
-                                           (let [arity (extract arity?)]
-                                             [init
-                                              "Port " result-var " = vars_alloc(tm, &vl);\n"
-                                              "if(1) {" line-sep
-                                              "NativeArgs callArgs = {" (inc num-args) ", {"
-                                              (-> (map args .var) (interpose ", "))
-                                              ", new_port(ARG, 0)}, "
-                                              ;; TODO: hacky. Find a better solution
-                                              (cond (b/is-glbl result-var)
-                                                    "(Port)&"
-                                                    "")
-                                              result-var "};\n"
-                                              "link(tm, new_port(REF, (Port)" (.c-fn arity)
-                                              "), argsNet(tm, &callArgs));\n"
-                                              "}\n"])))]
+                                           [init
+                                            "Port " result-var " = vars_alloc(tm, &vl);" line-sep
+                                            "if(1) {" line-sep
+                                            "Port args, n0;" line-sep
+                                            (-> (reverse args)
+                                                (map .var)
+                                                ;; TODO: hacky. Find a better solution
+                                                (conj (str (cond (b/is-glbl result-var)
+                                                                 "(Port)&"
+                                                                 "")
+                                                           result-var))
+                                                (reduce (str "args = new_port(ARG, 0);" line-sep)
+                                                        (fn [args arg]
+                                                          (str args
+                                                               "n0 = node_alloc(tm, &vl);" line-sep
+                                                               "node_create(n0, new_pair(" arg
+                                                               ", args));" line-sep
+                                                               "args = new_port(CON, n0);" line-sep))))
+
+                                            "link(tm, new_port(REF, (Port)" c-fn
+                                            "), args);" line-sep
+                                            "}" line-sep]))]
                     '_)
                   (generic-call tgt args result-var))))))
 
