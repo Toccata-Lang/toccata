@@ -1137,8 +1137,8 @@ Port argsNet(TM *tm, NativeArgs *args) {
 }
 
 void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
-  if (argCount == 0 || get_tag(args) == VAR) {
-    natives->result = args;
+  if (argCount == 0 || get_tag(args) == ARG || get_tag(args) == VAR) {
+    natives->args[natives->count++] = args;
   } else {
     // get the args node
     Pair argsNode = node_take(args);
@@ -1152,11 +1152,11 @@ void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
       if (varVal != NONE && varVal != FREE) {
 	arg = enter(varVal);
       }
+      argTag = get_tag(arg);
     }
 
     // save the arg
     natives->args[natives->count++] = arg;
-    natives->result = newArgs;
     if (argCount > 0 && get_tag(newArgs) == CON) {
       switch(argTag) {
       case NUM:
@@ -1166,8 +1166,11 @@ void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
 	break;
 
       default:
+	natives->args[natives->count++] = newArgs;
 	break;
       }
+    } else if (get_tag(newArgs) == ARG){
+      natives->args[natives->count++] = newArgs;
     }
   }
   return;
@@ -1191,12 +1194,15 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
   } else if (argCount == 0) {
     Pair pr = node_take(args);
     if (get_tag(pr.snd) != ARG) {
+      fprintf(stderr, "Compiler error at %s:%d", __FILE__, __LINE__);
+      abort();
     } else {
       natives->result = pr.fst;
       return TRUE;
     }
   } else {
-    natives->result = NONE;
+    Pair pr = node_take(args);
+    natives->result = pr.fst;
     extractNativeArgs(args, argCount, natives);
   }
 
@@ -1222,8 +1228,6 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
     switch (argTag) {
     case VAR :
       // we need to wait on an arg
-      natives->args[natives->count] = new_port(ARG, 0);
-      natives->count++;
       newArgs = argsNet(tm, natives);
       nl = 0;
       Port rdx = node_alloc(tm, &nl);
@@ -1236,14 +1240,11 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
       break;
 
     case CON :
-      natives->args[natives->count] = new_port(ARG, 0);
-      int argsCount = natives->count;
-      natives->count++;
       argPair = node_take(arg);
-      natives->args[argsCount - 1] = argPair.fst;
+      natives->args[natives->count - 1] = argPair.fst;
       newArgs = argsNet(tm, natives);
       push_redex(tm, new_pair(ref, newArgs));
-      natives->args[argsCount - 1] = argPair.snd;
+      natives->args[natives->count - 1] = argPair.snd;
       newArgs = argsNet(tm, natives);
       push_redex(tm, new_pair(ref, newArgs));
       break;
@@ -1260,18 +1261,66 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
 	break;
 
       default:
-	printf("unhandled tag %d line: %d\n", get_tag(out), __LINE__);
+	printf("unhandled tag 0x%x line: %d\n", get_tag(out), __LINE__);
 	abort();
 	break;
       }
       break;
 
     default:
-      printf("unhandled tag %d line: %d\n", get_tag(arg), __LINE__);
+      printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
       abort();
       break;
     }
     return FALSE;
+  }
+}
+
+Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
+  u32 nl;
+  Tag argsTag = get_tag(args);
+  Pair argsNode;
+  switch(get_tag(args)) {
+  case 0xF:
+    return NONE;
+    break;
+
+  case CON:
+    argsNode = node_take(args);
+    Port arg = argsNode.fst;
+    Port n0;
+    if (get_tag(arg) == VAR) {
+      arg = enter(arg);
+    }
+
+    switch(get_tag(arg)) {
+    case VAL:
+    case NUM:
+      argsStruct->args[argsStruct->count++] = arg;
+      return argsNode.snd;
+      break;
+
+    case VAR:
+      n0 = node_alloc(tm, &nl);
+      node_create(n0, argsNode);
+      argsStruct->args[argsStruct->count++] = arg;
+      argsStruct->args[argsStruct->count++] = n0;
+      Port rdx = node_alloc(tm, &nl);
+      node_create(rdx, new_pair(ref, argsNet(tm, argsStruct)));
+      link(tm, arg, new_port(RDX, rdx));
+      return NONE;
+      break;
+
+    default:
+      printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
+      abort();
+      break;
+    }
+
+  default:
+    printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
+    abort();
+    break;
   }
 }
 

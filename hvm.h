@@ -176,3 +176,4 @@ void free_static_tms();
 void normalize();
 void net_init();
 Port dupeArg(TM *tm, Port arg, Port dupeArg);
+Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct);
