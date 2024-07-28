@@ -189,22 +189,22 @@
     (assert-result r (instance? se/StateError r))
     )
 
-  (gen-call [tgt args mod result-var]
+  (gen-call [tgt args result-var]
     (assert-result r (instance? se/StateError r))
     ;; by providing impls for this, call sites can be optimized
 
-    (generic-call tgt args mod result-var))
+    (generic-call tgt args result-var))
 
   (gen-code [ast]
     (assert-result r (instance? se/StateError r))
     )
 
-  (gen-code [ast mod arity]
+  (gen-code [ast arity]
     (assert-result r (instance? se/StateError r))
 
     (gen-code ast)))
 
-(defn generic-call [tgt args mod result-var]
+(defn generic-call [tgt args result-var]
   (assert-result r (instance? se/StateError r))
 
   (se/update-val .init
@@ -275,7 +275,7 @@
               decl (se/get-val .decl)]
           (code-out decl))))
 
-(defn call-vector [tgt args mod result-var]
+(defn call-vector [tgt args result-var]
   (for [arg-codes (se/traverse args gen-code)]
     (let [num-args (count args)
           code (reduce arg-codes empty-c-code
@@ -302,7 +302,7 @@
                result-var " = (Value *)v;}"]
               (.refs-map code)))))
 
-(defn call-list [tgt args mod result-var]
+(defn call-list [tgt args result-var]
   (for [arg-codes (se/traverse args gen-code)]
     (let [num-args (count args)
           code (reduce arg-codes empty-c-code
@@ -366,14 +366,40 @@
                   (for [_ (se/assoc-in-val [.refs-map var] 1)]
                     ast)))))
 
-  (gen-call [tgt args mod result-var]
-    (cond (= tgt 'vector)
-          (call-vector tgt args mod result-var)
+  (gen-call [tgt args result-var]
+    (let [num-args (count args)]
+      (cond (= tgt 'vector)
+            (call-vector tgt args result-var)
 
-          (= tgt 'list)
-          (call-list tgt args mod result-var)
+            (= tgt 'list)
+            (call-list tgt args result-var)
 
-          (generic-call tgt args mod result-var))))
+            (comp (for [arities (se/get-in-val [.module .namespaces c/no-symbol
+                                                .values 0 tgt .arities])
+                        :let [arity? (some arities (fn [arity]
+                                                     (and (-> arity .arity .params .fixed
+                                                              count (= num-args))
+                                                          (maybe arity))))]
+                        :when arity?
+                        _ (se/update-val .init
+                                         (fn [init]
+                                           (let [arity (extract arity?)]
+                                             [init
+                                              "Port " result-var " = vars_alloc(tm, &vl);\n"
+                                              "if(1) {" line-sep
+                                              "NativeArgs callArgs = {" (inc num-args) ", {"
+                                              (-> (map args .var) (interpose ", "))
+                                              ", new_port(ARG, 0)}, "
+                                              ;; TODO: hacky. Find a better solution
+                                              (cond (b/is-glbl result-var)
+                                                    "(Port)&"
+                                                    "")
+                                              result-var "};\n"
+                                              "link(tm, new_port(REF, (Port)" (.c-fn arity)
+                                              "), argsNet(tm, &callArgs));\n"
+                                              "}\n"])))]
+                    '_)
+                  (generic-call tgt args result-var))))))
 
 (extend-type ast/inline-ast
   CodeGen
@@ -390,7 +416,7 @@
          (fn [_]
            x)))
 
-  (gen-code [x mod arity]
+  (gen-code [x arity]
     (gen-code x)))
 
 (defn destruct-params [params]
@@ -468,8 +494,7 @@
   (gen-code [ast]
     (print-err 'boom _FILE_ _LINE_)
     (abort)
-    (map (se/traverse (.body ast) (fn [expr]
-                                    (gen-code expr)))
+    (map (se/traverse (.body ast) gen-code)
          comp-code)))
 
 (defn name-natives [params]
@@ -604,7 +629,7 @@
       ;;               "  return TRUE;\n};\n"])))
       ))
 
-  (gen-call [tgt args mod result-var]
+  (gen-call [tgt args result-var]
     (se/update-val .init
                  (fn [init]
                    (let [num-args (count args)]
@@ -907,7 +932,7 @@
     (se/state-error ast))
 
   (gen-code [ast]
-    (map (gen-call (.call-target ast) (.args ast) mod (.var ast))
+    (map (gen-call (.call-target ast) (.args ast) (.var ast))
          (fn [_]
            ast))))
 
