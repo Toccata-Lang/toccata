@@ -1311,12 +1311,14 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       return NONE;
       break;
 
+      // TODO: what other tags need to be handled
     default:
       printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
       abort();
       break;
     }
 
+    // TODO: what other tags need to be handled
   default:
     printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
     abort();
