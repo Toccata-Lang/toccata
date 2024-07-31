@@ -538,7 +538,7 @@ Port enter(Port var) {
 
 // Atomically Links `A ~ B`.
 void link(TM* tm, Port A, Port B) {
-  //printf("LINK %s ~> %s\n", show_port(A).x, show_port(B).x);
+  // printf("link: %p ~> %p\n", (void *)A, (void *)B);
 
   // Attempts to directionally point `A ~> B`
   while (TRUE) {
