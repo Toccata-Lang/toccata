@@ -403,7 +403,7 @@
                                                                "n0 = node_alloc(tm, &vl);" line-sep
                                                                "node_create(n0, new_pair(" arg
                                                                ", args));" line-sep
-                                                               "args = new_port(CON, n0);" line-sep))))
+                                                               "args = new_port(ARG, n0);" line-sep))))
 
                                             "link(tm, new_port(REF, (Port)" c-fn
                                             "), args);" line-sep
@@ -445,7 +445,7 @@
                                                              "n0 = node_alloc(tm, &vl);" line-sep
                                                              "node_create(n0, new_pair(" arg
                                                              ", " (.var ast) "));" line-sep
-                                                             (.var ast) " = new_port(CON, n0);"
+                                                             (.var ast) " = new_port(ARG, n0);"
                                                              line-sep))))
                                           "}" line-sep
                                           init]))
@@ -572,41 +572,9 @@
       (either (map (last (.body ast))
                    (fn [last-ast]
                      (cond (instance? ast/inline-ast last-ast)
-                           (for [_ (se/update-val
-                                    .init
-                                    (fn [init]
-                                      ["  if (get_tag(args) == CON) {\n"
-                                       "    Pair pr = node_take(args);\n"
-                                       "    Port resultVar = pr.fst;\n"
-                                       "    Port result;\n"
-                                       "    NativeArgs arityArgs = {0, {}, resultVar};"
-                                       line-sep
-                                       (repeat (count (.fixed params))
-                                               (str "    args = nativeArg(tm, ref, pr.snd"
-                                                    ", &arityArgs);" line-sep))
-                                       "    if (arityArgs.count == " (count (.fixed params))
-                                       ") {" line-sep
-                                       (name-natives params)
-                                       init
-                                       "\nlink(tm, resultVar, result);\n}\n"
-                                       "return TRUE;\n"
-                                       "} else {\n"
-                                       "  fprintf(stderr, \"Compiler error at %s:%d\", __FILE__, __LINE__);\n"
-                                       "  abort();\n"
-                                       "  return FALSE;\n"
-                                       "}\n}\n"]))]
-                             ast)
+                           (se/state-error ast)
 
-                           (for [_ (destruct-params params)
-                                 _ (se/update-val .init
-                                                  (fn [init]
-                                                    [init
-                                                     "Port params = node_alloc(tm, &vl);" line-sep
-                                                     "node_create(params, new_pair(" (.var last-ast)
-                                                     ", " (.var params) "));" line-sep
-                                                     "params = new_port(CON, params);" line-sep
-                                                     "link(tm, params, args);" line-sep
-                                                     "return TRUE;" line-sep "}" line-sep]))]
+                           (for [_ (destruct-params params)]
                              ast))))
               (b/compilation-error "Invalid function body at:" (ast/location ast)))
 ;; =======
@@ -723,9 +691,8 @@
           params (-> ast .arity .params)
           arity-var (b/global-var 'Arity)
           arity-struct-var (.var (.arity ast))
-          inline? (flat-map (-> ast .arity .body last)
-                            (fn [last-ast]
-                              (instance? ast/inline-ast last-ast)))
+          last-ast (-> ast .arity .body last extract)
+          inline? (instance? ast/inline-ast last-ast)
           ;; checker (checking-fn (-> ast .arity .params) c-fn)
           ]
       (for [init (se/get-val .init)
@@ -733,19 +700,37 @@
             decl (se/get-val .decl)
             _ (se/set-val .decl [decl
                                  "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;\n"
-                                 init
-                                 "FnArity " arity-struct-var " = {FnArityType, REFS_STATIC, "
-                                 (count params)
-                                 ", (Vector *)0, "
-                                 (cond (= (-> ast .arity .params .variadic)
-                                          c/no-symbol)
-                                       ;; fixed arity
-                                       0
+                                 (cond inline?
+                                       ["  if (get_tag(args) == ARG) {\n"
+                                        "    Pair pr = node_take(args);\n"
+                                        "    Port resultVar = pr.fst;\n"
+                                        "    Port result;\n"
+                                        "    NativeArgs arityArgs = {0, {}, resultVar};"
+                                        line-sep
+                                        (repeat (count (.fixed params))
+                                                (str "    args = nativeArg(tm, ref, pr.snd"
+                                                     ", &arityArgs);" line-sep))
+                                        "    if (arityArgs.count == " (count (.fixed params))
+                                        ") {" line-sep
+                                        (name-natives params)]
 
-                                       ;; variadic arity
-                                       1)
-                                 ", " c-fn "};\n"
-                                 "FnArity *" arity-var " = &" arity-struct-var ";"])]
+                                      "")
+                                 init
+                                 (cond inline?
+                                       ["\nlink(tm, resultVar, result);\n}\n"
+                                        "return TRUE;\n"
+                                        "} else {\n"
+                                        "  fprintf(stderr, \"Compiler error at %s:%d\", __FILE__, __LINE__);\n"
+                                        "  abort();\n"
+                                        "  return FALSE;\n"
+                                        "}\n}\n"]
+
+                                       ["Port params = node_alloc(tm, &vl);" line-sep
+                                        "node_create(params, new_pair(" (.var last-ast)
+                                        ", " (.var params) "));" line-sep
+                                        "params = new_port(ARG, params);" line-sep
+                                        "link(tm, params, args);" line-sep
+                                        "return TRUE;" line-sep "}" line-sep])])]
         ast))))
 
 (defn default-fn [val c-fn]
@@ -830,60 +815,62 @@
     (se/state-error ast))
 
   (gen-code [ast]
-    (let [fn-sym (.fn-sym ast)
-          var (.var ast)
-          [defaults arities] (reduce (.arities ast) [[] []]
-                                     (fn [[defs arities] arity]
-                                       (cond (instance? ast/prototype-ast arity)
-                                             (let [def-c-fn (b/global-var b/CFn)
-                                                   arity-struct-var (b/global-var 'ArityStruct)]
-                                               [(conj defs (default-fn arity def-c-fn))
-                                                (conj arities
-                                                      (Dispatcher arity arity-struct-var def-c-fn))])
+    (se/state-error ast)
+    ;; (let [fn-sym (.fn-sym ast)
+    ;;       var (.var ast)
+    ;;       [defaults arities] (reduce (.arities ast) [[] []]
+    ;;                                  (fn [[defs arities] arity]
+    ;;                                    (cond (instance? ast/prototype-ast arity)
+    ;;                                          (let [def-c-fn (b/global-var b/CFn)
+    ;;                                                arity-struct-var (b/global-var 'ArityStruct)]
+    ;;                                            [(conj defs (default-fn arity def-c-fn))
+    ;;                                             (conj arities
+    ;;                                                   (Dispatcher arity arity-struct-var def-c-fn))])
 
-                                             [defs (conj arities arity)])))]
-      ;; TODO: what if fn-sym is c/no-symbol
-      (cond (every arities (partial instance? StaticOrDispatcher))
-            (let [struct-var (.struct-var ast)]
-              (for [_ (se/update-val .decl
-                                     (fn [decl]
-                                       [decl
-                                        "\n// --------- " fn-sym " -------------\n"
-                                        ;; "Value *" var ";" line-sep
-                                        "Function " struct-var " = {FunctionType, REFS_STATIC, \""
-                                        fn-sym "\", " (count arities) ", "
-                                        "{" (-> arities
-                                                (map (fn [arity]
-                                                       (str "&"
-                                                            (cond (instance? b/StaticArity arity)
-                                                                  (.var (.arity arity))
+    ;;                                          [defs (conj arities arity)])))]
+    ;;   ;; TODO: what if fn-sym is c/no-symbol
+    ;;   (cond (every arities (partial instance? StaticOrDispatcher))
+    ;;         (let [struct-var (.struct-var ast)]
+    ;;           (for [_ (se/update-val .decl
+    ;;                                  (fn [decl]
+    ;;                                    [decl
+    ;;                                     "\n// --------- " fn-sym " -------------\n"
+    ;;                                     ;; "Value *" var ";" line-sep
+    ;;                                     "Function " struct-var " = {FunctionType, REFS_STATIC, \""
+    ;;                                     fn-sym "\", " (count arities) ", "
+    ;;                                     "{" (-> arities
+    ;;                                             (map (fn [arity]
+    ;;                                                    (str "&"
+    ;;                                                         (cond (instance? b/StaticArity arity)
+    ;;                                                               (.var (.arity arity))
 
-                                                                  (.arity-struct-var arity)))))
-                                                (interpose ", "))
-                                        "}};\n"
-                                        "Value *" var " = (Value *)&" struct-var ";\n\n"]))]
-                ast))
+    ;;                                                               (.arity-struct-var arity)))))
+    ;;                                             (interpose ", "))
+    ;;                                     "}};\n"
+    ;;                                     "Value *" var " = (Value *)&" struct-var ";\n\n"]))]
+    ;;             ast))
 
-            (do
-              (print-err 'boom _FILE_ _LINE_)
-              (abort)
-              ;; (let [arity-count (count arities)
-              ;;       fn-ptr-var (.struct-var ast)]
-              ;;   (-> empty-c-code
-              ;;       (.var var)
-              ;;       (.decl (map code-vect .decl))
-              ;;       (.init [(map code-vect .init)
-              ;;               "Function *" fn-ptr-var " = malloc_function(" arity-count ");"
-              ;;               "Value *" var " = (Value *)" fn-ptr-var ";"
-              ;;               fn-ptr-var "->name = \"" fn-sym "\";"
-              ;;               fn-ptr-var "->arityCount = " arity-count ";"
-              ;;               (map (zip-lists (map code-vect .var)
-              ;;                               (range arity-count))
-              ;;                    (fn [[sym index]]
-              ;;                      [sym "->parent = " var ";"
-              ;;                       fn-ptr-var "->arities[" index "] = " sym ";"]))])
-              ;;       (.refs-map (merge-maps + (map code-vect .refs-map)))))
-              b/se-nop)))))
+    ;;         (do
+    ;;           (print-err 'boom _FILE_ _LINE_)
+    ;;           (abort)
+    ;;           ;; (let [arity-count (count arities)
+    ;;           ;;       fn-ptr-var (.struct-var ast)]
+    ;;           ;;   (-> empty-c-code
+    ;;           ;;       (.var var)
+    ;;           ;;       (.decl (map code-vect .decl))
+    ;;           ;;       (.init [(map code-vect .init)
+    ;;           ;;               "Function *" fn-ptr-var " = malloc_function(" arity-count ");"
+    ;;           ;;               "Value *" var " = (Value *)" fn-ptr-var ";"
+    ;;           ;;               fn-ptr-var "->name = \"" fn-sym "\";"
+    ;;           ;;               fn-ptr-var "->arityCount = " arity-count ";"
+    ;;           ;;               (map (zip-lists (map code-vect .var)
+    ;;           ;;                               (range arity-count))
+    ;;           ;;                    (fn [[sym index]]
+    ;;           ;;                      [sym "->parent = " var ";"
+    ;;           ;;                       fn-ptr-var "->arities[" index "] = " sym ";"]))])
+    ;;           ;;       (.refs-map (merge-maps + (map code-vect .refs-map)))))
+    ;;           b/se-nop)))
+    ))
 
 (extend-type ast/definition-ast
   CodeGen
@@ -1166,8 +1153,8 @@
               "  abort();\n"
               "  #endif\n"
               "  #endif\n"
-              "  maybeNothing = maybe( (FnArity *)0, (Value *)0, nothing);\n"
-              "  maybeNothing->refs = -1;\n"
+              ;; "  maybeNothing = maybe((FnArity *)0, (Value *)0, nothing);\n"
+              ;; "  maybeNothing->refs = -1;\n"
               "  outstream = stdout;\n"
               "  alloc_static_tms();\n"
               "  globalNet = malloc(sizeof(Net));\n"
@@ -1220,7 +1207,7 @@
               ;; TODO: casting argVect to List * is a temp hack
 
               ;; "  cleanupMemory(the_final_answer, maybeNothing, (List *)argVect);\n"
-              "  cleanupMemory(the_final_answer, maybeNothing, (List *)NULL);\n"
+              "  cleanupMemory(the_final_answer, (Value *)NULL, (List *)NULL);\n"
 
               "  if (malloc_count - free_count != 0)\n"
               "    return(1);\n"

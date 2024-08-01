@@ -538,8 +538,6 @@ Port enter(Port var) {
 
 // Atomically Links `A ~ B`.
 void link(TM* tm, Port A, Port B) {
-  // printf("link: %p ~> %p\n", (void *)A, (void *)B);
-
   // Attempts to directionally point `A ~> B`
   while (TRUE) {
     // If `A` is NODE: swap `A` and `B`, and continue
@@ -783,6 +781,17 @@ bool DECF(TM* tm, Port a, Port b) {
   return TRUE;
 }
 
+bool ARGS(TM* tm, Port a, Port b) {
+  if (a == ARG && b == ARG) {
+    return TRUE;
+  } else if (a == ARG || b == ARG) {
+    fprintf(stderr, "Implement currying: %p %p\n", (void *)a, (void *)b);
+    abort();
+  } else {
+    return ANNI(tm, a, b);
+  }
+}
+
 bool ABRT(TM* tm, Port a, Port b) {
   fprintf(stderr, "Bad interaction: 0x%x 0x%x\n", get_tag(a), get_tag(b));
   abort();
@@ -791,8 +800,8 @@ bool ABRT(TM* tm, Port a, Port b) {
 interactionFn interactions[12][12] = {
   //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL   ARG
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
-  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&LINK,&ABRT,&ABRT,&ABRT}, // REF
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF,&VOID}, // ERA
+  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&LINK,&ABRT,&ABRT,&CALL}, // REF
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF,&ABRT}, // ERA
   {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ABRT,&ABRT}, // NUM
   {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
   {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE,&ABRT}, // DUP
@@ -801,7 +810,7 @@ interactionFn interactions[12][12] = {
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
   {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
   {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
-  {&ABRT,&ABRT,&VOID,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&VOID}  // ARG
+  {&ABRT,&CALL,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ARGS}  // ARG
 };
 
 interactionFn get_rule(Port a, Port b) {
@@ -1129,11 +1138,11 @@ Port argsNet(TM *tm, NativeArgs *args) {
   Port tail = args->args[args->count - 1];
   for (int i = args->count - 2; i >= 0; i--) {
     node_create(n0, new_pair(args->args[i], tail));
-    tail = new_port(CON, n0);
+    tail = new_port(ARG, n0);
     n0 = node_alloc(tm, &nl);
   }
   node_create(n0, new_pair(args->result, tail));
-  return new_port(CON, n0);
+  return new_port(ARG, n0);
 }
 
 void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
@@ -1157,7 +1166,7 @@ void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
 
     // save the arg
     natives->args[natives->count++] = arg;
-    if (argCount > 0 && get_tag(newArgs) == CON) {
+    if (argCount > 0 && get_tag(newArgs) == ARG) {
       switch(argTag) {
       case NUM:
       case VAL:
@@ -1189,7 +1198,7 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
   natives->count = 0;
 
   // try to get the correct number of arguments
-  if (get_tag(args) != CON) {
+  if (get_tag(args) != ARG) {
     return FALSE;
   } else if (argCount == 0) {
     Pair pr = node_take(args);
@@ -1285,7 +1294,7 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
     return NONE;
     break;
 
-  case CON:
+  case ARG:
     argsNode = node_take(args);
     Port arg = argsNode.fst;
     Port n0;
