@@ -140,7 +140,7 @@ typedef struct {
 // Port: Constructor and Getters
 // -----------------------------
 
-// #define new_port_(tag, x) (((u64)x | tag))
+#define new_port_(tag, x) (((u64)x | tag))
 
 Port new_num(Port val);
 Val get_num(Port port);

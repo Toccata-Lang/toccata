@@ -776,7 +776,8 @@
           (se/state-error ast)))
 
   (set-global-var [ast]
-    (.var ast (b/global-var (.fn-sym ast) 'ArityStruct)))
+    (b/StaticArity ast (b/global-var (.fn-sym ast) b/CFn)
+                   (b/global-var (.fn-sym ast) 'Fn) (.constraint ast)))
 
   (pre-check [ast]
     (let [fixed-params (.fixed (.params ast))
@@ -1008,8 +1009,7 @@
         (-> ast
             (.constraint fn-c)
             (map (fn [arity]
-                   (-> (set-global-var arity)
-                       (b/StaticArity (b/global-var sym b/CFn))))))))))
+                   (set-global-var arity))))))))
 
 (extend-type Symbol
   TypeChecker
@@ -1701,26 +1701,26 @@
                         ctor-apply-id (c/tag (str "apply-" sym "-constructor") loc)
                         ctor-apply-fields (c/seq-c field-cs)
                         ctor-apply (c/arity ctor-apply-id
-                                               (c/seq-c [(c/multi [(c/param ctor-apply-id 0)
-                                                                   constructor])
-                                                         (c/multi [(c/param ctor-apply-id 1)
-                                                                   ctor-apply-fields])])
-                                               (c/type-op c/apply-op constructor
-                                                          (c/multi [(c/param ctor-apply-id 1)
-                                                                    ctor-apply-fields])))]
+                                            (c/seq-c [(c/multi [(c/param ctor-apply-id 0)
+                                                                constructor])
+                                                      (c/multi [(c/param ctor-apply-id 1)
+                                                                ctor-apply-fields])])
+                                            (c/type-op c/apply-op constructor
+                                                       (c/multi [(c/param ctor-apply-id 1)
+                                                                 ctor-apply-fields])))]
                   _ (b/set-type-info ctor-sym constructor)
                   _ (b/add-proto-impl ctor-type-num b/invoke-sym (inc field-count)
                                       (b/StaticArity
                                        (ast/fn-arity-ast b/invoke-sym c/no-symbol ctor-params
                                                          "" [] (b/global-var b/invoke-sym) ctor-arity)
-                                       ""))
+                                       "" "" ctor-arity))
                   _ (b/add-proto-impl ctor-type-num b/apply-sym 2
                                       (b/StaticArity
                                        (ast/fn-arity-ast b/apply-sym c/no-symbol
                                                          (ast/params [(c/tag (symbol "#app"))
                                                                       (c/tag (symbol "#fields"))])
                                                          "" [] (b/global-var b/apply-sym) ctor-apply)
-                                       ""))
+                                       "" "" ctor-apply))
                   ;; TODO: need instance? impl constraint
                   _ (b/set-type-info sym new-type-constraint)
                   _ (b/set-value sym (.constraint sym constructor))
@@ -1780,38 +1780,40 @@
 
                    (type-check [_ _]
                      (let [get-id (c/tag (str sym "_get") loc)
+                           getter-c (c/arity
+                                     get-id
+                                     (c/seq-c [(c/multi [new-type-constraint
+                                                         (c/param get-id 0)])
+                                               (c/param get-id 1)])
+                                     (c/MaybeConstraint
+                                      (c/type-op c/get-from-op (c/param get-id 0)
+                                                 [(c/param get-id 1)])
+                                      empty-list c/no-symbol))
                            getter-ast (b/StaticArity
                                        (ast/fn-arity-ast b/apply-sym c/no-symbol
                                                          (ast/params [(c/tag (symbol "#field") loc)
                                                                       (c/tag (symbol "#x") loc)])
                                                          "" [] (b/global-var b/apply-sym)
-                                                         (c/arity
-                                                          get-id
-                                                          (c/seq-c [(c/multi [new-type-constraint
-                                                                              (c/param get-id 0)])
-                                                                    (c/param get-id 1)])
-                                                          (c/MaybeConstraint
-                                                           (c/type-op c/get-from-op (c/param get-id 0)
-                                                                      [(c/param get-id 1)])
-                                                           empty-list c/no-symbol)))
-                                       "")
+                                                         getter-c)
+                                       "" "" getter-c)
                            set-id (c/tag (str sym "_set") loc)
+                           setter-c (c/arity
+                                     set-id
+                                     (c/seq-c [(c/multi [new-type-constraint
+                                                         (c/param set-id 0)])
+                                               (c/param set-id 1)
+                                               (c/param set-id 2)])
+                                     (c/type-op c/set-to-op (c/param set-id 0)
+                                                [[(c/param set-id 1)]
+                                                 (c/param set-id 2)]))
                            setter-ast (b/StaticArity
                                        (ast/fn-arity-ast b/apply-sym c/no-symbol
                                                          (ast/params [(c/tag (symbol "#field") loc)
                                                                       (c/tag (symbol "#x") loc)
                                                                       (c/tag (symbol "#val") loc)])
                                                          "" [] (b/global-var b/apply-sym)
-                                                         (c/arity
-                                                          set-id
-                                                          (c/seq-c [(c/multi [new-type-constraint
-                                                                              (c/param set-id 0)])
-                                                                    (c/param set-id 1)
-                                                                    (c/param set-id 2)])
-                                                          (c/type-op c/set-to-op (c/param set-id 0)
-                                                                     [[(c/param set-id 1)]
-                                                                      (c/param set-id 2)])))
-                                       "")]
+                                                         setter-c)
+                                       "" "" setter-c)]
                        (for [_ (b/pop-types)
                              _ (comp (b/get-proto-impl (c/tag 'get) type-num 2)
                                      (b/add-proto-impl type-num (c/tag 'get loc) 2
@@ -1882,3 +1884,11 @@
                                 (b/compilation-error "Could not find impl for" (str "'" (.type-sym ast)
                                                                                   "' (" type-num ")")
                                                      "at" (ast/location (.type-sym ast))))))))))
+
+(extend-type b/StaticArity
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (se/state-error (.constraint ast (.constraint (.arity ast))))))

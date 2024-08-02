@@ -357,7 +357,6 @@
             (comp (flat-map (se/get-in-val [.module .namespaces c/no-symbol .values 0 tgt])
                             (fn [tgt-val]
                               (gen-call tgt-val args result-var)))
-                  (b/compilation-error "Bad call target" (ast/location tgt))
                   (generic-call tgt args result-var))))))
 
 (extend-type ast/inline-ast
@@ -642,16 +641,19 @@
                                        ["Port n0;" line-sep])
                                  init
                                  (cond inline?
-                                       ["\nlink(tm, resultVar, result);\n}\n"
-                                        "return TRUE;\n"
-                                        "} else {\n"
-                                        "  fprintf(stderr, \"Compiler error at %s:%d\", __FILE__, __LINE__);\n"
-                                        "  abort();\n"
-                                        "  return FALSE;\n"
-                                        "}\n}\n"]
+                                       ["\nlink(tm, resultVar, result);" line-sep "}" line-sep
+                                        "return TRUE;" line-sep
+                                        "} else {" line-sep
+                                        "  fprintf(stderr, \"Compiler error at %s:%d\", __FILE__, __LINE__);" line-sep
+                                        "  abort();" line-sep
+                                        "  return FALSE;" line-sep
+                                        "}" line-sep "}" line-sep]
 
                                        ["link(tm, " (.var params) ", args);" line-sep
-                                        "return TRUE;" line-sep "}" line-sep])])]
+                                        "return TRUE;" line-sep "}" line-sep])
+                                 "Port " (.var ast) ";" line-sep])
+            _ (se/update-val .glbl-init (fn [init]
+                                          [init (.var ast) " = new_port_(REF, " c-fn ");" line-sep]))]
         ast)))
 
   (gen-call [tgt args result-var]
@@ -689,7 +691,7 @@
                     (cond (empty? default-body)
                           [(ast/inline-ast c/top-type (str "
    fprintf(stderr, \"*** Could not find implementation of '" (.fn-name val)
-"' for *finish this error message*\\n\");
+                                                           "' for *finish this error message*\\n\");
    abort();
    return ((Value *)0);
 ")
@@ -699,7 +701,9 @@
                           default-body)
                     (b/global-var 'ArityStruct)
                     c/top-type)
-                   c-fn)))
+                   c-fn
+                   (b/global-var 'Fn)
+                   c/top-type)))
 
 (deftype Dispatcher [proto arity-struct-var c-fn]
   (assert (instance? ast/prototype-ast proto))
@@ -1104,79 +1108,86 @@
                           ;; (abort)
                           ))
         code-context (emit-protos code-context)]
-    (code-out "  \n#\n"
-              "  \nint main (int argc, char **argv) {\n"
-              "  prErrSTAR = &defaultPrErrSTAR;\n"
-              "  #ifdef SINGLE_THREADED\n"
-              "  #ifdef CHECK_MEM_LEAK\n"
-              "  fprintf(stderr, \"Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK "
-              "  at same time.\");\n "
-              "  abort();\n"
-              "  #endif\n"
-              "  #endif\n"
-              ;; "  maybeNothing = maybe((FnArity *)0, (Value *)0, nothing);\n"
-              ;; "  maybeNothing->refs = -1;\n"
-              "  outstream = stdout;\n"
-              "  alloc_static_tms();\n"
-              "  globalNet = malloc(sizeof(Net));\n"
-              "  net_init();\n"
-              "  u64 start = time64();\n"
-              "  TM *tm = tms[0];\n"
-              "  u32 vl = 0;\n"
-              (.glbl-init code-context)
-              "\n#\n"
-              "  Vector *argVect = empty_vect;\n"
-              "  for(int i = 0; i < argc; i++) {\n"
-              "    argVect = mutateVectConj(argVect, stringValue(argv[i]));\n"
-              "  }\n"
-              ;; "  argVect->refs = -1;\n"
+    (cond (instance? se/Error code-context)
+          (do
+            (b/status (.val code-context))
+            (b/wait-for-err-out)
+            (abort)) 
 
-              "  APort resultVar;\n"
-              "  vars_create((Port)&resultVar, FREE);\n"
-              "  int bashResult = 0;\n"
-              "  Value *the_final_answer = nothing;\n"
-              "  NativeArgs natives;\n"
-              "  natives.count = 2;\n"
-              "  natives.args[0] = new_port(VAL, (Port)argVect);\n"
-              "  natives.args[1] = new_port(ARG, (Port)0);\n"
-              "  natives.result = (Port)&resultVar;\n"
-              "  link(tm, new_ref(" main-fn "), argsNet(tm, &natives));\n"
-              "  normalize();\n"
-              "  double duration = (time64() - start) / 1000000000.0; // seconds\n"
-              "  u64 itrs = atomic_load(&globalNet->itrs);\n"
-              "  printf(\"- ITRS: %\" PRIu64 \"\\n\", itrs);\n"
-              "  printf(\"- TIME: %.2fs\\n\", duration);\n"
-              "  printf(\"- MIPS: %.2f\\n\", (double)itrs / duration / 1000000.0);\n"
-              "  free_static_tms();\n"
-              "  free(globalNet);\n"
-              "  Port result = vars_load((Port)&resultVar);\n"
-              "  if (get_tag(result) == NUM) {\n"
-              "  bashResult = (int)get_u24(get_num(result));\n"
-              "  } else if (get_tag(result) == VAL ) {\n"
-              "  the_final_answer = (Value *)(result & ~TAG_MASK);\n"
-              "  }\n"
+          (code-out "  \n#\n"
+                    "  \nint main (int argc, char **argv) {\n"
+                    "  prErrSTAR = &defaultPrErrSTAR;\n"
+                    "  #ifdef SINGLE_THREADED\n"
+                    "  #ifdef CHECK_MEM_LEAK\n"
+                    "  fprintf(stderr, \"Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK "
+                    "  at same time.\");\n "
+                    "  abort();\n"
+                    "  #endif\n"
+                    "  #endif\n"
+                    ;; "  maybeNothing = maybe((FnArity *)0, (Value *)0, nothing);\n"
+                    ;; "  maybeNothing->refs = -1;\n"
+                    "  outstream = stdout;\n"
+                    "  alloc_static_tms();\n"
+                    "  globalNet = malloc(sizeof(Net));\n"
+                    "  net_init();\n"
+                    "  u64 start = time64();\n"
+                    "  TM *tm = tms[0];\n"
+                    "  u32 vl = 0;\n"
+                    "  Port n0;\n"
+                    (.glbl-init code-context)
+                    "\n#\n"
+                    "  Vector *argVect = empty_vect;\n"
+                    "  for(int i = 0; i < argc; i++) {\n"
+                    "    argVect = mutateVectConj(argVect, stringValue(argv[i]));\n"
+                    "  }\n"
+                    ;; "  argVect->refs = -1;\n"
 
-              "#ifdef CHECK_MEM_LEAK\n"
-              "cleaningUp = 1;\n"
-              "mainThreadDone = 1;\n"
-              "waitForWorkers();\n"
-              "\n#\n"
-              ;; TODO: change to argVect
-              ;; "for(List *l = argVect; l != (List *)0; l = l->tail) {\n"
-              ;; "   l->refs = 1;\n"
-              ;; "}\n"
-              ;; TODO: casting argVect to List * is a temp hack
+                    "  APort resultVar;\n"
+                    "  vars_create((Port)&resultVar, FREE);\n"
+                    "  int bashResult = 0;\n"
+                    "  Value *the_final_answer = nothing;\n"
+                    "  NativeArgs natives;\n"
+                    "  natives.count = 2;\n"
+                    "  natives.args[0] = new_port(VAL, (Port)argVect);\n"
+                    "  natives.args[1] = new_port(ARG, (Port)0);\n"
+                    "  natives.result = (Port)&resultVar;\n"
+                    "  link(tm, new_ref(" main-fn "), argsNet(tm, &natives));\n"
+                    "  normalize();\n"
+                    "  double duration = (time64() - start) / 1000000000.0; // seconds\n"
+                    "  u64 itrs = atomic_load(&globalNet->itrs);\n"
+                    "  printf(\"- ITRS: %\" PRIu64 \"\\n\", itrs);\n"
+                    "  printf(\"- TIME: %.2fs\\n\", duration);\n"
+                    "  printf(\"- MIPS: %.2f\\n\", (double)itrs / duration / 1000000.0);\n"
+                    "  free_static_tms();\n"
+                    "  free(globalNet);\n"
+                    "  Port result = vars_load((Port)&resultVar);\n"
+                    "  if (get_tag(result) == NUM) {\n"
+                    "  bashResult = (int)get_u24(get_num(result));\n"
+                    "  } else if (get_tag(result) == VAL ) {\n"
+                    "  the_final_answer = (Value *)(result & ~TAG_MASK);\n"
+                    "  }\n"
 
-              ;; "  cleanupMemory(the_final_answer, maybeNothing, (List *)argVect);\n"
-              "  cleanupMemory(the_final_answer, (Value *)NULL, (List *)NULL);\n"
+                    "#ifdef CHECK_MEM_LEAK\n"
+                    "cleaningUp = 1;\n"
+                    "mainThreadDone = 1;\n"
+                    "waitForWorkers();\n"
+                    "\n#\n"
+                    ;; TODO: change to argVect
+                    ;; "for(List *l = argVect; l != (List *)0; l = l->tail) {\n"
+                    ;; "   l->refs = 1;\n"
+                    ;; "}\n"
+                    ;; TODO: casting argVect to List * is a temp hack
 
-              "  if (malloc_count - free_count != 0)\n"
-              "    return(1);\n"
-              "#endif"
-              "\n#\n"
-              "  printf(\"bashResult: %d\\n\", bashResult);\n"
-              "  return(bashResult);\n}\n"
-              "\nint typeCount = " (extract b/type-counter) ";\n")
+                    ;; "  cleanupMemory(the_final_answer, maybeNothing, (List *)argVect);\n"
+                    "  cleanupMemory(the_final_answer, (Value *)NULL, (List *)NULL);\n"
+
+                    "  if (malloc_count - free_count != 0)\n"
+                    "    return(1);\n"
+                    "#endif"
+                    "\n#\n"
+                    "  printf(\"bashResult: %d\\n\", bashResult);\n"
+                    "  return(bashResult);\n}\n"
+                    "\nint typeCount = " (extract b/type-counter) ";\n"))
     (deliver done-promise 'done)
     code-context))
 
