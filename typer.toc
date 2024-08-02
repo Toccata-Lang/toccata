@@ -4,10 +4,10 @@
                             :sha "30b346e"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "91611e8"))
+                          :sha "a4c915d"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "a1eb8bb"))
+                            :sha "70df31c"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -224,7 +224,6 @@
 
 (def ConstrainedAST (any-of ast/call-ast
                             ;; ast/params-ast
-                            ast/fn-ast
                             ;; ast/fn-arity-ast
                             ;; ast/let-ast
                             ast/do-ast
@@ -277,7 +276,6 @@
                              c/SeqConstraint
                              c/CollectionOf
                              c/TypeOfConstraint
-                             c/FnConstraint
                              c/TypeOp
                              c/MultiConstraint
                              c/fn-arity
@@ -320,7 +318,6 @@
 
 (def DefaultConst (any-of c/AllValues
                           c/ParamConstraint
-                          c/FnConstraint
                           c/ReifiedConstraint
                           c/MultiConstraint
                           c/CollectionOf
@@ -342,8 +339,7 @@
                              c/IntegerConstraint
                              c/SymbolConstraint
                              c/StringConstraint
-                             c/MaybeConstraint
-                             c/FnConstraint))
+                             c/MaybeConstraint))
 
 (extend-type DefaultSymConst ;; c/SymbolConstraints
   TypeChecker
@@ -471,12 +467,10 @@
                       (b/get-value (.fn-name ast))
                       (fn [_]
                         (b/set-value (.fn-name ast)
-                                     (ast/fn-ast (.fn-name ast) [] (b/global-var b/Fn)
-                                                 (b/global-var b/FnStruct)
-                                                 (c/ProtoImpls (.fn-name ast)
-                                                               (.arities c/fn-constraint
-                                                                         {})
-                                                               {})))))
+                                     (c/ProtoImpls (.fn-name ast)
+                                                   (.arities c/fn-constraint
+                                                             {})
+                                                   {}))))
                   _ (b/push-types)
                   _ (se/set-val .var-count (int-generator 0))
                   _ (flat-map (set-local-var ast/result-sym)
@@ -556,12 +550,10 @@
                   '_)
                 (fn [_]
                   (b/status 'new-proto _LINE_ sym)
-                  (b/set-value sym (ast/fn-ast sym [ast] (b/global-var b/Fn)
-                                               (b/global-var b/FnStruct)
-                                               (c/ProtoImpls sym
-                                                             (.arities c/fn-constraint
-                                                                       {arg-count impl-c})
-                                                             {})))))]
+                  (b/set-value sym (c/ProtoImpls sym
+                                                 (.arities c/fn-constraint
+                                                           {arg-count impl-c})
+                                                 {}))))]
         ast))))
 
 (extend-type ast/call-ast
@@ -709,13 +701,7 @@
         (.value-exprs ast (-> (.value-exprs ast)
                               (remove (partial instance? ast/block-comment-ast))
                               (map (fn [inner-ast]
-                                     (cond (instance? ast/fn-ast inner-ast)
-                                           (-> inner-ast
-                                               (map (fn [arity]
-                                                      (.fn-sym arity sym)))
-                                               (.fn-sym sym))
-
-                                           (instance? c/SymbolConstraints inner-ast)
+                                     (cond (instance? c/SymbolConstraints inner-ast)
                                            (c/update-sym inner-ast sym)
 
                                            inner-ast))))))))
@@ -933,83 +919,6 @@
                             (.constraint arity-c)))
               closures (dissoc-all closures (ast/all-syms (.params ast)))]
           ast)))))
-
-(extend-type ast/fn-ast
-  TypeChecker
-  (set-local-var [ast]
-    (for [new (cond (= (.var ast) "")
-                    (for [new-var (b/local-var 'fn)]
-                      (.var ast new-var))
-
-                    (se/state-error ast))
-          newer (cond (= (.struct-var new) "")
-                      (for [struct-var (b/local-var 'fnStruct)]
-                        (.struct-var new struct-var))
-
-                      (se/state-error new))]
-      newer))
-
-  (set-global-var [ast]
-    (cond (every (.arities ast) (fn [arity]
-                                  (instance? b/StaticArity arity)))
-          (-> ast
-              (.struct-var (b/global-var (.fn-sym ast) b/FnStruct))
-              (.var (b/global-var (.fn-sym ast) b/Fn)))
-
-          ast))
-
-  (pre-check [ast]
-    (let [loc (ast/location ast)
-          sym (.fn-sym ast)]
-      ;; (or (= (.line loc) 0)
-      ;;     (= (.file loc) b/core)
-      ;;     (do
-      ;;       (print-err 'fn-ast loc
-      ;;                  lf ast)
-      ;;       nothing))
-      (for [_ (b/push-types)
-            _ (cond (= c/no-symbol sym)
-                    b/se-nop
-
-                    (b/set-value sym (.constraint sym (-> c/fn-constraint
-                                                          ;; TODO: worry about recursion later
-                                                          ;; (c/intersect (c/coll-of-c c/empty-reified))
-                                                          (c/update-path loc)
-                                                          (c/update-sym sym)))))]
-        (.arities ast (map (.arities ast)
-                           (fn [arity]
-                             (.fn-sym arity sym)))))))
-
-  (type-check [ast old-ast]
-    (let [sym (.fn-sym ast)
-          loc (ast/location old-ast)
-          fn-c (-> c/fn-constraint
-                   (c/update-path loc)
-                   (c/update-sym sym))
-          fn-c (reduce (.arities ast) (.arities fn-c {})
-                       (fn [c arity]
-                         (assert (instance? ast/fn-arity-ast arity))
-
-                         (let [arity-c (-> arity .constraint)]
-                           (either (for [variadic (map (get-in arity-c [.param-consts])
-                                                       c/seq-tail)
-                                         :when (= c/no-tail variadic)
-                                         fixed-params (map (get-in arity-c [.param-consts])
-                                                           c/get-items)]
-                                     (assoc-in c [.arities (count fixed-params)] arity-c))
-                                   (assoc-in c [.arities c/variadic] arity-c)))))
-          fn-c (c/update-path fn-c loc)]
-      ;; (let [loc (ast/location ast)]
-      ;;   (or ;; (= (.file loc) b/core)
-      ;;       ;; (= (.line loc) 0)
-      ;;       (do
-      ;;         (print-err 'fn-c _LINE_ (ast/location old-ast) lf fn-c)
-      ;;         nothLing)))
-      (for [_ (b/nip-types)]
-        (-> ast
-            (.constraint fn-c)
-            (map (fn [arity]
-                   (set-global-var arity))))))))
 
 (extend-type Symbol
   TypeChecker
