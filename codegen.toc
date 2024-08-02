@@ -194,7 +194,8 @@
     (assert (instance? Vector args))
     ;; by providing impls for this, call sites can be optimized
 
-    (generic-call tgt args result-var))
+    ;; (generic-call tgt args result-var)
+    )
 
   (gen-code [ast]
     (assert-result r (instance? se/StateError r))
@@ -222,48 +223,26 @@
                      ;;           lf 'refs-map (.refs-map code))
 
                      [init
-                      (line-marker (ast/location tgt) "// dynamic unknown type")
-                      "Port " result-var " = vars_alloc(tm, &vl);"
-                      ;; TODO: handle non-function call targets
-                      ;; "if((" (.var tgt-code) ")->type != FunctionType) {" line-sep
-                      ;; result-var " = " invoke-arity-sym "("
-                      ;; (interpose (list* (str "(FnArity *)" (.c-var sym-location))
-                      ;;                   (.c-var target) args) ", ") ");"
-                      ;; line-sep "} else {" line-sep
-                      "\nif(" (.var tgt) "->type == FunctionType) {" line-sep
+                      ;; (line-marker (ast/location tgt) "// dynamic unknown type")
+                      "if(1) {" line-sep
+                      "// call at" (ast/location args) "\n"
+                      "Port args, n0;" line-sep
+                      (-> (reverse args)
+                          (map .var)
+                          ;; TODO: hacky. Find a better solution
+                          (conj (str (cond (b/is-glbl result-var)
+                                           "(Port)&"
+                                           "")
+                                     result-var))
+                          (reduce (str "args = new_port(ARG, 0);" line-sep)
+                                  (fn [args arg]
+                                    (str args
+                                         "n0 = node_alloc(tm, &vl);" line-sep
+                                         "node_create(n0, new_pair(" arg
+                                         ", args));" line-sep
+                                         "args = new_port(ARG, n0);" line-sep))))
 
-                      ;; look for static arity and call that
-                      "FnArity *arity = findFnArity(" (.var tgt) ", " num-args ");"
-                      line-sep
-                      "if(arity != (FnArity *)0 && !arity->variadic) {" line-sep
-                      "NativeArgs callArgs = {" (inc num-args) ", {"
-                      (-> (map args .var)
-                          (interpose ", "))
-                      ", new_port(ARG, 0)}, "
-                      ;; TODO: hacky. Find a better solution
-                      (cond (b/is-glbl result-var)
-                            "(Port)&"
-                            "")
-                      result-var "};\n"
-                      "link(tm, new_port(REF, (Port)arity->fn), argsNet(tm, &callArgs));\n"
-                      " } else {\n"
-
-                      ;; TODO: for variadic calls
-                      ;; "} else if(arity != (FnArity *)0 && arity->variadic) {" line-sep
-                      ;; "FnType1 *fn = (FnType1 *)arity->fn;" line-sep
-                      ;; "List *args = empty_list;" line-sep
-                      ;; (map (reverse arg-codes)
-                      ;;      (fn [arg]
-                      ;;        (str "args = (List *)listCons("
-                      ;;             (.var arg) ", args);" line-sep)))
-                      ;; result-var " = fn(arity, (Value *)args);" line-sep
-                      ;; "} else {" line-sep
-                      "fprintf(stderr, \"\\n*** No arity found for '%s'.\\n\", "
-                      "((Function *)" (.var tgt) ")->name"
-                      ");" line-sep "  abort();" line-sep "}" line-sep
-                      (cond (b/is-glbl (.var tgt))
-                            ""
-                            ["dec_and_free("(.var tgt) ", 1);" line-sep])
+                      "link(tm, " (.var tgt) ", args);" line-sep
                       "}" line-sep]))))
 
 (defn emit-code [ast mod]
@@ -375,40 +354,10 @@
             (= tgt 'list)
             (call-list tgt args result-var)
 
-            (comp (for [arities (se/get-in-val [.module .namespaces c/no-symbol
-                                                .values 0 tgt .arities])
-                        c-fn (either (-> arities
-                                         (some (fn [arity]
-                                                 (and (-> arity .arity .params .fixed
-                                                          count (= num-args))
-                                                      (-> arity .c-fn maybe))))
-                                         (map se/state-error))
-                                     se/zero-se)
-                        _ (se/update-val .init
-                                         (fn [init]
-                                           [init
-                                            "Port " result-var " = vars_alloc(tm, &vl);" line-sep
-                                            "if(1) {" line-sep
-                                            "Port args, n0;" line-sep
-                                            (-> (reverse args)
-                                                (map .var)
-                                                ;; TODO: hacky. Find a better solution
-                                                (conj (str (cond (b/is-glbl result-var)
-                                                                 "(Port)&"
-                                                                 "")
-                                                           result-var))
-                                                (reduce (str "args = new_port(ARG, 0);" line-sep)
-                                                        (fn [args arg]
-                                                          (str args
-                                                               "n0 = node_alloc(tm, &vl);" line-sep
-                                                               "node_create(n0, new_pair(" arg
-                                                               ", args));" line-sep
-                                                               "args = new_port(ARG, n0);" line-sep))))
-
-                                            "link(tm, new_port(REF, (Port)" c-fn
-                                            "), args);" line-sep
-                                            "}" line-sep]))]
-                    '_)
+            (comp (flat-map (se/get-in-val [.module .namespaces c/no-symbol .values 0 tgt])
+                            (fn [tgt-val]
+                              (gen-call tgt-val args result-var)))
+                  (b/compilation-error "Bad call target" (ast/location tgt))
                   (generic-call tgt args result-var))))))
 
 (extend-type ast/inline-ast
@@ -436,7 +385,7 @@
                                        (fn [init]
                                          ["Port " (.var ast) ";" line-sep
                                           "if(1) {" line-sep
-                                          "Port n0;" line-sep
+                                          "// params at " (ast/location params) "\n"
                                           (-> (reverse (.fixed ast))
                                               (map .var)
                                               (reduce (str (.var ast) " = new_port(ARG, 0);" line-sep)
@@ -571,81 +520,55 @@
     (let [params (.params ast)]
       (either (map (last (.body ast))
                    (fn [last-ast]
-                     (cond (instance? ast/inline-ast last-ast)
-                           (se/state-error ast)
+                     (let [last-v (.var last-ast)]
+                       (cond (instance? ast/inline-ast last-ast)
+                             (se/state-error ast)
 
-                           (for [_ (destruct-params params)]
-                             ast))))
-              (b/compilation-error "Invalid function body at:" (ast/location ast)))
-;; =======
-;;     (let [params (.params ast)
-;;           arityArgs (str (.var ast) "Args")]
-;;       (either (for [last-ast (last (.body ast))
-;;                     :when-not (instance? ast/inline-ast last-ast)]
-;;                 (for [_ (cata (fn [p]
-;;                                 (cond (instance? c/TaggedSymbol p)
-;;                                       (comp (se/get-in-val [.refs-map (.var p)])
-;;                                             (se/update-val .init
-;;                                                            (fn [init]
-;;                                                              []))
-;;                                             (b/se-debug "p:" _LINE_ p))
+                             (for [_ (destruct-params params)
+                                   _ (elgot (fn [ast]
+                                              (cond (or (instance? ast/fn-arity-ast ast))
+                                                    (se/state-error (RecurseFinal ast))
 
-;;                                       b/se-nop))
-;;                               params se/state-error)
-;;                       _ (se/update-val .init
-;;                                        (fn [init]
-;;                                          [(cata (fn [ast]
-;;                                                   (cond (instance? c/TaggedSymbol ast)
-;;                                                         ["Port " (.var ast)
-;;                                                          " = vars_alloc(tm, &vl);\n"]
+                                                    (se/state-error (RecurseWith ast))))
+                                            (fn [ast]
+                                              (cond (instance? Vector ast)
+                                                    (se/state-error ast)
 
-;;                                                         (instance? ast/params-ast ast)
-;;                                                         (.fixed ast)
+                                                    (let [v (.var ast)]
+                                                      (cond (b/is-Rslt v)
+                                                            (se/update-val .init
+                                                                           (fn [init]
+                                                                             ["Port " v
+                                                                              " = vars_alloc(tm, &vl);"
+                                                                              line-sep
+                                                                              init]))
 
-;;                                                         ""))
-;;                                                 params)
-;;                                           init
-;;                                           "NativeArgs " arityArgs ";\n"
-;;                                           "  " arityArgs ".count = "
-;;                                           (count (.fixed params)) ";\n"
-;;                                           (-> (range (count (.fixed params)))
-;;                                               (zip-lists (.fixed params))
-;;                                               (map (fn [[idx p]]
-;;                                                      [arityArgs ".args[" (str idx)
-;;                                                       "] = " (.var p) ";\n"])))
-;;                                           arityArgs ".tail = " (.var last-ast) ";\n"
-;;                                           "Port " (.var ast) " = argsNet(tm, &"
-;;                                           arityArgs ");\n"]))]
-;;                   ast))
-;;               (se/state-error ast))
-;; >>>>>>> Stashed changes
+                                                            (se/state-error ast)))))
+                                            (.body ast)
+                                            se/state-error)
+                                   _ (se/update-val
+                                      .init
+                                      (fn [init]
+                                        [init
+                                         (map (butlast (.body ast))
+                                              (fn [expr]
+                                                (let [v (.var expr)]
+                                                  (cond (= v last-v)
+                                                        ""
 
-      ;; (for [_ b/se-nop
+                                                        (b/is-Rslt v)
+                                                        ["n0 = node_alloc(tm, &vl);" line-sep
+                                                         "node_create(n0, new_pair(" v ", erase));"
+                                                         line-sep "vars_create(" v ", "
+                                                         "new_port(RDX, n0));" line-sep]
 
-      ;;       ;; body-exprs (comp (cond (= (.variadic params) c/no-symbol)
-      ;;       ;;                        (flat-map (.fixed params) destruct-seq)
-
-      ;;       ;;                        (destruct-seq params))
-      ;;       ;;                  body-exprs)
-
-      ;;       code ]
-
-      ;;   ;; (b/status 'body _LINE_ (ast/location ast) 'params (ast/all-syms params)
-      ;;   ;;           lf (str "[" (-> body-exprs
-      ;;   ;;                           (map (fn [code]
-      ;;   ;;                                  [(type-name code)
-      ;;   ;;                                   (.var code)
-      ;;   ;;                                   (.refs-map code)]))
-      ;;   ;;                           (interpose (str lf "  "))
-      ;;   ;;                           to-str) "]"))
-      ;;   ;; TODO: handle recursion properly
-      ;;   (-> code
-      ;;       ;; TODO: don't think this does anything
-      ;;       ;; (.decl [(.decl code)])
-      ;;       (.init [ "\n  NativeArgs arityArgs;\n"
-      ;;               (.init code)
-      ;;               "  return TRUE;\n};\n"])))
-      ))
+                                                        ""))))
+                                         "n0 = node_alloc(tm, &vl);" line-sep
+                                         "node_create(n0, new_pair(" last-v
+                                         ", " (.var params) "));" line-sep
+                                         (.var params) " = new_port(ARG, n0);" line-sep]))]
+                               ast)))))
+              (b/compilation-error "Invalid function body at:" (ast/location ast)))))
 
   (gen-call [tgt args result-var]
     (se/update-val .init
@@ -661,25 +584,27 @@
                      ;;                                            (interpose (str lf "  ")))) "]")
                      ;;           lf 'refs-map (.refs-map code))
                      [init
-                      (line-marker (ast/location tgt) "// call fn-arity")
-                      "Port " result-var " = vars_alloc(tm, &vl);\n"
+                      ;; (line-marker (ast/location tgt) "// dynamic unknown type")
+                      "if(1) {" line-sep
+                      "// call at" (ast/location args) "\n"
+                      "Port args;" line-sep
+                      (-> (reverse args)
+                          (map .var)
+                          ;; TODO: hacky. Find a better solution
+                          (conj (str (cond (b/is-glbl result-var)
+                                           "(Port)&"
+                                           "")
+                                     result-var))
+                          (reduce (str "args = new_port(ARG, 0);" line-sep)
+                                  (fn [args arg]
+                                    (str args
+                                         "n0 = node_alloc(tm, &vl);" line-sep
+                                         "node_create(n0, new_pair(" arg
+                                         ", args));" line-sep
+                                         "args = new_port(ARG, n0);" line-sep))))
 
-                      ;; look for static arity and call that
-                      line-sep
-                      "NativeArgs callArgs = {" num-args ", {"
-                      (-> (map args .var)
-                          (interpose ", "))
-                      "}, "
-                      ;; TODO: hacky. Find a better solution
-                      (cond (b/is-glbl result-var)
-                            "(Port)&"
-                            "")
-                      result-var "};\n"
-                      "link(tm, " (.var tgt) ", argsNet(tm, &callArgs));\n"
-                      ;; (cond (b/is-glbl (.var tgt))
-                      ;;       ""
-                      ;;       ["dec_and_free("(.var tgt) ", 1);" line-sep])
-                      line-sep])))))
+                      "link(tm, " (.var (.params tgt)) ", args);" line-sep
+                      "}" line-sep])))))
 
 (extend-type b/StaticArity
   CodeGen
@@ -714,7 +639,7 @@
                                         ") {" line-sep
                                         (name-natives params)]
 
-                                      "")
+                                       ["Port n0;" line-sep])
                                  init
                                  (cond inline?
                                        ["\nlink(tm, resultVar, result);\n}\n"
@@ -725,13 +650,35 @@
                                         "  return FALSE;\n"
                                         "}\n}\n"]
 
-                                       ["Port params = node_alloc(tm, &vl);" line-sep
-                                        "node_create(params, new_pair(" (.var last-ast)
-                                        ", " (.var params) "));" line-sep
-                                        "params = new_port(ARG, params);" line-sep
-                                        "link(tm, params, args);" line-sep
+                                       ["link(tm, " (.var params) ", args);" line-sep
                                         "return TRUE;" line-sep "}" line-sep])])]
-        ast))))
+        ast)))
+
+  (gen-call [tgt args result-var]
+    (se/update-val .init
+                   (fn [init]
+                     [init
+                      "if(1) {" line-sep
+                      "// call at" (ast/location args) "\n"
+                      "Port args, n0;" line-sep
+                      (-> (reverse args)
+                          (map .var)
+                          ;; TODO: hacky. Find a better solution
+                          (conj (str (cond (b/is-glbl result-var)
+                                           "(Port)&"
+                                           "")
+                                     result-var))
+                          (reduce (str "args = new_port(ARG, 0);" line-sep)
+                                  (fn [args arg]
+                                    (str args
+                                         "n0 = node_alloc(tm, &vl);" line-sep
+                                         "node_create(n0, new_pair(" arg
+                                         ", args));" line-sep
+                                         "args = new_port(ARG, n0);" line-sep))))
+
+                      "link(tm, new_port(REF, (Port)" (.c-fn tgt)
+                      "), args);" line-sep
+                      "}" line-sep]))))
 
 (defn default-fn [val c-fn]
   (assert (instance? ast/prototype-ast val))
@@ -813,6 +760,17 @@
   CodeGen
   (pre-gen [ast]
     (se/state-error ast))
+
+  (gen-call [tgt args result-var]
+    (let [arities (.arities tgt)
+          static-arity (either (some arities (fn [arity]
+                                               (and (-> arity .arity .params .fixed
+                                                        count (= (count args)))
+                                                    (maybe arity))))
+                               (do
+                                 (print-err "Implement currying: " _FILE_ _LINE_)
+                                 (abort)))]
+      (gen-call static-arity args result-var)))
 
   (gen-code [ast]
     (se/state-error ast)
@@ -945,6 +903,9 @@
   CodeGen
   (pre-gen [ast]
     (se/state-error ast))
+
+  (gen-call [tgt args result-var]
+    (generic-call tgt args result-var))
 
   (gen-code [ast]
     (map (gen-call (.call-target ast) (.args ast) (.var ast))
