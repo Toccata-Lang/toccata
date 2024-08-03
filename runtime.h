@@ -345,7 +345,7 @@ char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);
 Value *prSTAR(Value *);
 Value *add_ints(Value *arg0, Value *arg1);
-Value *integer_str(Value *arg0);
+Port number_str(Port arg0);
 Value *integer_EQ(Value *arg0, Value *arg1);
 Value *integer_LT(Value *arg0, Value *arg1);
 Value *integerValue(int64_t n);

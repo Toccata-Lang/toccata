@@ -47,7 +47,7 @@ Port new_num(Port val) {
   return (val << TAG_SIZE) | NUM;
 }
 
-Val get_num(Port port) {
+Val get_val(Port port) {
   return port >> TAG_SIZE;
 }
 
@@ -157,29 +157,29 @@ bool is_high_priority(Pair AB) {
 
 // Constructor and getters for SYM (operation selector)
 Numb new_sym(u64 val) {
-  return (val << 5) | TY_SYM;
+  return (val << NUM_TAG_SIZE) | TY_SYM;
 }
 
 u64 get_sym(Numb word) {
-  return (word >> 5);
+  return (word >> NUM_TAG_SIZE);
 }
 
 // Constructor and getters for U24 (unsigned 24-bit integer)
 Numb new_u24(u64 val) {
-  return (val << 5) | TY_U24;
+  return (val << NUM_TAG_SIZE) | TY_U24;
 }
 
 u64 get_u24(Numb word) {
-  return word >> 5;
+  return word >> NUM_TAG_SIZE;
 }
 
 // Constructor and getters for I24 (signed 24-bit integer)
 Numb new_i24(i64 val) {
-  return ((u64)val << 5) | TY_I24;
+  return ((u64)val) << NUM_TAG_SIZE | TY_I24;
 }
 
 i64 get_i24(Numb word) {
-  return ((i64)word) << TAG_SIZE >> 5;
+  return ((i64)word) << TAG_SIZE >> (TAG_SIZE + NUM_TAG_SIZE);
 }
 
 // Constructor and getters for F24 (24-bit float)
@@ -191,7 +191,7 @@ Numb new_f24(float val) {
   shifted_bits += (!isnan(val)) & ((lost_bits - ((lost_bits >> 7) & !shifted_bits)) >> 7);
   // ensure NaNs don't become infinities
   shifted_bits |= isnan(val);
-  return (shifted_bits << 5) | TY_F24;
+  return (shifted_bits << NUM_TAG_SIZE) | TY_F24;
 }
 
 f64 get_f24(Numb word) {
@@ -262,9 +262,7 @@ Numb cast(Numb a, Numb b) {
 }
 
 // Operate function
-Numb operate(Port aP, Port bP) {
-  Numb a = aP >> TAG_SIZE;
-  Numb b = bP >> TAG_SIZE;
+Numb operate(Numb a, Numb b) {
   Tag at = get_typ(a);
   Tag bt = get_typ(b);
   if (at == TY_SYM && bt == TY_SYM) {
@@ -750,7 +748,7 @@ bool SWIT(TM* tm, Port a, Port b) {
   }
 
   // Loads ports.
-  u64  av = get_u24(get_num(a));
+  u64  av = get_u24(get_val(a));
   Pair B  = node_take(b);
   Port B1 = B.fst;
   Port B2 = B.snd;
@@ -1092,7 +1090,7 @@ void pretty_print_port(Port port) {
         break;
       }
       case NUM: {
-        pretty_print_numb(get_num(cur));
+        pretty_print_numb(get_val(cur));
         break;
       }
       case DUP: {

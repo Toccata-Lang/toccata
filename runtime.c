@@ -1768,12 +1768,11 @@ Value *integerValue(int64_t n) {
   return((Value *)numVal);
 };
 
-Value *integer_str(Value *arg0) {
+Port number_str(Port arg0) {
   String *numStr = malloc_string(50);
-  snprintf(numStr->buffer, 40, "%" PRId64 "", ((Integer *)arg0)->numVal);
+  snprintf(numStr->buffer, 40, "%" PRId64 "", get_i24(get_val(arg0)));
   numStr->len = strlen(numStr->buffer);
-  dec_and_free(arg0, 1);
-  return((Value *)numStr);
+  return(new_port(VAL, (Port)numStr));
 }
 
 Value *integer_EQ(Value *arg0, Value *arg1) {

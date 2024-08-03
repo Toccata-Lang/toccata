@@ -224,26 +224,24 @@
 
                      [init
                       ;; (line-marker (ast/location tgt) "// dynamic unknown type")
-                      "if(1) {" line-sep
-                      "// call at" (ast/location args) "\n"
-                      "Port args, n0;" line-sep
-                      (-> (reverse args)
+                      "// call " (either (instance? c/TaggedSymbol tgt) "")
+                      " at " (ast/location args) "\n"
+                      (-> args
                           (map .var)
                           ;; TODO: hacky. Find a better solution
                           (conj (str (cond (b/is-glbl result-var)
                                            "(Port)&"
                                            "")
                                      result-var))
-                          (reduce (str "args = new_port(ARG, 0);" line-sep)
+                          (reduce (str "callArgs = new_port(ARG, 0);" line-sep)
                                   (fn [args arg]
                                     (str args
                                          "n0 = node_alloc(tm, &vl);" line-sep
                                          "node_create(n0, new_pair(" arg
-                                         ", args));" line-sep
-                                         "args = new_port(ARG, n0);" line-sep))))
+                                         ", callArgs));" line-sep
+                                         "callArgs = new_port(ARG, n0);" line-sep))))
 
-                      "link(tm, " (.var tgt) ", args);" line-sep
-                      "}" line-sep]))))
+                      "link(tm, " (.var tgt) ", callArgs);" line-sep]))))
 
 (defn emit-code [ast mod]
   (cond (instance? ast/inline-ast ast)
@@ -354,6 +352,20 @@
             (= tgt 'list)
             (call-list tgt args result-var)
 
+            (and (= 2 (count args))
+                 (= tgt '+))
+            (se/update-val .init
+                           (fn [init]
+                             (let [[x y] (map args .var)]
+                               [init
+                                "if (get_tag(" x ") == NUM && get_tag("
+                                y ") == NUM) { " line-sep
+                                result-var " = new_num(operate(get_val(" x
+                                "), get_val(" y ") & ~0x1F | OP_ADD));"
+                                line-sep
+                                "} else {\nprintf(\"Finish +\\n\");\nabort();\n}\n"]
+                               )))
+
             (comp (flat-map (se/get-in-val [.module .namespaces c/no-symbol .values 0 tgt])
                             (fn [tgt-val]
                               (gen-call tgt-val args result-var)))
@@ -383,7 +395,6 @@
                         (se/update-val .init
                                        (fn [init]
                                          ["Port " (.var ast) ";" line-sep
-                                          "if(1) {" line-sep
                                           "// params at " (ast/location params) "\n"
                                           (-> (reverse (.fixed ast))
                                               (map .var)
@@ -395,7 +406,6 @@
                                                              ", " (.var ast) "));" line-sep
                                                              (.var ast) " = new_port(ARG, n0);"
                                                              line-sep))))
-                                          "}" line-sep
                                           init]))
 
                         (se/state-error ast)))
@@ -549,6 +559,7 @@
                                       .init
                                       (fn [init]
                                         [init
+                                         "// link args to body\n"
                                          (map (butlast (.body ast))
                                               (fn [expr]
                                                 (let [v (.var expr)]
@@ -583,27 +594,23 @@
                      ;;                                            (interpose (str lf "  ")))) "]")
                      ;;           lf 'refs-map (.refs-map code))
                      [init
-                      ;; (line-marker (ast/location tgt) "// dynamic unknown type")
-                      "if(1) {" line-sep
-                      "// call at" (ast/location args) "\n"
-                      "Port args;" line-sep
-                      (-> (reverse args)
+                      "// call " (.fn-sym tgt) "at" (ast/location args) "\n"
+                      (-> args
                           (map .var)
                           ;; TODO: hacky. Find a better solution
                           (conj (str (cond (b/is-glbl result-var)
                                            "(Port)&"
                                            "")
                                      result-var))
-                          (reduce (str "args = new_port(ARG, 0);" line-sep)
+                          (reduce (str "callArgs = new_port(ARG, 0);" line-sep)
                                   (fn [args arg]
                                     (str args
                                          "n0 = node_alloc(tm, &vl);" line-sep
                                          "node_create(n0, new_pair(" arg
-                                         ", args));" line-sep
-                                         "args = new_port(ARG, n0);" line-sep))))
+                                         ", callArgs));" line-sep
+                                         "callArgs = new_port(ARG, n0);" line-sep))))
 
-                      "link(tm, " (.var (.params tgt)) ", args);" line-sep
-                      "}" line-sep])))))
+                      "link(tm, " (.var (.params tgt)) ", callArgs);" line-sep])))))
 
 (extend-type b/StaticArity
   CodeGen
@@ -628,7 +635,7 @@
                                        ["  if (get_tag(args) == ARG) {\n"
                                         "    Pair pr = node_take(args);\n"
                                         "    Port resultVar = pr.fst;\n"
-                                        "    Port result;\n"
+                                        "    Port result = erase;\n"
                                         "    NativeArgs arityArgs = {0, {}, resultVar};"
                                         line-sep
                                         (repeat (count (.fixed params))
@@ -638,7 +645,7 @@
                                         ") {" line-sep
                                         (name-natives params)]
 
-                                       ["Port n0;" line-sep])
+                                       ["Port callArgs, n0;" line-sep])
                                  init
                                  (cond inline?
                                        ["\nlink(tm, resultVar, result);" line-sep "}" line-sep
@@ -660,9 +667,7 @@
     (se/update-val .init
                    (fn [init]
                      [init
-                      "if(1) {" line-sep
-                      "// call at" (ast/location args) "\n"
-                      "Port args, n0;" line-sep
+                      "// call " (.fn-sym (.arity tgt)) " at" (ast/location args) "\n"
                       (-> (reverse args)
                           (map .var)
                           ;; TODO: hacky. Find a better solution
@@ -670,17 +675,16 @@
                                            "(Port)&"
                                            "")
                                      result-var))
-                          (reduce (str "args = new_port(ARG, 0);" line-sep)
+                          (reduce (str "callArgs = new_port(ARG, 0);" line-sep)
                                   (fn [args arg]
                                     (str args
                                          "n0 = node_alloc(tm, &vl);" line-sep
                                          "node_create(n0, new_pair(" arg
-                                         ", args));" line-sep
-                                         "args = new_port(ARG, n0);" line-sep))))
+                                         ", callArgs));" line-sep
+                                         "callArgs = new_port(ARG, n0);" line-sep))))
 
                       "link(tm, new_port(REF, (Port)" (.c-fn tgt)
-                      "), args);" line-sep
-                      "}" line-sep]))))
+                      "), callArgs);" line-sep]))))
 
 (defn default-fn [val c-fn]
   (assert (instance? ast/prototype-ast val))
@@ -1059,7 +1063,7 @@
                     "  u64 start = time64();\n"
                     "  TM *tm = tms[0];\n"
                     "  u32 vl = 0;\n"
-                    "  Port n0;\n"
+                    "  Port callArgs, n0;\n"
                     (.glbl-init code-context)
                     "\n#\n"
                     "  Vector *argVect = empty_vect;\n"
@@ -1088,7 +1092,7 @@
                     "  free(globalNet);\n"
                     "  Port result = vars_load((Port)&resultVar);\n"
                     "  if (get_tag(result) == NUM) {\n"
-                    "  bashResult = (int)get_u24(get_num(result));\n"
+                    "  bashResult = (int)get_u24(get_val(result));\n"
                     "  } else if (get_tag(result) == VAL ) {\n"
                     "  the_final_answer = (Value *)(result & ~TAG_MASK);\n"
                     "  }\n"

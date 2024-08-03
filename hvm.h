@@ -78,6 +78,7 @@ typedef bool (*interactionFn)(TM* tm, Port a, Port b);
 #define FREE 0
 #define TAG_SIZE 4
 #define TAG_MASK 0xf
+#define NUM_TAG_SIZE 5
 
 // Local Types
 typedef u8  Tag;  // Tag  ::= 3-bit (rounded up to u8)
@@ -134,7 +135,7 @@ typedef struct {
 #define OP_SHR 0x15
 #define FP_SHR 0x16
 
-#define new_i24_(x) (((u64)x << 5) | TY_I24)
+#define new_i24_(x) (((u64)x << NUM_TAG_SIZE) | TY_I24)
 #define new_num_(x) ((x << TAG_SIZE) | NUM)
 
 // Port: Constructor and Getters
@@ -143,7 +144,7 @@ typedef struct {
 #define new_port_(tag, x) (((u64)x | tag))
 
 Port new_num(Port val);
-Val get_num(Port port);
+Val get_val(Port port);
 Port new_port(Tag tag, Port val);
 Port new_ref(interactionFn val);
 Tag get_tag(Port port);
@@ -177,3 +178,5 @@ void normalize();
 void net_init();
 Port dupeArg(TM *tm, Port arg, Port dupeArg);
 Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct);
+i64 get_i24(Numb word);
+Numb new_i24(i64 val);

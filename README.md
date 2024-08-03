@@ -10,6 +10,8 @@ deferred redex can be used to implement laziness
 deferred redex makes esb's obsolete. May not even need that
 closures can be limited to single arity in the parser
 Because of optimality, deforestation might be trivial as would multi modules
+To improve single-thread perf., reverse order links are written so the use of a
+result is put on the stack before the result is computed
 
 
 > "Pithy quote."
