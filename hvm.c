@@ -715,12 +715,6 @@ bool COMM(TM* tm, Port a, Port b) {
 
 // The Oper Interaction.
 bool OPER(TM* tm, Port a, Port b) {
-  //printf("OPER %08x %08x\n", a, b);
-
-  // Allocates needed nodes and vars.
-  u32 nl = 0;
-  Port n0 = node_alloc(tm, &nl);
-
   // Checks availability
   if (isEmpty(node_load(b))) {
     return FALSE;
@@ -733,11 +727,10 @@ bool OPER(TM* tm, Port a, Port b) {
 
   // Performs operation.
   if (get_tag(B1) == NUM) {
-    Numb cv = operate(a, B1);
-    link_pair(tm, new_pair(new_num(cv), B2));
+    Numb cv = operate(get_val(a), get_val(B1));
+    link(tm, new_num(cv), B2);
   } else {
-    node_create(n0, new_pair(a, B2));
-    link_pair(tm, new_pair(B1, new_port(OPR, n0)));
+    link(tm, B1, new_port(OPR, node_make(tm, a, B2)));
   }
 
   return TRUE;
@@ -1386,3 +1379,12 @@ void hvm_c(interactionFn mainFn, NativeArgs *args) {
   free(globalNet);
 }
 // */
+
+void make_op(TM *tm, int op, Port x, Port y, Port rslt) {
+  if (get_tag(x) == NUM && get_tag(y) == NUM) {
+    link(tm, rslt, new_num(operate(get_val(x), get_val(y) & ~0x1F | op)));
+  } else {
+    link(tm, x,new_port(OPR, node_make(tm, new_port(NUM, op << (NUM_TAG_SIZE + TAG_SIZE)),
+				       new_port(OPR, node_make(tm, y, rslt)))));
+  }
+}

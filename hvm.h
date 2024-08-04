@@ -181,3 +181,4 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct);
 i64 get_i24(Numb word);
 Numb new_i24(i64 val);
 Port node_make(TM *tm, Port fst, Port snd);
+void make_op(TM *tm, int op, Port x, Port y, Port rslt);
