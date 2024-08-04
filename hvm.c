@@ -434,6 +434,13 @@ void node_create(Port loc, Pair val) {
   atomic_store_explicit((APair*)((u64)loc & ~TAG_MASK), val, memory_order_relaxed);
 }
 
+Port node_make(TM *tm, Port fst, Port snd) {
+  u32 ul = 0;
+  Port n0 = node_alloc(tm, &ul);
+  node_create(n0, new_pair(fst, snd));
+  return n0;
+}
+
 // Stores a var on global.
 void vars_create(Port var, Port val) {
   atomic_store_explicit((APort*)var, val, memory_order_relaxed);

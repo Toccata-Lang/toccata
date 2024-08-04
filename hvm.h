@@ -180,3 +180,4 @@ Port dupeArg(TM *tm, Port arg, Port dupeArg);
 Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct);
 i64 get_i24(Numb word);
 Numb new_i24(i64 val);
+Port node_make(TM *tm, Port fst, Port snd);
