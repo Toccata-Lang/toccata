@@ -226,13 +226,13 @@
                       ;; (line-marker (ast/location tgt) "// dynamic unknown type")
                       "// call " (either (instance? c/TaggedSymbol tgt) "")
                       " at " (ast/location args) "\n"
+                      (cond (b/is-glbl result-var)
+                            ""
+                            "Port ")
+                      result-var " = vars_alloc(tm, &vl);" line-sep
                       (-> args
                           (map .var)
-                          ;; TODO: hacky. Find a better solution
-                          (conj (str (cond (b/is-glbl result-var)
-                                           "(Port)&"
-                                           "")
-                                     result-var))
+                          (conj result-var)
                           (reduce (str "callArgs = new_port(ARG, 0);" line-sep)
                                   (fn [args arg]
                                     (str args
@@ -357,13 +357,13 @@
                              (let [[x y] (map args .var)]
                                [init
                                 "// adding nums\n"
-                                "make_op(tm, OP_ADD, " x ", " y ", " result-var ");" line-sep]
-                               )))
+                                (cond (b/is-glbl result-var)
+                                      ""
+                                      "Port ")
+                                result-var " = vars_alloc(tm, &vl);" line-sep
+                                "make_op(tm, OP_ADD, " x ", " y ", " result-var ");" line-sep])))
 
-            (comp (flat-map (se/get-in-val [.module .namespaces c/no-symbol .values 0 tgt])
-                            (fn [tgt-val]
-                              (gen-call tgt-val args result-var)))
-                  (generic-call tgt args result-var))))))
+            (generic-call tgt args result-var)))))
 
 (extend-type ast/inline-ast
   CodeGen
@@ -388,8 +388,9 @@
                   (cond (instance? ast/params-ast ast)
                         (se/update-val .init
                                        (fn [init]
-                                         ["Port " (.var ast) ";" line-sep
+                                         [init
                                           "// params at " (ast/location params) "\n"
+                                          "Port " (.var ast) ";" line-sep
                                           (-> (reverse (.fixed ast))
                                               (map .var)
                                               (reduce (str (.var ast) " = new_port(ARG, 0);" line-sep)
@@ -397,8 +398,7 @@
                                                         (str args
                                                              (.var ast)
                                                              " = new_port(ARG, node_make(tm, " arg
-                                                             ", " (.var ast) "));" line-sep))))
-                                          init]))
+                                                             ", " (.var ast) "));" line-sep))))]))
 
                         (se/state-error ast)))
                 params se/state-error)
@@ -511,11 +511,12 @@
 (extend-type ast/fn-arity-ast
   CodeGen
   (pre-gen [ast]
-    (for [_ (se/update-val .refs-map (fn [refs]
-                                       (either (map (first refs)
-                                                    (fn [refs-map]
-                                                      (cons refs-map refs)))
-                                               (list {}))))]
+    (for [_ (se/update-val .refs-map
+                           (fn [refs]
+                             (either (map (first refs)
+                                          (fn [refs-map]
+                                            (cons refs-map refs)))
+                                     (list {}))))]
       ast))
 
   (gen-code [ast]
@@ -527,27 +528,6 @@
                              (se/state-error ast)
 
                              (for [_ (destruct-params params)
-                                   _ (elgot (fn [ast]
-                                              (cond (or (instance? ast/fn-arity-ast ast))
-                                                    (se/state-error (RecurseFinal ast))
-
-                                                    (se/state-error (RecurseWith ast))))
-                                            (fn [ast]
-                                              (cond (instance? Vector ast)
-                                                    (se/state-error ast)
-
-                                                    (let [v (.var ast)]
-                                                      (cond (b/is-Rslt v)
-                                                            (se/update-val .init
-                                                                           (fn [init]
-                                                                             ["Port " v
-                                                                              " = vars_alloc(tm, &vl);"
-                                                                              line-sep
-                                                                              init]))
-
-                                                            (se/state-error ast)))))
-                                            (.body ast)
-                                            se/state-error)
                                    _ (se/update-val
                                       .init
                                       (fn [init]
@@ -560,9 +540,7 @@
                                                         ""
 
                                                         (b/is-Rslt v)
-                                                        ["n0 = node_make(tm, " v ", erase);"
-                                                         line-sep "vars_create(" v ", "
-                                                         "new_port(RDX, n0));" line-sep]
+                                                        ["link(tm, " v ", erase);" line-sep]
 
                                                         ""))))
                                          (.var params) " = new_port(ARG, node_make(tm, " last-v
@@ -572,8 +550,7 @@
 
   (gen-call [tgt args result-var]
     (se/update-val .init
-                 (fn [init]
-                   (let [num-args (count args)]
+                   (fn [init]
                      ;; (b/status 'call _LINE_ (ast/location tgt)
                      ;;           lf 'tgt (type-name tgt-code) (.var tgt-code) (.refs-map tgt-code)
                      ;;           lf 'args lf (str "[" (to-str (-> arg-codes
@@ -585,20 +562,20 @@
                      ;;           lf 'refs-map (.refs-map code))
                      [init
                       "// call " (.fn-sym tgt) " at " (ast/location args) "\n"
+                      (cond (b/is-glbl result-var)
+                            ""
+                            "Port ")
+                      result-var " = vars_alloc(tm, &vl);" line-sep
                       (-> args
                           (map .var)
-                          ;; TODO: hacky. Find a better solution
-                          (conj (str (cond (b/is-glbl result-var)
-                                           "(Port)&"
-                                           "")
-                                     result-var))
+                          (conj result-var)
                           (reduce (str "callArgs = new_port(ARG, 0);" line-sep)
                                   (fn [args arg]
                                     (str args
                                          "callArgs = new_port(ARG, node_make(tm, " arg
                                          ", callArgs));" line-sep))))
 
-                      "link(tm, " (.var (.params tgt)) ", callArgs);" line-sep])))))
+                      "link(tm, " (.var (.params tgt)) ", callArgs);" line-sep]))))
 
 (extend-type b/StaticArity
   CodeGen
@@ -616,39 +593,42 @@
           ]
       (for [init (se/get-val .init)
             _ (se/set-val .init [])
-            decl (se/get-val .decl)
-            _ (se/set-val .decl [decl
-                                 "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;\n"
-                                 (cond inline?
-                                       ["  if (get_tag(args) == ARG) {\n"
-                                        "    Pair pr = node_take(args);\n"
-                                        "    Port resultVar = pr.fst;\n"
-                                        "    Port result = erase;\n"
-                                        "    NativeArgs arityArgs = {0, {}, resultVar};"
-                                        line-sep
-                                        (repeat (count (.fixed params))
-                                                (str "    args = nativeArg(tm, ref, pr.snd"
-                                                     ", &arityArgs);" line-sep))
-                                        "    if (arityArgs.count == " (count (.fixed params))
-                                        ") {" line-sep
-                                        (name-natives params)]
+            _ (se/update-val .decl
+                             (fn [decl]
+                               [decl
+                                "Port " (.var ast) ";" line-sep
+                                "bool " c-fn "(TM *tm, Port ref, Port args) {\nu32 vl = 0;\n"
+                                (cond inline?
+                                      ["  if (get_tag(args) == ARG) {\n"
+                                       "    Pair pr = node_take(args);\n"
+                                       "    Port resultVar = pr.fst;\n"
+                                       "    Port result = erase;\n"
+                                       "    NativeArgs arityArgs = {0, {}, resultVar};"
+                                       line-sep
+                                       (repeat (count (.fixed params))
+                                               (str "    args = nativeArg(tm, ref, pr.snd"
+                                                    ", &arityArgs);" line-sep))
+                                       "    if (arityArgs.count == " (count (.fixed params))
+                                       ") {" line-sep
+                                       (name-natives params)]
 
-                                       ["Port callArgs, n0;" line-sep])
-                                 init
-                                 (cond inline?
-                                       ["\nlink(tm, resultVar, result);" line-sep "}" line-sep
-                                        "return TRUE;" line-sep
-                                        "} else {" line-sep
-                                        "  fprintf(stderr, \"Compiler error at %s:%d\", __FILE__, __LINE__);" line-sep
-                                        "  abort();" line-sep
-                                        "  return FALSE;" line-sep
-                                        "}" line-sep "}" line-sep]
+                                      ["Port callArgs, n0;" line-sep])
+                                init
+                                (cond inline?
+                                      ["\nlink(tm, resultVar, result);" line-sep "}" line-sep
+                                       "return TRUE;" line-sep
+                                       "} else {" line-sep
+                                       "  fprintf(stderr, \"Compiler error at %s:%d\", __FILE__, __LINE__);" line-sep
+                                       "  abort();" line-sep
+                                       "  return FALSE;" line-sep
+                                       "}" line-sep "}" line-sep]
 
-                                       ["link(tm, " (.var params) ", args);" line-sep
-                                        "return TRUE;" line-sep "}" line-sep])
-                                 "Port " (.var ast) ";" line-sep])
-            _ (se/update-val .glbl-init (fn [init]
-                                          [init (.var ast) " = new_port_(REF, " c-fn ");" line-sep]))]
+                                      ["link(tm, " (.var params) ", args);" line-sep
+                                       "return TRUE;" line-sep "}" line-sep])]))
+            _ (se/update-val .glbl-init
+                             (fn [glbl-init]
+                               [glbl-init
+                                (.var ast) " = new_port_(REF, " c-fn ");" line-sep]))]
         ast)))
 
   (gen-call [tgt args result-var]
@@ -656,21 +636,20 @@
                    (fn [init]
                      [init
                       "// call " (.fn-sym (.arity tgt)) " at " (ast/location args) "\n"
+                      (cond (b/is-glbl result-var)
+                            ""
+                            "Port ")
+                      result-var " = vars_alloc(tm, &vl);" line-sep
                       (-> (reverse args)
                           (map .var)
-                          ;; TODO: hacky. Find a better solution
-                          (conj (str (cond (b/is-glbl result-var)
-                                           "(Port)&"
-                                           "")
-                                     result-var))
+                          (conj result-var)
                           (reduce (str "callArgs = new_port(ARG, 0);" line-sep)
                                   (fn [args arg]
                                     (str args
                                          "callArgs = new_port(ARG, node_make(tm, " arg
                                          ", callArgs));" line-sep))))
 
-                      "link(tm, new_port(REF, (Port)" (.c-fn tgt)
-                      "), callArgs);" line-sep]))))
+                      "link(tm, " (.var tgt) ", callArgs);" line-sep]))))
 
 (defn default-fn [val c-fn]
   (assert (instance? ast/prototype-ast val))
@@ -756,31 +735,19 @@
     (se/state-error ast))
 
   (gen-code [ast]
-    (let [[expr] (.value-exprs ast)]
+    (let [[expr] (.value-exprs ast)
+          sym (.sym ast)]
       (for [init (se/update-val .init (fn [_] []))
-            _ (se/update-val .glbl-init
-                             (fn [glbl-init]
-                               (let [add-global (either (= (.var expr) "")
-                                                        [;; keep track of the dynamically created
-                                                         ;; global values so they can be freed
-                                                         ;; "globals = listCons("
-                                                         ;; (.var code) ", globals);\n"
-                                                         ])]
-                                 (conj glbl-init
-                                       (either (empty? init)
-                                               [init add-global])))))
-            _ (se/update-val .decl
-                             (fn [decl]
-                               ;; TODO: there used to be a problem with multiple 'cond' clauses
-                               (cond (empty? init)
-                                     ["// " (str (ast/location ast) "\n")
-                                      decl]
+            _ (se/update-val .glbl-init (fn [glbl-init]
+                                          (comp glbl-init init)))
+            _ (cond (or (instance? c/TaggedSymbol expr)
+                        (instance? b/StaticArity expr)
+                        (instance? ast/string-ast expr)
+                        (instance? ast/integer-ast expr))
+                    b/se-nop
 
-                                     (cond (= (.var expr) "")
-                                           decl
-
-                                           ["Port " (.var expr) ";\n"
-                                            decl]))))]
+                    (se/update-val .decl (fn [decl]
+                                           [decl "Port " (.var expr) ";" line-sep])))]
         ast))))
 
 (extend-type ast/integer-ast
@@ -806,8 +773,8 @@
                         str-sym (str "str" str-idx)]
                   _ (se/assoc-in-val [.strings str-val] str-ptr)
                   _ (se/update-in-val [.glbl-init]
-                                      (fn [init]
-                                        [init
+                                      (fn [glbl-init]
+                                        [glbl-init
                                          str-sym " = stringValue(\"" (escape-chars str-val)
                                          "\");" str-sym "->refs = refsConstant;\n"
                                          "globals = listCons(" str-sym ", globals);\n"
@@ -1030,8 +997,7 @@
             (b/wait-for-err-out)
             (abort)) 
 
-          (code-out "  \n#\n"
-                    "  \nint main (int argc, char **argv) {\n"
+          (code-out "  \nint main (int argc, char **argv) {\n"
                     "  prErrSTAR = &defaultPrErrSTAR;\n"
                     "  #ifdef SINGLE_THREADED\n"
                     "  #ifdef CHECK_MEM_LEAK\n"
@@ -1051,7 +1017,6 @@
                     "  u32 vl = 0;\n"
                     "  Port callArgs, n0;\n"
                     (.glbl-init code-context)
-                    "\n#\n"
                     "  Vector *argVect = empty_vect;\n"
                     "  for(int i = 0; i < argc; i++) {\n"
                     "    argVect = mutateVectConj(argVect, stringValue(argv[i]));\n"
@@ -1087,7 +1052,6 @@
                     "cleaningUp = 1;\n"
                     "mainThreadDone = 1;\n"
                     "waitForWorkers();\n"
-                    "\n#\n"
                     ;; TODO: change to argVect
                     ;; "for(List *l = argVect; l != (List *)0; l = l->tail) {\n"
                     ;; "   l->refs = 1;\n"
@@ -1099,8 +1063,7 @@
 
                     "  if (malloc_count - free_count != 0)\n"
                     "    return(1);\n"
-                    "#endif"
-                    "\n#\n"
+                    "#endif\n"
                     "  printf(\"bashResult: %d\\n\", bashResult);\n"
                     "  return(bashResult);\n}\n"
                     "\nint typeCount = " (extract b/type-counter) ";\n"))

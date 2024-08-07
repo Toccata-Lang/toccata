@@ -1308,13 +1308,12 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       break;
 
     case VAR:
+    case OPR:
       n0 = node_alloc(tm, &nl);
       node_create(n0, argsNode);
       argsStruct->args[argsStruct->count++] = arg;
       argsStruct->args[argsStruct->count++] = n0;
-      Port rdx = node_alloc(tm, &nl);
-      node_create(rdx, new_pair(ref, argsNet(tm, argsStruct)));
-      link(tm, arg, new_port(RDX, rdx));
+      link(tm, arg, new_port(RDX, node_make(tm, ref, argsNet(tm, argsStruct))));
       return NONE;
       break;
 
