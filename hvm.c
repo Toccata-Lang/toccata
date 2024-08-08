@@ -526,7 +526,7 @@ Port vars_alloc(TM* tm, u32* lps) {
 
 // Finds a variable's value.
 Port enter(Port var) {
-  // While `B` is VAR: extend it (as an optimization)
+  // While `var` is VAR: extend it (as an optimization)
   while (get_tag(var) == VAR) {
     // Takes the current `var` substitution as `val`
     Port val = vars_exchange(var, NONE);
@@ -603,9 +603,27 @@ bool LINK(TM* tm, Port a, Port b) {
 
 bool CALL(TM *tm, Port a, Port b) {
   interactionFn fnPtr;
+  Pair pr;
 
-  fnPtr = (interactionFn)(a & ~TAG_MASK);
-  return fnPtr(tm, a, b);
+  switch(get_tag(b)) {
+  case ARG:
+    fnPtr = (interactionFn)(a & ~TAG_MASK);
+    return fnPtr(tm, a, b);
+    break;
+    
+  case DUP:
+    pr = node_take(b);
+    link(tm, a, pr.fst);
+    link(tm, a, pr.snd);
+    return TRUE;
+    break;
+
+  default:
+    printf("unhandled tag 0x%x line: %d\n", get_tag(b), __LINE__);
+    abort();
+    break;
+  }
+  return FALSE;
 }
 
 // The Void Interaction.
@@ -798,13 +816,13 @@ bool ABRT(TM* tm, Port a, Port b) {
 interactionFn interactions[12][12] = {
   //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL   ARG
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
-  {&LINK,&VOID,&VOID,&VOID,&CALL,&CALL,&CALL,&CALL,&LINK,&ABRT,&ABRT,&CALL}, // REF
+  {&LINK,&VOID,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL}, // REF
   {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF,&ABRT}, // ERA
   {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ABRT,&ABRT}, // NUM
-  {&LINK,&CALL,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
+  {&LINK,&ABRT,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
   {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE,&ABRT}, // DUP
-  {&LINK,&CALL,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // OPR
-  {&LINK,&CALL,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT}, // SWI
+  {&LINK,&ABRT,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // OPR
+  {&LINK,&ABRT,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT}, // SWI
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
   {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
   {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
@@ -1286,7 +1304,10 @@ bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *n
 Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
   u32 nl;
   Tag argsTag = get_tag(args);
+  Port arg;
+  Port n0;
   Pair argsNode;
+  Port varVal;
   switch(get_tag(args)) {
   case 0xF:
     return NONE;
@@ -1294,8 +1315,7 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
 
   case ARG:
     argsNode = node_take(args);
-    Port arg = argsNode.fst;
-    Port n0;
+    arg = argsNode.fst;
     if (get_tag(arg) == VAR) {
       arg = enter(arg);
     }
@@ -1308,12 +1328,15 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       break;
 
     case VAR:
-    case OPR:
       n0 = node_alloc(tm, &nl);
       node_create(n0, argsNode);
       argsStruct->args[argsStruct->count++] = arg;
       argsStruct->args[argsStruct->count++] = n0;
-      link(tm, arg, new_port(RDX, node_make(tm, ref, argsNet(tm, argsStruct))));
+      varVal = vars_exchange(arg, new_port(RDX, node_make(tm, ref, argsNet(tm, argsStruct))));
+      if (varVal != NONE && varVal != FREE) {
+        link(tm, ref, varVal);
+	vars_take(arg);
+      }
       return NONE;
       break;
 
@@ -1323,6 +1346,15 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       abort();
       break;
     }
+
+  case VAR:
+    varVal = vars_exchange(arg, new_port(RDX, node_make(tm, ref, arg)));
+    if (varVal != NONE && varVal != FREE) {
+      link(tm, ref, varVal);
+      vars_take(arg);
+    }
+    return NONE;
+    break;
 
     // TODO: what other tags need to be handled
   default:
