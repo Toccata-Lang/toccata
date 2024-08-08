@@ -982,6 +982,23 @@
            (let [[_ code-context] (emitter code-context)]
              code-context))))))
 
+(defn dynamic-globals [code-context]
+  (let [mod-prom (promise)
+        _ (send b/modules (fn [mods]
+                          (deliver mod-prom mods)
+                            mods))
+        mods (extract mod-prom)]
+    (for [mod (vals mods)
+          val (either (map (get-in mod [.namespaces c/no-symbol .values 0])
+                           vals)
+                      [])
+          :when-not (or (instance? c/TaggedSymbol val)
+                        (instance? b/StaticArity val)
+                        (instance? ast/string-ast val)
+                        (instance? ast/integer-ast val)
+                        (instance? c/ProtoImpls (.constraint val)))]
+      (str (.var val) " = enter(" (.var val) ");" line-sep))))
+
 (defn emit-main [code-context done-promise main-module]
   (let [main-fn (either (get-in main-module [.namespaces c/no-symbol .values 0
                                              ast/main .c-fn])
@@ -997,7 +1014,11 @@
             (b/wait-for-err-out)
             (abort)) 
 
-          (code-out "  \nint main (int argc, char **argv) {\n"
+          (code-out "void normalizeGlobals(){\n"
+                    "normalize();\n"
+                    (dynamic-globals code-context)
+                    "}\n"
+                    "  \nint main (int argc, char **argv) {\n"
                     "  prErrSTAR = &defaultPrErrSTAR;\n"
                     "  #ifdef SINGLE_THREADED\n"
                     "  #ifdef CHECK_MEM_LEAK\n"
@@ -1017,6 +1038,7 @@
                     "  u32 vl = 0;\n"
                     "  Port callArgs, n0;\n"
                     (.glbl-init code-context)
+                    "  normalizeGlobals();\n"
                     "  Vector *argVect = empty_vect;\n"
                     "  for(int i = 0; i < argc; i++) {\n"
                     "    argVect = mutateVectConj(argVect, stringValue(argv[i]));\n"
