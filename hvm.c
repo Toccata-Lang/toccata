@@ -612,6 +612,11 @@ bool CALL(TM *tm, Port a, Port b) {
     break;
     
   case DUP:
+    if (get_tag(a) != REF) {
+      // TODO: ever happen?
+      sprintf(stderr, "Oooopsie line: %d\n", __LINE__);
+      abort();
+    }
     pr = node_take(b);
     link(tm, a, pr.fst);
     link(tm, a, pr.snd);
@@ -745,7 +750,7 @@ bool OPER(TM* tm, Port a, Port b) {
   // Loads ports.
   Pair B  = node_take(b);
   Port B1 = B.fst;
-  Port B2 = enter(B.snd);
+  Port B2 = B.snd;
 
   // Performs operation.
   if (get_tag(B1) == NUM) {
@@ -1215,97 +1220,6 @@ void eraseNatives(TM *tm, NativeArgs* args) {
 }
 
 // extract the requested number of native args
-bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *natives) {
-  natives->count = 0;
-
-  // try to get the correct number of arguments
-  if (get_tag(args) != ARG) {
-    return FALSE;
-  } else if (argCount == 0) {
-    Pair pr = node_take(args);
-    if (get_tag(pr.snd) != ARG) {
-      fprintf(stderr, "Compiler error at %s:%d", __FILE__, __LINE__);
-      abort();
-    } else {
-      natives->result = pr.fst;
-      return TRUE;
-    }
-  } else {
-    Pair pr = node_take(args);
-    natives->result = pr.fst;
-    extractNativeArgs(args, argCount, natives);
-  }
-
-  Port arg;
-  if (natives->count == 0)
-    // pretend we got a number for the arg so we'll drop to the NUM case
-    arg = NUM;
-  else
-    arg = natives->args[natives->count - 1];
-  Tag argTag = get_tag(arg);
-  Port out = natives->result;
-  if (get_tag(out) == ERA) {
-    eraseNatives(tm, natives);
-    return FALSE;
-  } else if (natives->count == argCount && (argTag == NUM || argTag == VAL)) {
-    // we got all the args requested, so return them and
-    // the ptr to where to put the results
-    return TRUE;
-  } else {
-    u32 nl = 0;
-    Port newArgs;
-    Pair argPair;
-    switch (argTag) {
-    case VAR :
-      // we need to wait on an arg
-      newArgs = argsNet(tm, natives);
-      nl = 0;
-      Port rdx = node_alloc(tm, &nl);
-      node_create(rdx, new_pair(ref, newArgs));
-      link(tm, arg, new_port(RDX, rdx));
-      break;
-
-    case ERA :
-      eraseNatives(tm, natives);
-      break;
-
-    case CON :
-      argPair = node_take(arg);
-      natives->args[natives->count - 1] = argPair.fst;
-      newArgs = argsNet(tm, natives);
-      push_redex(tm, new_pair(ref, newArgs));
-      natives->args[natives->count - 1] = argPair.snd;
-      newArgs = argsNet(tm, natives);
-      push_redex(tm, new_pair(ref, newArgs));
-      break;
-
-    case NUM :
-    case VAL :
-      switch (get_tag(out)) {
-      case VAR :
-	// we need to wait on the rest of the args list
-	newArgs = argsNet(tm, natives);
-	Port rdx = node_alloc(tm, &nl);
-	node_create(rdx, new_pair(ref, newArgs));
-	link(tm, out, new_port(RDX, rdx));
-	break;
-
-      default:
-	printf("unhandled tag 0x%x line: %d\n", get_tag(out), __LINE__);
-	abort();
-	break;
-      }
-      break;
-
-    default:
-      printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
-      abort();
-      break;
-    }
-    return FALSE;
-  }
-}
-
 Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
   u32 nl;
   Tag argsTag = get_tag(args);
