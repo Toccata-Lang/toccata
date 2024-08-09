@@ -62,7 +62,9 @@
 (defn reset-code-context []
   (for [_ (se/set-val .decl [])
         _ (se/set-val .init [])
-        _ (se/set-val .refs-map {})]
+        _ (se/update-val .refs-map
+                         (fn [refs-map]
+                           (filter-keys refs-map b/is-glbl)))]
     '_))
 
 (def generic-call)
@@ -200,21 +202,53 @@
   (gen-code [ast]
     (se/state-error (.sym ast))))
 
+(defn get-value [sym]
+  (assert (instance? c/TaggedSymbol sym))
+
+  (cond (= (str sym) "")
+        (do
+          (print-err 'compiler-error _LINE_)
+          (se/state-error c/top-type))
+
+        (= sym c/no-symbol)
+        (do
+          (print-err 'compiler-error _LINE_)
+          (se/state-error c/top-type))
+
+        (comp (comp (se/get-in-val [.module .namespaces (.ns sym) .values 0 sym])
+                    (se/get-in-val [.module .namespaces b/core .values 0 sym]))
+              (b/compilation-error "Undefined symbol:" (str "'" sym "'") "at" (ast/location sym)))))
+
+
 (extend-type c/TaggedSymbol
   CodeGen
   (gen-code [ast]
     (let [var (.var ast)]
-      (cond (b/is-glbl var)
-            (se/state-error ast)
+      (comp (for [refs (se/update-in-val [.refs-map var] inc)
+                  :let [dupe-var (str var "_" refs)]
+                  _ (se/update-val .init
+                                   (fn [init]
+                                     ["\nPort " dupe-var " = vars_alloc(tm, &vl);\n"
+                                      var " = dupeArg(tm, " var, ", " dupe-var ");\n"
+                                      init]))]
+              (.var ast dupe-var))
+            (cond (b/is-glbl var)
+                  (flat-map (get-value ast)
+                            (fn [val]
+                              (cond (or (instance? b/StaticArity val)
+                                        (instance? ast/integer-ast val))
+                                    (se/state-error ast)
 
-            (comp (for [refs (se/update-in-val [.refs-map var] inc)
-                        :let [dupe-var (str var "_" refs)]
-                        _ (se/update-val .init
-                                         (fn [init]
-                                           ["\nPort " dupe-var " = vars_alloc(tm, &vl);\n"
-                                            var " = dupeArg(tm, " var, ", " dupe-var ");\n"
-                                            init]))]
-                    (.var ast dupe-var))
+                                    (for [_ (se/assoc-in-val [.refs-map var] 2)
+                                          :let [dupe-var (str var "_" 1)]
+                                          _ (se/update-val .init
+                                                           (fn [init]
+                                                             ["\nPort " dupe-var
+                                                              " = vars_alloc(tm, &vl);\n"
+                                                              var " = dupeArg(tm, " var, ", "
+                                                              dupe-var ");\n"
+                                                              init]))]
+                                      (.var ast dupe-var)))))
                   (for [_ (se/assoc-in-val [.refs-map var] 1)]
                     ast)))))
 
@@ -261,8 +295,7 @@
                   (cond (instance? ast/params-ast ast)
                         (se/update-val .init
                                        (fn [init]
-                                         [init
-                                          "// params at " (ast/location params) "\n"
+                                         ["// params at " (ast/location params) "\n"
                                           "Port " (.var ast) ";" line-sep
                                           (-> (reverse (.fixed ast))
                                               (map .var)
@@ -271,7 +304,8 @@
                                                         (str args
                                                              (.var ast)
                                                              " = new_port(ARG, node_make(tm, " arg
-                                                             ", " (.var ast) "));" line-sep))))]))
+                                                             ", " (.var ast) "));" line-sep))))
+                                          init]))
 
                         (se/state-error ast)))
                 params se/state-error)
@@ -861,7 +895,7 @@
                         (instance? ast/string-ast val)
                         (instance? ast/integer-ast val)
                         (instance? c/ProtoImpls (.constraint val)))]
-      (str (.var val) " = enter(" (.var val) ");" line-sep))))
+      (str "  link(tm, " (.var val) ", erase);" line-sep))))
 
 (defn emit-main [code-context done-promise main-module]
   (let [main-fn (either (get-in main-module [.namespaces c/no-symbol .values 0
@@ -878,9 +912,9 @@
             (b/wait-for-err-out)
             (abort)) 
 
-          (code-out "void normalizeGlobals(){\n"
-                    "normalize();\n"
+          (code-out "void normalizeGlobals(TM *tm){\n"
                     (dynamic-globals code-context)
+                    "  normalize();\n"
                     "}\n"
                     "  \nint main (int argc, char **argv) {\n"
                     "  prErrSTAR = &defaultPrErrSTAR;\n"
@@ -902,7 +936,7 @@
                     "  u32 vl = 0;\n"
                     "  Port callArgs, n0;\n"
                     (.glbl-init code-context)
-                    "  normalizeGlobals();\n"
+                    "  normalize();\n"
                     "  Vector *argVect = empty_vect;\n"
                     "  for(int i = 0; i < argc; i++) {\n"
                     "    argVect = mutateVectConj(argVect, stringValue(argv[i]));\n"
@@ -920,6 +954,7 @@
                     "  natives.result = (Port)&resultVar;\n"
                     "  link(tm, new_ref(" main-fn "), argsNet(tm, &natives));\n"
                     "  normalize();\n"
+                    "  normalizeGlobals(tm);\n"
                     "  double duration = (time64() - start) / 1000000000.0; // seconds\n"
                     "  u64 itrs = atomic_load(&globalNet->itrs);\n"
                     "  printf(\"- ITRS: %\" PRIu64 \"\\n\", itrs);\n"

@@ -633,6 +633,10 @@ bool VOID(TM* tm, Port a, Port b) {
 
 // The Eras Interaction.
 bool ERAS(TM* tm, Port a, Port b) {
+  if (get_val(b) == FREE) {
+    return TRUE;
+  }
+
   // Checks availability
   if (isEmpty(node_load(b))) {
     //printf("[%04x] unavailable0: %s\n", tid, show_port(b).x);
@@ -810,6 +814,7 @@ bool ARGS(TM* tm, Port a, Port b) {
 
 bool ABRT(TM* tm, Port a, Port b) {
   fprintf(stderr, "Bad interaction: 0x%x 0x%x\n", get_tag(a), get_tag(b));
+  fprintf(stderr, "a: %p b: %p\n", (void *)a, (void *)b);
   abort();
 }
 
@@ -817,7 +822,7 @@ interactionFn interactions[12][12] = {
   //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL   ARG
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
   {&LINK,&VOID,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL}, // REF
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF,&ABRT}, // ERA
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF,&ERAS}, // ERA
   {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ABRT,&ABRT}, // NUM
   {&LINK,&ABRT,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
   {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE,&ABRT}, // DUP
@@ -826,7 +831,7 @@ interactionFn interactions[12][12] = {
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
   {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
   {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
-  {&ABRT,&CALL,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ARGS}  // ARG
+  {&ABRT,&CALL,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ARGS}  // ARG
 };
 
 interactionFn get_rule(Port a, Port b) {

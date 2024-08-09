@@ -99,7 +99,7 @@ typedef u64 Numb; // Numb ::= 60-bit (rounded up to u64)
 #define VR1 0x8 // variable alias
 #define RDX 0x9 // deferred redex
 #define VAL 0xA // native value
-#define ARG 0xB // end of args list
+#define ARG 0xB // function arg or param
 
 extern Port erase;
 
