@@ -434,13 +434,6 @@ void node_create(Port loc, Pair val) {
   atomic_store_explicit((APair*)((u64)loc & ~TAG_MASK), val, memory_order_relaxed);
 }
 
-Port node_make(TM *tm, Port fst, Port snd) {
-  u32 ul = 0;
-  Port n0 = node_alloc(tm, &ul);
-  node_create(n0, new_pair(fst, snd));
-  return n0;
-}
-
 // Stores a var on global.
 void vars_create(Port var, Port val) {
   atomic_store_explicit((APort*)var, val, memory_order_relaxed);
@@ -495,7 +488,7 @@ void net_init() {
 // Allocator
 // ---------
 
-Port node_alloc(TM* tm, u32* lps) {
+Port node_alloc(TM* tm) {
   while (TRUE) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->nput%(G_NODE_LEN/TPC));
     Pair* elem = (Pair *)&globalNet->node_buf[lc];
@@ -503,12 +496,10 @@ Port node_alloc(TM* tm, u32* lps) {
     if (lc > 0 && isEmpty(*elem)) {
       return (Port)elem;
     }
-    // FIXME: check this decently
-    if (++(*lps) >= G_NODE_LEN/TPC) printf("OOM\n");
   }
 }
 
-Port vars_alloc(TM* tm, u32* lps) {
+Port vars_alloc(TM* tm) {
   while (TRUE) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->vput%(G_NODE_LEN/TPC));
     Port* elem = (Port*)&globalNet->vars_buf[lc];
@@ -516,9 +507,13 @@ Port vars_alloc(TM* tm, u32* lps) {
     if (lc > 0 && *elem == 0) {
       return (Port)elem;
     }
-    // FIXME: check this decently
-    if (++(*lps) >= G_NODE_LEN/TPC) printf("OOM\n");
   }
+}
+
+Port node_make(TM *tm, Port fst, Port snd) {
+  Port n0 = node_alloc(tm);
+  node_create(n0, new_pair(fst, snd));
+  return n0;
 }
 
 // Linking
@@ -691,16 +686,14 @@ bool ANNI(TM* tm, Port a, Port b) {
 
 // The Comm Interaction.
 bool COMM(TM* tm, Port a, Port b) {
-  u32 vl = 0;
-  u32 nl = 0;
-  Port v0 = vars_alloc(tm, &vl);
-  Port v1 = vars_alloc(tm, &vl);
-  Port v2 = vars_alloc(tm, &vl);
-  Port v3 = vars_alloc(tm, &vl);
-  Port n0 = node_alloc(tm, &nl);
-  Port n1 = node_alloc(tm, &nl);
-  Port n2 = node_alloc(tm, &nl);
-  Port n3 = node_alloc(tm, &nl);
+  Port v0 = vars_alloc(tm);
+  Port v1 = vars_alloc(tm);
+  Port v2 = vars_alloc(tm);
+  Port v3 = vars_alloc(tm);
+  Port n0 = node_alloc(tm);
+  Port n1 = node_alloc(tm);
+  Port n2 = node_alloc(tm);
+  Port n3 = node_alloc(tm);
 
   // Checks availability
   if (isEmpty(node_load(a)) || isEmpty(node_load(b))) {
@@ -765,9 +758,8 @@ bool OPER(TM* tm, Port a, Port b) {
 
 // The Swit Interaction.
 bool SWIT(TM* tm, Port a, Port b) {
-  u32 nl = 0;
-  Port n0 = node_alloc(tm, &nl);
-  Port n1 = node_alloc(tm, &nl);
+  Port n0 = node_alloc(tm);
+  Port n1 = node_alloc(tm);
 
   // Checks availability
   if (isEmpty(node_load(b))) {
@@ -1159,13 +1151,12 @@ void pretty_print_port(Port port) {
 }
 
 Port argsNet(TM *tm, NativeArgs *args) {
-  u32 nl;
-  Port n0 = node_alloc(tm, &nl);
+  Port n0 = node_alloc(tm);
   Port tail = args->args[args->count - 1];
   for (int i = args->count - 2; i >= 0; i--) {
     node_create(n0, new_pair(args->args[i], tail));
     tail = new_port(ARG, n0);
-    n0 = node_alloc(tm, &nl);
+    n0 = node_alloc(tm);
   }
   node_create(n0, new_pair(args->result, tail));
   return new_port(ARG, n0);
@@ -1221,7 +1212,6 @@ void eraseNatives(TM *tm, NativeArgs* args) {
 
 // extract the requested number of native args
 Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
-  u32 nl;
   Tag argsTag = get_tag(args);
   Port arg;
   Port n0;
@@ -1247,7 +1237,7 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       break;
 
     case VAR:
-      n0 = node_alloc(tm, &nl);
+      n0 = node_alloc(tm);
       node_create(n0, argsNode);
       argsStruct->args[argsStruct->count++] = arg;
       argsStruct->args[argsStruct->count++] = n0;
@@ -1284,9 +1274,8 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
 }
 
 Port dupeArg(TM *tm, Port arg, Port dupeArg) {
-  u32 nl;
-  Port dupeNode = node_alloc(tm, &nl);
-  Port dupedVar = vars_alloc(tm, &nl);
+  Port dupeNode = node_alloc(tm);
+  Port dupedVar = vars_alloc(tm);
   node_create(dupeNode, new_pair(dupedVar, dupeArg));
   link(tm, arg, new_port(DUP, dupeNode));
   return dupedVar;
