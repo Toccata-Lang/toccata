@@ -526,7 +526,10 @@ Port enter(Port var) {
     // Takes the current `var` substitution as `val`
     Port val = vars_exchange(var, NONE);
     // If there was no `val`, stop, as there is no extension
-    if (val == NONE || val == FREE) {
+    if (get_tag(val) == RDX) {
+      vars_exchange(var, val);
+      break;
+    } else if (val == NONE || val == FREE) {
       break;
     }
     // Otherwise, delete `B` (we own both) and continue
@@ -680,6 +683,8 @@ bool ANNI(TM* tm, Port a, Port b) {
   //if (B == 0) printf("[%04x] ERROR4: %s\n", tid, show_port(b).x);
 
   // Links.
+  // fprintf(stderr, "ANNI: %d A1: %p B1: %p\n", __LINE__, (void *)A1, (void *)B1);
+  // fprintf(stderr, "          A2: %p B2: %p\n", (void *)A2, (void *)B2);
   link_pair(tm, new_pair(A1, B1));
   link_pair(tm, new_pair(A2, B2));
 
@@ -1173,6 +1178,9 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
   Port varVal;
   switch(get_tag(args)) {
   case 0xF:
+    // TODO: test this
+    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
+    abort();
     return NONE;
     break;
 
@@ -1197,8 +1205,16 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       argsStruct->args[argsStruct->count++] = n0;
       varVal = vars_exchange(arg, new_port(RDX, node_make(tm, ref, argsNet(tm, argsStruct))));
       if (varVal != NONE && varVal != FREE) {
-        link(tm, ref, varVal);
-	vars_take(arg);
+    // TODO: test this
+    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
+    abort();
+
+	if (get_tag(varVal) == RDX) {
+	  push_redex(tm, node_take(varVal));
+	} else {
+	  link(tm, ref, varVal);
+	  vars_take(arg);
+	}
       }
       return NONE;
       break;
@@ -1211,6 +1227,10 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
     }
 
   case VAR:
+    // TODO: test this
+    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
+    abort();
+
     varVal = vars_exchange(arg, new_port(RDX, node_make(tm, ref, arg)));
     if (varVal != NONE && varVal != FREE) {
       link(tm, ref, varVal);
@@ -1286,7 +1306,7 @@ void printArgs(Port args) {
   if (args == ARG) {
     fprintf(stderr, "args: %p\n", (void *)args);
   } else if (get_tag(args) == ARG) {
-    Pair pr = *((Pair *)(args & ~TAG_MASK));
+    Pair pr = node_load(args);;
     fprintf(stderr, "args: %p arg: %p\n", (void *)args, (void *)pr.fst);
     printArgs(pr.snd);
   }
