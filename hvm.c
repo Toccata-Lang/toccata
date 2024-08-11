@@ -504,7 +504,7 @@ Port vars_alloc(TM* tm) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->vput%(G_NODE_LEN/TPC));
     Port* elem = (Port*)&globalNet->vars_buf[lc];
     tm->vput += 1;
-    if (lc > 0 && *elem == 0) {
+    if (lc > 0 && *elem == FREE) {
       return (Port)elem;
     }
   }
@@ -538,6 +538,8 @@ Port enter(Port var) {
 
 // Atomically Links `A ~ B`.
 void link(TM* tm, Port A, Port B) {
+  // fprintf(stderr, "link: %d A: %p B: %p\n", __LINE__, (void *)A, (void *)B);
+
   // Attempts to directionally point `A ~> B`
   while (TRUE) {
     // If `A` is NODE: swap `A` and `B`, and continue
@@ -609,7 +611,7 @@ bool CALL(TM *tm, Port a, Port b) {
   case DUP:
     if (get_tag(a) != REF) {
       // TODO: ever happen?
-      sprintf(stderr, "Oooopsie line: %d\n", __LINE__);
+      fprintf(stderr, "Oooopsie line: %d\n", __LINE__);
       abort();
     }
     pr = node_take(b);
@@ -1162,54 +1164,6 @@ Port argsNet(TM *tm, NativeArgs *args) {
   return new_port(ARG, n0);
 }
 
-void extractNativeArgs(Port args, unsigned argCount, NativeArgs *natives) {
-  if (argCount == 0 || get_tag(args) == ARG || get_tag(args) == VAR) {
-    natives->args[natives->count++] = args;
-  } else {
-    // get the args node
-    Pair argsNode = node_take(args);
-    // fst points to the arg
-    Port arg = argsNode.fst;
-    Tag argTag = get_tag(arg);
-    Port newArgs = argsNode.snd;
-    Port varVal;
-    if (argTag == VAR) {
-      varVal = vars_take(arg);
-      if (varVal != NONE && varVal != FREE) {
-	arg = enter(varVal);
-      }
-      argTag = get_tag(arg);
-    }
-
-    // save the arg
-    natives->args[natives->count++] = arg;
-    if (argCount > 0 && get_tag(newArgs) == ARG) {
-      switch(argTag) {
-      case NUM:
-      case VAL:
-	// recurse to get the rest of the args
-	extractNativeArgs(newArgs, argCount - 1, natives);
-	break;
-
-      default:
-	natives->args[natives->count++] = newArgs;
-	break;
-      }
-    } else if (get_tag(newArgs) == ARG){
-      natives->args[natives->count++] = newArgs;
-    }
-  }
-  return;
-}
-
-void eraseNatives(TM *tm, NativeArgs* args) {
-  for(int i = 0; i < args->count; i++) {
-    link(tm, erase, args->args[i]);
-  }
-  link(tm, erase, args->result);
-  args->count = -1;
-}
-
 // extract the requested number of native args
 Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
   Tag argsTag = get_tag(args);
@@ -1325,5 +1279,15 @@ void make_op(TM *tm, int op, Port x, Port y, Port rslt) {
   } else {
     link(tm, x,new_port(OPR, node_make(tm, new_port(NUM, op << (NUM_TAG_SIZE + TAG_SIZE)),
 				       new_port(OPR, node_make(tm, y, rslt)))));
+  }
+}
+
+void printArgs(Port args) {
+  if (args == ARG) {
+    fprintf(stderr, "args: %p\n", (void *)args);
+  } else if (get_tag(args) == ARG) {
+    Pair pr = *((Pair *)(args & ~TAG_MASK));
+    fprintf(stderr, "args: %p arg: %p\n", (void *)args, (void *)pr.fst);
+    printArgs(pr.snd);
   }
 }
