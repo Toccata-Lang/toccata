@@ -708,8 +708,8 @@ bool ANNI(TM* tm, Port a, Port b) {
   //if (B == 0) printf("[%04x] ERROR4: %s\n", tid, show_port(b).x);
 
   // Links.
-  // fprintf(stderr, "ANNI: %d A1: %p B1: %p\n", __LINE__, (void *)A1, (void *)B1);
-  // fprintf(stderr, "          A2: %p B2: %p\n", (void *)A2, (void *)B2);
+  fprintf(stderr, "ANNI: %d A1: %p B1: %p\n", __LINE__, (void *)A1, (void *)B1);
+  fprintf(stderr, "          A2: %p B2: %p\n", (void *)A2, (void *)B2);
   link_pair(tm, new_pair(A1, B1));
   link_pair(tm, new_pair(A2, B2));
 
@@ -853,14 +853,14 @@ interactionFn interactions[12][12] = {
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&LINK}, // VAR
   {&LINK,&VOID,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL}, // REF
   {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ERAS,&DECF,&ERAS}, // ERA
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ABRT,&ABRT}, // NUM
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ERAS,&ABRT}, // NUM
   {&LINK,&ABRT,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
   {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE,&ABRT}, // DUP
   {&LINK,&ABRT,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // OPR
   {&LINK,&ABRT,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT}, // SWI
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&LINK}, // VAR
   {&ABRT,&ABRT,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
-  {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
+  {&ABRT,&ABRT,&DECF,&ERAS,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
   {&LINK,&CALL,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ARGS}  // ARG
 };
 
@@ -878,6 +878,7 @@ bool interact(TM* tm) {
     // Gets redex ports A and B.
     Port a = redex.fst;
     Port b = redex.snd;
+    fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)a, (void *)b);
 
     // Gets the rule type.
     interactionFn rule = get_rule(a, b);
@@ -1229,14 +1230,18 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       node_create(n0, argsNode);
       argsStruct->args[argsStruct->count++] = arg;
       argsStruct->args[argsStruct->count++] = n0;
+      // TODO: get rid of 'argsNet'
       varVal = vars_exchange(arg, new_port(RDX, node_make(tm, ref, argsNet(tm, argsStruct))));
       if (varVal != NONE && varVal != FREE) {
+	if (get_tag(varVal) == RDX) {
     // TODO: test this
     fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
     abort();
-	if (get_tag(varVal) == RDX) {
 	  push_redex(tm, node_take(varVal));
 	} else {
+    // TODO: test this
+    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
+    abort();
 	  link(tm, ref, varVal);
 	  vars_take(arg);
 	}
@@ -1335,4 +1340,34 @@ void printArgs(Port args) {
     fprintf(stderr, "args: %p arg: %p\n", (void *)args, (void *)pr.fst);
     printArgs(pr.snd);
   }
+}
+
+Port resultVar;
+bool unwind(TM *tm, Port ref, Port args) {
+  Port callArgs;
+
+  // fprintf(stderr, "unwind: %d args: %p\n", __LINE__, (void *)args);
+  Pair pr = node_take(args);
+  // fprintf(stderr, "pr: %p %p\n", (void *)pr.fst, (void *)pr.snd);
+  Port v = enter(pr.fst);
+  switch(get_tag(v)) {
+  case RDX:
+    // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
+    vars_create(pr.fst, new_port(RDX, node_make(tm, ref, args)));
+    link_pair(tm, node_take(v));
+    break;
+
+  case VAR:
+    // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
+    callArgs = new_port(ARG, 0);
+    callArgs = new_port(ARG, node_make(tm, v, callArgs));
+    link(tm, v, new_port(RDX, node_make(tm, ref, callArgs)));
+    break;
+
+  default:
+    // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
+    resultVar = v;
+    break;
+  }
+  return TRUE;
 }

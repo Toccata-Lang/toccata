@@ -145,6 +145,8 @@ typedef struct {
 
 #define new_port_(tag, x) (((u64)x | tag))
 
+extern Port resultVar;
+
 Port new_num(Port val);
 Val get_val(Port port);
 Port new_port(Tag tag, Port val);
@@ -187,3 +189,4 @@ void make_op(TM *tm, int op, Port x, Port y, Port rslt);
 void printArgs(Port args);
 Port vars_make(TM *tm, Port p);
 void link_pair(TM* tm, Pair AB);
+bool unwind(TM* tm, Port a, Port b);
