@@ -456,11 +456,17 @@ void node_store(Port loc, Pair val) {
 
 // Exchanges a node on global by a value. Returns old.
 Pair node_exchange(Port loc, Pair val) {
+  if (val.fst == FREE && val.snd == FREE) {
+    node_count--;
+  }
   return atomic_exchange_explicit((APair*)((u64)loc & ~TAG_MASK), val, memory_order_relaxed);
 }
 
 // Exchanges a var on global by a value. Returns old.
 Port vars_exchange(Port var, Port val) {
+  if (val == FREE) {
+    vars_count--;
+  }
   Port p = var;
   // while (p != FREE && p != NONE && get_tag(p) == VAR) {
   // fprintf(stderr, "vars_exchange: %d var: %p val: %p\n", __LINE__, (void *)var, (void *)val);
@@ -494,12 +500,16 @@ void net_init() {
 // Allocator
 // ---------
 
+int vars_count = 0;
+int node_count = 0;
+
 Port node_alloc(TM* tm) {
   while (TRUE) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->nput%(G_NODE_LEN/TPC));
     Pair* elem = (Pair *)&globalNet->node_buf[lc];
     tm->nput += 1;
     if (lc > 0 && isEmpty(*elem)) {
+      node_count++;
       return (Port)elem;
     }
   }
@@ -511,6 +521,7 @@ Port vars_alloc(TM* tm) {
     Port* elem = (Port*)&globalNet->vars_buf[lc];
     tm->vput += 1;
     if (lc > 0 && *elem == FREE) {
+      vars_count++;
       return (Port)elem;
     }
   }
