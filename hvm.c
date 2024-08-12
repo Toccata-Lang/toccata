@@ -461,7 +461,13 @@ Pair node_exchange(Port loc, Pair val) {
 
 // Exchanges a var on global by a value. Returns old.
 Port vars_exchange(Port var, Port val) {
-  return atomic_exchange_explicit((APort*)var, val, memory_order_relaxed);
+  Port p = var;
+  // while (p != FREE && p != NONE && get_tag(p) == VAR) {
+  // fprintf(stderr, "vars_exchange: %d var: %p val: %p\n", __LINE__, (void *)var, (void *)val);
+    p = atomic_exchange_explicit((APort*)p, val, memory_order_relaxed);
+    // fprintf(stderr, "old-val: %p\n", (void *)p);
+    // }
+  return p;
 }
 
 // Takes a node.
@@ -508,6 +514,12 @@ Port vars_alloc(TM* tm) {
       return (Port)elem;
     }
   }
+}
+
+Port vars_make(TM *tm, Port p) {
+  Port v0 = vars_alloc(tm);
+  vars_create(v0, p);
+  return v0;
 }
 
 Port node_make(TM *tm, Port fst, Port snd) {
@@ -566,9 +578,11 @@ void link(TM* tm, Port A, Port B) {
       // If there was no `A'`, stop, as we lost B's ownership
       if (A_ == NONE || A_ == FREE) {
         break;
+      } else if (get_tag(B) == ERA) {
+	link(tm, A_, B);
+	break;
       } else if (get_tag(A_) == RDX) {
-	Pair rdx = node_take(A_);
-	push_redex(tm, rdx);
+	push_redex(tm, node_take(A_));
 	break;
       } else if (get_tag(B) == RDX && get_tag(A_) != VAR) {
 	vars_exchange(A, A_);
@@ -751,6 +765,7 @@ bool OPER(TM* tm, Port a, Port b) {
   Pair B  = node_take(b);
   Port B1 = B.fst;
   Port B2 = B.snd;
+  B2 = enter(B2);
 
   // Performs operation.
   if (get_tag(B1) == NUM) {
@@ -824,18 +839,18 @@ bool ABRT(TM* tm, Port a, Port b) {
 
 interactionFn interactions[12][12] = {
   //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL   ARG
-  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&LINK}, // VAR
   {&LINK,&VOID,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL}, // REF
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ABRT,&DECF,&ERAS}, // ERA
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ERAS,&DECF,&ERAS}, // ERA
   {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ABRT,&ABRT}, // NUM
   {&LINK,&ABRT,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
   {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE,&ABRT}, // DUP
   {&LINK,&ABRT,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // OPR
   {&LINK,&ABRT,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT}, // SWI
-  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&ABRT}, // VAR
-  {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&LINK}, // VAR
+  {&ABRT,&ABRT,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
   {&ABRT,&ABRT,&DECF,&ABRT,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
-  {&ABRT,&CALL,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ARGS}  // ARG
+  {&LINK,&CALL,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ARGS}  // ARG
 };
 
 interactionFn get_rule(Port a, Port b) {
@@ -1208,7 +1223,6 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
     // TODO: test this
     fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
     abort();
-
 	if (get_tag(varVal) == RDX) {
 	  push_redex(tm, node_take(varVal));
 	} else {

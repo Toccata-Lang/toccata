@@ -183,3 +183,5 @@ Numb new_i24(i64 val);
 Port node_make(TM *tm, Port fst, Port snd);
 void make_op(TM *tm, int op, Port x, Port y, Port rslt);
 void printArgs(Port args);
+Port vars_make(TM *tm, Port p);
+void link_pair(TM* tm, Pair AB);
