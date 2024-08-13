@@ -116,11 +116,11 @@
                         (reduce (str "callArgs = new_port(ARG, 0);" line-sep)
                                 (fn [args arg]
                                   (str args
-                                       "callArgs = new_port(ARG, node_make(tm, " arg
-                                       ", callArgs));" line-sep))))
+                                       "callArgs = node_make(tm, ARG, " arg
+                                       ", callArgs);" line-sep))))
                     "link(tm, " (.var tgt) ", callArgs);" line-sep
-                    ;; "vars_create(" result-var ", new_port(RDX, node_make(tm, "
-                    ;; (.var tgt) ", callArgs)));" line-sep
+                    ;; "vars_create(" result-var ", node_make(tm, RDX, "
+                    ;; (.var tgt) ", callArgs));" line-sep
                     ])))
 
 (defn emit-code [ast mod]
@@ -305,8 +305,8 @@
                                                       (fn [args arg]
                                                         (str args
                                                              (.var ast)
-                                                             " = new_port(ARG, node_make(tm, " arg
-                                                             ", " (.var ast) "));" line-sep))))
+                                                             " = node_make(tm, ARG, " arg
+                                                             ", " (.var ast) ");" line-sep))))
                                           init]))
 
                         (se/state-error ast)))
@@ -456,8 +456,8 @@
                                                          ", new_num(new_i24(81)));" line-sep]
 
                                                         ""))))
-                                         (.var params) " = new_port(ARG, node_make(tm, " last-v
-                                         ", " (.var params) "));" line-sep]))]
+                                         (.var params) " = node_make(tm, ARG, " last-v
+                                         ", " (.var params) ");" line-sep]))]
                                ast)))))
               (b/compilation-error "Invalid function body at:" (ast/location ast)))))
 
@@ -485,11 +485,12 @@
                                 (cond inline?
                                       ["  Pair pr = node_take(args);\n"
                                        "  Port resultVar = pr.fst;\n"
+                                       "  args = pr.snd;\n"
                                        "  Port result = erase;\n"
                                        "  NativeArgs arityArgs = {0, {}, resultVar};"
                                        line-sep
                                        (repeat (count (.fixed params))
-                                               (str "    args = nativeArg(tm, ref, pr.snd"
+                                               (str "    args = nativeArg(tm, ref, args"
                                                     ", &arityArgs);" line-sep))
                                        "    if (arityArgs.count == " (count (.fixed params))
                                        ") {" line-sep
@@ -598,26 +599,25 @@
   (gen-code [ast]
     (let [[expr] (.value-exprs ast)
           sym (.sym ast)]
-      (for [init (se/update-val .init (fn [_] []))
-            _ (se/update-val .glbl-init (fn [glbl-init]
-                                          (comp glbl-init
-                                                ;; TODO: only insert if 'init' has something
-                                                "if(1){"
-                                                init
-                                                "}" line-sep)))
-            _ (cond (or (instance? c/TaggedSymbol expr)
-                        (instance? b/StaticArity expr)
-                        (instance? ast/string-ast expr)
-                        (instance? ast/integer-ast expr))
-                    b/se-nop
+      (cond  (instance? c/TaggedSymbol expr)
+             (se/state-error ast)
 
-                    (se/update-val .decl (fn [decl]
-                                           [decl
-                                            (cond (= sym 'main)
-                                                  "// main fn\n"
-                                                  "")
-                                            "Port " (.var expr) ";" line-sep])))]
-        ast))))
+             (for [init (se/update-val .init (fn [_] []))
+                   _ (se/update-val .glbl-init (fn [glbl-init]
+                                                 (comp glbl-init
+                                                       "if(1){" init "}" line-sep)))
+                   _ (cond (or (instance? b/StaticArity expr)
+                               (instance? ast/string-ast expr)
+                               (instance? ast/integer-ast expr))
+                           b/se-nop
+
+                           (se/update-val .decl (fn [decl]
+                                                  [decl
+                                                   (cond (= sym 'main)
+                                                         "// main fn\n"
+                                                         "")
+                                                   "Port " (.var expr) ";" line-sep])))]
+               ast)))))
 
 (extend-type ast/integer-ast
   CodeGen
@@ -857,7 +857,6 @@
                       [])
           :when-not (or (instance? c/TaggedSymbol val)
                         (instance? b/StaticArity val)
-                        (instance? ast/string-ast val)
                         (instance? ast/integer-ast val)
                         (instance? c/ProtoImpls (.constraint val)))]
       (str "  link(tm, " (.var val) ", erase);" line-sep))))
@@ -911,14 +910,14 @@
                     "  int bashResult = 0;\n"
                     "  Value *the_final_answer = (Value *)NULL;\n"
                     "  callArgs = new_port(ARG, 0);\n"
-                    "  callArgs = new_port(ARG, node_make(tm, new_port(VAL,\n"
-                    "                      (Port)argVect), callArgs));\n"
-                    "  callArgs = new_port(ARG, node_make(tm, resultVar, callArgs));\n"
+                    "  callArgs = node_make(tm, ARG, new_port(VAL,\n"
+                    "                      (Port)argVect), callArgs);\n"
+                    "  callArgs = node_make(tm, ARG, resultVar, callArgs);\n"
                     "  link(tm, new_ref(" main-fn "), callArgs);\n"
                     "  callArgs = new_port(ARG, 0);\n"
-                    "  callArgs = new_port(ARG, node_make(tm, resultVar, callArgs));\n"
-                    "  link(tm, resultVar, new_port(RDX, node_make(tm, new_port(REF, (Port)unwind),\n"
-                    "        				      callArgs)));\n"
+                    "  callArgs = node_make(tm, ARG, resultVar, callArgs);\n"
+                    "  link(tm, resultVar, node_make(tm, RDX, new_ref(unwind),\n"
+                    "        				      callArgs));\n"
                     ;; "  fprintf(stderr, \"resultVar: %p\\n\", (void *)resultVar);\n"
                     ;; "  fprintf(stderr, \"unwind: %p\\n\", (void *)new_ref(unwind));\n"
                     "  normalize();\n"

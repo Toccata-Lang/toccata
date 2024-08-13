@@ -374,6 +374,7 @@ Numb operate(Numb a, Numb b) {
 // FIXME: what about some bound checks?
 
 void push_redex(TM* tm, Pair redex) {
+  // fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)redex.fst, (void *)redex.snd);
   if (is_high_priority(redex)) {
     tm->hbag_buf[tm->hput++] = redex;
   } else {
@@ -456,24 +457,28 @@ void node_store(Port loc, Pair val) {
 
 // Exchanges a node on global by a value. Returns old.
 Pair node_exchange(Port loc, Pair val) {
+  Pair pr = atomic_exchange_explicit((APair*)((u64)loc & ~TAG_MASK), val, memory_order_relaxed);
   if (val.fst == FREE && val.snd == FREE) {
+    // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)(loc & ~TAG_MASK));
+    // fprintf(stderr, "old-val: %p %p\n", (void *)pr.fst, (void *)pr.snd);
     node_count--;
   }
-  return atomic_exchange_explicit((APair*)((u64)loc & ~TAG_MASK), val, memory_order_relaxed);
+  return pr; 
 }
 
 // Exchanges a var on global by a value. Returns old.
 Port vars_exchange(Port var, Port val) {
-  if (val == FREE) {
-    // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)var);
-    vars_count--;
-  }
   Port p = var;
   // while (p != FREE && p != NONE && get_tag(p) == VAR) {
   // fprintf(stderr, "vars_exchange: %d var: %p val: %p\n", __LINE__, (void *)var, (void *)val);
     p = atomic_exchange_explicit((APort*)p, val, memory_order_relaxed);
     // fprintf(stderr, "old-val: %p\n", (void *)p);
     // }
+  if (val == FREE) {
+    // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)var);
+    // fprintf(stderr, "old-val: %p\n", (void *)p);
+    vars_count--;
+  }
   return p;
 }
 
@@ -513,6 +518,7 @@ Port node_alloc(TM* tm) {
     tm->nput += 1;
     if (lc > 0 && isEmpty(*elem)) {
       node_count++;
+      // fprintf(stderr, "node allocd: %d %p\n", __LINE__, (void *)elem);
       if (max_node < node_count)
 	max_node = node_count;
       return (Port)elem;
@@ -541,10 +547,26 @@ Port vars_make(TM *tm, Port p) {
   return v0;
 }
 
-Port node_make(TM *tm, Port fst, Port snd) {
-  Port n0 = node_alloc(tm);
+Port node_make(TM *tm, Tag tag, Port fst, Port snd) {
+  // Port n0 = node_alloc(tm);
+  //*
+  Port n0;
+  while (TRUE) {
+    u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->nput%(G_NODE_LEN/TPC));
+    Pair* elem = (Pair *)&globalNet->node_buf[lc];
+    tm->nput += 1;
+    if (lc > 0 && isEmpty(*elem)) {
+      node_count++;
+      if (max_node < node_count)
+	max_node = node_count;
+      n0 = (Port)elem;
+      break;
+    }
+  }
+  // */
+  
   node_create(n0, new_pair(fst, snd));
-  return n0;
+  return (n0 | tag);
 }
 
 // Linking
@@ -794,7 +816,7 @@ bool OPER(TM* tm, Port a, Port b) {
     Numb cv = operate(get_val(a), get_val(B1));
     link(tm, new_num(cv), B2);
   } else {
-    link(tm, B1, new_port(OPR, node_make(tm, a, B2)));
+    link(tm, B1, node_make(tm, OPR, a, B2));
   }
 
   return TRUE;
@@ -831,7 +853,7 @@ bool SWIT(TM* tm, Port a, Port b) {
 
 bool DUPE(TM* tm, Port a, Port b) {
   incRef((Value *)(b & ~TAG_MASK), 1);
-  Pair dupes = node_load(a);
+  Pair dupes = node_take(a);
   link(tm, dupes.fst, b);
   link(tm, dupes.snd, b);
   return TRUE;
@@ -864,14 +886,14 @@ interactionFn interactions[12][12] = {
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&LINK}, // VAR
   {&LINK,&VOID,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL}, // REF
   {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ERAS,&DECF,&ERAS}, // ERA
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&ERAS,&ABRT}, // NUM
+  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&DECF,&ABRT}, // NUM
   {&LINK,&ABRT,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
   {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE,&ABRT}, // DUP
   {&LINK,&ABRT,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // OPR
   {&LINK,&ABRT,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT}, // SWI
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&LINK}, // VAR
   {&ABRT,&ABRT,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
-  {&ABRT,&ABRT,&DECF,&ERAS,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
+  {&ABRT,&ABRT,&DECF,&DECF,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
   {&LINK,&CALL,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ARGS}  // ARG
 };
 
@@ -1237,12 +1259,9 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       break;
 
     case VAR:
-      n0 = node_alloc(tm);
-      node_create(n0, argsNode);
       argsStruct->args[argsStruct->count++] = arg;
-      argsStruct->args[argsStruct->count++] = n0;
-      // TODO: get rid of 'argsNet'
-      varVal = vars_exchange(arg, new_port(RDX, node_make(tm, ref, argsNet(tm, argsStruct))));
+      argsStruct->args[argsStruct->count++] = argsNode.snd;
+      varVal = vars_exchange(arg, node_make(tm, RDX, ref, argsNet(tm, argsStruct)));
       if (varVal != NONE && varVal != FREE) {
 	if (get_tag(varVal) == RDX) {
 	  push_redex(tm, node_take(varVal));
@@ -1269,7 +1288,7 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
     fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
     abort();
 
-    varVal = vars_exchange(arg, new_port(RDX, node_make(tm, ref, arg)));
+    varVal = vars_exchange(arg, node_make(tm, RDX, ref, arg));
     if (varVal != NONE && varVal != FREE) {
       link(tm, ref, varVal);
       vars_take(arg);
@@ -1286,10 +1305,9 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
 }
 
 Port dupeArg(TM *tm, Port arg, Port dupeArg) {
-  Port dupeNode = node_alloc(tm);
   Port dupedVar = vars_alloc(tm);
-  node_create(dupeNode, new_pair(dupedVar, dupeArg));
-  link(tm, arg, new_port(DUP, dupeNode));
+  // fprintf(stderr, "dupe: %d %p %p\n", __LINE__, (void *)arg, (void *)dupeNode);
+  link(tm, arg, node_make(tm, DUP, dupedVar, dupeArg));
   return dupedVar;
 }
 
@@ -1335,8 +1353,8 @@ void make_op(TM *tm, int op, Port x, Port y, Port rslt) {
   if (get_tag(x) == NUM && get_tag(y) == NUM) {
     link(tm, rslt, new_num(operate(get_val(x), get_val(y) & ~0x1F | op)));
   } else {
-    link(tm, x,new_port(OPR, node_make(tm, new_port(NUM, op << (NUM_TAG_SIZE + TAG_SIZE)),
-				       new_port(OPR, node_make(tm, y, rslt)))));
+    link(tm, x, node_make(tm, OPR, new_port(NUM, op << (NUM_TAG_SIZE + TAG_SIZE)),
+			  node_make(tm, OPR, y, rslt)));
   }
 }
 
@@ -1361,15 +1379,15 @@ bool unwind(TM *tm, Port ref, Port args) {
   switch(get_tag(v)) {
   case RDX:
     // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
-    vars_create(pr.fst, new_port(RDX, node_make(tm, ref, args)));
+    vars_create(pr.fst, node_make(tm, RDX, ref, args));
     link_pair(tm, node_take(v));
     break;
 
   case VAR:
     // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
     callArgs = new_port(ARG, 0);
-    callArgs = new_port(ARG, node_make(tm, v, callArgs));
-    link(tm, v, new_port(RDX, node_make(tm, ref, callArgs)));
+    callArgs = node_make(tm, ARG, v, callArgs);
+    link(tm, v, node_make(tm, RDX, ref, callArgs));
     break;
 
   default:
