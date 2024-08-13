@@ -6,7 +6,6 @@ a future. (Ponder this more).
 
 In those cases, a special bit could be set that would cause any ref updates to be done atomically.
 If the bit is not set, the ref update could be done immediately.
-Problems with values nested in others. And values delivered to Promises.
  */
 
 #include <stdlib.h>
@@ -19,19 +18,12 @@ REFS_SIZE refsConstant = -1;
 REFS_SIZE refsStatic = REFS_STATIC;
 
 Value *universalProtoFn = (Value *)0;
-Integer const0 = {IntegerType, -2, 0};
-Value *const0Ptr = (Value *)&const0;
 List *globals = &empty_list_struct;
 int cleaningUp = 0;
 
 // Immutable hash-map ported from Clojure
 BitmapIndexedNode emptyBMI = {BitmapIndexedType, -2, 0, 0};
 
-// threads that have been replaced, but haven't exited
-pthread_mutex_t lingeringAccess = PTHREAD_MUTEX_INITIALIZER;
-Value *lingeringThreads = (Value *)&emptyBMI;
-
-Value *maybeNothing;
 FILE *outstream;
 Value *(*prErrSTAR)(Value *str);
 
@@ -57,8 +49,6 @@ void incTypeMalloc(TYPE_SIZE type, int delta) {
     __atomic_fetch_add(&type_mallocs[19], delta, __ATOMIC_ACQ_REL);
   else if (type > OpaqueType)
     __atomic_fetch_add(&type_mallocs[0], delta, __ATOMIC_ACQ_REL);
-  else if (type == SymbolType)
-    __atomic_fetch_add(&type_mallocs[5], delta, __ATOMIC_ACQ_REL);
   else
     __atomic_fetch_add(&type_mallocs[type], delta, __ATOMIC_ACQ_REL);
 }
@@ -72,14 +62,10 @@ void incTypeFree(TYPE_SIZE type, int delta) {
     __atomic_fetch_add(&type_frees[19], delta, __ATOMIC_ACQ_REL);
   else if (type > OpaqueType)
     __atomic_fetch_add(&type_frees[0], delta, __ATOMIC_ACQ_REL);
-  else if (type == SymbolType)
-    __atomic_fetch_add(&type_frees[5], delta, __ATOMIC_ACQ_REL);
   else
     __atomic_fetch_add(&type_frees[type], delta, __ATOMIC_ACQ_REL);
 }
 
-Maybe nothing_struct = {MaybeType, -2, 0, 0};
-Value *nothing = (Value *)&nothing_struct;
 List empty_list_struct = (List){ListType,-2,0,0,0,0};
 List *empty_list = &empty_list_struct;
 Vector empty_vect_struct = (Vector){VectorType,-2,0,0,5,0,0};
@@ -87,17 +73,6 @@ Vector *empty_vect = &empty_vect_struct;
 
 ReifiedVal all_values_struct = {AllValuesType, -2, 0};
 Value *all_values = (Value *)&all_values_struct;
-
-#ifdef SINGLE_THREADED
-#define NUM_WORKERS 1
-#else
-#ifndef NUM_WORKERS
-#define NUM_WORKERS 10
-#endif
-#endif
-pthread_t workers[NUM_WORKERS];
-int32_t runningWorkers = NUM_WORKERS;
-int8_t mainThreadDone = 0;
 
 int mask(int64_t hash, int shift) {
   return (hash >> shift) & 0x1f;
@@ -128,12 +103,11 @@ Value *my_malloc(int64_t sz) {
   return(val);
 }
 
-void cleanupMemory (Value *the_final_answer, Value *maybeNothing, List *argVect) {
+void cleanupMemory (Value *the_final_answer,  List *argVect) {
   // TODO: change the type of argVect to Vector eventually
 #ifdef CHECK_MEM_LEAK
   dec_and_free(the_final_answer, 1);
   freeGlobal((Value *)argVect);
-  freeGlobal(maybeNothing);
   for (List *l = globals; l != (List *)0 && l->tail != (List *)0; l = l->tail) {
     if (l->head->refs == refsConstant)
       l->head->refs = 1;
@@ -283,43 +257,6 @@ void decValuePtrRef(Value **ptr) {
   }
 }
 
-FreeValList centralFreeIntegers = (FreeValList){(Value *)0, 0};
-__thread FreeValList freeIntegers = {(Value *)0, 0};
-Integer *malloc_integer() {
-  Integer *newInteger = (Integer *)freeIntegers.head;
-  if (newInteger == (Integer *)0) {
-    newInteger = (Integer *)removeFreeValue(&centralFreeIntegers);
-    if (newInteger == (Integer *)0) {
-      Integer *numberStructs = (Integer *)my_malloc(sizeof(Integer) * 100);
-#ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&malloc_count, 99, __ATOMIC_ACQ_REL);
-      // incTypeMalloc(TypeCount, 1);
-#endif
-      for (int i = 1; i < 99; i++) {
-	numberStructs[i].refs = refsError;
-        ((Value *)&numberStructs[i])->next = (Value *)&numberStructs[i + 1];
-      }
-      numberStructs[99].refs = refsError;
-      ((Value *)&numberStructs[99])->next = (Value *)0;
-      freeIntegers.head = (Value *)&numberStructs[1];
-      moveToCentral(&freeIntegers, &centralFreeIntegers);
-
-      newInteger = numberStructs;
-    }
-  } else {
-    freeIntegers.head = freeIntegers.head->next;
-  }
-  // incTypeMalloc(IntegerType, 1);
-  newInteger->type = IntegerType;
-  newInteger->refs = refsInit;
-  return(newInteger);
-}
-
-void freeInteger(Value *v) {
-  v->next = freeIntegers.head;
-  freeIntegers.head = v;
-}
-
 FreeValList centralFreeStrings = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeStrings = {(Value *)0, 0};
 #define STRING_RECYCLE_LEN 100
@@ -415,65 +352,6 @@ void freeFnArity(Value *v) {
   freeFnArities.head = v;
 }
 
-FreeValList centralFreeFunctions[10] = {(FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0},
-                                        (FreeValList){(Value *)0, 0}};
-__thread FreeValList freeFunctions[10] = {{(Value *)0, 0},
-                                          {(Value *)0, 0},
-                                          {(Value *)0, 0},
-                                          {(Value *)0, 0},
-                                          {(Value *)0, 0},
-                                          {(Value *)0, 0},
-                                          {(Value *)0, 0},
-                                          {(Value *)0, 0},
-                                          {(Value *)0, 0},
-                                          {(Value *)0, 0}};
-Function *malloc_function(int arityCount) {
-  Function *newFunction;
-  if (arityCount > 9) {
-    newFunction = (Function *)my_malloc(sizeof(Function) + sizeof(FnArity *) * arityCount);
-  } else {
-    newFunction = (Function *)freeFunctions[arityCount].head;
-    if (newFunction == (Function *)0) {
-      newFunction = (Function *)removeFreeValue(&centralFreeFunctions[arityCount]);
-      if (newFunction == (Function *)0) {
-        newFunction = (Function *)my_malloc(sizeof(Function) + sizeof(FnArity *) * arityCount);
-      }
-    } else {
-      freeFunctions[arityCount].head = freeFunctions[arityCount].head->next;
-    }
-  }
-  // incTypeMalloc(FunctionType, 1);
-  newFunction->type = FunctionType;
-  ((Function *)newFunction)->refs = refsInit;
-  return((Function *)newFunction);
-}
-
-void freeFunction(Value *v) {
-  Function *f = (Function *)v;
-  for (int i = 0; i < f->arityCount; i++) {
-    dec_and_free((Value *)f->arities[i], 1);
-  }
-  // fprintf(stderr, "%p freed\n", v);
-  if (f->arityCount < 10) {
-    v->next = freeFunctions[f->arityCount].head;
-    freeFunctions[f->arityCount].head = v;
-  } else {
-#ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-#endif
-    if (!cleaningUp)
-      free(v);
-  }
-}
-
 FreeValList centralFreeLists = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeLists = (FreeValList){(Value *)0, 0};
 List *malloc_list() {
@@ -541,48 +419,6 @@ void freeList(Value *v) {
     }
   }
 #endif
-}
-
-FreeValList centralFreeMaybes = (FreeValList){(Value *)0, 0};
-__thread FreeValList freeMaybes = {(Value *)0, 0};
-Maybe *malloc_maybe() {
-  Maybe *newMaybe = (Maybe *)freeMaybes.head;
-  if (newMaybe == (Maybe *)0) {
-    newMaybe = (Maybe *)removeFreeValue(&centralFreeMaybes);
-    if (newMaybe == (Maybe *)0) {
-      Maybe *maybeStructs = (Maybe *)my_malloc(sizeof(Maybe) * 50);
-#ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&malloc_count, 49, __ATOMIC_ACQ_REL);
-#endif
-      for (int i = 1; i < 49; i++) {
-        maybeStructs[i].refs = refsError;
-        ((Value *)&maybeStructs[i])->next = (Value *)&maybeStructs[i + 1];
-      }
-      maybeStructs[49].refs = refsError;
-      ((Value*)&maybeStructs[49])->next = (Value *)0;
-      freeMaybes.head = (Value *)&maybeStructs[1];
-      moveToCentral(&freeMaybes, &centralFreeMaybes);
-
-      newMaybe = maybeStructs;
-    }
-  } else {
-    freeMaybes.head = freeMaybes.head->next;
-  }
-  // incTypeMalloc(MaybeType, 1);
-  newMaybe->type = MaybeType;
-  newMaybe->refs = refsInit;
-  newMaybe->hashVal = 0;
-  newMaybe->value = (Value *)0;
-  return(newMaybe);
-}
-
-void freeMaybe(Value *v) {
-  Value *value = ((Maybe *)v)->value;
-  if (value != (Value *)0)
-    dec_and_free(value, 1);
-
-  v->next = freeMaybes.head;
-  freeMaybes.head = v;
 }
 
 FreeValList centralFreeVectorNodes = (FreeValList){(Value *)0, 0};
@@ -720,13 +556,13 @@ __thread FreeValList freeReified[20] = {{(Value *)0, 0},
 ReifiedVal *malloc_reified(int64_t implCount) {
   ReifiedVal *newReifiedVal;
   if (implCount > 19) {
-    newReifiedVal = (ReifiedVal *)my_malloc(sizeof(ReifiedVal) + sizeof(Function *) * implCount);
+    newReifiedVal = (ReifiedVal *)my_malloc(sizeof(ReifiedVal) + sizeof(FnArity *) * implCount);
   } else {
     newReifiedVal = (ReifiedVal *)freeReified[implCount].head;
     if (newReifiedVal == (ReifiedVal *)0) {
       newReifiedVal = (ReifiedVal *)removeFreeValue(&centralFreeReified[implCount]);
       if (newReifiedVal == (ReifiedVal *)0) {
-	int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * implCount;
+	int rvSize = sizeof(ReifiedVal) + sizeof(FnArity *) * implCount;
 	int rvCount = 100000;
 	char *reifiedStructs = (char *)my_malloc(rvSize * rvCount);
 	for (int i = 1; i < (rvCount - 1); i++) {
@@ -934,165 +770,6 @@ void freeArrayNode(Value *v) {
   freeArrayNodes.head = v;
 }
 
-FreeValList centralFreePromises = (FreeValList){(Value *)0, 0};
-__thread FreeValList freePromises = {(Value *)0, 0};
-Promise *malloc_promise() {
-  Promise *newPromise = (Promise *)freePromises.head;
-  if (newPromise == (Promise *)0) {
-    newPromise = (Promise *)removeFreeValue(&centralFreePromises);
-    if (newPromise == (Promise *)0) {
-      Promise *promises = (Promise *)my_malloc(sizeof(Promise) * 10);
-#ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&malloc_count, 9, __ATOMIC_ACQ_REL);
-#endif
-      for (int i = 1; i < 9; i++) {
-	promises[i].refs = refsError;
-        ((Value *)&promises[i])->next = (Value *)&promises[i + 1];
-      }
-      promises[9].refs = refsError;
-      ((Value *)&promises[9])->next = (Value *)0;
-      freePromises.head = (Value *)&promises[1];
-      moveToCentral(&freePromises, &centralFreePromises);
-
-      newPromise = promises;
-    }
-  } else {
-    freePromises.head = freePromises.head->next;
-  }
-  // incTypeMalloc(PromiseType, 1);
-  memset(newPromise, 0, sizeof(Promise));
-  newPromise->type = PromiseType;
-  newPromise->refs = refsInit;
-  newPromise->result = (Value *)0;
-  newPromise->actions = empty_list;
-  pthread_cond_init(&newPromise->delivered, NULL);
-  pthread_mutex_init(&newPromise->access, NULL);
-  return(newPromise);
-}
-
-void freePromise(Value *v) {
-  // TODO: make sure this is thread safe
-  Promise *p = (Promise *)v;
-  if (p->actions != (List *)0) {
-    Value *acts = (Value *)p->actions;
-    p->actions = (List *)0;
-    dec_and_free(acts, 1);
-  }
-  if (p->result != (Value *)0) {
-    Value *res = p->result;
-    p->result = (Value *)0;
-    dec_and_free(res, 1);
-  }
-  p->refs = refsError;
-  v->next = freePromises.head;
-  freePromises.head = v;
-}
-
-FreeValList centralFreeFutures = (FreeValList){(Value *)0, 0};
-__thread FreeValList freeFutures = {(Value *)0, 0};
-Future *malloc_future(int line) {
-  Future *newFuture = (Future *)freeFutures.head;
-  if (newFuture == (Future *)0) {
-    newFuture = (Future *)removeFreeValue(&centralFreeFutures);
-    if (newFuture == (Future *)0) {
-      Future *futures = (Future *)my_malloc(sizeof(Future) * 10);
-#ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&malloc_count, 9, __ATOMIC_ACQ_REL);
-#endif
-      for (int i = 1; i < 9; i++) {
-	futures[i].refs = refsError;
-        ((Value *)&futures[i])->next = (Value *)&futures[i + 1];
-      }
-      futures[9].refs = refsError;
-      ((Value *)&futures[9])->next = (Value *)0;
-      freeFutures.head = (Value *)&futures[1];
-      moveToCentral(&freeFutures, &centralFreeFutures);
-
-      newFuture = futures;
-    }
-  } else {
-    freeFutures.head = freeFutures.head->next;
-  }
-  // incTypeMalloc(FutureType, 1);
-  memset(newFuture, 0, sizeof(Future));
-  newFuture->type = FutureType;
-  newFuture->refs = refsInit;
-  newFuture->result = (Value *)0;
-  newFuture->action = (Value *)0;
-  newFuture->errorCallback = (Value *)0;
-  pthread_cond_init(&newFuture->delivered, NULL);
-  pthread_mutex_init(&newFuture->access, NULL);
-  return(newFuture);
-}
-
-void freeFuture(Value *v) {
-  List *actions = ((Future *)v)->actions;
-  if (actions != (List *)0)
-    dec_and_free((Value *)actions, 1);
-  Value *action = ((Future *)v)->action;
-  if (action != (Value *)0)
-    dec_and_free(action, 1);
-  Value *result = ((Future *)v)->result;
-  if (result != (Value *)0)
-    dec_and_free(result, 1);
-  v->next = freeFutures.head;
-  freeFutures.head = v;
-}
-
-void emptyAgent(Agent *agent) {
-  pthread_mutex_lock (&agent->access);
-  REFS_SIZE refs;
-#ifdef SINGLE_THREADED
-  refs = agent->output->refs;
-#else
-  __atomic_load(&agent->output->refs, &refs, __ATOMIC_RELAXED);
-#endif
-  if (refs != 1 &&
-      refs != refsConstant &&
-      refs != refsStatic) {
-    fprintf(stderr, "failure in emptyAgent()\n");
-    abort();
-  }
-  dec_and_free((Value *)agent->output, 1);
-
-  List *l;
-#ifdef SINGLE_THREADED
-  l = agent->input;
-  l->refs = refs;
-#else
-  __atomic_load(&agent->input, &l, __ATOMIC_RELAXED);
-  __atomic_load(&l->refs, &refs, __ATOMIC_RELAXED);
-#endif
-  if (refs != 1 &&
-      refs != refsConstant &&
-      refs != refsStatic) {
-    fprintf(stderr, "failure in emptyAgent()\n");
-    abort();
-  }
-  dec_and_free((Value *)l, 1);
-  pthread_mutex_unlock (&agent->access);
-}
-
-void freeAgent(Value *v) {
-  // TODO: must add loop detection. It's too easy to screw up and cause a cycle
-  Value *val = ((Agent *)v)->val;
-  REFS_SIZE refs;
-#ifdef SINGLE_THREADED
-  refs = val->refs;
-#else
-  __atomic_load(&val->refs, &refs, __ATOMIC_RELAXED);
-#endif
-  emptyAgent((Agent *)v);
-  if (val != (Value *)0) {
-    dec_and_free(val, 1);
-  }
-#ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-#endif
-  if (!cleaningUp)
-    free(v);
-}
-
 void freeOpaquePtr(Value *v) {
   // call the destructor with the pointer
   Opaque *opaque = (Opaque *)v;
@@ -1108,13 +785,13 @@ void freeOpaquePtr(Value *v) {
 typedef void (*freeValFn)(Value *);
 
 freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
-				       &freeInteger,
+				       NULL,
 				       &freeString,
 				       &freeFnArity,
-				       &freeFunction,
+				       NULL,
 				       &freeSubString,
 				       &freeList,
-				       &freeMaybe,
+				       NULL,
 				       &freeVector,
 				       &freeVectorNode,
 				       &freeSubString,
@@ -1122,139 +799,10 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeArrayNode,
 				       &freeHashCollisionNode,
 				       NULL,
-				       &freePromise,
-				       &freeFuture,
-				       &freeAgent,
+				       NULL,
+				       NULL,
+				       NULL,
 				       &freeOpaquePtr};
-
-void breakCycle(Value *val, Value *cycVal);
-
-void cyclePromise(Value *val, Value *cycVal) {
-  if (val == cycVal) {
-    decRefs(val, 1);
-  } else {
-    breakCycle(((Promise *)val)->result, cycVal);
-    breakCycle((Value *)(((Promise *)val)->actions), cycVal);
-  }
-}
-
-void cycleMaybe(Value *val, Value *cycVal) {
-  breakCycle(((Maybe *)val)->value, cycVal);
-}
-
-void cycleList(Value *val, Value *cycVal) {
-  List *lval = (List *)val;
-  breakCycle((Value *)lval->head, cycVal);
-  if (lval->tail != (List *)NULL) {
-    cycleList((Value *)lval->tail, cycVal);
-  }
-}
-
-void cycleFnArity(Value *val, Value *cycVal) {
-  FnArity *arity = (FnArity *)val;
-  breakCycle((Value *)arity->closures, cycVal);
-}
-
-void cycleFunction(Value *val, Value* cycVal) {
-  Function *f = (Function *)val;
-  for (int i = 0; i < f->arityCount; i++) {
-    if (f->arities[i] != NULL) {
-      cycleFnArity((Value *)f->arities[i], cycVal);
-    }
-  }
-}
-
-void cycleVector(Value *v, Value* cycVal) {
-  Value *root = (Value *)((Vector *)v)->root;
-  if (root != (Value *)NULL) {
-    breakCycle((Value *)root, cycVal);
-  }
-
-  for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
-    if (((Vector *)v)->tail[i] != (Value *)NULL)
-      breakCycle(((Vector *)v)->tail[i], cycVal);
-  }
-}
-
-void cycleVectorNode(Value *v, Value* cycVal) {
-  for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
-    if (((VectorNode *)v)->array[i] != (Value *)NULL) {
-      breakCycle(((VectorNode *)v)->array[i], cycVal);
-    }
-  }
-}
-
-void cycleBitmapNode(Value *v, Value* cycVal) {
-  BitmapIndexedNode *node = (BitmapIndexedNode *)v;
-  int cnt = __builtin_popcount(node->bitmap);
-  for (int i = 0; i < (2 * cnt); i++) {
-    if (node->array[i] != (Value *)0) {
-      breakCycle(node->array[i], cycVal);
-    }
-  }
-}
-
-void cycleArrayNode(Value *v, Value* cycVal) {
-  ArrayNode *node = (ArrayNode *)v;
-  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-    if (node->array[i] != (Value *)0) {
-      breakCycle(node->array[i], cycVal);
-    }
-  }
-}
-
-void cycleHashCollisionNode(Value *v, Value* cycVal) {
-  HashCollisionNode *node = (HashCollisionNode *)v;
-  for (int i = 0; i < node->count; i++) {
-    if (node->array[i] != (Value *)0) {
-      breakCycle(node->array[i], cycVal);
-    }
-  }
-}
-
-typedef void (*cycleValFn)(Value *, Value *);
-
-void noCycle(Value *val, Value *cycVal){
-  // fprintf(stderr, "val: %p\n", val);
-  // need no op
-  int x = 1;
-}
-
-cycleValFn cycleJmpTbl[CoreTypeCount] = {NULL,
-                                         &noCycle, // 1
-				         &noCycle, // 2
-				         &cycleFnArity, // 3
-				         &cycleFunction, // 4
-				         &noCycle, // 5
-				         &cycleList, // 6
-				         &cycleMaybe, // 7
-				         &cycleVector, // 8
-				         &cycleVectorNode, // 9
-				         &noCycle, // 10
-				         &cycleBitmapNode, // 11
-				         &cycleArrayNode, // 12
-				         &cycleHashCollisionNode, // 13
-				         NULL,
-				         &cyclePromise, // 15
-					 // TODO: need to finish these
-				         NULL, // &freeFuture,
-				         NULL, // &freeAgent,
-				         NULL};
-
-void breakCycle(Value *val, Value *cycVal) {
-  if (val != (Value *)NULL) {
-    if (val->type < CoreTypeCount) {
-      // fprintf(stderr, "breaking: %p %ld\n", val, val->type);
-      // incTypeFree(v->type, 1);
-      cycleJmpTbl[val->type](val, cycVal);
-    } else {
-      ReifiedVal *rv = (ReifiedVal *)val;
-      for (int i = 0; i < rv->implCount; i++) {
-	breakCycle(rv->impls[i], cycVal);
-      }
-    }
-  }
-}
 
 void dec_and_free(Value *v, int deltaRefs) {
   if (v == (Value *)0 ||
@@ -1342,9 +890,6 @@ Value *simpleIncRef(Value *v, int n) {
 
 void moveFreeToCentral() {
   moveToCentral(&freeLists, &centralFreeLists);
-  for (int i = 0; i < 10; i++) {
-    moveToCentral(&freeFunctions[i], &centralFreeFunctions[i]);
-  }
   for (int i = 0; i < BMI_RECYCLE_COUNT; i++) {
     moveToCentral(&freeBMINodes[i], &centralFreeBMINodes[i]);
   }
@@ -1354,13 +899,9 @@ void moveFreeToCentral() {
   moveToCentral(&freeStrings, &centralFreeStrings);
   moveToCentral(&freeArrayNodes, &centralFreeArrayNodes);
   moveToCentral(&freeSubStrings, &centralFreeSubStrings);
-  moveToCentral(&freeIntegers, &centralFreeIntegers);
-  moveToCentral(&freeMaybes, &centralFreeMaybes);
   moveToCentral(&freeVectors, &centralFreeVectors);
   moveToCentral(&freeVectorNodes, &centralFreeVectorNodes);
   moveToCentral(&freeFnArities, &centralFreeFnArities);
-  moveToCentral(&freePromises, &centralFreePromises);
-  moveToCentral(&freeFutures, &centralFreeFutures);
 }
 
 
@@ -1394,26 +935,19 @@ void emptyFreeList(FreeValList *freeLinkedList) {
 void freeAll() {
   moveFreeToCentral();
 
-  for (int i = 0; i < 10; i++) {
-    emptyFreeList(&centralFreeFunctions[i]);
-  }
   for (int i = 0; i < 20; i++) {
     emptyFreeList(&centralFreeReified[i]);
   }
   for (int i = 0; i < BMI_RECYCLE_COUNT; i++) {
     emptyFreeList(&centralFreeBMINodes[i]);
   }
-  emptyFreeList(&centralFreeFutures);
-  emptyFreeList(&centralFreePromises);
   emptyFreeList(&centralFreeArrayNodes);
   emptyFreeList(&centralFreeSubStrings);
   emptyFreeList(&centralFreeFnArities);
   emptyFreeList(&centralFreeLists);
-  emptyFreeList(&centralFreeMaybes);
   emptyFreeList(&centralFreeVectors);
   emptyFreeList(&centralFreeVectorNodes);
   emptyFreeList(&centralFreeStrings);
-  emptyFreeList(&centralFreeIntegers);
 
 //*
 #ifdef SINGLE_THREADED
@@ -1449,6 +983,10 @@ void freeAll() {
 }
 
 int64_t nakedSha1(Value *v1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return (0);
+  /*
   Integer *hashVal;
   int64_t hash;
   switch (v1->type) {
@@ -1458,12 +996,10 @@ int64_t nakedSha1(Value *v1) {
 
   case StringBufferType:
   case SubStringType:
-  case SymbolType:
     hash = strSha1(v1);
     break;
 
   case ListType:
-  case MaybeType:
   case VectorType:
   case BitmapIndexedType:
   case ArrayNodeType:
@@ -1498,6 +1034,7 @@ int64_t nakedSha1(Value *v1) {
     break;
   }
   return(hash);
+  // */
 }
 
 List *reverseList(List *input) {
@@ -1512,180 +1049,6 @@ List *reverseList(List *input) {
   }
   dec_and_free((Value *)input, 1);
   return(output);
-}
-
-FuturesQueueStruct futuresQueue;
-
-void scheduleFuture(Future *fut) {
-  List *newList = malloc_list();
-  newList->head = (Value *)fut;
-  List *input;
-#ifdef SINGLE_THREADED
-  input = futuresQueue.input;
-  newList->len = input->len + 1;
-  newList->tail = input;
-  futuresQueue.input = newList;
-#else
-  __atomic_load(&futuresQueue.input, &input, __ATOMIC_RELAXED);
-  do {
-    newList->len = input->len + 1;
-    newList->tail = input;
-  } while (!__atomic_compare_exchange(&futuresQueue.input, &input, &newList, 1,
-				      __ATOMIC_RELAXED, __ATOMIC_RELAXED));
-#endif
-
-  // It is unusual to not hold the mutex when signalling the condition. But
-  // in this case it's ok. All the threads waiting on the condition are of
-  // equal priority, so it doesn't matter which one gets the next item in
-  // the queue. See this explanation for the reasoning behind this:
-  // https://groups.google.com/forum/?hl=ky#!msg/comp.programming.threads/wEUgPq541v8/ZByyyS8acqMJ
-  pthread_cond_signal(&futuresQueue.notEmpty);
-}
-
-void waitForWorkers() {
-#ifdef SINGLE_THREADED
-  // no need to wait
-#else
-  pthread_cond_broadcast(&futuresQueue.notEmpty);
-  for (int8_t i = 0; i < NUM_WORKERS; i++) {
-    pthread_join(workers[i], NULL);
-  }
-  pthread_mutex_lock (&futuresQueue.mutex);
-  List *l;
-  __atomic_load(&futuresQueue.output, &l, __ATOMIC_RELAXED);
-  dec_and_free((Value *)l, 1);
-
-  __atomic_load(&futuresQueue.input, &l, __ATOMIC_RELAXED);
-  dec_and_free((Value *)l, 1);
-  pthread_mutex_unlock (&futuresQueue.mutex);
-
-#ifdef WAIT_FOR_LINGERING
-  int done = 0;
-  do {
-    pthread_mutex_lock (&lingeringAccess);
-    List *lingering = (List *)vals((FnArity *)0, lingeringThreads);
-    lingeringThreads = (Value *)&emptyBMI;
-    pthread_mutex_unlock (&lingeringAccess);
-
-    l = lingering;
-    for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
-      pthread_t threadId = (pthread_t)((Integer *)x)->numVal;
-      pthread_join(threadId, NULL);
-    }
-    if (lingering->len == 0)
-      done = 1;
-    dec_and_free((Value *)lingering, 1);
-  } while(!done);
-#else
-  fprintf(stderr, "\n\n*** not waiting on lingering threads\n\n");
-#endif
-#endif
-}
-
-Value *readFuturesQueue() {
-  return nothing;
-}
-
-Value *deliverFuture(Value *fut, Value *val) {
-  Future *future = (Future *)fut;
-  if (future->result == (Value *)0) {
-    pthread_mutex_lock (&future->access);
-    future->result = val;
-    List *l = future->actions;
-    List *head = l;
-    future->actions = (List *)0;
-    pthread_cond_broadcast(&future->delivered);
-    pthread_mutex_unlock (&future->access);
-
-    // perform actions
-    if (l != (List *)0 && l->len != 0) {
-      for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
-	incRef(x, 1);
-	incRef(val, 1);
-	Value *trash = dynamicCall1Arg(x, val);
-	dec_and_free(trash, 1);
-      }
-      dec_and_free((Value *)head, 1);
-    }
-  } else {
-    dec_and_free(val, 1);
-  }
-  return fut;
-}
-
-__thread int64_t workerIndex;
-void *futuresThread(void *input) {
-  workerIndex = (int64_t)input;
-  Future *future;
-  Value *result;
-  if (workerIndex >= 0)
-    future = (Future *)readFuturesQueue();
-  while(workerIndex >= 0 && future != (Future *)0) {
-    Value *f = future->action;
-    if(f->type != FunctionType) {
-      result = invoke0Args((FnArity *)0, incRef(f, 1));
-    } else {
-      FnArity *arity = findFnArity(f, 0);
-      if(arity != (FnArity *)0 && !arity->variadic) {
-	FnType0 *fn = (FnType0 *)arity->fn;
-	result = fn(arity);
-      } else if(arity != (FnArity *)0 && arity->variadic) {
-	FnType1 *fn = (FnType1 *)arity->fn;
-	result = fn(arity, (Value *)empty_list);
-      } else {
-	fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
-	abort();
-      }
-    }
-    deliverFuture((Value *)future, result);
-    dec_and_free((Value *)future, 1);
-    if (workerIndex >= 0) {
-      future = (Future *)readFuturesQueue();
-    }
-  }
-#ifdef SINGLE_THREADED
-  runningWorkers--;
-#else
-  __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
-#endif
-  Value *threadHandle = (Value *)integerValue((int64_t)pthread_self());
-
-  pthread_mutex_lock (&lingeringAccess);
-  lingeringThreads = baseDissoc(lingeringThreads, incRef(threadHandle, 1),
-				nakedSha1(threadHandle), 0);
-  pthread_mutex_unlock (&lingeringAccess);
-
-#ifdef CHECK_MEM_LEAK
-  moveFreeToCentral();
-#endif
-  return(NULL);
-}
-
-int32_t numWorkers = NUM_WORKERS;
-void startWorkers() {
-#ifdef SINGLE_THREADED
-  runningWorkers = numWorkers;
-#else
-  __atomic_store(&runningWorkers, &numWorkers, __ATOMIC_RELAXED);
-#endif
-  for (int64_t i = 0; i < NUM_WORKERS; i++)
-    pthread_create(&workers[i], NULL, futuresThread, (void *)i);
-}
-
-void replaceWorker() {
-  pthread_t me = pthread_self();
-  for (int64_t i = 0; i < NUM_WORKERS; i++) {
-    if (pthread_equal(workers[i], me)) {
-      pthread_create(&workers[workerIndex], NULL, futuresThread, (void *)i);
-      workerIndex = -1;
-    }
-  }
-  Value *threadHandle = (Value *)integerValue((int64_t)me);
-  pthread_mutex_lock (&lingeringAccess);
-  lingeringThreads = copyAssoc(lingeringThreads, incRef((Value *)threadHandle, 1),
-			       incRef((Value *)threadHandle, 1),
-			       nakedSha1(threadHandle), 0);
-  pthread_mutex_unlock (&lingeringAccess);
 }
 
 char *extractStr(Value *v) {
@@ -1705,35 +1068,11 @@ char *extractStr(Value *v) {
   }
 }
 
-FnArity *findFnArity(Value *fnVal, int64_t argCount) {
-  Function *fn = (Function *)fnVal;
-  int arityIndex = 0;
-  FnArity *arity = (FnArity *)fn->arities[arityIndex];
-  FnArity *variadic = (FnArity *)0;
-  while(arityIndex < fn->arityCount) {
-    arity = (FnArity *)fn->arities[arityIndex];
-    if (arity->variadic) {
-      variadic = arity;
-      arityIndex++;
-    } else if (arity->count != argCount) {
-      arityIndex++;
-    } else
-      return(arity);
-  }
-  return(variadic);
-};
-
-int8_t isNothing(Value *v) {
-  return(v->type == MaybeType && ((Maybe *)v)->value == (Value *)0);
-}
-
-Value *maybe(FnArity *arity, Value *arg0, Value *arg1) {
-  Maybe *mVal = malloc_maybe();
-  mVal->value = arg1;
-  return((Value *)mVal);
-}
-
 Value *prSTAR(Value *str) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   int bytes;
   if (str->type == StringBufferType) {
     bytes = fprintf(outstream, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
@@ -1742,9 +1081,14 @@ Value *prSTAR(Value *str) {
   }
   dec_and_free(str, 1);
   return(integerValue(bytes));
+  // */
 }
 
 Value *defaultPrErrSTAR(Value *str) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   int bytes;
   if (str->type == StringBufferType) {
     bytes = fprintf(stderr, "%-.*s", (int)((String *)str)->len, ((String *)str)->buffer);
@@ -1753,20 +1097,8 @@ Value *defaultPrErrSTAR(Value *str) {
   }
   dec_and_free(str, 1);
   return(integerValue(bytes));
+  // */
 }
-
-Value *add_ints(Value *arg0, Value *arg1) {
-  Value *numVal = integerValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
-  return(numVal);
-}
-
-Value *integerValue(int64_t n) {
-  Integer *numVal = malloc_integer();
-  numVal->numVal = n;
-  return((Value *)numVal);
-};
 
 Port number_str(Port arg0) {
   String *numStr = malloc_string(50);
@@ -1775,22 +1107,11 @@ Port number_str(Port arg0) {
   return(new_port(VAL, (Port)numStr));
 }
 
-Value *integer_EQ(Value *arg0, Value *arg1) {
-  if (IntegerType != arg0->type || IntegerType != arg1->type) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  } else if (((Integer *)arg0)->numVal != ((Integer *)arg1)->numVal) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  } else {
-    dec_and_free(arg1, 1);
-    return(maybe((FnArity *)0, (Value *)0, arg0));
-  }
-}
-
 Value *isInstance(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   if (typeNum == arg1->type) {
      dec_and_free(arg1, 1);
@@ -1808,6 +1129,7 @@ Value *isInstance(Value *arg0, Value *arg1) {
      dec_and_free(arg1, 1);
      return(nothing);
   }
+  // */
 }
 
 List *listCons(Value *x, List *l) {
@@ -2004,6 +1326,11 @@ VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Value *va
 }
 
 Value *vectStore(Vector *vect, unsigned index, Value *val) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   // TODO: check the refs count and mutate if equal 1
   // but only if all nodes 'above' this one are mutate-able
   // and if you do mutate this vect, clear the cached hash value (once that's implemented)
@@ -2038,6 +1365,7 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
     dec_and_free(val, 1);
     return(nothing);
   }
+  // */
 }
 
 Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
@@ -2051,6 +1379,10 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
     return((Value *)vect);
   } else {
     Value *result = vectStore(vect, index, val);
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
     if (isNothing(result)) {
       fprintf(stderr, "*** Improper use of fastVectStore\n");
       abort();
@@ -2061,6 +1393,7 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
       dec_and_free((Value *)vect, 1);
       return(inner);
     }
+    // */
   }
 }
 
@@ -2078,7 +1411,7 @@ Value *updateField(Value *rval, Value *field, int64_t idx) {
     return(rval);
   } else {
     ReifiedVal *rv = malloc_reified(template->implCount);
-    int rvSize = sizeof(ReifiedVal) + sizeof(Function *) * template->implCount;
+    int rvSize = sizeof(ReifiedVal) + sizeof(FnArity *) * template->implCount;
     memcpy(rv, template, rvSize);
 #ifdef SINGLE_THREADED
     rv->refs = refsInit;
@@ -2129,51 +1462,12 @@ Value *vectorReverse(Value *arg0) {
   return((Value *)newVect);
 }
 
-void destructValue(char *fileName, char *lineNum, Value *val, int numArgs, Value **args[]) {
-  if (val->type == ListType) {
-    List *l = (List *)val;
-    if (l->len < numArgs - 1) {
-      fprintf(stderr, "Insufficient values in list for destructuring at %s: %s\n",
-	      fileName, lineNum);
-      abort();
-    }
-    int64_t len = l->len - numArgs + 1;
-    for (int i = 0; i < numArgs - 1; i++) {
-      *args[i] = l->head; l = l->tail;
-      incRef(*args[i], 1);
-    }
-    Value **tail = args[numArgs - 1];
-    if (tail != (Value **)0) {
-      l->len = len;
-      *tail = (Value *)l;
-      incRef(*args[numArgs - 1], 1);
-    }
-    dec_and_free(val, 1);
-  } else if (val->type == VectorType) {
-    Vector *v = (Vector *)val;
-    if (v->count < numArgs - 1) {
-      fprintf(stderr, "Insufficient values in vector for destructuring at %s: %s\n",
-	      fileName, lineNum);
-      abort();
-    }
-    // unpack vector
-    for (int i = 0; i < numArgs - 1; i++) {
-      *args[i] = vectGet(v, i);
-      incRef(*args[i], 1);
-    }
-    Value **tail = args[numArgs - 1];
-    if (tail != (Value **)0) {
-      *tail = vectSeq(v, numArgs - 1);
-    } else {
-      dec_and_free(val, 1);
-    }
-  } else {
-    fprintf(stderr, "Could not unpack value at %s %s\n", fileName, lineNum);
-    abort();
-  }
-}
-
 Value *strEQ(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   char *s1, *s2;
   long int len;
 
@@ -2215,9 +1509,15 @@ Value *strEQ(Value *arg0, Value *arg1) {
     dec_and_free(arg1, 1);
     return(nothing);
   }
+  // */
 }
 
 Value *strLT(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   char *s1, *s2;
   long int len, s1Len, s2Len;
 
@@ -2276,9 +1576,14 @@ Value *strLT(Value *arg0, Value *arg1) {
     dec_and_free(arg1, 1);
     return(nothing);
   }
+  // */
 }
 
 Value *strCount(Value *arg0) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
    Value *numVal;
    if (arg0->type == StringBufferType)
      numVal = integerValue(((String *)arg0)->len);
@@ -2286,6 +1591,7 @@ Value *strCount(Value *arg0) {
      numVal = integerValue(((SubString *)arg0)->len);
    dec_and_free(arg0, 1);
    return(numVal);
+   // */
 }
 
 Value *strList(Value *arg0) {
@@ -2317,18 +1623,12 @@ Value *strList(Value *arg0) {
   return((Value *)result);
 }
 
-Value *integer_LT(Value *arg0, Value *arg1) {
- if (((Integer *)arg0)->numVal < ((Integer *)arg1)->numVal) {
-     dec_and_free(arg1, 1);
-     return(maybe((FnArity *)0, (Value *)0, arg0));
-  } else {
-     dec_and_free(arg0, 1);
-     dec_and_free(arg1, 1);
-     return(nothing);
-  }
-}
-
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   if (typeNum == arg1->type) {
     return(maybe((FnArity *)0, (Value *)0, arg1));
   } else if (StringBufferType == typeNum && SubStringType == arg1->type) {
@@ -2341,9 +1641,14 @@ Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
     dec_and_free(arg1, 1);
     return(nothing);
   }
+  // */
 }
 
 Value *listMap(Value *arg0, Value *f) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   // List map
   List *l = (List *)arg0;
   if (l->len == 0) {
@@ -2420,6 +1725,7 @@ Value *listMap(Value *arg0, Value *f) {
     dec_and_free(f, 1);
     return((Value *)head);
   }
+  // */
 }
 
 Value *listConcat(Value *arg0) {
@@ -2493,6 +1799,11 @@ Value *listConcat(Value *arg0) {
 }
 
 Value *car(Value *arg0) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   List *lst = (List *)arg0;
   if (lst->len == 0) {
     return(nothing);
@@ -2502,6 +1813,7 @@ Value *car(Value *arg0) {
     dec_and_free(arg0, 1);
     return(maybe((FnArity *)0, (Value *)0, h));
   }
+  // */
 }
 
 Value *cdr(Value *arg0) {
@@ -2515,17 +1827,6 @@ Value *cdr(Value *arg0) {
     incRef((Value *)tail, 1);
     dec_and_free(arg0, 1);
     return((Value *)tail);
-  }
-}
-
-Value *integerLT(Value *arg0, Value *arg1) {
-  if (((Integer *)arg0)->numVal < ((Integer *)arg1)->numVal) {
-    dec_and_free(arg1, 1);
-    return(maybe((FnArity *)0, (Value *)0, arg0));
-  } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
   }
 }
 
@@ -2686,14 +1987,22 @@ Value *malloc_sha1() {
 }
 
 Value *finalize_sha1(Value *ctxt) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   int64_t shaVal;
   Sha1Finalise(((Opaque *)ctxt)->ptr, (SHA1_HASH *)&shaVal);
   dec_and_free(ctxt, 1);
   return((Value *)integerValue(shaVal));
+  // */
 }
 
 int64_t integerSha1(Value *arg0) {
   int64_t shaVal;
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  /*
   Sha1Context context;
   Integer *numVal = (Integer *)arg0;
 
@@ -2702,64 +2011,16 @@ int64_t integerSha1(Value *arg0) {
   Sha1Update(&context, (void *)&numVal->numVal, 8);
   Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
   dec_and_free(arg0, 1);
+  // */
   return(shaVal);
 }
 
-Value *bitAnd(Value *arg0, Value *arg1) {
-  Value *result;
-  result = integerValue(((Integer *)arg0)->numVal & ((Integer *)arg1)->numVal);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
-  return(result);
-}
-
-Value *bitOr(Value *arg0, Value *arg1) {
-  Value *result;
-  result = integerValue(((Integer *)arg0)->numVal | ((Integer *)arg1)->numVal);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
-  return(result);
-}
-
-Value *bitXor(Value *arg0, Value *arg1) {
-  Value *result;
-  result = integerValue(((Integer *)arg0)->numVal ^ ((Integer *)arg1)->numVal);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
-  return(result);
-}
-
-Value *bitShiftLeft(Value *arg0, Value *arg1) {
-  Value *result;
-  result = integerValue(((Integer *)arg0)->numVal << ((Integer *)arg1)->numVal);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
-  return(result);
-}
-
-Value *bitShiftRight(Value *arg0, Value *arg1) {
-  Value *result;
-  result = integerValue(((Integer *)arg0)->numVal >> ((Integer *)arg1)->numVal);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
-  return(result);
-}
-
-Value *bitNot(Value *arg0) {
-  Value *result;
-  result = integerValue(~((Integer *)arg0)->numVal);
-  dec_and_free(arg0, 1);
-  return(result);
-}
-
-Value *addIntegers(Value *arg0, Value *arg1) {
-  Value *numVal = integerValue(((Integer *)arg0)->numVal + ((Integer *)arg1)->numVal);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
-  return(numVal);
-}
-
 Value *listEQ(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   if (arg1->type != ListType ||
       ((List *)arg0)->len != ((List *)arg1)->len) {
     dec_and_free(arg0, 1);
@@ -2783,24 +2044,27 @@ Value *listEQ(Value *arg0, Value *arg1) {
     dec_and_free(arg1, 1);
     return(maybe((FnArity *)0, (Value *)0, arg0));
   }
+  // */
 }
 
 int8_t equal(Value *v1, Value *v2) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return (0);
+  /*
   Value *equals;
   switch (v1->type) {
   case IntegerType:
     equals = integer_EQ(v1, v2);
     break;
-  case SymbolType:
-    equals = symEQ(v1, v2);
-    break;
   default:
     equals = equalSTAR((FnArity *)0, v1, v2);
     break;
   }
-   int8_t notEquals = isNothing(equals);
-   dec_and_free(equals, 1);
-   return(!notEquals);
+  int8_t notEquals = isNothing(equals);
+  dec_and_free(equals, 1);
+  return(!notEquals);
+  // */
 }
 
 Value *stringValue(char *s) {
@@ -2811,46 +2075,29 @@ Value *stringValue(char *s) {
   return((Value *)strVal);
 };
 
-Value *maybeExtract(Value *arg0) {
-  Maybe *mValue = (Maybe *)arg0;
-  if (mValue->value == (Value *)0) {
-    (*prErrSTAR)(stringValue("\n*** The 'nothing' value can not be passed to 'extract'.\n"));
-    abort();
-  }
-  incRef(mValue->value, 1);
-  Value *result = mValue->value;
-  dec_and_free(arg0, 1);
-  return(result);
-}
-
-Value *fnApply(Value *arg0, Value *arg1) {
+Value *fnApply(FnArity *_arity, Value *arg1) {
   List *argList = (List *)arg1;
-  FnArity *_arity;
-  if (arg0->type == FunctionType)
-    _arity = findFnArity(arg0, argList->len);
-  else
-    _arity = (FnArity *)arg0;
 
   if (_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** no arity of '%s' found to apply to %" PRId64 " args\n",
-            ((Function *)arg0)->name, argList->len);
+    fprintf(stderr, "\n*** no arity found to apply to %" PRId64 " args\n",
+            argList->len);
     abort();
   } else if(_arity->variadic) {
     FnType1 *_fn = (FnType1 *)_arity->fn;
     Value *result = _fn(_arity, arg1);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     return(result);
   } else if (argList->len == 0) {
     FnType0 *_fn = (FnType0 *)_arity->fn;
     Value *result = _fn(_arity);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 1) {
     FnType1 *_fn = (FnType1 *)_arity->fn;
     Value *appArg0 = argList->head; incRef(appArg0, 1);
     Value *result = _fn(_arity, appArg0);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 2) {
@@ -2859,7 +2106,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     argList = argList->tail;
     Value *appArg1 = argList->head; incRef(appArg1, 1);
     Value *result = _fn(_arity, appArg0, appArg1);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 3) {
@@ -2870,7 +2117,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     argList = argList->tail;
     Value *appArg2 = argList->head; incRef(appArg2, 1);
     Value *result = _fn(_arity, appArg0, appArg1, appArg2);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 4) {
@@ -2883,7 +2130,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     argList = argList->tail;
     Value *appArg3 = argList->head; incRef(appArg3, 1);
     Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 5) {
@@ -2898,7 +2145,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     argList = argList->tail;
     Value *appArg4 = argList->head; incRef(appArg4, 1);
     Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 6) {
@@ -2915,7 +2162,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     argList = argList->tail;
     Value *appArg5 = argList->head; incRef(appArg5, 1);
     Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 7) {
@@ -2934,7 +2181,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     argList = argList->tail;
     Value *appArg6 = argList->head; incRef(appArg6, 1);
     Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 8) {
@@ -2955,7 +2202,7 @@ Value *fnApply(Value *arg0, Value *arg1) {
     argList = argList->tail;
     Value *appArg7 = argList->head; incRef(appArg7, 1);
     Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else if (argList->len == 9) {
@@ -2979,75 +2226,13 @@ Value *fnApply(Value *arg0, Value *arg1) {
     Value *appArg8 = argList->head; incRef(appArg8, 1);
     Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7,
                         appArg8);
-    dec_and_free(arg0, 1);
+    dec_and_free((Value *)_arity, 1);
     dec_and_free(arg1, 1);
     return(result);
   } else {
     fprintf(stderr, "error in 'fn-apply'\n");
     abort();
   }
-}
-
-Value *maybeEQ(Value *arg0, Value *arg1) {
-  if (arg1->type == MaybeType &&
-      ((Maybe *)arg0)->value == ((Maybe *)arg1)->value) {
-    dec_and_free(arg1, 1);
-    return(maybe((FnArity *)0, (Value *)0, arg0));
-  } else if (arg1->type == MaybeType &&
-             ((Maybe *)arg0)->value != (Value *)0 &&
-             ((Maybe *)arg1)->value != (Value *)0) {
-    incRef(((Maybe *)arg0)->value, 1);
-    incRef(((Maybe *)arg1)->value, 1);
-    Value *eqResult = equalSTAR((FnArity *)0, ((Maybe *)arg0)->value, ((Maybe *)arg1)->value);
-    if (isNothing(eqResult)) {
-      dec_and_free(eqResult, 1);
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-    } else {
-      dec_and_free(eqResult, 1);
-      dec_and_free(arg1, 1);
-      Value *result = maybe((FnArity *)0, (Value *)0, arg0);
-      return(result);
-    }
-  } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  }
-}
-
-Value *maybeMap(Value *arg0, Value *arg1) {
-  Value *rslt6;
-  Maybe *mValue = (Maybe *)arg0;
-  if (mValue->value == (Value *)0) {
-    dec_and_free(arg1, 1);
-    return(arg0);
-  } else if((arg1)->type != FunctionType) {
-    incRef(arg1, 1);
-    incRef(mValue->value, 1);
-    rslt6 = invoke1Arg((FnArity *)0, arg1, mValue->value);
-  } else {
-    FnArity *arity3 = findFnArity(arg1, 1);
-    if(arity3 != (FnArity *)0 && !arity3->variadic) {
-      FnType1 *fn5 = (FnType1 *)arity3->fn;
-      incRef(mValue->value, 1);
-      rslt6 = fn5(arity3, mValue->value);
-    } else if(arity3 != (FnArity *)0 && arity3->variadic) {
-      FnType1 *fn5 = (FnType1 *)arity3->fn;
-      List *varArgs4 = empty_list;
-      incRef(mValue->value, 1);
-      varArgs4 = (List *)listCons(mValue->value, varArgs4);
-      rslt6 = fn5(arity3, (Value *)varArgs4);
-    } else {
-      fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
-      abort();
-    }
-  }
-  Value *result = maybe((FnArity *)0, (Value *)0, rslt6);
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
-  return(result);
 }
 
 void strSha1Update(Sha1Context *ctxt, Value *arg0) {
@@ -3078,8 +2263,7 @@ int64_t strSha1(Value *arg0) {
     hash = strVal->hashVal;
     buffer = strVal->buffer;
     len = strVal->len;
-  } else if (arg0->type == SubStringType ||
-	     arg0->type == SymbolType) {
+  } else if (arg0->type == SubStringType) {
     SubString *strVal = (SubString *)arg0;
     hash = strVal->hashVal;
     buffer = strVal->buffer;
@@ -3187,6 +2371,10 @@ Value *opaqueValue(void *ptr, Destructor *destruct) {
 };
 
 Value *subs2(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   int64_t idx = ((Integer *)arg1)->numVal;
   if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
@@ -3223,9 +2411,14 @@ Value *subs2(Value *arg0, Value *arg1) {
     return((Value *)subStr);
   }
   return(arg0);
+  // */
 }
 
 Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   int64_t idx = ((Integer *)arg1)->numVal;
   int64_t len = ((Integer *)arg2)->numVal;
   if (len <= 0) {
@@ -3271,6 +2464,7 @@ Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
     return((Value *)subStr);
   }
   return(arg0);
+  // */
 }
 
 Value *strSeq(Value *arg0) {
@@ -3304,25 +2498,7 @@ Value *strSeq(Value *arg0) {
 
 Value *dynamicCall2Arg(Value *f, Value *arg0, Value *arg1) {
   Value *rslt;
-  if(f->type != FunctionType) {
-    rslt = invoke2Args((FnArity *)0, f, arg0, arg1);
-  } else {
-    FnArity *arity = findFnArity(f, 2);
-    if(arity != (FnArity *)0 && !arity->variadic) {
-      FnType2 *fn = (FnType2 *)arity->fn;
-      rslt = fn(arity, arg0, arg1);
-    } else if(arity != (FnArity *)0 && arity->variadic) {
-      FnType1 *fn = (FnType1 *)arity->fn;
-      List *dynArgs = empty_list;
-      dynArgs = (List *)listCons(arg1, dynArgs);
-      dynArgs = (List *)listCons(arg0, dynArgs);
-      rslt = fn(arity, (Value *)dynArgs);
-    } else {
-      fprintf(stderr, "\n*** Invalid function for string reduction.\n");
-      abort();
-    }
-    dec_and_free(f, 1);
-  }
+  rslt = invoke2Args((FnArity *)0, f, arg0, arg1);
   return(rslt);
 }
 
@@ -3381,6 +2557,11 @@ Value *strVec(Value *arg0) {
 }
 
 Value *vectorGet(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   Vector *vect = (Vector *)arg0;
   Integer *index = (Integer *)arg1;
   if (index->numVal < 0 || vect->count <= index->numVal) {
@@ -3395,79 +2576,15 @@ Value *vectorGet(Value *arg0, Value *arg1) {
     dec_and_free(arg1, 1);
     return(result);
   }
-}
-
-Value *symbol(Value *arg0) {
-  int64_t len;
-  char *buffer;
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    buffer = s->buffer;
-    len = s->len;
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    buffer = s->buffer;
-    len = s->len;
-  } else if (arg0->type == SymbolType) {
-    return(arg0);
-  }
-
-  SubString *subStr = malloc_substring();
-  subStr->type = SymbolType;
-  subStr->len = len;
-  subStr->source = arg0;
-  subStr->hashVal = 0;
-  subStr->buffer = buffer;
-  return((Value *)subStr);
-}
-
-Value *symEQ(Value *arg0, Value *arg1) {
-  if (arg0->type != arg1->type) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  } else {
-    SubString *s1 = (SubString *)arg0;
-    SubString *s2 = (SubString *)arg1;
-    if (s1->len == s2->len &&
-	strncmp(s1->buffer, s2->buffer, s1->len) == 0) {
-      dec_and_free(arg1, 1);
-      return(maybe((FnArity *)0, (Value *)0, arg0));
-    } else {
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-    }
-  }
-}
-
-Value *symLT(Value *arg0, Value *arg1) {
-  if (arg0->type != arg1->type) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  } else {
-    SubString *s0 = (SubString *)arg0;
-    SubString *s1 = (SubString *)arg1;
-    int64_t len;
-    if (s0->len < s1->len)
-      len = s0->len;
-    else
-      len = s1->len;
-
-    int cmp = strncmp(s0->buffer, s1->buffer, len);
-    if (cmp < 0 || (cmp == 0 && s0->len < s1->len)) {
-      dec_and_free(arg1, 1);
-      return(maybe((FnArity *)0, (Value *)0, arg0));
-    } else {
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
-      return(nothing);
-    }
-  }
+  // */
 }
 
 Value *listFilter(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   List *l = (List *)arg0;
   if (l->len == 0) {
     dec_and_free(arg0, 1);
@@ -3527,6 +2644,7 @@ Value *listFilter(Value *arg0, Value *arg1) {
     dec_and_free(arg1, 1);
     return((Value *)head);
   }
+  // */
 }
 
 BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
@@ -3618,6 +2736,10 @@ Value *bmiHashVec(Value *arg0, Value *arg1) {
 }
 
 Value *bmiCount(Value *arg0) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int cnt = __builtin_popcount(((BitmapIndexedNode *)arg0)->bitmap);
   int accum = 0;
@@ -3633,6 +2755,7 @@ Value *bmiCount(Value *arg0) {
   }
   dec_and_free(arg0, 1);
   return(integerValue(accum));
+  // */
 }
 
 Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
@@ -4098,6 +3221,10 @@ Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
 }
 
 Value *arrayNodeCount(Value *arg0) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   int accum = 0;
   for(int i = 0; i < ARRAY_NODE_LEN; i++){
     if (((ArrayNode *)arg0)->array[i] != (Value *)0) {
@@ -4108,12 +3235,18 @@ Value *arrayNodeCount(Value *arg0) {
   }
   dec_and_free(arg0, 1);
   return(integerValue(accum));
+  // */
 }
 
 Value *collisionCount(Value *arg0) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   Value *result = integerValue(((HashCollisionNode *) arg0)->count / 2);
   dec_and_free(arg0, 1);
   return(result);
+  // */
 }
 
 Value *collisionSeq(Value *arg0, Value *arg1) {
@@ -4337,6 +3470,11 @@ Value *mutateAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift) {
 }
 
 Value *hashMapGet(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   int64_t hash = nakedSha1(incRef(arg1, 1));
   Value *found = get((FnArity *)0, arg0, arg1, notFoundPtr, hash, 0);
   if (found == notFoundPtr) {
@@ -4344,312 +3482,13 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
   } else {
     return(maybe((FnArity *)0, (Value *)0, found));
   }
+  // */
 }
 
 // used for static encoding hash maps and other things
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
   int64_t hash = nakedSha1(incRef(arg1, 1));
   return(mutateAssoc(arg0, arg1, arg2, hash, 0));
-}
-
-Value *dynamicCall1Arg(Value *f, Value *arg) {
-  Value *rslt;
-  if(f->type != FunctionType) {
-    rslt = invoke1Arg((FnArity *)0, f, arg);
-  } else {
-    FnArity *arity = findFnArity(f, 1);
-    if(arity != (FnArity *)0 && !arity->variadic) {
-      FnType1 *fn = (FnType1 *)arity->fn;
-      rslt = fn(arity, arg);
-    } else if(arity != (FnArity *)0 && arity->variadic) {
-      FnType1 *fn = (FnType1 *)arity->fn;
-      List *dynArgs = empty_list;
-      dynArgs = (List *)listCons(arg, dynArgs);
-      rslt = fn(arity, (Value *)dynArgs);
-    } else {
-      fprintf(stderr, "\n*** Invalid action for Promise.\n");
-      abort();
-    }
-    dec_and_free(f, 1);
-  }
-  return(rslt);
-}
-
-Value *addPromiseAction(Promise *p, Value *action) {
-  pthread_mutex_lock(&p->access);
-  if (p->result == (Value *)0) {
-    List *newList = malloc_list();
-    newList->head = (Value *)action;
-    List *actions;
-#ifdef SINGLE_THREADED
-    actions = p->actions;
-    newList->len = actions->len + 1;
-    newList->tail = actions;
-    p->actions = newList;
-#else
-    __atomic_load(&p->actions, &actions, __ATOMIC_RELAXED);
-    do {
-      if (actions != (List *)0) {
-	newList->len = actions->len + 1;
-	newList->tail = actions;
-      } else {
-	newList->len = 1;
-	newList->tail = empty_list;
-      }
-    } while (!__atomic_compare_exchange((List **)&p->actions, (List **)&actions, (List **)&newList,
-					1, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
-#endif
-    pthread_mutex_unlock(&p->access);
-  } else {
-    pthread_mutex_unlock(&p->access);
-    incRef(p->result, 1);
-    Value *trash = dynamicCall1Arg(action, p->result);
-    dec_and_free(trash, 1);
-  }
-  return((Value *)p);
-}
-
-Value *deliverPromise(Value *arg0, Value *arg1) {
-  // TODO: Must check for refs to arg0 in arg1
-  // also for agents and maybe futures
-  Promise *p = (Promise *)arg0;
-  if (p->result == (Value *)0) {
-    pthread_mutex_lock(&p->access);
-    if (p->result == (Value *)0) {
-      p->result = arg1;
-      pthread_cond_broadcast(&p->delivered);
-    }
-    List *l = p->actions;
-    List *head = l;
-    p->actions = (List *)0;
-
-    // int refs = arg0->refs;
-    // breakCycle(arg1, arg0);
-    // fprintf(stderr, "cycle refs: %d\n", p->cycleRefs);
-    // arg0->refs = refs;
-
-    pthread_mutex_unlock(&p->access);
-
-    // perform actions
-    if (l != (List *)0 && l->len != 0) {
-      for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
-	incRef(x, 1);
-	incRef(arg1, 1);
-	Value *trash = dynamicCall1Arg(x, arg1);
-	dec_and_free(trash, 1);
-      }
-    }
-    dec_and_free((Value *)head, 1);
-  } else {
-    dec_and_free(arg1, 1);
-  }
-  return(arg0);
-}
-
-Value *extractPromise(Value *arg0) {
-  Promise *p = (Promise *)arg0;
-  while (p->result == (Value *)0) {
-    pthread_mutex_lock (&p->access);
-    if (p->result == (Value *)0) {
-#ifdef SINGLE_THREADED
-      runningWorkers--;
-      int rw = runningWorkers;
-#else
-      int rw = __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
-#endif
-      replaceWorker();
-      pthread_cond_wait(&p->delivered, &p->access);
-#ifdef SINGLE_THREADED
-      runningWorkers++;
-#else
-      __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
-#endif
-    }
-    pthread_mutex_unlock (&p->access);
-  }
-  Value *result = p->result;
-  incRef(result, 1);
-  dec_and_free(arg0, 1);
-  return(result);
-}
-
-Value *promiseDelivered(Value *arg0) {
-  Promise *p = (Promise *)arg0;
-  if(p->result == (Value *)0) {
-    dec_and_free(arg0, 1);
-    return(nothing);
-  } else {
-    Value *mv = maybe((FnArity *)0, (Value *)0, p->result);
-    incRef(p->result, 1);
-    dec_and_free(arg0, 1);
-    return((Value *)mv);
-  }
-}
-
-Value *extractFuture(Value *arg0) {
-  Future *f = (Future *)arg0;
-  while (f->result == (Value *)0) {
-    pthread_mutex_lock (&f->access);
-    if (f->result == (Value *)0) {
-#ifdef SINGLE_THREADED
-      runningWorkers--;
-#else
-      __atomic_fetch_sub(&runningWorkers, 1, __ATOMIC_ACQ_REL);
-#endif
-      replaceWorker();
-      pthread_cond_wait(&f->delivered, &f->access);
-#ifdef SINGLE_THREADED
-      runningWorkers++;
-#else
-      __atomic_fetch_add(&runningWorkers, 1, __ATOMIC_ACQ_REL);
-#endif
-    }
-    pthread_mutex_unlock (&f->access);
-  }
-  Value *result = f->result;
-  incRef(result, 1);
-  dec_and_free((Value *)f, 1);
-  return(result);
-}
-
-Value *makeFuture(Value *arg0) {
-  Future *f = malloc_future(__LINE__);
-  f->action = arg0;
-  if (arg0 != (Value *)0) {
-    incRef((Value *)f, 1);
-    scheduleFuture(f);
-  }
-  return((Value *)f);
-}
-
-Value *addFutureAction(Future *p, Value *action) {
-  pthread_mutex_lock(&p->access);
-  if (p->result == (Value *)0) {
-    List *newList = malloc_list();
-    newList->head = (Value *)action;
-    List *actions;
-#ifdef SINGLE_THREADED
-    actions = p->actions;
-    if (actions != (List *)0) {
-      newList->len = actions->len + 1;
-      newList->tail = actions;
-    } else {
-      newList->len = 1;
-      newList->tail = empty_list;
-    }
-    p->actions = newList;
-#else
-    __atomic_load(&p->actions, &actions, __ATOMIC_RELAXED);
-    do {
-      if (actions != (List *)0) {
-	newList->len = actions->len + 1;
-	newList->tail = actions;
-      } else {
-	newList->len = 1;
-	newList->tail = empty_list;
-      }
-    } while (!__atomic_compare_exchange((List **)&p->actions, (List **)&actions, (List **)&newList, 1,
-					__ATOMIC_RELAXED, __ATOMIC_RELAXED));
-#endif
-    pthread_mutex_unlock(&p->access);
-  } else {
-    pthread_mutex_unlock(&p->access);
-    incRef(p->result, 1);
-    Value *trash = dynamicCall1Arg(action, p->result);
-    dec_and_free(trash, 1);
-  }
-  return((Value *)p);
-}
-
-Value *makeAgent(Value *arg0) {
-  Agent *a = (Agent *)my_malloc(sizeof(Agent));
-  // incTypeMalloc(AgentType, 1);
-  a->type = AgentType;
-#ifdef SINGLE_THREADED
-  a->refs = refsInit;
-#else
-  __atomic_store(&a->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
-  a->input = empty_list;
-  a->output = empty_list;
-  pthread_mutex_init(&a->access, NULL);
-  a->val = arg0;
-  return((Value *)a);
-}
-
-Value *extractAgent(Value *arg0) {
-  pthread_mutex_lock (&((Agent *)arg0)->access);
-  Value *v = ((Agent *)arg0)->val;
-  incRef(v, 1);
-  pthread_mutex_unlock (&((Agent *)arg0)->access);
-  dec_and_free(arg0, 1);
-  return(v);
-}
-
-List *readAgentQueue(Agent *agent) {
-  List *output = agent->output;
-  if (output != (List *)0 && output->len != 0) {
-    // if there was an item in the queue, return it
-    Value *item = output->head;
-    agent->output = output->tail;
-    output->head = (Value *)0;
-    output->tail = (List *)0;
-    REFS_SIZE refs;
-#ifdef SINGLE_THREADED
-    refs = output->refs;
-#else
-    __atomic_load(&output->refs, &refs, __ATOMIC_RELAXED);
-#endif
-    if (refs != 1) {
-      fprintf(stderr, "failure in readAgentQueue()\n");
-      abort();
-    }
-    dec_and_free((Value *)output, 1);
-    return((List *)item);
-  } else {
-    // move the input list to the output
-    // atomically get the input list and reset it to empty_list
-    List *input;
-#ifdef SINGLE_THREADED
-    input = agent->input;
-    agent->input = empty_list;
-#else
-    __atomic_exchange((List **)&agent->input,
-		      (List **)&empty_list,
-		      (List **)&input,
-		      __ATOMIC_RELAXED);
-#endif
-
-    if (input == (List *)0 || input->len == 0) {
-      // if the input was empty, return 0
-      agent->output = input;
-      return((List *)0);
-    } else {
-      // otherwise, move the input list to the output
-      agent->output = reverseList(input);
-      return(readAgentQueue(agent));
-    }
-  }
-}
-
-Value *updateAgent_impl(FnArity *arity) {
-  Agent *agent = (Agent *)(arity->closures)->tail[0];
-  if (pthread_mutex_trylock (&agent->access) == 0) { // succeeded
-    List *action = readAgentQueue(agent);
-    while(action != (List *)0) {
-      Value *f = (Value *)action->head;
-      List *args = listCons(agent->val, action->tail);
-      incRef((Value *)action->tail, 1);
-      agent->val = fn_apply((FnArity *)0, incRef((Value *)f, 1), (Value *)args);
-      dec_and_free((Value *)action, 1);
-      action = readAgentQueue(agent);
-    }
-    pthread_mutex_unlock (&agent->access);
-  }
-  return(nothing);
-};
-
-void scheduleAgent(Agent *agent, List *action) {
 }
 
 void freeExtractCache(void *cachePtr) {
@@ -4709,10 +3548,15 @@ void show(Value *v) {
 }
 
 int64_t countSeq(Value *seq) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return (0);
+  /*
   Integer *len = (Integer *)count((FnArity *)0, seq);
   int64_t result = len->numVal;
   dec_and_free((Value *)len, 1);
   return(result);
+  // */
 }
 
 Value *reifiedTypeArgs(Value *x) {

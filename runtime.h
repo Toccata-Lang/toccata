@@ -42,11 +42,6 @@ typedef struct Value {
   REFS_SIZE refs;
   struct Value *next;
 } Value;
-typedef struct {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
-  int64_t numVal;
-} Integer;
 typedef struct HashedValue {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -102,19 +97,6 @@ typedef struct {
 typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
-  char *name;
-  int64_t arityCount;
-  FnArity *arities[];
-} Function;
-typedef struct {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
-  int64_t hashVal;
-  Value *value;
-} Maybe;
-typedef struct {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
   int64_t hashVal;
   int32_t bitmap;
   Value *array[];
@@ -135,32 +117,6 @@ typedef struct {
 typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
-  Value *result;
-  List *actions;
-  pthread_cond_t delivered;
-  pthread_mutex_t access;
-} Promise;
-typedef struct {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
-  Value *action;
-  Value *errorCallback;
-  List *actions;
-  Value *result;
-  pthread_cond_t delivered;
-  pthread_mutex_t access;
-} Future;
-typedef struct {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
-  Value *val;
-  List *input;
-  List *output;
-  pthread_mutex_t access;
-} Agent;
-typedef struct {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
   int64_t hashVal;
   int64_t implCount;
   Value *impls[];
@@ -171,9 +127,6 @@ typedef struct {
   void *ptr;
   Destructor *destruct;
 } Opaque;
-
-extern Integer const0;
-extern Value *const0Ptr;
 
 typedef struct {
   TYPE_SIZE type;
@@ -209,9 +162,6 @@ typedef struct {
   int64_t sym_counter;
 } intGenerator;
 
-extern Value *nothing;
-extern Maybe nothing_struct;
-extern Value *maybeNothing;
 extern REFS_SIZE refsInit;
 extern REFS_SIZE refsError;
 extern REFS_SIZE refsConstant;
@@ -225,17 +175,12 @@ extern REFS_SIZE refsStatic;
 #define FunctionType 4
 #define SubStringType 5
 #define ListType 6
-#define MaybeType 7
 #define VectorType 8
 #define VectorNodeType 9
-#define SymbolType 10
 #define BitmapIndexedType 11
 #define ArrayNodeType 12
 #define HashCollisionNodeType 13
 #define HashMapType 14
-#define PromiseType 15
-#define FutureType 16
-#define AgentType 17
 #define OpaqueType 18
 #define FloatType 19
 #define CoreTypeCount 20
@@ -275,21 +220,13 @@ extern List *globals;
 extern ReifiedVal all_values_struct;
 extern Value *all_values;
 
-typedef struct {
-  List *input;
-  List *output;
-  pthread_mutex_t mutex;
-  pthread_cond_t notEmpty;
-} FuturesQueueStruct;
-extern FuturesQueueStruct futuresQueue;
-extern Future shutDown;
 extern int8_t mainThreadDone;
 
 extern int cleaningUp;
 
 extern int64_t malloc_count;
 extern int64_t free_count;
-void cleanupMemory(Value *the_final_answer, Value *maybeNothing, List *argList);
+void cleanupMemory(Value *the_final_answer, List *argList);
 void freeAll();
 void freeGlobal(Value *x);
 
@@ -329,18 +266,10 @@ Value *my_malloc(int64_t sz);
 List *malloc_list();
 Value *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
-Function *malloc_function(int arityCount);
 String *malloc_string(int len);
-Maybe *malloc_maybe();
-Integer *malloc_integer();
 Vector *malloc_vector();
-FnArity *findFnArity(Value *fnVal, int64_t argCount);
 ReifiedVal *malloc_reified(int64_t implCount);
-Promise *malloc_promise();
 
-void startWorkers();
-void replaceWorker();
-void waitForWorkers();
 char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);
 Value *prSTAR(Value *);
@@ -357,8 +286,6 @@ Value *vectorReverse(Value *arg0);
 List *listCons(Value *x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
                    Value **args[]);
-Value *maybe(FnArity *, Value *arg0, Value *arg1);
-int8_t isNothing(Value *v);
 Value *strCount(Value *arg0);
 Value *strEQ(Value *arg0, Value *arg1);
 Value *strList(Value *arg0);
@@ -379,11 +306,7 @@ Value *bitNot(Value *arg0);
 Value *addIntegers(Value *arg0, Value *arg1);
 Value *listEQ(Value *arg0, Value *arg1);
 int8_t equal(Value *v1, Value *v2);
-Value *maybeExtract(Value *arg0);
-Value *fnApply(Value *arg0, Value *arg1);
-Value *maybeApply(Value *arg0, Value *arg1);
-Value *maybeEQ(Value *arg0, Value *arg1);
-Value *maybeMap(Value *arg0, Value *arg1);
+Value *fnApply(FnArity *arg0, Value *arg1);
 int64_t strSha1(Value *arg0);
 Value *escapeChars(Value *arg0);
 Value *subs2(Value *arg0, Value *arg1);
@@ -393,10 +316,6 @@ Value *strReduce(Value *s0, Value *x1, Value *f2);
 Value *strVec(Value *arg0);
 Value *strLT(Value *arg0, Value *arg1);
 Value *vectorGet(Value *arg0, Value *arg1);
-Value *symbol(Value *arg0);
-Value *symbolSha1(Value *arg0);
-Value *symEQ(Value *arg0, Value *arg1);
-Value *symLT(Value *arg0, Value *arg1);
 Value *stringValue(char *s);
 Value *opaqueValue(void *ptr, Destructor *destruct);
 Value *listFilter(Value *arg0, Value *arg1);
@@ -427,20 +346,9 @@ Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
                     int shift);
 Value *arrayNodeSeq(Value *arg0, Value *arg1);
 Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
-Value *deliverPromise(Value *arg0, Value *arg1);
-Value *extractPromise(Value *arg0);
-Value *promiseDelivered(Value *arg0);
-Value *extractFuture(Value *arg0);
-Value *makeFuture(Value *arg0);
-Value *makeAgent(Value *arg0);
-Value *extractAgent(Value *arg0);
-void scheduleAgent(Agent *agent, List *action);
 void freeExtractCache(void *cachePtr);
 void freeIntGenerator(void *ptr);
-Value *addPromiseAction(Promise *promise, Value *action);
 Value *dynamicCall1Arg(Value *f, Value *arg);
-Value *deliverFuture(Value *fut, Value *val);
-Value *addFutureAction(Future *p, Value *action);
 String *nullTerm(Value *s);
 void show(Value *v);
 int64_t countSeq(Value *seq);
