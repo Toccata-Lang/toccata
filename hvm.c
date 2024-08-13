@@ -465,6 +465,7 @@ Pair node_exchange(Port loc, Pair val) {
 // Exchanges a var on global by a value. Returns old.
 Port vars_exchange(Port var, Port val) {
   if (val == FREE) {
+    // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)var);
     vars_count--;
   }
   Port p = var;
@@ -501,7 +502,9 @@ void net_init() {
 // ---------
 
 int vars_count = 0;
+int max_vars = 0;
 int node_count = 0;
+int max_node = 0;
 
 Port node_alloc(TM* tm) {
   while (TRUE) {
@@ -510,6 +513,8 @@ Port node_alloc(TM* tm) {
     tm->nput += 1;
     if (lc > 0 && isEmpty(*elem)) {
       node_count++;
+      if (max_node < node_count)
+	max_node = node_count;
       return (Port)elem;
     }
   }
@@ -522,6 +527,9 @@ Port vars_alloc(TM* tm) {
     tm->vput += 1;
     if (lc > 0 && *elem == FREE) {
       vars_count++;
+      if (max_vars < vars_count)
+	max_vars = vars_count;
+      // fprintf(stderr, "allocd: %d %p\n", __LINE__, (void *)elem);
       return (Port)elem;
     }
   }
@@ -591,6 +599,7 @@ void link(TM* tm, Port A, Port B) {
         break;
       } else if (get_tag(B) == ERA) {
 	link(tm, A_, B);
+	vars_take(A);
 	break;
       } else if (get_tag(A_) == RDX) {
 	push_redex(tm, node_take(A_));
@@ -681,8 +690,8 @@ bool ERAS(TM* tm, Port a, Port b) {
   //if (B == 0) printf("[%04x] ERROR2: %s\n", tid, show_port(b).x);
 
   // Links.
-  link_pair(tm, new_pair(a, B1));
-  link_pair(tm, new_pair(a, B2));
+  link(tm, a, B1);
+  link(tm, a, B2);
 
   return TRUE;
 }
@@ -708,10 +717,12 @@ bool ANNI(TM* tm, Port a, Port b) {
   //if (B == 0) printf("[%04x] ERROR4: %s\n", tid, show_port(b).x);
 
   // Links.
-  fprintf(stderr, "ANNI: %d A1: %p B1: %p\n", __LINE__, (void *)A1, (void *)B1);
-  fprintf(stderr, "          A2: %p B2: %p\n", (void *)A2, (void *)B2);
-  link_pair(tm, new_pair(A1, B1));
-  link_pair(tm, new_pair(A2, B2));
+  // if (A1 == ERA) {
+  // fprintf(stderr, "ANNI: %d A1: %p B1: %p\n", __LINE__, (void *)A1, (void *)B1);
+  // fprintf(stderr, "          A2: %p B2: %p\n", (void *)A2, (void *)B2);
+  // }
+  link(tm, A1, B1);
+  link(tm, A2, B2);
 
   return TRUE;
 }
@@ -878,7 +889,7 @@ bool interact(TM* tm) {
     // Gets redex ports A and B.
     Port a = redex.fst;
     Port b = redex.snd;
-    fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)a, (void *)b);
+    // fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)a, (void *)b);
 
     // Gets the rule type.
     interactionFn rule = get_rule(a, b);
@@ -1234,9 +1245,6 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       varVal = vars_exchange(arg, new_port(RDX, node_make(tm, ref, argsNet(tm, argsStruct))));
       if (varVal != NONE && varVal != FREE) {
 	if (get_tag(varVal) == RDX) {
-    // TODO: test this
-    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
-    abort();
 	  push_redex(tm, node_take(varVal));
 	} else {
     // TODO: test this

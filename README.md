@@ -27,6 +27,7 @@ regression tests pass
   git-dep-ast
   main-ast
   superposition & logic vars
+assertion tests pass
 build out hvm-core.toc
   Strings
   Lists
@@ -38,7 +39,6 @@ build out hvm-core.toc
   Agent
   IntGenerator
   LazyList
-assertion tests pass
 runtime failure tests pass
   add runtime checking
 get compiler to compile itself

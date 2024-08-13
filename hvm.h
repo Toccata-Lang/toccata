@@ -67,7 +67,9 @@ typedef struct Net {
 
 extern Net *globalNet;
 extern int vars_count;
+extern int max_vars;
 extern int node_count;
+extern int max_node;
 
 typedef bool (*interactionFn)(TM* tm, Port a, Port b);
 
