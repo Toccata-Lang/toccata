@@ -1,17 +1,51 @@
 Toccata
 =======
 
-binding-ast can be replaced with fn-arity-ast
 Maybe/Nothing are just special cases of types, can be eliminated
 cond/either/and/or can be implemented using deferred redex
 superposition makes miniKanren trivial
 also make parsing trivial. Eliminate grammar and recursive descent
-deferred redex can be used to implement laziness
 deferred redex makes esb's obsolete. May not even need that
-closures can be limited to single arity in the parser
 Because of optimality, deforestation might be trivial as would multi modules
 To improve single-thread perf., reverse order links are written so the use of a
 result is put on the stack before the result is computed
+
+Roadmap
+=======
+
+regression tests pass
+  do-ast
+  protocol-ast
+  reify-ast
+  quoted-ast
+  declaration-ast
+  prototype-ast
+  extend-ast
+  type-ast
+  rec-type-ast
+  module-ast
+  git-dep-ast
+  main-ast
+  superposition & logic vars
+build out hvm-core.toc
+  Strings
+  Lists
+  Vectors
+  HashMaps
+  HashSet
+  Resources
+  Sorting
+  Agent
+  IntGenerator
+  LazyList
+assertion tests pass
+runtime failure tests pass
+  add runtime checking
+get compiler to compile itself
+  Parser
+make allocator O(1)
+automatic currying
+tree shaking
 
 
 > "Pithy quote."
