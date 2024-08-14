@@ -1305,10 +1305,25 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
 }
 
 Port dupeArg(TM *tm, Port arg, Port dupeArg) {
-  Port dupedVar = vars_alloc(tm);
-  // fprintf(stderr, "dupe: %d %p %p\n", __LINE__, (void *)arg, (void *)dupeNode);
-  link(tm, arg, node_make(tm, DUP, dupedVar, dupeArg));
-  return dupedVar;
+  Port dupedVar;
+  switch(get_tag(arg)) {
+  case VAL:
+    link(tm, arg, dupeArg);
+    return new_port(VAL, (Port)incRef((Value *)(arg & ~TAG_MASK), 1));
+    break;
+
+  case NUM:
+  case REF:
+    link(tm, arg, dupeArg);
+    return arg;
+    break;
+
+  default:
+    dupedVar = vars_alloc(tm);
+    link(tm, arg, node_make(tm, DUP, dupedVar, dupeArg));
+    return dupedVar;
+    break;
+  }
 }
 
 /*
