@@ -93,17 +93,18 @@ typedef u64 Numb; // Numb ::= 60-bit (rounded up to u64)
 
 // Tags
 #define VAR 0x0 // variable
-#define REF 0x1 // reference
-#define ERA 0x2 // eraser
+#define VAL 0x1 // native value
+#define REF 0x2 // reference
 #define NUM 0x3 // number
 #define CON 0x4 // constructor
 #define DUP 0x5 // duplicator
 #define OPR 0x6 // operator
 #define SWI 0x7 // switch
 #define VR1 0x8 // variable alias
-#define RDX 0x9 // deferred redex
-#define VAL 0xA // native value
+#define VL1 0x9 // native value alias
+#define RDX 0xA // deferred redex
 #define ARG 0xB // function arg or param
+#define ERA 0xC // eraser
 
 extern Port erase;
 
@@ -145,7 +146,9 @@ typedef struct {
 // Port: Constructor and Getters
 // -----------------------------
 
-#define new_port_(tag, x) (((u64)x | tag))
+// this abuses the compile time functionality
+// to create a Port value
+#define new_port_(tag, x) (((u64)x + tag))
 
 extern Port resultVar;
 

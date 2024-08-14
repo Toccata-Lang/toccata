@@ -69,10 +69,15 @@ Port new_ref(interactionFn val) {
 }
 
 Tag get_tag(Port port) {
-  if (port & 7)
-    return port & TAG_MASK;
-  else
+  if (port & 7) {
+    Tag t = port & TAG_MASK;
+    if (t == VL1)
+      return VAL;
+    else
+      return t;
+  } else {
     return VAR;
+  }
 }
 
 // Pair: Constructor and Getters
@@ -132,24 +137,26 @@ bool should_swap(Port A, Port B) {
 }
 
 // Gets a rule's priority
-u8 interactionPriority[12][12] = {
-  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL   ARG
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE}, // VAR
-  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // REF
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE }, // ERA
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // NUM
-  {TRUE, FALSE,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE}, // CON
-  {TRUE, FALSE,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE,TRUE, FALSE,FALSE,TRUE }, // DUP
-  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,TRUE, FALSE,FALSE,FALSE}, // OPR
-  {TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, TRUE, FALSE,FALSE,FALSE}, // SWI
-  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE}, // VAR
-  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // RDX
-  {FALSE,FALSE,TRUE ,FALSE,FALSE,TRUE ,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // VAL
-  {FALSE,FALSE,TRUE ,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,TRUE }  // ARG
+u8 interactionPriority[13][13] = {
+  //VAR   ERA   REF   NUM   CON   DUP   OPR   SWI   VAR   VAL   RDX   ARG   ERA
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,TRUE }, // VAR
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE ,TRUE }, // ERA
+  {TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE,TRUE }, // REF
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE, FALSE,FALSE,FALSE,TRUE }, // NUM
+  {TRUE, TRUE, FALSE,TRUE, TRUE, FALSE,FALSE,FALSE,TRUE, FALSE,FALSE,FALSE,TRUE }, // CON
+  {TRUE, TRUE, FALSE,TRUE, FALSE,TRUE, FALSE,FALSE,TRUE, FALSE,FALSE,TRUE ,TRUE }, // DUP
+  {TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,TRUE, FALSE,TRUE, FALSE,FALSE,FALSE,TRUE }, // OPR
+  {TRUE, TRUE, FALSE,FALSE,FALSE,FALSE,FALSE,TRUE, TRUE, FALSE,FALSE,FALSE,TRUE }, // SWI
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,FALSE,TRUE }, // VAR
+  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // VAL 
+  {FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE}, // RDX 
+  {FALSE,TRUE, FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,TRUE ,TRUE }, // ARG
+  {TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE,FALSE,TRUE ,TRUE }  // ERA
 };
 
 bool is_high_priority(Pair AB) {
-  return interactionPriority[get_tag(AB.fst)][get_tag(AB.snd)];
+  // return interactionPriority[get_tag(AB.fst)][get_tag(AB.snd)];
+  return FALSE;
 }
 
 // Numbs
@@ -694,6 +701,10 @@ bool VOID(TM* tm, Port a, Port b) {
 
 // The Eras Interaction.
 bool ERAS(TM* tm, Port a, Port b) {
+  Tag t = get_tag(b);
+  if (t == ERA || t == NUM) {
+    b = a;
+  }
   if (get_val(b) == FREE) {
     return TRUE;
   }
@@ -852,7 +863,12 @@ bool SWIT(TM* tm, Port a, Port b) {
 }
 
 bool DUPE(TM* tm, Port a, Port b) {
-  incRef((Value *)(b & ~TAG_MASK), 1);
+  if (get_tag(a) == VAL) {
+    Port x = b;
+    b = a;
+    a = x;
+  }
+  incRef((Value *)(b & ~7), 1);
   Pair dupes = node_take(a);
   link(tm, dupes.fst, b);
   link(tm, dupes.snd, b);
@@ -860,7 +876,9 @@ bool DUPE(TM* tm, Port a, Port b) {
 }
 
 bool DECF(TM* tm, Port a, Port b) {
-  dec_and_free((Value *)(b & ~TAG_MASK), 1);
+  if (get_tag(a) == VAL)
+    b = a;
+  dec_and_free((Value *)(b & ~7), 1);
   return TRUE;
 }
 
@@ -881,20 +899,21 @@ bool ABRT(TM* tm, Port a, Port b) {
   abort();
 }
 
-interactionFn interactions[12][12] = {
-  //VAR   REF   ERA   NUM   CON   DUP   OPR   SWI   VAR   RDX   VAL   ARG
-  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&LINK}, // VAR
-  {&LINK,&VOID,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL}, // REF
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&ERAS,&DECF,&ERAS}, // ERA
-  {&LINK,&VOID,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&ABRT,&DECF,&ABRT}, // NUM
-  {&LINK,&ABRT,&ERAS,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // CON
-  {&LINK,&CALL,&ERAS,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&ABRT,&DUPE,&ABRT}, // DUP
-  {&LINK,&ABRT,&ERAS,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT}, // OPR
-  {&LINK,&ABRT,&ERAS,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT}, // SWI
-  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&ABRT,&LINK}, // VAR
-  {&ABRT,&ABRT,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // RDX
-  {&ABRT,&ABRT,&DECF,&DECF,&ABRT,&DUPE,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT}, // VAL
-  {&LINK,&CALL,&ERAS,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ARGS}  // ARG
+interactionFn interactions[13][13] = {
+  //VAR   VAL   REF   NUM   CON   DUP   OPR   SWI   VAR   VAL   RDX   ARG   ERA
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
+  {&LINK,&ABRT,&ABRT,&DECF,&ABRT,&DUPE,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
+  {&LINK,&ABRT,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL,&VOID}, // REF
+  {&LINK,&DECF,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&DECF,&ABRT,&ABRT,&VOID}, // NUM
+  {&LINK,&ABRT,&ABRT,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // CON
+  {&LINK,&DUPE,&CALL,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&DUPE,&ABRT,&ABRT,&ERAS}, // DUP
+  {&LINK,&ABRT,&ABRT,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // OPR
+  {&LINK,&ABRT,&ABRT,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // SWI
+  {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
+  {&LINK,&ABRT,&ABRT,&DECF,&ABRT,&DUPE,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
+  {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ERAS}, // RDX
+  {&LINK,&ABRT,&CALL,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ARGS,&ERAS}, // ARG
+  {&LINK,&DECF,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&DECF,&ERAS,&ERAS,&VOID}  // ERA
 };
 
 interactionFn get_rule(Port a, Port b) {
@@ -1309,7 +1328,7 @@ Port dupeArg(TM *tm, Port arg, Port dupeArg) {
   switch(get_tag(arg)) {
   case VAL:
     link(tm, arg, dupeArg);
-    return new_port(VAL, (Port)incRef((Value *)(arg & ~TAG_MASK), 1));
+    return new_port(VAL, (Port)incRef((Value *)(arg & ~7), 1));
     break;
 
   case NUM:

@@ -104,15 +104,16 @@ Value *my_malloc(int64_t sz) {
 }
 
 void cleanupMemory (Value *the_final_answer,  List *argVect) {
-  // TODO: change the type of argVect to Vector eventually
 #ifdef CHECK_MEM_LEAK
   dec_and_free(the_final_answer, 1);
   freeGlobal((Value *)argVect);
+  //*
   for (List *l = globals; l != (List *)0 && l->tail != (List *)0; l = l->tail) {
     if (l->head->refs == refsConstant)
       l->head->refs = 1;
   }
   dec_and_free((Value *)globals, 1);
+  // */
   freeAll();
 #endif
 }
