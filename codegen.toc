@@ -842,16 +842,6 @@
            (let [[_ code-context] (emitter code-context)]
              code-context))))))
 
-(defn dynamic-globals [code-context]
-  (let [mod-prom (promise)
-        _ (send b/modules (fn [mods]
-                          (deliver mod-prom mods)
-                            mods))
-        mods (extract mod-prom)]
-    (for [mod (vals mods)
-          var (.glbl-exprs mod)]
-      (str var " = enter(" var ");" line-sep))))
-
 (defn emit-main [code-context done-promise main-module]
   (let [main-fn (either (get-in main-module [.namespaces c/no-symbol .values 0
                                              ast/main .c-fn])
@@ -860,7 +850,13 @@
                           ;; TODO: make sure to abort
                           ;; (abort)
                           ))
-        code-context (emit-protos code-context)]
+        code-context (emit-protos code-context)
+        mod-prom (promise)
+        _ (send b/modules (fn [mods]
+                            (deliver mod-prom mods)
+                            mods))
+        mods (extract mod-prom)
+        dyn-glbls (flat-map (vals mods) .glbl-exprs)]
     (cond (instance? se/Error code-context)
           (do
             (b/status (.val code-context))
@@ -869,8 +865,17 @@
 
           (code-out "void normGlobals(TM *tm){\n"
                     "  normalize();\n"
-                    (dynamic-globals code-context)
+                    (map dyn-glbls
+                         (fn [var]
+                           (str var " = enter(" var ");" line-sep)))
                     "}\n"
+                    "void freeGlobals(TM *tm){\n"
+                    (map dyn-glbls
+                         (fn [var]
+                           (str "freeGlobal(tm, " var ");" line-sep)))
+                    "  normalize();\n"
+                    "}\n"
+
                     "  \nint main (int argc, char **argv) {\n"
                     "  prErrSTAR = &defaultPrErrSTAR;\n"
                     "  #ifdef SINGLE_THREADED\n"
@@ -913,6 +918,7 @@
                     ;; "  fprintf(stderr, \"unwind: %p\\n\", (void *)new_ref(unwind));\n"
                     "  normalize();\n"
                     "  Port result = enter(resultVar);\n"
+                    "  freeGlobals(tm);\n"
                     "  double duration = (time64() - start) / 1000000000.0; // seconds\n"
                     "  u64 itrs = atomic_load(&globalNet->itrs);\n"
                     "  printf(\"- ITRS: %\" PRIu64 \"\\n\", itrs);\n"
@@ -936,7 +942,8 @@
                     ;; "   l->refs = 1;\n"
                     ;; "}\n"
                     ;; TODO: casting argVect to List * is a temp hack
-                    "  cleanupMemory(the_final_answer, (List *)NULL);\n"
+                    ;; "  cleanupMemory(the_final_answer, (List *)NULL);\n"
+                    "  freeAll();\n"
                     "  if (malloc_count - free_count != 0 ||\n"
                     "      node_count != 0 || vars_count != 0)\n"
                     "    return(1);\n"

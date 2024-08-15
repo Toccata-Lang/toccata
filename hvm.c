@@ -1431,3 +1431,16 @@ bool unwind(TM *tm, Port ref, Port args) {
   }
   return TRUE;
 }
+
+void freeGlobal(TM *tm, Port p) {
+  p = enter(p);
+  Tag t = get_tag(p);
+  if (t == VAL) {
+    Value *v = (Value *)(p & ~7);
+    v->refs = 1;
+    dec_and_free(v, 1);
+    v->refs = REFS_STATIC;
+  } else {
+    link(tm, p, erase);
+  } 
+}

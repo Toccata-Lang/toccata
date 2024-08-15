@@ -215,7 +215,6 @@ extern Vector empty_vect_struct;
 extern BitmapIndexedNode emptyBMI;
 extern Value *universalProtoFn;
 extern int typeCount;
-extern List *globals;
 
 extern ReifiedVal all_values_struct;
 extern Value *all_values;
@@ -226,9 +225,7 @@ extern int cleaningUp;
 
 extern int64_t malloc_count;
 extern int64_t free_count;
-void cleanupMemory(Value *the_final_answer, List *argList);
 void freeAll();
-void freeGlobal(Value *x);
 
 #ifndef FAST_INCS
 Value *incRef(Value *v, int deltaRefs);

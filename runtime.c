@@ -18,7 +18,6 @@ REFS_SIZE refsConstant = -1;
 REFS_SIZE refsStatic = REFS_STATIC;
 
 Value *universalProtoFn = (Value *)0;
-List *globals = &empty_list_struct;
 int cleaningUp = 0;
 
 // Immutable hash-map ported from Clojure
@@ -101,21 +100,6 @@ Value *my_malloc(int64_t sz) {
     val->refs = refsInit;
   }
   return(val);
-}
-
-void cleanupMemory (Value *the_final_answer,  List *argVect) {
-#ifdef CHECK_MEM_LEAK
-  dec_and_free(the_final_answer, 1);
-  freeGlobal((Value *)argVect);
-  //*
-  for (List *l = globals; l != (List *)0 && l->tail != (List *)0; l = l->tail) {
-    if (l->head->refs == refsConstant)
-      l->head->refs = 1;
-  }
-  dec_and_free((Value *)globals, 1);
-  // */
-  freeAll();
-#endif
 }
 
 typedef struct {Value *head; uintptr_t aba;} FreeValList;
@@ -905,7 +889,7 @@ void moveFreeToCentral() {
   moveToCentral(&freeFnArities, &centralFreeFnArities);
 }
 
-
+/*
 void freeGlobal(Value *x) {
   if (x == (Value*)0 ||
       x->refs == refsError ||
@@ -916,6 +900,7 @@ void freeGlobal(Value *x) {
   dec_and_free(x, 1);
   x->refs = refsStatic;
 }
+// */
 
 void emptyFreeList(FreeValList *freeLinkedList) {
   FreeValList listHead;

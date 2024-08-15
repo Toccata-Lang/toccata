@@ -195,3 +195,4 @@ void printArgs(Port args);
 Port vars_make(TM *tm, Port p);
 void link_pair(TM* tm, Pair AB);
 bool unwind(TM* tm, Port a, Port b);
+void freeGlobal(TM *tm, Port p);
