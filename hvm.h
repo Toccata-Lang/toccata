@@ -95,9 +95,9 @@ typedef u64 Numb; // Numb ::= 60-bit (rounded up to u64)
 #define VAR 0x0 // variable
 #define VAL 0x1 // native value
 #define REF 0x2 // reference
-#define NUM 0x3 // number
-#define CON 0x4 // constructor
-#define DUP 0x5 // duplicator
+#define CON 0x3 // constructor
+#define DUP 0x4 // duplicator
+#define NUM 0x5 // number
 #define OPR 0x6 // operator
 #define SWI 0x7 // switch
 #define VR1 0x8 // variable alias

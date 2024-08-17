@@ -604,9 +604,9 @@ Port enter(Port var) {
 
 // Atomically Links `A ~ B`.
 void link(TM* tm, Port A, Port B) {
-  if (A == ERA) {
-    fprintf(stderr, "link: %d A: %p B: %p\n", __LINE__, (void *)A, (void *)B);
-  }
+  // if (A == ERA) {
+  // fprintf(stderr, "link: %d A: %p B: %p\n", __LINE__, (void *)A, (void *)B);
+  // }
 
   // Attempts to directionally point `A ~> B`
   while (TRUE) {
@@ -765,7 +765,7 @@ bool ANNI(TM* tm, Port a, Port b) {
 
 // The Comm Interaction.
 bool COMM(TM* tm, Port a, Port b) {
-  fprintf(stderr, "COMM: %d %p %p\n", __LINE__, (void *)a, (void *)b);
+  // fprintf(stderr, "COMM: %d %p %p\n", __LINE__, (void *)a, (void *)b);
   // Checks availability
   if (isEmpty(node_load(a))) {
     return FALSE;
@@ -776,7 +776,7 @@ bool COMM(TM* tm, Port a, Port b) {
   Port A1 = A.fst;
   Port A2 = A.snd;
 
-  if (get_val(b) == 0) {
+  if (get_val(b) == 0 || get_tag(b) == NUM) {
     link(tm, A1, b);
     link(tm, A2, b);
   } else {
@@ -897,20 +897,20 @@ bool ABRT(TM* tm, Port a, Port b) {
 }
 
 interactionFn interactions[13][13] = {
-  //VAR   VAL   REF   NUM   CON   DUP   OPR   SWI   VAR   VAL   RDX   ARG   ERA
+  //VAR   VAL   REF   CON   DUP   NUM   OPR   SWI   VAR   VAL   RDX   ARG   ERA
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
-  {&LINK,&ABRT,&ABRT,&DECF,&ABRT,&DUPE,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
-  {&LINK,&ABRT,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL,&VOID}, // REF
-  {&LINK,&DECF,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&DECF,&ABRT,&ABRT,&VOID}, // NUM
-  {&LINK,&ABRT,&ABRT,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // CON
-  {&LINK,&DUPE,&CALL,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&DUPE,&ABRT,&COMM,&ERAS}, // DUP
-  {&LINK,&ABRT,&ABRT,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // OPR
-  {&LINK,&ABRT,&ABRT,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // SWI
+  {&LINK,&ABRT,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
+  {&LINK,&ABRT,&VOID,&ABRT,&CALL,&VOID,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL,&VOID}, // REF
+  {&LINK,&ABRT,&ABRT,&ANNI,&COMM,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // CON
+  {&LINK,&DUPE,&CALL,&COMM,&ANNI,&COMM,&COMM,&COMM,&LINK,&DUPE,&ABRT,&COMM,&ERAS}, // DUP
+  {&LINK,&DECF,&VOID,&COMM,&COMM,&VOID,&OPER,&SWIT,&LINK,&DECF,&ABRT,&ABRT,&VOID}, // NUM
+  {&LINK,&ABRT,&ABRT,&COMM,&COMM,&OPER,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // OPR
+  {&LINK,&ABRT,&ABRT,&COMM,&COMM,&SWIT,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // SWI
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
-  {&LINK,&ABRT,&ABRT,&DECF,&ABRT,&DUPE,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
+  {&LINK,&ABRT,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
   {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ERAS}, // RDX
-  {&LINK,&ABRT,&CALL,&ABRT,&ABRT,&COMM,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ARGS,&ERAS}, // ARG
-  {&LINK,&DECF,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&DECF,&ERAS,&ERAS,&VOID}  // ERA
+  {&LINK,&ABRT,&CALL,&ABRT,&COMM,&ABRT,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ARGS,&ERAS}, // ARG
+  {&LINK,&DECF,&VOID,&ERAS,&ERAS,&VOID,&ERAS,&ERAS,&LINK,&DECF,&ERAS,&ERAS,&VOID}  // ERA
 };
 
 interactionFn get_rule(Port a, Port b) {
