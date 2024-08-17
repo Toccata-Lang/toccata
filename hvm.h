@@ -150,7 +150,7 @@ typedef struct {
 // to create a Port value
 #define new_port_(tag, x) (((u64)x + tag))
 
-extern Port resultVar;
+extern Port finalResultVar;
 
 Port new_num(Port val);
 Val get_val(Port port);

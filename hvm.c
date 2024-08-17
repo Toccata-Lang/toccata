@@ -381,7 +381,10 @@ Numb operate(Numb a, Numb b) {
 // FIXME: what about some bound checks?
 
 void push_redex(TM* tm, Pair redex) {
+  // if (get_tag(redex.fst) == ARG && get_tag(redex.snd) == ERA) {
   // fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)redex.fst, (void *)redex.snd);
+  // }
+
   if (is_high_priority(redex)) {
     tm->hbag_buf[tm->hput++] = redex;
   } else {
@@ -466,7 +469,7 @@ void node_store(Port loc, Pair val) {
 Pair node_exchange(Port loc, Pair val) {
   Pair pr = atomic_exchange_explicit((APair*)((u64)loc & ~TAG_MASK), val, memory_order_relaxed);
   if (val.fst == FREE && val.snd == FREE) {
-    // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)(loc & ~TAG_MASK));
+    // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)loc);
     // fprintf(stderr, "old-val: %p %p\n", (void *)pr.fst, (void *)pr.snd);
     node_count--;
   }
@@ -571,7 +574,7 @@ Port node_make(TM *tm, Tag tag, Port fst, Port snd) {
     }
   }
   // */
-  
+
   node_create(n0, new_pair(fst, snd));
   return (n0 | tag);
 }
@@ -601,7 +604,9 @@ Port enter(Port var) {
 
 // Atomically Links `A ~ B`.
 void link(TM* tm, Port A, Port B) {
-  // fprintf(stderr, "link: %d A: %p B: %p\n", __LINE__, (void *)A, (void *)B);
+  if (A == ERA) {
+    fprintf(stderr, "link: %d A: %p B: %p\n", __LINE__, (void *)A, (void *)B);
+  }
 
   // Attempts to directionally point `A ~> B`
   while (TRUE) {
@@ -673,7 +678,7 @@ bool CALL(TM *tm, Port a, Port b) {
     fnPtr = (interactionFn)(a & ~TAG_MASK);
     return fnPtr(tm, a, b);
     break;
-    
+
   case DUP:
     if (get_tag(a) != REF) {
       // TODO: ever happen?
@@ -760,6 +765,7 @@ bool ANNI(TM* tm, Port a, Port b) {
 
 // The Comm Interaction.
 bool COMM(TM* tm, Port a, Port b) {
+  fprintf(stderr, "COMM: %d %p %p\n", __LINE__, (void *)a, (void *)b);
   // Checks availability
   if (isEmpty(node_load(a))) {
     return FALSE;
@@ -921,9 +927,9 @@ bool interact(TM* tm) {
     // Gets redex ports A and B.
     Port a = redex.fst;
     Port b = redex.snd;
-    if (get_tag(redex.fst) == ARG && get_tag(redex.snd) == DUP) {
-      fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)a, (void *)b);
-    }
+    // if (get_tag(redex.fst) == ARG && get_tag(redex.snd) == DUP) {
+    // fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)a, (void *)b);
+      // }
 
     // Gets the rule type.
     interactionFn rule = get_rule(a, b);
@@ -1339,6 +1345,8 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       abort();
       break;
     }
+    return NONE;
+    break;
 
   case VAR:
     // TODO: test this
@@ -1357,6 +1365,7 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
   default:
     printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
     abort();
+    return NONE;
     break;
   }
 }
@@ -1441,7 +1450,7 @@ void printArgs(Port args) {
   }
 }
 
-Port resultVar;
+Port finalResultVar;
 bool unwind(TM *tm, Port ref, Port args) {
   Port callArgs;
 
@@ -1465,7 +1474,7 @@ bool unwind(TM *tm, Port ref, Port args) {
 
   default:
     // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
-    resultVar = v;
+    finalResultVar = v;
     break;
   }
   return TRUE;
@@ -1477,9 +1486,11 @@ void freeGlobal(TM *tm, Port p) {
   Tag t = get_tag(p);
   if (t == VAL) {
     Value *v = (Value *)(p & ~7);
-    v->refs = 1;
-    dec_and_free(v, 1);
-    v->refs = REFS_STATIC;
+    if (v->refs != REFS_STATIC) {
+      v->refs = 1;
+      dec_and_free(v, 1);
+      v->refs = REFS_STATIC;
+    }
   } else {
     link(tm, p, erase);
   } 
