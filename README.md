@@ -1,6 +1,13 @@
 Toccata
 =======
 
+Native fns have to have their inputs/outputs fully specified
+Top level C exprs have no result type
+There are no C defs
+If a native fn specifies a return type that has not been defined, that fn is it's constructor
+A native fn returns an Opaque type with the type num set, or an integer
+Remove SubString type
+
 Maybe/Nothing are just special cases of types, can be eliminated
 cond/either/and/or can be implemented using deferred redex
 superposition makes miniKanren trivial

@@ -555,8 +555,8 @@ Port vars_make(TM *tm, Port p) {
 }
 
 Port node_make(TM *tm, Tag tag, Port fst, Port snd) {
-  // Port n0 = node_alloc(tm);
-  //*
+  Port n0 = node_alloc(tm);
+  /*
   Port n0;
   while (TRUE) {
     u32 lc = tm->tid*(G_NODE_LEN/TPC) + (tm->nput%(G_NODE_LEN/TPC));
@@ -711,7 +711,6 @@ bool ERAS(TM* tm, Port a, Port b) {
 
   // Checks availability
   if (isEmpty(node_load(b))) {
-    //printf("[%04x] unavailable0: %s\n", tid, show_port(b).x);
     return FALSE;
   }
 
@@ -720,11 +719,10 @@ bool ERAS(TM* tm, Port a, Port b) {
   Port B1 = B.fst;
   Port B2 = B.snd;
 
-  //if (B == 0) printf("[%04x] ERROR2: %s\n", tid, show_port(b).x);
-
   // Links.
-  link(tm, a, B1);
-  link(tm, a, B2);
+  // fprintf(stderr, "era: %d %p %p\n", __LINE__, (void *)B1, (void *)B2);
+  link(tm, erase, B1);
+  link(tm, erase, B2);
 
   return TRUE;
 }
@@ -762,18 +760,8 @@ bool ANNI(TM* tm, Port a, Port b) {
 
 // The Comm Interaction.
 bool COMM(TM* tm, Port a, Port b) {
-  Port v0 = vars_alloc(tm);
-  Port v1 = vars_alloc(tm);
-  Port v2 = vars_alloc(tm);
-  Port v3 = vars_alloc(tm);
-  Port n0 = node_alloc(tm);
-  Port n1 = node_alloc(tm);
-  Port n2 = node_alloc(tm);
-  Port n3 = node_alloc(tm);
-
   // Checks availability
-  if (isEmpty(node_load(a)) || isEmpty(node_load(b))) {
-    //printf("[%04x] unavailable2: %s | %s\n", tid, show_port(a).x, show_port(b).x);
+  if (isEmpty(node_load(a))) {
     return FALSE;
   }
 
@@ -781,30 +769,33 @@ bool COMM(TM* tm, Port a, Port b) {
   Pair A  = node_take(a);
   Port A1 = A.fst;
   Port A2 = A.snd;
-  Pair B  = node_take(b);
-  Port B1 = B.fst;
-  Port B2 = B.snd;
 
-  //if (A == 0) printf("[%04x] ERROR5: %s\n", tid, show_port(a).x);
-  //if (B == 0) printf("[%04x] ERROR6: %s\n", tid, show_port(b).x);
+  if (get_val(b) == 0) {
+    link(tm, A1, b);
+    link(tm, A2, b);
+  } else {
+    // Checks availability
+    if (isEmpty(node_load(b))) {
+      return FALSE;
+    }
 
-  // Stores new vars.
-  vars_create(v0, NONE);
-  vars_create(v1, NONE);
-  vars_create(v2, NONE);
-  vars_create(v3, NONE);
+    Pair B  = node_take(b);
+    Port B1 = B.fst;
+    Port B2 = B.snd;
 
-  // Stores new nodes.
-  node_create(n0, new_pair(v0, v1));
-  node_create(n1, new_pair(v2, v3));
-  node_create(n2, new_pair(v0, v2));
-  node_create(n3, new_pair(v1, v3));
+    Port v0 = vars_make(tm, NONE);
+    Port v1 = vars_make(tm, NONE);
+    Port v2 = vars_make(tm, NONE);
+    Port v3 = vars_make(tm, NONE);
 
-  // Links.
-  link_pair(tm, new_pair(new_port(get_tag(b), n0), A1));
-  link_pair(tm, new_pair(new_port(get_tag(b), n1), A2));
-  link_pair(tm, new_pair(new_port(get_tag(a), n2), B1));
-  link_pair(tm, new_pair(new_port(get_tag(a), n3), B2));
+    // Links.
+    Tag ta = get_tag(a);
+    Tag tb = get_tag(b);
+    link(tm, node_make(tm, tb, v0, v1), A1);
+    link(tm, node_make(tm, tb, v2, v3), A2);
+    link(tm, node_make(tm, ta, v0, v2), B1);
+    link(tm, node_make(tm, ta, v1, v3), B2);
+  }
 
   return TRUE;
 }
@@ -906,13 +897,13 @@ interactionFn interactions[13][13] = {
   {&LINK,&ABRT,&VOID,&VOID,&ABRT,&CALL,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL,&VOID}, // REF
   {&LINK,&DECF,&VOID,&VOID,&ERAS,&ERAS,&OPER,&SWIT,&LINK,&DECF,&ABRT,&ABRT,&VOID}, // NUM
   {&LINK,&ABRT,&ABRT,&ERAS,&ANNI,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // CON
-  {&LINK,&DUPE,&CALL,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&DUPE,&ABRT,&ABRT,&ERAS}, // DUP
+  {&LINK,&DUPE,&CALL,&ERAS,&COMM,&ANNI,&COMM,&COMM,&LINK,&DUPE,&ABRT,&COMM,&ERAS}, // DUP
   {&LINK,&ABRT,&ABRT,&OPER,&COMM,&COMM,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // OPR
   {&LINK,&ABRT,&ABRT,&SWIT,&COMM,&COMM,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // SWI
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
   {&LINK,&ABRT,&ABRT,&DECF,&ABRT,&DUPE,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
   {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ERAS}, // RDX
-  {&LINK,&ABRT,&CALL,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ARGS,&ERAS}, // ARG
+  {&LINK,&ABRT,&CALL,&ABRT,&ABRT,&COMM,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ARGS,&ERAS}, // ARG
   {&LINK,&DECF,&VOID,&VOID,&ERAS,&ERAS,&ERAS,&ERAS,&LINK,&DECF,&ERAS,&ERAS,&VOID}  // ERA
 };
 
@@ -930,7 +921,9 @@ bool interact(TM* tm) {
     // Gets redex ports A and B.
     Port a = redex.fst;
     Port b = redex.snd;
-    // fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)a, (void *)b);
+    if (get_tag(redex.fst) == ARG && get_tag(redex.snd) == DUP) {
+      fprintf(stderr, "redex: %d %p %p\n", __LINE__, (void *)a, (void *)b);
+    }
 
     // Gets the rule type.
     interactionFn rule = get_rule(a, b);
@@ -1295,6 +1288,51 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
       return NONE;
       break;
 
+    case DUP:
+    case CON:
+      if (1) {
+	Tag t = get_tag(arg);
+	Port r1 = vars_make(tm, NONE);
+	Port r2 = vars_make(tm, NONE);
+	link(tm, argsStruct->result, node_make(tm, t, r1, r2));
+	
+	Port args1;
+	Port args2;
+	if (argsNode.snd == ARG) {
+	  args1 = ARG;
+	  args2 = ARG;
+	} else {
+	  args1 = vars_make(tm, NONE);
+	  args2 = vars_make(tm, NONE);
+	  Port n = node_make(tm, t, args1, args2);
+	  fprintf(stderr, "args: %d %p %p n: %p\n", __LINE__, (void *)args1, (void *)args2, (void *)n);
+	  fprintf(stderr, "snd: %p\n", (void *)argsNode.snd);
+	  link(tm, argsNode.snd, n);
+	}
+
+	Pair pr = node_take(arg);
+	int argsCount = argsStruct->count;
+	argsStruct->count = argsCount + 2;
+	argsStruct->args[argsCount] = pr.fst;
+	argsStruct->args[argsCount + 1] = args1;
+	argsStruct->result = r1;
+	link(tm, ref, argsNet(tm, argsStruct));
+	
+	argsStruct->args[argsCount] = pr.snd;
+	argsStruct->args[argsCount + 1] = args2;
+	argsStruct->result = r2;
+	link(tm, ref, argsNet(tm, argsStruct));
+      }
+      return NONE;
+      break;
+
+    case ERA:
+      link(tm, argsStruct->result, erase);
+      for (int i = 0; i < argsStruct->count; i++) {
+	link(tm, argsStruct->args[i], erase);
+      }
+      break;
+
       // TODO: what other tags need to be handled
     default:
       printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
@@ -1324,6 +1362,7 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
 }
 
 Port dupeArg(TM *tm, Port arg, Port dupeArg) {
+  // fprintf(stderr, "arg: %d %p\n", __LINE__, (void *)arg);
   Port dupedVar;
   switch(get_tag(arg)) {
   case VAL:
@@ -1434,6 +1473,7 @@ bool unwind(TM *tm, Port ref, Port args) {
 
 void freeGlobal(TM *tm, Port p) {
   p = enter(p);
+  // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
   Tag t = get_tag(p);
   if (t == VAL) {
     Value *v = (Value *)(p & ~7);
