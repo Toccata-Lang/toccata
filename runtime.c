@@ -790,6 +790,10 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeOpaquePtr};
 
 void dec_and_free(Value *v, int deltaRefs) {
+  if (get_tag(v) == NUM)
+    return;
+
+  v = (Value *)((long)v & ~7);
   if (v == (Value *)0 ||
       v->refs == refsStatic ||
       v->refs == refsConstant ||
@@ -825,6 +829,9 @@ void dec_and_free(Value *v, int deltaRefs) {
 
 #ifndef FAST_INCS
 Value *incRef(Value *v, int deltaRefs) {
+  if (get_tag(v) == NUM)
+    return v;
+
   if ((Value *)v == 0) {
     fprintf(stderr, "bad incRef value: %p\n", v);
     abort();
