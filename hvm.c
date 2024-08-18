@@ -386,8 +386,14 @@ void push_redex(TM* tm, Pair redex) {
 
   if (is_high_priority(redex)) {
     tm->hbag_buf[tm->hput++] = redex;
+    // for (int i = tm->hput; i > 0; i--) {
+    // tm->hbag_buf[i] = tm->hbag_buf[i - 1];
+    // }
+    // tm->hput++;
+    // tm->hbag_buf[0] = redex;
   } else {
-    atomic_store_explicit(&globalNet->rbag_buf[tm->tid*(G_RBAG_LEN/TPC) + (tm->rput++)], redex, memory_order_relaxed);
+    atomic_store_explicit(&globalNet->rbag_buf[tm->tid*(G_RBAG_LEN/TPC) + (tm->rput++)],
+			  redex, memory_order_relaxed);
   }
 }
 
@@ -470,7 +476,7 @@ Pair node_exchange(Port loc, Pair val) {
   if (val.fst == FREE && val.snd == FREE) {
     // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)loc);
     // fprintf(stderr, "old-val: %p %p\n", (void *)pr.fst, (void *)pr.snd);
-    node_count--;
+    atomic_fetch_sub_explicit(&node_count, 1, memory_order_relaxed);
   }
   return pr; 
 }
@@ -486,7 +492,7 @@ Port vars_exchange(Port var, Port val) {
   if (val == FREE) {
     // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)var);
     // fprintf(stderr, "old-val: %p\n", (void *)p);
-    vars_count--;
+    atomic_fetch_sub_explicit(&vars_count, 1, memory_order_relaxed);
   }
   return p;
 }
@@ -515,9 +521,9 @@ void net_init() {
 // Allocator
 // ---------
 
-int vars_count = 0;
+a32 vars_count;
 int max_vars = 0;
-int node_count = 0;
+a32 node_count;
 int max_node = 0;
 
 Port node_alloc(TM* tm) {
@@ -526,10 +532,10 @@ Port node_alloc(TM* tm) {
     Pair* elem = (Pair *)&globalNet->node_buf[lc];
     tm->nput += 1;
     if (lc > 0 && isEmpty(*elem)) {
-      node_count++;
+      int nc = atomic_fetch_add_explicit(&node_count, 1, memory_order_relaxed);
       // fprintf(stderr, "node allocd: %d %p\n", __LINE__, (void *)elem);
-      if (max_node < node_count)
-	max_node = node_count;
+      if (max_node < nc)
+	max_node = nc;
       return (Port)elem;
     }
   }
@@ -541,9 +547,9 @@ Port vars_alloc(TM* tm) {
     Port* elem = (Port*)&globalNet->vars_buf[lc];
     tm->vput += 1;
     if (lc > 0 && *elem == FREE) {
-      vars_count++;
-      if (max_vars < vars_count)
-	max_vars = vars_count;
+      int vc = atomic_fetch_add_explicit(&vars_count, 1, memory_order_relaxed);
+      if (max_vars < vc)
+	max_vars = vc;
       // fprintf(stderr, "allocd: %d %p\n", __LINE__, (void *)elem);
       return (Port)elem;
     }
@@ -1283,11 +1289,7 @@ Port nativeArg(TM *tm, Port ref, Port args, NativeArgs *argsStruct) {
 	if (get_tag(varVal) == RDX) {
 	  push_redex(tm, node_take(varVal));
 	} else {
-    // TODO: test this
-    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
-    abort();
-	  link(tm, ref, varVal);
-	  vars_take(arg);
+	  link(tm, arg, varVal);
 	}
       }
       return NONE;

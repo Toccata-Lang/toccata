@@ -790,7 +790,7 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeOpaquePtr};
 
 void dec_and_free(Value *v, int deltaRefs) {
-  if (get_tag(v) == NUM)
+  if (get_tag((Port)v) == NUM)
     return;
 
   v = (Value *)((long)v & ~7);
@@ -829,7 +829,7 @@ void dec_and_free(Value *v, int deltaRefs) {
 
 #ifndef FAST_INCS
 Value *incRef(Value *v, int deltaRefs) {
-  if (get_tag(v) == NUM)
+  if (get_tag((Port)v) == NUM)
     return v;
 
   if ((Value *)v == 0) {
