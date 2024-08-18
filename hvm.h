@@ -33,8 +33,8 @@ typedef _Atomic(Pair) APair; // atomic Pair
 #ifndef TPC_L2
 #define TPC_L2 4 // 16 cores
 #endif
-// #define TPC (1ul << TPC_L2)
-#define TPC 1
+#define TPC (1ul << TPC_L2)
+// #define TPC 1
 
 #define HLEN (1ul << 16) // max 16k high-priority redexes
 // Local Thread Memory
