@@ -377,3 +377,4 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount);
 void moveFreeToCentral();
 void freeGlobals(TM *tm);
 void normGlobals(TM *tm);
+void staticRefs(Port p);
