@@ -21,15 +21,14 @@ Roadmap
 =======
 
 regression tests pass
-  do-ast
   protocol-ast
-  reify-ast
-  quoted-ast
-  declaration-ast
   prototype-ast
   extend-ast
   type-ast
   rec-type-ast
+  quoted-ast
+  declaration-ast
+  reify-ast
   module-ast
   git-dep-ast
   main-ast

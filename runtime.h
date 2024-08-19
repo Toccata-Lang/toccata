@@ -220,6 +220,7 @@ extern ReifiedVal all_values_struct;
 extern Value *all_values;
 
 extern int8_t mainThreadDone;
+extern Port mainFn;
 
 extern int cleaningUp;
 
@@ -374,3 +375,5 @@ Value *hashVec(Value *n, Value *s);
 ArrayNode *malloc_arrayNode();
 HashCollisionNode *malloc_hashCollisionNode(int itemCount);
 void moveFreeToCentral();
+void freeGlobals(TM *tm);
+void normGlobals(TM *tm);
