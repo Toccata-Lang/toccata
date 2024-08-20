@@ -3608,12 +3608,12 @@ Value *newTypeValue(int typeNum, Vector *fields) {
 
 int main (int argc, char **argv) {
   prErrSTAR = &defaultPrErrSTAR;
-  #ifdef SINGLE_THREADED
-  #ifdef CHECK_MEM_LEAK
+#ifdef SINGLE_THREADED
+#ifdef CHECK_MEM_LEAK
   fprintf(stderr, "Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK   at same time.");
-   abort();
-  #endif
-  #endif
+  abort();
+#endif
+#endif
   outstream = stdout;
   alloc_static_tms();
   globalNet = malloc(sizeof(Net));
@@ -3622,31 +3622,31 @@ int main (int argc, char **argv) {
   TM *tm = tms[0];
   int bashResult;
   Port result;
-for (int iterations = 0; iterations < 1; iterations++) {
-  atomic_store_explicit(&node_count, 0, memory_order_relaxed);
-  atomic_store_explicit(&vars_count, 0, memory_order_relaxed);
-  normGlobals(tm);
-  Vector *argVect = empty_vect;
-  for(int i = 0; i < argc; i++) {
-    argVect = mutateVectConj(argVect, stringValue(argv[i]));
+  for (int iterations = 0; iterations < 1; iterations++) {
+    atomic_store_explicit(&node_count, 0, memory_order_relaxed);
+    atomic_store_explicit(&vars_count, 0, memory_order_relaxed);
+    normGlobals(tm);
+    Vector *argVect = empty_vect;
+    for(int i = 0; i < argc; i++) {
+      argVect = mutateVectConj(argVect, stringValue(argv[i]));
+    }
+    finalResultVar = vars_alloc(tm);
+    bashResult = 0;
+    Port callArgs;
+    callArgs = new_port(ARG, 0);
+    callArgs = node_make(ARG, new_port(VAL,
+					   (Port)argVect), callArgs);
+    callArgs = node_make(ARG, finalResultVar, callArgs);
+    link(mainFn, callArgs);
+    normalize();
+    result = enter(finalResultVar);
+    freeGlobals(tm);
+    if (node_count != 0 || vars_count != 0) {
+      printf("remaining vars: %d (%d)\n", vars_count, max_vars);
+      printf("remaining nodes: %d (%d)\n", node_count, max_node);
+      return(1);
+    }
   }
-  finalResultVar = vars_alloc(tm);
-  bashResult = 0;
-  Port callArgs;
-  callArgs = new_port(ARG, 0);
-  callArgs = node_make(tm, ARG, new_port(VAL,
-                      (Port)argVect), callArgs);
-  callArgs = node_make(tm, ARG, finalResultVar, callArgs);
-  link(tm, mainFn, callArgs);
-  normalize();
-  result = enter(finalResultVar);
-  freeGlobals(tm);
-  if (node_count != 0 || vars_count != 0) {
-    printf("remaining vars: %d (%d)\n", vars_count, max_vars);
-    printf("remaining nodes: %d (%d)\n", node_count, max_node);
-    return(1);
-  }
-}
 #ifdef CHECK_MEM_LEAK
   cleaningUp = 1;
   freeAll();
@@ -3664,7 +3664,7 @@ for (int iterations = 0; iterations < 1; iterations++) {
     bashResult = (int)get_u24(get_val(result));
     printf("result: %p bashResult: %d\n", (void *)result, bashResult);
   } else if (get_tag(result) == VAL ) {
-  Value *the_final_answer = (Value *)NULL;
+    Value *the_final_answer = (Value *)NULL;
     the_final_answer = (Value *)(result & ~TAG_MASK);
   }
   free_static_tms();
