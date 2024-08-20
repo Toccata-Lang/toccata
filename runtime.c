@@ -3671,13 +3671,3 @@ for (int iterations = 0; iterations < 1; iterations++) {
   free(globalNet);
   return(bashResult);
 }
-
-void staticRefs(Port p) {
-  p = enter(p);
-  // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
-  Tag t = get_tag(p);
-  if (t == VAL) {
-    Value *v = (Value *)(p & ~7);
-    v->refs = REFS_STATIC;
-  }
-}
