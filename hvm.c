@@ -678,21 +678,21 @@ void link_pair(Pair AB) {
 // ------------
 
 // The Link Interaction.
-bool LINK(TM* tm, Port a, Port b) {
+bool LINK(Port a, Port b) {
   // Links.
   link(a, b);
 
   return TRUE;
 }
 
-bool CALL(TM *tm, Port a, Port b) {
+bool CALL(Port a, Port b) {
   interactionFn fnPtr;
   Pair pr;
 
   switch(get_tag(b)) {
   case ARG:
     fnPtr = (interactionFn)(a & ~TAG_MASK);
-    return fnPtr(tm, a, b);
+    return fnPtr(a, b);
     break;
 
   case DUP:
@@ -716,12 +716,12 @@ bool CALL(TM *tm, Port a, Port b) {
 }
 
 // The Void Interaction.
-bool VOID(TM* tm, Port a, Port b) {
+bool VOID(Port a, Port b) {
   return TRUE;
 }
 
 // The Eras Interaction.
-bool ERAS(TM* tm, Port a, Port b) {
+bool ERAS(Port a, Port b) {
   Tag t = get_tag(b);
   if (t == ERA || t == NUM) {
     b = a;
@@ -749,7 +749,7 @@ bool ERAS(TM* tm, Port a, Port b) {
 }
 
 // The Anni Interaction.
-bool ANNI(TM* tm, Port a, Port b) {
+bool ANNI(Port a, Port b) {
   // Checks availability
   if (isEmpty(node_load(a)) || isEmpty(node_load(b))) {
     //printf("[%04x] unavailable1: %s | %s\n", tid, show_port(a).x, show_port(b).x);
@@ -780,7 +780,7 @@ bool ANNI(TM* tm, Port a, Port b) {
 }
 
 // The Comm Interaction.
-bool COMM(TM* tm, Port a, Port b) {
+bool COMM(Port a, Port b) {
   // fprintf(stderr, "COMM: %d %p %p\n", __LINE__, (void *)a, (void *)b);
   // Checks availability
   if (isEmpty(node_load(a))) {
@@ -823,7 +823,7 @@ bool COMM(TM* tm, Port a, Port b) {
 }
 
 // The Oper Interaction.
-bool OPER(TM* tm, Port a, Port b) {
+bool OPER(Port a, Port b) {
   // Checks availability
   if (isEmpty(node_load(b))) {
     return FALSE;
@@ -847,7 +847,7 @@ bool OPER(TM* tm, Port a, Port b) {
 }
 
 // The Swit Interaction.
-bool SWIT(TM* tm, Port a, Port b) {
+bool SWIT(Port a, Port b) {
   Port n0 = node_alloc();
   Port n1 = node_alloc();
 
@@ -875,7 +875,7 @@ bool SWIT(TM* tm, Port a, Port b) {
   return TRUE;
 }
 
-bool DUPE(TM* tm, Port a, Port b) {
+bool DUPE(Port a, Port b) {
   if (get_tag(a) == VAL) {
     Port x = b;
     b = a;
@@ -888,25 +888,25 @@ bool DUPE(TM* tm, Port a, Port b) {
   return TRUE;
 }
 
-bool DECF(TM* tm, Port a, Port b) {
+bool DECF(Port a, Port b) {
   if (get_tag(a) == VAL)
     b = a;
   dec_and_free((Value *)(b & ~7), 1);
   return TRUE;
 }
 
-bool ARGS(TM* tm, Port a, Port b) {
+bool ARGS(Port a, Port b) {
   if (a == ARG && b == ARG) {
     return TRUE;
   } else if (a == ARG || b == ARG) {
     fprintf(stderr, "Implement currying: %p %p\n", (void *)a, (void *)b);
     abort();
   } else {
-    return ANNI(tm, a, b);
+    return ANNI(a, b);
   }
 }
 
-bool ABRT(TM* tm, Port a, Port b) {
+bool ABRT(Port a, Port b) {
   fprintf(stderr, "Bad interaction: 0x%x 0x%x\n", get_tag(a), get_tag(b));
   fprintf(stderr, "a: %p b: %p\n", (void *)a, (void *)b);
   abort();
@@ -957,7 +957,7 @@ bool interact() {
     }
 
     // If error, pushes redex back.
-    if (!rule(tm, a, b)) {
+    if (!rule(a, b)) {
       push_redex(redex);
       return FALSE;
     // Else, increments the interaction count.
@@ -1456,7 +1456,7 @@ void make_op(int op, Port x, Port y, Port rslt) {
 }
 
 Port finalResultVar;
-void freeGlobal(TM *tm, Port p) {
+void freeGlobal(Port p) {
   p = enter(p);
   // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
   Tag t = get_tag(p);

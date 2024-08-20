@@ -375,5 +375,5 @@ Value *hashVec(Value *n, Value *s);
 ArrayNode *malloc_arrayNode();
 HashCollisionNode *malloc_hashCollisionNode(int itemCount);
 void moveFreeToCentral();
-void freeGlobals(TM *tm);
-void normGlobals(TM *tm);
+void freeGlobals();
+void normGlobals();

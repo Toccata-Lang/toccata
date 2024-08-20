@@ -71,7 +71,7 @@ extern int max_vars;
 extern a32 node_count;
 extern int max_node;
 
-typedef bool (*interactionFn)(TM* tm, Port a, Port b);
+typedef bool (*interactionFn)(Port a, Port b);
 
 // Booleans
 #define TRUE  1
@@ -157,7 +157,7 @@ Val get_val(Port port);
 Port new_port(Tag tag, Port val);
 Port new_ref(interactionFn val);
 Tag get_tag(Port port);
-bool ERAS(TM* tm, Port a, Port b);
+bool ERAS(Port a, Port b);
 Port node_alloc();
 Port vars_alloc();
 void node_create(Port loc, Pair val);
@@ -176,7 +176,6 @@ Numb operate(Port aP, Port bP);
 Port enter(Port var);
 u64 get_u24(Numb word);
 Numb new_u24(u64 val);
-bool getNativeArgs(TM *tm, Port ref, Port args, unsigned argCount, NativeArgs *natives);
 void vars_create(Port var, Port val);
 void hvm_c(interactionFn mainFn, NativeArgs *args);
 u64 time64();
@@ -193,4 +192,4 @@ void make_op(int op, Port x, Port y, Port rslt);
 void printArgs(Port args);
 Port vars_make(Port p);
 bool unwind(TM* tm, Port a, Port b);
-void freeGlobal(TM *tm, Port p);
+void freeGlobal(Port p);
