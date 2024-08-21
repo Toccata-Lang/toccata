@@ -824,6 +824,7 @@ bool COMM(Port a, Port b) {
 
 // The Oper Interaction.
 bool OPER(Port a, Port b) {
+  // fprintf(stderr, "OPER: %d %p %p\n", __LINE__, (void *)a, (void *)b);
   // Checks availability
   if (isEmpty(node_load(b))) {
     return FALSE;
@@ -891,11 +892,13 @@ bool DUPE(Port a, Port b) {
 bool DECF(Port a, Port b) {
   if (get_tag(a) == VAL)
     b = a;
-  dec_and_free((Value *)(b & ~7), 1);
+  // fprintf(stderr, "DECF %d: %p\n", __LINE__, (void *)b);
+  dec_and_free((Value *)b, 1);
   return TRUE;
 }
 
 bool ARGS(Port a, Port b) {
+  // fprintf(stderr, "ARGS %d: %p %p\n", __LINE__, (void *)a, (void *)b);
   if (a == ARG && b == ARG) {
     return TRUE;
   } else if (a == ARG || b == ARG) {
@@ -1447,12 +1450,8 @@ void hvm_c(interactionFn mainFn, NativeArgs *args) {
 // */
 
 void make_op(int op, Port x, Port y, Port rslt) {
-  if (get_tag(x) == NUM && get_tag(y) == NUM) {
-    link(rslt, new_num(operate(get_val(x), get_val(y) & ~0x1F | op)));
-  } else {
-    link(x, node_make(OPR, new_port(NUM, op << (NUM_TAG_SIZE + TAG_SIZE)),
-			  node_make(OPR, y, rslt)));
-  }
+  link(x, node_make(OPR, new_port(NUM, op << (NUM_TAG_SIZE + TAG_SIZE)),
+		    node_make(OPR, y, rslt)));
 }
 
 Port finalResultVar;

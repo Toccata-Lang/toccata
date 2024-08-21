@@ -377,10 +377,10 @@ List *malloc_list() {
 void freeList(Value *v) {
   List *l = (List *)v;
   Value *head = l->head;
+  List *tail = l->tail;
   if (head != (Value *)NULL) {
     dec_and_free(head, 1);
   }
-  List *tail = l->tail;
   l->tail = (List *)0;
   v->next = freeLists.head;
   freeLists.head = v;
@@ -790,41 +790,53 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeOpaquePtr};
 
 void dec_and_free(Value *v, int deltaRefs) {
-  if (get_tag((Port)v) == NUM)
-    return;
+  switch (get_tag((Port)v)) {
+  case NUM:
+    break;
 
-  v = (Value *)((long)v & ~7);
-  if (v == (Value *)0 ||
-      v->refs == refsStatic ||
-      v->refs == refsConstant ||
-      decRefs(v, deltaRefs) >= refsConstant)
-    return;
-
-  if (v->type < CoreTypeCount) {
-    // incTypeFree(v->type, 1);
-    freeJmpTbl[v->type](v);
-  } else {
-    ReifiedVal *rv = (ReifiedVal *)v;
-    for (int i = 0; i < rv->implCount; i++) {
-      dec_and_free(rv->impls[i], 1);
+  case VAL:
+    v = (Value *)((long)v & ~7);
+    if (v == (Value *)0 ||
+	v->refs == refsStatic ||
+	v->refs == refsConstant ||
+	decRefs(v, deltaRefs) >= refsConstant){
+      return;
     }
 
-    // incTypeFree(0, 1);
-    if (rv->implCount < 20) {
-      int64_t implCount = rv->implCount;
-      v->next = freeReified[implCount].head;
-      freeReified[implCount].head = v;
+    if (v->type < CoreTypeCount) {
+      // incTypeFree(v->type, 1);
+      // fprintf(stderr, "freeing core type: %d\n", __LINE__);
+      freeJmpTbl[v->type](v);
     } else {
+      ReifiedVal *rv = (ReifiedVal *)v;
+      for (int i = 0; i < rv->implCount; i++) {
+	dec_and_free(rv->impls[i], 1);
+      }
+
+      // incTypeFree(0, 1);
+      if (rv->implCount < 20) {
+	int64_t implCount = rv->implCount;
+	v->next = freeReified[implCount].head;
+	freeReified[implCount].head = v;
+      } else {
 #ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+	__atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
-      if (!cleaningUp)
-	free(v);
+	if (!cleaningUp)
+	  free(v);
+      }
     }
-  }
 #ifdef CHECK_MEM_LEAK
-  // fprintf(stderr, "malloc_count: %ld free_count: %ld\r", malloc_count, free_count);
+    // fprintf(stderr, "malloc_count: %ld free_count: %ld\r", malloc_count, free_count);
 #endif
+    break;
+
+  default:
+    v = enter(v);
+    // fprintf(stderr, "freeing interaction combinator: %d %p\n", __LINE__, (void *)v);
+    link((Port)v, erase);
+    break;
+  }
 };
 
 #ifndef FAST_INCS
@@ -3634,8 +3646,7 @@ int main (int argc, char **argv) {
     bashResult = 0;
     Port callArgs;
     callArgs = new_port(ARG, 0);
-    callArgs = node_make(ARG, new_port(VAL,
-					   (Port)argVect), callArgs);
+    callArgs = node_make(ARG, new_port(VAL, (Port)argVect), callArgs);
     callArgs = node_make(ARG, finalResultVar, callArgs);
     link(mainFn, callArgs);
     normalize();
