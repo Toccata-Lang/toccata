@@ -92,16 +92,16 @@ typedef u64 Val;  // Val  ::= 29-bit (rounded up to u32)
 typedef u64 Numb; // Numb ::= 60-bit (rounded up to u64)
 
 // Tags
-#define VAR 0x0 // variable
-#define VAL 0x1 // native value
+#define VAL 0x0 // native value
+#define VAR 0x1 // variable
 #define REF 0x2 // reference
 #define CON 0x3 // constructor
 #define DUP 0x4 // duplicator
 #define NUM 0x5 // number
 #define OPR 0x6 // operator
 #define SWI 0x7 // switch
-#define VR1 0x8 // variable alias
-#define VL1 0x9 // native value alias
+#define VL1 0x8 // native value alias
+#define VR1 0x9 // variable alias
 #define RDX 0xA // deferred redex
 #define ARG 0xB // function arg or param
 #define ERA 0xC // eraser

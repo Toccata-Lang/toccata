@@ -89,7 +89,6 @@ typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
   int count;
-  Vector *closures;
   int variadic;
   interactionFn fn;
   Value *parent;
@@ -235,7 +234,8 @@ Value *simpleIncRef(Value *v, int n);
 #define incRef(V, N) ((V)->refs >= 0 ? simpleIncRef(V, N) : V)
 #endif
 
-void dec_and_free(Value *v, int deltaRefs);
+void dec_and_free(Value* v, int deltaRefs);
+void decValRef(Port pv, int deltaRefs);
 
 void prefs(char *tag, Value *v);
 

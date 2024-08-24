@@ -155,19 +155,6 @@ Value *removeFreeValue(FreeValList *freeList) {
 
 int decRefs(Value *v, int deltaRefs) {
 #ifndef FAST_DECS
-#ifdef SINGLE_THREADED
-  if (v->refs == refsConstant || v->refs == refsStatic)
-    return(v->refs);
-
-  if (v->refs < deltaRefs) {
-    fprintf(stderr, "\nfailure in decRefs, refs too small: %d %p\n", v->refs, v);
-    abort();
-  } else if (v->refs == deltaRefs)
-    v->refs = refsError;
-  else
-    v->refs -= deltaRefs;
-  return(v->refs);
-#else
   // not SINGLE_THREADED
   if (v->refs == refsConstant || v->refs == refsStatic)
     return(v->refs);
@@ -183,7 +170,6 @@ int decRefs(Value *v, int deltaRefs) {
   fprintf(stderr, "\nfailure in decRefs, refs too small: %d %d %p\n", deltaRefs, v->refs, v);
   abort();
   return(refsError);
-#endif
 #else
   // FAST_DECS
   if (v->refs == refsConstant ||
@@ -232,6 +218,7 @@ void moveToCentral(FreeValList *freeList, FreeValList *centralList) {
   }
 }
 
+/*
 void decValuePtrRef(Value **ptr) {
   Value *toFree = (Value *)0;
   Value *oldPtr = (Value *)0;
@@ -241,6 +228,7 @@ void decValuePtrRef(Value **ptr) {
     dec_and_free((Value *)oldPtr, 1);
   }
 }
+// */
 
 FreeValList centralFreeStrings = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeStrings = {(Value *)0, 0};
@@ -332,7 +320,6 @@ FnArity *malloc_fnArity() {
 
 void freeFnArity(Value *v) {
   FnArity *arity = (FnArity *)v;
-  dec_and_free((Value *)arity->closures, 1);
   v->next = freeFnArities.head;
   freeFnArities.head = v;
 }
@@ -789,13 +776,14 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       NULL,
 				       &freeOpaquePtr};
 
-void dec_and_free(Value *v, int deltaRefs) {
-  switch (get_tag((Port)v)) {
+void decValRef(Port pv, int deltaRefs) {
+  Value *v;
+  switch (get_tag(pv)) {
   case NUM:
     break;
 
   case VAL:
-    v = (Value *)((long)v & ~7);
+    v = (Value *)pv;
     if (v == (Value *)0 ||
 	v->refs == refsStatic ||
 	v->refs == refsConstant ||
@@ -832,12 +820,30 @@ void dec_and_free(Value *v, int deltaRefs) {
     break;
 
   default:
-    v = enter(v);
-    // fprintf(stderr, "freeing interaction combinator: %d %p\n", __LINE__, (void *)v);
-    link((Port)v, erase);
+    fprintf(stderr, "HVM error %s:%d\n", __FILE__, __LINE__);
+    abort();
     break;
   }
 };
+
+void dec_and_free(Value* pv, int deltaRefs) {
+  if (pv == 0) {
+    return;
+  }
+
+  Value *v;
+  switch (get_tag((Port)pv)) {
+  case NUM:
+  case VAL:
+    decValRef((Port)pv, deltaRefs);
+    break;
+
+  default:
+    // fprintf(stderr, "freeing interaction combinator: %d %p\n", __LINE__, (void *)v);
+    link(enter((Port)pv), erase);
+    break;
+  }
+}
 
 #ifndef FAST_INCS
 Value *incRef(Value *v, int deltaRefs) {
@@ -3640,7 +3646,8 @@ int main (int argc, char **argv) {
     normGlobals(tm);
     Vector *argVect = empty_vect;
     for(int i = 0; i < argc; i++) {
-      argVect = mutateVectConj(argVect, stringValue(argv[i]));
+      Value* sv = stringValue(argv[i]);
+      argVect = mutateVectConj(argVect, (Value *)new_port(VAL, (Port)sv));
     }
     finalResultVar = vars_alloc(tm);
     bashResult = 0;

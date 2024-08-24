@@ -17,6 +17,19 @@ Because of optimality, deforestation might be trivial as would multi modules
 To improve single-thread perf., reverse order links are written so the use of a
 result is put on the stack before the result is computed
 
+
+Say HVM is running on 8 threads. Thread 0 has exactly 1 low-priority redex, while the other 7 threads have 0 low-priority redexes. No threads have any high-priority redexes. Naturally, net->idle will have a value of 7, as 7 of the 8 threads have no redexes of any priority. Consider the following order of events:
+Thread 1 successfully steals thread 0's low-priority redex here.
+Thread 1 is preempted by the operating system.
+Thread 0 calls rbag_len here and determines that it may still have a redex, as its tm->rput index is currently still 1.
+Since thread 1 still thinks it has a redex, it calls interact here. interact calls pop_redex, which decrements thread 1's tm->rput and returns 0, as the redex was stolen. Since interact didn't receive a redex, it immediately returns.
+Thread 0 once again checks if it has any active redexes by calling rbag_len. This time, however, its tm->rput index is 0, indicating that both redex bags are empty.
+Thread 0 increments net->idle here. net->idle now has a value of 8.
+Thread 1 calls rbag_len and determines that it may have a redex, as its tm->rput index was incremented to 1 when it successfully stole a redex from thread 0.
+Thread 1 decrements net->idle here. net->idle now has a value of 7.
+ 
+At any point after event 6 but before event 8, thread 0 as well as threads 1 through 8 may exit, as net->idle is equal to TPC as is required to exit here.
+
 Roadmap
 =======
 

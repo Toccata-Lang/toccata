@@ -74,12 +74,12 @@ Port new_ref(interactionFn val) {
 Tag get_tag(Port port) {
   if (port & 7) {
     Tag t = port & TAG_MASK;
-    if (t == VL1)
-      return VAL;
+    if (t == VR1)
+      return VAR;
     else
       return t;
   } else {
-    return VAR;
+    return VAL;
   }
 }
 
@@ -141,9 +141,9 @@ bool should_swap(Port A, Port B) {
 
 // Gets a rule's priority
 u8 interactionPriority[13][13] = {
-  //VAR   VAL   REF   CON   DUP   NUM   OPR   SWI   VAR   VAL   RDX   ARG   ERA
-  {TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE }, // VAR
+  //VAL   VAR   REF   CON   DUP   NUM   OPR   SWI   VAR   VAL   RDX   ARG   ERA
   {TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE }, // VAL
+  {TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE }, // VAR
   {TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE ,TRUE }, // REF
   {TRUE ,TRUE ,TRUE ,TRUE ,FALSE,FALSE,FALSE,FALSE,TRUE ,TRUE ,TRUE ,TRUE ,TRUE }, // CON
   {TRUE ,TRUE ,TRUE ,FALSE,TRUE ,FALSE,FALSE,FALSE,TRUE ,TRUE ,TRUE ,FALSE,TRUE }, // DUP
@@ -559,7 +559,7 @@ Port vars_alloc() {
       if (max_vars < vc)
 	max_vars = vc;
       // fprintf(stderr, "allocd: %d %p\n", __LINE__, (void *)elem);
-      return (Port)elem;
+      return (Port)((i64)elem | VAR);
     }
   }
 }
@@ -882,7 +882,7 @@ bool DUPE(Port a, Port b) {
     b = a;
     a = x;
   }
-  incRef((Value *)(b & ~7), 1);
+  incRef((Value *)b, 1);
   Pair dupes = node_take(a);
   link(dupes.fst, b);
   link(dupes.snd, b);
@@ -893,7 +893,7 @@ bool DECF(Port a, Port b) {
   if (get_tag(a) == VAL)
     b = a;
   // fprintf(stderr, "DECF %d: %p\n", __LINE__, (void *)b);
-  dec_and_free((Value *)b, 1);
+  decValRef(b, 1);
   return TRUE;
 }
 
@@ -916,20 +916,20 @@ bool ABRT(Port a, Port b) {
 }
 
 interactionFn interactions[13][13] = {
-  //VAR   VAL   REF   CON   DUP   NUM   OPR   SWI   VAR   VAL   RDX   ARG   ERA
+  //VAL   VAr   REF   CON   DUP   NUM   OPR   SWI   VAR   VAL   RDX   ARG   ERA
+  {&ABRT,&LINK,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
-  {&LINK,&ABRT,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
-  {&LINK,&ABRT,&VOID,&ABRT,&CALL,&VOID,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL,&VOID}, // REF
-  {&LINK,&ABRT,&ABRT,&ANNI,&COMM,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // CON
-  {&LINK,&DUPE,&CALL,&COMM,&ANNI,&COMM,&COMM,&COMM,&LINK,&DUPE,&ABRT,&COMM,&ERAS}, // DUP
-  {&LINK,&DECF,&VOID,&COMM,&COMM,&VOID,&OPER,&SWIT,&LINK,&DECF,&ABRT,&ABRT,&VOID}, // NUM
-  {&LINK,&ABRT,&ABRT,&COMM,&COMM,&OPER,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // OPR
-  {&LINK,&ABRT,&ABRT,&COMM,&COMM,&SWIT,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // SWI
+  {&ABRT,&LINK,&VOID,&ABRT,&CALL,&VOID,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL,&VOID}, // REF
+  {&ABRT,&LINK,&ABRT,&ANNI,&COMM,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // CON
+  {&DUPE,&LINK,&CALL,&COMM,&ANNI,&COMM,&COMM,&COMM,&LINK,&DUPE,&ABRT,&COMM,&ERAS}, // DUP
+  {&DECF,&LINK,&VOID,&COMM,&COMM,&VOID,&OPER,&SWIT,&LINK,&DECF,&ABRT,&ABRT,&VOID}, // NUM
+  {&ABRT,&LINK,&ABRT,&COMM,&COMM,&OPER,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // OPR
+  {&ABRT,&LINK,&ABRT,&COMM,&COMM,&SWIT,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // SWI
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
-  {&LINK,&ABRT,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
+  {&ABRT,&LINK,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
   {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ERAS}, // RDX
-  {&LINK,&ABRT,&CALL,&ABRT,&COMM,&ABRT,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ARGS,&ERAS}, // ARG
-  {&LINK,&DECF,&VOID,&ERAS,&ERAS,&VOID,&ERAS,&ERAS,&LINK,&DECF,&ERAS,&ERAS,&VOID}  // ERA
+  {&ABRT,&LINK,&CALL,&ABRT,&COMM,&ABRT,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ARGS,&ERAS}, // ARG
+  {&DECF,&LINK,&VOID,&ERAS,&ERAS,&VOID,&ERAS,&ERAS,&LINK,&DECF,&ERAS,&ERAS,&VOID}  // ERA
 };
 
 interactionFn get_rule(Port a, Port b) {
@@ -1394,7 +1394,7 @@ Port dupeArg(Port arg, Port dupeArg) {
   switch(get_tag(arg)) {
   case VAL:
     link(arg, dupeArg);
-    return new_port(VAL, (Port)incRef((Value *)(arg & ~7), 1));
+    return new_port(VAL, (Port)incRef((Value *)arg, 1));
     break;
 
   case NUM:
@@ -1460,7 +1460,7 @@ void freeGlobal(Port p) {
   // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
   Tag t = get_tag(p);
   if (t == VAL) {
-    Value *v = (Value *)(p & ~7);
+    Value *v = (Value *)p;
     if (v->refs != REFS_STATIC) {
       v->refs = 1;
       dec_and_free(v, 1);
