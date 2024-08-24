@@ -54,14 +54,6 @@ typedef struct {
   int64_t len;
   char buffer[0];
 } String;
-typedef struct {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
-  int64_t hashVal;
-  int64_t len;
-  Value *source;
-  char *buffer;
-} SubString;
 typedef struct List {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -172,7 +164,6 @@ extern REFS_SIZE refsStatic;
 #define StringBufferType 2
 #define FnArityType 3
 #define FunctionType 4
-#define SubStringType 5
 #define ListType 6
 #define VectorType 8
 #define VectorNodeType 9

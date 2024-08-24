@@ -272,34 +272,6 @@ void freeString(Value *v) {
   }
 }
 
-FreeValList centralFreeSubStrings = (FreeValList){(Value *)0, 0};
-__thread FreeValList freeSubStrings = {(Value *)0, 0};
-SubString *malloc_substring() {
-  SubString *subStr = (SubString *)freeSubStrings.head;
-  if (subStr == (SubString *)0) {
-    subStr = (SubString *)removeFreeValue(&centralFreeSubStrings);
-    if (subStr == (SubString *)0) {
-      subStr = (SubString *)my_malloc(sizeof(SubString));
-    }
-  } else {
-    freeSubStrings.head = freeSubStrings.head->next;
-  }
-  // incTypeMalloc(SubStringType, 1);
-  subStr->refs = refsInit;
-  subStr->hashVal = 0;
-  return(subStr);
-}
-
-void freeSubString(Value *v) {
-  Value *src = ((SubString *)v)->source;
-  if (src != (Value *)0) {
-    dec_and_free(src, 1);
-  }
-
-  v->next = freeSubStrings.head;
-  freeSubStrings.head = v;
-}
-
 FreeValList centralFreeFnArities = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeFnArities = {(Value *)0, 0};
 FnArity *malloc_fnArity() {
@@ -761,12 +733,12 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeString,
 				       &freeFnArity,
 				       NULL,
-				       &freeSubString,
+				       NULL,
 				       &freeList,
 				       NULL,
 				       &freeVector,
 				       &freeVectorNode,
-				       &freeSubString,
+				       NULL,
 				       &freeBitmapNode,
 				       &freeArrayNode,
 				       &freeHashCollisionNode,
@@ -908,7 +880,6 @@ void moveFreeToCentral() {
   }
   moveToCentral(&freeStrings, &centralFreeStrings);
   moveToCentral(&freeArrayNodes, &centralFreeArrayNodes);
-  moveToCentral(&freeSubStrings, &centralFreeSubStrings);
   moveToCentral(&freeVectors, &centralFreeVectors);
   moveToCentral(&freeVectorNodes, &centralFreeVectorNodes);
   moveToCentral(&freeFnArities, &centralFreeFnArities);
@@ -953,7 +924,6 @@ void freeAll() {
     emptyFreeList(&centralFreeBMINodes[i]);
   }
   emptyFreeList(&centralFreeArrayNodes);
-  emptyFreeList(&centralFreeSubStrings);
   emptyFreeList(&centralFreeFnArities);
   emptyFreeList(&centralFreeLists);
   emptyFreeList(&centralFreeVectors);
@@ -1065,14 +1035,8 @@ List *reverseList(List *input) {
 char *extractStr(Value *v) {
   // Should only be used to print an error meessage when calling 'abort'
   // Leaks a String value
-  if (v->type == StringBufferType)
+  if (v->type == StringBufferType) {
     return(((String *)v)->buffer);
-  else if (v->type == SubStringType) {
-    String *newStr = (String *)my_malloc(sizeof(String) + ((String *)v)->len + 5);
-    // incTypeMalloc(StringBufferType, 1);
-    newStr->hashVal = 0;
-    snprintf(newStr->buffer, ((String *)v)->len + 1, "%s", ((SubString *)v)->buffer);
-    return(newStr->buffer);
   } else {
     fprintf(stderr, "\ninvalid type for 'extractStr'\n");
     abort();
@@ -1606,6 +1570,10 @@ Value *strCount(Value *arg0) {
 }
 
 Value *strList(Value *arg0) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return((Value *)NULL);
+  /*
   List *result = empty_list;
   if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
@@ -1632,6 +1600,7 @@ Value *strList(Value *arg0) {
   }
   dec_and_free(arg0, 1);
   return((Value *)result);
+  // */
 }
 
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
@@ -2253,10 +2222,6 @@ void strSha1Update(Sha1Context *ctxt, Value *arg0) {
     String *strVal = (String *)arg0;
     buffer = strVal->buffer;
     len = strVal->len;
-  } else if (arg0->type == SubStringType) {
-    SubString *strVal = (SubString *)arg0;
-    buffer = strVal->buffer;
-    len = strVal->len;
   }
 
   Sha1Update(ctxt, (void *)&arg0->type, 8);
@@ -2271,11 +2236,6 @@ int64_t strSha1(Value *arg0) {
 
   if (arg0->type == StringBufferType) {
     String *strVal = (String *)arg0;
-    hash = strVal->hashVal;
-    buffer = strVal->buffer;
-    len = strVal->len;
-  } else if (arg0->type == SubStringType) {
-    SubString *strVal = (SubString *)arg0;
     hash = strVal->hashVal;
     buffer = strVal->buffer;
     len = strVal->len;
@@ -2302,40 +2262,6 @@ int64_t strSha1(Value *arg0) {
 Value *escapeChars(Value *arg0) {
   if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
-    String *result = malloc_string(s->len * 2);
-    char *resultBuffer = result->buffer;
-    int resultIndex = 0;
-    for(int i = 0; i < s->len; i++) {
-      if (s->buffer[i] == 10) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 110;
-      } else if (s->buffer[i] == 34) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 34;
-      } else if (s->buffer[i] == 13) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 114;
-      } else if (s->buffer[i] == 12) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 102;
-      } else if (s->buffer[i] == 8) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 98;
-      } else if (s->buffer[i] == 9) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 116;
-      } else if (s->buffer[i] == 92) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 92;
-      } else
-        resultBuffer[resultIndex++] = s->buffer[i];
-    }
-    resultBuffer[resultIndex] = 0;
-    result->len = resultIndex;
-    dec_and_free(arg0, 1);
-    return((Value *)result);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
     String *result = malloc_string(s->len * 2);
     char *resultBuffer = result->buffer;
     int resultIndex = 0;
@@ -2479,6 +2405,10 @@ Value *subs3(Value *arg0, Value *arg1, Value *arg2) {
 }
 
 Value *strSeq(Value *arg0) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   List *result = empty_list;
   if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
@@ -2505,6 +2435,7 @@ Value *strSeq(Value *arg0) {
   }
   dec_and_free(arg0, 1);
   return((Value *)result);
+  // */
 }
 
 Value *dynamicCall2Arg(Value *f, Value *arg0, Value *arg1) {
@@ -2514,14 +2445,16 @@ Value *dynamicCall2Arg(Value *f, Value *arg0, Value *arg1) {
 }
 
 Value *strReduce(Value *s0, Value *x1, Value *f2) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   int64_t len = ((String *)s0)->len;
   Value *result = x1;
 
   char *buffer;
   if (s0->type == StringBufferType)
     buffer = ((String *)s0)->buffer;
-  else if (s0->type == SubStringType)
-    buffer = ((SubString *)s0)->buffer;
 
   incRef(f2, len);
   incRef(s0, len);
@@ -2536,9 +2469,14 @@ Value *strReduce(Value *s0, Value *x1, Value *f2) {
   dec_and_free(f2, 1);
   dec_and_free(s0, 1);
   return((Value *)result);
+  // */
 }
 
 Value *strVec(Value *arg0) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   Vector *result = empty_vect;
   if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
@@ -2551,20 +2489,10 @@ Value *strVec(Value *arg0) {
       result = mutateVectConj(result, (Value *)subStr);
     }
     incRef(arg0, s->len);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    for (int64_t i = 0; i < s->len; i++) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = mutateVectConj(result, (Value *)subStr);
-    }
-    incRef(arg0, s->len);
   }
   dec_and_free(arg0, 1);
   return((Value *)result);
+  // */
 }
 
 Value *vectorGet(Value *arg0, Value *arg1) {
@@ -3530,8 +3458,6 @@ String *nullTerm(Value *s) {
   String *arg0Str = malloc_string(((String *)s)->len);
   if (s->type == StringBufferType)
     snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((String *)s)->buffer);
-  else if (s->type == SubStringType)
-    snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((SubString *)s)->buffer);
   dec_and_free(s, 1);
   return(arg0Str);
 }
