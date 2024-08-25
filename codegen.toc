@@ -223,45 +223,73 @@
   (gen-code [x arity]
     (gen-code x)))
 
+(deftype ParamInit [var init]
+  ;; Container
+  ;; (map [x f]
+  ;;   x)
+  )
+
+(defprotocol DestParams
+  (dest-params [ast]
+    (assert-result r (instance? ParamInit r))))
+
+(deftype PlainParams [fixed variadic var]
+  Container
+  (map [x f]
+    (PlainParams (map fixed f) (f variadic) var))
+
+  DestParams
+  (dest-params [ast]
+    (let [var (.var ast)]
+      (-> (reverse (.fixed ast))
+          (reduce (ParamInit var (str "Port " var " = new_port(ARG, 0);" line-sep))
+                  (fn [args arg]
+                    (assert (instance? ParamInit args))
+                    (assert (instance? ParamInit arg))
+
+                    (.init args [(.init args)
+                                 (.init arg)
+                                 (str var " = node_make(ARG, " (.var arg)
+                                      ", " var ");" line-sep)])))))))
+
+(extend-type c/TaggedSymbol
+  DestParams
+  (dest-params [s]
+    (ParamInit (.var s) [])))
+
+(extend-type c/NoSymbol
+  DestParams
+  (dest-params [s]
+    (ParamInit "" [])))
+
 (defn destruct-params [params]
-  (for [_ (cata (fn [ast]
-                  (cond (instance? ast/params-ast ast)
-                        (se/update-val .init
-                                       (fn [init]
-                                         ["// params at " (ast/location params) "\n"
-                                          "Port " (.var ast) ";" line-sep
-                                          (-> (reverse (.fixed ast))
-                                              (map .var)
-                                              (reduce (str (.var ast) " = new_port(ARG, 0);" line-sep)
-                                                      (fn [args arg]
-                                                        (str args
-                                                             (.var ast)
-                                                             " = node_make(ARG, " arg
-                                                             ", " (.var ast) ");" line-sep))))
-                                          init]))
+  (let [args-init (hylo (fn [ast]
+                          (cond (instance? ast/params-ast ast)
+                                (PlainParams (.fixed ast) (.variadic ast) (.var ast))
 
-                        (se/state-error ast)))
-                params se/state-error)
-        rm (se/get-val .refs-map)
-        _ (se/update-val .init
-                         (fn [init]
-                           ["// allocate args at " (ast/location params) "\n"
-                            (cata (fn [ast]
-                                    (cond (instance? c/TaggedSymbol ast)
-                                          (either (map (get rm (.var ast))
-                                                       (fn [_]
-                                                         [(str "Port " (.var ast)
-                                                               " = vars_alloc();\n")]))
-                                                  
-                                                  (str "Port " (.var ast) " = erase;\n"))
+                                ast))
+                        dest-params params)]
+    (for [rm (se/get-val .refs-map)
+          _ (se/update-val .init
+                           (fn [init]
+                             ["// allocate args at " (ast/location params) "\n"
+                              (cata (fn [ast]
+                                      (cond (instance? c/TaggedSymbol ast)
+                                            (either (map (get rm (.var ast))
+                                                         (fn [_]
+                                                           [(str "Port " (.var ast)
+                                                                 " = vars_alloc();\n")]))
 
-                                          (instance? ast/params-ast ast)
-                                          (.fixed ast)
+                                                    (str "Port " (.var ast) " = erase;\n"))
 
-                                          ""))
-                                  params)
-                            init]))]
-    '_))
+                                            (instance? ast/params-ast ast)
+                                            (.fixed ast)
+
+                                            ""))
+                                    params)
+                              (.init args-init)
+                              init]))]
+      '_)))
 
 ;; (defn checking-fn [params c-fn]
 ;;   (assert (instance? ast/params-ast params))
@@ -598,7 +626,7 @@
                                                 "if (1) {" line-sep
                                                 "  List *l = malloc_list();" line-sep]
                                                (fn [v arg]
-                                                 (comp v ["  l = listCons((Value *)" (.var arg)
+                                                 (comp v ["  l = listCons(" (.var arg)
                                                           ", l);" line-sep])))
                                        (comp [result-var " = new_port(VAL, (Port)l);" line-sep
                                               "}" line-sep]))
