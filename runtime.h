@@ -253,7 +253,7 @@ extern Value *(*prValue)(FnArity *, Value *v);
 
 Value *my_malloc(int64_t sz);
 List *malloc_list();
-Value *vectSeq(Vector *vect, int index);
+List *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
 String *malloc_string(int len);
 Vector *malloc_vector();

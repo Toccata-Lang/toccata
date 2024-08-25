@@ -15,6 +15,7 @@ __thread u32 tid;
 // -------------
 
 Port erase = ERA;
+Port endArgs = new_port_(ARG, (NONE & ~TAG_MASK));
 Pair emptyPair = {FREE, FREE};
 u8 isEmpty(Pair p) {
   return p.fst == 0 && p.snd == 0;
@@ -726,7 +727,7 @@ bool ERAS(Port a, Port b) {
   if (t == ERA || t == NUM) {
     b = a;
   }
-  if (get_val(b) == FREE) {
+  if (b == endArgs || get_val(b) == FREE) {
     return TRUE;
   }
 
@@ -900,13 +901,52 @@ bool DECF(Port a, Port b) {
 
 bool ARGS(Port a, Port b) {
   // fprintf(stderr, "ARGS %d: %p %p\n", __LINE__, (void *)a, (void *)b);
-  if (a == ARG && b == ARG) {
+  if ((a == ARG || a == endArgs) &&
+      (b == ARG || b == endArgs)) {
     return TRUE;
   } else if (a == ARG || b == ARG) {
     fprintf(stderr, "Implement currying: %p %p\n", (void *)a, (void *)b);
     abort();
   } else {
     return ANNI(a, b);
+  }
+}
+
+bool DEST(Port a, Port b) {
+  // fprintf(stderr, "DEST %d: %p %p\n", __LINE__, (void *)a, (void *)b);
+  Value *val = (Value *)a;
+  if (val->type == ListType) {
+    List *l = (List *)a;
+    while (b != ARG) {
+      if (l == (List *)NULL) {
+	fprintf(stderr, "Too few items in collection being destructured. %s:%d\n",
+		__FILE__, __LINE__);
+	abort();
+      }
+      Pair B = node_take(b);
+      link(B.fst, l->head);
+      if (get_tag(B.snd) != ARG) {
+	link(B.snd, (Port)l->tail);
+	return TRUE;
+      }
+      List *tail = l->tail;
+      l->head = 0;
+      l->tail = (List *)NULL;
+      dec_and_free((Port)l, 1);
+      l = tail;
+      b = B.snd;
+    }
+    dec_and_free((Port)l, 1);
+    return TRUE;
+  } else if (val->type == VectorType) {
+    Vector *v = (Vector *)val;
+    List *l = vectSeq(v, 0);
+    return DEST((Port)l, b);
+  } else {
+    fprintf(stderr, "Destructuring Error %s:%d  %ld\n", __FILE__, __LINE__,
+	    val->type);
+    abort();
+    return FALSE;
   }
 }
 
@@ -918,7 +958,7 @@ bool ABRT(Port a, Port b) {
 
 interactionFn interactions[13][13] = {
   //VAL   VAr   REF   CON   DUP   NUM   OPR   SWI   VAR   VAL   RDX   ARG   ERA
-  {&ABRT,&LINK,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
+  {&ABRT,&LINK,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&DEST,&DECF}, // VAL
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
   {&ABRT,&LINK,&VOID,&ABRT,&CALL,&VOID,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&CALL,&VOID}, // REF
   {&ABRT,&LINK,&ABRT,&ANNI,&COMM,&COMM,&COMM,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // CON
@@ -927,9 +967,9 @@ interactionFn interactions[13][13] = {
   {&ABRT,&LINK,&ABRT,&COMM,&COMM,&OPER,&ANNI,&COMM,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // OPR
   {&ABRT,&LINK,&ABRT,&COMM,&COMM,&SWIT,&COMM,&ANNI,&LINK,&ABRT,&ABRT,&ABRT,&ERAS}, // SWI
   {&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&LINK,&ABRT,&LINK,&LINK}, // VAR
-  {&ABRT,&LINK,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ABRT,&DECF}, // VAL
+  {&ABRT,&LINK,&ABRT,&ABRT,&DUPE,&DECF,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&DEST,&DECF}, // VAL
   {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ERAS}, // RDX
-  {&ABRT,&LINK,&CALL,&ABRT,&COMM,&ABRT,&ABRT,&ABRT,&LINK,&ABRT,&ABRT,&ARGS,&ERAS}, // ARG
+  {&DEST,&LINK,&CALL,&ABRT,&COMM,&ABRT,&ABRT,&ABRT,&LINK,&DEST,&ABRT,&ARGS,&ERAS}, // ARG
   {&DECF,&LINK,&VOID,&ERAS,&ERAS,&VOID,&ERAS,&ERAS,&LINK,&DECF,&ERAS,&ERAS,&VOID}  // ERA
 };
 
@@ -1323,9 +1363,9 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 	
 	Port args1;
 	Port args2;
-	if (argsNode.snd == ARG) {
-	  args1 = ARG;
-	  args2 = ARG;
+	if (argsNode.snd == ARG || argsNode.snd == endArgs) {
+	  args1 = argsNode.snd;
+	  args2 = argsNode.snd;
 	} else {
 	  args1 = vars_make(NONE);
 	  args2 = vars_make(NONE);

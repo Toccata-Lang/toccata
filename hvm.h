@@ -107,6 +107,7 @@ typedef u64 Numb; // Numb ::= 60-bit (rounded up to u64)
 #define ERA 0xC // eraser
 
 extern Port erase;
+extern Port endArgs;
 
 #define MAX_ARGS 9
 typedef struct {

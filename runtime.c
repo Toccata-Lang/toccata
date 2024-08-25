@@ -1120,7 +1120,7 @@ Port dupeVal(Port *v) {
   else if (t == VAL)
     return (Port)incRef((Value *)(*v), 1);
   else {
-    fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+    fprintf(stderr, "Boom tag: %d at %s:%d\n", t, __FILE__, __LINE__);
     abort();
     return (0);
   }
@@ -1425,25 +1425,24 @@ Port vectGet(Vector *vect, unsigned index) {
   // this fn does not dec_and_free vect on purpose
   // it lets calling functions do that.
   Port *array = arrayFor(vect, index);
-  return(array[index & 0x1f]);
+  if (vect->refs == 1) {
+    Port p = array[index & 0x1f];
+    array[index & 0x1f] = 0;
+    return(p);
+  } else {
+    return(dupeVal(&array[index & 0x1f]));
+  }
 }
 
-Value *vectSeq(Vector *vect, int index) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
+List *vectSeq(Vector *vect, int index) {
   List *ret = empty_list;
   if (vect->count > 0) {
     for (int i = vect->count - 1; i >= index; i -= 1) {
-      Port v = vectGet(vect, (unsigned)i);
-      incRef(v, 1);
-      ret = listCons(v, ret);
+      ret = listCons(vectGet(vect, (unsigned)i), ret);
     }
   }
   dec_and_free((Port)vect, 1);
-  return((Value *)ret);
-  // */
+  return(ret);
 }
 
 Vector *vectorReverse(Vector *v) {
