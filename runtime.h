@@ -59,13 +59,13 @@ typedef struct List {
   REFS_SIZE refs;
   int64_t hashVal;
   int64_t len;
-  Value *head;
+  Port head;
   struct List *tail;
 } List;
 typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
-  Value *array[VECTOR_ARRAY_LEN];
+  Port array[VECTOR_ARRAY_LEN];
 } VectorNode;
 typedef struct {
   TYPE_SIZE type;
@@ -75,7 +75,7 @@ typedef struct {
   int8_t shift;
   int64_t tailOffset;
   VectorNode *root;
-  Value *tail[VECTOR_ARRAY_LEN];
+  Port tail[VECTOR_ARRAY_LEN];
 } Vector;
 typedef struct {
   TYPE_SIZE type;
@@ -96,7 +96,7 @@ typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
   int64_t hashVal;
-  Value *array[ARRAY_NODE_LEN];
+  Port array[ARRAY_NODE_LEN];
 } ArrayNode;
 typedef struct {
   TYPE_SIZE type;
@@ -110,7 +110,7 @@ typedef struct {
   REFS_SIZE refs;
   int64_t hashVal;
   int64_t implCount;
-  Value *impls[];
+  Port impls[];
 } ReifiedVal;
 typedef struct {
   TYPE_SIZE type;
@@ -219,13 +219,13 @@ extern int64_t free_count;
 void freeAll();
 
 #ifndef FAST_INCS
-Value *incRef(Value *v, int deltaRefs);
+Value* incRef(Value* v, int deltaRefs);
 #else
 Value *simpleIncRef(Value *v, int n);
 #define incRef(V, N) ((V)->refs >= 0 ? simpleIncRef(V, N) : V)
 #endif
 
-void dec_and_free(Value* v, int deltaRefs);
+void dec_and_free(Port v, int deltaRefs);
 void decValRef(Port pv, int deltaRefs);
 
 void prefs(char *tag, Value *v);
@@ -267,12 +267,12 @@ Port number_str(Port arg0);
 Value *integer_EQ(Value *arg0, Value *arg1);
 Value *integer_LT(Value *arg0, Value *arg1);
 Value *integerValue(int64_t n);
-Vector *vectConj(Vector *vect, Value *val);
-Vector *mutateVectConj(Vector *vect, Value *val);
-Value *vectStore(Vector *vect, unsigned index, Value *val);
-Value *updateField(Value *rval, Value *field, int64_t index);
-Value *vectorReverse(Value *arg0);
-List *listCons(Value *x, List *l);
+Vector *vectConj(Vector *vect, Port val);
+Vector *mutateVectConj(Vector *vect, Port val);
+Vector *vectStore(Vector *vect, unsigned index, Port val);
+ReifiedVal *updateField(ReifiedVal *rval, Port field, int64_t idx);
+Vector *vectorReverse(Vector *v);
+List *listCons(Port x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
                    Value **args[]);
 Value *strCount(Value *arg0);
@@ -281,9 +281,8 @@ Value *strList(Value *arg0);
 Value *strVect(Value *arg0);
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);
-Value *listConcat(Value *arg0);
-Value *car(Value *arg0);
-Value *cdr(Value *arg0);
+Port car(List *arg0);
+List *cdr(List *arg0);
 Value *integerLT(Value *arg0, Value *arg1);
 int64_t integerSha1(Value *arg0);
 Value *bitAnd(Value *arg0, Value *arg1);
@@ -295,7 +294,6 @@ Value *bitNot(Value *arg0);
 Value *addIntegers(Value *arg0, Value *arg1);
 Value *listEQ(Value *arg0, Value *arg1);
 int8_t equal(Value *v1, Value *v2);
-Value *fnApply(FnArity *arg0, Value *arg1);
 int64_t strSha1(Value *arg0);
 Value *escapeChars(Value *arg0);
 Value *subs2(Value *arg0, Value *arg1);
@@ -339,13 +337,12 @@ void freeExtractCache(void *cachePtr);
 void freeIntGenerator(void *ptr);
 Value *dynamicCall1Arg(Value *f, Value *arg);
 String *nullTerm(Value *s);
-void show(Value *v);
 int64_t countSeq(Value *seq);
 Value *malloc_sha1();
 Value *finalize_sha1(Value *ctxt);
 void Sha1Update(Sha1Context *Context, void *Buffer, int64_t BufferSize);
 void strSha1Update(Sha1Context *ctxt, Value *arg0);
-Value *reifiedTypeArgs(Value *x);
+Value *reifiedTypeArgs(Port x);
 Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym,
                      Value *dispValue, Value *args);
 Value *get(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
@@ -357,7 +354,7 @@ Value *newTypeValue(int typeNum, Vector *fields);
 Value *getField(Value *value, int fieldIndex);
 Vector *listVec(Value *list);
 Value *defaultPrErrSTAR(Value *str);
-Value *vectGet(Vector *vect, unsigned index);
+Port vectGet(Vector *vect, unsigned index);
 Value *hashMapVec(Value *m);
 void incTypeMalloc(TYPE_SIZE type, int delta);
 void incTypeFree(TYPE_SIZE type, int delta);

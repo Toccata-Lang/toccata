@@ -882,6 +882,7 @@ bool DUPE(Port a, Port b) {
     b = a;
     a = x;
   }
+  // b must be a VALue
   incRef((Value *)b, 1);
   Pair dupes = node_take(a);
   link(dupes.fst, b);
@@ -1458,15 +1459,5 @@ Port finalResultVar;
 void freeGlobal(Port p) {
   p = enter(p);
   // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
-  Tag t = get_tag(p);
-  if (t == VAL) {
-    Value *v = (Value *)p;
-    if (v->refs != REFS_STATIC) {
-      v->refs = 1;
-      dec_and_free(v, 1);
-      v->refs = REFS_STATIC;
-    }
-  } else {
-    link(p, erase);
-  } 
+  link(p, erase);
 }

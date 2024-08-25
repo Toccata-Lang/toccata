@@ -327,7 +327,7 @@ List *malloc_list() {
   newList->type = ListType;
   newList->refs = refsInit;
   newList->hashVal = 0;
-  newList->head = (Value *)0;
+  newList->head = 0;
   newList->tail = (List *)0;
   newList->len = 0;
   return(newList);
@@ -335,11 +335,9 @@ List *malloc_list() {
 
 void freeList(Value *v) {
   List *l = (List *)v;
-  Value *head = l->head;
+  Port head = l->head;
   List *tail = l->tail;
-  if (head != (Value *)NULL) {
-    dec_and_free(head, 1);
-  }
+  dec_and_free(head, 1);
   l->tail = (List *)0;
   v->next = freeLists.head;
   freeLists.head = v;
@@ -399,7 +397,7 @@ VectorNode *malloc_vectorNode() {
 
 void freeVectorNode(Value *v) {
   for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
-    if (((VectorNode *)v)->array[i] != (Value *)0) {
+    if (((VectorNode *)v)->array[i] != 0) {
       dec_and_free(((VectorNode *)v)->array[i], 1);
     }
   }
@@ -443,18 +441,19 @@ Vector *malloc_vector() {
   return(newVector);
 }
 
-void freeVector(Value *v) {
-  Value *root = (Value *)((Vector *)v)->root;
-  if (root != (Value *)0) {
-    dec_and_free((Value *)root, 1);
+void freeVector(Value *val) {
+  Vector *v = (Vector *)val;
+  VectorNode *root = ((Vector *)v)->root;
+  if (root != (VectorNode *)NULL) {
+    dec_and_free((Port)root, 1);
   }
 
   for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
-    if (((Vector *)v)->tail[i] != (Value *)0)
+    if (((Vector *)v)->tail[i] != 0)
       dec_and_free(((Vector *)v)->tail[i], 1);
   }
-  v->next = freeVectors.head;
-  freeVectors.head = v;
+  val->next = freeVectors.head;
+  freeVectors.head = val;
 }
 
 FreeValList centralFreeReified[20] = {(FreeValList){(Value *)0, 0},
@@ -620,6 +619,10 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
 }
 
 void freeBitmapNode(Value *v) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return;
+  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)v;
   int cnt = __builtin_popcount(node->bitmap);
   for (int i = 0; i < (2 * cnt); i++) {
@@ -637,6 +640,7 @@ void freeBitmapNode(Value *v) {
     v->next = freeBMINodes[cnt].head;
     freeBMINodes[cnt].head = v;
   }
+  // */
 }
 
 HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
@@ -657,9 +661,13 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
 }
 
 void freeHashCollisionNode(Value *v) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return;
+  /*
   HashCollisionNode *node = (HashCollisionNode *)v;
   for (int i = 0; i < node->count; i++) {
-    if (node->array[i] != (Value *)0) {
+    if (node->array[i] != 0) {
       dec_and_free(node->array[i], 1);
     }
   }
@@ -668,6 +676,7 @@ void freeHashCollisionNode(Value *v) {
 #endif
   if (!cleaningUp)
     free(v);
+  // */
 }
 
 FreeValList centralFreeArrayNodes = (FreeValList){(Value *)0, 0};
@@ -706,7 +715,7 @@ ArrayNode *malloc_arrayNode() {
 void freeArrayNode(Value *v) {
   ArrayNode *node = (ArrayNode *)v;
   for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-    if (node->array[i] != (Value *)0) {
+    if (node->array[i] != 0) {
       dec_and_free(node->array[i], 1);
     }
   }
@@ -798,7 +807,7 @@ void decValRef(Port pv, int deltaRefs) {
   }
 };
 
-void dec_and_free(Value* pv, int deltaRefs) {
+void dec_and_free(Port pv, int deltaRefs) {
   if (pv == 0) {
     return;
   }
@@ -818,11 +827,11 @@ void dec_and_free(Value* pv, int deltaRefs) {
 }
 
 #ifndef FAST_INCS
-Value *incRef(Value *v, int deltaRefs) {
+Value* incRef(Value* v, int deltaRefs) {
   if (get_tag((Port)v) == NUM)
     return v;
 
-  if ((Value *)v == 0) {
+  if (v == (Value *)NULL) {
     fprintf(stderr, "bad incRef value: %p\n", v);
     abort();
   }
@@ -832,19 +841,6 @@ Value *incRef(Value *v, int deltaRefs) {
   } else if (deltaRefs < 1)
     return(v);
 
-#ifdef SINGLE_THREADED
-  if (v->refs == refsStatic || v->refs == refsConstant)
-    return(v);
-
-  if (v->refs < refsStatic) {
-    fprintf(stderr, "failure in incRef: %d %p\n", v->refs, v);
-    abort();
-  }
-
-  if (v->refs >= 0) {
-    v->refs += deltaRefs;;
-  }
-#else
   REFS_SIZE refs;
   __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
 
@@ -854,13 +850,13 @@ Value *incRef(Value *v, int deltaRefs) {
       return(v);
 
     if (refs < refsStatic) {
-      fprintf(stderr, "failure in incRef: %d %p\n", refs, v);
+      fprintf(stderr, "failure in incRef: %d %p\n", refs, (void *)v);
       abort();
     }
 
     newRefs = refs + deltaRefs;
-  } while (!__atomic_compare_exchange(&v->refs, &refs, &newRefs, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
-#endif
+  } while (!__atomic_compare_exchange(&v->refs, &refs, &newRefs, 1,
+				      __ATOMIC_RELAXED, __ATOMIC_RELAXED));
   return(v);
 }
 #else
@@ -905,7 +901,7 @@ void emptyFreeList(FreeValList *freeLinkedList) {
 #else
   __atomic_load((FreeValList *)freeLinkedList, (FreeValList *)&listHead, __ATOMIC_RELAXED);
 #endif
-  for(Value *item = listHead.head;
+  for(Value *item = (Value *)listHead.head;
       item != (Value *)0;
       item =  item->next) {
 #ifdef CHECK_MEM_LEAK
@@ -1018,6 +1014,7 @@ int64_t nakedSha1(Value *v1) {
   // */
 }
 
+/*
 List *reverseList(List *input) {
   List *output = empty_list;
   Value *item;
@@ -1031,6 +1028,7 @@ List *reverseList(List *input) {
   dec_and_free((Value *)input, 1);
   return(output);
 }
+// */
 
 char *extractStr(Value *v) {
   // Should only be used to print an error meessage when calling 'abort'
@@ -1107,37 +1105,54 @@ Value *isInstance(Value *arg0, Value *arg1) {
   // */
 }
 
-List *listCons(Value *x, List *l) {
+List *listCons(Port x, List *l) {
   List *newList = malloc_list();
   newList->len = l->len + 1;
-  newList->head = (Value *)x;
+  newList->head = x;
   newList->tail = l;
   return(newList);
 };
 
-Vector *newVector(Value *array[], int indexToSkip) {
+Port dupeVal(Port *v) {
+  Tag t = get_tag(*v);
+  if (t == NUM)
+    return *v;
+  else if (t == VAL)
+    return (Port)incRef((Value *)(*v), 1);
+  else {
+    fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+    abort();
+    return (0);
+  }
+}
+
+Vector *newVector(Port array[], int indexToSkip) {
   Vector *ret = malloc_vector();
   for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
-    if (array[i] != (Value *)0 && i != indexToSkip) {
-      ret->tail[i] = array[i];
-      incRef(array[i], 1);
+    if (array[i] != 0 && i != indexToSkip) {
+      ret->tail[i] = dupeVal(&array[i]);
     }
   }
   return(ret);
 }
 
-VectorNode *newVectorNode(Value *array[], int indexToSkip) {
+VectorNode *newVectorNode(Port array[], int indexToSkip) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((VectorNode *)NULL);
+  /*
   VectorNode *ret = malloc_vectorNode();
   for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
-    if (array[i] != (Value *)0 && i != indexToSkip) {
+    if (array[i] != 0 && i != indexToSkip) {
       ret->array[i] = array[i];
       incRef(array[i], 1);
     }
   }
   return(ret);
+  // */
 }
 
-Value **arrayFor(Vector *v, unsigned index) {
+Port *arrayFor(Vector *v, unsigned index) {
   if (index < v->count) {
     if (index >= v->tailOffset) {
       return(v->tail);
@@ -1151,7 +1166,7 @@ Value **arrayFor(Vector *v, unsigned index) {
   } else {
     fprintf(stderr, "Vector index out of bounds\n");
     abort();
-    return((Value **)0);
+    return((Port *)0);
   }
 }
 
@@ -1160,7 +1175,7 @@ VectorNode *newPath(int level, VectorNode *node) {
     return(node);
   } else {
     VectorNode *ret = malloc_vectorNode();
-    ret->array[0] = (Value *)newPath(level - 5, node);
+    ret->array[0] = (Port)newPath(level - 5, node);
     return(ret);
   }
 }
@@ -1184,11 +1199,11 @@ VectorNode *pushTail(unsigned count, int level, VectorNode *parent, VectorNode *
       nodeToInsert = newPath(level - 5, tailNode);
     }
   }
-  ret->array[subidx] = (Value *)nodeToInsert;
+  ret->array[subidx] = (Port)nodeToInsert;
   return(ret);
 }
 
-Vector *vectConj(Vector *vect, Value *val) {
+Vector *vectConj(Vector *vect, Port val) {
   if (vect->refs == 1) {
     return(mutateVectConj((Vector *)incRef((Value *)vect, 1), val));
     // if there's room in the tail
@@ -1203,7 +1218,7 @@ Vector *vectConj(Vector *vect, Value *val) {
       newVect->tailOffset = (newVect->count - 1) & ~0x1f;
     }
     newVect->root = vect->root;
-    if (newVect->root != (VectorNode *)0) {
+    if (newVect->root != (VectorNode *)NULL) {
       incRef((Value *)newVect->root, 1);
     }
 
@@ -1220,11 +1235,11 @@ Vector *vectConj(Vector *vect, Value *val) {
     if ((vect->count >> 5) > (1 << vect->shift)) {
       // make new vector one level deeper
       newRoot = malloc_vectorNode();
-      newRoot->array[0] = (Value *)vect->root;
-      incRef(newRoot->array[0], 1);
+      newRoot->array[0] = (Port)vect->root;
+      incRef((Value *)newRoot->array[0], 1);
 
       // and make a new path that includes that node
-      newRoot->array[1] = (Value *)newPath(vect->shift, tailNode);
+      newRoot->array[1] = (Port)newPath(vect->shift, tailNode);
       newShift += 5;
     } else {
       // otherwise, push the tail node down, creating a new root
@@ -1240,7 +1255,7 @@ Vector *vectConj(Vector *vect, Value *val) {
   }
 }
 
-Vector *mutateVectConj(Vector *vect, Value *val) {
+Vector *mutateVectConj(Vector *vect, Port val) {
   // if 'vect' is a static vector
   if (vect->refs <= refsConstant) {
     Vector *result = vectConj(vect, val);
@@ -1256,7 +1271,7 @@ Vector *mutateVectConj(Vector *vect, Value *val) {
     VectorNode *tailNode = newVectorNode(vect->tail, VECTOR_ARRAY_LEN);
     for (unsigned i = 0; i < VECTOR_ARRAY_LEN; i++) {
       dec_and_free(vect->tail[i], 1);
-      vect->tail[i] = (Value *)0;
+      vect->tail[i] = 0;
     }
     int newShift = vect->shift;
 
@@ -1264,17 +1279,17 @@ Vector *mutateVectConj(Vector *vect, Value *val) {
     if ((vect->count >> 5) > (1 << vect->shift)) {
       // make new vector one level deeper
       newRoot = malloc_vectorNode();
-      newRoot->array[0] = (Value *)vect->root;
+      newRoot->array[0] = (Port)vect->root;
 
       // and make a new path that includes that node
-      newRoot->array[1] = (Value *)newPath(vect->shift, tailNode);
+      newRoot->array[1] = (Port)newPath(vect->shift, tailNode);
       newShift += 5;
     } else {
       // make new vector one level deeper
       // otherwise, push the tail node down, creating a new root
       newRoot = pushTail(vect->count, vect->shift, vect->root, tailNode);
       if (vect->root != (VectorNode *)0)
-        dec_and_free((Value *)vect->root, 1);
+        dec_and_free((Port)vect->root, 1);
     }
     vect->count += 1;
     vect->tailOffset = (vect->count - 1) & ~0x1f;
@@ -1285,7 +1300,7 @@ Vector *mutateVectConj(Vector *vect, Value *val) {
   }
 }
 
-VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Value *val) {
+VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Port val) {
   if (level == 0) {
     int arrayIndex = index & 0x1f;
     VectorNode *newNode = newVectorNode(node->array, arrayIndex);
@@ -1294,16 +1309,17 @@ VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Value *va
   } else {
     int arrayIndex = (index >> level) & 0x1f;
     VectorNode *newNode = newVectorNode(node->array, arrayIndex);
-    newNode->array[arrayIndex] = (Value *)copyVectStore(level - 5, (VectorNode *)node->array[arrayIndex],
-							index, val);
+    newNode->array[arrayIndex] = (Port)copyVectStore(level - 5,
+						     (VectorNode *)node->array[arrayIndex],
+						     index, val);
     return(newNode);
   }
 }
 
-Value *vectStore(Vector *vect, unsigned index, Value *val) {
+Vector *vectStore(Vector *vect, unsigned index, Port val) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
-  return ((Value *)NULL);
+  return ((Vector *)NULL);
   /*
   TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   // TODO: check the refs count and mutate if equal 1
@@ -1343,7 +1359,7 @@ Value *vectStore(Vector *vect, unsigned index, Value *val) {
   // */
 }
 
-Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
+Vector *fastVectStore(Vector *vect, unsigned index, Port val) {
   if (index < vect->count &&
       index >= vect->tailOffset &&
       vect->refs == 1) {
@@ -1351,13 +1367,13 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
     dec_and_free(vect->tail[newIndex], 1);
 
     vect->tail[newIndex] = val;
-    return((Value *)vect);
+    return(vect);
   } else {
-    Value *result = vectStore(vect, index, val);
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
-  return ((Value *)NULL);
+  return ((Vector *)NULL);
   /*
+    Vector *result = vectStore(vect, index, val);
     if (isNothing(result)) {
       fprintf(stderr, "*** Improper use of fastVectStore\n");
       abort();
@@ -1372,11 +1388,15 @@ Value *fastVectStore(Vector *vect, unsigned index, Value *val) {
   }
 }
 
-Value *updateField(Value *rval, Value *field, int64_t idx) {
+ReifiedVal *updateField(ReifiedVal *rval, Port field, int64_t idx) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((ReifiedVal *)NULL);
+  /*
   ReifiedVal *template = (ReifiedVal *)rval;
   if (idx >= template->implCount) {
     fprintf(stderr, "Field index for type '%s' out of bounds: %" PRId64 ". Max: %" PRId64 "\n",
-	    extractStr(type_name((FnArity *)0, rval)), idx, template->implCount);
+	    extractStr(type_name((FnArity *)0, (Value *)rval)), idx, template->implCount);
     abort();
   }
   if (rval->refs == 1) {
@@ -1388,53 +1408,59 @@ Value *updateField(Value *rval, Value *field, int64_t idx) {
     ReifiedVal *rv = malloc_reified(template->implCount);
     int rvSize = sizeof(ReifiedVal) + sizeof(FnArity *) * template->implCount;
     memcpy(rv, template, rvSize);
-#ifdef SINGLE_THREADED
-    rv->refs = refsInit;
-#else
     __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
     for (int i = 0; i < template->implCount; i++) {
       if (i != idx) {
         incRef(template->impls[i], 1);
       }
     }
     rv->impls[idx] = field;
-    dec_and_free(rval, 1);
-    return((Value *)rv);
+    dec_and_free((Port)rval, 1);
+    return(rv);
   }
+  // */
 }
 
-Value *vectGet(Vector *vect, unsigned index) {
+Port vectGet(Vector *vect, unsigned index) {
   // this fn does not dec_and_free vect on purpose
   // it lets calling functions do that.
-  Value **array = arrayFor(vect, index);
+  Port *array = arrayFor(vect, index);
   return(array[index & 0x1f]);
 }
 
 Value *vectSeq(Vector *vect, int index) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   List *ret = empty_list;
   if (vect->count > 0) {
     for (int i = vect->count - 1; i >= index; i -= 1) {
-      Value *v = vectGet(vect, (unsigned)i);
+      Port v = vectGet(vect, (unsigned)i);
       incRef(v, 1);
       ret = listCons(v, ret);
     }
   }
-  dec_and_free((Value *)vect, 1);
+  dec_and_free((Port)vect, 1);
   return((Value *)ret);
+  // */
 }
 
-Value *vectorReverse(Value *arg0) {
-  Vector *v = (Vector *)arg0;
+Vector *vectorReverse(Vector *v) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Vector *)NULL);
+  /*
   int i;
   Vector *newVect = empty_vect;
   for (i = v->count - 1; i >= 0; i--) {
-    Value *val = vectGet(v, i);
+    Port val = vectGet(v, i);
     incRef(val, 1);
     newVect = mutateVectConj(newVect, val);
   }
-  dec_and_free(arg0, 1);
-  return((Value *)newVect);
+  dec_and_free((Port)v, 1);
+  return(newVect);
+  // */
 }
 
 Value *strEQ(Value *arg0, Value *arg1) {
@@ -1708,19 +1734,18 @@ Value *listMap(Value *arg0, Value *f) {
   // */
 }
 
-Value *listConcat(Value *arg0) {
+/*
+List *listConcat(List *ls) {
   // TODO: check refs count for each list and stitch them together
-  List *ls = (List *)arg0;
-
   if (ls->len == 0) {
-    dec_and_free(arg0, 1);
-    return((Value *)empty_list);
+    dec_and_free((Port)ls, 1);
+    return(empty_list);
   }
   else if (ls->len == 1) {
-    Value *h = ls->head;
+    Port h = ls->head;
     incRef(h, 1);
-    dec_and_free((Value *)ls, 1);
-    if (h != (Value *)0 && h->type == VectorType) {
+    dec_and_free((Port)ls, 1);
+    if (h != 0 && h->type == VectorType) {
        return(vectSeq((Vector *)h, 0));
     } else if (h != (Value *)0 && h->type != ListType) {
       // TODO: this test should be redundant when type checker is finished. Verify
@@ -1744,8 +1769,8 @@ Value *listConcat(Value *arg0) {
 	fprintf(stderr, "*** Could not concatenate non-list value with list\n");
 	abort();
       }
-      Value *x;
-      for(; l != (List *)0 && l->head != (Value *)0; l = newL) {
+      Port x;
+      for(; l != (List *)NULL && l->head != 0; l = newL) {
         x = l->head;
         if (head == empty_list) {
           // if we haven't started the new list yet
@@ -1769,44 +1794,43 @@ Value *listConcat(Value *arg0) {
         newL = l->tail;
         if(discard) {
           l->tail = (List *)0;
-          dec_and_free((Value *)l, 1);
+          dec_and_free((Port)l, 1);
         }
       }
     }
-    dec_and_free(arg0, 1);
+    dec_and_free((Port)ls, 1);
     return((Value *)head);
   }
 }
+// */
 
-Value *car(Value *arg0) {
+Port car(List *lst) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
-  return ((Value *)NULL);
+  return (0);
   /*
   TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
-  List *lst = (List *)arg0;
   if (lst->len == 0) {
     return(nothing);
   } else {
-    Value *h = lst->head;
+    Port h = lst->head;
     incRef(h, 1);
-    dec_and_free(arg0, 1);
+    dec_and_free((Port)lst, 1);
     return(maybe((FnArity *)0, (Value *)0, h));
   }
   // */
 }
 
-Value *cdr(Value *arg0) {
-  List *lst = (List *)arg0;
+List *cdr(List *lst) {
   if (lst->len == 0) {
-    dec_and_free(arg0, 1);
-    return((Value *)empty_list);
+    dec_and_free((Port)lst, 1);
+    return(empty_list);
   } else {
-    List *tail = ((List *)arg0)->tail;
+    List *tail = lst->tail;
     tail->len = lst->len - 1;
     incRef((Value *)tail, 1);
-    dec_and_free(arg0, 1);
-    return((Value *)tail);
+    dec_and_free((Port)lst, 1);
+    return(tail);
   }
 }
 
@@ -2055,6 +2079,7 @@ Value *stringValue(char *s) {
   return((Value *)strVal);
 };
 
+/*
 Value *fnApply(FnArity *_arity, Value *arg1) {
   List *argList = (List *)arg1;
 
@@ -2214,7 +2239,9 @@ Value *fnApply(FnArity *_arity, Value *arg1) {
     abort();
   }
 }
+// */
 
+/*
 void strSha1Update(Sha1Context *ctxt, Value *arg0) {
   char *buffer;
   int64_t len;
@@ -2228,7 +2255,9 @@ void strSha1Update(Sha1Context *ctxt, Value *arg0) {
   Sha1Update(ctxt, buffer, len);
   return;
 }
+// */
 
+/*
 int64_t strSha1(Value *arg0) {
   int64_t hash;
   char *buffer;
@@ -2258,7 +2287,9 @@ int64_t strSha1(Value *arg0) {
     return(shaVal);
   }
 }
+// */
 
+/*
 Value *escapeChars(Value *arg0) {
   if (arg0->type == StringBufferType) {
     String *s = (String *)arg0;
@@ -2297,6 +2328,7 @@ Value *escapeChars(Value *arg0) {
   }
   return(arg0);
 }
+// */
 
 Value *opaqueValue(void *ptr, Destructor *destruct) {
   Opaque *opVal = (Opaque *)my_malloc(sizeof(Opaque));
@@ -2589,6 +2621,10 @@ Value *listFilter(Value *arg0, Value *arg1) {
 BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
                                            Value *key, Value* val)
 {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((BitmapIndexedNode *)NULL);
+  /*
   int itemCount = __builtin_popcount(node->bitmap);
   BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
   newNode->bitmap = node->bitmap;
@@ -2608,12 +2644,17 @@ BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
     }
   }
   return(newNode);
+  // */
 }
 
 Value *createNode(int shift,
 		  int64_t key1hash, Value *key1, Value *val1,
 		  int64_t key2hash, Value *key2, Value *val2)
 {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   if (shift > 60) {
     fprintf(stderr, "Ran out of shift!!!!!!");
     abort();
@@ -2635,9 +2676,14 @@ Value *createNode(int shift,
     newNode->array[key2idx * 2 + 1] = val2;
   }
   return((Value *)newNode);
+  // */
 }
 
 Value *bmiHashSeq(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int cnt = __builtin_popcount(node->bitmap);
   List *seq = (List *)arg1;
@@ -2648,14 +2694,19 @@ Value *bmiHashSeq(Value *arg0, Value *arg1) {
       List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
       incRef(node->array[2 * i], 1);
       incRef(node->array[2 * i + 1], 1);
-      seq = listCons((Value *)pair, seq);
+      seq = listCons((Port)pair, seq);
     }
   }
   dec_and_free(arg0, 1);
   return((Value *)seq);
+  // */
 }
 
 Value *bmiHashVec(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int cnt = __builtin_popcount(node->bitmap);
   Vector *vec = (Vector *)arg1;
@@ -2672,6 +2723,7 @@ Value *bmiHashVec(Value *arg0, Value *arg1) {
   }
   dec_and_free(arg0, 1);
   return((Value *)vec);
+  // */
 }
 
 Value *bmiCount(Value *arg0) {
@@ -2698,6 +2750,10 @@ Value *bmiCount(Value *arg0) {
 }
 
 Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
@@ -2812,9 +2868,14 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
       return((Value *)newNode);
     }
   }
+  // */
 }
 
 Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   if (arg0->refs != 1) {
     return(bmiCopyAssoc(arg0, arg1, arg2, hash, shift));
   } else {
@@ -2929,9 +2990,14 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
       }
     }
   }
+  // */
 }
 
 Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,  int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
 
@@ -2966,9 +3032,14 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,  int shift) {
     dec_and_free(arg1, 1);
     return(arg2);
   }
+  // */
 }
 
 Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
 
@@ -3036,9 +3107,14 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
     dec_and_free(arg1, 1);
     return(arg0);
   }
+  // */
 }
 
 Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
@@ -3075,9 +3151,14 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, i
   }
   dec_and_free((Value *)node, 1);
   return((Value *)newNode);
+  // */
 }
 
 Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   if (arg0->refs != 1) {
     return(arrayNodeCopyAssoc(arg0, arg1, arg2, hash, shift));
   } else {
@@ -3096,9 +3177,14 @@ Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
     }
     return((Value *)node);
   }
+  // */
 }
 
 Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
@@ -3136,12 +3222,17 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
     dec_and_free(arg0, 1);
     return((Value *)bmi);
   }
+  // */
 }
 
 Value notFound = {0, -2};
 Value *notFoundPtr = &notFound;
 
 Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   Value *notFound = arg2;
@@ -3157,6 +3248,7 @@ Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
     dec_and_free(arg0, 1);
     return(get((FnArity *)0, subNode, key, notFound, hash, shift + 5));
   }
+  // */
 }
 
 Value *arrayNodeCount(Value *arg0) {
@@ -3189,6 +3281,10 @@ Value *collisionCount(Value *arg0) {
 }
 
 Value *collisionSeq(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   List *seq = (List *)arg1;
   for (int i = 0; i < node->count / 2; i++) {
@@ -3196,14 +3292,19 @@ Value *collisionSeq(Value *arg0, Value *arg1) {
       List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
       incRef(node->array[2 * i], 1);
       incRef(node->array[2 * i + 1], 1);
-      seq = listCons((Value *)pair, seq);
+      seq = listCons((Port)pair, seq);
     }
   }
   dec_and_free(arg0, 1);
   return((Value *)seq);
+  // */
 }
 
 Value *collisionVec(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Vector *vec = (Vector *)arg1;
   for (int i = 0; i < node->count / 2; i++) {
@@ -3217,9 +3318,14 @@ Value *collisionVec(Value *arg0, Value *arg1) {
   }
   dec_and_free(arg0, 1);
   return((Value *)vec);
+  // */
 }
 
 Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Value *key = arg1;
   HashCollisionNode *newNode;
@@ -3257,9 +3363,14 @@ Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
     }
   }
   return(arg0);
+  // */
 }
 
 Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   for (int i = 0; i < node->count / 2; i++) {
     if (node->array[2 * i] != (Value *)0 && equal(incRef(arg1, 1),
@@ -3282,9 +3393,14 @@ abort();
   dec_and_free(arg0, 1);
   dec_and_free(arg1, 1);
   return(arg2);
+  // */
 }
 
 Value *arrayNodeSeq(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   ArrayNode *node = (ArrayNode *)arg0;
   List *seq = (List *)arg1;
   for (int i = 0; i < ARRAY_NODE_LEN; i++) {
@@ -3295,9 +3411,14 @@ Value *arrayNodeSeq(Value *arg0, Value *arg1) {
   }
   dec_and_free(arg0, 1);
   return((Value *)seq);
+  // */
 }
 
 Value *arrayNodeVec(Value *arg0, Value *arg1) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   ArrayNode *node = (ArrayNode *)arg0;
   Vector *vec = (Vector *)arg1;
   for (int i = 0; i < ARRAY_NODE_LEN; i++) {
@@ -3306,18 +3427,23 @@ Value *arrayNodeVec(Value *arg0, Value *arg1) {
       vec = (Vector *)hashVec(node->array[i], (Value *)vec);
     }
   }
-  dec_and_free(arg0, 1);
-  return((Value *)vec);
+  dec_and_free((Port)node, 1);
+  return((Port)vec);
+  // */
 }
 
 Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   int idx = mask(hash, shift);
   ArrayNode *newNode;
 
-  Value *subNode = node->array[idx];
-  if (subNode == (Value *)0) {
+  Port subNode = node->array[idx];
+  if (subNode == 0) {
     // do nothing
     dec_and_free(arg1, 1);
     return(arg0);
@@ -3332,9 +3458,10 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
         }
       }
       newNode->array[idx] = n;
-      dec_and_free(arg0, 1);
+      dec_and_free((Port)arg0, 1);
   }
   return((Value *)newNode);
+  // */
 }
 
 Value *get(FnArity *arity, Value *node, Value *k, Value *v, int64_t hash, int shift) {
@@ -3366,6 +3493,10 @@ Value *baseDissoc(Value *node, Value *k, int64_t hash, int shift) {
 }
 
 Value *hashVec(Value *node, Value *vec) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
   switch(node->type) {
   case BitmapIndexedType:
     return(bmiHashVec(node, vec));
@@ -3377,6 +3508,7 @@ Value *hashVec(Value *node, Value *vec) {
     fprintf(stderr, "Can't assoc into that kind of node\n");
     abort();
   }
+  // */
 }
 
 Value *copyAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift) {
@@ -3424,6 +3556,7 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
   // */
 }
 
+/*
 // used for static encoding hash maps and other things
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
   int64_t hash = nakedSha1(incRef(arg1, 1));
@@ -3433,7 +3566,7 @@ Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
 void freeExtractCache(void *cachePtr) {
   extractCache *cacheTail = (extractCache *)cachePtr;
   if (cacheTail != (extractCache *)0) {
-    dec_and_free((Value *)cacheTail->tail, 1);
+    dec_and_free((Port)cacheTail->tail, 1);
     if (!cleaningUp)
       free(cacheTail);
 #ifdef CHECK_MEM_LEAK
@@ -3442,6 +3575,7 @@ void freeExtractCache(void *cachePtr) {
 #endif
    }
 }
+// */
 
 void freeIntGenerator(void *ptr) {
   if (ptr != (void *)0) {
@@ -3458,10 +3592,11 @@ String *nullTerm(Value *s) {
   String *arg0Str = malloc_string(((String *)s)->len);
   if (s->type == StringBufferType)
     snprintf(arg0Str->buffer, ((String *)s)->len + 1, "%s", ((String *)s)->buffer);
-  dec_and_free(s, 1);
+  dec_and_free((Port)s, 1);
   return(arg0Str);
 }
 
+/*
 void show(Value *v) {
   if (v == (Value *)0) {
     fprintf(stderr, "Null\n");
@@ -3474,7 +3609,7 @@ void show(Value *v) {
   incRef(v, 1);
   List *strings = (List *)showFn((FnArity *)0, v);
   List *l = strings;
-  for (Value *h = l->head; l != (List *)0 && h != (Value *)0; h = l->head) {
+  for (Port h = l->head; l != (List *)NULL && h != 0; h = l->head) {
     incRef(h, 1);
     prErrSTAR(h);
     l = l->tail;
@@ -3483,6 +3618,7 @@ void show(Value *v) {
   dec_and_free((Value *)strings, 1);
   return;
 }
+// */
 
 int64_t countSeq(Value *seq) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
@@ -3496,31 +3632,41 @@ int64_t countSeq(Value *seq) {
   // */
 }
 
-Value *reifiedTypeArgs(Value *x) {
-  if (x->type < CoreTypeCount) {
+Value *reifiedTypeArgs(Port x) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Value *)NULL);
+  /*
+  if (((Value *)x)->type < CoreTypeCount) {
     dec_and_free(x, 1);
     return((Value *)empty_vect);
   } else {
     Vector *typeArgs = empty_vect;
     ReifiedVal *rv = (ReifiedVal *)x;
     for (int i = 0; i < rv->implCount; i++) {
-      if (rv->impls[i] != (Value *)0) {
+      if (rv->impls[i] != 0) {
 	typeArgs = mutateVectConj(typeArgs, incRef(rv->impls[i], 1));
       }
     }
     dec_and_free(x, 1);
     return((Value *)typeArgs);
   }
+  // */
 }
 
 Vector *listVec(Value *list) {
+  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
+  abort();
+  return ((Vector *)NULL);
+  /*
   List *l = (List *)list;
   Vector *newVect = empty_vect;
-  for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
+  for(Port x = l->head; x != 0; l = l->tail, x = l->head) {
     newVect = mutateVectConj(newVect, incRef(x, 1));
   }
-  dec_and_free(list, 1);
+  dec_and_free((Port)list, 1);
   return(newVect);
+  // */
 }
 
 Value *newTypeValue(int typeNum, Vector *fields) {
@@ -3536,17 +3682,13 @@ Value *newTypeValue(int typeNum, Vector *fields) {
   rv->type = typeNum;
   for (int i = 0; i < vect->count; i++) {
     rv->impls[i] = vect->tail[i];
-    vect->tail[i] = (Value *)0;
+    vect->tail[i] = 0;
   }
-#ifdef SINGLE_THREADED
-  rv->refs = refsInit;
-#else
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-#endif
   if (fields->type == ListType) {
-    dec_and_free((Value *)vect, 1);
+    dec_and_free((Port)vect, 1);
   }
-  dec_and_free((Value *)fields, 1);
+  dec_and_free((Port)fields, 1);
   return((Value *)rv);
 }
 
@@ -3573,7 +3715,7 @@ int main (int argc, char **argv) {
     Vector *argVect = empty_vect;
     for(int i = 0; i < argc; i++) {
       Value* sv = stringValue(argv[i]);
-      argVect = mutateVectConj(argVect, (Value *)new_port(VAL, (Port)sv));
+      argVect = mutateVectConj(argVect, new_port(VAL, (Port)sv));
     }
     finalResultVar = vars_alloc(tm);
     bashResult = 0;
