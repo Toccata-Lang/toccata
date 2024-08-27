@@ -919,35 +919,48 @@ bool DEST(Port a, Port b) {
     List *l = (List *)a;
     while (b != ARG) {
       if (l == (List *)NULL) {
-	fprintf(stderr, "Too few items in collection being destructured. %s:%d\n",
+	fprintf(stderr, "Too few items in list being destructured. %s:%d\n",
 		__FILE__, __LINE__);
 	abort();
       }
       Pair B = node_take(b);
-      link(B.fst, l->head);
+      link(B.fst, dupeVal(&l->head));
       if (get_tag(B.snd) != ARG) {
 	link(B.snd, (Port)l->tail);
 	return TRUE;
       }
-      List *tail = l->tail;
-      l->head = 0;
-      l->tail = (List *)NULL;
-      dec_and_free((Port)l, 1);
-      l = tail;
+      l = l->tail;
       b = B.snd;
     }
-    dec_and_free((Port)l, 1);
-    return TRUE;
   } else if (val->type == VectorType) {
     Vector *v = (Vector *)val;
-    List *l = vectSeq(v, 0);
-    return DEST((Port)l, b);
+    int len = v->count;
+    int i = 0;
+    while (b != ARG) {
+      if (i >= len) {
+	fprintf(stderr, "Too few items in vector being destructured. %s:%d\n",
+		__FILE__, __LINE__);
+	abort();
+      }
+      Pair B = node_take(b);
+      link(B.fst, vectGet(v, i));
+      if (get_tag(B.snd) != ARG) {
+	fprintf(stderr, "Destruct tail of vect. %s:%d\n",
+		__FILE__, __LINE__);
+	abort();
+	return TRUE;
+      }
+      i++;
+      b = B.snd;
+    }
   } else {
     fprintf(stderr, "Destructuring Error %s:%d  %ld\n", __FILE__, __LINE__,
 	    val->type);
     abort();
     return FALSE;
   }
+  dec_and_free((Port)a, 1);
+  return TRUE;
 }
 
 bool ABRT(Port a, Port b) {
@@ -1434,8 +1447,8 @@ Port dupeArg(Port arg, Port dupeArg) {
   Port dupedVar;
   switch(get_tag(arg)) {
   case VAL:
-    link(arg, dupeArg);
-    return new_port(VAL, (Port)incRef((Value *)arg, 1));
+    link((Port)incRef((Value *)arg, 1), dupeArg);
+    return new_port(VAL, arg);
     break;
 
   case NUM:

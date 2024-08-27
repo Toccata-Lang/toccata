@@ -1120,9 +1120,15 @@ Port dupeVal(Port *v) {
   else if (t == VAL)
     return (Port)incRef((Value *)(*v), 1);
   else {
-    fprintf(stderr, "Boom tag: %d at %s:%d\n", t, __FILE__, __LINE__);
-    abort();
-    return (0);
+    Port duped = vars_alloc();
+    Port result = vars_alloc();
+    Port orig = 0;
+    __atomic_load(v, (Port *)&orig, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange(v, &orig, &duped, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+      // Spin until it writes
+      ;
+    link(orig, node_make(DUP, duped, result));
+    return result;
   }
 }
 
@@ -1425,13 +1431,7 @@ Port vectGet(Vector *vect, unsigned index) {
   // this fn does not dec_and_free vect on purpose
   // it lets calling functions do that.
   Port *array = arrayFor(vect, index);
-  if (vect->refs == 1) {
-    Port p = array[index & 0x1f];
-    array[index & 0x1f] = 0;
-    return(p);
-  } else {
-    return(dupeVal(&array[index & 0x1f]));
-  }
+  return(dupeVal(&array[index & 0x1f]));
 }
 
 List *vectSeq(Vector *vect, int index) {
@@ -3716,7 +3716,7 @@ int main (int argc, char **argv) {
       Value* sv = stringValue(argv[i]);
       argVect = mutateVectConj(argVect, new_port(VAL, (Port)sv));
     }
-    finalResultVar = vars_alloc(tm);
+    finalResultVar = vars_alloc();
     bashResult = 0;
     Port callArgs;
     callArgs = new_port(ARG, 0);

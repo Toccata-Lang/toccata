@@ -365,3 +365,4 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount);
 void moveFreeToCentral();
 void freeGlobals();
 void normGlobals();
+Port dupeVal(Port *v);
