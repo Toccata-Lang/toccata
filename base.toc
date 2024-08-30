@@ -4,10 +4,10 @@
                             :sha "30b346e"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "5dd788f"))
+                          :sha "c33aaf6"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "03f9bad"))
+                            :sha "e7a0dcf"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -229,7 +229,8 @@
                                (c/type-op c/set-to-op (c/param setter-sym 0)
                                           [[field-sym]
                                            (c/param setter-sym 1)]))}
-        getter (c/ProtoImpls sym (.arities c/fn-constraint arities) {})
+        getter (c/ProtoImpls sym (c/arity sym (c/list-c (repeat 2 c/top-type))
+                                          c/top-type) {})
         sym (.constraint sym getter)
         new-s (either (update-in s [.namespaces (cond (= 0 (.index s))
                                                       c/no-symbol
@@ -285,7 +286,7 @@
   (se/try
     (comp (flat-map (get-value sym)
                     (fn [val]
-                      (either (map (get-in val [.constraint .impl-fns type-num .arities arity-rank])
+                      (either (map (get-in val [.constraint .impl-fns type-num])
                                    se/state-error)
                               se/zero-se)))
           ;; TODO: send request to mods, cache result
@@ -328,7 +329,7 @@
 (defn add-impl-c [proto-impls type-num arg-count arity-c loc]
   (instance? c/ProtoImpls proto-impls)
 
-  (either (map (get-in proto-impls [.default-impl .arities arg-count])
+  (either (map (get-in proto-impls [.default-impl])
                (fn [dflt-arity]
                  (let [idxs (integer-gen 0)
                        new-params (-> (.param-consts dflt-arity)
@@ -370,15 +371,8 @@
 
                          ;; happy path
                          (se/state-error
-                          (either (update-in proto-impls [.impl-fns type-num]
-                                             (fn [fn-c]
-                                               (assert (instance? c/FnConstraint fn-c))
-
-                                               (assoc-in fn-c [.arities arg-count]
-                                                         new-arity-c)))
-                                  (assoc-in proto-impls [.impl-fns type-num]
-                                            (.arities c/fn-constraint
-                                                      {arg-count new-arity-c}))))))))
+                          (assoc-in proto-impls [.impl-fns type-num]
+                                    new-arity-c))))))
           (compilation-error "No prototype for" (str "'" (.fn-sym proto-impls) "'") "with"
                              (str arg-count) "arguments at" loc)))
 
@@ -394,23 +388,6 @@
                              .values]
                             (set-val-hist sym sym))]
     sym))
-
-(defn insert-invoke [type-num arity-c]
-  (let [arity-rank (either (map (get-in arity-c [.param-consts])
-                                (fn [params]
-                                  (count (c/get-items params))))
-                           0)]
-    (se/update-in-val [.namespaces c/no-symbol .types]
-                      (fn [types-info]
-                        (map-vals types-info
-                                  (fn [type-info]
-                                    (either (for [_ (instance? c/ReifiedConstraint type-info)
-                                                  _ (= (.type-number type-info) type-num)]
-                                              (.invoke-fn type-info
-                                                          (.arities c/fn-constraint
-                                                                    {arity-rank arity-c})))
-
-                                            type-info)))))))
 
 (defn add-proto-impl [type-num fn-sym arg-count arity]
   (assert (instance? Integer type-num))
@@ -455,31 +432,19 @@
 
                 (for [proto-val (get-value fn-sym)
                       :let [proto-impls (.constraint proto-val)]
-                      _ (cond (get-in proto-impls [.impl-fns type-num .arities arg-count])
+                      _ (cond (get-in proto-impls [.impl-fns type-num])
                               (compilation-error "An implementation for" (str "'" fn-sym "'")
                                                  "already exists\n"
                                                  "Redefinition attempted at" loc)
-                              (let [new-arities (map (.arities proto-val)
-                                                     (fn [proto-arity]
-                                                       (cond (= (count (.params proto-arity))
-                                                                arg-count)
-                                                             (assoc-in proto-arity [.impls type-num]
-                                                                       arity)
 
-                                                             proto-arity)))]
-                                (for [new-proto-c (add-impl-c proto-impls type-num
-                                                              arg-count arity-c loc)
-                                      :let [new-proto (-> proto-val
-                                                          (.constraint new-proto-c)
-                                                          (.arities new-arities))]
-                                      _ (se/update-in-val
-                                         [.namespaces c/no-symbol .values]
-                                         (set-val-hist fn-sym new-proto))]
-                                  new-proto-c)))
-                      _ (cond (= invoke-sym fn-sym)
-                              (insert-invoke type-num arity-c)
-
-                              se-nop)]
+                              (for [new-proto-c (add-impl-c proto-impls type-num
+                                                            arg-count arity-c loc)
+                                    :let [new-proto (-> proto-val
+                                                        (.constraint new-proto-c))]
+                                    _ (se/update-in-val
+                                       [.namespaces c/no-symbol .values]
+                                       (set-val-hist fn-sym new-proto))]
+                                new-proto-c))]
                   '_)))))
 
 (defn remove-value-type [sym]
