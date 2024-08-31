@@ -4,10 +4,10 @@
                             :sha "30b346e"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "c33aaf6"))
+                          :sha "65cd0ac"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "e7a0dcf"))
+                            :sha "2d4c9c7"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -454,6 +454,7 @@
   TypeChecker
   (pre-check [ast]
     (let [loc (ast/location ast)
+          sym (.fn-name ast)
           fixed-params (-> ast .params .fixed)
           arg-count (count fixed-params)
           all-param-syms (remove (ast/all-syms (.params ast))
@@ -463,14 +464,17 @@
             (b/compilation-error "Duplicate parameter names in prototype at" loc)
 
             (for [_ (se/try
-                      (b/get-value (.fn-name ast))
+                      (flat-map (b/get-value sym)
+                                (fn [_]
+                                  (b/compilation-error "Duplicate prototype name at" loc)))
                       (fn [_]
-                        (b/set-value (.fn-name ast)
-                                     (c/ProtoImpls (.fn-name ast)
-                                                   (c/arity (.fn-name ast)
+                        (b/set-value sym
+                                     (c/ProtoImpls sym
+                                                   (c/arity sym
                                                             (c/list-c (repeat arg-count c/top-type))
                                                             c/top-type)
                                                    {}))))
+                  ;; get ready to compile the body expressions and assertions
                   _ (b/push-types)
                   _ (se/set-val .var-count (int-generator 0))
                   _ (flat-map (set-local-var ast/result-sym)
@@ -478,10 +482,10 @@
                                 (b/set-value ast/result-sym result-sym)))
                   ;; :let [_ (or ;; (= (.line loc) 0)
                   ;;             ;; (= (.file loc) b/core)
-                  ;;          (and (= (.fn-name ast) 'first)
+                  ;;          (and (= sym 'first)
                   ;;               (do
                   ;;                 (send b/err-out (fn [_] (maybe nothing)))
-                  ;;                 (b/status 'pre-prototype _LINE_ (.fn-name ast)
+                  ;;                 (b/status 'pre-prototype _LINE_ sym
                   ;;                           (ast/location ast)
                   ;;                         lf 'body (.default-body ast))
                   ;;                 nothing)))]
@@ -492,18 +496,17 @@
                   :let [idxs (integer-gen 1)]
                   _ (se/traverse fixed-params
                                  (fn [sym]
-                                   (let [idx (- arg-count (new-int idxs))]
+                                   (let [idx (new-int idxs)]
                                      (cond (instance? ast/params-ast sym)
-                                           (se/state-error (new-int idxs))
+                                           (se/state-error idx)
 
                                            (= sym '_)
                                            (b/set-value sym (.constraint sym c/top-type))
 
                                            (append-value-type sym
-                                                              (c/param (.fn-name ast) idx)
+                                                              (c/param sym (- arg-count idx))
                                                               loc)))))]
-              (-> ast
-                  (.params new-params))))))
+              (.params ast new-params)))))
 
   (type-check [ast old-ast]
     (let [arg-count (count (.fixed (.params old-ast)))
@@ -533,19 +536,13 @@
             ;;                         lflf 'result result-c)
             ;;                 (send b/err-out (fn [_] nothing))
             ;;                 nothing)))]
-            :let [pts (c/set-seq-tail pts c/no-tail)
-                  impl-c (c/arity (.fn-name old-ast) pts result-c)]
+            :let [impl-c (c/arity (.fn-name old-ast) pts result-c)]
             _ (b/remove-value-type ast/result-sym)
             _ (se/traverse (ast/all-syms (.params old-ast)) b/recover-val)
             _ (b/nip-types)
             _ (se/try
                 (for [val (b/get-value sym)
-                      _ (b/set-value sym
-                                     (-> val
-                                         ;; (.arities (conj (.arities val) ast))
-                                         (.constraint (assoc-in (.constraint val)
-                                                                [.default-impl]
-                                                                impl-c))))]
+                      _ (b/set-value sym (.constraint val impl-c))]
                   '_)
                 (fn [_]
                   (b/status 'new-proto _LINE_ sym)
@@ -1775,7 +1772,7 @@
 
   (type-check [ast old-ast]
     (cond (= c/no-symbol (.type-sym ast))
-          (se/state-error (.constraint ast (-> ast .impl-sym .constraint .default-impl)))
+          (se/state-error (.constraint ast (-> ast .impl-sym .constraint)))
 
           (flat-map (b/get-type-info (.type-sym ast))
                     (fn [c]
