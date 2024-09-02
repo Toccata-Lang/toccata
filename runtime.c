@@ -881,19 +881,6 @@ void moveFreeToCentral() {
   moveToCentral(&freeFnArities, &centralFreeFnArities);
 }
 
-/*
-void freeGlobal(Value *x) {
-  if (x == (Value*)0 ||
-      x->refs == refsError ||
-      x->refs == refsStatic ||
-      x == (Value *)&emptyBMI)
-    return;
-  x->refs = refsInit;
-  dec_and_free(x, 1);
-  x->refs = refsStatic;
-}
-// */
-
 void emptyFreeList(FreeValList *freeLinkedList) {
   FreeValList listHead;
 #ifdef SINGLE_THREADED

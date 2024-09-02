@@ -77,6 +77,11 @@
 
     (gen-code ast)))
 
+(extend-type Vector
+  CodeGen
+  (gen-code [v]
+    b/se-nop))
+
 (defn emit-code [ast mod]
   (cond (instance? ast/inline-ast ast)
         (se/state-error (code-out (.txt ast)))
@@ -491,7 +496,8 @@
                                                        "if(1){" init "}" line-sep)))
                    _ (cond (or (instance? b/StaticArity expr)
                                (instance? ast/string-ast expr)
-                               (instance? ast/integer-ast expr))
+                               (instance? ast/integer-ast expr)
+                               (instance? ast/reify-ast expr))
                            b/se-nop
 
                            (se/update-val .decl (fn [decl]
@@ -534,81 +540,150 @@
                                       str-sym ");" line-sep]))]
               ast)))))
 
+(defn call-vector [ast]
+  (-> (.args ast)
+      (reduce [line-sep
+               (cond (b/is-glbl (.var ast))
+                     ""
+                     ["Port " (.var ast) ";"  line-sep])
+               "if (1) {" line-sep
+               "  Vector *v = malloc_vector();" line-sep]
+              (fn [v arg]
+                (comp v ["  v = mutateVectConj(v, "
+                         (.var arg) ");" line-sep])))
+      (comp [(.var ast) " = new_port(VAL, (Port)v);" line-sep
+             "}" line-sep])))
+
+(defn call-list [ast]
+  (-> (.args ast)
+      reverse
+      (reduce [line-sep
+               (cond (b/is-glbl (.var ast))
+                     ""
+                     ["Port " (.var ast) ";"  line-sep])
+               "if (1) {" line-sep
+               "  List *l = malloc_list();" line-sep]
+              (fn [v arg]
+                (comp v ["  l = listCons(" (.var arg)
+                         ", l);" line-sep])))
+      (comp [(.var ast) " = new_port(VAL, (Port)l);" line-sep
+             "}" line-sep])))
+
+(defn call-op [op]
+  (fn [ast]
+    (cond (= 2 (count (.args ast)))
+          (let [[x y] (map (.args ast) .var)]
+            [(cond (b/is-glbl (.var ast))
+                   ""
+                   "Port ")
+             (.var ast) " = vars_alloc();" line-sep
+             "make_op(" op ", " x ", " y ", " (.var ast) ");" line-sep])
+
+          (do
+            (print-err "Wrong number of args for" (str "'" (.call-target ast) "'") "at"
+                       (ast/location ast))
+            (abort)))))
+
+(def call-gens {'vector call-vector
+                'list call-list
+                '+ (call-op "OP_ADD")
+                'access-field ["fprintf(stderr, \"HA HA\\n\"); abort();"]
+                })
+
+(defn generic-call [ast]
+  (let [tgt (.call-target ast)
+        args (.args ast)
+        result-var (.var ast)
+        num-args (count args)]
+    ["// call " (either (or (instance? c/TaggedSymbol tgt)
+                            (get tgt .fn-sym))
+                        "")
+     " at " (ast/location args) "\n"
+     (cond (b/is-glbl (.var ast))
+           ""
+           "Port ")
+     (.var ast) " = vars_alloc();" line-sep
+     (-> args
+         (map .var)
+         (reverse)
+         (conj (.var ast))
+         (reduce (str "callArgs = endArgs;" line-sep)
+                 (fn [args arg]
+                   (str args
+                        "callArgs = node_make(ARG, " arg
+                        ", callArgs);" line-sep))))
+     (cond (b/is-glbl (.var ast))
+           ["link(" (.var tgt) ", callArgs);"]
+
+           ["vars_create(" (.var ast) ", node_make(RDX, "
+            (.var tgt) ", callArgs));"])
+     line-sep]))
+
+(defn call-constructor [ast type-info]
+  (assert (instance? c/ReifiedConstraint type-info))
+
+  ;; TODO: need runtime check of field values
+
+  (print-err 'woo-hoo _LINE_)
+  (abort)
+  (let [tgt (.call-target ast)
+        args (.args ast)
+        result-var (.var ast)
+        num-args (count args)]
+    ["// call " (either (or (instance? c/TaggedSymbol tgt)
+                            (get tgt .fn-sym))
+                        "")
+     " at " (ast/location args) "\n"
+     (cond (b/is-glbl (.var ast))
+           ""
+           "Port ")
+     (.var ast) " = vars_alloc();" line-sep
+     (-> args
+         (map .var)
+         (reverse)
+         (conj (.var ast))
+         (reduce (str "callArgs = endArgs;" line-sep)
+                 (fn [args arg]
+                   (str args
+                        "callArgs = node_make(ARG, " arg
+                        ", callArgs);" line-sep))))
+     (cond (b/is-glbl (.var ast))
+           ["link(" (.var tgt) ", callArgs);"]
+
+           ["vars_create(" (.var ast) ", node_make(RDX, "
+            (.var tgt) ", callArgs));"])
+     line-sep]))
+
 (extend-type ast/call-ast
   CodeGen
   (gen-code [ast]
-    (let [tgt (.call-target ast)
-          args (.args ast)
-          result-var (.var ast)
-          num-args (count args)]
-      (map (se/update-val .init
-                          (fn [init]
-                            [init
-                             (cond (= tgt 'vector)
-                                   (do
-                                     (-> args
-                                         (reduce [line-sep
-                                                  (cond (b/is-glbl result-var)
-                                                        ""
-                                                        ["Port " result-var ";"  line-sep])
-                                                  "if (1) {" line-sep
-                                                  "  Vector *v = malloc_vector();" line-sep]
-                                                 (fn [v arg]
-                                                   (comp v ["  v = mutateVectConj(v, "
-                                                            (.var arg) ");" line-sep])))
-                                         (comp [result-var " = new_port(VAL, (Port)v);" line-sep
-                                                "}" line-sep])))
+    (let [tgt (.call-target ast)]
+      (cond (instance? c/TaggedSymbol tgt)
+            (comp (for [type-info (b/get-type-info tgt)
+                        _ (se/update-val .init
+                                         (fn [init]
+                                           [init
+                                            (call-constructor ast type-info)]))]
+                    ast)
+                  (map (se/update-val .init
+                                      (fn [init]
+                                        [init
+                                         (either (map (get call-gens tgt)
+                                                      (fn [cg]
+                                                        (cg ast)))
+                                                 (generic-call ast))]))
+                       (fn [_]
+                         ast)))
 
-                                   (= tgt 'list)
-                                   (-> args
-                                       reverse
-                                       (reduce [line-sep
-                                                (cond (b/is-glbl result-var)
-                                                    ""
-                                                    ["Port " result-var ";"  line-sep])
-                                                "if (1) {" line-sep
-                                                "  List *l = malloc_list();" line-sep]
-                                               (fn [v arg]
-                                                 (comp v ["  l = listCons(" (.var arg)
-                                                          ", l);" line-sep])))
-                                       (comp [result-var " = new_port(VAL, (Port)l);" line-sep
-                                              "}" line-sep]))
-
-                                   (and (= 2 num-args)
-                                        (= tgt '+))
-                                   (let [[x y] (map args .var)]
-                                     [(cond (b/is-glbl result-var)
-                                            ""
-                                            "Port ")
-                                      result-var " = vars_alloc();" line-sep
-                                      "make_op(OP_ADD, " x ", " y ", " result-var ");" line-sep])
-
-                                   ;; generic call site
-                                   ["// call " (either (or (instance? c/TaggedSymbol tgt)
-                                                           (get tgt .fn-sym))
-                                                       "")
-                                    " at " (ast/location args) "\n"
-                                    (cond (b/is-glbl result-var)
-                                          ""
-                                          "Port ")
-                                    result-var " = vars_alloc();" line-sep
-                                    (-> args
-                                        (map .var)
-                                        (reverse)
-                                        (conj result-var)
-                                        (reduce (str "callArgs = endArgs;" line-sep)
-                                                (fn [args arg]
-                                                  (str args
-                                                       "callArgs = node_make(ARG, " arg
-                                                       ", callArgs);" line-sep))))
-                                    (cond (b/is-glbl result-var)
-                                          ["link(" (.var tgt) ", callArgs);"]
-
-                                          ["vars_create(" result-var ", node_make(RDX, "
-                                           (.var tgt) ", callArgs));"])
-                                    line-sep])]))
-           (fn [_]
-             ast)))))
+            (map (se/update-val .init
+                                (fn [init]
+                                  [init
+                                   (either (map (get call-gens tgt)
+                                                (fn [cg]
+                                                  (cg ast)))
+                                           (generic-call ast))]))
+                 (fn [_]
+                   ast))))))
 
 (extend-type ast/prototype-ast
   CodeGen
@@ -672,9 +747,7 @@
 (extend-type ast/block-comment-ast
   CodeGen
   (gen-code [ast]
-    (print-err 'boom _FILE_ _LINE_)
-    (abort)
-    (se/state-error '_)))
+    b/se-nop))
 
 ;; (extend-type ast/or-ast
 ;;   CodeGen
@@ -724,31 +797,16 @@
 ;;                    (.init cont-code) (.var ast) " = " (.var cont-code) ";}"]
 ;;                   refs-map))))))
 
-;; (extend-type ast/reify-ast
-;;   CodeGen
-;;   (gen-code [ast]
-;;     (print-err 'boom _FILE_ _LINE_)
-;;     (abort)
-;;     (for [code-vect (se/traverse (.impls ast) (fn [impl]
-;;                                                 (gen-code impl)))]
-;;       (cond (every (.impls ast) (fn [impl]
-;;                                   (assert (instance? b/StaticArity impl))
-
-;;                                   (instance? b/StaticArity impl)))
-;;             (let [reified-sym (b/global-var 'Reified)]
-;;               (-> code-vect
-;;                   (conj (C-init ""
-;;                                 ["ReifiedVal " reified-sym " = {"
-;;                                  (.type-num ast) ", -2, 0, 0, {}};"
-;;                                  "Value *" (.var ast) " = (Value *)&" reified-sym ";"]
-;;                                 []
-;;                                 {}))
-;;                   comp-code))
-
-;;             (do
-;;               (b/status 'finish _LINE_)
-;;               (b/wait-for-err-out)
-;;               (abort))))))
+(extend-type ast/reify-ast
+  CodeGen
+  (gen-code [ast]
+    (map (se/update-val .decl
+                        (fn [decl]
+                          (conj decl
+                                (str "ReifiedVal wut = {" (.type-num ast) ", -2, 0, 0, {}};\n"
+                                     "Port " (.var ast) " = new_port_(VAL, &wut);" line-sep))))
+         (fn [_]
+           ast))))
 
 (defn emit-protos [code-context]
   (let [mod-prom (promise)
