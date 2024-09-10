@@ -112,7 +112,7 @@ extern Port endArgs;
 #define MAX_ARGS 9
 typedef struct {
   int count;
-  Port args[MAX_ARGS];
+  Port args[MAX_ARGS + 2];
   Port result;
 } NativeArgs;
 

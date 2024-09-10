@@ -86,6 +86,10 @@
   (cond (instance? ast/inline-ast ast)
         (se/state-error (code-out (.txt ast)))
 
+        (instance? Vector ast)
+        (se/traverse ast (fn [inner]
+                           (emit-code inner mod)))
+
         (for [_ (reset-code-context)
               _ (se/set-val .module mod)
               _ (cata gen-code ast se/state-error)
@@ -115,8 +119,11 @@
           (print-err 'compiler-error _LINE_)
           (se/state-error c/top-type))
 
-        (comp (comp (se/get-in-val [.module .namespaces (.ns sym) .values 0 sym])
-                    (se/get-in-val [.module .namespaces b/core .values 0 sym]))
+        (comp (se/get-in-val [.module .namespaces (.ns sym) .values 0 sym])
+              (cond (= (.ns sym) c/no-symbol)
+                    (se/get-in-val [.module .namespaces b/core .values 0 sym])
+
+                    se/zero-se)
               (b/compilation-error "Undefined symbol:" (str "'" sym "'") "at" (ast/location sym)))))
 
 
@@ -587,45 +594,9 @@
 (def call-gens {'vector call-vector
                 'list call-list
                 '+ (call-op "OP_ADD")
-                'access-field ["fprintf(stderr, \"HA HA\\n\"); abort();"]
                 })
 
 (defn generic-call [ast]
-  (let [tgt (.call-target ast)
-        args (.args ast)
-        result-var (.var ast)
-        num-args (count args)]
-    ["// call " (either (or (instance? c/TaggedSymbol tgt)
-                            (get tgt .fn-sym))
-                        "")
-     " at " (ast/location args) "\n"
-     (cond (b/is-glbl (.var ast))
-           ""
-           "Port ")
-     (.var ast) " = vars_alloc();" line-sep
-     (-> args
-         (map .var)
-         (reverse)
-         (conj (.var ast))
-         (reduce (str "callArgs = endArgs;" line-sep)
-                 (fn [args arg]
-                   (str args
-                        "callArgs = node_make(ARG, " arg
-                        ", callArgs);" line-sep))))
-     (cond (b/is-glbl (.var ast))
-           ["link(" (.var tgt) ", callArgs);"]
-
-           ["vars_create(" (.var ast) ", node_make(RDX, "
-            (.var tgt) ", callArgs));"])
-     line-sep]))
-
-(defn call-constructor [ast type-info]
-  (assert (instance? c/ReifiedConstraint type-info))
-
-  ;; TODO: need runtime check of field values
-
-  (print-err 'woo-hoo _LINE_)
-  (abort)
   (let [tgt (.call-target ast)
         args (.args ast)
         result-var (.var ast)
@@ -658,32 +629,15 @@
   CodeGen
   (gen-code [ast]
     (let [tgt (.call-target ast)]
-      (cond (instance? c/TaggedSymbol tgt)
-            (comp (for [type-info (b/get-type-info tgt)
-                        _ (se/update-val .init
-                                         (fn [init]
-                                           [init
-                                            (call-constructor ast type-info)]))]
-                    ast)
-                  (map (se/update-val .init
-                                      (fn [init]
-                                        [init
-                                         (either (map (get call-gens tgt)
-                                                      (fn [cg]
-                                                        (cg ast)))
-                                                 (generic-call ast))]))
-                       (fn [_]
-                         ast)))
-
-            (map (se/update-val .init
-                                (fn [init]
-                                  [init
-                                   (either (map (get call-gens tgt)
-                                                (fn [cg]
-                                                  (cg ast)))
-                                           (generic-call ast))]))
-                 (fn [_]
-                   ast))))))
+      (map (se/update-val .init
+                          (fn [init]
+                            [init
+                             (either (map (get call-gens tgt)
+                                          (fn [cg]
+                                            (cg ast)))
+                                     (generic-call ast))]))
+           (fn [_]
+             ast)))))
 
 (extend-type ast/prototype-ast
   CodeGen

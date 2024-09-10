@@ -1448,7 +1448,7 @@ Port dupeArg(Port arg, Port dupeArg) {
   switch(get_tag(arg)) {
   case VAL:
     link((Port)incRef((Value *)arg, 1), dupeArg);
-    return new_port(VAL, arg);
+    return arg;
     break;
 
   case NUM:

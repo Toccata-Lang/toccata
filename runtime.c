@@ -3743,3 +3743,32 @@ int main (int argc, char **argv) {
   free(globalNet);
   return(bashResult);
 }
+
+bool constructFn(Port ref, Port args) {
+  Pair pr = node_take(args);
+  Port resultVar = pr.fst;
+  args = pr.snd;
+  NativeArgs arityArgs = {0, {}, resultVar};
+  // the first two args will always be integers; type-number and num-args
+  args = nativeArg(ref, args, &arityArgs);
+  args = nativeArg(ref, args, &arityArgs);
+  int numArgs = get_i24(get_val(arityArgs.args[1]));
+  int typeNum = get_i24(get_val(arityArgs.args[0]));
+
+  arityArgs.count = 0;
+  for (int i = 0; i < numArgs; i++) {
+    args = nativeArg(ref, args, &arityArgs);
+  }
+
+  if (arityArgs.count == numArgs) {
+    ReifiedVal *rv = malloc_reified(1);
+    rv->type = typeNum;
+    for (int i = 0; i < arityArgs.count; i++) {
+      rv->impls[i] = arityArgs.args[i];
+    }
+    __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+    link(resultVar, new_port(VAL, (Port)rv));
+  }
+  return TRUE;
+}
+Port construct = new_port_(REF, constructFn);
