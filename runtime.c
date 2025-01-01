@@ -1107,15 +1107,8 @@ Port dupeVal(Port *v) {
   else if (t == VAL)
     return (Port)incRef((Value *)(*v), 1);
   else {
-    Port duped = vars_alloc();
-    Port result = vars_alloc();
-    Port orig = 0;
-    __atomic_load(v, (Port *)&orig, __ATOMIC_RELAXED);
-    while (!__atomic_compare_exchange(v, &orig, &duped, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
-      // Spin until it writes
-      ;
-    link(orig, node_make(DUP, duped, result));
-    return result;
+    fprintf(stderr, "Compiler error at %s: %d\n", __FILE__, __LINE__);
+    abort();
   }
 }
 
