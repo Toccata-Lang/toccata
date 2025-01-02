@@ -164,9 +164,7 @@ extern REFS_SIZE refsStatic;
 #define StringBufferType 2
 #define FnArityType 3
 #define FunctionType 4
-#define NoneType 5
-#define SomeType 6
-#define ListType 7
+#define ListType 6
 #define VectorType 8
 #define VectorNodeType 9
 #define BitmapIndexedType 11
@@ -197,7 +195,9 @@ extern REFS_SIZE refsStatic;
 #define TypeOfConstraintType 39
 #define InnerTypeOfConstraintType 40
 #define DebugConstraintType 41
-#define TypeCount 42
+#define NoneType 42
+#define SomeType 43
+#define TypeCount 44
 
 extern FILE *outstream;
 extern List *empty_list;
