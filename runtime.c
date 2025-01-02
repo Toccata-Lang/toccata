@@ -1106,10 +1106,9 @@ Port dupeVal(Port *v) {
     return *v;
   else if (t == VAL)
     return (Port)incRef((Value *)(*v), 1);
-  else {
-    fprintf(stderr, "Compiler error at %s: %d\n", __FILE__, __LINE__);
-    abort();
-  }
+
+  fprintf(stderr, "Compiler error at %s: %d\nt: %d\n", __FILE__, __LINE__, t);
+  abort();
 }
 
 Vector *newVector(Port array[], int indexToSkip) {
@@ -1996,6 +1995,32 @@ int64_t integerSha1(Value *arg0) {
   dec_and_free(arg0, 1);
   // */
   return(shaVal);
+}
+
+Port nothing() {
+  ReifiedVal *rv = malloc_reified(0);
+  rv->type = NoneType;
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  return(new_port(VAL, (Port)rv));
+}
+
+Port some(Port thing) {
+  ReifiedVal *rv = malloc_reified(1);
+  rv->type = SomeType;
+  rv->impls[0] = thing;
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  return(new_port(VAL, (Port)rv));
+}
+
+Port integer_EQ(Port arg0, Port arg1) {
+  i64 x = get_i24(get_val(arg0));
+  i64 y = get_i24(get_val(arg0));
+
+  if (x != y) {
+    return(nothing());
+  } else {
+    return(some(arg0));
+  }
 }
 
 Value *listEQ(Value *arg0, Value *arg1) {
@@ -3754,7 +3779,7 @@ bool constructFn(Port ref, Port args) {
   }
 
   if (arityArgs.count == numArgs) {
-    ReifiedVal *rv = malloc_reified(1);
+    ReifiedVal *rv = malloc_reified(arityArgs.count);
     rv->type = typeNum;
     for (int i = 0; i < arityArgs.count; i++) {
       rv->impls[i] = arityArgs.args[i];

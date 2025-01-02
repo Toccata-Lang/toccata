@@ -164,7 +164,9 @@ extern REFS_SIZE refsStatic;
 #define StringBufferType 2
 #define FnArityType 3
 #define FunctionType 4
-#define ListType 6
+#define NoneType 5
+#define SomeType 6
+#define ListType 7
 #define VectorType 8
 #define VectorNodeType 9
 #define BitmapIndexedType 11
@@ -264,7 +266,7 @@ Value *isInstance(Value *arg0, Value *arg1);
 Value *prSTAR(Value *);
 Value *add_ints(Value *arg0, Value *arg1);
 Port number_str(Port arg0);
-Value *integer_EQ(Value *arg0, Value *arg1);
+Port integer_EQ(Port arg0, Port arg1);
 Value *integer_LT(Value *arg0, Value *arg1);
 Value *integerValue(int64_t n);
 Vector *vectConj(Vector *vect, Port val);
