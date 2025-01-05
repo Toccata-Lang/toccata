@@ -1,10 +1,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "f8bb466"))
+                          :sha "bb97351"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "3577f9b"))
+                            :sha "c476894"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -67,6 +67,84 @@
                            (filter-keys refs-map b/is-glbl)))]
     '_))
 
+(defn call-vector [ast]
+  (-> (.args ast)
+      (reduce [line-sep
+               (cond (b/is-glbl (.var ast))
+                     ""
+                     ["Port " (.var ast) ";"  line-sep])
+               "if (1) {" line-sep
+               "  Vector *v = malloc_vector();" line-sep]
+              (fn [v arg]
+                (comp v ["  v = mutateVectConj(v, "
+                         (.var arg) ");" line-sep])))
+      (comp [(.var ast) " = new_port(VAL, (Port)v);" line-sep
+             "}" line-sep])))
+
+(defn call-list [ast]
+  (-> (.args ast)
+      reverse
+      (reduce [line-sep
+               (cond (b/is-glbl (.var ast))
+                     ""
+                     ["Port " (.var ast) ";"  line-sep])
+               "if (1) {" line-sep
+               "  List *l = malloc_list();" line-sep]
+              (fn [v arg]
+                (comp v ["  l = listCons(" (.var arg)
+                         ", l);" line-sep])))
+      (comp [(.var ast) " = new_port(VAL, (Port)l);" line-sep
+             "}" line-sep])))
+
+(defn call-op [op]
+  (fn [ast]
+    (cond (= 2 (count (.args ast)))
+          (let [[x y] (map (.args ast) .var)]
+            [(cond (b/is-glbl (.var ast))
+                   ""
+                   "Port ")
+             (.var ast) " = vars_alloc();" line-sep
+             "make_op(" op ", " x ", " y ", " (.var ast) ");" line-sep])
+
+          (do
+            (print-err "Wrong number of args for" (str "'" (.call-target ast) "'") "at"
+                       (ast/location ast))
+            (abort)))))
+
+(def call-gens {'vector call-vector
+                'list call-list
+                '+ (call-op "OP_ADD")
+                })
+
+(defn generic-call [ast]
+  (let [tgt (.call-target ast)
+        args (.args ast)
+        result-var (.var ast)
+        num-args (count args)]
+    (se/state-error ["// call " (either (or (instance? c/TaggedSymbol tgt)
+                                            (get tgt .fn-sym))
+                                        "")
+                     " at " (ast/location args) "\n"
+                     (cond (b/is-glbl (.var ast))
+                           ""
+                           "Port ")
+                     (.var ast) " = vars_alloc();" line-sep
+                     (-> args
+                         (map .var)
+                         (reverse)
+                         (conj (.var ast))
+                         (reduce (str "callArgs = endArgs;" line-sep)
+                                 (fn [args arg]
+                                   (str args
+                                        "callArgs = node_make(ARG, " arg
+                                        ", callArgs);" line-sep))))
+                     (cond (b/is-glbl (.var ast))
+                           ["link(" (.var tgt) ", callArgs);"]
+
+                           ["vars_create(" (.var ast) ", node_make(RDX, "
+                            (.var tgt) ", callArgs));"])
+                     line-sep])))
+
 (defprotocol CodeGen
   (gen-code [ast]
     (assert-result r (instance? se/StateError r))
@@ -75,7 +153,10 @@
   (gen-code [ast arity]
     (assert-result r (instance? se/StateError r))
 
-    (gen-code ast)))
+    (gen-code ast))
+
+  (gen-call [ast call-ast]
+    (generic-call call-ast)))
 
 (extend-type Vector
   CodeGen
@@ -126,7 +207,6 @@
                     se/zero-se)
               (b/compilation-error "Undefined symbol:" (str "'" sym "'") "at" (ast/location sym)))))
 
-
 (extend-type c/TaggedSymbol
   CodeGen
   (gen-code [ast]
@@ -161,7 +241,13 @@
                                                               init]))]
                                       (.var ast dupe-var)))))
                   (for [_ (se/assoc-in-val [.refs-map var] 1)]
-                    ast))))))
+                    ast)))))
+
+  (gen-call [sym call-ast]
+    (either (map (get call-gens sym)
+                 (fn [cg]
+                   (cg call-ast)))
+            (generic-call call-ast))))
 
 (extend-type ast/inline-ast
   CodeGen
@@ -407,30 +493,33 @@
                                       ["link(" (.var params) ", args);" line-sep
                                        "return TRUE;" line-sep "}" line-sep
                                        "Port " (.var ast) " = new_port_(REF, " c-fn ");" line-sep])]))]
-        ast))))
+        ast)))
 
-(defn default-fn [val c-fn]
-  (assert (instance? ast/prototype-ast val))
+  (gen-call [sym call-ast]
+    (generic-call call-ast)))
 
-  (let [default-body (.default-body val)]
-    (b/StaticArity (ast/fn-arity-ast
-                    (.fn-name val) c/no-symbol (.params val) (.doc val)
-                    (cond (empty? default-body)
-                          [(ast/inline-ast c/top-type (str "
-   fprintf(stderr, \"*** Could not find implementation of '" (.fn-name val)
-                                                           "' for *finish this error message*\\n\");
-   abort();
-   return ((Value *)0);
-")
-                                           (ast/location (.params val))
-                                           "")]
+;; (defn default-fn [val c-fn]
+;;   (assert (instance? ast/prototype-ast val))
 
-                          default-body)
-                    (b/global-var 'ArityStruct)
-                    c/top-type)
-                   c-fn
-                   (b/global-var 'Fn)
-                   c/top-type)))
+;;   (let [default-body (.default-body val)]
+;;     (b/StaticArity (ast/fn-arity-ast
+;;                     (.fn-name val) c/no-symbol (.params val) (.doc val)
+;;                     (cond (empty? default-body)
+;;                           [(ast/inline-ast c/top-type (str "
+;;    fprintf(stderr, \"*** Could not find implementation of '" (.fn-name val)
+;;                                                            "' for *finish this error message*\\n\");
+;;    abort();
+;;    return ((Value *)0);
+;; ")
+;;                                            (ast/location (.params val))
+;;                                            "")]
+
+;;                           default-body)
+;;                     (b/global-var 'ArityStruct)
+;;                     c/top-type)
+;;                    c-fn
+;;                    (b/global-var 'Fn)
+;;                    c/top-type)))
 
 (deftype Dispatcher [proto arity-struct-var c-fn]
   (assert (instance? ast/prototype-ast proto))
@@ -548,102 +637,61 @@
                                       str-sym ");" line-sep]))]
               ast)))))
 
-(defn call-vector [ast]
-  (-> (.args ast)
-      (reduce [line-sep
-               (cond (b/is-glbl (.var ast))
-                     ""
-                     ["Port " (.var ast) ";"  line-sep])
-               "if (1) {" line-sep
-               "  Vector *v = malloc_vector();" line-sep]
-              (fn [v arg]
-                (comp v ["  v = mutateVectConj(v, "
-                         (.var arg) ");" line-sep])))
-      (comp [(.var ast) " = new_port(VAL, (Port)v);" line-sep
-             "}" line-sep])))
-
-(defn call-list [ast]
-  (-> (.args ast)
-      reverse
-      (reduce [line-sep
-               (cond (b/is-glbl (.var ast))
-                     ""
-                     ["Port " (.var ast) ";"  line-sep])
-               "if (1) {" line-sep
-               "  List *l = malloc_list();" line-sep]
-              (fn [v arg]
-                (comp v ["  l = listCons(" (.var arg)
-                         ", l);" line-sep])))
-      (comp [(.var ast) " = new_port(VAL, (Port)l);" line-sep
-             "}" line-sep])))
-
-(defn call-op [op]
-  (fn [ast]
-    (cond (= 2 (count (.args ast)))
-          (let [[x y] (map (.args ast) .var)]
-            [(cond (b/is-glbl (.var ast))
-                   ""
-                   "Port ")
-             (.var ast) " = vars_alloc();" line-sep
-             "make_op(" op ", " x ", " y ", " (.var ast) ");" line-sep])
-
-          (do
-            (print-err "Wrong number of args for" (str "'" (.call-target ast) "'") "at"
-                       (ast/location ast))
-            (abort)))))
-
-(def call-gens {'vector call-vector
-                'list call-list
-                '+ (call-op "OP_ADD")
-                })
-
-(defn generic-call [ast]
-  (let [tgt (.call-target ast)
-        args (.args ast)
-        result-var (.var ast)
-        num-args (count args)]
-    ["// call " (either (or (instance? c/TaggedSymbol tgt)
-                            (get tgt .fn-sym))
-                        "")
-     " at " (ast/location args) "\n"
-     (cond (b/is-glbl (.var ast))
-           ""
-           "Port ")
-     (.var ast) " = vars_alloc();" line-sep
-     (-> args
-         (map .var)
-         (reverse)
-         (conj (.var ast))
-         (reduce (str "callArgs = endArgs;" line-sep)
-                 (fn [args arg]
-                   (str args
-                        "callArgs = node_make(ARG, " arg
-                        ", callArgs);" line-sep))))
-     (cond (b/is-glbl (.var ast))
-           ["link(" (.var tgt) ", callArgs);"]
-
-           ["vars_create(" (.var ast) ", node_make(RDX, "
-            (.var tgt) ", callArgs));"])
-     line-sep]))
-
 (extend-type ast/call-ast
   CodeGen
   (gen-code [ast]
     (let [tgt (.call-target ast)]
-      (map (se/update-val .init
-                          (fn [init]
-                            [init
-                             (either (map (get call-gens tgt)
-                                          (fn [cg]
-                                            (cg ast)))
-                                     (generic-call ast))]))
-           (fn [_]
-             ast)))))
+      (for [tgt-val (cond (instance? c/TaggedSymbol tgt)
+                          (get-value tgt)
+
+                          (se/state-error tgt))
+            call-init (gen-call tgt-val ast)
+            _ (se/update-val .init
+                             (fn [init]
+                               [init call-init]))]
+        ast))))
 
 (extend-type ast/prototype-ast
   CodeGen
   (gen-code [ast]
-    (se/state-error ast)))
+    (for [_ (se/update-val .decl (fn [decl]
+                                   [decl "Port " (.var ast) ";\n"]))]
+      ast))
+
+  (gen-call [proto call-ast]
+    (let [tgt (.call-target call-ast)
+          args (.args call-ast)
+          result-var (.var call-ast)
+          num-args (count args)
+          loc (ast/location call-ast)]
+      (for [file-str (-> (.file loc)
+                         (ast/string-ast loc (b/global-var 'Str)
+                                         c/string-constraint)
+                         gen-code)]
+        ["// call " (either (or (instance? c/TaggedSymbol tgt)
+                                (get tgt .fn-sym))
+                            "")
+         " at " (ast/location args) "\n"
+         (cond (b/is-glbl (.var call-ast))
+               ""
+               "Port ")
+         (.var call-ast) " = vars_alloc();" line-sep
+         (-> args
+             (map .var)
+             (reverse)
+             (comp [(str "new_num_(new_i24_(" (.line loc) "))")
+                    (.var file-str) (.var call-ast)])
+             (reduce (str "callArgs = endArgs;" line-sep)
+                     (fn [args arg]
+                       (str args
+                            "callArgs = node_make(ARG, " arg
+                            ", callArgs);" line-sep))))
+         (cond (b/is-glbl (.var call-ast))
+               ["link(" (.var proto) ", callArgs);"]
+
+               ["vars_create(" (.var call-ast) ", node_make(RDX, "
+                (.var proto) ", callArgs));"])
+         line-sep]))))
 
 (extend-type ast/binding-ast
   CodeGen
@@ -764,31 +812,73 @@
            (fn [_]
              ast)))))
 
+(defn emit-proto [ptype]
+  ;; (for [_ (se/update-val .init (fn [init]
+  ;;                                [init (.txt x)]))]
+  ;;   )
+  (let [c-fn (b/global-var b/CFn)]
+    (se/update-val .decl
+                   (fn [decl]
+                     [decl
+                      "Port " (.var ptype) ";" line-sep
+                      "bool " c-fn "(Port ref, Port args) {\n"
+                      "  Pair pr = node_take(args);\n"
+                      "  Port resultVar = pr.fst;\n"
+                      "  args = pr.snd;\n"
+                      "  Port result = erase;\n"
+                      "  NativeArgs arityArgs = {0, {}, resultVar};"
+                      line-sep
+                      (repeat 3
+                              (str "    args = nativeArg(ref, args"
+                                   ", &arityArgs);" line-sep))
+                      "    if (arityArgs.count == 3) {" line-sep
+                      "String *fileStr = (String *)arityArgs.args[0];\n"
+                      "Value *dispVal = (Value *)arityArgs.args[2];\n"
+                      "args = node_make(ARG, (Port)dispVal, args);\n"
+                      "args = node_make(ARG, resultVar, args);\n"
+                      "switch(dispVal->type) {\n"
+                      ;; (-> (.impls ptype)
+                      ;;     seq
+                      ;;     (reduce [] (fn [cases impl-arity]
+                      ;;                  )))
+                      "default:\n"
+                      (either (map (get-in ptype [.impls c/UnknownType])
+                                   (fn [def-arity]
+                                     ["link(" (.var def-arity) ", args);\n"]))
+                              ["fprintf(stderr, \"No implementation found for '" (.fn-name ptype)
+                               "' at %.*s: %ld\\n\", (int)fileStr->len, fileStr->buffer,"
+                               "get_i24(get_val(arityArgs.args[1])));\n"
+                               "abort();\n"])
+                      "}\n}\nreturn TRUE;\n}\n"
+                      "Port " (.var ptype) " = new_port_(REF, " c-fn ");" line-sep]))))
+
 (defn emit-protos [code-context]
   (let [mod-prom (promise)
         _ (send b/modules (fn [mods]
                             (deliver mod-prom mods)
                             mods))
-        mods (extract mod-prom)]
-    (-> (for [mod (vals mods)
-              val (either (map (get-in mod [.namespaces c/no-symbol .values 0])
-                               vals)
-                          [])
-              :when (instance? c/ProtoImpls (.constraint val))]
-          val)
-        (se/traverse (fn [val]
-                       (se/try
-                         (for [code (gen-code val)
-                               _ (se/update-val .init (fn [init]
-                                                        (conj init (.init code))))]
-                           (code-out (.decl code)))
-                         (fn [err]
-                           (b/status (.val err))
-                           (b/wait-for-err-out)
-                           (abort)))))
-        ((fn [emitter]
-           (let [[_ code-context] (emitter code-context)]
-             code-context))))))
+        mods (extract mod-prom)
+        protos (for [mod (vals mods)
+                     val (either (map (get-in mod [.namespaces c/no-symbol .values 0])
+                                      vals)
+                                 [])
+                     :when (instance? ast/prototype-ast val)]
+                 val)
+        emitter (for [_ (se/set-val .decl [])
+                      _ (se/traverse protos (fn [val]
+                                              (se/try
+                                                (emit-proto val)
+                                                (fn [err]
+                                                  (b/status (.val err))
+                                                  (b/wait-for-err-out)
+                                                  (abort)))))
+                      proto-decl (se/get-val .decl)
+                      _ (se/set-val .decl [])]
+                  (code-out "\n// before\n"
+                            proto-decl
+                            "\n// after \n"))]
+    (let [[_ code-context] (emitter code-context)]
+      code-context)))
 
 (defn emit-main [code-context done-promise main-module]
   (let [main-fn (either (get-in main-module [.namespaces c/no-symbol .values 0

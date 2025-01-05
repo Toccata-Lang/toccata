@@ -369,3 +369,4 @@ void freeGlobals();
 void normGlobals();
 Port dupeVal(Port *v);
 extern Port construct;
+Port nothing();

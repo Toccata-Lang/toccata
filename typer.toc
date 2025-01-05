@@ -4,10 +4,10 @@
                             :sha "30b346e"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "f8bb466"))
+                          :sha "bb97351"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "3577f9b"))
+                            :sha "c476894"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -51,9 +51,7 @@
 (deftype ProtoArity [type-num arity]
   (assert (instance? (all-of Integer (min 1))
                      type-num))
-  (assert (instance? (any-of ast/fn-arity-ast
-                             b/StaticArity)
-                     arity))
+  (assert (instance? b/StaticArity arity))
 
   Stringable
   (string-list [_]
@@ -432,6 +430,8 @@
   (type-check [ast old-ast]
     (-> ast
         (map (fn [arity]
+               (print-err 'boom-typer _LINE_)
+               (abort)
                (ProtoArity (.type-num ast) arity)))
         se/state-error)))
 
@@ -440,11 +440,25 @@
   (pre-check [ast]
     (let [loc (ast/location ast)
           sym (.fn-name ast)
+          ast (-> ast
+                  (.var (b/global-var 'Proto))
+                  (.impls (map-vals (.impls ast)
+                                    (fn [arity-ast]
+                                      (b/StaticArity arity-ast
+                                                     (b/global-var (str '_ (.fn-name ast) '_Def))
+                                                     (b/global-var (.fn-name ast) 'Fn)
+                                                     (.constraint arity-ast))))))
           fixed-params (-> ast .params .fixed)
           arg-count (count fixed-params)
           all-param-syms (remove (ast/all-syms (.params ast))
                                  (fn [s]
-                                   (= s '_)))]
+                                   (= s '_)))
+          proto-c (c/ProtoImpls sym
+                                {c/UnknownType (c/arity sym
+                                                        (c/list-c (repeat arg-count c/top-type))
+                                                        c/top-type)})]
+      ;; TODO: it would be ideal to somehow collect the contraints for the default impl
+      ;; and construct a proto-c with them
       (cond (< (count (set all-param-syms)) (count all-param-syms))
             (b/compilation-error "Duplicate parameter names in prototype at" loc)
 
@@ -453,18 +467,12 @@
                                 (fn [_]
                                   (b/compilation-error "Duplicate prototype name at" loc)))
                       (fn [_]
-                        (b/set-value sym
-                                     (c/ProtoImpls sym
-                                                   (c/arity sym
-                                                            (c/list-c (repeat arg-count c/top-type))
-                                                            c/top-type)
-                                                   {}))))
+                        (b/set-value sym (.constraint ast proto-c))))
                   ;; get ready to compile the body expressions and assertions
                   _ (b/push-types)
                   _ (se/set-val .var-count (int-generator 0))
-                  _ (flat-map (set-local-var ast/result-sym)
-                              (fn [result-sym]
-                                (b/set-value ast/result-sym result-sym)))
+                  result-sym (set-local-var ast/result-sym)
+                  _ (b/set-value ast/result-sym result-sym)
                   ;; :let [_ (or ;; (= (.line loc) 0)
                   ;;             ;; (= (.file loc) b/core)
                   ;;          (and (= sym 'first)
@@ -498,10 +506,10 @@
           sym (.fn-name ast)
           ast (-> ast
                   (.params (.params old-ast))
-                  (.var (b/global-var b/CFn))
-                  (.default-body (remove (.default-body ast)
-                                         (fn [expr]
-                                           (instance? c/Constraints expr)))))]
+                  ;; (.default-body (remove (.default-body ast)
+                  ;;                        (fn [expr]
+                  ;;                          (instance? c/Constraints expr))))
+                  )]
       (for [pts (map (get-param-types (.params old-ast))
                      (fn [pts]
                        (-> pts
@@ -521,17 +529,11 @@
             ;;                         lflf 'result result-c)
             ;;                 (send b/err-out (fn [_] nothing))
             ;;                 nothing)))]
-            :let [impl-c (c/arity (.fn-name old-ast) pts result-c)]
+            :let [impls-c (c/ProtoImpls sym {c/UnknownType (c/arity (.fn-name old-ast) pts result-c)})]
             _ (b/remove-value-type ast/result-sym)
             _ (se/traverse (ast/all-syms (.params old-ast)) b/recover-val)
             _ (b/nip-types)
-            _ (se/try
-                (for [val (b/get-value sym)
-                      _ (b/set-value sym (.constraint val impl-c))]
-                  '_)
-                (fn [_]
-                  (b/status 'new-proto _LINE_ sym)
-                  (b/set-value sym (c/ProtoImpls sym impl-c {}))))]
+            _ (b/set-value sym (.constraint ast impls-c))]
         ast))))
 
 (extend-type ast/call-ast
@@ -800,9 +802,8 @@
                             (se/state-error x)))
                     new-params
                     se/state-error)
-            _ (flat-map (set-local-var ast/result-sym)
-                        (fn [result-sym]
-                          (b/set-value ast/result-sym result-sym)))
+            result-sym (set-local-var ast/result-sym)
+            _ (b/set-value ast/result-sym result-sym)
             ;; _ (b/status 'new-params _LINE_
             ;;             (interpose (map (ast/all-syms new-params)
             ;;                             (fn [s]
@@ -1071,60 +1072,63 @@
 (extend-type ast/extend-ast
   TypeChecker
   (pre-check [ast]
-    (let [type-sym (.type ast)
-          loc (ast/location ast)]
-      (for [;; _ (map b/se-nop (fn [_]
-            ;;                 (print-err 'extending _LINE_ (ast/location ast) (.type ast))))
-            type-info (comp (b/get-type-info type-sym)
-                            (b/compilation-error "No type named" (str "'" type-sym "'")
-                                                 "was found. Used at" (ast/location type-sym)))
-            ;; TODO: don't allow extension of refined types
-            :let [type-infos (cond (instance? c/SumConstraint type-info)
-                                   (.alts type-info)
-                                   [type-info])]
-            new-impls (-> (.impls ast)
-                          (filter (fn [arity]
-                                    (instance? ast/fn-arity-ast arity)))
-                          (se/traverse
-                           (fn [arity]
-                             (either (-> (.params arity)
-                                         .fixed
-                                         first
-                                         (map (fn [first-param]
-                                                ;; (print-err 'params _LINE_
-                                                ;;            (ast/location first-param)
-                                                ;;            first-param)
-                                                (-> type-infos
-                                                    (map (fn [type-info]
-                                                           (let [new-bod (comp
-                                                                          [(CheckOnly first-param
-                                                                                      type-info)]
-                                                                          (.body arity))]
-                                                             (ProtoArity (c/type-num type-info)
-                                                                         (.body arity new-bod)))))
-                                                    se/state-error))))
-                                     (b/compilation-error "Prototype implentation for "
-                                                          (str "'" (.fn-sym arity) "'")
-                                                          "must have at least one parameter at"
-                                                          (ast/location (.fn-sym arity)))))))]
-        (conj new-impls
-              (reify
-                Type
-                (type-name [_]
-                  (str "reified at " (c/Location _FILE_ _LINE_)))
+    (print-err 'boom-typer _LINE_)
+    b/se-nop
+    ;; (let [type-sym (.type ast)
+    ;;       loc (ast/location ast)]
+    ;;   (for [;; _ (map b/se-nop (fn [_]
+    ;;         ;;                 (print-err 'extending _LINE_ (ast/location ast) (.type ast))))
+    ;;         type-info (comp (b/get-type-info type-sym)
+    ;;                         (b/compilation-error "No type named" (str "'" type-sym "'")
+    ;;                                              "was found. Used at" (ast/location type-sym)))
+    ;;         ;; TODO: don't allow extension of refined types
+    ;;         :let [type-infos (cond (instance? c/SumConstraint type-info)
+    ;;                                (.alts type-info)
+    ;;                                [type-info])]
+    ;;         new-impls (-> (.impls ast)
+    ;;                       (filter (fn [arity]
+    ;;                                 (instance? ast/fn-arity-ast arity)))
+    ;;                       (se/traverse
+    ;;                        (fn [arity]
+    ;;                          (either (-> (.params arity)
+    ;;                                      .fixed
+    ;;                                      first
+    ;;                                      (map (fn [first-param]
+    ;;                                             ;; (print-err 'params _LINE_
+    ;;                                             ;;            (ast/location first-param)
+    ;;                                             ;;            first-param)
+    ;;                                             (-> type-infos
+    ;;                                                 (map (fn [type-info]
+    ;;                                                        (let [new-bod (comp
+    ;;                                                                       [(CheckOnly first-param
+    ;;                                                                                   type-info)]
+    ;;                                                                       (.body arity))]
+    ;;                                                          (ProtoArity (c/type-num type-info)
+    ;;                                                                      (.body arity new-bod)))))
+    ;;                                                 se/state-error))))
+    ;;                                  (b/compilation-error "Prototype implentation for "
+    ;;                                                       (str "'" (.fn-sym arity) "'")
+    ;;                                                       "must have at least one parameter at"
+    ;;                                                       (ast/location (.fn-sym arity)))))))]
+    ;;     (conj new-impls
+    ;;           (reify
+    ;;             Type
+    ;;             (type-name [_]
+    ;;               (str "reified at " (c/Location _FILE_ _LINE_)))
 
-                Stringable
-                (string-list [_]
-                  (list (str "reified at " (c/Location _FILE_ _LINE_))))
+    ;;             Stringable
+    ;;             (string-list [_]
+    ;;               (list (str "reified at " (c/Location _FILE_ _LINE_))))
 
-                Container
-                (map [y f embed]
-                  (embed y))
+    ;;             Container
+    ;;             (map [y f embed]
+    ;;               (embed y))
 
-                TypeChecker
-                (pre-check [x]
-                  (se/state-error (ast/block-comment-ast [] c/no-loc
-                                                         c/top-type)))))))))
+    ;;             TypeChecker
+    ;;             (pre-check [x]
+    ;;               (se/state-error (ast/block-comment-ast [] c/no-loc
+    ;;                                                      c/top-type)))))))
+    ))
 
 (extend-type ast/string-ast
   TypeChecker
@@ -1136,7 +1140,7 @@
       (-> ast
           (.constraint (.static c/strbuff-constraint str-val))
           (.var (b/global-var 'Str))
-          se/state-error ))))
+          se/state-error))))
 
 (extend-type ast/integer-ast
   TypeChecker
@@ -1349,17 +1353,23 @@
 (def ctxt* (c/tag "#ctxt"))
 
 (defn constrain-first-param [ast type-info fields loc]
-  (assert (instance? ast/fn-arity-ast ast))
+  (assert (instance? b/StaticArity ast))
   (assert (instance? c/ReifiedConstraint type-info))
 
-   (either (-> (.params ast)
+  (either (-> (.arity ast)
+              .params
               .fixed
               first
               (map (fn [first-param]
+                     (print-err 'boom-typer _LINE_)
+                     ;; TODO: put the commented code back in
+                     (abort)
                      (ProtoArity (c/type-num type-info)
-                                 (.body ast (comp [(DestructFields (.sym type-info first-param)
-                                                                   fields loc)]
-                                                  (.body ast)))))))
+                                 ;; (.body ast (comp [(DestructFields (.sym type-info first-param)
+                                 ;;                                   fields loc)]
+                                 ;;                  (.body ast)))
+                                 ast
+                                 ))))
 
           (do
             ;; (b/compilation-error "Prototype implentation for "
