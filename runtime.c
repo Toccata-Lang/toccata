@@ -2014,7 +2014,7 @@ Port some(Port thing) {
 
 Port integer_EQ(Port arg0, Port arg1) {
   i64 x = get_i24(get_val(arg0));
-  i64 y = get_i24(get_val(arg0));
+  i64 y = get_i24(get_val(arg1));
 
   if (x != y) {
     return(nothing());
@@ -3712,6 +3712,7 @@ int main (int argc, char **argv) {
   TM *tm = tms[0];
   int bashResult;
   Port result;
+  // normalize the net 'iterations' times
   for (int iterations = 0; iterations < 1; iterations++) {
     atomic_store_explicit(&node_count, 0, memory_order_relaxed);
     atomic_store_explicit(&vars_count, 0, memory_order_relaxed);
@@ -3731,18 +3732,14 @@ int main (int argc, char **argv) {
     normalize();
     result = enter(finalResultVar);
     freeGlobals(tm);
+    //*
     if (node_count != 0 || vars_count != 0) {
       printf("remaining vars: %d (%d)\n", vars_count, max_vars);
       printf("remaining nodes: %d (%d)\n", node_count, max_node);
       return(1);
     }
+    // */
   }
-#ifdef CHECK_MEM_LEAK
-  cleaningUp = 1;
-  freeAll();
-  if (malloc_count - free_count != 0)
-    return(1);
-#endif
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = atomic_load(&globalNet->itrs);
   printf("- ITRS: %" PRIu64 "\n", itrs);
@@ -3754,9 +3751,14 @@ int main (int argc, char **argv) {
     bashResult = (int)get_u24(get_val(result));
     printf("result: %p bashResult: %d\n", (void *)result, bashResult);
   } else if (get_tag(result) == VAL ) {
-    Value *the_final_answer = (Value *)NULL;
-    the_final_answer = (Value *)(result & ~TAG_MASK);
+    dec_and_free(result, 1);
   }
+#ifdef CHECK_MEM_LEAK
+  cleaningUp = 1;
+  freeAll();
+  if (malloc_count - free_count != 0)
+    return(1);
+#endif
   free_static_tms();
   free(globalNet);
   return(bashResult);

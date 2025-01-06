@@ -56,8 +56,9 @@ Val get_val(Port port) {
 }
 
 Port new_port(Tag tag, Port val) {
-  if (val & TAG_MASK) {
+  if (tag > 0 && val & TAG_MASK) {
     fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__); 
+    fprintf(stderr, "tag: %d  val: %p\n", tag, (void *)val);
     abort();
   }
   return (u64)val | tag;
@@ -1325,15 +1326,18 @@ Port argsNet(NativeArgs *args) {
 
 // extract the requested number of native args
 Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
+  if (argsStruct->count < 0)
+    return NONE;
+
   Tag argsTag = get_tag(args);
   Port arg;
   Port n0;
   Pair argsNode;
   Port varVal;
-  switch(get_tag(args)) {
-  case 0xF:
+  switch(argsTag) {
+  case 0xF: // aka lowest byte of NONE
     // TODO: test this
-    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
+    fprintf(stderr, "Boom at %s: %d args: %d\n", __FILE__, __LINE__, argsStruct->count);
     abort();
     return NONE;
     break;
@@ -1363,6 +1367,7 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 	  link(arg, varVal);
 	}
       }
+      argsStruct->count = -1;
       return NONE;
       break;
 
