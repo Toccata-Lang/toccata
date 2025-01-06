@@ -3771,21 +3771,21 @@ bool constructFn(Port ref, Port args) {
   NativeArgs arityArgs = {0, {}, resultVar};
   // the first two args will always be integers; type-number and num-args
   args = nativeArg(ref, args, &arityArgs);
+  int typeNum = get_i24(get_val(arityArgs.args[0]));
   args = nativeArg(ref, args, &arityArgs);
   int numArgs = get_i24(get_val(arityArgs.args[1]));
-  int typeNum = get_i24(get_val(arityArgs.args[0]));
 
-  arityArgs.count = 0;
   for (int i = 0; i < numArgs; i++) {
     args = nativeArg(ref, args, &arityArgs);
   }
 
-  if (arityArgs.count == numArgs) {
+  if (arityArgs.count == numArgs + 2) {
     ReifiedVal *rv = malloc_reified(arityArgs.count);
     rv->type = typeNum;
     for (int i = 0; i < arityArgs.count; i++) {
       rv->impls[i] = arityArgs.args[i];
     }
+    rv->implCount = numArgs;
     __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
     link(resultVar, new_port(VAL, (Port)rv));
   }

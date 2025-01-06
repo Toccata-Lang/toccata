@@ -1345,11 +1345,13 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
   case ARG:
     argsNode = node_take(args);
     arg = argsNode.fst;
-    if (get_tag(arg) == VAR) {
+    Tag argTag = get_tag(arg);
+    if (argTag == VAR) {
       arg = enter(arg);
+      argTag = get_tag(arg);
     }
 
-    switch(get_tag(arg)) {
+    switch(argTag) {
     case VAL:
     case NUM:
       argsStruct->args[argsStruct->count++] = arg;
@@ -1374,10 +1376,9 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
     case DUP:
     case CON:
       if (1) {
-	Tag t = get_tag(arg);
 	Port r1 = vars_make(NONE);
 	Port r2 = vars_make(NONE);
-	link(argsStruct->result, node_make(t, r1, r2));
+	link(argsStruct->result, node_make(argTag, r1, r2));
 	
 	Port args1;
 	Port args2;
@@ -1387,7 +1388,7 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 	} else {
 	  args1 = vars_make(NONE);
 	  args2 = vars_make(NONE);
-	  Port n = node_make(t, args1, args2);
+	  Port n = node_make(argTag, args1, args2);
 	  fprintf(stderr, "args: %d %p %p n: %p\n", __LINE__, (void *)args1, (void *)args2, (void *)n);
 	  fprintf(stderr, "snd: %p\n", (void *)argsNode.snd);
 	  link(argsNode.snd, n);
