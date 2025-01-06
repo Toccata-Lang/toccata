@@ -8,6 +8,7 @@
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
+(add-ns ty (module "typer.toc"))
 (add-ns b (module "base.toc"))
 
 (def lf "\n")
@@ -426,8 +427,10 @@
   ;;     ast))
 
   (gen-code [ast]
-    (let [params (.params ast)]
-      (either (map (last (.body ast))
+    (let [params (.params ast)
+          body (remove (.body ast) (fn [expr]
+                                     (instance? ast/block-comment-ast expr)))]
+      (either (map (last body)
                    (fn [last-ast]
                      (let [last-v (.var last-ast)]
                        (cond (instance? ast/inline-ast last-ast)
@@ -439,7 +442,7 @@
                                       (fn [init]
                                         [init
                                          "// link args to body\n"
-                                         (map (butlast (.body ast))
+                                         (map (butlast body)
                                               (fn [expr]
                                                 (let [v (.var expr)]
                                                   (cond (= v last-v)
@@ -751,7 +754,7 @@
 (extend-type ast/block-comment-ast
   CodeGen
   (gen-code [ast]
-    b/se-nop))
+    (se/state-error ast)))
 
 ;; (extend-type ast/or-ast
 ;;   CodeGen
@@ -813,10 +816,16 @@
            (fn [_]
              ast)))))
 
+(extend-type ty/ProtoArity
+  CodeGen
+  (gen-code [ast]
+    (se/state-error ast)))
+
 (defn emit-proto [ptype]
-  ;; (for [_ (se/update-val .init (fn [init]
-  ;;                                [init (.txt x)]))]
-  ;;   )
+  (assert (instance? ast/prototype-ast ptype))
+
+  (print-err 'emit-proto _LINE_ ptype lflf
+             (.impls ptype))
   (let [c-fn (b/global-var b/CFn)]
     (se/update-val .decl
                    (fn [decl]
@@ -829,19 +838,23 @@
                       "  Port result = erase;\n"
                       "  NativeArgs arityArgs = {0, {}, resultVar};"
                       line-sep
-                      (repeat 3
-                              (str "    args = nativeArg(ref, args"
-                                   ", &arityArgs);" line-sep))
+                      (repeat 3 (str "    args = nativeArg(ref, args"
+                                     ", &arityArgs);" line-sep))
                       "    if (arityArgs.count == 3) {" line-sep
                       "String *fileStr = (String *)arityArgs.args[0];\n"
                       "Value *dispVal = (Value *)arityArgs.args[2];\n"
                       "args = node_make(ARG, (Port)dispVal, args);\n"
                       "args = node_make(ARG, resultVar, args);\n"
                       "switch(dispVal->type) {\n"
-                      ;; (-> (.impls ptype)
-                      ;;     seq
-                      ;;     (reduce [] (fn [cases impl-arity]
-                      ;;                  )))
+                      (-> (.impls ptype)
+                          seq
+                          (reduce [] (fn [cases [type-num impl-arity]]
+                                       (cond (= 0 type-num)
+                                             cases
+
+                                             [cases
+                                              "case " (str type-num) ":\n"
+                                              "link(" (.var impl-arity) ", args);\nbreak;\n"]))))
                       "default:\n"
                       (either (map (get-in ptype [.impls c/UnknownType])
                                    (fn [def-arity]
@@ -875,9 +888,7 @@
                                                   (abort)))))
                       proto-decl (se/get-val .decl)
                       _ (se/set-val .decl [])]
-                  (code-out "\n// before\n"
-                            proto-decl
-                            "\n// after \n"))]
+                  (code-out proto-decl))]
     (let [[_ code-context] (emitter code-context)]
       code-context)))
 
