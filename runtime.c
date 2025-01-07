@@ -3744,7 +3744,7 @@ int main (int argc, char **argv) {
       resultTag = get_tag(result);
       // fprintf(stderr, "result tag: %d\n", resultTag);
       if (resultTag == VAR) {
-	result = vars_exchange(result, FREE);
+	result = vars_exchange(result, NONE);
       }
       resultTag = get_tag(result);
       if (resultTag == RDX) {
