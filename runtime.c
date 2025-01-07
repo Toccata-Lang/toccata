@@ -3729,8 +3729,21 @@ int main (int argc, char **argv) {
     callArgs = node_make(ARG, new_port(VAL, (Port)argVect), callArgs);
     callArgs = node_make(ARG, finalResultVar, callArgs);
     link(mainFn, callArgs);
-    normalize();
-    result = enter(finalResultVar);
+    Tag resultTag;
+    do {
+      normalize();
+      result = enter(finalResultVar);
+      if (get_tag(result) == VAR) {
+	result = vars_exchange(result, NONE);
+      }
+      resultTag = get_tag(result);
+      if (resultTag == RDX) {
+	Pair rdx = node_take(result);
+	Pair args = node_load(rdx.snd);
+	finalResultVar = args.fst;
+	push_redex(rdx);
+      }
+    } while(resultTag != NUM && resultTag != VAL);
     freeGlobals(tm);
     //*
     if (node_count != 0 || vars_count != 0) {
