@@ -492,15 +492,17 @@ Pair node_exchange(Port loc, Pair val) {
 // Exchanges a var on global by a value. Returns old.
 Port vars_exchange(Port var, Port val) {
   Port p = var;
-  // while (p != FREE && p != NONE && get_tag(p) == VAR) {
-  // fprintf(stderr, "vars_exchange: %d var: %p val: %p\n", __LINE__, (void *)var, (void *)val);
-    p = atomic_exchange_explicit((APort*)p, val, memory_order_relaxed);
-    // fprintf(stderr, "old-val: %p\n", (void *)p);
-    // }
   if (val == FREE) {
-    // fprintf(stderr, "freed: %d %p\n", __LINE__, (void *)var);
-    // fprintf(stderr, "old-val: %p\n", (void *)p);
-    atomic_fetch_sub_explicit(&vars_count, 1, memory_order_relaxed);
+    // while (p != FREE && p != NONE && get_tag(p) == VAR) {
+    // fprintf(stderr, "vars_freed: %d var: %p\n", __LINE__, (void *)p);
+    p = atomic_exchange_explicit((APort*)p, val, memory_order_relaxed);
+    // fprintf(stderr, "old-val: %p %p\n", (void *)get_tag(p), (void *)(p & ~TAG_MASK));
+    // }
+    if (p != FREE) {
+      atomic_fetch_sub_explicit(&vars_count, 1, memory_order_relaxed);
+    }
+  } else {
+    p = atomic_exchange_explicit((APort*)p, val, memory_order_relaxed);
   }
   return p;
 }
@@ -560,7 +562,7 @@ Port vars_alloc() {
       int vc = atomic_fetch_add_explicit(&vars_count, 1, memory_order_relaxed);
       if (max_vars < vc)
 	max_vars = vc;
-      // fprintf(stderr, "allocd: %d %p\n", __LINE__, (void *)elem);
+      //  fprintf(stderr, "allocd: %d %p %p\n", __LINE__, (void *)elem, (void *)((Port)elem | VAR));
       return (Port)((i64)elem | VAR);
     }
   }

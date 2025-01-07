@@ -3723,6 +3723,7 @@ int main (int argc, char **argv) {
       argVect = mutateVectConj(argVect, new_port(VAL, (Port)sv));
     }
     finalResultVar = vars_alloc();
+    // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
     bashResult = 0;
     Port callArgs;
     callArgs = new_port(ARG, 0);
@@ -3733,8 +3734,11 @@ int main (int argc, char **argv) {
     do {
       normalize();
       result = enter(finalResultVar);
-      if (get_tag(result) == VAR) {
-	result = vars_exchange(result, NONE);
+      // result = vars_exchange(finalResultVar, FREE);
+      resultTag = get_tag(result);
+      // fprintf(stderr, "result tag: %d\n", resultTag);
+      if (resultTag == VAR) {
+	result = vars_exchange(result, FREE);
       }
       resultTag = get_tag(result);
       if (resultTag == RDX) {
@@ -3745,13 +3749,6 @@ int main (int argc, char **argv) {
       }
     } while(resultTag != NUM && resultTag != VAL);
     freeGlobals(tm);
-    //*
-    if (node_count != 0 || vars_count != 0) {
-      printf("remaining vars: %d (%d)\n", vars_count, max_vars);
-      printf("remaining nodes: %d (%d)\n", node_count, max_node);
-      return(1);
-    }
-    // */
   }
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = atomic_load(&globalNet->itrs);
@@ -3764,12 +3761,13 @@ int main (int argc, char **argv) {
     bashResult = (int)get_u24(get_val(result));
     printf("result: %p bashResult: %d\n", (void *)result, bashResult);
   } else if (get_tag(result) == VAL ) {
+    printf("result %d  %p\n", __LINE__, (void *)result);
     dec_and_free(result, 1);
   }
 #ifdef CHECK_MEM_LEAK
   cleaningUp = 1;
   freeAll();
-  if (malloc_count - free_count != 0)
+  if (malloc_count - free_count != 0 || vars_count != 0 || node_count != 0)
     return(1);
 #endif
   free_static_tms();
