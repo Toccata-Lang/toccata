@@ -562,7 +562,7 @@ Port vars_alloc() {
       int vc = atomic_fetch_add_explicit(&vars_count, 1, memory_order_relaxed);
       if (max_vars < vc)
 	max_vars = vc;
-      //  fprintf(stderr, "allocd: %d %p %p\n", __LINE__, (void *)elem, (void *)((Port)elem | VAR));
+      // fprintf(stderr, "allocd: %d %p %p\n", __LINE__, (void *)elem, (void *)((Port)elem | VAR));
       return (Port)((i64)elem | VAR);
     }
   }
