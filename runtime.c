@@ -3800,7 +3800,7 @@ bool constructFn(Port ref, Port args) {
     ReifiedVal *rv = malloc_reified(numArgs);
     rv->type = typeNum;
     for (int i = 0; i < numArgs; i++) {
-      Port field = (void *)arityArgs.args[i + 2];
+      Port field = arityArgs.args[i + 2];
       // fprintf(stderr, "field val %d: %d %p\n", __LINE__, get_tag((Port)field), field); 
       rv->impls[i] = field;
     }
