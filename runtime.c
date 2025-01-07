@@ -145,7 +145,7 @@ Value *removeFreeValue(FreeValList *freeList) {
     REFS_SIZE refs;
     __atomic_load(&item->refs, &refs, __ATOMIC_RELAXED);
     if (refs != refsError) {
-      fprintf(stderr, "failure in removeFreeValue: %d\n", refs);
+      fprintf(stderr, "failure in removeFreeValue: %d %p\n", refs, item);
       abort();
     }
     return(item);
@@ -506,11 +506,13 @@ ReifiedVal *malloc_reified(int64_t implCount) {
       newReifiedVal = (ReifiedVal *)removeFreeValue(&centralFreeReified[implCount]);
       if (newReifiedVal == (ReifiedVal *)0) {
 	int rvSize = sizeof(ReifiedVal) + sizeof(FnArity *) * implCount;
-	int rvCount = 100000;
+	int rvCount = 5000;
 	char *reifiedStructs = (char *)my_malloc(rvSize * rvCount);
 	for (int i = 1; i < (rvCount - 1); i++) {
-	  ((ReifiedVal *)&reifiedStructs[i * rvSize])->refs = refsError;
-	  ((Value *)&reifiedStructs[i * rvSize])->next = (Value *)&reifiedStructs[(i + 1) * rvSize];
+	  ReifiedVal *rv = (ReifiedVal *)&reifiedStructs[i * rvSize];
+	  // fprintf(stderr, "rv %d: %p\n", __LINE__, rv);
+	  rv->refs = refsError;
+	  ((Value *)rv)->next = (Value *)&reifiedStructs[(i + 1) * rvSize];
 	}
 	((ReifiedVal *)&reifiedStructs[(rvCount - 1) * rvSize])->refs = refsError;
 	((Value *)&reifiedStructs[(rvCount - 1) * rvSize])->next = (Value *)0;
@@ -530,6 +532,7 @@ ReifiedVal *malloc_reified(int64_t implCount) {
   newReifiedVal->refs = refsInit;
   newReifiedVal->hashVal = 0;
   newReifiedVal->implCount = implCount;
+  // fprintf(stderr, "newReified %d: %ld  %p\n", __LINE__, implCount, newReifiedVal);
   return(newReifiedVal);
 }
 
@@ -778,6 +781,7 @@ void decValRef(Port pv, int deltaRefs) {
       freeJmpTbl[v->type](v);
     } else {
       ReifiedVal *rv = (ReifiedVal *)v;
+      // fprintf(stderr, "freeing reified %d: %ld %p\n", __LINE__, rv->implCount, rv);
       for (int i = 0; i < rv->implCount; i++) {
 	dec_and_free(rv->impls[i], 1);
       }
@@ -815,6 +819,8 @@ void dec_and_free(Port pv, int deltaRefs) {
   Value *v;
   switch (get_tag((Port)pv)) {
   case NUM:
+    break;
+
   case VAL:
     decValRef((Port)pv, deltaRefs);
     break;
@@ -3791,12 +3797,13 @@ bool constructFn(Port ref, Port args) {
   }
 
   if (arityArgs.count == numArgs + 2) {
-    ReifiedVal *rv = malloc_reified(arityArgs.count);
+    ReifiedVal *rv = malloc_reified(numArgs);
     rv->type = typeNum;
-    for (int i = 0; i < arityArgs.count; i++) {
-      rv->impls[i] = arityArgs.args[i];
+    for (int i = 0; i < numArgs; i++) {
+      Value *field = (void *)arityArgs.args[i + 2];
+      // fprintf(stderr, "field val %d: %d %p\n", __LINE__, get_tag((Port)field), field); 
+      rv->impls[i] = field;
     }
-    rv->implCount = numArgs;
     __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
     link(resultVar, new_port(VAL, (Port)rv));
   }

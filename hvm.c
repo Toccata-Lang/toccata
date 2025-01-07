@@ -1356,6 +1356,7 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
     switch(argTag) {
     case VAL:
     case NUM:
+      // fprintf(stderr, "arg %d: %p\n", __LINE__, (void *)arg);
       argsStruct->args[argsStruct->count++] = arg;
       return argsNode.snd;
       break;
@@ -1365,6 +1366,7 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
       argsStruct->args[argsStruct->count++] = argsNode.snd;
       varVal = vars_exchange(arg, node_make(RDX, ref, argsNet(argsStruct)));
       if (varVal != NONE && varVal != FREE) {
+	// fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
 	if (get_tag(varVal) == RDX) {
 	  push_redex(node_take(varVal));
 	} else {
