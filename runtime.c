@@ -3810,3 +3810,23 @@ bool constructFn(Port ref, Port args) {
   return TRUE;
 }
 Port construct = new_port_(REF, constructFn);
+
+bool getFieldFn(Port ref, Port args) {
+  Pair pr = node_take(args);
+  Port resultVar = pr.fst;
+  args = pr.snd;
+  NativeArgs arityArgs = {0, {}, resultVar};
+  args = nativeArg(ref, args, &arityArgs);
+  args = nativeArg(ref, args, &arityArgs);
+
+  if (arityArgs.count == 2) {
+    ReifiedVal *value = (ReifiedVal *)arityArgs.args[0];
+    int fldIdx = get_i24(get_val(arityArgs.args[1]));
+    Port fld = value->impls[fldIdx];
+    incRef((Value *)fld, 1);
+    dec_and_free((Port)value, 1);
+    link(resultVar, new_port(VAL, (Port)fld));
+  }
+  return TRUE;
+}
+Port getField = new_port_(REF, getFieldFn);

@@ -7,7 +7,7 @@
                           :sha "ff96b0c"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "3f6549e"))
+                            :sha "ce21dfc"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -918,6 +918,10 @@
   (type-check [s old-s]
     ;; TODO: this is probably a hotspot since it gets called for every symbol.
     (for [new-s (b/get-value s)
+          new-s (cond (instance? ast/field-ast new-s)
+                      (set-local-var new-s)
+
+                      (se/state-error new-s))
           ;; new-s (se/try
           ;;         (for [arity-id (b/get-value b/curr-arity)
           ;;               r (cond (or (b/is-glbl (.var new-s))
@@ -940,8 +944,9 @@
           ;;         (fn [err]
           ;;           (se/state-error new-s)))
           ]
-      (cond (and (instance? c/TaggedSymbol new-s)
-                 (= (.sym s) (.sym new-s)))
+      (cond (or (instance? ast/field-ast new-s)
+                (and (instance? c/TaggedSymbol new-s)
+                     (= (.sym s) (.sym new-s))))
             (do
               ;; (or (b/is-glbl (.var new-s))
               ;;     (and (= (.arity-id new-s) c/no-symbol)
@@ -1191,7 +1196,7 @@
 (deftype DestructFields [type-info fields loc]
   (assert (instance? c/ReifiedConstraint type-info))
   (assert (instance? c/Location loc))
-  (assert (instance? (vector-of c/TaggedSymbol) fields))
+  (assert (instance? (vector-of ast/field-ast) fields))
 
   Stringable
   (string-list [_]
@@ -1209,12 +1214,10 @@
     (for [arity-id (b/get-value b/curr-arity)
           :let [param (c/param arity-id 0)]
           _ (append-value-type (.sym type-info) type-info loc)
+          val (b/get-value (.sym type-info))
           _ (se/traverse fields
                          (fn [fld]
-                           (append-value-type fld
-                                              (c/type-op c/get-from-op param
-                                                         [(c/Field (c/tag (str "." fld) loc))])
-                                              loc)))]
+                           (b/set-value (.sym fld) (.val-var fld (.var val)))))]
       (ast/block-comment-ast [] c/no-loc c/top-type))))
 
 (def x* (c/tag "#x"))
@@ -1232,7 +1235,7 @@
               first
               (map (fn [first-param]
                      (ProtoArity (c/type-num type-info)
-                                 (either (update-in ast [.arity .arity .body]
+                                 (either (update-in ast [.arity .body]
                                                     (fn [body]
                                                       (comp [(DestructFields (.sym type-info
                                                                                    first-param)
@@ -1342,12 +1345,15 @@
               :let [field-cs (map field-vals .constraint)
                     type-num (.type-number new-type-constraint)
                     idxs (integer-gen 1)
-                    field-pairs (map (zip-lists fields field-cs)
-                                     (fn [[fld-name fld-c]]
-                                       [(c/Field (c/tag (str "." fld-name)))
-                                        fld-c
-                                        (new-int idxs)]))
-                    fields-map (reduce field-pairs {} conj)
+                    field-asts (-> (zip-lists fields field-cs)
+                                   (map (fn [[fld-name fld-c]]
+                                          (ast/field-ast (c/tag fld-name)
+                                                         (dec (new-int idxs)) "" "" fld-c)))
+                                   vec)
+                    fields-map (reduce field-asts {}
+                                       (fn [m fld-ast]
+                                         (assoc m (c/Field (.sym fld-ast))
+                                                (.constraint fld-ast))))
                     new-type-constraint (-> new-type-constraint
                                             (.field-consts fields-map)
                                             (.fields (assoc fields-map
@@ -1359,15 +1365,15 @@
                                 (c/seq-c field-cs)
                                 (-> c/empty-reified
                                     (.type-symbol sym)
-                                    (.field-consts (reduce field-pairs {}
-                                                           (fn [fields-map [fld fld-c idx]]
-                                                             (assoc fields-map fld fld-c))))
-                                    (.fields (reduce field-pairs {}
-                                                     (fn [fields-map [fld fld-c idx]]
-                                                       (assoc fields-map
-                                                              fld
-                                                              (c/intersect (c/param sym (dec idx))
-                                                                           fld-c)))))
+                                    (.field-consts fields-map)
+                                    (.fields (reduce field-asts {}
+                                                     (fn [fields-map fld-ast]
+                                                       (let [fld (c/Field (c/tag (.sym fld-ast)))
+                                                             fld-c (.constraint fld-ast)
+                                                             idx (.idx fld-ast)]
+                                                         (assoc fields-map fld
+                                                                (c/intersect (c/param sym (dec idx))
+                                                                             fld-c))))))
                                     (assoc-in [.fields c/contents] c/top-type)))]
               _ (b/set-type-info sym new-type-constraint)
               _ (b/set-value sym (.constraint sym ctor-arity))
@@ -1397,24 +1403,28 @@
               ;;                                         (c/type-op c/set-to-op setter-param-0
               ;;                                                    [[field] setter-param-1]))
               ;;                                        loc))))
-              _ (cata (fn [ast]
-                        (cond (and (instance? c/TaggedSymbol ast)
-                                   (some fields (fn [field]
-                                                  (= ast field))))
-                              (b/compilation-error "Parameter" (str "'" ast "'") "shadows a field"
-                                                   "name at" (ast/location ast) ".")
+              _ (-> (.impls ast)
+                    (filter (fn [expr]
+                              (instance? ast/fn-arity-ast expr)))
+                    (map (fn [impl]
+                           (map (.fixed (.params impl))
+                                (fn [sym]
+                                  (cond (some fields (fn [field]
+                                                       (= ast field)))
+                                        (b/compilation-error "Parameter" (str "'" ast "'")
+                                                             "shadows a field" "name at"
+                                                             (ast/location ast) ".")
 
-                              b/se-nop))
-                      (.impls ast)
-                      se/state-error)
-              ]
+                                        b/se-nop))
+                                se/state-error))
+                         se/state-error))]
           (let [impls (-> (.impls ast)
                           (remove (fn [expr]
                                     (or (instance? ast/block-comment-ast expr)
                                         (instance? c/SymbolConstraints expr))))
-                          (map (fn [ast]
-                                 (constrain-first-param (set-global-var ast)
-                                                        new-type-constraint fields loc))))
+                          (map (fn [impl]
+                                 (constrain-first-param (set-global-var impl)
+                                                        new-type-constraint field-asts loc))))
                 ctor-fn (b/global-var sym 'CtorFn)
                 ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
                 ;; and parameter, respectively
