@@ -195,3 +195,4 @@ Port vars_make(Port p);
 bool unwind(TM* tm, Port a, Port b);
 void freeGlobal(Port p);
 void push_redex(Pair redex);
+Port argsNet(NativeArgs *args);

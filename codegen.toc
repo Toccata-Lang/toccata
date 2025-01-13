@@ -4,7 +4,7 @@
                           :sha "ff96b0c"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "ce21dfc"))
+                            :sha "5bd1cd5"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -258,29 +258,44 @@
 (extend-type ast/field-ast
   CodeGen
   (gen-code [ast]
-    (let [val-var (.val-var ast)
-          get-field ["Port " (.var ast) " = vars_alloc();\n"
-                     "if(1){\n"
-                     "Port callArgs = new_port(ARG, 0);\n"
-                     "callArgs = node_make(ARG, new_num_(new_i24_(" (.idx ast) ")), callArgs);\n"
-                     "callArgs = node_make(ARG, " val-var ", callArgs);\n"
-                     "callArgs = node_make(ARG, " (.var ast) ", callArgs);\n"
-                     "link(getField, callArgs);\n}\n"]]
-      (comp (for [refs (se/update-in-val [.refs-map val-var] inc)
-                  :let [dupe-var (str val-var "_" refs)]
-                  _ (se/update-val .init
-                                   (fn [init]
-                                     ["\nPort " dupe-var " = vars_alloc();\n"
-                                      val-var " = dupeArg(" val-var, ", " dupe-var ");\n"
-                                      get-field
-                                      init]))]
-              (.var ast dupe-var))
-            ;; if val-var is not in the refs-map, being seen for the first time
-            (for [_ (se/assoc-in-val [.refs-map val-var] 1)
-                  _ (se/update-val .init
-                                   (fn [init]
-                                     [get-field init]))]
-              ast)))))
+    (cond (b/is-glbl (.var ast))
+          (let [c-fn (b/global-var 'FldFn)]
+            (se/update-val .decl
+                           (fn [decl]
+                             [decl
+                              "Port " (.var ast) ";\n"
+                              "bool " c-fn "(Port ref, Port args) {\n"
+                              "Pair pr = node_take(args);\n"
+                              "Port resultVar = pr.fst;\n"
+                              "args = pr.snd;\n"
+                              "args = node_make(ARG, new_num_(new_i24_(" (.idx ast) ")), args);\n"
+                              "args = node_make(ARG, resultVar, args);\n"
+                              "link(accessField, args);\n"
+                              "return TRUE;\n}\n"
+                              "Port " (.var ast) " = new_port_(REF, " c-fn ");\n"])))
+          
+          (let [val-var (.val-var ast)
+                get-field ["Port " (.var ast) " = vars_alloc();\n"
+                           "callArgs = endArgs;\n"
+                           "callArgs = node_make(ARG, " val-var ", callArgs);\n"
+                           "callArgs = node_make(ARG, new_num_(new_i24_(" (.idx ast) ")), callArgs);\n"
+                           "callArgs = node_make(ARG, " (.var ast) ", callArgs);\n"
+                           "link(accessField, callArgs);\n"]]
+            (comp (for [refs (se/update-in-val [.refs-map val-var] inc)
+                        :let [dupe-var (str val-var "_" refs)]
+                        _ (se/update-val .init
+                                         (fn [init]
+                                           ["\nPort " dupe-var " = vars_alloc();\n"
+                                            val-var " = dupeArg(" val-var, ", " dupe-var ");\n"
+                                            get-field
+                                            init]))]
+                    (.var ast dupe-var))
+                  ;; if val-var is not in the refs-map, being seen for the first time
+                  (for [_ (se/assoc-in-val [.refs-map val-var] 1)
+                        _ (se/update-val .init
+                                         (fn [init]
+                                           [get-field init]))]
+                    ast))))))
 
 (extend-type ast/inline-ast
   CodeGen
@@ -316,7 +331,7 @@
   (dest-params [ast]
     (let [var (.var ast)]
       (-> (reverse (.fixed ast))
-          (reduce (ParamInit var (str "Port " var " = new_port(ARG, 0);" line-sep))
+          (reduce (ParamInit var (str "Port " var " = new_port(ARG, 0);\n"))
                   (fn [args arg]
                     (assert (instance? ParamInit args))
                     (assert (instance? ParamInit arg))
@@ -444,15 +459,6 @@
 
 (extend-type ast/fn-arity-ast
   CodeGen
-  ;; (pre-gen [ast]
-  ;;   (for [_ (se/update-val .refs-map
-  ;;                          (fn [refs]
-  ;;                            (either (map (first refs)
-  ;;                                         (fn [refs-map]
-  ;;                                           (cons refs-map refs)))
-  ;;                                    (list {}))))]
-  ;;     ast))
-
   (gen-code [ast]
     (let [params (.params ast)
           body (remove (.body ast) (fn [expr]
@@ -831,9 +837,9 @@
                             mods))
         mods (extract mod-prom)
         protos (for [mod (vals mods)
-                     val (either (map (get-in mod [.namespaces c/no-symbol .values 0])
-                                      vals)
-                                 [])
+                     [sym val] (either (map (get-in mod [.namespaces c/no-symbol .values 0])
+                                        seq)
+                                   [])
                      :when (instance? ast/prototype-ast val)]
                  val)
         emitter (for [_ (se/set-val .decl [])

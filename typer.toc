@@ -7,7 +7,7 @@
                           :sha "ff96b0c"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "ce21dfc"))
+                            :sha "5bd1cd5"))
 (add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
                            "state-error.toc"
                            :sha "8b250fe"))
@@ -966,6 +966,23 @@
                   (.constraint (.constraint new-s))
                   (.var (.var new-s))))))))
 
+(extend-type ast/field-ast
+  TypeChecker
+  (set-global-var [ast]
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Fld))))
+
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (let [proto-sym (c/tag (str "." (.sym ast)))]
+      (for [ptype (b/get-value proto-sym)
+            _ (b/set-value proto-sym (assoc-in ptype [.impls (.type-num ast)] ast))]
+        ast))))
+
 (extend-type ast/params-ast
   TypeChecker
   (set-local-var [ast]
@@ -1342,13 +1359,24 @@
                                            loc))))))
               field-vals (se/traverse fields b/get-value)
               new-type-constraint (b/get-type-info sym)
-              :let [field-cs (map field-vals .constraint)
+              field-protos (se/traverse fields (fn [fld]
+                                                 (let [proto-sym (c/tag (str "." (.sym fld)))]
+                                                   (comp (map (se/get-in-val [.namespaces b/core
+                                                                              .values 0 proto-sym])
+                                                              (fn [_]
+                                                                nothing))
+                                                         (map (b/get-value proto-sym) maybe)))))
+              :let [field-protos (reduce field-protos [] (fn [fps fp]
+                                                           (either (map fp (fn [ptype]
+                                                                             (conj fps ptype)))
+                                                                   fps)))
+                    field-cs (map field-vals .constraint)
                     type-num (.type-number new-type-constraint)
                     idxs (integer-gen 1)
                     field-asts (-> (zip-lists fields field-cs)
                                    (map (fn [[fld-name fld-c]]
-                                          (ast/field-ast (c/tag fld-name)
-                                                         (dec (new-int idxs)) "" "" fld-c)))
+                                          (ast/field-ast (c/tag fld-name loc) (dec (new-int idxs))
+                                                         type-num "" "" fld-c)))
                                    vec)
                     fields-map (reduce field-asts {}
                                        (fn [m fld-ast]
@@ -1402,7 +1430,7 @@
               ;;                                                             fld-c])])
               ;;                                         (c/type-op c/set-to-op setter-param-0
               ;;                                                    [[field] setter-param-1]))
-              ;;                                        loc))))
+              ;;                  ))))
               _ (-> (.impls ast)
                     (filter (fn [expr]
                               (instance? ast/fn-arity-ast expr)))
@@ -1444,51 +1472,9 @@
                        (se/state-error x))
 
                      (type-check [_ _]
-                       (let [get-id (c/tag (str sym "_get") loc)
-                             ;; getter-c (c/arity
-                             ;;           get-id
-                             ;;           (c/seq-c [(c/multi [new-type-constraint
-                             ;;                               (c/param get-id 0)])
-                             ;;                     (c/param get-id 1)])
-                             ;;           (c/MaybeConstraint
-                             ;;            (c/type-op c/get-from-op (c/param get-id 0)
-                             ;;                       [(c/param get-id 1)])
-                             ;;            empty-list c/no-symbol))
-                             ;; getter-ast (b/StaticArity
-                             ;;             (ast/fn-arity-ast b/apply-sym c/no-symbol
-                             ;;                               (ast/params [(c/tag (symbol "#field") loc)
-                             ;;                                            (c/tag (symbol "#x") loc)])
-                             ;;                               "" [] (b/global-var b/apply-sym)
-                             ;;                               getter-c)
-                             ;;             "" "" getter-c)
-                             ;; set-id (c/tag (str sym "_set") loc)
-                             ;; setter-c (c/arity
-                             ;;           set-id
-                             ;;           (c/seq-c [(c/multi [new-type-constraint
-                             ;;                               (c/param set-id 0)])
-                             ;;                     (c/param set-id 1)
-                             ;;                     (c/param set-id 2)])
-                             ;;           (c/type-op c/set-to-op (c/param set-id 0)
-                             ;;                      [[(c/param set-id 1)]
-                             ;;                       (c/param set-id 2)]))
-                             ;; setter-ast (b/StaticArity
-                             ;;             (ast/fn-arity-ast b/apply-sym c/no-symbol
-                             ;;                               (ast/params [(c/tag (symbol "#field") loc)
-                             ;;                                            (c/tag (symbol "#x") loc)
-                             ;;                                            (c/tag (symbol "#val") loc)])
-                             ;;                               "" [] (b/global-var b/apply-sym)
-                             ;;                               setter-c)
-                             ;;             "" "" setter-c)
-                             ]
-                         (for [_ (b/pop-types)
-                               ;; _ (comp (b/get-proto-impl (c/tag 'get) type-num 2)
-                               ;;         (b/add-proto-impl type-num (c/tag 'get loc) 2
-                               ;;                           getter-ast))
-                               ;; _ (comp (b/get-proto-impl (c/tag 'assoc) type-num 3)
-                               ;;         (b/add-proto-impl type-num (c/tag 'assoc loc) 3
-                               ;;                           setter-ast))
-                               _ (b/set-type-info sym new-type-constraint)]
-                           (ast/block-comment-ast [] c/no-loc c/top-type)))))
+                       (for [_ (b/pop-types)
+                             _ (b/set-type-info sym new-type-constraint)]
+                         (ast/block-comment-ast [] c/no-loc c/top-type))))
                    (ast/inline-ast
                     c/top-type
                     (str "bool " ctor-fn "(Port ref, Port args) {\n"
@@ -1506,7 +1492,12 @@
                      [(ast/inline-ast ctor-arity
                                       (str "new_port_(REF, (Port)" ctor-fn ")")
                                       loc "")])]
-
+                  (map field-protos (fn [ptype]
+                                      (ast/inline-ast
+                                       c/top-type
+                                       (str "Port " (.var ptype) ";\n")
+                                       loc "")))
+                  (map field-asts set-global-var)
                   ;; (reify
                   ;;   Container
                   ;;   (map [y f embed]

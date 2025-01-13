@@ -369,4 +369,4 @@ void normGlobals();
 Port dupeVal(Port *v);
 extern Port construct;
 Port nothing();
-extern Port getField;
+extern Port accessField;

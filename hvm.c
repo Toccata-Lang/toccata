@@ -1333,7 +1333,6 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 
   Tag argsTag = get_tag(args);
   Port arg;
-  Port n0;
   Pair argsNode;
   Port varVal;
   switch(argsTag) {
@@ -1395,6 +1394,7 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 	  Port n = node_make(argTag, args1, args2);
 	  fprintf(stderr, "args: %d %p %p n: %p\n", __LINE__, (void *)args1, (void *)args2, (void *)n);
 	  fprintf(stderr, "snd: %p\n", (void *)argsNode.snd);
+	  abort();
 	  link(argsNode.snd, n);
 	}
 

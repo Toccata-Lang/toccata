@@ -3811,7 +3811,7 @@ bool constructFn(Port ref, Port args) {
 }
 Port construct = new_port_(REF, constructFn);
 
-bool getFieldFn(Port ref, Port args) {
+bool accessFieldFn(Port ref, Port args) {
   Pair pr = node_take(args);
   Port resultVar = pr.fst;
   args = pr.snd;
@@ -3819,14 +3819,134 @@ bool getFieldFn(Port ref, Port args) {
   args = nativeArg(ref, args, &arityArgs);
   args = nativeArg(ref, args, &arityArgs);
 
+  Tag argsTag = get_tag(args);
+  Port arg;
+  Pair argsNode;
+  Port varVal;
+  switch(argsTag) {
+  case ARG:
+    if (args == endArgs) {
+      break;
+    }
+    argsNode = node_take(args);
+    arg = argsNode.fst;
+    Tag argTag = get_tag(arg);
+    if (argTag == VAR) {
+      arg = enter(arg);
+      argTag = get_tag(arg);
+    }
+
+    switch(argTag) {
+    case VAL:
+    case NUM:
+      arityArgs.args[arityArgs.count++] = arg;
+      args = argsNode.snd;
+      break;
+
+    case VAR:
+      arityArgs.args[arityArgs.count++] = arg;
+      arityArgs.args[arityArgs.count++] = argsNode.snd;
+      varVal = vars_exchange(arg, node_make(RDX, ref, argsNet(&arityArgs)));
+      if (varVal != NONE && varVal != FREE) {
+	// fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
+	if (get_tag(varVal) == RDX) {
+	  push_redex(node_take(varVal));
+	} else {
+	  link(arg, varVal);
+	}
+      }
+      arityArgs.count = -1;
+      break;
+
+    case DUP:
+    case CON:
+      if (1) {
+	Port r1 = vars_make(NONE);
+	Port r2 = vars_make(NONE);
+	link(arityArgs.result, node_make(argTag, r1, r2));
+	
+	Port args1;
+	Port args2;
+	if (argsNode.snd == ARG || argsNode.snd == endArgs) {
+	  args1 = argsNode.snd;
+	  args2 = argsNode.snd;
+	} else {
+	  args1 = vars_make(NONE);
+	  args2 = vars_make(NONE);
+	  Port n = node_make(argTag, args1, args2);
+	  fprintf(stderr, "args: %d %p %p n: %p\n", __LINE__, (void *)args1, (void *)args2, (void *)n);
+	  fprintf(stderr, "snd: %p\n", (void *)argsNode.snd);
+	  abort();
+	  link(argsNode.snd, n);
+	}
+
+	Pair pr = node_take(arg);
+	int argsCount = arityArgs.count;
+	arityArgs.count = argsCount + 2;
+	arityArgs.args[argsCount] = pr.fst;
+	arityArgs.args[argsCount + 1] = args1;
+	arityArgs.result = r1;
+	link(ref, argsNet(&arityArgs));
+	
+	arityArgs.args[argsCount] = pr.snd;
+	arityArgs.args[argsCount + 1] = args2;
+	arityArgs.result = r2;
+	link(ref, argsNet(&arityArgs));
+      }
+      arityArgs.count = -1;
+      break;
+
+    case ERA:
+      link(arityArgs.result, erase);
+      for (int i = 0; i < arityArgs.count; i++) {
+	link(arityArgs.args[i], erase);
+      }
+      arityArgs.count = -1;
+      break;
+
+      // TODO: what other tags need to be handled
+    default:
+      printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
+      abort();
+      break;
+    }
+    arityArgs.count = -1;
+    break;
+
+  case VAR:
+    // TODO: test this
+    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
+    abort();
+
+    varVal = vars_exchange(arg, node_make(RDX, ref, arg));
+    if (varVal != NONE && varVal != FREE) {
+      link(ref, varVal);
+      vars_take(arg);
+    }
+    arityArgs.count = -1;
+    break;
+
+    // TODO: what other tags need to be handled
+  default:
+    printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
+    abort();
+    arityArgs.count = -1;
+    break;
+  }
+
   if (arityArgs.count == 2) {
-    ReifiedVal *value = (ReifiedVal *)arityArgs.args[0];
-    int fldIdx = get_i24(get_val(arityArgs.args[1]));
+    int fldIdx = get_i24(get_val(arityArgs.args[0]));
+    ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
     Port fld = value->impls[fldIdx];
     incRef((Value *)fld, 1);
     dec_and_free((Port)value, 1);
     link(resultVar, new_port(VAL, (Port)fld));
+  } else if (arityArgs.count == 3) {
+    int fldIdx = get_i24(get_val(arityArgs.args[0]));
+    ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
+    value->impls[fldIdx] = arityArgs.args[2];
+    link(resultVar, new_port(VAL, (Port)value));
   }
   return TRUE;
 }
-Port getField = new_port_(REF, getFieldFn);
+Port accessField = new_port_(REF, accessFieldFn);
