@@ -388,37 +388,33 @@
                          (se/state-error
                           (assoc-in proto-impls [.impl-fns type-num]
                                     new-arity-c))))))
-          (compilation-error "No prototype for" (str "'" (.fn-sym proto-impls) "'") "at" loc)))
+          (do
+            (print-err 'proto-impls _LINE_ proto-impls)
+            (compilation-error "No prototype for" (str "'" (.fn-sym proto-impls) "'") "at" loc))))
 
-(defn add-getter-impls [sym type-num getter-impl setter-impl loc]
-  (print-err 'base-boomer _LINE_)
-  (abort)
-  se-nop
-  ;; (for [getter-val (get-core-value sym)
-  ;;       new-getter (add-impl-c (.constraint getter-val) type-num 1 getter-impl loc)
-  ;;       new-getter (add-impl-c new-getter type-num 2 setter-impl loc)
-  ;;       mod-idx (se/get-val .index)
-  ;;       :let [sym (.constraint sym new-getter)]
-  ;;       _ (se/update-in-val [.namespaces (cond (= 0 mod-idx)
-  ;;                                              c/no-symbol
-  ;;                                              core)
-  ;;                            .values]
-  ;;                           (set-val-hist sym sym))]
-  ;;   sym)
-  )
+(def ProtoImpl (any-of ProtoArity ast/field-ast))
 
-(defn add-proto-impl [type-num stat-arity]
-  (assert (instance? Integer type-num))
-  (assert (instance? StaticArity stat-arity))
+(defn add-proto-impl [proto-arity]
+  (assert (instance? ProtoImpl proto-arity))
   (assert-result r (instance? se/StateError r))
 
-  (cond (= type-num c/UnknownType)
-        (do
-          (status 'bad-type-num _LINE_)
-          (wait-for-err-out)
-          (abort))
-        '_)
-  (let [fn-arity (.arity stat-arity)
+  (let [type-num (.type-num proto-arity)
+        _ (cond (= type-num c/UnknownType)
+                (do
+                  (status 'bad-type-num _LINE_)
+                  (wait-for-err-out)
+                  (abort))
+                '_)
+        fn-arity (either (get-in proto-arity [.arity .arity])
+                         (let [getter-id (c/tag (str (.sym proto-arity) "_" type-num)
+                                                (ast/location (.sym proto-arity)))]
+
+                           (-> (ast/fn-arity (c/tag (str "." (.sym proto-arity))
+                                                    (ast/location (.sym proto-arity)))
+                                             (ast/params []) "" [])
+                               (.constraint (c/arity getter-id
+                                                     (c/seq-c [(c/param getter-id 0)])
+                                                     c/top-type)))))
         fn-sym (.fn-sym fn-arity)
         arg-count (count (.params fn-arity))
         loc (ast/location fn-sym)
@@ -434,15 +430,16 @@
                       (for [mod-idx (se/get-val .index)
                             :when-not (= 0 mod-idx)
                             _ (get-core-value fn-sym)]
-                        (send modules
-                              (fn [mods]
-                                (either (map (get mods core)
-                                             (fn [core-mod]
-                                               (let [[_ new-core] ((add-proto-impl type-num
-                                                                                   stat-arity)
-                                                                   core-mod)]
-                                                 (assoc mods core new-core))))
-                                        mods))))
+                        (do
+                          (send modules
+                                (fn [mods]
+                                  (either (map (get mods core)
+                                               (fn [core-mod]
+                                                 (let [[_ new-core] ((add-proto-impl proto-arity)
+                                                                     core-mod)]
+                                                   (assoc mods core new-core))))
+                                          mods)))
+                          proto-arity))
 
                       ;; (instance? c/TaggedSymbol (.ns fn-sym))
                       ;; (do
@@ -461,12 +458,14 @@
                               (for [new-proto-c (add-impl-c proto-impls type-num arity-c loc)
                                     :let [new-proto (-> proto-val
                                                         (.constraint new-proto-c)
-                                                        (assoc-in [.impls type-num] stat-arity))]
+                                                        (assoc-in [.impls type-num]
+                                                                  (either (get proto-arity .arity)
+                                                                          proto-arity)))]
                                     _ (se/update-in-val
                                        [.namespaces c/no-symbol .values]
                                        (set-val-hist fn-sym new-proto))]
                                 new-proto-c))]
-                  '_)))))
+                  proto-arity)))))
 
 (defn remove-value-type [sym]
   (assert (instance? c/TaggedSymbol sym))
