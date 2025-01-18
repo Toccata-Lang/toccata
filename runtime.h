@@ -42,11 +42,11 @@ typedef struct Value {
   REFS_SIZE refs;
   struct Value *next;
 } Value;
-typedef struct HashedValue {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
-  int64_t hashVal;
-} HashedValue;
+// typedef struct HashedValue {
+// TYPE_SIZE type;
+// REFS_SIZE refs;
+// int64_t hashVal;
+// } HashedValue;
 typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -341,7 +341,7 @@ Value *dynamicCall1Arg(Value *f, Value *arg);
 String *nullTerm(Value *s);
 int64_t countSeq(Value *seq);
 Value *malloc_sha1();
-Value *finalize_sha1(Value *ctxt);
+long finalize_sha1(Value *ctxt);
 void Sha1Update(Sha1Context *Context, void *Buffer, int64_t BufferSize);
 void strSha1Update(Sha1Context *ctxt, Value *arg0);
 Value *reifiedTypeArgs(Port x);

@@ -1974,16 +1974,11 @@ Value *malloc_sha1() {
   return(opaqueValue(ctxt, free_sha1));
 }
 
-Value *finalize_sha1(Value *ctxt) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
+long finalize_sha1(Value *ctxt) {
   int64_t shaVal;
   Sha1Finalise(((Opaque *)ctxt)->ptr, (SHA1_HASH *)&shaVal);
-  dec_and_free(ctxt, 1);
-  return((Value *)integerValue(shaVal));
-  // */
+  dec_and_free((Port)ctxt, 1);
+  return(shaVal);
 }
 
 int64_t integerSha1(Value *arg0) {
