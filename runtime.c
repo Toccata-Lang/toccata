@@ -3747,11 +3747,22 @@ int main (int argc, char **argv) {
 	result = vars_exchange(result, NONE);
       }
       resultTag = get_tag(result);
-      if (resultTag == RDX) {
-	Pair rdx = node_take(result);
-	Pair args = node_load(rdx.snd);
-	finalResultVar = args.fst;
-	push_redex(rdx);
+      switch (resultTag) {
+      case RDX:
+	if (1) {
+	  Pair rdx = node_take(result);
+	  Pair args = node_load(rdx.snd);
+	  finalResultVar = args.fst;
+	  push_redex(rdx);
+	}
+	break;
+
+      case CON:
+	link(result, erase);
+	normalize();
+	result = new_num(new_i24(0));
+	resultTag = NUM;
+	break;
       }
     } while(resultTag != NUM && resultTag != VAL);
     freeGlobals(tm);
