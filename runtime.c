@@ -2532,7 +2532,7 @@ Value *strVec(Value *arg0) {
   // */
 }
 
-Value *vectorGet(Value *arg0, Value *arg1) {
+Value *vectorGet(Port v, Port n) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
   return ((Value *)NULL);

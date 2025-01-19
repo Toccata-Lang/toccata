@@ -304,7 +304,7 @@ Value *strSeq(Value *arg0);
 Value *strReduce(Value *s0, Value *x1, Value *f2);
 Value *strVec(Value *arg0);
 Value *strLT(Value *arg0, Value *arg1);
-Value *vectorGet(Value *arg0, Value *arg1);
+Value *vectorGet(Port v, Port n);
 Value *stringValue(char *s);
 Value *opaqueValue(void *ptr, Destructor *destruct);
 Value *listFilter(Value *arg0, Value *arg1);
