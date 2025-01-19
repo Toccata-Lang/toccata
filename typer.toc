@@ -203,8 +203,7 @@
 
 (def ConstrainedAST (any-of ast/call-ast
                             ;; ast/params-ast
-                            ;; ast/fn-arity-ast
-                            ;; ast/let-ast
+                            ast/fn-arity-ast
                             ast/string-ast
                             ast/integer-ast
                             ast/binding-ast
@@ -601,7 +600,19 @@
 (extend-type ast/definition-ast
   TypeChecker
   (pre-check [ast]
-    (let [sym (.sym ast)]
+    (let [sym (.sym ast)
+          exprs (-> (.value-exprs ast)
+                    (remove (partial instance? ast/block-comment-ast))
+                    (map (fn [inner-ast]
+                           (cond (instance? c/SymbolConstraints inner-ast)
+                                 (c/update-sym inner-ast sym)
+
+                                 (set-global-var inner-ast)))))
+          val-var (reduce exprs "" (fn [val-var expr]
+                                     (cond (instance? c/SymbolConstraints expr)
+                                           val-var
+
+                                           (.var expr))))]
       (for [
             ;; :let [_ (start-clock)]
             _ (cond (or (= sym 'empty-list)
@@ -620,15 +631,11 @@
                             ast)
                           (se/state-error ast))
 
-                    (b/set-value sym (.constraint sym c/top-type)))
+                    (b/set-value sym (-> sym
+                                         (.var val-var)
+                                         (.constraint c/top-type))))
             _ (se/set-val .var-count (int-generator 0))]
-        (.value-exprs ast (-> (.value-exprs ast)
-                              (remove (partial instance? ast/block-comment-ast))
-                              (map (fn [inner-ast]
-                                     (cond (instance? c/SymbolConstraints inner-ast)
-                                           (c/update-sym inner-ast sym)
-
-                                           inner-ast))))))))
+        (.value-exprs ast exprs))))
 
   (type-check [ast old-ast]
     (let [loc (ast/location (.sym old-ast))
@@ -655,15 +662,13 @@
                                          (= sym 'empty-vector)
                                          (= sym 'int-max)
                                          (= sym 'int-min))
-                                     (let [val (set-global-var val)]
-                                       (for [c (map (b/get-value sym) .constraint)
-                                             _ (b/set-value sym (-> val
-                                                                    (.constraint (c/update-path c loc))
-                                                                    (.var (.var val))))]
-                                         val))
+                                     (for [c (map (b/get-value sym) .constraint)
+                                           _ (b/set-value sym (-> val
+                                                                  (.constraint (c/update-path c loc))
+                                                                  (.var (.var val))))]
+                                       val)
 
-                                     (let [val (set-global-var val)
-                                           val (.constraint val
+                                     (let [val (.constraint val
                                                             (c/trim (.constraint val)))]
                                        (for [_ (b/set-value sym val)
                                              _ (cond (or (instance? b/StaticArity val)
