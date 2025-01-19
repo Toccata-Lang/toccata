@@ -267,7 +267,7 @@ Value *prSTAR(Value *);
 Value *add_ints(Value *arg0, Value *arg1);
 Port number_str(Port arg0);
 Port integer_EQ(Port arg0, Port arg1);
-Value *integer_LT(Value *arg0, Value *arg1);
+Port integer_LT(Port arg0, Port arg1);
 Value *integerValue(int64_t n);
 Vector *vectConj(Vector *vect, Port val);
 Vector *mutateVectConj(Vector *vect, Port val);

@@ -2024,6 +2024,17 @@ Port integer_EQ(Port arg0, Port arg1) {
   }
 }
 
+Port integer_LT(Port arg0, Port arg1) {
+  i64 x = get_i24(get_val(arg0));
+  i64 y = get_i24(get_val(arg1));
+
+  if (x >= y) {
+    return(nothing());
+  } else {
+    return(some(arg0));
+  }
+}
+
 Value *listEQ(Value *arg0, Value *arg1) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
