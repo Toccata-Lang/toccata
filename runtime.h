@@ -54,14 +54,6 @@ typedef struct {
   int64_t len;
   char buffer[0];
 } String;
-typedef struct List {
-  TYPE_SIZE type;
-  REFS_SIZE refs;
-  int64_t hashVal;
-  int64_t len;
-  Port head;
-  struct List *tail;
-} List;
 typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -145,11 +137,6 @@ typedef Value *(FnType9)(FnArity *, Value *, Value *, Value *, Value *, Value *,
                          Value *, Value *, Value *, Value *);
 
 typedef struct {
-  List *tail;
-  pthread_mutex_t access;
-} extractCache;
-
-typedef struct {
   int64_t sym_counter;
 } intGenerator;
 
@@ -164,7 +151,6 @@ extern REFS_SIZE refsStatic;
 #define StringBufferType 2
 #define FnArityType 3
 #define FunctionType 4
-#define ListType 6
 #define VectorType 8
 #define VectorNodeType 9
 #define BitmapIndexedType 11
@@ -200,8 +186,6 @@ extern REFS_SIZE refsStatic;
 #define TypeCount 44
 
 extern FILE *outstream;
-extern List *empty_list;
-extern List empty_list_struct;
 extern Vector *empty_vect;
 extern Vector empty_vect_struct;
 extern BitmapIndexedNode emptyBMI;
@@ -254,8 +238,6 @@ extern Value *(*prErrSTAR)(Value *str);
 extern Value *(*prValue)(FnArity *, Value *v);
 
 Value *my_malloc(int64_t sz);
-List *malloc_list();
-List *vectSeq(Vector *vect, int index);
 FnArity *malloc_fnArity();
 String *malloc_string(int len);
 Vector *malloc_vector();
@@ -274,17 +256,13 @@ Vector *mutateVectConj(Vector *vect, Port val);
 Vector *vectStore(Vector *vect, unsigned index, Port val);
 ReifiedVal *updateField(ReifiedVal *rval, Port field, int64_t idx);
 Vector *vectorReverse(Vector *v);
-List *listCons(Port x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
                    Value **args[]);
 Port strCount(Port s);
 Value *strEQ(Value *arg0, Value *arg1);
-Value *strList(Value *arg0);
 Value *strVect(Value *arg0);
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);
-Port car(List *arg0);
-List *cdr(List *arg0);
 Value *integerLT(Value *arg0, Value *arg1);
 int64_t integerSha1(Value *arg0);
 Value *bitAnd(Value *arg0, Value *arg1);
@@ -308,7 +286,6 @@ Value *vectorGet(Port v, Port n);
 Value *stringValue(char *s);
 Value *opaqueValue(void *ptr, Destructor *destruct);
 Value *listFilter(Value *arg0, Value *arg1);
-List *reverseList(List *input);
 Value *bmiHashSeq(Value *arg0, Value *arg1);
 Value *bmiCount(Value *arg0);
 Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,

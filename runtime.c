@@ -65,8 +65,6 @@ void incTypeFree(TYPE_SIZE type, int delta) {
     __atomic_fetch_add(&type_frees[type], delta, __ATOMIC_ACQ_REL);
 }
 
-List empty_list_struct = (List){ListType,-2,0,0,0,0};
-List *empty_list = &empty_list_struct;
 Vector empty_vect_struct = (Vector){VectorType,-2,0,0,5,0,0};
 Vector *empty_vect = &empty_vect_struct;
 
@@ -294,73 +292,6 @@ void freeFnArity(Value *v) {
   FnArity *arity = (FnArity *)v;
   v->next = freeFnArities.head;
   freeFnArities.head = v;
-}
-
-FreeValList centralFreeLists = (FreeValList){(Value *)0, 0};
-__thread FreeValList freeLists = (FreeValList){(Value *)0, 0};
-List *malloc_list() {
-  List *newList = (List *)freeLists.head;
-  if (newList == (List *)0) {
-    newList = (List *)removeFreeValue(&centralFreeLists);
-    if (newList == (List *)0) {
-      List *listStructs = (List *)my_malloc(sizeof(List) * 100);
-#ifdef CHECK_MEM_LEAK
-      // incTypeMalloc(TypeCount, 1);
-      __atomic_fetch_add(&malloc_count, 99, __ATOMIC_ACQ_REL);
-#endif
-      for (int i = 1; i < 99; i++) {
-        listStructs[i].refs = refsError;
-        ((Value *)&listStructs[i])->next = (Value *)&listStructs[i + 1];
-      }
-      listStructs[99].refs = refsError;
-      ((Value *)&listStructs[99])->next = freeLists.head;
-      freeLists.head = (Value *)&listStructs[1];
-      moveToCentral(&freeLists, &centralFreeLists);
-
-      newList = listStructs;
-    }
-  } else {
-    freeLists.head = freeLists.head->next;
-  }
-
-  // incTypeMalloc(ListType, 1);
-  newList->type = ListType;
-  newList->refs = refsInit;
-  newList->hashVal = 0;
-  newList->head = 0;
-  newList->tail = (List *)0;
-  newList->len = 0;
-  return(newList);
-}
-
-void freeList(Value *v) {
-  List *l = (List *)v;
-  Port head = l->head;
-  List *tail = l->tail;
-  dec_and_free(head, 1);
-  l->tail = (List *)0;
-  v->next = freeLists.head;
-  freeLists.head = v;
-#ifdef SINGLE_THREADED
-  if (tail != (List *)0) {
-    if (tail->refs == 1) {
-      tail->refs = refsError;
-      freeList((Value *)tail);
-    } else {
-      decRefs((Value *)tail, 1);
-    }
-  }
-#else
-  if (tail != (List *)0) {
-    REFS_SIZE refs = tail->refs;
-    if (refs != 1) {
-      decRefs((Value *)tail, 1);
-    } else {
-      tail->refs = refsError;
-      freeList((Value *)tail);
-    }
-  }
-#endif
 }
 
 FreeValList centralFreeVectorNodes = (FreeValList){(Value *)0, 0};
@@ -746,7 +677,7 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       &freeFnArity,
 				       NULL,
 				       NULL,
-				       &freeList,
+				       NULL,
 				       NULL,
 				       &freeVector,
 				       &freeVectorNode,
@@ -873,7 +804,6 @@ Value *simpleIncRef(Value *v, int n) {
 #endif
 
 void moveFreeToCentral() {
-  moveToCentral(&freeLists, &centralFreeLists);
   for (int i = 0; i < BMI_RECYCLE_COUNT; i++) {
     moveToCentral(&freeBMINodes[i], &centralFreeBMINodes[i]);
   }
@@ -914,7 +844,6 @@ void freeAll() {
   }
   emptyFreeList(&centralFreeArrayNodes);
   emptyFreeList(&centralFreeFnArities);
-  emptyFreeList(&centralFreeLists);
   emptyFreeList(&centralFreeVectors);
   emptyFreeList(&centralFreeVectorNodes);
   emptyFreeList(&centralFreeStrings);
@@ -1007,22 +936,6 @@ int64_t nakedSha1(Value *v1) {
   // */
 }
 
-/*
-List *reverseList(List *input) {
-  List *output = empty_list;
-  Value *item;
-  List *l = input;
-  while(l != (List *)0 && l->head != (Value *)0) {
-    item = l->head;
-    incRef(item, 1);
-    output = listCons(item, output);
-    l = l->tail;
-  }
-  dec_and_free((Value *)input, 1);
-  return(output);
-}
-// */
-
 char *extractStr(Value *v) {
   // Should only be used to print an error meessage when calling 'abort'
   // Leaks a String value
@@ -1097,14 +1010,6 @@ Value *isInstance(Value *arg0, Value *arg1) {
   }
   // */
 }
-
-List *listCons(Port x, List *l) {
-  List *newList = malloc_list();
-  newList->len = l->len + 1;
-  newList->head = x;
-  newList->tail = l;
-  return(newList);
-};
 
 Port dupeVal(Port *v) {
   Tag t = get_tag(*v);
@@ -1419,17 +1324,6 @@ Port vectGet(Vector *vect, unsigned index) {
   return(dupeVal(&array[index & 0x1f]));
 }
 
-List *vectSeq(Vector *vect, int index) {
-  List *ret = empty_list;
-  if (vect->count > 0) {
-    for (int i = vect->count - 1; i >= index; i -= 1) {
-      ret = listCons(vectGet(vect, (unsigned)i), ret);
-    }
-  }
-  dec_and_free((Port)vect, 1);
-  return(ret);
-}
-
 Vector *vectorReverse(Vector *v) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
@@ -1579,40 +1473,6 @@ Port strCount(Port s) {
    // */
 }
 
-Value *strList(Value *arg0) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return((Value *)NULL);
-  /*
-  List *result = empty_list;
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    for (int64_t i = s->len - 1; i >= 0; i--) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = listCons((Value *)subStr, result);
-    }
-    incRef(arg0, s->len);
-  } else if (arg0->type == SubStringType) {
-    SubString *s = (SubString *)arg0;
-    for (int64_t i = s->len - 1; i >= 0; i--) {
-      SubString *subStr = malloc_substring();
-      subStr->type = SubStringType;
-      subStr->len = 1;
-      subStr->source = arg0;
-      subStr->buffer = s->buffer + i;
-      result = listCons((Value *)subStr, result);
-    }
-    incRef(arg0, s->len);
-  }
-  dec_and_free(arg0, 1);
-  return((Value *)result);
-  // */
-}
-
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
@@ -1632,190 +1492,6 @@ Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
     return(nothing);
   }
   // */
-}
-
-Value *listMap(Value *arg0, Value *f) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  // List map
-  List *l = (List *)arg0;
-  if (l->len == 0) {
-    dec_and_free(arg0, 1);
-    dec_and_free(f, 1);
-    return((Value *)empty_list);
-  } else {
-    List *head = empty_list;
-    List *tail = empty_list;
-    int mutate = 0;
-    FnArity *arity2;
-    if(f->type == FunctionType) {
-      arity2 = findFnArity(f, 1);
-      if(arity2 == (FnArity *)0) {
-        fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)f)->name);
-        abort();
-      }
-    }
-    REFS_SIZE refs;
-    __atomic_load(&arg0->refs, &refs, __ATOMIC_RELAXED);
-    if (refs == 1) {
-      mutate = 1;
-      head = l;
-      head->len = 0;
-
-      tail = l;
-    }
-    for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
-      Value *y;
-      if (mutate && l->refs > 1) {
-	dec_and_free((Value *)l, 1);
-	mutate = 0;
-      }
-
-      if (!mutate)
-	incRef(x, 1);
-      if(f->type != FunctionType) {
-        incRef(f, 1);
-        y = invoke1Arg((FnArity *)0, f, x);
-      } else if(arity2->variadic) {
-        FnType1 *fn4 = (FnType1 *)arity2->fn;
-        List *varArgs3 = (List *)listCons(x, empty_list);
-        y = fn4(arity2, (Value *)varArgs3);
-      } else {
-        FnType1 *fn4 = (FnType1 *)arity2->fn;
-        y = fn4(arity2, x);
-      }
-
-      // 'y' is the value for the new list
-      if (mutate) {
-	l->head = y;
-	tail = l;
-        head->len++;
-      } else if (head == empty_list) {
-        // if we haven't started the new list yet
-        head = malloc_list();
-        head->len = 1;
-        head->head = y;
-        head->tail = empty_list;
-        tail = head;
-      } else {
-        // otherwise, append to tail of list
-        List *new_tail = malloc_list();
-        new_tail->len = 1;
-        new_tail->head = y;
-        new_tail->tail = empty_list;
-        tail->tail = new_tail;
-        tail = new_tail;
-        head->len++;
-      }
-    }
-    if (refs != 1)
-      dec_and_free(arg0, 1);
-    dec_and_free(f, 1);
-    return((Value *)head);
-  }
-  // */
-}
-
-/*
-List *listConcat(List *ls) {
-  // TODO: check refs count for each list and stitch them together
-  if (ls->len == 0) {
-    dec_and_free((Port)ls, 1);
-    return(empty_list);
-  }
-  else if (ls->len == 1) {
-    Port h = ls->head;
-    incRef(h, 1);
-    dec_and_free((Port)ls, 1);
-    if (h != 0 && h->type == VectorType) {
-       return(vectSeq((Vector *)h, 0));
-    } else if (h != (Value *)0 && h->type != ListType) {
-      // TODO: this test should be redundant when type checker is finished. Verify
-      fprintf(stderr, "*** Could not concatenate non-list value with list\n");
-      abort();
-    } else {
-      return(h);
-    }
-  } else {
-    List *head = empty_list;
-    List *tail = empty_list;
-    for (; ls != (List *)0; ls = ls->tail) {
-      List *l = (List *)ls->head;
-      List *newL;
-      int discard = 0;
-      if (l != (List *)0 && l->type == VectorType) {
-        l = (List *)vectSeq((Vector *)incRef((Value *)l, 1), 0);
-        discard = 1;
-      } else if (l != (List *)0 && l->type != ListType) {
-	// TODO: this test should be redundant when type checker is finished. Verify
-	fprintf(stderr, "*** Could not concatenate non-list value with list\n");
-	abort();
-      }
-      Port x;
-      for(; l != (List *)NULL && l->head != 0; l = newL) {
-        x = l->head;
-        if (head == empty_list) {
-          // if we haven't started the new list yet
-          head = malloc_list();
-          head->len = 1;
-          head->head = x;
-          incRef(x, 1);
-          head->tail = empty_list;
-          tail = head;
-        } else {
-          // otherwise, append to tail of list
-          List *new_tail = malloc_list();
-          new_tail->len = 1;
-          new_tail->head = x;
-          incRef(x, 1);
-          new_tail->tail = empty_list;
-          tail->tail = new_tail;
-          tail = new_tail;
-          head->len++;
-        }
-        newL = l->tail;
-        if(discard) {
-          l->tail = (List *)0;
-          dec_and_free((Port)l, 1);
-        }
-      }
-    }
-    dec_and_free((Port)ls, 1);
-    return((Value *)head);
-  }
-}
-// */
-
-Port car(List *lst) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return (0);
-  /*
-  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
-  if (lst->len == 0) {
-    return(nothing);
-  } else {
-    Port h = lst->head;
-    incRef(h, 1);
-    dec_and_free((Port)lst, 1);
-    return(maybe((FnArity *)0, (Value *)0, h));
-  }
-  // */
-}
-
-List *cdr(List *lst) {
-  if (lst->len == 0) {
-    dec_and_free((Port)lst, 1);
-    return(empty_list);
-  } else {
-    List *tail = lst->tail;
-    tail->len = lst->len - 1;
-    incRef((Value *)tail, 1);
-    dec_and_free((Port)lst, 1);
-    return(tail);
-  }
 }
 
 // SHA1 implementation courtesy of: Steve Reid <sreid@sea-to-sky.net>
@@ -2035,38 +1711,6 @@ Port integer_LT(Port arg0, Port arg1) {
   }
 }
 
-Value *listEQ(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
-  if (arg1->type != ListType ||
-      ((List *)arg0)->len != ((List *)arg1)->len) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  } else {
-    List *l0 = (List *)arg0;
-    List *l1 = (List *)arg1;
-    for (;
-         l0 != (List *)0 && l0->head != (Value *)0 &&
-           l1 != (List *)0 && l1->head != (Value *)0;
-         l0 = l0->tail, l1 = l1->tail) {
-      incRef(l0->head, 1);
-      incRef(l1->head, 1);
-      if (!equal(l0->head, l1->head)) {
-        dec_and_free(arg0, 1);
-        dec_and_free(arg1, 1);
-        return(nothing);
-      }
-    }
-    dec_and_free(arg1, 1);
-    return(maybe((FnArity *)0, (Value *)0, arg0));
-  }
-  // */
-}
-
 int8_t equal(Value *v1, Value *v2) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
@@ -2094,257 +1738,6 @@ Value *stringValue(char *s) {
   strVal->buffer[len] = 0;
   return((Value *)strVal);
 };
-
-/*
-Value *fnApply(FnArity *_arity, Value *arg1) {
-  List *argList = (List *)arg1;
-
-  if (_arity == (FnArity *)0) {
-    fprintf(stderr, "\n*** no arity found to apply to %" PRId64 " args\n",
-            argList->len);
-    abort();
-  } else if(_arity->variadic) {
-    FnType1 *_fn = (FnType1 *)_arity->fn;
-    Value *result = _fn(_arity, arg1);
-    dec_and_free((Value *)_arity, 1);
-    return(result);
-  } else if (argList->len == 0) {
-    FnType0 *_fn = (FnType0 *)_arity->fn;
-    Value *result = _fn(_arity);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 1) {
-    FnType1 *_fn = (FnType1 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    Value *result = _fn(_arity, appArg0);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 2) {
-    FnType2 *_fn = (FnType2 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    argList = argList->tail;
-    Value *appArg1 = argList->head; incRef(appArg1, 1);
-    Value *result = _fn(_arity, appArg0, appArg1);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 3) {
-    FnType3 *_fn = (FnType3 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    argList = argList->tail;
-    Value *appArg1 = argList->head; incRef(appArg1, 1);
-    argList = argList->tail;
-    Value *appArg2 = argList->head; incRef(appArg2, 1);
-    Value *result = _fn(_arity, appArg0, appArg1, appArg2);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 4) {
-    FnType4 *_fn = (FnType4 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    argList = argList->tail;
-    Value *appArg1 = argList->head; incRef(appArg1, 1);
-    argList = argList->tail;
-    Value *appArg2 = argList->head; incRef(appArg2, 1);
-    argList = argList->tail;
-    Value *appArg3 = argList->head; incRef(appArg3, 1);
-    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 5) {
-    FnType5 *_fn = (FnType5 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    argList = argList->tail;
-    Value *appArg1 = argList->head; incRef(appArg1, 1);
-    argList = argList->tail;
-    Value *appArg2 = argList->head; incRef(appArg2, 1);
-    argList = argList->tail;
-    Value *appArg3 = argList->head; incRef(appArg3, 1);
-    argList = argList->tail;
-    Value *appArg4 = argList->head; incRef(appArg4, 1);
-    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 6) {
-    FnType6 *_fn = (FnType6 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    argList = argList->tail;
-    Value *appArg1 = argList->head; incRef(appArg1, 1);
-    argList = argList->tail;
-    Value *appArg2 = argList->head; incRef(appArg2, 1);
-    argList = argList->tail;
-    Value *appArg3 = argList->head; incRef(appArg3, 1);
-    argList = argList->tail;
-    Value *appArg4 = argList->head; incRef(appArg4, 1);
-    argList = argList->tail;
-    Value *appArg5 = argList->head; incRef(appArg5, 1);
-    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 7) {
-    FnType7 *_fn = (FnType7 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    argList = argList->tail;
-    Value *appArg1 = argList->head; incRef(appArg1, 1);
-    argList = argList->tail;
-    Value *appArg2 = argList->head; incRef(appArg2, 1);
-    argList = argList->tail;
-    Value *appArg3 = argList->head; incRef(appArg3, 1);
-    argList = argList->tail;
-    Value *appArg4 = argList->head; incRef(appArg4, 1);
-    argList = argList->tail;
-    Value *appArg5 = argList->head; incRef(appArg5, 1);
-    argList = argList->tail;
-    Value *appArg6 = argList->head; incRef(appArg6, 1);
-    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 8) {
-    FnType8 *_fn = (FnType8 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    argList = argList->tail;
-    Value *appArg1 = argList->head; incRef(appArg1, 1);
-    argList = argList->tail;
-    Value *appArg2 = argList->head; incRef(appArg2, 1);
-    argList = argList->tail;
-    Value *appArg3 = argList->head; incRef(appArg3, 1);
-    argList = argList->tail;
-    Value *appArg4 = argList->head; incRef(appArg4, 1);
-    argList = argList->tail;
-    Value *appArg5 = argList->head; incRef(appArg5, 1);
-    argList = argList->tail;
-    Value *appArg6 = argList->head; incRef(appArg6, 1);
-    argList = argList->tail;
-    Value *appArg7 = argList->head; incRef(appArg7, 1);
-    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else if (argList->len == 9) {
-    FnType9 *_fn = (FnType9 *)_arity->fn;
-    Value *appArg0 = argList->head; incRef(appArg0, 1);
-    argList = argList->tail;
-    Value *appArg1 = argList->head; incRef(appArg1, 1);
-    argList = argList->tail;
-    Value *appArg2 = argList->head; incRef(appArg2, 1);
-    argList = argList->tail;
-    Value *appArg3 = argList->head; incRef(appArg3, 1);
-    argList = argList->tail;
-    Value *appArg4 = argList->head; incRef(appArg4, 1);
-    argList = argList->tail;
-    Value *appArg5 = argList->head; incRef(appArg5, 1);
-    argList = argList->tail;
-    Value *appArg6 = argList->head; incRef(appArg6, 1);
-    argList = argList->tail;
-    Value *appArg7 = argList->head; incRef(appArg7, 1);
-    argList = argList->tail;
-    Value *appArg8 = argList->head; incRef(appArg8, 1);
-    Value *result = _fn(_arity, appArg0, appArg1, appArg2, appArg3, appArg4, appArg5, appArg6, appArg7,
-                        appArg8);
-    dec_and_free((Value *)_arity, 1);
-    dec_and_free(arg1, 1);
-    return(result);
-  } else {
-    fprintf(stderr, "error in 'fn-apply'\n");
-    abort();
-  }
-}
-// */
-
-/*
-void strSha1Update(Sha1Context *ctxt, Value *arg0) {
-  char *buffer;
-  int64_t len;
-  if (arg0->type == StringBufferType) {
-    String *strVal = (String *)arg0;
-    buffer = strVal->buffer;
-    len = strVal->len;
-  }
-
-  Sha1Update(ctxt, (void *)&arg0->type, 8);
-  Sha1Update(ctxt, buffer, len);
-  return;
-}
-// */
-
-/*
-int64_t strSha1(Value *arg0) {
-  int64_t hash;
-  char *buffer;
-  int64_t len;
-
-  if (arg0->type == StringBufferType) {
-    String *strVal = (String *)arg0;
-    hash = strVal->hashVal;
-    buffer = strVal->buffer;
-    len = strVal->len;
-  }
-
-  if (hash != 0) {
-    dec_and_free(arg0, 1);
-    return(hash);
-  } else {
-    int64_t shaVal;
-    Sha1Context context;
-
-    Sha1Initialise(&context);
-    Sha1Update(&context, (void *)&arg0->type, 8);
-    Sha1Update(&context, buffer, len);
-    Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
-
-    ((String *)arg0)->hashVal = shaVal;
-    dec_and_free(arg0, 1);
-    return(shaVal);
-  }
-}
-// */
-
-/*
-Value *escapeChars(Value *arg0) {
-  if (arg0->type == StringBufferType) {
-    String *s = (String *)arg0;
-    String *result = malloc_string(s->len * 2);
-    char *resultBuffer = result->buffer;
-    int resultIndex = 0;
-    for(int i = 0; i < s->len; i++) {
-      if (s->buffer[i] == 10) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 110;
-      } else if (s->buffer[i] == 34) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 34;
-      } else if (s->buffer[i] == 13) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 114;
-      } else if (s->buffer[i] == 12) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 102;
-      } else if (s->buffer[i] == 8) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 98;
-      } else if (s->buffer[i] == 9) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 116;
-      } else if (s->buffer[i] == 92) {
-        resultBuffer[resultIndex++] = 92;
-        resultBuffer[resultIndex++] = 92;
-      } else
-        resultBuffer[resultIndex++] = s->buffer[i];
-    }
-    resultBuffer[resultIndex] = 0;
-    result->len = resultIndex;
-    dec_and_free(arg0, 1);
-    return((Value *)result);
-  }
-  return(arg0);
-}
-// */
 
 Value *opaqueValue(void *ptr, Destructor *destruct) {
   Opaque *opVal = (Opaque *)my_malloc(sizeof(Opaque));
@@ -2374,74 +1767,6 @@ Value *vectorGet(Port v, Port n) {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
     return(result);
-  }
-  // */
-}
-
-Value *listFilter(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
-  List *l = (List *)arg0;
-  if (l->len == 0) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return((Value *)empty_list);
-  } else {
-    List *head = empty_list;
-    List *tail = empty_list;
-    FnArity *arity2;
-    if(arg1->type == FunctionType) {
-      arity2 = findFnArity(arg1, 1);
-      if(arity2 == (FnArity *)0) {
-	fprintf(stderr, "\n*** no arity found for '%s'.\n", ((Function *)arg1)->name);
-	abort();
-      }
-    }
-    for(Value *x = l->head; x != (Value *)0; l = l->tail, x = l->head) {
-      Value *y;
-      incRef(x, 1);
-      if(arg1->type != FunctionType) {
-	incRef(arg1, 1);
-	y = invoke1Arg((FnArity *)0, arg1, x);
-      } else if(arity2->variadic) {
-	FnType1 *fn4 = (FnType1 *)arity2->fn;
-	List *varArgs3 = empty_list;
-	varArgs3 = (List *)listCons(x, varArgs3);
-	y = fn4(arity2, (Value *)varArgs3);
-      } else {
-	FnType1 *fn4 = (FnType1 *)arity2->fn;
-	y = fn4(arity2, x);
-      }
-
-      // 'y' is the filter maybe/nothing value
-      if (!isNothing(y)) {
-	incRef(x, 1);
-	if (head == empty_list) {
-	  // if we haven't started the new list yet
-	  head = malloc_list();
-	  head->len = 1;
-	  head->head = x;
-	  head->tail = empty_list;
-	  tail = head;
-	} else {
-	  // otherwise, append to tail of list
-	  List *new_tail = malloc_list();
-	  new_tail->len = 1;
-	  new_tail->head = x;
-	  new_tail->tail = empty_list;
-	  tail->tail = new_tail;
-	  tail = new_tail;
-	  head->len++;
-	}
-      }
-      dec_and_free(y, 1);
-    }
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return((Value *)head);
   }
   // */
 }
@@ -2504,29 +1829,6 @@ Value *createNode(int shift,
     newNode->array[key2idx * 2 + 1] = val2;
   }
   return((Value *)newNode);
-  // */
-}
-
-Value *bmiHashSeq(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
-  int cnt = __builtin_popcount(node->bitmap);
-  List *seq = (List *)arg1;
-  for (int i = 0; i < cnt; i++) {
-    if (node->array[2 * i] == (Value *)0) {
-      seq = (List *)hashSeq((FnArity *)0, incRef(node->array[2 * i + 1], 1), (Value *)seq);
-    } else {
-      List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
-      incRef(node->array[2 * i], 1);
-      incRef(node->array[2 * i + 1], 1);
-      seq = listCons((Port)pair, seq);
-    }
-  }
-  dec_and_free(arg0, 1);
-  return((Value *)seq);
   // */
 }
 
@@ -3108,26 +2410,6 @@ Value *collisionCount(Value *arg0) {
   // */
 }
 
-Value *collisionSeq(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  HashCollisionNode *node = (HashCollisionNode *)arg0;
-  List *seq = (List *)arg1;
-  for (int i = 0; i < node->count / 2; i++) {
-    if (node->array[2 * i] != (Value *)0 && node->array[2 * i + 1] != (Value *)0) {
-      List *pair = listCons(node->array[2 * i], listCons(node->array[2 * i + 1], empty_list));
-      incRef(node->array[2 * i], 1);
-      incRef(node->array[2 * i + 1], 1);
-      seq = listCons((Port)pair, seq);
-    }
-  }
-  dec_and_free(arg0, 1);
-  return((Value *)seq);
-  // */
-}
-
 Value *collisionVec(Value *arg0, Value *arg1) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
@@ -3221,24 +2503,6 @@ abort();
   dec_and_free(arg0, 1);
   dec_and_free(arg1, 1);
   return(arg2);
-  // */
-}
-
-Value *arrayNodeSeq(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  ArrayNode *node = (ArrayNode *)arg0;
-  List *seq = (List *)arg1;
-  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-    if (node->array[i] != (Value *)0) {
-      incRef(node->array[i], 1);
-      seq = (List *)hashSeq((FnArity *)0, node->array[i], (Value *)seq);
-    }
-  }
-  dec_and_free(arg0, 1);
-  return((Value *)seq);
   // */
 }
 
@@ -3482,30 +2746,7 @@ Value *reifiedTypeArgs(Port x) {
   // */
 }
 
-Vector *listVec(Value *list) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Vector *)NULL);
-  /*
-  List *l = (List *)list;
-  Vector *newVect = empty_vect;
-  for(Port x = l->head; x != 0; l = l->tail, x = l->head) {
-    newVect = mutateVectConj(newVect, incRef(x, 1));
-  }
-  dec_and_free((Port)list, 1);
-  return(newVect);
-  // */
-}
-
-Value *newTypeValue(int typeNum, Vector *fields) {
-  Vector *vect ;
-  if (fields->type == ListType) {
-    incRef((Value *)fields, 1);
-    vect = (Vector *)listVec((Value *)fields);
-  }
-  else {
-    vect = fields;
-  }
+Value *newTypeValue(int typeNum, Vector *vect) {
   ReifiedVal *rv = malloc_reified(vect->count);
   rv->type = typeNum;
   for (int i = 0; i < vect->count; i++) {
@@ -3513,10 +2754,7 @@ Value *newTypeValue(int typeNum, Vector *fields) {
     vect->tail[i] = 0;
   }
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  if (fields->type == ListType) {
-    dec_and_free((Port)vect, 1);
-  }
-  dec_and_free((Port)fields, 1);
+  dec_and_free((Port)vect, 1);
   return((Value *)rv);
 }
 

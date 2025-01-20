@@ -918,24 +918,7 @@ bool ARGS(Port a, Port b) {
 bool DEST(Port a, Port b) {
   // fprintf(stderr, "DEST %d: %p %p\n", __LINE__, (void *)a, (void *)b);
   Value *val = (Value *)a;
-  if (val->type == ListType) {
-    List *l = (List *)a;
-    while (b != ARG) {
-      if (l == (List *)NULL) {
-	fprintf(stderr, "Too few items in list being destructured. %s:%d\n",
-		__FILE__, __LINE__);
-	abort();
-      }
-      Pair B = node_take(b);
-      link(B.fst, dupeVal(&l->head));
-      if (get_tag(B.snd) != ARG) {
-	link(B.snd, (Port)l->tail);
-	return TRUE;
-      }
-      l = l->tail;
-      b = B.snd;
-    }
-  } else if (val->type == VectorType) {
+  if (val->type == VectorType) {
     Vector *v = (Vector *)val;
     int len = v->count;
     int i = 0;
