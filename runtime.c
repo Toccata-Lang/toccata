@@ -1564,7 +1564,7 @@ Value *strLT(Value *arg0, Value *arg1) {
   // */
 }
 
-Value *strCount(Value *arg0) {
+Port strCount(Port s) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
   return ((Value *)NULL);

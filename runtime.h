@@ -277,7 +277,7 @@ Vector *vectorReverse(Vector *v);
 List *listCons(Port x, List *l);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
                    Value **args[]);
-Value *strCount(Value *arg0);
+Port strCount(Port s);
 Value *strEQ(Value *arg0, Value *arg1);
 Value *strList(Value *arg0);
 Value *strVect(Value *arg0);
