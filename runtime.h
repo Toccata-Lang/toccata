@@ -42,11 +42,6 @@ typedef struct Value {
   REFS_SIZE refs;
   struct Value *next;
 } Value;
-// typedef struct HashedValue {
-// TYPE_SIZE type;
-// REFS_SIZE refs;
-// int64_t hashVal;
-// } HashedValue;
 typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;

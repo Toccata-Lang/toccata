@@ -959,7 +959,7 @@ Value *prSTAR(Value *str) {
     bytes = fprintf(outstream, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
   }
   dec_and_free(str, 1);
-  return(integerValue(bytes));
+  return(new_num(new_i24(bytes));
   // */
 }
 
@@ -975,7 +975,7 @@ Value *defaultPrErrSTAR(Value *str) {
     bytes = fprintf(stderr, "%-.*s", (int)((SubString *)str)->len, ((SubString *)str)->buffer);
   }
   dec_and_free(str, 1);
-  return(integerValue(bytes));
+  return(new_num(new_i24(bytes));
   // */
 }
 
@@ -1459,18 +1459,10 @@ Value *strLT(Value *arg0, Value *arg1) {
 }
 
 Port strCount(Port s) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return (erase);
-  /*
-   Value *numVal;
-   if (arg0->type == StringBufferType)
-     numVal = integerValue(((String *)arg0)->len);
-   else
-     numVal = integerValue(((SubString *)arg0)->len);
-   dec_and_free(arg0, 1);
+   String *str = (String *)((u64)s & ~7);
+   Port numVal = new_num(new_i24(str->len));
+   // dec_and_free(arg0, 1);
    return(numVal);
-   // */
 }
 
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1) {
@@ -1875,7 +1867,7 @@ Value *bmiCount(Value *arg0) {
     }
   }
   dec_and_free(arg0, 1);
-  return(integerValue(accum));
+  return(new_num(new_i24(accum));
   // */
 }
 
@@ -2395,7 +2387,7 @@ Value *arrayNodeCount(Value *arg0) {
     }
   }
   dec_and_free(arg0, 1);
-  return(integerValue(accum));
+  return(new_num(new_i24(accum));
   // */
 }
 
@@ -2404,7 +2396,7 @@ Value *collisionCount(Value *arg0) {
   abort();
   return ((Value *)NULL);
   /*
-  Value *result = integerValue(((HashCollisionNode *) arg0)->count / 2);
+  Value *result = new_num(new_i24(((HashCollisionNode *) arg0)->count / 2);
   dec_and_free(arg0, 1);
   return(result);
   // */

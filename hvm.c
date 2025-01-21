@@ -903,10 +903,13 @@ bool DECF(Port a, Port b) {
 }
 
 bool ARGS(Port a, Port b) {
-  // fprintf(stderr, "ARGS %d: %p %p\n", __LINE__, (void *)a, (void *)b);
+  // fprintf(stderr, "ARGS %d: %p %p  endArgs: %p\n", __LINE__, (void *)a, (void *)b, (void *)endArgs);
   if ((a == ARG || a == endArgs) &&
       (b == ARG || b == endArgs)) {
     return TRUE;
+  } else if (a == endArgs || b == endArgs) {
+    fprintf(stderr, "Insufficient arguments to a function.\n");
+    abort();
   } else if (a == ARG || b == ARG) {
     fprintf(stderr, "Implement currying: %p %p\n", (void *)a, (void *)b);
     abort();
