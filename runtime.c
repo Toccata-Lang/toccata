@@ -369,6 +369,7 @@ Vector *malloc_vector() {
   newVector->root = (VectorNode *)0;
   newVector->hashVal = 0;
   memset(&newVector->tail, 0, sizeof(Value *) * VECTOR_ARRAY_LEN);
+  // fprintf(stderr, "newVector %d: %p\n", __LINE__, (void *)newVector);
   return(newVector);
 }
 
@@ -764,10 +765,11 @@ void dec_and_free(Port pv, int deltaRefs) {
 }
 
 #ifndef FAST_INCS
-Value* incRef(Value* v, int deltaRefs) {
-  if (get_tag((Port)v) == NUM)
-    return v;
+Port incRef(Port val, int deltaRefs) {
+  if (get_tag(val) == NUM)
+    return val;
 
+  Value *v = (Value *)val;
   if (v == (Value *)NULL) {
     fprintf(stderr, "bad incRef value: %p\n", v);
     abort();
@@ -776,7 +778,7 @@ Value* incRef(Value* v, int deltaRefs) {
     fprintf(stderr, "bad deltaRefs: %p\n", v);
     abort();
   } else if (deltaRefs < 1)
-    return(v);
+    return(val);
 
   REFS_SIZE refs;
   __atomic_load(&v->refs, &refs, __ATOMIC_RELAXED);
@@ -784,7 +786,7 @@ Value* incRef(Value* v, int deltaRefs) {
   REFS_SIZE newRefs;
   do {
     if (refs == refsStatic || refs == refsConstant)
-      return(v);
+      return(val);
 
     if (refs < refsStatic) {
       fprintf(stderr, "failure in incRef: %d %p\n", refs, (void *)v);
@@ -794,7 +796,7 @@ Value* incRef(Value* v, int deltaRefs) {
     newRefs = refs + deltaRefs;
   } while (!__atomic_compare_exchange(&v->refs, &refs, &newRefs, 1,
 				      __ATOMIC_RELAXED, __ATOMIC_RELAXED));
-  return(v);
+  return(val);
 }
 #else
 Value *simpleIncRef(Value *v, int n) {
@@ -1016,9 +1018,9 @@ Port dupeVal(Port *v) {
   if (t == NUM)
     return *v;
   else if (t == VAL)
-    return (Port)incRef((Value *)(*v), 1);
+    return incRef(*v, 1);
 
-  fprintf(stderr, "Compiler error at %s: %d\nt: %d\n", __FILE__, __LINE__, t);
+  fprintf(stderr, "Compiler error at %s: %d\nt: %d %p\n", __FILE__, __LINE__, t, (void *)*v);
   abort();
 }
 
@@ -1101,7 +1103,7 @@ VectorNode *pushTail(unsigned count, int level, VectorNode *parent, VectorNode *
 
 Vector *vectConj(Vector *vect, Port val) {
   if (vect->refs == 1) {
-    return(mutateVectConj((Vector *)incRef((Value *)vect, 1), val));
+    return(mutateVectConj(vect, val));
     // if there's room in the tail
   } else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
     // make a new vector and copy info over
@@ -1115,7 +1117,7 @@ Vector *vectConj(Vector *vect, Port val) {
     }
     newVect->root = vect->root;
     if (newVect->root != (VectorNode *)NULL) {
-      incRef((Value *)newVect->root, 1);
+      incRef((Port)newVect->root, 1);
     }
 
     // add value to tail of new vector
@@ -1132,7 +1134,7 @@ Vector *vectConj(Vector *vect, Port val) {
       // make new vector one level deeper
       newRoot = malloc_vectorNode();
       newRoot->array[0] = (Port)vect->root;
-      incRef((Value *)newRoot->array[0], 1);
+      incRef((Port)newRoot->array[0], 1);
 
       // and make a new path that includes that node
       newRoot->array[1] = (Port)newPath(vect->shift, tailNode);
@@ -1195,6 +1197,25 @@ Vector *mutateVectConj(Vector *vect, Port val) {
     return(vect);
   }
 }
+
+bool hvmVectConjFn(Port ref, Port args){
+  // fprintf(stderr, "hcf %d: %p\n", __LINE__, (void *)args);
+  Pair pr = node_take(args);
+  Port resultVar = pr.fst;
+  args = pr.snd;
+  NativeArgs arityArgs = {0, {}, resultVar};
+  args = nativeArg(ref, args, &arityArgs);
+  args = nativeArg(ref, args, &arityArgs);
+  if (arityArgs.count == 2) {
+    Vector *v = (Vector *)((u64)arityArgs.args[0] & ~7);
+    // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
+    Vector *newV = vectConj(v, arityArgs.args[1]);
+    // fprintf(stderr, "newV %d: %p\n", __LINE__, (void *)newV);
+    link(resultVar, new_port(VAL, (Port)newV));
+  }
+  return TRUE;
+}
+Port hvmVectConj = new_port_(REF, hvmVectConjFn);
 
 VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Port val) {
   if (level == 0) {
@@ -1740,27 +1761,18 @@ Value *opaqueValue(void *ptr, Destructor *destruct) {
   return((Value *)opVal);
 };
 
-Value *vectorGet(Port v, Port n) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
-  Vector *vect = (Vector *)arg0;
-  Integer *index = (Integer *)arg1;
-  if (index->numVal < 0 || vect->count <= index->numVal) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
+Port vectorGet(Port v, Port n) {
+  long index = get_val(get_i24(n));
+  Vector *vect = (Vector *)((u64)v & ~7);
+  if (index < 0 || vect->count <= index) {
+    dec_and_free(v, 1);
+    return(nothing());
   } else {
-    Value *val = vectGet(vect, (unsigned)index->numVal);
+    Port val = vectGet(vect, index);
     incRef(val, 1);
-    Value *result = maybe((FnArity *)0, (Value *)0, val);
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(result);
+    dec_and_free(v, 1);
+    return(some(val));
   }
-  // */
 }
 
 BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
@@ -2750,96 +2762,6 @@ Value *newTypeValue(int typeNum, Vector *vect) {
   return((Value *)rv);
 }
 
-int main (int argc, char **argv) {
-  prErrSTAR = &defaultPrErrSTAR;
-#ifdef SINGLE_THREADED
-#ifdef CHECK_MEM_LEAK
-  fprintf(stderr, "Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK   at same time.");
-  abort();
-#endif
-#endif
-  outstream = stdout;
-  alloc_static_tms();
-  globalNet = malloc(sizeof(Net));
-  net_init();
-  u64 start = time64();
-  TM *tm = tms[0];
-  int bashResult;
-  Port result;
-  // normalize the net 'iterations' times
-  for (int iterations = 0; iterations < 1; iterations++) {
-    atomic_store_explicit(&node_count, 0, memory_order_relaxed);
-    atomic_store_explicit(&vars_count, 0, memory_order_relaxed);
-    normGlobals(tm);
-    Vector *argVect = empty_vect;
-    for(int i = 0; i < argc; i++) {
-      Value* sv = stringValue(argv[i]);
-      argVect = mutateVectConj(argVect, new_port(VAL, (Port)sv));
-    }
-    finalResultVar = vars_alloc();
-    // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
-    bashResult = 0;
-    Port callArgs;
-    callArgs = new_port(ARG, 0);
-    callArgs = node_make(ARG, new_port(VAL, (Port)argVect), callArgs);
-    callArgs = node_make(ARG, finalResultVar, callArgs);
-    link(mainFn, callArgs);
-    Tag resultTag;
-    do {
-      normalize();
-      result = enter(finalResultVar);
-      // result = vars_exchange(finalResultVar, FREE);
-      resultTag = get_tag(result);
-      // fprintf(stderr, "result tag: %d\n", resultTag);
-      if (resultTag == VAR) {
-	result = vars_exchange(result, NONE);
-      }
-      resultTag = get_tag(result);
-      switch (resultTag) {
-      case RDX:
-	if (1) {
-	  Pair rdx = node_take(result);
-	  Pair args = node_load(rdx.snd);
-	  finalResultVar = args.fst;
-	  push_redex(rdx);
-	}
-	break;
-
-      case CON:
-	link(result, erase);
-	normalize();
-	result = new_num(new_i24(0));
-	resultTag = NUM;
-	break;
-      }
-    } while(resultTag != NUM && resultTag != VAL);
-    freeGlobals(tm);
-  }
-  double duration = (time64() - start) / 1000000000.0; // seconds
-  u64 itrs = atomic_load(&globalNet->itrs);
-  printf("- ITRS: %" PRIu64 "\n", itrs);
-  printf("- TIME: %.2fs\n", duration);
-  printf("- MIPS: %.2f\n", (double)itrs / duration / 1000000.0);
-  printf("remaining vars: %d (%d)\n", vars_count, max_vars);
-  printf("remaining nodes: %d (%d)\n", node_count, max_node);
-  if (get_tag(result) == NUM) {
-    bashResult = (int)get_u24(get_val(result));
-    printf("result: %p bashResult: %d\n", (void *)result, bashResult);
-  } else if (get_tag(result) == VAL ) {
-    printf("result %d  %p\n", __LINE__, (void *)result);
-    dec_and_free(result, 1);
-  }
-#ifdef CHECK_MEM_LEAK
-  cleaningUp = 1;
-  freeAll();
-  if (malloc_count - free_count != 0 || vars_count != 0 || node_count != 0)
-    return(1);
-#endif
-  free_static_tms();
-  free(globalNet);
-  return(bashResult);
-}
-
 bool constructFn(Port ref, Port args) {
   Pair pr = node_take(args);
   Port resultVar = pr.fst;
@@ -2997,7 +2919,7 @@ bool accessFieldFn(Port ref, Port args) {
     int fldIdx = get_i24(get_val(arityArgs.args[0]));
     ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
     Port fld = value->impls[fldIdx];
-    incRef((Value *)fld, 1);
+    incRef(fld, 1);
     dec_and_free((Port)value, 1);
     link(resultVar, new_port(VAL, (Port)fld));
   } else if (arityArgs.count == 3) {
@@ -3009,3 +2931,101 @@ bool accessFieldFn(Port ref, Port args) {
   return TRUE;
 }
 Port accessField = new_port_(REF, accessFieldFn);
+
+int main (int argc, char **argv) {
+  prErrSTAR = &defaultPrErrSTAR;
+#ifdef SINGLE_THREADED
+#ifdef CHECK_MEM_LEAK
+  fprintf(stderr, "Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK   at same time.");
+  abort();
+#endif
+#endif
+  outstream = stdout;
+  alloc_static_tms();
+  globalNet = malloc(sizeof(Net));
+  net_init();
+  u64 start = time64();
+  TM *tm = tms[0];
+  int bashResult;
+  Port result;
+  // normalize the net 'iterations' times
+  for (int iterations = 0; iterations < 1; iterations++) {
+    atomic_store_explicit(&node_count, 0, memory_order_relaxed);
+    atomic_store_explicit(&vars_count, 0, memory_order_relaxed);
+    normGlobals(tm);
+    Vector *argVect = empty_vect;
+    for(int i = 0; i < argc; i++) {
+      Value* sv = stringValue(argv[i]);
+      argVect = mutateVectConj(argVect, new_port(VAL, (Port)sv));
+    }
+    finalResultVar = vars_alloc();
+    // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
+    bashResult = 0;
+    Port callArgs;
+    callArgs = new_port(ARG, 0);
+    callArgs = node_make(ARG, new_port(VAL, (Port)argVect), callArgs);
+    callArgs = node_make(ARG, finalResultVar, callArgs);
+    link(mainFn, callArgs);
+    Tag resultTag;
+    do {
+      normalize();
+      result = enter(finalResultVar);
+      printf("result %d  %p\n", __LINE__, (void *)result);
+      // result = vars_exchange(finalResultVar, FREE);
+      resultTag = get_tag(result);
+      if (resultTag == VAR) {
+	result = vars_exchange(result, NONE);
+      }
+      resultTag = get_tag(result);
+      switch (resultTag) {
+      case RDX:
+	if (1) {
+	  Pair rdx = node_take(result);
+	  Pair args = node_load(rdx.snd);
+	  finalResultVar = args.fst;
+	  push_redex(rdx);
+	}
+	break;
+
+      case DUP:
+      case CON:
+	if (1) {
+	  Pair pr = node_load(result);
+	  fprintf(stderr, "result %d: %d %d\n", __LINE__, get_tag(pr.fst), get_tag(pr.snd));
+	  link(result, erase);
+	  normalize();
+	  result = new_num(new_i24(0));
+	  resultTag = NUM;
+	}
+	break;
+      }
+      // TODO: only for debugging. Remove ASAP
+      // break;
+    } while(resultTag != NUM && resultTag != VAL);
+    freeGlobals(tm);
+  }
+  double duration = (time64() - start) / 1000000000.0; // seconds
+  u64 itrs = atomic_load(&globalNet->itrs);
+  printf("- ITRS: %" PRIu64 "\n", itrs);
+  printf("- TIME: %.2fs\n", duration);
+  printf("- MIPS: %.2f\n", (double)itrs / duration / 1000000.0);
+  printf("remaining vars: %d (%d)\n", vars_count, max_vars);
+  printf("remaining nodes: %d (%d)\n", node_count, max_node);
+  if (get_tag(result) == NUM) {
+    bashResult = (int)get_u24(get_val(result));
+    printf("result: %p bashResult: %d\n", (void *)result, bashResult);
+  } else if (get_tag(result) == VAL ) {
+    result = (u64)result & ~7;
+    printf("result %d  %p\n", __LINE__, (void *)result);
+    dec_and_free(result, 1);
+  }
+#ifdef CHECK_MEM_LEAK
+  cleaningUp = 1;
+  freeAll();
+  if (malloc_count - free_count != 0 || vars_count != 0 || node_count != 0)
+    return(1);
+#endif
+  free_static_tms();
+  free(globalNet);
+  return(bashResult);
+}

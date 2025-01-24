@@ -200,7 +200,7 @@ extern int64_t free_count;
 void freeAll();
 
 #ifndef FAST_INCS
-Value* incRef(Value* v, int deltaRefs);
+Port incRef(Port v, int deltaRefs);
 #else
 Value *simpleIncRef(Value *v, int n);
 #define incRef(V, N) ((V)->refs >= 0 ? simpleIncRef(V, N) : V)
@@ -277,7 +277,7 @@ Value *strSeq(Value *arg0);
 Value *strReduce(Value *s0, Value *x1, Value *f2);
 Value *strVec(Value *arg0);
 Value *strLT(Value *arg0, Value *arg1);
-Value *vectorGet(Port v, Port n);
+Port vectorGet(Port v, Port n);
 Value *stringValue(char *s);
 Value *opaqueValue(void *ptr, Destructor *destruct);
 Value *listFilter(Value *arg0, Value *arg1);
@@ -342,3 +342,4 @@ Port dupeVal(Port *v);
 extern Port construct;
 Port nothing();
 extern Port accessField;
+extern Port hvmVectConj;

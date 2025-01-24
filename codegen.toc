@@ -68,18 +68,25 @@
     '_))
 
 (defn call-vector [ast]
-  (-> (.args ast)
-      (reduce [line-sep
-               (cond (b/is-glbl (.var ast))
-                     ""
-                     ["Port " (.var ast) ";"  line-sep])
-               "if (1) {" line-sep
-               "  Vector *v = malloc_vector();" line-sep]
-              (fn [v arg]
-                (comp v ["  v = mutateVectConj(v, "
-                         (.var arg) ");" line-sep])))
-      (comp [(.var ast) " = new_port(VAL, (Port)v);" line-sep
-             "}" line-sep])))
+  (assert (instance? ast/call-ast ast))
+
+  (let [result-var (.var ast)]
+    (-> (.args ast)
+        (map .var)
+        (reduce ["// call 'vector' at " (ast/location ast) "\n"
+                 (cond (b/is-glbl result-var)
+                       ""
+                       ["Port " result-var ";\n"])
+                 result-var " = (Port)empty_vect;\n" ]
+                (fn [v arg]
+                  [v
+                   "callArgs = endArgs;\n"
+                   "callArgs = node_make(ARG, " arg ", callArgs);\n"
+                   "callArgs = node_make(ARG, " result-var ", callArgs);\n"
+                   result-var " = vars_alloc();\n"
+                   "callArgs = node_make(ARG, " result-var ", callArgs);\n"
+                   "vars_create(" result-var ", node_make(RDX, "
+                   "hvmVectConj, callArgs));\n"])))))
 
 (defn call-op [op]
   (fn [ast]
@@ -102,6 +109,7 @@
                 })
 
 (defn generic-call [ast]
+  (assert (instance? ast/call-ast ast))
   (let [tgt (.call-target ast)
         args (.args ast)
         result-var (.var ast)
@@ -110,25 +118,25 @@
                                             (get tgt .fn-sym))
                                         "")
                      " at " (ast/location args) "\n"
-                     (cond (b/is-glbl (.var ast))
+                     (cond (b/is-glbl result-var)
                            ""
                            "Port ")
-                     (.var ast) " = vars_alloc();" line-sep
+                     result-var " = vars_alloc();\n"
                      (-> args
                          (map .var)
                          (reverse)
-                         (conj (.var ast))
-                         (reduce (str "callArgs = endArgs;" line-sep)
+                         (conj result-var)
+                         (reduce (str "callArgs = endArgs;\n")
                                  (fn [args arg]
                                    (str args
                                         "callArgs = node_make(ARG, " arg
-                                        ", callArgs);" line-sep))))
-                     (cond (b/is-glbl (.var ast))
+                                        ", callArgs);\n"))))
+                     (cond (b/is-glbl result-var)
                            ["link(" (.var tgt) ", callArgs);"]
 
-                           ["vars_create(" (.var ast) ", node_make(RDX, "
+                           ["vars_create(" result-var ", node_make(RDX, "
                             (.var tgt) ", callArgs));"])
-                     line-sep])))
+                     "\n"])))
 
 (defprotocol CodeGen
   (gen-code [ast]
