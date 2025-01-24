@@ -1207,6 +1207,7 @@ bool hvmVectConjFn(Port ref, Port args){
   args = nativeArg(ref, args, &arityArgs);
   args = nativeArg(ref, args, &arityArgs);
   if (arityArgs.count == 2) {
+    link(args, erase);
     Vector *v = (Vector *)((u64)arityArgs.args[0] & ~7);
     // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
     Vector *newV = vectConj(v, arityArgs.args[1]);

@@ -503,10 +503,13 @@ Port vars_exchange(Port var, Port val) {
       atomic_fetch_sub_explicit(&vars_count, 1, memory_order_relaxed);
     }
   } else {
-    if (val == endArgs) {
-      fprintf(stderr, "vars_exch: %d var: %p %p\n", __LINE__, (void *)p, (void *)val);
-    }
+    // if (val == erase) {
+    // fprintf(stderr, "vars_exch: %d var: %p %p\n", __LINE__, (void *)p, (void *)val);
+    // }
     p = atomic_exchange_explicit((APort*)p, val, memory_order_relaxed);
+    // if (val == erase) {
+    // fprintf(stderr, "old val: %p\n", (void *)p);
+    // }
   }
   return p;
 }
@@ -1350,11 +1353,19 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
     break;
 
   case VAR:
+    args = enter(args);
     argsStruct->args[argsStruct->count++] = args;
-    varVal = vars_exchange(args, node_make(RDX, ref, argsNet(argsStruct)));
-    if (varVal != endArgs && varVal != NONE && varVal != FREE) {
-      link(ref, varVal);
-      vars_exchange(args, FREE);
+    fprintf(stderr, "args var %d: %p\n", __LINE__, (void *)args);
+    if (get_tag(args) == VAR) {
+      varVal = vars_exchange(args, node_make(RDX, ref, argsNet(argsStruct)));
+      fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
+      // if (varVal != endArgs && varVal != NONE && varVal != FREE) {
+      // fprintf(stderr, "wut\n");
+      // // link(ref, varVal);
+      // vars_exchange(args, FREE);
+      // }
+    } else {
+      link(ref, argsNet(argsStruct));
     }
     argsStruct->count = -1;
     return NONE;
@@ -1380,8 +1391,8 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
       break;
 
     case VAR:
-      fprintf(stderr, "Boomerity %d\n", __LINE__);
-      abort();
+      // fprintf(stderr, "Boomerity %d\n", __LINE__);
+      // abort();
       argsStruct->args[argsStruct->count++] = arg;
       argsStruct->args[argsStruct->count++] = argsNode.snd;
       varVal = vars_exchange(arg, node_make(RDX, ref, argsNet(argsStruct)));
@@ -1401,32 +1412,7 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 	Port r1 = vars_make(NONE);
 	Port r2 = vars_make(NONE);
 	Port finalResult = argsStruct->result;
-	// fprintf(stderr, "native result %d: %p %p %p\n", __LINE__, finalResult,
-	// (void *)r1, (void *)r2);
-	
-	/*
-	if (argsNode.snd == ARG || argsNode.snd == endArgs) {
-	  // fprintf(stderr, "duping arg %d: count: %d\n", __LINE__, argsStruct->count);
-	  Pair pr = node_take(arg);
-	  int argsCount = argsStruct->count;
-	  for (int i = 0; i < argsCount; i++) {
-	    incRef(argsStruct->args[i], 1);
-	  }
-	  argsStruct->count = argsCount + 2;
-	  argsStruct->result = r1;
-	  argsStruct->args[argsCount] = pr.fst;
-	  argsStruct->args[argsCount + 1] = argsNode.snd;
-	  link(ref, argsNet(argsStruct));
-	
-	  argsStruct->result = r2;
-	  argsStruct->args[argsCount] = pr.snd;
-	  argsStruct->args[argsCount + 1] = argsNode.snd;
-	  link(ref, argsNet(argsStruct));
-	  argsStruct->count = -1;
-	  return NONE;
-	}
-	// */
-	// fprintf(stderr, "duping arg %d: count: %d\n", __LINE__, argsStruct->count);
+	link(finalResult, node_make(argTag, r1, r2));
 	Port args1;
 	Port args2;
 
@@ -1460,7 +1446,6 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 	Port net2 = argsNet(argsStruct);
 	link(ref, net2);
 
-	link(finalResult, node_make(argTag, r1, r2));
 	// link(ref, node_make(argTag, net1, net2));
 	argsStruct->count = -1;
 	return NONE;
