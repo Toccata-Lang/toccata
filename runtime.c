@@ -1201,7 +1201,6 @@ Vector *mutateVectConj(Vector *vect, Port val) {
 }
 
 bool hvmVectConjFn(Port ref, Port args){
-  // fprintf(stderr, "hcf %d: %p\n", __LINE__, (void *)args);
   Pair pr = node_take(args);
   Port resultVar = pr.fst;
   args = pr.snd;
@@ -1211,9 +1210,7 @@ bool hvmVectConjFn(Port ref, Port args){
   if (arityArgs.count == 2) {
     link(args, erase);
     Vector *v = (Vector *)((u64)arityArgs.args[0] & ~7);
-    // fprintf(stderr, "v %d: %p\n", __LINE__, (void *)v);
     Vector *newV = vectConj(v, arityArgs.args[1]);
-    // fprintf(stderr, "newV %d: %p\n", __LINE__, (void *)newV);
     link(resultVar, new_port(VAL, (Port)newV));
   }
   return TRUE;
@@ -2973,7 +2970,7 @@ int main (int argc, char **argv) {
     do {
       normalize();
       result = enter(finalResultVar);
-      printf("result %d  %p\n", __LINE__, (void *)result);
+      // printf("result %d  %p\n", __LINE__, (void *)result);
       // result = vars_exchange(finalResultVar, FREE);
       resultTag = get_tag(result);
       if (resultTag == VAR) {
@@ -2994,7 +2991,7 @@ int main (int argc, char **argv) {
       case CON:
 	if (1) {
 	  Pair pr = node_load(result);
-	  fprintf(stderr, "result %d: %d %d\n", __LINE__, get_tag(pr.fst), get_tag(pr.snd));
+	  // fprintf(stderr, "result %d: %d %d\n", __LINE__, get_tag(pr.fst), get_tag(pr.snd));
 	  link(result, erase);
 	  normalize();
 	  result = new_num(new_i24(0));

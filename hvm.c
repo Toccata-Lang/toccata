@@ -495,7 +495,7 @@ Port vars_exchange(Port var, Port val) {
   Port p = var;
   if (val == FREE) {
     // while (p != FREE && p != NONE && get_tag(p) == VAR) {
-    fprintf(stderr, "vars_freed: %d var: %p\n", __LINE__, (void *)p);
+    // fprintf(stderr, "vars_freed: %d var: %p\n", __LINE__, (void *)p);
     p = atomic_exchange_explicit((APort*)p, val, memory_order_relaxed);
     // fprintf(stderr, "old-val: %p %p\n", (void *)get_tag(p), (void *)(p & ~TAG_MASK));
     // }
@@ -569,7 +569,7 @@ Port vars_alloc() {
       int vc = atomic_fetch_add_explicit(&vars_count, 1, memory_order_relaxed);
       if (max_vars < vc)
 	max_vars = vc;
-      fprintf(stderr, "allocd: %d %p %p\n", __LINE__, (void *)elem, (void *)((Port)elem | VAR));
+      // fprintf(stderr, "allocd: %d %p %p\n", __LINE__, (void *)elem, (void *)((Port)elem | VAR));
       return (Port)((i64)elem | VAR);
     }
   }
@@ -804,20 +804,19 @@ bool ANNI(Port a, Port b) {
 
 // The Comm Interaction.
 bool COMM(Port a, Port b) {
-  // fprintf(stderr, "COMM: %d %p %p\n", __LINE__, (void *)a, (void *)b);
-  // Checks availability
+  // fprintf(stderr, "COMM %d: %d %p %d %p\n", __LINE__, get_tag(a), (void *)a,
+  // get_tag(b), (void *)b);
+  // checks availability
   if (isEmpty(node_load(a))) {
     return FALSE;
   }
 
   // Loads ports.
   Pair A  = node_take(a);
-  Port A1 = A.fst;
-  Port A2 = A.snd;
 
   if (b == endArgs || get_val(b) == 0 || get_tag(b) == NUM) {
-    link(A1, b);
-    link(A2, b);
+    link(A.fst, b);
+    link(A.snd, b);
   } else {
     // Checks availability
     if (isEmpty(node_load(b))) {
@@ -825,8 +824,6 @@ bool COMM(Port a, Port b) {
     }
 
     Pair B  = node_take(b);
-    Port B1 = B.fst;
-    Port B2 = B.snd;
 
     Port v0 = vars_make(NONE);
     Port v1 = vars_make(NONE);
@@ -836,10 +833,10 @@ bool COMM(Port a, Port b) {
     // Links.
     Tag ta = get_tag(a);
     Tag tb = get_tag(b);
-    link(node_make(tb, v0, v1), A1);
-    link(node_make(tb, v2, v3), A2);
-    link(node_make(ta, v0, v2), B1);
-    link(node_make(ta, v1, v3), B2);
+    link(node_make(tb, v0, v1), A.fst);
+    link(node_make(tb, v2, v3), A.snd);
+    link(node_make(ta, v0, v2), B.fst);
+    link(node_make(ta, v1, v3), B.snd);
   }
 
   return TRUE;
@@ -1340,6 +1337,12 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
   if (argsStruct->count < 0)
     return NONE;
 
+  // if (argsStruct->count > 0) {
+  // fprintf(stderr, "nativeArg %d: %p %d %p\n", __LINE__, (void *)ref, argsStruct->count,
+  // (void *)get_i24(get_val(argsStruct->args[argsStruct->count - 1])));
+  // } else {
+  // fprintf(stderr, "nativeArg %d: %p %d\n", __LINE__, (void *)ref, argsStruct->count);
+  // }
   Tag argsTag = get_tag(args);
   Port arg;
   Pair argsNode;
@@ -1354,11 +1357,11 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 
   case VAR:
     args = enter(args);
+    // fprintf(stderr, "args VAR %d: %p %d\n", __LINE__, (void *)args, get_tag(args));
     argsStruct->args[argsStruct->count++] = args;
-    fprintf(stderr, "args var %d: %p\n", __LINE__, (void *)args);
     if (get_tag(args) == VAR) {
       varVal = vars_exchange(args, node_make(RDX, ref, argsNet(argsStruct)));
-      fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
+      // fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
       // if (varVal != endArgs && varVal != NONE && varVal != FREE) {
       // fprintf(stderr, "wut\n");
       // // link(ref, varVal);
@@ -1391,13 +1394,12 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
       break;
 
     case VAR:
-      // fprintf(stderr, "Boomerity %d\n", __LINE__);
-      // abort();
+      // fprintf(stderr, "VAR %d\n", __LINE__);
       argsStruct->args[argsStruct->count++] = arg;
       argsStruct->args[argsStruct->count++] = argsNode.snd;
       varVal = vars_exchange(arg, node_make(RDX, ref, argsNet(argsStruct)));
       if (varVal != NONE && varVal != FREE) {
-	fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
+	// fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
 	if (get_tag(varVal) == RDX) {
 	  push_redex(node_take(varVal));
 	}
@@ -1409,6 +1411,7 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
     case DUP:
     case CON:
       if (1) {
+	// fprintf(stderr, "DUP/CON %d: %d\n", __LINE__, argTag);
 	Port r1 = vars_make(NONE);
 	Port r2 = vars_make(NONE);
 	Port finalResult = argsStruct->result;
@@ -1453,10 +1456,12 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
       break;
 
     case ERA:
+      // fprintf(stderr, "ERA %d: %d\n", __LINE__, argsStruct->count);
       link(argsStruct->result, erase);
       for (int i = 0; i < argsStruct->count; i++) {
 	link(argsStruct->args[i], erase);
       }
+      link(argsNode.snd, erase);
       break;
 
       // TODO: what other tags need to be handled
