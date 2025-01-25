@@ -1122,6 +1122,7 @@ Vector *vectConj(Vector *vect, Port val) {
 
     // add value to tail of new vector
     newVect->tail[vect->count & 0x1F] = val;
+    dec_and_free((Port)vect, 1);
     return(newVect);
   } else {
     // since tail is full, make a new node from the tail of 'vect'
@@ -1149,6 +1150,7 @@ Vector *vectConj(Vector *vect, Port val) {
     newVect->shift = newShift;
     newVect->root = newRoot;
     newVect->tail[0] = val;
+    dec_and_free((Port)vect, 1);
     return(newVect);
   }
 }
