@@ -1103,7 +1103,10 @@ VectorNode *pushTail(unsigned count, int level, VectorNode *parent, VectorNode *
 
 Vector *vectConj(Vector *vect, Port val) {
   if (vect->refs == 1) {
-    return(mutateVectConj(vect, val));
+    Vector *newVect = mutateVectConj(vect, val);
+    fprintf(stderr, "vectConj %d: %p %ld %p\n", __LINE__, (void *)vect,
+	    get_i24(get_val(val)), (void *)newVect);
+    return(newVect);
     // if there's room in the tail
   } else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
     // make a new vector and copy info over
@@ -1122,6 +1125,8 @@ Vector *vectConj(Vector *vect, Port val) {
 
     // add value to tail of new vector
     newVect->tail[vect->count & 0x1F] = val;
+    fprintf(stderr, "vectConj %d: %p %ld %p\n", __LINE__, (void *)vect,
+	    get_i24(get_val(val)), (void *)newVect);
     dec_and_free((Port)vect, 1);
     return(newVect);
   } else {

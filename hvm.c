@@ -1409,6 +1409,10 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
       break;
 
     case DUP:
+      // fprintf(stderr, "Boomity %s %d\n", __FILE__, __LINE__);
+      // abort();
+      // break;
+      
     case CON:
       if (1) {
 	// fprintf(stderr, "DUP/CON %d: %d\n", __LINE__, argTag);
@@ -1425,7 +1429,7 @@ Port nativeArg(Port ref, Port args, NativeArgs *argsStruct) {
 	} else {
 	  args1 = vars_make(NONE);
 	  args2 = vars_make(NONE);
-	  Port n = node_make(argTag, args1, args2);
+	  Port n = node_make(DUP, args1, args2);
 	  link(n, argsNode.snd);
 	}
 
