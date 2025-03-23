@@ -5,6 +5,7 @@
 
 #define TAG_SIZE 8
 #define TAG_MASK 0xff
+#define VAL_MASK 0x7
 #define LAB_SIZE 24
 #define LAB_MASK 0xffffff
 #define LOC_MASK 0xffffffff
@@ -28,14 +29,17 @@ typedef int64_t  i64;
 #define LAM 0x05
 #define APP 0x06
 #define REF 0x07
-// #define VL1 0x08 // native value alieas
+#define VL1 0x08 // native value alieas
 #define SUP 0x09
-#define DUP 0x0A
-#define OPR 0x0B // operator
-#define RDX 0x0C // deferred redex
-#define I56 0x0D
-#define F56 0x0E
+#define DUP 0x0a
+#define OPR 0x0b // operator
+#define RDX 0x0c // deferred redex
+#define I56 0x0d
+#define F56 0x0e
 // #define MAT 0x0F
+#define VL2 0x18 // native value alieas
+#define VL3 0x28 // native value alieas
+#define VL4 0x38 // native value alieas
 
 #define new_i56(x) (((u64)x << TAG_SIZE) | I56)
 #define get_i56(x) (i64)((i64)x >> TAG_SIZE)
@@ -100,3 +104,5 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct);
 u64 time64();
 void hvm_init();
 void hvm_free();
+Term pair_make(Tag tag, Term fst, Term snd);
+Term normalize(Term term);

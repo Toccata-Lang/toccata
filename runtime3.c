@@ -249,6 +249,7 @@ String *malloc_string(int len) {
     }
   }
   // incTypeMalloc(StringBufferType, 1);
+  // fprintf(stderr, "newStr %d: %p\n", __LINE__, (void *)str);
   str->refs = refsInit;
   str->hashVal = 0;
   str->type = StringBufferType;
@@ -1128,8 +1129,10 @@ Vector *vectConj(Vector *vect, Term val) {
 
     // add value to tail of new vector
     newVect->tail[vect->count & 0x1F] = val;
+    /*
     fprintf(stderr, "vectConj %d: %p %ld %p\n", __LINE__, (void *)vect,
 	    get_i56(val), (void *)newVect);
+    // */
     dec_and_free((Term)vect, 1);
     return(newVect);
   } else {
@@ -2978,11 +2981,12 @@ int main (int argc, char **argv) {
     // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
     bashResult = 0;
     Term callArgs;
-    callArgs = ARG;
-    callArgs = node_make(ARG, term_val((Term)argVect), callArgs);
-    callArgs = node_make(ARG, finalResultVar, callArgs);
-  /*
+    callArgs = APP;
+    callArgs = pair_make(APP, term_val((Term)argVect), callArgs);
+    callArgs = pair_make(APP, SUB, callArgs);
     link(mainFn, callArgs);
+    dec_and_free((Term)argVect, 1);
+  /*
     Tag resultTag;
     do {
       normalize();
@@ -3019,8 +3023,8 @@ int main (int argc, char **argv) {
       // TODO: only for debugging. Remove ASAP
       // break;
     } while(resultTag != I56 && resultTag != F56 && resultTag != VAL);
-  // */
     freeGlobals(tm);
+  // */
   }
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = 0; // atomic_load(&globalNet->itrs);
