@@ -3,33 +3,42 @@
 
 #define HVM
 
-typedef uint8_t  Tag;  //  8 bits
+#define TAG_SIZE 8
+#define TAG_MASK 0xff
+#define LAB_SIZE 24
+#define LAB_MASK 0xffffff
+#define LOC_MASK 0xffffffff
+
+typedef uint8_t bool;
+typedef uint8_t  Tag;  // TAG_SIZE bits
 typedef uint32_t Lab;  // 24 bits
 typedef uint32_t Loc;  // 32 bits
 typedef uint64_t Term; // Loc | Lab | Tag
 typedef uint32_t u32;
 typedef uint64_t u64;
 typedef int32_t  i32;
-typedef float    f32;
+typedef int64_t  i64;
 
 // Constants
+#define VAL 0x00 // native value
 #define VAR 0x01
 #define SUB 0x02
 #define NUL 0x03
 #define ERA 0x04
 #define LAM 0x05
 #define APP 0x06
-#define SUP 0x07
-#define DUP 0x08
-#define REF 0x09
-#define OPX 0x0A
-#define OPY 0x0B
-#define U32 0x0C
-#define I32 0x0D
-#define F32 0x0E
-#define MAT 0x0F
+#define REF 0x07
+// #define VL1 0x08 // native value alieas
+#define SUP 0x09
+#define DUP 0x0A
+#define OPR 0x0B // operator
+#define RDX 0x0C // deferred redex
+#define I56 0x0D
+#define F56 0x0E
+// #define MAT 0x0F
 
-const Term VOID = 0;
+#define new_i56(x) (((u64)x << TAG_SIZE) | I56)
+#define get_i56(x) (i64)((i64)x >> TAG_SIZE)
 
 // Operators
 #define OP_ADD 0x00
@@ -53,6 +62,16 @@ const Term VOID = 0;
 typedef uint64_t u64;
 typedef _Atomic(u64) a64;
 
+// TODO: Not sure about this
+typedef bool (*interactionFn)(Term a, Term b);
+
+#define MAX_ARGS 9
+typedef struct {
+  int count;
+  Term args[MAX_ARGS + 2];
+  Term result;
+} NativeArgs;
+
 // Global book
 typedef struct Def {
   char* name;
@@ -67,3 +86,17 @@ typedef struct Book {
   u32 len;
   u32 cap;
 } Book;
+
+#define BOOM(msg) boom(msg, __FILE__, __LINE__);
+
+extern a64 node_count;
+extern int max_node;
+
+void *boom(char *msg, char *file, int line);
+Tag term_tag(Term term);
+void link(Term neg, Term pos);
+Term term_val(Term val);
+Term nativeArg(Term ref, Term args, NativeArgs *argsStruct);
+u64 time64();
+void hvm_init();
+void hvm_free();
