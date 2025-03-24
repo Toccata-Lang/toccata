@@ -63,7 +63,9 @@ Term term_val(Term val) {
 }
 
 Tag term_tag(Term term) {
-  if (term & VAL_MASK) {
+  if ((term & 0xF) == REF) {
+    return REF;
+  } else if (term & VAL_MASK) {
     return term & TAG_MASK;
   } else {
     return VAL;
@@ -240,57 +242,17 @@ char* def_name(Loc def_idx) {
   return BOOK.defs[def_idx].name;
 }
 
-// Expands a ref's data into a linear block of nodes with its nodes' locs
-// offset by the index where in the BUFF it was expanded.
-//
-// Returns the ref's root, the first node in its data.
-Term expand_ref(Loc def_idx) {
-  if (RNOD_END == 0) {
-    printf("expand_ref: empty BUFF\n");
-    exit(1);
-  }
-
-  Def def = BOOK.defs[def_idx];
-  const u32 nodes_len = def.nodes_len;
-  const Term* nodes = def.nodes;
-  const Term* rbag = def.rbag;
-  const u32 rbag_len = def.rbag_len;
-
-  Loc offset = RNOD_END - 1;
-  RNOD_END += nodes_len - 1;
-
-  Term root = term_offset_loc(nodes[0], offset);
-  
-  // Unroll loop for non-root nodes
-  u32 i = 1;
-  for (; i + 3 < nodes_len; i += 4) {
-    set(i + offset, term_offset_loc(nodes[i], offset));
-    set(i + offset + 1, term_offset_loc(nodes[i + 1], offset));
-    set(i + offset + 2, term_offset_loc(nodes[i + 2], offset));
-    set(i + offset + 3, term_offset_loc(nodes[i + 3], offset));
-  }
-  
-  // Remaining nodes
-  for (; i < nodes_len; i++) {
-    set(i + offset, term_offset_loc(nodes[i], offset));
-  }
-
-  // Redexes in batches of 2 (already aligned)
-  for (u32 i = 0; i < rbag_len; i += 2) {
-    rbag_push(term_offset_loc(rbag[i], offset), term_offset_loc(rbag[i + 1], offset));
-  }
-
-  return root;
-}
-
-
 // Atomic Linker
 static inline void move(Loc neg_loc, u64 pos);
 
 void link(Term neg, Term pos) {
   if (term_tag(pos) == VAR) {
     Term far = swap(term_loc(pos), neg);
-    if (term_tag(far) != SUB) {
+    Tag t = term_tag(far);
+    if (t == RDX) {
+      BOOM("linking RDX");
+    } else if (t != SUB) {
+      // leave things as they are
       move(term_loc(pos), far);
     }
   } else {
@@ -315,6 +277,12 @@ static void interact_applam(Loc a_loc, Loc b_loc) {
   Term bod = take(port(2, b_loc));
   move(var, arg);
   move(ret, bod);
+}
+
+static void interact_appref(Term app, Term ref) {
+  interactionFn fnPtr;
+  fnPtr = (interactionFn)(ref & ~0xF);
+  fnPtr(ref, app);
 }
 
 static void interact_appsup(Loc a_loc, Loc b_loc) {
@@ -626,8 +594,6 @@ static void interact_erasup(Loc b_loc) {
   link(ERA, tm2);
 }
 
-static char* tag_to_str(Tag tag);
-
 static void interact(Term neg, Term pos) {
   Tag neg_tag = term_tag(neg);
   Tag pos_tag = term_tag(pos);
@@ -635,74 +601,74 @@ static void interact(Term neg, Term pos) {
   Loc pos_loc = term_loc(pos);
 
   switch (neg_tag) {
-    case APP:
+  case APP:
+    switch (pos_tag) {
+    case LAM: interact_applam(neg_loc, pos_loc); break;
+    case NUL: interact_appnul(neg_loc); break;
+      // case U32: interact_appu32(neg_loc, pos_loc); break;
+    case REF: interact_appref(neg, pos); break;
+    case SUP: interact_appsup(neg_loc, pos_loc); break;
+    }
+    break;
+    /*
+      case OPX:
       switch (pos_tag) {
-        case LAM: interact_applam(neg_loc, pos_loc); break;
-        case NUL: interact_appnul(neg_loc); break;
-	  // case U32: interact_appu32(neg_loc, pos_loc); break;
-        case REF: link(neg, expand_ref(pos_loc)); break;
-        case SUP: interact_appsup(neg_loc, pos_loc); break;
+      case LAM: break;
+      case NUL: interact_opxnul(neg_loc); break;
+      case U32:
+      case I56:
+      case F56: interact_opxnum(neg_loc, term_lab(neg), pos_loc, pos_tag); break;
+      case REF: link(neg, expand_ref(pos_loc)); break;
+      case SUP: interact_opxsup(neg_loc, term_lab(neg), pos_loc); break;
       }
       break;
-      /*
-    case OPX:
+      case OPY:
       switch (pos_tag) {
-        case LAM: break;
-        case NUL: interact_opxnul(neg_loc); break;
-        case U32:
-        case I56:
-        case F56: interact_opxnum(neg_loc, term_lab(neg), pos_loc, pos_tag); break;
-        case REF: link(neg, expand_ref(pos_loc)); break;
-        case SUP: interact_opxsup(neg_loc, term_lab(neg), pos_loc); break;
+      case LAM: break;
+      case NUL: interact_opynul(neg_loc); break;
+      case U32:
+      case I56:
+      case F56: interact_opynum(neg_loc, term_lab(neg), pos_loc, pos_tag); break;
+      case REF: link(neg, expand_ref(pos_loc)); break;
+      case SUP: interact_opysup(neg_loc, pos_loc); break;
       }
       break;
-    case OPY:
+      case MAT:
       switch (pos_tag) {
-        case LAM: break;
-        case NUL: interact_opynul(neg_loc); break;
-        case U32:
-        case I56:
-        case F56: interact_opynum(neg_loc, term_lab(neg), pos_loc, pos_tag); break;
-        case REF: link(neg, expand_ref(pos_loc)); break;
-        case SUP: interact_opysup(neg_loc, pos_loc); break;
-      }
-      break;
-    case MAT:
-      switch (pos_tag) {
-        case LAM: break;
-        case NUL: interact_matnul(neg_loc, term_lab(neg)); break;
-	  // case U32:
-        case I56:
-        case F56: interact_matnum(neg_loc, term_lab(neg), pos_loc, pos_tag); break;
-        case REF: link(neg, expand_ref(pos_loc)); break;
-        case SUP: interact_matsup(neg_loc, term_lab(neg), pos_loc); break;
+      case LAM: break;
+      case NUL: interact_matnul(neg_loc, term_lab(neg)); break;
+      // case U32:
+      case I56:
+      case F56: interact_matnum(neg_loc, term_lab(neg), pos_loc, pos_tag); break;
+      case REF: link(neg, expand_ref(pos_loc)); break;
+      case SUP: interact_matsup(neg_loc, term_lab(neg), pos_loc); break;
       }
       break;
       // */
-    case DUP:
-      switch (pos_tag) {
-        case LAM: interact_duplam(neg_loc, pos_loc); break;
-        case NUL: interact_dupnul(neg_loc); break;
-	  // case U32:
-        case I56:
-        case F56: interact_dupnum(neg_loc, pos); break;
-        // TODO(enricozb): dup-ref optimization
-        case REF: interact_dupref(neg_loc, pos_loc); break;
-        // case REF: link(neg, expand_ref(pos_loc)); break;
-        case SUP: interact_dupsup(neg_loc, pos_loc); break;
-      }
-      break;
-    case ERA:
-      switch (pos_tag) {
-        case LAM: interact_eralam(pos_loc); break;
-        case NUL: break;
-	  // case U32: break;
-        case I56: break;
-        case F56: break;
-        case REF: break;
-        case SUP: interact_erasup(pos_loc); break;
-      }
-      break;
+  case DUP:
+    switch (pos_tag) {
+    case LAM: interact_duplam(neg_loc, pos_loc); break;
+    case NUL: interact_dupnul(neg_loc); break;
+      // case U32:
+    case I56:
+    case F56: interact_dupnum(neg_loc, pos); break;
+      // TODO(enricozb): dup-ref optimization
+    case REF: interact_dupref(neg_loc, pos_loc); break;
+      // case REF: link(neg, expand_ref(pos_loc)); break;
+    case SUP: interact_dupsup(neg_loc, pos_loc); break;
+    }
+    break;
+  case ERA:
+    switch (pos_tag) {
+    case LAM: interact_eralam(pos_loc); break;
+    case NUL: break;
+      // case U32: break;
+    case I56: break;
+    case F56: break;
+    case REF: break;
+    case SUP: interact_erasup(pos_loc); break;
+    }
+    break;
   }
 }
 
@@ -720,7 +686,9 @@ static inline int normal_step() {
   Term neg = take(loc + 0);
   Term pos = take(loc + 1);
 
-  // printf("\n\n%04lX: INTERACT %s ~ %s\n\n", inc_itr(), tag_to_str(neg), tag_to_str(pos));
+  printf("\n\n%04lX: INTERACT %s ~ %s\n%p ~ %p\n",
+	 inc_itr(), tag_to_str(term_tag(neg)), tag_to_str(term_tag(pos)),
+	 (void *)neg, (void *)pos);
 
   interact(neg, pos);
 
@@ -745,27 +713,8 @@ void hvm_free() {
   }
 }
 
-void boot(Loc def_idx) {
-  if (RNOD_END || RBAG_END) {
-    printf("booting on non-empty state\n");
-    exit(1);
-  }
-
-  Loc root = alloc_node(1);
-  set(root, expand_ref(def_idx));
-}
-
-Term normalize(Term term) {
-  if (term_tag(term) != REF) {
-    printf("normalizing non-ref\n");
-    exit(1);
-  }
-
-  boot(term_loc(term));
-
+void normalize() {
   while (normal_step());
-
-  return get(0);
 }
 
 // Debugging

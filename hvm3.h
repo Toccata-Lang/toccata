@@ -20,6 +20,10 @@ typedef uint64_t u64;
 typedef int32_t  i32;
 typedef int64_t  i64;
 
+// Booleans
+#define TRUE  1
+#define FALSE 0
+
 // Constants
 #define VAL 0x00 // native value
 #define VAR 0x01
@@ -40,6 +44,9 @@ typedef int64_t  i64;
 #define VL2 0x18 // native value alieas
 #define VL3 0x28 // native value alieas
 #define VL4 0x38 // native value alieas
+
+typedef bool (*interactionFn)(Term a, Term b);
+#define new_ref(x) (((u64)x + REF))
 
 #define new_i56(x) (((u64)x << TAG_SIZE) | I56)
 #define get_i56(x) (i64)((i64)x >> TAG_SIZE)
@@ -91,7 +98,7 @@ typedef struct Book {
   u32 cap;
 } Book;
 
-#define BOOM(msg) boom(msg, __FILE__, __LINE__);
+#define BOOM(msg) boom(msg, __FILE__, __LINE__)
 
 extern a64 node_count;
 extern int max_node;
@@ -100,9 +107,13 @@ void *boom(char *msg, char *file, int line);
 Tag term_tag(Term term);
 void link(Term neg, Term pos);
 Term term_val(Term val);
+Term term_new(Tag tag, Lab lab, Loc loc);
+Loc term_loc(Term term);
+Term take(Loc loc);
+void set(Loc loc, Term term);
 Term nativeArg(Term ref, Term args, NativeArgs *argsStruct);
 u64 time64();
 void hvm_init();
 void hvm_free();
 Term pair_make(Tag tag, Term fst, Term snd);
-Term normalize(Term term);
+void normalize();

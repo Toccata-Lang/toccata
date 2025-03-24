@@ -2984,16 +2984,16 @@ int main (int argc, char **argv) {
     callArgs = APP;
     callArgs = pair_make(APP, term_val((Term)argVect), callArgs);
     callArgs = pair_make(APP, SUB, callArgs);
-    link(mainFn, callArgs);
-    dec_and_free((Term)argVect, 1);
-  /*
+    link(callArgs, mainFn);
     Tag resultTag;
     do {
       normalize();
-      result = finalResultVar;
-      // printf("result %d  %p\n", __LINE__, (void *)result);
+      result = take(term_loc(callArgs));
+      printf("result %d  %p\n", __LINE__, (void *)result);
       // result = vars_exchange(finalResultVar, FREE);
       resultTag = term_tag(result);
+/*
+dec_and_free((Term)argVect, 1);
       if (resultTag == VAR) {
 	result = vars_exchange(result, NONE);
       }
@@ -3022,9 +3022,9 @@ int main (int argc, char **argv) {
       }
       // TODO: only for debugging. Remove ASAP
       // break;
-    } while(resultTag != I56 && resultTag != F56 && resultTag != VAL);
-    freeGlobals(tm);
   // */
+    } while(resultTag != I56 && resultTag != F56 && resultTag != VAL);
+    // freeGlobals(tm);
   }
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = 0; // atomic_load(&globalNet->itrs);
