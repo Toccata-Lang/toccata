@@ -5,7 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
-#include "hvm3.h"
+#include "runtime3.h"
 // #include <unistd.h>
 
 // Thread local values
@@ -722,7 +722,7 @@ void normalize() {
 // Debugging
 static char* tag_to_str(Tag tag) {
   switch (tag) {
-    case VOID: return "___";
+    case VAL:  return "VAL";
     case VAR:  return "VAR";
     case SUB:  return "SUB";
     case NUL:  return "NUL";
