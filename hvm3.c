@@ -231,7 +231,7 @@ void def_new(char* name) {
   memset(BUFF, 0, sizeof(Term) * def.nodes_len);
   memset(BUFF + RBAG, 0, sizeof(Term) * def.rbag_len);
 
-  RNOD_END = 0;
+  RNOD_END = 2;
   RBAG_END = 0;
 
   BOOK.defs[BOOK.len] = def;
@@ -647,6 +647,7 @@ static void interact(Term neg, Term pos) {
       // */
   case DUP:
     switch (pos_tag) {
+    case VAL: incRef(pos, 1); break;
     case LAM: interact_duplam(neg_loc, pos_loc); break;
     case NUL: interact_dupnul(neg_loc); break;
       // case U32:
@@ -660,6 +661,7 @@ static void interact(Term neg, Term pos) {
     break;
   case ERA:
     switch (pos_tag) {
+    case VAL: dec_and_free(pos, 1); break;
     case LAM: interact_eralam(pos_loc); break;
     case NUL: break;
       // case U32: break;
@@ -701,7 +703,7 @@ void hvm_init() {
     BUFF = calloc((1ULL << 24), sizeof(a64));
   }
   RNOD_INI = 0;
-  RNOD_END = 0;
+  RNOD_END = 2;
   RBAG_INI = 0;
   RBAG_END = 0;
 }
@@ -804,11 +806,10 @@ Term argsNet(NativeArgs *args) {
 
 // extract the requested number of native args
 Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
-  BOOM("nativeArg");
-  return (Term)0;
-  /*
-  if (argsStruct->count < 0)
-    return NONE;
+  if (argsStruct->count < 0 || args == VOID) {
+    BOOM("natveArgs");
+    return VOID;
+  }
 
   // if (argsStruct->count > 0) {
   // fprintf(stderr, "nativeArg %d: %p %d %p\n", __LINE__, (void *)ref, argsStruct->count,
@@ -816,23 +817,19 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   // } else {
   // fprintf(stderr, "nativeArg %d: %p %d\n", __LINE__, (void *)ref, argsStruct->count);
   // }
-  Tag argsTag = get_tag(args);
+  Tag argsTag = term_tag(args);
+  fprintf(stderr, "argsTag %d: %s (%d) in %p\n", __LINE__,
+	  tag_to_str(argsTag), argsTag, (void *)args);
   Term arg;
-  Pair argsNode;
   Term varVal;
   switch(argsTag) {
-  case 0xF: // aka lowest byte of NONE
-    // TODO: test this
-    fprintf(stderr, "Boom at %s: %d args: %d\n", __FILE__, __LINE__, argsStruct->count);
-    abort();
-    return NONE;
-    break;
-
   case VAR:
-    args = enter(args);
-    // fprintf(stderr, "args VAR %d: %p %d\n", __LINE__, (void *)args, get_tag(args));
-    argsStruct->args[argsStruct->count++] = args;
-    if (get_tag(args) == VAR) {
+    BOOM("natveArgs");
+    /*
+      args = enter(args);
+      // fprintf(stderr, "args VAR %d: %p %d\n", __LINE__, (void *)args, get_tag(args));
+      argsStruct->args[argsStruct->count++] = args;
+      if (get_tag(args) == VAR) {
       varVal = vars_exchange(args, node_make(RDX, ref, argsNet(argsStruct)));
       // fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
       // if (varVal != endArgs && varVal != NONE && varVal != FREE) {
@@ -840,45 +837,44 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
       // // link(ref, varVal);
       // vars_exchange(args, FREE);
       // }
-    } else {
+      } else {
       link(ref, argsNet(argsStruct));
-    }
-    argsStruct->count = -1;
-    return NONE;
+      }
+      argsStruct->count = -1;
+      // */
+    return VOID;
     break;
 
-  case ARG:
-    argsNode = node_take(args);
-    arg = argsNode.fst;
-    Tag argTag = get_tag(arg);
-    if (argTag == VAR) {
-      // fprintf(stderr, "arg 1 %d: %d %p\n", __LINE__, argTag, (void *)arg);
-      arg = enter(arg);
-      argTag = get_tag(arg);
-    }
-
+  case APP:
+    arg = take(port(1, term_loc(args)));
+    Tag argTag = term_tag(arg);
+    Term argsNode = take(port(2, term_loc(args)));
     // fprintf(stderr, "arg 2 %d: %d %p\n", __LINE__, argTag, (void *)arg);
     switch(argTag) {
     case VAL:
-    case NUM:
+    case I56:
+    case F56:
       // fprintf(stderr, "arg %d: %p\n", __LINE__, (void *)arg);
       argsStruct->args[argsStruct->count++] = arg;
-      return argsNode.snd;
+      return argsNode;
       break;
 
     case VAR:
+      BOOM("natveArgs");
+      /*
       // fprintf(stderr, "VAR %d\n", __LINE__);
       argsStruct->args[argsStruct->count++] = arg;
       argsStruct->args[argsStruct->count++] = argsNode.snd;
       varVal = vars_exchange(arg, node_make(RDX, ref, argsNet(argsStruct)));
       if (varVal != NONE && varVal != FREE) {
-	// fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
-	if (get_tag(varVal) == RDX) {
-	  push_redex(node_take(varVal));
-	}
+      // fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
+      if (get_tag(varVal) == RDX) {
+      push_redex(node_take(varVal));
+      }
       }
       argsStruct->count = -1;
-      return NONE;
+      // */
+      return VOID;
       break;
 
     case DUP:
@@ -886,8 +882,10 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
       // abort();
       // break;
       
-    case CON:
-      if (1) {
+      /*
+	case CON:
+	if (1) {
+	BOOM("natveArgs");
 	// fprintf(stderr, "DUP/CON %d: %d\n", __LINE__, argTag);
 	Term r1 = vars_make(NONE);
 	Term r2 = vars_make(NONE);
@@ -897,18 +895,18 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	Term args2;
 
 	if (argsNode.snd == ARG || argsNode.snd == endArgs) {
-	  args1 = argsNode.snd;
-	  args2 = argsNode.snd;
+	args1 = argsNode.snd;
+	args2 = argsNode.snd;
 	} else {
-	  args1 = vars_make(NONE);
-	  args2 = vars_make(NONE);
-	  Term n = node_make(DUP, args1, args2);
-	  link(n, argsNode.snd);
+	args1 = vars_make(NONE);
+	args2 = vars_make(NONE);
+	Term n = node_make(DUP, args1, args2);
+	link(n, argsNode.snd);
 	}
 
 	int argsCount = argsStruct->count;
 	for (int i = 0; i < argsCount; i++) {
-	  incRef(argsStruct->args[i], 1);
+	incRef(argsStruct->args[i], 1);
 	}
 
 	// TODO: if pr.fst is not a native val, put pr.snd with args1
@@ -928,34 +926,40 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 
 	// link(ref, node_make(argTag, net1, net2));
 	argsStruct->count = -1;
-	return NONE;
-      }
-      break;
+	return VOID;
+	}
+	break;
+	// */
 
     case ERA:
+      BOOM("natveArgs");
+      /*
       // fprintf(stderr, "ERA %d: %d\n", __LINE__, argsStruct->count);
       link(argsStruct->result, erase);
       for (int i = 0; i < argsStruct->count; i++) {
-	link(argsStruct->args[i], erase);
+      link(argsStruct->args[i], erase);
       }
       link(argsNode.snd, erase);
+      // */
       break;
 
       // TODO: what other tags need to be handled
     default:
-      printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
+      printf("unhandled tag 0x%x line: %d\n", term_tag(arg), __LINE__);
       abort();
       break;
     }
     argsStruct->count = -1;
-    return NONE;
+    // */
+    return VOID;
     break;
 
     // TODO: what other tags need to be handled
   default:
-    printf("unhandled tag 0x%x line: %d\n", get_tag(arg), __LINE__);
+    printf("unhandled tag %s (0x%x) %p line: %d\n",
+	   tag_to_str(term_tag(arg)), term_tag(arg), (void *)arg, __LINE__);
     abort();
-    return NONE;
+    return VOID;
     break;
   }
   // */
