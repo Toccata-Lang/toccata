@@ -818,8 +818,8 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   // fprintf(stderr, "nativeArg %d: %p %d\n", __LINE__, (void *)ref, argsStruct->count);
   // }
   Tag argsTag = term_tag(args);
-  fprintf(stderr, "argsTag %d: %s (%d) in %p\n", __LINE__,
-	  tag_to_str(argsTag), argsTag, (void *)args);
+  // fprintf(stderr, "argsTag %d: %s (%d) in %p\n", __LINE__,
+  //	  tag_to_str(argsTag), argsTag, (void *)args);
   Term arg;
   Term varVal;
   switch(argsTag) {
@@ -964,6 +964,32 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   }
   // */
 }
+
+Term dupeArg(Term arg, Term dupedArg) {
+  // fprintf(stderr, "arg: %d %p\n", __LINE__, (void *)arg);
+  switch(term_tag(arg)) {
+  case VAL:
+    link(incRef(arg, 1), dupedArg);
+    return arg;
+    break;
+
+  case F56:
+  case I56:
+  case REF:
+    link(arg, dupedArg);
+    return arg;
+    break;
+
+  default:
+    if (1) {
+      Term newDup = pair_make(DUP, SUB, dupedArg);
+      link(arg, newDup);
+      return port(1, term_loc(newDup));
+    }
+    break;
+  }
+}
+
 
 /*
 int main(int argc, char *argv[]) {

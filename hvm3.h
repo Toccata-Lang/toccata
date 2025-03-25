@@ -118,3 +118,4 @@ void hvm_free();
 Term pair_make(Tag tag, Term fst, Term snd);
 void normalize();
 Loc port(u64 n, Loc x);
+Term dupeArg(Term arg, Term dupedArg);

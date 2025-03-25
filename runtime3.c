@@ -2972,7 +2972,7 @@ int main (int argc, char **argv) {
   // normalize the net 'iterations' times
   for (int iterations = 0; iterations < 1; iterations++) {
     atomic_store_explicit(&node_count, 0, memory_order_relaxed);
-    // normGlobals(tm);
+    normGlobals();
     Vector *argVect = empty_vect;
     for(int i = 0; i < argc; i++) {
       Value* sv = stringValue(argv[i]);
@@ -2989,7 +2989,7 @@ int main (int argc, char **argv) {
     do {
       normalize();
       result = take(term_loc(callArgs));
-      printf("result %d  %p\n", __LINE__, (void *)result);
+      // printf("result %d  %p\n", __LINE__, (void *)result);
       // result = vars_exchange(finalResultVar, FREE);
       resultTag = term_tag(result);
 /*
@@ -3024,7 +3024,7 @@ dec_and_free((Term)argVect, 1);
       // break;
   // */
     } while(resultTag != I56 && resultTag != F56 && resultTag != VAL);
-    // freeGlobals(tm);
+    freeGlobals();
   }
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = 0; // atomic_load(&globalNet->itrs);
