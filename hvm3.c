@@ -81,25 +81,16 @@ Loc term_loc(Term term) {
 }
 
 Term term_offset_loc(Term term, Loc offset) {
-  // do not offset terms that use loc for something other than
-  // indices into the global buffer.
-  switch (term_tag(term)) {
-    case SUB:
+  Tag tag = term_tag(term);
+  if (tag == SUB || tag == NUL || tag == ERA || tag == REF || tag == I56 || tag == F56) {
+    if (tag == SUB)
       BOOM("offset of SUB");
-      break;
-    case NUL:
-    case ERA:
-    case REF:
-    case I56:
-    case F56:
-      return term;
+    return term;
   }
 
-  Term tag = term_tag(term);
-  Term lab = term_lab(term);
-  Term loc = term_loc(term) + offset;
+  Loc loc = term_loc(term) + offset;
 
-  return term_new(tag, lab, loc);
+  return (term & 0xFFFFFFFF) | (((Term)loc) << 32);
 }
 
 // Memory operations
