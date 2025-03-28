@@ -1,0 +1,1616 @@
+
+(add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
+                            "system.toc"
+                            :sha "30b346e"))
+(add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
+                          "constraints.toc"
+                          :sha "80258a3"))
+(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
+                            "ast.toc"
+                            :sha "c2ee5b2"))
+(add-ns se (git-dependency "https://github.com/Toccata-Lang/state-error.git"
+                           "state-error.toc"
+                           :sha "8b250fe"))
+(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
+                           "recursive-descent.toc"
+                           :sha "d61aa1e"))
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "e8eba87"))
+(add-ns b (module "base.toc"))
+
+;; (add-ns fr (git-dependency "https://github.com/Toccata-Lang/Free.git"
+;;                            "free.toc"
+;;                             :sha "5c353f2"))
+
+(def lf "\n")
+(def lflf "\n\n")
+
+(def max-time (agent 0))
+(def start-time (agent empty-list))
+
+(defn start-clock []
+  (let [start (sys/clock_gettime)]
+    (send start-time (fn [starts] (cons start starts)))))
+
+(defn stop-clock [ast]
+  (let [end (sys/clock_gettime)]
+    (send start-time (fn [[start & starts]]
+                       (let [delta (sys/time-delta start end)]
+                         (send max-time (fn [prev-max]
+                                          (cond (< prev-max delta)
+                                                (do
+                                                  (b/status 'slow _LINE_
+                                                          (ast/location ast)
+                                                          (div delta 1000) "ms"
+                                                          lflf ast)
+                                                  delta)
+                                                prev-max)))
+                         starts)))))
+
+(defn append-value-type [sym constraint loc]
+  (assert (instance? c/OptionalSym sym))
+  (assert (instance? c/Constraints constraint))
+
+  (cond (= sym c/no-symbol)
+        (se/state-error constraint)
+
+        (= (str sym) "")
+        (b/compilation-error "Bad call to append-value-type" _LINE_ loc sym lf constraint)
+
+        (= constraint c/top-type)
+        (se/try
+          (map (b/get-value sym) .constraint)
+          (fn [_]
+            (se/state-error c/top-type)))
+
+        (= constraint c/bottom-type)
+        (b/compilation-error ;; 'site _LINE_ loc 'appending sym
+                             ;; lflf 'constraint constraint
+                             ;; lflf
+                             (b/conf-ass _LINE_ constraint loc))
+
+        (= (.ns sym) c/no-symbol)
+        (flat-map (se/try
+                    (b/get-value sym)
+                    (fn [_]
+                      (se/state-error sym)))
+                  (fn [curr-val]
+                    (let [curr-const (.constraint curr-val)]
+                      (cond (= curr-const c/top-type)
+                            (map (b/set-value sym (.constraint curr-val
+                                                               (c/update-path constraint loc)))
+                                 .constraint)
+
+                            (instance? c/ProtoImpls curr-const)
+                            b/se-nop
+
+                            (let [new-const (c/intersect (c/update-path constraint loc)
+                                                         curr-const)]
+                              ;; (let [loc (ast/location sym)]
+                              ;;   (or ;; (= (.file loc) b/core)
+                              ;;       ;; (= (.line loc) 0)
+                              ;;       (do
+                              ;;         (b/status 'appending _LINE_ loc (str "\"" sym "\"")
+                              ;;                 lf 'constraint constraint
+                              ;;                 lflf 'curr curr-const
+                              ;;                 lflf 'untrimmed (c/intersect curr-const constraint)
+                              ;;                 lflf 'new-const new-const)
+                              ;;         nothing)))
+
+                              (cond (= new-const c/bottom-type)
+                                    (b/compilation-error
+                                    ;;  'site _LINE_ loc 'appending sym
+                                    ;;  lf 'curr curr-const
+                                    ;;  lflf 'constraint constraint
+                                    ;;  lflf 'new-const new-const
+                                    ;;  lflf
+                                     (b/conf-ass _LINE_ new-const loc))
+
+                                    (map (b/set-value sym
+                                                      (.constraint curr-val
+                                                                   (c/update-path new-const loc)))
+                                         .constraint)))))))
+
+        (se/state-error constraint)))
+
+;; (defn add-ns-impl [ns sym type-num arg-count arity-c loc]
+;;   (fn [mods]
+;;     (assert (instance? HashMap mods))
+;;     (assert-result r (instance? HashMap r))
+
+;;     (either (for [val-types-list (get-in mods [ns .value-types])
+;;                   val-types (first val-types-list)
+;;                   proto-impls (get val-types sym)]
+;;               (let [new-proto (add-impl proto-impls type-num
+;;                                         arg-count arity-c loc)
+;;                     val-types-list (map val-types-list
+;;                                         (fn [m]
+;;                                           (assoc m sym new-proto)))]
+;;                 (cond (instance? c/ProtoImpls new-proto)
+;;                       (assoc-in mods [ns .value-types]
+;;                                 val-types-list)
+
+;;                       ;; add-impl might return a compilation error
+;;                       (do
+;;                         (b/status (.val new-proto))
+;;                         (b/wait-for-err-out)
+;;                         (abort)))))
+;;             mods)))
+
+;; TODO:
+;; (def C-var-punct (grmr/any (map (grmr/ignore "*") (constantly "_STAR_"))
+;;                            (map (grmr/ignore ".") (constantly ""))
+;;                            (map (grmr/ignore "#") (constantly "_HASH_"))
+;;                            (map (grmr/ignore "+") (constantly "_PLUS_"))
+;;                            (map (grmr/ignore "?") (constantly "_QM_"))
+;;                            (map (grmr/ignore "!") (constantly "_BANG_"))
+;;                            (map (grmr/ignore "=") (constantly "_EQ_"))
+;;                            (map (grmr/ignore "<") (constantly "_LT_"))
+;;                            (map (grmr/ignore ">") (constantly "_GT_"))))
+
+;; (def C-var-remaining
+;;   (grmr/none-or-more (grmr/any "_"
+;;                                (map (grmr/ignore "-") (constantly "_"))
+;;                                grmr/alpha
+;;                                grmr/digit
+;;                                C-var-punct)))
+
+;; (def C-var (apply-to (fn [start remaining]
+;;                        (to-str (comp [start] remaining)))
+;;                      (grmr/any grmr/alpha
+;;                                (map (grmr/ignore "#") (fn [] ""))
+;;                                (map (grmr/ignore "-") (fn [] "_MINUS_"))
+;;                                C-var-punct)
+;;                      C-var-remaining))
+
+;; (def C-var (rd/parser C-var))
+
+(defprotocol TypeChecker
+  (set-local-var [ast]
+    (assert-result r (instance? se/StateError r))
+
+    (cond (= (.var ast) "")
+          (map (b/local-var b/Rslt)
+               (fn [new-var]
+                 (.var ast new-var)))
+          (se/state-error ast)))
+
+  (set-global-var [ast])
+
+  (update-constraint [ast constraint loc]
+    (b/compilation-error "Could not find implementation of 'update-constraint' at" loc "for:"
+                       lf (type-name ast) ast
+                       lflf constraint))
+
+  (param-types [_]
+    (assert-result x (instance? se/StateError x)))
+
+  (pre-check [ast]
+    (assert-result x (instance? se/StateError x))
+
+    ;; TODO: put back in when done
+    ;; (se/state-error ast)
+    )
+
+  (type-check [ast old-ast]
+    (assert-result x (instance? se/StateError x))
+
+    (b/compilation-error "Could not find implementation of 'type-check' at" (ast/location old-ast) "for:"
+                       lf (type-name old-ast) old-ast)
+    ;; (se/state-error ast)
+    ))
+
+(def ConstrainedAST (any-of ast/call-ast
+                            ;; ast/params-ast
+                            ast/fn-arity-ast
+                            ast/string-ast
+                            ast/integer-ast
+                            ast/binding-ast
+                            ;; c/TaggedSymbol
+                            ;; ast/prototype-ast
+                            ast/superposition-ast
+                            ast/block-comment-ast))
+
+(extend-type Opaque
+  Eq
+  (=* [x y]
+    nothing))
+
+(extend-type ConstrainedAST
+  TypeChecker
+  (update-constraint [ast constraint loc]
+    (let [new-c (c/intersect (.constraint ast) constraint)]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (b/compilation-error ;; 'site _LINE_ loc
+                                        ;; lf 'ast ast
+                                        ;; lflf 'ast-constraint (.constraint ast)
+                                        ;; lflf 'constraint constraint
+                                        ;; lflf 'new-c new-c
+                                        ;; lflf
+                                        (b/conf-ass _LINE_ new-c loc))))
+              (se/state-error (.constraint ast (c/update-path new-c loc)))))))
+
+(defn get-param-types [params]
+  (assert (instance? (any-of c/TaggedSymbol ast/params-ast) params))
+
+  (cata param-types params se/state-error))
+
+;; TODO: remove when done
+(def DefaultPreCheck (any-of Vector
+                             ;; ProtoArity
+                             ;; c/TaggedSymbol
+                             c/AllValues
+                             c/NoSymbol
+                             c/ReifiedConstraint
+                             c/SumConstraint
+                             c/SeqConstraint
+                             c/CollectionOf
+                             c/TypeOfConstraint
+                             c/TypeOp
+                             c/MultiConstraint
+                             c/fn-arity
+                             c/Field
+                             c/NoTail
+                             c/ParamConstraint
+                             c/Contents
+                             ast/declaration-ast
+                             ast/string-ast
+                             ast/integer-ast
+                             ast/call-ast
+                             ast/inline-ast
+                             ast/params-ast))
+
+;; TODO: remove when done
+(def DefaultTypeCheck (any-of Vector
+                              c/AllValues
+                              c/NoSymbol
+                              c/NoTail
+                              c/Contents
+                              c/fn-arity
+                              ast/block-comment-ast))
+
+;; TODO: remove when done
+(extend-type DefaultPreCheck
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast)))
+
+;; TODO: remove when done
+(extend-type DefaultTypeCheck
+  TypeChecker
+  (type-check [ast old-ast]
+    (assert-result x (instance? se/StateError x))
+
+    (se/state-error ast)))
+
+(def DefaultConst (any-of c/AllValues
+                          c/ParamConstraint
+                          c/ReifiedConstraint
+                          c/MultiConstraint
+                          c/CollectionOf
+                          c/SeqConstraint
+                          c/SumConstraint
+                          c/StringConstraint
+                          c/NoSymbol))
+
+(extend-type DefaultConst ;; c/Constraints
+  TypeChecker
+  (param-types [c]
+    (se/state-error c)))
+
+(def DefaultSymConst (any-of c/CollectionOf
+                             c/SeqConstraint
+                             c/SumConstraint
+                             c/MultiConstraint
+                             c/TypeOp
+                             c/IntegerConstraint
+                             c/SymbolConstraint
+                             c/StringConstraint))
+
+(extend-type DefaultSymConst ;; c/SymbolConstraints
+  TypeChecker
+  (type-check [c old-c]
+    (let [loc (ast/location old-c)]
+      (append-value-type (.sym c) c loc))))
+
+(extend-type Integer
+  TypeChecker
+  (pre-check [n]
+    (se/state-error (c/IntConstraint n))))
+
+(extend-type c/NoSymbol
+  TypeChecker
+  (set-local-var [x]
+    (se/state-error x))
+
+  (update-constraint [x _ _]
+    (se/state-error x)))
+
+(extend-type c/NoValues
+  TypeChecker
+  (type-check [c old-c]
+    (b/compilation-error (b/conf-ass _LINE_ c (ast/location c)))))
+
+(extend-type c/Field
+  TypeChecker
+  (param-types [c]
+    (se/state-error c))
+
+  (type-check [c old-c]
+    (se/state-error c)))
+
+(extend-type c/ReifiedConstraint
+  TypeChecker
+  (type-check [c old-c]
+    (let [loc (ast/location old-c)]
+      (flat-map (cond (= c/UnknownType (c/type-num c))
+                      (comp (b/get-type-info (.type-symbol c))
+                            (se/state-error c))
+                      (se/state-error c))
+                (fn [type-c]
+                  (append-value-type (.sym c) type-c loc))))))
+
+(extend-type c/TypeOfConstraint
+  TypeChecker
+  (type-check [c old-c]
+    ;; TODO: restrict use to fn params only
+    (flat-map (b/get-value (.param-sym old-c))
+              (fn [val]
+                (let [loc (ast/location c)]
+                  (append-value-type (.sym c) (.constraint val) loc))))))
+
+(extend-type b/ProtoArity
+  TypeChecker
+  (pre-check [ast]
+    (let [sym (.fn-sym (.arity (.arity ast)))]
+      (flat-map (b/get-value sym)
+                (fn [proto-val]
+                  (cond (instance? ast/prototype-ast proto-val)
+                        (se/state-error ast)
+
+                        (b/compilation-error "Trying to override a non-protocol value for"
+                                             (str "'" sym "'") "at" (ast/location sym)))))))
+
+  (type-check [ast old-ast]
+    (b/add-proto-impl ast)))
+
+(extend-type ast/inline-ast
+  TypeChecker
+  (set-global-var [ast]
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Val))))
+
+  (type-check [ast old-ast]
+    (map (type-check (.constraint ast) (.constraint ast))
+         (fn [c]
+           (.constraint ast c)))))
+
+(extend-type ast/prototype-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [loc (ast/location ast)
+          fn-sym (.fn-name ast)
+          ast (-> ast
+                  (.var (b/global-var 'Proto))
+                  (.impls (map-vals (.impls ast)
+                                    (fn [arity-ast]
+                                      (b/StaticArity arity-ast
+                                                     (b/global-var (str '_ (.fn-name ast) '_Def))
+                                                     (b/global-var (.fn-name ast) 'Fn)
+                                                     (.constraint arity-ast))))))
+          fixed-params (-> ast .params .fixed)
+          arg-count (count fixed-params)
+          all-param-syms (remove (ast/all-syms (.params ast))
+                                 (fn [s]
+                                   (= s '_)))
+          proto-c (c/ProtoImpls fn-sym
+                                {c/UnknownType (c/arity fn-sym
+                                                        (c/vect-c (repeat arg-count c/top-type))
+                                                        c/top-type)})]
+      ;; TODO: it would be ideal to somehow collect the contraints for the default impl
+      ;; and construct a proto-c with them
+      (cond (< (count (set all-param-syms)) (count all-param-syms))
+            (b/compilation-error "Duplicate parameter names in prototype at" loc)
+
+            (for [_ (se/try
+                      (flat-map (b/get-value fn-sym)
+                                (fn [_]
+                                  (b/compilation-error "Duplicate prototype name at" loc)))
+                      (fn [_]
+                        (b/set-value fn-sym (.constraint ast proto-c))))
+                  ;; get ready to compile the body expressions and assertions
+                  _ (b/push-types)
+                  _ (se/set-val .var-count (int-generator 0))
+                  result-sym (set-local-var ast/result-sym)
+                  _ (b/set-value ast/result-sym result-sym)
+                  ;; :let [_ (or ;; (= (.line loc) 0)
+                  ;;             ;; (= (.file loc) b/core)
+                  ;;          (and (= sym 'first)
+                  ;;               (do
+                  ;;                 (send b/err-out (fn [_] (maybe nothing)))
+                  ;;                 (b/status 'pre-prototype _LINE_ sym
+                  ;;                           (ast/location ast)
+                  ;;                         lf 'body (.default-body ast))
+                  ;;                 nothing)))]
+                  new-params (set-local-var (.params ast))
+                  _ (se/traverse all-param-syms
+                                 (fn [sym]
+                                   (b/set-value sym (.constraint sym c/top-type))))
+                  :let [idxs (integer-gen 1)]
+                  _ (se/traverse fixed-params
+                                 (fn [sym]
+                                   (let [idx (new-int idxs)]
+                                     (cond (instance? ast/params-ast sym)
+                                           (se/state-error idx)
+
+                                           (= sym '_)
+                                           (b/set-value sym (.constraint sym c/top-type))
+
+                                           (append-value-type sym
+                                                              (c/param fn-sym (- arg-count idx))
+                                                              loc)))))]
+              (.params ast new-params)))))
+
+  (type-check [ast old-ast]
+    (let [arg-count (count (.fixed (.params old-ast)))
+          sym (.fn-name ast)
+          ast (.params ast (.params old-ast))]
+      (for [pts (map (get-param-types (.params old-ast))
+                     (fn [pts]
+                       (-> pts
+                           (c/set-seq-tail c/no-tail)
+                           (c/intersect c/vect-constraint))))
+            result-c (se/try
+                       (map (b/get-value ast/result-sym) .constraint)
+                       (fn [_]
+                         (se/state-error c/top-type)))
+            ;; :let [_ (or ;; (= (.line loc) 0)
+            ;;             ;; (= (.file loc) b/core)
+            ;;          (and (= (.fn-name ast) 'vec)
+            ;;               (do
+            ;;                 (b/status 'check-prototype _LINE_ (.fn-name ast) (ast/location ast)
+            ;;                         lf ast
+            ;;                         lflf 'pts pts
+            ;;                         lflf 'result result-c)
+            ;;                 (send b/err-out (fn [_] nothing))
+            ;;                 nothing)))]
+            :let [impls-c (c/ProtoImpls sym {c/UnknownType (c/arity (.fn-name old-ast) pts result-c)})]
+            _ (b/remove-value-type ast/result-sym)
+            _ (se/traverse (ast/all-syms (.params old-ast)) b/recover-val)
+            _ (b/nip-types)
+            _ (b/set-value sym (.constraint ast impls-c))]
+        ast))))
+
+(extend-type ast/call-ast
+  TypeChecker
+  (set-global-var [ast]
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var b/Rslt))))
+
+  (type-check [ast old-ast]
+    (let [loc (ast/location (.call-target old-ast))
+          target-c (.constraint (.call-target ast))
+          arg-cs (map (.args ast) .constraint)
+          arg-count (count arg-cs)
+          ;; print-info? (and (= (.call-target old-ast) 'pr*)
+          ;;              ;; (= (.line loc) 2462)
+          ;;              ;; (= (.file loc) "assertion-tests/tail-either-2.toc")
+          ;;              ;; nothing
+          ;;              )
+          ;; _ (b/status 'call-site _LINE_ loc (.call-target old-ast)
+          ;;             lf 'target-c target-c
+          ;;             lflf 'args (str "[" (-> arg-cs
+          ;;                                     (interpose "\n ")
+          ;;                                     to-str)
+          ;;                             "]"))
+          [result-type param-cs] (c/do-call-value target-c arg-cs (list loc))]
+      ;; (map print-info?
+      ;;      (fn [_]
+      ;;        (b/status 'call-site _LINE_ loc (.call-target ast)
+      ;;                  lf 'result result-type
+      ;;                  lflf 'param-cs param-cs
+      ;;                  )))
+
+      ;; (for [_ (and (instance? c/ProtoImpls target-c)
+      ;;              (< 1968 (.line loc)))
+      ;;       disp-arg (map (first (.args ast)) .constraint)
+      ;;       :let [val-num (c/type-num disp-arg)]
+      ;;       :when-not (or (instance? c/ParamConstraint disp-arg)
+      ;;                     (= c/UnknownType val-num)
+      ;;                     (get-in target-c [.impl-fns val-num .arities arg-count]))]
+      ;;   (b/status 'call-proto _LINE_ loc
+      ;;           lf ast
+      ;;           lflf 'disp val-num disp-arg))
+      (for [
+            ;; This is a small perf hit
+            ;; target-c (cond (or (instance? c/FnConstraint target-c)
+            ;;                    (instance? c/ReifiedConstraint target-c))
+            ;;                (apo (fn [inner]
+            ;;                       ;; Get the current type info for any proto impls
+            ;;                       (cond (instance? c/ProtoImpls inner)
+            ;;                             (map (get-value-type (.fn-sym inner))
+            ;;                                  RecurseFinal)
+
+            ;;                             (se/state-error (RecurseWith inner))))
+            ;;                     target-c
+            ;;                     se/state-error)
+
+            ;;                (se/state-error target-c))
+            ast (set-local-var ast)
+            result-type (either (for [reified-c (instance? c/ReifiedConstraint result-type)
+                                      :when-not (= c/no-symbol (.type-symbol reified-c))
+                                      _ (= c/UnknownType (.type-number reified-c))]
+                                  (map (comp (b/get-type-info (.type-symbol reified-c))
+                                             (se/state-error reified-c))
+                                       (fn [type-info]
+                                         (let [result-type (c/intersect reified-c type-info)]
+                                           ;; (b/status 'call-site _LINE_ loc (.call-target ast)
+                                           ;;           lf 'reified-c reified-c
+                                           ;;           lflf 'type-info type-info
+                                           ;;           lflf 'inter result-type)
+                                           result-type))))
+
+                                (se/state-error result-type))
+            new-args (either (map (= c/bottom-type result-type)
+                                  (fn [_]
+                                    (b/compilation-error ""
+                                                         ;; 'site _LINE_ loc
+                                                         ;; lf old-ast
+                                                         ;; lflf 'target-c target-c
+                                                         ;; lflf 'arg-cs arg-cs
+                                                         ;; lflf 'result-type result-type
+                                                         ;; lflf
+                                                         (b/conf-ass _LINE_ result-type loc))))
+                             (se/traverse
+                              (zip-lists (.args ast) param-cs)
+                              (fn [[ast arg-c]]
+                                ;; (either (map print-info?
+                                ;;              (fn [_]
+                                ;;                (for [new-ast (update-constraint ast arg-c loc)
+                                ;;                      _ (b/se-debug 'updating-arg _LINE_ loc
+                                ;;                                  lflf 'ast ast
+                                ;;                                  lflf 'ast-c (.constraint ast)
+                                ;;                                  lflf 'arg-c arg-c
+                                ;;                                  lflf 'new-c
+                                ;;                                  (.constraint new-ast))]
+                                ;;                  new-ast))))
+                                (update-constraint ast arg-c loc))))]
+        (-> ast
+            (.args (vec new-args))
+            (.constraint result-type))))))
+
+(extend-type ast/Annotated
+  TypeChecker
+  (pre-check [ast]
+    (pre-check (.ast ast))))
+
+(extend-type ast/declaration-ast
+  TypeChecker
+  (type-check [ast old-ast]
+    (b/set-value (.sym old-ast) (-> (.sym old-ast)
+                                    set-global-var
+                                    (.constraint c/top-type)))))
+
+(extend-type ast/definition-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [sym (.sym ast)
+          exprs (-> (.value-exprs ast)
+                    (remove (partial instance? ast/block-comment-ast))
+                    (map (fn [inner-ast]
+                           (cond (instance? c/SymbolConstraints inner-ast)
+                                 (c/update-sym inner-ast sym)
+
+                                 (set-global-var inner-ast)))))
+          val-var (reduce exprs "" (fn [val-var expr]
+                                     (cond (instance? c/SymbolConstraints expr)
+                                           val-var
+
+                                           (.var expr))))]
+      (for [
+            ;; :let [_ (start-clock)]
+            _ (cond (or (= sym 'empty-list)
+                        (= sym 'empty-vector)
+                        (= sym 'int-max)
+                        (= sym 'int-min))
+                    (se/state-error ast)
+
+                    (flat-map (last (.value-exprs ast))
+                              (fn [val]
+                                (instance? c/Constraints val)))
+                    (comp (for [_ (b/get-type-info sym)
+                                _ (b/compilation-error
+                                   "A type named" (str "'" sym "'")
+                                   "was already defined." " Re-defined at" (ast/location sym))]
+                            ast)
+                          (se/state-error ast))
+
+                    (b/set-value sym (-> sym
+                                         (.var val-var)
+                                         (.constraint c/top-type))))
+            _ (se/set-val .var-count (int-generator 0))]
+        (.value-exprs ast exprs))))
+
+  (type-check [ast old-ast]
+    (let [loc (ast/location (.sym old-ast))
+          sym (.sym old-ast)]
+      (for [
+            ;; se-nop
+            ;; :let [_ (stop-clock ast)]
+            val (either (map (last (.value-exprs ast))
+                             (fn [val]
+                               (cond (instance? c/Constraints val)
+                                     ;; TODO: if (.sym old-ast) is already in the types, it won't be replaced by
+                                     ;; the updated version. Possibly a bug in assoc-in*
+
+                                     ;; TODO: this version produces a very cryptic error message
+                                     ;; (flat-map (se/assoc-in-val [.types (ast/untag (.sym old-ast))] val)
+                                     ;;           (set-value-type (.sym old-ast) val))
+
+                                     (let [val (c/trim val)]
+                                       (for [_ (b/set-type-info sym val)
+                                             _ (b/set-value sym (.constraint sym val))]
+                                         (.constraint sym val)))
+
+                                     (or (= sym 'empty-list)
+                                         (= sym 'empty-vector)
+                                         (= sym 'int-max)
+                                         (= sym 'int-min))
+                                     (for [c (map (b/get-value sym) .constraint)
+                                           _ (b/set-value sym (-> val
+                                                                  (.constraint (c/update-path c loc))
+                                                                  (.var (.var val))))]
+                                       val)
+
+                                     (let [val (.constraint val
+                                                            (c/trim (.constraint val)))]
+                                       (for [_ (b/set-value sym val)
+                                             _ (cond (or (instance? b/StaticArity val)
+                                                         (instance? c/TaggedSymbol val)
+                                                         (instance? ast/string-ast val)
+                                                         (instance? ast/integer-ast val))
+                                                     b/se-nop
+
+                                                     (se/update-val .glbl-exprs
+                                                                    (fn [vars]
+                                                                      (conj vars (.var val)))))]
+                                         val)))))
+                        (b/set-value (.sym old-ast) (.constraint (.sym old-ast) c/top-type)))]
+        (do
+          ;; (b/status 'defed _LINE_ loc (.sym old-ast)
+          ;;           lflf (.var val)
+          ;;           lflf val)
+          (.value-exprs ast [val]))))))
+
+(extend-type ast/fn-arity-ast
+  TypeChecker
+  (set-local-var [ast]
+    (assert-result r (instance? se/StateError r))
+
+    (cond (= (.var ast) "")
+          (map (b/local-var 'ArityStruct)
+               (fn [new-var]
+                 (.var ast new-var)))
+          (se/state-error ast)))
+
+  (set-global-var [ast]
+    (b/StaticArity ast (b/global-var (.fn-sym ast) b/CFn)
+                   (b/global-var (.fn-sym ast) 'Fn) (.constraint ast)))
+
+  (pre-check [ast]
+    (let [fixed-params (.fixed (.params ast))
+          arg-count (count (.params ast))
+          arity-id (cond (= (.arity-id ast) c/no-symbol)
+                         (c/tag (gensym "fn-arity"))
+                         (.arity-id ast))
+          ast (.arity-id ast arity-id)
+          body (.body ast)
+          body (either (map (last body)
+                            (fn [last-expr]
+                              (conj (remove (butlast body) (fn [expr]
+                                                             (instance? c/TaggedSymbol expr)))
+                                    last-expr)))
+                       body)
+          loc (ast/location ast)]
+      ;; TODO: what about duplicate param names (like in prototype-ast)?
+      (for [_ (b/push-types)
+            ast (set-local-var ast)
+            ;; :let [_ (start-clock)]
+
+            ;; :let [_ (or (= (.line loc) 0)
+            ;;             (= b/core (.file loc))
+            ;;             (and (= (.fn-sym ast) 'tf)
+            ;;                  (do
+            ;;                    (b/status 'pre-fn-arity _LINE_ (.fn-sym ast) loc
+            ;;                            lf 'params (.params ast)
+            ;;                            lflf 'body "[" (to-str (interpose (.body ast) lflf)) "]"
+            ;;                            lflf 'body-types (map (.body ast) type-name)
+            ;;                            lflf 'const (.constraint ast))
+            ;;                    nothing)))]
+            _ (b/set-value b/curr-arity arity-id)
+            new-params (set-local-var (.params ast))
+            _ (cata (fn [x]
+                      (cond (instance? c/TaggedSymbol x)
+                            (b/set-value x (-> x
+                                               (.arity-id arity-id)
+                                               (.constraint c/top-type)))
+
+                            ;; TODO: should use cata to make all the variadic syms be lists
+                            (se/state-error x)))
+                    new-params
+                    se/state-error)
+            result-sym (set-local-var ast/result-sym)
+            _ (b/set-value ast/result-sym result-sym)
+            ;; _ (b/status 'new-params _LINE_
+            ;;             (interpose (map (ast/all-syms new-params)
+            ;;                             (fn [s]
+            ;;                               (str "[" s " " (.var s) "]")))
+            ;;                              lf))
+            :let [idxs (integer-gen 1)]
+            _ (se/traverse fixed-params
+                           (fn [sym]
+                             (cond (instance? ast/params-ast sym)
+                                   (se/state-error (new-int idxs))
+
+                                   (append-value-type sym
+                                                      (c/param arity-id
+                                                               (- arg-count (new-int idxs)))
+                                                      loc))))]
+        (-> ast
+            (.params new-params)
+            (.body (comp (filter body (partial instance? c/Constraints))
+                         (remove body (fn [ast]
+                                        (or (instance? c/Constraints ast)
+                                            (instance? ast/block-comment-ast ast))))))))))
+
+  (type-check [ast old-ast]
+    (assert (instance? ast/fn-arity-ast old-ast))
+
+    (let [loc (ast/location old-ast)]
+      (for [result-c (map (b/get-value ast/result-sym) .constraint)
+            ;; :let [_ (stop-clock ast)]
+            _ (b/recover-val ast/result-sym)
+            _ (b/recover-val b/curr-arity)
+            args (se/traverse (ast/all-syms (.params old-ast))
+                              (fn [arg]
+                                (for [final-arg (b/get-value arg)]
+                                  [arg final-arg])))
+            pts (map (get-param-types (.params old-ast))
+                     (fn [pts]
+                       (c/set-seq-tail pts c/no-tail)))
+            _ (se/traverse (ast/all-syms (.params old-ast)) b/recover-val)
+            _ (b/nip-types)
+            :let [args (reduce args {} conj)
+                  body-c (either (map (last (.body ast)) .constraint)
+                                 c/top-type)
+                  final-c (c/intersect result-c body-c)
+                  checked-fnl (either (= c/bottom-type pts)
+                                      (c/reify-type-constraint final-c (.arity-id ast)
+                                                               (-> pts c/get-items count
+                                                                   (repeat c/top-type))
+                                                               loc))
+                  arity-c (c/intersect (.constraint ast)
+                                       (c/arity (.arity-id ast) pts final-c))]
+            ;; :let [_ (or (= b/core (.file loc))
+            ;;             (= (.line loc) 0)
+            ;;             (and (= (.fn-sym ast) 'tf)
+            ;;                  (do
+            ;;                    (b/status 'check-fn-arity _LINE_ (.fn-sym ast) loc
+            ;;                            lf 'pts pts
+            ;;                            lflf 'result-c result-c
+            ;;                            lflf 'body-c body-c
+            ;;                            lflf 'final-c final-c
+            ;;                            lflf 'checked-fnl checked-fnl
+            ;;                            lflf 'ast-c (.constraint ast)
+            ;;                            lflf 'body-exprs (str "[" (to-str (interpose (.body ast) lf))
+            ;;                                                  "]"))
+            ;;                    nothing)))]
+            _ (either (map (or (= c/bottom-type arity-c)
+                               (= c/bottom-type final-c))
+                           (fn [failure-c]
+                             (b/compilation-error ""
+                                                ;; 'arity _LINE_ loc (.fn-sym old-ast) (.fn-var ast)
+                                                ;; lflf 'pts pts
+                                                ;; lflf 'result-c result-c
+                                                ;; lflf 'body-c body-c
+                                                ;; lflf 'final-c final-c
+                                                ;; ;; lflf 'body (either (map (last (.body ast))
+                                                ;; ;;                         .constraint)
+                                                ;; ;;                    c/top-type)
+                                                ;; lflf 'failure-c failure-c
+                                                ;; lflf
+                                                (b/conf-ass _LINE_ failure-c loc)
+                              )))
+                      b/se-nop)]
+        (let [sym (.fn-sym ast)
+              ;; TODO: use update-constraint here
+              ast (cond (= c/bottom-type pts)
+                        (do
+                          ;; TODO: should never happen
+                          (print-err 'blewity _LINE_ loc)
+                          (abort))
+
+                        ;; TODO: this cata is incomplete. It needs to go through the body
+                        (-> (cata (fn [x]
+                                    (either (for [_ (instance? c/TaggedSymbol x)
+                                                  final-arg (get args x)
+                                                  _ (identical (.var x) (.var final-arg))]
+                                              final-arg)
+
+                                            x))
+                                  ast)
+                            (.body (remove (.body ast) (fn [x]
+                                                         (instance? c/Constraints x))))
+                            (.constraint arity-c)))]
+          ast)))))
+
+(extend-type Symbol
+  TypeChecker
+  (pre-check [s]
+    (se/state-error (abort))))
+
+(extend-type c/TaggedSymbol
+  TypeChecker
+  (set-local-var [ast]
+    (cond (= (.var ast) "")
+          (map (b/local-var ast)
+               (fn [new-var]
+                 (.var ast new-var)))
+          (se/state-error ast)))
+
+  (set-global-var [ast]
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Val))))
+
+  (param-types [sym]
+    (map (b/get-value sym) .constraint))
+
+  (update-constraint [ast constraint loc]
+    (map (append-value-type ast constraint loc)
+         (partial .constraint ast)))
+
+  (pre-check [s]
+    (se/state-error s))
+
+  (type-check [s old-s]
+    ;; TODO: this is probably a hotspot since it gets called for every symbol.
+    (for [new-s (b/get-value s)
+          new-s (cond (instance? ast/field-ast new-s)
+                      (set-local-var new-s)
+
+                      (se/state-error new-s))
+          ;; new-s (se/try
+          ;;         (for [arity-id (b/get-value b/curr-arity)
+          ;;               r (cond (or (b/is-glbl (.var new-s))
+          ;;                           (and (instance? c/TaggedSymbol new-s)
+          ;;                                (= (.arity-id new-s) arity-id)))
+          ;;                       (se/state-error new-s)
+
+          ;;                       (cond (instance? c/TaggedSymbol new-s)
+          ;;                             (for [newer-s (set-local-var (.var new-s ""))
+          ;;                                   :let [newer-s (.arity-id newer-s arity-id)]
+          ;;                                   _ (b/set-value newer-s newer-s)
+          ;;                                   _ (se/update-val .closures
+          ;;                                                    (fn [[m & ms]]
+          ;;                                                      (cons (assoc m new-s newer-s)
+          ;;                                                            ms)))]
+          ;;                               newer-s)
+
+          ;;                             (se/state-error new-s)))]
+          ;;           r)
+          ;;         (fn [err]
+          ;;           (se/state-error new-s)))
+          ]
+      (cond (or (instance? ast/field-ast new-s)
+                (and (instance? c/TaggedSymbol new-s)
+                     (= (.sym s) (.sym new-s))))
+            (do
+              ;; (or (b/is-glbl (.var new-s))
+              ;;     (and (= (.arity-id new-s) c/no-symbol)
+              ;;          (do
+              ;;            (b/status 'no-arity-id _LINE_ (ast/location s) new-s
+              ;;                      (str "'" (.var new-s) "'"))
+              ;;            (b/wait-for-err-out)
+              ;;            (abort))))
+              new-s)
+
+            (do
+              ;; (or (b/is-glbl (.var new-s))
+              ;;     (do
+              ;;       (b/status 'sym _LINE_ (ast/location s) s)
+              ;;       (abort)))
+              (-> s
+                  (.constraint (.constraint new-s))
+                  (.var (.var new-s))))))))
+
+(extend-type ast/field-ast
+  TypeChecker
+  (set-global-var [ast]
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Fld))))
+
+  (update-constraint [ast constraint loc]
+    (map (append-value-type (.sym ast) constraint loc)
+         (partial .constraint ast)))
+
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (b/add-proto-impl ast)))
+
+(extend-type ast/params-ast
+  TypeChecker
+  (set-local-var [ast]
+    (cata (fn [inner]
+            (cond (instance? c/TaggedSymbol inner)
+                  (set-local-var inner)
+
+                  (instance? ast/params-ast inner)
+                  (cond (= (.var inner) "")
+                        (map (b/local-var 'seq)
+                             (fn [new-var]
+                               (.var inner new-var)))
+
+                        (se/state-error inner))
+
+                  (se/state-error inner)))
+          ast
+          se/state-error))
+
+  (update-constraint [ast constraint loc]
+    (let [new-c (-> (.constraint ast)
+                    (c/intersect c/vect-constraint)
+                    (c/intersect (c/update-path constraint loc)))]
+      (either (map (= c/bottom-type new-c)
+                   (fn [_]
+                     (b/compilation-error (b/conf-ass _LINE_ new-c loc))))
+              (let [tail-item-cs (-> (c/get-items new-c)
+                                     (drop (count (.fixed ast))))
+                    item-cs (map (range (count (.fixed ast)))
+                                 (fn [idx]
+                                   (c/do-get-from new-c [idx] (list loc))))
+                    tail-c (-> (c/vect-c tail-item-cs (c/get-tail new-c))
+                               (c/replace-path (.path new-c)))]
+                ;; TODO: these are possibly redundant intersects
+                (for [_ (se/traverse (zip-lists (seq (.fixed ast)) item-cs)
+                                     (fn [[ast c]]
+                                       (update-constraint ast c loc)))]
+                  (.constraint ast new-c))))))
+
+  (param-types [params]
+    (-> (c/vect-c (.fixed params) c/no-tail)
+        se/state-error))
+
+  (type-check [ast old-ast]
+    (let [c (-> (c/vect-c (map (.fixed ast) .constraint))
+                (c/update-path (ast/location old-ast)))]
+      (-> ast
+          (.constraint (c/set-seq-tail c c/coll-of-any))
+          (map (fn [p]
+                 (cond (instance? c/TaggedSymbol p)
+                       (b/TaggedParam p)
+
+                       p)))
+          se/state-error))))
+
+(deftype CheckOnly [sym c]
+  Stringable
+  (string-list [_]
+    (list (str "(CheckOnly " sym " " c ")")))
+
+  Container
+  (map [y f embed]
+    (embed y))
+
+  TypeChecker
+  (pre-check [x]
+    (se/state-error x))
+
+  (type-check [_ old-ast]
+    (append-value-type sym c (ast/location sym))))
+
+;; TODO: for extend-ast, fn-ast, type-ast, etc
+;; the type checking should run recursively until the fixed point
+(extend-type ast/extend-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [type-sym (.type ast)
+          loc (ast/location ast)]
+      (for [;; _ (map b/se-nop (fn [_]
+            ;;                 (print-err 'extending _LINE_ (ast/location ast) (.type ast))))
+            type-info (comp (b/get-type-info type-sym)
+                            (b/compilation-error "No type named" (str "'" type-sym "'")
+                                                 "was found. Used at" (ast/location type-sym)))
+            :let [type-infos (cond (instance? c/SumConstraint type-info)
+                                   (.alts type-info)
+                                   [type-info])
+                  _ (map type-infos (fn [type-c]
+                                      (cond (and (flat-map (or (get type-c .static)
+                                                               (maybe c/no-int))
+                                                           (fn [stat-val]
+                                                             (or (= stat-val c/no-int)
+                                                                 (= stat-val c/no-string))))
+                                                 (flat-map (or (get type-c .min)
+                                                               (maybe int-min))
+                                                           (fn [stat-val]
+                                                             (= stat-val int-min)))
+                                                 (flat-map (or (get type-c .max)
+                                                               (maybe int-max))
+                                                           (fn [stat-val]
+                                                             (= stat-val int-max))))
+                                            type-c
+
+                                            (let [stat-val (either
+                                                            (map (get type-c .static)
+                                                                 (fn [stat-val]
+                                                                   (cond (instance? String stat-val)
+                                                                         (str "\"" stat-val "\"")
+                                                                         stat-val)))
+                                                            "Integer range")]
+                                              (b/status "Can't extend singleton type"
+                                                        stat-val
+                                                        "at:" loc)
+                                              (b/wait-for-err-out)
+                                              (abort)))))]
+            new-impls (-> (.impls ast)
+                          (filter (fn [arity]
+                                    (instance? ast/fn-arity-ast arity)))
+                          (se/traverse
+                           (fn [arity]
+                             (either (-> (.params arity)
+                                         .fixed
+                                         first
+                                         (map (fn [first-param]
+                                                (-> type-infos
+                                                    (map (fn [type-info]
+                                                           (let [new-bod (comp
+                                                                          [(CheckOnly first-param
+                                                                                      type-info)]
+                                                                          (.body arity))]
+                                                             (b/ProtoArity (c/type-num type-info)
+                                                                           (set-global-var
+                                                                            (.body arity new-bod))))))
+                                                    se/state-error))))
+                                     (b/compilation-error "Prototype implentation for "
+                                                          (str "'" (.fn-sym arity) "'")
+                                                          "must have at least one parameter at"
+                                                          (ast/location (.fn-sym arity)))))))]
+        (conj new-impls
+              (reify
+                Type
+                (type-name [_]
+                  (str "reified at " (c/Location _FILE_ _LINE_)))
+
+                Stringable
+                (string-list [_]
+                  (list (str "reified at " (c/Location _FILE_ _LINE_))))
+
+                Container
+                (map [y f embed]
+                  (embed y))
+
+                TypeChecker
+                (pre-check [x]
+                  (se/state-error (ast/block-comment-ast [] c/no-loc
+                                                         c/top-type)))))))))
+
+(extend-type ast/string-ast
+  TypeChecker
+  (set-global-var [ast]
+    ast)
+
+  (type-check [ast old-ast]
+    (let [str-val (.string old-ast)]
+      (-> ast
+          (.constraint (.static c/strbuff-constraint str-val))
+          (.var (b/global-var 'Str))
+          se/state-error))))
+
+(extend-type ast/integer-ast
+  TypeChecker
+  (set-global-var [ast]
+    ast)
+
+  (type-check [ast old-ast]
+    (-> ast
+        (.var (str "new_i56(" (.int ast) ")"))
+        (.constraint (-> (.static c/int-constraint (.int old-ast))
+                         (c/update-path (ast/location old-ast))))
+        se/state-error)))
+
+(deftype PushTypes [expr]
+  Stringable
+  (string-list [pt]
+    (list (str "(PushTypes " expr ")")))
+
+  TypeChecker
+  (pre-check [_]
+    (flat-map (b/push-types)
+              (fn [_]
+                (pre-check expr)))))
+
+(deftype Binder [binding val]
+  Stringable
+  (string-list [_]
+    (list "(Binder " (str binding) " " (str val) ")"))
+
+  Container
+  (map [x f]
+    (.val x (f val)))
+
+  (map [x f embed]
+    (map (f val)
+         (partial .val x)))
+
+  ast/FileLoc
+  (ast/location [_]
+    (ast/location binding))
+
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (let [loc (ast/location val)
+          binding (.var (.binding ast) (.var val))]
+      (for [_ (b/push-types)
+            arity-id (b/get-value b/curr-arity)
+            _ (se/traverse (ast/all-syms binding)
+                           (fn [sym]
+                             (b/set-value sym (-> sym
+                                                  (.arity-id arity-id)
+                                                  (.constraint c/top-type)))))]
+        val))))
+
+(def pre-defed-types {'HashSet c/HashSetType
+                      'ProtoDispatcher c/ProtoDispatcherType
+                      'NoValues c/NoValuesType
+                      'AllValues c/AllValuesType
+                      'None c/NoneType
+                      'Some c/SomeType
+                      ;; TODO: remove ones no longer used
+                      'ResultConstraint c/ResultConstraintType
+                      'InferredInner c/InferredInnerType
+                      'ContentsConstraint c/ContentsConstraintType
+                      'SumConstraint c/SumConstraintType})
+
+(defn new-type-number [type-symbol]
+  (assert (instance? c/TaggedSymbol type-symbol))
+  (either (get pre-defed-types type-symbol)
+          (extract b/type-counter)))
+
+(deftype DestructFields [type-info fields loc]
+  (assert (instance? c/ReifiedConstraint type-info))
+  (assert (instance? c/Location loc))
+  (assert (instance? (vector-of ast/field-ast) fields))
+
+  Stringable
+  (string-list [_]
+    (list "(DestructFields " (to-str fields) " " (str loc) ")"))
+
+  Container
+  (map [x f] x)
+  (map [x f embed] (embed x))
+
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (for [arity-id (b/get-value b/curr-arity)
+          :let [param (c/param arity-id 0)]
+          _ (append-value-type (.sym type-info) type-info loc)
+          val (b/get-value (.sym type-info))
+          _ (se/traverse fields
+                         (fn [fld]
+                           (b/set-value (.sym fld) (.val-var fld (.var val)))))]
+      (ast/block-comment-ast [] c/no-loc c/top-type))))
+
+(def x* (c/tag "#x"))
+(def y* (c/tag "#y"))
+(def field* (c/tag "#field"))
+(def ctxt* (c/tag "#ctxt"))
+
+(defn constrain-first-param [ast type-info fields loc]
+  (assert (instance? b/StaticArity ast))
+  (assert (instance? c/ReifiedConstraint type-info))
+
+  (either (-> (.arity ast)
+              .params
+              .fixed
+              first
+              (map (fn [first-param]
+                     (b/ProtoArity (c/type-num type-info)
+                                   (either (update-in ast [.arity .body]
+                                                      (fn [body]
+                                                        (comp [(DestructFields (.sym type-info
+                                                                                     first-param)
+                                                                               fields loc)]
+                                                              body)))
+                                           ast)))))
+
+          (do
+            ;; (b/compilation-error "Prototype implentation for "
+            ;;                    (str "'" (.fn-sym c) "'")
+            ;;                    "must have at least one parameter at"
+            ;;                    (ast/location (.fn-sym c)))
+            (print-err 'BOOOMMMM _LINE_ ast)
+            (abort)
+            ast)))
+
+(defn check-ast [ast]
+  (cond (instance? c/Constraints ast)
+        (cond (instance? c/SymbolConstraints ast)
+              (cond (instance? c/TypeOfConstraint ast)
+                    (type-check ast ast)
+
+                    (flat-map (map ast check-ast se/state-error)
+                              (fn [r]
+                                (type-check r ast))))
+
+              (instance? c/ProtoImpls ast)
+              (se/state-error ast)
+
+              (se/state-error ast))
+
+        (for [new-ast (pre-check ast)
+              ;; :let [loc (ast/location ast)
+              ;;       _ (do
+              ;;           (b/status 'type-checking _LINE_ loc
+              ;;                     lflf 'ast ast
+              ;;                     lflf 'new-ast new-ast)
+              ;;           (b/wait-for-err-out))]
+              newer-ast (map new-ast check-ast se/state-error)
+              ;; :let [loc (ast/location ast)
+              ;;       _ (do
+              ;;           (b/status 'type-checking _LINE_ loc
+              ;;                     lflf 'newer-ast newer-ast
+              ;;                     lflf 'new-ast new-ast)
+              ;;           (b/wait-for-err-out))]
+              final-ast (type-check newer-ast new-ast)]
+          (do
+            ;; (let [loc (ast/location ast)]
+            ;;   (b/status 'final-ast _LINE_ loc
+            ;;             lflf final-ast))
+            final-ast))))
+
+(deftype TypeSpec [sym fields impls]
+  (assert (instance? c/TaggedSymbol sym))
+  (assert (instance? (any-of c/NoFields ast/params-ast) fields))
+  (assert (instance? Vector impls))
+
+  Stringable
+  (string-list [_]
+    (list "(TypeSpec " (str sym) "\n"
+          (str fields) "\n"
+          (str impls) ")"))
+
+  Container
+  (map [x f embed]
+    (for [new-fields (map fields f embed)
+          new-impls (map impls f embed)]
+      (-> x
+          (.fields new-fields)
+          (.impls new-impls))))
+
+  TypeChecker
+  (pre-check [ast]
+    (let [loc (ast/location sym)]
+      ;; (b/status 'ts _LINE_ ast)
+      (let [fields (-> ast .fields .fixed)
+            field-count (count fields)]
+        (for [_ (b/push-types)
+              ;; clear previous constraints for the fields
+              _ (se/traverse fields (fn [sym]
+                                      (b/set-value sym (.constraint sym c/top-type))))
+
+              ;; then add all the explicit constraints for the fields
+              ;; and collect them in 'field-cs'
+              _ (-> (.impls ast)
+                    (filter (partial instance? c/SymbolConstraints))
+                    (se/traverse (fn [field-c]
+                                   (cond (some fields (partial = (.sym field-c)))
+                                         (check-ast field-c)
+
+                                         (b/compilation-error
+                                          (b/conf-ass
+                                           _LINE_
+                                           (c/NoValues
+                                            [field-c
+                                             (.type-symbol c/empty-reified
+                                                           (c/tag (str "Field '" (.sym field-c)
+                                                                       "' doesn't exist")))])
+                                           loc))))))
+              field-vals (se/traverse fields b/get-value)
+              new-type-constraint (b/get-type-info sym)
+              field-protos (se/traverse fields (fn [fld]
+                                                 (let [proto-sym (c/tag (str "." (.sym fld)))]
+                                                   (comp (map (se/get-in-val [.namespaces b/core
+                                                                              .values 0 proto-sym])
+                                                              (fn [_]
+                                                                nothing))
+                                                         (map (b/get-value proto-sym) maybe)))))
+              :let [field-protos (reduce field-protos [] (fn [fps fp]
+                                                           (either (map fp (fn [ptype]
+                                                                             (conj fps ptype)))
+                                                                   fps)))
+                    field-cs (map field-vals .constraint)
+                    type-num (.type-number new-type-constraint)
+                    idxs (integer-gen 1)
+                    field-asts (-> (zip-lists fields field-cs)
+                                   (map (fn [[fld-name fld-c]]
+                                          (ast/field-ast (c/tag fld-name loc) (dec (new-int idxs))
+                                                         type-num "" "" fld-c)))
+                                   vec)
+                    fields-map (reduce field-asts {}
+                                       (fn [m fld-ast]
+                                         (assoc m (c/Field (.sym fld-ast))
+                                                (.constraint fld-ast))))
+                    new-type-constraint (-> new-type-constraint
+                                            (.field-consts fields-map)
+                                            (.fields (assoc fields-map
+                                                            c/contents c/top-type))
+                                            (c/update-path loc))
+
+                    ctor-arity (c/arity
+                                sym
+                                (c/vect-c field-cs)
+                                (-> new-type-constraint
+                                    (.fields (reduce field-asts {}
+                                                     (fn [fields-map fld-ast]
+                                                       (let [fld (c/Field (c/tag (.sym fld-ast)))
+                                                             fld-c (.constraint fld-ast)
+                                                             idx (.idx fld-ast)]
+                                                         (assoc fields-map fld
+                                                                (c/intersect (c/param sym (dec idx))
+                                                                             fld-c))))))
+                                    (assoc-in [.fields c/contents] c/top-type)))]
+              _ (b/set-type-info sym new-type-constraint)
+              _ (b/set-value sym (.constraint sym ctor-arity))
+
+              ;; _ (se/traverse (vec fields-map)
+              ;;                (fn [[field fld-c]]
+              ;;                  (let [fld-sym (.sym field)
+              ;;                        getter-id (c/tag (str sym "-" fld-sym "-getter"))
+              ;;                        getter-param (c/param getter-id 0)
+              ;;                        setter-id (c/tag (str sym "-" fld-sym "-setter"))
+              ;;                        setter-param-0 (c/param setter-id 0)
+              ;;                        setter-param-1 (c/param setter-id 1)]
+              ;;                    (b/add-getter-impls fld-sym type-num
+              ;;                                        (c/arity
+              ;;                                         getter-id
+              ;;                                         (c/vect-c [(c/multi [new-type-constraint
+              ;;                                                             getter-param])])
+              ;;                                         (-> (c/type-op c/get-from-op getter-param
+              ;;                                                        [field])
+              ;;                                             (c/intersect fld-c)))
+              ;;                                        (c/arity
+              ;;                                         setter-id
+              ;;                                         (c/vect-c [(c/multi [new-type-constraint
+              ;;                                                             setter-param-0])
+              ;;                                                   (c/multi [setter-param-1
+              ;;                                                             fld-c])])
+              ;;                                         (c/type-op c/set-to-op setter-param-0
+              ;;                                                    [[field] setter-param-1]))
+              ;;                  ))))
+              _ (-> (.impls ast)
+                    (filter (fn [expr]
+                              (instance? ast/fn-arity-ast expr)))
+                    (map (fn [impl]
+                           (map (.fixed (.params impl))
+                                (fn [sym]
+                                  (cond (some fields (fn [field]
+                                                       (= ast field)))
+                                        (b/compilation-error "Parameter" (str "'" ast "'")
+                                                             "shadows a field" "name at"
+                                                             (ast/location ast) ".")
+
+                                        b/se-nop))
+                                se/state-error))
+                         se/state-error))]
+          (let [impls (-> (.impls ast)
+                          (remove (fn [expr]
+                                    (or (instance? ast/block-comment-ast expr)
+                                        (instance? c/SymbolConstraints expr))))
+                          (map (fn [impl]
+                                 (constrain-first-param (set-global-var impl)
+                                                        new-type-constraint field-asts loc))))
+                ctor-fn (b/global-var sym 'CtorFn)
+                ;; TODO: make sure the impls for 'get' and 'assoc' have constraints on their result
+                ;; and parameter, respectively
+                ]
+            (comp [(reify
+                     Type
+                     (type-name [_]
+                       (str "reified at " (c/Location _FILE_ _LINE_)))
+
+                     Stringable
+                     (string-list [_]
+                       (list (str "reified at " (c/Location _FILE_ _LINE_))))
+
+                     Container
+                     (map [y f embed]
+                       (embed y))
+
+                     TypeChecker
+                     (pre-check [x]
+                       (se/state-error x))
+
+                     (type-check [_ _]
+                       (for [_ (b/pop-types)
+                             _ (b/set-type-info sym new-type-constraint)]
+                         (ast/block-comment-ast [] c/no-loc c/top-type))))
+
+                   (ast/inline-ast
+                    c/top-type
+                    (str "bool " ctor-fn "(Port ref, Port args) {\n"
+                         "Pair pr = node_take(args);\n"
+                         "Port resultVar = pr.fst;\n"
+                         "Port callArgs = pr.snd;\n"
+                         "callArgs = node_make(ARG, new_num(new_i24(" field-count ")), callArgs);\n"
+                         "callArgs = node_make(ARG, new_num(new_i24(" type-num ")), callArgs);\n"
+                         "callArgs = node_make(ARG, resultVar, callArgs);\n"
+                         "link(construct, callArgs);\n"
+                         "return TRUE;\n"
+                         "}\n")
+                    loc "")
+                   (ast/definition sym
+                     [(ast/inline-ast ctor-arity
+                                      (str "new_port_(REF, (Port)" ctor-fn ")")
+                                      loc "")])]
+                  impls
+                  (map field-protos (fn [ptype]
+                                      (ast/inline-ast
+                                       c/top-type
+                                       (str "Port " (.var ptype) ";\n")
+                                       loc "")))
+                  (map field-asts set-global-var)
+                  ;; (reify
+                  ;;   Container
+                  ;;   (map [y f embed]
+                  ;;     (embed y))
+
+                  ;;   TypeChecker
+                  ;;   (pre-check [ast]
+                  ;;  report-type-stack
+                  ;;     (for [ft (se/get-val .value-types)
+                  ;;           mby (get-value-type maybe-sym)]
+                  ;;       (do
+                  ;;         (b/status 'vts _LINE_ sym (count ft)
+                  ;;                 lflf 'maybe mby)
+                  ;;         (ast/block-comment-ast [] c/no-loc c/top-type)))))
+                  )))))))
+
+(defn create-type [type]
+  (assert (instance? ast/type-ast type))
+
+  (let [sym (.sym type)
+        loc (ast/location sym)]
+    (comp (flat-map (b/get-type-info (.sym type))
+                    (fn [_]
+                      (b/compilation-error "A type named" (str "'" sym "'")
+                                           "was already defined. Re-defined at"
+                                           loc)))
+          (let [fields (reduce (.fixed (.fields type)) {}
+                               (fn [m f]
+                                 (assoc m f c/top-type)))]
+            ;; (b/status 'ct _LINE_ sym fields (.fields type))
+            (for [_ (b/set-type-info sym
+                                     (-> (c/ReifiedConstraint (new-type-number sym)
+                                                              sym fields
+                                                              (assoc fields c/contents c/top-type)
+                                                              empty-list c/no-symbol)
+                                         (c/update-path loc)))]
+              (TypeSpec sym (.fields type) (.impls type)))))))
+
+(extend-type ast/type-ast
+  TypeChecker
+  (pre-check [ast]
+    (map (create-type ast) vector)))
+
+(extend-type ast/rec-type-ast
+  TypeChecker
+  (pre-check [ast]
+    (let [loc (ast/location ast)
+          new-types (filter (.types ast) (fn [type-expr]
+                                           (instance? ast/type-ast type-expr)))
+          singletons (filter (.types ast) (fn [type-expr]
+                                            (or (instance? ast/integer-ast type-expr)
+                                                (instance? ast/string-ast type-expr))))
+          exist-types (filter (.types ast) (fn [type-expr]
+                                                (instance? c/TaggedSymbol type-expr)))]
+      (for [specs (se/traverse new-types create-type)
+            exist-specs (se/traverse exist-types b/get-type-info)]
+        (comp [(ast/definition (.sym ast)
+                 [(c/SumConstraint
+                   (comp (map specs (fn [type]
+                                      (.type-symbol c/empty-reified
+                                                    (.sym type))))
+                         exist-specs
+                         (map singletons .constraint))
+                   (list loc)
+                   c/no-symbol)])]
+              specs)))))
+
+(extend-type ast/superposition-ast
+  TypeChecker
+  (set-global-var [ast]
+    (cond (b/is-glbl (.var ast))
+          ast
+
+          (.var ast (b/global-var 'Val))))
+
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (-> ast
+        (.constraint (.alts (.constraint ast)
+                            (map (.alts ast) .constraint)))
+        set-local-var)))
+
+(extend-type ast/IsType
+  TypeChecker
+  (pre-check [ast]
+    (for [_ (b/push-types)
+          _ (either (map (= (.ast ast) '_)
+                         (fn [_]
+                           (b/status "Type at:" (ast/location (.ast ast))
+                                   (.expected ast))
+                           b/se-nop))
+                    (flat-map (se/try
+                                (check-ast (.ast ast))
+                                (fn [err]
+                                  (b/status (.val err))
+                                  (se/state-error (.constraint (.ast ast) c/bottom-type))))
+                              (fn [c]
+                                (either (map (= (c/trim (.constraint c)) (.expected ast))
+                                             se/state-error)
+                                        (b/compilation-error "Type Error:" (ast/location (.ast ast))
+                                                           lf 'ast (.ast ast)
+                                                           lflf 'expected (.expected ast)
+                                                           lflf 'actual (either (get c .constraint)
+                                                                                  c))))))
+          _ (b/pop-types)]
+      (ast/block-comment-ast [] c/no-loc c/top-type))))
+
+(extend-type ast/GetImpl
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (let [type-sym (.type-sym ast)]
+      (cond (= c/no-symbol type-sym)
+            (se/state-error (.constraint ast (-> ast .impl-sym .constraint)))
+
+            (flat-map (comp (b/get-type-info type-sym)
+                            (b/compilation-error "No type named" (str "'" type-sym "'")
+                                                 "was found. Used at" (ast/location type-sym)))
+                      (fn [c]
+                        (let [type-num (c/type-num c)]
+                          (either (map (get-in ast [.impl-sym .constraint .impl-fns type-num])
+                                       (fn [impl-c]
+                                         (se/state-error (.constraint ast impl-c))))
+                                  (b/compilation-error "Could not find impl for"
+                                                       (str "'" type-sym "' (" type-num ")")
+                                                       "at" (ast/location (.type-sym ast)))))))))))
+
+(extend-type b/StaticArity
+  TypeChecker
+  (pre-check [ast]
+    (se/state-error ast))
+
+  (type-check [ast old-ast]
+    (se/state-error (.constraint ast (.constraint (.arity ast))))))

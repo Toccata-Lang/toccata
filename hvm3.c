@@ -35,7 +35,7 @@ u64 time64() {
 }
 
 // Debugging
-static char* tag_to_str(Tag tag);
+char* tag_to_str(Tag tag);
 void dump_buff();
 
 void *boom(char *msg, char *file, int line) {
@@ -78,19 +78,6 @@ Lab term_lab(Term term) {
 
 Loc term_loc(Term term) {
   return (term >> (TAG_SIZE + LAB_SIZE)) & LOC_MASK;
-}
-
-Term term_offset_loc(Term term, Loc offset) {
-  Tag tag = term_tag(term);
-  if (tag == SUB || tag == NUL || tag == ERA || tag == REF || tag == I56 || tag == F56) {
-    if (tag == SUB)
-      BOOM("offset of SUB");
-    return term;
-  }
-
-  Loc loc = term_loc(term) + offset;
-
-  return (term & 0xFFFFFFFF) | (((Term)loc) << 32);
 }
 
 // Memory operations
@@ -222,7 +209,7 @@ void def_new(char* name) {
   memset(BUFF, 0, sizeof(Term) * def.nodes_len);
   memset(BUFF + RBAG, 0, sizeof(Term) * def.rbag_len);
 
-  RNOD_END = 2;
+  RNOD_END = 0;
   RBAG_END = 0;
 
   BOOK.defs[BOOK.len] = def;
@@ -234,17 +221,35 @@ char* def_name(Loc def_idx) {
 }
 
 // Atomic Linker
-static inline void move(Loc neg_loc, u64 pos);
+void move(Loc neg_loc, u64 pos);
 
 void link(Term neg, Term pos) {
   if (term_tag(pos) == VAR) {
     Term far = swap(term_loc(pos), neg);
     Tag t = term_tag(far);
-    if (t == RDX) {
-      BOOM("linking RDX");
+    if (t == VAR) {
+      link(neg, far);
     } else if (t != SUB) {
-      // leave things as they are
+      BOOM("linking non SUB");
       move(term_loc(pos), far);
+//*
+    } else if (far != SUB) {
+      fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
+	      (void *)pos, tag_to_str(term_tag(pos)),
+	      (void *)neg, tag_to_str(term_tag(neg)),
+	      (void *)far, tag_to_str(term_tag(far)));
+      Loc sub_loc = term_loc(far);
+      Term app = take(port(1, sub_loc));
+      Term lam = take(port(2, sub_loc));
+      if (term_tag(app) == APP) {
+	// set(port(1, term_loc(app)), neg);
+	link(app, lam);
+      } else {
+	fprintf(stderr, "sub_loc: %d  pos: %s %p\n",
+		sub_loc, tag_to_str(term_tag(pos)), (void *)pos);
+	BOOM("bad link");
+      }
+// */
     }
   } else {
     rbag_push(neg, pos);
@@ -252,16 +257,27 @@ void link(Term neg, Term pos) {
 }
 
 
-static inline void move(Loc neg_loc, Term pos) {
+void move(Loc neg_loc, Term pos) {
   Term neg = swap(neg_loc, pos);
   if (term_tag(neg) != SUB) {
     // No need to take() since we already swapped
+    link(neg, pos);
+  } else if (neg != SUB) {
+    Loc sub_loc = term_loc(neg);
+    Term neg = take(port(1, sub_loc));
+    Term pos = take(port(2, sub_loc));
     link(neg, pos);
   }
 }
 
 // Interactions
 static void interact_applam(Loc a_loc, Loc b_loc) {
+  // a_loc is APP, b_loc is LAM
+  if (a_loc == 0 && b_loc == 0)
+    return;
+  else if (a_loc == 0 || b_loc ==0)
+    BOOM("Bad app - lam redex");
+
   Term arg = take(port(1, a_loc));
   Loc  ret = port(2, a_loc);
   Loc  var = port(1, b_loc);
@@ -592,6 +608,30 @@ static void interact(Term neg, Term pos) {
   Loc pos_loc = term_loc(pos);
 
   switch (neg_tag) {
+  case VAL:
+    switch (pos_tag) {
+    case SUB:
+      if (1) {
+	Term app = take(port(1, pos_loc));
+	Term lam = take(port(2, pos_loc));
+	if (pos != SUB && term_tag(app) == APP) {
+	  set(port(1, term_loc(app)), neg);
+	  link(app, lam);
+	} else {
+	  fprintf(stderr, "neg: %p, pos: %p, app %s %p\n",
+		  (void *)neg, (void *)pos, tag_to_str(term_tag(app)), (void *)app);
+	  BOOM("bad link");
+	}
+      }
+      break;
+      
+    default:
+      fprintf(stderr, "neg: %p, pos: %p\n", (void *)neg, (void *)pos);
+      BOOM("bad link");
+      break;
+    }
+    break;
+    
   case APP:
     switch (pos_tag) {
     case LAM: interact_applam(neg_loc, pos_loc); break;
@@ -601,6 +641,7 @@ static void interact(Term neg, Term pos) {
     case SUP: interact_appsup(neg_loc, pos_loc); break;
     }
     break;
+
     /*
       case OPX:
       switch (pos_tag) {
@@ -636,6 +677,7 @@ static void interact(Term neg, Term pos) {
       }
       break;
       // */
+
   case DUP:
     switch (pos_tag) {
     case VAL: incRef(pos, 1); break;
@@ -650,6 +692,7 @@ static void interact(Term neg, Term pos) {
     case SUP: interact_dupsup(neg_loc, pos_loc); break;
     }
     break;
+
   case ERA:
     switch (pos_tag) {
     case VAL: dec_and_free(pos, 1); break;
@@ -662,6 +705,22 @@ static void interact(Term neg, Term pos) {
     case SUP: interact_erasup(pos_loc); break;
     }
     break;
+
+  case I56:
+    switch(pos_tag) {
+    case ERA:
+    case NUL:
+      break;
+      
+    default:
+      fprintf(stderr, "bad tag: %s (%d) %p\n", tag_to_str(neg_tag), neg_tag, (void *)neg);
+      BOOM("unhandled tag");
+    }
+    break;
+
+  default:
+    fprintf(stderr, "bad tag: %s (%d) %p\n", tag_to_str(neg_tag), neg_tag, (void *)neg);
+    BOOM("unhandled tag");
   }
 }
 
@@ -694,7 +753,7 @@ void hvm_init() {
     BUFF = calloc((1ULL << 24), sizeof(a64));
   }
   RNOD_INI = 0;
-  RNOD_END = 2;
+  RNOD_END = 0;
   RBAG_INI = 0;
   RBAG_END = 0;
 }
@@ -711,26 +770,26 @@ void normalize() {
 }
 
 // Debugging
-static char* tag_to_str(Tag tag) {
+char* tag_to_str(Tag tag) {
   switch (tag) {
-    case VAL:  return "VAL";
-    case VAR:  return "VAR";
-    case SUB:  return "SUB";
-    case NUL:  return "NUL";
-    case ERA:  return "ERA";
-    case LAM:  return "LAM";
-    case APP:  return "APP";
-    case SUP:  return "SUP";
-    case DUP:  return "DUP";
-    case REF:  return "REF";
-      // case OPX:  return "OPX";
-      // case OPY:  return "OPY";
-      // case U32:  return "U32";
-    case I56:  return "I56";
-    case F56:  return "F56";
-      // case MAT:  return "MAT";
+  case VAL:  return "VAL";
+  case VL1:  return "VAL";
+  case VAR:  return "VAR";
+  case SUB:  return "SUB";
+  case NUL:  return "NUL";
+  case ERA:  return "ERA";
+  case LAM:  return "LAM";
+  case APP:  return "APP";
+  case SUP:  return "SUP";
+  case DUP:  return "DUP";
+  case REF:  return "REF";
+  case OPX:  return "OPX";
+  case OPY:  return "OPY";
+  case I56:  return "I56";
+  case F56:  return "F56";
+  case MAT:  return "MAT";
 
-    default:   return "???";
+  default:   return "???";
   }
 }
 
@@ -780,19 +839,17 @@ void spawn_threads_equal_to_cores() {
 }
 
 Term argsNet(NativeArgs *args) {
-  BOOM("argsNet");
-  /*
-  Term n0 = alloc_node(2);
-  Term tail = args->args[args->count - 1];
+  Term tail;
+  if(args->count < 1)
+    tail = APP;
+  else
+    tail = args->args[args->count - 1];
   for (int i = args->count - 2; i >= 0; i--) {
-    node_create(n0, new_pair(args->args[i], tail));
-    tail = new_port(ARG, n0);
-    n0 = alloc_node(2);
+    tail = pair_make(APP, args->args[i], tail);
+    args->args[i] = tail;
   }
-  node_create(n0, new_pair(args->result, tail));
-  return new_port(ARG, n0);
-  // */
-  return (Term)0;
+  
+  return pair_make(APP, args->result, tail);
 }
 
 // extract the requested number of native args
@@ -814,34 +871,33 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   Term arg;
   Term varVal;
   switch(argsTag) {
-  case VAR:
-    BOOM("natveArgs");
-    /*
-      args = enter(args);
-      // fprintf(stderr, "args VAR %d: %p %d\n", __LINE__, (void *)args, get_tag(args));
-      argsStruct->args[argsStruct->count++] = args;
-      if (get_tag(args) == VAR) {
-      varVal = vars_exchange(args, node_make(RDX, ref, argsNet(argsStruct)));
-      // fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
-      // if (varVal != endArgs && varVal != NONE && varVal != FREE) {
-      // fprintf(stderr, "wut\n");
-      // // link(ref, varVal);
-      // vars_exchange(args, FREE);
-      // }
-      } else {
-      link(ref, argsNet(argsStruct));
-      }
-      argsStruct->count = -1;
-      // */
-    return VOID;
-    break;
-
   case APP:
     arg = take(port(1, term_loc(args)));
-    Tag argTag = term_tag(arg);
     Term argsNode = take(port(2, term_loc(args)));
+    Tag argTag = term_tag(arg);
     // fprintf(stderr, "arg 2 %d: %d %p\n", __LINE__, argTag, (void *)arg);
     switch(argTag) {
+    case SUB:
+      if (arg == 0 && argsNode == 0)
+	return VOID;
+      else if (arg == 0 || argsNode ==0)
+	BOOM("natveArgs");
+      Term neg = take(port(1, term_loc(arg)));
+      Term pos = take(port(2, term_loc(arg)));
+      int argsCount = argsStruct->count;
+      argsStruct->args[argsStruct->count++] = SUB;
+      argsStruct->args[argsStruct->count++] = argsNode;
+      Term newArgs = argsNet(argsStruct);
+      Term retry = pair_make(SUB, newArgs, ref);
+      Loc subLoc = term_loc(argsStruct->args[argsCount]);
+      fprintf(stderr, "subLoc %d: %x\n", __LINE__, subLoc);
+      set(port(1, subLoc), retry);
+      set(port(1, term_loc(neg)), term_new(VAR, 0, subLoc));
+      link(neg, pos);
+      argsStruct->count = -1;
+      return VOID;
+      break;
+
     case VAL:
     case I56:
     case F56:
@@ -868,12 +924,12 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
       return VOID;
       break;
 
+/*
     case DUP:
       // fprintf(stderr, "Boomity %s %d\n", __FILE__, __LINE__);
       // abort();
       // break;
       
-      /*
 	case CON:
 	if (1) {
 	BOOM("natveArgs");
@@ -920,7 +976,7 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	return VOID;
 	}
 	break;
-	// */
+// */
 
     case ERA:
       BOOM("natveArgs");
@@ -936,12 +992,40 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 
       // TODO: what other tags need to be handled
     default:
-      printf("unhandled tag 0x%x line: %d\n", term_tag(arg), __LINE__);
+      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
+	     term_tag(arg), __LINE__);
       abort();
       break;
     }
     argsStruct->count = -1;
     // */
+    return VOID;
+    break;
+
+  case VAR:
+    BOOM("natveArgs");
+    /*
+      args = enter(args);
+      // fprintf(stderr, "args VAR %d: %p %d\n", __LINE__, (void *)args, get_tag(args));
+      argsStruct->args[argsStruct->count++] = args;
+      if (get_tag(args) == VAR) {
+      varVal = vars_exchange(args, node_make(RDX, ref, argsNet(argsStruct)));
+      // fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
+      // if (varVal != endArgs && varVal != NONE && varVal != FREE) {
+      // fprintf(stderr, "wut\n");
+      // // link(ref, varVal);
+      // vars_exchange(args, FREE);
+      // }
+      } else {
+      link(ref, argsNet(argsStruct));
+      }
+      argsStruct->count = -1;
+      // */
+    return VOID;
+    break;
+
+  case SUB:
+    BOOM("natveArgs");
     return VOID;
     break;
 

@@ -27,7 +27,7 @@ typedef int64_t  i64;
 // Constants
 #define VAL 0x00 // native value
 #define VAR 0x01
-#define SUB 0x02
+#define SUB 0x02 // possible deferred redex
 #define NUL 0x03
 #define ERA 0x04
 #define LAM 0x05
@@ -36,11 +36,11 @@ typedef int64_t  i64;
 #define VL1 0x08 // native value alieas
 #define SUP 0x09
 #define DUP 0x0a
-#define OPR 0x0b // operator
-#define RDX 0x0c // deferred redex
+#define OPX 0x0b
+#define OPY 0x0c
 #define I56 0x0d
 #define F56 0x0e
-// #define MAT 0x0F
+#define MAT 0x0F
 #define VL2 0x18 // native value alieas
 #define VL3 0x28 // native value alieas
 #define VL4 0x38 // native value alieas
@@ -104,13 +104,15 @@ extern a64 node_count;
 extern int max_node;
 
 void *boom(char *msg, char *file, int line);
-Tag term_tag(Term term);
 void link(Term neg, Term pos);
+void move(Loc neg_loc, Term pos);
+Tag term_tag(Term term);
 Term term_val(Term val);
 Term term_new(Tag tag, Lab lab, Loc loc);
 Loc term_loc(Term term);
 Term take(Loc loc);
 void set(Loc loc, Term term);
+Term swap(Loc loc, Term term);
 Term nativeArg(Term ref, Term args, NativeArgs *argsStruct);
 u64 time64();
 void hvm_init();
@@ -119,3 +121,4 @@ Term pair_make(Tag tag, Term fst, Term snd);
 void normalize();
 Loc port(u64 n, Loc x);
 Term dupeArg(Term arg, Term dupedArg);
+char* tag_to_str(Tag tag);

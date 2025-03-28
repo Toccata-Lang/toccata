@@ -987,7 +987,7 @@ Value *defaultPrErrSTAR(Value *str) {
 
 Term number_str(Term arg0) {
   String *numStr = malloc_string(50);
-  snprintf(numStr->buffer, 40, "%" PRId64 "", get_i56(arg0));
+  snprintf(numStr->buffer, 40, "\nwoot***\n%" PRId64 "\n", get_i56(arg0));
   numStr->len = strlen(numStr->buffer);
   return(term_val((Term)numStr));
 }
@@ -2844,10 +2844,10 @@ bool accessFieldFn(Term ref, Term args) {
     case VAR:
       arityArgs.args[arityArgs.count++] = arg;
       arityArgs.args[arityArgs.count++] = argsNode.snd;
-      varVal = vars_exchange(arg, node_make(RDX, ref, argsNet(&arityArgs)));
+      varVal = vars_exchange(arg, node_make(SUB, ref, argsNet(&arityArgs)));
       if (varVal != NONE && varVal != FREE) {
 	// fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
-	if (term_tag(varVal) == RDX) {
+	if (term_tag(varVal) == SUB) {
 	  push_redex(node_take(varVal));
 	} else {
 	  link(arg, varVal);
@@ -2916,7 +2916,7 @@ bool accessFieldFn(Term ref, Term args) {
     fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
     abort();
 
-    varVal = vars_exchange(arg, node_make(RDX, ref, arg));
+    varVal = vars_exchange(arg, node_make(SUB, ref, arg));
     if (varVal != NONE && varVal != FREE) {
       link(ref, varVal);
       vars_take(arg);
@@ -2981,33 +2981,33 @@ int main (int argc, char **argv) {
     // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
     bashResult = 0;
     Term callArgs;
+    result = pair_make(SUB, SUB, SUB);
     callArgs = APP;
     callArgs = pair_make(APP, term_val((Term)argVect), callArgs);
-    callArgs = pair_make(APP, SUB, callArgs);
+    callArgs = pair_make(APP, term_new(VAR, 0, term_loc(result)), callArgs);
     link(callArgs, mainFn);
     Tag resultTag;
     do {
       normalize();
-      result = take(term_loc(callArgs));
-      // printf("result %d  %p\n", __LINE__, (void *)result);
-      // result = vars_exchange(finalResultVar, FREE);
+      result = take(term_loc(result));
       resultTag = term_tag(result);
-/*
-dec_and_free((Term)argVect, 1);
-      if (resultTag == VAR) {
-	result = vars_exchange(result, NONE);
-      }
-      resultTag = term_tag(result);
+      printf("result %d: %s (%d) %p\n", __LINE__,
+	     tag_to_str(resultTag), resultTag, (void *)result);
+//*
       switch (resultTag) {
-      case RDX:
+      case SUB:
 	if (1) {
-	  Pair rdx = node_take(result);
-	  Pair args = node_load(rdx.snd);
-	  finalResultVar = args.fst;
-	  push_redex(rdx);
+	  Term neg = take(port(1, term_loc(result)));
+	  Term pos = take(port(2, term_loc(result)));
+	  link(neg, pos);
+	  // Pair rdx = node_take(result);
+	  // Pair args = node_load(rdx.snd);
+	  // finalResultVar = args.fst;
+	  // push_redex(rdx);
 	}
 	break;
 
+/*
       case DUP:
       case CON:
 	if (1) {
@@ -3019,6 +3019,7 @@ dec_and_free((Term)argVect, 1);
 	  resultTag = I56;
 	}
 	break;
+// */
       }
       // TODO: only for debugging. Remove ASAP
       // break;
@@ -3041,7 +3042,7 @@ dec_and_free((Term)argVect, 1);
     BOOM("can't return a float as a result");
   } else if (term_tag(result) == VAL ) {
     result = (u64)result & ~7;
-    printf("result %d  %p\n", __LINE__, (void *)result);
+    printf("result %d:  %p\n", __LINE__, (void *)result);
     dec_and_free(result, 1);
   }
 #ifdef CHECK_MEM_LEAK

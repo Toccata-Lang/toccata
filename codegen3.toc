@@ -85,7 +85,7 @@
                    "callArgs = node_make(ARG, " result-var ", callArgs);\n"
                    result-var " = vars_alloc();\n"
                    "callArgs = node_make(ARG, " result-var ", callArgs);\n"
-                   "vars_create(" result-var ", node_make(RDX, "
+                   "vars_create(" result-var ", node_make(SUB, "
                    "hvmVectConj, callArgs));\n"])))))
 
 (defn call-op [op]
@@ -118,25 +118,33 @@
                                             (get tgt .fn-sym))
                                         "")
                      " at " (ast/location args) "\n"
-                     (cond (b/is-glbl result-var)
-                           ""
-                           "Term ")
-                     result-var " = term_new(VAR, 0, port(1, term_loc(args)));\n"
                      (-> args
-                         (map .var)
                          (reverse)
-                         (conj result-var)
-                         (reduce (str "callArgs = APP;\n")
+                         (reduce ["callArgs = APP;\n"]
                                  (fn [args arg]
-                                   (str args
-                                        "callArgs = pair_make(APP, " arg
-                                        ", callArgs);\n"))))
-                     (cond (b/is-glbl result-var)
-                           ["link(callArgs, " (.var tgt) ");"]
+                                   (cond (instance? ast/integer-ast arg)
+                                         (conj args
+                                               ["callArgs = pair_make(APP, "
+                                                "new_i56(" (.int arg) "), callArgs);\n"])
+                                         (let [arg-var (.var arg)]
+                                           (cond (b/is-glbl arg-var)
+                                                 (conj args "BOOM(\"and check this\");\n")
 
-                           ["vars_create(" result-var ", node_make(RDX, "
-                            (.var tgt) ", callArgs));"])
-                     "\n"])))
+                                                 (conj args
+                                                       ["callArgs = pair_make(APP, SUB, callArgs);\n"
+                                                        arg-var " = swap(term_loc(" arg-var
+                                                        "), term_new(VAR, 0, term_loc(callArgs)));\n"
+                                                        "set(term_loc(callArgs), " arg-var
+                                                        ");\n"])))))))
+                     (cond (b/is-glbl result-var)
+                           ["BOOM(\"initing global " result-var " \");\n"
+                            "set(term_loc(callArgs), term_new(VAR, 0, " result-var ");\n"
+                            "link(" (.var tgt) ", callArgs);\n"]
+
+                           ["callArgs = pair_make(APP, SUB, callArgs);\n"
+                            "Term " result-var " = callArgs;\n"
+                            "set(term_loc(" result-var "), pair_make(SUB, callArgs, "
+                            (.var tgt) "));\n"])])))
 
 (defprotocol CodeGen
   (gen-code [ast]
@@ -334,7 +342,7 @@
 
                     (.init args [(.init args)
                                  (.init arg)
-                                 (str var " = pair_make(ARG, " (.var arg)
+                                 (str var " = pair_make(LAM, " (.var arg)
                                       ", " var ");" line-sep)])))))))
 
 (extend-type c/TaggedSymbol
@@ -463,7 +471,7 @@
                                       .init
                                       (fn [init]
                                         [init
-                                         "// link args to body\n"
+                                         "// cause all internal expressions to be reduced\n"
                                          (map (butlast body)
                                               (fn [expr]
                                                 (let [v (.var expr)]
@@ -471,13 +479,17 @@
                                                         ""
 
                                                         (b/is-Rslt v)
-                                                        ["link(" v
-                                                         ;; '81' was picked randomly
-                                                         ", new_num(new_i24(81)));" line-sep]
+                                                        ["move(term_loc(" v "), ERA);\n"]
 
                                                         ""))))
-                                         (.var params) " = node_make(ARG, " last-v
-                                         ", " (.var params) ");" line-sep]))]
+                                         "\n// link args to body\n"
+                                         (cond (instance? ast/integer-ast last-ast)
+                                               ["link(" last-v ", resultVar);\n"]
+
+                                               ["link(args, " (.var params) ");\n"
+                                                "move(port(1, term_loc(" last-v ")), resultVar);\n"])
+
+                                         ]))]
                                (.var ast (.var params)))))))
               (b/compilation-error "Invalid function body at:" (ast/location ast))))))
 
@@ -500,7 +512,7 @@
                                 "Term " (.var ast) ";" line-sep
                                 "bool " c-fn "(Term ref, Term args) {\n"
                                 (cond inline?
-                                      ["  Term resultVar = term_new(VAR, 0, port(1, term_loc(args)));\n"
+                                      ["  Term resultVar = take(port(1, term_loc(args)));\n"
                                        "  args = take(port(2, term_loc(args)));\n"
                                        "  Term result = ERA;\n"
                                        "  NativeArgs arityArgs = {0, {}, resultVar};\n"
@@ -511,16 +523,16 @@
                                        ") {\nlink(ERA, args);\n"
                                        (name-natives params)]
 
-                                      ["Term callArgs;\n"])
+                                      ["Term callArgs;\n"
+                                       "Term resultVar = take(port(1, term_loc(args)));\n"
+                                       "args = take(port(2, term_loc(args)));\n"])
                                 init
                                 (cond inline?
                                       ["\nlink(result, resultVar);\n}\n"
                                        "return TRUE;\n}\n"
                                        "Term " (.var ast) " = new_ref(" c-fn ");\n"]
 
-                                      ["link(args, " (.var params) ");\n"
-                                       "BOOM(\"check this\");\n"
-                                       "return TRUE;\n}\n"
+                                      ["return TRUE;\n}\n"
                                        "Term " (.var ast) " = new_ref(" c-fn ");\n"])]))]
         ast)))
 
@@ -713,7 +725,7 @@
          (cond (b/is-glbl (.var call-ast))
                ["link(" (.var tgt) ", callArgs);"]
 
-               ["vars_create(" (.var call-ast) ", node_make(RDX, "
+               ["vars_create(" (.var call-ast) ", node_make(SUB, "
                 (.var tgt) ", callArgs));"])
          line-sep]))))
 
