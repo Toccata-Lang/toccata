@@ -710,6 +710,8 @@ static void interact(Term neg, Term pos) {
     switch(pos_tag) {
     case ERA:
     case NUL:
+    case I56:
+    case F56:
       break;
       
     default:
@@ -901,7 +903,7 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
     case VAL:
     case I56:
     case F56:
-      // fprintf(stderr, "arg %d: %p\n", __LINE__, (void *)arg);
+    case REF:
       argsStruct->args[argsStruct->count++] = arg;
       return argsNode;
       break;
@@ -1032,7 +1034,7 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
     // TODO: what other tags need to be handled
   default:
     printf("unhandled tag %s (0x%x) %p line: %d\n",
-	   tag_to_str(term_tag(arg)), term_tag(arg), (void *)arg, __LINE__);
+	   tag_to_str(argsTag), argsTag, (void *)arg, __LINE__);
     abort();
     return VOID;
     break;
