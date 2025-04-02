@@ -81,7 +81,6 @@ typedef bool (*interactionFn)(Term a, Term b);
 typedef struct {
   int count;
   Term args[MAX_ARGS + 2];
-  Term result;
 } NativeArgs;
 
 // Global book

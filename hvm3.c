@@ -138,7 +138,7 @@ Loc alloc_node(u64 arity) {
 
 bool isNegative(Term trm) {
   switch(term_tag(trm)) {
-  case SUB:
+  case VAR:
   case ERA:
   case APP:
   case DUP:
@@ -152,7 +152,7 @@ bool isNegative(Term trm) {
 
 bool isPositive(Term trm) {
   switch(term_tag(trm)) {
-  case VAR:
+  case SUB:
   case NUL:
   case LAM:
   case REF:
@@ -306,14 +306,14 @@ void link(Term neg, Term pos) {
   fprintf(stderr, "linking %d: neg: %p %s pos: %p %s\n", __LINE__,
 	  (void *)neg, tag_to_str(term_tag(neg)),
 	  (void *)pos, tag_to_str(term_tag(pos)));
+  Tag negTag = term_tag(neg);
+  Tag posTag = term_tag(pos);
   if (isPositive(neg)) {
     BOOM("linking from a positive");
   }
-  if (isNegative(pos)) {
-    BOOM("linking to a negative");
+  if (posTag != VAR && isNegative(pos)) {
+    BOOM("lin!king to a negative");
   }
-  Tag negTag = term_tag(neg);
-  Tag posTag = term_tag(pos);
   if ((neg == VAL && pos == VAL) ||
       (neg == APP && pos == LAM))
     return;
@@ -355,7 +355,7 @@ void link(Term neg, Term pos) {
     if (negTag == APP) {
       Term arg = get(port(1, term_loc(neg)));
       Term ret = get(port(2, term_loc(neg)));
-      if (posTag != NUL && (term_tag(arg) == SUB || term_tag(ret) == SUB)) {
+      if (posTag != NUL && term_tag(arg) == SUB) {
 	printf("pos: %p %s\n", (void *)pos, tag_to_str(term_tag(pos)));
 	BOOM("bad link APP node");
       }
@@ -1021,6 +1021,8 @@ void spawn_threads_equal_to_cores() {
 }
 
 Term argsNet(NativeArgs *args) {
+  BOOM("argsNet");
+  /*
   Term tail;
   if(args->count < 1)
     tail = APP;
@@ -1032,6 +1034,7 @@ Term argsNet(NativeArgs *args) {
   }
   
   return pair_make(APP, args->result, tail);
+  // */
 }
 
 // extract the requested number of native args

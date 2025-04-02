@@ -2981,21 +2981,26 @@ int main (int argc, char **argv) {
     // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
     bashResult = 0;
     Term callArgs;
-    result = pair_make(SUB, VAR, SUB);
+    // grab the first pair at address 0
+    pair_make(SUB, SUB, VAR);
     set(port(1, term_loc(result)), SUB);
-    callArgs = APP;
-    callArgs = pair_make(APP, term_val((Term)argVect), callArgs);
-    callArgs = pair_make(APP, term_new(VAR, 0, term_loc(result)), callArgs);
+    callArgs = pair_make(APP, term_val((Term)argVect), term_new(VAR, 0, 0));
+    result = SUB;
     link(callArgs, mainFn);
     Tag resultTag;
     do {
       normalize();
-      result = take(term_loc(result));
+      result = take(port(1, term_loc(result)));
       resultTag = term_tag(result);
       printf("result %d: %s (%d) %p\n", __LINE__,
 	     tag_to_str(resultTag), resultTag, (void *)result);
 //*
       switch (resultTag) {
+      case ERA:
+	result = new_i56(0);
+	resultTag = I56;
+	break;
+	
       case SUB:
 	if (1) {
 	  Term neg = take(port(1, term_loc(result)));
