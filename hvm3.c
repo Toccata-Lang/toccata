@@ -85,12 +85,30 @@ Term swap(Loc loc, Term term) {
   return atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
 }
 
+Term getAndCheck(Loc loc) {
+  Term gotten = atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+  if (term_tag(gotten) == SUB) {
+    BOOM("got SUB");
+  }
+  return gotten;
+}
+
 Term get(Loc loc) {
-  return atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+  Term gotten = atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+  return gotten;
+}
+
+Term takeAndCheck(Loc loc) {
+  Term taken = atomic_exchange_explicit(&BUFF[loc], VOID, memory_order_relaxed);
+  if (term_tag(taken) == SUB) {
+    BOOM("took SUB");
+  }
+  return taken;
 }
 
 Term take(Loc loc) {
-  return atomic_exchange_explicit(&BUFF[loc], VOID, memory_order_relaxed);
+  Term taken = atomic_exchange_explicit(&BUFF[loc], VOID, memory_order_relaxed);
+  return taken;
 }
 
 void set(Loc loc, Term term) {
@@ -118,6 +136,35 @@ Loc alloc_node(u64 arity) {
   return loc;
 }
 
+bool isNegative(Term trm) {
+  switch(term_tag(trm)) {
+  case SUB:
+  case ERA:
+  case APP:
+  case DUP:
+  case OPY:
+    return TRUE;
+
+  default:
+    return FALSE;
+  }
+}
+
+bool isPositive(Term trm) {
+  switch(term_tag(trm)) {
+  case VAR:
+  case NUL:
+  case LAM:
+  case REF:
+  case SUP:
+  case OPX:
+    return TRUE;
+
+  default:
+    return FALSE;
+  }
+}
+
 Term pair_make(Tag tag, Term fst, Term snd) {
   // TM *tm = tms[tid];
   Loc loc = alloc_node(2);
@@ -136,6 +183,38 @@ Term pair_make(Tag tag, Term fst, Term snd) {
     }
   }
   // */
+
+  switch(tag) {
+  case SUB:
+    if ((term_tag(fst) != APP && isNegative(fst)) ||
+	(term_tag(snd) != REF && isPositive(snd))) {
+      fprintf(stderr, "fst: %s %d  snd: %s %d\n",
+	      tag_to_str(term_tag(fst)), isNegative(fst),
+	      tag_to_str(term_tag(snd)), isPositive(snd));
+      BOOM("bad SUB pair");
+    }
+    break;
+    
+  case APP:
+    if ((term_tag(fst) != SUB && isNegative(fst)) || isPositive(snd)) {
+      fprintf(stderr, "fst: %s %d  snd: %s %d\n",
+	      tag_to_str(term_tag(fst)), isNegative(fst),
+	      tag_to_str(term_tag(snd)), isPositive(snd));
+      BOOM("bad APP pair");
+    }
+    break;
+    
+  case LAM:
+    if (isPositive(fst) || isNegative(snd) ) {
+      BOOM("bad LAM pair");
+    }
+    break;
+    
+  default:
+    fprintf(stderr, "bad tag: %s\n", tag_to_str(tag));
+    BOOM("unhandled tag");
+    break;
+  }
 
   set(port(1, loc), fst);
   set(port(2, loc), snd);
@@ -224,23 +303,43 @@ char* def_name(Loc def_idx) {
 void move(Loc neg_loc, u64 pos);
 
 void link(Term neg, Term pos) {
-  if (term_tag(pos) == VAR) {
+  fprintf(stderr, "linking %d: neg: %p %s pos: %p %s\n", __LINE__,
+	  (void *)neg, tag_to_str(term_tag(neg)),
+	  (void *)pos, tag_to_str(term_tag(pos)));
+  if (isPositive(neg)) {
+    BOOM("linking from a positive");
+  }
+  if (isNegative(pos)) {
+    BOOM("linking to a negative");
+  }
+  Tag negTag = term_tag(neg);
+  Tag posTag = term_tag(pos);
+  if ((neg == VAL && pos == VAL) ||
+      (neg == APP && pos == LAM))
+    return;
+  else if (neg == VAL || neg == SUB)
+    BOOM("bad link");
+  else if (posTag == VAR) {
     Term far = swap(term_loc(pos), neg);
     Tag t = term_tag(far);
     if (t == VAR) {
+      take(term_loc(pos));
       link(neg, far);
     } else if (t != SUB) {
+      fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
+	      (void *)pos, tag_to_str(term_tag(pos)),
+	      (void *)neg, tag_to_str(term_tag(neg)),
+	      (void *)far, tag_to_str(term_tag(far)));
       BOOM("linking non SUB");
       move(term_loc(pos), far);
-//*
     } else if (far != SUB) {
       fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
 	      (void *)pos, tag_to_str(term_tag(pos)),
 	      (void *)neg, tag_to_str(term_tag(neg)),
 	      (void *)far, tag_to_str(term_tag(far)));
       Loc sub_loc = term_loc(far);
-      Term app = take(port(1, sub_loc));
-      Term lam = take(port(2, sub_loc));
+      Term app = takeAndCheck(port(1, sub_loc));
+      Term lam = takeAndCheck(port(2, sub_loc));
       if (term_tag(app) == APP) {
 	// set(port(1, term_loc(app)), neg);
 	link(app, lam);
@@ -249,9 +348,18 @@ void link(Term neg, Term pos) {
 		sub_loc, tag_to_str(term_tag(pos)), (void *)pos);
 	BOOM("bad link");
       }
-// */
     }
+    // */
   } else {
+    // TODO: this is for validating the algorithm. Remove for production
+    if (negTag == APP) {
+      Term arg = get(port(1, term_loc(neg)));
+      Term ret = get(port(2, term_loc(neg)));
+      if (posTag != NUL && (term_tag(arg) == SUB || term_tag(ret) == SUB)) {
+	printf("pos: %p %s\n", (void *)pos, tag_to_str(term_tag(pos)));
+	BOOM("bad link APP node");
+      }
+    }
     rbag_push(neg, pos);
   }
 }
@@ -264,8 +372,8 @@ void move(Loc neg_loc, Term pos) {
     link(neg, pos);
   } else if (neg != SUB) {
     Loc sub_loc = term_loc(neg);
-    Term neg = take(port(1, sub_loc));
-    Term pos = take(port(2, sub_loc));
+    Term neg = takeAndCheck(port(1, sub_loc));
+    Term pos = takeAndCheck(port(2, sub_loc));
     link(neg, pos);
   }
 }
@@ -278,10 +386,24 @@ static void interact_applam(Loc a_loc, Loc b_loc) {
   else if (a_loc == 0 || b_loc ==0)
     BOOM("Bad app - lam redex");
 
-  Term arg = take(port(1, a_loc));
+  Term arg = get(port(1, a_loc));
   Loc  ret = port(2, a_loc);
   Loc  var = port(1, b_loc);
-  Term bod = take(port(2, b_loc));
+  Term bod = get(port(2, b_loc));
+  if(term_tag(arg) == SUB) {
+    fprintf(stderr, "applam %d: arg: %p %s  ret: %p %s\n", __LINE__,
+	    (void *)arg, tag_to_str(term_tag(arg)),
+	    (void *)get(ret), tag_to_str(term_tag(get(ret))));
+    return;
+  }
+  if(term_tag(arg) == SUB) {
+    fprintf(stderr, "applam %d: arg: %p %s  ret: %p %s\n", __LINE__,
+	    (void *)arg, tag_to_str(term_tag(arg)),
+	    (void *)get(ret), tag_to_str(term_tag(get(ret))));
+    return;
+  }
+  arg = take(port(1, a_loc));
+  bod = take(port(2, b_loc));
   move(var, arg);
   move(ret, bod);
 }
@@ -293,10 +415,10 @@ static void interact_appref(Term app, Term ref) {
 }
 
 static void interact_appsup(Loc a_loc, Loc b_loc) {
-  Term arg = take(port(1, a_loc));
+  Term arg = takeAndCheck(port(1, a_loc));
   Loc  ret = port(2, a_loc);
-  Term tm1 = take(port(1, b_loc));
-  Term tm2 = take(port(2, b_loc));
+  Term tm1 = takeAndCheck(port(1, b_loc));
+  Term tm2 = takeAndCheck(port(2, b_loc));
   Loc  dp1 = alloc_node(2);
   Loc  dp2 = alloc_node(2);
   Loc  cn1 = alloc_node(2);
@@ -315,23 +437,68 @@ static void interact_appsup(Loc a_loc, Loc b_loc) {
   link(term_new(APP, 0, cn2), tm2);
 }
 
+static void interact_subnul(Loc a_loc) {
+  if (a_loc == 0)
+    return;
+
+  Term pos = take(port(1, a_loc));
+  Tag posTag = term_tag(pos);
+  Term neg = take(port(2, a_loc));
+  Tag negTag = term_tag(neg);
+  if (pos == SUB)
+    BOOM("took SUB");
+  if (posTag == APP) 
+    link(pos, NUL);
+  else if (posTag == SUB) {
+    Loc posLoc = term_loc(get(port(1, term_loc(pos))));
+    if (posLoc == a_loc) {
+      set(port(1, term_loc(pos)), VOID);
+      Term posNeg = get(port(2, term_loc(pos)));
+      if (isPositive(posNeg))
+	link(ERA, posNeg);
+      else
+	link(posNeg, NUL);
+    } else {
+      // SUB is a negative
+      link(pos, NUL);
+    }
+  } else
+    link(ERA, pos);
+  if (negTag == REF)
+    link(ERA, neg);
+  else
+    link(neg, NUL);
+}
+
 static void interact_appnul(Loc a_loc) {
-  Term arg = take(port(1, a_loc));
-  Loc  ret = port(2, a_loc);
-  link(ERA, arg);
-  move(ret, term_new(NUL, 0, 0));
+  if (a_loc == 0)
+    return;
+
+  Term pos = take(port(1, a_loc));
+  Tag posTag = term_tag(pos);
+  Term neg = take(port(2, a_loc));
+  Tag negTag = term_tag(neg);
+  if (pos == SUB)
+    BOOM("took SUB");
+  else if (posTag == APP) 
+    BOOM("what's an APP doing here");
+  else if (posTag == SUB) {
+    link(pos, NUL);
+  } else
+    link(ERA, pos);
+  link(neg, NUL);
 }
 
 /*
 static void interact_appu32(Loc a_loc, u32 num) {
-  Term arg = take(port(1, a_loc));
+  Term arg = takeAndCheck(port(1, a_loc));
   Loc  ret = port(2, a_loc);
   link(term_new(U32, 0, num), arg);
   move(ret, term_new(U32, 0, num));
 }
 
 static void interact_opxnul(Loc a_loc) {
-  Term arg = take(port(1, a_loc));
+  Term arg = takeAndCheck(port(1, a_loc));
   Loc  ret = port(2, a_loc);
   link(ERA, arg);
   move(ret, term_new(NUL, 0, 0));
@@ -343,10 +510,10 @@ static void interact_opxnum(Loc a_loc, Lab op, u32 num, Tag num_type) {
 }
 
 static void interact_opxsup(Loc a_loc, Lab op, Loc b_loc) {
-  Term arg = take(port(1, a_loc));
+  Term arg = takeAndCheck(port(1, a_loc));
   Loc  ret = port(2, a_loc);
-  Term tm1 = take(port(1, b_loc));
-  Term tm2 = take(port(2, b_loc));
+  Term tm1 = takeAndCheck(port(1, b_loc));
+  Term tm2 = takeAndCheck(port(2, b_loc));
   Loc  dp1 = alloc_node(2);
   Loc  dp2 = alloc_node(2);
   Loc  cn1 = alloc_node(2);
@@ -366,7 +533,7 @@ static void interact_opxsup(Loc a_loc, Lab op, Loc b_loc) {
 }
 
 static void interact_opynul(Loc a_loc) {
-  Term arg = take(port(1, a_loc));
+  Term arg = takeAndCheck(port(1, a_loc));
   Loc  ret = port(2, a_loc);
   link(ERA, arg);
   move(ret, term_new(NUL, 0, 0));
@@ -380,7 +547,7 @@ u32 i32_to_u32(i32 i) { return *(u32*)&i; }
 u32 f32_to_u32(f32 f) { return *(u32*)&f; }
 
 static void interact_opynum(Loc a_loc, Lab op, u32 y, Tag y_type) {
-  u32 x = term_loc(take(port(1, a_loc)));
+  u32 x = term_loc(takeAndCheck(port(1, a_loc)));
   Loc ret = port(2, a_loc);
   u32 res;
 
@@ -448,10 +615,10 @@ static void interact_opynum(Loc a_loc, Lab op, u32 y, Tag y_type) {
 }
 
 static void interact_opysup(Loc a_loc, Loc b_loc) {
-  Term arg = take(port(1, a_loc));
+  Term arg = takeAndCheck(port(1, a_loc));
   Loc  ret = port(2, a_loc);
-  Term tm1 = take(port(1, b_loc));
-  Term tm2 = take(port(2, b_loc));
+  Term tm1 = takeAndCheck(port(1, b_loc));
+  Term tm2 = takeAndCheck(port(2, b_loc));
   Loc  dp1 = alloc_node(2);
   Loc  dp2 = alloc_node(2);
   Loc  cn1 = alloc_node(2);
@@ -474,8 +641,8 @@ static void interact_opysup(Loc a_loc, Loc b_loc) {
 static void interact_dupsup(Loc a_loc, Loc b_loc) {
   Loc  dp1 = port(1, a_loc);
   Loc  dp2 = port(2, a_loc);
-  Term tm1 = take(port(1, b_loc));
-  Term tm2 = take(port(2, b_loc));
+  Term tm1 = takeAndCheck(port(1, b_loc));
+  Term tm2 = takeAndCheck(port(2, b_loc));
   move(dp1, tm1);
   move(dp2, tm2);
 }
@@ -485,7 +652,7 @@ static void interact_duplam(Loc a_loc, Loc b_loc) {
   Loc  dp2 = port(2, a_loc);
   Loc  var = port(1, b_loc);
   // TODO(enricozb): why is this the only take?
-  Term bod = take(port(2, b_loc));
+  Term bod = takeAndCheck(port(2, b_loc));
   Loc  co1 = alloc_node(2);
   Loc  co2 = alloc_node(2);
   Loc  du1 = alloc_node(2);
@@ -527,7 +694,7 @@ static void interact_dupref(Loc a_loc, Loc b_loc) {
 static void interact_matnul(Loc a_loc, Lab mat_len) {
   move(port(1, a_loc), term_new(NUL, 0, 0));
   for (u32 i = 0; i < mat_len; i++) {
-    link(ERA, take(port(i + 2, a_loc)));
+    link(ERA, takeAndCheck(port(i + 2, a_loc)));
   }
 }
 
@@ -540,12 +707,12 @@ static void interact_matnum(Loc mat_loc, Lab mat_len, u32 n, Tag n_type) {
   u32 i_arm = (n < mat_len - 1) ? n : (mat_len - 1);
   for (u32 i = 0; i < mat_len; i++) {
     if (i != i_arm) {
-      link(ERA, take(port(2 + i, mat_loc)));
+      link(ERA, takeAndCheck(port(2 + i, mat_loc)));
     }
   }
 
   Loc ret = port(1, mat_loc);
-  Term arm = take(port(2 + i_arm, mat_loc));
+  Term arm = takeAndCheck(port(2 + i_arm, mat_loc));
 
   if (i_arm < mat_len - 1) {
     move(ret, arm);
@@ -577,26 +744,26 @@ static void interact_matsup(Loc mat_loc, Lab mat_len, Loc sup_loc) {
     set(port(2 + i, ma0), term_new(VAR, 0, port(2, dui)));
     set(port(2 + i, ma1), term_new(VAR, 0, port(1, dui)));
 
-    link(term_new(DUP, 0, dui), take(port(2 + i, mat_loc)));
+    link(term_new(DUP, 0, dui), takeAndCheck(port(2 + i, mat_loc)));
   }
 
   move(port(1, mat_loc), term_new(SUP, 0, sup));
-  link(term_new(MAT, mat_len, ma0), take(port(2, sup_loc)));
-  link(term_new(MAT, mat_len, ma1), take(port(1, sup_loc)));
+  link(term_new(MAT, mat_len, ma0), takeAndCheck(port(2, sup_loc)));
+  link(term_new(MAT, mat_len, ma1), takeAndCheck(port(1, sup_loc)));
 }
 // */
 
 
 static void interact_eralam(Loc b_loc) {
   Loc  var = port(1, b_loc);
-  Term bod = take(port(2, b_loc));
+  Term bod = takeAndCheck(port(2, b_loc));
   move(var, term_new(NUL, 0, 0));
   link(ERA, bod);
 }
 
 static void interact_erasup(Loc b_loc) {
-  Term tm1 = take(port(1, b_loc));
-  Term tm2 = take(port(2, b_loc));
+  Term tm1 = takeAndCheck(port(1, b_loc));
+  Term tm2 = takeAndCheck(port(2, b_loc));
   link(ERA, tm1);
   link(ERA, tm2);
 }
@@ -612,8 +779,8 @@ static void interact(Term neg, Term pos) {
     switch (pos_tag) {
     case SUB:
       if (1) {
-	Term app = take(port(1, pos_loc));
-	Term lam = take(port(2, pos_loc));
+	Term app = takeAndCheck(port(1, pos_loc));
+	Term lam = takeAndCheck(port(2, pos_loc));
 	if (pos != SUB && term_tag(app) == APP) {
 	  set(port(1, term_loc(app)), neg);
 	  link(app, lam);
@@ -632,6 +799,17 @@ static void interact(Term neg, Term pos) {
     }
     break;
     
+  case SUB:
+    if (pos == NUL) {
+      set(port(1, neg_loc), VOID);
+      Term subNeg = take(port(2, neg_loc));
+      if (term_tag(subNeg != REF))
+	link(ERA, subNeg);
+    } else {
+      BOOM("bad link previously");
+    }
+    break;
+
   case APP:
     switch (pos_tag) {
     case LAM: interact_applam(neg_loc, pos_loc); break;
@@ -738,7 +916,9 @@ static inline int normal_step() {
   }
 
   Term neg = take(loc + 0);
-  Term pos = take(loc + 1);
+  if (neg == SUB)
+    BOOM("took SUB");
+  Term pos = takeAndCheck(loc + 1);
 
   printf("\n\n%04lX: INTERACT %s ~ %s\n%p ~ %p\n",
 	 inc_itr(), tag_to_str(term_tag(neg)), tag_to_str(term_tag(pos)),
@@ -874,18 +1054,18 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   Term varVal;
   switch(argsTag) {
   case APP:
-    arg = take(port(1, term_loc(args)));
-    Term argsNode = take(port(2, term_loc(args)));
+    arg = takeAndCheck(port(1, term_loc(args)));
+    Term argsNode = takeAndCheck(port(2, term_loc(args)));
     Tag argTag = term_tag(arg);
     // fprintf(stderr, "arg 2 %d: %d %p\n", __LINE__, argTag, (void *)arg);
     switch(argTag) {
     case SUB:
       if (arg == 0 && argsNode == 0)
 	return VOID;
-      else if (arg == 0 || argsNode ==0)
+      else if (arg == 0 || argsNode == 0)
 	BOOM("natveArgs");
-      Term neg = take(port(1, term_loc(arg)));
-      Term pos = take(port(2, term_loc(arg)));
+      Term neg = takeAndCheck(port(1, term_loc(arg)));
+      Term pos = takeAndCheck(port(2, term_loc(arg)));
       int argsCount = argsStruct->count;
       argsStruct->args[argsStruct->count++] = SUB;
       argsStruct->args[argsStruct->count++] = argsNode;

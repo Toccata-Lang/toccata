@@ -25,6 +25,7 @@ typedef int64_t  i64;
 #define FALSE 0
 
 // Constants
+// odd tags are positive, even tags are negative
 #define VAL 0x00 // native value
 #define VAR 0x01
 #define SUB 0x02 // possible deferred redex

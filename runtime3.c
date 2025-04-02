@@ -2981,7 +2981,8 @@ int main (int argc, char **argv) {
     // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
     bashResult = 0;
     Term callArgs;
-    result = pair_make(SUB, SUB, SUB);
+    result = pair_make(SUB, VAR, SUB);
+    set(port(1, term_loc(result)), SUB);
     callArgs = APP;
     callArgs = pair_make(APP, term_val((Term)argVect), callArgs);
     callArgs = pair_make(APP, term_new(VAR, 0, term_loc(result)), callArgs);
