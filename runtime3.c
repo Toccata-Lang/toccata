@@ -2981,11 +2981,8 @@ int main (int argc, char **argv) {
     // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
     bashResult = 0;
     Term callArgs;
-    // grab the first pair at address 0
-    pair_make(SUB, SUB, VAR);
-    set(port(1, term_loc(result)), SUB);
-    callArgs = pair_make(APP, term_val((Term)argVect), term_new(VAR, 0, 0));
-    result = SUB;
+    callArgs = pair_make(APP, term_val((Term)argVect), SUB);
+    result = term_new(VAR, 0, port(2, term_loc(callArgs)));
     link(callArgs, mainFn);
     Tag resultTag;
     do {
@@ -2996,6 +2993,7 @@ int main (int argc, char **argv) {
 	     tag_to_str(resultTag), resultTag, (void *)result);
 //*
       switch (resultTag) {
+      case NUL:
       case ERA:
 	result = new_i56(0);
 	resultTag = I56;

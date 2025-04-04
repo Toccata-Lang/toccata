@@ -41,10 +41,8 @@ typedef int64_t  i64;
 #define OPY 0x0c
 #define I56 0x0d
 #define F56 0x0e
-#define MAT 0x0F
-#define VL2 0x18 // native value alieas
-#define VL3 0x28 // native value alieas
-#define VL4 0x38 // native value alieas
+#define LAZ 0x0F
+// #define VL2 0x18 // native value alieas
 
 typedef bool (*interactionFn)(Term a, Term b);
 #define new_ref(x) (((u64)x + REF))
@@ -104,12 +102,13 @@ extern a64 node_count;
 extern int max_node;
 
 void *boom(char *msg, char *file, int line);
-void link(Term neg, Term pos);
-void move(Loc neg_loc, Term pos);
 Tag term_tag(Term term);
 Term term_val(Term val);
 Term term_new(Tag tag, Lab lab, Loc loc);
 Loc term_loc(Term term);
+void link(Term neg, Term pos);
+void move(Loc neg_loc, Term pos);
+Term takeAndCheck(Loc loc);
 Term take(Loc loc);
 void set(Loc loc, Term term);
 Term swap(Loc loc, Term term);

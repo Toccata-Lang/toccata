@@ -111,16 +111,27 @@
 (defn generic-call [ast]
   (assert (instance? ast/call-ast ast))
   (let [tgt (.call-target ast)
-        args (.args ast)
         result-var (.var ast)
-        num-args (count args)]
+        rev-args (reverse (.args ast))
+        last-arg (either (first rev-args)
+                         (.var (c/tag "") "NUL"))]
     (se/state-error ["// call " (either (or (instance? c/TaggedSymbol tgt)
                                             (get tgt .fn-sym))
                                         "")
-                     " at " (ast/location args) "\n"
-                     (-> args
-                         (reverse)
-                         (reduce ["callArgs = APP;\n"]
+                     " at " (ast/location (.args ast)) "\n"
+                     ["callArgs = SUB;\n"
+                      ;; TODO: make the .var of integer-ast include call to new_i56
+                      (cond (instance? ast/integer-ast last-arg)
+                            ["callArgs = pair_make(APP, new_i56(" (.int last-arg) "), callArgs);\n"]
+
+                            (b/is-glbl (.var last-arg))
+                            "BOOM(\"and check this\");\n"
+
+                            ["callArgs = pair_make(APP, " (.var last-arg) ", callArgs);\n"])
+                      "Term " result-var " = port(2, term_loc(callArgs));\n"]
+                     (-> rev-args
+                         (rest)
+                         (reduce []
                                  (fn [args arg]
                                    (cond (instance? ast/integer-ast arg)
                                          (conj args
@@ -131,22 +142,15 @@
                                                  (conj args "BOOM(\"and check this\");\n")
 
                                                  (conj args
-                                                       ["callArgs = pair_make(APP, SUB, callArgs);\n"
-                                                        arg-var " = swap(term_loc(" arg-var
-                                                        "), term_new(VAR, 0, "
-                                                        "port(1, term_loc(callArgs))));\n"
-                                                        "set(port(1, term_loc(callArgs)), " arg-var
-                                                        ");\n"])))))))
+                                                       ["callArgs = pair_make(APP, " arg-var
+                                                        ", callArgs);\n"])))))))
                      (cond (b/is-glbl result-var)
                            ["BOOM(\"initing global " result-var " \");\n"
                             "set(term_loc(callArgs), term_new(VAR, 0, port(1, term_loc("
                             result-var ")));\n"
                             "link(" (.var tgt) ", callArgs);\n"]
 
-                           ["callArgs = pair_make(APP, SUB, callArgs);\n"
-                            "Term " result-var " = port(1, term_loc(callArgs));\n"
-                            "set(term_loc(" result-var "), pair_make(SUB, callArgs, "
-                            (.var tgt) "));\n"])])))
+                           ["set(" result-var ", pair_make(LAZ, callArgs, glblFn7));\n"])])))
 
 (defprotocol CodeGen
   (gen-code [ast]
@@ -355,32 +359,25 @@
     (ParamInit "" [])))
 
 (defn destruct-params [params]
-  (let [args-init (hylo (fn [ast]
-                          (cond (instance? ast/params-ast ast)
-                                (PlainParams (.fixed ast) (.var ast))
+  (for [rm (se/get-val .refs-map)
+        _ (se/update-val .init
+                         (fn [init]
+                           ["// allocate args at " (ast/location params) "\n"
+                            (cata (fn [ast]
+                                    (cond (instance? c/TaggedSymbol ast)
+                                          (either (map (get rm (.var ast))
+                                                       (fn [_]
+                                                         [(str "Term " (.var ast) ";\n")]))
 
-                                ast))
-                        dest-params params)]
-    (for [rm (se/get-val .refs-map)
-          _ (se/update-val .init
-                           (fn [init]
-                             ["// allocate args at " (ast/location params) "\n"
-                              (cata (fn [ast]
-                                      (cond (instance? c/TaggedSymbol ast)
-                                            (either (map (get rm (.var ast))
-                                                         (fn [_]
-                                                           [(str "Term " (.var ast) ";\n")]))
+                                                  (str "Term " (.var ast) " = ERA;\n"))
 
-                                                    (str "Term " (.var ast) " = ERA;\n"))
+                                          (instance? ast/params-ast ast)
+                                          (.fixed ast)
 
-                                            (instance? ast/params-ast ast)
-                                            (.fixed ast)
-
-                                            ""))
-                                    params)
-                              (.init args-init)
-                              init]))]
-      '_)))
+                                          ""))
+                                  params)
+                            init]))]
+    '_))
 
 ;; (defn checking-fn [params c-fn]
 ;;   (assert (instance? ast/params-ast params))
@@ -481,17 +478,24 @@
                                                         ;; 47 was chosen randomly
                                                         ["move(new_i56(47), term_loc(" v "));\n"]
 
-                                                        ""))))
+                                                        (do
+                                                          (print-err 'BOOMITY _FILE_ _LINE_)
+                                                          "")))))
                                          "\n// link args to body\n"
-                                         "link(args, " (.var params) ");\n"
                                          (cond (instance? ast/integer-ast last-ast)
-                                               ["link(" last-v ", resultVar);\n"]
+                                               ["Term " (.var params) " = new_i56(" (.int last-ast)
+                                                ");\n"]
 
                                                [;; move 'resultVar' to the location holding the SUB
                                                 ;; which triggers this function being reduced
-                                                "move(port(1, term_loc(" last-v ")), resultVar);\n"])
-
-                                         ]))]
+                                                "move(" last-v ", SUB);\n"
+                                                "Term " (.var params) " = term_new(VAR, 0, "
+                                                last-v ");\n"])
+                                         (map (.fixed params)
+                                              (fn [param]
+                                                (str (.var params) " = pair_make(LAM, " (.var param)
+                                                     ", " (.var params) ");\n")))
+                                         "link(args, " (.var params) ");\n"]))]
                                (.var ast (.var params)))))))
               (b/compilation-error "Invalid function body at:" (ast/location ast))))))
 
@@ -514,28 +518,28 @@
                                 "Term " (.var ast) ";" line-sep
                                 "bool " c-fn "(Term ref, Term args) {\n"
                                 (cond inline?
-                                      ["  Term result = ERA;\n"
+                                      ["  Term result = NUL;\n"
                                        "  NativeArgs arityArgs = {0, {}};\n"
                                        (repeat (dec (count (.fixed params)))
-                                               (str "  args = nativeArg(ref, args"
-                                                    ", &arityArgs);\n"))
-                                       "  Term resultVar = nativeArg(ref, args, &arityArgs);\n"
+                                               ["  nativeArg(ref, args, &arityArgs);\n"
+                                                "  if (args != 0)\n"
+                                                "    args = take(port(2, term_loc(args)));\n"])
+                                       (cond (= (count (.fixed params)) 0)
+                                             ""
+                                             "  nativeArg(ref, args, &arityArgs);\n")
                                        "  if (arityArgs.count == " (count (.fixed params))
                                        ") {\n"
                                        (name-natives params)]
 
-                                      ["BOOM(\"boo yah\");\n"
-                                       "Term callArgs;\n"
-                                       "Term resultVar = take(port(1, term_loc(args)));\n"
-                                       "args = take(port(2, term_loc(args)));\n"])
+                                      ["Term callArgs;\n"])
                                 init
                                 (cond inline?
-                                      ["\nlink(result, resultVar);\n}\n"
-                                       "return TRUE;\n}\n"
-                                       "Term " (.var ast) " = new_ref(" c-fn ");\n"]
+                                      ["    move(port(2, term_loc(args)), result);\n  }\n"
+                                       "  return TRUE;\n}\n"
+                                       "  Term " (.var ast) " = new_ref(" c-fn ");\n"]
 
-                                      ["return TRUE;\n}\n"
-                                       "Term " (.var ast) " = new_ref(" c-fn ");\n"])]))]
+                                      ["  return TRUE;\n}\n"
+                                       "  Term " (.var ast) " = new_ref(" c-fn ");\n"])]))]
         ast)))
 
   (gen-call [sym call-ast]

@@ -138,7 +138,7 @@ Loc alloc_node(u64 arity) {
 
 bool isNegative(Term trm) {
   switch(term_tag(trm)) {
-  case VAR:
+  case SUB:
   case ERA:
   case APP:
   case DUP:
@@ -152,7 +152,8 @@ bool isNegative(Term trm) {
 
 bool isPositive(Term trm) {
   switch(term_tag(trm)) {
-  case SUB:
+  case LAZ:
+  case VAR:
   case NUL:
   case LAM:
   case REF:
@@ -166,8 +167,6 @@ bool isPositive(Term trm) {
 }
 
 Term pair_make(Tag tag, Term fst, Term snd) {
-  // TM *tm = tms[tid];
-  Loc loc = alloc_node(2);
   /*
   Port n0;
   while (TRUE) {
@@ -185,28 +184,27 @@ Term pair_make(Tag tag, Term fst, Term snd) {
   // */
 
   switch(tag) {
+  case LAZ:
   case SUB:
-    if ((term_tag(fst) != APP && isNegative(fst)) ||
-	(term_tag(snd) != REF && isPositive(snd))) {
+  case LAM:
+    if (isPositive(fst) || isNegative(snd)) {
       fprintf(stderr, "fst: %s %d  snd: %s %d\n",
 	      tag_to_str(term_tag(fst)), isNegative(fst),
 	      tag_to_str(term_tag(snd)), isPositive(snd));
-      BOOM("bad SUB pair");
+      char s[50];
+      sprintf(s, "bad %s pair", tag_to_str(tag));
+      BOOM(s);
     }
     break;
     
   case APP:
-    if ((term_tag(fst) != SUB && isNegative(fst)) || isPositive(snd)) {
+    if (isNegative(fst) || isPositive(snd)) {
       fprintf(stderr, "fst: %s %d  snd: %s %d\n",
 	      tag_to_str(term_tag(fst)), isNegative(fst),
 	      tag_to_str(term_tag(snd)), isPositive(snd));
-      BOOM("bad APP pair");
-    }
-    break;
-    
-  case LAM:
-    if (isPositive(fst) || isNegative(snd) ) {
-      BOOM("bad LAM pair");
+      char s[50];
+      sprintf(s, "bad %s pair", tag_to_str(tag));
+      BOOM(s);
     }
     break;
     
@@ -216,6 +214,8 @@ Term pair_make(Tag tag, Term fst, Term snd) {
     break;
   }
 
+  // TM *tm = tms[tid];
+  Loc loc = alloc_node(2);
   set(port(1, loc), fst);
   set(port(2, loc), snd);
   return term_new(tag, 0, loc);
@@ -311,7 +311,7 @@ void link(Term neg, Term pos) {
   if (isPositive(neg)) {
     BOOM("linking from a positive");
   }
-  if (posTag != VAR && isNegative(pos)) {
+  if (isNegative(pos)) {
     BOOM("lin!king to a negative");
   }
   if ((neg == VAL && pos == VAL) ||
@@ -351,15 +351,6 @@ void link(Term neg, Term pos) {
     }
     // */
   } else {
-    // TODO: this is for validating the algorithm. Remove for production
-    if (negTag == APP) {
-      Term arg = get(port(1, term_loc(neg)));
-      Term ret = get(port(2, term_loc(neg)));
-      if (posTag != NUL && term_tag(arg) == SUB) {
-	printf("pos: %p %s\n", (void *)pos, tag_to_str(term_tag(pos)));
-	BOOM("bad link APP node");
-      }
-    }
     rbag_push(neg, pos);
   }
 }
@@ -367,13 +358,21 @@ void link(Term neg, Term pos) {
 
 void move(Loc neg_loc, Term pos) {
   Term neg = swap(neg_loc, pos);
-  if (term_tag(neg) != SUB) {
-    // No need to take() since we already swapped
+  Tag negTag = term_tag(neg);
+  if (negTag == SUB) {
+    if (neg != SUB) {
+      Loc sub_loc = term_loc(neg);
+      Term neg = takeAndCheck(port(1, sub_loc));
+      Term pos = takeAndCheck(port(2, sub_loc));
+      link(neg, pos);
+    }
+  } else if (negTag == LAZ) {
+    Loc laz_loc = term_loc(neg);
+    Term neg = takeAndCheck(port(1, laz_loc));
+    Term pos = takeAndCheck(port(2, laz_loc));
     link(neg, pos);
-  } else if (neg != SUB) {
-    Loc sub_loc = term_loc(neg);
-    Term neg = takeAndCheck(port(1, sub_loc));
-    Term pos = takeAndCheck(port(2, sub_loc));
+  } else {
+    // No need to take() since we already swapped
     link(neg, pos);
   }
 }
@@ -383,8 +382,6 @@ static void interact_applam(Loc a_loc, Loc b_loc) {
   // a_loc is APP, b_loc is LAM
   if (a_loc == 0 && b_loc == 0)
     return;
-  else if (a_loc == 0 || b_loc ==0)
-    BOOM("Bad app - lam redex");
 
   Term arg = get(port(1, a_loc));
   Loc  ret = port(2, a_loc);
@@ -775,6 +772,10 @@ static void interact(Term neg, Term pos) {
   Loc pos_loc = term_loc(pos);
 
   switch (neg_tag) {
+  case VAR:
+    move(neg_loc, pos);
+    break;
+
   case VAL:
     switch (pos_tag) {
     case SUB:
@@ -969,7 +970,7 @@ char* tag_to_str(Tag tag) {
   case OPY:  return "OPY";
   case I56:  return "I56";
   case F56:  return "F56";
-  case MAT:  return "MAT";
+  case LAZ:  return "LAZ";
 
   default:   return "???";
   }
@@ -1021,26 +1022,25 @@ void spawn_threads_equal_to_cores() {
 }
 
 Term argsNet(NativeArgs *args) {
-  BOOM("argsNet");
-  /*
+  //*
   Term tail;
-  if(args->count < 1)
-    tail = APP;
+  if(args->count < 2)
+    BOOM("argsNet");
   else
     tail = args->args[args->count - 1];
-  for (int i = args->count - 2; i >= 0; i--) {
+
+  for (int i = args->count - 2; i >= 1; i--) {
     tail = pair_make(APP, args->args[i], tail);
     args->args[i] = tail;
   }
   
-  return pair_make(APP, args->result, tail);
+  return pair_make(APP, args->args[0], tail);
   // */
 }
 
 // extract the requested number of native args
 Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   if (argsStruct->count < 0 || args == VOID) {
-    BOOM("natveArgs");
     return VOID;
   }
 
@@ -1058,11 +1058,77 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   switch(argsTag) {
   case APP:
     arg = takeAndCheck(port(1, term_loc(args)));
-    Term argsNode = takeAndCheck(port(2, term_loc(args)));
+    // only look at port 2 of args. It will be taken in the caller if needed.
+    Term argsNode = get(port(2, term_loc(args)));
     Tag argTag = term_tag(arg);
     // fprintf(stderr, "arg 2 %d: %d %p\n", __LINE__, argTag, (void *)arg);
     switch(argTag) {
+    case VAL:
+    case I56:
+    case F56:
+    case REF:
+      argsStruct->args[argsStruct->count++] = arg;
+      return argsNode;
+      break;
+
+    case NUL:
+      return argsNode;
+      break;
+
+    case VAR:
+      if (1) {
+	Term negVar = get(term_loc(arg));
+	switch(term_tag(negVar)) {
+	case LAZ:
+	  if (1) {
+	    argsStruct->args[argsStruct->count++] = arg;
+	    argsStruct->args[argsStruct->count++] = argsNode;
+	    Term newargs = argsNet(argsStruct);
+	    Term retry = pair_make(SUB, newargs, ref);
+	    set(term_loc(arg), retry);
+
+	    Term neg = take(port(1, term_loc(negVar)));
+	    Term pos = take(port(2, term_loc(negVar)));
+	    link(neg, pos);
+	  }
+	  argsStruct->count = -1;
+	  return VOID;
+	  break;
+
+	case VAL:
+	  if(1) {
+	    Term val = take(term_loc(arg));
+	    fprintf(stderr, "val %d %p\n", __LINE__, (void *)val);
+	    argsStruct->args[argsStruct->count++] = val;
+	    return argsNode;
+	  }
+	  break;
+
+	default:
+	  fprintf(stderr, "arg %s %p\n", tag_to_str(term_tag(arg)), (void *)arg);
+	  fprintf(stderr, "negVar %s %p\n", tag_to_str(term_tag(negVar)), (void *)negVar);
+	  BOOM("natveArgs");
+	  break;
+	}
+	/*
+	  argsStruct->args[argsStruct->count++] = arg;
+	  argsStruct->args[argsStruct->count++] = argsNode.snd;
+	  varVal = vars_exchange(arg, node_make(RDX, ref, argsNet(argsStruct)));
+	  if (varVal != NONE && varVal != FREE) {
+	  // fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
+	  if (get_tag(varVal) == RDX) {
+	  push_redex(node_take(varVal));
+	  }
+	  }
+	  argsStruct->count = -1;
+	  // */
+	argsStruct->count = -1;
+	return VOID;
+      }
+      break;
+
     case SUB:
+      BOOM("natveArgs");
       if (arg == 0 && argsNode == 0)
 	return VOID;
       else if (arg == 0 || argsNode == 0)
@@ -1072,40 +1138,14 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
       int argsCount = argsStruct->count;
       argsStruct->args[argsStruct->count++] = SUB;
       argsStruct->args[argsStruct->count++] = argsNode;
-      Term newArgs = argsNet(argsStruct);
-      Term retry = pair_make(SUB, newArgs, ref);
+      Term newargs = argsNet(argsStruct);
+      Term retry = pair_make(SUB, newargs, ref);
       Loc subLoc = term_loc(argsStruct->args[argsCount]);
       fprintf(stderr, "subLoc %d: %x\n", __LINE__, subLoc);
       set(port(1, subLoc), retry);
       set(port(1, term_loc(neg)), term_new(VAR, 0, subLoc));
       link(neg, pos);
       argsStruct->count = -1;
-      return VOID;
-      break;
-
-    case VAL:
-    case I56:
-    case F56:
-    case REF:
-      argsStruct->args[argsStruct->count++] = arg;
-      return argsNode;
-      break;
-
-    case VAR:
-      BOOM("natveArgs");
-      /*
-      // fprintf(stderr, "VAR %d\n", __LINE__);
-      argsStruct->args[argsStruct->count++] = arg;
-      argsStruct->args[argsStruct->count++] = argsNode.snd;
-      varVal = vars_exchange(arg, node_make(RDX, ref, argsNet(argsStruct)));
-      if (varVal != NONE && varVal != FREE) {
-      // fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
-      if (get_tag(varVal) == RDX) {
-      push_redex(node_take(varVal));
-      }
-      }
-      argsStruct->count = -1;
-      // */
       return VOID;
       break;
 
