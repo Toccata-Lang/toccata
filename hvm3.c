@@ -153,6 +153,7 @@ bool isNegative(Term trm) {
 bool isPositive(Term trm) {
   switch(term_tag(trm)) {
   case LAZ:
+  case VAL:
   case VAR:
   case NUL:
   case LAM:
@@ -189,8 +190,8 @@ Term pair_make(Tag tag, Term fst, Term snd) {
   case LAM:
     if (isPositive(fst) || isNegative(snd)) {
       fprintf(stderr, "fst: %s %d  snd: %s %d\n",
-	      tag_to_str(term_tag(fst)), isNegative(fst),
-	      tag_to_str(term_tag(snd)), isPositive(snd));
+	      tag_to_str(term_tag(fst)), isPositive(fst),
+	      tag_to_str(term_tag(snd)), isNegative(snd));
       char s[50];
       sprintf(s, "bad %s pair", tag_to_str(tag));
       BOOM(s);
@@ -202,6 +203,17 @@ Term pair_make(Tag tag, Term fst, Term snd) {
       fprintf(stderr, "fst: %s %d  snd: %s %d\n",
 	      tag_to_str(term_tag(fst)), isNegative(fst),
 	      tag_to_str(term_tag(snd)), isPositive(snd));
+      char s[50];
+      sprintf(s, "bad %s pair", tag_to_str(tag));
+      BOOM(s);
+    }
+    break;
+    
+  case DUP:
+    if (isPositive(fst) || isPositive(snd)) {
+      fprintf(stderr, "fst: %s %d  snd: %s %d\n",
+	      tag_to_str(term_tag(fst)), isNegative(fst),
+	      tag_to_str(term_tag(snd)), isNegative(snd));
       char s[50];
       sprintf(s, "bad %s pair", tag_to_str(tag));
       BOOM(s);
@@ -316,7 +328,7 @@ void link(Term neg, Term pos) {
   }
   if ((neg == VAL && pos == VAL) ||
       (neg == APP && pos == LAM))
-    return;
+    BOOM("bad link");
   else if (neg == VAL || neg == SUB)
     BOOM("bad link");
   else if (posTag == VAR) {
@@ -675,6 +687,15 @@ static void interact_dupnul(Loc a_loc) {
   move(dp2, term_new(NUL, 0, a_loc));
 }
 
+static void interact_dupval(Loc a_loc, Term pos) {
+  Loc dp1 = port(1, a_loc);
+  Loc dp2 = port(2, a_loc);
+  fprintf(stderr, "dupval %d  dup1: %0x  dup2: %0x\n", __LINE__, dp1, dp2);
+  incRef(pos, 1);
+  move(dp1, pos);
+  move(dp2, pos);
+}
+
 static void interact_dupnum(Loc a_loc, Term pos) {
   Loc dp1 = port(1, a_loc);
   Loc dp2 = port(2, a_loc);
@@ -776,6 +797,28 @@ static void interact(Term neg, Term pos) {
     move(neg_loc, pos);
     break;
 
+  case SUB:
+    if (pos == NUL) {
+      set(port(1, neg_loc), VOID);
+      Term subNeg = take(port(2, neg_loc));
+      if (term_tag(subNeg != REF))
+	link(ERA, subNeg);
+    } else {
+      BOOM("bad link previously");
+    }
+    break;
+
+  case APP:
+    switch (pos_tag) {
+    case LAM: interact_applam(neg_loc, pos_loc); break;
+    case NUL: interact_appnul(neg_loc); break;
+      // case U32: interact_appu32(neg_loc, pos_loc); break;
+    case REF: interact_appref(neg, pos); break;
+    case SUP: interact_appsup(neg_loc, pos_loc); break;
+    }
+    break;
+
+    /*
   case VAL:
     switch (pos_tag) {
     case SUB:
@@ -800,28 +843,6 @@ static void interact(Term neg, Term pos) {
     }
     break;
     
-  case SUB:
-    if (pos == NUL) {
-      set(port(1, neg_loc), VOID);
-      Term subNeg = take(port(2, neg_loc));
-      if (term_tag(subNeg != REF))
-	link(ERA, subNeg);
-    } else {
-      BOOM("bad link previously");
-    }
-    break;
-
-  case APP:
-    switch (pos_tag) {
-    case LAM: interact_applam(neg_loc, pos_loc); break;
-    case NUL: interact_appnul(neg_loc); break;
-      // case U32: interact_appu32(neg_loc, pos_loc); break;
-    case REF: interact_appref(neg, pos); break;
-    case SUP: interact_appsup(neg_loc, pos_loc); break;
-    }
-    break;
-
-    /*
       case OPX:
       switch (pos_tag) {
       case LAM: break;
@@ -859,7 +880,7 @@ static void interact(Term neg, Term pos) {
 
   case DUP:
     switch (pos_tag) {
-    case VAL: incRef(pos, 1); break;
+    case VAL: interact_dupval(neg_loc, pos); break;
     case LAM: interact_duplam(neg_loc, pos_loc); break;
     case NUL: interact_dupnul(neg_loc); break;
       // case U32:
@@ -1024,17 +1045,17 @@ void spawn_threads_equal_to_cores() {
 Term argsNet(NativeArgs *args) {
   //*
   Term tail;
-  if(args->count < 2)
+  if(args->count < 1)
     BOOM("argsNet");
   else
     tail = args->args[args->count - 1];
 
-  for (int i = args->count - 2; i >= 1; i--) {
+  for (int i = args->count - 2; i >= 0; i--) {
     tail = pair_make(APP, args->args[i], tail);
     args->args[i] = tail;
   }
   
-  return pair_make(APP, args->args[0], tail);
+  return args->args[0];
   // */
 }
 
@@ -1083,9 +1104,9 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	  if (1) {
 	    argsStruct->args[argsStruct->count++] = arg;
 	    argsStruct->args[argsStruct->count++] = argsNode;
-	    Term newargs = argsNet(argsStruct);
-	    Term retry = pair_make(SUB, newargs, ref);
-	    set(term_loc(arg), retry);
+	    Term newArgs = argsNet(argsStruct);
+	    Term retry = pair_make(SUB, newArgs, ref);
+	    set(port(1, term_loc(arg)), retry);
 
 	    Term neg = take(port(1, term_loc(negVar)));
 	    Term pos = take(port(2, term_loc(negVar)));
@@ -1098,9 +1119,23 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	case VAL:
 	  if(1) {
 	    Term val = take(term_loc(arg));
-	    fprintf(stderr, "val %d %p\n", __LINE__, (void *)val);
 	    argsStruct->args[argsStruct->count++] = val;
 	    return argsNode;
+	  }
+	  break;
+
+	case SUB:
+	  if (negVar != SUB)
+	    BOOM("nativeArgs");
+	  else {
+	    argsStruct->args[argsStruct->count++] = args;
+	    Term newargs = argsNet(argsStruct);
+	    Term retry = pair_make(SUB, newargs, ref);
+	    set(port(1, term_loc(args)), arg);
+	    set(port(1, term_loc(arg)), retry);
+
+	    argsStruct->count = -1;
+	    return VOID;
 	  }
 	  break;
 
@@ -1141,7 +1176,6 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
       Term newargs = argsNet(argsStruct);
       Term retry = pair_make(SUB, newargs, ref);
       Loc subLoc = term_loc(argsStruct->args[argsCount]);
-      fprintf(stderr, "subLoc %d: %x\n", __LINE__, subLoc);
       set(port(1, subLoc), retry);
       set(port(1, term_loc(neg)), term_new(VAR, 0, subLoc));
       link(neg, pos);

@@ -2978,17 +2978,16 @@ int main (int argc, char **argv) {
       Value* sv = stringValue(argv[i]);
       argVect = mutateVectConj(argVect, term_val((Term)sv));
     }
-    // printf("finalResultVar %d  %p\n", __LINE__, (void *)finalResultVar);
     bashResult = 0;
     Term callArgs;
     callArgs = pair_make(APP, term_val((Term)argVect), SUB);
-    result = term_new(VAR, 0, port(2, term_loc(callArgs)));
+    Loc resultLoc = port(2, term_loc(callArgs));
+    fprintf(stderr, "resultLoc: %0x\n", resultLoc);
+    result = term_new(VAR, 0, resultLoc);
     link(callArgs, mainFn);
-    Tag resultTag;
+    normalize();
+    Tag resultTag = VAR;
     do {
-      normalize();
-      result = take(port(1, term_loc(result)));
-      resultTag = term_tag(result);
       printf("result %d: %s (%d) %p\n", __LINE__,
 	     tag_to_str(resultTag), resultTag, (void *)result);
 //*
@@ -3000,14 +2999,26 @@ int main (int argc, char **argv) {
 	break;
 	
       case SUB:
-	if (1) {
+	if (result != SUB) {
 	  Term neg = take(port(1, term_loc(result)));
 	  Term pos = take(port(2, term_loc(result)));
 	  link(neg, pos);
+	  normalize();
+	  result = take(resultLoc);
 	  // Pair rdx = node_take(result);
 	  // Pair args = node_load(rdx.snd);
 	  // finalResultVar = args.fst;
 	  // push_redex(rdx);
+	} else
+	  BOOM("Compiler screwed up. Incomplete result.");
+	break;
+
+      case VAR:
+	while (resultTag == VAR) {
+	  resultLoc = term_loc(result);
+	  fprintf(stderr, "resultLoc: %0x\n", resultLoc);
+	  result = take(resultLoc);
+	  resultTag = term_tag(result);
 	}
 	break;
 
@@ -3024,6 +3035,13 @@ int main (int argc, char **argv) {
 	}
 	break;
 // */
+      default:
+	if (1) {
+	  char s[50];
+	  sprintf(s, "bad result %s (%d) pair", tag_to_str(resultTag), resultTag);
+	  BOOM(s);
+	}
+	break;
       }
       // TODO: only for debugging. Remove ASAP
       // break;
