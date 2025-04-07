@@ -73,7 +73,7 @@
   (let [result-var (.var ast)]
     (-> (.args ast)
         (map .var)
-        (reduce ["// call 'vector' at " (ast/location ast) "\n"
+        (reduce ["  // call 'vector' at " (ast/location ast) "\n"
                  (cond (b/is-glbl result-var)
                        ""
                        ["Term " result-var ";\n"])
@@ -114,35 +114,41 @@
         result-var (.var ast)
         rev-args (reverse (.args ast))
         last-arg (either (first rev-args)
+                         ;; doesn't really matter what value is here
+                         ;; factor this out better, lot of redundancy where this is used
                          (.var (c/tag "") "NUL"))]
-    (se/state-error ["// call " (either (or (instance? c/TaggedSymbol tgt)
+    (se/state-error ["  // call " (either (or (instance? c/TaggedSymbol tgt)
                                             (get tgt .fn-sym))
                                         "")
                      " at " (ast/location (.args ast)) "\n"
-                     ["callArgs = SUB;\n"
+                     ["  callArgs = SUB;\n"
                       ;; TODO: make the .var of integer-ast include call to new_i56
                       (cond (instance? ast/integer-ast last-arg)
-                            ["callArgs = pair_make(APP, new_i56(" (.int last-arg) "), callArgs);\n"]
+                            ["  callArgs = pair_make(APP, new_i56(" (.int last-arg) "), callArgs);\n"]
 
                             (b/is-glbl (.var last-arg))
                             "BOOM(\"and check this\");\n"
 
-                            ["callArgs = pair_make(APP, " (.var last-arg) ", callArgs);\n"])
-                      "Loc " result-var " = port(2, term_loc(callArgs));\n"]
+                            (empty? rev-args)
+                            ["  callArgs = pair_make(APP, NUL, callArgs);\n"]
+
+                            ["  callArgs = pair_make(APP, term_new(VAR, 0, "
+                             (.var last-arg) "), callArgs);\n"])
+                      "  Loc " result-var " = port(2, term_loc(callArgs));\n"]
                      (-> rev-args
                          (rest)
                          (reduce []
                                  (fn [args arg]
                                    (cond (instance? ast/integer-ast arg)
                                          (conj args
-                                               ["callArgs = pair_make(APP, "
+                                               ["  callArgs = pair_make(APP, "
                                                 "new_i56(" (.int arg) "), callArgs);\n"])
                                          (let [arg-var (.var arg)]
                                            (cond (b/is-glbl arg-var)
                                                  (conj args "BOOM(\"and check this\");\n")
 
                                                  (conj args
-                                                       ["callArgs = pair_make(APP, "
+                                                       ["  callArgs = pair_make(APP, "
                                                         "term_new(VAR, 0, " arg-var
                                                         "), callArgs);\n"])))))))
                      (cond (b/is-glbl result-var)
@@ -151,7 +157,7 @@
                             result-var ")));\n"
                             "link(" (.var tgt) ", callArgs);\n"]
 
-                           ["set(" result-var ", pair_make(LAZ, callArgs, " (.var tgt) "));\n"])])))
+                           ["  set(" result-var ", pair_make(LAZ, callArgs, " (.var tgt) "));\n"])])))
 
 (defprotocol CodeGen
   (gen-code [ast]
@@ -224,13 +230,8 @@
                   (se/state-error ast)
 
                   se/zero-se)
-            (for [refs (se/update-in-val [.refs-map var] inc)
-                  :let [dupe-var (str var "_" refs)]
-                  _ (se/update-val .init
-                                   (fn [init]
-                                     ["\n" var " = dupeArg(" var, ", " dupe-var ");\n"
-                                      init]))]
-              (.var ast dupe-var))
+            (for [refs (se/update-in-val [.refs-map var] inc)]
+              (.var ast (str var "_" refs)))
             (cond (b/is-glbl var)
                   (flat-map (get-value ast)
                             (fn [val]
@@ -247,7 +248,7 @@
                                                               init]))]
                                       (.var ast dupe-var)))))
                   (for [_ (se/assoc-in-val [.refs-map var] 1)]
-                    ast)))))
+                    (.var ast (str var "_" 0)))))))
 
   (gen-call [sym call-ast]
     (either (map (get call-gens sym)
@@ -363,14 +364,25 @@
   (for [rm (se/get-val .refs-map)
         _ (se/update-val .init
                          (fn [init]
-                           ["// allocate args at " (ast/location params) "\n"
+                           ["  // allocate args at " (ast/location params) "\n"
                             (cata (fn [ast]
                                     (cond (instance? c/TaggedSymbol ast)
                                           (either (map (get rm (.var ast))
-                                                       (fn [_]
-                                                         [(str "Term " (.var ast) ";\n")]))
+                                                       (fn [refs-count]
+                                                         ["  Term " (.var ast)
+                                                          " = pair_make(DUP, SUB, SUB);\n"
+                                                          "  Term " (.var ast) "_0 = "
+                                                          "port(2, term_loc(" (.var ast) "));\n"
+                                                          (for [x (map (range (dec refs-count)) inc)]
+                                                            [(cond (< 1 x)
+                                                                   [(.var ast)
+                                                                    " = pair_make(DUP, SUB, "
+                                                                    (.var ast) ");\n"]
+                                                                   "")
+                                                             "  Term " (.var ast) "_" x " = "
+                                                             "port(1, term_loc(" (.var ast) "));\n"])]))
 
-                                                  (str "Term " (.var ast) " = ERA;\n"))
+                                                  ["  Term " (.var ast) " = ERA;\n"])
 
                                           (instance? ast/params-ast ast)
                                           (.fixed ast)
@@ -468,7 +480,7 @@
                                       .init
                                       (fn [init]
                                         [init
-                                         "// cause all internal expressions to be reduced\n"
+                                         "  // cause all internal expressions to be reduced\n"
                                          (map (butlast body)
                                               (fn [expr]
                                                 (let [v (.var expr)]
@@ -476,26 +488,26 @@
                                                         ""
 
                                                         (b/is-Rslt v)
-                                                        ["move(" v ", ERA);\n"]
+                                                        ["  move(" v ", ERA);\n"]
 
                                                         (do
                                                           (print-err 'BOOMITY _FILE_ _LINE_)
                                                           "")))))
-                                         "\n// link args to body\n"
+                                         "  // link args to body\n"
                                          (cond (instance? ast/integer-ast last-ast)
                                                ["Term " (.var params) " = new_i56(" (.int last-ast)
                                                 ");\n"]
 
                                                [;; move 'resultVar' to the location holding the SUB
                                                 ;; which triggers this function being reduced
-                                                "move(" last-v ", SUB);\n"
-                                                "Term " (.var params) " = term_new(VAR, 0, "
+                                                "  move(" last-v ", SUB);\n"
+                                                "  Term " (.var params) " = term_new(VAR, 0, "
                                                 last-v ");\n"])
                                          (map (.fixed params)
                                               (fn [param]
-                                                (str (.var params) " = pair_make(LAM, " (.var param)
-                                                     ", " (.var params) ");\n")))
-                                         "link(args, " (.var params) ");\n"]))]
+                                                ["  " (.var params) " = pair_make(LAM, " (.var param)
+                                                 ", " (.var params) ");\n"]))
+                                         "  link(args, " (.var params) ");\n"]))]
                                (.var ast (.var params)))))))
               (b/compilation-error "Invalid function body at:" (ast/location ast))))))
 
@@ -531,15 +543,15 @@
                                        ") {\n"
                                        (name-natives params)]
 
-                                      ["Term callArgs;\n"])
+                                      ["  Term callArgs;\n"])
                                 init
                                 (cond inline?
                                       ["\n    move(port(2, term_loc(args)), result);\n  }\n"
                                        "  return TRUE;\n}\n"
-                                       "  Term " (.var ast) " = new_ref(" c-fn ");\n"]
+                                       "Term " (.var ast) " = new_ref(" c-fn ");\n"]
 
                                       ["  return TRUE;\n}\n"
-                                       "  Term " (.var ast) " = new_ref(" c-fn ");\n"])]))]
+                                       "Term " (.var ast) " = new_ref(" c-fn ");\n"])]))]
         ast)))
 
   (gen-call [sym call-ast]
@@ -709,7 +721,7 @@
                          (ast/string-ast loc (b/global-var 'Str)
                                          c/string-constraint)
                          gen-code)]
-        ["// call " (either (or (instance? c/TaggedSymbol tgt)
+        ["  // call " (either (or (instance? c/TaggedSymbol tgt)
                                 (get tgt .fn-sym))
                             "")
          " at " (ast/location args) "\n"
@@ -722,10 +734,10 @@
              (reverse)
              (comp [(str "new_num_(new_i24_(" (.line loc) "))")
                     (.var file-str) (.var call-ast)])
-             (reduce (str "callArgs = APP;" line-sep)
+             (reduce (str "  callArgs = APP;" line-sep)
                      (fn [args arg]
                        (str args
-                            "callArgs = pair_make(ARG, " arg
+                            "  callArgs = pair_make(ARG, " arg
                             ", callArgs);" line-sep))))
          (cond (b/is-glbl (.var call-ast))
                ["link(" (.var tgt) ", callArgs);"]
