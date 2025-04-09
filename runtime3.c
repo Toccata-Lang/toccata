@@ -2981,6 +2981,7 @@ int main (int argc, char **argv) {
     bashResult = 0;
     Term callArgs;
     callArgs = pair_make(APP, term_val((Term)argVect), SUB);
+    fprintf(stderr, "argVect %d: %p\n", __LINE__, (void *)argVect);
     Loc resultLoc = port(2, term_loc(callArgs));
     fprintf(stderr, "resultLoc: %0x\n", resultLoc);
     result = term_new(VAR, 0, resultLoc);

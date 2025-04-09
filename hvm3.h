@@ -111,6 +111,7 @@ void move(Loc neg_loc, Term pos);
 Term takeAndCheck(Loc loc);
 Term take(Loc loc);
 void set(Loc loc, Term term);
+Term get(Loc loc);
 Term swap(Loc loc, Term term);
 Term nativeArg(Term ref, Term args, NativeArgs *argsStruct);
 u64 time64();

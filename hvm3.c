@@ -320,53 +320,116 @@ void link(Term neg, Term pos) {
 	  (void *)pos, tag_to_str(term_tag(pos)));
   Tag negTag = term_tag(neg);
   Tag posTag = term_tag(pos);
-  if (isPositive(neg)) {
+  if (neg == VOID || pos == VOID)
+    BOOM("linking VOID");
+  if (isPositive(neg))
     BOOM("linking from a positive");
-  }
-  if (isNegative(pos)) {
-    BOOM("lin!king to a negative");
-  }
+  if (isNegative(pos))
+    BOOM("linking to a negative");
   if ((neg == VAL && pos == VAL) ||
       (neg == APP && pos == LAM))
     BOOM("bad link");
   else if (neg == VAL || neg == SUB)
     BOOM("bad link");
-  else if (posTag == VAR) {
-    Term far = swap(term_loc(pos), neg);
-    Tag t = term_tag(far);
-    if (t == VAR) {
-      take(term_loc(pos));
-      link(neg, far);
-    } else if (t != SUB) {
-      fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
-	      (void *)pos, tag_to_str(term_tag(pos)),
-	      (void *)neg, tag_to_str(term_tag(neg)),
-	      (void *)far, tag_to_str(term_tag(far)));
-      BOOM("linking non SUB");
-      move(term_loc(pos), far);
-    } else if (far != SUB) {
-      fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
-	      (void *)pos, tag_to_str(term_tag(pos)),
-	      (void *)neg, tag_to_str(term_tag(neg)),
-	      (void *)far, tag_to_str(term_tag(far)));
-      Loc sub_loc = term_loc(far);
-      Term app = takeAndCheck(port(1, sub_loc));
-      Term lam = takeAndCheck(port(2, sub_loc));
-      if (term_tag(app) == APP) {
-	// set(port(1, term_loc(app)), neg);
-	link(app, lam);
-      } else {
-	fprintf(stderr, "sub_loc: %d  pos: %s %p\n",
-		sub_loc, tag_to_str(term_tag(pos)), (void *)pos);
-	BOOM("bad link");
+  else {
+    switch (posTag) {
+    case LAZ:
+      rbag_push(neg, pos);
+      break;
+      
+    case VAR:
+      if (1) {
+	Term far = get(term_loc(pos));
+	Tag t = term_tag(far);
+	if (t == VAR) {
+	  take(term_loc(pos));
+	  link(neg, far);
+	} else if (t == LAZ) {
+	  if (negTag == DUP) {
+	    Term newZ = pair_make(LAZ, neg, pos);
+	    move(port(1, term_loc(neg)), newZ);
+	    move(port(2, term_loc(neg)), newZ);
+	  }
+	  else {
+	    take(term_loc(pos));
+	    link(neg, far);
+	  }
+	} else if (t != SUB) {
+	  fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
+		  (void *)pos, tag_to_str(term_tag(pos)),
+		  (void *)neg, tag_to_str(term_tag(neg)),
+		  (void *)far, tag_to_str(term_tag(far)));
+	  link(neg, far);
+	} else if (far != SUB) {
+	  fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
+		  (void *)pos, tag_to_str(term_tag(pos)),
+		  (void *)neg, tag_to_str(term_tag(neg)),
+		  (void *)far, tag_to_str(term_tag(far)));
+	  take(term_loc(pos));
+	  Loc sub_loc = term_loc(far);
+	  Term app = takeAndCheck(port(1, sub_loc));
+	  Term lam = takeAndCheck(port(2, sub_loc));
+	  if (term_tag(app) == APP) {
+	    // set(port(1, term_loc(app)), neg);
+	    link(app, lam);
+	  } else {
+	    fprintf(stderr, "sub_loc: %d  pos: %s %p\n",
+		    sub_loc, tag_to_str(term_tag(pos)), (void *)pos);
+	    BOOM("bad link");
+	  }
+	}
       }
+      break;
+      
+    default:
+      rbag_push(neg, pos);
+      break;
     }
-    // */
-  } else {
-    rbag_push(neg, pos);
   }
+    // */
 }
 
+
+void forceLazy(Term z) {
+  fprintf(stderr, "forcing lazy %d: %p\n", __LINE__, (void *)z);
+  Term neg = take(port(1, term_loc(z)));
+  Term pos = get(port(2, term_loc(z)));
+  if (neg != VOID) {
+    if (term_tag(neg) == DUP && term_tag(pos) == LAZ) {
+      BOOM("ever happen?");
+      Term curr = swap(port(1, term_loc(neg)), SUB);
+      if (curr != z)
+	set(port(1, term_loc(neg)), z);
+      curr = swap(port(2, term_loc(neg)), SUB);
+      if (curr != z)
+	set(port(2, term_loc(neg)), z);
+      set(port(2, term_loc(z)), neg);
+      forceLazy(pos);
+    } else if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
+      Term curr = swap(port(1, term_loc(neg)), SUB);
+      if (curr != z)
+	set(port(1, term_loc(neg)), z);
+      curr = swap(port(2, term_loc(neg)), SUB);
+      if (curr != z)
+	set(port(2, term_loc(neg)), z);
+
+      Term newPos = get(term_loc(pos));
+      while (term_tag(newPos) == VAR) {
+	pos = newPos;
+	newPos = get(term_loc(pos));
+      }
+      if (term_tag(newPos) == LAZ) {
+	set(term_loc(pos), pair_make(SUB, neg, pos));
+	forceLazy(newPos);
+      } else
+	link(neg, newPos);
+      take(port(2, term_loc(z)));
+    } else {
+      take(port(2, term_loc(z)));
+      link(neg, pos);
+    }
+  }
+}
 
 void move(Loc neg_loc, Term pos) {
   Term neg = swap(neg_loc, pos);
@@ -379,10 +442,7 @@ void move(Loc neg_loc, Term pos) {
       link(neg, pos);
     }
   } else if (negTag == LAZ) {
-    Loc laz_loc = term_loc(neg);
-    Term neg = takeAndCheck(port(1, laz_loc));
-    Term pos = takeAndCheck(port(2, laz_loc));
-    link(neg, pos);
+    forceLazy(neg);
   } else {
     // No need to take() since we already swapped
     link(neg, pos);
@@ -690,7 +750,6 @@ static void interact_dupnul(Loc a_loc) {
 static void interact_dupval(Loc a_loc, Term pos) {
   Loc dp1 = port(1, a_loc);
   Loc dp2 = port(2, a_loc);
-  fprintf(stderr, "dupval %d  dup1: %0x  dup2: %0x\n", __LINE__, dp1, dp2);
   incRef(pos, 1);
   move(dp1, pos);
   move(dp2, pos);
@@ -1078,6 +1137,7 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   Term varVal;
   switch(argsTag) {
   case APP:
+    // TODO: walk through all the args and queue up any LAZ nodes
     arg = takeAndCheck(port(1, term_loc(args)));
     // only look at port 2 of args. It will be taken in the caller if needed.
     Term argsNode = get(port(2, term_loc(args)));
@@ -1102,15 +1162,19 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	switch(term_tag(negVar)) {
 	case LAZ:
 	  if (1) {
+	    fprintf(stderr, "arg %d: %p  argsNode: %p\n", __LINE__, (void *)arg, (void *)argsNode);
 	    argsStruct->args[argsStruct->count++] = arg;
 	    argsStruct->args[argsStruct->count++] = argsNode;
 	    Term newArgs = argsNet(argsStruct);
 	    Term retry = pair_make(SUB, newArgs, ref);
-	    set(port(1, term_loc(arg)), retry);
-
-	    Term neg = take(port(1, term_loc(negVar)));
-	    Term pos = take(port(2, term_loc(negVar)));
-	    link(neg, pos);
+	    forceLazy(negVar);
+	    Term newArg = swap(port(1, term_loc(arg)), retry);
+	    if (newArg != SUB) {
+	      set(port(1, term_loc(arg)), newArg);
+	      take(port(1, term_loc(retry)));
+	      take(port(2, term_loc(retry)));
+	      link(newArgs, ref);
+	    }
 	  }
 	  argsStruct->count = -1;
 	  return VOID;
@@ -1129,8 +1193,9 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	    BOOM("nativeArgs");
 	  else {
 	    argsStruct->args[argsStruct->count++] = args;
-	    Term newargs = argsNet(argsStruct);
-	    Term retry = pair_make(SUB, newargs, ref);
+	    Term newArgs = argsNet(argsStruct);
+	    fprintf(stderr, "newArgs %d: %p\n", __LINE__, (void *)newArgs);
+	    Term retry = pair_make(SUB, newArgs, ref);
 	    set(port(1, term_loc(args)), arg);
 	    set(port(1, term_loc(arg)), retry);
 
@@ -1173,8 +1238,8 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
       int argsCount = argsStruct->count;
       argsStruct->args[argsStruct->count++] = SUB;
       argsStruct->args[argsStruct->count++] = argsNode;
-      Term newargs = argsNet(argsStruct);
-      Term retry = pair_make(SUB, newargs, ref);
+      Term newArgs = argsNet(argsStruct);
+      Term retry = pair_make(SUB, newArgs, ref);
       Loc subLoc = term_loc(argsStruct->args[argsCount]);
       set(port(1, subLoc), retry);
       set(port(1, term_loc(neg)), term_new(VAR, 0, subLoc));
