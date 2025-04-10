@@ -1135,6 +1135,8 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   //	  tag_to_str(argsTag), argsTag, (void *)args);
   Term arg;
   Term varVal;
+  Term retry;
+  Term newArgs;
   switch(argsTag) {
   case APP:
     // TODO: walk through all the args and queue up any LAZ nodes
@@ -1163,12 +1165,12 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	case LAZ:
 	  if (1) {
 	    fprintf(stderr, "arg %d: %p  argsNode: %p\n", __LINE__, (void *)arg, (void *)argsNode);
-	    argsStruct->args[argsStruct->count++] = arg;
-	    argsStruct->args[argsStruct->count++] = argsNode;
-	    Term newArgs = argsNet(argsStruct);
-	    Term retry = pair_make(SUB, newArgs, ref);
+	    argsStruct->args[argsStruct->count++] = args;
+	    set(port(1, term_loc(args)), arg);
+	    newArgs = argsNet(argsStruct);
+	    retry = pair_make(SUB, newArgs, ref);
 	    forceLazy(negVar);
-	    Term newArg = swap(port(1, term_loc(arg)), retry);
+	    Term newArg = swap(term_loc(arg), retry);
 	    if (newArg != SUB) {
 	      set(port(1, term_loc(arg)), newArg);
 	      take(port(1, term_loc(retry)));
@@ -1193,9 +1195,9 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	    BOOM("nativeArgs");
 	  else {
 	    argsStruct->args[argsStruct->count++] = args;
-	    Term newArgs = argsNet(argsStruct);
+	    newArgs = argsNet(argsStruct);
 	    fprintf(stderr, "newArgs %d: %p\n", __LINE__, (void *)newArgs);
-	    Term retry = pair_make(SUB, newArgs, ref);
+	    retry = pair_make(SUB, newArgs, ref);
 	    set(port(1, term_loc(args)), arg);
 	    set(port(1, term_loc(arg)), retry);
 
@@ -1238,8 +1240,8 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
       int argsCount = argsStruct->count;
       argsStruct->args[argsStruct->count++] = SUB;
       argsStruct->args[argsStruct->count++] = argsNode;
-      Term newArgs = argsNet(argsStruct);
-      Term retry = pair_make(SUB, newArgs, ref);
+      newArgs = argsNet(argsStruct);
+      retry = pair_make(SUB, newArgs, ref);
       Loc subLoc = term_loc(argsStruct->args[argsCount]);
       set(port(1, subLoc), retry);
       set(port(1, term_loc(neg)), term_new(VAR, 0, subLoc));
