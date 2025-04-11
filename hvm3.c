@@ -1119,11 +1119,7 @@ Term argsNet(NativeArgs *args) {
 }
 
 // extract the requested number of native args
-Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
-  if (argsStruct->count < 0 || args == VOID) {
-    return VOID;
-  }
-
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   // if (argsStruct->count > 0) {
   // fprintf(stderr, "nativeArg %d: %p %d %p\n", __LINE__, (void *)ref, argsStruct->count,
   // (void *)get_i24(get_val(argsStruct->args[argsStruct->count - 1])));
@@ -1137,56 +1133,47 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
   Term varVal;
   Term retry;
   Term newArgs;
+  Term newArg;
   switch(argsTag) {
   case APP:
     // TODO: walk through all the args and queue up any LAZ nodes
     arg = takeAndCheck(port(1, term_loc(args)));
+    if (expected == 0) {
+      return args;
+    }
+
     // only look at port 2 of args. It will be taken in the caller if needed.
-    Term argsNode = get(port(2, term_loc(args)));
     Tag argTag = term_tag(arg);
     // fprintf(stderr, "arg 2 %d: %d %p\n", __LINE__, argTag, (void *)arg);
     switch(argTag) {
+      // the strict arg types
     case VAL:
     case I56:
     case F56:
     case REF:
       argsStruct->args[argsStruct->count++] = arg;
-      return argsNode;
-      break;
-
-    case NUL:
-      return argsNode;
+      if (expected > 1)
+	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+      else
+	return args;
       break;
 
     case VAR:
       if (1) {
 	Term negVar = get(term_loc(arg));
 	switch(term_tag(negVar)) {
-	case LAZ:
-	  if (1) {
-	    fprintf(stderr, "arg %d: %p  argsNode: %p\n", __LINE__, (void *)arg, (void *)argsNode);
-	    argsStruct->args[argsStruct->count++] = args;
-	    set(port(1, term_loc(args)), arg);
-	    newArgs = argsNet(argsStruct);
-	    retry = pair_make(SUB, newArgs, ref);
-	    forceLazy(negVar);
-	    Term newArg = swap(term_loc(arg), retry);
-	    if (newArg != SUB) {
-	      set(port(1, term_loc(arg)), newArg);
-	      take(port(1, term_loc(retry)));
-	      take(port(2, term_loc(retry)));
-	      link(newArgs, ref);
-	    }
-	  }
-	  argsStruct->count = -1;
-	  return VOID;
-	  break;
-
+	  // the strict arg types
 	case VAL:
+	case I56:
+	case F56:
+	case REF:
 	  if(1) {
 	    Term val = take(term_loc(arg));
 	    argsStruct->args[argsStruct->count++] = val;
-	    return argsNode;
+	    if (expected > 1)
+	      return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+	    else
+	      return args;
 	  }
 	  break;
 
@@ -1196,14 +1183,39 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 	  else {
 	    argsStruct->args[argsStruct->count++] = args;
 	    newArgs = argsNet(argsStruct);
-	    fprintf(stderr, "newArgs %d: %p\n", __LINE__, (void *)newArgs);
-	    retry = pair_make(SUB, newArgs, ref);
 	    set(port(1, term_loc(args)), arg);
-	    set(port(1, term_loc(arg)), retry);
-
+	    retry = pair_make(SUB, newArgs, ref);
+	    newArg = swap(term_loc(arg), retry);
+	    if (newArg != SUB) {
+	      // someone slipped the needed arg in since we last looked
+	      set(term_loc(arg), newArg);
+	      take(port(1, term_loc(retry)));
+	      take(port(2, term_loc(retry)));
+	      link(newArgs, ref);
+	    }
 	    argsStruct->count = -1;
 	    return VOID;
 	  }
+	  break;
+
+	case LAZ:
+	  fprintf(stderr, "args %d: %p  arg: %p\n", __LINE__,
+		  (void *)args, (void *)arg);
+	  argsStruct->args[argsStruct->count++] = args;
+	  newArgs = argsNet(argsStruct);
+	  set(port(1, term_loc(args)), arg);
+	  retry = pair_make(SUB, newArgs, ref);
+	  forceLazy(negVar);
+	  newArg = swap(term_loc(arg), retry);
+	  if (newArg != negVar) {
+	    // someone slipped the needed arg in since we last looked
+	    set(port(1, term_loc(arg)), newArg);
+	    take(port(1, term_loc(retry)));
+	    take(port(2, term_loc(retry)));
+	    link(newArgs, ref);
+	  }
+	  argsStruct->count = -1;
+	  return VOID;
 	  break;
 
 	default:
@@ -1231,6 +1243,7 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
 
     case SUB:
       BOOM("natveArgs");
+      /*
       if (arg == 0 && argsNode == 0)
 	return VOID;
       else if (arg == 0 || argsNode == 0)
@@ -1247,6 +1260,7 @@ Term nativeArg(Term ref, Term args, NativeArgs *argsStruct) {
       set(port(1, term_loc(neg)), term_new(VAR, 0, subLoc));
       link(neg, pos);
       argsStruct->count = -1;
+	// */
       return VOID;
       break;
 

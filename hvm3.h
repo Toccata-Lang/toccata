@@ -113,7 +113,7 @@ Term take(Loc loc);
 void set(Loc loc, Term term);
 Term get(Loc loc);
 Term swap(Loc loc, Term term);
-Term nativeArg(Term ref, Term args, NativeArgs *argsStruct);
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
 u64 time64();
 void hvm_init();
 void hvm_free();
