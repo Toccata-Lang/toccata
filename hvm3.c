@@ -331,19 +331,32 @@ void link(Term neg, Term pos) {
     BOOM("bad link");
   else if (neg == VAL || neg == SUB)
     BOOM("bad link");
+  else if (negTag == ERA && posTag == LAZ)
+    fprintf(stderr, "erasing lazy node %d\n", __LINE__);
   else {
     switch (posTag) {
     case VAR:
       if (1) {
 	Term far = get(term_loc(pos));
 	Tag t = term_tag(far);
-	if (t != SUB) {
-/*
+	if (negTag == DUP && t == LAZ) {
 	  fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
 		  (void *)pos, tag_to_str(term_tag(pos)),
 		  (void *)neg, tag_to_str(term_tag(neg)),
 		  (void *)far, tag_to_str(term_tag(far)));
-// */
+	  Term newZ = pair_make(LAZ, neg, pos);
+	  Term curr = get(port(1, term_loc(neg)));
+	  move(port(1, term_loc(neg)), newZ);
+	  if (term_tag(curr) != SUB) {
+	    link(curr, term_new(VAR, 0, get(port(1, term_loc(neg)))));
+	  }
+
+	  curr = get(port(2, term_loc(neg)));
+	  move(port(2, term_loc(neg)), newZ);
+	  if (term_tag(curr) != SUB) {
+	    link(curr, term_new(VAR, 0, get(port(2, term_loc(neg)))));
+	  }
+	} else if (t != SUB) {
 	  take(term_loc(pos));
 	  link(neg, far);
 	} else if (far != SUB) {
@@ -381,11 +394,11 @@ void link(Term neg, Term pos) {
 void forceLazy(Term z) {
   Term neg = take(port(1, term_loc(z)));
   Loc posLoc = port(2, term_loc(z));
-  fprintf(stderr, "forcing lazy %d: %p  posLoc: %0x\n", __LINE__, (void *)z, posLoc);
   Term pos = get(posLoc);
   if (neg != VOID) {
     if (term_tag(neg) == DUP && term_tag(pos) == LAZ) {
       Term curr = swap(port(1, term_loc(neg)), SUB);
+      fprintf(stderr, "forcing lazy DUP/LAZ %d: %p  posLoc: %0x\n", __LINE__, (void *)z, posLoc);
       if (curr != z)
 	set(port(1, term_loc(neg)), curr);
       curr = swap(port(2, term_loc(neg)), SUB);
@@ -394,6 +407,7 @@ void forceLazy(Term z) {
       set(posLoc, pair_make(SUB, neg, term_new(VAR, 0, posLoc)));
       forceLazy(pos);
     } else if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
+      fprintf(stderr, "forcing lazy DUP/VAR %d: %p  posLoc: %0x\n", __LINE__, (void *)z, posLoc);
       Term curr = swap(port(1, term_loc(neg)), SUB);
       if (curr != z)
 	set(port(1, term_loc(neg)), curr);
@@ -957,6 +971,7 @@ static void interact(Term neg, Term pos) {
     case F56: break;
     case REF: break;
     case SUP: interact_erasup(pos_loc); break;
+    case LAZ: BOOM("erasing lazy node");
     }
     break;
 
