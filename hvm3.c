@@ -333,38 +333,26 @@ void link(Term neg, Term pos) {
     BOOM("bad link");
   else {
     switch (posTag) {
-    case LAZ:
-      rbag_push(neg, pos);
-      break;
-      
     case VAR:
       if (1) {
 	Term far = get(term_loc(pos));
 	Tag t = term_tag(far);
-	if (t == VAR) {
+	if (t != SUB) {
+/*
+	  fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
+		  (void *)pos, tag_to_str(term_tag(pos)),
+		  (void *)neg, tag_to_str(term_tag(neg)),
+		  (void *)far, tag_to_str(term_tag(far)));
+// */
 	  take(term_loc(pos));
 	  link(neg, far);
-	} else if (t == LAZ) {
-	  if (negTag == DUP) {
-	    Term newZ = pair_make(LAZ, neg, pos);
-	    move(port(1, term_loc(neg)), newZ);
-	    move(port(2, term_loc(neg)), newZ);
-	  }
-	  else {
-	    take(term_loc(pos));
-	    link(neg, far);
-	  }
-	} else if (t != SUB) {
-	  fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
-		  (void *)pos, tag_to_str(term_tag(pos)),
-		  (void *)neg, tag_to_str(term_tag(neg)),
-		  (void *)far, tag_to_str(term_tag(far)));
-	  link(neg, far);
 	} else if (far != SUB) {
+/*
 	  fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
 		  (void *)pos, tag_to_str(term_tag(pos)),
 		  (void *)neg, tag_to_str(term_tag(neg)),
 		  (void *)far, tag_to_str(term_tag(far)));
+// */
 	  take(term_loc(pos));
 	  Loc sub_loc = term_loc(far);
 	  Term app = takeAndCheck(port(1, sub_loc));
@@ -391,27 +379,27 @@ void link(Term neg, Term pos) {
 
 
 void forceLazy(Term z) {
-  fprintf(stderr, "forcing lazy %d: %p\n", __LINE__, (void *)z);
   Term neg = take(port(1, term_loc(z)));
-  Term pos = get(port(2, term_loc(z)));
+  Loc posLoc = port(2, term_loc(z));
+  fprintf(stderr, "forcing lazy %d: %p  posLoc: %0x\n", __LINE__, (void *)z, posLoc);
+  Term pos = get(posLoc);
   if (neg != VOID) {
     if (term_tag(neg) == DUP && term_tag(pos) == LAZ) {
-      BOOM("ever happen?");
       Term curr = swap(port(1, term_loc(neg)), SUB);
       if (curr != z)
-	set(port(1, term_loc(neg)), z);
+	set(port(1, term_loc(neg)), curr);
       curr = swap(port(2, term_loc(neg)), SUB);
       if (curr != z)
-	set(port(2, term_loc(neg)), z);
-      set(port(2, term_loc(z)), neg);
+	set(port(2, term_loc(neg)), curr);
+      set(posLoc, pair_make(SUB, neg, term_new(VAR, 0, posLoc)));
       forceLazy(pos);
     } else if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
       Term curr = swap(port(1, term_loc(neg)), SUB);
       if (curr != z)
-	set(port(1, term_loc(neg)), z);
+	set(port(1, term_loc(neg)), curr);
       curr = swap(port(2, term_loc(neg)), SUB);
       if (curr != z)
-	set(port(2, term_loc(neg)), z);
+	set(port(2, term_loc(neg)), curr);
 
       Term newPos = get(term_loc(pos));
       while (term_tag(newPos) == VAR) {
@@ -437,9 +425,9 @@ void move(Loc neg_loc, Term pos) {
   if (negTag == SUB) {
     if (neg != SUB) {
       Loc sub_loc = term_loc(neg);
-      Term neg = takeAndCheck(port(1, sub_loc));
-      Term pos = takeAndCheck(port(2, sub_loc));
-      link(neg, pos);
+      Term subNeg = takeAndCheck(port(1, sub_loc));
+      Term subPos = takeAndCheck(port(2, sub_loc));
+      link(subNeg, subPos);
     }
   } else if (negTag == LAZ) {
     forceLazy(neg);
@@ -767,6 +755,12 @@ static void interact_dupref(Loc a_loc, Loc b_loc) {
   move(port(2, a_loc), term_new(REF, 0, b_loc));
 }
 
+static void interact_duplaz(Term neg, Term z) {
+  Term newZ = pair_make(LAZ, neg, z);
+  move(port(1, term_loc(neg)), newZ);
+  move(port(2, term_loc(neg)), newZ);
+}
+
 /*
 static void interact_matnul(Loc a_loc, Lab mat_len) {
   move(port(1, a_loc), term_new(NUL, 0, 0));
@@ -949,6 +943,7 @@ static void interact(Term neg, Term pos) {
     case REF: interact_dupref(neg_loc, pos_loc); break;
       // case REF: link(neg, expand_ref(pos_loc)); break;
     case SUP: interact_dupsup(neg_loc, pos_loc); break;
+    case LAZ: interact_duplaz(neg, pos); break;
     }
     break;
 
