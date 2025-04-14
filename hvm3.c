@@ -331,9 +331,10 @@ void link(Term neg, Term pos) {
     BOOM("bad link");
   else if (neg == VAL || neg == SUB)
     BOOM("bad link");
-  else if (negTag == ERA && posTag == LAZ)
+  else if (negTag == ERA && posTag == LAZ) {
     fprintf(stderr, "erasing lazy node %d\n", __LINE__);
-  else {
+    rbag_push(neg, pos);
+  } else {
     switch (posTag) {
     case VAR:
       if (1) {
@@ -853,6 +854,31 @@ static void interact_erasup(Loc b_loc) {
   link(ERA, tm2);
 }
 
+static void interact_eralaz(Loc b_loc) {
+  Term negLaz = take(port(1, b_loc));
+  Term posLaz = take(port(2, b_loc));
+  switch(term_tag(negLaz)) {
+  case DUP:
+    BOOM("erasing a lazy DUP");
+    // take(port(1, term_loc(tm1)));
+    // take(port(1, term_loc(tm1)));
+    break;
+
+  case APP:
+    set(port(2, term_loc(negLaz)), ERA);
+    link(negLaz, NUL);
+    break;
+
+  default:
+    if (1) {
+      char s[50];
+      sprintf(s, "unhandled kind of lazyz  %s", tag_to_str(term_tag(negLaz)));
+      BOOM(s);
+    }
+  }
+  link(ERA, posLaz);
+}
+
 static void interact(Term neg, Term pos) {
   Tag neg_tag = term_tag(neg);
   Tag pos_tag = term_tag(pos);
@@ -971,7 +997,7 @@ static void interact(Term neg, Term pos) {
     case F56: break;
     case REF: break;
     case SUP: interact_erasup(pos_loc); break;
-    case LAZ: BOOM("erasing lazy node");
+    case LAZ: interact_eralaz(pos_loc); break;
     }
     break;
 
