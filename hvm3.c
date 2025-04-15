@@ -331,31 +331,117 @@ void link(Term neg, Term pos) {
     BOOM("bad link");
   else if (neg == VAL || neg == SUB)
     BOOM("bad link");
-  else if (negTag == ERA && posTag == LAZ) {
-    fprintf(stderr, "erasing lazy node %d\n", __LINE__);
-    rbag_push(neg, pos);
-  } else {
+  else {
     switch (posTag) {
+    case LAZ:
+      BOOM("shouldn't ever happen because you can't take a lazy location");
+      break;
+      
     case VAR:
       if (1) {
 	Term far = get(term_loc(pos));
 	Tag t = term_tag(far);
-	if (negTag == DUP && t == LAZ) {
-	  fprintf(stderr, "pos %d: %p %s neg: %p %s far: %p %s\n", __LINE__,
-		  (void *)pos, tag_to_str(term_tag(pos)),
-		  (void *)neg, tag_to_str(term_tag(neg)),
-		  (void *)far, tag_to_str(term_tag(far)));
-	  Term newZ = pair_make(LAZ, neg, pos);
-	  Term curr = get(port(1, term_loc(neg)));
-	  move(port(1, term_loc(neg)), newZ);
-	  if (term_tag(curr) != SUB) {
-	    link(curr, term_new(VAR, 0, get(port(1, term_loc(neg)))));
-	  }
 
-	  curr = get(port(2, term_loc(neg)));
-	  move(port(2, term_loc(neg)), newZ);
-	  if (term_tag(curr) != SUB) {
-	    link(curr, term_new(VAR, 0, get(port(2, term_loc(neg)))));
+	// if the VAR is pointing to a lazy, you can't just take it
+	if (t == LAZ) {
+	  switch(negTag) {
+	  case DUP:
+	    if (1) {
+	      Term dup1 = get(port(1, term_loc(neg)));
+	      Term dup2 = get(port(2, term_loc(neg)));
+
+	      if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
+		take(port(1, term_loc(neg)));
+		take(port(2, term_loc(neg)));
+		eraseLazy(pos);
+	      } else if (term_tag(dup1) == ERA) {
+		take(port(1, term_loc(neg)));
+		// take(port(2, term_loc(neg)));
+		move(port(2, term_loc(neg)), pos);
+	      } else if (term_tag(dup2) == ERA) {
+		// take(port(1, term_loc(neg)));
+		take(port(2, term_loc(neg)));
+		move(port(1, term_loc(neg)), pos);
+	      } else {
+		Term newZ = pair_make(LAZ, neg, pos);
+		// TODO: factor this out into move
+		dup1 = swap(port(1, term_loc(neg)), newZ);
+		switch (term_tag(dup1)) {
+		case DUP:
+		  link(dup1, term_new(VAR, 0, port(1, term_loc(neg))));
+		  break;
+
+		case SUB:
+		  if (dup1 != SUB) {
+		    Loc sub_loc = term_loc(dup1);
+		    Term subNeg = takeAndCheck(port(1, sub_loc));
+		    Term subPos = takeAndCheck(port(2, sub_loc));
+		    link(subNeg, subPos);
+		  }
+		  break;
+
+		default:
+		  if (1) {
+		    char s[150];
+		    sprintf(s, "unhandled kind of duped %s", tag_to_str(term_tag(dup1)));
+		    BOOM(s);
+		    break;
+		  }
+		}
+
+		dup2 = swap(port(2, term_loc(neg)), newZ);
+		switch (term_tag(dup2)) {
+		case DUP:
+		  link(dup2, term_new(VAR, 0, port(2, term_loc(neg))));
+		  break;
+
+		case SUB:
+		  if (dup2 != SUB) {
+		    Loc sub_loc = term_loc(dup2);
+		    Term subNeg = takeAndCheck(port(1, sub_loc));
+		    Term subPos = takeAndCheck(port(2, sub_loc));
+		    link(subNeg, subPos);
+		  }
+		  break;
+
+		default:
+		  if (2) {
+		    char s[250];
+		    sprintf(s, "unhandled kind of duped %s", tag_to_str(term_tag(dup2)));
+		    BOOM(s);
+		    break;
+		  }
+		}
+	      }
+	    }
+	    break;
+
+	  case SUB:
+	    if (neg != SUB) {
+	      Loc sub_loc = term_loc(neg);
+	      Term app = takeAndCheck(port(1, sub_loc));
+	      Term lam = takeAndCheck(port(2, sub_loc));
+	      if (term_tag(app) == APP) {
+		link(app, lam);
+	      } else {
+		fprintf(stderr, "sub_loc: %d  pos: %s %p\n",
+			sub_loc, tag_to_str(term_tag(pos)), (void *)pos);
+		BOOM("bad link");
+	      }
+	    }
+	    break;
+
+	  case ERA:
+	    eraseLazy(pos);
+	    break;
+
+	  default:
+	    if (1) {
+	      char s[150];
+	      sprintf(s, "unhandled kind of lazy %s %p", tag_to_str(negTag), (void *)neg);
+	      BOOM(s);
+	      break;
+	    }
 	  }
 	} else if (t != SUB) {
 	  take(term_loc(pos));
@@ -391,6 +477,42 @@ void link(Term neg, Term pos) {
     // */
 }
 
+void eraseLazy(Term lazyVar) {
+  if (term_tag(lazyVar) != VAR)
+    BOOM("Trying to erase a non-var LAZ");
+
+  Term laz = swap(term_loc(lazyVar), ERA);
+  Loc lazyLoc = term_loc(laz);
+  Term negLaz = get(port(1, lazyLoc));
+  Term posLaz = get(port(2, lazyLoc));
+  switch(term_tag(negLaz)) {
+  case DUP:
+    if (1) {
+      Term dup1 = get(port(1, term_loc(negLaz)));
+      Term dup2 = get(port(2, term_loc(negLaz)));
+
+      if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
+	take(port(1, term_loc(negLaz)));
+	take(port(2, term_loc(negLaz)));
+	eraseLazy(posLaz);
+      }
+    }
+    break;
+
+  case APP:
+    link(negLaz, NUL);
+    link(ERA, posLaz);
+    break;
+
+  default:
+    if (1) {
+      char s[50];
+      sprintf(s, "unhandled kind of lazy  %s", tag_to_str(term_tag(negLaz)));
+      BOOM(s);
+    }
+    break;
+  }
+}
 
 void forceLazy(Term z) {
   Term neg = take(port(1, term_loc(z)));
@@ -422,8 +544,10 @@ void forceLazy(Term z) {
 	newPos = get(term_loc(pos));
       }
       if (term_tag(newPos) == LAZ) {
-	set(term_loc(pos), pair_make(SUB, neg, pos));
-	forceLazy(newPos);
+	// set(term_loc(pos), pair_make(SUB, neg, pos));
+	// forceLazy(newPos);
+	BOOM("this is almost right");
+	move(term_loc(newPos), pair_make(SUB, neg, pos));
       } else
 	link(neg, newPos);
       take(port(2, term_loc(z)));
@@ -435,8 +559,13 @@ void forceLazy(Term z) {
 }
 
 void move(Loc neg_loc, Term pos) {
-  Term neg = swap(neg_loc, pos);
+  Term neg = get(neg_loc);
   Tag negTag = term_tag(neg);
+  // TODO: still need this?
+  if (negTag == ERA && term_tag(pos) == LAZ && term_tag(get(port(1, term_loc(pos)))) == DUP) {
+    return;
+  }
+  swap(neg_loc, pos);
   if (negTag == SUB) {
     if (neg != SUB) {
       Loc sub_loc = term_loc(neg);
@@ -770,12 +899,6 @@ static void interact_dupref(Loc a_loc, Loc b_loc) {
   move(port(2, a_loc), term_new(REF, 0, b_loc));
 }
 
-static void interact_duplaz(Term neg, Term z) {
-  Term newZ = pair_make(LAZ, neg, z);
-  move(port(1, term_loc(neg)), newZ);
-  move(port(2, term_loc(neg)), newZ);
-}
-
 /*
 static void interact_matnul(Loc a_loc, Lab mat_len) {
   move(port(1, a_loc), term_new(NUL, 0, 0));
@@ -852,31 +975,6 @@ static void interact_erasup(Loc b_loc) {
   Term tm2 = takeAndCheck(port(2, b_loc));
   link(ERA, tm1);
   link(ERA, tm2);
-}
-
-static void interact_eralaz(Loc b_loc) {
-  Term negLaz = take(port(1, b_loc));
-  Term posLaz = take(port(2, b_loc));
-  switch(term_tag(negLaz)) {
-  case DUP:
-    BOOM("erasing a lazy DUP");
-    // take(port(1, term_loc(tm1)));
-    // take(port(1, term_loc(tm1)));
-    break;
-
-  case APP:
-    set(port(2, term_loc(negLaz)), ERA);
-    link(negLaz, NUL);
-    break;
-
-  default:
-    if (1) {
-      char s[50];
-      sprintf(s, "unhandled kind of lazyz  %s", tag_to_str(term_tag(negLaz)));
-      BOOM(s);
-    }
-  }
-  link(ERA, posLaz);
 }
 
 static void interact(Term neg, Term pos) {
@@ -983,7 +1081,7 @@ static void interact(Term neg, Term pos) {
     case REF: interact_dupref(neg_loc, pos_loc); break;
       // case REF: link(neg, expand_ref(pos_loc)); break;
     case SUP: interact_dupsup(neg_loc, pos_loc); break;
-    case LAZ: interact_duplaz(neg, pos); break;
+    case LAZ: BOOM("shouldn't ever happen because you can't take a lazy location");
     }
     break;
 
@@ -997,7 +1095,7 @@ static void interact(Term neg, Term pos) {
     case F56: break;
     case REF: break;
     case SUP: interact_erasup(pos_loc); break;
-    case LAZ: interact_eralaz(pos_loc); break;
+    case LAZ: BOOM("shouldn't ever happen because you can't take a lazy location");
     }
     break;
 
@@ -1012,12 +1110,14 @@ static void interact(Term neg, Term pos) {
     default:
       fprintf(stderr, "bad tag: %s (%d) %p\n", tag_to_str(neg_tag), neg_tag, (void *)neg);
       BOOM("unhandled tag");
+      break;
     }
     break;
 
   default:
     fprintf(stderr, "bad tag: %s (%d) %p\n", tag_to_str(neg_tag), neg_tag, (void *)neg);
     BOOM("unhandled tag");
+    break;
   }
 }
 
@@ -1231,6 +1331,14 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	    }
 	    argsStruct->count = -1;
 	    return VOID;
+	  }
+	  break;
+
+	case VAR:
+	  if (1) {
+	    Term newVar = take(term_loc(arg));
+	    set(port(1, term_loc(args)), newVar);
+	    return strictArgs(ref, args, expected, argsStruct);
 	  }
 	  break;
 
