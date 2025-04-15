@@ -313,6 +313,7 @@ char* def_name(Loc def_idx) {
 
 // Atomic Linker
 void move(Loc neg_loc, u64 pos);
+void eraseLazy(Term lazyVar);
 
 void link(Term neg, Term pos) {
   fprintf(stderr, "linking %d: neg: %p %s pos: %p %s\n", __LINE__,
@@ -516,43 +517,49 @@ void eraseLazy(Term lazyVar) {
 
 void forceLazy(Term z) {
   Term neg = take(port(1, term_loc(z)));
-  Loc posLoc = port(2, term_loc(z));
-  Term pos = get(posLoc);
   if (neg != VOID) {
+    Term pos = take(port(2, term_loc(z)));
     if (term_tag(neg) == DUP && term_tag(pos) == LAZ) {
+      BOOM("we do need this, it appears");
+      /*
       Term curr = swap(port(1, term_loc(neg)), SUB);
-      fprintf(stderr, "forcing lazy DUP/LAZ %d: %p  posLoc: %0x\n", __LINE__, (void *)z, posLoc);
       if (curr != z)
 	set(port(1, term_loc(neg)), curr);
+      BOOM("don't swap");
       curr = swap(port(2, term_loc(neg)), SUB);
       if (curr != z)
 	set(port(2, term_loc(neg)), curr);
-      set(posLoc, pair_make(SUB, neg, term_new(VAR, 0, posLoc)));
+      // set(posLoc, pair_make(SUB, neg, term_new(VAR, 0, posLoc)));
       forceLazy(pos);
+      // */
     } else if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
-      fprintf(stderr, "forcing lazy DUP/VAR %d: %p  posLoc: %0x\n", __LINE__, (void *)z, posLoc);
-      Term curr = swap(port(1, term_loc(neg)), SUB);
-      if (curr != z)
-	set(port(1, term_loc(neg)), curr);
-      curr = swap(port(2, term_loc(neg)), SUB);
-      if (curr != z)
-	set(port(2, term_loc(neg)), curr);
+      Term curr = get(port(1, term_loc(neg)));
+      if (curr == z)
+	set(port(1, term_loc(neg)), SUB);
+      curr = get(port(2, term_loc(neg)));
+      if (curr == z)
+	set(port(2, term_loc(neg)), SUB);
 
-      Term newPos = get(term_loc(pos));
+      Term newPos = take(term_loc(pos));
       while (term_tag(newPos) == VAR) {
 	pos = newPos;
-	newPos = get(term_loc(pos));
+	newPos = take(term_loc(pos));
       }
-      if (term_tag(newPos) == LAZ) {
-	// set(term_loc(pos), pair_make(SUB, neg, pos));
-	// forceLazy(newPos);
-	BOOM("this is almost right");
-	move(term_loc(newPos), pair_make(SUB, neg, pos));
-      } else
+      switch(term_tag(newPos)) {
+      case LAZ:
+	set(term_loc(pos), pair_make(SUB, neg, pos));
+	fprintf(stderr, "*** what if newPos is not lazy? %d\n", __LINE__);
+	forceLazy(newPos);
+	break;
+
+      case SUB:
+	set(term_loc(pos), pair_make(SUB, neg, term_new(VAR, 0, term_loc(pos))));
+	break;
+
+      default:
 	link(neg, newPos);
-      take(port(2, term_loc(z)));
+      }
     } else {
-      take(port(2, term_loc(z)));
       link(neg, pos);
     }
   }
@@ -1349,15 +1356,8 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	  newArgs = argsNet(argsStruct);
 	  set(port(1, term_loc(args)), arg);
 	  retry = pair_make(SUB, newArgs, ref);
-	  forceLazy(negVar);
 	  newArg = swap(term_loc(arg), retry);
-	  if (newArg != negVar) {
-	    // someone slipped the needed arg in since we last looked
-	    set(port(1, term_loc(arg)), newArg);
-	    take(port(1, term_loc(retry)));
-	    take(port(2, term_loc(retry)));
-	    link(newArgs, ref);
-	  }
+	  forceLazy(negVar);
 	  argsStruct->count = -1;
 	  return VOID;
 	  break;
