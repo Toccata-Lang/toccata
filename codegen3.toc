@@ -117,7 +117,7 @@
                          ;; doesn't really matter what value is here
                          ;; factor this out better, lot of redundancy where this is used
                          (.var (c/tag "") "NUL"))]
-    (se/state-error ["  // call " (either (or (instance? c/TaggedSymbol tgt)
+    (se/state-error ["\n  // call " (either (or (instance? c/TaggedSymbol tgt)
                                             (get tgt .fn-sym))
                                         "")
                      " at " (ast/location (.args ast)) "\n"
@@ -127,14 +127,16 @@
                             ["  callArgs = pair_make(APP, new_i56(" (.int last-arg) "), callArgs);\n"]
 
                             (b/is-glbl (.var last-arg))
-                            "BOOM(\"and check this\");\n"
+                            ["  callArgs = pair_make(APP, " (.var last-arg) ", callArgs);\n"]
 
                             (empty? rev-args)
                             ["  callArgs = pair_make(APP, NUL, callArgs);\n"]
 
                             ["  callArgs = pair_make(APP, term_new(VAR, 0, "
                              (.var last-arg) "), callArgs);\n"])
-                      "  Loc " result-var " = port(2, term_loc(callArgs));\n"]
+                      (cond (b/is-glbl result-var)
+                            ["  " result-var " = term_new(VAR, 0, port(2, term_loc(callArgs)));\n"]
+                            ["  Loc " result-var " = port(2, term_loc(callArgs));\n"])]
                      (-> rev-args
                          (rest)
                          (reduce []
@@ -152,10 +154,7 @@
                                                         "term_new(VAR, 0, " arg-var
                                                         "), callArgs);\n"])))))))
                      (cond (b/is-glbl result-var)
-                           ["BOOM(\"initing global " result-var " \");\n"
-                            "set(term_loc(callArgs), term_new(VAR, 0, port(1, term_loc("
-                            result-var ")));\n"
-                            "link(" (.var tgt) ", callArgs);\n"]
+                           ["  link(callArgs, " (.var tgt) ");\n"]
 
                            ["  set(" result-var ", pair_make(LAZ, callArgs, " (.var tgt) "));\n"])])))
 
@@ -233,20 +232,8 @@
             (for [refs (se/update-in-val [.refs-map var] inc)]
               (.var ast (str var "_" refs)))
             (cond (b/is-glbl var)
-                  (flat-map (get-value ast)
-                            (fn [val]
-                              (cond (or (instance? b/StaticArity val)
-                                        (instance? ast/integer-ast val))
-                                    (se/state-error ast)
+                  (se/state-error ast)
 
-                                    (for [_ (se/assoc-in-val [.refs-map var] 2)
-                                          :let [dupe-var (str var "_" 1)]
-                                          _ (se/update-val .init
-                                                           (fn [init]
-                                                             ["\n" var " = dupeArg(" var, ", "
-                                                              dupe-var ");\n"
-                                                              init]))]
-                                      (.var ast dupe-var)))))
                   (for [_ (se/assoc-in-val [.refs-map var] 1)]
                     (.var ast (str var "_" 0)))))))
 
@@ -643,8 +630,7 @@
 
             (for [init (se/update-val .init (fn [_] []))
                   _ (se/update-val .glbl-init (fn [glbl-init]
-                                                (comp glbl-init
-                                                      "if(1){" init "}" line-sep)))
+                                                [glbl-init init]))
                   _ (cond (or (instance? b/StaticArity expr)
                               (instance? ast/string-ast expr)
                               (instance? ast/integer-ast expr))
@@ -654,7 +640,10 @@
                           (se/update-val .decl (fn [decl]
                                                  [decl "// main fn\n"]))
 
-                          b/se-nop)]
+                          (se/update-val .decl (fn [decl]
+                                                 [decl
+                                                  "Term " (.var expr) "; // global val "
+                                                  sym "\n"])))]
               ast)))))
 
 (extend-type ast/integer-ast
@@ -924,13 +913,26 @@
                     "  Term callArgs;\n"
                     (.glbl-init code-context)
                     (cond (first dyn-glbls)
-                          "  normalize();\n"
+                          ["  normalize();\n"
+                           (map dyn-glbls
+                                (fn [ast]
+                                  (let [var (.var ast)]
+                                    ["  " var "= take(term_loc(" var "));\n"
+                                     "  if (term_tag(" var ") == VAL)\n"
+                                     "    ((Value *)" var ")->refs = REFS_STATIC;\n"
+                                     "  else if (term_tag(" var ") != I56)\n"
+                                     "    BOOM(\"Invalid global value at "
+                                     (ast/location ast) "\");\n"])))]
                           "")
                     "}\n"
                     "void freeGlobals(){\n"
                     (map dyn-glbls
-                         (fn [var]
-                           (str "  link(ERA, " var ");\n")))
+                         (fn [ast]
+                           (let [var (.var ast)]
+                             ["  if (term_tag(" var ") == VAL) {\n"
+                              "    ((Value *)" var ")->refs = 1;\n"
+                              "    dec_and_free(" var ", 1);\n"
+                              "  }\n"])))
                     (cond (first dyn-glbls)
                           "  normalize();\n"
                           "")
