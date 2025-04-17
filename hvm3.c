@@ -417,6 +417,10 @@ void link(Term neg, Term pos) {
 	    }
 	    break;
 
+	  case APP:
+	    move(term_loc(pos), pair_make(SUB, neg, term_new(VAR, 0, term_loc(pos))));
+	    break;
+
 	  case SUB:
 	    if (neg != SUB) {
 	      Loc sub_loc = term_loc(neg);
