@@ -2993,6 +2993,10 @@ int main (int argc, char **argv) {
 	     tag_to_str(resultTag), resultTag, (void *)result);
 //*
       switch (resultTag) {
+      case I56:
+      case F56:
+	break;
+	
       case NUL:
       case ERA:
 	result = new_i56(0);
@@ -3017,10 +3021,17 @@ int main (int argc, char **argv) {
       case VAR:
 	while (resultTag == VAR) {
 	  resultLoc = term_loc(result);
-	  fprintf(stderr, "resultLoc: %0x\n", resultLoc);
 	  result = take(resultLoc);
 	  resultTag = term_tag(result);
 	}
+	break;
+
+      case LAZ:
+	forceLazy(result);
+	set(resultLoc, SUB);
+	normalize();
+	result = term_new(VAR, 0, resultLoc);
+	resultTag = VAR;
 	break;
 
 /*

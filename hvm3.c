@@ -323,7 +323,7 @@ void link(Term neg, Term pos) {
   Tag posTag = term_tag(pos);
   if (neg == VOID || pos == VOID)
     BOOM("linking VOID");
-  if (isPositive(neg))
+  if (negTag != NUL && isPositive(neg))
     BOOM("linking from a positive");
   if (isNegative(pos))
     BOOM("linking to a negative");
@@ -438,6 +438,10 @@ void link(Term neg, Term pos) {
 
 	  case ERA:
 	    eraseLazy(pos);
+	    break;
+
+	  case NUL:
+	    move(term_loc(pos), NUL);
 	    break;
 
 	  default:
@@ -575,6 +579,13 @@ void move(Loc neg_loc, Term pos) {
   // TODO: still need this?
   if (negTag == ERA && term_tag(pos) == LAZ && term_tag(get(port(1, term_loc(pos)))) == DUP) {
     return;
+  }
+  if (term_tag(pos) == VAR) {
+    Term z = get(term_loc(pos));
+    if (term_tag(z) != LAZ) {
+      move(neg_loc, take(term_loc(pos)));
+      return;
+    }
   }
   swap(neg_loc, pos);
   if (negTag == SUB) {
@@ -1096,6 +1107,7 @@ static void interact(Term neg, Term pos) {
     }
     break;
 
+  case NUL:
   case ERA:
     switch (pos_tag) {
     case VAL: dec_and_free(pos, 1); break;
