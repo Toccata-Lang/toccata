@@ -126,15 +126,18 @@
                       (cond (instance? ast/integer-ast last-arg)
                             ["  callArgs = pair_make(APP, new_i56(" (.int last-arg) "), callArgs);\n"]
 
-                            (b/is-glbl (.var last-arg))
-                            ["  callArgs = pair_make(APP, " (.var last-arg) ", callArgs);\n"]
+                            (b/is-glbl-rslt (.var last-arg))
+                            ["  callArgs = pair_make(APP, dupeGlobal(" (.var last-arg)
+                             "), callArgs);\n"]
 
                             (empty? rev-args)
                             ["  callArgs = pair_make(APP, NUL, callArgs);\n"]
 
                             ["  callArgs = pair_make(APP, " (.var last-arg) ", callArgs);\n"])
-                      (cond (b/is-glbl result-var)
-                            ["  " result-var " = term_new(VAR, 0, port(2, term_loc(callArgs)));\n"]
+                      (cond (b/is-glbl-rslt result-var)
+                            ["  " result-var
+                             " = port(1, term_loc(pair_make(APP, term_new(VAR, 0, "
+                             "port(2, term_loc(callArgs))), SUB)));\n"]
                             ["  Term " result-var
                              " = term_new(VAR, 0, port(2, term_loc(callArgs)));\n"])]
                      (-> rev-args
@@ -152,7 +155,7 @@
                                                  (conj args
                                                        ["  callArgs = pair_make(APP, "
                                                         arg-var ", callArgs);\n"])))))))
-                     (cond (b/is-glbl result-var)
+                     (cond (b/is-glbl-rslt result-var)
                            ["  link(callArgs, " (.var tgt) ");\n"]
 
                            (b/is-Rslt result-var)
@@ -242,18 +245,19 @@
                     (.var ast (str var "_" 0)))))))
 
   (gen-call [sym call-ast]
-    (either (map (get call-gens sym)
-                 (fn [cg]
-                   (se/state-error (cg call-ast))))
-            (flat-map (se/try
-                        (get-value sym)
-                        (fn [c]
-                          (se/state-error sym)))
-                      (fn [tgt-val]
-                        (cond (instance? c/TaggedSymbol tgt-val)
-                              (generic-call call-ast)
+    ;; TODO: implement fast ops
+    ;; (either (map (get call-gens sym)
+    ;;              (fn [cg]
+    ;;                (se/state-error (cg call-ast)))))
+    (flat-map (se/try
+                (get-value sym)
+                (fn [c]
+                  (se/state-error sym)))
+              (fn [tgt-val]
+                (cond (instance? c/TaggedSymbol tgt-val)
+                      (generic-call call-ast)
 
-                              (gen-call tgt-val call-ast)))))))
+                      (gen-call tgt-val call-ast))))))
 
 (extend-type ast/field-ast
   CodeGen
@@ -649,7 +653,7 @@
 
                           (se/update-val .decl (fn [decl]
                                                  [decl
-                                                  "Term " (.var expr) "; // global val "
+                                                  "Loc " (.var expr) "; // global val "
                                                   sym "\n"])))]
               ast)))))
 
@@ -731,7 +735,8 @@
                             "  callArgs = pair_make(ARG, " arg
                             ", callArgs);" line-sep))))
          (cond (b/is-glbl (.var call-ast))
-               ["link(" (.var tgt) ", callArgs);"]
+               ["BOOM(\"calling global\");\n"
+                "link(" (.var tgt) ", callArgs);"]
 
                ["vars_create(" (.var call-ast) ", node_make(SUB, "
                 (.var tgt) ", callArgs));"])
@@ -920,27 +925,32 @@
                     "  Term callArgs;\n"
                     (.glbl-init code-context)
                     (cond (first dyn-glbls)
-                          ["  normalize();\n"
+                          ["  int moreToDo = 1;\n"
+                           "  while(moreToDo) {\n"
+                           "    moreToDo = 0;\n"
+                           "    Term trm;\n"
+                           "    normalize();\n"
                            (map dyn-glbls
                                 (fn [ast]
                                   (let [var (.var ast)]
-                                    ["  if (term_tag(" var ") == VAR)\n"
-                                     "    " var " = take(term_loc(" var "));\n"
-                                     "  if (term_tag(" var ") == VAL)\n"
-                                     "    ((Value *)" var ")->refs = REFS_STATIC;\n"
-                                     "  else if (term_tag(" var ") != I56)\n"
-                                     "    BOOM(\"Invalid global value at "
-                                     (ast/location ast) "\");\n"])))]
+                                    ["    trm = get(" var ");\n"
+                                     "    while (term_tag(trm) == VAR) {\n"
+                                     "      " var " = term_loc(take(" var "));\n"
+                                     "      trm = get(" var ");\n"
+                                     "    }\n"
+                                     "    if (term_tag(trm) == LAZ) {\n"
+                                     "      moreToDo = 1;\n"
+                                     "      set(" var ", SUB);\n"
+                                     "      forceLazy(trm);\n"
+                                     "    }\n"])))
+                            "}\n"]
                           "")
                     "}\n"
                     "void freeGlobals(){\n"
                     (map dyn-glbls
                          (fn [ast]
                            (let [var (.var ast)]
-                             ["  if (term_tag(" var ") == VAL) {\n"
-                              "    ((Value *)" var ")->refs = 1;\n"
-                              "    dec_and_free(" var ", 1);\n"
-                              "  }\n"])))
+                             [" link(ERA, take(" var "));\n"])))
                     (cond (first dyn-glbls)
                           "  normalize();\n"
                           "")

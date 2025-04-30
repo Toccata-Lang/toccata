@@ -338,6 +338,7 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount);
 void moveFreeToCentral();
 void freeGlobals();
 void normGlobals();
+Term dupeGlobal(Loc glbl);
 Term dupeVal(Term *v);
 extern Term construct;
 Term nothing();

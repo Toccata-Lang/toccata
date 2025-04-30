@@ -2778,6 +2778,70 @@ Value *newTypeValue(int typeNum, Vector *vect) {
   return((Value *)rv);
 }
 
+Term dupeGlobal(Loc glbl) {
+  Term duper = pair_make(DUP, SUB, SUB);
+  Term gTerm = swap(glbl, term_new(VAR, 0, port(1, term_loc(duper))));
+
+  switch(term_tag(gTerm)) {
+  case VAL:
+  case I56:
+  case F56:
+  case NUL:
+  case REF:
+    set(glbl, gTerm);
+    link(duper, gTerm);
+    break;
+
+  case LAM:
+  case SUP:
+    link(duper, gTerm);
+    break;
+
+  case VAR:
+    if (1) {
+      Term varTerm = swap(term_loc(gTerm), duper);
+      while(term_tag(varTerm) == VAR)
+	varTerm = take(term_loc(varTerm));
+      switch(term_tag(varTerm)) {
+      case VAL:
+      case I56:
+      case F56:
+      case NUL:
+      case REF:
+	set(glbl, varTerm);
+	link(duper, varTerm);
+	break;
+
+      case LAM:
+      case SUP:
+	link(duper, varTerm);
+	break;
+
+      case SUB:
+	break;
+	
+      default:
+	if (1) {
+	  char s[50];
+	  sprintf(s, "bad global tag %s", tag_to_str(term_tag(varTerm)));
+	  BOOM(s);
+	}
+      }
+    }
+     
+    break;
+
+  case LAZ:
+  default:
+    if (1) {
+      char s[50];
+      sprintf(s, "bad global tag %s", tag_to_str(term_tag(gTerm)));
+      BOOM(s);
+    }
+  }
+  return term_new(VAR, 0, port(2, term_loc(duper)));
+}
+
 #if 0
 bool constructFn(Term ref, Term args) {
   Pair pr = node_take(args);

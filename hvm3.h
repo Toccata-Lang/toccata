@@ -49,6 +49,7 @@ typedef bool (*interactionFn)(Term a, Term b);
 
 #define new_i56(x) (((u64)x << TAG_SIZE) | I56)
 #define get_i56(x) (i64)((i64)x >> TAG_SIZE)
+#define new_num(type, x) (((u64)x << TAG_SIZE) | type)
 
 // Operators
 #define OP_ADD 0x00

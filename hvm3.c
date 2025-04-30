@@ -159,6 +159,8 @@ bool isPositive(Term trm) {
   case LAM:
   case REF:
   case SUP:
+  case I56:
+  case F56:
   case OPX:
     return TRUE;
 
@@ -587,8 +589,8 @@ void move(Loc neg_loc, Term pos) {
       return;
     }
   }
-  swap(neg_loc, pos);
   if (negTag == SUB) {
+    swap(neg_loc, pos);
     if (neg != SUB) {
       Loc sub_loc = term_loc(neg);
       Term subNeg = takeAndCheck(port(1, sub_loc));
@@ -596,9 +598,10 @@ void move(Loc neg_loc, Term pos) {
       link(subNeg, subPos);
     }
   } else if (negTag == LAZ) {
+    swap(neg_loc, pos);
     forceLazy(neg);
   } else {
-    // No need to take() since we already swapped
+    take(neg_loc);
     link(neg, pos);
   }
 }
@@ -724,11 +727,11 @@ static void interact_opxnul(Loc a_loc) {
   Term arg = takeAndCheck(port(1, a_loc));
   Loc  ret = port(2, a_loc);
   link(ERA, arg);
-  move(ret, term_new(NUL, 0, 0));
+  move(ret, NUL);
 }
 
 static void interact_opxnum(Loc a_loc, Lab op, u32 num, Tag num_type) {
-  Term arg = swap(port(1, a_loc), term_new(num_type, 0, num));
+  Term arg = swap(port(1, a_loc), new_num(num_type, num));
   link(term_new(OPY, op, a_loc), arg);
 }
 
