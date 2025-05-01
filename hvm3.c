@@ -1103,12 +1103,9 @@ static void interact(Term neg, Term pos) {
     case VAL: interact_dupval(neg_loc, pos); break;
     case LAM: interact_duplam(neg_loc, pos_loc); break;
     case NUL: interact_dupnul(neg_loc); break;
-      // case U32:
     case I56:
     case F56: interact_dupnum(neg_loc, pos); break;
-      // TODO(enricozb): dup-ref optimization
     case REF: interact_dupref(neg_loc, pos); break;
-      // case REF: link(neg, expand_ref(pos_loc)); break;
     case SUP: interact_dupsup(neg_loc, pos_loc); break;
     case LAZ: BOOM("shouldn't ever happen because you can't take a lazy location");
     }
@@ -1120,7 +1117,6 @@ static void interact(Term neg, Term pos) {
     case VAL: dec_and_free(pos, 1); break;
     case LAM: interact_eralam(pos_loc); break;
     case NUL: break;
-      // case U32: break;
     case I56: break;
     case F56: break;
     case REF: break;
