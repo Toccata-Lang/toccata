@@ -476,6 +476,10 @@ void link(Term neg, Term pos) {
 		    sub_loc, tag_to_str(term_tag(pos)), (void *)pos);
 	    BOOM("bad link");
 	  }
+	} else {
+	  // linking something to a SUB
+	  // 'far' is an empty SUB
+	  move(term_loc(pos), neg);
 	}
       }
       break;
@@ -919,9 +923,9 @@ static void interact_dupnum(Loc a_loc, Term pos) {
   move(dp2, pos);
 }
 
-static void interact_dupref(Loc a_loc, Loc b_loc) {
-  move(port(1, a_loc), term_new(REF, 0, b_loc));
-  move(port(2, a_loc), term_new(REF, 0, b_loc));
+static void interact_dupref(Loc a_loc, Term ref) {
+  move(port(1, a_loc), ref);
+  move(port(2, a_loc), ref);
 }
 
 /*
@@ -1103,7 +1107,7 @@ static void interact(Term neg, Term pos) {
     case I56:
     case F56: interact_dupnum(neg_loc, pos); break;
       // TODO(enricozb): dup-ref optimization
-    case REF: interact_dupref(neg_loc, pos_loc); break;
+    case REF: interact_dupref(neg_loc, pos); break;
       // case REF: link(neg, expand_ref(pos_loc)); break;
     case SUP: interact_dupsup(neg_loc, pos_loc); break;
     case LAZ: BOOM("shouldn't ever happen because you can't take a lazy location");
