@@ -1211,24 +1211,26 @@ Vector *mutateVectConj(Vector *vect, Term val) {
   }
 }
 
-#if 0
-bool hvmVectConjFn(Term ref, Term args){
-  Pair pr = node_take(args);
-  Term resultVar = pr.fst;
-  args = pr.snd;
-  NativeArgs arityArgs = {0, {}, resultVar};
-  args = nativeArg(ref, args, &arityArgs);
-  args = nativeArg(ref, args, &arityArgs);
-  if (arityArgs.count == 2) {
-    link(args, ERA);
-    Vector *v = (Vector *)((u64)arityArgs.args[0] & ~7);
-    Vector *newV = vectConj(v, arityArgs.args[1]);
-    link(resultVar, term_val((Term)newV));
+bool hvmVectFn(Term ref, Term args){
+  NativeArgs arityArgs = {0, {}};
+  Term newArgs = strictArgs(ref, args, 1, &arityArgs);
+  if (arityArgs.count == 1) {
+    newArgs = take(port(2, term_loc(newArgs)));
+    long vectLen = get_i56(arityArgs.args[0]);
+    arityArgs.count = 0;
+    Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs);
+    if (arityArgs.count == vectLen) {
+      Vector *newV = empty_vect;
+      for (int i = 0; i < arityArgs.count; i++)
+	newV = vectConj(newV, arityArgs.args[i]);
+      move(port(2, term_loc(lastArgs)), term_val((Term)newV));
+    }
   }
   return TRUE;
 }
-Term hvmVectConj = new_port_(REF, hvmVectConjFn);
+Term hvmVect = new_ref(hvmVectFn);
 
+#if 0
 VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Term val) {
   if (level == 0) {
     int arrayIndex = index & 0x1f;

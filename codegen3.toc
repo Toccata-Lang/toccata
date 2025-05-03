@@ -70,23 +70,29 @@
 (defn call-vector [ast]
   (assert (instance? ast/call-ast ast))
 
-  (let [result-var (.var ast)]
-    (-> (.args ast)
-        (map .var)
-        (reduce ["  // call 'vector' at " (ast/location ast) "\n"
-                 (cond (b/is-glbl result-var)
-                       ""
-                       ["Term " result-var ";\n"])
-                 result-var " = (Term)empty_vect;\n" ]
-                (fn [v arg]
-                  [v
-                   "callArgs = APP;\n"
-                   "callArgs = node_make(ARG, " arg ", callArgs);\n"
-                   "callArgs = node_make(ARG, " result-var ", callArgs);\n"
-                   result-var " = vars_alloc();\n"
-                   "callArgs = node_make(ARG, " result-var ", callArgs);\n"
-                   "vars_create(" result-var ", node_make(SUB, "
-                   "hvmVectConj, callArgs));\n"])))))
+  (let [result-var (.var ast)
+        arg-vars (-> (.args ast)
+                     (map .var))]
+    [(reduce (rest arg-vars)
+             ["  // call 'vector' at " (ast/location ast) "\n"
+              "  callArgs = SUB;\n"
+              (either (map (first arg-vars)
+                           (fn [first-var]
+                             ["  callArgs = pair_make(APP, " first-var ", callArgs);\n"]))
+                      ["  callArgs = pair_make(APP, NUL, callArgs);\n"])
+              (cond (b/is-glbl-rslt result-var)
+                    ["  " result-var
+                     " = port(1, term_loc(pair_make(APP, term_new(VAR, 0, "
+                     "port(2, term_loc(callArgs))), SUB)));\n"]
+                    ["  Term " result-var
+                     " = term_new(VAR, 0, port(2, term_loc(callArgs)));\n"])]
+             (fn [v arg]
+               [v "  callArgs = pair_make(APP, " arg ", callArgs);\n"]))
+     ["  callArgs = pair_make(APP, new_i56(" (count arg-vars) "), callArgs);\n"
+      (cond (b/is-glbl-rslt result-var)
+            ["  link(callArgs, hvmVect);\n"]
+
+            ["  set(term_loc(" result-var "), pair_make(LAZ, callArgs, hvmVect));\n"])]]))
 
 (defn call-op [op]
   (fn [ast]
@@ -104,8 +110,8 @@
             (abort)))))
 
 (def call-gens {'vector call-vector
-                '+ (call-op "OP_ADD")
-                '- (call-op "OP_SUB")
+                ;; '+ (call-op "OP_ADD")
+                ;; '- (call-op "OP_SUB")
                 })
 
 (defn generic-call [ast]
@@ -252,18 +258,18 @@
 
   (gen-call [sym call-ast]
     ;; TODO: implement fast ops
-    ;; (either (map (get call-gens sym)
-    ;;              (fn [cg]
-    ;;                (se/state-error (cg call-ast)))))
-    (flat-map (se/try
-                (get-value sym)
-                (fn [c]
-                  (se/state-error sym)))
-              (fn [tgt-val]
-                (cond (instance? c/TaggedSymbol tgt-val)
-                      (generic-call call-ast)
+    (either (map (get call-gens sym)
+                 (fn [cg]
+                   (se/state-error (cg call-ast))))
+            (flat-map (se/try
+                        (get-value sym)
+                        (fn [c]
+                          (se/state-error sym)))
+                      (fn [tgt-val]
+                        (cond (instance? c/TaggedSymbol tgt-val)
+                              (generic-call call-ast)
 
-                      (gen-call tgt-val call-ast))))))
+                              (gen-call tgt-val call-ast)))))))
 
 (extend-type ast/field-ast
   CodeGen
@@ -769,7 +775,7 @@
                                  (reduce (str (.var ast) " = ERA;\n")
                                          (fn [args arg]
                                            (str args
-                                                (.var ast) " = node_make(CON, "
+                                                (.var ast) " = pair_make(SUP, "
                                                 arg ", " (.var ast) ");\n"))))]))
            (fn [_]
              ast)))))

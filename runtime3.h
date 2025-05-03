@@ -343,4 +343,4 @@ Term dupeVal(Term *v);
 extern Term construct;
 Term nothing();
 extern Term accessField;
-extern Term hvmVectConj;
+extern Term hvmVect;
