@@ -1217,6 +1217,8 @@ bool hvmVectFn(Term ref, Term args){
   if (arityArgs.count == 1) {
     newArgs = take(port(2, term_loc(newArgs)));
     long vectLen = get_i56(arityArgs.args[0]);
+    if (vectLen > MAX_ARGS)
+      BOOM("too many items in vector literal");
     arityArgs.count = 0;
     Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs);
     if (arityArgs.count == vectLen) {
@@ -2844,44 +2846,36 @@ Term dupeGlobal(Loc glbl) {
   return term_new(VAR, 0, port(2, term_loc(duper)));
 }
 
-#if 0
 bool constructFn(Term ref, Term args) {
-  Pair pr = node_take(args);
-  Term resultVar = pr.fst;
-  args = pr.snd;
-  NativeArgs arityArgs = {0, {}, resultVar};
-  // the first two args will always be integers; type-number and num-args
-  args = nativeArg(ref, args, &arityArgs);
-  int typeNum = get_i56(arityArgs.args[0]);
-  args = nativeArg(ref, args, &arityArgs);
-  int numArgs = get_i56(arityArgs.args[1]);
-
-  for (int i = 0; i < numArgs; i++) {
-    args = nativeArg(ref, args, &arityArgs);
-  }
-
-  if (arityArgs.count == numArgs + 2) {
-    ReifiedVal *rv = malloc_reified(numArgs);
-    rv->type = typeNum;
-    for (int i = 0; i < numArgs; i++) {
-      Term field = arityArgs.args[i + 2];
-      // fprintf(stderr, "field val %d: %d %p\n", __LINE__, term_tag((Term)field), field); 
-      rv->impls[i] = field;
+  NativeArgs arityArgs = {0, {}};
+  Term newArgs = strictArgs(ref, args, 2, &arityArgs);
+  if (arityArgs.count == 2) {
+    newArgs = take(port(2, term_loc(newArgs)));
+    int typeNum = get_i56(arityArgs.args[0]);
+    int numArgs = get_i56(arityArgs.args[1]);
+    arityArgs.count = 0;
+    Term lastArgs = strictArgs(ref, newArgs, numArgs, &arityArgs);
+    if (arityArgs.count == numArgs) {
+      ReifiedVal *rv = malloc_reified(numArgs);
+      rv->type = typeNum;
+      for (int i = 0; i < numArgs; i++) {
+	Term field = arityArgs.args[i];
+	// fprintf(stderr, "field val %d: %d %p\n", __LINE__, term_tag((Term)field), field); 
+	rv->impls[i] = field;
+      }
+      __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+      move(port(2, term_loc(lastArgs)), term_val((Term)rv));
     }
-    __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-    link(resultVar, term_val((Term)rv));
   }
   return TRUE;
 }
-Term construct = new_port_(REF, constructFn);
+Term construct = new_ref(constructFn);
 
+#if 0
 bool accessFieldFn(Term ref, Term args) {
-  Pair pr = node_take(args);
-  Term resultVar = pr.fst;
-  args = pr.snd;
-  NativeArgs arityArgs = {0, {}, resultVar};
-  args = nativeArg(ref, args, &arityArgs);
-  args = nativeArg(ref, args, &arityArgs);
+  NativeArgs arityArgs = {0, {}};
+  args = strictArgs(ref, args, 2, &arityArgs);
+  args = take(port(2, term_loc(args)));
 
   Tag argsTag = term_tag(args);
   Term arg;
