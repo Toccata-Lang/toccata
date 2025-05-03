@@ -1219,12 +1219,11 @@ bool hvmVectFn(Term ref, Term args){
     long vectLen = get_i56(arityArgs.args[0]);
     if (vectLen > MAX_ARGS)
       BOOM("too many items in vector literal");
-    arityArgs.count = 0;
     Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs);
-    if (arityArgs.count == vectLen) {
+    if (arityArgs.count == vectLen + 1) {
       Vector *newV = empty_vect;
       for (int i = 0; i < arityArgs.count; i++)
-	newV = vectConj(newV, arityArgs.args[i]);
+	newV = vectConj(newV, arityArgs.args[i + 1]);
       move(port(2, term_loc(lastArgs)), term_val((Term)newV));
     }
   }
@@ -2853,13 +2852,12 @@ bool constructFn(Term ref, Term args) {
     newArgs = take(port(2, term_loc(newArgs)));
     int typeNum = get_i56(arityArgs.args[0]);
     int numArgs = get_i56(arityArgs.args[1]);
-    arityArgs.count = 0;
     Term lastArgs = strictArgs(ref, newArgs, numArgs, &arityArgs);
-    if (arityArgs.count == numArgs) {
+    if (arityArgs.count == numArgs + 2) {
       ReifiedVal *rv = malloc_reified(numArgs);
       rv->type = typeNum;
       for (int i = 0; i < numArgs; i++) {
-	Term field = arityArgs.args[i];
+	Term field = arityArgs.args[i + 2];
 	// fprintf(stderr, "field val %d: %d %p\n", __LINE__, term_tag((Term)field), field); 
 	rv->impls[i] = field;
       }
