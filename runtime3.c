@@ -2869,144 +2869,49 @@ bool constructFn(Term ref, Term args) {
 }
 Term construct = new_ref(constructFn);
 
-#if 0
 bool accessFieldFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 2, &arityArgs);
-  args = take(port(2, term_loc(args)));
-
-  Tag argsTag = term_tag(args);
-  Term arg;
-  Pair argsNode;
-  Term varVal;
-  switch(argsTag) {
-  case ARG:
-    if (args == endArgs) {
-      break;
-    }
-    argsNode = node_take(args);
-    arg = argsNode.fst;
-    Tag argTag = term_tag(arg);
-    if (argTag == VAR) {
-      argTag = term_tag(arg);
-    }
-
-    switch(argTag) {
-    case VAL:
-    case F56:
-    case I56:
-      arityArgs.args[arityArgs.count++] = arg;
-      args = argsNode.snd;
-      break;
-
-    case VAR:
-      arityArgs.args[arityArgs.count++] = arg;
-      arityArgs.args[arityArgs.count++] = argsNode.snd;
-      varVal = vars_exchange(arg, node_make(SUB, ref, argsNet(&arityArgs)));
-      if (varVal != NONE && varVal != FREE) {
-	// fprintf(stderr, "varVal %d: %p  %p\n", __LINE__, (void *)arg, (void *)varVal);
-	if (term_tag(varVal) == SUB) {
-	  push_redex(node_take(varVal));
-	} else {
-	  link(arg, varVal);
-	}
-      }
-      arityArgs.count = -1;
-      break;
-
-    case DUP:
-    case CON:
+  if (arityArgs.count == 2) {
+    args = take(port(2, term_loc(args)));
+    Tag argsTag = term_tag(args);
+    switch(argsTag) {
+    case APP:
       if (1) {
-	Term r1 = vars_make(NONE);
-	Term r2 = vars_make(NONE);
-	link(arityArgs.result, node_make(argTag, r1, r2));
-	
-	Term args1;
-	Term args2;
-	if (argsNode.snd == ARG || argsNode.snd == endArgs) {
-	  args1 = argsNode.snd;
-	  args2 = argsNode.snd;
-	} else {
-	  args1 = vars_make(NONE);
-	  args2 = vars_make(NONE);
-	  Term n = node_make(argTag, args1, args2);
-	  fprintf(stderr, "args: %d %p %p n: %p\n", __LINE__, (void *)args1, (void *)args2, (void *)n);
-	  fprintf(stderr, "snd: %p\n", (void *)argsNode.snd);
-	  abort();
-	  link(argsNode.snd, n);
+	Term lastArgs = strictArgs(ref, args, 1, &arityArgs);
+	if (arityArgs.count == 3) {
+	  int fldIdx = get_i56(arityArgs.args[0]);
+	  ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
+	  value->impls[fldIdx] = arityArgs.args[2];
+	  move(port(2, term_loc(lastArgs)), term_val((Term)value));
 	}
-
-	Pair pr = node_take(arg);
-	int argsCount = arityArgs.count;
-	arityArgs.count = argsCount + 2;
-	arityArgs.args[argsCount] = pr.fst;
-	arityArgs.args[argsCount + 1] = args1;
-	arityArgs.result = r1;
-	link(ref, argsNet(&arityArgs));
-	
-	arityArgs.args[argsCount] = pr.snd;
-	arityArgs.args[argsCount + 1] = args2;
-	arityArgs.result = r2;
-	link(ref, argsNet(&arityArgs));
       }
-      arityArgs.count = -1;
       break;
 
-    case ERA:
-      link(arityArgs.result, ERA);
-      for (int i = 0; i < arityArgs.count; i++) {
-	link(arityArgs.args[i], ERA);
+    case SUB:
+      if (1) {
+	int fldIdx = get_i56(arityArgs.args[0]);
+	ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
+	Term fld = value->impls[fldIdx];
+	incRef(fld, 1);
+	dec_and_free((Term)value, 1);
+	move(port(2, term_loc(args)), term_val((Term)fld));
       }
-      arityArgs.count = -1;
       break;
 
       // TODO: what other tags need to be handled
     default:
-      printf("unhandled tag 0x%x line: %d\n", term_tag(arg), __LINE__);
-      abort();
+      if (1) {
+	char s[50];
+	sprintf(s,"unhandled tag %s (%0d) line: %d\n", tag_to_str(argsTag), argsTag, __LINE__);
+	BOOM(s);
+      }
       break;
     }
-    arityArgs.count = -1;
-    break;
-
-  case VAR:
-    // TODO: test this
-    fprintf(stderr, "Boom at %s: %d\n", __FILE__, __LINE__);
-    abort();
-
-    varVal = vars_exchange(arg, node_make(SUB, ref, arg));
-    if (varVal != NONE && varVal != FREE) {
-      link(ref, varVal);
-      vars_take(arg);
-    }
-    arityArgs.count = -1;
-    break;
-
-    // TODO: what other tags need to be handled
-  default:
-    printf("unhandled tag 0x%x line: %d\n", term_tag(arg), __LINE__);
-    abort();
-    arityArgs.count = -1;
-    break;
-  }
-
-  if (arityArgs.count == 2) {
-    int fldIdx = get_i56(arityArgs.args[0]);
-    ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
-    Term fld = value->impls[fldIdx];
-    incRef(fld, 1);
-    dec_and_free((Term)value, 1);
-    link(resultVar, term_val((Term)fld));
-  } else if (arityArgs.count == 3) {
-    int fldIdx = get_i56(arityArgs.args[0]);
-    ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
-    value->impls[fldIdx] = arityArgs.args[2];
-    link(resultVar, term_val((Term)value));
   }
   return TRUE;
 }
-Term accessField = new_port_(REF, accessFieldFn);
-#endif
+Term accessField = new_ref(accessFieldFn);
 
 int main (int argc, char **argv) {
   prErrSTAR = &defaultPrErrSTAR;

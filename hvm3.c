@@ -1297,6 +1297,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   Term newArgs;
   Term newArg;
   switch(argsTag) {
+    // TODO: make sure every 'switch' handles all the tags it needs to
   case APP:
     // TODO: walk through all the args and queue up any LAZ nodes
     arg = takeAndCheck(port(1, term_loc(args)));

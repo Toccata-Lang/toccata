@@ -76,7 +76,7 @@ typedef _Atomic(u64) a64;
 // TODO: Not sure about this
 typedef bool (*interactionFn)(Term a, Term b);
 
-#define MAX_ARGS 9
+#define MAX_ARGS 15
 typedef struct {
   int count;
   Term args[MAX_ARGS + 2];
