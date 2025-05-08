@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 
 // Type definitions
 typedef uint64_t u64;
@@ -20,6 +21,9 @@ typedef atomic_uint_least64_t a64;
 #define TAG_MASK 0xFULL
 #define LAB_MASK 0xFFFFFFFULL
 #define LOC_MASK 0xFFFFFFFFULL
+
+// Global VM state
+extern u64 RNOD_END;
 
 // Tags for different term types
 typedef enum {
@@ -50,10 +54,15 @@ Lab term_lab(Term term);
 Location term_loc(Term term);
 Term swap(Location loc, Term term);
 Location port(u64 n, Location x);
+// Check term polarity
+bool is_positive(Term term);
+bool is_negative(Term term);
+
+// Get term at location
 Term get(Location loc);
 void set(Location loc, Term term);
 Term pair_make(Tag tag, Term fst, Term snd);
-void link(Term neg, Term pos);
+void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
 void applam(Location neg_loc, Location pos_loc);
 void duplam(Location neg_loc, Location pos_loc);

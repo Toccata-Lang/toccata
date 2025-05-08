@@ -4,7 +4,7 @@
 // Global heap
 static a64* BUFF = NULL;
 static u64 RNOD_INI = 0;
-static u64 RNOD_END = 0;
+u64 RNOD_END = 0;
 static u64 RBAG = 0x1000;
 static u64 RBAG_INI = 0;
 static u64 RBAG_END = 0;
@@ -16,8 +16,8 @@ void hvm_init(u64 size) {
         fprintf(stderr, "Failed to allocate memory\n");
         exit(1);
     }
-    RNOD_INI = 1;
-    RNOD_END = 1;
+    RNOD_INI = 0;
+    RNOD_END = 0;
     RBAG_INI = RBAG;
     RBAG_END = RBAG;
 }
@@ -60,6 +60,7 @@ void hvm_reset(void) {
 // Convert a tag to its string representation
 const char* tag_to_string(Tag tag) {
     switch (tag) {
+        case SUB: return "SUB";
         case NUL: return "NUL";
         case VAR: return "VAR";
         case APP: return "APP";
@@ -71,9 +72,12 @@ const char* tag_to_string(Tag tag) {
 
 // Create a new term with given tag, label, and location
 Term term_new(Tag tag, Lab lab, Location loc) {
-    return ((u64)loc << (TAG_SIZE + LAB_SIZE)) |
-           ((u64)lab << TAG_SIZE) |
-           (u64)tag;
+    u64 loc_bits = ((u64)loc) & LOC_MASK;
+    u64 lab_bits = ((u64)lab) & LAB_MASK;
+    u64 tag_bits = ((u64)tag) & TAG_MASK;
+    return (loc_bits << (TAG_SIZE + LAB_SIZE)) |
+           (lab_bits << TAG_SIZE) |
+           tag_bits;
 }
 
 // Get the tag of a term
@@ -92,12 +96,44 @@ Location term_loc(Term term) {
 }
 
 Location port(u64 n, Location x) {
+  if (n != 1 && n != 2) {
+    fprintf(stderr, "Error: Invalid port number %lu. Port must be 1 or 2.\n", n);
+    exit(1);
+  }
   return n + x - 1;
 }
 
 // Atomic swap operation
 Term swap(Location loc, Term term) {
     return atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
+}
+
+Term take(Location loc) {
+  return swap(loc, 0);
+}
+
+// Check if a term is positive
+bool is_positive(Term term) {
+    switch (term_tag(term)) {
+        case VAR:
+        case NUL:
+        case LAM:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Check if a term is negative
+bool is_negative(Term term) {
+    switch (term_tag(term)) {
+        case SUB:
+        case ERA:
+        case APP:
+            return true;
+        default:
+            return false;
+    }
 }
 
 // Get term at location
@@ -118,12 +154,50 @@ Term pair_make(Tag tag, Term fst, Term snd) {
                 RNOD_END, RBAG_INI);
         exit(1);
     }
+
+    // Check port polarities based on pair type
+    switch (tag) {
+        case LAM:
+            // Port 1 must be negative
+            if (!is_negative(fst)) {
+                fprintf(stderr, "Error: LAM pair requires negative term in port 1\n");
+                fprintf(stderr, "  Port 1 term tag: %d\n", term_tag(fst));
+                exit(1);
+            }
+            // Port 2 must be positive
+            if (!is_positive(snd)) {
+                fprintf(stderr, "Error: LAM pair requires positive term in port 2\n");
+                fprintf(stderr, "  Port 2 term tag: %d\n", term_tag(snd));
+                exit(1);
+            }
+            break;
+
+        case APP:
+            // Port 1 must be positive
+            if (!is_positive(fst)) {
+                fprintf(stderr, "Error: APP pair requires positive term in port 1\n");
+                fprintf(stderr, "  Port 1 term tag: %d\n", term_tag(fst));
+                exit(1);
+            }
+            // Port 2 must be negative
+            if (!is_negative(snd)) {
+                fprintf(stderr, "Error: APP pair requires negative term in port 2\n");
+                fprintf(stderr, "  Port 2 term tag: %d\n", term_tag(snd));
+                exit(1);
+            }
+            break;
+
+        default:
+            fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
+		    tag_to_string(tag), tag);
+            exit(1);
+    }
     
     Location loc = RNOD_END;
     RNOD_END += 2;
     
-    // Store terms at adjacent locations
-    set(loc, fst);
+    // Store terms in their respective ports
+    set(port(1, loc), fst);
     set(port(2, loc), snd);
     
     return term_new(tag, 0, loc);
@@ -131,20 +205,26 @@ Term pair_make(Tag tag, Term fst, Term snd) {
 
 // Move a positive term into a negative location
 void move(Location neg_loc, Term pos) {
-    Term neg = swap(neg_loc, pos);
-    if (term_tag(neg) != SUB) {
-        link(neg, pos);
-    }
+  Term neg = swap(neg_loc, pos);
+  if (term_tag(neg) != SUB) {
+    take(neg_loc);
+    term_link(neg, pos);
+  }
 }
 
-// Link a negative node with a positive term
-void link(Term neg, Term pos) {
+// Link two terms together
+void term_link(Term neg, Term pos) {
     if (term_tag(pos) == VAR) {
         Term neg_var = swap(term_loc(pos), neg);
         if (term_tag(neg_var) != SUB) {
             move(term_loc(pos), neg_var);
         }
     } else {
+        // Check if we have enough space in reduction bag
+        if (RBAG_END + 2 >= RBAG_INI + RBAG) {
+            fprintf(stderr, "Error: Not enough space in reduction bag. RBAG_END=%lu\n", RBAG_END);
+            exit(1);
+        }
         // Push redex to reduction bag
         Location redex_loc = RBAG_END;
         RBAG_END += 2;
@@ -163,52 +243,18 @@ void applam(Location neg_loc, Location pos_loc) {
     }
 
     // Get locations for each port
-    Location arg_loc = port(2, neg_loc);
-    Location ret_loc = port(3, neg_loc);
-    Location var_loc = port(2, pos_loc);
-    Location bod_loc = port(3, pos_loc);
-
-    fprintf(stderr, "Ports: arg=%u ret=%u var=%u bod=%u\n",
-            arg_loc, ret_loc, var_loc, bod_loc);
+    Location arg_loc = port(1, neg_loc);
+    Location ret_loc = port(2, neg_loc);
+    Location var_loc = port(1, pos_loc);
+    Location bod_loc = port(2, pos_loc);
 
     // Take the positive terms
-    fprintf(stderr, "Before swap - arg_loc term: tag=%d\n", term_tag(get(arg_loc)));
-    Term arg_val = swap(arg_loc, term_new(NUL, 0, 0));
-    fprintf(stderr, "arg_val: tag=%d lab=%d loc=%u\n",
-            term_tag(arg_val), term_lab(arg_val), term_loc(arg_val));
+    Term arg_val = take(arg_loc);
+    Term bod_val = take(bod_loc);
 
-    fprintf(stderr, "Before swap - bod_loc term: tag=%d\n", term_tag(get(bod_loc)));
-    Term bod_val = swap(bod_loc, term_new(NUL, 0, 0));
-    fprintf(stderr, "bod_val: tag=%d lab=%d loc=%u\n",
-            term_tag(bod_val), term_lab(bod_val), term_loc(bod_val));
-
-    // Create a new pair for variable binding
-    Term var_pair = pair_make(VAR, arg_val, term_new(NUL, 0, 0));
-    fprintf(stderr, "Created var_pair: tag=%d loc=%u\n",
-            term_tag(var_pair), term_loc(var_pair));
-    
-    // Create a new pair for return value
-    Term ret_pair = pair_make(APP, bod_val, term_new(NUL, 0, 0));
-    fprintf(stderr, "Created ret_pair: tag=%d loc=%u\n",
-            term_tag(ret_pair), term_loc(ret_pair));
-
-    // Move terms into their new locations
-    fprintf(stderr, "Moving pairs to new locations...\n");
-    fprintf(stderr, "ret_loc=%u var_loc=%u\n", ret_loc, var_loc);
-    fprintf(stderr, "ret_pair: tag=%s (%d) loc=%u\n", tag_to_string(term_tag(ret_pair)), term_tag(ret_pair), term_loc(ret_pair));
-    fprintf(stderr, "var_pair: tag=%s (%d) loc=%u\n", tag_to_string(term_tag(var_pair)), term_tag(var_pair), term_loc(var_pair));
-    
-    set(var_loc, var_pair);
-    set(ret_loc, ret_pair);
-    
-    fprintf(stderr, "Clearing original locations...\n");
-    fprintf(stderr, "neg_loc=%u pos_loc=%u\n", neg_loc, pos_loc);
-    
-    // Clear original locations
-    set(neg_loc, term_new(NUL, 0, 0));
-    set(pos_loc, term_new(NUL, 0, 0));
-    
-    fprintf(stderr, "Interaction complete\n");
+    // Move terms to their new locations
+    move(var_loc, arg_val);
+    move(ret_loc, bod_val);
 }
 
 // Duplication-Lambda interaction
@@ -240,5 +286,5 @@ void duplam(Location neg_loc, Location pos_loc) {
     move(dp1_loc, co1);
     move(dp2_loc, co2);
     move(var_loc, du1);
-    link(du2, bod_val);
+    term_link(du2, bod_val);
 }
