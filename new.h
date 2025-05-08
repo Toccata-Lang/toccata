@@ -67,6 +67,8 @@ void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
 void applam(Location neg_loc, Location pos_loc);
 void duplam(Location neg_loc, Location pos_loc);
+void eranul(Location neg_loc, Location pos_loc);
+void eralam(Term era, Term lam);
 void push_redex(Term neg, Term pos);
 
 #endif // NEW_H

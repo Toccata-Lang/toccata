@@ -263,7 +263,6 @@ void test_boundary_validation(void) {
         // Child process
         // Create a pair and link terms to fill up reduction bag space
         Term pair1 = pair_make(APP, term_new(NUL, 0, 0), term_new(SUB, 0, 0));
-        printf("Created pair at location %u\n", term_loc(pair1));
         
         // Link terms to fill up reduction bag space
         // Each term_link uses 2 slots, and we want to fill up the small memory
@@ -346,6 +345,46 @@ void test_duplam(void) {
     printf("[PASS] test_duplam\n");
 }
 
+// Test ERA NUL interaction
+void test_eranul(void) {
+    Location era_loc = 0;
+    Location nul_loc = 1;
+    set(era_loc, ERA);  // Negative eraser
+    set(nul_loc, NUL);  // Positive eraser
+    
+    // Perform interaction
+    eranul(era_loc, nul_loc);
+    
+    // They should just annihilate - nothing else to check
+    printf("[PASS] test_eranul\n");
+}
+
+// Test ERA LAM interaction
+void test_eralam(void) {
+    printf("=== Starting test_eralam ===\n");
+    
+    // Create LAM term with ports
+    Term var = term_new(SUB, 0, 0);  // Negative variable port
+    Term bod = term_new(NUL, 0, 0);  // Positive body port
+    Term lam = pair_make(LAM, var, bod);
+    
+    // Create ERA term
+    Term era = term_new(ERA, 0, 0);
+    
+    // Perform interaction
+    eralam(era, lam);
+    
+    // Check that NUL was sent to variable port
+    Location var_loc = port(1, term_loc(lam));
+    Term result_var = get(var_loc);
+    if (term_tag(result_var) != NUL) {
+        printf("[FAIL] test_eralam: Expected NUL in variable port, got tag=%d\n", term_tag(result_var));
+        exit(1);
+    }
+    
+    printf("[PASS] test_eralam\n");
+}
+
 int main(int argc, char *argv[]) {
     // Initialize the VM with some memory
     hvm_init(1024);
@@ -379,6 +418,14 @@ int main(int argc, char *argv[]) {
     printf("\n=== Running test_duplam ===\n");
     hvm_reset();
     test_duplam();
+    
+    printf("\n=== Running test_eranul ===\n");
+    hvm_reset();
+    test_eranul();
+    
+    printf("\n=== Running test_eralam ===\n");
+    hvm_reset();
+    test_eralam();
     
     // printf("\n=== Running test_boundary_validation ===\n");
     // test_boundary_validation();

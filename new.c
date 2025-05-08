@@ -242,28 +242,15 @@ Term pair_make(Tag tag, Term fst, Term snd) {
 
 // Move a positive term into a negative location
 void move(Location neg_loc, Term pos) {
-  Term neg = swap(neg_loc, pos);
-  if (term_tag(neg) != SUB) {
-    take(neg_loc);
-    term_link(neg, pos);
-  }
+    Term neg = swap(neg_loc, pos);
+    if (term_tag(neg) != SUB) {
+        take(neg_loc);
+        term_link(neg, pos);
+    }
 }
 
 // Link two terms together
 // Push a redex (pair of terms) to the reduction bag
-void push_redex(Term neg, Term pos) {
-    // Check if we have enough space in reduction bag
-    if (RBAG_END + 2 >= RBAG_INI + RBAG) {
-        fprintf(stderr, "Error: Not enough space in reduction bag. RBAG_END=%lu\n", RBAG_END);
-        exit(1);
-    }
-    // Push redex to reduction bag
-    Location redex_loc = RBAG_END;
-    RBAG_END += 2;
-    set(redex_loc, neg);
-    set(port(2, redex_loc), pos);
-}
-
 void term_link(Term neg, Term pos) {
     if (term_tag(pos) == VAR) {
         Term neg_var = swap(term_loc(pos), neg);
@@ -273,6 +260,20 @@ void term_link(Term neg, Term pos) {
     } else {
         push_redex(neg, pos);
     }
+}
+
+// Push a redex (pair of terms) to the reduction bag
+void push_redex(Term neg, Term pos) {
+    // Check if we have enough space in reduction bag
+    if (RBAG_END + 2 >= RBAG_INI + RBAG) {
+        fprintf(stderr, "Error: Reduction bag is full\n");
+        exit(1);
+    }
+    // Push redex to reduction bag
+    Location redex_loc = RBAG_END;
+    RBAG_END += 2;
+    set(redex_loc, neg);
+    set(port(2, redex_loc), pos);
 }
 
 // Application-Lambda interaction
@@ -297,6 +298,21 @@ void applam(Location neg_loc, Location pos_loc) {
     // Move terms to their new locations
     move(var_loc, arg_val);
     move(ret_loc, bod_val);
+}
+
+// Eraser-Null interaction - they simply annihilate
+void eranul(Location neg_loc, Location pos_loc) {
+    // Nothing to do - they just disappear
+    return;
+}
+
+// Eraser-Lambda interaction
+void eralam(Term era, Term lam) {
+  Location lam_loc = term_loc(lam);
+  Location var = port(1, lam_loc);
+  Term bod = take(port(2, lam_loc));
+  move(var, term_new(NUL, 0, 0));
+  term_link(term_new(ERA, 0, 0), bod);
 }
 
 // Duplication-Lambda interaction
