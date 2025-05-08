@@ -10,7 +10,7 @@ void print_raw_term(Term t) {
     Tag tag = term_tag(t);
     Lab lab = term_lab(t);
     Location loc = term_loc(t);
-    printf("%s %x %0.3x", tag_to_string(tag), lab, loc);
+    printf("%s %x %.3x", tag_to_string(tag), lab, loc);
   }
 }
 
@@ -26,7 +26,7 @@ void print_buff(Location start, Location end) {
     }
     printf("BUFF contents from %u to %u:\n", start, end);
     for (Location i = start; i < end; i += 2) {
-        printf(" %0.3x  ", i);
+        printf(" %.3x  ", i);
 	print_raw_term(buff[i]);
 	printf("  ");
 	print_raw_term(buff[i + 1]);
@@ -145,7 +145,7 @@ void test_pair_manipulation(void) {
 
 // Helper to test invalid pair creation
 void try_invalid_pair(Tag tag, Term fst, Term snd, const char* desc) {
-    bool caught_error = false;
+    // bool caught_error = false; // Removed unused variable
     pid_t pid = fork();
     
     if (pid == 0) {
@@ -170,13 +170,13 @@ void test_pair_polarity() {
     // Test valid LAM pair (port 1 negative, port 2 positive)
     Term era = term_new(ERA, 0, 0);  // negative term
     Term var = term_new(VAR, 0, 0);  // positive term
-    Term lam = pair_make(LAM, era, var);
+    pair_make(LAM, era, var);
     printf("[PASS] Created LAM pair with correct port polarities\n");
     
     // Test valid APP pair (port 1 positive, port 2 negative)
     Term nul = term_new(NUL, 0, 0);  // positive term
     Term sub = term_new(SUB, 0, 0);  // negative term
-    Term app = pair_make(APP, nul, sub);
+    pair_make(APP, nul, sub);
     printf("[PASS] Created APP pair with correct port polarities\n");
     
     // Test invalid LAM pair (wrong port polarities)
@@ -261,7 +261,7 @@ void test_boundary_validation(void) {
     if (pid == 0) {
         // Child process
         // Create a pair and link terms to fill up reduction bag space
-        Term pair1 = pair_make(APP, term_new(NUL, 0, 0), term_new(SUB, 0, 0));
+        pair_make(APP, term_new(NUL, 0, 0), term_new(SUB, 0, 0));
         
         // Link terms to fill up reduction bag space
         // Each term_link uses 2 slots, and we want to fill up the small memory
@@ -356,6 +356,7 @@ void test_eranul(void) {
 
 // Test ERA LAM interaction
 void test_eralam(void) {
+    
     // Create LAM term with ports
     Term var = term_new(SUB, 0, 0);  // Negative variable port
     Term bod = term_new(NUL, 0, 0);  // Positive body port
@@ -376,6 +377,99 @@ void test_eralam(void) {
     }
     
     printf("[PASS] test_eralam\n");
+}
+
+// Test APP NUL interaction
+void test_appnul(void) {
+    // Create APP term with ports
+    Term arg = term_new(NUL, 0, 0);  // Positive argument port
+    Term ret = term_new(SUB, 0, 0);  // Negative return port
+    Term app = pair_make(APP, arg, ret);
+    
+    // Create NUL term
+    Term nul = term_new(NUL, 0, 0);
+    
+    // Perform interaction
+    appnul(app, nul);
+    
+    // Check that NUL was sent to return port
+    Location ret_loc = port(2, term_loc(app));
+    Term result_ret = get(ret_loc);
+    if (term_tag(result_ret) != NUL) {
+        printf("[FAIL] test_appnul: Expected NUL in return port, got tag=%d\n", term_tag(result_ret));
+        exit(1);
+    }
+    
+    printf("[PASS] test_appnul\n");
+}
+
+// Test DUP NUL interaction
+void test_dupnul(void) {
+    
+    // Create DUP term with ports
+    Term dp1 = term_new(SUB, 1, 0);  // Negative first copy port
+    Term dp2 = term_new(SUB, 2, 0);  // Negative second copy port
+    Term dup = pair_make(DUP, dp1, dp2);
+    
+    // Create NUL term
+    Term nul = term_new(NUL, 0, 0);
+    
+    // Perform interaction
+    dupnul(dup, nul);
+    
+    // Check that NUL was sent to both copy ports
+    Location dp1_loc = port(1, term_loc(dup));
+    Location dp2_loc = port(2, term_loc(dup));
+    
+    Term result_dp1 = get(dp1_loc);
+    Term result_dp2 = get(dp2_loc);
+    
+    if (term_tag(result_dp1) != NUL) {
+        printf("[FAIL] test_dupnul: Expected NUL in first copy port, got tag=%d\n", term_tag(result_dp1));
+        exit(1);
+    }
+    
+    if (term_tag(result_dp2) != NUL) {
+        printf("[FAIL] test_dupnul: Expected NUL in second copy port, got tag=%d\n", term_tag(result_dp2));
+        exit(1);
+    }
+    
+    printf("[PASS] test_dupnul\n");
+}
+
+// Test ERA SUP interaction
+void test_erasup(void) {
+    
+    // Create SUP term with ports
+    Term p1 = term_new(NUL, 1, 0);  // Positive first port
+    Term p2 = term_new(NUL, 2, 0);  // Positive second port
+    Term sup = pair_make(SUP, p1, p2);
+    
+    // Create ERA term
+    Term era = term_new(ERA, 0, 0);
+    
+    // Store locations for verification
+    Location p1_loc = term_loc(p1);
+    Location p2_loc = term_loc(p2);
+    
+    // Perform interaction
+    erasup(era, sup);
+    
+    // Check that ERA was linked to both ports
+    Term result_p1 = get(p1_loc);
+    Term result_p2 = get(p2_loc);
+    
+    if (result_p1 != 0) {
+        printf("[FAIL] test_erasup: Expected ERA in first port, got tag=%d\n", term_tag(result_p1));
+        exit(1);
+    }
+    
+    if (result_p2 != 0) {
+        printf("[FAIL] test_erasup: Expected ERA in second port, got tag=%d\n", term_tag(result_p2));
+        exit(1);
+    }
+    
+    printf("[PASS] test_erasup\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -419,6 +513,18 @@ int main(int argc, char *argv[]) {
     printf("\n=== Running test_eralam ===\n");
     hvm_reset();
     test_eralam();
+
+    printf("\n=== Running test_appnul ===\n");
+    hvm_reset();
+    test_appnul();
+
+    printf("\n=== Running test_dupnul ===\n");
+    hvm_reset();
+    test_dupnul();
+
+    printf("\n=== Running test_erasup ===\n");
+    hvm_reset();
+    test_erasup();
     
     // printf("\n=== Running test_boundary_validation ===\n");
     // test_boundary_validation();

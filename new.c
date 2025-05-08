@@ -353,3 +353,46 @@ void duplam(Term dup, Term lam) {
   move(var_loc, du1);
   term_link(du2, bod_val);
 }
+
+// Application-Null interaction
+void appnul(Term app, Term nul) {
+  Location app_loc = term_loc(app);
+  Term pos = take(port(1, app_loc));
+  
+  // Get port locations
+  Location ret_loc = port(2, app_loc);
+  
+  // Set NUL in return port
+  move(ret_loc, term_new(NUL, 0, 0));
+  term_link(ERA, pos);
+}
+
+// Duplication-Null interaction
+void dupnul(Term dup, Term nul) {
+  Location dup_loc = term_loc(dup);
+  
+  // Get port locations
+  Location dp1_loc = port(1, dup_loc);
+  Location dp2_loc = port(2, dup_loc);
+  
+  // Set NUL in both copy ports
+  move(dp1_loc, term_new(NUL, 0, 0));
+  move(dp2_loc, term_new(NUL, 0, 0));
+}
+
+// Eraser-Duplicator interaction
+void erasup(Term era, Term sup) {
+  Location sup_loc = term_loc(sup);
+  
+  // Get port locations
+  Location p1_loc = port(1, sup_loc);
+  Location p2_loc = port(2, sup_loc);
+  
+  // Take terms from both ports
+  Term p1 = take(p1_loc);
+  Term p2 = take(p2_loc);
+  
+  // Set the terms at the original locations
+  term_link(p1, era);
+  term_link(p2, era);
+}
