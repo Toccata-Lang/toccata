@@ -2,20 +2,57 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// Helper to print a term's details
-void print_term(const char* prefix, Term term) {
-    printf("%s:\n", prefix);
-    printf("  Tag: %s (%d)\n", tag_to_string(term_tag(term)), term_tag(term));
-    printf("  Location: %u\n", term_loc(term));
-    
-    // If this is a pair, print its contents
-    if (term_loc(term) > 0) {
-        Term first = get(term_loc(term));
-        Term second = get(term_loc(term) + 1);
-        printf("  First term: %s (%d)\n", tag_to_string(term_tag(first)), term_tag(first));
-        printf("  Second term: %s (%d)\n", tag_to_string(term_tag(second)), term_tag(second));
+// Print contents of BUFF between start and end locations
+void print_raw_term(Term t) {
+  if (t == 0) {
+    printf("  FREE   ");
+  } else {
+    Tag tag = term_tag(t);
+    Lab lab = term_lab(t);
+    Location loc = term_loc(t);
+    printf("%s %x %0.3x", tag_to_string(tag), lab, loc);
+  }
+}
+
+void print_buff(Location start, Location end) {
+    a64* buff = get_buff();
+    if (!buff) {
+        printf("BUFF is not initialized\n");
+        return;
+    }
+    if (start >= end) {
+        printf("Invalid range: start=%u end=%u\n", start, end);
+        return;
+    }
+    printf("BUFF contents from %u to %u:\n", start, end);
+    for (Location i = start; i < end; i += 2) {
+        printf(" %0.3x  ", i);
+	print_raw_term(buff[i]);
+	printf("  ");
+	print_raw_term(buff[i + 1]);
+	printf("\n");
     }
     printf("\n");
+}
+
+// Helper to print a term's details
+void print_term(const char* prefix, Term term) {
+  printf("%s:\n", prefix);
+  printf("  Tag: %s (%d)\n", tag_to_string(term_tag(term)), term_tag(term));
+  printf("  Location: %u\n", term_loc(term));
+    
+  // If this is a pair, print its contents
+  if (term_loc(term) >= 0) {
+    Term first = get(port(1, term_loc(term)));
+    Term second = get(port(2, term_loc(term)));
+    printf("  First term: ");
+    print_raw_term(first);
+    printf("\n");
+    printf("  Second term: ");
+    print_raw_term(second);
+    printf("\n");
+  }
+  printf("\n");
 }
 
 // Test pair creation
@@ -252,10 +289,73 @@ void test_boundary_validation(void) {
 }
 
 // Main function
+// Test DUP LAM interaction
+void test_duplam(void) {
+    // Create test terms with correct polarities
+    Term var_term = term_new(SUB, 0, 0);  // Negative variable term
+    Term bod_term = term_new(NUL, 0, 0);  // Positive body term
+    Term dup1_term = term_new(SUB, 1, 0); // Negative first copy term
+    Term dup2_term = term_new(SUB, 2, 0); // Negative second copy term
+    
+    // Create lambda and duplicator terms
+    Term lam = pair_make(LAM, var_term, bod_term);
+    Term dup = pair_make(DUP, dup1_term, dup2_term);
+    
+    Location lam_loc = term_loc(lam);
+    Location dup_loc = term_loc(dup);
+    
+    // Get port locations
+    Location var_loc = port(1, lam_loc);   // Variable port
+    Location bod_loc = port(2, lam_loc);   // Body port
+    Location dup1_loc = port(1, dup_loc);  // First copy port
+    Location dup2_loc = port(2, dup_loc);  // Second copy port
+    
+    // Perform interaction
+    duplam(dup_loc, lam_loc);
+    
+    Term lam1 = get(dup1_loc);
+    Term lam2 = get(dup2_loc);
+    Term sup = get(var_loc);
+
+    // Check that first copy has correct structure
+    if (term_tag(lam1) != LAM) {
+        printf("[FAIL] test_duplam: Expected LAM tag in first copy port, got: tag=%d\n", term_tag(lam1));
+        exit(1);
+    }
+
+    // Check that second copy has correct structure
+    if (term_tag(lam2) != LAM) {
+        printf("[FAIL] test_duplam: Expected LAM tag in second copy port, got: tag=%d\n", term_tag(lam2));
+        exit(1);
+    }
+    
+    // Check that variable port contains a SUP term
+    if (term_tag(sup) != SUP) {
+        printf("[FAIL] test_duplam: Expected SUP tag in variable port, got: tag=%d\n", term_tag(sup));
+        exit(1);
+    }
+    if (term_loc(get(port(1, term_loc(sup)))) != port(1, term_loc(lam1))) {
+        printf("[FAIL] test_duplam: Expected SUP port 1 points to wrong place\n");
+        exit(1);
+    }
+    if (term_loc(get(port(2, term_loc(sup)))) != port(1, term_loc(lam2))) {
+        printf("[FAIL] test_duplam: Expected SUP port 2 points to wrong place\n");
+        exit(1);
+    }
+
+    printf("[PASS] test_duplam\n");
+}
+
 int main(int argc, char *argv[]) {
     // Initialize the VM with some memory
     hvm_init(1024);
     
+    printf("\n=== Running test_error_conditions ===\n");
+    test_error_conditions();
+
+    // Re-initialize VM after error conditions test
+    hvm_init(1024);
+
     printf("\n=== Running test_polarity ===\n");
     hvm_reset();
     test_polarity();
@@ -276,8 +376,9 @@ int main(int argc, char *argv[]) {
     hvm_reset();
     test_applam();
     
-    printf("\n=== Running test_error_conditions ===\n");
-    test_error_conditions();
+    printf("\n=== Running test_duplam ===\n");
+    hvm_reset();
+    test_duplam();
     
     // printf("\n=== Running test_boundary_validation ===\n");
     // test_boundary_validation();

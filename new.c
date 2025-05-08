@@ -9,6 +9,11 @@ static u64 RBAG = 0x1000;
 static u64 RBAG_INI = 0;
 static u64 RBAG_END = 0;
 
+// For testing only
+a64* get_buff(void) {
+    return BUFF;
+}
+
 // Initialize the virtual machine with a given heap size
 void hvm_init(u64 size) {
     BUFF = (a64*)calloc(size, sizeof(a64));
@@ -61,6 +66,8 @@ void hvm_reset(void) {
 const char* tag_to_string(Tag tag) {
     switch (tag) {
         case SUB: return "SUB";
+        case SUP: return "SUP";
+        case DUP: return "DUP";
         case NUL: return "NUL";
         case VAR: return "VAR";
         case APP: return "APP";
@@ -187,6 +194,36 @@ Term pair_make(Tag tag, Term fst, Term snd) {
             }
             break;
 
+        case DUP:
+            // Port 1 must be negative
+            if (!is_negative(fst)) {
+                fprintf(stderr, "Error: DUP pair requires negative term in port 1\n");
+                fprintf(stderr, "  Port 1 term tag: %d\n", term_tag(fst));
+                exit(1);
+            }
+            // Port 2 must be negative
+            if (!is_negative(snd)) {
+                fprintf(stderr, "Error: DUP pair requires negative term in port 2\n");
+                fprintf(stderr, "  Port 2 term tag: %d\n", term_tag(snd));
+                exit(1);
+            }
+            break;
+
+        case SUP:
+            // Port 1 must be positive
+            if (!is_positive(fst)) {
+                fprintf(stderr, "Error: SUP pair requires positive term in port 1\n");
+                fprintf(stderr, "  Port 1 term tag: %d\n", term_tag(fst));
+                exit(1);
+            }
+            // Port 2 must be positive
+            if (!is_positive(snd)) {
+                fprintf(stderr, "Error: SUP pair requires positive term in port 2\n");
+                fprintf(stderr, "  Port 2 term tag: %d\n", term_tag(snd));
+                exit(1);
+            }
+            break;
+
         default:
             fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
 		    tag_to_string(tag), tag);
@@ -213,6 +250,20 @@ void move(Location neg_loc, Term pos) {
 }
 
 // Link two terms together
+// Push a redex (pair of terms) to the reduction bag
+void push_redex(Term neg, Term pos) {
+    // Check if we have enough space in reduction bag
+    if (RBAG_END + 2 >= RBAG_INI + RBAG) {
+        fprintf(stderr, "Error: Not enough space in reduction bag. RBAG_END=%lu\n", RBAG_END);
+        exit(1);
+    }
+    // Push redex to reduction bag
+    Location redex_loc = RBAG_END;
+    RBAG_END += 2;
+    set(redex_loc, neg);
+    set(port(2, redex_loc), pos);
+}
+
 void term_link(Term neg, Term pos) {
     if (term_tag(pos) == VAR) {
         Term neg_var = swap(term_loc(pos), neg);
@@ -220,16 +271,7 @@ void term_link(Term neg, Term pos) {
             move(term_loc(pos), neg_var);
         }
     } else {
-        // Check if we have enough space in reduction bag
-        if (RBAG_END + 2 >= RBAG_INI + RBAG) {
-            fprintf(stderr, "Error: Not enough space in reduction bag. RBAG_END=%lu\n", RBAG_END);
-            exit(1);
-        }
-        // Push redex to reduction bag
-        Location redex_loc = RBAG_END;
-        RBAG_END += 2;
-        set(redex_loc, neg);
-        set(port(2, redex_loc), pos);
+        push_redex(neg, pos);
     }
 }
 
@@ -259,32 +301,33 @@ void applam(Location neg_loc, Location pos_loc) {
 
 // Duplication-Lambda interaction
 void duplam(Location neg_loc, Location pos_loc) {
-    Location dp1_loc = neg_loc + 1;
-    Location dp2_loc = neg_loc + 2;
-    Location var_loc = pos_loc + 1;
-    Location bod_loc = pos_loc + 2;
+  // Get port locations
+  Location dp1_loc = port(1, neg_loc);
+  Location dp2_loc = port(2, neg_loc);
+  Location var_loc = port(1, pos_loc);
+  Location bod_loc = port(2, pos_loc);
 
-    // Take the positive term
-    Term bod_val = swap(bod_loc, term_new(NUL, 0, 0));
+  // Take the positive term
+  Term bod_val = take(bod_loc);
 
-    // Create the pairs
-    Term co1 = pair_make(LAM, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
-    Term co2 = pair_make(LAM, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
-    Term du1 = pair_make(SUP, term_new(VAR, 0, term_loc(co1)), term_new(VAR, 0, term_loc(co2)));
-    Term du2 = pair_make(DUP, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
+  // Create the pairs
+  Term co1 = pair_make(LAM, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
+  Term co2 = pair_make(LAM, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
+  Term du1 = pair_make(SUP, term_new(VAR, 0, term_loc(co1)), term_new(VAR, 0, term_loc(co2)));
+  Term du2 = pair_make(DUP, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
 
-    // Update variable references
-    Location co1_loc = term_loc(co1);
-    Location co2_loc = term_loc(co2);
-    Location du2_loc = term_loc(du2);
+  // Update variable references
+  Location co1_loc = term_loc(co1);
+  Location co2_loc = term_loc(co2);
+  Location du2_loc = term_loc(du2);
     
-    // Update the second terms in co1 and co2 to point to du2
-    set(co1_loc + 1, term_new(VAR, 0, du2_loc));
-    set(co2_loc + 1, term_new(VAR, 0, du2_loc + 1));
+  // Update the second terms in co1 and co2 to point to du2
+  set(port(2, co1_loc), term_new(VAR, 0, port(1, du2_loc)));
+  set(port(2, co2_loc), term_new(VAR, 0, port(2, du2_loc)));
 
-    // Move positive terms into negative locations
-    move(dp1_loc, co1);
-    move(dp2_loc, co2);
-    move(var_loc, du1);
-    term_link(du2, bod_val);
+  // Move positive terms into negative locations
+  move(dp1_loc, co1);
+  move(dp2_loc, co2);
+  move(var_loc, du1);
+  term_link(du2, bod_val);
 }

@@ -24,6 +24,7 @@ typedef atomic_uint_least64_t a64;
 
 // Global VM state
 extern u64 RNOD_END;
+extern a64* get_buff(void);  // For testing only
 
 // Tags for different term types
 typedef enum {
@@ -66,5 +67,6 @@ void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
 void applam(Location neg_loc, Location pos_loc);
 void duplam(Location neg_loc, Location pos_loc);
+void push_redex(Term neg, Term pos);
 
 #endif // NEW_H
