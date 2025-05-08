@@ -277,19 +277,22 @@ void push_redex(Term neg, Term pos) {
 }
 
 // Application-Lambda interaction
-void applam(Location neg_loc, Location pos_loc) {
+void applam(Term app, Term lam) {
+    Location app_loc = term_loc(app);
+    Location lam_loc = term_loc(lam);
+    
     // Bounds checking
-    if (neg_loc >= RNOD_END || pos_loc >= RNOD_END) {
-        fprintf(stderr, "Invalid locations: neg_loc=%u pos_loc=%u RNOD_END=%lu\n",
-                neg_loc, pos_loc, RNOD_END);
+    if (app_loc >= RNOD_END || lam_loc >= RNOD_END) {
+        fprintf(stderr, "Invalid locations: app_loc=%u lam_loc=%u RNOD_END=%lu\n",
+                app_loc, lam_loc, RNOD_END);
         return;
     }
 
     // Get locations for each port
-    Location arg_loc = port(1, neg_loc);
-    Location ret_loc = port(2, neg_loc);
-    Location var_loc = port(1, pos_loc);
-    Location bod_loc = port(2, pos_loc);
+    Location arg_loc = port(1, app_loc);
+    Location ret_loc = port(2, app_loc);
+    Location var_loc = port(1, lam_loc);
+    Location bod_loc = port(2, lam_loc);
 
     // Take the positive terms
     Term arg_val = take(arg_loc);

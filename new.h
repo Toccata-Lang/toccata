@@ -65,7 +65,7 @@ void set(Location loc, Term term);
 Term pair_make(Tag tag, Term fst, Term snd);
 void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
-void applam(Location neg_loc, Location pos_loc);
+void applam(Term app, Term lam);
 void duplam(Term dup, Term lam);
 void eranul(Term era, Term nul);
 void eralam(Term era, Term lam);

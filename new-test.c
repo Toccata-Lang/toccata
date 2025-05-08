@@ -90,17 +90,16 @@ void test_applam(void) {
     Term app = pair_make(APP, arg_term, ret_term);
     Term lam = pair_make(LAM, var_term, bod_term);
     
+    // Get port locations for verification
     Location app_loc = term_loc(app);
     Location lam_loc = term_loc(lam);
-    
-    // Get port locations
     Location var_loc = port(1, lam_loc);  // Variable port
     Location bod_loc = port(2, lam_loc);  // Body port
     Location arg_loc = port(1, app_loc);  // Argument port
     Location ret_loc = port(2, app_loc);  // Return port
     
     // Perform interaction
-    applam(app_loc, lam_loc);
+    applam(app, lam);
     
     // Check that argument was moved to variable port with VAR tag
     Term actual_var = get(var_loc);
