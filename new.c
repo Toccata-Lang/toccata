@@ -301,7 +301,7 @@ void applam(Location neg_loc, Location pos_loc) {
 }
 
 // Eraser-Null interaction - they simply annihilate
-void eranul(Location neg_loc, Location pos_loc) {
+void eranul(Term era, Term nul) {
     // Nothing to do - they just disappear
     return;
 }

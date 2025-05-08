@@ -347,13 +347,12 @@ void test_duplam(void) {
 
 // Test ERA NUL interaction
 void test_eranul(void) {
-    Location era_loc = 0;
-    Location nul_loc = 1;
-    set(era_loc, ERA);  // Negative eraser
-    set(nul_loc, NUL);  // Positive eraser
+    // Create ERA and NUL terms
+    Term era = term_new(ERA, 0, 0);  // Negative eraser
+    Term nul = term_new(NUL, 0, 0);  // Positive eraser
     
     // Perform interaction
-    eranul(era_loc, nul_loc);
+    eranul(era, nul);
     
     // They should just annihilate - nothing else to check
     printf("[PASS] test_eranul\n");
@@ -361,8 +360,6 @@ void test_eranul(void) {
 
 // Test ERA LAM interaction
 void test_eralam(void) {
-    printf("=== Starting test_eralam ===\n");
-    
     // Create LAM term with ports
     Term var = term_new(SUB, 0, 0);  // Negative variable port
     Term bod = term_new(NUL, 0, 0);  // Positive body port
