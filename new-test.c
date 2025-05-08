@@ -300,17 +300,14 @@ void test_duplam(void) {
     Term lam = pair_make(LAM, var_term, bod_term);
     Term dup = pair_make(DUP, dup1_term, dup2_term);
     
-    Location lam_loc = term_loc(lam);
+    // Get port locations for verification
     Location dup_loc = term_loc(dup);
-    
-    // Get port locations
-    Location var_loc = port(1, lam_loc);   // Variable port
-    Location bod_loc = port(2, lam_loc);   // Body port
     Location dup1_loc = port(1, dup_loc);  // First copy port
     Location dup2_loc = port(2, dup_loc);  // Second copy port
+    Location var_loc = port(1, term_loc(lam));   // Variable port
     
     // Perform interaction
-    duplam(dup_loc, lam_loc);
+    duplam(dup, lam);
     
     Term lam1 = get(dup1_loc);
     Term lam2 = get(dup2_loc);

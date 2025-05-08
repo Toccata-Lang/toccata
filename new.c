@@ -316,12 +316,15 @@ void eralam(Term era, Term lam) {
 }
 
 // Duplication-Lambda interaction
-void duplam(Location neg_loc, Location pos_loc) {
+void duplam(Term dup, Term lam) {
+  Location dup_loc = term_loc(dup);
+  Location lam_loc = term_loc(lam);
+  
   // Get port locations
-  Location dp1_loc = port(1, neg_loc);
-  Location dp2_loc = port(2, neg_loc);
-  Location var_loc = port(1, pos_loc);
-  Location bod_loc = port(2, pos_loc);
+  Location dp1_loc = port(1, dup_loc);
+  Location dp2_loc = port(2, dup_loc);
+  Location var_loc = port(1, lam_loc);
+  Location bod_loc = port(2, lam_loc);
 
   // Take the positive term
   Term bod_val = take(bod_loc);
