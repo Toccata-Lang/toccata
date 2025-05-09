@@ -410,8 +410,8 @@ void appsup(Term app, Term sup) {
   Term dp2 = pair_make(SUP, term_new(VAR, 0, 0), term_new(VAR, 0, 0));
   Term cn1 = pair_make(APP, term_new(VAR, 0, port(1, term_loc(dp1))), term_new(SUB, 0, 0));
   Term cn2 = pair_make(APP, term_new(VAR, 0, port(2, term_loc(dp1))), term_new(SUB, 0, 0));
-  link(dp1, arg);
+  term_link(dp1, arg);
   move(ret, dp2);
-  link(cn1, tm1);
-  link(cn2, tm2);
+  term_link(cn1, tm1);
+  term_link(cn2, tm2);
 }
