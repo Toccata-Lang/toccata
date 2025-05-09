@@ -320,38 +320,28 @@ void eralam(Term era, Term lam) {
 
 // Duplication-Lambda interaction
 void duplam(Term dup, Term lam) {
-  Location dup_loc = term_loc(dup);
+  Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
-  
-  // Get port locations
-  Location dp1_loc = port(1, dup_loc);
-  Location dp2_loc = port(2, dup_loc);
-  Location var_loc = port(1, lam_loc);
-  Location bod_loc = port(2, lam_loc);
-
-  // Take the positive term
-  Term bod_val = take(bod_loc);
-
-  // Create the pairs
-  Term co1 = pair_make(LAM, 0, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
-  Term co2 = pair_make(LAM, 0, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
-  Term du1 = pair_make(SUP, 0, term_new(VAR, 0, term_loc(co1)), term_new(VAR, 0, term_loc(co2)));
-  Term du2 = pair_make(DUP, 0, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
-
-  // Update variable references
-  Location co1_loc = term_loc(co1);
-  Location co2_loc = term_loc(co2);
-  Location du2_loc = term_loc(du2);
-    
-  // Update the second terms in co1 and co2 to point to du2
-  set(port(2, co1_loc), term_new(VAR, 0, port(1, du2_loc)));
-  set(port(2, co2_loc), term_new(VAR, 0, port(2, du2_loc)));
-
-  // Move positive terms into negative locations
-  move(dp1_loc, co1);
-  move(dp2_loc, co2);
-  move(var_loc, du1);
-  term_link(du2, bod_val);
+  Location var = port(1, lam_loc);
+  Term bod = take(port(2, lam_loc));
+  Term co1 = pair_make(LAM, 0,
+		       term_new(SUB, 0, 0),
+		       term_new(VAR, 0, 0));
+  Term co2 = pair_make(LAM, 0,
+		       term_new(SUB, 0, 0),
+		       term_new(VAR, 0, 0));
+  Term du1 = pair_make(SUP, dup_lab,
+		       term_new(VAR, 0, port(1, term_loc(co1))),
+		       term_new(VAR, 0, port(1, term_loc(co2))));
+  Term du2 = pair_make(DUP, dup_lab,
+		       term_new(SUB, 0, 0),
+		       term_new(SUB, 0, 0));
+  set(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
+  set(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
+  move(port(1, term_loc(dup)), co1);
+  move(port(2, term_loc(dup)), co2);
+  move(var, du1);
+  term_link(du2, bod);
 }
 
 // Application-Null interaction
