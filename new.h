@@ -27,6 +27,25 @@ extern u64 RNOD_END;
 extern a64* get_buff(void);  // For testing only
 
 // Tags for different term types
+#define VAL 0x00 // positive native value
+#define VAR 0x01 // positive variable
+#define SUB 0x02 // negative possible deferred redex
+#define NUL 0x03 // positive eraser
+#define ERA 0x04 // negative eraser
+#define LAM 0x05 // positive constructor
+#define APP 0x06 // negative constructor
+#define REF 0x07 // positive reference
+#define VL1 0x08 // positive native value alieas
+#define SUP 0x09 // positive duplicator
+#define DUP 0x0a // negative duplicator
+#define OPX 0x0b // negative operation
+#define OPY 0x0c // negative operation
+#define I56 0x0d // positive 56 bit int
+#define F56 0x0e // positive 56 bit float
+#define LAZ 0x0f // positive lazy node
+typedef u32 Tag; // Tag is now just an unsigned integer
+
+/*
 typedef enum {
     VAR, // Positive variable
     SUB, // Negative variable (aux wire)
@@ -37,6 +56,7 @@ typedef enum {
     SUP, // Positive duplicator node
     DUP  // Negative duplicator node
 } Tag;
+// */
 
 // Term is a 64-bit value:
 // - Highest 32 bits: Location

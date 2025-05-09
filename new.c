@@ -65,14 +65,22 @@ void hvm_reset(void) {
 // Convert a tag to its string representation
 const char* tag_to_string(Tag tag) {
     switch (tag) {
+        case VAL: return "VAL";
+        case VAR: return "VAR";
         case SUB: return "SUB";
+        case NUL: return "NUL";
+        case ERA: return "ERA";
+        case LAM: return "LAM";
+        case APP: return "APP";
+        case REF: return "REF";
+        case VL1: return "VL1";
         case SUP: return "SUP";
         case DUP: return "DUP";
-        case NUL: return "NUL";
-        case VAR: return "VAR";
-        case APP: return "APP";
-        case LAM: return "LAM";
-        case ERA: return "ERA";
+        case OPX: return "OPX";
+        case OPY: return "OPY";
+        case I56: return "I56";
+        case F56: return "F56";
+        case LAZ: return "LAZ";
         default: return "UNKNOWN";
     }
 }
@@ -89,7 +97,11 @@ Term term_new(Tag tag, Lab lab, Location loc) {
 
 // Get the tag of a term
 Tag term_tag(Term term) {
-    return (Tag)(term & TAG_MASK);
+  Tag t = (Tag)(term & TAG_MASK);
+  if (t == VL1)
+    return VAL;
+  else
+    return t;
 }
 
 // Get the label of a term
@@ -122,9 +134,16 @@ Term take(Location loc) {
 // Check if a term is positive
 bool is_positive(Term term) {
     switch (term_tag(term)) {
+        case VAL:
         case VAR:
         case NUL:
         case LAM:
+        case REF:
+        case VL1:
+        case SUP:
+        case I56:
+        case F56:
+        case LAZ:
             return true;
         default:
             return false;
@@ -137,6 +156,9 @@ bool is_negative(Term term) {
         case SUB:
         case ERA:
         case APP:
+        case DUP:
+        case OPX:
+        case OPY:
             return true;
         default:
             return false;
