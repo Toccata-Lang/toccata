@@ -65,7 +65,7 @@ void test_pair_creation(void) {
     // Verify pair structure
     Location loc = term_loc(pair);
     if (get(loc) != t1 || get(port(2, loc)) != t2) {
-        printf("[FAIL] test_pair_creation: Incorrect values stored in BUFF\n");
+        printf("[FAIL:%d] test_pair_creation: Incorrect values stored in BUFF\n", __LINE__);
         printf("Expected: BUFF[%u]=%lu, BUFF[%u]=%lu\n", loc, t1, port(2, loc), t2);
         printf("Got:      BUFF[%u]=%lu, BUFF[%u]=%lu\n", loc, get(loc), port(2, loc), get(port(2, loc)));
         exit(1);
@@ -104,20 +104,20 @@ void test_applam(void) {
     // Check that argument was moved to variable port with VAR tag
     Term actual_var = get(var_loc);
     if (term_tag(actual_var) != VAR) {
-        printf("[FAIL] test_applam: Expected VAR tag in variable port, got: tag=%d\n", term_tag(actual_var));
+        printf("[FAIL:%d] test_applam: Expected VAR tag in variable port, got: tag=%d\n", __LINE__, term_tag(actual_var));
         exit(1);
     }
     
     // Check that body was moved to return port with APP tag
     Term actual_ret = get(ret_loc);
     if (term_tag(actual_ret) != NUL) {
-        printf("[FAIL] test_applam: Expected APP tag in return port, got: tag=%d\n", term_tag(actual_ret));
+        printf("[FAIL:%d] test_applam: Expected APP tag in return port, got: tag=%d\n", __LINE__, term_tag(actual_ret));
         exit(1);
     }
     
     // Check that original locations are cleared
     if (get(arg_loc) != 0 || get(bod_loc) != 0) {
-        printf("[FAIL] test_applam: Original locations not cleared\n");
+        printf("[FAIL:%d] test_applam: Original locations not cleared\n", __LINE__);
         exit(1);
     }
     
@@ -159,7 +159,7 @@ void try_invalid_pair(Tag tag, Term fst, Term snd, const char* desc) {
         if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
             printf("[PASS] Correctly rejected %s\n", desc);
         } else {
-            printf("[FAIL] Failed to reject %s\n", desc);
+            printf("[FAIL:%d] Failed to reject %s\n", __LINE__, desc);
             exit(1);
         }
     }
@@ -198,12 +198,12 @@ void test_polarity() {
     Term lam = term_new(LAM, 0, 0);
     
     if (!is_positive(var) || !is_positive(nul) || !is_positive(lam)) {
-        printf("[FAIL] test_polarity: Expected VAR, NUL, LAM to be positive\n");
+        printf("[FAIL:%d] test_polarity: Expected VAR, NUL, LAM to be positive\n", __LINE__);
         exit(1);
     }
     
     if (is_negative(var) || is_negative(nul) || is_negative(lam)) {
-        printf("[FAIL] test_polarity: VAR, NUL, LAM should not be negative\n");
+        printf("[FAIL:%d] test_polarity: VAR, NUL, LAM should not be negative\n", __LINE__);
         exit(1);
     }
     
@@ -213,12 +213,12 @@ void test_polarity() {
     Term app = term_new(APP, 0, 0);
     
     if (!is_negative(sub) || !is_negative(era) || !is_negative(app)) {
-        printf("[FAIL] test_polarity: Expected SUB, ERA, APP to be negative\n");
+        printf("[FAIL:%d] test_polarity: Expected SUB, ERA, APP to be negative\n", __LINE__);
         exit(1);
     }
     
     if (is_positive(sub) || is_positive(era) || is_positive(app)) {
-        printf("[FAIL] test_polarity: SUB, ERA, APP should not be positive\n");
+        printf("[FAIL:%d] test_polarity: SUB, ERA, APP should not be positive\n", __LINE__);
         exit(1);
     }
     
@@ -245,7 +245,7 @@ void test_error_conditions(void) {
         if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
             printf("[PASS] Correctly failed on uninitialized VM\n");
         } else {
-            printf("[FAIL] Did not fail on uninitialized VM\n");
+            printf("[FAIL:%d] Did not fail on uninitialized VM\n", __LINE__);
             exit(1);
         }
     }
@@ -280,7 +280,7 @@ void test_boundary_validation(void) {
         if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
             printf("[PASS] Correctly failed on boundary error\n");
         } else {
-            printf("[FAIL] Did not fail on boundary error\n");
+            printf("[FAIL:%d] Did not fail on boundary error\n", __LINE__);
             exit(1);
         }
     }
@@ -314,27 +314,27 @@ void test_duplam(void) {
 
     // Check that first copy has correct structure
     if (term_tag(lam1) != LAM) {
-        printf("[FAIL] test_duplam: Expected LAM tag in first copy port, got: tag=%d\n", term_tag(lam1));
+        printf("[FAIL:%d] test_duplam: Expected LAM tag in first copy port, got: tag=%d\n", __LINE__, term_tag(lam1));
         exit(1);
     }
 
     // Check that second copy has correct structure
     if (term_tag(lam2) != LAM) {
-        printf("[FAIL] test_duplam: Expected LAM tag in second copy port, got: tag=%d\n", term_tag(lam2));
+        printf("[FAIL:%d] test_duplam: Expected LAM tag in second copy port, got: tag=%d\n", __LINE__, term_tag(lam2));
         exit(1);
     }
     
     // Check that variable port contains a SUP term
     if (term_tag(sup) != SUP) {
-        printf("[FAIL] test_duplam: Expected SUP tag in variable port, got: tag=%d\n", term_tag(sup));
+        printf("[FAIL:%d] test_duplam: Expected SUP tag in variable port, got: tag=%d\n", __LINE__, term_tag(sup));
         exit(1);
     }
     if (term_loc(get(port(1, term_loc(sup)))) != port(1, term_loc(lam1))) {
-        printf("[FAIL] test_duplam: Expected SUP port 1 points to wrong place\n");
+        printf("[FAIL:%d] test_duplam: Expected SUP port 1 points to wrong place\n", __LINE__);
         exit(1);
     }
     if (term_loc(get(port(2, term_loc(sup)))) != port(1, term_loc(lam2))) {
-        printf("[FAIL] test_duplam: Expected SUP port 2 points to wrong place\n");
+        printf("[FAIL:%d] test_duplam: Expected SUP port 2 points to wrong place\n", __LINE__);
         exit(1);
     }
 
@@ -372,7 +372,7 @@ void test_eralam(void) {
     Location var_loc = port(1, term_loc(lam));
     Term result_var = get(var_loc);
     if (term_tag(result_var) != NUL) {
-        printf("[FAIL] test_eralam: Expected NUL in variable port, got tag=%d\n", term_tag(result_var));
+        printf("[FAIL:%d] test_eralam: Expected NUL in variable port, got tag=%d\n", __LINE__, term_tag(result_var));
         exit(1);
     }
     
@@ -396,7 +396,7 @@ void test_appnul(void) {
     Location ret_loc = port(2, term_loc(app));
     Term result_ret = get(ret_loc);
     if (term_tag(result_ret) != NUL) {
-        printf("[FAIL] test_appnul: Expected NUL in return port, got tag=%d\n", term_tag(result_ret));
+        printf("[FAIL:%d] test_appnul: Expected NUL in return port, got tag=%d\n", __LINE__, term_tag(result_ret));
         exit(1);
     }
     
@@ -425,12 +425,12 @@ void test_dupnul(void) {
     Term result_dp2 = get(dp2_loc);
     
     if (term_tag(result_dp1) != NUL) {
-        printf("[FAIL] test_dupnul: Expected NUL in first copy port, got tag=%d\n", term_tag(result_dp1));
+        printf("[FAIL:%d] test_dupnul: Expected NUL in first copy port, got tag=%d\n", __LINE__, term_tag(result_dp1));
         exit(1);
     }
     
     if (term_tag(result_dp2) != NUL) {
-        printf("[FAIL] test_dupnul: Expected NUL in second copy port, got tag=%d\n", term_tag(result_dp2));
+        printf("[FAIL:%d] test_dupnul: Expected NUL in second copy port, got tag=%d\n", __LINE__, term_tag(result_dp2));
         exit(1);
     }
     
@@ -460,12 +460,12 @@ void test_erasup(void) {
     Term result_p2 = get(p2_loc);
     
     if (result_p1 != 0) {
-        printf("[FAIL] test_erasup: Expected ERA in first port, got tag=%d\n", term_tag(result_p1));
+        printf("[FAIL:%d] test_erasup: Expected ERA in first port, got tag=%d\n", __LINE__, term_tag(result_p1));
         exit(1);
     }
     
     if (result_p2 != 0) {
-        printf("[FAIL] test_erasup: Expected ERA in second port, got tag=%d\n", term_tag(result_p2));
+        printf("[FAIL:%d] test_erasup: Expected ERA in second port, got tag=%d\n", __LINE__, term_tag(result_p2));
         exit(1);
     }
     
@@ -504,7 +504,7 @@ void test_appsup(void) {
     // Check that original terms have been taken (should be 0)
     if (get(arg_loc) != 0 || get(ret_loc) != 0 || 
         get(p1_loc) != 0 || get(p2_loc) != 0) {
-        printf("[FAIL] test_appsup: Original terms not properly taken\n");
+        printf("[FAIL:%d] test_appsup: Original terms not properly taken\n", __LINE__);
         exit(1);
     }
     
