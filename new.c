@@ -153,8 +153,8 @@ void set(Location loc, Term term) {
     atomic_store_explicit(&BUFF[loc], term, memory_order_relaxed);
 }
 
-// Create a new pair with given tag and terms
-Term pair_make(Tag tag, Term fst, Term snd) {
+// Create a new pair with given tag, label, and terms
+Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     // Check if we have enough space for the pair
     if (RNOD_END + 2 >= RBAG_INI) {
         fprintf(stderr, "Error: Not enough space to create pair. RNOD_END=%lu, RBAG_INI=%lu\n",
@@ -237,7 +237,7 @@ Term pair_make(Tag tag, Term fst, Term snd) {
     set(port(1, loc), fst);
     set(port(2, loc), snd);
     
-    return term_new(tag, 0, loc);
+    return term_new(tag, lab, loc);
 }
 
 // Move a positive term into a negative location
@@ -333,10 +333,10 @@ void duplam(Term dup, Term lam) {
   Term bod_val = take(bod_loc);
 
   // Create the pairs
-  Term co1 = pair_make(LAM, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
-  Term co2 = pair_make(LAM, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
-  Term du1 = pair_make(SUP, term_new(VAR, 0, term_loc(co1)), term_new(VAR, 0, term_loc(co2)));
-  Term du2 = pair_make(DUP, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
+  Term co1 = pair_make(LAM, 0, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
+  Term co2 = pair_make(LAM, 0, term_new(SUB, 0, 0), term_new(VAR, 0, 0));
+  Term du1 = pair_make(SUP, 0, term_new(VAR, 0, term_loc(co1)), term_new(VAR, 0, term_loc(co2)));
+  Term du2 = pair_make(DUP, 0, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
 
   // Update variable references
   Location co1_loc = term_loc(co1);
@@ -406,10 +406,10 @@ void appsup(Term app, Term sup) {
   Location ret = port(2, app_loc);
   Term tm1 = take(port(1, sup_loc));
   Term tm2 = take(port(2, sup_loc));
-  Term dp1 = pair_make(DUP, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
-  Term dp2 = pair_make(SUP, term_new(VAR, 0, 0), term_new(VAR, 0, 0));
-  Term cn1 = pair_make(APP, term_new(VAR, 0, port(1, term_loc(dp1))), term_new(SUB, 0, 0));
-  Term cn2 = pair_make(APP, term_new(VAR, 0, port(2, term_loc(dp1))), term_new(SUB, 0, 0));
+  Term dp1 = pair_make(DUP, 0, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
+  Term dp2 = pair_make(SUP, 0, term_new(VAR, 0, 0), term_new(VAR, 0, 0));
+  Term cn1 = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(dp1))), term_new(SUB, 0, 0));
+  Term cn2 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(dp1))), term_new(SUB, 0, 0));
   term_link(dp1, arg);
   move(ret, dp2);
   term_link(cn1, tm1);

@@ -59,7 +59,7 @@ void print_term(const char* prefix, Term term) {
 void test_pair_creation(void) {
     Term t1 = term_new(ERA, 0, 0);  // negative term for port 1
     Term t2 = term_new(NUL, 0, 0);  // positive term for port 2
-    Term pair = pair_make(LAM, t1, t2);
+    Term pair = pair_make(LAM, 0, t1, t2);
     print_term("Simple pair", pair);
     
     // Verify pair structure
@@ -87,8 +87,8 @@ void test_applam(void) {
     Term bod_term = term_new(NUL, 0, 0);  // Positive body term
     
     // Create application and lambda terms
-    Term app = pair_make(APP, arg_term, ret_term);
-    Term lam = pair_make(LAM, var_term, bod_term);
+    Term app = pair_make(APP, 0, arg_term, ret_term);
+    Term lam = pair_make(LAM, 0, var_term, bod_term);
     
     // Get port locations for verification
     Location app_loc = term_loc(app);
@@ -128,8 +128,8 @@ void test_applam(void) {
 void test_pair_manipulation(void) {
     
     // Create nested pairs
-    Term inner = pair_make(APP, term_new(NUL, 0, 0), term_new(SUB, 0, 0));  // positive port 1, negative port 2
-    Term outer = pair_make(APP, term_new(NUL, 0, 0), term_new(SUB, 0, 0));  // positive port 1, negative port 2
+    Term inner = pair_make(APP, 0, term_new(NUL, 0, 0), term_new(SUB, 0, 0));  // positive port 1, negative port 2
+    Term outer = pair_make(APP, 0, term_new(NUL, 0, 0), term_new(SUB, 0, 0));  // positive port 1, negative port 2
     
     print_term("Inner pair", inner);
     print_term("Outer pair", outer);
@@ -150,7 +150,7 @@ void try_invalid_pair(Tag tag, Term fst, Term snd, const char* desc) {
     
     if (pid == 0) {
         // Child process
-        pair_make(tag, fst, snd);
+        pair_make(tag, 0, fst, snd);
         exit(0);  // Should not reach here
     } else {
         // Parent process
@@ -170,13 +170,13 @@ void test_pair_polarity() {
     // Test valid LAM pair (port 1 negative, port 2 positive)
     Term era = term_new(ERA, 0, 0);  // negative term
     Term var = term_new(VAR, 0, 0);  // positive term
-    pair_make(LAM, era, var);
+    pair_make(LAM, 0, era, var);
     printf("[PASS] Created LAM pair with correct port polarities\n");
     
     // Test valid APP pair (port 1 positive, port 2 negative)
     Term nul = term_new(NUL, 0, 0);  // positive term
     Term sub = term_new(SUB, 0, 0);  // negative term
-    pair_make(APP, nul, sub);
+    pair_make(APP, 0, nul, sub);
     printf("[PASS] Created APP pair with correct port polarities\n");
     
     // Test invalid LAM pair (wrong port polarities)
@@ -261,7 +261,7 @@ void test_boundary_validation(void) {
     if (pid == 0) {
         // Child process
         // Create a pair and link terms to fill up reduction bag space
-        pair_make(APP, term_new(NUL, 0, 0), term_new(SUB, 0, 0));
+        pair_make(APP, 0, term_new(NUL, 0, 0), term_new(SUB, 0, 0));
         
         // Link terms to fill up reduction bag space
         // Each term_link uses 2 slots, and we want to fill up the small memory
@@ -296,8 +296,8 @@ void test_duplam(void) {
     Term dup2_term = term_new(SUB, 2, 0); // Negative second copy term
     
     // Create lambda and duplicator terms
-    Term lam = pair_make(LAM, var_term, bod_term);
-    Term dup = pair_make(DUP, dup1_term, dup2_term);
+    Term lam = pair_make(LAM, 0, var_term, bod_term);
+    Term dup = pair_make(DUP, 0, dup1_term, dup2_term);
     
     // Get port locations for verification
     Location dup_loc = term_loc(dup);
@@ -360,7 +360,7 @@ void test_eralam(void) {
     // Create LAM term with ports
     Term var = term_new(SUB, 0, 0);  // Negative variable port
     Term bod = term_new(NUL, 0, 0);  // Positive body port
-    Term lam = pair_make(LAM, var, bod);
+    Term lam = pair_make(LAM, 0, var, bod);
     
     // Create ERA term
     Term era = term_new(ERA, 0, 0);
@@ -384,7 +384,7 @@ void test_appnul(void) {
     // Create APP term with ports
     Term arg = term_new(NUL, 0, 0);  // Positive argument port
     Term ret = term_new(SUB, 0, 0);  // Negative return port
-    Term app = pair_make(APP, arg, ret);
+    Term app = pair_make(APP, 0, arg, ret);
     
     // Create NUL term
     Term nul = term_new(NUL, 0, 0);
@@ -409,7 +409,7 @@ void test_dupnul(void) {
     // Create DUP term with ports
     Term dp1 = term_new(SUB, 1, 0);  // Negative first copy port
     Term dp2 = term_new(SUB, 2, 0);  // Negative second copy port
-    Term dup = pair_make(DUP, dp1, dp2);
+    Term dup = pair_make(DUP, 0, dp1, dp2);
     
     // Create NUL term
     Term nul = term_new(NUL, 0, 0);
@@ -443,7 +443,7 @@ void test_erasup(void) {
     // Create SUP term with ports
     Term p1 = term_new(NUL, 1, 0);  // Positive first port
     Term p2 = term_new(NUL, 2, 0);  // Positive second port
-    Term sup = pair_make(SUP, p1, p2);
+    Term sup = pair_make(SUP, 0, p1, p2);
     
     // Create ERA term
     Term era = term_new(ERA, 0, 0);
@@ -481,12 +481,12 @@ void test_appsup(void) {
     // Create SUP term with ports
     Term p1 = term_new(NUL, 1, 0);  // Positive first port
     Term p2 = term_new(NUL, 2, 0);  // Positive second port
-    Term sup = pair_make(SUP, p1, p2);
+    Term sup = pair_make(SUP, 0, p1, p2);
     
     // Create APP term with ports
     Term arg = term_new(NUL, 3, 0);  // Positive argument port
     Term ret = term_new(SUB, 4, 0);  // Negative return port
-    Term app = pair_make(APP, arg, ret);
+    Term app = pair_make(APP, 0, arg, ret);
     
     // Store locations for verification
     Location p1_loc = term_loc(p1);

@@ -62,7 +62,7 @@ bool is_negative(Term term);
 // Get term at location
 Term get(Location loc);
 void set(Location loc, Term term);
-Term pair_make(Tag tag, Term fst, Term snd);
+Term pair_make(Tag tag, Lab lab, Term fst, Term snd);
 void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
 void applam(Term app, Term lam);
