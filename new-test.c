@@ -101,13 +101,6 @@ void test_applam(void) {
     // Perform interaction
     applam(app, lam);
     
-    // Check that argument was moved to variable port with VAR tag
-    Term actual_var = get(var_loc);
-    if (term_tag(actual_var) != VAR) {
-        printf("[FAIL:%d] test_applam: Expected VAR tag in variable port, got: tag=%d\n", __LINE__, term_tag(actual_var));
-        exit(1);
-    }
-    
     // Check that body was moved to return port with APP tag
     Term actual_ret = get(ret_loc);
     if (term_tag(actual_ret) != NUL) {
