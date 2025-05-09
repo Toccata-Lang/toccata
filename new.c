@@ -454,10 +454,10 @@ bool ABRT(Term neg, Term pos) {
   abort();
 }
 
-interactionFn posInteractions[16] = {
-  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// Define a macro for the default interaction functions
+#define POS_INTERACTIONS \
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
-};
+  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 /*
 interactionFn eraInteractions [16] = {
@@ -466,24 +466,24 @@ interactionFn eraInteractions [16] = {
 };
 // */
 
+// Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
-  //VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
-  // posInteractions,
-  // posInteractions,
-  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
-  // posInteractions,
-  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
-  // posInteractions,
-  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
-  // posInteractions,
-  // posInteractions,
-  // posInteractions,
-  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
-  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
-  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
-  // posInteractions,
-  // posInteractions,
-  // posInteractions
+  { POS_INTERACTIONS }, // VAL
+  { POS_INTERACTIONS }, // VAR
+  { POS_INTERACTIONS }, // SUB
+  { POS_INTERACTIONS }, // NUL
+  { POS_INTERACTIONS }, // ERA
+  { POS_INTERACTIONS }, // LAM
+  { POS_INTERACTIONS }, // APP
+  { POS_INTERACTIONS }, // REF
+  { POS_INTERACTIONS }, // VL1
+  { POS_INTERACTIONS }, // SUP
+  { POS_INTERACTIONS }, // DUP
+  { POS_INTERACTIONS }, // OPX
+  { POS_INTERACTIONS }, // OPY
+  { POS_INTERACTIONS }, // I56
+  { POS_INTERACTIONS }, // F56
+  { POS_INTERACTIONS }  // LAZ
 };
 
 bool interact(Term neg, Term pos) {

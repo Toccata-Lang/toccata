@@ -93,7 +93,6 @@ void test_applam(void) {
     // Get port locations for verification
     Location app_loc = term_loc(app);
     Location lam_loc = term_loc(lam);
-    Location var_loc = port(1, lam_loc);  // Variable port
     Location bod_loc = port(2, lam_loc);  // Body port
     Location arg_loc = port(1, app_loc);  // Argument port
     Location ret_loc = port(2, app_loc);  // Return port
