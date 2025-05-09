@@ -472,6 +472,50 @@ void test_erasup(void) {
     printf("[PASS] test_erasup\n");
 }
 
+// Test APP SUP interaction
+void test_appsup(void) {
+    // Initialize VM with enough memory for this test
+    hvm_init(1024);
+    hvm_reset();
+    
+    // Create SUP term with ports
+    Term p1 = term_new(NUL, 1, 0);  // Positive first port
+    Term p2 = term_new(NUL, 2, 0);  // Positive second port
+    Term sup = pair_make(SUP, p1, p2);
+    
+    // Create APP term with ports
+    Term arg = term_new(NUL, 3, 0);  // Positive argument port
+    Term ret = term_new(SUB, 4, 0);  // Negative return port
+    Term app = pair_make(APP, arg, ret);
+    
+    // Store locations for verification
+    Location p1_loc = term_loc(p1);
+    Location p2_loc = term_loc(p2);
+    Location arg_loc = term_loc(arg);
+    Location ret_loc = term_loc(ret);
+    
+    // Perform interaction
+    appsup(app, sup);
+    
+    // After interaction, we should have:
+    // 1. Two new APP nodes linked to the original SUP ports
+    // 2. Two new DUP nodes for argument and return
+    
+    // Check that original terms have been taken (should be 0)
+    if (get(arg_loc) != 0 || get(ret_loc) != 0 || 
+        get(p1_loc) != 0 || get(p2_loc) != 0) {
+        printf("[FAIL] test_appsup: Original terms not properly taken\n");
+        exit(1);
+    }
+    
+    // We can't easily check the exact structure without tracing through all the links,
+    // but we can verify that the interaction completed without errors
+    printf("[PASS] test_appsup\n");
+    
+    // Clean up
+    hvm_free();
+}
+
 int main(int argc, char *argv[]) {
     // Initialize the VM with some memory
     hvm_init(1024);
@@ -526,10 +570,11 @@ int main(int argc, char *argv[]) {
     hvm_reset();
     test_erasup();
     
-    // printf("\n=== Running test_boundary_validation ===\n");
-    // test_boundary_validation();
+    printf("\n=== Running test_appsup ===\n");
+    test_appsup();
     
     // Final cleanup
     hvm_free();
+    
     return 0;
 }

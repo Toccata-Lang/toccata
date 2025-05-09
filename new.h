@@ -72,6 +72,7 @@ void eralam(Term era, Term lam);
 void appnul(Term app, Term nul);
 void dupnul(Term dup, Term nul);
 void erasup(Term era, Term sup);
+void appsup(Term app, Term sup);
 void push_redex(Term neg, Term pos);
 
 #endif // NEW_H

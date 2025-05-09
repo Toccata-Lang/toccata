@@ -396,3 +396,22 @@ void erasup(Term era, Term sup) {
   term_link(p1, era);
   term_link(p2, era);
 }
+
+// Application-Duplicator interaction
+void appsup(Term app, Term sup) {
+  Location app_loc = term_loc(app);
+  Location sup_loc = term_loc(sup);
+
+  Term arg = take(port(1, app_loc));
+  Location ret = port(2, app_loc);
+  Term tm1 = take(port(1, sup_loc));
+  Term tm2 = take(port(2, sup_loc));
+  Term dp1 = pair_make(DUP, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
+  Term dp2 = pair_make(SUP, term_new(VAR, 0, 0), term_new(VAR, 0, 0));
+  Term cn1 = pair_make(APP, term_new(VAR, 0, port(1, term_loc(dp1))), term_new(SUB, 0, 0));
+  Term cn2 = pair_make(APP, term_new(VAR, 0, port(2, term_loc(dp1))), term_new(SUB, 0, 0));
+  link(dp1, arg);
+  move(ret, dp2);
+  link(cn1, tm1);
+  link(cn2, tm2);
+}
