@@ -7,6 +7,10 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 
+// Booleans
+#define TRUE  1
+#define FALSE 0
+
 // Type definitions
 typedef uint64_t u64;
 typedef uint32_t u32;
@@ -94,5 +98,7 @@ void dupnul(Term dup, Term nul);
 void erasup(Term era, Term sup);
 void appsup(Term app, Term sup);
 void push_redex(Term neg, Term pos);
+
+typedef bool (*interactionFn)(Term a, Term b);
 
 #endif // NEW_H

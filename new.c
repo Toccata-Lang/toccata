@@ -436,3 +436,61 @@ void appsup(Term app, Term sup) {
   term_link(cn1, tm1);
   term_link(cn2, tm2);
 }
+
+// The Void Interaction.
+bool VOID(Term neg, Term pos) {
+  return TRUE;
+}
+
+bool ABRT(Term neg, Term pos) {
+  fprintf(stderr, "Bad interaction: %s %s\n",
+	  tag_to_string(term_tag(neg)), tag_to_string(term_tag(pos)));
+  fprintf(stderr, "a: %p b: %p\n", (void *)neg, (void *)pos);
+  /*
+  if (term_tag(pos) == VAL) {
+    fprintf(stderr, "val type %d: %ld\n", __LINE__, ((Value *)((u64)a & ~7))->type);
+  }
+  // */
+  abort();
+}
+
+interactionFn posInteractions[16] = {
+  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+  &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+};
+
+/*
+interactionFn eraInteractions [16] = {
+  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+  &ABRT,&ABRT,&ABRT,&VOID,&ABRT,&ABRT,&ABRT,&VOID,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&VOID,&VOID,&ABRT
+};
+// */
+
+interactionFn interactions[16][16] = {
+  //VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+  // posInteractions,
+  // posInteractions,
+  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
+  // posInteractions,
+  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
+  // posInteractions,
+  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
+  // posInteractions,
+  // posInteractions,
+  // posInteractions,
+  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
+  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
+  // {&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT},
+  // posInteractions,
+  // posInteractions,
+  // posInteractions
+};
+
+bool interact(Term neg, Term pos) {
+  // Gets the rule type.
+  interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
+
+  // Swaps ports if necessary.
+  rule(neg, pos);
+  return TRUE;
+}
