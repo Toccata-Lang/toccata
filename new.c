@@ -389,6 +389,7 @@ void erasup(Term era, Term sup) {
 
 // Application-Duplicator interaction
 void appsup(Term app, Term sup) {
+  Lab sup_lab = term_lab(sup);
   Location app_loc = term_loc(app);
   Location sup_loc = term_loc(sup);
 
@@ -396,10 +397,18 @@ void appsup(Term app, Term sup) {
   Location ret = port(2, app_loc);
   Term tm1 = take(port(1, sup_loc));
   Term tm2 = take(port(2, sup_loc));
-  Term dp1 = pair_make(DUP, 0, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
-  Term dp2 = pair_make(SUP, 0, term_new(VAR, 0, 0), term_new(VAR, 0, 0));
-  Term cn1 = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(dp1))), term_new(SUB, 0, 0));
-  Term cn2 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(dp1))), term_new(SUB, 0, 0));
+  Term dp1 = pair_make(DUP, sup_lab,
+		       term_new(SUB, 0, 0),
+		       term_new(SUB, 0, 0));
+  Term dp2 = pair_make(SUP, sup_lab,
+		       term_new(VAR, 0, 0),
+		       term_new(VAR, 0, 0));
+  Term cn1 = pair_make(APP, 0,
+		       term_new(VAR, 0, port(1, term_loc(dp1))),
+		       term_new(SUB, 0, 0));
+  Term cn2 = pair_make(APP, 0,
+		       term_new(VAR, 0, port(2, term_loc(dp1))),
+		       term_new(SUB, 0, 0));
   term_link(dp1, arg);
   move(ret, dp2);
   term_link(cn1, tm1);
