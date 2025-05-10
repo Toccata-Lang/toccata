@@ -14,8 +14,21 @@ void print_raw_term(Term t) {
   } else {
     Tag tag = term_tag(t);
     Lab lab = term_lab(t);
-    Location loc = term_loc(t);
-    printf("%s %x %.3x", tag_to_string(tag), lab, loc);
+    switch(term_tag(t)) {
+    case VAL:
+    case SUB:
+    case NUL:
+    case REF:
+    case ERA:
+    case I56:
+    case F56:
+      printf("%s %x", tag_to_string(tag), lab);
+      break;
+    
+    default:
+      printf("%s %x %.3x", tag_to_string(tag), lab, term_loc(t));
+      break;
+    }
   }
 }
 
@@ -261,8 +274,8 @@ void test_erasup(void) {
   Term era = term_new(ERA, 0, 0);
     
   // Store locations for verification
-  Location p1_loc = term_loc(p1);
-  Location p2_loc = term_loc(p2);
+  Location p1_loc = port(1, term_loc(sup));
+  Location p2_loc = port(2, term_loc(sup));
     
   // Perform interaction
   test_interact(era, sup);
@@ -483,41 +496,64 @@ void test_dupnul(void) {
     printf("[PASS] test_dupnul\n");
 }
 
+Term identity_lambda() {
+  Term lam= pair_make(LAM, 0,
+		     term_new(SUB, 0, 0),
+		     term_new(NUL, 0, 0));
+  // make 'lam' the identity fn
+  set(port(2, term_loc(lam)), term_new(VAR, 0, port(1, term_loc(lam))));
+  return lam;
+}
+
+Term get_var(Term t) {
+  while(term_tag(t) == VAR) {
+    t = get(term_loc(t));
+  }
+  return t;
+}
+
 // Test APP SUP interaction
 void test_appsup(void) {
-    // Create SUP term with ports
-    Term p1 = new_i56(4);  // Positive first port
-    Term p2 = new_i56(8);  // Positive second port
-    Term sup = pair_make(SUP, 0, p1, p2);
+  // Create SUP term with ports
+  Term p1 = identity_lambda();
+  Term p2 = new_i56(8);
+  Term sup = pair_make(SUP, 5, p1, p2);
     
-    // Create APP term with ports
-    Term arg = term_new(NUL, 3, 0);  // Positive argument port
-    Term ret = term_new(SUB, 4, 0);  // Negative return port
-    Term app = pair_make(APP, 0, arg, ret);
+  // Create APP term with ports
+  Term arg = new_i56(75);  // Positive argument port
+  Term ret = term_new(SUB, 4, 0);  // Negative return port
+  Term app = pair_make(APP, 0, arg, ret);
     
-    // Store locations for verification
-    Location p1_loc = term_loc(p1);
-    Location p2_loc = term_loc(p2);
-    Location arg_loc = term_loc(arg);
-    Location ret_loc = term_loc(ret);
+  // Store locations for verification
+  Location p1_loc = term_loc(p1);
+  Location ret_loc = port(2, term_loc(app));
     
-    // Perform interaction
-    interact(app, sup);
+  // Perform interaction
+  test_interact(app, sup);
     
-    // After interaction, we should have:
-    // 1. Two new APP nodes linked to the original SUP ports
-    // 2. Two new DUP nodes for argument and return
-
-    // Check that original terms have been taken (should be 0)
-    if (get(arg_loc) != 0 || get(ret_loc) != 0 || 
-        get(p1_loc) != 0 || get(p2_loc) != 0) {
-        printf("[FAIL:%d] test_appsup: Original terms not properly taken\n", __LINE__);
-        exit(1);
-    }
+  // Check that SUP was moved to return port
+  Term actual_ret = get(ret_loc);
+  if (term_tag(actual_ret) != SUP) {
+    printf("[FAIL:%d] test_applam: Expected SUP tag in return port, got: tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(actual_ret)));
+    exit(1);
+  }
     
-    // We can't easily check the exact structure without tracing through all the links,
-    // but we can verify that the interaction completed without errors
-    printf("[PASS] test_appsup\n");
+  // Check that SUP points to the right values
+  if (get_var(get(port(1, term_loc(actual_ret)))) != arg) {
+    printf("[FAIL:%d] test_applam: SUP port 1 value is wrong. got:\n",
+	   __LINE__);
+    print_term("", get_var(get(port(1, term_loc(actual_ret)))));
+    exit(1);
+  }
+  if (get_var(get(port(2, term_loc(actual_ret)))) != NUL) {
+    printf("[FAIL:%d] test_applam: SUP port 2 value is wrong. got:\n",
+	   __LINE__);
+    print_term("", get_var(get(port(2, term_loc(actual_ret)))));
+    exit(1);
+  }
+    
+  printf("[PASS] test_appsup\n");
 }
 
 // Test application-lambda interaction
@@ -716,64 +752,51 @@ int main(int argc, char *argv[]) {
     // Initialize the VM with some memory
     hvm_init(1024);
     
-    printf("\n=== Running test_error_conditions ===\n");
     test_error_conditions();
 
     // Re-initialize VM after error conditions test
     hvm_init(1024);
 
     // Run the redex stack test
-    printf("\n=== Running test_redex_stack ===\n");
     hvm_reset();
     test_redex_stack();
     
     // Run the thread-safe redex test
-    printf("\n=== Running test_thread_safe_redex ===\n");
     hvm_reset();
     test_thread_safe_redex();
     
-    printf("\n=== Running test_polarity ===\n");
     hvm_reset();
     test_polarity();
 
-    printf("\n=== Running test_pair_polarity ===\n");
     hvm_reset();
     test_pair_polarity();
 
-    printf("\n=== Running test_pair_creation ===\n");
     hvm_reset();
     test_pair_creation();
     
-    printf("\n=== Running test_pair_manipulation ===\n");
     hvm_reset();
     test_pair_manipulation();
     
-    printf("\n=== Running test_erasup ===\n");
     hvm_reset();
     test_erasup();
     
-    printf("\n=== Running test_eralam ===\n");
     hvm_reset();
     test_eralam();
 
-    printf("\n=== Running test_appnul ===\n");
     hvm_reset();
     test_appnul();
 
-    printf("\n=== Running test_dupnul ===\n");
     hvm_reset();
     test_dupnul();
 
-    printf("\n=== Running test_applam ===\n");
     hvm_reset();
     test_applam();
     
-    printf("\n=== Running test_duplam ===\n");
+    hvm_reset();
+    test_appsup();
+    
     hvm_reset();
     test_duplam();
-    
-    printf("\n=== Running test_appsup ===\n");
-    test_appsup();
     
     // Final cleanup
     hvm_free();

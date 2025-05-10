@@ -142,7 +142,21 @@ Lab term_lab(Term term) {
 
 // Get the location of a term
 Location term_loc(Term term) {
+  switch(term_tag(term)) {
+  case VAL:
+  case SUB:
+  case NUL:
+  case REF:
+  case ERA:
+  case I56:
+  case F56:
+    BOOM("term has no location");
+    break;
+    
+  default:
     return (Location)(term >> (TAG_SIZE + LAB_SIZE));
+  }
+  return 0;
 }
 
 Location port(u64 n, Location x) {
@@ -445,15 +459,15 @@ bool appsup(Term app, Term sup) {
   Term dp1 = pair_make(DUP, sup_lab,
 		       term_new(SUB, 0, 0),
 		       term_new(SUB, 0, 0));
-  Term dp2 = pair_make(SUP, sup_lab,
-		       term_new(VAR, 0, 0),
-		       term_new(VAR, 0, 0));
   Term cn1 = pair_make(APP, 0,
 		       term_new(VAR, 0, port(1, term_loc(dp1))),
 		       term_new(SUB, 0, 0));
   Term cn2 = pair_make(APP, 0,
 		       term_new(VAR, 0, port(2, term_loc(dp1))),
 		       term_new(SUB, 0, 0));
+  Term dp2 = pair_make(SUP, sup_lab,
+		       term_new(VAR, 0, port(2, term_loc(cn1))),
+		       term_new(VAR, 0, port(2, term_loc(cn2))));
   term_link(dp1, arg);
   move(ret, dp2);
   term_link(cn1, tm1);
@@ -550,11 +564,11 @@ bool ABRT(Term neg, Term pos) {
 
 #define ERA_INTERACTIONS \
   &ABRT,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-  //VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1   SUP     DUP   OPX   OPY  I56  F56   LAZ
+  //VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1   SUP     DUP   OPX   OPY   I56  F56  LAZ
 
 #define APP_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&appsup,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
-  //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP     DUP   OPX   OPY   I56   F56   LAZ
+  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&appsup,&ABRT,&ABRT,&ABRT,&appnul,&appnul,&ABRT
+  //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY    I56     F56   LAZ
 
 #define DUP_INTERACTIONS \
   &ABRT,&ABRT,&ABRT,&copy,&ABRT,&duplam,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
