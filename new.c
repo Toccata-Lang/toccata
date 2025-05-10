@@ -510,6 +510,45 @@ bool duplam(Term dup, Term lam) {
   return true;
 }
 
+// Duplication-Superposition interaction
+bool dupsup(Term dup, Term sup) {
+  Lab dup_lab = term_lab(dup);
+  Lab sup_lab = term_lab(sup);
+
+  if (dup_lab == sup_lab) {
+  } else {
+    // Get the ports of the DUP node
+    Location dup_loc = term_loc(dup);
+    Location dup_p1 = port(1, dup_loc);
+    Location dup_p2 = port(2, dup_loc);
+    
+    // Get the ports of the SUP node
+    Location sup_loc = term_loc(sup);
+    Term sup_p1 = take(port(1, sup_loc));
+    Term sup_p2 = take(port(2, sup_loc));
+    
+    // Create two new DUP nodes with the same label
+    Term dup1 = pair_make(DUP, dup_lab, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
+    Term dup2 = pair_make(DUP, dup_lab, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
+    
+    // Create two new SUP nodes with the same label
+    Term sup1 = pair_make(SUP, sup_lab,
+			  term_new(VAR, 0, port(1, term_loc(dup1))),
+			  term_new(VAR, 0, port(1, term_loc(dup2))));
+    Term sup2 = pair_make(SUP, sup_lab,
+			  term_new(VAR, 0, port(2, term_loc(dup1))),
+			  term_new(VAR, 0, port(2, term_loc(dup2))));
+    
+    // Connect the new nodes
+    move(dup_p1, sup1);
+    move(dup_p2, sup2);
+    term_link(dup1, sup_p1);
+    term_link(dup2, sup_p2);
+  }
+    
+  return true;
+}
+
 // Duplication interaction with copyable term
 bool copy(Term dup, Term trm) {
   Location dup_loc = term_loc(dup);
@@ -571,7 +610,7 @@ bool ABRT(Term neg, Term pos) {
   //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY    I56     F56   LAZ
 
 #define DUP_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&copy,&ABRT,&duplam,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
+  &ABRT,&ABRT,&ABRT,&copy,&ABRT,&duplam,&ABRT,&ABRT,&ABRT,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
   //VAL  VAR   SUB   NUL   ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 // Initialize the interactions array with the same values in each row

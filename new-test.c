@@ -738,6 +738,28 @@ void test_thread_safe_redex(void) {
     printf("[PASS] test_thread_safe_redex\n");
 }
 
+// Test DUP SUP interaction
+void test_dupsup(void) {
+    // Create a DUP node
+    Term dup = pair_make(DUP, 1, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
+    
+    // Create a SUP node
+    Term sup = pair_make(SUP, 2, term_new(NUL, 0, 0), term_new(NUL, 0, 0));
+    
+    // Create terms to connect to the ports
+    Term a = term_new(I56, 42, 0);  // A positive term (integer 42)
+    Term b = term_new(I56, 99, 0);  // Another positive term (integer 99)
+    
+    // Connect terms to SUP ports
+    set(port(1, term_loc(sup)), a);
+    set(port(2, term_loc(sup)), b);
+    
+    test_interact(dup, sup);
+    exit(1);
+    
+    printf("[PASS] test_dupsup\n");
+}
+
 int main(int argc, char *argv[]) {
     // Initialize the VM with some memory
     hvm_init(1024);
@@ -784,6 +806,9 @@ int main(int argc, char *argv[]) {
     
     hvm_reset();
     test_appsup();
+    
+    hvm_reset();
+    test_dupsup();
     
     hvm_reset();
     test_duplam();
