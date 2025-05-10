@@ -28,6 +28,8 @@ typedef atomic_uint_least64_t a64;
 
 // Global VM state
 extern u64 RNOD_END;
+extern u64 RBAG_INI;
+extern u64 RBAG_END;
 extern a64* get_buff(void);  // For testing only
 
 // Tags for different term types
@@ -49,24 +51,16 @@ extern a64* get_buff(void);  // For testing only
 #define LAZ 0x0f // positive lazy node
 typedef u32 Tag; // Tag is now just an unsigned integer
 
-/*
-typedef enum {
-    VAR, // Positive variable
-    SUB, // Negative variable (aux wire)
-    NUL, // Positive eraser node
-    ERA, // Negative eraser node
-    LAM, // Positive constructor node
-    APP, // Negative constructor node
-    SUP, // Positive duplicator node
-    DUP  // Negative duplicator node
-} Tag;
-// */
-
 // Term is a 64-bit value:
 // - Highest 32 bits: Location
 // - Next 28 bits: Label
 // - Lowest 4 bits: Tag
 typedef u64 Term;
+
+// creating number terms
+#define new_i56(x) (((u64)x << TAG_SIZE) | I56)
+#define get_i56(x) (i64)((i64)x >> TAG_SIZE)
+#define new_num(type, x) (((u64)x << TAG_SIZE) | type)
 
 // Function declarations
 void hvm_init(u64 size);

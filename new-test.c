@@ -74,48 +74,6 @@ void test_pair_creation(void) {
     printf("[PASS] test_pair_creation\n\n");
 }
 
-// Test application-lambda interaction
-void test_applam(void) {
-    // Initialize VM
-    hvm_init(1024);
-    hvm_reset();
-
-    // Create test terms with correct polarities
-    Term arg_term = term_new(NUL, 1, 0);  // Positive argument term
-    Term ret_term = term_new(SUB, 0, 0);  // Negative return term
-    Term var_term = term_new(ERA, 0, 0);  // Negative variable term
-    Term bod_term = term_new(NUL, 0, 0);  // Positive body term
-    
-    // Create application and lambda terms
-    Term app = pair_make(APP, 0, arg_term, ret_term);
-    Term lam = pair_make(LAM, 0, var_term, bod_term);
-    
-    // Get port locations for verification
-    Location app_loc = term_loc(app);
-    Location lam_loc = term_loc(lam);
-    Location bod_loc = port(2, lam_loc);  // Body port
-    Location arg_loc = port(1, app_loc);  // Argument port
-    Location ret_loc = port(2, app_loc);  // Return port
-    
-    // Perform interaction
-    interact(app, lam);
-    
-    // Check that body was moved to return port with APP tag
-    Term actual_ret = get(ret_loc);
-    if (term_tag(actual_ret) != NUL) {
-        printf("[FAIL:%d] test_applam: Expected APP tag in return port, got: tag=%d\n", __LINE__, term_tag(actual_ret));
-        exit(1);
-    }
-    
-    // Check that original locations are cleared
-    if (get(arg_loc) != 0 || get(bod_loc) != 0) {
-        printf("[FAIL:%d] test_applam: Original locations not cleared\n", __LINE__);
-        exit(1);
-    }
-    
-    printf("[PASS] test_applam\n");
-}
-
 // Test pair manipulation
 void test_pair_manipulation(void) {
     
@@ -306,19 +264,22 @@ void test_duplam(void) {
 
     // Check that first copy has correct structure
     if (term_tag(lam1) != LAM) {
-        printf("[FAIL:%d] test_duplam: Expected LAM tag in first copy port, got: tag=%d\n", __LINE__, term_tag(lam1));
+        printf("[FAIL:%d] test_duplam: Expected LAM tag in first copy port, got: tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(lam1)));
         exit(1);
     }
 
     // Check that second copy has correct structure
     if (term_tag(lam2) != LAM) {
-        printf("[FAIL:%d] test_duplam: Expected LAM tag in second copy port, got: tag=%d\n", __LINE__, term_tag(lam2));
+        printf("[FAIL:%d] test_duplam: Expected LAM tag in second copy port, got: tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(lam2)));
         exit(1);
     }
     
     // Check that variable port contains a SUP term
     if (term_tag(sup) != SUP) {
-        printf("[FAIL:%d] test_duplam: Expected SUP tag in variable port, got: tag=%d\n", __LINE__, term_tag(sup));
+        printf("[FAIL:%d] test_duplam: Expected SUP tag in variable port, got: tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(sup)));
         exit(1);
     }
     if (term_loc(get(port(1, term_loc(sup)))) != port(1, term_loc(lam1))) {
@@ -364,7 +325,8 @@ void test_eralam(void) {
     Location var_loc = port(1, term_loc(lam));
     Term result_var = get(var_loc);
     if (term_tag(result_var) != NUL) {
-        printf("[FAIL:%d] test_eralam: Expected NUL in variable port, got tag=%d\n", __LINE__, term_tag(result_var));
+        printf("[FAIL:%d] test_eralam: Expected NUL in variable port, got tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(result_var)));
         exit(1);
     }
     
@@ -388,7 +350,8 @@ void test_appnul(void) {
     Location ret_loc = port(2, term_loc(app));
     Term result_ret = get(ret_loc);
     if (term_tag(result_ret) != NUL) {
-        printf("[FAIL:%d] test_appnul: Expected NUL in return port, got tag=%d\n", __LINE__, term_tag(result_ret));
+        printf("[FAIL:%d] test_appnul: Expected NUL in return port, got tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(result_ret)));
         exit(1);
     }
     
@@ -417,12 +380,14 @@ void test_dupnul(void) {
     Term result_dp2 = get(dp2_loc);
     
     if (term_tag(result_dp1) != NUL) {
-        printf("[FAIL:%d] test_dupnul: Expected NUL in first copy port, got tag=%d\n", __LINE__, term_tag(result_dp1));
+        printf("[FAIL:%d] test_dupnul: Expected NUL in first copy port, got tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(result_dp1)));
         exit(1);
     }
     
     if (term_tag(result_dp2) != NUL) {
-        printf("[FAIL:%d] test_dupnul: Expected NUL in second copy port, got tag=%d\n", __LINE__, term_tag(result_dp2));
+        printf("[FAIL:%d] test_dupnul: Expected NUL in second copy port, got tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(result_dp2)));
         exit(1);
     }
     
@@ -452,12 +417,14 @@ void test_erasup(void) {
     Term result_p2 = get(p2_loc);
     
     if (result_p1 != 0) {
-        printf("[FAIL:%d] test_erasup: Expected ERA in first port, got tag=%d\n", __LINE__, term_tag(result_p1));
+        printf("[FAIL:%d] test_erasup: Expected ERA in first port, got tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(result_p1)));
         exit(1);
     }
     
     if (result_p2 != 0) {
-        printf("[FAIL:%d] test_erasup: Expected ERA in second port, got tag=%d\n", __LINE__, term_tag(result_p2));
+        printf("[FAIL:%d] test_erasup: Expected ERA in second port, got tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(result_p2)));
         exit(1);
     }
     
@@ -471,8 +438,8 @@ void test_appsup(void) {
     hvm_reset();
     
     // Create SUP term with ports
-    Term p1 = term_new(NUL, 1, 0);  // Positive first port
-    Term p2 = term_new(NUL, 2, 0);  // Positive second port
+    Term p1 = new_i56(4);  // Positive first port
+    Term p2 = new_i56(8);  // Positive second port
     Term sup = pair_make(SUP, 0, p1, p2);
     
     // Create APP term with ports
@@ -488,11 +455,12 @@ void test_appsup(void) {
     
     // Perform interaction
     interact(app, sup);
+    print_buff(0, 18);
     
     // After interaction, we should have:
     // 1. Two new APP nodes linked to the original SUP ports
     // 2. Two new DUP nodes for argument and return
-    
+
     // Check that original terms have been taken (should be 0)
     if (get(arg_loc) != 0 || get(ret_loc) != 0 || 
         get(p1_loc) != 0 || get(p2_loc) != 0) {
@@ -506,6 +474,57 @@ void test_appsup(void) {
     
     // Clean up
     hvm_free();
+}
+
+// Test application-lambda interaction
+void test_applam(void) {
+    // Initialize VM
+    hvm_init(1024);
+    hvm_reset();
+
+    // Create test terms with correct polarities
+    Term arg_term = new_i56(82);  // Positive argument term
+    Term ret_term = term_new(SUB, 0, 0);  // Negative return term
+    Term var_term = term_new(SUB, 0, 0);  // Negative variable term
+    Term bod_term = new_i56(83);  // Positive body term
+    
+    // Create application and lambda terms
+    Term app = pair_make(APP, 0, arg_term, ret_term);
+    Term lam = pair_make(LAM, 0, var_term, bod_term);
+    
+    // Get port locations for verification
+    Location app_loc = term_loc(app);
+    Location lam_loc = term_loc(lam);
+    Location var_loc = port(1, lam_loc);  // Body port
+    Location bod_loc = port(2, lam_loc);  // Body port
+    Location arg_loc = port(1, app_loc);  // Argument port
+    Location ret_loc = port(2, app_loc);  // Return port
+    
+    // Perform interaction
+    interact(app, lam);
+    
+    // Check that body was moved to return port with APP tag
+    Term actual_ret = get(ret_loc);
+    if (actual_ret != new_i56(83)) {
+        printf("[FAIL:%d] test_applam: Expected I56 tag in return port, got: tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(actual_ret)));
+        exit(1);
+    }
+    
+    Term actual_var = get(var_loc);
+    if (actual_var != new_i56(82)) {
+        printf("[FAIL:%d] test_applam: Expected I56 tag in return port, got: tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(actual_var)));
+        exit(1);
+    }
+    
+    // Check that original locations are cleared
+    if (get(arg_loc) != 0 || get(bod_loc) != 0) {
+        printf("[FAIL:%d] test_applam: Original locations not cleared\n", __LINE__);
+        exit(1);
+    }
+    
+    printf("[PASS] test_applam\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -568,5 +587,6 @@ int main(int argc, char *argv[]) {
     // Final cleanup
     hvm_free();
     
+    printf("\nAll tests passed!\n");
     return 0;
 }

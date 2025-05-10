@@ -6,8 +6,8 @@ static a64* BUFF = NULL;
 static u64 RNOD_INI = 0;
 u64 RNOD_END = 0;
 static u64 RBAG = 0x1000;
-static u64 RBAG_INI = 0;
-static u64 RBAG_END = 0;
+u64 RBAG_INI = 0;
+u64 RBAG_END = 0;
 
 // For testing only
 a64* get_buff(void) {
@@ -499,4 +499,28 @@ bool interact(Term neg, Term pos) {
   // Swaps ports if necessary.
   rule(neg, pos);
   return TRUE;
+}
+
+static inline int normal_step() {
+  // dump_buff();
+
+  Location loc = rbag_pop();
+  if (loc == 0) {
+    // dump_buff();
+
+    return 0;
+  }
+
+  Term neg = take(loc + 0);
+  if (neg == SUB)
+    BOOM("took SUB");
+  Term pos = takeAndCheck(loc + 1);
+
+  printf("\n\n%04lX: INTERACT %s ~ %s\n%p ~ %p\n",
+	 inc_itr(), tag_to_str(term_tag(neg)), tag_to_str(term_tag(pos)),
+	 (void *)neg, (void *)pos);
+
+  interact(neg, pos);
+
+  return 1;
 }
