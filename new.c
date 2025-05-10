@@ -572,3 +572,17 @@ bool interact(Term neg, Term pos) {
   rule(neg, pos);
   return TRUE;
 }
+
+// Perform interactions until the redex stack is empty
+// Returns the number of interactions performed
+void normalize(void) {
+    Term neg, pos;
+    
+    // Process redexes until the stack is empty
+    while (pop_redex(&neg, &pos)) {
+        // Perform the interaction
+        interact(neg, pos);
+    }
+    
+    return;
+}

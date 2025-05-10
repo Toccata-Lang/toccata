@@ -89,6 +89,10 @@ bool interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
 
+// Perform interactions until the redex stack is empty
+// Returns the number of interactions performed
+void normalize(void);
+
 typedef bool (*interactionFn)(Term a, Term b);
 
 #endif // NEW_H

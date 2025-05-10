@@ -465,9 +465,6 @@ void test_appsup(void) {
     // We can't easily check the exact structure without tracing through all the links,
     // but we can verify that the interaction completed without errors
     printf("[PASS] test_appsup\n");
-    
-    // Clean up
-    hvm_free();
 }
 
 // Test application-lambda interaction
@@ -595,7 +592,6 @@ void test_redex_stack(void) {
     }
     
     printf("[PASS] test_redex_stack\n");
-    hvm_free();
 }
 
 // Thread function for concurrent redex operations
@@ -669,8 +665,6 @@ void test_thread_safe_redex(void) {
     
     printf("Successfully popped %d redexes after concurrent operations\n", pop_count);
     printf("[PASS] test_thread_safe_redex\n");
-    
-    hvm_free();
 }
 
 int main(int argc, char *argv[]) {
@@ -690,6 +684,7 @@ int main(int argc, char *argv[]) {
     
     // Run the thread-safe redex test
     printf("\n=== Running test_thread_safe_redex ===\n");
+    hvm_reset();
     test_thread_safe_redex();
     
     printf("\n=== Running test_polarity ===\n");
