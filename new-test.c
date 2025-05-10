@@ -131,11 +131,9 @@ void test_pair_polarity() {
     printf("[PASS] Created APP pair with correct port polarities\n");
     
     // Test invalid LAM pair (wrong port polarities)
-    printf("Testing invalid LAM pair...\n");
     try_invalid_pair(LAM, var, era, "wrong port polarities in LAM pair");
     
     // Test invalid APP pair (wrong port polarities)
-    printf("Testing invalid APP pair...\n");
     try_invalid_pair(APP, sub, var, "wrong port polarities in APP pair");
     
     printf("[PASS] test_pair_polarity\n");
@@ -449,7 +447,6 @@ void test_appsup(void) {
     
     // Perform interaction
     interact(app, sup);
-    print_buff(0, 18);
     
     // After interaction, we should have:
     // 1. Two new APP nodes linked to the original SUP ports
@@ -515,8 +512,6 @@ void test_applam(void) {
 }
 // Test push_redex and pop_redex
 void test_redex_stack(void) {
-    printf("\n=== Testing Redex Stack Operations ===\n");
-    
     // Create some terms to push
     Term neg1 = term_new(ERA, 1, 0);
     Term pos1 = term_new(NUL, 1, 0);
@@ -536,60 +531,46 @@ void test_redex_stack(void) {
     Term neg, pos;
     
     // First pop should get neg3, pos3 (LIFO order)
-    if (pop_redex(&neg, &pos)) {
-        printf("Popped redex: %s(%u), %s(%u)\n", 
-               tag_to_string(term_tag(neg)), term_lab(neg),
-               tag_to_string(term_tag(pos)), term_lab(pos));
-        
-        if (term_tag(neg) != SUB || term_lab(neg) != 3 ||
-            term_tag(pos) != VAR || term_lab(pos) != 3) {
-            printf("[FAIL:%d] First pop returned incorrect values\n", __LINE__);
-            exit(1);
-        }
-    } else {
-        printf("[FAIL:%d] First pop_redex failed unexpectedly\n", __LINE__);
+    neg = 0; pos = 0; // Reset to ensure we're getting new values
+    pop_redex(&neg, &pos);
+    printf("Popped redex: %s(%u), %s(%u)\n", 
+           tag_to_string(term_tag(neg)), term_lab(neg),
+           tag_to_string(term_tag(pos)), term_lab(pos));
+    
+    if (term_tag(neg) != SUB || term_lab(neg) != 3 ||
+        term_tag(pos) != VAR || term_lab(pos) != 3) {
+        printf("[FAIL:%d] First pop returned incorrect values\n", __LINE__);
         exit(1);
     }
     
     // Second pop should get neg2, pos2
-    if (pop_redex(&neg, &pos)) {
-        printf("Popped redex: %s(%u), %s(%u)\n", 
-               tag_to_string(term_tag(neg)), term_lab(neg),
-               tag_to_string(term_tag(pos)), term_lab(pos));
-        
-        if (term_tag(neg) != APP || term_lab(neg) != 2 ||
-            term_tag(pos) != LAM || term_lab(pos) != 2) {
-            printf("[FAIL:%d] Second pop returned incorrect values\n", __LINE__);
-            exit(1);
-        }
-    } else {
-        printf("[FAIL:%d] Second pop_redex failed unexpectedly\n", __LINE__);
+    neg = 0; pos = 0; // Reset to ensure we're getting new values
+    pop_redex(&neg, &pos);
+    printf("Popped redex: %s(%u), %s(%u)\n", 
+           tag_to_string(term_tag(neg)), term_lab(neg),
+           tag_to_string(term_tag(pos)), term_lab(pos));
+    
+    if (term_tag(neg) != APP || term_lab(neg) != 2 ||
+        term_tag(pos) != LAM || term_lab(pos) != 2) {
+        printf("[FAIL:%d] Second pop returned incorrect values\n", __LINE__);
         exit(1);
     }
     
     // Third pop should get neg1, pos1
-    if (pop_redex(&neg, &pos)) {
-        printf("Popped redex: %s(%u), %s(%u)\n", 
-               tag_to_string(term_tag(neg)), term_lab(neg),
-               tag_to_string(term_tag(pos)), term_lab(pos));
-        
-        if (term_tag(neg) != ERA || term_lab(neg) != 1 ||
-            term_tag(pos) != NUL || term_lab(pos) != 1) {
-            printf("[FAIL:%d] Third pop returned incorrect values\n", __LINE__);
-            exit(1);
-        }
-    } else {
-        printf("[FAIL:%d] Third pop_redex failed unexpectedly\n", __LINE__);
+    neg = 0; pos = 0; // Reset to ensure we're getting new values
+    pop_redex(&neg, &pos);
+    printf("Popped redex: %s(%u), %s(%u)\n", 
+           tag_to_string(term_tag(neg)), term_lab(neg),
+           tag_to_string(term_tag(pos)), term_lab(pos));
+    
+    if (term_tag(neg) != ERA || term_lab(neg) != 1 ||
+        term_tag(pos) != NUL || term_lab(pos) != 1) {
+        printf("[FAIL:%d] Third pop returned incorrect values\n", __LINE__);
         exit(1);
     }
     
-    // Fourth pop should fail (stack is empty)
-    if (pop_redex(&neg, &pos)) {
-        printf("[FAIL:%d] Fourth pop_redex succeeded unexpectedly\n", __LINE__);
-        exit(1);
-    } else {
-        printf("Pop on empty stack correctly returned false\n");
-    }
+    // Note: We don't test popping from an empty stack since pop_redex now waits
+    // when the stack is empty, which would cause the test to hang
     
     printf("[PASS] test_redex_stack\n");
 }
@@ -615,10 +596,10 @@ void* thread_push_pop(void* arg) {
         
         // Occasionally pop a redex to test both operations
         if (i % 3 == 0) {
-            Term popped_neg, popped_pos;
-            if (pop_redex(&popped_neg, &popped_pos)) {
-                // Successfully popped a redex
-            }
+            Term popped_neg = 0, popped_pos = 0;
+            // Pop a redex - note that this might block if the stack is empty
+            // but in this test there should always be redexes available
+            pop_redex(&popped_neg, &popped_pos);
         }
     }
     
@@ -627,7 +608,6 @@ void* thread_push_pop(void* arg) {
 
 // Test thread-safe redex operations
 void test_thread_safe_redex(void) {
-    printf("\n=== Testing Thread-Safe Redex Operations ===\n");
     // Number of threads and operations per thread
     const int num_threads = 4;
     const int ops_per_thread = 100;
@@ -655,12 +635,21 @@ void test_thread_safe_redex(void) {
         }
     }
     
-    // Verify we can still pop redexes after concurrent operations
+    // Pop a few redexes to verify they can be retrieved after concurrent operations
+    // We can't use a while loop since pop_redex would wait indefinitely when empty
     int pop_count = 0;
     Term neg, pos;
     
-    while (pop_redex(&neg, &pos)) {
-        pop_count++;
+    // Try to pop a fixed number of redexes
+    // This assumes there are at least this many redexes in the stack
+    for (int i = 0; i < 10; i++) {
+        neg = 0; pos = 0;
+        pop_redex(&neg, &pos);
+        
+        // Check if we got valid terms
+        if (neg != 0 && pos != 0) {
+            pop_count++;
+        }
     }
     
     printf("Successfully popped %d redexes after concurrent operations\n", pop_count);

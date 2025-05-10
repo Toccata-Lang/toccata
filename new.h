@@ -32,6 +32,7 @@ extern u64 RNOD_END;
 extern u64 RBAG_INI;
 extern u64 RBAG_END;
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
+extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
 extern a64* get_buff(void);  // For testing only
 
 // Tags for different term types
@@ -87,7 +88,7 @@ void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
 bool interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
-bool pop_redex(Term* neg, Term* pos);
+void pop_redex(Term* neg, Term* pos);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed

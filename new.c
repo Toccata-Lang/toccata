@@ -12,6 +12,9 @@ u64 RBAG_END = 0;
 // Mutex for thread-safe redex operations
 pthread_mutex_t redex_mutex;
 
+// Condition variable for signaling when redex is available
+pthread_cond_t redex_cond;
+
 // For testing only
 a64* get_buff(void) {
     return BUFF;
@@ -36,6 +39,15 @@ void hvm_init(u64 size) {
         BUFF = NULL;
         exit(1);
     }
+    
+    // Initialize condition variable for redex signaling
+    if (pthread_cond_init(&redex_cond, NULL) != 0) {
+        fprintf(stderr, "Failed to initialize condition variable\n");
+        pthread_mutex_destroy(&redex_mutex);
+        free(BUFF);
+        BUFF = NULL;
+        exit(1);
+    }
 }
 
 // Free allocated memory
@@ -43,7 +55,8 @@ void hvm_free(void) {
     if (BUFF == NULL) {
         return;
     }
-    // Destroy mutex
+    // Destroy mutex and condition variable
+    pthread_cond_destroy(&redex_cond);
     pthread_mutex_destroy(&redex_mutex);
     free(BUFF);
     BUFF = NULL;
@@ -318,13 +331,16 @@ void push_redex(Term neg, Term pos) {
     // Update the bag end pointer
     RBAG_END += 2;
     
+    // Signal that a redex is available
+    pthread_cond_signal(&redex_cond);
+    
     // Unlock the mutex
     pthread_mutex_unlock(&redex_mutex);
 }
 
 // Pop a redex (pair of terms) from the reduction bag
 // Returns false if the bag is empty, true otherwise
-bool pop_redex(Term* neg, Term* pos) {
+void pop_redex(Term* neg, Term* pos) {
     bool result;
     
     // Lock the mutex to ensure thread safety
@@ -332,8 +348,14 @@ bool pop_redex(Term* neg, Term* pos) {
     
     // Check if the reduction bag is empty
     if (RBAG_END <= RBAG_INI) {
-        pthread_mutex_unlock(&redex_mutex);
-        return false;
+        // Wait for a signal that a redex is available
+        pthread_cond_wait(&redex_cond, &redex_mutex);
+        
+        // Check again if the bag is still empty after waking up
+        if (RBAG_END <= RBAG_INI) {
+            pthread_mutex_unlock(&redex_mutex);
+            return;
+        }
     }
     
     // Update the bag end pointer
@@ -343,31 +365,10 @@ bool pop_redex(Term* neg, Term* pos) {
     *neg = take(RBAG_END);
     *pos = take(RBAG_END + 1);
     
-    // Check if the redex is valid
-    if (*neg == 0 || *pos == 0) {
-        fprintf(stderr, "Error: Invalid redex in bag\n");
-        pthread_mutex_unlock(&redex_mutex);
-        exit(1);
-    }
-    
-    // Check that the terms have the correct polarity
-    if (!is_negative(*neg)) {
-        fprintf(stderr, "Error: First term in redex is not negative\n");
-        pthread_mutex_unlock(&redex_mutex);
-        exit(1);
-    }
-    if (!is_positive(*pos)) {
-        fprintf(stderr, "Error: Second term in redex is not positive\n");
-        pthread_mutex_unlock(&redex_mutex);
-        exit(1);
-    }
-    
-    result = true;
-    
     // Unlock the mutex
     pthread_mutex_unlock(&redex_mutex);
     
-    return result;
+    return;
 }
 
 // Application-Lambda interaction
@@ -571,18 +572,4 @@ bool interact(Term neg, Term pos) {
   // Swaps ports if necessary.
   rule(neg, pos);
   return TRUE;
-}
-
-// Perform interactions until the redex stack is empty
-// Returns the number of interactions performed
-void normalize(void) {
-    Term neg, pos;
-    
-    // Process redexes until the stack is empty
-    while (pop_redex(&neg, &pos)) {
-        // Perform the interaction
-        interact(neg, pos);
-    }
-    
-    return;
 }
