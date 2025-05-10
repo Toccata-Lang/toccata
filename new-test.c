@@ -53,6 +53,22 @@ void print_buff(Location start, Location end) {
     printf("\n");
 }
 
+Term identity_lambda() {
+  Term lam= pair_make(LAM, 0,
+		     term_new(SUB, 0, 0),
+		     term_new(NUL, 0, 0));
+  // make 'lam' the identity fn
+  set(port(2, term_loc(lam)), term_new(VAR, 0, port(1, term_loc(lam))));
+  return lam;
+}
+
+Term get_var(Term t) {
+  while(term_tag(t) == VAR) {
+    t = get(term_loc(t));
+  }
+  return t;
+}
+
 // Helper to print a term's details
 void print_term(const char* prefix, Term term) {
   printf("%s:\n", prefix);
@@ -335,39 +351,29 @@ void test_duplam(void) {
 	   __LINE__, tag_to_string(result_var));
     exit(1);
   }
-  Term result_bod = get(port(2, term_loc(lam1)));
-  if (term_tag(result_bod) != VAR) {
-    printf("[FAIL:%d] test_duplam: Expected VAR tag in first copy's bod port, got: tag=%s\n",
-	   __LINE__, tag_to_string(term_tag(result_bod)));
-    exit(1);
-  }
-  if (get(term_loc(result_bod)) != lam_result) {
+  Term result_bod = get_var(get(port(2, term_loc(lam1))));
+  if (result_bod != lam_result) {
     printf("[FAIL:%d] test_duplam: Wrong value in first copy's result port, got: %p\n",
-	   __LINE__, (void *)get(term_loc(result_bod)));
+	   __LINE__, (void *)result_bod);
     exit(1);
   }
 
   // Check that second copy has correct structure
   if (term_tag(lam2) != LAM) {
-    printf("[FAIL:%d] test_duplam: Expected LAM tag in first copy port, got: tag=%s\n",
+    printf("[FAIL:%d] test_duplam: Expected LAM tag in second copy port, got: tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(lam2)));
     exit(1);
   }
   result_var = get(port(1, term_loc(lam2)));
   if (term_tag(result_var) != ERA) {
-    printf("[FAIL:%d] test_duplam: Expected ERA tag in first copy's var port, got: tag=%s\n",
+    printf("[FAIL:%d] test_duplam: Expected ERA tag in second copy's var port, got: tag=%s\n",
 	   __LINE__, tag_to_string(result_var));
     exit(1);
   }
-  result_bod = get(port(2, term_loc(lam2)));
-  if (term_tag(result_bod) != VAR) {
-    printf("[FAIL:%d] test_duplam: Expected VAR tag in first copy's bod port, got: tag=%s\n",
-	   __LINE__, tag_to_string(term_tag(result_bod)));
-    exit(1);
-  }
-  if (get(term_loc(result_bod)) != lam_result) {
-    printf("[FAIL:%d] test_duplam: Wrong value in first copy's result port, got: %p\n",
-	   __LINE__, (void *)get(term_loc(result_bod)));
+  result_bod = get_var(get(port(2, term_loc(lam2))));
+  if (result_bod != lam_result) {
+    printf("[FAIL:%d] test_duplam: Wrong value in second copy's result port, got: %p\n",
+	   __LINE__, (void *)result_bod);
     exit(1);
   }
     
@@ -494,22 +500,6 @@ void test_dupnul(void) {
     }
     
     printf("[PASS] test_dupnul\n");
-}
-
-Term identity_lambda() {
-  Term lam= pair_make(LAM, 0,
-		     term_new(SUB, 0, 0),
-		     term_new(NUL, 0, 0));
-  // make 'lam' the identity fn
-  set(port(2, term_loc(lam)), term_new(VAR, 0, port(1, term_loc(lam))));
-  return lam;
-}
-
-Term get_var(Term t) {
-  while(term_tag(t) == VAR) {
-    t = get(term_loc(t));
-  }
-  return t;
 }
 
 // Test APP SUP interaction
