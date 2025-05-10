@@ -1,3 +1,7 @@
+
+// to run: clang -g -o new-test new-test.c new.c && ./new-test
+//     or: gcc -g -o new-test new-test.c new.c && ./new-test
+
 #include "new.h"
 #include <sys/wait.h>
 #include <unistd.h>
