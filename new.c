@@ -376,8 +376,10 @@ bool pop_redex(Term* neg, Term* pos) {
     
   // Check if the reduction bag is empty
   if (RBAG_END <= RBAG_INI) {
-    if (stop_reducing)
+    if (stop_reducing) {
+      pthread_mutex_unlock(&redex_mutex);
       return false;
+    }
 
     // Wait for a signal that a redex is available
     pthread_cond_wait(&redex_cond, &redex_mutex);
@@ -411,7 +413,7 @@ bool applam(Term app, Term lam) {
   if (app_loc >= RNOD_END || lam_loc >= RNOD_END) {
     fprintf(stderr, "Invalid locations: app_loc=%u lam_loc=%u RNOD_END=%lu\n",
 	    app_loc, lam_loc, RNOD_END);
-    return FALSE;
+    return false;
   }
 
   // Get locations for each port
@@ -427,7 +429,7 @@ bool applam(Term app, Term lam) {
   // Move terms to their new locations
   move(var_loc, arg_val);
   move(ret_loc, bod_val);
-  return TRUE;
+  return true;
 }
 
 // Application-Duplicator interaction
@@ -456,21 +458,15 @@ bool appsup(Term app, Term sup) {
   move(ret, dp2);
   term_link(cn1, tm1);
   term_link(cn2, tm2);
-  return TRUE;
+  return true;
 }
 
 // Application-Null interaction
 bool appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
-  Term pos = take(port(1, app_loc));
-  
-  // Get port locations
-  Location ret_loc = port(2, app_loc);
-  
-  // Set NUL in return port
-  move(ret_loc, term_new(NUL, 0, 0));
-  term_link(ERA, pos);
-  return TRUE;
+  term_link(ERA, take(port(1, app_loc)));
+  move(port(2, app_loc), NUL);
+  return true;
 }
 
 // Duplication-Lambda interaction
@@ -497,11 +493,11 @@ bool duplam(Term dup, Term lam) {
   move(port(2, term_loc(dup)), co2);
   move(var, du1);
   term_link(du2, bod);
-  return TRUE;
+  return true;
 }
 
-// Duplication-Null interaction
-bool dupnul(Term dup, Term nul) {
+// Duplication interaction with copyable term
+bool copy(Term dup, Term trm) {
   Location dup_loc = term_loc(dup);
   
   // Get port locations
@@ -517,28 +513,16 @@ bool dupnul(Term dup, Term nul) {
 // Eraser-Lambda interaction
 bool eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
-  Location var = port(1, lam_loc);
-  Term bod = take(port(2, lam_loc));
-  move(var, term_new(NUL, 0, 0));
-  term_link(term_new(ERA, 0, 0), bod);
+  move(port(1, lam_loc), NUL);
+  term_link(ERA, take(port(2, lam_loc)));
   return true;
 }
 
-// Eraser-Duplicator interaction
+// Eraser-Superposition interaction
 bool erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  
-  // Get port locations
-  Location p1_loc = port(1, sup_loc);
-  Location p2_loc = port(2, sup_loc);
-  
-  // Take terms from both ports
-  Term p1 = take(p1_loc);
-  Term p2 = take(p2_loc);
-  
-  // Set the terms at the original locations
-  term_link(p1, era);
-  term_link(p2, era);
+  term_link(ERA, take(port(1, sup_loc)));
+  term_link(ERA, take(port(2, sup_loc)));
   return true;
 }
 

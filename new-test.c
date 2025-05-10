@@ -239,96 +239,184 @@ void test_boundary_validation(void) {
     }
 }
 
-// Main function
-// Test DUP LAM interaction
-void test_duplam(void) {
-    // Create test terms with correct polarities
-    Term var_term = term_new(SUB, 0, 0);  // Negative variable term
-    Term bod_term = term_new(NUL, 0, 0);  // Positive body term
-    Term dup1_term = term_new(SUB, 1, 0); // Negative first copy term
-    Term dup2_term = term_new(SUB, 2, 0); // Negative second copy term
-    
-    // Create lambda and duplicator terms
-    Term lam = pair_make(LAM, 0, var_term, bod_term);
-    Term dup = pair_make(DUP, 0, dup1_term, dup2_term);
-    
-    // Get port locations for verification
-    Location dup_loc = term_loc(dup);
-    Location dup1_loc = port(1, dup_loc);  // First copy port
-    Location dup2_loc = port(2, dup_loc);  // Second copy port
-    Location var_loc = port(1, term_loc(lam));   // Variable port
-    
-    // Perform interaction
-    interact(dup, lam);
-    
-    Term lam1 = get(dup1_loc);
-    Term lam2 = get(dup2_loc);
-    Term sup = get(var_loc);
-
-    // Check that first copy has correct structure
-    if (term_tag(lam1) != LAM) {
-        printf("[FAIL:%d] test_duplam: Expected LAM tag in first copy port, got: tag=%s\n",
-	       __LINE__, tag_to_string(term_tag(lam1)));
-        exit(1);
-    }
-
-    // Check that second copy has correct structure
-    if (term_tag(lam2) != LAM) {
-        printf("[FAIL:%d] test_duplam: Expected LAM tag in second copy port, got: tag=%s\n",
-	       __LINE__, tag_to_string(term_tag(lam2)));
-        exit(1);
-    }
-    
-    // Check that variable port contains a SUP term
-    if (term_tag(sup) != SUP) {
-        printf("[FAIL:%d] test_duplam: Expected SUP tag in variable port, got: tag=%s\n",
-	       __LINE__, tag_to_string(term_tag(sup)));
-        exit(1);
-    }
-    if (term_loc(get(port(1, term_loc(sup)))) != port(1, term_loc(lam1))) {
-        printf("[FAIL:%d] test_duplam: Expected SUP port 1 points to wrong place\n", __LINE__);
-        exit(1);
-    }
-    if (term_loc(get(port(2, term_loc(sup)))) != port(1, term_loc(lam2))) {
-        printf("[FAIL:%d] test_duplam: Expected SUP port 2 points to wrong place\n", __LINE__);
-        exit(1);
-    }
-
-    printf("[PASS] test_duplam\n");
+void test_interact(Term neg, Term pos) {
+    interact(neg, pos);
+    printf("redexes: %ld\n", RBAG_END - RBAG_INI);
+    stop_reducing = true;
+    print_buff(0, 18);
+    normalize();
+    printf("redexes: %ld\n", RBAG_END - RBAG_INI);
+    print_buff(0, 18);
 }
 
-// Test ERA NUL interaction
-void test_eranul(void) {
-    // Create ERA and NUL terms
-    Term era = term_new(ERA, 0, 0);  // Negative eraser
-    Term nul = term_new(NUL, 0, 0);  // Positive eraser
+// Main function
+// Test ERA SUP interaction
+void test_erasup(void) {
+  // Create SUP term with ports
+  Term p1 = new_i56(7);  // Positive first port
+  Term p2 = new_i56(8);  // Positive second port
+  Term sup = pair_make(SUP, 0, p1, p2);
     
-    // Perform interaction
-    interact(era, nul);
+  // Create ERA term
+  Term era = term_new(ERA, 0, 0);
     
-    // They should just annihilate - nothing else to check
-    printf("[PASS] test_eranul\n");
+  // Store locations for verification
+  Location p1_loc = term_loc(p1);
+  Location p2_loc = term_loc(p2);
+    
+  // Perform interaction
+  test_interact(era, sup);
+    
+  // Check that ERA was linked to both ports
+  Term result_p1 = get(p1_loc);
+  Term result_p2 = get(p2_loc);
+    
+  if (result_p1 != 0) {
+    printf("[FAIL:%d] test_erasup: Expected first port to be free, got tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(result_p1)));
+    exit(1);
+  }
+    
+  if (result_p2 != 0) {
+    printf("[FAIL:%d] test_erasup: Expected second port to be free, got tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(result_p2)));
+    exit(1);
+  }
+    
+  printf("[PASS] test_erasup\n");
+}
+
+// Test DUP LAM interaction
+void test_duplam(void) {
+  // Create lambda and duplicator terms
+  Term lam_result = new_i56(6);
+  Term lam = pair_make(LAM, 0,
+		       term_new(ERA, 0, 0),
+		       lam_result);
+  Term dup = pair_make(DUP, 0,
+		       term_new(SUB, 1, 0),
+		       term_new(SUB, 2, 0));
+    
+  // Get port locations for verification
+  Location dup_loc = term_loc(dup);
+  Location dup1_loc = port(1, dup_loc);  // First copy port
+  Location dup2_loc = port(2, dup_loc);  // Second copy port
+  Location var_loc = port(1, term_loc(lam));   // Variable port
+    
+  // Perform interaction
+  test_interact(dup, lam);
+    
+  Term lam1 = get(dup1_loc);
+  Term lam2 = get(dup2_loc);
+  Term sup = get(var_loc);
+
+  // Check that first copy has correct structure
+  if (term_tag(lam1) != LAM) {
+    printf("[FAIL:%d] test_duplam: Expected LAM tag in first copy port, got: tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(lam1)));
+    exit(1);
+  }
+  Term result_var = get(port(1, term_loc(lam1)));
+  if (term_tag(result_var) != ERA) {
+    printf("[FAIL:%d] test_duplam: Expected ERA tag in first copy's var port, got: tag=%s\n",
+	   __LINE__, tag_to_string(result_var));
+    exit(1);
+  }
+  Term result_bod = get(port(2, term_loc(lam1)));
+  if (term_tag(result_bod) != VAR) {
+    printf("[FAIL:%d] test_duplam: Expected VAR tag in first copy's bod port, got: tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(result_bod)));
+    exit(1);
+  }
+  if (get(term_loc(result_bod)) != lam_result) {
+    printf("[FAIL:%d] test_duplam: Wrong value in first copy's result port, got: %p\n",
+	   __LINE__, (void *)get(term_loc(result_bod)));
+    exit(1);
+  }
+
+  // Check that second copy has correct structure
+  if (term_tag(lam2) != LAM) {
+    printf("[FAIL:%d] test_duplam: Expected LAM tag in first copy port, got: tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(lam2)));
+    exit(1);
+  }
+  result_var = get(port(1, term_loc(lam2)));
+  if (term_tag(result_var) != ERA) {
+    printf("[FAIL:%d] test_duplam: Expected ERA tag in first copy's var port, got: tag=%s\n",
+	   __LINE__, tag_to_string(result_var));
+    exit(1);
+  }
+  result_bod = get(port(2, term_loc(lam2)));
+  if (term_tag(result_bod) != VAR) {
+    printf("[FAIL:%d] test_duplam: Expected VAR tag in first copy's bod port, got: tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(result_bod)));
+    exit(1);
+  }
+  if (get(term_loc(result_bod)) != lam_result) {
+    printf("[FAIL:%d] test_duplam: Wrong value in first copy's result port, got: %p\n",
+	   __LINE__, (void *)get(term_loc(result_bod)));
+    exit(1);
+  }
+    
+  /*
+    TODO: finish this after DUP SUP is finished
+  hvm_reset();
+  lam = pair_make(LAM, 0,
+		  term_new(SUB, 0, 0),
+		  term_new(NUL, 0, 0));
+  // make 'lam' the identity fn
+  set(port(2, term_loc(lam)), term_new(VAR, 0, port(1, term_loc(lam))));
+  dup = pair_make(DUP, 0,
+		  term_new(SUB, 1, 0),
+		  term_new(SUB, 2, 0));
+  test_interact(dup, lam);
+  exit(1);
+    
+  // Check that variable port contains a SUP term
+  if (term_tag(sup) != SUP) {
+  printf("[FAIL:%d] test_duplam: Expected SUP tag in variable port, got: tag=%s\n",
+  __LINE__, tag_to_string(term_tag(sup)));
+  exit(1);
+  }
+  if (term_loc(get(port(1, term_loc(sup)))) != port(1, term_loc(lam1))) {
+  printf("[FAIL:%d] test_duplam: Expected SUP port 1 points to wrong place\n", __LINE__);
+  exit(1);
+  }
+  if (term_loc(get(port(2, term_loc(sup)))) != port(1, term_loc(lam2))) {
+  printf("[FAIL:%d] test_duplam: Expected SUP port 2 points to wrong place\n", __LINE__);
+  exit(1);
+  }
+  // */
+
+  printf("[PASS] test_duplam\n");
 }
 
 // Test ERA LAM interaction
 void test_eralam(void) {
     // Create LAM term with ports
-    Term var = term_new(SUB, 0, 0);  // Negative variable port
-    Term bod = term_new(NUL, 0, 0);  // Positive body port
+    Term var = term_new(ERA, 0, 0);  // Negative variable port
+    Term bod = new_i56(67);  // Positive body port
     Term lam = pair_make(LAM, 0, var, bod);
     
     // Create ERA term
     Term era = term_new(ERA, 0, 0);
     
     // Perform interaction
-    interact(era, lam);
+    test_interact(era, lam);
     
-    // Check that NUL was sent to variable port
-    Location var_loc = port(1, term_loc(lam));
-    Term result_var = get(var_loc);
-    if (term_tag(result_var) != NUL) {
-        printf("[FAIL:%d] test_eralam: Expected NUL in variable port, got tag=%s\n",
+    // Check that variable port was freed
+    Term result_var = get(port(1, term_loc(lam)));
+    if (result_var != 0) {
+        printf("[FAIL:%d] test_eralam: Expected variable port to be free, got tag=%s\n",
 	       __LINE__, tag_to_string(term_tag(result_var)));
+        exit(1);
+    }
+    
+    // Check that variable body value was freed
+    Term result_bod = get(port(2, term_loc(lam)));
+    if (result_bod != 0) {
+        printf("[FAIL:%d] test_eralam: Expected body port to be free, got tag=%s\n",
+	       __LINE__, tag_to_string(term_tag(result_bod)));
         exit(1);
     }
     
@@ -337,27 +425,27 @@ void test_eralam(void) {
 
 // Test APP NUL interaction
 void test_appnul(void) {
-    // Create APP term with ports
-    Term arg = term_new(NUL, 0, 0);  // Positive argument port
-    Term ret = term_new(SUB, 0, 0);  // Negative return port
-    Term app = pair_make(APP, 0, arg, ret);
+  // Create APP term with ports
+  Term arg = new_i56(53);  // Positive argument port
+  Term ret = term_new(ERA, 0, 0);  // Negative return port
+  Term app = pair_make(APP, 0, arg, ret);
     
-    // Create NUL term
-    Term nul = term_new(NUL, 0, 0);
+  // Create NUL term
+  Term nul = term_new(NUL, 0, 0);
     
-    // Perform interaction
-    interact(app, nul);
+  // Perform interaction
+  test_interact(app, nul);
     
-    // Check that NUL was sent to return port
-    Location ret_loc = port(2, term_loc(app));
-    Term result_ret = get(ret_loc);
-    if (term_tag(result_ret) != NUL) {
-        printf("[FAIL:%d] test_appnul: Expected NUL in return port, got tag=%s\n",
-	       __LINE__, tag_to_string(term_tag(result_ret)));
-        exit(1);
-    }
+  // Check that NUL was sent to return port
+  Location ret_loc = port(2, term_loc(app));
+  Term result_ret = get(ret_loc);
+  if (result_ret != 0) {
+    printf("[FAIL:%d] test_appnul: Expected return port to be free, got tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(result_ret)));
+    exit(1);
+  }
     
-    printf("[PASS] test_appnul\n");
+  printf("[PASS] test_appnul\n");
 }
 
 // Test DUP NUL interaction
@@ -371,7 +459,7 @@ void test_dupnul(void) {
     Term nul = term_new(NUL, 0, 0);
     
     // Perform interaction
-    interact(dup, nul);
+    test_interact(dup, nul);
     
     // Check that NUL was sent to both copy ports
     Location dp1_loc = port(1, term_loc(dup));
@@ -393,42 +481,6 @@ void test_dupnul(void) {
     }
     
     printf("[PASS] test_dupnul\n");
-}
-
-// Test ERA SUP interaction
-void test_erasup(void) {
-    // Create SUP term with ports
-    Term p1 = term_new(NUL, 1, 0);  // Positive first port
-    Term p2 = term_new(NUL, 2, 0);  // Positive second port
-    Term sup = pair_make(SUP, 0, p1, p2);
-    
-    // Create ERA term
-    Term era = term_new(ERA, 0, 0);
-    
-    // Store locations for verification
-    Location p1_loc = term_loc(p1);
-    Location p2_loc = term_loc(p2);
-    
-    // Perform interaction
-    interact(era, sup);
-    
-    // Check that ERA was linked to both ports
-    Term result_p1 = get(p1_loc);
-    Term result_p2 = get(p2_loc);
-    
-    if (result_p1 != 0) {
-        printf("[FAIL:%d] test_erasup: Expected ERA in first port, got tag=%s\n",
-	       __LINE__, tag_to_string(term_tag(result_p1)));
-        exit(1);
-    }
-    
-    if (result_p2 != 0) {
-        printf("[FAIL:%d] test_erasup: Expected ERA in second port, got tag=%s\n",
-	       __LINE__, tag_to_string(term_tag(result_p2)));
-        exit(1);
-    }
-    
-    printf("[PASS] test_erasup\n");
 }
 
 // Test APP SUP interaction
@@ -489,7 +541,7 @@ void test_applam(void) {
     Location ret_loc = port(2, app_loc);  // Return port
     
     // Perform interaction
-    interact(app, lam);
+    test_interact(app, lam);
 
     // Check that body was moved to return port with APP tag
     Term actual_ret = get(ret_loc);
@@ -696,17 +748,9 @@ int main(int argc, char *argv[]) {
     hvm_reset();
     test_pair_manipulation();
     
-    printf("\n=== Running test_applam ===\n");
+    printf("\n=== Running test_erasup ===\n");
     hvm_reset();
-    test_applam();
-    
-    printf("\n=== Running test_duplam ===\n");
-    hvm_reset();
-    test_duplam();
-    
-    printf("\n=== Running test_eranul ===\n");
-    hvm_reset();
-    test_eranul();
+    test_erasup();
     
     printf("\n=== Running test_eralam ===\n");
     hvm_reset();
@@ -720,9 +764,13 @@ int main(int argc, char *argv[]) {
     hvm_reset();
     test_dupnul();
 
-    printf("\n=== Running test_erasup ===\n");
+    printf("\n=== Running test_applam ===\n");
     hvm_reset();
-    test_erasup();
+    test_applam();
+    
+    printf("\n=== Running test_duplam ===\n");
+    hvm_reset();
+    test_duplam();
     
     printf("\n=== Running test_appsup ===\n");
     test_appsup();
