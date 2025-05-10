@@ -8,10 +8,6 @@
 #include <stdbool.h>
 #include <pthread.h>
 
-// Booleans
-#define TRUE  1
-#define FALSE 0
-
 // Type definitions
 typedef uint64_t u64;
 typedef uint32_t u32;
@@ -31,6 +27,7 @@ typedef atomic_uint_least64_t a64;
 extern u64 RNOD_END;
 extern u64 RBAG_INI;
 extern u64 RBAG_END;
+extern bool stop_reducing;
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
 extern a64* get_buff(void);  // For testing only
@@ -88,12 +85,15 @@ void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
 bool interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
-void pop_redex(Term* neg, Term* pos);
+bool pop_redex(Term* neg, Term* pos);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
 void normalize(void);
 
 typedef bool (*interactionFn)(Term a, Term b);
+
+void *boom(char *msg, char *file, int line);
+#define BOOM(msg) boom(msg, __FILE__, __LINE__)
 
 #endif // NEW_H

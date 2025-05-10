@@ -20,6 +20,11 @@ a64* get_buff(void) {
     return BUFF;
 }
 
+void *boom(char *msg, char *file, int line) {
+  fprintf(stderr, "%s at %s:%d\n", msg, file, line);
+  abort();
+}
+
 // Initialize the virtual machine with a given heap size
 void hvm_init(u64 size) {
     BUFF = (a64*)calloc(size, sizeof(a64));
@@ -300,75 +305,101 @@ void move(Location neg_loc, Term pos) {
 // Link two terms together
 // Push a redex (pair of terms) to the reduction bag
 void term_link(Term neg, Term pos) {
-    if (term_tag(pos) == VAR) {
-        Term neg_var = swap(term_loc(pos), neg);
-        if (term_tag(neg_var) != SUB) {
-            move(term_loc(pos), neg_var);
-        }
-    } else {
-        push_redex(neg, pos);
+  Term neg_var ;
+  switch(term_tag(pos)) {
+  case VAR:
+    neg_var = swap(term_loc(pos), neg);
+    if (term_tag(neg_var) != SUB) {
+      move(term_loc(pos), neg_var);
     }
+    break;
+
+  case NUL:
+    interact(neg, pos);
+    break;
+
+  default:
+    switch(term_tag(neg)) {
+    case ERA:
+      interact(neg, pos);
+      break;
+
+    default:
+      push_redex(neg, pos);
+      break;
+    }
+  }
 }
 
 
 
 // Push a redex (pair of terms) to the reduction bag
 void push_redex(Term neg, Term pos) {
-    // Lock the mutex to ensure thread safety
-    pthread_mutex_lock(&redex_mutex);
+  if (term_tag(neg) == ERA)
+    BOOM("don't push ERA redex");
+  if (term_tag(pos) == NUL)
+    BOOM("don't push NUL redex");
+  if (is_positive(neg) || is_negative(pos))
+    BOOM("bad redex");
+  
+  // Lock the mutex to ensure thread safety
+  pthread_mutex_lock(&redex_mutex);
     
-    // Check if the reduction bag is full
-    if (RBAG_END >= RBAG_INI + RBAG) {
-        fprintf(stderr, "Error: Reduction bag overflow\n");
-        pthread_mutex_unlock(&redex_mutex);
-        exit(1);
-    }
-    
-    // Store the redex in the bag
-    set(RBAG_END, neg);
-    set(RBAG_END + 1, pos);
-    
-    // Update the bag end pointer
-    RBAG_END += 2;
-    
-    // Signal that a redex is available
-    pthread_cond_signal(&redex_cond);
-    
-    // Unlock the mutex
+  // Check if the reduction bag is full
+  if (RBAG_END >= RBAG_INI + RBAG) {
+    fprintf(stderr, "Error: Reduction bag overflow\n");
     pthread_mutex_unlock(&redex_mutex);
+    exit(1);
+  }
+    
+  // Store the redex in the bag
+  set(RBAG_END, neg);
+  set(RBAG_END + 1, pos);
+    
+  // Update the bag end pointer
+  RBAG_END += 2;
+    
+  // Signal that a redex is available
+  pthread_cond_signal(&redex_cond);
+    
+  // Unlock the mutex
+  pthread_mutex_unlock(&redex_mutex);
 }
+
+bool stop_reducing = false;
 
 // Pop a redex (pair of terms) from the reduction bag
 // Returns false if the bag is empty, true otherwise
-void pop_redex(Term* neg, Term* pos) {
-    bool result;
+bool pop_redex(Term* neg, Term* pos) {
+  // Lock the mutex to ensure thread safety
+  pthread_mutex_lock(&redex_mutex);
     
-    // Lock the mutex to ensure thread safety
-    pthread_mutex_lock(&redex_mutex);
-    
-    // Check if the reduction bag is empty
+  // Check if the reduction bag is empty
+  if (RBAG_END <= RBAG_INI) {
+    if (stop_reducing)
+      return false;
+
+    // Wait for a signal that a redex is available
+    pthread_cond_wait(&redex_cond, &redex_mutex);
+	
+    // Check again if the bag is still empty after waking up
     if (RBAG_END <= RBAG_INI) {
-        // Wait for a signal that a redex is available
-        pthread_cond_wait(&redex_cond, &redex_mutex);
-        
-        // Check again if the bag is still empty after waking up
-        if (RBAG_END <= RBAG_INI) {
-            pthread_mutex_unlock(&redex_mutex);
-            return;
-        }
+      pthread_mutex_unlock(&redex_mutex);
+      return false;
     }
+  }
     
-    // Update the bag end pointer
-    RBAG_END -= 2;
+  // Update the bag end pointer
+  RBAG_END -= 2;
     
-    // Get the redex from the bag
-    *neg = take(RBAG_END);
-    *pos = take(RBAG_END + 1);
+  // Get the redex from the bag
+  *neg = take(RBAG_END);
+  *pos = take(RBAG_END + 1);
     
-    // Unlock the mutex
-    pthread_mutex_unlock(&redex_mutex);
+  // Unlock the mutex
+  pthread_mutex_unlock(&redex_mutex);
     
-    return;
+  return true;
 }
 
 // Application-Lambda interaction
@@ -477,10 +508,10 @@ bool dupnul(Term dup, Term nul) {
   Location dp1_loc = port(1, dup_loc);
   Location dp2_loc = port(2, dup_loc);
   
-  // Set NUL in both copy ports
-  move(dp1_loc, term_new(NUL, 0, 0));
-  move(dp2_loc, term_new(NUL, 0, 0));
-  return TRUE;
+  // put trm in both copy ports
+  move(dp1_loc, trm);
+  move(dp2_loc, trm);
+  return true;
 }
 
 // Eraser-Lambda interaction
@@ -490,7 +521,7 @@ bool eralam(Term era, Term lam) {
   Term bod = take(port(2, lam_loc));
   move(var, term_new(NUL, 0, 0));
   term_link(term_new(ERA, 0, 0), bod);
-  return TRUE;
+  return true;
 }
 
 // Eraser-Duplicator interaction
@@ -508,12 +539,12 @@ bool erasup(Term era, Term sup) {
   // Set the terms at the original locations
   term_link(p1, era);
   term_link(p2, era);
-  return TRUE;
+  return true;
 }
 
 // The Void Interaction.
 bool NOP(Term neg, Term pos) {
-  return TRUE;
+  return true;
 }
 
 bool ABRT(Term neg, Term pos) {
@@ -542,8 +573,8 @@ bool ABRT(Term neg, Term pos) {
   //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP     DUP   OPX   OPY   I56   F56   LAZ
 
 #define DUP_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&dupnul,&ABRT,&duplam,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
-  //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+  &ABRT,&ABRT,&ABRT,&copy,&ABRT,&duplam,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
+  //VAL  VAR   SUB   NUL   ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
@@ -571,5 +602,19 @@ bool interact(Term neg, Term pos) {
 
   // Swaps ports if necessary.
   rule(neg, pos);
-  return TRUE;
+  return true;
+}
+
+// Perform interactions until the redex stack is empty
+// Returns the number of interactions performed
+void normalize(void) {
+    Term neg, pos;
+    
+    // Process redexes until the stack is empty
+    while (pop_redex(&neg, &pos)) {
+        // Perform the interaction
+        interact(neg, pos);
+    }
+    
+    return;
 }

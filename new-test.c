@@ -490,7 +490,7 @@ void test_applam(void) {
     
     // Perform interaction
     interact(app, lam);
-    
+
     // Check that body was moved to return port with APP tag
     Term actual_ret = get(ret_loc);
     if (actual_ret != new_i56(83)) {
@@ -517,8 +517,8 @@ void test_applam(void) {
 // Test push_redex and pop_redex
 void test_redex_stack(void) {
     // Create some terms to push
-    Term neg1 = term_new(ERA, 1, 0);
-    Term pos1 = term_new(NUL, 1, 0);
+    Term neg1 = term_new(APP, 1, 0);
+    Term pos1 = term_new(LAM, 1, 0);
     Term neg2 = term_new(APP, 2, 0);
     Term pos2 = term_new(LAM, 2, 0);
     Term neg3 = term_new(SUB, 3, 0);
@@ -567,8 +567,8 @@ void test_redex_stack(void) {
            tag_to_string(term_tag(neg)), term_lab(neg),
            tag_to_string(term_tag(pos)), term_lab(pos));
     
-    if (term_tag(neg) != ERA || term_lab(neg) != 1 ||
-        term_tag(pos) != NUL || term_lab(pos) != 1) {
+    if (term_tag(neg) != APP || term_lab(neg) != 1 ||
+        term_tag(pos) != LAM || term_lab(pos) != 1) {
         printf("[FAIL:%d] Third pop returned incorrect values\n", __LINE__);
         exit(1);
     }
@@ -592,8 +592,8 @@ void* thread_push_pop(void* arg) {
     
     for (int i = 0; i < num_operations; i++) {
         // Create terms with thread-specific labels
-        Term neg = term_new(ERA, thread_id * 1000 + i, 0);
-        Term pos = term_new(NUL, thread_id * 1000 + i, 0);
+        Term neg = term_new(APP, thread_id * 1000 + i, 0);
+        Term pos = term_new(LAM, thread_id * 1000 + i, 0);
         
         // Push the redex
         push_redex(neg, pos);
