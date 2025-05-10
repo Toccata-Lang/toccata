@@ -1,6 +1,7 @@
 #include "new.h"
 #include <sys/wait.h>
 #include <unistd.h>
+#include <pthread.h>
 
 // Print contents of BUFF between start and end locations
 void print_raw_term(Term t) {
@@ -309,7 +310,6 @@ void test_eranul(void) {
 
 // Test ERA LAM interaction
 void test_eralam(void) {
-    
     // Create LAM term with ports
     Term var = term_new(SUB, 0, 0);  // Negative variable port
     Term bod = term_new(NUL, 0, 0);  // Positive body port
@@ -360,7 +360,6 @@ void test_appnul(void) {
 
 // Test DUP NUL interaction
 void test_dupnul(void) {
-    
     // Create DUP term with ports
     Term dp1 = term_new(SUB, 1, 0);  // Negative first copy port
     Term dp2 = term_new(SUB, 2, 0);  // Negative second copy port
@@ -396,7 +395,6 @@ void test_dupnul(void) {
 
 // Test ERA SUP interaction
 void test_erasup(void) {
-    
     // Create SUP term with ports
     Term p1 = term_new(NUL, 1, 0);  // Positive first port
     Term p2 = term_new(NUL, 2, 0);  // Positive second port
@@ -433,10 +431,6 @@ void test_erasup(void) {
 
 // Test APP SUP interaction
 void test_appsup(void) {
-    // Initialize VM with enough memory for this test
-    hvm_init(1024);
-    hvm_reset();
-    
     // Create SUP term with ports
     Term p1 = new_i56(4);  // Positive first port
     Term p2 = new_i56(8);  // Positive second port
@@ -478,10 +472,6 @@ void test_appsup(void) {
 
 // Test application-lambda interaction
 void test_applam(void) {
-    // Initialize VM
-    hvm_init(1024);
-    hvm_reset();
-
     // Create test terms with correct polarities
     Term arg_term = new_i56(82);  // Positive argument term
     Term ret_term = term_new(SUB, 0, 0);  // Negative return term
@@ -526,6 +516,162 @@ void test_applam(void) {
     
     printf("[PASS] test_applam\n");
 }
+// Test push_redex and pop_redex
+void test_redex_stack(void) {
+    printf("\n=== Testing Redex Stack Operations ===\n");
+    
+    // Create some terms to push
+    Term neg1 = term_new(ERA, 1, 0);
+    Term pos1 = term_new(NUL, 1, 0);
+    Term neg2 = term_new(APP, 2, 0);
+    Term pos2 = term_new(LAM, 2, 0);
+    Term neg3 = term_new(SUB, 3, 0);
+    Term pos3 = term_new(VAR, 3, 0);
+    
+    // Push the terms onto the stack
+    push_redex(neg1, pos1);
+    push_redex(neg2, pos2);
+    push_redex(neg3, pos3);
+    
+    printf("Pushed 3 redexes onto the stack\n");
+    
+    // Pop the terms and verify they match what we pushed
+    Term neg, pos;
+    
+    // First pop should get neg3, pos3 (LIFO order)
+    if (pop_redex(&neg, &pos)) {
+        printf("Popped redex: %s(%u), %s(%u)\n", 
+               tag_to_string(term_tag(neg)), term_lab(neg),
+               tag_to_string(term_tag(pos)), term_lab(pos));
+        
+        if (term_tag(neg) != SUB || term_lab(neg) != 3 ||
+            term_tag(pos) != VAR || term_lab(pos) != 3) {
+            printf("[FAIL:%d] First pop returned incorrect values\n", __LINE__);
+            exit(1);
+        }
+    } else {
+        printf("[FAIL:%d] First pop_redex failed unexpectedly\n", __LINE__);
+        exit(1);
+    }
+    
+    // Second pop should get neg2, pos2
+    if (pop_redex(&neg, &pos)) {
+        printf("Popped redex: %s(%u), %s(%u)\n", 
+               tag_to_string(term_tag(neg)), term_lab(neg),
+               tag_to_string(term_tag(pos)), term_lab(pos));
+        
+        if (term_tag(neg) != APP || term_lab(neg) != 2 ||
+            term_tag(pos) != LAM || term_lab(pos) != 2) {
+            printf("[FAIL:%d] Second pop returned incorrect values\n", __LINE__);
+            exit(1);
+        }
+    } else {
+        printf("[FAIL:%d] Second pop_redex failed unexpectedly\n", __LINE__);
+        exit(1);
+    }
+    
+    // Third pop should get neg1, pos1
+    if (pop_redex(&neg, &pos)) {
+        printf("Popped redex: %s(%u), %s(%u)\n", 
+               tag_to_string(term_tag(neg)), term_lab(neg),
+               tag_to_string(term_tag(pos)), term_lab(pos));
+        
+        if (term_tag(neg) != ERA || term_lab(neg) != 1 ||
+            term_tag(pos) != NUL || term_lab(pos) != 1) {
+            printf("[FAIL:%d] Third pop returned incorrect values\n", __LINE__);
+            exit(1);
+        }
+    } else {
+        printf("[FAIL:%d] Third pop_redex failed unexpectedly\n", __LINE__);
+        exit(1);
+    }
+    
+    // Fourth pop should fail (stack is empty)
+    if (pop_redex(&neg, &pos)) {
+        printf("[FAIL:%d] Fourth pop_redex succeeded unexpectedly\n", __LINE__);
+        exit(1);
+    } else {
+        printf("Pop on empty stack correctly returned false\n");
+    }
+    
+    printf("[PASS] test_redex_stack\n");
+    hvm_free();
+}
+
+// Thread function for concurrent redex operations
+typedef struct {
+    int thread_id;
+    int num_operations;
+} ThreadArgs;
+
+void* thread_push_pop(void* arg) {
+    ThreadArgs* args = (ThreadArgs*)arg;
+    int thread_id = args->thread_id;
+    int num_operations = args->num_operations;
+    
+    for (int i = 0; i < num_operations; i++) {
+        // Create terms with thread-specific labels
+        Term neg = term_new(ERA, thread_id * 1000 + i, 0);
+        Term pos = term_new(NUL, thread_id * 1000 + i, 0);
+        
+        // Push the redex
+        push_redex(neg, pos);
+        
+        // Occasionally pop a redex to test both operations
+        if (i % 3 == 0) {
+            Term popped_neg, popped_pos;
+            if (pop_redex(&popped_neg, &popped_pos)) {
+                // Successfully popped a redex
+            }
+        }
+    }
+    
+    return NULL;
+}
+
+// Test thread-safe redex operations
+void test_thread_safe_redex(void) {
+    printf("\n=== Testing Thread-Safe Redex Operations ===\n");
+    // Number of threads and operations per thread
+    const int num_threads = 4;
+    const int ops_per_thread = 100;
+    
+    // Create thread arguments
+    ThreadArgs args[num_threads];
+    pthread_t threads[num_threads];
+    
+    // Create and start threads
+    for (int i = 0; i < num_threads; i++) {
+        args[i].thread_id = i + 1;  // Start from 1 for easier identification
+        args[i].num_operations = ops_per_thread;
+        
+        if (pthread_create(&threads[i], NULL, thread_push_pop, &args[i]) != 0) {
+            printf("[FAIL:%d] Failed to create thread %d\n", __LINE__, i);
+            exit(1);
+        }
+    }
+    
+    // Wait for all threads to complete
+    for (int i = 0; i < num_threads; i++) {
+        if (pthread_join(threads[i], NULL) != 0) {
+            printf("[FAIL:%d] Failed to join thread %d\n", __LINE__, i);
+            exit(1);
+        }
+    }
+    
+    // Verify we can still pop redexes after concurrent operations
+    int pop_count = 0;
+    Term neg, pos;
+    
+    while (pop_redex(&neg, &pos)) {
+        pop_count++;
+    }
+    
+    printf("Successfully popped %d redexes after concurrent operations\n", pop_count);
+    printf("[PASS] test_thread_safe_redex\n");
+    
+    hvm_free();
+}
 
 int main(int argc, char *argv[]) {
     // Initialize the VM with some memory
@@ -537,6 +683,15 @@ int main(int argc, char *argv[]) {
     // Re-initialize VM after error conditions test
     hvm_init(1024);
 
+    // Run the redex stack test
+    printf("\n=== Running test_redex_stack ===\n");
+    hvm_reset();
+    test_redex_stack();
+    
+    // Run the thread-safe redex test
+    printf("\n=== Running test_thread_safe_redex ===\n");
+    test_thread_safe_redex();
+    
     printf("\n=== Running test_polarity ===\n");
     hvm_reset();
     test_polarity();

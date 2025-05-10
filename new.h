@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 // Booleans
 #define TRUE  1
@@ -30,6 +31,7 @@ typedef atomic_uint_least64_t a64;
 extern u64 RNOD_END;
 extern u64 RBAG_INI;
 extern u64 RBAG_END;
+extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern a64* get_buff(void);  // For testing only
 
 // Tags for different term types
@@ -85,6 +87,7 @@ void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
 bool interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
+bool pop_redex(Term* neg, Term* pos);
 
 typedef bool (*interactionFn)(Term a, Term b);
 
