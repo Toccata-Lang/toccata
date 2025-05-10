@@ -516,6 +516,20 @@ bool dupsup(Term dup, Term sup) {
   Lab sup_lab = term_lab(sup);
 
   if (dup_lab == sup_lab) {
+    // Special case: when DUP and SUP have the same label, they annihilate
+    // Get the ports of the DUP node
+    Location dup_loc = term_loc(dup);
+    Location dup_p1 = port(1, dup_loc);
+    Location dup_p2 = port(2, dup_loc);
+    
+    // Get the ports of the SUP node
+    Location sup_loc = term_loc(sup);
+    Term sup_p1 = take(port(1, sup_loc));
+    Term sup_p2 = take(port(2, sup_loc));
+    
+    // Direct connection of the ports
+    move(dup_p1, sup_p1);
+    move(dup_p2, sup_p2);
   } else {
     // Get the ports of the DUP node
     Location dup_loc = term_loc(dup);
