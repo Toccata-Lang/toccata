@@ -299,118 +299,35 @@ void push_redex(Term neg, Term pos) {
 }
 
 // Application-Lambda interaction
-void applam(Term app, Term lam) {
-    Location app_loc = term_loc(app);
-    Location lam_loc = term_loc(lam);
-    
-    // Bounds checking
-    if (app_loc >= RNOD_END || lam_loc >= RNOD_END) {
-        fprintf(stderr, "Invalid locations: app_loc=%u lam_loc=%u RNOD_END=%lu\n",
-                app_loc, lam_loc, RNOD_END);
-        return;
-    }
-
-    // Get locations for each port
-    Location arg_loc = port(1, app_loc);
-    Location ret_loc = port(2, app_loc);
-    Location var_loc = port(1, lam_loc);
-    Location bod_loc = port(2, lam_loc);
-
-    // Take the positive terms
-    Term arg_val = take(arg_loc);
-    Term bod_val = take(bod_loc);
-
-    // Move terms to their new locations
-    move(var_loc, arg_val);
-    move(ret_loc, bod_val);
-}
-
-// Eraser-Null interaction - they simply annihilate
-void eranul(Term era, Term nul) {
-    // Nothing to do - they just disappear
-    return;
-}
-
-// Eraser-Lambda interaction
-void eralam(Term era, Term lam) {
-  Location lam_loc = term_loc(lam);
-  Location var = port(1, lam_loc);
-  Term bod = take(port(2, lam_loc));
-  move(var, term_new(NUL, 0, 0));
-  term_link(term_new(ERA, 0, 0), bod);
-}
-
-// Duplication-Lambda interaction
-void duplam(Term dup, Term lam) {
-  Lab dup_lab = term_lab(dup);
-  Location lam_loc = term_loc(lam);
-  Location var = port(1, lam_loc);
-  Term bod = take(port(2, lam_loc));
-  Term co1 = pair_make(LAM, 0,
-		       term_new(SUB, 0, 0),
-		       term_new(VAR, 0, 0));
-  Term co2 = pair_make(LAM, 0,
-		       term_new(SUB, 0, 0),
-		       term_new(VAR, 0, 0));
-  Term du1 = pair_make(SUP, dup_lab,
-		       term_new(VAR, 0, port(1, term_loc(co1))),
-		       term_new(VAR, 0, port(1, term_loc(co2))));
-  Term du2 = pair_make(DUP, dup_lab,
-		       term_new(SUB, 0, 0),
-		       term_new(SUB, 0, 0));
-  set(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
-  set(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
-  move(port(1, term_loc(dup)), co1);
-  move(port(2, term_loc(dup)), co2);
-  move(var, du1);
-  term_link(du2, bod);
-}
-
-// Application-Null interaction
-void appnul(Term app, Term nul) {
+bool applam(Term app, Term lam) {
   Location app_loc = term_loc(app);
-  Term pos = take(port(1, app_loc));
-  
-  // Get port locations
+  Location lam_loc = term_loc(lam);
+    
+  // Bounds checking
+  if (app_loc >= RNOD_END || lam_loc >= RNOD_END) {
+    fprintf(stderr, "Invalid locations: app_loc=%u lam_loc=%u RNOD_END=%lu\n",
+	    app_loc, lam_loc, RNOD_END);
+    return FALSE;
+  }
+
+  // Get locations for each port
+  Location arg_loc = port(1, app_loc);
   Location ret_loc = port(2, app_loc);
-  
-  // Set NUL in return port
-  move(ret_loc, term_new(NUL, 0, 0));
-  term_link(ERA, pos);
-}
+  Location var_loc = port(1, lam_loc);
+  Location bod_loc = port(2, lam_loc);
 
-// Duplication-Null interaction
-void dupnul(Term dup, Term nul) {
-  Location dup_loc = term_loc(dup);
-  
-  // Get port locations
-  Location dp1_loc = port(1, dup_loc);
-  Location dp2_loc = port(2, dup_loc);
-  
-  // Set NUL in both copy ports
-  move(dp1_loc, term_new(NUL, 0, 0));
-  move(dp2_loc, term_new(NUL, 0, 0));
-}
+  // Take the positive terms
+  Term arg_val = take(arg_loc);
+  Term bod_val = take(bod_loc);
 
-// Eraser-Duplicator interaction
-void erasup(Term era, Term sup) {
-  Location sup_loc = term_loc(sup);
-  
-  // Get port locations
-  Location p1_loc = port(1, sup_loc);
-  Location p2_loc = port(2, sup_loc);
-  
-  // Take terms from both ports
-  Term p1 = take(p1_loc);
-  Term p2 = take(p2_loc);
-  
-  // Set the terms at the original locations
-  term_link(p1, era);
-  term_link(p2, era);
+  // Move terms to their new locations
+  move(var_loc, arg_val);
+  move(ret_loc, bod_val);
+  return TRUE;
 }
 
 // Application-Duplicator interaction
-void appsup(Term app, Term sup) {
+bool appsup(Term app, Term sup) {
   Lab sup_lab = term_lab(sup);
   Location app_loc = term_loc(app);
   Location sup_loc = term_loc(sup);
@@ -435,10 +352,94 @@ void appsup(Term app, Term sup) {
   move(ret, dp2);
   term_link(cn1, tm1);
   term_link(cn2, tm2);
+  return TRUE;
+}
+
+// Application-Null interaction
+bool appnul(Term app, Term nul) {
+  Location app_loc = term_loc(app);
+  Term pos = take(port(1, app_loc));
+  
+  // Get port locations
+  Location ret_loc = port(2, app_loc);
+  
+  // Set NUL in return port
+  move(ret_loc, term_new(NUL, 0, 0));
+  term_link(ERA, pos);
+  return TRUE;
+}
+
+// Duplication-Lambda interaction
+bool duplam(Term dup, Term lam) {
+  Lab dup_lab = term_lab(dup);
+  Location lam_loc = term_loc(lam);
+  Location var = port(1, lam_loc);
+  Term bod = take(port(2, lam_loc));
+  Term co1 = pair_make(LAM, 0,
+		       term_new(SUB, 0, 0),
+		       term_new(VAR, 0, 0));
+  Term co2 = pair_make(LAM, 0,
+		       term_new(SUB, 0, 0),
+		       term_new(VAR, 0, 0));
+  Term du1 = pair_make(SUP, dup_lab,
+		       term_new(VAR, 0, port(1, term_loc(co1))),
+		       term_new(VAR, 0, port(1, term_loc(co2))));
+  Term du2 = pair_make(DUP, dup_lab,
+		       term_new(SUB, 0, 0),
+		       term_new(SUB, 0, 0));
+  set(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
+  set(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
+  move(port(1, term_loc(dup)), co1);
+  move(port(2, term_loc(dup)), co2);
+  move(var, du1);
+  term_link(du2, bod);
+  return TRUE;
+}
+
+// Duplication-Null interaction
+bool dupnul(Term dup, Term nul) {
+  Location dup_loc = term_loc(dup);
+  
+  // Get port locations
+  Location dp1_loc = port(1, dup_loc);
+  Location dp2_loc = port(2, dup_loc);
+  
+  // Set NUL in both copy ports
+  move(dp1_loc, term_new(NUL, 0, 0));
+  move(dp2_loc, term_new(NUL, 0, 0));
+  return TRUE;
+}
+
+// Eraser-Lambda interaction
+bool eralam(Term era, Term lam) {
+  Location lam_loc = term_loc(lam);
+  Location var = port(1, lam_loc);
+  Term bod = take(port(2, lam_loc));
+  move(var, term_new(NUL, 0, 0));
+  term_link(term_new(ERA, 0, 0), bod);
+  return TRUE;
+}
+
+// Eraser-Duplicator interaction
+bool erasup(Term era, Term sup) {
+  Location sup_loc = term_loc(sup);
+  
+  // Get port locations
+  Location p1_loc = port(1, sup_loc);
+  Location p2_loc = port(2, sup_loc);
+  
+  // Take terms from both ports
+  Term p1 = take(p1_loc);
+  Term p2 = take(p2_loc);
+  
+  // Set the terms at the original locations
+  term_link(p1, era);
+  term_link(p2, era);
+  return TRUE;
 }
 
 // The Void Interaction.
-bool VOID(Term neg, Term pos) {
+bool NOP(Term neg, Term pos) {
   return TRUE;
 }
 
@@ -459,12 +460,17 @@ bool ABRT(Term neg, Term pos) {
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
   //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
-/*
-interactionFn eraInteractions [16] = {
-  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
-  &ABRT,&ABRT,&ABRT,&VOID,&ABRT,&ABRT,&ABRT,&VOID,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&VOID,&VOID,&ABRT
-};
-// */
+#define ERA_INTERACTIONS \
+  &ABRT,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
+  //VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1   SUP     DUP   OPX   OPY  I56  F56   LAZ
+
+#define APP_INTERACTIONS \
+  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&appsup,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+  //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP     DUP   OPX   OPY   I56   F56   LAZ
+
+#define DUP_INTERACTIONS \
+  &ABRT,&ABRT,&ABRT,&dupnul,&ABRT,&duplam,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+  //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
@@ -472,13 +478,13 @@ interactionFn interactions[16][16] = {
   { POS_INTERACTIONS }, // VAR
   { POS_INTERACTIONS }, // SUB
   { POS_INTERACTIONS }, // NUL
-  { POS_INTERACTIONS }, // ERA
+  { ERA_INTERACTIONS },
   { POS_INTERACTIONS }, // LAM
-  { POS_INTERACTIONS }, // APP
+  { APP_INTERACTIONS },
   { POS_INTERACTIONS }, // REF
   { POS_INTERACTIONS }, // VL1
   { POS_INTERACTIONS }, // SUP
-  { POS_INTERACTIONS }, // DUP
+  { DUP_INTERACTIONS },
   { POS_INTERACTIONS }, // OPX
   { POS_INTERACTIONS }, // OPY
   { POS_INTERACTIONS }, // I56

@@ -89,14 +89,7 @@ void set(Location loc, Term term);
 Term pair_make(Tag tag, Lab lab, Term fst, Term snd);
 void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
-void applam(Term app, Term lam);
-void duplam(Term dup, Term lam);
-void eranul(Term era, Term nul);
-void eralam(Term era, Term lam);
-void appnul(Term app, Term nul);
-void dupnul(Term dup, Term nul);
-void erasup(Term era, Term sup);
-void appsup(Term app, Term sup);
+bool interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
 
 typedef bool (*interactionFn)(Term a, Term b);

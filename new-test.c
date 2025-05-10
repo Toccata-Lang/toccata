@@ -98,7 +98,7 @@ void test_applam(void) {
     Location ret_loc = port(2, app_loc);  // Return port
     
     // Perform interaction
-    applam(app, lam);
+    interact(app, lam);
     
     // Check that body was moved to return port with APP tag
     Term actual_ret = get(ret_loc);
@@ -298,7 +298,7 @@ void test_duplam(void) {
     Location var_loc = port(1, term_loc(lam));   // Variable port
     
     // Perform interaction
-    duplam(dup, lam);
+    interact(dup, lam);
     
     Term lam1 = get(dup1_loc);
     Term lam2 = get(dup2_loc);
@@ -340,7 +340,7 @@ void test_eranul(void) {
     Term nul = term_new(NUL, 0, 0);  // Positive eraser
     
     // Perform interaction
-    eranul(era, nul);
+    interact(era, nul);
     
     // They should just annihilate - nothing else to check
     printf("[PASS] test_eranul\n");
@@ -358,7 +358,7 @@ void test_eralam(void) {
     Term era = term_new(ERA, 0, 0);
     
     // Perform interaction
-    eralam(era, lam);
+    interact(era, lam);
     
     // Check that NUL was sent to variable port
     Location var_loc = port(1, term_loc(lam));
@@ -382,7 +382,7 @@ void test_appnul(void) {
     Term nul = term_new(NUL, 0, 0);
     
     // Perform interaction
-    appnul(app, nul);
+    interact(app, nul);
     
     // Check that NUL was sent to return port
     Location ret_loc = port(2, term_loc(app));
@@ -407,7 +407,7 @@ void test_dupnul(void) {
     Term nul = term_new(NUL, 0, 0);
     
     // Perform interaction
-    dupnul(dup, nul);
+    interact(dup, nul);
     
     // Check that NUL was sent to both copy ports
     Location dp1_loc = port(1, term_loc(dup));
@@ -445,7 +445,7 @@ void test_erasup(void) {
     Location p2_loc = term_loc(p2);
     
     // Perform interaction
-    erasup(era, sup);
+    interact(era, sup);
     
     // Check that ERA was linked to both ports
     Term result_p1 = get(p1_loc);
@@ -487,7 +487,7 @@ void test_appsup(void) {
     Location ret_loc = term_loc(ret);
     
     // Perform interaction
-    appsup(app, sup);
+    interact(app, sup);
     
     // After interaction, we should have:
     // 1. Two new APP nodes linked to the original SUP ports
