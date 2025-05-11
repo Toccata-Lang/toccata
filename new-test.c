@@ -377,8 +377,8 @@ void test_duplam(void) {
     exit(1);
   }
     
-  /*
-    TODO: finish this after DUP SUP is finished
+  //*
+  // TODO: finish this after DUP SUP is finished
   hvm_reset();
   lam = pair_make(LAM, 0,
 		  term_new(SUB, 0, 0),
@@ -389,21 +389,20 @@ void test_duplam(void) {
 		  term_new(SUB, 1, 0),
 		  term_new(SUB, 2, 0));
   test_interact(dup, lam);
-  exit(1);
     
   // Check that variable port contains a SUP term
   if (term_tag(sup) != SUP) {
-  printf("[FAIL:%d] test_duplam: Expected SUP tag in variable port, got: tag=%s\n",
-  __LINE__, tag_to_string(term_tag(sup)));
-  exit(1);
+    printf("[FAIL:%d] test_duplam: Expected SUP tag in variable port, got: tag=%s\n",
+	   __LINE__, tag_to_string(term_tag(sup)));
+    exit(1);
   }
   if (term_loc(get(port(1, term_loc(sup)))) != port(1, term_loc(lam1))) {
-  printf("[FAIL:%d] test_duplam: Expected SUP port 1 points to wrong place\n", __LINE__);
-  exit(1);
+    printf("[FAIL:%d] test_duplam: Expected SUP port 1 points to wrong place\n", __LINE__);
+    exit(1);
   }
   if (term_loc(get(port(2, term_loc(sup)))) != port(1, term_loc(lam2))) {
-  printf("[FAIL:%d] test_duplam: Expected SUP port 2 points to wrong place\n", __LINE__);
-  exit(1);
+    printf("[FAIL:%d] test_duplam: Expected SUP port 2 points to wrong place\n", __LINE__);
+    exit(1);
   }
   // */
 
@@ -755,7 +754,6 @@ void test_dupsup(void) {
     set(port(2, term_loc(sup)), b);
     
     test_interact(dup, sup);
-    exit(1);
     
     printf("[PASS] test_dupsup\n");
 }

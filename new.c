@@ -593,6 +593,12 @@ bool erasup(Term era, Term sup) {
   return true;
 }
 
+bool appref(Term app, Term ref) {
+  interactionFn fnPtr;
+  fnPtr = (interactionFn)(ref & ~0xF);
+  fnPtr(ref, app);
+  return true;
+}
 // The Void Interaction.
 bool NOP(Term neg, Term pos) {
   return true;
@@ -617,15 +623,15 @@ bool ABRT(Term neg, Term pos) {
 
 #define ERA_INTERACTIONS \
   &ABRT,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-  //VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1   SUP     DUP   OPX   OPY   I56  F56  LAZ
+  //VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
 
 #define APP_INTERACTIONS \
   &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&appsup,&ABRT,&ABRT,&ABRT,&appnul,&appnul,&ABRT
   //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY    I56     F56   LAZ
 
 #define DUP_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&copy,&ABRT,&duplam,&ABRT,&ABRT,&ABRT,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
-  //VAL  VAR   SUB   NUL   ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+  &ABRT,&ABRT,&ABRT,&copy,&ABRT,&duplam,&ABRT,&copy,&ABRT,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
+  //VAL  VAR   SUB   NUL   ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY   I56   F56   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
