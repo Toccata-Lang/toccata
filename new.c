@@ -659,22 +659,22 @@ bool ABRT(Term neg, Term pos) {
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
-  { POS_INTERACTIONS }, // VAL
-  { POS_INTERACTIONS }, // VAR
-  { POS_INTERACTIONS }, // SUB
-  { POS_INTERACTIONS }, // NUL
-  { ERA_INTERACTIONS }, // ERA
-  { POS_INTERACTIONS }, // LAM
-  { APP_INTERACTIONS }, // APP
-  { POS_INTERACTIONS }, // REF
-  { POS_INTERACTIONS }, // VL1
-  { POS_INTERACTIONS }, // SUP
-  { DUP_INTERACTIONS }, // DUP
-  { OPX_INTERACTIONS }, // OPX
+  { POS_INTERACTIONS }, // VAL  +
+  { POS_INTERACTIONS }, // VAR  +
+  { POS_INTERACTIONS }, // SUB  - [{+ -}]
+  { POS_INTERACTIONS }, // NUL  +
+  { ERA_INTERACTIONS }, // ERA  -
+  { POS_INTERACTIONS }, // LAM  + {- +}
+  { APP_INTERACTIONS }, // APP  - {+ -}
+  { POS_INTERACTIONS }, // REF  +
+  { POS_INTERACTIONS }, // VL1  +
+  { POS_INTERACTIONS }, // SUP  + {+ +}
+  { DUP_INTERACTIONS }, // DUP  - {- -}
+  { OPX_INTERACTIONS }, // OPX  - {- +}
   { POS_INTERACTIONS }, // OPY
-  { NUM_INTERACTIONS }, // I56
-  { NUM_INTERACTIONS }, // F56
-  { POS_INTERACTIONS }  // LAZ
+  { NUM_INTERACTIONS }, // I56  +
+  { NUM_INTERACTIONS }, // F56  +
+  { POS_INTERACTIONS }  // LAZ  + {+ -}
 };
 
 bool interact(Term neg, Term pos) {
