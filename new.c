@@ -155,6 +155,7 @@ Location term_loc(Term term) {
     
   default:
     return (Location)(term >> (TAG_SIZE + LAB_SIZE));
+    break;
   }
   return 0;
 }
@@ -328,6 +329,8 @@ void term_link(Term neg, Term pos) {
     }
     break;
 
+  case I56:
+  case F56:
   case NUL:
     interact(neg, pos);
     break;
@@ -599,6 +602,19 @@ bool appref(Term app, Term ref) {
   fnPtr(ref, app);
   return true;
 }
+
+void appnum(Term app, Term num) {
+  Location app_loc = term_loc(app);
+  term_link(num, take(port(1, app_loc)));
+  move(port(2, app_loc), num);
+}
+
+void opxnul(Term opx) {
+  Location op_loc = term_loc(opx);
+  term_link(ERA, take(port(1, op_loc)));
+  move(port(2, op_loc), NUL);
+}
+
 // The Void Interaction.
 bool NOP(Term neg, Term pos) {
   return true;
@@ -621,12 +637,16 @@ bool ABRT(Term neg, Term pos) {
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
   //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
+#define NUM_INTERACTIONS \
+  &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
+  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56   LAZ
+
 #define ERA_INTERACTIONS \
   &ABRT,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
   //VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
 
 #define APP_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&appsup,&ABRT,&ABRT,&ABRT,&appnul,&appnul,&ABRT
+  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&appsup,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
   //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY    I56     F56   LAZ
 
 #define DUP_INTERACTIONS \
@@ -639,17 +659,17 @@ interactionFn interactions[16][16] = {
   { POS_INTERACTIONS }, // VAR
   { POS_INTERACTIONS }, // SUB
   { POS_INTERACTIONS }, // NUL
-  { ERA_INTERACTIONS },
+  { ERA_INTERACTIONS }, // ERA
   { POS_INTERACTIONS }, // LAM
-  { APP_INTERACTIONS },
+  { APP_INTERACTIONS }, // APP
   { POS_INTERACTIONS }, // REF
   { POS_INTERACTIONS }, // VL1
   { POS_INTERACTIONS }, // SUP
-  { DUP_INTERACTIONS },
+  { DUP_INTERACTIONS }, // DUP
   { POS_INTERACTIONS }, // OPX
   { POS_INTERACTIONS }, // OPY
-  { POS_INTERACTIONS }, // I56
-  { POS_INTERACTIONS }, // F56
+  { NUM_INTERACTIONS }, // I56
+  { NUM_INTERACTIONS }, // F56
   { POS_INTERACTIONS }  // LAZ
 };
 

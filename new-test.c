@@ -73,19 +73,32 @@ Term get_var(Term t) {
 void print_term(const char* prefix, Term term) {
   printf("%s:\n", prefix);
   printf("  Tag: %s (%d)\n", tag_to_string(term_tag(term)), term_tag(term));
-  printf("  Location: %u\n", term_loc(term));
+  switch(term_tag(term)) {
+  case VAL:
+  case SUB:
+  case NUL:
+  case REF:
+  case ERA:
+  case I56:
+  case F56:
+    break;
     
-  // If this is a pair, print its contents
-  if (term_loc(term) >= 0) {
-    Term first = get(port(1, term_loc(term)));
-    Term second = get(port(2, term_loc(term)));
-    printf("  First term: ");
-    print_raw_term(first);
-    printf("\n");
-    printf("  Second term: ");
-    print_raw_term(second);
-    printf("\n");
+  default:
+    printf("  Location: %u\n", term_loc(term));
+    // If this is a pair, print its contents
+    if (term_loc(term) >= 0) {
+      Term first = get(port(1, term_loc(term)));
+      Term second = get(port(2, term_loc(term)));
+      printf("  First term: ");
+      print_raw_term(first);
+      printf("\n");
+      printf("  Second term: ");
+      print_raw_term(second);
+      printf("\n");
+    }
+    break;
   }
+    
   printf("\n");
 }
 
@@ -377,7 +390,7 @@ void test_duplam(void) {
     exit(1);
   }
     
-  //*
+  /*
   // TODO: finish this after DUP SUP is finished
   hvm_reset();
   lam = pair_make(LAM, 0,
@@ -535,10 +548,10 @@ void test_appsup(void) {
     print_term("", get_var(get(port(1, term_loc(actual_ret)))));
     exit(1);
   }
-  if (get_var(get(port(2, term_loc(actual_ret)))) != NUL) {
+  if (term_tag(actual_ret) != I56) {
     printf("[FAIL:%d] test_applam: SUP port 2 value is wrong. got:\n",
 	   __LINE__);
-    print_term("", get_var(get(port(2, term_loc(actual_ret)))));
+    print_term("", actual_ret);
     exit(1);
   }
     
