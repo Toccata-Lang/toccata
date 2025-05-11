@@ -548,6 +548,7 @@ void test_appsup(void) {
     print_term("", get_var(get(port(1, term_loc(actual_ret)))));
     exit(1);
   }
+  actual_ret = get_var(get(port(2, term_loc(actual_ret))));
   if (term_tag(actual_ret) != I56) {
     printf("[FAIL:%d] test_applam: SUP port 2 value is wrong. got:\n",
 	   __LINE__);
