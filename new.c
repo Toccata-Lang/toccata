@@ -232,70 +232,72 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 
     // Check port polarities based on pair type
     switch (tag) {
-        case LAM:
-            // Port 1 must be negative
-            if (!is_negative(fst)) {
-                fprintf(stderr, "Error: LAM pair requires negative term in port 1\n");
-                fprintf(stderr, "  Port 1 term tag: %d\n", term_tag(fst));
-                exit(1);
-            }
-            // Port 2 must be positive
-            if (!is_positive(snd)) {
-                fprintf(stderr, "Error: LAM pair requires positive term in port 2\n");
-                fprintf(stderr, "  Port 2 term tag: %d\n", term_tag(snd));
-                exit(1);
-            }
-            break;
+    case LAM:
+      // Port 1 must be negative
+      if (!is_negative(fst)) {
+	fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
+	fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+	exit(1);
+      }
+      // Port 2 must be positive
+      if (!is_positive(snd)) {
+	fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
+	fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+	exit(1);
+      }
+      break;
 
-        case APP:
-            // Port 1 must be positive
-            if (!is_positive(fst)) {
-                fprintf(stderr, "Error: APP pair requires positive term in port 1\n");
-                fprintf(stderr, "  Port 1 term tag: %d\n", term_tag(fst));
-                exit(1);
-            }
-            // Port 2 must be negative
-            if (!is_negative(snd)) {
-                fprintf(stderr, "Error: APP pair requires negative term in port 2\n");
-                fprintf(stderr, "  Port 2 term tag: %d\n", term_tag(snd));
-                exit(1);
-            }
-            break;
+    case OPX:
+    case OPY:
+    case APP:
+      // Port 1 must be positive
+      if (!is_positive(fst)) {
+	fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
+	fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+	exit(1);
+      }
+      // Port 2 must be negative
+      if (!is_negative(snd)) {
+	fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
+	fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+	exit(1);
+      }
+      break;
 
-        case DUP:
-            // Port 1 must be negative
-            if (!is_negative(fst)) {
-                fprintf(stderr, "Error: DUP pair requires negative term in port 1\n");
-                fprintf(stderr, "  Port 1 term tag: %d\n", term_tag(fst));
-                exit(1);
-            }
-            // Port 2 must be negative
-            if (!is_negative(snd)) {
-                fprintf(stderr, "Error: DUP pair requires negative term in port 2\n");
-                fprintf(stderr, "  Port 2 term tag: %d\n", term_tag(snd));
-                exit(1);
-            }
-            break;
+    case DUP:
+      // Port 1 must be negative
+      if (!is_negative(fst)) {
+	fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
+	fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+	exit(1);
+      }
+      // Port 2 must be negative
+      if (!is_negative(snd)) {
+	fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
+	fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+	exit(1);
+      }
+      break;
 
-        case SUP:
-            // Port 1 must be positive
-            if (!is_positive(fst)) {
-                fprintf(stderr, "Error: SUP pair requires positive term in port 1\n");
-                fprintf(stderr, "  Port 1 term tag: %d\n", term_tag(fst));
-                exit(1);
-            }
-            // Port 2 must be positive
-            if (!is_positive(snd)) {
-                fprintf(stderr, "Error: SUP pair requires positive term in port 2\n");
-                fprintf(stderr, "  Port 2 term tag: %d\n", term_tag(snd));
-                exit(1);
-            }
-            break;
+    case SUP:
+      // Port 1 must be positive
+      if (!is_positive(fst)) {
+	fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
+	fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+	exit(1);
+      }
+      // Port 2 must be positive
+      if (!is_positive(snd)) {
+	fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
+	fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+	exit(1);
+      }
+      break;
 
-        default:
-            fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
-		    tag_to_string(tag), tag);
-            exit(1);
+    default:
+      fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
+	      tag_to_string(tag), tag);
+      exit(1);
     }
     
     Location loc = RNOD_END;
@@ -312,8 +314,8 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 void move(Location neg_loc, Term pos) {
     Term neg = swap(neg_loc, pos);
     if (term_tag(neg) != SUB) {
-        take(neg_loc);
-        term_link(neg, pos);
+	take(neg_loc);
+	term_link(neg, pos);
     }
 }
 

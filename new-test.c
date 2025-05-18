@@ -760,7 +760,7 @@ void test_dupsup(void) {
     Term sup = pair_make(SUP, 2, term_new(NUL, 0, 0), term_new(NUL, 0, 0));
     
     // Create terms to connect to the ports
-    Term a = term_new(I56, 42, 0);  // A positive term (integer 42)
+    Term a = term_new(I56, 56, 0);  // A positive term (integer 56)
     Term b = term_new(I56, 99, 0);  // Another positive term (integer 99)
     
     // Connect terms to SUP ports
@@ -770,6 +770,43 @@ void test_dupsup(void) {
     test_interact(dup, sup);
     
     printf("[PASS] test_dupsup\n");
+}
+
+// Test adding two numbers using OPX/OPY operations
+void test_add_numbers(void) {
+    // Create two numbers to add: 56 and 17
+    Term num1 = new_i56(56);
+    Term num2 = new_i56(17);
+    
+    // Create an addition operation (using OPX with OP_ADD=0 for addition)
+    Term ret_port = term_new(SUB, 0, 0);  // Negative return port
+    Term opx = pair_make(OPX, OP_ADD, num2, ret_port);
+    
+    // Get port locations for verification
+    Location opx_loc = term_loc(opx);
+    Location arg_loc = port(1, opx_loc);
+    Location ret_loc = port(2, opx_loc);
+    
+    // This should trigger opxnum interaction, converting OPX to OPY
+    test_interact(opx, num1);
+    
+    // Check result at return port - should be 56 + 17 = 73
+    Term result = get(ret_loc);
+    if (term_tag(result) != I56) {
+        printf("[FAIL:%d] test_add_numbers: Expected I56 tag in result, got: tag=%s\n",
+               __LINE__, tag_to_string(term_tag(result)));
+        exit(1);
+    }
+    
+    // Extract the numeric value and verify
+    u64 value = get_i56(result);
+    if (value != 73) {
+        printf("[FAIL:%d] test_add_numbers: Expected result 73, got: %lu\n",
+               __LINE__, value);
+        exit(1);
+    }
+    
+    printf("[PASS] test_add_numbers\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -824,6 +861,9 @@ int main(int argc, char *argv[]) {
     
     hvm_reset();
     test_duplam();
+    
+    hvm_reset();
+    test_add_numbers();
     
     // Final cleanup
     hvm_free();
