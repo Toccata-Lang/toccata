@@ -489,7 +489,7 @@ bool appnul(Term app, Term nul) {
 }
 
 // Duplication-Lambda interaction
-bool duplam(Term dup, Term lam) {
+bool DLAM(Term dup, Term lam) {
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
   Location var = port(1, lam_loc);
@@ -516,7 +516,7 @@ bool duplam(Term dup, Term lam) {
 }
 
 // Duplication-Superposition interaction
-bool dupsup(Term dup, Term sup) {
+bool DSUP(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
 
@@ -619,14 +619,68 @@ bool opnul(Term op, Term nul) {
   return true;
 }
 
-bool opxnum(Term opx, Term num) {
+bool XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
   Term arg = swap(port(1, opx_loc), num);
   term_link(term_new(OPY, term_lab(opx), opx_loc), arg);
   return true;
 }
 
+// Utilities
+i64 u64_to_i64(u64 u) { return *(i64*)&u; }
+// f64 u64_to_f64(u64 u) { return *(f64*)&u; }
+u64 i64_to_u64(i64 i) { return *(u64*)&i; }
+// u64 f64_to_u64(f64 f) { return *(u64*)&f; }
 
+// These macros build all the different casts to make the operations work
+// There's a ton of repetitive copy and paste code
+#define CASES_u64(a, b) \
+  case OP_MOD: val = a %  b; break; \
+  case OP_AND: val = a &  b; break; \
+  case OP_OR : val = a |  b; break; \
+  case OP_XOR: val = a ^  b; break; \
+  case OP_LSH: val = a << b; break; \
+  case OP_RSH: val = a >> b; break;
+#define CASES_i64(a, b) CASES_u64(a, b)
+#define CASES_f64(a, b)
+
+#define PERFORM_OP(x, y, op, type)		\
+  {						\
+    type val;					\
+    type a = u64_to_##type(x);			\
+    type b = u64_to_##type(y);			\
+    switch (op) {				\
+    case OP_ADD: val = a +  b; break;		\
+    case OP_SUB: val = a -  b; break;		\
+    case OP_MUL: val = a *  b; break;		\
+    case OP_DIV: val = a /  b; break;		\
+    case OP_EQ : val = a == b; break;		\
+    case OP_NE : val = a != b; break;		\
+    case OP_LT : val = a <  b; break;		\
+    case OP_GT : val = a >  b; break;		\
+    case OP_LTE: val = a <= b; break;		\
+    case OP_GTE: val = a >= b; break;		\
+      CASES_##type(a, b)			\
+	}					\
+    res = type##_to_u64(val);			\
+  }
+
+bool YNUM(Term opy, Term num) {
+  Location op_loc = term_loc(opy);
+  Term x = take(port(1, op_loc));
+  Tag y_type = term_tag(num);
+  Location ret = port(2, op_loc);
+  u32 res;
+  Lab op = term_lab(opy);
+
+  switch (y_type) {
+  case I56: PERFORM_OP(get_u64(x), get_u64(num), op, i64); break;
+    // case F56: PERFORM_OP(x, y, op, f64); break;
+  }
+
+  move(ret, new_num(y_type, res));
+  return true;
+}
 
 // The Void Interaction.
 bool NOP(Term neg, Term pos) {
@@ -655,11 +709,11 @@ bool ABRT(Term neg, Term pos) {
   //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56   LAZ
 
 #define OPX_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
   //VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 #define OPY_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
   //VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 #define ERA_INTERACTIONS \
@@ -671,8 +725,8 @@ bool ABRT(Term neg, Term pos) {
   //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
 
 #define DUP_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&copy,&ABRT,&duplam,&ABRT,&copy,&ABRT,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
-  //VAL  VAR   SUB   NUL   ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY   I56   F56   LAZ
+  &ABRT,&ABRT,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&ABRT,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
+  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
@@ -688,7 +742,7 @@ interactionFn interactions[16][16] = {
   { POS_INTERACTIONS }, // SUP  + {+ +}
   { DUP_INTERACTIONS }, // DUP  - {- -}
   { OPX_INTERACTIONS }, // OPX  - {- +}
-  { OPY_INTERACTIONS }, // OPY
+  { OPY_INTERACTIONS }, // OPY  - {- +}
   { NUM_INTERACTIONS }, // I56  +
   { NUM_INTERACTIONS }, // F56  +
   { POS_INTERACTIONS }  // LAZ  + {+ -}

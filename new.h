@@ -10,6 +10,7 @@
 
 // Type definitions
 typedef uint64_t u64;
+typedef int64_t i64;
 typedef uint32_t u32;
 typedef uint32_t Location;
 typedef uint32_t Lab;
@@ -51,6 +52,24 @@ extern a64* get_buff(void);  // For testing only
 #define LAZ 0x0f // positive lazy node
 typedef u32 Tag; // Tag is now just an unsigned integer
 
+// Operators
+#define OP_ADD 0x00
+#define OP_SUB 0x01
+#define OP_MUL 0x02
+#define OP_DIV 0x03
+#define OP_MOD 0x04
+#define OP_EQ  0x05
+#define OP_NE  0x06
+#define OP_LT  0x07
+#define OP_GT  0x08
+#define OP_LTE 0x09
+#define OP_GTE 0x0A
+#define OP_AND 0x0B
+#define OP_OR  0x0C
+#define OP_XOR 0x0D
+#define OP_LSH 0x0E
+#define OP_RSH 0x0F
+
 // Term is a 64-bit value:
 // - Highest 32 bits: Location
 // - Next 28 bits: Label
@@ -59,7 +78,8 @@ typedef u64 Term;
 
 // creating number terms
 #define new_i56(x) (((u64)x << TAG_SIZE) | I56)
-#define get_i56(x) (i64)((i64)x >> TAG_SIZE)
+#define get_i56(x) (i64)((u64)x >> TAG_SIZE)
+#define get_u64(x) (i64)((u64)x >> TAG_SIZE)
 #define new_num(type, x) (((u64)x << TAG_SIZE) | type)
 
 // Function declarations
