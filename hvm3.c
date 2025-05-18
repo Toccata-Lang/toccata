@@ -644,11 +644,11 @@ static void interact_appref(Term app, Term ref) {
   fnPtr(ref, app);
 }
 
-static void interact_appsup(Loc a_loc, Loc b_loc) {
-  Term arg = takeAndCheck(port(1, a_loc));
-  Loc  ret = port(2, a_loc);
-  Term tm1 = takeAndCheck(port(1, b_loc));
-  Term tm2 = takeAndCheck(port(2, b_loc));
+static void interact_appsup(Loc app_loc, Loc sup_loc) {
+  Term arg = takeAndCheck(port(1, app_loc));
+  Loc  ret = port(2, app_loc);
+  Term tm1 = takeAndCheck(port(1, sup_loc));
+  Term tm2 = takeAndCheck(port(2, sup_loc));
   Loc  dp1 = alloc_node(2);
   Loc  dp2 = alloc_node(2);
   Loc  cn1 = alloc_node(2);
@@ -881,7 +881,6 @@ static void interact_duplam(Loc a_loc, Loc b_loc) {
   Loc  dp1 = port(1, a_loc);
   Loc  dp2 = port(2, a_loc);
   Loc  var = port(1, b_loc);
-  // TODO(enricozb): why is this the only take?
   Term bod = takeAndCheck(port(2, b_loc));
   Loc  co1 = alloc_node(2);
   Loc  co2 = alloc_node(2);
@@ -1323,13 +1322,14 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 
     case VAR:
       if (1) {
-	Term negVar = get(term_loc(arg));
-	switch(term_tag(negVar)) {
+	Term valVar = get(term_loc(arg));
+	switch(term_tag(valVar)) {
 	  // the strict arg types
 	case VAL:
 	case I56:
 	case F56:
 	case REF:
+	case NUL:
 	  if(1) {
 	    Term val = take(term_loc(arg));
 	    argsStruct->args[argsStruct->count++] = val;
@@ -1341,7 +1341,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	  break;
 
 	case SUB:
-	  if (negVar != SUB)
+	  if (valVar != SUB)
 	    BOOM("nativeArgs");
 	  else {
 	    argsStruct->args[argsStruct->count++] = args;
@@ -1377,15 +1377,17 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	  set(port(1, term_loc(args)), arg);
 	  retry = pair_make(SUB, newArgs, ref);
 	  newArg = swap(term_loc(arg), retry);
-	  forceLazy(negVar);
+	  forceLazy(valVar);
 	  argsStruct->count = -1;
 	  return VOID;
 	  break;
 
 	default:
-	  fprintf(stderr, "arg %s %p\n", tag_to_str(term_tag(arg)), (void *)arg);
-	  fprintf(stderr, "negVar %s %p\n", tag_to_str(term_tag(negVar)), (void *)negVar);
-	  BOOM("natveArgs");
+	  if (1) {
+	    char s[50];
+	    sprintf(s, "bad %s valVar", tag_to_str(term_tag(valVar)));
+	    BOOM(s);
+	  }
 	  break;
 	}
 	/*
