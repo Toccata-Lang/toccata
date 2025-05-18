@@ -449,23 +449,25 @@ bool applam(Term app, Term lam) {
   return true;
 }
 
-// Application-Duplicator interaction
-bool appsup(Term app, Term sup) {
+// Distribure a negative term
+bool DNEG(Term neg, Term sup) {
+  Tag neg_tag = term_tag(neg);
   Lab sup_lab = term_lab(sup);
-  Location app_loc = term_loc(app);
+  Lab neg_lab = term_lab(neg);
+  Location neg_loc = term_loc(neg);
   Location sup_loc = term_loc(sup);
 
-  Term arg = take(port(1, app_loc));
-  Location ret = port(2, app_loc);
+  Term arg = take(port(1, neg_loc));
+  Location ret = port(2, neg_loc);
   Term tm1 = take(port(1, sup_loc));
   Term tm2 = take(port(2, sup_loc));
   Term dp1 = pair_make(DUP, sup_lab,
 		       term_new(SUB, 0, 0),
 		       term_new(SUB, 0, 0));
-  Term cn1 = pair_make(APP, 0,
+  Term cn1 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(1, term_loc(dp1))),
 		       term_new(SUB, 0, 0));
-  Term cn2 = pair_make(APP, 0,
+  Term cn2 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(2, term_loc(dp1))),
 		       term_new(SUB, 0, 0));
   Term dp2 = pair_make(SUP, sup_lab,
@@ -603,47 +605,28 @@ bool appref(Term app, Term ref) {
   return true;
 }
 
-void appnum(Term app, Term num) {
+bool appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
   term_link(num, take(port(1, app_loc)));
   move(port(2, app_loc), num);
+  return true;
 }
 
-void opnul(Term op) {
+bool opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
   term_link(ERA, take(port(1, op_loc)));
-  move(port(2, op_loc), NUL);
+  move(port(2, op_loc), nul);
+  return true;
 }
 
-void opxnum(Term opx, Term num) {
+bool opxnum(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
   Term arg = swap(port(1, opx_loc), num);
   term_link(term_new(OPY, term_lab(opx), opx_loc), arg);
+  return true;
 }
 
-void opxsup(Term opx, Term sup) {
-  Location opx_loc = term_loc(opx);
-  Location sup_loc = term_loc(sup);
-  Term arg = take(port(1, opx_loc));
-  Location ret = port(2, opx_loc);
-  Term arg1 = take(port(1, sup_loc));
-  Term arg2 = take(port(2, sup_loc));
-  Term dp1 = pair_make(DUP, 0, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
-  Term sp2 = pair_make(SUP, 0, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
-  Term op1 = pair_make(OPX, term_lab(opx), term_new(SUB, 0, 0), term_new(SUB, 0, 0));
-  Term op2 = pair_make(OPX, term_lab(opx), term_new(SUB, 0, 0), term_new(SUB, 0, 0));
 
-  // Connect the pairs properly
-  set(port(1, term_loc(sp2)), term_new(VAR, 0, port(2, term_loc(op1))));
-  set(port(2, term_loc(sp2)), term_new(VAR, 0, port(2, term_loc(op2))));
-  set(port(1, term_loc(op1)), term_new(VAR, 0, port(1, term_loc(dp1))));
-  set(port(1, term_loc(op2)), term_new(VAR, 0, port(2, term_loc(dp1))));
-
-  term_link(dp1, arg);
-  move(ret, sp2);
-  term_link(op1, arg1);
-  term_link(op2, arg2);
-}
 
 // The Void Interaction.
 bool NOP(Term neg, Term pos) {
@@ -672,11 +655,11 @@ bool ABRT(Term neg, Term pos) {
   //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56   LAZ
 
 #define OPX_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
   //VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 #define OPY_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
   //VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 #define ERA_INTERACTIONS \
@@ -684,8 +667,8 @@ bool ABRT(Term neg, Term pos) {
   //VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
 
 #define APP_INTERACTIONS \
-  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&appsup,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
-  //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY    I56     F56   LAZ
+  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
+  //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
 
 #define DUP_INTERACTIONS \
   &ABRT,&ABRT,&ABRT,&copy,&ABRT,&duplam,&ABRT,&copy,&ABRT,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
