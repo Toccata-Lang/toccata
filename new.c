@@ -174,7 +174,13 @@ Term swap(Location loc, Term term) {
 }
 
 Term take(Location loc) {
-  return swap(loc, 0);
+  Term taken = swap(loc, 0);
+  /*
+  while (term_tag(taken) == VAR) {
+    taken = swap(term_loc(taken), 0);
+  }
+  // */
+  return taken;
 }
 
 // Check if a term is positive

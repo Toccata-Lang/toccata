@@ -107,7 +107,7 @@ void test_pair_creation(void) {
     Term t1 = term_new(ERA, 0, 0);  // negative term for port 1
     Term t2 = term_new(NUL, 0, 0);  // positive term for port 2
     Term pair = pair_make(LAM, 0, t1, t2);
-    print_term("Simple pair", pair);
+    // print_term("Simple pair", pair);
     
     // Verify pair structure
     Location loc = term_loc(pair);
@@ -128,15 +128,15 @@ void test_pair_manipulation(void) {
     Term inner = pair_make(APP, 0, term_new(NUL, 0, 0), term_new(SUB, 0, 0));  // positive port 1, negative port 2
     Term outer = pair_make(APP, 0, term_new(NUL, 0, 0), term_new(SUB, 0, 0));  // positive port 1, negative port 2
     
-    print_term("Inner pair", inner);
-    print_term("Outer pair", outer);
+    // print_term("Inner pair", inner);
+    // print_term("Outer pair", outer);
     
     // Modify inner pair's first term
     set(term_loc(inner), term_new(APP, 0, 0));
     
-    printf("After modification:\n");
-    print_term("Modified inner pair", inner);
-    print_term("Outer pair (showing modified inner)", outer);
+    // printf("After modification:\n");
+    // print_term("Modified inner pair", inner);
+    // print_term("Outer pair (showing modified inner)", outer);
     printf("[PASS] test_pair_manipulation\n\n");
 }
 
@@ -283,12 +283,12 @@ void test_boundary_validation(void) {
 
 void test_interact(Term neg, Term pos) {
     interact(neg, pos);
-    printf("redexes: %ld\n", RBAG_END - RBAG_INI);
+    // printf("redexes: %ld\n", RBAG_END - RBAG_INI);
     stop_reducing = true;
-    print_buff(0, 18);
+    // print_buff(0, 18);
     normalize();
-    printf("redexes: %ld\n", RBAG_END - RBAG_INI);
-    print_buff(0, 18);
+    // printf("redexes: %ld\n", RBAG_END - RBAG_INI);
+    // print_buff(0, 18);
 }
 
 // Main function
@@ -620,7 +620,7 @@ void test_redex_stack(void) {
     push_redex(neg2, pos2);
     push_redex(neg3, pos3);
     
-    printf("Pushed 3 redexes onto the stack\n");
+    // printf("Pushed 3 redexes onto the stack\n");
     
     // Pop the terms and verify they match what we pushed
     Term neg, pos;
@@ -628,9 +628,11 @@ void test_redex_stack(void) {
     // First pop should get neg3, pos3 (LIFO order)
     neg = 0; pos = 0; // Reset to ensure we're getting new values
     pop_redex(&neg, &pos);
+    /*
     printf("Popped redex: %s(%u), %s(%u)\n", 
            tag_to_string(term_tag(neg)), term_lab(neg),
            tag_to_string(term_tag(pos)), term_lab(pos));
+    // */
     
     if (term_tag(neg) != SUB || term_lab(neg) != 3 ||
         term_tag(pos) != VAR || term_lab(pos) != 3) {
@@ -641,9 +643,11 @@ void test_redex_stack(void) {
     // Second pop should get neg2, pos2
     neg = 0; pos = 0; // Reset to ensure we're getting new values
     pop_redex(&neg, &pos);
+    /*
     printf("Popped redex: %s(%u), %s(%u)\n", 
            tag_to_string(term_tag(neg)), term_lab(neg),
            tag_to_string(term_tag(pos)), term_lab(pos));
+    // */
     
     if (term_tag(neg) != APP || term_lab(neg) != 2 ||
         term_tag(pos) != LAM || term_lab(pos) != 2) {
@@ -654,9 +658,11 @@ void test_redex_stack(void) {
     // Third pop should get neg1, pos1
     neg = 0; pos = 0; // Reset to ensure we're getting new values
     pop_redex(&neg, &pos);
+    /*
     printf("Popped redex: %s(%u), %s(%u)\n", 
            tag_to_string(term_tag(neg)), term_lab(neg),
            tag_to_string(term_tag(pos)), term_lab(pos));
+    // */
     
     if (term_tag(neg) != APP || term_lab(neg) != 1 ||
         term_tag(pos) != LAM || term_lab(pos) != 1) {
