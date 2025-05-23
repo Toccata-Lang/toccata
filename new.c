@@ -20,27 +20,27 @@ pthread_cond_t redex_cond;
 
 // For testing only
 a64* get_buff(void) {
-    return BUFF;
+  return BUFF;
 }
 
 // Print the free list for debugging
 void print_free_list(void) {
-    printf("Free list: ");
-    Location ptr = FREE_LIST;
-    int count = 0;
+  printf("Free list: ");
+  Location ptr = FREE_LIST;
+  int count = 0;
 
-    while (ptr != 0 && count < 100) { // Limit to prevent infinite loops
-        printf("%u -> ", ptr);
-        Term next = get(ptr);
-        if (term_tag(next) != NUL) {
-            printf("(INVALID: not NUL) ");
-            break;
-        }
-	ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-        count++;
+  while (ptr != 0 && count < 100) { // Limit to prevent infinite loops
+    printf("%u -> ", ptr);
+    Term next = get(ptr);
+    if (term_tag(next) != NUL) {
+      printf("(INVALID: not NUL) ");
+      break;
     }
+    ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+    count++;
+  }
 
-    printf("END (count: %d)\n", count);
+  printf("END (count: %d)\n", count);
 }
 
 void *boom(char *msg, char *file, int line) {
@@ -50,45 +50,45 @@ void *boom(char *msg, char *file, int line) {
 
 // Initialize the virtual machine with a given heap size
 void hvm_init(u64 size) {
-    BUFF = (a64*)calloc(size, sizeof(a64));
-    if (!BUFF) {
-        fprintf(stderr, "Failed to allocate memory\n");
-        exit(1);
-    }
-    RNOD_INI = 0;
-    RNOD_END = 0;
-    RBAG_INI = RBAG;
-    RBAG_END = RBAG;
-    FREE_LIST = 0;  // Initially no free pairs
+  BUFF = (a64*)calloc(size, sizeof(a64));
+  if (!BUFF) {
+    fprintf(stderr, "Failed to allocate memory\n");
+    exit(1);
+  }
+  RNOD_INI = 0;
+  RNOD_END = 0;
+  RBAG_INI = RBAG;
+  RBAG_END = RBAG;
+  FREE_LIST = 0;  // Initially no free pairs
 
-    // Initialize mutex for thread-safe redex operations
-    if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
-        fprintf(stderr, "Failed to initialize mutex\n");
-        free(BUFF);
-        BUFF = NULL;
-        exit(1);
-    }
+  // Initialize mutex for thread-safe redex operations
+  if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
+    fprintf(stderr, "Failed to initialize mutex\n");
+    free(BUFF);
+    BUFF = NULL;
+    exit(1);
+  }
 
-    // Initialize condition variable for redex signaling
-    if (pthread_cond_init(&redex_cond, NULL) != 0) {
-        fprintf(stderr, "Failed to initialize condition variable\n");
-        pthread_mutex_destroy(&redex_mutex);
-        free(BUFF);
-        BUFF = NULL;
-        exit(1);
-    }
+  // Initialize condition variable for redex signaling
+  if (pthread_cond_init(&redex_cond, NULL) != 0) {
+    fprintf(stderr, "Failed to initialize condition variable\n");
+    pthread_mutex_destroy(&redex_mutex);
+    free(BUFF);
+    BUFF = NULL;
+    exit(1);
+  }
 }
 
 // Free allocated memory
 void hvm_free(void) {
-    if (BUFF == NULL) {
-        return;
-    }
-    // Destroy mutex and condition variable
-    pthread_cond_destroy(&redex_cond);
-    pthread_mutex_destroy(&redex_mutex);
-    free(BUFF);
-    BUFF = NULL;
+  if (BUFF == NULL) {
+    return;
+  }
+  // Destroy mutex and condition variable
+  pthread_cond_destroy(&redex_cond);
+  pthread_mutex_destroy(&redex_mutex);
+  free(BUFF);
+  BUFF = NULL;
 }
 
 // Reset node and bag indices
@@ -163,64 +163,64 @@ void pair_free(Location loc) {
 }
 
 void hvm_reset(void) {
-    if (BUFF == NULL) {
-        fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvm_init first.\n");
-        exit(1);
-    }
+  if (BUFF == NULL) {
+    fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvm_init first.\n");
+    exit(1);
+  }
 
-    // Clear memory to prevent stale data
-    memset(BUFF, 0, RBAG);
+  // Clear memory to prevent stale data
+  memset(BUFF, 0, RBAG);
 
-    // Reset node indices
-    RNOD_INI = 0;
-    RNOD_END = 0;
+  // Reset node indices
+  RNOD_INI = 0;
+  RNOD_END = 0;
 
-    // Reset bag indices
-    RBAG_INI = RBAG;
-    RBAG_END = RBAG;
+  // Reset bag indices
+  RBAG_INI = RBAG;
+  RBAG_END = RBAG;
 
-    // Initialize the free list (initially empty)
-    FREE_LIST = 0;
+  // Initialize the free list (initially empty)
+  FREE_LIST = 0;
 
-    // Verify indices are valid
-    if (RNOD_END >= RBAG_INI) {
-        fprintf(stderr, "Error: Node space overlaps with reduction bag space.\n");
-        fprintf(stderr, "RNOD_END: %lu, RBAG_INI: %lu\n", RNOD_END, RBAG_INI);
-        exit(1);
-    }
+  // Verify indices are valid
+  if (RNOD_END >= RBAG_INI) {
+    fprintf(stderr, "Error: Node space overlaps with reduction bag space.\n");
+    fprintf(stderr, "RNOD_END: %lu, RBAG_INI: %lu\n", RNOD_END, RBAG_INI);
+    exit(1);
+  }
 }
 
 // Convert a tag to its string representation
 const char* tag_to_string(Tag tag) {
-    switch (tag) {
-        case VAL: return "VAL";
-        case VAR: return "VAR";
-        case SUB: return "SUB";
-        case NUL: return "NUL";
-        case ERA: return "ERA";
-        case LAM: return "LAM";
-        case APP: return "APP";
-        case REF: return "REF";
-        case VL1: return "VL1";
-        case SUP: return "SUP";
-        case DUP: return "DUP";
-        case OPX: return "OPX";
-        case OPY: return "OPY";
-        case I56: return "I56";
-        case F56: return "F56";
-        case LAZ: return "LAZ";
-        default: return "UNKNOWN";
-    }
+  switch (tag) {
+  case VAL: return "VAL";
+  case VAR: return "VAR";
+  case SUB: return "SUB";
+  case NUL: return "NUL";
+  case ERA: return "ERA";
+  case LAM: return "LAM";
+  case APP: return "APP";
+  case REF: return "REF";
+  case VL1: return "VL1";
+  case SUP: return "SUP";
+  case DUP: return "DUP";
+  case OPX: return "OPX";
+  case OPY: return "OPY";
+  case I56: return "I56";
+  case F56: return "F56";
+  case LAZ: return "LAZ";
+  default: return "UNKNOWN";
+  }
 }
 
 // Create a new term with given tag, label, and location
 Term term_new(Tag tag, Lab lab, Location loc) {
-    u64 loc_bits = ((u64)loc) & LOC_MASK;
-    u64 lab_bits = ((u64)lab) & LAB_MASK;
-    u64 tag_bits = ((u64)tag) & TAG_MASK;
-    return (loc_bits << (TAG_SIZE + LAB_SIZE)) |
-           (lab_bits << TAG_SIZE) |
-           tag_bits;
+  u64 loc_bits = ((u64)loc) & LOC_MASK;
+  u64 lab_bits = ((u64)lab) & LAB_MASK;
+  u64 tag_bits = ((u64)tag) & TAG_MASK;
+  return (loc_bits << (TAG_SIZE + LAB_SIZE)) |
+    (lab_bits << TAG_SIZE) |
+    tag_bits;
 }
 
 // Get the tag of a term
@@ -234,7 +234,7 @@ Tag term_tag(Term term) {
 
 // Get the label of a term
 Lab term_lab(Term term) {
-    return (Lab)((term >> TAG_SIZE) & LAB_MASK);
+  return (Lab)((term >> TAG_SIZE) & LAB_MASK);
 }
 
 // Get the location of a term
@@ -269,7 +269,7 @@ Location port(u64 n, Location x) {
 Term swap(Location loc, Term term) {
   Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
   if (term == 0 && get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
-      pair_free(loc & 0xFFFFFFFE);
+    pair_free(loc & 0xFFFFFFFE);
   }
   return result;
 }
@@ -277,147 +277,147 @@ Term swap(Location loc, Term term) {
 Term take(Location loc) {
   Term taken = swap(loc, 0);
   /*
-  while (term_tag(taken) == VAR) {
+    while (term_tag(taken) == VAR) {
     taken = swap(term_loc(taken), 0);
-  }
-  // */
+    }
+    // */
   return taken;
 }
 
 // Check if a term is positive
 bool is_positive(Term term) {
-    switch (term_tag(term)) {
-        case VAL:
-        case VAR:
-        case NUL:
-        case LAM:
-        case REF:
-        case VL1:
-        case SUP:
-        case I56:
-        case F56:
-        case LAZ:
-            return true;
-        default:
-            return false;
-    }
+  switch (term_tag(term)) {
+  case VAL:
+  case VAR:
+  case NUL:
+  case LAM:
+  case REF:
+  case VL1:
+  case SUP:
+  case I56:
+  case F56:
+  case LAZ:
+    return true;
+  default:
+    return false;
+  }
 }
 
 // Check if a term is negative
 bool is_negative(Term term) {
-    switch (term_tag(term)) {
-        case SUB:
-        case ERA:
-        case APP:
-        case DUP:
-        case OPX:
-        case OPY:
-            return true;
-        default:
-            return false;
-    }
+  switch (term_tag(term)) {
+  case SUB:
+  case ERA:
+  case APP:
+  case DUP:
+  case OPX:
+  case OPY:
+    return true;
+  default:
+    return false;
+  }
 }
 
 // Get term at location
 Term get(Location loc) {
-    return atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+  return atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
 }
 
 // Set term at location
 void set(Location loc, Term term) {
-    atomic_store_explicit(&BUFF[loc], term, memory_order_relaxed);
+  atomic_store_explicit(&BUFF[loc], term, memory_order_relaxed);
 }
 
 // Create a new pair with given tag, label, and terms
 Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 
-    // Check port polarities based on pair type
-    switch (tag) {
-    case LAM:
-      // Port 1 must be negative
-      if (!is_negative(fst)) {
-	fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
-	fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
-	exit(1);
-      }
-      // Port 2 must be positive
-      if (!is_positive(snd)) {
-	fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
-	fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
-	exit(1);
-      }
-      break;
-
-    case OPX:
-    case OPY:
-    case APP:
-      // Port 1 must be positive
-      if (!is_positive(fst)) {
-	fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
-	fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
-	exit(1);
-      }
-      // Port 2 must be negative
-      if (!is_negative(snd)) {
-	fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
-	fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
-	exit(1);
-      }
-      break;
-
-    case DUP:
-      // Port 1 must be negative
-      if (!is_negative(fst)) {
-	fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
-	fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
-	exit(1);
-      }
-      // Port 2 must be negative
-      if (!is_negative(snd)) {
-	fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
-	fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
-	exit(1);
-      }
-      break;
-
-    case SUP:
-      // Port 1 must be positive
-      if (!is_positive(fst)) {
-	fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
-	fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
-	exit(1);
-      }
-      // Port 2 must be positive
-      if (!is_positive(snd)) {
-	fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
-	fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
-	exit(1);
-      }
-      break;
-
-    default:
-      fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
-	      tag_to_string(tag), tag);
+  // Check port polarities based on pair type
+  switch (tag) {
+  case LAM:
+    // Port 1 must be negative
+    if (!is_negative(fst)) {
+      fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
       exit(1);
     }
+    // Port 2 must be positive
+    if (!is_positive(snd)) {
+      fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+      exit(1);
+    }
+    break;
 
-    // Get a pair from the free list or by extending RNOD_END
-    Location loc = pair_alloc();
+  case OPX:
+  case OPY:
+  case APP:
+    // Port 1 must be positive
+    if (!is_positive(fst)) {
+      fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+      exit(1);
+    }
+    // Port 2 must be negative
+    if (!is_negative(snd)) {
+      fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+      exit(1);
+    }
+    break;
 
-    // Store terms in their respective ports
-    set(port(1, loc), fst);
-    set(port(2, loc), snd);
+  case DUP:
+    // Port 1 must be negative
+    if (!is_negative(fst)) {
+      fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+      exit(1);
+    }
+    // Port 2 must be negative
+    if (!is_negative(snd)) {
+      fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+      exit(1);
+    }
+    break;
 
-    return term_new(tag, lab, loc);
+  case SUP:
+    // Port 1 must be positive
+    if (!is_positive(fst)) {
+      fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+      exit(1);
+    }
+    // Port 2 must be positive
+    if (!is_positive(snd)) {
+      fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+      exit(1);
+    }
+    break;
+
+  default:
+    fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
+	    tag_to_string(tag), tag);
+    exit(1);
+  }
+
+  // Get a pair from the free list or by extending RNOD_END
+  Location loc = pair_alloc();
+
+  // Store terms in their respective ports
+  set(port(1, loc), fst);
+  set(port(2, loc), snd);
+
+  return term_new(tag, lab, loc);
 }
 
 // Move a positive term into a negative location
 void move(Location neg_loc, Term pos) {
-    Term neg = swap(neg_loc, pos);
-    if (term_tag(neg) != SUB) {
-	take(neg_loc);
-	term_link(neg, pos);
-    }
+  Term neg = swap(neg_loc, pos);
+  if (term_tag(neg) != SUB) {
+    take(neg_loc);
+    term_link(neg, pos);
+  }
 }
 
 // Link two terms together
@@ -738,12 +738,12 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
 
 // These macros build all the different casts to make the operations work
 // There's a ton of repetitive copy and paste code
-#define CASES_u64(a, b) \
-  case OP_MOD: val = a %  b; break; \
-  case OP_AND: val = a &  b; break; \
-  case OP_OR : val = a |  b; break; \
-  case OP_XOR: val = a ^  b; break; \
-  case OP_LSH: val = a << b; break; \
+#define CASES_u64(a, b)				\
+  case OP_MOD: val = a %  b; break;		\
+  case OP_AND: val = a &  b; break;		\
+  case OP_OR : val = a |  b; break;		\
+  case OP_XOR: val = a ^  b; break;		\
+  case OP_LSH: val = a << b; break;		\
   case OP_RSH: val = a >> b; break;
 #define CASES_i64(a, b) CASES_u64(a, b)
 #define CASES_f64(a, b)
@@ -796,41 +796,41 @@ bool ABRT(Term neg, Term pos) {
 	  tag_to_string(term_tag(neg)), tag_to_string(term_tag(pos)));
   fprintf(stderr, "a: %p b: %p\n", (void *)neg, (void *)pos);
   /*
-  if (term_tag(pos) == VAL) {
+    if (term_tag(pos) == VAL) {
     fprintf(stderr, "val type %d: %ld\n", __LINE__, ((Value *)((u64)a & ~7))->type);
-  }
-  // */
+    }
+    // */
   abort();
 }
 
 // Define a macro for the default interaction functions
-#define POS_INTERACTIONS \
+#define POS_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
-  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+//VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
-#define NUM_INTERACTIONS \
+#define NUM_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56   LAZ
+//VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56   LAZ
 
-#define OPX_INTERACTIONS \
+#define OPX_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
-  //VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+//VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
-#define OPY_INTERACTIONS \
+#define OPY_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
-  //VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+//VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
-#define ERA_INTERACTIONS \
+#define ERA_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-  //VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
+//VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
 
-#define APP_INTERACTIONS \
+#define APP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
-  //VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
+//VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
 
-#define DUP_INTERACTIONS \
+#define DUP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&ABRT,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
-  //VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+//VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
@@ -864,13 +864,13 @@ bool interact(Term neg, Term pos) {
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
 void normalize(void) {
-    Term neg, pos;
+  Term neg, pos;
 
-    // Process redexes until the stack is empty
-    while (pop_redex(&neg, &pos)) {
-        // Perform the interaction
-        interact(neg, pos);
-    }
+  // Process redexes until the stack is empty
+  while (pop_redex(&neg, &pos)) {
+    // Perform the interaction
+    interact(neg, pos);
+  }
 
-    return;
+  return;
 }
