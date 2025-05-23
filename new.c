@@ -28,7 +28,7 @@ void print_free_list(void) {
     printf("Free list: ");
     Location ptr = FREE_LIST;
     int count = 0;
-    
+
     while (ptr != 0 && count < 100) { // Limit to prevent infinite loops
         printf("%u -> ", ptr);
         Term next = get(ptr);
@@ -39,7 +39,7 @@ void print_free_list(void) {
 	ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
         count++;
     }
-    
+
     printf("END (count: %d)\n", count);
 }
 
@@ -60,7 +60,7 @@ void hvm_init(u64 size) {
     RBAG_INI = RBAG;
     RBAG_END = RBAG;
     FREE_LIST = 0;  // Initially no free pairs
-    
+
     // Initialize mutex for thread-safe redex operations
     if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
         fprintf(stderr, "Failed to initialize mutex\n");
@@ -68,7 +68,7 @@ void hvm_init(u64 size) {
         BUFF = NULL;
         exit(1);
     }
-    
+
     // Initialize condition variable for redex signaling
     if (pthread_cond_init(&redex_cond, NULL) != 0) {
         fprintf(stderr, "Failed to initialize condition variable\n");
@@ -96,10 +96,10 @@ void hvm_free(void) {
 void init_free_list(u64 start, u64 end) {
   start = (start + 1) & 0xFFFFFFFe;
   end = end & 0xFFFFFFFe;
-    
+
   // Clear the list initially
   FREE_LIST = 0;
-    
+
   // Create a linked list of free pairs
   for (Location loc = end - 2; loc >= start; loc -= 2) {
     // Store the current head as the 'next' pointer
@@ -129,10 +129,10 @@ Location pair_alloc(void) {
     RNOD_END += 2;
     return loc;
   }
-    
+
   // Get a pair from the free list
   Location loc = FREE_LIST;
-    
+
   // Update free list head to next free pair
   Term next = get(loc);
   if (term_tag(next) == NUL) {
@@ -142,7 +142,7 @@ Location pair_alloc(void) {
     // Invalid free list pointer
     FREE_LIST = 0;
   }
-    
+
   return loc;
 }
 
@@ -153,11 +153,11 @@ void pair_free(Location loc) {
     fprintf(stderr, "Error: Invalid pair location for freeing: %u RNOD_END: %lu\n", loc, RNOD_END);
     return;
   }
-  
+
   // Clear the pair
   set(loc, term_new(NUL, 0, FREE_LIST)); // Store next free pair location
   set(loc + 1, 0);                       // Clear second cell
-    
+
   // Add to front of free list
   FREE_LIST = loc;
 }
@@ -167,21 +167,21 @@ void hvm_reset(void) {
         fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvm_init first.\n");
         exit(1);
     }
-    
+
     // Clear memory to prevent stale data
     memset(BUFF, 0, RBAG);
-    
+
     // Reset node indices
     RNOD_INI = 0;
     RNOD_END = 0;
-    
+
     // Reset bag indices
     RBAG_INI = RBAG;
     RBAG_END = RBAG;
-    
+
     // Initialize the free list (initially empty)
     FREE_LIST = 0;
-    
+
     // Verify indices are valid
     if (RNOD_END >= RBAG_INI) {
         fprintf(stderr, "Error: Node space overlaps with reduction bag space.\n");
@@ -249,7 +249,7 @@ Location term_loc(Term term) {
   case F56:
     BOOM("term has no location");
     break;
-    
+
   default:
     return (Location)(term >> (TAG_SIZE + LAB_SIZE));
     break;
@@ -400,14 +400,14 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 	      tag_to_string(tag), tag);
       exit(1);
     }
-    
+
     // Get a pair from the free list or by extending RNOD_END
     Location loc = pair_alloc();
-    
+
     // Store terms in their respective ports
     set(port(1, loc), fst);
     set(port(2, loc), snd);
-    
+
     return term_new(tag, lab, loc);
 }
 
@@ -461,27 +461,27 @@ void push_redex(Term neg, Term pos) {
     BOOM("don't push NUL redex");
   if (is_positive(neg) || is_negative(pos))
     BOOM("bad redex");
-  
+
   // Lock the mutex to ensure thread safety
   pthread_mutex_lock(&redex_mutex);
-    
+
   // Check if the reduction bag is full
   if (RBAG_END >= RBAG_INI + RBAG) {
     fprintf(stderr, "Error: Reduction bag overflow\n");
     pthread_mutex_unlock(&redex_mutex);
     exit(1);
   }
-    
+
   // Store the redex in the bag
   set(RBAG_END, neg);
   set(RBAG_END + 1, pos);
-    
+
   // Update the bag end pointer
   RBAG_END += 2;
-    
+
   // Signal that a redex is available
   pthread_cond_signal(&redex_cond);
-    
+
   // Unlock the mutex
   pthread_mutex_unlock(&redex_mutex);
 }
@@ -493,7 +493,7 @@ bool stop_reducing = false;
 bool pop_redex(Term* neg, Term* pos) {
   // Lock the mutex to ensure thread safety
   pthread_mutex_lock(&redex_mutex);
-    
+
   // Check if the reduction bag is empty
   if (RBAG_END <= RBAG_INI) {
     if (stop_reducing) {
@@ -510,18 +510,18 @@ bool pop_redex(Term* neg, Term* pos) {
       return false;
     }
   }
-    
+
   // Update the bag end pointer
   RBAG_END -= 2;
-    
+
   // Get the redex from the bag
 
   *neg = atomic_exchange_explicit(&BUFF[RBAG_END], 0, memory_order_relaxed);
   *pos = atomic_exchange_explicit(&BUFF[RBAG_END + 1], 0, memory_order_relaxed);
-    
+
   // Unlock the mutex
   pthread_mutex_unlock(&redex_mutex);
-    
+
   return true;
 }
 
@@ -529,7 +529,7 @@ bool pop_redex(Term* neg, Term* pos) {
 bool applam(Term app, Term lam) {
   Location app_loc = term_loc(app);
   Location lam_loc = term_loc(lam);
-    
+
   // Bounds checking
   if (app_loc >= RNOD_END || lam_loc >= RNOD_END) {
     fprintf(stderr, "Invalid locations: app_loc=%u lam_loc=%u RNOD_END=%lu\n",
@@ -630,12 +630,12 @@ bool DSUP(Term dup, Term sup) {
     Location dup_loc = term_loc(dup);
     Location dup_p1 = port(1, dup_loc);
     Location dup_p2 = port(2, dup_loc);
-    
+
     // Get the ports of the SUP node
     Location sup_loc = term_loc(sup);
     Term sup_p1 = take(port(1, sup_loc));
     Term sup_p2 = take(port(2, sup_loc));
-    
+
     // Direct connection of the ports
     move(dup_p1, sup_p1);
     move(dup_p2, sup_p2);
@@ -644,16 +644,16 @@ bool DSUP(Term dup, Term sup) {
     Location dup_loc = term_loc(dup);
     Location dup_p1 = port(1, dup_loc);
     Location dup_p2 = port(2, dup_loc);
-    
+
     // Get the ports of the SUP node
     Location sup_loc = term_loc(sup);
     Term sup_p1 = take(port(1, sup_loc));
     Term sup_p2 = take(port(2, sup_loc));
-    
+
     // Create two new DUP nodes with the same label
     Term dup1 = pair_make(DUP, dup_lab, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
     Term dup2 = pair_make(DUP, dup_lab, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
-    
+
     // Create two new SUP nodes with the same label
     Term sup1 = pair_make(SUP, sup_lab,
 			  term_new(VAR, 0, port(1, term_loc(dup1))),
@@ -661,25 +661,25 @@ bool DSUP(Term dup, Term sup) {
     Term sup2 = pair_make(SUP, sup_lab,
 			  term_new(VAR, 0, port(2, term_loc(dup1))),
 			  term_new(VAR, 0, port(2, term_loc(dup2))));
-    
+
     // Connect the new nodes
     move(dup_p1, sup1);
     move(dup_p2, sup2);
     term_link(dup1, sup_p1);
     term_link(dup2, sup_p2);
   }
-    
+
   return true;
 }
 
 // Duplication interaction with copyable term
 bool copy(Term dup, Term trm) {
   Location dup_loc = term_loc(dup);
-  
+
   // Get port locations
   Location dp1_loc = port(1, dup_loc);
   Location dp2_loc = port(2, dup_loc);
-  
+
   // put trm in both copy ports
   move(dp1_loc, trm);
   move(dp2_loc, trm);
@@ -865,12 +865,12 @@ bool interact(Term neg, Term pos) {
 // Returns the number of interactions performed
 void normalize(void) {
     Term neg, pos;
-    
+
     // Process redexes until the stack is empty
     while (pop_redex(&neg, &pos)) {
         // Perform the interaction
         interact(neg, pos);
     }
-    
+
     return;
 }
