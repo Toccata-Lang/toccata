@@ -118,7 +118,7 @@ void test_pair_creation(void) {
         exit(1);
     }
     
-    printf("[PASS] test_pair_creation\n\n");
+    printf("[PASS] test_pair_creation\n");
 }
 
 // Test pair manipulation
@@ -137,7 +137,7 @@ void test_pair_manipulation(void) {
     // printf("After modification:\n");
     // print_term("Modified inner pair", inner);
     // print_term("Outer pair (showing modified inner)", outer);
-    printf("[PASS] test_pair_manipulation\n\n");
+    printf("[PASS] test_pair_manipulation\n");
 }
 
 // Helper to test invalid pair creation
@@ -313,7 +313,7 @@ void test_erasup(void) {
   Term result_p1 = get(p1_loc);
   Term result_p2 = get(p2_loc);
     
-  if (result_p1 != 0) {
+  if (term_tag(result_p1) != NUL) {
     printf("[FAIL:%d] test_erasup: Expected first port to be free, got tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(result_p1)));
     exit(1);
@@ -437,7 +437,7 @@ void test_eralam(void) {
     
     // Check that variable port was freed
     Term result_var = get(port(1, term_loc(lam)));
-    if (result_var != 0) {
+    if (term_tag(result_var) != NUL) {
         printf("[FAIL:%d] test_eralam: Expected variable port to be free, got tag=%s\n",
 	       __LINE__, tag_to_string(term_tag(result_var)));
         exit(1);
@@ -778,6 +778,71 @@ void test_dupsup(void) {
     printf("[PASS] test_dupsup\n");
 }
 
+// Test free list by creating, freeing, and reusing pairs
+void test_free_list_reuse(void) {
+    // Make sure we start with an empty free list
+    if (FREE_LIST != 0) {
+        printf("WARNING: Free list not empty at start of test\n");
+        print_free_list();
+    }
+    
+    // Create some initial pairs
+    const int NUM_PAIRS = 10;
+    Location pairs[NUM_PAIRS];
+    
+    for (int i = 0; i < NUM_PAIRS; i++) {
+        pairs[i] = pair_alloc();
+        set(port(1, pairs[i]), new_i56(i));
+        set(port(2, pairs[i]), new_i56((i * 2)));
+    }
+    
+    // Note the current RNOD_END
+    u64 initial_rnod_end = RNOD_END;
+    // print_free_list(); // Should be empty at this point
+    
+    // Free some pairs
+    for (int i = 0; i < NUM_PAIRS/2; i++) {
+        pair_free(pairs[i]);
+    }
+    
+    // print_free_list(); // Should contain the freed pairs
+    
+    // Allocate some new pairs - these should reuse the freed locations
+    Location new_pairs[NUM_PAIRS/2];
+    for (int i = 0; i < NUM_PAIRS/2; i++) {
+        // Check free list before allocation
+        // printf("Before allocating pair %d:\n", i);
+        // print_free_list();
+        
+        // Allocate a new pair
+        new_pairs[i] = pair_alloc();
+        // printf("Allocated new pair at location %u\n", new_pairs[i]);
+        
+        // Note the allocated location
+        // printf("  New pair allocated at: %u\n", new_pairs[i]);
+        
+        // Initialize with different values
+        set(port(1, new_pairs[i]), new_i56((i + 100)));
+	set(port(2, new_pairs[i]), new_i56((i + 200)));
+        
+        // Check free list after allocation
+        // printf("After allocating pair %d:\n", i);
+        // print_free_list();
+    }
+    
+    // print_free_list(); // Should be empty again after reusing all freed pairs
+    
+    // Verify RNOD_END hasn't changed significantly 
+    // (might have increased by a small amount if exact reuse ordering wasn't followed)
+    if (RNOD_END > initial_rnod_end + 4) { // Allow a small margin
+        printf("[FAIL:%d] test_free_list_reuse: RNOD_END increased too much after reusing pairs\n", __LINE__);
+        printf("  Initial RNOD_END: %lu, Current RNOD_END: %lu\n", initial_rnod_end, RNOD_END);
+        exit(1);
+    }
+    
+    printf("[PASS] test_free_list_reuse\n");
+}
+
 // Test adding two numbers using OPX/OPY operations
 void test_add_numbers(void) {
     // Create two numbers to add: 56 and 17
@@ -818,7 +883,6 @@ void test_add_numbers(void) {
 int main(int argc, char *argv[]) {
     // Initialize the VM with some memory
     hvm_init(1024);
-    
     test_error_conditions();
 
     // Re-initialize VM after error conditions test
@@ -870,6 +934,10 @@ int main(int argc, char *argv[]) {
     
     hvm_reset();
     test_add_numbers();
+    
+    // Test the free list with manual freeing
+    hvm_reset();
+    test_free_list_reuse();
     
     // Final cleanup
     hvm_free();

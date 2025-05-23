@@ -9,6 +9,9 @@ static u64 RBAG = 0x1000;
 u64 RBAG_INI = 0;
 u64 RBAG_END = 0;
 
+// Free list for O(1) pair allocation
+Location FREE_LIST = 0; // Head of the free list
+
 // Mutex for thread-safe redex operations
 pthread_mutex_t redex_mutex;
 
@@ -18,6 +21,26 @@ pthread_cond_t redex_cond;
 // For testing only
 a64* get_buff(void) {
     return BUFF;
+}
+
+// Print the free list for debugging
+void print_free_list(void) {
+    printf("Free list: ");
+    Location ptr = FREE_LIST;
+    int count = 0;
+    
+    while (ptr != 0 && count < 100) { // Limit to prevent infinite loops
+        printf("%u -> ", ptr);
+        Term next = get(ptr);
+        if (term_tag(next) != NUL) {
+            printf("(INVALID: not NUL) ");
+            break;
+        }
+	ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+        count++;
+    }
+    
+    printf("END (count: %d)\n", count);
 }
 
 void *boom(char *msg, char *file, int line) {
@@ -36,6 +59,7 @@ void hvm_init(u64 size) {
     RNOD_END = 0;
     RBAG_INI = RBAG;
     RBAG_END = RBAG;
+    FREE_LIST = 0;  // Initially no free pairs
     
     // Initialize mutex for thread-safe redex operations
     if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
@@ -68,6 +92,76 @@ void hvm_free(void) {
 }
 
 // Reset node and bag indices
+// Initialize the free list by linking all available pairs
+void init_free_list(u64 start, u64 end) {
+  start = (start + 1) & 0xFFFFFFFe;
+  end = end & 0xFFFFFFFe;
+    
+  // Clear the list initially
+  FREE_LIST = 0;
+    
+  // Create a linked list of free pairs
+  for (Location loc = end - 2; loc >= start; loc -= 2) {
+    // Store the current head as the 'next' pointer
+    set(loc, FREE_LIST == 0 ? 0 : term_new(NUL, 0, FREE_LIST));
+    // Mark the second cell as free
+    set(loc + 1, 0);
+    // Update the free list head
+    FREE_LIST = loc;
+	
+    // Break if we've reached the start (needed for unsigned wrap-around)
+    if (loc == start) break;
+  }
+}
+
+// Allocate a pair from the free list - O(1)
+Location pair_alloc(void) {
+  // If free list is empty, extend RNOD_END
+  if (FREE_LIST == 0) {
+    // Check if we have space
+    if (RNOD_END + 2 >= RBAG_INI) {
+      fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, RBAG_INI=%lu\n",
+	      RNOD_END, RBAG_INI);
+      exit(1);
+    }
+	
+    Location loc = RNOD_END;
+    RNOD_END += 2;
+    return loc;
+  }
+    
+  // Get a pair from the free list
+  Location loc = FREE_LIST;
+    
+  // Update free list head to next free pair
+  Term next = get(loc);
+  if (term_tag(next) == NUL) {
+    // Extract the location from the term
+    FREE_LIST = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+  } else {
+    // Invalid free list pointer
+    FREE_LIST = 0;
+  }
+    
+  return loc;
+}
+
+// Free a pair by adding it to the free list - O(1)
+void pair_free(Location loc) {
+  // Validate location is within bounds and aligned
+  if (loc >= RNOD_END || loc % 2 != 0) {
+    fprintf(stderr, "Error: Invalid pair location for freeing: %u RNOD_END: %lu\n", loc, RNOD_END);
+    return;
+  }
+  
+  // Clear the pair
+  set(loc, term_new(NUL, 0, FREE_LIST)); // Store next free pair location
+  set(loc + 1, 0);                       // Clear second cell
+    
+  // Add to front of free list
+  FREE_LIST = loc;
+}
+
 void hvm_reset(void) {
     if (BUFF == NULL) {
         fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvm_init first.\n");
@@ -84,6 +178,9 @@ void hvm_reset(void) {
     // Reset bag indices
     RBAG_INI = RBAG;
     RBAG_END = RBAG;
+    
+    // Initialize the free list (initially empty)
+    FREE_LIST = 0;
     
     // Verify indices are valid
     if (RNOD_END >= RBAG_INI) {
@@ -170,7 +267,11 @@ Location port(u64 n, Location x) {
 
 // Atomic swap operation
 Term swap(Location loc, Term term) {
-    return atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
+  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
+  if (term == 0 && get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
+      pair_free(loc & 0xFFFFFFFE);
+  }
+  return result;
 }
 
 Term take(Location loc) {
@@ -229,12 +330,6 @@ void set(Location loc, Term term) {
 
 // Create a new pair with given tag, label, and terms
 Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
-    // Check if we have enough space for the pair
-    if (RNOD_END + 2 >= RBAG_INI) {
-        fprintf(stderr, "Error: Not enough space to create pair. RNOD_END=%lu, RBAG_INI=%lu\n",
-                RNOD_END, RBAG_INI);
-        exit(1);
-    }
 
     // Check port polarities based on pair type
     switch (tag) {
@@ -306,8 +401,8 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
       exit(1);
     }
     
-    Location loc = RNOD_END;
-    RNOD_END += 2;
+    // Get a pair from the free list or by extending RNOD_END
+    Location loc = pair_alloc();
     
     // Store terms in their respective ports
     set(port(1, loc), fst);
@@ -420,8 +515,9 @@ bool pop_redex(Term* neg, Term* pos) {
   RBAG_END -= 2;
     
   // Get the redex from the bag
-  *neg = take(RBAG_END);
-  *pos = take(RBAG_END + 1);
+
+  *neg = atomic_exchange_explicit(&BUFF[RBAG_END], 0, memory_order_relaxed);
+  *pos = atomic_exchange_explicit(&BUFF[RBAG_END + 1], 0, memory_order_relaxed);
     
   // Unlock the mutex
   pthread_mutex_unlock(&redex_mutex);

@@ -29,9 +29,11 @@ extern u64 RNOD_END;
 extern u64 RBAG_INI;
 extern u64 RBAG_END;
 extern bool stop_reducing;
+extern Location FREE_LIST; // Head of free list
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
 extern a64* get_buff(void);  // For testing only
+void print_free_list(void);   // For debugging
 
 // Tags for different term types
 #define VAL 0x00 // positive native value
@@ -86,6 +88,9 @@ typedef u64 Term;
 void hvm_init(u64 size);
 void hvm_free(void);
 void hvm_reset(void);
+void init_free_list(u64 start, u64 end);
+Location pair_alloc(void);
+void pair_free(Location loc);
 const char* tag_to_string(Tag tag);
 Term term_new(Tag tag, Lab lab, Location loc);
 Tag term_tag(Term term);
