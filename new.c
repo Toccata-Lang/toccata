@@ -253,7 +253,6 @@ Lab term_lab(Term term) {
 Location term_loc(Term term) {
   switch(term_tag(term)) {
   case VAL:
-  case SUB:
   case NUL:
   case REF:
   case ERA:
@@ -262,6 +261,8 @@ Location term_loc(Term term) {
     BOOM("term has no location");
     break;
 
+  // Allow SUB terms to have locations
+  case SUB:
   default:
     return (Location)(term >> (TAG_SIZE + LAB_SIZE));
     break;
@@ -345,6 +346,7 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 
   // Check port polarities based on pair type
   switch (tag) {
+  case SUB:
   case LAM:
     // Port 1 must be negative
     if (!is_negative(fst)) {
@@ -426,7 +428,19 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 // Move a positive term into a negative location
 void move(Location neg_loc, Term pos) {
   Term neg = swap(neg_loc, pos);
-  if (term_tag(neg) != SUB) {
+  if (term_tag(neg) == SUB) {
+    // If SUB has a location, link the pair at that location
+    Location sub_loc = term_loc(neg);
+    if (sub_loc != 0) {
+      // Get the terms at the SUB location
+      Term sub_neg = get(port(1, sub_loc));
+      Term sub_pos = get(port(2, sub_loc));
+
+      // Link the terms - use the first term in the pair (which should be a negative term)
+      // and the positive term that was moved to the SUB location
+      term_link(sub_neg, sub_pos);
+    }
+  } else {
     take(neg_loc);
     term_link(neg, pos);
   }

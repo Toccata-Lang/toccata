@@ -800,6 +800,64 @@ void test_dupsup(void) {
   printf("[PASS] test_dupsup\n");
 }
 
+// Test SUB terms with locations
+void test_sub_with_location(void) {
+  // Create a negative term (APP) for the redex
+  Location app_loc = pair_alloc();
+  Term neg_term = term_new(APP, 42, app_loc);
+  
+  // Create a positive term (SUP) for the redex
+  Location sup_loc = pair_alloc();
+  Term pos_term = term_new(SUP, 42, sup_loc);
+  
+  // Create a SUB term with a location pointing to the pair
+  Term sub_term = pair_make(SUB, 0, neg_term, pos_term);
+  
+  // Create a location to store the SUB term
+  Location sub_loc = pair_alloc();
+  set(sub_loc, sub_term);
+  
+  // Create a dummy positive term to move to the SUB location
+  Term dummy_term = term_new(LAM, 123, 0);
+  
+  // Clear the redex stack before our test
+  Term dummy_neg, dummy_pos;
+  while (pop_redex(&dummy_neg, &dummy_pos)) {
+    // Just drain the stack
+  }
+  
+  // Check that the redex stack has the redex we pushed
+  Term neg, pos;
+  bool has_redex;
+  
+  // Now test the SUB term with location functionality
+  // Move the dummy term to the SUB location
+  move(sub_loc, dummy_term);
+  
+  // Check that a redex was pushed to the stack
+  has_redex = pop_redex(&neg, &pos);
+  
+  if (!has_redex) {
+    printf("[FAIL:%d] test_sub_with_location: No redex was pushed after move to SUB\n", __LINE__);
+    exit(1);
+  }
+  
+  // The move function should have linked the terms in the pair pointed to by the SUB term
+  if (term_tag(neg) != APP || term_lab(neg) != 42) {
+    printf("[FAIL:%d] test_sub_with_location: Incorrect negative term after SUB move. Expected APP(42), got %s(%u)\n", 
+           __LINE__, tag_to_string(term_tag(neg)), term_lab(neg));
+    exit(1);
+  }
+  
+  if (term_tag(pos) != SUP || term_lab(pos) != 42) {
+    printf("[FAIL:%d] test_sub_with_location: Incorrect positive term after SUB move. Expected SUP(42), got %s(%u)\n", 
+           __LINE__, tag_to_string(term_tag(pos)), term_lab(pos));
+    exit(1);
+  }
+  
+  printf("[PASS] test_sub_with_location\n");
+}
+
 // Test free list by creating, freeing, and reusing pairs
 void test_free_list_reuse(void) {
   // Make sure we start with an empty free list
@@ -960,6 +1018,10 @@ int main(int argc, char *argv[]) {
   // Test the free list with manual freeing
   hvm_reset();
   test_free_list_reuse();
+
+  // Test SUB terms with locations
+  hvm_reset();
+  test_sub_with_location();
 
   // Final cleanup
   hvm_free();
