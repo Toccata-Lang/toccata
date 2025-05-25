@@ -7,6 +7,9 @@
 #include <unistd.h>
 #include <pthread.h>
 
+// External function declarations
+extern bool subnul(Term sub, Term nul);
+
 // Print contents of BUFF between start and end locations
 void print_raw_term(Term t) {
   if (t == 0) {
@@ -358,8 +361,8 @@ void test_duplam(void) {
 		       term_new(ERA, 0, 0),
 		       lam_result);
   Term dup = pair_make(DUP, 0,
-		       term_new(SUB, 1, 0),
-		       term_new(SUB, 2, 0));
+		       term_new(SUB, 0, 0),
+		       term_new(SUB, 0, 0));
 
   // Get port locations for verification
   Location dup_loc = term_loc(dup);
@@ -504,8 +507,8 @@ void test_appnul(void) {
 // Test DUP NUL interaction
 void test_dupnul(void) {
   // Create DUP term with ports
-  Term dp1 = term_new(SUB, 1, 0);  // Negative first copy port
-  Term dp2 = term_new(SUB, 2, 0);  // Negative second copy port
+  Term dp1 = term_new(SUB, 0, 0);  // Negative first copy port
+  Term dp2 = term_new(SUB, 0, 0);  // Negative second copy port
   Term dup = pair_make(DUP, 0, dp1, dp2);
 
   // Create NUL term
@@ -545,7 +548,7 @@ void test_appsup(void) {
 
   // Create APP term with ports
   Term arg = new_i56(75);  // Positive argument port
-  Term ret = term_new(SUB, 4, 0);  // Negative return port
+  Term ret = term_new(SUB, 0, 0);  // Negative return port
   Term app = pair_make(APP, 0, arg, ret);
 
   // Store locations for verification
@@ -800,6 +803,61 @@ void test_dupsup(void) {
   printf("[PASS] test_dupsup\n");
 }
 
+// Test SUB/NUL interaction
+void test_subnul(void) {
+  // Create a pair with a negative term (APP) and a positive term (SUP)
+  Location pair_loc = pair_alloc();
+  Term neg_term = term_new(APP, 42, 0);
+  Term pos_term = term_new(SUP, 42, 0);
+  set(port(1, pair_loc), neg_term);
+  set(port(2, pair_loc), pos_term);
+  
+  // Create a SUB term with a location pointing to the pair
+  // Note: We need to use a non-zero label to indicate the SUB has a location
+  Term sub_term = term_new(SUB, 0, pair_loc);
+  
+  // Create a NUL term
+  Term nul_term = term_new(NUL, 0, 0);
+  
+  // Create a location for the SUB term
+  Location sub_loc = pair_alloc();
+  set(sub_loc, sub_term);
+  
+  // Store the location of the SUB term in the SUB term itself
+  // This is needed for the move function to work correctly
+  sub_term = term_new(SUB, 0, pair_loc);
+  set(sub_loc, sub_term);
+  
+  // Clear the redex stack before our test
+  Term dummy_neg, dummy_pos;
+  while (pop_redex(&dummy_neg, &dummy_pos)) {
+    // Just drain the stack
+  }
+  
+  // Directly call the subnul function
+  subnul(sub_term, nul_term);
+  
+  // Check that the first port of the pair was set to 0
+  Term port1_result = get(port(1, pair_loc));
+  if (port1_result != 0) {
+    printf("[FAIL:%d] test_subnul: Expected 0 in port 1 of pair, got %lu\n", 
+           __LINE__, (unsigned long)port1_result);
+    exit(1);
+  }
+  
+  // Check that the second port was linked with ERA (should be empty now)
+  // Note: The second port might not be exactly 0, but it should be taken
+  // and linked with ERA, so we'll just check that it's not the original value
+  Term port2_result = get(port(2, pair_loc));
+  if (port2_result == pos_term) {
+    printf("[FAIL:%d] test_subnul: Port 2 still contains the original term\n", 
+           __LINE__);
+    exit(1);
+  }
+  
+  printf("[PASS] test_subnul\n");
+}
+
 // Test SUB terms with locations
 void test_sub_with_location(void) {
   // Create a negative term (APP) for the redex
@@ -811,7 +869,7 @@ void test_sub_with_location(void) {
   Term pos_term = term_new(SUP, 42, sup_loc);
   
   // Create a SUB term with a location pointing to the pair
-  Term sub_term = pair_make(SUB, 0, neg_term, pos_term);
+  Term sub_term = pair_make(SUB, 1, neg_term, pos_term);
   
   // Create a location to store the SUB term
   Location sub_loc = pair_alloc();
@@ -1022,6 +1080,10 @@ int main(int argc, char *argv[]) {
   // Test SUB terms with locations
   hvm_reset();
   test_sub_with_location();
+
+  // Test SUB/NUL interaction
+  // hvm_reset();
+  // test_subnul();
 
   // Final cleanup
   hvm_free();

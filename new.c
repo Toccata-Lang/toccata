@@ -429,9 +429,10 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 void move(Location neg_loc, Term pos) {
   Term neg = swap(neg_loc, pos);
   if (term_tag(neg) == SUB) {
-    // If SUB has a location, link the pair at that location
-    Location sub_loc = term_loc(neg);
-    if (sub_loc != 0) {
+    if (term_lab(neg) > 0) {
+      // If SUB has a location, link the pair at that location
+      Location sub_loc = term_loc(neg);
+
       // Get the terms at the SUB location
       Term sub_neg = get(port(1, sub_loc));
       Term sub_pos = get(port(2, sub_loc));
@@ -733,6 +734,24 @@ bool opnul(Term op, Term nul) {
   return true;
 }
 
+// SUB-NUL interaction
+bool subnul(Term sub, Term nul) {
+  // Check if the SUB term has a location (label > 0)
+  Lab lab = term_lab(sub);
+  if (lab > 0) {
+    // The SUB term has a location pointing to a pair
+    Location sub_loc = term_loc(sub);
+    
+    // Swap the first port with 0
+    swap(port(1, sub_loc), 0);
+    
+    // Take the second port and link it with ERA
+    Term second_port = take(port(2, sub_loc));
+    term_link(ERA, second_port);
+  }
+  return true;
+}
+
 bool XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
   Term arg = swap(port(1, opx_loc), num);
@@ -816,37 +835,41 @@ bool ABRT(Term neg, Term pos) {
 // Define a macro for the default interaction functions
 #define POS_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
-//VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL  VAR    SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+
+#define SUB_INTERACTIONS						\
+  &ABRT,&ABRT,&ABRT,&subnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+// VAL   VAR   SUB    NUL    ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 #define NUM_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-//VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56   LAZ
+// VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56  LAZ
 
 #define OPX_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
-//VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 #define OPY_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
-//VAL  VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 #define ERA_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-//VAL  VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
+// VAL   VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
 
 #define APP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
-//VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
+// VAL   VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
 
 #define DUP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&ABRT,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
-//VAL  VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
   { POS_INTERACTIONS }, // VAL  +
   { POS_INTERACTIONS }, // VAR  +
-  { POS_INTERACTIONS }, // SUB  - [{+ -}]
+  { SUB_INTERACTIONS }, // SUB  - [{+ -}]
   { POS_INTERACTIONS }, // NUL  +
   { ERA_INTERACTIONS }, // ERA  -
   { POS_INTERACTIONS }, // LAM  + {- +}
