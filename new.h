@@ -24,6 +24,12 @@ typedef atomic_uint_least64_t a64;
 #define LAB_MASK 0xFFFFFFFULL
 #define LOC_MASK 0xFFFFFFFFULL
 
+// Term is a 64-bit value:
+// - Highest 32 bits: Location
+// - Next 28 bits: Label
+// - Lowest 4 bits: Tag
+typedef u64 Term;
+
 // Global VM state
 extern u64 RNOD_END;
 extern u64 RBAG_INI;
@@ -33,7 +39,7 @@ extern Location FREE_LIST; // Head of free list
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
 extern a64* get_buff(void);  // For testing only
-extern a64* get_rbag_buff(void);  // For testing only
+extern Term* get_rbag_buff(void);  // For testing only
 void print_free_list(void);   // For debugging
 
 // Tags for different term types
@@ -73,11 +79,7 @@ typedef u32 Tag; // Tag is now just an unsigned integer
 #define OP_LSH 0x0E
 #define OP_RSH 0x0F
 
-// Term is a 64-bit value:
-// - Highest 32 bits: Location
-// - Next 28 bits: Label
-// - Lowest 4 bits: Tag
-typedef u64 Term;
+
 
 // creating number terms
 #define new_i56(x) (((u64)x << TAG_SIZE) | I56)

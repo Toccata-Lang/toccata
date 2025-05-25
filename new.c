@@ -3,7 +3,7 @@
 
 // Global heap
 static a64* BUFF = NULL;
-static a64* RBAG_BUFF = NULL;
+static Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
 static u64 RNOD_INI = 0;
 u64 RNOD_END = 0;
 static u64 RBAG_SIZE = 0x1000;
@@ -26,7 +26,7 @@ a64* get_buff(void) {
 }
 
 // For testing only
-a64* get_rbag_buff(void) {
+Term* get_rbag_buff(void) {
   return RBAG_BUFF;
 }
 
@@ -63,7 +63,7 @@ void hvm_init(u64 size) {
     exit(1);
   }
   
-  RBAG_BUFF = (a64*)calloc(RBAG_SIZE, sizeof(a64));
+  RBAG_BUFF = (Term*)calloc(RBAG_SIZE, sizeof(Term));
   if (!RBAG_BUFF) {
     fprintf(stderr, "Failed to allocate memory for redex stack\n");
     free(BUFF);
@@ -193,7 +193,7 @@ void hvm_reset(void) {
   // Clear memory to prevent stale data
   // We only need to clear the node space since RBAG is now separate
   memset(BUFF, 0, RNOD_END * sizeof(a64));
-  memset(RBAG_BUFF, 0, RBAG_SIZE * sizeof(a64));
+  memset(RBAG_BUFF, 0, RBAG_SIZE * sizeof(Term));
 
   // Reset node indices
   RNOD_INI = 0;
@@ -490,8 +490,8 @@ void push_redex(Term neg, Term pos) {
   }
 
   // Store the redex in the bag
-  atomic_store_explicit(&RBAG_BUFF[RBAG_END], neg, memory_order_relaxed);
-  atomic_store_explicit(&RBAG_BUFF[RBAG_END + 1], pos, memory_order_relaxed);
+  RBAG_BUFF[RBAG_END] = neg;
+  RBAG_BUFF[RBAG_END + 1] = pos;
   RBAG_END += 2;
 
   // Signal that a redex is available
@@ -515,8 +515,8 @@ bool pop_redex(Term* neg, Term* pos) {
   if (RBAG_INI < RBAG_END) {
     // Get the redex from the bag (LIFO order - pop from the end)
     RBAG_END -= 2;
-    *neg = atomic_exchange_explicit(&RBAG_BUFF[RBAG_END], 0, memory_order_relaxed);
-    *pos = atomic_exchange_explicit(&RBAG_BUFF[RBAG_END + 1], 0, memory_order_relaxed);
+    *neg = RBAG_BUFF[RBAG_END];
+    *pos = RBAG_BUFF[RBAG_END + 1];
     result = true;
   }
 
