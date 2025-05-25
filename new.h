@@ -32,7 +32,6 @@ typedef u64 Term;
 
 // Global VM state
 extern u64 RNOD_END;
-extern u64 RBAG_INI;
 extern u64 RBAG_END;
 extern bool stop_reducing;
 extern Location FREE_LIST; // Head of free list

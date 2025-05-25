@@ -55,7 +55,7 @@ void print_buff(Location start, Location end) {
 
 // Print contents of RBAG_BUFF between start and end locations
 void print_rbag(Location start, Location end) {
-  a64* buff = get_rbag_buff();
+  Term* buff = get_rbag_buff();
   if (!buff) {
     printf("RBAG_BUFF is not initialized\n");
     return;

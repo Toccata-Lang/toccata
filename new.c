@@ -4,11 +4,9 @@
 // Global heap
 static a64* BUFF = NULL;
 static Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
-static u64 RNOD_INI = 0;
-u64 RNOD_END = 0;
+u64 RNOD_END = 0; // Only need to track the end of the node space
 static u64 RBAG_SIZE = 0x1000;
-u64 RBAG_INI = 0;
-u64 RBAG_END = 0;
+u64 RBAG_END = 0; // Only need to track the end of the redex stack
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
@@ -71,7 +69,6 @@ void hvm_init(u64 size) {
     exit(1);
   }
 
-  RNOD_INI = 0;
   RNOD_END = 0;
   RBAG_END = 0;
   FREE_LIST = 0;  // Initially no free pairs
@@ -195,12 +192,10 @@ void hvm_reset(void) {
   memset(BUFF, 0, RNOD_END * sizeof(a64));
   memset(RBAG_BUFF, 0, RBAG_SIZE * sizeof(Term));
 
-  // Reset node indices
-  RNOD_INI = 0;
+  // Reset node index
   RNOD_END = 0;
 
-  // Reset bag indices
-  RBAG_INI = 0;
+  // Reset bag index
   RBAG_END = 0;
 
   // Initialize the free list (initially empty)
@@ -512,7 +507,7 @@ bool pop_redex(Term* neg, Term* pos) {
   pthread_mutex_lock(&redex_mutex);
 
   // Check if the bag is empty
-  if (RBAG_INI < RBAG_END) {
+  if (RBAG_END > 0) {
     // Get the redex from the bag (LIFO order - pop from the end)
     RBAG_END -= 2;
     *neg = RBAG_BUFF[RBAG_END];
