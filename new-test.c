@@ -53,6 +53,28 @@ void print_buff(Location start, Location end) {
   printf("\n");
 }
 
+// Print contents of RBAG_BUFF between start and end locations
+void print_rbag(Location start, Location end) {
+  a64* buff = get_rbag_buff();
+  if (!buff) {
+    printf("RBAG_BUFF is not initialized\n");
+    return;
+  }
+  if (start >= end) {
+    printf("Invalid range: start=%u end=%u\n", start, end);
+    return;
+  }
+  printf("RBAG contents from %u to %u:\n", start, end);
+  for (Location i = start; i < end; i += 2) {
+    printf(" %.3x  ", i);
+    print_raw_term(buff[i]);
+    printf("  ");
+    print_raw_term(buff[i + 1]);
+    printf("\n");
+  }
+  printf("\n");
+}
+
 Term identity_lambda() {
   Term lam= pair_make(LAM, 0,
 		      term_new(SUB, 0, 0),

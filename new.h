@@ -33,6 +33,7 @@ extern Location FREE_LIST; // Head of free list
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
 extern a64* get_buff(void);  // For testing only
+extern a64* get_rbag_buff(void);  // For testing only
 void print_free_list(void);   // For debugging
 
 // Tags for different term types

@@ -3,11 +3,13 @@
 
 // Global heap
 static a64* BUFF = NULL;
+static a64* RBAG_BUFF = NULL;
 static u64 RNOD_INI = 0;
 u64 RNOD_END = 0;
-static u64 RBAG = 0x1000;
+static u64 RBAG_SIZE = 0x1000;
 u64 RBAG_INI = 0;
 u64 RBAG_END = 0;
+static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
 Location FREE_LIST = 0; // Head of the free list
@@ -21,6 +23,11 @@ pthread_cond_t redex_cond;
 // For testing only
 a64* get_buff(void) {
   return BUFF;
+}
+
+// For testing only
+a64* get_rbag_buff(void) {
+  return RBAG_BUFF;
 }
 
 // Print the free list for debugging
@@ -55,11 +62,22 @@ void hvm_init(u64 size) {
     fprintf(stderr, "Failed to allocate memory\n");
     exit(1);
   }
+  
+  RBAG_BUFF = (a64*)calloc(RBAG_SIZE, sizeof(a64));
+  if (!RBAG_BUFF) {
+    fprintf(stderr, "Failed to allocate memory for redex stack\n");
+    free(BUFF);
+    BUFF = NULL;
+    exit(1);
+  }
+  
   RNOD_INI = 0;
   RNOD_END = 0;
-  RBAG_INI = RBAG;
-  RBAG_END = RBAG;
+  RBAG_END = 0;
   FREE_LIST = 0;  // Initially no free pairs
+  
+  // Store the size of the buffer for bounds checking in pair_alloc
+  BUFF_SIZE = size;
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
@@ -89,6 +107,11 @@ void hvm_free(void) {
   pthread_mutex_destroy(&redex_mutex);
   free(BUFF);
   BUFF = NULL;
+  
+  if (RBAG_BUFF != NULL) {
+    free(RBAG_BUFF);
+    RBAG_BUFF = NULL;
+  }
 }
 
 // Reset node and bag indices
@@ -118,13 +141,12 @@ void init_free_list(u64 start, u64 end) {
 Location pair_alloc(void) {
   // If free list is empty, extend RNOD_END
   if (FREE_LIST == 0) {
-    // Check if we have space
-    if (RNOD_END + 2 >= RBAG_INI) {
-      fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, RBAG_INI=%lu\n",
-	      RNOD_END, RBAG_INI);
+    // Check if we have space in the buffer
+    if (RNOD_END + 2 >= BUFF_SIZE) {
+      fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
+	      RNOD_END, BUFF_SIZE);
       exit(1);
     }
-	
     Location loc = RNOD_END;
     RNOD_END += 2;
     return loc;
@@ -163,31 +185,26 @@ void pair_free(Location loc) {
 }
 
 void hvm_reset(void) {
-  if (BUFF == NULL) {
+  if (BUFF == NULL || RBAG_BUFF == NULL) {
     fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvm_init first.\n");
     exit(1);
   }
 
   // Clear memory to prevent stale data
-  memset(BUFF, 0, RBAG);
+  // We only need to clear the node space since RBAG is now separate
+  memset(BUFF, 0, RNOD_END * sizeof(a64));
+  memset(RBAG_BUFF, 0, RBAG_SIZE * sizeof(a64));
 
   // Reset node indices
   RNOD_INI = 0;
   RNOD_END = 0;
 
   // Reset bag indices
-  RBAG_INI = RBAG;
-  RBAG_END = RBAG;
+  RBAG_INI = 0;
+  RBAG_END = 0;
 
   // Initialize the free list (initially empty)
   FREE_LIST = 0;
-
-  // Verify indices are valid
-  if (RNOD_END >= RBAG_INI) {
-    fprintf(stderr, "Error: Node space overlaps with reduction bag space.\n");
-    fprintf(stderr, "RNOD_END: %lu, RBAG_INI: %lu\n", RNOD_END, RBAG_INI);
-    exit(1);
-  }
 }
 
 // Convert a tag to its string representation
@@ -462,27 +479,25 @@ void push_redex(Term neg, Term pos) {
   if (is_positive(neg) || is_negative(pos))
     BOOM("bad redex");
 
-  // Lock the mutex to ensure thread safety
+  // Acquire mutex before modifying the redex bag
   pthread_mutex_lock(&redex_mutex);
 
-  // Check if the reduction bag is full
-  if (RBAG_END >= RBAG_INI + RBAG) {
-    fprintf(stderr, "Error: Reduction bag overflow\n");
-    pthread_mutex_unlock(&redex_mutex);
+  // Check if there's space in the bag
+  if (RBAG_END + 2 > RBAG_SIZE) {
+    fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
+	    RBAG_END, RBAG_SIZE);
     exit(1);
   }
 
   // Store the redex in the bag
-  set(RBAG_END, neg);
-  set(RBAG_END + 1, pos);
-
-  // Update the bag end pointer
+  atomic_store_explicit(&RBAG_BUFF[RBAG_END], neg, memory_order_relaxed);
+  atomic_store_explicit(&RBAG_BUFF[RBAG_END + 1], pos, memory_order_relaxed);
   RBAG_END += 2;
 
   // Signal that a redex is available
   pthread_cond_signal(&redex_cond);
 
-  // Unlock the mutex
+  // Release mutex
   pthread_mutex_unlock(&redex_mutex);
 }
 
@@ -491,38 +506,24 @@ bool stop_reducing = false;
 // Pop a redex (pair of terms) from the reduction bag
 // Returns false if the bag is empty, true otherwise
 bool pop_redex(Term* neg, Term* pos) {
-  // Lock the mutex to ensure thread safety
+  bool result = false;
+
+  // Acquire mutex before accessing the redex bag
   pthread_mutex_lock(&redex_mutex);
 
-  // Check if the reduction bag is empty
-  if (RBAG_END <= RBAG_INI) {
-    if (stop_reducing) {
-      pthread_mutex_unlock(&redex_mutex);
-      return false;
-    }
-
-    // Wait for a signal that a redex is available
-    pthread_cond_wait(&redex_cond, &redex_mutex);
-	
-    // Check again if the bag is still empty after waking up
-    if (RBAG_END <= RBAG_INI) {
-      pthread_mutex_unlock(&redex_mutex);
-      return false;
-    }
+  // Check if the bag is empty
+  if (RBAG_INI < RBAG_END) {
+    // Get the redex from the bag (LIFO order - pop from the end)
+    RBAG_END -= 2;
+    *neg = atomic_exchange_explicit(&RBAG_BUFF[RBAG_END], 0, memory_order_relaxed);
+    *pos = atomic_exchange_explicit(&RBAG_BUFF[RBAG_END + 1], 0, memory_order_relaxed);
+    result = true;
   }
 
-  // Update the bag end pointer
-  RBAG_END -= 2;
-
-  // Get the redex from the bag
-
-  *neg = atomic_exchange_explicit(&BUFF[RBAG_END], 0, memory_order_relaxed);
-  *pos = atomic_exchange_explicit(&BUFF[RBAG_END + 1], 0, memory_order_relaxed);
-
-  // Unlock the mutex
+  // Release mutex
   pthread_mutex_unlock(&redex_mutex);
 
-  return true;
+  return result;
 }
 
 // Application-Lambda interaction
