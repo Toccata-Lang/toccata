@@ -62,7 +62,7 @@ void hvm_init(u64 size) {
     fprintf(stderr, "Failed to allocate memory\n");
     exit(1);
   }
-  
+
   RBAG_BUFF = (Term*)calloc(RBAG_SIZE, sizeof(Term));
   if (!RBAG_BUFF) {
     fprintf(stderr, "Failed to allocate memory for redex stack\n");
@@ -70,12 +70,12 @@ void hvm_init(u64 size) {
     BUFF = NULL;
     exit(1);
   }
-  
+
   RNOD_INI = 0;
   RNOD_END = 0;
   RBAG_END = 0;
   FREE_LIST = 0;  // Initially no free pairs
-  
+
   // Store the size of the buffer for bounds checking in pair_alloc
   BUFF_SIZE = size;
 
@@ -107,7 +107,7 @@ void hvm_free(void) {
   pthread_mutex_destroy(&redex_mutex);
   free(BUFF);
   BUFF = NULL;
-  
+
   if (RBAG_BUFF != NULL) {
     free(RBAG_BUFF);
     RBAG_BUFF = NULL;
