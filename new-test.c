@@ -316,6 +316,28 @@ void test_interact(Term neg, Term pos) {
   // print_buff(0, 18);
 }
 
+// Helper function to count items in the free list
+int count_free_list_items(void) {
+  Location ptr = FREE_LIST;
+  int count = 0;
+
+  if (ptr == EMPTY_FREE_LIST) {
+    return 0; // Empty list
+  }
+
+  while (ptr != EMPTY_FREE_LIST && count < 100) { // Limit to prevent infinite loops
+    Term next = get(ptr);
+    if (term_tag(next) != NUL) {
+      printf("Warning: Invalid free list item at %u, tag=%s\n", ptr, tag_to_string(term_tag(next)));
+      break;
+    }
+    ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+    count++;
+  }
+
+  return count;
+}
+
 // Main function
 // Test ERA SUP interaction
 void test_erasup(void) {
@@ -328,8 +350,9 @@ void test_erasup(void) {
   Term era = term_new(ERA, 0, 0);
 
   // Store locations for verification
-  Location p1_loc = port(1, term_loc(sup));
-  Location p2_loc = port(2, term_loc(sup));
+  Location sup_loc = term_loc(sup);
+  Location p1_loc = port(1, sup_loc);
+  Location p2_loc = port(2, sup_loc);
 
   // Perform interaction
   test_interact(era, sup);
@@ -347,6 +370,17 @@ void test_erasup(void) {
   if (result_p2 != 0) {
     printf("[FAIL:%d] test_erasup: Expected second port to be free, got tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(result_p2)));
+    exit(1);
+  }
+
+  // Check the free list after the interaction
+  int final_free_count = count_free_list_items();
+  
+  // The SUP node should have been freed, so we should have one more item in the free list
+  if (final_free_count != 1) {
+    printf("[FAIL:%d] test_erasup: Free list count was wrong: %d\n",
+           __LINE__, final_free_count);
+    print_free_list();
     exit(1);
   }
 
@@ -476,6 +510,17 @@ void test_eralam(void) {
     exit(1);
   }
 
+  // Check the free list after the interaction
+  int final_free_count = count_free_list_items();
+  
+  // The SUP node should have been freed, so we should have one more item in the free list
+  if (final_free_count != 1) {
+    printf("[FAIL:%d] test_erasup: Free list count was wrong: %d\n",
+           __LINE__, final_free_count);
+    print_free_list();
+    exit(1);
+  }
+
   printf("[PASS] test_eralam\n");
 }
 
@@ -498,6 +543,17 @@ void test_appnul(void) {
   if (result_ret != 0) {
     printf("[FAIL:%d] test_appnul: Expected return port to be free, got tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(result_ret)));
+    exit(1);
+  }
+
+  // Check the free list after the interaction
+  int final_free_count = count_free_list_items();
+  
+  // The SUP node should have been freed, so we should have one more item in the free list
+  if (final_free_count != 1) {
+    printf("[FAIL:%d] test_erasup: Free list count was wrong: %d\n",
+           __LINE__, final_free_count);
+    print_free_list();
     exit(1);
   }
 
@@ -536,6 +592,17 @@ void test_dupnul(void) {
     exit(1);
   }
 
+  // Check the free list after the interaction
+  int final_free_count = count_free_list_items();
+  
+  // The SUP node should have been freed, so we should have one more item in the free list
+  if (final_free_count != 0) {
+    printf("[FAIL:%d] test_erasup: Free list count was wrong: %d\n",
+           __LINE__, final_free_count);
+    print_free_list();
+    exit(1);
+  }
+
   printf("[PASS] test_dupnul\n");
 }
 
@@ -561,21 +628,21 @@ void test_appsup(void) {
   // Check that SUP was moved to return port
   Term actual_ret = get(ret_loc);
   if (term_tag(actual_ret) != SUP) {
-    printf("[FAIL:%d] test_applam: Expected SUP tag in return port, got: tag=%s\n",
+    printf("[FAIL:%d] test_appsup: Expected SUP tag in return port, got: tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(actual_ret)));
     exit(1);
   }
 
   // Check that SUP points to the right values
   if (get_var(get(port(1, term_loc(actual_ret)))) != arg) {
-    printf("[FAIL:%d] test_applam: SUP port 1 value is wrong. got:\n",
+    printf("[FAIL:%d] test_appsup: SUP port 1 value is wrong. got:\n",
 	   __LINE__);
     print_term("", get_var(get(port(1, term_loc(actual_ret)))));
     exit(1);
   }
   actual_ret = get_var(get(port(2, term_loc(actual_ret))));
   if (term_tag(actual_ret) != I56) {
-    printf("[FAIL:%d] test_applam: SUP port 2 value is wrong. got:\n",
+    printf("[FAIL:%d] test_appsup: SUP port 2 value is wrong. got:\n",
 	   __LINE__);
     print_term("", actual_ret);
     exit(1);
@@ -630,6 +697,7 @@ void test_applam(void) {
 
   printf("[PASS] test_applam\n");
 }
+
 // Test push_redex and pop_redex
 void test_redex_stack(void) {
   // Create some terms to push
@@ -803,26 +871,7 @@ void test_dupsup(void) {
   printf("[PASS] test_dupsup\n");
 }
 
-// Helper function to count items in the free list
-int count_free_list_items(void) {
-  Location ptr = FREE_LIST;
-  int count = 0;
-
-  if (ptr == EMPTY_FREE_LIST) {
-    return 0; // Empty list
-  }
-
-  while (ptr != EMPTY_FREE_LIST && ptr != 0 && count < 100) { // Limit to prevent infinite loops
-    Term next = get(ptr);
-    if (term_tag(next) != NUL) {
-      break;
-    }
-    ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-    count++;
-  }
-
-  return count;
-}
+// This function has been moved to before test_erasup
 
 // Test SUB/NUL interaction
 void test_subnul(void) {
@@ -914,7 +963,7 @@ void test_sub_with_location(void) {
 // Test free list by creating, freeing, and reusing pairs
 void test_free_list_reuse(void) {
   // Make sure we start with an empty free list
-  if (FREE_LIST != 0) {
+  if (FREE_LIST != EMPTY_FREE_LIST) {
     printf("WARNING: Free list not empty at start of test\n");
     print_free_list();
   }
@@ -1050,6 +1099,9 @@ int main(int argc, char *argv[]) {
   test_dupnul();
 
   hvm_reset();
+  test_subnul();
+
+  hvm_reset();
   test_applam();
 
   hvm_reset();
@@ -1069,9 +1121,6 @@ int main(int argc, char *argv[]) {
 
   hvm_reset();
   test_sub_with_location();
-
-  hvm_reset();
-  test_subnul();
 
   // Test APP/REF interaction
   // hvm_reset();
