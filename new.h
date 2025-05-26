@@ -30,6 +30,9 @@ typedef atomic_uint_least64_t a64;
 // - Lowest 4 bits: Tag
 typedef u64 Term;
 
+// Define empty free list marker
+#define EMPTY_FREE_LIST 0xFFFFFFFF
+
 // Global VM state
 extern u64 RNOD_END;
 extern u64 RBAG_END;

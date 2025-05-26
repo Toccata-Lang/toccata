@@ -803,34 +803,52 @@ void test_dupsup(void) {
   printf("[PASS] test_dupsup\n");
 }
 
+// Helper function to count items in the free list
+int count_free_list_items(void) {
+  Location ptr = FREE_LIST;
+  int count = 0;
+
+  if (ptr == EMPTY_FREE_LIST) {
+    return 0; // Empty list
+  }
+
+  while (ptr != EMPTY_FREE_LIST && ptr != 0 && count < 100) { // Limit to prevent infinite loops
+    Term next = get(ptr);
+    if (term_tag(next) != NUL) {
+      break;
+    }
+    ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+    count++;
+  }
+
+  return count;
+}
+
 // Test SUB/NUL interaction
 void test_subnul(void) {
-  // Create a pair with a negative term (APP) and a positive term (SUP)
-  Location pair_loc = pair_alloc();
-  Term neg_term = pair_make(APP, 42, new_i56(10), SUB);
-  Term pos_term = pair_make(SUP, 42, new_i56(11), new_i56(12));
-  set(port(1, pair_loc), neg_term);
-  set(port(2, pair_loc), pos_term);
-  
+  Term neg_term = pair_make(APP, 42, new_i56(9), term_new(SUB, 0, 0));
+  Term pos_term = pair_make(SUP, 42, new_i56(10), new_i56(11));
   // Create a SUB term with a location pointing to the pair
   // Note: We need to use a non-zero label to indicate the SUB has a location
-  Term sub_term = term_new(SUB, 1, pair_loc);
-  
+  Term sub_term = pair_make(SUB, 1, neg_term, pos_term);
   // Create a NUL term
   Term nul_term = term_new(NUL, 0, 0);
   
-  // Clear the redex stack before our test
-  Term dummy_neg, dummy_pos;
-  while (pop_redex(&dummy_neg, &dummy_pos)) {
-    // Just drain the stack
-  }
+  // Record the initial free list count
+  int initial_count = count_free_list_items();
   
   // Directly call the subnul function
   subnul(sub_term, nul_term);
   stop_reducing = true;
   normalize();
   
-  // check that free_list has two items in it
+  // Check that free_list has one more item in it
+  int final_count = count_free_list_items();
+  if (final_count != initial_count + 2) {
+    printf("[FAIL:%d] test_subnul: Expected free list to have %d items, but got %d\n", 
+           __LINE__, initial_count + 2, final_count);
+    exit(1);
+  }
   
   printf("[PASS] test_subnul\n");
 }

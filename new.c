@@ -10,7 +10,7 @@ u64 RBAG_END = 0; // Only need to track the end of the redex stack
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
-Location FREE_LIST = 0; // Head of the free list
+Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list
 
 // Mutex for thread-safe redex operations
 pthread_mutex_t redex_mutex;
@@ -34,15 +34,19 @@ void print_free_list(void) {
   Location ptr = FREE_LIST;
   int count = 0;
 
-  while (ptr != 0 && count < 100) { // Limit to prevent infinite loops
-    printf("%u -> ", ptr);
-    Term next = get(ptr);
-    if (term_tag(next) != NUL) {
-      printf("(INVALID: not NUL) ");
-      break;
+  if (ptr == EMPTY_FREE_LIST) {
+    printf("EMPTY ");
+  } else {
+    while (ptr != EMPTY_FREE_LIST && count < 100) { // Limit to prevent infinite loops
+      printf("%u -> ", ptr);
+      Term next = get(ptr);
+      if (term_tag(next) != NUL) {
+        printf("(INVALID: not NUL) ");
+        break;
+      }
+      ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+      count++;
     }
-    ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-    count++;
   }
 
   printf("END (count: %d)\n", count);
@@ -71,7 +75,7 @@ void hvm_init(u64 size) {
 
   RNOD_END = 0;
   RBAG_END = 0;
-  FREE_LIST = 0;  // Initially no free pairs
+  FREE_LIST = EMPTY_FREE_LIST;  // Initially no free pairs
 
   // Store the size of the buffer for bounds checking in pair_alloc
   BUFF_SIZE = size;
@@ -118,12 +122,12 @@ void init_free_list(u64 start, u64 end) {
   end = end & 0xFFFFFFFe;
 
   // Clear the list initially
-  FREE_LIST = 0;
+  FREE_LIST = EMPTY_FREE_LIST;
 
   // Create a linked list of free pairs
   for (Location loc = end - 2; loc >= start; loc -= 2) {
     // Store the current head as the 'next' pointer
-    set(loc, FREE_LIST == 0 ? 0 : term_new(NUL, 0, FREE_LIST));
+    set(loc, term_new(NUL, 0, FREE_LIST));
     // Mark the second cell as free
     set(loc + 1, 0);
     // Update the free list head
@@ -137,7 +141,7 @@ void init_free_list(u64 start, u64 end) {
 // Allocate a pair from the free list - O(1)
 Location pair_alloc(void) {
   // If free list is empty, extend RNOD_END
-  if (FREE_LIST == 0) {
+  if (FREE_LIST == EMPTY_FREE_LIST) {
     // Check if we have space in the buffer
     if (RNOD_END + 2 >= BUFF_SIZE) {
       fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
@@ -157,9 +161,13 @@ Location pair_alloc(void) {
   if (term_tag(next) == NUL) {
     // Extract the location from the term
     FREE_LIST = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+    // If the next location is 0xFFFFFFFF, it means end of list
+    if ((next >> (TAG_SIZE + LAB_SIZE)) == EMPTY_FREE_LIST) {
+      FREE_LIST = EMPTY_FREE_LIST;
+    }
   } else {
     // Invalid free list pointer
-    FREE_LIST = 0;
+    FREE_LIST = EMPTY_FREE_LIST;
   }
 
   return loc;
@@ -199,7 +207,7 @@ void hvm_reset(void) {
   RBAG_END = 0;
 
   // Initialize the free list (initially empty)
-  FREE_LIST = 0;
+  FREE_LIST = EMPTY_FREE_LIST;
 }
 
 // Convert a tag to its string representation
