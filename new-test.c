@@ -897,17 +897,18 @@ bool custom_ref_interaction(Term ref, Term app) {
 
 // Test APP/REF interaction
 void test_appref(void) {
-  // Create an APP term
-  Location app_loc = pair_alloc();
-  Term arg_term = term_new(SUP, 10, 0); // Some arbitrary term as the argument
-  Term ret_term = term_new(LAM, 20, 0); // Some arbitrary term as the return
+  // Initialize the VM for this test
+  hvm_init(1024);
   
-  // Store the terms in the APP pair
-  set(port(1, app_loc), arg_term);
-  set(port(2, app_loc), ret_term);
+  // Create terms for the APP pair with correct polarities
+  // APP requires positive term in port 1 and negative term in port 2
+  Term arg_term = term_new(NUL, 10, 0); // Positive term for port 1
+  Term ret_term = term_new(SUB, 20, 0); // Negative term for port 2
   
-  // Create the APP term
-  Term app_term = term_new(APP, 30, app_loc);
+  // Create the APP term using pair_make
+  Term app_term = pair_make(APP, 30, arg_term, ret_term);
+  // Store the location for later use
+  Location app_loc = term_loc(app_term);
   
   // Create a REF term with our custom interaction function
   Term ref_term = ref_make(custom_ref_interaction);
@@ -940,6 +941,9 @@ void test_appref(void) {
   }
   
   printf("[PASS] test_appref\n");
+  
+  // Clean up
+  hvm_free();
 }
 
 // Test SUB/NUL interaction
@@ -974,18 +978,17 @@ void test_subnul(void) {
 // Test SUB terms with locations
 void test_sub_with_location(void) {
   // Create a negative term (APP) for the redex
-  Location app_loc = pair_alloc();
-  Term neg_term = term_new(APP, 42, app_loc);
+  Term neg_term = pair_make(APP, 42, term_new(NUL, 0, 0), term_new(ERA, 0, 0));
   
   // Create a positive term (SUP) for the redex
-  Location sup_loc = pair_alloc();
-  Term pos_term = term_new(SUP, 42, sup_loc);
+  Term pos_term = pair_make(SUP, 42, term_new(VAL, 0, 1), term_new(VAL, 0, 2));
   
   // Create a SUB term with a location pointing to the pair
   Term sub_term = pair_make(SUB, 1, neg_term, pos_term);
   
-  // Create a location to store the SUB term
+  // Allocate a location to store the SUB term
   Location sub_loc = pair_alloc();
+  // Store the SUB term directly
   set(sub_loc, sub_term);
   
   // Create a dummy positive term to move to the SUB location

@@ -83,17 +83,12 @@ void hvm_init(u64 size) {
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
     fprintf(stderr, "Failed to initialize mutex\n");
-    free(BUFF);
-    BUFF = NULL;
     exit(1);
   }
 
   // Initialize condition variable for redex signaling
   if (pthread_cond_init(&redex_cond, NULL) != 0) {
     fprintf(stderr, "Failed to initialize condition variable\n");
-    pthread_mutex_destroy(&redex_mutex);
-    free(BUFF);
-    BUFF = NULL;
     exit(1);
   }
 }
@@ -103,6 +98,7 @@ void hvm_free(void) {
   if (BUFF == NULL) {
     return;
   }
+
   // Destroy mutex and condition variable
   pthread_cond_destroy(&redex_cond);
   pthread_mutex_destroy(&redex_mutex);
@@ -156,36 +152,22 @@ Location pair_alloc(void) {
   // Get a pair from the free list
   Location loc = FREE_LIST;
 
+  // TODO: this is not thread safe
+  
   // Update free list head to next free pair
   Term next = get(loc);
-  if (term_tag(next) == NUL) {
-    // Extract the location from the term
-    FREE_LIST = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-    // If the next location is 0xFFFFFFFF, it means end of list
-    if ((next >> (TAG_SIZE + LAB_SIZE)) == EMPTY_FREE_LIST) {
-      FREE_LIST = EMPTY_FREE_LIST;
-    }
-  } else {
-    // Invalid free list pointer
-    FREE_LIST = EMPTY_FREE_LIST;
-  }
-
+  FREE_LIST = (Location)(next >> (TAG_SIZE + LAB_SIZE));
   return loc;
 }
 
 // Free a pair by adding it to the free list - O(1)
 void pair_free(Location loc) {
-  // Validate location is within bounds and aligned
-  if (loc >= RNOD_END || loc % 2 != 0) {
-    fprintf(stderr, "Error: Invalid pair location for freeing: %u RNOD_END: %lu\n", loc, RNOD_END);
-    return;
-  }
-
   // Clear the pair
   set(loc, term_new(NUL, 0, FREE_LIST)); // Store next free pair location
   set(loc + 1, 0);                       // Clear second cell
 
   // Add to front of free list
+  // TODO: this is not thread safe
   FREE_LIST = loc;
 }
 
@@ -196,7 +178,6 @@ void hvm_reset(void) {
   }
 
   // Clear memory to prevent stale data
-  // We only need to clear the node space since RBAG is now separate
   memset(BUFF, 0, RNOD_END * sizeof(a64));
   memset(RBAG_BUFF, 0, RBAG_SIZE * sizeof(Term));
 
