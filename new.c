@@ -721,6 +721,14 @@ bool erasup(Term era, Term sup) {
   return true;
 }
 
+// Create a REF term with a specific interaction function
+Term ref_make(interactionFn fn) {
+  // Store the function pointer in the term, with the REF tag
+  return ((Term)fn & ~0xF) | REF;
+}
+
+// APP-REF interaction
+// When an APP term meets a REF term, call the function stored in the REF term
 bool appref(Term app, Term ref) {
   interactionFn fnPtr;
   fnPtr = (interactionFn)(ref & ~0xF);
@@ -868,8 +876,8 @@ bool ABRT(Term neg, Term pos) {
 // VAL   VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
 
 #define APP_INTERACTIONS						\
-  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
-// VAL   VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
+  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
+// VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
 
 #define DUP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&ABRT,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT

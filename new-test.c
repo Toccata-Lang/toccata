@@ -9,6 +9,10 @@
 
 // External function declarations
 extern bool subnul(Term sub, Term nul);
+extern Term take(Location loc);
+
+// Custom interaction function for testing REF terms
+bool custom_ref_interaction(Term ref, Term app);
 
 // Print contents of BUFF between start and end locations
 void print_raw_term(Term t) {
@@ -871,7 +875,72 @@ void test_dupsup(void) {
   printf("[PASS] test_dupsup\n");
 }
 
-// This function has been moved to before test_erasup
+// Custom interaction function for testing REF terms
+// This function will swap the argument of the APP with a specific value
+bool custom_ref_interaction(Term ref, Term app) {
+  // Get the APP location
+  Location app_loc = term_loc(app);
+  
+  // Get the argument location
+  Location arg_loc = port(1, app_loc);
+  
+  // Take the current argument
+  Term arg = take(arg_loc);
+  
+  // Replace it with a specific value (I56 with value 42)
+  Term new_arg = new_i56(42);
+  set(arg_loc, new_arg);
+  
+  // Return true to indicate success
+  return true;
+}
+
+// Test APP/REF interaction
+void test_appref(void) {
+  // Create an APP term
+  Location app_loc = pair_alloc();
+  Term arg_term = term_new(SUP, 10, 0); // Some arbitrary term as the argument
+  Term ret_term = term_new(LAM, 20, 0); // Some arbitrary term as the return
+  
+  // Store the terms in the APP pair
+  set(port(1, app_loc), arg_term);
+  set(port(2, app_loc), ret_term);
+  
+  // Create the APP term
+  Term app_term = term_new(APP, 30, app_loc);
+  
+  // Create a REF term with our custom interaction function
+  Term ref_term = ref_make(custom_ref_interaction);
+  
+  // Clear the redex stack before our test
+  Term dummy_neg, dummy_pos;
+  while (pop_redex(&dummy_neg, &dummy_pos)) {
+    // Just drain the stack
+  }
+  
+  // Manually push a redex with APP and REF
+  push_redex(app_term, ref_term);
+  
+  // Perform one interaction
+  Term neg, pos;
+  if (pop_redex(&neg, &pos)) {
+    interact(neg, pos);
+  } else {
+    printf("[FAIL:%d] test_appref: No redex was available\n", __LINE__);
+    exit(1);
+  }
+  
+  // Check that the argument was replaced with our specific value
+  Term new_arg = get(port(1, app_loc));
+  if (term_tag(new_arg) != I56 || get_i56(new_arg) != 42) {
+    printf("[FAIL:%d] test_appref: Expected I56(42), got %s(%ld)\n", 
+           __LINE__, tag_to_string(term_tag(new_arg)), 
+           (long)((term_tag(new_arg) == I56) ? get_i56(new_arg) : 0));
+    exit(1);
+  }
+  
+  printf("[PASS] test_appref\n");
+}
 
 // Test SUB/NUL interaction
 void test_subnul(void) {
@@ -1122,9 +1191,8 @@ int main(int argc, char *argv[]) {
   hvm_reset();
   test_sub_with_location();
 
-  // Test APP/REF interaction
-  // hvm_reset();
-  // test_appref();
+  hvm_reset();
+  test_appref();
 
   // Final cleanup
   hvm_free();

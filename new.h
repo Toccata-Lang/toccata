@@ -123,6 +123,12 @@ void normalize(void);
 
 typedef bool (*interactionFn)(Term a, Term b);
 
+// Interaction functions
+bool subnul(Term sub, Term nul);
+
+// Create a REF term with a specific interaction function
+Term ref_make(interactionFn fn);
+
 void *boom(char *msg, char *file, int line);
 #define BOOM(msg) boom(msg, __FILE__, __LINE__)
 
