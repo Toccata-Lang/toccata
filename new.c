@@ -10,7 +10,7 @@ u64 RBAG_END = 0; // Only need to track the end of the redex stack
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
-Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list
+_Atomic Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
 
 // Mutex for thread-safe redex operations
 pthread_mutex_t redex_mutex;
@@ -136,39 +136,55 @@ void init_free_list(u64 start, u64 end) {
 
 // Allocate a pair from the free list - O(1)
 Location pair_alloc(void) {
-  // If free list is empty, extend RNOD_END
-  if (FREE_LIST == EMPTY_FREE_LIST) {
-    // Check if we have space in the buffer
-    if (RNOD_END + 2 >= BUFF_SIZE) {
-      fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
-	      RNOD_END, BUFF_SIZE);
-      exit(1);
-    }
-    Location loc = RNOD_END;
-    RNOD_END += 2;
-    return loc;
-  }
-
-  // Get a pair from the free list
-  Location loc = FREE_LIST;
-
-  // TODO: this is not thread safe
+  // Get a pair from the free list and update FREE_LIST atomically
+  Location expected = atomic_load(&FREE_LIST);
+  Location loc, new_free_list;
+  Term next;
   
-  // Update free list head to next free pair
-  Term next = get(loc);
-  FREE_LIST = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+  do {
+    // If free list is empty
+    if (expected == EMPTY_FREE_LIST) {
+      // Check if we have space in the buffer
+      if (RNOD_END + 2 >= BUFF_SIZE) {
+        fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
+	  RNOD_END, BUFF_SIZE);
+        exit(1);
+      }
+      Location loc = RNOD_END;
+      RNOD_END += 2;
+      return loc;
+    }
+    
+    // Get the location we want to return
+    loc = expected;
+    
+    // Get the next free pair location
+    next = get(loc);
+    new_free_list = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+    
+    // Try to update FREE_LIST, retry if it changed
+  } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, new_free_list));
+  
   return loc;
 }
 
 // Free a pair by adding it to the free list - O(1)
 void pair_free(Location loc) {
-  // Clear the pair
-  set(loc, term_new(NUL, 0, FREE_LIST)); // Store next free pair location
-  set(loc + 1, 0);                       // Clear second cell
+  // Clear the second cell
+  set(loc + 1, 0);
 
-  // Add to front of free list
-  // TODO: this is not thread safe
-  FREE_LIST = loc;
+  // Atomically update FREE_LIST
+  Location expected, desired;
+  do {
+    // Read the current free list head
+    expected = atomic_load(&FREE_LIST);
+    
+    // Set up the node to point to the current head
+    set(loc, term_new(NUL, 0, expected)); // Store next free pair location
+    
+    // Try to update FREE_LIST to point to our node
+    desired = loc;
+  } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, desired));
 }
 
 void hvm_reset(void) {

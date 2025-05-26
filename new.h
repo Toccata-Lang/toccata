@@ -1,6 +1,8 @@
 #ifndef NEW_H
 #define NEW_H
 
+#include <stdatomic.h>
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,7 +39,7 @@ typedef u64 Term;
 extern u64 RNOD_END;
 extern u64 RBAG_END;
 extern bool stop_reducing;
-extern Location FREE_LIST; // Head of free list
+extern _Atomic Location FREE_LIST; // Head of free list (atomic for thread safety)
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
 extern a64* get_buff(void);  // For testing only
