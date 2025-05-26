@@ -742,13 +742,15 @@ bool subnul(Term sub, Term nul) {
     // The SUB term has a location pointing to a pair
     Location sub_loc = term_loc(sub);
     
-    // Swap the first port with 0
-    swap(port(1, sub_loc), 0);
+    // Take the first port and link it with NUL
+    Term t = take(port(1, sub_loc));
+    term_link(t, NUL);
     
     // Take the second port and link it with ERA
-    Term second_port = take(port(2, sub_loc));
-    term_link(ERA, second_port);
+    t = take(port(2, sub_loc));
+    term_link(ERA, t);
   }
+  
   return true;
 }
 
@@ -833,19 +835,19 @@ bool ABRT(Term neg, Term pos) {
 }
 
 // Define a macro for the default interaction functions
-#define POS_INTERACTIONS						\
+#define POS_INTERACTIONS\
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
 // VAL  VAR    SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
-#define SUB_INTERACTIONS						\
+#define SUB_INTERACTIONS\
   &ABRT,&ABRT,&ABRT,&subnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
 // VAL   VAR   SUB    NUL    ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
-#define NUM_INTERACTIONS						\
+#define NUM_INTERACTIONS\
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
 // VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56  LAZ
 
-#define OPX_INTERACTIONS						\
+#define OPX_INTERACTIONS\
   &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
 
