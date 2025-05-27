@@ -23,7 +23,6 @@ void print_raw_term(Term t) {
     Lab lab = term_lab(t);
     switch(term_tag(t)) {
     case VAL:
-    case SUB:
     case NUL:
     case REF:
     case ERA:
@@ -393,12 +392,17 @@ void test_erasup(void) {
 
 // Test DUP LAM interaction
 void test_duplam(void) {
+  Term lam;
+  Term lam1;
+  Term lam2;
+  Term dup;
+  Term sup;
   // Create lambda and duplicator terms
   Term lam_result = new_i56(6);
-  Term lam = pair_make(LAM, 0,
+  lam = pair_make(LAM, 0,
 		       term_new(ERA, 0, 0),
 		       lam_result);
-  Term dup = pair_make(DUP, 0,
+  dup = pair_make(DUP, 0,
 		       term_new(SUB, 0, 0),
 		       term_new(SUB, 0, 0));
 
@@ -411,9 +415,8 @@ void test_duplam(void) {
   // Perform interaction
   test_interact(dup, lam);
 
-  Term lam1 = get(dup1_loc);
-  Term lam2 = get(dup2_loc);
-  Term sup = get(var_loc);
+  lam1 = get(dup1_loc);
+  lam2 = get(dup2_loc);
 
   // Check that first copy has correct structure
   if (term_tag(lam1) != LAM) {
@@ -421,6 +424,7 @@ void test_duplam(void) {
 	   __LINE__, tag_to_string(term_tag(lam1)));
     exit(1);
   }
+
   Term result_var = get(port(1, term_loc(lam1)));
   if (term_tag(result_var) != ERA) {
     printf("[FAIL:%d] test_duplam: Expected ERA tag in first copy's var port, got: tag=%s\n",
@@ -453,34 +457,26 @@ void test_duplam(void) {
     exit(1);
   }
 
-  /*
-  // TODO: finish this after DUP SUP is finished
   hvm_reset();
   lam = pair_make(LAM, 0,
-  term_new(SUB, 0, 0),
-  term_new(NUL, 0, 0));
+		  term_new(SUB, 0, 0),
+		  term_new(NUL, 0, 0));
   // make 'lam' the identity fn
   set(port(2, term_loc(lam)), term_new(VAR, 0, port(1, term_loc(lam))));
-  dup = pair_make(DUP, 0,
-  term_new(SUB, 1, 0),
-  term_new(SUB, 2, 0));
+  dup = pair_make(DUP, 1,
+		  term_new(SUB, 0, 0),
+		  term_new(SUB, 0, 0));
   test_interact(dup, lam);
 
-  // Check that variable port contains a SUP term
-  if (term_tag(sup) != SUP) {
-  printf("[FAIL:%d] test_duplam: Expected SUP tag in variable port, got: tag=%s\n",
-  __LINE__, tag_to_string(term_tag(sup)));
-  exit(1);
+  if (term_tag(get(port(1, term_loc(dup)))) != LAM) {
+    printf("[FAIL:%d] test_duplam: Expected a LAM term in DUP port 1\n", __LINE__);
+    exit(1);
   }
-  if (term_loc(get(port(1, term_loc(sup)))) != port(1, term_loc(lam1))) {
-  printf("[FAIL:%d] test_duplam: Expected SUP port 1 points to wrong place\n", __LINE__);
-  exit(1);
+
+  if (term_tag(get(port(2, term_loc(dup)))) != LAM) {
+    printf("[FAIL:%d] test_duplam: Expected a LAM term in DUP port 2\n", __LINE__);
+    exit(1);
   }
-  if (term_loc(get(port(2, term_loc(sup)))) != port(1, term_loc(lam2))) {
-  printf("[FAIL:%d] test_duplam: Expected SUP port 2 points to wrong place\n", __LINE__);
-  exit(1);
-  }
-  // */
 
   printf("[PASS] test_duplam\n");
 }
