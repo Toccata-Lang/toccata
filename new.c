@@ -134,8 +134,12 @@ void init_free_list(u64 start, u64 end) {
   }
 }
 
+int alloced = 0;
+
 // Allocate a pair from the free list - O(1)
 Location pair_alloc(void) {
+  alloced++;
+
   // Get a pair from the free list and update FREE_LIST atomically
   Location expected = atomic_load(&FREE_LIST);
   Location loc, new_free_list;
@@ -170,6 +174,8 @@ Location pair_alloc(void) {
 
 // Free a pair by adding it to the free list - O(1)
 void pair_free(Location loc) {
+  alloced--;
+
   // Clear the second cell
   set(loc + 1, 0);
 
@@ -302,7 +308,7 @@ Term take(Location loc) {
       taken = prev;
       break;
     } else {
-      set(term_loc(prev), 0);
+      swap(term_loc(prev), 0);
     }
   }
 

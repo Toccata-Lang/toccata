@@ -36,6 +36,7 @@ typedef u64 Term;
 #define EMPTY_FREE_LIST 0xFFFFFFFF
 
 // Global VM state
+extern int alloced;
 extern u64 RNOD_END;
 extern u64 RBAG_END;
 extern bool stop_reducing;
@@ -91,8 +92,8 @@ typedef struct {
 } NativeArgs;
 
 // creating number terms
-#define new_i56(x) (((u64)x << TAG_SIZE) | I60)
-#define get_i56(x) (i64)((u64)x >> TAG_SIZE)
+#define new_i60(x) (((u64)x << TAG_SIZE) | I60)
+#define get_i60(x) (i64)((u64)x >> TAG_SIZE)
 #define get_u64(x) (i64)((u64)x >> TAG_SIZE)
 #define new_num(type, x) (((u64)x << TAG_SIZE) | type)
 
@@ -117,6 +118,7 @@ bool is_negative(Term term);
 // Get term at location
 Term get(Location loc);
 void set(Location loc, Term term);
+Term take(Location loc);
 Term pair_make(Tag tag, Lab lab, Term fst, Term snd);
 void term_link(Term neg, Term pos);
 void move(Location neg_loc, Term pos);
@@ -129,6 +131,7 @@ bool pop_redex(Term* neg, Term* pos);
 void normalize(void);
 
 typedef bool (*interactionFn)(Term a, Term b);
+#define new_ref(x) (((u64)x + REF))
 
 // Interaction functions
 bool subnul(Term sub, Term nul);

@@ -345,8 +345,8 @@ int count_free_list_items(void) {
 // Test ERA SUP interaction
 void test_erasup(void) {
   // Create SUP term with ports
-  Term p1 = new_i56(7);  // Positive first port
-  Term p2 = new_i56(8);  // Positive second port
+  Term p1 = new_i60(7);  // Positive first port
+  Term p2 = new_i60(8);  // Positive second port
   Term sup = pair_make(SUP, 0, p1, p2);
 
   // Create ERA term
@@ -398,7 +398,7 @@ void test_duplam(void) {
   Term dup;
   Term sup;
   // Create lambda and duplicator terms
-  Term lam_result = new_i56(6);
+  Term lam_result = new_i60(6);
   lam = pair_make(LAM, 0,
 		       term_new(ERA, 0, 0),
 		       lam_result);
@@ -485,7 +485,7 @@ void test_duplam(void) {
 void test_eralam(void) {
   // Create LAM term with ports
   Term var = term_new(ERA, 0, 0);  // Negative variable port
-  Term bod = new_i56(67);  // Positive body port
+  Term bod = new_i60(67);  // Positive body port
   Term lam = pair_make(LAM, 0, var, bod);
 
   // Create ERA term
@@ -527,7 +527,7 @@ void test_eralam(void) {
 // Test APP NUL interaction
 void test_appnul(void) {
   // Create APP term with ports
-  Term arg = new_i56(53);  // Positive argument port
+  Term arg = new_i60(53);  // Positive argument port
   Term ret = term_new(ERA, 0, 0);  // Negative return port
   Term app = pair_make(APP, 0, arg, ret);
 
@@ -610,11 +610,11 @@ void test_dupnul(void) {
 void test_appsup(void) {
   // Create SUP term with ports
   Term p1 = identity_lambda();
-  Term p2 = new_i56(8);
+  Term p2 = new_i60(8);
   Term sup = pair_make(SUP, 5, p1, p2);
 
   // Create APP term with ports
-  Term arg = new_i56(75);  // Positive argument port
+  Term arg = new_i60(75);  // Positive argument port
   Term ret = term_new(SUB, 0, 0);  // Negative return port
   Term app = pair_make(APP, 0, arg, ret);
 
@@ -654,10 +654,10 @@ void test_appsup(void) {
 // Test application-lambda interaction
 void test_applam(void) {
   // Create test terms with correct polarities
-  Term arg_term = new_i56(82);  // Positive argument term
+  Term arg_term = new_i60(82);  // Positive argument term
   Term ret_term = term_new(SUB, 0, 0);  // Negative return term
   Term var_term = term_new(SUB, 0, 0);  // Negative variable term
-  Term bod_term = new_i56(83);  // Positive body term
+  Term bod_term = new_i60(83);  // Positive body term
 
   // Create application and lambda terms
   Term app = pair_make(APP, 0, arg_term, ret_term);
@@ -676,14 +676,14 @@ void test_applam(void) {
 
   // Check that body was moved to return port with APP tag
   Term actual_ret = get(ret_loc);
-  if (actual_ret != new_i56(83)) {
+  if (actual_ret != new_i60(83)) {
     printf("[FAIL:%d] test_applam: Expected I60 tag in return port, got: tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(actual_ret)));
     exit(1);
   }
 
   Term actual_var = get(var_loc);
-  if (actual_var != new_i56(82)) {
+  if (actual_var != new_i60(82)) {
     printf("[FAIL:%d] test_applam: Expected I60 tag in return port, got: tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(actual_var)));
     exit(1);
@@ -884,7 +884,7 @@ bool custom_ref_interaction(Term ref, Term app) {
   Term arg = take(arg_loc);
   
   // Replace it with a specific value (I60 with value 42)
-  Term new_arg = new_i56(42);
+  Term new_arg = new_i60(42);
   set(arg_loc, new_arg);
   
   // Return true to indicate success
@@ -929,10 +929,10 @@ void test_appref(void) {
   
   // Check that the argument was replaced with our specific value
   Term new_arg = get(port(1, app_loc));
-  if (term_tag(new_arg) != I60 || get_i56(new_arg) != 42) {
+  if (term_tag(new_arg) != I60 || get_i60(new_arg) != 42) {
     printf("[FAIL:%d] test_appref: Expected I60(42), got %s(%ld)\n", 
            __LINE__, tag_to_string(term_tag(new_arg)), 
-           (long)((term_tag(new_arg) == I60) ? get_i56(new_arg) : 0));
+           (long)((term_tag(new_arg) == I60) ? get_i60(new_arg) : 0));
     exit(1);
   }
   
@@ -944,8 +944,8 @@ void test_appref(void) {
 
 // Test SUB/NUL interaction
 void test_subnul(void) {
-  Term neg_term = pair_make(APP, 42, new_i56(9), term_new(SUB, 0, 0));
-  Term pos_term = pair_make(SUP, 42, new_i56(10), new_i56(11));
+  Term neg_term = pair_make(APP, 42, new_i60(9), term_new(SUB, 0, 0));
+  Term pos_term = pair_make(SUP, 42, new_i60(10), new_i60(11));
   // Create a SUB term with a location pointing to the pair
   // Note: We need to use a non-zero label to indicate the SUB has a location
   Term sub_term = pair_make(SUB, 1, neg_term, pos_term);
@@ -1042,8 +1042,8 @@ void test_free_list_reuse(void) {
 
   for (int i = 0; i < NUM_PAIRS; i++) {
     pairs[i] = pair_alloc();
-    set(port(1, pairs[i]), new_i56(i));
-    set(port(2, pairs[i]), new_i56((i * 2)));
+    set(port(1, pairs[i]), new_i60(i));
+    set(port(2, pairs[i]), new_i60((i * 2)));
   }
 
   // Note the current RNOD_END
@@ -1072,8 +1072,8 @@ void test_free_list_reuse(void) {
     // printf("  New pair allocated at: %u\n", new_pairs[i]);
 
     // Initialize with different values
-    set(port(1, new_pairs[i]), new_i56((i + 100)));
-    set(port(2, new_pairs[i]), new_i56((i + 200)));
+    set(port(1, new_pairs[i]), new_i60((i + 100)));
+    set(port(2, new_pairs[i]), new_i60((i + 200)));
 
     // Check free list after allocation
     // printf("After allocating pair %d:\n", i);
@@ -1096,8 +1096,8 @@ void test_free_list_reuse(void) {
 // Test adding two numbers using OPX/OPY operations
 void test_add_numbers(void) {
   // Create two numbers to add: 56 and 17
-  Term num1 = new_i56(56);
-  Term num2 = new_i56(17);
+  Term num1 = new_i60(56);
+  Term num2 = new_i60(17);
 
   // Create an addition operation (using OPX with OP_ADD=0 for addition)
   Term ret_port = term_new(SUB, 0, 0);  // Negative return port
@@ -1120,7 +1120,7 @@ void test_add_numbers(void) {
   }
 
   // Extract the numeric value and verify
-  u64 value = get_i56(result);
+  u64 value = get_i60(result);
   if (value != 73) {
     printf("[FAIL:%d] test_add_numbers: Expected result 73, got: %lu\n",
 	   __LINE__, value);
@@ -1133,7 +1133,7 @@ void test_add_numbers(void) {
 // Test variable dereferencing chain
 void test_variable_chain(void) {
   // Create a simple variable chain: var1 -> value
-  Term value = new_i56(73);
+  Term value = new_i60(73);
 
   // Allocate a location for var1
   Location var_loc = pair_alloc();
@@ -1148,10 +1148,10 @@ void test_variable_chain(void) {
   Term result = take(var_loc);
 
   // Check that we got the value
-  if (term_tag(result) != I60 || get_i56(result) != 73) {
+  if (term_tag(result) != I60 || get_i60(result) != 73) {
     printf("[FAIL:%d] test_variable_chain: Expected I60(42), got %s(%ld)\n",
 	   __LINE__, tag_to_string(term_tag(result)),
-	   (long)((term_tag(result) == I60) ? get_i56(result) : 0));
+	   (long)((term_tag(result) == I60) ? get_i60(result) : 0));
     exit(1);
   }
 
