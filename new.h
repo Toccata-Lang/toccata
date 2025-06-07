@@ -60,8 +60,8 @@ void print_free_list(void);   // For debugging
 #define DUP 0x0a // negative duplicator
 #define OPX 0x0b // negative operation
 #define OPY 0x0c // negative operation
-#define I56 0x0d // positive 56 bit int
-#define F56 0x0e // positive 56 bit float
+#define I60 0x0d // positive 56 bit int
+#define F60 0x0e // positive 56 bit float
 #define LAZ 0x0f // positive lazy node
 typedef u32 Tag; // Tag is now just an unsigned integer
 
@@ -84,9 +84,14 @@ typedef u32 Tag; // Tag is now just an unsigned integer
 #define OP_RSH 0x0F
 
 
+#define MAX_ARGS 15
+typedef struct {
+  int count;
+  Term args[MAX_ARGS + 2];
+} NativeArgs;
 
 // creating number terms
-#define new_i56(x) (((u64)x << TAG_SIZE) | I56)
+#define new_i56(x) (((u64)x << TAG_SIZE) | I60)
 #define get_i56(x) (i64)((u64)x >> TAG_SIZE)
 #define get_u64(x) (i64)((u64)x >> TAG_SIZE)
 #define new_num(type, x) (((u64)x << TAG_SIZE) | type)

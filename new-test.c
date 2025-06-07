@@ -26,8 +26,8 @@ void print_raw_term(Term t) {
     case NUL:
     case REF:
     case ERA:
-    case I56:
-    case F56:
+    case I60:
+    case F60:
       printf("%s %x", tag_to_string(tag), lab);
       break;
 
@@ -107,8 +107,8 @@ void print_term(const char* prefix, Term term) {
   case NUL:
   case REF:
   case ERA:
-  case I56:
-  case F56:
+  case I60:
+  case F60:
     break;
 
   default:
@@ -641,7 +641,7 @@ void test_appsup(void) {
     exit(1);
   }
   actual_ret = get_var(get(port(2, term_loc(actual_ret))));
-  if (term_tag(actual_ret) != I56) {
+  if (term_tag(actual_ret) != I60) {
     printf("[FAIL:%d] test_appsup: SUP port 2 value is wrong. got:\n",
 	   __LINE__);
     print_term("", actual_ret);
@@ -677,14 +677,14 @@ void test_applam(void) {
   // Check that body was moved to return port with APP tag
   Term actual_ret = get(ret_loc);
   if (actual_ret != new_i56(83)) {
-    printf("[FAIL:%d] test_applam: Expected I56 tag in return port, got: tag=%s\n",
+    printf("[FAIL:%d] test_applam: Expected I60 tag in return port, got: tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(actual_ret)));
     exit(1);
   }
 
   Term actual_var = get(var_loc);
   if (actual_var != new_i56(82)) {
-    printf("[FAIL:%d] test_applam: Expected I56 tag in return port, got: tag=%s\n",
+    printf("[FAIL:%d] test_applam: Expected I60 tag in return port, got: tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(actual_var)));
     exit(1);
   }
@@ -859,8 +859,8 @@ void test_dupsup(void) {
   Term sup = pair_make(SUP, 2, term_new(NUL, 0, 0), term_new(NUL, 0, 0));
 
   // Create terms to connect to the ports
-  Term a = term_new(I56, 56, 0);  // A positive term (integer 56)
-  Term b = term_new(I56, 99, 0);  // Another positive term (integer 99)
+  Term a = term_new(I60, 56, 0);  // A positive term (integer 56)
+  Term b = term_new(I60, 99, 0);  // Another positive term (integer 99)
 
   // Connect terms to SUP ports
   set(port(1, term_loc(sup)), a);
@@ -883,7 +883,7 @@ bool custom_ref_interaction(Term ref, Term app) {
   // Take the current argument
   Term arg = take(arg_loc);
   
-  // Replace it with a specific value (I56 with value 42)
+  // Replace it with a specific value (I60 with value 42)
   Term new_arg = new_i56(42);
   set(arg_loc, new_arg);
   
@@ -929,10 +929,10 @@ void test_appref(void) {
   
   // Check that the argument was replaced with our specific value
   Term new_arg = get(port(1, app_loc));
-  if (term_tag(new_arg) != I56 || get_i56(new_arg) != 42) {
-    printf("[FAIL:%d] test_appref: Expected I56(42), got %s(%ld)\n", 
+  if (term_tag(new_arg) != I60 || get_i56(new_arg) != 42) {
+    printf("[FAIL:%d] test_appref: Expected I60(42), got %s(%ld)\n", 
            __LINE__, tag_to_string(term_tag(new_arg)), 
-           (long)((term_tag(new_arg) == I56) ? get_i56(new_arg) : 0));
+           (long)((term_tag(new_arg) == I60) ? get_i56(new_arg) : 0));
     exit(1);
   }
   
@@ -1113,8 +1113,8 @@ void test_add_numbers(void) {
 
   // Check result at return port - should be 56 + 17 = 73
   Term result = get(ret_loc);
-  if (term_tag(result) != I56) {
-    printf("[FAIL:%d] test_add_numbers: Expected I56 tag in result, got: tag=%s\n",
+  if (term_tag(result) != I60) {
+    printf("[FAIL:%d] test_add_numbers: Expected I60 tag in result, got: tag=%s\n",
 	   __LINE__, tag_to_string(term_tag(result)));
     exit(1);
   }
@@ -1148,10 +1148,10 @@ void test_variable_chain(void) {
   Term result = take(var_loc);
 
   // Check that we got the value
-  if (term_tag(result) != I56 || get_i56(result) != 73) {
-    printf("[FAIL:%d] test_variable_chain: Expected I56(42), got %s(%ld)\n",
+  if (term_tag(result) != I60 || get_i56(result) != 73) {
+    printf("[FAIL:%d] test_variable_chain: Expected I60(42), got %s(%ld)\n",
 	   __LINE__, tag_to_string(term_tag(result)),
-	   (long)((term_tag(result) == I56) ? get_i56(result) : 0));
+	   (long)((term_tag(result) == I60) ? get_i56(result) : 0));
     exit(1);
   }
 

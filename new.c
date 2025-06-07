@@ -223,8 +223,8 @@ const char* tag_to_string(Tag tag) {
   case DUP: return "DUP";
   case OPX: return "OPX";
   case OPY: return "OPY";
-  case I56: return "I56";
-  case F56: return "F56";
+  case I60: return "I60";
+  case F60: return "F60";
   case LAZ: return "LAZ";
   default: return "UNKNOWN";
   }
@@ -261,8 +261,8 @@ Location term_loc(Term term) {
   case NUL:
   case REF:
   case ERA:
-  case I56:
-  case F56:
+  case I60:
+  case F60:
     BOOM("term has no location");
     break;
 
@@ -320,8 +320,8 @@ bool is_positive(Term term) {
   case REF:
   case VL1:
   case SUP:
-  case I56:
-  case F56:
+  case I60:
+  case F60:
   case LAZ:
     return true;
   default:
@@ -472,8 +472,8 @@ void term_link(Term neg, Term pos) {
     }
     break;
 
-  case I56:
-  case F56:
+  case I60:
+  case F60:
   case NUL:
     interact(neg, pos);
     break;
@@ -830,8 +830,8 @@ bool YNUM(Term opy, Term num) {
   Lab op = term_lab(opy);
 
   switch (y_type) {
-  case I56: PERFORM_OP(get_u64(x), get_u64(num), op, i64); break;
-    // case F56: PERFORM_OP(x, y, op, f64); break;
+  case I60: PERFORM_OP(get_u64(x), get_u64(num), op, i64); break;
+    // case F60: PERFORM_OP(x, y, op, f64); break;
   }
 
   move(ret, new_num(y_type, res));
@@ -858,35 +858,35 @@ bool ABRT(Term neg, Term pos) {
 // Define a macro for the default interaction functions
 #define POS_INTERACTIONS\
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
-// VAL  VAR    SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL  VAR    SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define SUB_INTERACTIONS\
   &ABRT,&ABRT,&ABRT,&subnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
-// VAL   VAR   SUB    NUL    ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL   VAR   SUB    NUL    ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define NUM_INTERACTIONS\
   &ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-// VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56  F56  LAZ
+// VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60  F60  LAZ
 
 #define OPX_INTERACTIONS\
   &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
-// VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define OPY_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
-// VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define ERA_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-// VAL   VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I56  F56  LAZ
+// VAL   VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
-// VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I56     F56   LAZ
+// VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
 
 #define DUP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&ABRT,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
-// VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I56   F56   LAZ
+// VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
@@ -903,8 +903,8 @@ interactionFn interactions[16][16] = {
   { DUP_INTERACTIONS }, // DUP  - {- -}
   { OPX_INTERACTIONS }, // OPX  - {- +}
   { OPY_INTERACTIONS }, // OPY  - {- +}
-  { NUM_INTERACTIONS }, // I56  +
-  { NUM_INTERACTIONS }, // F56  +
+  { NUM_INTERACTIONS }, // I60  +
+  { NUM_INTERACTIONS }, // F60  +
   { POS_INTERACTIONS }  // LAZ  + {+ -}
 };
 
@@ -929,4 +929,139 @@ void normalize(void) {
   }
 
   return;
+}
+
+Term argsNet(NativeArgs *args) {
+  Term tail;
+  if(args->count < 1)
+    BOOM("argsNet");
+  else
+    tail = args->args[args->count - 1];
+
+  for (int i = args->count - 2; i >= 0; i--) {
+    tail = pair_make(APP, 0, args->args[i], tail);
+    args->args[i] = tail;
+  }
+
+  return args->args[0];
+}
+
+// extract the requested number of native args. I60, F60, REF or VAL terms
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
+  // if (argsStruct->count > 0) {
+  // fprintf(stderr, "nativeArg %d: %p %d %p\n", __LINE__, (void *)ref, argsStruct->count,
+  // (void *)get_i24(get_val(argsStruct->args[argsStruct->count - 1])));
+  // } else {
+  // fprintf(stderr, "nativeArg %d: %p %d\n", __LINE__, (void *)ref, argsStruct->count);
+  // }
+  // 'args' will only ever be a negative term
+  Tag argsTag = term_tag(args);
+  // fprintf(stderr, "argsTag %d: %s (%d) in %p\n", __LINE__,
+  //	  tag_to_string(argsTag), argsTag, (void *)args);
+  Term arg;
+  Term varVal;
+  Term retry;
+  Term newArgs;
+  Term newArg;
+  switch(argsTag) {
+  case APP:
+    arg = take(port(1, term_loc(args)));
+    if (expected == 0) {
+      return args;
+    }
+
+    // 'arg' will only ever be a positive term
+    Tag argTag = term_tag(arg);
+    // fprintf(stderr, "arg 2 %d: %d %p\n", __LINE__, argTag, (void *)arg);
+    switch(argTag) {
+      // the strict arg types
+    case VAL:
+    case I60:
+    case F60:
+    case REF:
+      argsStruct->args[argsStruct->count++] = arg;
+      if (expected > 1)
+	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+      else
+	return args;
+      break;
+
+    case VAR: {
+      Term valVar = get(term_loc(arg));
+      switch(term_tag(valVar)) {
+	// the strict arg types
+      case VAL:
+      case I60:
+      case F60:
+      case REF:
+	if(1) {
+	  Term val = take(term_loc(arg));
+	  argsStruct->args[argsStruct->count++] = val;
+	  if (expected > 1)
+	    return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+	  else
+	    return args;
+	}
+	break;
+
+      case SUB:
+	if (valVar != SUB)
+	  BOOM("nativeArgs");
+	else {
+	  argsStruct->args[argsStruct->count++] = args;
+	  newArgs = argsNet(argsStruct);
+	  set(port(1, term_loc(args)), arg);
+	  retry = pair_make(SUB, 0, newArgs, ref);
+	  newArg = swap(term_loc(arg), retry);
+	  if (newArg != SUB) {
+	    // someone slipped the needed arg in since we last looked
+	    set(term_loc(arg), newArg);
+	    take(port(1, term_loc(retry)));
+	    take(port(2, term_loc(retry)));
+	    term_link(newArgs, ref);
+	  }
+	  argsStruct->count = -1;
+	  return 0;
+	}
+	break;
+
+      default: {
+	char s[50];
+	sprintf(s, "bad %s valVar", tag_to_string(term_tag(valVar)));
+	BOOM(s);
+      }
+	break;
+      }
+      argsStruct->count = -1;
+      return 0;
+    }
+      break;
+
+    case SUP:
+    case LAM:
+    case LAZ:
+    case NUL:
+    default:
+      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_string(term_tag(arg)),
+	     term_tag(arg), __LINE__);
+      abort();
+      break;
+    }
+    argsStruct->count = -1;
+    // */
+    return 0;
+    break;
+
+  case SUB:
+  case ERA:
+  case DUP:
+  case OPX:
+  case OPY:
+  default:
+    printf("unhandled tag %s (0x%x) %p line: %d\n",
+	   tag_to_string(argsTag), argsTag, (void *)arg, __LINE__);
+    abort();
+    return 0;
+    break;
+  }
 }
