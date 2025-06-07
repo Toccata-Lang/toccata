@@ -293,12 +293,20 @@ Term swap(Location loc, Term term) {
 }
 
 Term take(Location loc) {
+  // Take the term at the given location, replacing it with 0
   Term taken = swap(loc, 0);
-  /*
-    while (term_tag(taken) == VAR) {
-    taken = swap(term_loc(taken), 0);
+  while (term_tag(taken) == VAR) {
+    Term prev = taken;
+    taken = get(term_loc(taken));
+    if (term_tag(taken) == SUB) {
+      taken = prev;
+      break;
+    } else {
+      set(term_loc(prev), 0);
     }
-    // */
+  }
+
+  // Not a variable, just return it
   return taken;
 }
 

@@ -1130,9 +1130,44 @@ void test_add_numbers(void) {
   printf("[PASS] test_add_numbers\n");
 }
 
+// Test variable dereferencing chain
+void test_variable_chain(void) {
+  // Create a simple variable chain: var1 -> value
+  Term value = new_i56(73);
+
+  // Allocate a location for var1
+  Location var_loc = pair_alloc();
+
+  // Create a variable pointing to value
+  set(var_loc, term_new(VAR, 0, var_loc + 1));
+
+  // Set the value at the location the variable points to
+  set(var_loc + 1, value);
+
+  // Test taking the value through the variable reference
+  Term result = take(var_loc);
+
+  // Check that we got the value
+  if (term_tag(result) != I56 || get_i56(result) != 73) {
+    printf("[FAIL:%d] test_variable_chain: Expected I56(42), got %s(%ld)\n",
+	   __LINE__, tag_to_string(term_tag(result)),
+	   (long)((term_tag(result) == I56) ? get_i56(result) : 0));
+    exit(1);
+  }
+
+  printf("[PASS] test_variable_chain\n");
+}
+
 int main(int argc, char *argv[]) {
   // Initialize the VM with some memory
   hvm_init(1024);
+  hvm_reset();
+  
+  // Test variable dereferencing chain
+  test_variable_chain();
+  
+  // Test error conditions
+  hvm_reset();
   test_error_conditions();
 
   hvm_init(1024);
@@ -1192,6 +1227,8 @@ int main(int argc, char *argv[]) {
 
   hvm_reset();
   test_appref();
+
+  // Variable dereferencing test is run only once at the beginning
 
   // Final cleanup
   hvm_free();
