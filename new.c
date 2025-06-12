@@ -28,6 +28,76 @@ Term* get_rbag_buff(void) {
   return RBAG_BUFF;
 }
 
+void print_raw_term(Term t) {
+  if (t == 0) {
+    printf("  FREE   ");
+  } else {
+    Tag tag = term_tag(t);
+    Lab lab = term_lab(t);
+    switch(term_tag(t)) {
+    case VAL:
+    case NUL:
+    case REF:
+    case ERA:
+    case I60:
+    case F60:
+      printf("%s %x", tag_to_string(tag), lab);
+      break;
+
+    default:
+      printf("%s %x %.3x", tag_to_string(tag), lab, term_loc(t));
+      break;
+    }
+  }
+}
+
+// Helper to print a term's details
+void print_term(const char* prefix, Term term) {
+  printf("%s:\n", prefix);
+  printf("  Tag: %s (%d)\n", tag_to_string(term_tag(term)), term_tag(term));
+  switch(term_tag(term)) {
+  case VAL:
+  case SUB:
+  case NUL:
+  case REF:
+  case ERA:
+  case F60:
+    break;
+    
+  case I60:
+    printf("  Val: %ld", get_i60(term));
+    break;
+
+  case VAR:
+    printf("  Location: %.3x\n", term_loc(term));
+    // If this is a pair, print its contents
+    if (term_loc(term) >= 0) {
+      Term first = get(port(1, term_loc(term)));
+      printf("  term: ");
+      print_raw_term(first);
+      printf("\n");
+    }
+    break;
+
+  default:
+    printf("  Location: %.3x\n", term_loc(term));
+    // If this is a pair, print its contents
+    if (term_loc(term) >= 0) {
+      Term first = get(port(1, term_loc(term)));
+      Term second = get(port(2, term_loc(term)));
+      printf("  First term: ");
+      print_raw_term(first);
+      printf("\n");
+      printf("  Second term: ");
+      print_raw_term(second);
+      printf("\n");
+    }
+    break;
+  }
+
+  printf("\n");
+}
+
 // Print the free list for debugging
 void print_free_list(void) {
   printf("Free list: ");
@@ -62,7 +132,7 @@ void hvm_init(u64 size) {
   BUFF = (a64*)calloc(size, sizeof(a64));
   if (!BUFF) {
     fprintf(stderr, "Failed to allocate memory\n");
-    exit(1);
+    abort();
   }
 
   RBAG_BUFF = (Term*)calloc(RBAG_SIZE, sizeof(Term));
@@ -70,7 +140,7 @@ void hvm_init(u64 size) {
     fprintf(stderr, "Failed to allocate memory for redex stack\n");
     free(BUFF);
     BUFF = NULL;
-    exit(1);
+    abort();
   }
 
   RNOD_END = 0;
@@ -83,13 +153,13 @@ void hvm_init(u64 size) {
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
     fprintf(stderr, "Failed to initialize mutex\n");
-    exit(1);
+    abort();
   }
 
   // Initialize condition variable for redex signaling
   if (pthread_cond_init(&redex_cond, NULL) != 0) {
     fprintf(stderr, "Failed to initialize condition variable\n");
-    exit(1);
+    abort();
   }
 }
 
@@ -152,7 +222,7 @@ Location pair_alloc(void) {
       if (RNOD_END + 2 >= BUFF_SIZE) {
         fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
 	  RNOD_END, BUFF_SIZE);
-        exit(1);
+        abort();
       }
       Location loc = RNOD_END;
       RNOD_END += 2;
@@ -196,7 +266,7 @@ void pair_free(Location loc) {
 void hvm_reset(void) {
   if (BUFF == NULL || RBAG_BUFF == NULL) {
     fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvm_init first.\n");
-    exit(1);
+    abort();
   }
 
   // Clear memory to prevent stale data
@@ -284,7 +354,7 @@ Location term_loc(Term term) {
 Location port(u64 n, Location x) {
   if (n != 1 && n != 2) {
     fprintf(stderr, "Error: Invalid port number %lu. Port must be 1 or 2.\n", n);
-    exit(1);
+    abort();
   }
   return n + x - 1;
 }
@@ -292,27 +362,31 @@ Location port(u64 n, Location x) {
 // Atomic swap operation
 Term swap(Location loc, Term term) {
   Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
-  if (term == 0 && get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
-    pair_free(loc & 0xFFFFFFFE);
-  }
   return result;
 }
 
 Term take(Location loc) {
   // Take the term at the given location, replacing it with 0
-  Term taken = swap(loc, 0);
-  while (term_tag(taken) == VAR) {
-    Term prev = taken;
-    taken = get(term_loc(taken));
-    if (term_tag(taken) == SUB) {
-      taken = prev;
-      break;
-    } else {
-      swap(term_loc(prev), 0);
+  Tag takenTag;
+  Term taken = get(loc);
+  takenTag = term_tag(taken);
+  Term next;
+  do {
+    if (takenTag == VAR) {
+      next = get(term_loc(taken));
+      if (term_tag(next) == SUB)
+	break;
     }
-  }
-
-  // Not a variable, just return it
+    set(loc, 0);
+    if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
+      pair_free(loc & 0xFFFFFFFE);
+    }
+    if (takenTag == VAR) {
+      loc = term_loc(taken);
+      taken = next;
+      takenTag = term_tag(taken);
+    }
+  } while (takenTag == VAR);
   return taken;
 }
 
@@ -371,13 +445,13 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     if (!is_negative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
-      exit(1);
+      abort();
     }
     // Port 2 must be positive
     if (!is_positive(snd)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
-      exit(1);
+      abort();
     }
     break;
 
@@ -388,13 +462,13 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     if (!is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
-      exit(1);
+      abort();
     }
     // Port 2 must be negative
     if (!is_negative(snd)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
-      exit(1);
+      abort();
     }
     break;
 
@@ -403,13 +477,13 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     if (!is_negative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
-      exit(1);
+      abort();
     }
     // Port 2 must be negative
     if (!is_negative(snd)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
-      exit(1);
+      abort();
     }
     break;
 
@@ -418,20 +492,20 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     if (!is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
-      exit(1);
+      abort();
     }
     // Port 2 must be positive
     if (!is_positive(snd)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
-      exit(1);
+      abort();
     }
     break;
 
   default:
     fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
 	    tag_to_string(tag), tag);
-    exit(1);
+    abort();
   }
 
   // Get a pair from the free list or by extending RNOD_END
@@ -447,6 +521,16 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 // Move a positive term into a negative location
 void move(Location neg_loc, Term pos) {
   Term neg = swap(neg_loc, pos);
+  if (is_negative(pos)) {
+    char s[50];
+    sprintf(s,"trying to move a negative to location %.3x: %p", neg_loc, (void *)neg);
+    BOOM(s);
+  }
+  if (is_positive(neg)) {
+    char s[50];
+    sprintf(s,"found positive at move target %.3x: %p", neg_loc, (void *)neg);
+    BOOM(s);
+  }
   if (term_tag(neg) == SUB) {
     if (term_lab(neg) > 0) {
       // If SUB has a location, link the pair at that location
@@ -469,6 +553,9 @@ void move(Location neg_loc, Term pos) {
 // Link two terms together
 // Push a redex (pair of terms) to the reduction bag
 void term_link(Term neg, Term pos) {
+  if (is_positive(neg) || is_negative(pos))
+    BOOM("bad redex");
+
   Term neg_var ;
   switch(term_tag(pos)) {
   case VAR:
@@ -515,7 +602,7 @@ void push_redex(Term neg, Term pos) {
   if (RBAG_END + 2 > RBAG_SIZE) {
     fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
 	    RBAG_END, RBAG_SIZE);
-    exit(1);
+    abort();
   }
 
   // Store the redex in the bag

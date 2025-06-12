@@ -14,51 +14,6 @@ extern Term take(Location loc);
 // Custom interaction function for testing REF terms
 bool custom_ref_interaction(Term ref, Term app);
 
-// Print contents of BUFF between start and end locations
-void print_raw_term(Term t) {
-  if (t == 0) {
-    printf("  FREE   ");
-  } else {
-    Tag tag = term_tag(t);
-    Lab lab = term_lab(t);
-    switch(term_tag(t)) {
-    case VAL:
-    case NUL:
-    case REF:
-    case ERA:
-    case I60:
-    case F60:
-      printf("%s %x", tag_to_string(tag), lab);
-      break;
-
-    default:
-      printf("%s %x %.3x", tag_to_string(tag), lab, term_loc(t));
-      break;
-    }
-  }
-}
-
-void print_buff(Location start, Location end) {
-  a64* buff = get_buff();
-  if (!buff) {
-    printf("BUFF is not initialized\n");
-    return;
-  }
-  if (start >= end) {
-    printf("Invalid range: start=%u end=%u\n", start, end);
-    return;
-  }
-  printf("BUFF contents from %u to %u:\n", start, end);
-  for (Location i = start; i < end; i += 2) {
-    printf(" %.3x  ", i);
-    print_raw_term(buff[i]);
-    printf("  ");
-    print_raw_term(buff[i + 1]);
-    printf("\n");
-  }
-  printf("\n");
-}
-
 // Print contents of RBAG_BUFF between start and end locations
 void print_rbag(Location start, Location end) {
   Term* buff = get_rbag_buff();
@@ -95,39 +50,6 @@ Term get_var(Term t) {
     t = get(term_loc(t));
   }
   return t;
-}
-
-// Helper to print a term's details
-void print_term(const char* prefix, Term term) {
-  printf("%s:\n", prefix);
-  printf("  Tag: %s (%d)\n", tag_to_string(term_tag(term)), term_tag(term));
-  switch(term_tag(term)) {
-  case VAL:
-  case SUB:
-  case NUL:
-  case REF:
-  case ERA:
-  case I60:
-  case F60:
-    break;
-
-  default:
-    printf("  Location: %u\n", term_loc(term));
-    // If this is a pair, print its contents
-    if (term_loc(term) >= 0) {
-      Term first = get(port(1, term_loc(term)));
-      Term second = get(port(2, term_loc(term)));
-      printf("  First term: ");
-      print_raw_term(first);
-      printf("\n");
-      printf("  Second term: ");
-      print_raw_term(second);
-      printf("\n");
-    }
-    break;
-  }
-
-  printf("\n");
 }
 
 // Test pair creation
@@ -181,7 +103,7 @@ void try_invalid_pair(Tag tag, Term fst, Term snd, const char* desc) {
     // Parent process
     int status;
     waitpid(pid, &status, 0);
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
+    if (!WIFEXITED(status)) {
       printf("[PASS] Correctly rejected %s\n", desc);
     } else {
       printf("[FAIL:%d] Failed to reject %s\n", __LINE__, desc);
@@ -265,7 +187,7 @@ void test_error_conditions(void) {
     // Parent process
     int status;
     waitpid(pid, &status, 0);
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
+    if (!WIFEXITED(status)) {
       printf("[PASS] Correctly failed on uninitialized VM\n");
     } else {
       printf("[FAIL:%d] Did not fail on uninitialized VM\n", __LINE__);
@@ -300,7 +222,7 @@ void test_boundary_validation(void) {
     // Parent process
     int status;
     waitpid(pid, &status, 0);
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
+    if (!WIFEXITED(status)) {
       printf("[PASS] Correctly failed on boundary error\n");
     } else {
       printf("[FAIL:%d] Did not fail on boundary error\n", __LINE__);
@@ -1163,14 +1085,13 @@ int main(int argc, char *argv[]) {
   hvm_init(1024);
   hvm_reset();
   
-  // Test variable dereferencing chain
-  test_variable_chain();
-  
   // Test error conditions
-  hvm_reset();
   test_error_conditions();
 
   hvm_init(1024);
+  hvm_reset();
+  test_variable_chain();
+
   hvm_reset();
   test_redex_stack();
 

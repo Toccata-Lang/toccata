@@ -46,6 +46,8 @@ extern pthread_cond_t redex_cond; // Condition variable for signaling when redex
 extern a64* get_buff(void);  // For testing only
 extern Term* get_rbag_buff(void);  // For testing only
 void print_free_list(void);   // For debugging
+void print_raw_term(Term t);
+void print_term(const char* prefix, Term term);
 
 // Tags for different term types
 #define VAL 0x00 // positive native value
