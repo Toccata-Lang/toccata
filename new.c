@@ -390,26 +390,24 @@ Term swap(Location loc, Term term) {
 Term take(Location loc) {
   // Take the term at the given location, replacing it with 0
   Tag takenTag;
-  Term taken = get(loc);
-  takenTag = term_tag(taken);
-  Term next;
+  Term taken;
   do {
-    if (takenTag == VAR) {
-      next = get(term_loc(taken));
-      if (term_tag(next) == SUB)
-	break;
-    }
-    set(loc, 0);
-    if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
-      pair_free(loc & 0xFFFFFFFE);
-    }
-    if (takenTag == VAR) {
-      loc = term_loc(taken);
-      taken = next;
-      takenTag = term_tag(taken);
+    taken = get(loc);
+    takenTag = term_tag(taken);
+    if (takenTag != SUB) {
+      set(loc, 0);
+      if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
+	pair_free(loc & 0xFFFFFFFE);
+      }
+      if (takenTag == VAR) {
+	loc = term_loc(taken);
+      }
     }
   } while (takenTag == VAR);
-  return taken;
+  if (takenTag == SUB)
+    return term_new(VAR, 0, loc);
+  else
+    return taken;
 }
 
 // Check if a term is positive
@@ -567,7 +565,7 @@ void move(Location neg_loc, Term pos) {
       term_link(sub_neg, sub_pos);
     }
   } else {
-    take(neg_loc);
+    pos = take(neg_loc);
     term_link(neg, pos);
   }
 }

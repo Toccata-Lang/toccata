@@ -1069,6 +1069,12 @@ void test_variable_chain(void) {
   // Test taking the value through the variable reference
   Term result = take(var_loc);
 
+  if (alloced != 0) {
+    printf("[FAIL:%d] test_variable_chain: Did not free pair.\n",
+	   __LINE__);
+    exit(1);
+  }
+
   // Check that we got the value
   if (term_tag(result) != I60 || get_i60(result) != 73) {
     printf("[FAIL:%d] test_variable_chain: Expected I60(73), got %s(%ld)\n",
@@ -1089,6 +1095,11 @@ void test_variable_chain(void) {
     exit(1);
   }
 
+  if (alloced != 1) {
+    printf("[FAIL:%d] test_variable_chain: Erroneously freed pair.\n",
+	   __LINE__);
+    exit(1);
+  }
 
   printf("[PASS] test_variable_chain\n");
 }

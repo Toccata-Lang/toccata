@@ -3,28 +3,6 @@
 #include <stdlib.h>
 #include <time.h>
 
-// Print contents of BUFF between start and end locations
-void print_buff(Location start, Location end) {
-  a64* buff = get_buff();
-  if (!buff) {
-    printf("BUFF is not initialized\n");
-    return;
-  }
-  if (start >= end) {
-    printf("Invalid range: start=%u end=%u\n", start, end);
-    return;
-  }
-  printf("BUFF contents from %u to %u:\n", start, end);
-  for (Location i = start; i < end; i += 2) {
-    printf(" %.3x  ", i);
-    print_raw_term(buff[i]);
-    printf("  ");
-    print_raw_term(buff[i + 1]);
-    printf("\n");
-  }
-  printf("\n");
-}
-
 // Print contents of RBAG_BUFF between start and end locations
 void print_rbag(Location start, Location end) {
   Term* buff = get_rbag_buff();
@@ -48,13 +26,11 @@ void print_rbag(Location start, Location end) {
 }
 
 bool leafFn(Term ref, Term args) {
-  printf("leaf fn\n");
   Term a0 = pair_make(APP, 0, NUL, SUB);
   Term b = term_new(VAR, 0, port(2, term_loc(a0)));
   Term l2 = pair_make(LAM, 0, a0, b);
   Term l1 = pair_make(LAM, 0, ERA, l2);
   Term l0 = pair_make(LAM, 0, SUB, l1);
-  printf("a0 loc: %.3x l0 loc: %.3x\n", term_loc(a0), term_loc(l0));
   set(port(1, term_loc(a0)), term_new(VAR, 0, port(1, term_loc(l0))));
   term_link(args, l0);
   return true;
@@ -132,7 +108,6 @@ int main() {
 
   Term lft = term_new(VAR, 0, port(2, term_loc(l1)));
   Term rgt = term_new(VAR, 0, port(2, term_loc(l2)));
-  rgt = term_new(VAR, 0, port(2, term_loc(l2)));
   Term a1 = pair_make(APP, 0, rgt, SUB);
   Term a0 = pair_make(APP, 0, lft, a1);
   term_link(a0, node);
@@ -143,7 +118,6 @@ int main() {
   normalize();
   print_term("result", take(port(2, term_loc(a))));
   // print_term("result", take(n));
-  print_buff(0, 40);
 
   printf("alloced pairs: %d\n", alloced);
 
