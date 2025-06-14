@@ -63,7 +63,7 @@ void print_term(const char* prefix, Term term) {
   case ERA:
   case F60:
     break;
-    
+
   case I60:
     printf("  Val: %ld", get_i60(term));
     break;
@@ -236,7 +236,7 @@ Location pair_alloc(void) {
   Location expected = atomic_load(&FREE_LIST);
   Location loc, new_free_list;
   Term next;
-  
+
   do {
     // If free list is empty
     if (expected == EMPTY_FREE_LIST) {
@@ -250,17 +250,17 @@ Location pair_alloc(void) {
       RNOD_END += 2;
       return loc;
     }
-    
+
     // Get the location we want to return
     loc = expected;
-    
+
     // Get the next free pair location
     next = get(loc);
     new_free_list = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-    
+
     // Try to update FREE_LIST, retry if it changed
   } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, new_free_list));
-  
+
   return loc;
 }
 
@@ -276,10 +276,10 @@ void pair_free(Location loc) {
   do {
     // Read the current free list head
     expected = atomic_load(&FREE_LIST);
-    
+
     // Set up the node to point to the current head
     set(loc, term_new(NUL, 0, expected)); // Store next free pair location
-    
+
     // Try to update FREE_LIST to point to our node
     desired = loc;
   } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, desired));
@@ -577,13 +577,13 @@ void move(Location neg_loc, Term pos) {
 void term_link(Term neg, Term pos) {
   // Check if terms have the correct polarity
   if (is_positive(neg)) {
-    fprintf(stderr, "Error: term_link called with positive term in negative position: %s\n", 
+    fprintf(stderr, "Error: term_link called with positive term in negative position: %s\n",
             tag_to_string(term_tag(neg)));
     BOOM("bad redex - positive term in negative position");
   }
-  
+
   if (is_negative(pos)) {
-    fprintf(stderr, "Error: term_link called with negative term in positive position: %s\n", 
+    fprintf(stderr, "Error: term_link called with negative term in positive position: %s\n",
             tag_to_string(term_tag(pos)));
     BOOM("bad redex - negative term in positive position");
   }
@@ -829,7 +829,7 @@ bool copy(Term dup, Term trm) {
             tag_to_string(term_tag(dup)), tag_to_string(term_tag(trm)));
     abort();
   }
-  
+
   Location dup_loc = term_loc(dup);
 
   // Get port locations
@@ -894,16 +894,16 @@ bool subnul(Term sub, Term nul) {
   if (lab > 0) {
     // The SUB term has a location pointing to a pair
     Location sub_loc = term_loc(sub);
-    
+
     // Take the first port and link it with NUL
     Term t = take(port(1, sub_loc));
     term_link(t, NUL);
-    
+
     // Take the second port and link it with ERA
     t = take(port(2, sub_loc));
     term_link(ERA, t);
   }
-  
+
   return true;
 }
 
