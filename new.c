@@ -98,6 +98,28 @@ void print_term(const char* prefix, Term term) {
   printf("\n");
 }
 
+// Print contents of BUFF between start and end locations
+void print_buff(Location start, Location end) {
+  a64* buff = get_buff();
+  if (!buff) {
+    printf("BUFF is not initialized\n");
+    return;
+  }
+  if (start >= end) {
+    printf("Invalid range: start=%u end=%u\n", start, end);
+    return;
+  }
+  printf("BUFF contents from %u to %u:\n", start, end);
+  for (Location i = start; i < end; i += 2) {
+    printf(" %.3x  ", i);
+    print_raw_term(buff[i]);
+    printf("  ");
+    print_raw_term(buff[i + 1]);
+    printf("\n");
+  }
+  printf("\n");
+}
+
 // Print the free list for debugging
 void print_free_list(void) {
   printf("Free list: ");
@@ -553,10 +575,20 @@ void move(Location neg_loc, Term pos) {
 // Link two terms together
 // Push a redex (pair of terms) to the reduction bag
 void term_link(Term neg, Term pos) {
-  if (is_positive(neg) || is_negative(pos))
-    BOOM("bad redex");
+  // Check if terms have the correct polarity
+  if (is_positive(neg)) {
+    fprintf(stderr, "Error: term_link called with positive term in negative position: %s\n", 
+            tag_to_string(term_tag(neg)));
+    BOOM("bad redex - positive term in negative position");
+  }
+  
+  if (is_negative(pos)) {
+    fprintf(stderr, "Error: term_link called with negative term in positive position: %s\n", 
+            tag_to_string(term_tag(pos)));
+    BOOM("bad redex - negative term in positive position");
+  }
 
-  Term neg_var ;
+  Term neg_var;
   switch(term_tag(pos)) {
   case VAR:
     neg_var = swap(term_loc(pos), neg);
@@ -791,6 +823,13 @@ bool DSUP(Term dup, Term sup) {
 
 // Duplication interaction with copyable term
 bool copy(Term dup, Term trm) {
+  // Verify term polarities
+  if (!is_negative(dup) || !is_positive(trm)) {
+    fprintf(stderr, "Error in copy: incorrect term polarities. dup=%s, trm=%s\n",
+            tag_to_string(term_tag(dup)), tag_to_string(term_tag(trm)));
+    abort();
+  }
+  
   Location dup_loc = term_loc(dup);
 
   // Get port locations
@@ -836,7 +875,7 @@ bool appref(Term app, Term ref) {
 
 bool appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
-  term_link(num, take(port(1, app_loc)));
+  term_link(ERA, take(port(1, app_loc)));
   move(port(2, app_loc), num);
   return true;
 }
@@ -975,7 +1014,7 @@ bool ABRT(Term neg, Term pos) {
 
 #define APP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
-// VAL  VAR   SUB    NUL    ERA    LAM    APP   REF   VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
+// VAL   VAR   SUB    NUL    ERA    LAM    APP    REF    VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
 
 #define DUP_INTERACTIONS						\
   &ABRT,&ABRT,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&ABRT,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT

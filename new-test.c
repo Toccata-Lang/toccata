@@ -300,7 +300,7 @@ void test_erasup(void) {
 
   // Check the free list after the interaction
   int final_free_count = count_free_list_items();
-  
+
   // The SUP node should have been freed, so we should have one more item in the free list
   if (final_free_count != 1) {
     printf("[FAIL:%d] test_erasup: Free list count was wrong: %d\n",
@@ -434,7 +434,7 @@ void test_eralam(void) {
 
   // Check the free list after the interaction
   int final_free_count = count_free_list_items();
-  
+
   // The SUP node should have been freed, so we should have one more item in the free list
   if (final_free_count != 1) {
     printf("[FAIL:%d] test_erasup: Free list count was wrong: %d\n",
@@ -470,7 +470,7 @@ void test_appnul(void) {
 
   // Check the free list after the interaction
   int final_free_count = count_free_list_items();
-  
+
   // The SUP node should have been freed, so we should have one more item in the free list
   if (final_free_count != 1) {
     printf("[FAIL:%d] test_erasup: Free list count was wrong: %d\n",
@@ -516,7 +516,7 @@ void test_dupnul(void) {
 
   // Check the free list after the interaction
   int final_free_count = count_free_list_items();
-  
+
   // The SUP node should have been freed, so we should have one more item in the free list
   if (final_free_count != 0) {
     printf("[FAIL:%d] test_erasup: Free list count was wrong: %d\n",
@@ -798,17 +798,17 @@ void test_dupsup(void) {
 bool custom_ref_interaction(Term ref, Term app) {
   // Get the APP location
   Location app_loc = term_loc(app);
-  
+
   // Get the argument location
   Location arg_loc = port(1, app_loc);
-  
+
   // Take the current argument
   Term arg = take(arg_loc);
-  
+
   // Replace it with a specific value (I60 with value 42)
   Term new_arg = new_i60(42);
   set(arg_loc, new_arg);
-  
+
   // Return true to indicate success
   return true;
 }
@@ -817,29 +817,29 @@ bool custom_ref_interaction(Term ref, Term app) {
 void test_appref(void) {
   // Initialize the VM for this test
   hvm_init(1024);
-  
+
   // Create terms for the APP pair with correct polarities
   // APP requires positive term in port 1 and negative term in port 2
   Term arg_term = term_new(NUL, 10, 0); // Positive term for port 1
   Term ret_term = term_new(SUB, 20, 0); // Negative term for port 2
-  
+
   // Create the APP term using pair_make
   Term app_term = pair_make(APP, 30, arg_term, ret_term);
   // Store the location for later use
   Location app_loc = term_loc(app_term);
-  
+
   // Create a REF term with our custom interaction function
   Term ref_term = ref_make(custom_ref_interaction);
-  
+
   // Clear the redex stack before our test
   Term dummy_neg, dummy_pos;
   while (pop_redex(&dummy_neg, &dummy_pos)) {
     // Just drain the stack
   }
-  
+
   // Manually push a redex with APP and REF
   push_redex(app_term, ref_term);
-  
+
   // Perform one interaction
   Term neg, pos;
   if (pop_redex(&neg, &pos)) {
@@ -848,18 +848,18 @@ void test_appref(void) {
     printf("[FAIL:%d] test_appref: No redex was available\n", __LINE__);
     exit(1);
   }
-  
+
   // Check that the argument was replaced with our specific value
   Term new_arg = get(port(1, app_loc));
   if (term_tag(new_arg) != I60 || get_i60(new_arg) != 42) {
-    printf("[FAIL:%d] test_appref: Expected I60(42), got %s(%ld)\n", 
-           __LINE__, tag_to_string(term_tag(new_arg)), 
+    printf("[FAIL:%d] test_appref: Expected I60(42), got %s(%ld)\n",
+           __LINE__, tag_to_string(term_tag(new_arg)),
            (long)((term_tag(new_arg) == I60) ? get_i60(new_arg) : 0));
     exit(1);
   }
-  
+
   printf("[PASS] test_appref\n");
-  
+
   // Clean up
   hvm_free();
 }
@@ -873,23 +873,23 @@ void test_subnul(void) {
   Term sub_term = pair_make(SUB, 1, neg_term, pos_term);
   // Create a NUL term
   Term nul_term = term_new(NUL, 0, 0);
-  
+
   // Record the initial free list count
   int initial_count = count_free_list_items();
-  
+
   // Directly call the subnul function
   subnul(sub_term, nul_term);
   stop_reducing = true;
   normalize();
-  
+
   // Check that free_list has one more item in it
   int final_count = count_free_list_items();
   if (final_count != initial_count + 2) {
-    printf("[FAIL:%d] test_subnul: Expected free list to have %d items, but got %d\n", 
+    printf("[FAIL:%d] test_subnul: Expected free list to have %d items, but got %d\n",
            __LINE__, initial_count + 2, final_count);
     exit(1);
   }
-  
+
   printf("[PASS] test_subnul\n");
 }
 
@@ -897,56 +897,56 @@ void test_subnul(void) {
 void test_sub_with_location(void) {
   // Create a negative term (APP) for the redex
   Term neg_term = pair_make(APP, 42, term_new(NUL, 0, 0), term_new(ERA, 0, 0));
-  
+
   // Create a positive term (SUP) for the redex
   Term pos_term = pair_make(SUP, 42, term_new(VAL, 0, 1), term_new(VAL, 0, 2));
-  
+
   // Create a SUB term with a location pointing to the pair
   Term sub_term = pair_make(SUB, 1, neg_term, pos_term);
-  
+
   // Allocate a location to store the SUB term
   Location sub_loc = pair_alloc();
   // Store the SUB term directly
   set(sub_loc, sub_term);
-  
+
   // Create a dummy positive term to move to the SUB location
   Term dummy_term = term_new(LAM, 123, 0);
-  
+
   // Clear the redex stack before our test
   Term dummy_neg, dummy_pos;
   while (pop_redex(&dummy_neg, &dummy_pos)) {
     // Just drain the stack
   }
-  
+
   // Check that the redex stack has the redex we pushed
   Term neg, pos;
   bool has_redex;
-  
+
   // Now test the SUB term with location functionality
   // Move the dummy term to the SUB location
   move(sub_loc, dummy_term);
-  
+
   // Check that a redex was pushed to the stack
   has_redex = pop_redex(&neg, &pos);
-  
+
   if (!has_redex) {
     printf("[FAIL:%d] test_sub_with_location: No redex was pushed after move to SUB\n", __LINE__);
     exit(1);
   }
-  
+
   // The move function should have linked the terms in the pair pointed to by the SUB term
   if (term_tag(neg) != APP || term_lab(neg) != 42) {
-    printf("[FAIL:%d] test_sub_with_location: Incorrect negative term after SUB move. Expected APP(42), got %s(%u)\n", 
+    printf("[FAIL:%d] test_sub_with_location: Incorrect negative term after SUB move. Expected APP(42), got %s(%u)\n",
            __LINE__, tag_to_string(term_tag(neg)), term_lab(neg));
     exit(1);
   }
-  
+
   if (term_tag(pos) != SUP || term_lab(pos) != 42) {
-    printf("[FAIL:%d] test_sub_with_location: Incorrect positive term after SUB move. Expected SUP(42), got %s(%u)\n", 
+    printf("[FAIL:%d] test_sub_with_location: Incorrect positive term after SUB move. Expected SUP(42), got %s(%u)\n",
            __LINE__, tag_to_string(term_tag(pos)), term_lab(pos));
     exit(1);
   }
-  
+
   printf("[PASS] test_sub_with_location\n");
 }
 
@@ -1071,11 +1071,24 @@ void test_variable_chain(void) {
 
   // Check that we got the value
   if (term_tag(result) != I60 || get_i60(result) != 73) {
-    printf("[FAIL:%d] test_variable_chain: Expected I60(42), got %s(%ld)\n",
+    printf("[FAIL:%d] test_variable_chain: Expected I60(73), got %s(%ld)\n",
 	   __LINE__, tag_to_string(term_tag(result)),
 	   (long)((term_tag(result) == I60) ? get_i60(result) : 0));
     exit(1);
   }
+
+  Term l = identity_lambda();
+  var_loc = port(2, term_loc(l));
+  result = take(var_loc);
+
+  if (result != term_new(VAR, 0, term_loc(l))) {
+    printf("[FAIL:%d] test_variable_chain: Expected VAR, got ",
+	   __LINE__);
+    print_raw_term(result);
+    printf("\n");
+    exit(1);
+  }
+
 
   printf("[PASS] test_variable_chain\n");
 }
@@ -1083,9 +1096,8 @@ void test_variable_chain(void) {
 int main(int argc, char *argv[]) {
   // Initialize the VM with some memory
   hvm_init(1024);
+
   hvm_reset();
-  
-  // Test error conditions
   test_error_conditions();
 
   hvm_init(1024);
@@ -1148,8 +1160,6 @@ int main(int argc, char *argv[]) {
 
   hvm_reset();
   test_appref();
-
-  // Variable dereferencing test is run only once at the beginning
 
   // Final cleanup
   hvm_free();
