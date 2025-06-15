@@ -354,6 +354,7 @@ Lab term_lab(Term term) {
 
 // Get the location of a term
 Location term_loc(Term term) {
+#ifdef SAFETY
   switch(term_tag(term)) {
   case VAL:
   case NUL:
@@ -371,6 +372,9 @@ Location term_loc(Term term) {
     break;
   }
   return 0;
+#else
+  return (Location)(term >> (TAG_SIZE + LAB_SIZE));
+#endif
 }
 
 Location port(u64 n, Location x) {
@@ -457,6 +461,7 @@ void set(Location loc, Term term) {
 // Create a new pair with given tag, label, and terms
 Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 
+#ifdef SAFETY
   // Check port polarities based on pair type
   switch (tag) {
   case SUB:
@@ -527,6 +532,7 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 	    tag_to_string(tag), tag);
     abort();
   }
+#endif
 
   // Get a pair from the free list or by extending RNOD_END
   Location loc = pair_alloc();
@@ -541,6 +547,7 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 // Move a positive term into a negative location
 void move(Location neg_loc, Term pos) {
   Term neg = swap(neg_loc, pos);
+#ifdef SAFETY
   if (is_negative(pos)) {
     char s[50];
     sprintf(s,"trying to move a negative to location %.3x: %p", neg_loc, (void *)neg);
@@ -551,6 +558,7 @@ void move(Location neg_loc, Term pos) {
     sprintf(s,"found positive at move target %.3x: %p", neg_loc, (void *)neg);
     BOOM(s);
   }
+#endif
   if (term_tag(neg) == SUB) {
     if (term_lab(neg) > 0) {
       // If SUB has a location, link the pair at that location
@@ -573,6 +581,7 @@ void move(Location neg_loc, Term pos) {
 // Link two terms together
 // Push a redex (pair of terms) to the reduction bag
 void term_link(Term neg, Term pos) {
+#ifdef SAFETY
   // Check if terms have the correct polarity
   if (is_positive(neg)) {
     fprintf(stderr, "Error: term_link called with positive term in negative position: %s\n",
@@ -585,6 +594,7 @@ void term_link(Term neg, Term pos) {
             tag_to_string(term_tag(pos)));
     BOOM("bad redex - negative term in positive position");
   }
+#endif
 
   Term neg_var;
   switch(term_tag(pos)) {
@@ -618,22 +628,26 @@ void term_link(Term neg, Term pos) {
 
 // Push a redex (pair of terms) to the reduction bag
 void push_redex(Term neg, Term pos) {
+#ifdef SAFETY
   if (term_tag(neg) == ERA)
     BOOM("don't push ERA redex");
   if (term_tag(pos) == NUL)
     BOOM("don't push NUL redex");
   if (is_positive(neg) || is_negative(pos))
     BOOM("bad redex");
+#endif
 
   // Acquire mutex before modifying the redex bag
   pthread_mutex_lock(&redex_mutex);
 
+#ifdef SAFETY
   // Check if there's space in the bag
   if (RBAG_END + 2 > RBAG_SIZE) {
     fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
 	    RBAG_END, RBAG_SIZE);
     abort();
   }
+#endif
 
   // Store the redex in the bag
   RBAG_BUFF[RBAG_END] = neg;
@@ -821,12 +835,14 @@ bool DSUP(Term dup, Term sup) {
 
 // Duplication interaction with copyable term
 bool copy(Term dup, Term trm) {
+#ifdef SAFETY
   // Verify term polarities
   if (!is_negative(dup) || !is_positive(trm)) {
     fprintf(stderr, "Error in copy: incorrect term polarities. dup=%s, trm=%s\n",
             tag_to_string(term_tag(dup)), tag_to_string(term_tag(trm)));
     abort();
   }
+#endif
 
   Location dup_loc = term_loc(dup);
 

@@ -148,22 +148,6 @@ int main() {
   // Initialize the VM with some memory
   hvm_init(1024 * 1024 * 1024);
   hvm_reset();
-    
-  /*
-  Term l1 = pair_make(APP, 0, new_i60(20), SUB);
-  Term h1 = pair_make(APP, 0, new_i60(0), l1);
-  term_link(h1, make);
-
-  Term l2 = pair_make(APP, 0, new_i60(21), SUB);
-  Term h2 = pair_make(APP, 0, new_i60(0), l2);
-  term_link(h2, make);
-
-  Term lft = term_new(VAR, 0, port(2, term_loc(l1)));
-  Term rgt = term_new(VAR, 0, port(2, term_loc(l2)));
-  Term a1 = pair_make(APP, 0, rgt, SUB);
-  Term a0 = pair_make(APP, 0, lft, a1);
-  term_link(a0, node);
-  // */
 
   int height = 20;
   unsigned expected = ((1 << height) - 1) * (1 << height) / 2;
