@@ -37,20 +37,6 @@ bool leafFn(Term ref, Term args) {
 }
 Term leaf = new_ref(leafFn);
 
-bool makeLeafFn(Term ref, Term args) {
-  term_link(args, leaf);
-  return true;
-}
-Term makeLeaf = new_ref(makeLeafFn);
-
-bool sumLeafFn(Term ref, Term args) {
-  Term l = pair_make(LAM, 0, SUB, NUL);
-  set(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))));
-  term_link(args, l);
-  return true;
-}
-Term sumLeaf = new_ref(sumLeafFn);
-
 bool nodeFn(Term ref, Term args) {
   Term l3 = pair_make(LAM, 0, ERA, NUL);
   Term l2 = pair_make(LAM, 0, SUB, l3);
@@ -67,6 +53,69 @@ bool nodeFn(Term ref, Term args) {
   return true;
 }
 Term node = new_ref(nodeFn);
+
+bool makeLeafFn(Term ref, Term args) {
+  print_term("makeLeaf args", args);
+  term_link(args, leaf);
+  return true;
+}
+Term makeLeaf = new_ref(makeLeafFn);
+
+Term makeNode;
+bool makeFn(Term ref, Term args) {
+  Term hTrm = take(port(1, term_loc(args)));
+  print_term("make height", hTrm);
+  if (term_tag(hTrm) == I60) {
+    int h = get_i60(hTrm);
+    Term a = take(port(2, term_loc(args)));
+    if (h == 0)
+      term_link(a, makeLeaf);
+    else
+      term_link(pair_make(APP, 0, new_i60(h - 1), a), makeNode);
+  } else {
+    printf("Bad argument to 'make'\n");
+    abort();
+  }
+  return true;
+}
+Term make = new_ref(makeFn);
+
+bool makeNodeFn(Term ref, Term args) {
+  Term d0 = pair_make(DUP, 0, SUB, SUB);
+  Term h = pair_make(DUP, 0, SUB, SUB);
+  Location hLoc = term_loc(h);
+
+  Term lftA1 = pair_make(APP, 0, term_new(VAR, 0, port(1, hLoc)), SUB);
+  Term lftA0 = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(d0))), lftA1);
+  Term lft = term_new(VAR, 0, port(2, term_loc(lftA1)));
+
+  Term rgtA1 = pair_make(APP, 0, term_new(VAR, 0, port(2, hLoc)), SUB);
+  Term rgtA0 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(d0))), rgtA1);
+  Term rgt = term_new(VAR, 0, port(2, term_loc(rgtA1)));
+
+  Term nA1 = pair_make(APP, 0, rgt, SUB);
+  Term nA0 = pair_make(APP, 0, lft, nA1);
+  
+  Term l1 = pair_make(LAM, 0, h, term_new(VAR, 0, port(2, term_loc(nA1))));
+  Term l0 = pair_make(LAM, 0, d0, l1);
+
+  print_term("lftA0", lftA0);
+  print_term("rgtA0", rgtA0);
+  term_link(lftA0, make);
+  term_link(rgtA0, make);
+  term_link(nA0, node);
+  term_link(args, l0);
+  return true;
+}
+Term makeNode = new_ref(makeNodeFn);
+
+bool sumLeafFn(Term ref, Term args) {
+  Term l = pair_make(LAM, 0, SUB, NUL);
+  set(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))));
+  term_link(args, l);
+  return true;
+}
+Term sumLeaf = new_ref(sumLeafFn);
 
 Term sum;
 
@@ -100,21 +149,29 @@ int main() {
   hvm_init(1024 * 1024);
   hvm_reset();
     
+  /*
   Term l1 = pair_make(APP, 0, new_i60(20), SUB);
-  term_link(l1, leaf);
+  Term h1 = pair_make(APP, 0, new_i60(0), l1);
+  term_link(h1, make);
 
   Term l2 = pair_make(APP, 0, new_i60(21), SUB);
-  term_link(l2, leaf);
+  Term h2 = pair_make(APP, 0, new_i60(0), l2);
+  term_link(h2, make);
 
   Term lft = term_new(VAR, 0, port(2, term_loc(l1)));
   Term rgt = term_new(VAR, 0, port(2, term_loc(l2)));
   Term a1 = pair_make(APP, 0, rgt, SUB);
   Term a0 = pair_make(APP, 0, lft, a1);
   term_link(a0, node);
+  // */
+
+  Term a1 = pair_make(APP, 0, new_i60(20), SUB);
+  Term a0 = pair_make(APP, 0, new_i60(1), a1);
 
   Term n = term_new(VAR, 0, port(2, term_loc(a1)));
   Term a = pair_make(APP, 0, n, SUB);
   term_link(a, sum);
+  term_link(a0, make);
   normalize();
   print_term("result", take(port(2, term_loc(a))));
   // print_term("result", take(n));

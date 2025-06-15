@@ -95,10 +95,10 @@ typedef struct {
 } NativeArgs;
 
 // creating number terms
-#define new_i60(x) (((u64)x << TAG_SIZE) | I60)
-#define get_i60(x) (i64)((u64)x >> TAG_SIZE)
-#define get_u64(x) (i64)((u64)x >> TAG_SIZE)
-#define new_num(type, x) (((u64)x << TAG_SIZE) | type)
+#define new_i60(x) (((u64)(x) << TAG_SIZE) | I60)
+#define get_i60(x) (i64)((u64)(x) >> TAG_SIZE)
+#define get_u64(x) (i64)((u64)(x) >> TAG_SIZE)
+#define new_num(type, x) (((u64)(x) << TAG_SIZE) | type)
 
 // Function declarations
 void hvm_init(u64 size);
