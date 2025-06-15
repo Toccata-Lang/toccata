@@ -81,23 +81,26 @@ bool makeFn(Term ref, Term args) {
 Term make = new_ref(makeFn);
 
 bool makeNodeFn(Term ref, Term args) {
-  Term d0 = pair_make(DUP, 0, SUB, SUB);
+  Term newN = pair_make(OPY, OP_ADD, new_i60(1), SUB);
+  Term n = pair_make(DUP, 0, SUB, newN);
+  Location nLoc = term_loc(n);
+
   Term h = pair_make(DUP, 0, SUB, SUB);
   Location hLoc = term_loc(h);
 
-  Term lftA1 = pair_make(APP, 0, term_new(VAR, 0, port(1, hLoc)), SUB);
-  Term lftA0 = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(d0))), lftA1);
+  Term lftA1 = pair_make(APP, 0, term_new(VAR, 0, port(1, nLoc)), SUB);
+  Term lftA0 = pair_make(APP, 0, term_new(VAR, 0, port(1, hLoc)), lftA1);
   Term lft = term_new(VAR, 0, port(2, term_loc(lftA1)));
 
-  Term rgtA1 = pair_make(APP, 0, term_new(VAR, 0, port(2, hLoc)), SUB);
-  Term rgtA0 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(d0))), rgtA1);
+  Term rgtA1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(newN))), SUB);
+  Term rgtA0 = pair_make(APP, 0, term_new(VAR, 0, port(2, hLoc)), rgtA1);
   Term rgt = term_new(VAR, 0, port(2, term_loc(rgtA1)));
 
   Term nA1 = pair_make(APP, 0, rgt, SUB);
   Term nA0 = pair_make(APP, 0, lft, nA1);
   
-  Term l1 = pair_make(LAM, 0, h, term_new(VAR, 0, port(2, term_loc(nA1))));
-  Term l0 = pair_make(LAM, 0, d0, l1);
+  Term l1 = pair_make(LAM, 0, n, term_new(VAR, 0, port(2, term_loc(nA1))));
+  Term l0 = pair_make(LAM, 0, h, l1);
 
   print_term("lftA0", lftA0);
   print_term("rgtA0", rgtA0);
