@@ -144,12 +144,23 @@ bool sumFn(Term ref, Term args) {
 }
 Term sum = new_ref(sumFn);
 
-int main() {
+int main(int argc, char *argv[]) {
+  if (argc < 3) {
+    printf("\ncorrect command line is \"bench <height> <threads>\"\n");
+    exit(1);
+  }
+  
   // Initialize the VM with some memory
   hvm_init(1024 * 1024 * 1024);
   hvm_reset();
 
-  int height = 20;
+  int height = atoi(argv[1]);
+  if (height < 0) {
+    printf("\nInvalid height: %d\n", height);
+    exit(1);
+  } else {
+    printf("\nHeight: %d\n", height);
+  }
   unsigned expected = ((1 << height) - 1) * (1 << height) / 2;
 
   struct timeval start, end;

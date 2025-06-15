@@ -637,8 +637,10 @@ void push_redex(Term neg, Term pos) {
     BOOM("bad redex");
 #endif
 
+#ifndef SINGLE_THREAD
   // Acquire mutex before modifying the redex bag
   pthread_mutex_lock(&redex_mutex);
+#endif
 
 #ifdef SAFETY
   // Check if there's space in the bag
@@ -658,7 +660,9 @@ void push_redex(Term neg, Term pos) {
   pthread_cond_signal(&redex_cond);
 
   // Release mutex
+#ifndef SINGLE_THREAD
   pthread_mutex_unlock(&redex_mutex);
+#endif
 }
 
 bool stop_reducing = false;
@@ -669,7 +673,9 @@ bool pop_redex(Term* neg, Term* pos) {
   bool result = false;
 
   // Acquire mutex before accessing the redex bag
+#ifndef SINGLE_THREAD
   pthread_mutex_lock(&redex_mutex);
+#endif
 
   // Check if the bag is empty
   if (RBAG_END > 0) {
@@ -681,7 +687,9 @@ bool pop_redex(Term* neg, Term* pos) {
   }
 
   // Release mutex
+#ifndef SINGLE_THREAD
   pthread_mutex_unlock(&redex_mutex);
+#endif
 
   return result;
 }
