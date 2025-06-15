@@ -55,7 +55,6 @@ bool nodeFn(Term ref, Term args) {
 Term node = new_ref(nodeFn);
 
 bool makeLeafFn(Term ref, Term args) {
-  print_term("makeLeaf args", args);
   term_link(args, leaf);
   return true;
 }
@@ -64,7 +63,6 @@ Term makeLeaf = new_ref(makeLeafFn);
 Term makeNode;
 bool makeFn(Term ref, Term args) {
   Term hTrm = take(port(1, term_loc(args)));
-  print_term("make height", hTrm);
   if (term_tag(hTrm) == I60) {
     int h = get_i60(hTrm);
     Term a = take(port(2, term_loc(args)));
@@ -81,9 +79,10 @@ bool makeFn(Term ref, Term args) {
 Term make = new_ref(makeFn);
 
 bool makeNodeFn(Term ref, Term args) {
-  Term newN = pair_make(OPY, OP_ADD, new_i60(1), SUB);
-  Term n = pair_make(DUP, 0, SUB, newN);
-  Location nLoc = term_loc(n);
+  Term rgtN = pair_make(OPY, OP_ADD, new_i60(1), SUB);
+  Term lftN = pair_make(DUP, 0, SUB, rgtN);
+  Term dblN = pair_make(OPY, OP_MUL, new_i60(2), lftN);
+  Location nLoc = term_loc(lftN);
 
   Term h = pair_make(DUP, 0, SUB, SUB);
   Location hLoc = term_loc(h);
@@ -92,18 +91,16 @@ bool makeNodeFn(Term ref, Term args) {
   Term lftA0 = pair_make(APP, 0, term_new(VAR, 0, port(1, hLoc)), lftA1);
   Term lft = term_new(VAR, 0, port(2, term_loc(lftA1)));
 
-  Term rgtA1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(newN))), SUB);
+  Term rgtA1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(rgtN))), SUB);
   Term rgtA0 = pair_make(APP, 0, term_new(VAR, 0, port(2, hLoc)), rgtA1);
   Term rgt = term_new(VAR, 0, port(2, term_loc(rgtA1)));
 
   Term nA1 = pair_make(APP, 0, rgt, SUB);
   Term nA0 = pair_make(APP, 0, lft, nA1);
   
-  Term l1 = pair_make(LAM, 0, n, term_new(VAR, 0, port(2, term_loc(nA1))));
+  Term l1 = pair_make(LAM, 0, dblN, term_new(VAR, 0, port(2, term_loc(nA1))));
   Term l0 = pair_make(LAM, 0, h, l1);
 
-  print_term("lftA0", lftA0);
-  print_term("rgtA0", rgtA0);
   term_link(lftA0, make);
   term_link(rgtA0, make);
   term_link(nA0, node);
@@ -149,7 +146,7 @@ Term sum = new_ref(sumFn);
 
 int main() {
   // Initialize the VM with some memory
-  hvm_init(1024 * 1024);
+  hvm_init(1024 * 1024 * 1024);
   hvm_reset();
     
   /*
@@ -168,8 +165,11 @@ int main() {
   term_link(a0, node);
   // */
 
-  Term a1 = pair_make(APP, 0, new_i60(20), SUB);
-  Term a0 = pair_make(APP, 0, new_i60(1), a1);
+  int height = 20;
+  unsigned expected = ((1 << height) - 1) * (1 << height) / 2;
+
+  Term a1 = pair_make(APP, 0, new_i60(0), SUB);
+  Term a0 = pair_make(APP, 0, new_i60(height), a1);
 
   Term n = term_new(VAR, 0, port(2, term_loc(a1)));
   Term a = pair_make(APP, 0, n, SUB);
@@ -177,6 +177,8 @@ int main() {
   term_link(a0, make);
   normalize();
   print_term("result", take(port(2, term_loc(a))));
+  printf("exptd: %u\n", expected);
+  printf("interactions: %u\n", reduced);
   // print_term("result", take(n));
 
   printf("alloced pairs: %d\n", alloced);

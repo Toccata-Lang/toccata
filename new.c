@@ -1038,7 +1038,9 @@ interactionFn interactions[16][16] = {
   { POS_INTERACTIONS }  // LAZ  + {+ -}
 };
 
+unsigned reduced = 0;
 bool interact(Term neg, Term pos) {
+  reduced++;
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
 

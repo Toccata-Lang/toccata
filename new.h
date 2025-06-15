@@ -37,6 +37,7 @@ typedef u64 Term;
 
 // Global VM state
 extern int alloced;
+extern unsigned reduced;
 extern u64 RNOD_END;
 extern u64 RBAG_END;
 extern bool stop_reducing;
