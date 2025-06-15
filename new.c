@@ -1213,3 +1213,19 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     break;
   }
 }
+
+/*
+void spawn_threads_equal_to_cores() {
+    long num_cores = 1; // sysconf(_SC_NPROCESSORS_ONLN);, tmp
+    if (num_cores < 1) {
+        perror("sysconf");
+        exit(EXIT_FAILURE);
+    }
+
+    pthread_t threads[num_cores];
+
+    for (long i = 0; i < num_cores; i++) {
+        pthread_create(&threads[i], NULL, thread_function, (void*)i);
+    }
+}
+// */

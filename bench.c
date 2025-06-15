@@ -1,7 +1,7 @@
 #include "new.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
+#include <sys/time.h>
 
 // Print contents of RBAG_BUFF between start and end locations
 void print_rbag(Location start, Location end) {
@@ -152,6 +152,11 @@ int main() {
   int height = 20;
   unsigned expected = ((1 << height) - 1) * (1 << height) / 2;
 
+  struct timeval start, end;
+  double elapsed;
+
+  gettimeofday(&start, NULL);
+
   Term a1 = pair_make(APP, 0, new_i60(0), SUB);
   Term a0 = pair_make(APP, 0, new_i60(height), a1);
 
@@ -160,9 +165,14 @@ int main() {
   term_link(a, sum);
   term_link(a0, make);
   normalize();
+
+  gettimeofday(&end, NULL);
+  elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
+
   print_term("result", take(port(2, term_loc(a))));
   printf("exptd: %u\n", expected);
   printf("interactions: %u\n", reduced);
+  printf("MIPS: %f\n", reduced / elapsed / 1000000);
   // print_term("result", take(n));
 
   printf("alloced pairs: %d\n", alloced);
