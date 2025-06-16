@@ -149,6 +149,23 @@ void *boom(char *msg, char *file, int line) {
   abort();
 }
 
+int threadCount = 1;
+
+void spawn_threads() {
+  /*
+    long num_cores = 1; // sysconf(_SC_NPROCESSORS_ONLN);, tmp
+    if (num_cores < 1) {
+    perror("sysconf");
+    exit(EXIT_FAILURE);
+    }
+    // */
+
+  pthread_t threads[threadCount];
+  for (long i = 0; i < threadCount; i++) {
+    pthread_create(&threads[i], NULL, normalize, (void*)i);
+  }
+}
+
 // Initialize the virtual machine with a given heap size
 void hvm_init(u64 size) {
   BUFF = (a64*)calloc(size, sizeof(a64));
@@ -746,8 +763,8 @@ bool DNEG(Term neg, Term sup) {
   Term dp2 = pair_make(SUP, sup_lab,
 		       term_new(VAR, 0, port(2, term_loc(cn1))),
 		       term_new(VAR, 0, port(2, term_loc(cn2))));
-  term_link(dp1, arg);
   move(ret, dp2);
+  term_link(dp1, arg);
   term_link(cn1, tm1);
   term_link(cn2, tm2);
   return true;
@@ -756,8 +773,8 @@ bool DNEG(Term neg, Term sup) {
 // Application-Null interaction
 bool appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
-  term_link(ERA, take(port(1, app_loc)));
   move(port(2, app_loc), NUL);
+  term_link(ERA, take(port(1, app_loc)));
   return true;
 }
 
@@ -897,15 +914,15 @@ bool appref(Term app, Term ref) {
 
 bool appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
-  term_link(ERA, take(port(1, app_loc)));
   move(port(2, app_loc), num);
+  term_link(ERA, take(port(1, app_loc)));
   return true;
 }
 
 bool opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
-  term_link(ERA, take(port(1, op_loc)));
   move(port(2, op_loc), nul);
+  term_link(ERA, take(port(1, op_loc)));
   return true;
 }
 
@@ -1075,7 +1092,8 @@ bool interact(Term neg, Term pos) {
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
-void normalize(void) {
+void *normalize(void *v) {
+  printf("normalizing\n");
   Term neg, pos;
 
   // Process redexes until the stack is empty
@@ -1084,7 +1102,7 @@ void normalize(void) {
     interact(neg, pos);
   }
 
-  return;
+  return NULL;
 }
 
 Term argsNet(NativeArgs *args) {
@@ -1222,18 +1240,3 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   }
 }
 
-/*
-void spawn_threads_equal_to_cores() {
-    long num_cores = 1; // sysconf(_SC_NPROCESSORS_ONLN);, tmp
-    if (num_cores < 1) {
-        perror("sysconf");
-        exit(EXIT_FAILURE);
-    }
-
-    pthread_t threads[num_cores];
-
-    for (long i = 0; i < num_cores; i++) {
-        pthread_create(&threads[i], NULL, thread_function, (void*)i);
-    }
-}
-// */

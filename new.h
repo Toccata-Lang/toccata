@@ -38,6 +38,7 @@ typedef u64 Term;
 // Global VM state
 extern int alloced;
 extern unsigned reduced;
+extern int threadCount;
 extern u64 RNOD_END;
 extern u64 RBAG_END;
 extern bool stop_reducing;
@@ -132,7 +133,7 @@ bool pop_redex(Term* neg, Term* pos);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
-void normalize(void);
+void *normalize(void *v);
 
 typedef bool (*interactionFn)(Term a, Term b);
 #define new_ref(x) (((u64)x + REF))

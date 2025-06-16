@@ -1,6 +1,7 @@
 #include "new.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/time.h>
 
 // Print contents of RBAG_BUFF between start and end locations
@@ -71,7 +72,7 @@ bool makeFn(Term ref, Term args) {
     else
       term_link(pair_make(APP, 0, new_i60(h - 1), a), makeNode);
   } else {
-    printf("Bad argument to 'make'\n");
+    print_term("Bad argument to 'make'", hTrm);
     abort();
   }
   return true;
@@ -144,6 +145,31 @@ bool sumFn(Term ref, Term args) {
 }
 Term sum = new_ref(sumFn);
 
+struct timeval startTime, endTime;
+double elapsed;
+int height;
+unsigned expected;
+
+bool endFn(Term ref, Term args) {
+  Term rTrm = take(port(1, args));
+  print_term("result term", rTrm);
+  if (term_tag(rTrm) == VAR) {
+    swap(term_loc(rTrm), pair_make(SUB, 1, args, ref));
+  }
+  if (term_tag(rTrm) == I60) {
+    gettimeofday(&endTime, NULL);
+    elapsed = (endTime.tv_sec - startTime.tv_sec) + (endTime.tv_usec - startTime.tv_usec) / 1000000.0;
+
+    printf("exptd: %u\n", expected);
+    printf("interactions: %u\n", reduced);
+    printf("MIPS: %f\n", reduced / elapsed / 1000000);
+    printf("alloced pairs: %d\n", alloced);
+  }
+  exit(0);
+  return true;
+}
+Term end = new_ref(endFn);
+
 int main(int argc, char *argv[]) {
   if (argc < 3) {
     printf("\ncorrect command line is \"bench <height> <threads>\"\n");
@@ -154,39 +180,37 @@ int main(int argc, char *argv[]) {
   hvm_init(1024 * 1024 * 1024);
   hvm_reset();
 
-  int height = atoi(argv[1]);
+  height = atoi(argv[1]);
   if (height < 0) {
     printf("\nInvalid height: %d\n", height);
     exit(1);
   } else {
     printf("\nHeight: %d\n", height);
   }
-  unsigned expected = ((1 << height) - 1) * (1 << height) / 2;
+  expected = ((1 << height) - 1) * (1 << height) / 2;
 
-  struct timeval start, end;
-  double elapsed;
+  threadCount = atoi(argv[2]);
 
-  gettimeofday(&start, NULL);
+  gettimeofday(&startTime, NULL);
 
   Term a1 = pair_make(APP, 0, new_i60(0), SUB);
   Term a0 = pair_make(APP, 0, new_i60(height), a1);
 
   Term n = term_new(VAR, 0, port(2, term_loc(a1)));
   Term a = pair_make(APP, 0, n, SUB);
+
+  // TODO: order is important here. Make it not be.
+  term_link(pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB), end);
   term_link(a, sum);
   term_link(a0, make);
-  normalize();
 
-  gettimeofday(&end, NULL);
-  elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
+  spawn_threads();
 
-  print_term("result", take(port(2, term_loc(a))));
-  printf("exptd: %u\n", expected);
-  printf("interactions: %u\n", reduced);
-  printf("MIPS: %f\n", reduced / elapsed / 1000000);
-  // print_term("result", take(n));
-
-  printf("alloced pairs: %d\n", alloced);
+  // do nothing, slowly
+  while(1) {
+    printf("sleeping\n");
+    sleep(1);
+  }
 
   return 0;
 }
