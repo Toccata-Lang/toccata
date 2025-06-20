@@ -51,6 +51,7 @@ void print_free_list(void);   // For debugging
 void print_raw_term(Term t);
 void print_term(const char* prefix, Term term);
 void print_buff(Location start, Location end);
+char *refName(Term ref);
 
 // Tags for different term types
 #define VAL 0x00 // positive native value
@@ -134,6 +135,8 @@ bool pop_redex(Term* neg, Term* pos);
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
 void *normalize(void *v);
+void spawn_threads();
+extern pthread_t threads[];
 
 typedef bool (*interactionFn)(Term a, Term b);
 #define new_ref(x) (((u64)x + REF))

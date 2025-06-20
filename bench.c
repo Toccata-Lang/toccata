@@ -61,18 +61,39 @@ bool makeLeafFn(Term ref, Term args) {
 }
 Term makeLeaf = new_ref(makeLeafFn);
 
+Term defer(Term ref, Term args) {
+  Term rTrm = get(port(1, args));
+  if (term_tag(rTrm) == VAR) {
+    rTrm = take(term_loc(rTrm));
+    if (term_tag(rTrm) == VAR) {
+      set(port(1, term_loc(args)), rTrm);
+      Term deferred = pair_make(SUB, 1, args, ref);
+      rTrm = swap(term_loc(rTrm), deferred);
+      if (term_tag(rTrm) == SUB && rTrm != SUB)
+	BOOM("Definitely shouldn't happen");
+      else if (rTrm != SUB)
+	pair_free(deferred);
+    }
+  }
+  return rTrm;
+}
+
 Term makeNode;
 bool makeFn(Term ref, Term args) {
-  Term hTrm = take(port(1, term_loc(args)));
-  if (term_tag(hTrm) == I60) {
+  Term hTrm = get(port(1, term_loc(args)));
+  if (term_tag(hTrm) == I60 || term_tag(get(term_loc(hTrm))) == I60) {
+    hTrm = take(port(1, term_loc(args)));
     int h = get_i60(hTrm);
     Term a = take(port(2, term_loc(args)));
     if (h == 0)
       term_link(a, makeLeaf);
     else
       term_link(pair_make(APP, 0, new_i60(h - 1), a), makeNode);
+  } else if (term_tag(hTrm) == VAR && get(term_loc(hTrm)) == SUB) {
+    swap(port(1, term_loc(args)), pair_make(SUB, 1, args, ref));
   } else {
     print_term("Bad argument to 'make'", hTrm);
+    print_term("args", args);
     abort();
   }
   return true;
@@ -148,24 +169,25 @@ Term sum = new_ref(sumFn);
 struct timeval startTime, endTime;
 double elapsed;
 int height;
-unsigned expected;
+unsigned long long expected;
 
 bool endFn(Term ref, Term args) {
-  Term rTrm = take(port(1, args));
-  print_term("result term", rTrm);
-  if (term_tag(rTrm) == VAR) {
-    swap(term_loc(rTrm), pair_make(SUB, 1, args, ref));
-  }
+  Term rTrm = defer(ref, args);
   if (term_tag(rTrm) == I60) {
     gettimeofday(&endTime, NULL);
     elapsed = (endTime.tv_sec - startTime.tv_sec) + (endTime.tv_usec - startTime.tv_usec) / 1000000.0;
 
-    printf("exptd: %u\n", expected);
+    print_term("result", rTrm);
+    printf("exptd: %llu\n", expected);
     printf("interactions: %u\n", reduced);
     printf("MIPS: %f\n", reduced / elapsed / 1000000);
     printf("alloced pairs: %d\n", alloced);
+    exit(0);
+  } else {
+    pthread_mutex_lock(&redex_mutex);
+    print_term("bad result", rTrm);
+    abort();
   }
-  exit(0);
   return true;
 }
 Term end = new_ref(endFn);
@@ -190,6 +212,7 @@ int main(int argc, char *argv[]) {
   expected = ((1 << height) - 1) * (1 << height) / 2;
 
   threadCount = atoi(argv[2]);
+  printf("Threads: %d\n", threadCount);
 
   gettimeofday(&startTime, NULL);
 
@@ -198,19 +221,41 @@ int main(int argc, char *argv[]) {
 
   Term n = term_new(VAR, 0, port(2, term_loc(a1)));
   Term a = pair_make(APP, 0, n, SUB);
+  Term a3 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB);
 
-  // TODO: order is important here. Make it not be.
-  term_link(pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB), end);
-  term_link(a, sum);
+  term_link(a3, end);
   term_link(a0, make);
+  term_link(a, sum);
+
+  // normalize(NULL);
 
   spawn_threads();
-
-  // do nothing, slowly
-  while(1) {
-    printf("sleeping\n");
-    sleep(1);
+  for(int i = 0; i < threadCount; i++) {
+    pthread_join(threads[i], NULL);
   }
 
   return 0;
+}
+
+char *refName(Term ref) {
+  if (ref == leaf)
+    return "leaf";
+  else if (ref == node)
+    return "node";
+  else if (ref == makeLeaf)
+    return "makeLeaf";
+  else if (ref == make)
+    return "make";
+  else if (ref == makeNode)
+    return "makeNode";
+  else if (ref == sumLeaf)
+    return "sumLeaf";
+  else if (ref == sumNode)
+    return "sumNode";
+  else if (ref == sum)
+    return "sum";
+  else if (ref == end)
+    return "end";
+  else
+    return "unknown";
 }

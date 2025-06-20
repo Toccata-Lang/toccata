@@ -37,11 +37,14 @@ void print_raw_term(Term t) {
     switch(term_tag(t)) {
     case VAL:
     case NUL:
-    case REF:
     case ERA:
     case I60:
     case F60:
       printf("%s %x", tag_to_string(tag), lab);
+      break;
+
+    case REF:
+      printf("REF %s", refName(t));
       break;
 
     default:
@@ -57,7 +60,6 @@ void print_term(const char* prefix, Term term) {
   printf("  Tag: %s (%d)\n", tag_to_string(term_tag(term)), term_tag(term));
   switch(term_tag(term)) {
   case VAL:
-  case SUB:
   case NUL:
   case REF:
   case ERA:
@@ -150,6 +152,7 @@ void *boom(char *msg, char *file, int line) {
 }
 
 int threadCount = 1;
+pthread_t threads[200];
 
 void spawn_threads() {
   /*
@@ -160,7 +163,6 @@ void spawn_threads() {
     }
     // */
 
-  pthread_t threads[threadCount];
   for (long i = 0; i < threadCount; i++) {
     pthread_create(&threads[i], NULL, normalize, (void*)i);
   }
@@ -286,7 +288,7 @@ void pair_free(Location loc) {
   alloced--;
 
   // Clear the second cell
-  set(loc + 1, 0);
+  atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
 
   // Atomically update FREE_LIST
   Location expected, desired;
@@ -402,10 +404,31 @@ Location port(u64 n, Location x) {
   return n + x - 1;
 }
 
+// Get term at location
+Term get(Location loc) {
+  return atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+}
+
 // Atomic swap operation
 Term swap(Location loc, Term term) {
+#ifdef SAFETY
+  if (term == 0)
+    BOOM("bad swap");
+#endif
   Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
-  return result;
+  if (term_tag(result) == SUB && result != SUB) {
+    Term neg = get(port(1, term_loc(result)));
+    Term pos = get(port(2, term_loc(result)));
+    push_redex(neg, pos);
+    pair_free(term_loc(result));
+    return SUB;
+  } else
+    return result;
+}
+
+// Set term at location
+void set(Location loc, Term term) {
+  swap(loc, term);
 }
 
 Term take(Location loc) {
@@ -416,7 +439,7 @@ Term take(Location loc) {
     taken = get(loc);
     takenTag = term_tag(taken);
     if (takenTag != SUB) {
-      set(loc, 0);
+      atomic_store_explicit(&BUFF[loc], 0, memory_order_relaxed);
       if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
 	pair_free(loc & 0xFFFFFFFE);
       }
@@ -463,16 +486,6 @@ bool is_negative(Term term) {
   default:
     return false;
   }
-}
-
-// Get term at location
-Term get(Location loc) {
-  return atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
-}
-
-// Set term at location
-void set(Location loc, Term term) {
-  atomic_store_explicit(&BUFF[loc], term, memory_order_relaxed);
 }
 
 // Create a new pair with given tag, label, and terms
@@ -595,6 +608,28 @@ void move(Location neg_loc, Term pos) {
   }
 }
 
+bool DEFR(Term neg, Term var) {
+  // 'var' was the result of a 'take', so it points to a SUB term
+  // that needs to hold a deferred redex of 'neg' and 'var'
+  var = take(term_loc(var));
+  if (term_tag(var) == VAR) {
+    Term deferred = pair_make(SUB, 1, neg, var);
+    var = swap(term_loc(var), deferred);
+    if (term_tag(var) == SUB) {
+      if (var != SUB)
+	BOOM("This shouldn't happen, should it?");
+      else
+	return true;
+    } else {
+      pair_free(term_loc(deferred));
+      return interact(neg, var);
+    }
+  } else {
+    return interact(neg, var);
+  }
+  return true;
+}
+
 // Link two terms together
 // Push a redex (pair of terms) to the reduction bag
 void term_link(Term neg, Term pos) {
@@ -613,12 +648,29 @@ void term_link(Term neg, Term pos) {
   }
 #endif
 
-  Term neg_var;
   switch(term_tag(pos)) {
   case VAR:
-    neg_var = swap(term_loc(pos), neg);
-    if (term_tag(neg_var) != SUB) {
-      move(term_loc(pos), neg_var);
+    if (1) {
+      Term val = take(term_loc(pos));
+      switch(term_tag(val)) {
+      case VAR: 
+	if (1) {
+	  Term deferred = pair_make(SUB, 1, neg, val);
+	  val = swap(term_loc(val), deferred);
+	  if (term_tag(val) == SUB) {
+	    if (val != SUB)
+	      BOOM("This shouldn't happen, should it?");
+	  } else {
+	    pair_free(term_loc(deferred));
+	    term_link(neg, val);
+	  }
+	}
+	break;
+
+      default:
+	term_link(neg, val);
+	break;
+      }
     }
     break;
 
@@ -671,14 +723,17 @@ void push_redex(Term neg, Term pos) {
   // Store the redex in the bag
   RBAG_BUFF[RBAG_END] = neg;
   RBAG_BUFF[RBAG_END + 1] = pos;
-  RBAG_END += 2;
 
   // Signal that a redex is available
-  pthread_cond_signal(&redex_cond);
-
-  // Release mutex
 #ifndef SINGLE_THREAD
+  if (RBAG_END == 0)
+    pthread_cond_signal(&redex_cond);
+  RBAG_END += 2;
+ 
+  // Release mutex
   pthread_mutex_unlock(&redex_mutex);
+#else
+  RBAG_END += 2;
 #endif
 }
 
@@ -695,13 +750,26 @@ bool pop_redex(Term* neg, Term* pos) {
 #endif
 
   // Check if the bag is empty
-  if (RBAG_END > 0) {
-    // Get the redex from the bag (LIFO order - pop from the end)
-    RBAG_END -= 2;
-    *neg = RBAG_BUFF[RBAG_END];
-    *pos = RBAG_BUFF[RBAG_END + 1];
-    result = true;
+  while (RBAG_END <= 0) {
+#ifndef SINGLE_THREAD
+    printf("waiting\n");
+    pthread_cond_wait(&redex_cond, &redex_mutex);
+    printf("signaled\n");
+#else
+    return false;
+#endif
   }
+
+  // Get the redex from the bag (LIFO order - pop from the end)
+  RBAG_END -= 2;
+  *neg = RBAG_BUFF[RBAG_END];
+  *pos = RBAG_BUFF[RBAG_END + 1];
+  result = true;
+
+#ifdef SAFETY
+  if (*neg == 0 || *pos == 0)
+    abort();
+#endif
 
   // Release mutex
 #ifndef SINGLE_THREAD
@@ -949,7 +1017,7 @@ bool subnul(Term sub, Term nul) {
 bool XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
   Term arg = swap(port(1, opx_loc), num);
-  term_link(term_new(OPY, term_lab(opx), opx_loc), arg);
+  term_link(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
   return true;
 }
 
@@ -1040,11 +1108,11 @@ bool ABRT(Term neg, Term pos) {
 // VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60  F60  LAZ
 
 #define OPX_INTERACTIONS\
-  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
+  &ABRT,&DEFR,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define OPY_INTERACTIONS						\
-  &ABRT,&ABRT,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
+  &ABRT,&DEFR,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define ERA_INTERACTIONS						\
@@ -1052,7 +1120,7 @@ bool ABRT(Term neg, Term pos) {
 // VAL   VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS						\
-  &ABRT,&ABRT,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
+  &ABRT,&DEFR,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
 // VAL   VAR   SUB    NUL    ERA    LAM    APP    REF    VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
 
 #define DUP_INTERACTIONS						\
@@ -1093,7 +1161,6 @@ bool interact(Term neg, Term pos) {
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
 void *normalize(void *v) {
-  printf("normalizing\n");
   Term neg, pos;
 
   // Process redexes until the stack is empty
