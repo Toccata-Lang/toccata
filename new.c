@@ -193,14 +193,12 @@ void hvm_init(u64 size) {
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
-    fprintf(stderr, "Failed to initialize mutex\n");
-    abort();
+    BOOM("Failed to initialize mutex\n");
   }
 
   // Initialize condition variable for redex signaling
   if (pthread_cond_init(&redex_cond, NULL) != 0) {
-    fprintf(stderr, "Failed to initialize condition variable\n");
-    abort();
+    BOOM("Failed to initialize condition variable\n");
   }
 }
 
@@ -408,7 +406,8 @@ Location port(u64 n, Location x) {
 
 // Get term at location
 Term get(Location loc) {
-  return atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+  Term result = atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+  return result;
 }
 
 // Atomic swap operation
@@ -577,6 +576,39 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 }
 
 // Move a positive term into a negative location
+void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
+  Term neg = swap(neg_loc, pos);
+#ifdef SAFETY
+  if (is_negative(pos)) {
+    char s[50];
+    sprintf(s,"trying to move a negative to location %.3x: %p", neg_loc, (void *)neg);
+    BOOM(s);
+  }
+  if (is_positive(neg)) {
+    char s[50];
+    sprintf(s,"found positive at move target %.3x: %p", neg_loc, (void *)neg);
+    BOOM(s);
+  }
+#endif
+  if (term_tag(neg) == SUB) {
+    if (term_lab(neg) > 0) {
+      // If SUB has a location, link the pair at that location
+      Location sub_loc = term_loc(neg);
+
+      // Get the terms at the SUB location
+      Term sub_neg = get(port(1, sub_loc));
+      Term sub_pos = get(port(2, sub_loc));
+
+      // Link the terms - use the first term in the pair (which should be a negative term)
+      // and the positive term that was moved to the SUB location
+      store_redex(pairs, sub_neg, sub_pos);
+    }
+  } else {
+    pos = take(neg_loc);
+    store_redex(pairs, neg, pos);
+  }
+}
+
 void move(Location neg_loc, Term pos) {
   Term neg = swap(neg_loc, pos);
 #ifdef SAFETY
@@ -695,20 +727,50 @@ void term_link(Term neg, Term pos) {
   }
 }
 
-
+interactionFn interactions[16][16];
+bool ABRT(Term neg, Term pos);
 
 // Push a redex (pair of terms) to the reduction bag
+void fast_push(Term neg, Term pos) {
+#ifdef SAFETY
+  // Check if there's space in the bag
+  if (RBAG_END + 2 > RBAG_SIZE) {
+    fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
+	    RBAG_END, RBAG_SIZE);
+    abort();
+  }
+#endif
+
+  // Store the redex in the bag
+  RBAG_BUFF[RBAG_END] = neg;
+  RBAG_BUFF[RBAG_END + 1] = pos;
+
+  // Signal that a redex is available
+#ifndef SINGLE_THREAD
+  if (RBAG_END == 0)
+    pthread_cond_signal(&redex_cond);
+#endif
+  RBAG_END += 2;
+}
+
 void push_redex(Term neg, Term pos) {
 #ifdef SAFETY
   if (neg == 0 && pos == 0)
     // shutdown the threads
     neg = 0;
-  else if (term_tag(neg) == ERA)
+  else if (term_tag(neg) == ERA) {
+    pthread_mutex_lock(&redex_mutex);
     BOOM("don't push ERA redex");
-  else if (term_tag(pos) == NUL)
+  } else if (term_tag(pos) == NUL) {
+    pthread_mutex_lock(&redex_mutex);
     BOOM("don't push NUL redex");
-  else if (is_positive(neg) || is_negative(pos))
+  } else if (is_positive(neg) || is_negative(pos)) {
+    pthread_mutex_lock(&redex_mutex);
     BOOM("bad redex");
+  } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
+    pthread_mutex_lock(&redex_mutex);
+    BOOM("bad redex");
+  }
 #endif
 
 #ifndef SINGLE_THREAD
@@ -791,6 +853,86 @@ bool pop_redex(Term* neg, Term* pos) {
   return result;
 }
 
+void link_redexes(Pairs *pairs) {
+  if (pairs == NULL || pairs->count == 0)
+    return;
+
+  Pairs newPairs;
+  newPairs.count = 0;
+
+#ifndef SINGLE_THREAD
+  pthread_mutex_lock(&redex_mutex);
+#endif
+  for (int i = 0; i < pairs->count; i++) {
+    Term neg = pairs->rdxs[i][0];
+    Term pos = pairs->rdxs[i][1];
+
+    switch(term_tag(neg)) {
+    case ERA:
+      newPairs.rdxs[newPairs.count][0] = neg;
+      newPairs.rdxs[newPairs.count++][1] = pos;
+      break;
+
+    default:
+      switch(term_tag(pos)) {
+      case I60:
+      case F60:
+      case NUL:
+	newPairs.rdxs[newPairs.count][0] = neg;
+	newPairs.rdxs[newPairs.count++][1] = pos;
+	break;
+
+      case VAR:
+	if (1) {
+	  Term val = take(term_loc(pos));
+	  switch(term_tag(val)) {
+	  case I60:
+	  case F60:
+	  case NUL:
+	    newPairs.rdxs[newPairs.count][0] = neg;
+	    newPairs.rdxs[newPairs.count++][1] = pos;
+	    break;
+
+	  case VAR:
+	    if (1) {
+	      Term deferred = pair_make(SUB, 1, neg, val);
+	      val = swap(term_loc(val), deferred);
+	      if (term_tag(val) == SUB) {
+		if (val != SUB)
+		  BOOM("This shouldn't happen, should it?");
+	      } else {
+		pair_free(term_loc(deferred));
+		fast_push(neg, val);
+	      }
+	    }
+	    break;
+
+	  default:
+	    fast_push(neg, val);
+	    break;
+	  }
+	}
+	break;
+
+      default:
+	fast_push(neg, pos);
+	break;
+      }
+    }
+  }
+#ifndef SINGLE_THREAD
+  pthread_cond_signal(&redex_cond);
+  pthread_mutex_unlock(&redex_mutex);
+#endif
+
+  for (int i = 0; i < newPairs.count; i++) {
+    Term neg = newPairs.rdxs[i][0];
+    Term pos = newPairs.rdxs[i][1];
+
+    interact(neg, pos);
+  }
+}
+
 // Application-Lambda interaction
 bool applam(Term app, Term lam) {
   Location app_loc = term_loc(app);
@@ -819,8 +961,25 @@ bool applam(Term app, Term lam) {
   return true;
 }
 
+void store_redex(Pairs *pairs, Term neg, Term pos) {
+#ifdef SAFETY
+  if (neg == 0 && pos == 0)
+    // shutdown the threads
+    neg = 0;
+  else if (is_positive(neg) || is_negative(pos)) {
+    BOOM("bad redex");
+  } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
+    BOOM("bad redex");
+  }
+#endif
+
+  pairs->rdxs[pairs->count][0] = neg;
+  pairs->rdxs[pairs->count++][1] = pos;
+}
+
 // Distribure a negative term
 bool DNEG(Term neg, Term sup) {
+  printf("DNEG\n");
   Tag neg_tag = term_tag(neg);
   Lab sup_lab = term_lab(sup);
   Lab neg_lab = term_lab(neg);
@@ -843,10 +1002,13 @@ bool DNEG(Term neg, Term sup) {
   Term dp2 = pair_make(SUP, sup_lab,
 		       term_new(VAR, 0, port(2, term_loc(cn1))),
 		       term_new(VAR, 0, port(2, term_loc(cn2))));
-  move(ret, dp2);
-  term_link(cn2, tm2);
-  term_link(cn1, tm1);
-  term_link(dp1, arg);
+  Pairs pairs;
+  pairs.count = 0;
+  moveStore(ret, dp2, &pairs);
+  store_redex(&pairs, cn2, tm2);
+  store_redex(&pairs, cn1, tm1);
+  store_redex(&pairs, dp1, arg);
+  link_redexes(&pairs);
   return true;
 }
 
@@ -854,7 +1016,7 @@ bool DNEG(Term neg, Term sup) {
 bool appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
   move(port(2, app_loc), NUL);
-  term_link(ERA, take(port(1, app_loc)));
+  interact(ERA, take(port(1, app_loc)));
   return true;
 }
 
@@ -878,15 +1040,19 @@ bool DLAM(Term dup, Term lam) {
 		       term_new(SUB, 0, 0));
   set(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
   set(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
-  move(port(1, term_loc(dup)), co1);
-  move(port(2, term_loc(dup)), co2);
-  move(var, du1);
-  term_link(du2, bod);
+  Pairs pairs;
+  pairs.count = 0;
+  moveStore(port(1, term_loc(dup)), co1, &pairs);
+  moveStore(port(2, term_loc(dup)), co2, &pairs);
+  moveStore(var, du1, &pairs);
+  store_redex(&pairs, du2, bod);
+  link_redexes(&pairs);
   return true;
 }
 
 // Duplication-Superposition interaction
 bool DSUP(Term dup, Term sup) {
+  printf("DSUP\n");
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
 
@@ -929,10 +1095,13 @@ bool DSUP(Term dup, Term sup) {
 			  term_new(VAR, 0, port(2, term_loc(dup2))));
 
     // Connect the new nodes
-    term_link(dup2, sup_p2);
-    term_link(dup1, sup_p1);
-    move(dup_p1, sup1);
-    move(dup_p2, sup2);
+    Pairs pairs;
+    pairs.count = 0;
+    moveStore(dup_p1, sup1, &pairs);
+    moveStore(dup_p2, sup2, &pairs);
+    store_redex(&pairs, dup2, sup_p2);
+    store_redex(&pairs, dup1, sup_p1);
+    link_redexes(&pairs);
   }
 
   return true;
@@ -964,7 +1133,7 @@ bool copy(Term dup, Term trm) {
 // Eraser-Lambda interaction
 bool eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
-  term_link(ERA, take(port(2, lam_loc)));
+  interact(ERA, take(port(2, lam_loc)));
   move(port(1, lam_loc), NUL);
   return true;
 }
@@ -972,8 +1141,8 @@ bool eralam(Term era, Term lam) {
 // Eraser-Superposition interaction
 bool erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  term_link(ERA, take(port(2, sup_loc)));
-  term_link(ERA, take(port(1, sup_loc)));
+  interact(ERA, take(port(2, sup_loc)));
+  interact(ERA, take(port(1, sup_loc)));
   return true;
 }
 
@@ -995,14 +1164,14 @@ bool appref(Term app, Term ref) {
 bool appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
   move(port(2, app_loc), num);
-  term_link(ERA, take(port(1, app_loc)));
+  interact(ERA, take(port(1, app_loc)));
   return true;
 }
 
 bool opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
   move(port(2, op_loc), nul);
-  term_link(ERA, take(port(1, op_loc)));
+  interact(ERA, take(port(1, op_loc)));
   return true;
 }
 
@@ -1016,11 +1185,11 @@ bool subnul(Term sub, Term nul) {
 
     // Take the first port and link it with NUL
     Term t = take(port(1, sub_loc));
-    term_link(t, NUL);
+    interact(t, NUL);
 
     // Take the second port and link it with ERA
     t = take(port(2, sub_loc));
-    term_link(ERA, t);
+    interact(ERA, t);
   }
 
   return true;

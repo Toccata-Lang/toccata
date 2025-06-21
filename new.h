@@ -97,6 +97,11 @@ typedef struct {
   Term args[MAX_ARGS + 2];
 } NativeArgs;
 
+typedef struct {
+  unsigned count;
+  Term rdxs[100][2];
+} Pairs;
+
 // creating number terms
 #define new_i60(x) (((u64)(x) << TAG_SIZE) | I60)
 #define get_i60(x) (i64)((u64)(x) >> TAG_SIZE)
@@ -127,10 +132,11 @@ void set(Location loc, Term term);
 Term take(Location loc);
 Term pair_make(Tag tag, Lab lab, Term fst, Term snd);
 void term_link(Term neg, Term pos);
-void move(Location neg_loc, Term pos);
 bool interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
+void store_redex(Pairs *pairs, Term neg, Term pos);
+void link_redexes(Pairs *pairs);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed

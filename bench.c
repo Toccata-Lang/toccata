@@ -128,10 +128,13 @@ bool makeNodeFn(Term ref, Term args) {
   Term l1 = pair_make(LAM, 0, dblN, term_new(VAR, 0, port(2, term_loc(nA1))));
   Term l0 = pair_make(LAM, 0, h, l1);
 
-  term_link(args, l0);
-  term_link(lftA0, make);
-  term_link(nA0, node);
-  term_link(rgtA0, make);
+  Pairs pairs;
+  pairs.count = 0;
+  store_redex(&pairs, args, l0);
+  store_redex(&pairs, lftA0, make);
+  store_redex(&pairs, nA0, node);
+  store_redex(&pairs, rgtA0, make);
+  link_redexes(&pairs);
   return true;
 }
 Term makeNode = new_ref(makeNodeFn);
@@ -154,9 +157,12 @@ bool sumNodeFn(Term ref, Term args) {
   Term sumLft = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l0))), SUB);
   Term sumRgt = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l1))), s);
   set(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))));
-  term_link(sumRgt, sum);
-  term_link(args, l0);
-  term_link(sumLft, sum);
+  Pairs pairs;
+  pairs.count = 0;
+  store_redex(&pairs, sumRgt, sum);
+  store_redex(&pairs, args, l0);
+  store_redex(&pairs, sumLft, sum);
+  link_redexes(&pairs);
   return true;
 }
 Term sumNode = new_ref(sumNodeFn);
@@ -252,9 +258,12 @@ int main(int argc, char *argv[]) {
     Term a = pair_make(APP, 0, n, SUB);
     Term a3 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB);
 
-    term_link(a0, make);
-    term_link(a, sum);
-    term_link(a3, end);
+    Pairs pairs;
+    pairs.count = 0;
+    store_redex(&pairs, a0, make);
+    store_redex(&pairs, a, sum);
+    store_redex(&pairs, a3, end);
+    link_redexes(&pairs);
 
     // normalize(NULL);
 
