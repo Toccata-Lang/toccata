@@ -36,8 +36,8 @@ typedef u64 Term;
 #define EMPTY_FREE_LIST 0xFFFFFFFF
 
 // Global VM state
-extern int alloced;
-extern unsigned reduced;
+extern a64 alloced;
+extern a64 reduced;
 extern int threadCount;
 extern u64 RNOD_END;
 extern u64 RBAG_END;

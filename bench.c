@@ -187,12 +187,18 @@ bool endFn(Term ref, Term args) {
     pair_free(term_loc(args));
     print_term("result", rTrm);
     printf("exptd: %llu\n", expected);
-    printf("interactions: %u\n", reduced);
+    printf("interactions: %lu\n", reduced);
     printf("MIPS: %f\n", reduced / elapsed / 1000000);
-    printf("alloced pairs: %d\n", alloced);
+    printf("elapsed: %f\n", elapsed);
+    printf("alloced pairs: %lu\n", alloced);
+    if (alloced != 0) {
+      print_buff(0, 50);
+      abort();
+    }
 #ifndef SINGLE_THREAD
-    for (int i = 0; i < threadCount; i++)
+    for (int i = 0; i < threadCount; i++) {
       push_redex(0, 0);
+    }
 #endif
     break;
 
@@ -218,7 +224,6 @@ int main(int argc, char *argv[]) {
   
   // Initialize the VM with some memory
   hvm_init(1024 * 1024 * 1024);
-  hvm_reset();
 
   height = atoi(argv[1]);
   if (height < 0) {
@@ -236,7 +241,8 @@ int main(int argc, char *argv[]) {
   printf("Running single thread\n");
 #endif
 
-  for(int reps = 0; reps < 1; reps++) {
+  for(int reps = 0; reps < 10; reps++) {
+    hvm_reset();
     gettimeofday(&startTime, NULL);
 
     Term a1 = pair_make(APP, 0, new_i60(0), SUB);
@@ -256,7 +262,6 @@ int main(int argc, char *argv[]) {
     for(int i = 0; i < threadCount; i++) {
       pthread_join(threads[i], NULL);
     }
-    print_buff(0, 50);
   }
 
   return 0;

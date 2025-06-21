@@ -245,11 +245,11 @@ void init_free_list(u64 start, u64 end) {
   }
 }
 
-int alloced = 0;
+a64 alloced = 0;
 
 // Allocate a pair from the free list - O(1)
 Location pair_alloc(void) {
-  alloced++;
+  atomic_fetch_add_explicit(&alloced, 1, memory_order_relaxed);
 
   // Get a pair from the free list and update FREE_LIST atomically
   Location expected = atomic_load(&FREE_LIST);
@@ -285,7 +285,7 @@ Location pair_alloc(void) {
 
 // Free a pair by adding it to the free list - O(1)
 void pair_free(Location loc) {
-  alloced--;
+  atomic_fetch_add_explicit(&alloced, -1, memory_order_relaxed);
 
   // Clear the second cell
   atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
@@ -322,6 +322,8 @@ void hvm_reset(void) {
 
   // Initialize the free list (initially empty)
   FREE_LIST = EMPTY_FREE_LIST;
+  alloced = 0;
+  reduced = 0;
 }
 
 // Convert a tag to its string representation
@@ -1157,9 +1159,9 @@ interactionFn interactions[16][16] = {
   { POS_INTERACTIONS }  // LAZ  + {+ -}
 };
 
-unsigned reduced = 0;
+a64 reduced = 0;
 bool interact(Term neg, Term pos) {
-  reduced++;
+  atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
 
@@ -1178,6 +1180,9 @@ void *normalize(void *v) {
     // Perform the interaction
     interact(neg, pos);
   }
+  pthread_mutex_lock(&redex_mutex);
+  pthread_cond_signal(&redex_cond);
+  pthread_mutex_unlock(&redex_mutex);
 
   return NULL;
 }
