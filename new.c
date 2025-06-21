@@ -698,11 +698,14 @@ void term_link(Term neg, Term pos) {
 // Push a redex (pair of terms) to the reduction bag
 void push_redex(Term neg, Term pos) {
 #ifdef SAFETY
-  if (term_tag(neg) == ERA)
+  if (neg == 0 && pos == 0)
+    // shutdown the threads
+    neg = 0;
+  else if (term_tag(neg) == ERA)
     BOOM("don't push ERA redex");
-  if (term_tag(pos) == NUL)
+  else if (term_tag(pos) == NUL)
     BOOM("don't push NUL redex");
-  if (is_positive(neg) || is_negative(pos))
+  else if (is_positive(neg) || is_negative(pos))
     BOOM("bad redex");
 #endif
 
@@ -752,9 +755,9 @@ bool pop_redex(Term* neg, Term* pos) {
   // Check if the bag is empty
   while (RBAG_END <= 0) {
 #ifndef SINGLE_THREAD
-    printf("waiting\n");
+    // printf("waiting\n");
     pthread_cond_wait(&redex_cond, &redex_mutex);
-    printf("signaled\n");
+    // printf("signaled\n");
 #else
     return false;
 #endif
@@ -765,6 +768,13 @@ bool pop_redex(Term* neg, Term* pos) {
   *neg = RBAG_BUFF[RBAG_END];
   *pos = RBAG_BUFF[RBAG_END + 1];
   result = true;
+
+#ifndef SINGLE_THREAD
+  if (*neg == 0 && *pos == 0) {
+    pthread_mutex_unlock(&redex_mutex);
+    return false;
+  }
+#endif
 
 #ifdef SAFETY
   if (*neg == 0 || *pos == 0)
@@ -832,9 +842,9 @@ bool DNEG(Term neg, Term sup) {
 		       term_new(VAR, 0, port(2, term_loc(cn1))),
 		       term_new(VAR, 0, port(2, term_loc(cn2))));
   move(ret, dp2);
-  term_link(dp1, arg);
-  term_link(cn1, tm1);
   term_link(cn2, tm2);
+  term_link(cn1, tm1);
+  term_link(dp1, arg);
   return true;
 }
 
@@ -917,10 +927,10 @@ bool DSUP(Term dup, Term sup) {
 			  term_new(VAR, 0, port(2, term_loc(dup2))));
 
     // Connect the new nodes
+    term_link(dup2, sup_p2);
+    term_link(dup1, sup_p1);
     move(dup_p1, sup1);
     move(dup_p2, sup2);
-    term_link(dup1, sup_p1);
-    term_link(dup2, sup_p2);
   }
 
   return true;
@@ -952,16 +962,16 @@ bool copy(Term dup, Term trm) {
 // Eraser-Lambda interaction
 bool eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
-  move(port(1, lam_loc), NUL);
   term_link(ERA, take(port(2, lam_loc)));
+  move(port(1, lam_loc), NUL);
   return true;
 }
 
 // Eraser-Superposition interaction
 bool erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  term_link(ERA, take(port(1, sup_loc)));
   term_link(ERA, take(port(2, sup_loc)));
+  term_link(ERA, take(port(1, sup_loc)));
   return true;
 }
 

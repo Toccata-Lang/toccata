@@ -62,9 +62,8 @@ bool makeLeafFn(Term ref, Term args) {
 Term makeLeaf = new_ref(makeLeafFn);
 
 Term defer(Term ref, Term args) {
-  Term rTrm = get(port(1, args));
+  Term rTrm = take(port(1, term_loc(args)));
   if (term_tag(rTrm) == VAR) {
-    rTrm = take(term_loc(rTrm));
     if (term_tag(rTrm) == VAR) {
       set(port(1, term_loc(args)), rTrm);
       Term deferred = pair_make(SUB, 1, args, ref);
@@ -80,21 +79,27 @@ Term defer(Term ref, Term args) {
 
 Term makeNode;
 bool makeFn(Term ref, Term args) {
-  Term hTrm = get(port(1, term_loc(args)));
-  if (term_tag(hTrm) == I60 || term_tag(get(term_loc(hTrm))) == I60) {
-    hTrm = take(port(1, term_loc(args)));
-    int h = get_i60(hTrm);
-    Term a = take(port(2, term_loc(args)));
-    if (h == 0)
-      term_link(a, makeLeaf);
-    else
-      term_link(pair_make(APP, 0, new_i60(h - 1), a), makeNode);
-  } else if (term_tag(hTrm) == VAR && get(term_loc(hTrm)) == SUB) {
-    swap(port(1, term_loc(args)), pair_make(SUB, 1, args, ref));
-  } else {
+  Term hTrm = defer(ref, args);
+  switch(term_tag(hTrm)) {
+  case SUB:
+    return true;
+
+  case I60:
+    if (1) {
+      int h = get_i60(hTrm);
+      Term a = take(port(2, term_loc(args)));
+      if (h == 0)
+	term_link(a, makeLeaf);
+      else
+	term_link(pair_make(APP, 0, new_i60(h - 1), a), makeNode);
+    }
+    break;
+
+  default:
     print_term("Bad argument to 'make'", hTrm);
     print_term("args", args);
     abort();
+    break;
   }
   return true;
 }
@@ -123,10 +128,10 @@ bool makeNodeFn(Term ref, Term args) {
   Term l1 = pair_make(LAM, 0, dblN, term_new(VAR, 0, port(2, term_loc(nA1))));
   Term l0 = pair_make(LAM, 0, h, l1);
 
-  term_link(lftA0, make);
-  term_link(rgtA0, make);
-  term_link(nA0, node);
   term_link(args, l0);
+  term_link(lftA0, make);
+  term_link(nA0, node);
+  term_link(rgtA0, make);
   return true;
 }
 Term makeNode = new_ref(makeNodeFn);
@@ -149,9 +154,9 @@ bool sumNodeFn(Term ref, Term args) {
   Term sumLft = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l0))), SUB);
   Term sumRgt = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l1))), s);
   set(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))));
-  term_link(sumLft, sum);
   term_link(sumRgt, sum);
   term_link(args, l0);
+  term_link(sumLft, sum);
   return true;
 }
 Term sumNode = new_ref(sumNodeFn);
@@ -173,20 +178,33 @@ unsigned long long expected;
 
 bool endFn(Term ref, Term args) {
   Term rTrm = defer(ref, args);
-  if (term_tag(rTrm) == I60) {
+  switch(term_tag(rTrm)) {
+  case I60: 
     gettimeofday(&endTime, NULL);
-    elapsed = (endTime.tv_sec - startTime.tv_sec) + (endTime.tv_usec - startTime.tv_usec) / 1000000.0;
+    elapsed = (endTime.tv_sec - startTime.tv_sec) +
+      (endTime.tv_usec - startTime.tv_usec) / 1000000.0;
 
+    pair_free(term_loc(args));
     print_term("result", rTrm);
     printf("exptd: %llu\n", expected);
     printf("interactions: %u\n", reduced);
     printf("MIPS: %f\n", reduced / elapsed / 1000000);
     printf("alloced pairs: %d\n", alloced);
-    exit(0);
-  } else {
+#ifndef SINGLE_THREAD
+    for (int i = 0; i < threadCount; i++)
+      push_redex(0, 0);
+#endif
+    break;
+
+  case SUB:
+    return true;
+    break;
+
+  default:
     pthread_mutex_lock(&redex_mutex);
     print_term("bad result", rTrm);
-    abort();
+    BOOM("in 'end'");
+    break;
   }
   return true;
 }
@@ -211,27 +229,34 @@ int main(int argc, char *argv[]) {
   }
   expected = ((1 << height) - 1) * (1 << height) / 2;
 
+#ifndef SINGLE_THREAD
   threadCount = atoi(argv[2]);
   printf("Threads: %d\n", threadCount);
+#else
+  printf("Running single thread\n");
+#endif
 
-  gettimeofday(&startTime, NULL);
+  for(int reps = 0; reps < 1; reps++) {
+    gettimeofday(&startTime, NULL);
 
-  Term a1 = pair_make(APP, 0, new_i60(0), SUB);
-  Term a0 = pair_make(APP, 0, new_i60(height), a1);
+    Term a1 = pair_make(APP, 0, new_i60(0), SUB);
+    Term a0 = pair_make(APP, 0, new_i60(height), a1);
 
-  Term n = term_new(VAR, 0, port(2, term_loc(a1)));
-  Term a = pair_make(APP, 0, n, SUB);
-  Term a3 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB);
+    Term n = term_new(VAR, 0, port(2, term_loc(a1)));
+    Term a = pair_make(APP, 0, n, SUB);
+    Term a3 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB);
 
-  term_link(a3, end);
-  term_link(a0, make);
-  term_link(a, sum);
+    term_link(a0, make);
+    term_link(a, sum);
+    term_link(a3, end);
 
-  // normalize(NULL);
+    // normalize(NULL);
 
-  spawn_threads();
-  for(int i = 0; i < threadCount; i++) {
-    pthread_join(threads[i], NULL);
+    spawn_threads();
+    for(int i = 0; i < threadCount; i++) {
+      pthread_join(threads[i], NULL);
+    }
+    print_buff(0, 50);
   }
 
   return 0;
