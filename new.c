@@ -3,6 +3,7 @@
 
 // Global heap
 static a64* BUFF = NULL;
+pthread_mutex_t buff_mutex;
 static Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
 u64 RNOD_END = 0; // Only need to track the end of the node space
 static u64 RBAG_SIZE = 0x1000;
@@ -11,6 +12,7 @@ static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
 _Atomic Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
+pthread_mutex_t free_mutex;
 
 // Mutex for thread-safe redex operations
 pthread_mutex_t redex_mutex;
@@ -170,6 +172,8 @@ void spawn_threads() {
 
 // Initialize the virtual machine with a given heap size
 void hvm_init(u64 size) {
+  srand(time(NULL));
+  
   BUFF = (a64*)calloc(size, sizeof(a64));
   if (!BUFF) {
     fprintf(stderr, "Failed to allocate memory\n");
@@ -191,6 +195,14 @@ void hvm_init(u64 size) {
   // Store the size of the buffer for bounds checking in pair_alloc
   BUFF_SIZE = size;
 
+  if (pthread_mutex_init(&free_mutex, NULL) != 0) {
+    BOOM("Failed to initialize mutex\n");
+  }
+
+  if (pthread_mutex_init(&buff_mutex, NULL) != 0) {
+    BOOM("Failed to initialize mutex\n");
+  }
+
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
     BOOM("Failed to initialize mutex\n");
@@ -211,6 +223,8 @@ void hvm_free(void) {
   // Destroy mutex and condition variable
   pthread_cond_destroy(&redex_cond);
   pthread_mutex_destroy(&redex_mutex);
+  pthread_mutex_destroy(&buff_mutex);
+  pthread_mutex_destroy(&free_mutex);
   free(BUFF);
   BUFF = NULL;
 
@@ -247,27 +261,33 @@ a64 alloced = 0;
 
 // Allocate a pair from the free list - O(1)
 Location pair_alloc(void) {
-  atomic_fetch_add_explicit(&alloced, 1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&alloced, 1, memory_order_seq_cst);
 
   // Get a pair from the free list and update FREE_LIST atomically
+#ifndef SINGLE_THREAD
+  pthread_mutex_lock(&free_mutex);
+#endif
   Location expected = atomic_load(&FREE_LIST);
   Location loc, new_free_list;
   Term next;
 
-  do {
-    // If free list is empty
-    if (expected == EMPTY_FREE_LIST) {
-      // Check if we have space in the buffer
-      if (RNOD_END + 2 >= BUFF_SIZE) {
-        fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
-	  RNOD_END, BUFF_SIZE);
-        abort();
-      }
-      Location loc = RNOD_END;
-      RNOD_END += 2;
-      return loc;
+  // If free list is empty
+  if (expected == EMPTY_FREE_LIST) {
+    // Check if we have space in the buffer
+    if (RNOD_END + 2 >= BUFF_SIZE) {
+      fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
+	      RNOD_END, BUFF_SIZE);
+      abort();
     }
+    Location loc = RNOD_END;
+    RNOD_END += 2;
+#ifndef SINGLE_THREAD
+    pthread_mutex_unlock(&free_mutex);
+#endif
+    return loc;
+  }
 
+  do {
     // Get the location we want to return
     loc = expected;
 
@@ -277,17 +297,26 @@ Location pair_alloc(void) {
 
     // Try to update FREE_LIST, retry if it changed
   } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, new_free_list));
+#ifndef SINGLE_THREAD
+  pthread_mutex_unlock(&free_mutex);
+#endif
 
   return loc;
 }
 
 // Free a pair by adding it to the free list - O(1)
-void pair_free(Location loc) {
-  atomic_fetch_add_explicit(&alloced, -1, memory_order_relaxed);
+void freer(unsigned line, Location loc) {
+  atomic_fetch_add_explicit(&alloced, -1, memory_order_seq_cst);
 
   // Clear the second cell
-  atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
+#ifndef SINGLE_THREAD
+  atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_seq_cst);
+  pthread_mutex_lock(&free_mutex);
+#else
+  atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_seq_cst);
+#endif
 
+  // printf("free pair: %.3x at line: %u\n", loc, line);
   // Atomically update FREE_LIST
   Location expected, desired;
   do {
@@ -300,6 +329,9 @@ void pair_free(Location loc) {
     // Try to update FREE_LIST to point to our node
     desired = loc;
   } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, desired));
+#ifndef SINGLE_THREAD
+  pthread_mutex_unlock(&free_mutex);
+#endif  
 }
 
 void hvm_reset(void) {
@@ -406,7 +438,11 @@ Location port(u64 n, Location x) {
 
 // Get term at location
 Term get(Location loc) {
-  Term result = atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+#ifndef SINGLE_THREAD
+  Term result = atomic_load_explicit(&BUFF[loc], memory_order_seq_cst);
+#else
+  Term result = atomic_load_explicit(&BUFF[loc], memory_order_seq_cst);
+#endif
   return result;
 }
 
@@ -416,12 +452,18 @@ Term swap(Location loc, Term term) {
   if (term == 0)
     BOOM("bad swap");
 #endif
-  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
+  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_seq_cst);
   if (term_tag(result) == SUB && result != SUB) {
+    // #ifndef SINGLE_THREAD
+    // pthread_mutex_lock(&buff_mutex);
+    // #endif
     Term neg = get(port(1, term_loc(result)));
     Term pos = get(port(2, term_loc(result)));
     push_redex(neg, pos);
     pair_free(term_loc(result));
+    // #ifndef SINGLE_THREAD
+    // pthread_mutex_unlock(&buff_mutex);
+    // #endif
     return SUB;
   } else
     return result;
@@ -432,15 +474,19 @@ void set(Location loc, Term term) {
   swap(loc, term);
 }
 
-Term take(Location loc) {
+Term taker(unsigned line, Location loc) {
   // Take the term at the given location, replacing it with 0
   Tag takenTag;
   Term taken;
+  // #ifndef SINGLE_THREAD
+  // pthread_mutex_lock(&buff_mutex);
+  // #endif
   do {
     taken = get(loc);
     takenTag = term_tag(taken);
     if (takenTag != SUB) {
-      atomic_store_explicit(&BUFF[loc], 0, memory_order_relaxed);
+      // printf("taking: %.3x at line: %u\n", loc, line);
+      atomic_store_explicit(&BUFF[loc], 0, memory_order_seq_cst);
       if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
 	pair_free(loc & 0xFFFFFFFE);
       }
@@ -449,6 +495,9 @@ Term take(Location loc) {
       }
     }
   } while (takenTag == VAR);
+  // #ifndef SINGLE_THREAD
+  // pthread_mutex_unlock(&buff_mutex);
+  // #endif
   if (takenTag == SUB)
     return term_new(VAR, 0, loc);
   else
@@ -490,8 +539,7 @@ bool is_negative(Term term) {
 }
 
 // Create a new pair with given tag, label, and terms
-Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
-
+Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd) {
 #ifdef SAFETY
   // Check port polarities based on pair type
   switch (tag) {
@@ -572,7 +620,13 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
   set(port(1, loc), fst);
   set(port(2, loc), snd);
 
-  return term_new(tag, lab, loc);
+  Term new_pair = term_new(tag, lab, loc);
+  /*
+  printf("new pair at line %u: %s %.3x %p %p\n", line, tag_to_string(tag), loc,
+	 (void *)get(port(1, loc)),
+	 (void *)get(port(2, loc)));
+  // */
+  return new_pair;
 }
 
 // Move a positive term into a negative location
@@ -592,12 +646,18 @@ void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
 #endif
   if (term_tag(neg) == SUB) {
     if (term_lab(neg) > 0) {
+      // #ifndef SINGLE_THREAD
+      // pthread_mutex_lock(&buff_mutex);
+      // #endif
       // If SUB has a location, link the pair at that location
       Location sub_loc = term_loc(neg);
 
       // Get the terms at the SUB location
       Term sub_neg = get(port(1, sub_loc));
       Term sub_pos = get(port(2, sub_loc));
+      // #ifndef SINGLE_THREAD
+      // pthread_mutex_unlock(&buff_mutex);
+      // #endif
 
       // Link the terms - use the first term in the pair (which should be a negative term)
       // and the positive term that was moved to the SUB location
@@ -624,13 +684,13 @@ void move(Location neg_loc, Term pos) {
   }
 #endif
   if (term_tag(neg) == SUB) {
-    if (term_lab(neg) > 0) {
+    if (neg != SUB) {
       // If SUB has a location, link the pair at that location
       Location sub_loc = term_loc(neg);
 
       // Get the terms at the SUB location
-      Term sub_neg = get(port(1, sub_loc));
-      Term sub_pos = get(port(2, sub_loc));
+      Term sub_neg = take(port(1, sub_loc));
+      Term sub_pos = take(port(2, sub_loc));
 
       // Link the terms - use the first term in the pair (which should be a negative term)
       // and the positive term that was moved to the SUB location
@@ -643,23 +703,24 @@ void move(Location neg_loc, Term pos) {
 }
 
 bool DEFR(Term neg, Term var) {
-  // 'var' was the result of a 'take', so it points to a SUB term
-  // that needs to hold a deferred redex of 'neg' and 'var'
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
     Term deferred = pair_make(SUB, 1, neg, var);
-    var = swap(term_loc(var), deferred);
-    if (term_tag(var) == SUB) {
-      if (var != SUB)
+    Term newVar = swap(term_loc(var), deferred);
+    if (term_tag(newVar) == SUB) {
+      if (newVar != SUB)
 	BOOM("This shouldn't happen, should it?");
       else
 	return true;
     } else {
       pair_free(term_loc(deferred));
-      return interact(neg, var);
+      take(term_loc(var));
+      term_link(neg, newVar);
+      return true;
     }
   } else {
-    return interact(neg, var);
+    term_link(neg, var);
+    return true;
   }
   return true;
 }
@@ -685,18 +746,20 @@ void term_link(Term neg, Term pos) {
   switch(term_tag(pos)) {
   case VAR:
     if (1) {
+      // printf("linking: %p %p\n", (void *)neg, (void *)pos);
       Term val = take(term_loc(pos));
       switch(term_tag(val)) {
       case VAR: 
 	if (1) {
 	  Term deferred = pair_make(SUB, 1, neg, val);
-	  val = swap(term_loc(val), deferred);
-	  if (term_tag(val) == SUB) {
-	    if (val != SUB)
+	  Term newVal = swap(term_loc(val), deferred);
+	  if (term_tag(newVal) == SUB) {
+	    if (newVal != SUB)
 	      BOOM("This shouldn't happen, should it?");
 	  } else {
 	    pair_free(term_loc(deferred));
-	    term_link(neg, val);
+	    take(term_loc(val));
+	    term_link(neg, newVal);
 	  }
 	}
 	break;
@@ -708,17 +771,17 @@ void term_link(Term neg, Term pos) {
     }
     break;
 
-  case I60:
-  case F60:
-  case NUL:
-    interact(neg, pos);
-    break;
+    // case I60:
+    // case F60:
+    // case NUL:
+    // interact(neg, pos);
+    // break;
 
   default:
     switch(term_tag(neg)) {
-    case ERA:
-      interact(neg, pos);
-      break;
+      // case ERA:
+      // interact(neg, pos);
+      // break;
 
     default:
       push_redex(neg, pos);
@@ -755,12 +818,12 @@ void fast_push(Term neg, Term pos) {
 
 void push_redex(Term neg, Term pos) {
 #ifdef SAFETY
-  if (neg == 0 && pos == 0)
+  if (neg == 0 && pos == 0) {
     // shutdown the threads
     neg = 0;
-  else if (term_tag(neg) == ERA) {
-    pthread_mutex_lock(&redex_mutex);
-    BOOM("don't push ERA redex");
+    // } else if (term_tag(neg) == ERA) {
+    // pthread_mutex_lock(&redex_mutex);
+    // BOOM("don't push ERA redex");
   } else if (term_tag(pos) == NUL) {
     pthread_mutex_lock(&redex_mutex);
     BOOM("don't push NUL redex");
@@ -805,6 +868,57 @@ void push_redex(Term neg, Term pos) {
 }
 
 bool stop_reducing = false;
+
+bool pick_redex(Term* neg, Term* pos) {
+  bool result = false;
+
+#ifndef SINGLE_THREAD
+  // Acquire mutex before accessing the redex bag
+  pthread_mutex_lock(&redex_mutex);
+#endif
+
+  // Check if the bag is empty
+  while (RBAG_END <= 0) {
+#ifndef SINGLE_THREAD
+    // printf("waiting\n");
+    pthread_cond_wait(&redex_cond, &redex_mutex);
+    // printf("signaled\n");
+#else
+    return false;
+#endif
+  }
+
+  // Get the redex from the bag (LIFO order - pop from the end)
+  unsigned i = (rand() % RBAG_END) & 0xFFFFFFFE;
+  
+  *neg = RBAG_BUFF[i];
+  *pos = RBAG_BUFF[i + 1];
+  for (;i < RBAG_END; i++) {
+    RBAG_BUFF[i] = RBAG_BUFF[i + 2];
+    RBAG_BUFF[i + 1] = RBAG_BUFF[i + 3];
+  }
+  RBAG_END -= 2;
+  result = true;
+
+#ifndef SINGLE_THREAD
+  if (*neg == 0 && *pos == 0) {
+    pthread_mutex_unlock(&redex_mutex);
+    return false;
+  }
+#endif
+
+#ifdef SAFETY
+  if (*neg == 0 || *pos == 0)
+    abort();
+#endif
+
+  // Release mutex
+#ifndef SINGLE_THREAD
+  pthread_mutex_unlock(&redex_mutex);
+#endif
+
+  return result;
+}
 
 // Pop a redex (pair of terms) from the reduction bag
 // Returns false if the bag is empty, true otherwise
@@ -929,7 +1043,8 @@ void link_redexes(Pairs *pairs) {
     Term neg = newPairs.rdxs[i][0];
     Term pos = newPairs.rdxs[i][1];
 
-    interact(neg, pos);
+    // TODO: possibly should be a call to interact
+    push_redex(neg, pos);
   }
 }
 
@@ -1016,7 +1131,7 @@ bool DNEG(Term neg, Term sup) {
 bool appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
   move(port(2, app_loc), NUL);
-  interact(ERA, take(port(1, app_loc)));
+  term_link(ERA, take(port(1, app_loc)));
   return true;
 }
 
@@ -1069,8 +1184,11 @@ bool DSUP(Term dup, Term sup) {
     Term sup_p2 = take(port(2, sup_loc));
 
     // Direct connection of the ports
-    move(dup_p1, sup_p1);
-    move(dup_p2, sup_p2);
+    Pairs pairs;
+    pairs.count = 0;
+    moveStore(dup_p1, sup_p1, &pairs);
+    moveStore(dup_p2, sup_p2, &pairs);
+    link_redexes(&pairs);
   } else {
     // Get the ports of the DUP node
     Location dup_loc = term_loc(dup);
@@ -1125,15 +1243,18 @@ bool copy(Term dup, Term trm) {
   Location dp2_loc = port(2, dup_loc);
 
   // put trm in both copy ports
-  move(dp1_loc, trm);
-  move(dp2_loc, trm);
+  Pairs pairs;
+  pairs.count = 0;
+  moveStore(dp1_loc, trm, &pairs);
+  moveStore(dp2_loc, trm, &pairs);
+  link_redexes(&pairs);
   return true;
 }
 
 // Eraser-Lambda interaction
 bool eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
-  interact(ERA, take(port(2, lam_loc)));
+  term_link(ERA, take(port(2, lam_loc)));
   move(port(1, lam_loc), NUL);
   return true;
 }
@@ -1141,8 +1262,8 @@ bool eralam(Term era, Term lam) {
 // Eraser-Superposition interaction
 bool erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  interact(ERA, take(port(2, sup_loc)));
-  interact(ERA, take(port(1, sup_loc)));
+  term_link(ERA, take(port(2, sup_loc)));
+  term_link(ERA, take(port(1, sup_loc)));
   return true;
 }
 
@@ -1164,14 +1285,14 @@ bool appref(Term app, Term ref) {
 bool appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
   move(port(2, app_loc), num);
-  interact(ERA, take(port(1, app_loc)));
+  term_link(ERA, take(port(1, app_loc)));
   return true;
 }
 
 bool opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
   move(port(2, op_loc), nul);
-  interact(ERA, take(port(1, op_loc)));
+  term_link(ERA, take(port(1, op_loc)));
   return true;
 }
 
@@ -1185,11 +1306,11 @@ bool subnul(Term sub, Term nul) {
 
     // Take the first port and link it with NUL
     Term t = take(port(1, sub_loc));
-    interact(t, NUL);
+    term_link(t, NUL);
 
     // Take the second port and link it with ERA
     t = take(port(2, sub_loc));
-    interact(ERA, t);
+    term_link(ERA, t);
   }
 
   return true;
@@ -1329,13 +1450,36 @@ interactionFn interactions[16][16] = {
 };
 
 a64 reduced = 0;
-bool interact(Term neg, Term pos) {
-  atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
+interactionFn intsERA[16] = {ERA_INTERACTIONS};
+bool interactERA(Term pos) {
+  atomic_fetch_add_explicit(&reduced, 1, memory_order_seq_cst);
+  // Gets the rule type.
+  interactionFn rule = intsERA[term_tag(pos)];
+
+  // Swaps ports if necessary.
+  rule(ERA, pos);
+  return true;
+}
+
+bool fastInteract(Term neg, Term pos) {
+  atomic_fetch_add_explicit(&reduced, 1, memory_order_seq_cst);
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
 
   // Swaps ports if necessary.
   rule(neg, pos);
+  return true;
+}
+
+bool interact(Term neg, Term pos) {
+  atomic_fetch_add_explicit(&reduced, 1, memory_order_seq_cst);
+  // Gets the rule type.
+  interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
+
+  // Swaps ports if necessary.
+  pthread_mutex_lock(&buff_mutex);
+  rule(neg, pos);
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1345,9 +1489,11 @@ void *normalize(void *v) {
   Term neg, pos;
 
   // Process redexes until the stack is empty
-  while (pop_redex(&neg, &pos)) {
+  while (pick_redex(&neg, &pos)) {
     // Perform the interaction
+    // pthread_mutex_lock(&buff_mutex);
     interact(neg, pos);
+    // pthread_mutex_unlock(&buff_mutex);
   }
   pthread_mutex_lock(&redex_mutex);
   pthread_cond_signal(&redex_cond);

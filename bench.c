@@ -64,14 +64,15 @@ Term makeLeaf = new_ref(makeLeafFn);
 Term defer(Term ref, Term args) {
   Term rTrm = take(port(1, term_loc(args)));
   if (term_tag(rTrm) == VAR) {
-    if (term_tag(rTrm) == VAR) {
-      set(port(1, term_loc(args)), rTrm);
-      Term deferred = pair_make(SUB, 1, args, ref);
-      rTrm = swap(term_loc(rTrm), deferred);
-      if (term_tag(rTrm) == SUB && rTrm != SUB)
-	BOOM("Definitely shouldn't happen");
-      else if (rTrm != SUB)
-	pair_free(deferred);
+    set(port(1, term_loc(args)), rTrm);
+    Term deferred = pair_make(SUB, 1, args, ref);
+    Term newTrm = swap(term_loc(rTrm), deferred);
+    if (term_tag(newTrm) == SUB && newTrm != SUB)
+      BOOM("Definitely shouldn't happen");
+    else if (newTrm != SUB) {
+      take(term_loc(rTrm));
+      pair_free(deferred);
+      return newTrm;
     }
   }
   return rTrm;
@@ -81,7 +82,7 @@ Term makeNode;
 bool makeFn(Term ref, Term args) {
   Term hTrm = defer(ref, args);
   switch(term_tag(hTrm)) {
-  case SUB:
+  case VAR:
     return true;
 
   case I60:
@@ -185,6 +186,10 @@ unsigned long long expected;
 bool endFn(Term ref, Term args) {
   Term rTrm = defer(ref, args);
   switch(term_tag(rTrm)) {
+  case VAR:
+    return true;
+    break;
+
   case I60: 
     gettimeofday(&endTime, NULL);
     elapsed = (endTime.tv_sec - startTime.tv_sec) +
@@ -197,19 +202,18 @@ bool endFn(Term ref, Term args) {
     printf("MIPS: %f\n", reduced / elapsed / 1000000);
     printf("elapsed: %f\n", elapsed);
     printf("alloced pairs: %lu\n", alloced);
+    if (expected != get_i60(rTrm)) {
+      abort();
+    }
     if (alloced != 0) {
       print_buff(0, 50);
-      abort();
+      exit(1);
     }
 #ifndef SINGLE_THREAD
     for (int i = 0; i < threadCount; i++) {
       push_redex(0, 0);
     }
 #endif
-    break;
-
-  case SUB:
-    return true;
     break;
 
   default:
@@ -247,7 +251,7 @@ int main(int argc, char *argv[]) {
   printf("Running single thread\n");
 #endif
 
-  for(int reps = 0; reps < 10; reps++) {
+  for(int reps = 0; reps < 10000; reps++) {
     hvm_reset();
     gettimeofday(&startTime, NULL);
 

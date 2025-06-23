@@ -129,10 +129,10 @@ bool is_negative(Term term);
 // Get term at location
 Term get(Location loc);
 void set(Location loc, Term term);
-Term take(Location loc);
-Term pair_make(Tag tag, Lab lab, Term fst, Term snd);
+Term taker(unsigned line, Location loc);
 void term_link(Term neg, Term pos);
 bool interact(Term neg, Term pos);
+bool interactERA(Term pos);
 void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
 void store_redex(Pairs *pairs, Term neg, Term pos);
@@ -155,5 +155,10 @@ Term ref_make(interactionFn fn);
 
 void *boom(char *msg, char *file, int line);
 #define BOOM(msg) boom(msg, __FILE__, __LINE__)
-
+#define take(l) taker(__LINE__, (l))
+#define pair_free(l) freer(__LINE__, (l))
+void freer(unsigned line, Location loc);
+Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd);
+#define pair_make(t, l, f, s) pair_maker(__LINE__, (t), (l), (f), (s))
 #endif // NEW_H
+
