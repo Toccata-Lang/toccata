@@ -703,6 +703,7 @@ void move(Location neg_loc, Term pos) {
 }
 
 bool DEFR(Term neg, Term var) {
+  pthread_mutex_lock(&buff_mutex);
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
     Term deferred = pair_make(SUB, 1, neg, var);
@@ -710,18 +711,23 @@ bool DEFR(Term neg, Term var) {
     if (term_tag(newVar) == SUB) {
       if (newVar != SUB)
 	BOOM("This shouldn't happen, should it?");
-      else
+      else {
+	pthread_mutex_unlock(&buff_mutex);
 	return true;
+      }
     } else {
       pair_free(term_loc(deferred));
       take(term_loc(var));
       term_link(neg, newVar);
+      pthread_mutex_unlock(&buff_mutex);
       return true;
     }
   } else {
     term_link(neg, var);
+    pthread_mutex_unlock(&buff_mutex);
     return true;
   }
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1050,6 +1056,7 @@ void link_redexes(Pairs *pairs) {
 
 // Application-Lambda interaction
 bool applam(Term app, Term lam) {
+  pthread_mutex_lock(&buff_mutex);
   Location app_loc = term_loc(app);
   Location lam_loc = term_loc(lam);
 
@@ -1073,6 +1080,7 @@ bool applam(Term app, Term lam) {
   // Move terms to their new locations
   move(var_loc, arg_val);
   move(ret_loc, bod_val);
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1130,13 +1138,16 @@ bool DNEG(Term neg, Term sup) {
 // Application-Null interaction
 bool appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
+  pthread_mutex_lock(&buff_mutex);
   move(port(2, app_loc), NUL);
   term_link(ERA, take(port(1, app_loc)));
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
 // Duplication-Lambda interaction
 bool DLAM(Term dup, Term lam) {
+  pthread_mutex_lock(&buff_mutex);
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
   Location var = port(1, lam_loc);
@@ -1162,6 +1173,7 @@ bool DLAM(Term dup, Term lam) {
   moveStore(var, du1, &pairs);
   store_redex(&pairs, du2, bod);
   link_redexes(&pairs);
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1245,9 +1257,11 @@ bool copy(Term dup, Term trm) {
   // put trm in both copy ports
   Pairs pairs;
   pairs.count = 0;
+  pthread_mutex_lock(&buff_mutex);
   moveStore(dp1_loc, trm, &pairs);
   moveStore(dp2_loc, trm, &pairs);
   link_redexes(&pairs);
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1255,7 +1269,9 @@ bool copy(Term dup, Term trm) {
 bool eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
   term_link(ERA, take(port(2, lam_loc)));
+  pthread_mutex_lock(&buff_mutex);
   move(port(1, lam_loc), NUL);
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1278,21 +1294,27 @@ Term ref_make(interactionFn fn) {
 bool appref(Term app, Term ref) {
   interactionFn fnPtr;
   fnPtr = (interactionFn)(ref & ~0xF);
+  pthread_mutex_lock(&buff_mutex);
   fnPtr(ref, app);
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
 bool appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
+  pthread_mutex_lock(&buff_mutex);
   move(port(2, app_loc), num);
   term_link(ERA, take(port(1, app_loc)));
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
 bool opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
+  pthread_mutex_lock(&buff_mutex);
   move(port(2, op_loc), nul);
   term_link(ERA, take(port(1, op_loc)));
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1318,8 +1340,10 @@ bool subnul(Term sub, Term nul) {
 
 bool XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
+  pthread_mutex_lock(&buff_mutex);
   Term arg = swap(port(1, opx_loc), num);
   term_link(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1363,6 +1387,7 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
   }
 
 bool YNUM(Term opy, Term num) {
+  pthread_mutex_lock(&buff_mutex);
   Location op_loc = term_loc(opy);
   Term x = take(port(1, op_loc));
   Tag y_type = term_tag(num);
@@ -1376,6 +1401,7 @@ bool YNUM(Term opy, Term num) {
   }
 
   move(ret, new_num(y_type, res));
+  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1477,9 +1503,7 @@ bool interact(Term neg, Term pos) {
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
 
   // Swaps ports if necessary.
-  pthread_mutex_lock(&buff_mutex);
   rule(neg, pos);
-  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
