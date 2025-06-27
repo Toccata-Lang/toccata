@@ -62,15 +62,16 @@ bool makeLeafFn(Term ref, Term args) {
 Term makeLeaf = new_ref(makeLeafFn);
 
 Term defer(Term ref, Term args) {
-  Term rTrm = take(port(1, term_loc(args)));
+  Location argLoc = port(1, term_loc(args));
+  Term rTrm = take(argLoc);
   if (term_tag(rTrm) == VAR) {
-    set(port(1, term_loc(args)), rTrm);
-    Term deferred = pair_make(SUB, 1, args, ref);
-    Term newTrm = swap(term_loc(rTrm), deferred);
-    if (term_tag(newTrm) == SUB && newTrm != SUB)
-      BOOM("Definitely shouldn't happen");
-    else if (newTrm != SUB) {
-      take(term_loc(rTrm));
+    set(argLoc, rTrm);
+    Location varLoc = term_loc(rTrm);
+    Term deferred = pair_make(SUB, 6, args, ref);
+    Term newTrm = swap(varLoc, deferred);
+    if (newTrm != SUB) {
+      freeLoc(argLoc);
+      freeLoc(varLoc);
       pair_free(deferred);
       return newTrm;
     }

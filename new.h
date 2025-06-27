@@ -130,6 +130,7 @@ bool is_negative(Term term);
 Term get(Location loc);
 void set(Location loc, Term term);
 Term taker(unsigned line, Location loc);
+void freeLoc(Location loc);
 void term_link(Term neg, Term pos);
 bool interact(Term neg, Term pos);
 bool interactERA(Term pos);

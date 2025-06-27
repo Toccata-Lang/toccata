@@ -438,11 +438,7 @@ Location port(u64 n, Location x) {
 
 // Get term at location
 Term get(Location loc) {
-#ifndef SINGLE_THREAD
   Term result = atomic_load_explicit(&BUFF[loc], memory_order_seq_cst);
-#else
-  Term result = atomic_load_explicit(&BUFF[loc], memory_order_seq_cst);
-#endif
   return result;
 }
 
@@ -454,16 +450,10 @@ Term swap(Location loc, Term term) {
 #endif
   Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_seq_cst);
   if (term_tag(result) == SUB && result != SUB) {
-    // #ifndef SINGLE_THREAD
-    // pthread_mutex_lock(&buff_mutex);
-    // #endif
     Term neg = get(port(1, term_loc(result)));
     Term pos = get(port(2, term_loc(result)));
     push_redex(neg, pos);
     pair_free(term_loc(result));
-    // #ifndef SINGLE_THREAD
-    // pthread_mutex_unlock(&buff_mutex);
-    // #endif
     return SUB;
   } else
     return result;
@@ -474,30 +464,35 @@ void set(Location loc, Term term) {
   swap(loc, term);
 }
 
+void freeLoc(Location loc) {
+  atomic_store_explicit(&BUFF[loc], 0, memory_order_seq_cst);
+  if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
+    pair_free(loc & 0xFFFFFFFE);
+  }
+}
+
 Term taker(unsigned line, Location loc) {
   // Take the term at the given location, replacing it with 0
   Tag takenTag;
   Term taken;
-  // #ifndef SINGLE_THREAD
-  // pthread_mutex_lock(&buff_mutex);
-  // #endif
   do {
     taken = get(loc);
     takenTag = term_tag(taken);
     if (takenTag != SUB) {
+      freeLoc(loc);
       // printf("taking: %.3x at line: %u\n", loc, line);
-      atomic_store_explicit(&BUFF[loc], 0, memory_order_seq_cst);
-      if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
-	pair_free(loc & 0xFFFFFFFE);
-      }
       if (takenTag == VAR) {
 	loc = term_loc(taken);
       }
+#ifdef SAFETY
+    } else if (taken != SUB) {
+      char msg[200];
+      sprintf(msg, "should never happen! %p", (void *)taken);
+      BOOM(msg);
+#endif
     }
   } while (takenTag == VAR);
-  // #ifndef SINGLE_THREAD
-  // pthread_mutex_unlock(&buff_mutex);
-  // #endif
+
   if (takenTag == SUB)
     return term_new(VAR, 0, loc);
   else
@@ -631,6 +626,9 @@ Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd) {
 
 // Move a positive term into a negative location
 void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
+#ifndef SINGLE_THREAD
+  // pthread_mutex_lock(&buff_mutex);
+#endif
   Term neg = swap(neg_loc, pos);
 #ifdef SAFETY
   if (is_negative(pos)) {
@@ -644,29 +642,13 @@ void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
     BOOM(s);
   }
 #endif
-  if (term_tag(neg) == SUB) {
-    if (term_lab(neg) > 0) {
-      // #ifndef SINGLE_THREAD
-      // pthread_mutex_lock(&buff_mutex);
-      // #endif
-      // If SUB has a location, link the pair at that location
-      Location sub_loc = term_loc(neg);
-
-      // Get the terms at the SUB location
-      Term sub_neg = get(port(1, sub_loc));
-      Term sub_pos = get(port(2, sub_loc));
-      // #ifndef SINGLE_THREAD
-      // pthread_mutex_unlock(&buff_mutex);
-      // #endif
-
-      // Link the terms - use the first term in the pair (which should be a negative term)
-      // and the positive term that was moved to the SUB location
-      store_redex(pairs, sub_neg, sub_pos);
-    }
-  } else {
+  if (term_tag(neg) != SUB) {
     pos = take(neg_loc);
     store_redex(pairs, neg, pos);
   }
+#ifndef SINGLE_THREAD
+  // pthread_mutex_unlock(&buff_mutex);
+#endif
 }
 
 void move(Location neg_loc, Term pos) {
@@ -703,31 +685,21 @@ void move(Location neg_loc, Term pos) {
 }
 
 bool DEFR(Term neg, Term var) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
-    Term deferred = pair_make(SUB, 1, neg, var);
-    Term newVar = swap(term_loc(var), deferred);
-    if (term_tag(newVar) == SUB) {
-      if (newVar != SUB)
-	BOOM("This shouldn't happen, should it?");
-      else {
-	pthread_mutex_unlock(&buff_mutex);
-	return true;
-      }
-    } else {
+    Location varLoc = term_loc(var);
+    Term deferred = pair_make(SUB, 2, neg, var);
+    Term newVar = swap(varLoc, deferred);
+    if (term_tag(newVar) != SUB) {
       pair_free(term_loc(deferred));
-      take(term_loc(var));
+      freeLoc(varLoc);
       term_link(neg, newVar);
-      pthread_mutex_unlock(&buff_mutex);
-      return true;
     }
   } else {
     term_link(neg, var);
-    pthread_mutex_unlock(&buff_mutex);
-    return true;
   }
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -750,32 +722,33 @@ void term_link(Term neg, Term pos) {
 #endif
 
   switch(term_tag(pos)) {
-  case VAR:
-    if (1) {
-      // printf("linking: %p %p\n", (void *)neg, (void *)pos);
-      Term val = take(term_loc(pos));
-      switch(term_tag(val)) {
-      case VAR: 
-	if (1) {
-	  Term deferred = pair_make(SUB, 1, neg, val);
-	  Term newVal = swap(term_loc(val), deferred);
-	  if (term_tag(newVal) == SUB) {
-	    if (newVal != SUB)
-	      BOOM("This shouldn't happen, should it?");
-	  } else {
-	    pair_free(term_loc(deferred));
-	    take(term_loc(val));
-	    term_link(neg, newVal);
-	  }
-	}
-	break;
-
-      default:
-	term_link(neg, val);
-	break;
-      }
-    }
-    break;
+    // TODO: put this optimization back in
+    // case VAR:
+    // if (1) {
+      // // printf("linking: %p %p\n", (void *)neg, (void *)pos);
+      // Term val = take(term_loc(pos));
+      // switch(term_tag(val)) {
+      // case VAR: 
+    // if (1) {
+    // Term deferred = pair_make(SUB, 3, neg, val);
+    // Term newVal = swap(term_loc(val), deferred);
+    // if (term_tag(newVal) == SUB) {
+    // if (newVal != SUB)
+    // BOOM("This shouldn't happen, should it?");
+    // } else {
+    // pair_free(term_loc(deferred));
+    // freeLoc(term_loc(val));
+    // term_link(neg, newVal);
+    // }
+    // }
+    // break;
+    // 
+    // default:
+    // term_link(neg, val);
+    // break;
+    // }
+    // }
+    // break;
 
     // case I60:
     // case F60:
@@ -1015,7 +988,7 @@ void link_redexes(Pairs *pairs) {
 
 	  case VAR:
 	    if (1) {
-	      Term deferred = pair_make(SUB, 1, neg, val);
+	      Term deferred = pair_make(SUB, 4, neg, val);
 	      val = swap(term_loc(val), deferred);
 	      if (term_tag(val) == SUB) {
 		if (val != SUB)
@@ -1056,7 +1029,7 @@ void link_redexes(Pairs *pairs) {
 
 // Application-Lambda interaction
 bool applam(Term app, Term lam) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   Location app_loc = term_loc(app);
   Location lam_loc = term_loc(lam);
 
@@ -1080,7 +1053,7 @@ bool applam(Term app, Term lam) {
   // Move terms to their new locations
   move(var_loc, arg_val);
   move(ret_loc, bod_val);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1114,14 +1087,14 @@ bool DNEG(Term neg, Term sup) {
   Term tm1 = take(port(1, sup_loc));
   Term tm2 = take(port(2, sup_loc));
   Term dp1 = pair_make(DUP, sup_lab,
-		       term_new(SUB, 0, 0),
-		       term_new(SUB, 0, 0));
+		       SUB,
+		       SUB);
   Term cn1 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(1, term_loc(dp1))),
-		       term_new(SUB, 0, 0));
+		       SUB);
   Term cn2 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(2, term_loc(dp1))),
-		       term_new(SUB, 0, 0));
+		       SUB);
   Term dp2 = pair_make(SUP, sup_lab,
 		       term_new(VAR, 0, port(2, term_loc(cn1))),
 		       term_new(VAR, 0, port(2, term_loc(cn2))));
@@ -1138,32 +1111,32 @@ bool DNEG(Term neg, Term sup) {
 // Application-Null interaction
 bool appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(port(2, app_loc), NUL);
   term_link(ERA, take(port(1, app_loc)));
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
 // Duplication-Lambda interaction
 bool DLAM(Term dup, Term lam) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
   Location var = port(1, lam_loc);
   Term bod = take(port(2, lam_loc));
   Term co1 = pair_make(LAM, 0,
-		       term_new(SUB, 0, 0),
+		       SUB,
 		       term_new(VAR, 0, 0));
   Term co2 = pair_make(LAM, 0,
-		       term_new(SUB, 0, 0),
+		       SUB,
 		       term_new(VAR, 0, 0));
   Term du1 = pair_make(SUP, dup_lab,
 		       term_new(VAR, 0, port(1, term_loc(co1))),
 		       term_new(VAR, 0, port(1, term_loc(co2))));
   Term du2 = pair_make(DUP, dup_lab,
-		       term_new(SUB, 0, 0),
-		       term_new(SUB, 0, 0));
+		       SUB,
+		       SUB);
   set(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
   set(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
   Pairs pairs;
@@ -1173,7 +1146,7 @@ bool DLAM(Term dup, Term lam) {
   moveStore(var, du1, &pairs);
   store_redex(&pairs, du2, bod);
   link_redexes(&pairs);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1213,8 +1186,8 @@ bool DSUP(Term dup, Term sup) {
     Term sup_p2 = take(port(2, sup_loc));
 
     // Create two new DUP nodes with the same label
-    Term dup1 = pair_make(DUP, dup_lab, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
-    Term dup2 = pair_make(DUP, dup_lab, term_new(SUB, 0, 0), term_new(SUB, 0, 0));
+    Term dup1 = pair_make(DUP, dup_lab, SUB, SUB);
+    Term dup2 = pair_make(DUP, dup_lab, SUB, SUB);
 
     // Create two new SUP nodes with the same label
     Term sup1 = pair_make(SUP, sup_lab,
@@ -1257,11 +1230,9 @@ bool copy(Term dup, Term trm) {
   // put trm in both copy ports
   Pairs pairs;
   pairs.count = 0;
-  pthread_mutex_lock(&buff_mutex);
-  moveStore(dp1_loc, trm, &pairs);
   moveStore(dp2_loc, trm, &pairs);
+  moveStore(dp1_loc, trm, &pairs);
   link_redexes(&pairs);
-  pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1269,9 +1240,9 @@ bool copy(Term dup, Term trm) {
 bool eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
   term_link(ERA, take(port(2, lam_loc)));
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(port(1, lam_loc), NUL);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1294,35 +1265,34 @@ Term ref_make(interactionFn fn) {
 bool appref(Term app, Term ref) {
   interactionFn fnPtr;
   fnPtr = (interactionFn)(ref & ~0xF);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   fnPtr(ref, app);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
 bool appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(port(2, app_loc), num);
   term_link(ERA, take(port(1, app_loc)));
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
 bool opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(port(2, op_loc), nul);
   term_link(ERA, take(port(1, op_loc)));
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
 // SUB-NUL interaction
 bool subnul(Term sub, Term nul) {
   // Check if the SUB term has a location (label > 0)
-  Lab lab = term_lab(sub);
-  if (lab > 0) {
+  if (sub != SUB) {
     // The SUB term has a location pointing to a pair
     Location sub_loc = term_loc(sub);
 
@@ -1340,10 +1310,10 @@ bool subnul(Term sub, Term nul) {
 
 bool XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   Term arg = swap(port(1, opx_loc), num);
   term_link(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1387,7 +1357,7 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
   }
 
 bool YNUM(Term opy, Term num) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   Location op_loc = term_loc(opy);
   Term x = take(port(1, op_loc));
   Tag y_type = term_tag(num);
@@ -1401,7 +1371,7 @@ bool YNUM(Term opy, Term num) {
   }
 
   move(ret, new_num(y_type, res));
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return true;
 }
 
@@ -1515,9 +1485,7 @@ void *normalize(void *v) {
   // Process redexes until the stack is empty
   while (pick_redex(&neg, &pos)) {
     // Perform the interaction
-    // pthread_mutex_lock(&buff_mutex);
     interact(neg, pos);
-    // pthread_mutex_unlock(&buff_mutex);
   }
   pthread_mutex_lock(&redex_mutex);
   pthread_cond_signal(&redex_cond);
@@ -1606,7 +1574,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	  argsStruct->args[argsStruct->count++] = args;
 	  newArgs = argsNet(argsStruct);
 	  set(port(1, term_loc(args)), arg);
-	  retry = pair_make(SUB, 0, newArgs, ref);
+	  retry = pair_make(SUB, 5, newArgs, ref);
 	  newArg = swap(term_loc(arg), retry);
 	  if (newArg != SUB) {
 	    // someone slipped the needed arg in since we last looked
