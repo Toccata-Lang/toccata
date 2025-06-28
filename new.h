@@ -41,7 +41,6 @@ extern a64 reduced;
 extern int threadCount;
 extern u64 RNOD_END;
 extern u64 RBAG_END;
-extern bool stop_reducing;
 extern _Atomic Location FREE_LIST; // Head of free list (atomic for thread safety)
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
@@ -128,12 +127,10 @@ bool is_negative(Term term);
 
 // Get term at location
 Term get(Location loc);
-void set(Location loc, Term term);
 Term taker(unsigned line, Location loc);
 void freeLoc(Location loc);
 void term_link(Term neg, Term pos);
-bool interact(Term neg, Term pos);
-bool interactERA(Term pos);
+void interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
 void store_redex(Pairs *pairs, Term neg, Term pos);
@@ -145,11 +142,8 @@ void *normalize(void *v);
 void spawn_threads();
 extern pthread_t threads[];
 
-typedef bool (*interactionFn)(Term a, Term b);
+typedef void (*interactionFn)(Term a, Term b);
 #define new_ref(x) (((u64)x + REF))
-
-// Interaction functions
-bool subnul(Term sub, Term nul);
 
 // Create a REF term with a specific interaction function
 Term ref_make(interactionFn fn);

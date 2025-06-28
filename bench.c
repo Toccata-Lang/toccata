@@ -32,7 +32,7 @@ bool leafFn(Term ref, Term args) {
   Term l2 = pair_make(LAM, 0, a0, b);
   Term l1 = pair_make(LAM, 0, ERA, l2);
   Term l0 = pair_make(LAM, 0, SUB, l1);
-  set(port(1, term_loc(a0)), term_new(VAR, 0, port(1, term_loc(l0))));
+  swap(port(1, term_loc(a0)), term_new(VAR, 0, port(1, term_loc(l0))));
   term_link(args, l0);
   return true;
 }
@@ -47,8 +47,8 @@ bool nodeFn(Term ref, Term args) {
   Term lft = term_new(VAR, 0, port(1, term_loc(l0)));
   Term a1 = pair_make(APP, 0, rgt, SUB);
   Term a0 = pair_make(APP, 0, lft, a1);
-  set(port(2, term_loc(l3)), term_new(VAR, 0, port(2, term_loc(a1))));
-  set(port(1, term_loc(l2)), a0);
+  swap(port(2, term_loc(l3)), term_new(VAR, 0, port(2, term_loc(a1))));
+  swap(port(1, term_loc(l2)), a0);
 
   term_link(args, l0);
   return true;
@@ -65,7 +65,7 @@ Term defer(Term ref, Term args) {
   Location argLoc = port(1, term_loc(args));
   Term rTrm = take(argLoc);
   if (term_tag(rTrm) == VAR) {
-    set(argLoc, rTrm);
+    swap(argLoc, rTrm);
     Location varLoc = term_loc(rTrm);
     Term deferred = pair_make(SUB, 6, args, ref);
     Term newTrm = swap(varLoc, deferred);
@@ -98,9 +98,12 @@ bool makeFn(Term ref, Term args) {
     break;
 
   default:
+#ifndef SINGLE_THREAD
+    pthread_mutex_lock(&redex_mutex);
+#endif
     print_term("Bad argument to 'make'", hTrm);
     print_term("args", args);
-    abort();
+    BOOM("log");
     break;
   }
   return true;
@@ -132,10 +135,10 @@ bool makeNodeFn(Term ref, Term args) {
 
   Pairs pairs;
   pairs.count = 0;
-  store_redex(&pairs, args, l0);
-  store_redex(&pairs, lftA0, make);
-  store_redex(&pairs, nA0, node);
-  store_redex(&pairs, rgtA0, make);
+  term_link(args, l0);
+  term_link(lftA0, make);
+  term_link(nA0, node);
+  term_link(rgtA0, make);
   link_redexes(&pairs);
   return true;
 }
@@ -143,7 +146,7 @@ Term makeNode = new_ref(makeNodeFn);
 
 bool sumLeafFn(Term ref, Term args) {
   Term l = pair_make(LAM, 0, SUB, NUL);
-  set(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))));
+  swap(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))));
   term_link(args, l);
   return true;
 }
@@ -158,12 +161,12 @@ bool sumNodeFn(Term ref, Term args) {
 
   Term sumLft = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l0))), SUB);
   Term sumRgt = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l1))), s);
-  set(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))));
+  swap(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))));
   Pairs pairs;
   pairs.count = 0;
-  store_redex(&pairs, sumRgt, sum);
-  store_redex(&pairs, args, l0);
-  store_redex(&pairs, sumLft, sum);
+  term_link(sumRgt, sum);
+  term_link(args, l0);
+  term_link(sumLft, sum);
   link_redexes(&pairs);
   return true;
 }
@@ -265,9 +268,9 @@ int main(int argc, char *argv[]) {
 
     Pairs pairs;
     pairs.count = 0;
-    store_redex(&pairs, a0, make);
-    store_redex(&pairs, a, sum);
-    store_redex(&pairs, a3, end);
+    term_link(a0, make);
+    term_link(a, sum);
+    term_link(a3, end);
     link_redexes(&pairs);
 
     // normalize(NULL);
