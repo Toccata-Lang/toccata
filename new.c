@@ -791,7 +791,7 @@ void link_redexes(Pairs *pairs) {
 }
 
 void DEFR(Term neg, Term var) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
     Location varLoc = term_loc(var);
@@ -805,22 +805,23 @@ void DEFR(Term neg, Term var) {
   } else {
     term_link(neg, var);
   }
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
 // Application-Lambda interaction
 void applam(Term app, Term lam) {
-  pthread_mutex_lock(&buff_mutex);
   Location app_loc = term_loc(app);
   Location lam_loc = term_loc(lam);
 
   // Bounds checking
+#ifdef SAFETY
   if (app_loc >= RNOD_END || lam_loc >= RNOD_END) {
     fprintf(stderr, "Invalid locations: app_loc=%u lam_loc=%u RNOD_END=%lu\n",
 	    app_loc, lam_loc, RNOD_END);
     return;
   }
+#endif
 
   // Get locations for each port
   Location arg_loc = port(1, app_loc);
@@ -833,6 +834,7 @@ void applam(Term app, Term lam) {
   Term bod_val = take(bod_loc);
 
   // Move terms to their new locations
+  pthread_mutex_lock(&buff_mutex);
   move(var_loc, arg_val);
   move(ret_loc, bod_val);
   pthread_mutex_unlock(&buff_mutex);
@@ -877,16 +879,16 @@ void DNEG(Term neg, Term sup) {
 // Application-Null interaction
 void appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(port(2, app_loc), NUL);
   term_link(ERA, take(port(1, app_loc)));
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
 // Duplication-Lambda interaction
 void DLAM(Term dup, Term lam) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
   Location var = port(1, lam_loc);
@@ -912,7 +914,7 @@ void DLAM(Term dup, Term lam) {
   move(var, du1);
   term_link(du2, bod);
   link_redexes(&pairs);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
@@ -1008,9 +1010,9 @@ void copy(Term dup, Term trm) {
 void eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
   term_link(ERA, take(port(2, lam_loc)));
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(port(1, lam_loc), NUL);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
@@ -1041,25 +1043,25 @@ void appref(Term app, Term ref) {
 
 void appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(port(2, app_loc), num);
   term_link(ERA, take(port(1, app_loc)));
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
 void opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(port(2, op_loc), nul);
   term_link(ERA, take(port(1, op_loc)));
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
 // SUB-NUL interaction
 void subnul(Term sub, Term nul) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   // Check if the SUB term has a location (label > 0)
   if (sub != SUB) {
     // The SUB term has a location pointing to a pair
@@ -1074,16 +1076,16 @@ void subnul(Term sub, Term nul) {
     term_link(ERA, t);
   }
 
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
 void XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   Term arg = swap(port(1, opx_loc), num);
   term_link(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
@@ -1127,7 +1129,7 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
   }
 
 void YNUM(Term opy, Term num) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   Location op_loc = term_loc(opy);
   Term x = take(port(1, op_loc));
   Tag y_type = term_tag(num);
@@ -1141,7 +1143,7 @@ void YNUM(Term opy, Term num) {
   }
 
   move(ret, new_num(y_type, res));
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
