@@ -11,7 +11,7 @@ u64 RBAG_END = 0; // Only need to track the end of the redex stack
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
-_Atomic Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
+Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
 pthread_mutex_t free_mutex;
 
 // interaction jump table
@@ -75,6 +75,8 @@ void write_log(Term neg, Term pos) {
     BOOM("bad redex");
   }
 #endif
+  if (rdxLog.count > 995)
+    return;
 
   rdxLog.rdxs[rdxLog.count][0] = neg;
   rdxLog.rdxs[rdxLog.count++][1] = pos;
@@ -85,9 +87,12 @@ void *boom(char *msg, char *file, int line) {
     pthread_mutex_lock(&redex_mutex);
 #endif
   fprintf(stderr, "%s at %s:%d\n", msg, file, line);
+  fprintf(stderr, "%u\n", rdxLog.count);
+  /*
   for (int i = 0; i < rdxLog.count; i++) {
     printf("rdx: %p  %p\n", (void *)rdxLog.rdxs[i][0], (void *)rdxLog.rdxs[i][1]);
   }
+  // */
   abort();
 }
 
@@ -377,39 +382,24 @@ Location pair_alloc(void) {
   pthread_mutex_lock(&free_mutex);
 #endif
   atomic_fetch_add_explicit(&alloced, 1, memory_order_seq_cst);
-  Location expected = atomic_load(&FREE_LIST);
-  Location loc, new_free_list;
-  Term next;
+  Location loc = FREE_LIST;
 
   // If free list is empty
-  if (expected == EMPTY_FREE_LIST) {
+  if (loc == EMPTY_FREE_LIST) {
     // Check if we have space in the buffer
     if (RNOD_END + 2 >= BUFF_SIZE) {
       fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
 	      RNOD_END, BUFF_SIZE);
       abort();
     }
-    Location loc = RNOD_END;
+    loc = RNOD_END;
     RNOD_END += 2;
-#ifndef SINGLE_THREAD
-    pthread_mutex_unlock(&free_mutex);
-#endif
-    return loc;
+  } else {
+    FREE_LIST = (Location)(get(loc) >> (TAG_SIZE + LAB_SIZE));
   }
-
-  do {
-    // Get the location we want to return
-    loc = expected;
-
-    // Get the next free pair location
-    next = get(loc);
-    new_free_list = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-    // Try to update FREE_LIST, retry if it changed
-  } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, new_free_list));
 #ifndef SINGLE_THREAD
   pthread_mutex_unlock(&free_mutex);
 #endif
-
   return loc;
 }
 
@@ -423,19 +413,9 @@ void freer(unsigned line, Location loc) {
   // Clear the second cell
   atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_seq_cst);
 
-  // printf("free pair: %.3x at line: %u\n", loc, line);
-  // Atomically update FREE_LIST
-  Location expected, desired;
-  do {
-    // Read the current free list head
-    expected = atomic_load(&FREE_LIST);
+  // Set up the node to point to the current head
+  atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, FREE_LIST), memory_order_seq_cst);
 
-    // Set up the node to point to the current head
-    atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, expected), memory_order_seq_cst);
-
-    // Try to update FREE_LIST to point to our node
-    desired = loc;
-  } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, desired));
 #ifndef SINGLE_THREAD
   pthread_mutex_unlock(&free_mutex);
 #endif  
@@ -612,6 +592,12 @@ Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd) {
   // Get a pair from the free list or by extending RNOD_END
   Location loc = pair_alloc();
 
+#ifdef SAFETY
+  // TODO: remove
+  if (loc & 0x1)
+    BOOM("Bad pair_alloc return");
+#endif
+
   // Store terms in their respective ports
   swap(port(1, loc), fst);
   swap(port(2, loc), snd);
@@ -713,6 +699,7 @@ void link_redexes(Pairs *pairs) {
   if (pairs == NULL || pairs->count == 0)
     return;
 
+  BOOM("link_redexes");
   Pairs newPairs;
   newPairs.count = 0;
 
@@ -1569,31 +1556,8 @@ void hvm_reset(void) {
 
   // Initialize the free list (initially empty)
   FREE_LIST = EMPTY_FREE_LIST;
-  alloced = 0;
-  reduced = 0;
-}
-
-// Reset node and bag indices
-// Initialize the free list by linking all available pairs
-void init_free_list(u64 start, u64 end) {
-  start = (start + 1) & 0xFFFFFFFe;
-  end = end & 0xFFFFFFFe;
-
-  // Clear the list initially
-  FREE_LIST = EMPTY_FREE_LIST;
-
-  // Create a linked list of free pairs
-  for (Location loc = end - 2; loc >= start; loc -= 2) {
-    // Store the current head as the 'next' pointer
-    swap(loc, term_new(NUL, 0, FREE_LIST));
-    // Mark the second cell as free
-    swap(loc + 1, 0);
-    // Update the free list head
-    FREE_LIST = loc;
-	
-    // Break if we've reached the start (needed for unsigned wrap-around)
-    if (loc == start) break;
-  }
+  atomic_store_explicit(&alloced, 0, memory_order_seq_cst);
+  atomic_store_explicit(&reduced, 0, memory_order_seq_cst);
 }
 
 // For testing only

@@ -34,6 +34,7 @@ typedef u64 Term;
 
 // Define empty free list marker
 #define EMPTY_FREE_LIST 0xFFFFFFFF
+extern Location FREE_LIST;
 
 // Global VM state
 extern a64 alloced;
