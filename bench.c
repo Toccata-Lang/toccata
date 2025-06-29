@@ -79,15 +79,7 @@ Term defer(Term ref, Term args) {
       return VAR;
     }
   } else {
-    // pthread_mutex_lock(&buff_mutex);
     Term rslt = take(port(1, term_loc(args)));
-    // pthread_mutex_unlock(&buff_mutex);
-    if (term_tag(rslt) != I60) {
-      pthread_mutex_lock(&buff_mutex);
-      print_term("args", args);
-      pthread_mutex_unlock(&buff_mutex);
-      abort();
-    }
     return rslt;
   }
 }
