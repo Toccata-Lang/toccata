@@ -32,8 +32,11 @@ void leafFn(Term ref, Term args) {
   Term l2 = pair_make(LAM, 0, a0, b);
   Term l1 = pair_make(LAM, 0, ERA, l2);
   Term l0 = pair_make(LAM, 0, SUB, l1);
-  swap(port(1, term_loc(a0)), term_new(VAR, 0, port(1, term_loc(l0))));
-  term_link(args, l0);
+  Pairs pairs;
+  pairs.count = 0;
+  swapStore(port(1, term_loc(a0)), term_new(VAR, 0, port(1, term_loc(l0))), &pairs);
+  store_redex(&pairs, args, l0);
+  link_redexes(&pairs);
   return;
 }
 Term leaf = new_ref(leafFn);
@@ -47,10 +50,12 @@ void nodeFn(Term ref, Term args) {
   Term lft = term_new(VAR, 0, port(1, term_loc(l0)));
   Term a1 = pair_make(APP, 0, rgt, SUB);
   Term a0 = pair_make(APP, 0, lft, a1);
-  swap(port(2, term_loc(l3)), term_new(VAR, 0, port(2, term_loc(a1))));
-  swap(port(1, term_loc(l2)), a0);
-
-  term_link(args, l0);
+  Pairs pairs;
+  pairs.count = 0;
+  swapStore(port(2, term_loc(l3)), term_new(VAR, 0, port(2, term_loc(a1))), &pairs);
+  swapStore(port(1, term_loc(l2)), a0, &pairs);
+  store_redex(&pairs, args, l0);
+  link_redexes(&pairs);
   return;
 }
 Term node = new_ref(nodeFn);
@@ -145,10 +150,10 @@ void makeNodeFn(Term ref, Term args) {
 
   Pairs pairs;
   pairs.count = 0;
-  term_link(args, l0);
-  term_link(lftA0, make);
-  term_link(nA0, node);
-  term_link(rgtA0, make);
+  store_redex(&pairs, args, l0);
+  store_redex(&pairs, lftA0, make);
+  store_redex(&pairs, nA0, node);
+  store_redex(&pairs, rgtA0, make);
   link_redexes(&pairs);
   return;
 }
@@ -156,8 +161,11 @@ Term makeNode = new_ref(makeNodeFn);
 
 void sumLeafFn(Term ref, Term args) {
   Term l = pair_make(LAM, 0, SUB, NUL);
-  swap(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))));
-  term_link(args, l);
+  Pairs pairs;
+  pairs.count = 0;
+  swapStore(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))), &pairs);
+  store_redex(&pairs, args, l);
+  link_redexes(&pairs);
   return;
 }
 Term sumLeaf = new_ref(sumLeafFn);
@@ -171,12 +179,12 @@ void sumNodeFn(Term ref, Term args) {
 
   Term sumLft = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l0))), SUB);
   Term sumRgt = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l1))), s);
-  swap(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))));
   Pairs pairs;
   pairs.count = 0;
-  term_link(sumRgt, sum);
-  term_link(args, l0);
-  term_link(sumLft, sum);
+  swapStore(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))), &pairs);
+  store_redex(&pairs, sumRgt, sum);
+  store_redex(&pairs, args, l0);
+  store_redex(&pairs, sumLft, sum);
   link_redexes(&pairs);
   return;
 }
@@ -278,9 +286,9 @@ int main(int argc, char *argv[]) {
 
     Pairs pairs;
     pairs.count = 0;
-    term_link(a0, make);
-    term_link(a, sum);
-    term_link(a3, end);
+    store_redex(&pairs, a0, make);
+    store_redex(&pairs, a, sum);
+    store_redex(&pairs, a3, end);
     link_redexes(&pairs);
 
     spawn_threads();

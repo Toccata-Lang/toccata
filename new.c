@@ -120,6 +120,22 @@ Term swap(Location loc, Term term) {
     return result;
 }
 
+Term swapStore(Location loc, Term term, Pairs *pairs) {
+#ifdef SAFETY
+  if (term == 0)
+    BOOM("bad swap");
+#endif
+  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_seq_cst);
+  if (term_tag(result) == SUB && result != SUB) {
+    Term neg = get(port(1, term_loc(result)));
+    Term pos = get(port(2, term_loc(result)));
+    store_redex(pairs, neg, pos);
+    pair_free(term_loc(result));
+    return SUB;
+  } else
+    return result;
+}
+
 void freeLoc(Location loc) {
   atomic_store_explicit(&BUFF[loc], 0, memory_order_seq_cst);
   if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
@@ -691,7 +707,6 @@ void link_redexes(Pairs *pairs) {
   if (pairs == NULL || pairs->count == 0)
     return;
 
-  BOOM("link_redexes");
   Pairs newPairs;
   newPairs.count = 0;
 
@@ -811,8 +826,11 @@ void applam(Term app, Term lam) {
   Term bod_val = take(bod_loc);
 
   // Move terms to their new locations
+  Pairs pairs;
+  pairs.count = 0;
   move(var_loc, arg_val);
   move(ret_loc, bod_val);
+  link_redexes(&pairs);
   return;
 }
 

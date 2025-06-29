@@ -135,6 +135,7 @@ void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
 void store_redex(Pairs *pairs, Term neg, Term pos);
 void link_redexes(Pairs *pairs);
+Term swapStore(Location loc, Term term, Pairs *pairs);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
