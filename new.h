@@ -41,7 +41,6 @@ extern a64 reduced;
 extern int threadCount;
 extern u64 RNOD_END;
 extern u64 RBAG_END;
-extern _Atomic Location FREE_LIST; // Head of free list (atomic for thread safety)
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
 extern a64* get_buff(void);  // For testing only
@@ -157,3 +156,4 @@ Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd);
 #define pair_make(t, l, f, s) pair_maker(__LINE__, (t), (l), (f), (s))
 #endif // NEW_H
 
+extern pthread_mutex_t buff_mutex;

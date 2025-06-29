@@ -26,7 +26,7 @@ void print_rbag(Location start, Location end) {
   printf("\n");
 }
 
-bool leafFn(Term ref, Term args) {
+void leafFn(Term ref, Term args) {
   Term a0 = pair_make(APP, 0, NUL, SUB);
   Term b = term_new(VAR, 0, port(2, term_loc(a0)));
   Term l2 = pair_make(LAM, 0, a0, b);
@@ -34,11 +34,11 @@ bool leafFn(Term ref, Term args) {
   Term l0 = pair_make(LAM, 0, SUB, l1);
   swap(port(1, term_loc(a0)), term_new(VAR, 0, port(1, term_loc(l0))));
   term_link(args, l0);
-  return true;
+  return;
 }
 Term leaf = new_ref(leafFn);
 
-bool nodeFn(Term ref, Term args) {
+void nodeFn(Term ref, Term args) {
   Term l3 = pair_make(LAM, 0, ERA, NUL);
   Term l2 = pair_make(LAM, 0, SUB, l3);
   Term l1 = pair_make(LAM, 0, SUB, l2);
@@ -51,66 +51,84 @@ bool nodeFn(Term ref, Term args) {
   swap(port(1, term_loc(l2)), a0);
 
   term_link(args, l0);
-  return true;
+  return;
 }
 Term node = new_ref(nodeFn);
 
-bool makeLeafFn(Term ref, Term args) {
+Term defer(Term ref, Term args) {
+  Location argLoc = port(1, term_loc(args));
+  Term rTrm;
+  Tag t;
+  do {
+    rTrm = get(argLoc);
+    t = term_tag(rTrm);
+    if (t == VAR)
+      argLoc = term_loc(rTrm);
+  } while(t == VAR);
+
+  if (t == SUB) {
+    if (rTrm != SUB) {
+      BOOM("Should never happen");
+      return VAR;
+    } else {
+      Term deferred = pair_make(SUB, 6, args, ref);
+      Term newTrm = swap(argLoc, deferred);
+      if (newTrm != SUB) {
+	swap(argLoc, newTrm);
+      }
+      return VAR;
+    }
+  } else {
+    // pthread_mutex_lock(&buff_mutex);
+    Term rslt = take(port(1, term_loc(args)));
+    // pthread_mutex_unlock(&buff_mutex);
+    if (term_tag(rslt) != I60) {
+      pthread_mutex_lock(&buff_mutex);
+      print_term("args", args);
+      pthread_mutex_unlock(&buff_mutex);
+      abort();
+    }
+    return rslt;
+  }
+}
+
+void makeLeafFn(Term ref, Term args) {
   term_link(args, leaf);
-  return true;
+  return;
 }
 Term makeLeaf = new_ref(makeLeafFn);
 
-Term defer(Term ref, Term args) {
-  Location argLoc = port(1, term_loc(args));
-  Term rTrm = take(argLoc);
-  if (term_tag(rTrm) == VAR) {
-    swap(argLoc, rTrm);
-    Location varLoc = term_loc(rTrm);
-    Term deferred = pair_make(SUB, 6, args, ref);
-    Term newTrm = swap(varLoc, deferred);
-    if (newTrm != SUB) {
-      freeLoc(argLoc);
-      freeLoc(varLoc);
-      pair_free(deferred);
-      return newTrm;
-    }
-  }
-  return rTrm;
-}
-
 Term makeNode;
-bool makeFn(Term ref, Term args) {
+void makeFn(Term ref, Term args) {
   Term hTrm = defer(ref, args);
   switch(term_tag(hTrm)) {
   case VAR:
-    return true;
+    return;
+    break;
 
   case I60:
     if (1) {
       int h = get_i60(hTrm);
       Term a = take(port(2, term_loc(args)));
-      if (h == 0)
+      if (h == 0) {
 	term_link(a, makeLeaf);
-      else
+      } else {
 	term_link(pair_make(APP, 0, new_i60(h - 1), a), makeNode);
+      }
     }
     break;
 
   default:
-#ifndef SINGLE_THREAD
-    pthread_mutex_lock(&redex_mutex);
-#endif
     print_term("Bad argument to 'make'", hTrm);
     print_term("args", args);
     BOOM("log");
     break;
   }
-  return true;
+  return;
 }
 Term make = new_ref(makeFn);
 
-bool makeNodeFn(Term ref, Term args) {
+void makeNodeFn(Term ref, Term args) {
   Term rgtN = pair_make(OPY, OP_ADD, new_i60(1), SUB);
   Term lftN = pair_make(DUP, 0, SUB, rgtN);
   Term dblN = pair_make(OPY, OP_MUL, new_i60(2), lftN);
@@ -140,21 +158,21 @@ bool makeNodeFn(Term ref, Term args) {
   term_link(nA0, node);
   term_link(rgtA0, make);
   link_redexes(&pairs);
-  return true;
+  return;
 }
 Term makeNode = new_ref(makeNodeFn);
 
-bool sumLeafFn(Term ref, Term args) {
+void sumLeafFn(Term ref, Term args) {
   Term l = pair_make(LAM, 0, SUB, NUL);
   swap(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))));
   term_link(args, l);
-  return true;
+  return;
 }
 Term sumLeaf = new_ref(sumLeafFn);
 
 Term sum;
 
-bool sumNodeFn(Term ref, Term args) {
+void sumNodeFn(Term ref, Term args) {
   Term s = pair_make(OPX, OP_ADD, NUL, SUB);
   Term l1 = pair_make(LAM, 0, SUB, term_new(VAR, 0, port(2, term_loc(s))));
   Term l0 = pair_make(LAM, 0, SUB, l1);
@@ -168,17 +186,17 @@ bool sumNodeFn(Term ref, Term args) {
   term_link(args, l0);
   term_link(sumLft, sum);
   link_redexes(&pairs);
-  return true;
+  return;
 }
 Term sumNode = new_ref(sumNodeFn);
 
-bool sumFn(Term ref, Term args) {
+void sumFn(Term ref, Term args) {
   Term a1 = pair_make(APP, 0, sumLeaf, SUB);
   Term a0 = pair_make(APP, 0, sumNode, a1);
   Term l = pair_make(LAM, 0, a0, term_new(VAR, 0, port(2, term_loc(a1))));
 
   term_link(args, l);
-  return true;
+  return;
 }
 Term sum = new_ref(sumFn);
 
@@ -187,11 +205,11 @@ double elapsed;
 int height;
 unsigned long long expected;
 
-bool endFn(Term ref, Term args) {
+void endFn(Term ref, Term args) {
   Term rTrm = defer(ref, args);
   switch(term_tag(rTrm)) {
   case VAR:
-    return true;
+    return;
     break;
 
   case I60: 
@@ -221,12 +239,11 @@ bool endFn(Term ref, Term args) {
     break;
 
   default:
-    pthread_mutex_lock(&redex_mutex);
     print_term("bad result", rTrm);
     BOOM("in 'end'");
     break;
   }
-  return true;
+  return;
 }
 Term end = new_ref(endFn);
 
@@ -272,8 +289,6 @@ int main(int argc, char *argv[]) {
     term_link(a, sum);
     term_link(a3, end);
     link_redexes(&pairs);
-
-    // normalize(NULL);
 
     spawn_threads();
     for(int i = 0; i < threadCount; i++) {

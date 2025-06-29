@@ -431,7 +431,7 @@ void freer(unsigned line, Location loc) {
     expected = atomic_load(&FREE_LIST);
 
     // Set up the node to point to the current head
-    swap(loc, term_new(NUL, 0, expected)); // Store next free pair location
+    atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, expected), memory_order_seq_cst);
 
     // Try to update FREE_LIST to point to our node
     desired = loc;
@@ -834,10 +834,10 @@ void applam(Term app, Term lam) {
   Term bod_val = take(bod_loc);
 
   // Move terms to their new locations
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   move(var_loc, arg_val);
   move(ret_loc, bod_val);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
@@ -980,7 +980,7 @@ void DSUP(Term dup, Term sup) {
 
 // Duplication interaction with copyable term
 void copy(Term dup, Term trm) {
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
 #ifdef SAFETY
   // Verify term polarities
   if (!is_negative(dup) || !is_positive(trm)) {
@@ -1002,7 +1002,7 @@ void copy(Term dup, Term trm) {
   move(dp2_loc, trm);
   move(dp1_loc, trm);
   link_redexes(&pairs);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
@@ -1035,9 +1035,9 @@ Term ref_make(interactionFn fn) {
 void appref(Term app, Term ref) {
   interactionFn fnPtr;
   fnPtr = (interactionFn)(ref & ~0xF);
-  pthread_mutex_lock(&buff_mutex);
+  // pthread_mutex_lock(&buff_mutex);
   fnPtr(ref, app);
-  pthread_mutex_unlock(&buff_mutex);
+  // pthread_mutex_unlock(&buff_mutex);
   return;
 }
 
