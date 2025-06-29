@@ -45,6 +45,10 @@ const char* tag_to_string(Tag tag) {
   }
 }
 
+const char* tag_str(Term t) {
+  return tag_to_string(term_tag(t));
+}
+
 // abort on invalid reduction
 void ABRT(Term neg, Term pos) {
   fprintf(stderr, "Bad interaction: %s %s\n",
@@ -700,6 +704,7 @@ void link_redexes(Pairs *pairs) {
       case I60:
       case F60:
       case NUL:
+      case REF:
 	immediate.rdxs[immediate.count][0] = neg;
 	immediate.rdxs[immediate.count++][1] = pos;
 	break;
