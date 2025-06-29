@@ -833,9 +833,9 @@ void DNEG(Term neg, Term sup) {
   Pairs pairs;
   pairs.count = 0;
   move(ret, dp2);
-  term_link(cn2, tm2);
-  term_link(cn1, tm1);
-  term_link(dp1, arg);
+  store_redex(&pairs, cn2, tm2);
+  store_redex(&pairs, cn1, tm1);
+  store_redex(&pairs, dp1, arg);
   link_redexes(&pairs);
   return;
 }
@@ -930,8 +930,8 @@ void DSUP(Term dup, Term sup) {
     pairs.count = 0;
     move(dup_p1, sup1);
     move(dup_p2, sup2);
-    term_link(dup2, sup_p2);
-    term_link(dup1, sup_p1);
+    store_redex(&pairs, dup2, sup_p2);
+    store_redex(&pairs, dup1, sup_p1);
     link_redexes(&pairs);
   }
 

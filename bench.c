@@ -60,7 +60,7 @@ void nodeFn(Term ref, Term args) {
 }
 Term node = new_ref(nodeFn);
 
-Term defer(Term ref, Term args) {
+Term defer(Term ref, Term args, Pairs *pairs) {
   Location argLoc = port(1, term_loc(args));
   Term rTrm;
   Tag t;
@@ -77,9 +77,9 @@ Term defer(Term ref, Term args) {
       return VAR;
     } else {
       Term deferred = pair_make(SUB, 6, args, ref);
-      Term newTrm = swap(argLoc, deferred);
+      Term newTrm = swapStore(argLoc, deferred, pairs);
       if (newTrm != SUB) {
-	swap(argLoc, newTrm);
+	swapStore(argLoc, newTrm, pairs);
       }
       return VAR;
     }
@@ -97,7 +97,11 @@ Term makeLeaf = new_ref(makeLeafFn);
 
 Term makeNode;
 void makeFn(Term ref, Term args) {
-  Term hTrm = defer(ref, args);
+  Pairs pairs;
+  pairs.count = 0;
+  Term hTrm = defer(ref, args, &pairs);
+  // TODO: this has be done here. Why?
+  link_redexes(&pairs);
   switch(term_tag(hTrm)) {
   case VAR:
     return;
@@ -206,7 +210,10 @@ int height;
 unsigned long long expected;
 
 void endFn(Term ref, Term args) {
-  Term rTrm = defer(ref, args);
+  Pairs pairs;
+  pairs.count = 0;
+  Term rTrm = defer(ref, args, &pairs);
+  link_redexes(&pairs);
   switch(term_tag(rTrm)) {
   case VAR:
     return;
