@@ -58,40 +58,11 @@ void ABRT(Term neg, Term pos) {
   abort();
 }
 
-struct {
-  unsigned count;
-  Term rdxs[1000][2];
-} rdxLog;
-
-void write_log(Term neg, Term pos) {
-#ifdef SAFETY
-  if (neg == 0 && pos == 0)
-    // shutdown the threads
-    neg = 0;
-  else if (is_positive(neg) || is_negative(pos)) {
-    BOOM("bad redex");
-  } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
-    BOOM("bad redex");
-  }
-#endif
-  if (rdxLog.count > 995)
-    return;
-
-  rdxLog.rdxs[rdxLog.count][0] = neg;
-  rdxLog.rdxs[rdxLog.count++][1] = pos;
-}
-
 void *boom(char *msg, char *file, int line) {
 #ifndef SINGLE_THREAD
     pthread_mutex_lock(&redex_mutex);
 #endif
   fprintf(stderr, "%s at %s:%d\n", msg, file, line);
-  fprintf(stderr, "%u\n", rdxLog.count);
-  /*
-  for (int i = 0; i < rdxLog.count; i++) {
-    printf("rdx: %p  %p\n", (void *)rdxLog.rdxs[i][0], (void *)rdxLog.rdxs[i][1]);
-  }
-  // */
   abort();
 }
 
@@ -1190,19 +1161,8 @@ void interactERA(Term pos) {
   return;
 }
 
-void fastInteract(Term neg, Term pos) {
-  atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
-  // Gets the rule type.
-  interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
-
-  // Swaps ports if necessary.
-  rule(neg, pos);
-  return;
-}
-
 void interact(Term neg, Term pos) {
   atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
-  write_log(neg, pos);
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
 
@@ -1521,8 +1481,6 @@ void hvm_reset(void) {
     fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvm_init first.\n");
     abort();
   }
-
-  rdxLog.count = 0;
 
   // Clear memory to prevent stale data
   memset(BUFF, 0, RNOD_END * sizeof(a64));
