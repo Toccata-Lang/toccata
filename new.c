@@ -164,6 +164,7 @@ void store_redex(Pairs *pairs, Term neg, Term pos) {
 // If anything besides a deferred redex is there, it must be a
 // negative and should be reduced with 'pos'
 void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
+  unsigned startCount = pairs->count;
   Term neg = swapStore(neg_loc, pos, pairs);
 #ifdef SAFETY
   if (is_negative(pos)) {
@@ -678,20 +679,20 @@ void link_redexes(Pairs *pairs) {
   if (pairs == NULL || pairs->count == 0)
     return;
 
-  Pairs newPairs;
-  newPairs.count = 0;
+  Pairs pushing;
+  pushing.count = 0;
 
-#ifndef SINGLE_THREAD
-  pthread_mutex_lock(&redex_mutex);
-#endif
+  Pairs immediate;
+  immediate.count = 0;
+
   for (int i = 0; i < pairs->count; i++) {
     Term neg = pairs->rdxs[i][0];
     Term pos = pairs->rdxs[i][1];
 
     switch(term_tag(neg)) {
     case ERA:
-      newPairs.rdxs[newPairs.count][0] = neg;
-      newPairs.rdxs[newPairs.count++][1] = pos;
+      immediate.rdxs[immediate.count][0] = neg;
+      immediate.rdxs[immediate.count++][1] = pos;
       break;
 
     default:
@@ -699,8 +700,8 @@ void link_redexes(Pairs *pairs) {
       case I60:
       case F60:
       case NUL:
-	newPairs.rdxs[newPairs.count][0] = neg;
-	newPairs.rdxs[newPairs.count++][1] = pos;
+	immediate.rdxs[immediate.count][0] = neg;
+	immediate.rdxs[immediate.count++][1] = pos;
 	break;
 
       case VAR:
@@ -710,8 +711,8 @@ void link_redexes(Pairs *pairs) {
 	  case I60:
 	  case F60:
 	  case NUL:
-	    newPairs.rdxs[newPairs.count][0] = neg;
-	    newPairs.rdxs[newPairs.count++][1] = pos;
+	    immediate.rdxs[immediate.count][0] = neg;
+	    immediate.rdxs[immediate.count++][1] = val;
 	    break;
 
 	  case VAR:
@@ -723,36 +724,56 @@ void link_redexes(Pairs *pairs) {
 		  BOOM("This shouldn't happen, should it?");
 	      } else {
 		pair_free(term_loc(deferred));
-		fast_push(neg, val);
+		// TODO: should not assume this needs to be pushed
+		pushing.rdxs[pushing.count][0] = neg;
+		pushing.rdxs[pushing.count++][1] = val;
 	      }
 	    }
 	    break;
 
 	  default:
-	    fast_push(neg, val);
+	    pushing.rdxs[pushing.count][0] = neg;
+	    pushing.rdxs[pushing.count++][1] = val;
 	    break;
 	  }
 	}
 	break;
 
       default:
-	fast_push(neg, pos);
+	pushing.rdxs[pushing.count][0] = neg;
+	pushing.rdxs[pushing.count++][1] = pos;
 	break;
       }
     }
   }
+
+#ifndef SINGLE_THREAD
+  pthread_mutex_lock(&redex_mutex);
+#endif
+
+  for (int i = 1; i < pushing.count; i++) {
+    Term neg = pushing.rdxs[i][0];
+    Term pos = pushing.rdxs[i][1];
+
+    fast_push(neg, pos);
+  }
+
 #ifndef SINGLE_THREAD
   pthread_cond_signal(&redex_cond);
   pthread_mutex_unlock(&redex_mutex);
 #endif
+  for (int i = 0; i < immediate.count; i++) {
+    Term neg = immediate.rdxs[i][0];
+    Term pos = immediate.rdxs[i][1];
 
-  for (int i = 0; i < newPairs.count; i++) {
-    Term neg = newPairs.rdxs[i][0];
-    Term pos = newPairs.rdxs[i][1];
-
-    // TODO: possibly should be a call to interact
-    push_redex(neg, pos);
+    interact(neg, pos);
   }
+
+  if (pushing.count > 0)
+    return interact(pushing.rdxs[0][0],
+		    pushing.rdxs[0][1]);
+  else
+    return;
 }
 
 void DEFR(Term neg, Term var) {
@@ -799,8 +820,8 @@ void applam(Term app, Term lam) {
   // Move terms to their new locations
   Pairs pairs;
   pairs.count = 0;
-  move(var_loc, arg_val);
-  move(ret_loc, bod_val);
+  moveStore(var_loc, arg_val, &pairs);
+  moveStore(ret_loc, bod_val, &pairs);
   link_redexes(&pairs);
   return;
 }
@@ -843,13 +864,14 @@ void DNEG(Term neg, Term sup) {
 // Application-Null interaction
 void appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
-  move(port(2, app_loc), NUL);
   interactERA(take(port(1, app_loc)));
+  move(port(2, app_loc), NUL);
   return;
 }
 
 // Duplication-Lambda interaction
 void DLAM(Term dup, Term lam) {
+  BOOM("DLAM");
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
   Location var = port(1, lam_loc);
@@ -958,17 +980,21 @@ void copy(Term dup, Term trm) {
   // put trm in both copy ports
   Pairs pairs;
   pairs.count = 0;
-  move(dp2_loc, trm);
-  move(dp1_loc, trm);
+  moveStore(dp2_loc, trm, &pairs);
+  moveStore(dp1_loc, trm, &pairs);
   link_redexes(&pairs);
   return;
 }
 
 // Eraser-Lambda interaction
 void eralam(Term era, Term lam) {
+  BOOM("eralam");
   Location lam_loc = term_loc(lam);
   interactERA(take(port(2, lam_loc)));
-  move(port(1, lam_loc), NUL);
+  Pairs pairs;
+  pairs.count = 0;
+  moveStore(port(1, lam_loc), NUL, &pairs);
+  link_redexes(&pairs);
   return;
 }
 
@@ -996,6 +1022,7 @@ void appref(Term app, Term ref) {
 }
 
 void appnum(Term app, Term num) {
+  BOOM("appnum");
   Location app_loc = term_loc(app);
   move(port(2, app_loc), num);
   interactERA(take(port(1, app_loc)));
@@ -1003,6 +1030,7 @@ void appnum(Term app, Term num) {
 }
 
 void opnul(Term op, Term nul) {
+  BOOM("opnul");
   Location op_loc = term_loc(op);
   move(port(2, op_loc), nul);
   interactERA(take(port(1, op_loc)));
@@ -1011,6 +1039,7 @@ void opnul(Term op, Term nul) {
 
 // SUB-NUL interaction
 void subnul(Term sub, Term nul) {
+  BOOM("subnul");
   // Check if the SUB term has a location (label > 0)
   if (sub != SUB) {
     // The SUB term has a location pointing to a pair
@@ -1031,7 +1060,7 @@ void subnul(Term sub, Term nul) {
 void XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
   Term arg = swap(port(1, opx_loc), num);
-  term_link(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
+  interact(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
   return;
 }
 
