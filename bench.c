@@ -89,12 +89,6 @@ Term defer(Term ref, Term args, Pairs *pairs) {
   }
 }
 
-void makeLeafFn(Term ref, Term args) {
-  term_link(args, leaf);
-  return;
-}
-Term makeLeaf = new_ref(makeLeafFn);
-
 Term makeNode;
 void makeFn(Term ref, Term args) {
   Pairs pairs;
@@ -109,7 +103,7 @@ void makeFn(Term ref, Term args) {
       int h = get_i60(hTrm);
       Term a = take(port(2, term_loc(args)));
       if (h == 0) {
-	store_redex(&pairs, a, makeLeaf);
+	store_redex(&pairs, a, leaf);
       } else {
 	store_redex(&pairs, pair_make(APP, 0, new_i60(h - 1), a), makeNode);
       }
@@ -197,7 +191,7 @@ void sumFn(Term ref, Term args) {
   Term a0 = pair_make(APP, 0, sumNode, a1);
   Term l = pair_make(LAM, 0, a0, term_new(VAR, 0, port(2, term_loc(a1))));
 
-  term_link(args, l);
+  interact(args, l);
   return;
 }
 Term sum = new_ref(sumFn);
@@ -310,8 +304,6 @@ char *refName(Term ref) {
     return "leaf";
   else if (ref == node)
     return "node";
-  else if (ref == makeLeaf)
-    return "makeLeaf";
   else if (ref == make)
     return "make";
   else if (ref == makeNode)

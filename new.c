@@ -718,15 +718,13 @@ void link_redexes(Pairs *pairs) {
 	  case VAR:
 	    if (1) {
 	      Term deferred = pair_make(SUB, 4, neg, val);
-	      val = swap(term_loc(val), deferred);
+	      val = swapStore(term_loc(val), deferred, pairs);
 	      if (term_tag(val) == SUB) {
 		if (val != SUB)
 		  BOOM("This shouldn't happen, should it?");
 	      } else {
 		pair_free(term_loc(deferred));
-		// TODO: should not assume this needs to be pushed
-		pushing.rdxs[pushing.count][0] = neg;
-		pushing.rdxs[pushing.count++][1] = val;
+		store_redex(pairs, neg, val);
 	      }
 	    }
 	    break;
@@ -759,9 +757,11 @@ void link_redexes(Pairs *pairs) {
   }
 
 #ifndef SINGLE_THREAD
-  pthread_cond_signal(&redex_cond);
+  if (pairs->count > 1)
+    pthread_cond_signal(&redex_cond);
   pthread_mutex_unlock(&redex_mutex);
 #endif
+
   for (int i = 0; i < immediate.count; i++) {
     Term neg = immediate.rdxs[i][0];
     Term pos = immediate.rdxs[i][1];
@@ -772,8 +772,7 @@ void link_redexes(Pairs *pairs) {
   if (pushing.count > 0)
     return interact(pushing.rdxs[0][0],
 		    pushing.rdxs[0][1]);
-  else
-    return;
+  return;
 }
 
 void DEFR(Term neg, Term var) {
@@ -781,14 +780,17 @@ void DEFR(Term neg, Term var) {
   if (term_tag(var) == VAR) {
     Location varLoc = term_loc(var);
     Term deferred = pair_make(SUB, 2, neg, var);
-    Term newVar = swap(varLoc, deferred);
+    Pairs pairs;
+    pairs.count = 0;
+    Term newVar = swapStore(varLoc, deferred, &pairs);
     if (term_tag(newVar) != SUB) {
       pair_free(term_loc(deferred));
       freeLoc(varLoc);
-      term_link(neg, newVar);
+      store_redex(&pairs, neg, newVar);
     }
+    link_redexes(&pairs);
   } else {
-    term_link(neg, var);
+    interact(neg, var);
   }
   return;
 }
