@@ -1123,7 +1123,10 @@ void YNUM(Term opy, Term num) {
     // case F60: PERFORM_OP(x, y, op, f64); break;
   }
 
-  move(ret, new_num(y_type, res));
+  Pairs pairs;
+  pairs.count = 0;
+  moveStore(ret, new_num(y_type, res), &pairs);
+  link_redexes(&pairs);
   return;
 }
 
