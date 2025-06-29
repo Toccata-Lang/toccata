@@ -100,11 +100,8 @@ void makeFn(Term ref, Term args) {
   Pairs pairs;
   pairs.count = 0;
   Term hTrm = defer(ref, args, &pairs);
-  // TODO: this has be done here. Why?
-  link_redexes(&pairs);
   switch(term_tag(hTrm)) {
   case VAR:
-    return;
     break;
 
   case I60:
@@ -112,9 +109,9 @@ void makeFn(Term ref, Term args) {
       int h = get_i60(hTrm);
       Term a = take(port(2, term_loc(args)));
       if (h == 0) {
-	term_link(a, makeLeaf);
+	store_redex(&pairs, a, makeLeaf);
       } else {
-	term_link(pair_make(APP, 0, new_i60(h - 1), a), makeNode);
+	store_redex(&pairs, pair_make(APP, 0, new_i60(h - 1), a), makeNode);
       }
     }
     break;
@@ -125,6 +122,7 @@ void makeFn(Term ref, Term args) {
     BOOM("log");
     break;
   }
+  link_redexes(&pairs);
   return;
 }
 Term make = new_ref(makeFn);
