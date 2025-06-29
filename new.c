@@ -193,7 +193,7 @@ void store_redex(Pairs *pairs, Term neg, Term pos) {
 // If anything besides a deferred redex is there, it must be a
 // negative and should be reduced with 'pos'
 void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
-  Term neg = swap(neg_loc, pos);
+  Term neg = swapStore(neg_loc, pos, pairs);
 #ifdef SAFETY
   if (is_negative(pos)) {
     char s[50];
@@ -895,14 +895,14 @@ void DLAM(Term dup, Term lam) {
   Term du2 = pair_make(DUP, dup_lab,
 		       SUB,
 		       SUB);
-  swap(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
-  swap(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
   Pairs pairs;
   pairs.count = 0;
+  swapStore(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))), &pairs);
+  swapStore(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))), &pairs);
   move(port(1, term_loc(dup)), co1);
   move(port(2, term_loc(dup)), co2);
   move(var, du1);
-  term_link(du2, bod);
+  store_redex(&pairs, du2, bod);
   link_redexes(&pairs);
   return;
 }
