@@ -580,8 +580,8 @@ Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd) {
 #endif
 
   // Store terms in their respective ports
-  swap(port(1, loc), fst);
-  swap(port(2, loc), snd);
+  atomic_store_explicit(&BUFF[port(1, loc)], fst, memory_order_relaxed);
+  atomic_store_explicit(&BUFF[port(2, loc)], snd, memory_order_relaxed);
 
   Term new_pair = term_new(tag, lab, loc);
   /*
