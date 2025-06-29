@@ -97,7 +97,7 @@ void *boom(char *msg, char *file, int line) {
 
 // Get term at location
 Term get(Location loc) {
-  Term result = atomic_load_explicit(&BUFF[loc], memory_order_seq_cst);
+  Term result = atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
   return result;
 }
 
@@ -109,7 +109,7 @@ Term swap(Location loc, Term term) {
   if (term == 0)
     BOOM("bad swap");
 #endif
-  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_seq_cst);
+  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
   if (term_tag(result) == SUB && result != SUB) {
     Term neg = get(port(1, term_loc(result)));
     Term pos = get(port(2, term_loc(result)));
@@ -125,7 +125,7 @@ Term swapStore(Location loc, Term term, Pairs *pairs) {
   if (term == 0)
     BOOM("bad swap");
 #endif
-  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_seq_cst);
+  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
   if (term_tag(result) == SUB && result != SUB) {
     Term neg = get(port(1, term_loc(result)));
     Term pos = get(port(2, term_loc(result)));
@@ -137,7 +137,7 @@ Term swapStore(Location loc, Term term, Pairs *pairs) {
 }
 
 void freeLoc(Location loc) {
-  atomic_store_explicit(&BUFF[loc], 0, memory_order_seq_cst);
+  atomic_store_explicit(&BUFF[loc], 0, memory_order_relaxed);
   if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
     pair_free(loc & 0xFFFFFFFE);
   }
@@ -390,7 +390,7 @@ Location pair_alloc(void) {
 #ifndef SINGLE_THREAD
   pthread_mutex_lock(&free_mutex);
 #endif
-  atomic_fetch_add_explicit(&alloced, 1, memory_order_seq_cst);
+  atomic_fetch_add_explicit(&alloced, 1, memory_order_relaxed);
   Location loc = FREE_LIST;
 
   // If free list is empty
@@ -417,13 +417,13 @@ void freer(unsigned line, Location loc) {
 #ifndef SINGLE_THREAD
   pthread_mutex_lock(&free_mutex);
 #endif
-  atomic_fetch_add_explicit(&alloced, -1, memory_order_seq_cst);
+  atomic_fetch_add_explicit(&alloced, -1, memory_order_relaxed);
 
   // Clear the second cell
-  atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_seq_cst);
+  atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
 
   // Set up the node to point to the current head
-  atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, FREE_LIST), memory_order_seq_cst);
+  atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, FREE_LIST), memory_order_relaxed);
 
 #ifndef SINGLE_THREAD
   pthread_mutex_unlock(&free_mutex);
@@ -1181,7 +1181,7 @@ interactionFn interactions[16][16] = {
 a64 reduced = 0;
 interactionFn intsERA[16] = {ERA_INTERACTIONS};
 void interactERA(Term pos) {
-  atomic_fetch_add_explicit(&reduced, 1, memory_order_seq_cst);
+  atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
   // Gets the rule type.
   interactionFn rule = intsERA[term_tag(pos)];
 
@@ -1191,7 +1191,7 @@ void interactERA(Term pos) {
 }
 
 void fastInteract(Term neg, Term pos) {
-  atomic_fetch_add_explicit(&reduced, 1, memory_order_seq_cst);
+  atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
 
@@ -1201,7 +1201,7 @@ void fastInteract(Term neg, Term pos) {
 }
 
 void interact(Term neg, Term pos) {
-  atomic_fetch_add_explicit(&reduced, 1, memory_order_seq_cst);
+  atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
   write_log(neg, pos);
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
@@ -1536,8 +1536,8 @@ void hvm_reset(void) {
 
   // Initialize the free list (initially empty)
   FREE_LIST = EMPTY_FREE_LIST;
-  atomic_store_explicit(&alloced, 0, memory_order_seq_cst);
-  atomic_store_explicit(&reduced, 0, memory_order_seq_cst);
+  atomic_store_explicit(&alloced, 0, memory_order_relaxed);
+  atomic_store_explicit(&reduced, 0, memory_order_relaxed);
 }
 
 // For testing only

@@ -226,7 +226,7 @@ void endFn(Term ref, Term args) {
     if (expected != get_i60(rTrm)) {
       abort();
     }
-    u64 allocCount = atomic_load_explicit(&alloced, memory_order_seq_cst);
+    u64 allocCount = atomic_load_explicit(&alloced, memory_order_relaxed);
     // if (allocCount != 0) {
     // printf("alloced pairs: %lu\n", allocCount);
     // printf("FREE_LIST: %x\n", FREE_LIST);
