@@ -844,7 +844,7 @@ void DNEG(Term neg, Term sup) {
 void appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
   move(port(2, app_loc), NUL);
-  term_link(ERA, take(port(1, app_loc)));
+  interactERA(take(port(1, app_loc)));
   return;
 }
 
@@ -967,7 +967,7 @@ void copy(Term dup, Term trm) {
 // Eraser-Lambda interaction
 void eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
-  term_link(ERA, take(port(2, lam_loc)));
+  interactERA(take(port(2, lam_loc)));
   move(port(1, lam_loc), NUL);
   return;
 }
@@ -975,8 +975,8 @@ void eralam(Term era, Term lam) {
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  term_link(ERA, take(port(2, sup_loc)));
-  term_link(ERA, take(port(1, sup_loc)));
+  interactERA(take(port(2, sup_loc)));
+  interactERA(take(port(1, sup_loc)));
   return;
 }
 
@@ -998,14 +998,14 @@ void appref(Term app, Term ref) {
 void appnum(Term app, Term num) {
   Location app_loc = term_loc(app);
   move(port(2, app_loc), num);
-  term_link(ERA, take(port(1, app_loc)));
+  interactERA(take(port(1, app_loc)));
   return;
 }
 
 void opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
   move(port(2, op_loc), nul);
-  term_link(ERA, take(port(1, op_loc)));
+  interactERA(take(port(1, op_loc)));
   return;
 }
 
@@ -1022,7 +1022,7 @@ void subnul(Term sub, Term nul) {
 
     // Take the second port and link it with ERA
     t = take(port(2, sub_loc));
-    term_link(ERA, t);
+    interactERA(t);
   }
 
   return;

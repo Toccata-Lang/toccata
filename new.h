@@ -131,6 +131,7 @@ Term taker(unsigned line, Location loc);
 void freeLoc(Location loc);
 void term_link(Term neg, Term pos);
 void interact(Term neg, Term pos);
+void interactERA(Term pos);
 void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
 void store_redex(Pairs *pairs, Term neg, Term pos);
