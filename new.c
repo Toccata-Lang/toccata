@@ -623,45 +623,44 @@ void term_link(Term neg, Term pos) {
 #endif
 
   switch(term_tag(pos)) {
-    // TODO: put this optimization back in
-    // case VAR:
-    // if (1) {
-      // // printf("linking: %p %p\n", (void *)neg, (void *)pos);
-      // Term val = take(term_loc(pos));
-      // switch(term_tag(val)) {
-      // case VAR: 
-    // if (1) {
-    // Term deferred = pair_make(SUB, 3, neg, val);
-    // Term newVal = swap(term_loc(val), deferred);
-    // if (term_tag(newVal) == SUB) {
-    // if (newVal != SUB)
-    // BOOM("This shouldn't happen, should it?");
-    // } else {
-    // pair_free(term_loc(deferred));
-    // freeLoc(term_loc(val));
-    // term_link(neg, newVal);
-    // }
-    // }
-    // break;
-    // 
-    // default:
-    // term_link(neg, val);
-    // break;
-    // }
-    // }
-    // break;
+  case VAR:
+    if (1) {
+      // printf("linking: %p %p\n", (void *)neg, (void *)pos);
+      Term val = take(term_loc(pos));
+      switch(term_tag(val)) {
+      case VAR: 
+	if (1) {
+	  Term deferred = pair_make(SUB, 3, neg, val);
+	  Term newVal = swap(term_loc(val), deferred);
+	  if (term_tag(newVal) == SUB) {
+	    if (newVal != SUB)
+	      BOOM("This shouldn't happen, should it?");
+	  } else {
+	    pair_free(term_loc(deferred));
+	    freeLoc(term_loc(val));
+	    term_link(neg, newVal);
+	  }
+	}
+	break;
 
-    // case I60:
-    // case F60:
-    // case NUL:
-    // interact(neg, pos);
-    // break;
+      default:
+	term_link(neg, val);
+	break;
+      }
+    }
+    break;
+
+  case I60:
+  case F60:
+  case NUL:
+    interact(neg, pos);
+    break;
 
   default:
     switch(term_tag(neg)) {
-      // case ERA:
-      // interact(neg, pos);
-      // break;
+    case ERA:
+      interact(neg, pos);
+      break;
 
     default:
       push_redex(neg, pos);
