@@ -119,7 +119,6 @@ Term term_new(Tag tag, Lab lab, Location loc);
 Tag term_tag(Term term);
 Lab term_lab(Term term);
 Location term_loc(Term term);
-Term swap(Location loc, Term term);
 Location port(u64 n, Location x);
 // Check term polarity
 bool is_positive(Term term);
@@ -129,9 +128,7 @@ bool is_negative(Term term);
 Term get(Location loc);
 Term taker(unsigned line, Location loc);
 void freeLoc(Location loc);
-void term_link(Term neg, Term pos);
 void interact(Term neg, Term pos);
-void interactERA(Term pos);
 void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
 void store_redex(Pairs *pairs, Term neg, Term pos);

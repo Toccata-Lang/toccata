@@ -79,22 +79,6 @@ Term get(Location loc) {
 // Atomic swap operation
 // If a deferred redex is found, queue it up and return SUB
 // Otherwise, return a positive value.
-Term swap(Location loc, Term term) {
-#ifdef SAFETY
-  if (term == 0)
-    BOOM("bad swap");
-#endif
-  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
-  if (term_tag(result) == SUB && result != SUB) {
-    Term neg = get(port(1, term_loc(result)));
-    Term pos = get(port(2, term_loc(result)));
-    push_redex(neg, pos);
-    pair_free(term_loc(result));
-    return SUB;
-  } else
-    return result;
-}
-
 Term swapStore(Location loc, Term term, Pairs *pairs) {
 #ifdef SAFETY
   if (term == 0)
@@ -185,26 +169,6 @@ void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
   if (term_tag(neg) != SUB) {
     freeLoc(neg_loc);
     store_redex(pairs, neg, pos);
-  }
-}
-
-void move(Location neg_loc, Term pos) {
-  Term neg = swap(neg_loc, pos);
-#ifdef SAFETY
-  if (is_negative(pos)) {
-    char s[50];
-    sprintf(s,"trying to move a negative to location %.3x: %p", neg_loc, (void *)neg);
-    BOOM(s);
-  }
-  if (is_positive(neg)) {
-    char s[50];
-    sprintf(s,"found positive at move target %.3x: %p", neg_loc, (void *)neg);
-    BOOM(s);
-  }
-#endif
-  if (term_tag(neg) != SUB) {
-    freeLoc(neg_loc);
-    term_link(neg, pos);
   }
 }
 
@@ -596,71 +560,6 @@ Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd) {
   return new_pair;
 }
 
-// Link two terms together
-// Push a redex (pair of terms) to the reduction bag
-void term_link(Term neg, Term pos) {
-#ifdef SAFETY
-  // Check if terms have the correct polarity
-  if (is_positive(neg)) {
-    fprintf(stderr, "Error: term_link called with positive term in negative position: %s\n",
-            tag_to_string(term_tag(neg)));
-    BOOM("bad redex - positive term in negative position");
-  }
-
-  if (is_negative(pos)) {
-    fprintf(stderr, "Error: term_link called with negative term in positive position: %s\n",
-            tag_to_string(term_tag(pos)));
-    BOOM("bad redex - negative term in positive position");
-  }
-#endif
-
-  switch(term_tag(pos)) {
-  case VAR:
-    if (1) {
-      // printf("linking: %p %p\n", (void *)neg, (void *)pos);
-      Term val = take(term_loc(pos));
-      switch(term_tag(val)) {
-      case VAR: 
-	if (1) {
-	  Term deferred = pair_make(SUB, 3, neg, val);
-	  Term newVal = swap(term_loc(val), deferred);
-	  if (term_tag(newVal) == SUB) {
-	    if (newVal != SUB)
-	      BOOM("This shouldn't happen, should it?");
-	  } else {
-	    pair_free(term_loc(deferred));
-	    freeLoc(term_loc(val));
-	    term_link(neg, newVal);
-	  }
-	}
-	break;
-
-      default:
-	term_link(neg, val);
-	break;
-      }
-    }
-    break;
-
-  case I60:
-  case F60:
-  case NUL:
-    interact(neg, pos);
-    break;
-
-  default:
-    switch(term_tag(neg)) {
-    case ERA:
-      interact(neg, pos);
-      break;
-
-    default:
-      push_redex(neg, pos);
-      break;
-    }
-  }
-}
-
 // Push a redex (pair of terms) to the reduction bag
 // the redex mutex is already locked
 void fast_push(Term neg, Term pos) {
@@ -835,7 +734,7 @@ void applam(Term app, Term lam) {
 
 // Distribure a negative term
 void DNEG(Term neg, Term sup) {
-  printf("DNEG\n");
+  BOOM("DNEG\n");
   Tag neg_tag = term_tag(neg);
   Lab sup_lab = term_lab(sup);
   Lab neg_lab = term_lab(neg);
@@ -860,7 +759,7 @@ void DNEG(Term neg, Term sup) {
 		       term_new(VAR, 0, port(2, term_loc(cn2))));
   Pairs pairs;
   pairs.count = 0;
-  move(ret, dp2);
+  moveStore(ret, dp2, &pairs);
   store_redex(&pairs, cn2, tm2);
   store_redex(&pairs, cn1, tm1);
   store_redex(&pairs, dp1, arg);
@@ -871,8 +770,11 @@ void DNEG(Term neg, Term sup) {
 // Application-Null interaction
 void appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
-  interactERA(take(port(1, app_loc)));
-  move(port(2, app_loc), NUL);
+  Pairs pairs;
+  pairs.count = 0;
+  store_redex(&pairs, ERA, take(port(1, app_loc)));
+  moveStore(port(2, app_loc), NUL, &pairs);
+  link_redexes(&pairs);
   return;
 }
 
@@ -899,9 +801,9 @@ void DLAM(Term dup, Term lam) {
   pairs.count = 0;
   swapStore(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))), &pairs);
   swapStore(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))), &pairs);
-  move(port(1, term_loc(dup)), co1);
-  move(port(2, term_loc(dup)), co2);
-  move(var, du1);
+  moveStore(port(1, term_loc(dup)), co1, &pairs);
+  moveStore(port(2, term_loc(dup)), co2, &pairs);
+  moveStore(var, du1, &pairs);
   store_redex(&pairs, du2, bod);
   link_redexes(&pairs);
   return;
@@ -928,8 +830,8 @@ void DSUP(Term dup, Term sup) {
     // Direct connection of the ports
     Pairs pairs;
     pairs.count = 0;
-    move(dup_p1, sup_p1);
-    move(dup_p2, sup_p2);
+    moveStore(dup_p1, sup_p1, &pairs);
+    moveStore(dup_p2, sup_p2, &pairs);
     link_redexes(&pairs);
   } else {
     // Get the ports of the DUP node
@@ -957,8 +859,8 @@ void DSUP(Term dup, Term sup) {
     // Connect the new nodes
     Pairs pairs;
     pairs.count = 0;
-    move(dup_p1, sup1);
-    move(dup_p2, sup2);
+    moveStore(dup_p1, sup1, &pairs);
+    moveStore(dup_p2, sup2, &pairs);
     store_redex(&pairs, dup2, sup_p2);
     store_redex(&pairs, dup1, sup_p1);
     link_redexes(&pairs);
@@ -997,9 +899,9 @@ void copy(Term dup, Term trm) {
 void eralam(Term era, Term lam) {
   BOOM("eralam");
   Location lam_loc = term_loc(lam);
-  interactERA(take(port(2, lam_loc)));
   Pairs pairs;
   pairs.count = 0;
+  store_redex(&pairs, ERA, take(port(2, lam_loc)));
   moveStore(port(1, lam_loc), NUL, &pairs);
   link_redexes(&pairs);
   return;
@@ -1008,8 +910,11 @@ void eralam(Term era, Term lam) {
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  interactERA(take(port(2, sup_loc)));
-  interactERA(take(port(1, sup_loc)));
+  Pairs pairs;
+  pairs.count = 0;
+  store_redex(&pairs, ERA, take(port(2, sup_loc)));
+  store_redex(&pairs, ERA, take(port(1, sup_loc)));
+  link_redexes(&pairs);
   return;
 }
 
@@ -1031,16 +936,22 @@ void appref(Term app, Term ref) {
 void appnum(Term app, Term num) {
   BOOM("appnum");
   Location app_loc = term_loc(app);
-  move(port(2, app_loc), num);
-  interactERA(take(port(1, app_loc)));
+  Pairs pairs;
+  pairs.count = 0;
+  moveStore(port(2, app_loc), num, &pairs);
+  store_redex(&pairs, ERA, take(port(1, app_loc)));
+  link_redexes(&pairs);
   return;
 }
 
 void opnul(Term op, Term nul) {
   BOOM("opnul");
   Location op_loc = term_loc(op);
-  move(port(2, op_loc), nul);
-  interactERA(take(port(1, op_loc)));
+  Pairs pairs;
+  pairs.count = 0;
+  moveStore(port(2, op_loc), nul, &pairs);
+  store_redex(&pairs, ERA, take(port(1, op_loc)));
+  link_redexes(&pairs);
   return;
 }
 
@@ -1053,12 +964,15 @@ void subnul(Term sub, Term nul) {
     Location sub_loc = term_loc(sub);
 
     // Take the first port and link it with NUL
+    Pairs pairs;
+    pairs.count = 0;
     Term t = take(port(1, sub_loc));
-    term_link(t, NUL);
+    store_redex(&pairs, t, NUL);
 
     // Take the second port and link it with ERA
     t = take(port(2, sub_loc));
-    interactERA(t);
+    store_redex(&pairs, ERA, t);
+    link_redexes(&pairs);
   }
 
   return;
@@ -1066,8 +980,11 @@ void subnul(Term sub, Term nul) {
 
 void XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
-  Term arg = swap(port(1, opx_loc), num);
-  interact(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
+  Pairs pairs;
+  pairs.count = 0;
+  Term arg = swapStore(port(1, opx_loc), num, &pairs);
+  store_redex(&pairs, term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
+  link_redexes(&pairs);
   return;
 }
 
@@ -1189,17 +1106,6 @@ interactionFn interactions[16][16] = {
 };
 
 a64 reduced = 0;
-interactionFn intsERA[16] = {ERA_INTERACTIONS};
-void interactERA(Term pos) {
-  atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
-  // Gets the rule type.
-  interactionFn rule = intsERA[term_tag(pos)];
-
-  // Swaps ports if necessary.
-  rule(ERA, pos);
-  return;
-}
-
 void interact(Term neg, Term pos) {
   atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
   // Gets the rule type.
@@ -1243,6 +1149,7 @@ Term argsNet(NativeArgs *args) {
 }
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
+/*
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   // if (argsStruct->count > 0) {
   // fprintf(stderr, "nativeArg %d: %p %d %p\n", __LINE__, (void *)ref, argsStruct->count,
@@ -1344,7 +1251,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
     }
     argsStruct->count = -1;
-    // */
+    // /
     return 0;
     break;
 
@@ -1361,6 +1268,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     break;
   }
 }
+// */
 
 // For testing only
 void print_raw_term(Term t) {
