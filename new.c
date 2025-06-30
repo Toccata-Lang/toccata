@@ -176,32 +176,8 @@ int threadCount = 1;
 pthread_t threads[200];
 
 // Push a redex (pair of terms) to the reduction bag
+// the redex mutex is already locked
 void push_redex(Term neg, Term pos) {
-#ifdef SAFETY
-  if (neg == 0 && pos == 0) {
-    // shutdown the threads
-    neg = 0;
-    // } else if (term_tag(neg) == ERA) {
-    // pthread_mutex_lock(&redex_mutex);
-    // BOOM("don't push ERA redex");
-  } else if (term_tag(pos) == NUL) {
-    BOOM("don't push NUL redex");
-  } else if (is_positive(neg) || is_negative(pos)) {
-    char msg[200];
-    sprintf(msg, "Bad redex neg: %p  pos: %p", (void *)neg, (void *)pos);
-    BOOM(msg);
-  } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
-    char msg[200];
-    sprintf(msg, "ABRT redex neg: %p  pos: %p", (void *)neg, (void *)pos);
-    BOOM(msg);
-  }
-#endif
-
-#ifndef SINGLE_THREAD
-  // Acquire mutex before modifying the redex bag
-  pthread_mutex_lock(&redex_mutex);
-#endif
-
 #ifdef SAFETY
   // Check if there's space in the bag
   if (RBAG_END + 2 > RBAG_SIZE) {
@@ -215,64 +191,6 @@ void push_redex(Term neg, Term pos) {
   RBAG_BUFF[RBAG_END] = neg;
   RBAG_BUFF[RBAG_END + 1] = pos;
   RBAG_END += 2;
- 
-  // Signal that a redex is available
-#ifndef SINGLE_THREAD
-  // Release mutex
-  pthread_cond_signal(&redex_cond);
-  pthread_mutex_unlock(&redex_mutex);
-#endif
-}
-
-bool pick_redex(Term* neg, Term* pos) {
-  bool result = false;
-
-#ifndef SINGLE_THREAD
-  // Acquire mutex before accessing the redex bag
-  pthread_mutex_lock(&redex_mutex);
-#endif
-
-  // Check if the bag is empty
-  while (RBAG_END <= 0) {
-#ifndef SINGLE_THREAD
-    // printf("waiting\n");
-    pthread_cond_wait(&redex_cond, &redex_mutex);
-    // printf("signaled\n");
-#else
-    return false;
-#endif
-  }
-
-  // Get the redex from the bag (LIFO order - pop from the end)
-  unsigned i = (rand() % RBAG_END) & 0xFFFFFFFE;
-  
-  *neg = RBAG_BUFF[i];
-  *pos = RBAG_BUFF[i + 1];
-  for (;i < RBAG_END; i++) {
-    RBAG_BUFF[i] = RBAG_BUFF[i + 2];
-    RBAG_BUFF[i + 1] = RBAG_BUFF[i + 3];
-  }
-  RBAG_END -= 2;
-  result = true;
-
-#ifndef SINGLE_THREAD
-  if (*neg == 0 && *pos == 0) {
-    pthread_mutex_unlock(&redex_mutex);
-    return false;
-  }
-#endif
-
-#ifdef SAFETY
-  if (*neg == 0 || *pos == 0)
-    abort();
-#endif
-
-  // Release mutex
-#ifndef SINGLE_THREAD
-  pthread_mutex_unlock(&redex_mutex);
-#endif
-
-  return result;
 }
 
 // Pop a redex (pair of terms) from the reduction bag
@@ -560,24 +478,6 @@ Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd) {
   return new_pair;
 }
 
-// Push a redex (pair of terms) to the reduction bag
-// the redex mutex is already locked
-void fast_push(Term neg, Term pos) {
-#ifdef SAFETY
-  // Check if there's space in the bag
-  if (RBAG_END + 2 > RBAG_SIZE) {
-    fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
-	    RBAG_END, RBAG_SIZE);
-    abort();
-  }
-#endif
-
-  // Store the redex in the bag
-  RBAG_BUFF[RBAG_END] = neg;
-  RBAG_BUFF[RBAG_END + 1] = pos;
-  RBAG_END += 2;
-}
-
 void link_redexes(Pairs *pairs) {
   if (pairs == NULL || pairs->count == 0)
     return;
@@ -657,7 +557,7 @@ void link_redexes(Pairs *pairs) {
     Term neg = pushing.rdxs[i][0];
     Term pos = pushing.rdxs[i][1];
 
-    fast_push(neg, pos);
+    push_redex(neg, pos);
   }
 
 #ifndef SINGLE_THREAD
