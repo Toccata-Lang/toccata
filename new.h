@@ -34,14 +34,11 @@ typedef u64 Term;
 
 // Define empty free list marker
 #define EMPTY_FREE_LIST 0xFFFFFFFF
-extern Location FREE_LIST;
 
 // Global VM state
 extern a64 alloced;
 extern a64 reduced;
 extern int threadCount;
-extern u64 RNOD_END;
-extern u64 RBAG_END;
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
 extern a64* get_buff(void);  // For testing only

@@ -4,14 +4,13 @@
 // Global heap
 static a64* BUFF = NULL;
 static Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
-u64 RNOD_END = 0; // Only need to track the end of the node space
+a64 RNOD_END = 0; // Only need to track the end of the node space
 static u64 RBAG_SIZE = 0x1000;
 u64 RBAG_END = 0; // Only need to track the end of the redex stack
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
-Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
-pthread_mutex_t free_mutex;
+_Atomic Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
 
 // interaction jump table
 interactionFn interactions[16][16];
@@ -245,47 +244,56 @@ a64 alloced = 0;
 // Allocate a pair from the free list - O(1)
 Location pair_alloc(void) {
   // Get a pair from the free list and update FREE_LIST atomically
-#ifndef SINGLE_THREAD
-  pthread_mutex_lock(&free_mutex);
-#endif
   atomic_fetch_add_explicit(&alloced, 1, memory_order_relaxed);
-  Location loc = FREE_LIST;
+  Location expected = atomic_load_explicit(&FREE_LIST, memory_order_relaxed);
+  Location loc, new_free_list;
+  Term next;
 
   // If free list is empty
-  if (loc == EMPTY_FREE_LIST) {
+  if (expected == EMPTY_FREE_LIST) {
+    Location loc = atomic_fetch_add_explicit(&RNOD_END, 2, memory_order_relaxed);
     // Check if we have space in the buffer
-    if (RNOD_END + 2 >= BUFF_SIZE) {
-      fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%lu, BUFF_SIZE=%lu\n",
-	      RNOD_END, BUFF_SIZE);
+    if (loc >= BUFF_SIZE) {
+      fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%u, BUFF_SIZE=%lu\n",
+	      loc, BUFF_SIZE);
       abort();
     }
-    loc = RNOD_END;
-    RNOD_END += 2;
-  } else {
-    FREE_LIST = (Location)(get(loc) >> (TAG_SIZE + LAB_SIZE));
+    return loc;
   }
-#ifndef SINGLE_THREAD
-  pthread_mutex_unlock(&free_mutex);
-#endif
+
+  do {
+    // Get the location we want to return
+    loc = expected;
+
+    // Get the next free pair location
+    next = get(loc);
+    new_free_list = (Location)(next >> (TAG_SIZE + LAB_SIZE));
+    // Try to update FREE_LIST, retry if it changed
+  } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, new_free_list));
+
   return loc;
 }
 
 // Free a pair by adding it to the free list - O(1)
 void freer(unsigned line, Location loc) {
-#ifndef SINGLE_THREAD
-  pthread_mutex_lock(&free_mutex);
-#endif
   atomic_fetch_add_explicit(&alloced, -1, memory_order_relaxed);
 
   // Clear the second cell
   atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
 
-  // Set up the node to point to the current head
-  atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, FREE_LIST), memory_order_relaxed);
+  // printf("free pair: %.3x at line: %u\n", loc, line);
+  // Atomically update FREE_LIST
+  Location expected, desired;
+  do {
+    // Read the current free list head
+    expected = atomic_load(&FREE_LIST);
 
-#ifndef SINGLE_THREAD
-  pthread_mutex_unlock(&free_mutex);
-#endif  
+    // Set up the node to point to the current head
+    atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, expected), memory_order_relaxed);
+
+    // Try to update FREE_LIST to point to our node
+    desired = loc;
+  } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, desired));
 }
 
 // Create a new term with given tag, label, and location
@@ -603,15 +611,6 @@ void DEFR(Term neg, Term var) {
 void applam(Term app, Term lam) {
   Location app_loc = term_loc(app);
   Location lam_loc = term_loc(lam);
-
-  // Bounds checking
-#ifdef SAFETY
-  if (app_loc >= RNOD_END || lam_loc >= RNOD_END) {
-    fprintf(stderr, "Invalid locations: app_loc=%u lam_loc=%u RNOD_END=%lu\n",
-	    app_loc, lam_loc, RNOD_END);
-    return;
-  }
-#endif
 
   // Get locations for each port
   Location arg_loc = port(1, app_loc);
@@ -1279,17 +1278,8 @@ void hvm_init(u64 size) {
     abort();
   }
 
-  RNOD_END = 0;
-  RBAG_END = 0;
-  FREE_LIST = EMPTY_FREE_LIST;  // Initially no free pairs
-
   // Store the size of the buffer for bounds checking in pair_alloc
   BUFF_SIZE = size;
-
-  if (pthread_mutex_init(&free_mutex, NULL) != 0) {
-    fprintf(stderr, "Failed to initialize mutex\n");
-    abort();
-  }
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
@@ -1313,7 +1303,6 @@ void hvm_free(void) {
   // Destroy mutex and condition variable
   pthread_cond_destroy(&redex_cond);
   pthread_mutex_destroy(&redex_mutex);
-  pthread_mutex_destroy(&free_mutex);
   free(BUFF);
   BUFF = NULL;
 
@@ -1330,7 +1319,7 @@ void hvm_reset(void) {
   }
 
   // Clear memory to prevent stale data
-  memset(BUFF, 0, RNOD_END * sizeof(a64));
+  // memset(BUFF, 0, BUFF_SIZE * sizeof(Term));
   memset(RBAG_BUFF, 0, RBAG_SIZE * sizeof(Term));
 
   // Reset node index
@@ -1340,7 +1329,7 @@ void hvm_reset(void) {
   RBAG_END = 0;
 
   // Initialize the free list (initially empty)
-  FREE_LIST = EMPTY_FREE_LIST;
+  atomic_store_explicit(&FREE_LIST, EMPTY_FREE_LIST, memory_order_relaxed);
   atomic_store_explicit(&alloced, 0, memory_order_relaxed);
   atomic_store_explicit(&reduced, 0, memory_order_relaxed);
 }
@@ -1375,7 +1364,7 @@ void print_buff(Location start, Location end) {
 // Print the free list for debugging
 void print_free_list(void) {
   printf("Free list: ");
-  Location ptr = FREE_LIST;
+  Location ptr = atomic_load_explicit(&FREE_LIST, memory_order_relaxed);
   int count = 0;
 
   if (ptr == EMPTY_FREE_LIST) {
