@@ -10,7 +10,8 @@ u64 RBAG_END = 0; // Only need to track the end of the redex stack
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
-_Atomic Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
+a64 freeStack[1024];
+a64 freeStackPtr;
 
 // interaction jump table
 interactionFn interactions[16][16];
@@ -96,8 +97,9 @@ Term swapStore(Location loc, Term term, Pairs *pairs) {
 
 void freeLoc(Location loc) {
   atomic_store_explicit(&BUFF[loc], 0, memory_order_relaxed);
-  if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
-    pair_free(loc & 0xFFFFFFFE);
+  Location evenLoc = loc & 0xFFFFFFFE;
+  if (get(evenLoc) == 0 && get(evenLoc + 1) == 0) {
+    pair_free(evenLoc);
   }
 }
 
@@ -270,30 +272,38 @@ Location pair_alloc(void) {
     new_free_list = (Location)(next >> (TAG_SIZE + LAB_SIZE));
     // Try to update FREE_LIST, retry if it changed
   } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, new_free_list));
+  // */
 
   return loc;
 }
 
 // Free a pair by adding it to the free list - O(1)
+u64 emptyFreeList = EMPTY_FREE_LIST;
 void freer(unsigned line, Location loc) {
   atomic_fetch_add_explicit(&alloced, -1, memory_order_relaxed);
 
-  // Clear the second cell
-  atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
-
-  // printf("free pair: %.3x at line: %u\n", loc, line);
-  // Atomically update FREE_LIST
-  Location expected, desired;
+  printf("free pair: %.3x at line: %u\n", loc, line);
+  u64  currTop, newTop;
+  int idx = 0;
   do {
-    // Read the current free list head
-    expected = atomic_load(&FREE_LIST);
+    currTop = atomic_load_explicit(&freeStackPtr, memory_order_relaxed);
+    idx = (currTop & EMPTY_FREE_LIST) + 1;
+    newTop = ((u64)loc << 32 | idx);
+    // establish control of push ops
+    if (!atomic_compare_exchange_weak(&freeStack[idx], &emptyFreeList, newTop))
+      continue;
+       
+    // control established
+    atomic_store_explicit(&freeStack[idx + 1], EMPTY_FREE_LIST, memory_order_relaxed);
 
-    // Set up the node to point to the current head
-    atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, expected), memory_order_relaxed);
-
-    // Try to update FREE_LIST to point to our node
-    desired = loc;
-  } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, desired));
+    // try to update the stack ptr before someone else pops
+    if (!atomic_compare_exchange_weak(&freeStackPtr, &currTop, newTop)) {
+      // failed, start over
+      atomic_store_explicit(&freeStack[idx], EMPTY_FREE_LIST, memory_order_relaxed);
+      continue;
+    }
+    break;
+  } while (1);
 }
 
 // Create a new term with given tag, label, and location
@@ -1329,7 +1339,8 @@ void hvm_reset(void) {
   RBAG_END = 0;
 
   // Initialize the free list (initially empty)
-  atomic_store_explicit(&FREE_LIST, EMPTY_FREE_LIST, memory_order_relaxed);
+  atomic_store_explicit(&freeStackPtr, EMPTY_FREE_LIST, memory_order_relaxed);
+  atomic_store_explicit(&freeStack[0], EMPTY_FREE_LIST, memory_order_relaxed);
   atomic_store_explicit(&alloced, 0, memory_order_relaxed);
   atomic_store_explicit(&reduced, 0, memory_order_relaxed);
 }
@@ -1364,24 +1375,17 @@ void print_buff(Location start, Location end) {
 // Print the free list for debugging
 void print_free_list(void) {
   printf("Free list: ");
-  Location ptr = atomic_load_explicit(&FREE_LIST, memory_order_relaxed);
-  int count = 0;
+  u64 ptr = atomic_load_explicit(&freeStackPtr, memory_order_relaxed);
 
   if (ptr == EMPTY_FREE_LIST) {
-    printf("EMPTY ");
+    printf("EMPTY\n");
+    return;
   } else {
-    while (ptr != EMPTY_FREE_LIST && count < 100) { // Limit to prevent infinite loops
-      printf("%u -> ", ptr);
-      Term next = get(ptr);
-      if (term_tag(next) != NUL) {
-        printf("(INVALID: not NUL) ");
-        break;
-      }
-      ptr = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-      count++;
+    for (int i = ptr & EMPTY_FREE_LIST; i >= 0; i--) {
+      printf("%lu -> ", atomic_load_explicit(&freeStack[i], memory_order_relaxed) >> 32);
     }
   }
 
-  printf("END (count: %d)\n", count);
+  printf("END\n");
 }
 
