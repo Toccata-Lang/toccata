@@ -10,7 +10,8 @@ u64 RBAG_END = 0; // Only need to track the end of the redex stack
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
-a64 freeStack[1024];
+#define FREE_STACK_SIZE 20000
+Location freeStack[FREE_STACK_SIZE];
 a64 freeStackPtr;
 
 // interaction jump table
@@ -241,48 +242,80 @@ bool pop_redex(Term* neg, Term* pos) {
   return result;
 }
 
-a64 alloced = 0;
+a64 alloced;
 
 // Allocate a pair from the free list - O(1)
+// By popping a value from the free stack
 Location pair_alloc(void) {
-  // Get a pair from the free list and update FREE_LIST atomically
   atomic_fetch_add_explicit(&alloced, 1, memory_order_relaxed);
-  Location expected = atomic_load_explicit(&FREE_LIST, memory_order_relaxed);
-  Location loc, new_free_list;
-  Term next;
+  Location loc = 0;
 
-  // If free list is empty
-  if (expected == EMPTY_FREE_LIST) {
-    Location loc = atomic_fetch_add_explicit(&RNOD_END, 2, memory_order_relaxed);
-    // Check if we have space in the buffer
-    if (loc >= BUFF_SIZE) {
-      fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%u, BUFF_SIZE=%lu\n",
-	      loc, BUFF_SIZE);
-      abort();
-    }
-    return loc;
-  }
-
+  u64 currTop;
   do {
-    // Get the location we want to return
-    loc = expected;
+    currTop = atomic_exchange_explicit(&freeStackPtr, EMPTY_FREE_LIST, memory_order_relaxed);
+    switch(currTop) {
+    case EMPTY_FREE_LIST:
+      break;
 
-    // Get the next free pair location
-    next = get(loc);
-    new_free_list = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-    // Try to update FREE_LIST, retry if it changed
-  } while (!atomic_compare_exchange_weak(&FREE_LIST, &expected, new_free_list));
+    case 0:
+      atomic_store_explicit(&freeStackPtr, 0, memory_order_relaxed);
+      // Free list
+      loc = atomic_fetch_add_explicit(&RNOD_END, 2, memory_order_relaxed);
+      // Check if we have space in the buffer
+      if (loc >= BUFF_SIZE) {
+	fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%u, BUFF_SIZE=%lu\n",
+		loc, BUFF_SIZE);
+	abort();
+      }
+      break;
+      
+    default:
+      loc = freeStack[currTop];
+      currTop--;
+      atomic_store_explicit(&freeStackPtr, currTop, memory_order_relaxed);
+      break;
+    }
+  } while (currTop == EMPTY_FREE_LIST);
+  return (Location)loc;
+
+  /*
+  u64 currTop, newTop;
+  int idx = 0;
+  do {
+    currTop = atomic_load_explicit(&freeStackPtr, memory_order_relaxed);
+    idx = currTop & EMPTY_FREE_LIST;
+    if (idx > 0) {
+      newTop = atomic_exchange_explicit(&freeStack[idx - 1], EMPTY_FREE_LIST, memory_order_relaxed);
+      if (newTop == EMPTY_FREE_LIST)
+	continue;
+    } else
+      newTop = EMPTY_FREE_LIST;
+  } while(!atomic_compare_exchange_weak(&freeStackPtr, &currTop, newTop));
+
+  printf("newTop: %.9lx\n", atomic_load_explicit(&freeStackPtr, memory_order_relaxed));
+  return currTop >> 32;
   // */
-
-  return loc;
 }
 
 // Free a pair by adding it to the free list - O(1)
-u64 emptyFreeList = EMPTY_FREE_LIST;
+// By pushing a value to the free stack
 void freer(unsigned line, Location loc) {
   atomic_fetch_add_explicit(&alloced, -1, memory_order_relaxed);
 
-  printf("free pair: %.3x at line: %u\n", loc, line);
+  u64 currTop;
+  do {
+    currTop = atomic_exchange_explicit(&freeStackPtr, EMPTY_FREE_LIST, memory_order_relaxed);
+    if (currTop != EMPTY_FREE_LIST) {
+      if (currTop > (FREE_STACK_SIZE - 2)) {
+	BOOM("freeStack!!!");
+      }
+      currTop++;
+      freeStack[currTop] = loc;
+      atomic_store_explicit(&freeStackPtr, currTop, memory_order_relaxed);
+    }
+  } while (currTop == EMPTY_FREE_LIST);
+  /*
+u64 emptyFreeList = EMPTY_FREE_LIST;
   u64  currTop, newTop;
   int idx = 0;
   do {
@@ -292,8 +325,8 @@ void freer(unsigned line, Location loc) {
     // establish control of push ops
     if (!atomic_compare_exchange_weak(&freeStack[idx], &emptyFreeList, newTop))
       continue;
-       
     // control established
+       
     atomic_store_explicit(&freeStack[idx + 1], EMPTY_FREE_LIST, memory_order_relaxed);
 
     // try to update the stack ptr before someone else pops
@@ -304,6 +337,7 @@ void freer(unsigned line, Location loc) {
     }
     break;
   } while (1);
+  // */
 }
 
 // Create a new term with given tag, label, and location
@@ -1339,8 +1373,7 @@ void hvm_reset(void) {
   RBAG_END = 0;
 
   // Initialize the free list (initially empty)
-  atomic_store_explicit(&freeStackPtr, EMPTY_FREE_LIST, memory_order_relaxed);
-  atomic_store_explicit(&freeStack[0], EMPTY_FREE_LIST, memory_order_relaxed);
+  atomic_store_explicit(&freeStackPtr, 0, memory_order_relaxed);
   atomic_store_explicit(&alloced, 0, memory_order_relaxed);
   atomic_store_explicit(&reduced, 0, memory_order_relaxed);
 }
@@ -1382,10 +1415,14 @@ void print_free_list(void) {
     return;
   } else {
     for (int i = ptr & EMPTY_FREE_LIST; i >= 0; i--) {
-      printf("%lu -> ", atomic_load_explicit(&freeStack[i], memory_order_relaxed) >> 32);
+      printf("%u -> ", freeStack[i]);
     }
+    printf("END\nfreePtr: %.9lx\n", atomic_load_explicit(&freeStackPtr, memory_order_relaxed));
+    /*
+    for (int i = ptr & EMPTY_FREE_LIST; i >= 0; i--) {
+      printf("%d: %.9lx\n", i, atomic_load_explicit(&freeStack[i], memory_order_relaxed));
+    }
+    // */
   }
-
-  printf("END\n");
 }
 

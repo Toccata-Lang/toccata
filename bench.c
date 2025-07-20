@@ -217,20 +217,20 @@ void endFn(Term ref, Term args) {
       (endTime.tv_usec - startTime.tv_usec) / 1000000.0;
 
     pair_free(term_loc(args));
-    // print_term("result", rTrm);
-    // printf("exptd: %llu\n", expected);
-    // printf("interactions: %lu\n", reduced);
+    print_term("result", rTrm);
+    printf("exptd: %llu\n", expected);
+    printf("interactions: %lu\n", reduced);
     printf("MIPS: %f\n", reduced / elapsed / 1000000);
-    // printf("elapsed: %f\n", elapsed);
+    printf("elapsed: %f\n", elapsed);
     if (expected != get_i60(rTrm)) {
       abort();
     }
     u64 allocCount = atomic_load_explicit(&alloced, memory_order_relaxed);
-    // if (allocCount != 0) {
-    // printf("alloced pairs: %lu\n", allocCount);
-    // printf("FREE_LIST: %x\n", FREE_LIST);
-    // exit(1);
-    // }
+    if (allocCount != 0) {
+      printf("alloced pairs: %lu\n", allocCount);
+      // print_free_list();
+      exit(1);
+    }
 #ifndef SINGLE_THREAD
     for (int i = 0; i < threadCount; i++) {
       push_redex(0, 0);
@@ -272,8 +272,9 @@ int main(int argc, char *argv[]) {
   printf("Running single thread\n");
 #endif
 
-  for(int reps = 0; reps < 100; reps++) {
+  for(int reps = 0; reps < 1; reps++) {
     hvm_reset();
+
     gettimeofday(&startTime, NULL);
 
     Term a1 = pair_make(APP, 0, new_i60(0), SUB);
