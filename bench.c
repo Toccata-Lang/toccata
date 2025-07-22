@@ -225,12 +225,14 @@ void endFn(Term ref, Term args) {
     if (expected != get_i60(rTrm)) {
       abort();
     }
+    /*
     u64 allocCount = atomic_load_explicit(&alloced, memory_order_relaxed);
     if (allocCount != 0) {
       printf("alloced pairs: %lu\n", allocCount);
       // print_free_list();
       exit(1);
     }
+    // */
 #ifndef SINGLE_THREAD
     for (int i = 0; i < threadCount; i++) {
       push_redex(0, 0);
@@ -272,7 +274,8 @@ int main(int argc, char *argv[]) {
   printf("Running single thread\n");
 #endif
 
-  for(int reps = 0; reps < 1; reps++) {
+  for(int reps = 0; reps < 100; reps++) {
+    alloced = 0;
     hvm_reset();
 
     gettimeofday(&startTime, NULL);
@@ -292,8 +295,19 @@ int main(int argc, char *argv[]) {
     link_redexes(&pairs);
 
     spawn_threads();
+    int *res;
     for(int i = 0; i < threadCount; i++) {
-      pthread_join(threads[i], NULL);
+      pthread_join(threads[i], (void **)&res);
+      alloced += *res;
+    }
+    i64 gAlloced = atomic_load_explicit(&glblAlloced, memory_order_relaxed);
+    i64 rnod = atomic_load_explicit(&RNOD_END, memory_order_relaxed);
+    if (alloced != 0 || glblAlloced != 0) {
+      printf("final alloced: %d %ld\n", alloced, gAlloced);
+      printf("RNOD_END: %ld\n", rnod);
+      print_free_list();
+      print_buff(0, rnod); 
+      BOOM("");
     }
   }
 

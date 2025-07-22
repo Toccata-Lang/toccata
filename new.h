@@ -33,10 +33,13 @@ typedef atomic_uint_least64_t a64;
 typedef u64 Term;
 
 // Define empty free list marker
-#define EMPTY_FREE_LIST 0xFFFFFFFF
+#define EMPTY_FREE_LIST 0xFFFFFFFE
+#define LOCK_FREE_LIST 0xFFFFFFFF
 
 // Global VM state
-extern a64 alloced;
+__thread extern int alloced;
+extern a64 glblAlloced;
+extern a64 RNOD_END;
 extern a64 reduced;
 extern int threadCount;
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
