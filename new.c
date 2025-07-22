@@ -3,14 +3,17 @@
 
 // Global heap
 static a64* BUFF = NULL;
-static Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
 a64 RNOD_END = 0; // Only need to track the end of the node space
-static u64 RBAG_SIZE = 0x1000;
-u64 RBAG_END = 0; // Only need to track the end of the redex stack
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
 _Atomic Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
+
+// Redex stack
+static Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
+static u64 RBAG_SIZE = 0x1000;
+a64 RBAG_END; // Only need to track the end of the redex stack
+#define LOCK_REDEX_STACK 0xFFFFFFFF
 
 // interaction jump table
 interactionFn interactions[16][16];
@@ -96,8 +99,9 @@ Term swapStore(Location loc, Term term, Pairs *pairs) {
 
 void freeLoc(Location loc) {
   atomic_store_explicit(&BUFF[loc], 0, memory_order_relaxed);
-  if (get(loc & 0xFFFFFFFE) == 0 && get((loc & 0xFFFFFFFE) + 1) == 0) {
-    pair_free(loc & 0xFFFFFFFE);
+  Location evenLoc = loc & 0xFFFFFFFE;
+  if (get(evenLoc) == 0 && get(evenLoc + 1) == 0) {
+    pair_free(evenLoc);
   }
 }
 
@@ -174,68 +178,50 @@ void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
 int threadCount = 1;
 pthread_t threads[200];
 
-// Push a redex (pair of terms) to the reduction bag
-// the redex mutex is already locked
-void push_redex(Term neg, Term pos) {
-#ifdef SAFETY
-  // Check if there's space in the bag
-  if (RBAG_END + 2 > RBAG_SIZE) {
-    fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
-	    RBAG_END, RBAG_SIZE);
-    abort();
-  }
-#endif
-
-  // Store the redex in the bag
-  RBAG_BUFF[RBAG_END] = neg;
-  RBAG_BUFF[RBAG_END + 1] = pos;
-  RBAG_END += 2;
-}
-
 // Pop a redex (pair of terms) from the reduction bag
 // Returns false if the bag is empty, true otherwise
 bool pop_redex(Term* neg, Term* pos) {
   bool result = false;
+  bool starved = false;
 
-  // Acquire mutex before accessing the redex bag
-#ifndef SINGLE_THREAD
-  pthread_mutex_lock(&redex_mutex);
-#endif
+  u64 currTop;
+  do {
+    currTop = atomic_exchange_explicit(&RBAG_END, LOCK_REDEX_STACK, memory_order_relaxed);
 
-  // Check if the bag is empty
-  while (RBAG_END <= 0) {
-#ifndef SINGLE_THREAD
-    // printf("waiting\n");
-    pthread_cond_wait(&redex_cond, &redex_mutex);
-    // printf("signaled\n");
-#else
-    return false;
-#endif
-  }
+    switch(currTop) {
+    case LOCK_REDEX_STACK:
+      break;
 
-  // Get the redex from the bag (LIFO order - pop from the end)
-  RBAG_END -= 2;
-  *neg = RBAG_BUFF[RBAG_END];
-  *pos = RBAG_BUFF[RBAG_END + 1];
-  result = true;
+    case 0:
+      pthread_mutex_lock(&redex_mutex);
+      atomic_store_explicit(&RBAG_END, 0, memory_order_relaxed);
+      pthread_cond_wait(&redex_cond, &redex_mutex);
+      starved = true;
+      continue;
+      break;
 
-#ifndef SINGLE_THREAD
-  if (*neg == 0 && *pos == 0) {
-    pthread_mutex_unlock(&redex_mutex);
-    return false;
-  }
-#endif
+    default:
+      currTop -= 2;
+      *neg = RBAG_BUFF[currTop];
+      *pos = RBAG_BUFF[currTop + 1];
+      atomic_store_explicit(&RBAG_END, currTop, memory_order_relaxed);
+      if (starved && currTop > 0) {
+	pthread_mutex_lock(&redex_mutex);
+	pthread_cond_signal(&redex_cond);
+	pthread_mutex_unlock(&redex_mutex);
+      }
+      if (*neg == VAL && *pos == VAL) {
+	result = false;
+      } else
+	result = true;
+      break;
+    }
+  } while (currTop == LOCK_REDEX_STACK);
 
 #ifdef SAFETY
   if (*neg == 0 || *pos == 0)
     abort();
 #endif
-
-  // Release mutex
-#ifndef SINGLE_THREAD
-  pthread_mutex_unlock(&redex_mutex);
-#endif
-
   return result;
 }
 
@@ -595,22 +581,43 @@ void link_redexes(Pairs *pairs) {
     }
   }
 
-#ifndef SINGLE_THREAD
-  pthread_mutex_lock(&redex_mutex);
+  if (pushing.count > 1) {
+    u64 currTop;
+    do {
+      currTop = atomic_exchange_explicit(&RBAG_END, LOCK_REDEX_STACK, memory_order_relaxed);
+      switch (currTop) {
+      case LOCK_REDEX_STACK:
+	break;
+
+      default:
+	if (1) {
+#ifdef SAFETY
+	  // Check if there's space in the bag
+	  if (currTop + pushing.count - 1 > RBAG_SIZE) {
+	    fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
+		    currTop, RBAG_SIZE);
+	    abort();
+	  }
 #endif
+	  int newTop = currTop;
+	  for (int i = 1; i < pushing.count; i++, newTop += 2) {
+	    // Store the redex in the bag
+	    RBAG_BUFF[newTop] = pushing.rdxs[i][0];
+	    RBAG_BUFF[newTop + 1] = pushing.rdxs[i][1];
+	  }
 
-  for (int i = 1; i < pushing.count; i++) {
-    Term neg = pushing.rdxs[i][0];
-    Term pos = pushing.rdxs[i][1];
-
-    push_redex(neg, pos);
+#ifndef SINGLE_THREAD
+	  if (currTop == 0) {
+	    pthread_mutex_lock(&redex_mutex);
+	    pthread_cond_signal(&redex_cond);
+	    pthread_mutex_unlock(&redex_mutex);
+	  }
+#endif
+	  atomic_store_explicit(&RBAG_END, newTop, memory_order_relaxed);
+	}
+      }
+    } while (currTop == LOCK_REDEX_STACK);
   }
-
-#ifndef SINGLE_THREAD
-  if (pairs->count > 1)
-    pthread_cond_signal(&redex_cond);
-  pthread_mutex_unlock(&redex_mutex);
-#endif
 
   for (int i = 0; i < immediate.count; i++) {
     Term neg = immediate.rdxs[i][0];
@@ -1364,10 +1371,10 @@ void hvm_reset(void) {
   memset(RBAG_BUFF, 0, RBAG_SIZE * sizeof(Term));
 
   // Reset node index
-  RNOD_END = 0;
+  atomic_store_explicit(&RNOD_END, 0, memory_order_relaxed);;
 
   // Reset bag index
-  RBAG_END = 0;
+  atomic_store_explicit(&RBAG_END, 0, memory_order_relaxed);;
 
   // Initialize the free list (initially empty)
   atomic_store_explicit(&FREE_LIST, EMPTY_FREE_LIST, memory_order_relaxed);

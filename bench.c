@@ -234,9 +234,12 @@ void endFn(Term ref, Term args) {
     }
     // */
 #ifndef SINGLE_THREAD
+    Pairs pairs;
+    pairs.count = 0;
     for (int i = 0; i < threadCount; i++) {
-      push_redex(0, 0);
+      store_redex(&pairs, 0, 0);
     }
+    link_redexes(&pairs);
 #endif
     break;
 
