@@ -10,10 +10,9 @@ static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 _Atomic Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
 
 // Redex stack
-static Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
+Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
 static u64 RBAG_SIZE = 0x1000;
 a64 RBAG_END; // Only need to track the end of the redex stack
-#define LOCK_REDEX_STACK 0xFFFFFFFF
 
 // interaction jump table
 interactionFn interactions[16][16];
@@ -66,7 +65,7 @@ void ABRT(Term neg, Term pos) {
 
 void *boom(char *msg, char *file, int line) {
 #ifndef SINGLE_THREAD
-    pthread_mutex_lock(&redex_mutex);
+  pthread_mutex_lock(&redex_mutex);
 #endif
   fprintf(stderr, "%s at %s:%d\n", msg, file, line);
   abort();
@@ -196,6 +195,7 @@ bool pop_redex(Term* neg, Term* pos) {
       pthread_mutex_lock(&redex_mutex);
       atomic_store_explicit(&RBAG_END, 0, memory_order_relaxed);
       pthread_cond_wait(&redex_cond, &redex_mutex);
+      pthread_mutex_unlock(&redex_mutex);
       starved = true;
       continue;
       break;
@@ -210,7 +210,7 @@ bool pop_redex(Term* neg, Term* pos) {
 	pthread_cond_signal(&redex_cond);
 	pthread_mutex_unlock(&redex_mutex);
       }
-      if (*neg == VAL && *pos == VAL) {
+      if (*neg == 0 && *pos == 0) {
 	result = false;
       } else
 	result = true;
@@ -270,24 +270,6 @@ Location pair_alloc(void) {
   alloced++;
   // printf("allc: %d\n", loc);
   return (Location)loc;
-
-  /*
-  u64 currTop, newTop;
-  int idx = 0;
-  do {
-    currTop = atomic_load_explicit(&freeStackPtr, memory_order_relaxed);
-    idx = currTop & EMPTY_FREE_LIST;
-    if (idx > 0) {
-      newTop = atomic_exchange_explicit(&freeStack[idx - 1], EMPTY_FREE_LIST, memory_order_relaxed);
-      if (newTop == EMPTY_FREE_LIST)
-	continue;
-    } else
-      newTop = EMPTY_FREE_LIST;
-  } while(!atomic_compare_exchange_weak(&freeStackPtr, &currTop, newTop));
-
-  printf("newTop: %.9lx\n", atomic_load_explicit(&freeStackPtr, memory_order_relaxed));
-  return currTop >> 32;
-  // */
 }
 
 // Free a pair by adding it to the free list - O(1)
@@ -599,7 +581,7 @@ void link_redexes(Pairs *pairs) {
 	    abort();
 	  }
 #endif
-	  int newTop = currTop;
+	  u64 newTop = currTop;
 	  for (int i = 1; i < pushing.count; i++, newTop += 2) {
 	    // Store the redex in the bag
 	    RBAG_BUFF[newTop] = pushing.rdxs[i][0];
@@ -1071,9 +1053,11 @@ void *normalize(void *v) {
     // Perform the interaction
     interact(neg, pos);
   }
+  //*
   pthread_mutex_lock(&redex_mutex);
   pthread_cond_signal(&redex_cond);
   pthread_mutex_unlock(&redex_mutex);
+  // */
 
   int *res = malloc(sizeof(int));
   *res = alloced;

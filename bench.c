@@ -234,12 +234,38 @@ void endFn(Term ref, Term args) {
     }
     // */
 #ifndef SINGLE_THREAD
-    Pairs pairs;
-    pairs.count = 0;
-    for (int i = 0; i < threadCount; i++) {
-      store_redex(&pairs, 0, 0);
-    }
-    link_redexes(&pairs);
+    u64 currTop;
+    do {
+      currTop = atomic_exchange_explicit(&RBAG_END, LOCK_REDEX_STACK, memory_order_relaxed);
+      switch (currTop) {
+      case LOCK_REDEX_STACK:
+	break;
+
+      default:
+	if (1) {
+#ifdef SAFETY
+	  // Check if there's space in the bag
+	  if (currTop + threadCount - 1 > RBAG_SIZE) {
+	    fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
+		    currTop, RBAG_SIZE);
+	    abort();
+	  }
+#endif
+	  u64 newTop = currTop;
+	  for (int i = 0; i < threadCount; i++, newTop += 2) {
+	    RBAG_BUFF[newTop] = 0;
+	    RBAG_BUFF[newTop + 1] = 0;
+	  }
+
+	  if (currTop == 0) {
+	    pthread_mutex_lock(&redex_mutex);
+	    pthread_cond_signal(&redex_cond);
+	    pthread_mutex_unlock(&redex_mutex);
+	  }
+	  atomic_store_explicit(&RBAG_END, newTop, memory_order_relaxed);
+	}
+      }
+    } while (currTop == LOCK_REDEX_STACK);
 #endif
     break;
 
@@ -277,7 +303,7 @@ int main(int argc, char *argv[]) {
   printf("Running single thread\n");
 #endif
 
-  for(int reps = 0; reps < 100; reps++) {
+  for(int reps = 0; reps < 20; reps++) {
     alloced = 0;
     hvm_reset();
 
