@@ -226,12 +226,13 @@ bool pop_redex(Term* neg, Term* pos) {
 }
 
 a64 glblAlloced;
-__thread int alloced;
 
 // Allocate a pair from the free list - O(1)
 // By popping a value from the free stack
 Location pair_alloc(void) {
+#ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, 1, memory_order_relaxed);
+#endif
   Location loc;
   do {
     loc = FREE_LIST;
@@ -265,17 +266,14 @@ Location pair_alloc(void) {
       break;
     }
   } while (loc == LOCK_FREE_LIST);
-
-  alloced++;
-  // printf("allc: %d\n", loc);
   return (Location)loc;
 }
 
 // Free a pair by adding it to the free list - O(1)
 void freer(unsigned line, Location loc) {
+#ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
-  // printf("free: %d\n", loc);
-  alloced--;
+#endif
 
   // Clear the second cell
   atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
@@ -957,7 +955,7 @@ void YNUM(Term opy, Term num) {
   Term x = take(port(1, op_loc));
   Tag y_type = term_tag(num);
   Location ret = port(2, op_loc);
-  u32 res;
+  u64 res;
   Lab op = term_lab(opy);
 
   switch (y_type) {
@@ -1044,7 +1042,6 @@ void interact(Term neg, Term pos) {
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
 void *normalize(void *v) {
-  alloced = 0;
   Term neg, pos;
 
   // Process redexes until the stack is empty
@@ -1058,8 +1055,8 @@ void *normalize(void *v) {
   pthread_mutex_unlock(&redex_mutex);
   // */
 
-  int *res = malloc(sizeof(int));
-  *res = alloced;
+  u64 *res = malloc(sizeof(int));
+  *res = 0;
   return res;
 }
 

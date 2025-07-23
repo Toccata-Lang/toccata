@@ -41,7 +41,6 @@ extern Term* RBAG_BUFF;
 #define LOCK_REDEX_STACK 0xFFFFFFFF
 
 // Global VM state
-__thread extern int alloced;
 extern a64 glblAlloced;
 extern a64 RNOD_END;
 extern a64 reduced;

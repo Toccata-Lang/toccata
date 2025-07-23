@@ -199,7 +199,7 @@ Term sum = new_ref(sumFn);
 struct timeval startTime, endTime;
 double elapsed;
 int height;
-unsigned long long expected;
+u64 expected;
 
 void endFn(Term ref, Term args) {
   Pairs pairs;
@@ -218,10 +218,7 @@ void endFn(Term ref, Term args) {
 
     pair_free(term_loc(args));
     print_term("result", rTrm);
-    printf("exptd: %llu\n", expected);
-    printf("interactions: %lu\n", reduced);
-    printf("MIPS: %f\n", reduced / elapsed / 1000000);
-    printf("elapsed: %f\n", elapsed);
+    printf("exptd: %lu\n", expected);
     if (expected != get_i60(rTrm)) {
       abort();
     }
@@ -285,7 +282,7 @@ int main(int argc, char *argv[]) {
   }
   
   // Initialize the VM with some memory
-  hvm_init(1024 * 1024 * 1024);
+  hvm_init((u64)3 * (u64)(1 << 30));
 
   height = atoi(argv[1]);
   if (height < 0) {
@@ -294,7 +291,8 @@ int main(int argc, char *argv[]) {
   } else {
     printf("\nHeight: %d\n", height);
   }
-  expected = ((1 << height) - 1) * (1 << height) / 2;
+  i64 wtf = 1 << height;
+  expected = (wtf - 1) * wtf / 2;
 
 #ifndef SINGLE_THREAD
   threadCount = atoi(argv[2]);
@@ -304,7 +302,6 @@ int main(int argc, char *argv[]) {
 #endif
 
   for(int reps = 0; reps < 20; reps++) {
-    alloced = 0;
     hvm_reset();
 
     gettimeofday(&startTime, NULL);
@@ -324,15 +321,22 @@ int main(int argc, char *argv[]) {
     link_redexes(&pairs);
 
     spawn_threads();
-    int *res;
+    u64 *res;
+    u64 interactions = 0;
     for(int i = 0; i < threadCount; i++) {
       pthread_join(threads[i], (void **)&res);
-      alloced += *res;
+      interactions += *res;
+      printf("rdxCount: %lu\n", *res);
     }
+    interactions = atomic_load_explicit(&reduced, memory_order_relaxed);
+    printf("interactions: %lu\n", interactions);
+    printf("MIPS: %f\n", interactions / elapsed / 1000000);
+    printf("elapsed: %f\n", elapsed);
+    printf("Heap needed: %lu\n", atomic_load_explicit(&RNOD_END, memory_order_relaxed));
     i64 gAlloced = atomic_load_explicit(&glblAlloced, memory_order_relaxed);
     i64 rnod = atomic_load_explicit(&RNOD_END, memory_order_relaxed);
-    if (alloced != 0 || glblAlloced != 0) {
-      printf("final alloced: %d %ld\n", alloced, gAlloced);
+    if (glblAlloced != 0) {
+      printf("final alloced: %ld\n", gAlloced);
       printf("RNOD_END: %ld\n", rnod);
       print_free_list();
       print_buff(0, rnod); 
