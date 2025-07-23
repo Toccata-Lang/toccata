@@ -7,7 +7,7 @@ a64 RNOD_END = 0; // Only need to track the end of the node space
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
-_Atomic Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
+__thread Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
 
 // Redex stack
 Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
@@ -234,13 +234,12 @@ Location pair_alloc(void) {
   atomic_fetch_add_explicit(&glblAlloced, 1, memory_order_relaxed);
   Location loc;
   do {
-    loc = atomic_exchange_explicit(&FREE_LIST, LOCK_FREE_LIST, memory_order_relaxed);
+    loc = FREE_LIST;
     switch(loc) {
     case LOCK_FREE_LIST:
       break;
 
     case EMPTY_FREE_LIST:
-      atomic_store_explicit(&FREE_LIST, EMPTY_FREE_LIST, memory_order_relaxed);
       loc = atomic_fetch_add_explicit(&RNOD_END, 2, memory_order_relaxed);
       // Check if we have space in the buffer
       if (loc >= BUFF_SIZE) {
@@ -255,7 +254,7 @@ Location pair_alloc(void) {
 	// Get the next free pair location
 	Term next = get(loc);
 	Location new_free_list = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-	atomic_store_explicit(&FREE_LIST, new_free_list, memory_order_relaxed);
+	FREE_LIST = new_free_list;
       }
 
       /* for the redex stack
@@ -283,7 +282,7 @@ void freer(unsigned line, Location loc) {
 
   Location currTop;
   do {
-    currTop = atomic_exchange_explicit(&FREE_LIST, LOCK_FREE_LIST, memory_order_relaxed);
+    currTop = FREE_LIST;
     switch(currTop) {
     case LOCK_FREE_LIST:
       break;
@@ -291,7 +290,7 @@ void freer(unsigned line, Location loc) {
     default:
       // Set up the node to point to the current head
       atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, currTop), memory_order_relaxed);
-      atomic_store_explicit(&FREE_LIST, loc, memory_order_relaxed);
+      FREE_LIST = loc;
       break;
     }
   } while (currTop == LOCK_FREE_LIST);
@@ -1361,7 +1360,7 @@ void hvm_reset(void) {
   atomic_store_explicit(&RBAG_END, 0, memory_order_relaxed);;
 
   // Initialize the free list (initially empty)
-  atomic_store_explicit(&FREE_LIST, EMPTY_FREE_LIST, memory_order_relaxed);
+  FREE_LIST = EMPTY_FREE_LIST;
   atomic_store_explicit(&glblAlloced, 0, memory_order_relaxed);
   atomic_store_explicit(&reduced, 0, memory_order_relaxed);
 }
@@ -1399,7 +1398,7 @@ void print_buff(Location start, Location end) {
 // Print the free list for debugging
 void print_free_list(void) {
   printf("Free list: ");
-  Location ptr = atomic_load_explicit(&FREE_LIST, memory_order_relaxed);
+  Location ptr = FREE_LIST;
   int count = 0;
 
   if (ptr == EMPTY_FREE_LIST) {
