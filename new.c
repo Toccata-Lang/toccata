@@ -13,6 +13,8 @@ __thread Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic 
 Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
 static u64 RBAG_SIZE = 0x1000;
 a64 RBAG_END; // Only need to track the end of the redex stack
+__thread u64 rdxCount = 0;
+a64 reduced;
 
 // interaction jump table
 interactionFn interactions[16][16];
@@ -1028,9 +1030,9 @@ interactionFn interactions[16][16] = {
   { POS_INTERACTIONS }  // LAZ  + {+ -}
 };
 
-a64 reduced = 0;
 void interact(Term neg, Term pos) {
   atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
+  rdxCount++;
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
 
@@ -1055,8 +1057,8 @@ void *normalize(void *v) {
   pthread_mutex_unlock(&redex_mutex);
   // */
 
-  u64 *res = malloc(sizeof(int));
-  *res = 0;
+  u64 *res = malloc(sizeof(u64));
+  *res = rdxCount;
   return res;
 }
 
@@ -1360,6 +1362,7 @@ void hvm_reset(void) {
   FREE_LIST = EMPTY_FREE_LIST;
   atomic_store_explicit(&glblAlloced, 0, memory_order_relaxed);
   atomic_store_explicit(&reduced, 0, memory_order_relaxed);
+  rdxCount = 0;
 }
 
 // For testing only

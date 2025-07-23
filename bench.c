@@ -301,7 +301,7 @@ int main(int argc, char *argv[]) {
   printf("Running single thread\n");
 #endif
 
-  for(int reps = 0; reps < 20; reps++) {
+  for(int reps = 0; reps < 1; reps++) {
     hvm_reset();
 
     gettimeofday(&startTime, NULL);
@@ -313,23 +313,24 @@ int main(int argc, char *argv[]) {
     Term a = pair_make(APP, 0, n, SUB);
     Term a3 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB);
 
-    Pairs pairs;
-    pairs.count = 0;
-    store_redex(&pairs, a0, make);
-    store_redex(&pairs, a, sum);
-    store_redex(&pairs, a3, end);
-    link_redexes(&pairs);
+    RBAG_BUFF[0] = a0;
+    RBAG_BUFF[1] = make;
+    RBAG_BUFF[2] = a;
+    RBAG_BUFF[3] = sum;
+    RBAG_BUFF[4] = a3;
+    RBAG_BUFF[5] = end;
+    atomic_store_explicit(&RBAG_END, 6, memory_order_relaxed);
 
     spawn_threads();
     u64 *res;
-    u64 interactions = 0;
+    u64 interactions = rdxCount;
     for(int i = 0; i < threadCount; i++) {
       pthread_join(threads[i], (void **)&res);
       interactions += *res;
       printf("rdxCount: %lu\n", *res);
     }
-    interactions = atomic_load_explicit(&reduced, memory_order_relaxed);
-    printf("interactions: %lu\n", interactions);
+    u64 rdxs = atomic_load_explicit(&reduced, memory_order_relaxed);
+    printf("interactions: %lu %lu\n", rdxs, interactions);
     printf("MIPS: %f\n", interactions / elapsed / 1000000);
     printf("elapsed: %f\n", elapsed);
     printf("Heap needed: %lu\n", atomic_load_explicit(&RNOD_END, memory_order_relaxed));
