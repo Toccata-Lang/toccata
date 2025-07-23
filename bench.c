@@ -206,22 +206,13 @@ void endFn(Term ref, Term args) {
   pairs.count = 0;
   Term rTrm = defer(ref, args, &pairs);
   link_redexes(&pairs);
+  u64 currTop;
   switch(term_tag(rTrm)) {
   case VAR:
     return;
     break;
 
   case I60: 
-    gettimeofday(&endTime, NULL);
-    elapsed = (endTime.tv_sec - startTime.tv_sec) +
-      (endTime.tv_usec - startTime.tv_usec) / 1000000.0;
-
-    pair_free(term_loc(args));
-    print_term("result", rTrm);
-    printf("exptd: %lu\n", expected);
-    if (expected != get_i60(rTrm)) {
-      abort();
-    }
     /*
     u64 allocCount = atomic_load_explicit(&alloced, memory_order_relaxed);
     if (allocCount != 0) {
@@ -231,7 +222,6 @@ void endFn(Term ref, Term args) {
     }
     // */
 #ifndef SINGLE_THREAD
-    u64 currTop;
     do {
       currTop = atomic_exchange_explicit(&RBAG_END, LOCK_REDEX_STACK, memory_order_relaxed);
       switch (currTop) {
@@ -240,6 +230,17 @@ void endFn(Term ref, Term args) {
 
       default:
 	if (1) {
+	  gettimeofday(&endTime, NULL);
+	  elapsed = (endTime.tv_sec - startTime.tv_sec) +
+	    (endTime.tv_usec - startTime.tv_usec) / 1000000.0;
+
+	  pair_free(term_loc(args));
+	  pthread_mutex_lock(&redex_mutex);
+	  print_term("result", rTrm);
+	  printf("exptd: %lu\n", expected);
+	  if (expected != get_i60(rTrm)) {
+	    abort();
+	  }
 #ifdef SAFETY
 	  // Check if there's space in the bag
 	  if (currTop + threadCount - 1 > RBAG_SIZE) {
@@ -249,17 +250,14 @@ void endFn(Term ref, Term args) {
 	  }
 #endif
 	  u64 newTop = currTop;
-	  for (int i = 0; i < threadCount; i++, newTop += 2) {
+	  for (int i = 0; i < threadCount * 2; i++, newTop += 2) {
 	    RBAG_BUFF[newTop] = 0;
 	    RBAG_BUFF[newTop + 1] = 0;
 	  }
-
-	  if (currTop == 0) {
-	    pthread_mutex_lock(&redex_mutex);
-	    pthread_cond_signal(&redex_cond);
-	    pthread_mutex_unlock(&redex_mutex);
-	  }
 	  atomic_store_explicit(&RBAG_END, newTop, memory_order_relaxed);
+	  u64 waitingThreads = atomic_load_explicit(&waiting, memory_order_relaxed);
+	  pthread_cond_signal(&redex_cond);
+	  pthread_mutex_unlock(&redex_mutex);
 	}
       }
     } while (currTop == LOCK_REDEX_STACK);
@@ -301,8 +299,9 @@ int main(int argc, char *argv[]) {
   printf("Running single thread\n");
 #endif
 
-  for(int reps = 0; reps < 1; reps++) {
+  for(int reps = 0; reps < 10; reps++) {
     hvm_reset();
+    printf("run: %d\n", reps);
 
     gettimeofday(&startTime, NULL);
 
@@ -313,12 +312,9 @@ int main(int argc, char *argv[]) {
     Term a = pair_make(APP, 0, n, SUB);
     Term a3 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB);
 
-    RBAG_BUFF[0] = a0;
-    RBAG_BUFF[1] = make;
-    RBAG_BUFF[2] = a;
-    RBAG_BUFF[3] = sum;
-    RBAG_BUFF[4] = a3;
-    RBAG_BUFF[5] = end;
+    RBAG_BUFF[0] = a0; RBAG_BUFF[1] = make;
+    RBAG_BUFF[2] = a; RBAG_BUFF[3] = sum;
+    RBAG_BUFF[4] = a3; RBAG_BUFF[5] = end;
     atomic_store_explicit(&RBAG_END, 6, memory_order_relaxed);
 
     spawn_threads();
@@ -327,7 +323,6 @@ int main(int argc, char *argv[]) {
     for(int i = 0; i < threadCount; i++) {
       pthread_join(threads[i], (void **)&res);
       interactions += *res;
-      printf("rdxCount: %lu\n", *res);
     }
     u64 rdxs = atomic_load_explicit(&reduced, memory_order_relaxed);
     printf("interactions: %lu %lu\n", rdxs, interactions);

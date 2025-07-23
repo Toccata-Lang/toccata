@@ -179,13 +179,15 @@ void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
 int threadCount = 1;
 pthread_t threads[200];
 
+a64 waiting;
+
 // Pop a redex (pair of terms) from the reduction bag
 // Returns false if the bag is empty, true otherwise
 bool pop_redex(Term* neg, Term* pos) {
   bool result = false;
-  bool starved = false;
 
   u64 currTop;
+  u64 waitingThreads;
   do {
     currTop = atomic_exchange_explicit(&RBAG_END, LOCK_REDEX_STACK, memory_order_relaxed);
 
@@ -195,11 +197,15 @@ bool pop_redex(Term* neg, Term* pos) {
 
     case 0:
       pthread_mutex_lock(&redex_mutex);
+      waitingThreads = atomic_fetch_add_explicit(&waiting, 1, memory_order_relaxed);
       atomic_store_explicit(&RBAG_END, 0, memory_order_relaxed);
       pthread_cond_wait(&redex_cond, &redex_mutex);
+      u64 currWaiting = atomic_fetch_add_explicit(&waiting, -1, memory_order_relaxed);
+      if (currWaiting > 0) {
+	pthread_cond_signal(&redex_cond);
+      }
       pthread_mutex_unlock(&redex_mutex);
-      starved = true;
-      continue;
+      currTop = LOCK_REDEX_STACK;
       break;
 
     default:
@@ -207,12 +213,16 @@ bool pop_redex(Term* neg, Term* pos) {
       *neg = RBAG_BUFF[currTop];
       *pos = RBAG_BUFF[currTop + 1];
       atomic_store_explicit(&RBAG_END, currTop, memory_order_relaxed);
-      if (starved && currTop > 0) {
-	pthread_mutex_lock(&redex_mutex);
-	pthread_cond_signal(&redex_cond);
-	pthread_mutex_unlock(&redex_mutex);
-      }
       if (*neg == 0 && *pos == 0) {
+	/*
+	waitingThreads = atomic_load_explicit(&waiting, memory_order_relaxed);
+	if (waitingThreads > 0) {
+	  pthread_mutex_lock(&redex_mutex);
+	  printf("signal %d %lu %lu\n", __LINE__, currTop, waitingThreads);
+	  pthread_cond_signal(&redex_cond);
+	  pthread_mutex_unlock(&redex_mutex);
+	}
+	// */
 	result = false;
       } else
 	result = true;
@@ -588,7 +598,8 @@ void link_redexes(Pairs *pairs) {
 	  }
 
 #ifndef SINGLE_THREAD
-	  if (currTop == 0) {
+	  u64 waitingThreads = atomic_load_explicit(&waiting, memory_order_relaxed);
+	  if (waitingThreads > 0) {
 	    pthread_mutex_lock(&redex_mutex);
 	    pthread_cond_signal(&redex_cond);
 	    pthread_mutex_unlock(&redex_mutex);
@@ -1052,9 +1063,12 @@ void *normalize(void *v) {
     interact(neg, pos);
   }
   //*
-  pthread_mutex_lock(&redex_mutex);
-  pthread_cond_signal(&redex_cond);
-  pthread_mutex_unlock(&redex_mutex);
+  u64 waitingThreads = atomic_load_explicit(&waiting, memory_order_relaxed);
+  if (waitingThreads > 0) {
+    pthread_mutex_lock(&redex_mutex);
+    pthread_cond_signal(&redex_cond);
+    pthread_mutex_unlock(&redex_mutex);
+  }
   // */
 
   u64 *res = malloc(sizeof(u64));
@@ -1362,6 +1376,7 @@ void hvm_reset(void) {
   FREE_LIST = EMPTY_FREE_LIST;
   atomic_store_explicit(&glblAlloced, 0, memory_order_relaxed);
   atomic_store_explicit(&reduced, 0, memory_order_relaxed);
+  atomic_store_explicit(&waiting, 0, memory_order_relaxed);
   rdxCount = 0;
 }
 

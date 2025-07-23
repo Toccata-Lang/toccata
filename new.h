@@ -39,6 +39,7 @@ typedef u64 Term;
 extern a64 RBAG_END;
 extern Term* RBAG_BUFF;
 #define LOCK_REDEX_STACK 0xFFFFFFFF
+extern a64 waiting;
 extern __thread u64 rdxCount;
 
 // Global VM state
