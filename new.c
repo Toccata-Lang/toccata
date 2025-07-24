@@ -14,7 +14,6 @@ Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
 static u64 RBAG_SIZE = 0x1000;
 a64 RBAG_END; // Only need to track the end of the redex stack
 __thread u64 rdxCount = 0;
-a64 reduced;
 
 // interaction jump table
 interactionFn interactions[16][16];
@@ -1042,7 +1041,6 @@ interactionFn interactions[16][16] = {
 };
 
 void interact(Term neg, Term pos) {
-  atomic_fetch_add_explicit(&reduced, 1, memory_order_relaxed);
   rdxCount++;
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
@@ -1092,88 +1090,85 @@ Term argsNet(NativeArgs *args) {
 }
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
-/*
-Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
-  // if (argsStruct->count > 0) {
-  // fprintf(stderr, "nativeArg %d: %p %d %p\n", __LINE__, (void *)ref, argsStruct->count,
-  // (void *)get_i24(get_val(argsStruct->args[argsStruct->count - 1])));
-  // } else {
-  // fprintf(stderr, "nativeArg %d: %p %d\n", __LINE__, (void *)ref, argsStruct->count);
-  // }
-  // 'args' will only ever be a negative term
+//*
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, Pairs *pairs) {
+  // 'args' will only ever be an APP term
   Tag argsTag = term_tag(args);
-  // fprintf(stderr, "argsTag %d: %s (%d) in %p\n", __LINE__,
-  //	  tag_to_string(argsTag), argsTag, (void *)args);
-  Term arg;
-  Term varVal;
-  Term retry;
-  Term newArgs;
-  Term newArg;
-  switch(argsTag) {
-  case APP:
-    arg = take(port(1, term_loc(args)));
+  if (argsTag == APP) {
+    Term arg = take(port(1, term_loc(args)));
     if (expected == 0) {
       return args;
     }
 
     // 'arg' will only ever be a positive term
     Tag argTag = term_tag(arg);
-    // fprintf(stderr, "arg 2 %d: %d %p\n", __LINE__, argTag, (void *)arg);
     switch(argTag) {
       // the strict arg types
     case VAL:
     case I60:
     case F60:
     case REF:
+      // add it to argsStruct
       argsStruct->args[argsStruct->count++] = arg;
       if (expected > 1)
-	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+	// need to get more strict args
+	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct, pairs);
       else
 	return args;
       break;
 
     case VAR: {
-      Term valVar = get(term_loc(arg));
-      switch(term_tag(valVar)) {
+      Term val = take(term_loc(arg));
+      switch(term_tag(val)) {
 	// the strict arg types
       case VAL:
       case I60:
       case F60:
-      case REF:
-	if(1) {
-	  Term val = take(term_loc(arg));
+      case REF: {
 	  argsStruct->args[argsStruct->count++] = val;
 	  if (expected > 1)
-	    return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+	    return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct, pairs);
 	  else
 	    return args;
 	}
 	break;
 
-      case SUB:
-	if (valVar != SUB)
-	  BOOM("nativeArgs");
-	else {
-	  argsStruct->args[argsStruct->count++] = args;
-	  newArgs = argsNet(argsStruct);
-	  swap(port(1, term_loc(args)), arg);
-	  retry = pair_make(SUB, 5, newArgs, ref);
-	  newArg = swap(term_loc(arg), retry);
-	  if (newArg != SUB) {
-	    // someone slipped the needed arg in since we last looked
-	    swap(term_loc(arg), newArg);
-	    take(port(1, term_loc(retry)));
-	    take(port(2, term_loc(retry)));
-	    term_link(newArgs, ref);
+      case VAR: {
+	  Term val = get(term_loc(arg));
+	  if (val != SUB)
+	    BOOM("nativeArgs");
+	  else {
+	    // add the remaining args to argsStruct
+	    argsStruct->args[argsStruct->count++] = args;
+
+	    // create a chain of APP terms from argsStruct
+	    Term newArgs = argsNet(argsStruct);
+
+	    // put 'arg' back in it's place
+	    swapStore(port(1, term_loc(args)), arg, pairs);
+
+	    // make a deferred redex to retry the APP/REF pair when the value becomes available
+	    Term retry = pair_make(SUB, 5, newArgs, ref);
+
+	    // and put it in the location 'arg' points to
+	    Term newArg = swapStore(term_loc(arg), retry, pairs);
+	    if (newArg != SUB) {
+	      // someone slipped the needed arg in since we last looked
+	      swapStore(term_loc(arg), newArg, pairs);
+	      pair_free(term_loc(retry));
+
+	      // so retry the original APP/REF redex
+	      store_redex(pairs, newArgs, ref);
+	    }
+	    argsStruct->count = -1;
+	    return 0;
 	  }
-	  argsStruct->count = -1;
-	  return 0;
 	}
 	break;
 
       default: {
 	char s[50];
-	sprintf(s, "bad %s valVar", tag_to_string(term_tag(valVar)));
+	sprintf(s, "bad %s val", tag_to_string(term_tag(val)));
 	BOOM(s);
       }
 	break;
@@ -1196,19 +1191,11 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     argsStruct->count = -1;
     // /
     return 0;
-    break;
-
-  case SUB:
-  case ERA:
-  case DUP:
-  case OPX:
-  case OPY:
-  default:
+  } else {
     printf("unhandled tag %s (0x%x) %p line: %d\n",
-	   tag_to_string(argsTag), argsTag, (void *)arg, __LINE__);
+	   tag_to_string(argsTag), argsTag, (void *)args, __LINE__);
     abort();
     return 0;
-    break;
   }
 }
 // */
@@ -1375,7 +1362,6 @@ void hvm_reset(void) {
   // Initialize the free list (initially empty)
   FREE_LIST = EMPTY_FREE_LIST;
   atomic_store_explicit(&glblAlloced, 0, memory_order_relaxed);
-  atomic_store_explicit(&reduced, 0, memory_order_relaxed);
   atomic_store_explicit(&waiting, 0, memory_order_relaxed);
   rdxCount = 0;
 }

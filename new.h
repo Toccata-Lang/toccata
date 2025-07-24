@@ -45,7 +45,6 @@ extern __thread u64 rdxCount;
 // Global VM state
 extern a64 glblAlloced;
 extern a64 RNOD_END;
-extern a64 reduced;
 extern int threadCount;
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
@@ -139,6 +138,7 @@ bool pop_redex(Term* neg, Term* pos);
 void store_redex(Pairs *pairs, Term neg, Term pos);
 void link_redexes(Pairs *pairs);
 Term swapStore(Location loc, Term term, Pairs *pairs);
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, Pairs *pairs);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
