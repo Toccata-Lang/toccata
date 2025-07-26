@@ -288,9 +288,10 @@ int main(int argc, char *argv[]) {
     Term a = pair_make(APP, 0, n, SUB);
     Term a3 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(a))), SUB);
 
-    RBAG_BUFF[0] = a0; RBAG_BUFF[1] = make;
-    RBAG_BUFF[2] = a; RBAG_BUFF[3] = sum;
-    RBAG_BUFF[4] = a3; RBAG_BUFF[5] = end;
+    unsigned i = 0;
+    RBAG_BUFF[i++] = a0; RBAG_BUFF[i++] = make;
+    RBAG_BUFF[i++] = a; RBAG_BUFF[i++] = sum;
+    RBAG_BUFF[i++] = a3; RBAG_BUFF[i++] = end;
     atomic_store_explicit(&RBAG_END, 6, memory_order_relaxed);
 
     spawn_threads();
