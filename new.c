@@ -1089,6 +1089,69 @@ Term argsNet(NativeArgs *args) {
   return args->args[0];
 }
 
+#ifdef NADA
+void forceLazy(Term z) {
+  // 'z' is a LAZ term
+  Pairs pairs;
+  pairs.count = 0;
+  Term neg = take(port(1, term_loc(z)));
+  if (neg != VOID) {
+    Term pos = take(port(2, term_loc(z)));
+    if (term_tag(neg) == DUP && term_tag(pos) == LAZ) {
+      BOOM("we do need this, it appears");
+      /*
+      Term curr = swap(port(1, term_loc(neg)), SUB);
+      if (curr != z)
+	set(port(1, term_loc(neg)), curr);
+      BOOM("don't swap");
+      curr = swap(port(2, term_loc(neg)), SUB);
+      if (curr != z)
+	set(port(2, term_loc(neg)), curr);
+      // set(posLoc, pair_make(SUB, neg, term_new(VAR, 0, posLoc)));
+      forceLazy(pos);
+      // */
+    } else if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
+      // if this is a lazy DUP, which ever port points to itself
+      // gets replaced with SUB
+      Term curr = get(port(1, term_loc(neg)));
+      if (curr == z)
+	set(port(1, term_loc(neg)), SUB);
+      curr = get(port(2, term_loc(neg)));
+      if (curr == z)
+	set(port(2, term_loc(neg)), SUB);
+
+      Term newPos = take(term_loc(pos));
+      // newPos is the term being duped
+      /*
+      while (term_tag(newPos) == VAR) {
+	pos = newPos;
+	newPos = take(term_loc(pos));
+      }
+      // */
+      switch(term_tag(newPos)) {
+      case LAZ:
+	BOOM("this is totally wrong");
+	// see the loop commented out above
+	set(term_loc(newPos), pair_make(SUB, 7, neg, pos));
+	BOOM("*** what if newPos is not lazy? %d\n");
+	forceLazy(newPos);
+	break;
+
+      case VAR:
+	set(term_loc(newPos), pair_make(SUB, 6, neg, newPos)));
+	break;
+
+      default:
+	store_redex(&pairs, neg, newPos);
+      }
+    } else {
+      store_redex(&pairs, neg, pos);
+    }
+  }
+  link_redexes(&pairs);
+}
+#endif
+
 // extract the requested number of native args. I60, F60, REF or VAL terms
 //*
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, Pairs *pairs) {
