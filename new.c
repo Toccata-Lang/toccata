@@ -253,6 +253,7 @@ Location pair_alloc(void) {
 
     case EMPTY_FREE_LIST:
       loc = atomic_fetch_add_explicit(&RNOD_END, 2, memory_order_relaxed);
+      printf("new pair: %d\n", loc);
       // Check if we have space in the buffer
       if (loc >= BUFF_SIZE) {
 	fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%u, BUFF_SIZE=%lu\n",
@@ -282,6 +283,7 @@ Location pair_alloc(void) {
 
 // Free a pair by adding it to the free list - O(1)
 void freer(unsigned line, Location loc) {
+  printf("free pair at: %d\n", loc);
 #ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
 #endif
@@ -1041,6 +1043,10 @@ interactionFn interactions[16][16] = {
 };
 
 void interact(Term neg, Term pos) {
+  print_raw_term(neg);
+  printf("  ");
+  print_raw_term(pos);
+  printf("\n");
   rdxCount++;
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
