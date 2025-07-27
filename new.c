@@ -109,7 +109,7 @@ void freeLoc(Location loc) {
 // Take the term at the given location, replacing it with 0
 // And freeing a VAR chain if needed
 // Returns a positive value.
-Term taker(unsigned line, Location loc) {
+Term take(Location loc) {
   Tag takenTag;
   Term taken;
   do {
@@ -117,7 +117,6 @@ Term taker(unsigned line, Location loc) {
     takenTag = term_tag(taken);
     if (takenTag != SUB) {
       freeLoc(loc);
-      // printf("taking: %.3x at line: %u\n", loc, line);
       if (takenTag == VAR) {
 	loc = term_loc(taken);
       }
@@ -292,7 +291,7 @@ Location pair_alloc(void) {
 }
 
 // Free a pair by adding it to the free list - O(1)
-void freer(unsigned line, Location loc) {
+void pair_free(Location loc) {
   // printf("free pair at: %d\n", loc);
 #ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
@@ -411,7 +410,7 @@ bool is_negative(Term term) {
 }
 
 // Create a new pair with given tag, label, and terms
-Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd) {
+Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 #ifdef SAFETY
   // Check port polarities based on pair type
   switch (tag) {
@@ -1109,7 +1108,7 @@ void forceLazy(Term z) {
       case LAZ:
 	BOOM("this is totally wrong");
 	// see the loop commented out above
-	set(term_loc(newPos), pair_make(SUB, 7, neg, pos));
+	set(term_loc(pos), pair_make(SUB, neg, pos));
 	BOOM("*** what if newPos is not lazy? %d\n");
 	forceLazy(newPos);
 	break;

@@ -119,6 +119,7 @@ void hvm_reset(void);
 void init_free_list(u64 start, u64 end);
 Location pair_alloc(void);
 void pair_free(Location loc);
+Term pair_make( Tag tag, Lab lab, Term fst, Term snd);
 const char* tag_to_string(Tag tag);
 Term term_new(Tag tag, Lab lab, Location loc);
 Tag term_tag(Term term);
@@ -131,7 +132,7 @@ bool is_negative(Term term);
 
 // Get term at location
 Term get(Location loc);
-Term taker(unsigned line, Location loc);
+Term take(Location loc);
 void freeLoc(Location loc);
 void interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
@@ -156,11 +157,6 @@ Term ref_make(interactionFn fn);
 
 void *boom(char *msg, char *file, int line);
 #define BOOM(msg) boom(msg, __FILE__, __LINE__)
-#define take(l) taker(__LINE__, (l))
-#define pair_free(l) freer(__LINE__, (l))
-void freer(unsigned line, Location loc);
-Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd);
-#define pair_make(t, l, f, s) pair_maker(__LINE__, (t), (l), (f), (s))
 #endif // NEW_H
 
 extern pthread_mutex_t buff_mutex;
