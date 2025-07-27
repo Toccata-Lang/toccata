@@ -32,11 +32,8 @@ void leafFn(Term ref, Term args) {
   Term l2 = pair_make(LAM, 0, a0, b);
   Term l1 = pair_make(LAM, 0, ERA, l2);
   Term l0 = pair_make(LAM, 0, SUB, l1);
-  Pairs pairs;
-  pairs.count = 0;
-  swapStore(port(1, term_loc(a0)), term_new(VAR, 0, port(1, term_loc(l0))), &pairs);
-  store_redex(&pairs, args, l0);
-  link_redexes(&pairs);
+  swapStore(port(1, term_loc(a0)), term_new(VAR, 0, port(1, term_loc(l0))));
+  store_redex(args, l0);
   return;
 }
 Term leaf = new_ref(leafFn);
@@ -50,12 +47,9 @@ void nodeFn(Term ref, Term args) {
   Term lft = term_new(VAR, 0, port(1, term_loc(l0)));
   Term a1 = pair_make(APP, 0, rgt, SUB);
   Term a0 = pair_make(APP, 0, lft, a1);
-  Pairs pairs;
-  pairs.count = 0;
-  swapStore(port(2, term_loc(l3)), term_new(VAR, 0, port(2, term_loc(a1))), &pairs);
-  swapStore(port(1, term_loc(l2)), a0, &pairs);
-  store_redex(&pairs, args, l0);
-  link_redexes(&pairs);
+  swapStore(port(2, term_loc(l3)), term_new(VAR, 0, port(2, term_loc(a1))));
+  swapStore(port(1, term_loc(l2)), a0);
+  store_redex(args, l0);
   return;
 }
 Term node = new_ref(nodeFn);
@@ -63,9 +57,7 @@ Term node = new_ref(nodeFn);
 Term makeNode;
 void makeFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
-  Pairs pairs;
-  pairs.count = 0;
-  args = strictArgs(ref, args, 1, &arityArgs, &pairs);
+  args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
     Term hTrm = arityArgs.args[0];
     switch(term_tag(hTrm)) {
@@ -74,9 +66,9 @@ void makeFn(Term ref, Term args) {
 	int h = get_i60(hTrm);
 	Term a = take(port(2, term_loc(args)));
 	if (h == 0) {
-	  store_redex(&pairs, a, leaf);
+	  store_redex(a, leaf);
 	} else {
-	  store_redex(&pairs, pair_make(APP, 0, new_i60(h - 1), a), makeNode);
+	  store_redex(pair_make(APP, 0, new_i60(h - 1), a), makeNode);
 	}
       }
       break;
@@ -88,7 +80,6 @@ void makeFn(Term ref, Term args) {
       break;
     }
   }
-  link_redexes(&pairs);
   return;
 }
 Term make = new_ref(makeFn);
@@ -116,24 +107,18 @@ void makeNodeFn(Term ref, Term args) {
   Term l1 = pair_make(LAM, 0, dblN, term_new(VAR, 0, port(2, term_loc(nA1))));
   Term l0 = pair_make(LAM, 0, h, l1);
 
-  Pairs pairs;
-  pairs.count = 0;
-  store_redex(&pairs, args, l0);
-  store_redex(&pairs, lftA0, make);
-  store_redex(&pairs, nA0, node);
-  store_redex(&pairs, rgtA0, make);
-  link_redexes(&pairs);
+  store_redex(args, l0);
+  store_redex(lftA0, make);
+  store_redex(nA0, node);
+  store_redex(rgtA0, make);
   return;
 }
 Term makeNode = new_ref(makeNodeFn);
 
 void sumLeafFn(Term ref, Term args) {
   Term l = pair_make(LAM, 0, SUB, NUL);
-  Pairs pairs;
-  pairs.count = 0;
-  swapStore(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))), &pairs);
-  store_redex(&pairs, args, l);
-  link_redexes(&pairs);
+  swapStore(port(2, term_loc(l)), term_new(VAR, 0, port(1, term_loc(l))));
+  store_redex(args, l);
   return;
 }
 Term sumLeaf = new_ref(sumLeafFn);
@@ -147,13 +132,10 @@ void sumNodeFn(Term ref, Term args) {
 
   Term sumLft = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l0))), SUB);
   Term sumRgt = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l1))), s);
-  Pairs pairs;
-  pairs.count = 0;
-  swapStore(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))), &pairs);
-  store_redex(&pairs, sumRgt, sum);
-  store_redex(&pairs, args, l0);
-  store_redex(&pairs, sumLft, sum);
-  link_redexes(&pairs);
+  swapStore(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))));
+  store_redex(sumRgt, sum);
+  store_redex(args, l0);
+  store_redex(sumLft, sum);
   return;
 }
 Term sumNode = new_ref(sumNodeFn);
@@ -175,10 +157,7 @@ u64 expected;
 
 void endFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
-  Pairs pairs;
-  pairs.count = 0;
-  args = strictArgs(ref, args, 1, &arityArgs, &pairs);
-  link_redexes(&pairs);
+  args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
     u64 currTop;
     Term rTrm = arityArgs.args[0];
@@ -256,7 +235,8 @@ int main(int argc, char *argv[]) {
   }
   
   // Initialize the VM with some memory
-  hvm_init((u64)3 * (u64)(1 << 30));
+  // hvm_init((u64)3 * (u64)(1 << 30));
+  hvm_init(2000);
 
   height = atoi(argv[1]);
   if (height < 0) {

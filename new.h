@@ -100,9 +100,10 @@ typedef struct {
   Term args[MAX_ARGS + 2];
 } NativeArgs;
 
+#define LOCAL_PAIRS_SIZE 200
 typedef struct {
   unsigned count;
-  Term rdxs[100][2];
+  Term rdxs[LOCAL_PAIRS_SIZE][2];
 } Pairs;
 
 // creating number terms
@@ -135,10 +136,11 @@ void freeLoc(Location loc);
 void interact(Term neg, Term pos);
 void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
-void store_redex(Pairs *pairs, Term neg, Term pos);
-void link_redexes(Pairs *pairs);
-Term swapStore(Location loc, Term term, Pairs *pairs);
-Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, Pairs *pairs);
+void store_redex(Term neg, Term pos);
+Term swapStore(Location loc, Term term);
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
+void link_redexes();
+void store_redex(Term neg, Term pos);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed

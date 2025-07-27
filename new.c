@@ -10,6 +10,7 @@ static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 __thread Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
 
 // Redex stack
+__thread Pairs pairs;
 Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
 static u64 RBAG_SIZE = 0x1000;
 a64 RBAG_END; // Only need to track the end of the redex stack
@@ -81,7 +82,7 @@ Term get(Location loc) {
 // Atomic swap operation
 // If a deferred redex is found, queue it up and return SUB
 // Otherwise, return a positive value.
-Term swapStore(Location loc, Term term, Pairs *pairs) {
+Term swapStore(Location loc, Term term) {
 #ifdef SAFETY
   if (term == 0)
     BOOM("bad swap");
@@ -90,7 +91,7 @@ Term swapStore(Location loc, Term term, Pairs *pairs) {
   if (term_tag(result) == SUB && result != SUB) {
     Term neg = get(port(1, term_loc(result)));
     Term pos = get(port(2, term_loc(result)));
-    store_redex(pairs, neg, pos);
+    store_redex(neg, pos);
     pair_free(term_loc(result));
     return SUB;
   } else
@@ -135,7 +136,7 @@ Term taker(unsigned line, Location loc) {
     return taken;
 }
 
-void store_redex(Pairs *pairs, Term neg, Term pos) {
+void store_redex(Term neg, Term pos) {
 #ifdef SAFETY
   if (neg == 0 && pos == 0)
     // shutdown the threads
@@ -147,16 +148,18 @@ void store_redex(Pairs *pairs, Term neg, Term pos) {
   }
 #endif
 
-  pairs->rdxs[pairs->count][0] = neg;
-  pairs->rdxs[pairs->count++][1] = pos;
+  pairs.rdxs[pairs.count][0] = neg;
+  pairs.rdxs[pairs.count++][1] = pos;
+  if (pairs.count >= LOCAL_PAIRS_SIZE) {
+    link_redexes();
+  }
 }
 
 // Move a positive term into a negative location
 // If anything besides a deferred redex is there, it must be a
 // negative and should be reduced with 'pos'
-void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
-  unsigned startCount = pairs->count;
-  Term neg = swapStore(neg_loc, pos, pairs);
+void moveStore(Location neg_loc, Term pos) {
+  Term neg = swapStore(neg_loc, pos);
 #ifdef SAFETY
   if (is_negative(pos)) {
     char s[50];
@@ -171,7 +174,7 @@ void moveStore(Location neg_loc, Term pos, Pairs *pairs) {
 #endif
   if (term_tag(neg) != SUB) {
     freeLoc(neg_loc);
-    store_redex(pairs, neg, pos);
+    store_redex(neg, pos);
   }
 }
 
@@ -184,6 +187,13 @@ a64 waiting;
 // Returns false if the bag is empty, true otherwise
 bool pop_redex(Term* neg, Term* pos) {
   bool result = false;
+
+  if (pairs.count > 0) {
+    pairs.count -= 1;
+    *neg = pairs.rdxs[pairs.count][0];
+    *pos = pairs.rdxs[pairs.count][1];
+    return true;
+  }
 
   u64 currTop;
   u64 waitingThreads;
@@ -253,7 +263,7 @@ Location pair_alloc(void) {
 
     case EMPTY_FREE_LIST:
       loc = atomic_fetch_add_explicit(&RNOD_END, 2, memory_order_relaxed);
-      printf("new pair: %d\n", loc);
+      // printf("new pair: %d\n", loc);
       // Check if we have space in the buffer
       if (loc >= BUFF_SIZE) {
 	fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%u, BUFF_SIZE=%lu\n",
@@ -283,7 +293,7 @@ Location pair_alloc(void) {
 
 // Free a pair by adding it to the free list - O(1)
 void freer(unsigned line, Location loc) {
-  printf("free pair at: %d\n", loc);
+  // printf("free pair at: %d\n", loc);
 #ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
 #endif
@@ -497,19 +507,21 @@ Term pair_maker(unsigned line, Tag tag, Lab lab, Term fst, Term snd) {
   return new_pair;
 }
 
-void link_redexes(Pairs *pairs) {
-  if (pairs == NULL || pairs->count == 0)
-    return;
+void store_pair(Pairs *pairs, Term neg, Term pos) {
+  pairs->rdxs[pairs->count][0] = neg;
+  pairs->rdxs[pairs->count++][1] = pos;
+}
 
+void link_redexes() {
   Pairs pushing;
   pushing.count = 0;
 
   Pairs immediate;
   immediate.count = 0;
 
-  for (int i = 0; i < pairs->count; i++) {
-    Term neg = pairs->rdxs[i][0];
-    Term pos = pairs->rdxs[i][1];
+  for (int i = 0; i < pairs.count; i++) {
+    Term neg = pairs.rdxs[i][0];
+    Term pos = pairs.rdxs[i][1];
 
     switch(term_tag(neg)) {
     case ERA:
@@ -527,8 +539,7 @@ void link_redexes(Pairs *pairs) {
 	immediate.rdxs[immediate.count++][1] = pos;
 	break;
 
-      case VAR:
-	if (1) {
+      case VAR: {
 	  Term val = take(term_loc(pos));
 	  switch(term_tag(val)) {
 	  case I60:
@@ -541,7 +552,7 @@ void link_redexes(Pairs *pairs) {
 	  case VAR:
 	    if (1) {
 	      Term deferred = pair_make(SUB, 4, neg, val);
-	      Term newVal = swapStore(term_loc(val), deferred, pairs);
+	      Term newVal = swapStore(term_loc(val), deferred);
 	      if (term_tag(newVal) == SUB) {
 		if (newVal != SUB)
 		  BOOM("This shouldn't happen, should it?");
@@ -552,7 +563,7 @@ void link_redexes(Pairs *pairs) {
 		// print_term("newVal", newVal);
 		pair_free(term_loc(deferred));
 		freeLoc(term_loc(val));
-		store_redex(pairs, neg, newVal);
+		store_redex(neg, newVal);
 	      }
 	    }
 	    break;
@@ -572,8 +583,13 @@ void link_redexes(Pairs *pairs) {
       }
     }
   }
+  pairs.count = 0;
+  unsigned pushCount = LOCAL_PAIRS_SIZE / 2;
+  if (pushCount > pushing.count)
+    pushCount = pushing.count;
+  printf("pushing: %u immediate: %u  pushed: %u\n", pushing.count, immediate.count, pushCount);
 
-  if (pushing.count > 1) {
+  if (pushing.count > 0) {
     u64 currTop;
     do {
       currTop = atomic_exchange_explicit(&RBAG_END, LOCK_REDEX_STACK, memory_order_relaxed);
@@ -585,14 +601,14 @@ void link_redexes(Pairs *pairs) {
 	if (1) {
 #ifdef SAFETY
 	  // Check if there's space in the bag
-	  if (currTop + pushing.count - 1 > RBAG_SIZE) {
+	  if (currTop + pushCount > RBAG_SIZE) {
 	    fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
 		    currTop, RBAG_SIZE);
 	    abort();
 	  }
 #endif
 	  u64 newTop = currTop;
-	  for (int i = 1; i < pushing.count; i++, newTop += 2) {
+	  for (int i = 1; i < pushCount; i++, newTop += 2) {
 	    // Store the redex in the bag
 	    RBAG_BUFF[newTop] = pushing.rdxs[i][0];
 	    RBAG_BUFF[newTop + 1] = pushing.rdxs[i][1];
@@ -612,17 +628,19 @@ void link_redexes(Pairs *pairs) {
     } while (currTop == LOCK_REDEX_STACK);
   }
 
+  for (int i = pushCount; i < pushing.count; i++) {
+    Term neg = pushing.rdxs[i][0];
+    Term pos = pushing.rdxs[i][1];
+
+    store_redex(neg, pos);
+  }
+
   for (int i = 0; i < immediate.count; i++) {
     Term neg = immediate.rdxs[i][0];
     Term pos = immediate.rdxs[i][1];
 
-    interact(neg, pos);
+    store_redex(neg, pos);
   }
-
-  if (pushing.count > 0)
-    return interact(pushing.rdxs[0][0],
-		    pushing.rdxs[0][1]);
-  return;
 }
 
 void DEFR(Term neg, Term var) {
@@ -630,15 +648,12 @@ void DEFR(Term neg, Term var) {
   if (term_tag(var) == VAR) {
     Location varLoc = term_loc(var);
     Term deferred = pair_make(SUB, 2, neg, var);
-    Pairs pairs;
-    pairs.count = 0;
-    Term newVar = swapStore(varLoc, deferred, &pairs);
+    Term newVar = swapStore(varLoc, deferred);
     if (term_tag(newVar) != SUB) {
       pair_free(term_loc(deferred));
       freeLoc(varLoc);
-      store_redex(&pairs, neg, newVar);
+      store_redex(neg, newVar);
     }
-    link_redexes(&pairs);
   } else {
     interact(neg, var);
   }
@@ -661,11 +676,8 @@ void applam(Term app, Term lam) {
   Term bod_val = take(bod_loc);
 
   // Move terms to their new locations
-  Pairs pairs;
-  pairs.count = 0;
-  moveStore(var_loc, arg_val, &pairs);
-  moveStore(ret_loc, bod_val, &pairs);
-  link_redexes(&pairs);
+  moveStore(var_loc, arg_val);
+  moveStore(ret_loc, bod_val);
   return;
 }
 
@@ -694,24 +706,18 @@ void DNEG(Term neg, Term sup) {
   Term dp2 = pair_make(SUP, sup_lab,
 		       term_new(VAR, 0, port(2, term_loc(cn1))),
 		       term_new(VAR, 0, port(2, term_loc(cn2))));
-  Pairs pairs;
-  pairs.count = 0;
-  moveStore(ret, dp2, &pairs);
-  store_redex(&pairs, cn2, tm2);
-  store_redex(&pairs, cn1, tm1);
-  store_redex(&pairs, dp1, arg);
-  link_redexes(&pairs);
+  moveStore(ret, dp2);
+  store_redex(cn2, tm2);
+  store_redex(cn1, tm1);
+  store_redex(dp1, arg);
   return;
 }
 
 // Application-Null interaction
 void appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
-  Pairs pairs;
-  pairs.count = 0;
-  store_redex(&pairs, ERA, take(port(1, app_loc)));
-  moveStore(port(2, app_loc), NUL, &pairs);
-  link_redexes(&pairs);
+  store_redex(ERA, take(port(1, app_loc)));
+  moveStore(port(2, app_loc), NUL);
   return;
 }
 
@@ -734,15 +740,12 @@ void DLAM(Term dup, Term lam) {
   Term du2 = pair_make(DUP, dup_lab,
 		       SUB,
 		       SUB);
-  Pairs pairs;
-  pairs.count = 0;
-  swapStore(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))), &pairs);
-  swapStore(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))), &pairs);
-  moveStore(port(1, term_loc(dup)), co1, &pairs);
-  moveStore(port(2, term_loc(dup)), co2, &pairs);
-  moveStore(var, du1, &pairs);
-  store_redex(&pairs, du2, bod);
-  link_redexes(&pairs);
+  swapStore(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
+  swapStore(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
+  moveStore(port(1, term_loc(dup)), co1);
+  moveStore(port(2, term_loc(dup)), co2);
+  moveStore(var, du1);
+  store_redex(du2, bod);
   return;
 }
 
@@ -765,11 +768,8 @@ void DSUP(Term dup, Term sup) {
     Term sup_p2 = take(port(2, sup_loc));
 
     // Direct connection of the ports
-    Pairs pairs;
-    pairs.count = 0;
-    moveStore(dup_p1, sup_p1, &pairs);
-    moveStore(dup_p2, sup_p2, &pairs);
-    link_redexes(&pairs);
+    moveStore(dup_p1, sup_p1);
+    moveStore(dup_p2, sup_p2);
   } else {
     // Get the ports of the DUP node
     Location dup_loc = term_loc(dup);
@@ -794,13 +794,10 @@ void DSUP(Term dup, Term sup) {
 			  term_new(VAR, 0, port(2, term_loc(dup2))));
 
     // Connect the new nodes
-    Pairs pairs;
-    pairs.count = 0;
-    moveStore(dup_p1, sup1, &pairs);
-    moveStore(dup_p2, sup2, &pairs);
-    store_redex(&pairs, dup2, sup_p2);
-    store_redex(&pairs, dup1, sup_p1);
-    link_redexes(&pairs);
+    moveStore(dup_p1, sup1);
+    moveStore(dup_p2, sup2);
+    store_redex(dup2, sup_p2);
+    store_redex(dup1, sup_p1);
   }
 
   return;
@@ -824,11 +821,8 @@ void copy(Term dup, Term trm) {
   Location dp2_loc = port(2, dup_loc);
 
   // put trm in both copy ports
-  Pairs pairs;
-  pairs.count = 0;
-  moveStore(dp2_loc, trm, &pairs);
-  moveStore(dp1_loc, trm, &pairs);
-  link_redexes(&pairs);
+  moveStore(dp2_loc, trm);
+  moveStore(dp1_loc, trm);
   return;
 }
 
@@ -836,22 +830,16 @@ void copy(Term dup, Term trm) {
 void eralam(Term era, Term lam) {
   BOOM("eralam");
   Location lam_loc = term_loc(lam);
-  Pairs pairs;
-  pairs.count = 0;
-  store_redex(&pairs, ERA, take(port(2, lam_loc)));
-  moveStore(port(1, lam_loc), NUL, &pairs);
-  link_redexes(&pairs);
+  store_redex(ERA, take(port(2, lam_loc)));
+  moveStore(port(1, lam_loc), NUL);
   return;
 }
 
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  Pairs pairs;
-  pairs.count = 0;
-  store_redex(&pairs, ERA, take(port(2, sup_loc)));
-  store_redex(&pairs, ERA, take(port(1, sup_loc)));
-  link_redexes(&pairs);
+  store_redex(ERA, take(port(2, sup_loc)));
+  store_redex(ERA, take(port(1, sup_loc)));
   return;
 }
 
@@ -873,22 +861,16 @@ void appref(Term app, Term ref) {
 void appnum(Term app, Term num) {
   BOOM("appnum");
   Location app_loc = term_loc(app);
-  Pairs pairs;
-  pairs.count = 0;
-  moveStore(port(2, app_loc), num, &pairs);
-  store_redex(&pairs, ERA, take(port(1, app_loc)));
-  link_redexes(&pairs);
+  moveStore(port(2, app_loc), num);
+  store_redex(ERA, take(port(1, app_loc)));
   return;
 }
 
 void opnul(Term op, Term nul) {
   BOOM("opnul");
   Location op_loc = term_loc(op);
-  Pairs pairs;
-  pairs.count = 0;
-  moveStore(port(2, op_loc), nul, &pairs);
-  store_redex(&pairs, ERA, take(port(1, op_loc)));
-  link_redexes(&pairs);
+  moveStore(port(2, op_loc), nul);
+  store_redex(ERA, take(port(1, op_loc)));
   return;
 }
 
@@ -901,15 +883,12 @@ void subnul(Term sub, Term nul) {
     Location sub_loc = term_loc(sub);
 
     // Take the first port and link it with NUL
-    Pairs pairs;
-    pairs.count = 0;
     Term t = take(port(1, sub_loc));
-    store_redex(&pairs, t, NUL);
+    store_redex(t, NUL);
 
     // Take the second port and link it with ERA
     t = take(port(2, sub_loc));
-    store_redex(&pairs, ERA, t);
-    link_redexes(&pairs);
+    store_redex(ERA, t);
   }
 
   return;
@@ -917,11 +896,8 @@ void subnul(Term sub, Term nul) {
 
 void XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
-  Pairs pairs;
-  pairs.count = 0;
-  Term arg = swapStore(port(1, opx_loc), num, &pairs);
-  store_redex(&pairs, term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
-  link_redexes(&pairs);
+  Term arg = swapStore(port(1, opx_loc), num);
+  store_redex(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
   return;
 }
 
@@ -977,10 +953,7 @@ void YNUM(Term opy, Term num) {
     // case F60: PERFORM_OP(x, y, op, f64); break;
   }
 
-  Pairs pairs;
-  pairs.count = 0;
-  moveStore(ret, new_num(y_type, res), &pairs);
-  link_redexes(&pairs);
+  moveStore(ret, new_num(y_type, res));
   return;
 }
 
@@ -1043,10 +1016,10 @@ interactionFn interactions[16][16] = {
 };
 
 void interact(Term neg, Term pos) {
-  print_raw_term(neg);
-  printf("  ");
-  print_raw_term(pos);
-  printf("\n");
+  // print_raw_term(neg);
+  // printf("  ");
+  // print_raw_term(pos);
+  // printf("\n");
   rdxCount++;
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
@@ -1098,8 +1071,6 @@ Term argsNet(NativeArgs *args) {
 #ifdef NADA
 void forceLazy(Term z) {
   // 'z' is a LAZ term
-  Pairs pairs;
-  pairs.count = 0;
   Term neg = take(port(1, term_loc(z)));
   if (neg != VOID) {
     Term pos = take(port(2, term_loc(z)));
@@ -1148,19 +1119,18 @@ void forceLazy(Term z) {
 	break;
 
       default:
-	store_redex(&pairs, neg, newPos);
+	store_redex(neg, newPos);
       }
     } else {
-      store_redex(&pairs, neg, pos);
+      store_redex(neg, pos);
     }
   }
-  link_redexes(&pairs);
 }
 #endif
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
 //*
-Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, Pairs *pairs) {
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   // 'args' will only ever be an APP term
   Tag argsTag = term_tag(args);
   if (argsTag == APP) {
@@ -1181,7 +1151,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, Pairs
       argsStruct->args[argsStruct->count++] = arg;
       if (expected > 1)
 	// need to get more strict args
-	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct, pairs);
+	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
       else
 	return args;
       break;
@@ -1196,7 +1166,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, Pairs
       case REF: {
 	  argsStruct->args[argsStruct->count++] = val;
 	  if (expected > 1)
-	    return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct, pairs);
+	    return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
 	  else
 	    return args;
 	}
@@ -1214,20 +1184,20 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, Pairs
 	    Term newArgs = argsNet(argsStruct);
 
 	    // put 'arg' back in it's place
-	    swapStore(port(1, term_loc(args)), arg, pairs);
+	    swapStore(port(1, term_loc(args)), arg);
 
 	    // make a deferred redex to retry the APP/REF pair when the value becomes available
 	    Term retry = pair_make(SUB, 5, newArgs, ref);
 
 	    // and put it in the location 'arg' points to
-	    Term newArg = swapStore(term_loc(arg), retry, pairs);
+	    Term newArg = swapStore(term_loc(arg), retry);
 	    if (newArg != SUB) {
 	      // someone slipped the needed arg in since we last looked
-	      swapStore(term_loc(arg), newArg, pairs);
+	      swapStore(term_loc(arg), newArg);
 	      pair_free(term_loc(retry));
 
 	      // so retry the original APP/REF redex
-	      store_redex(pairs, newArgs, ref);
+	      store_redex(newArgs, ref);
 	    }
 	    argsStruct->count = -1;
 	    return 0;
