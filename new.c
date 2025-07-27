@@ -129,10 +129,14 @@ Term take(Location loc) {
     }
   } while (takenTag == VAR);
 
-  if (takenTag == SUB)
+  switch(takenTag) {
+  case SUB:
+  case LAZ:
     return term_new(VAR, 0, loc);
-  else
+
+  default:
     return taken;
+  }
 }
 
 void store_redex(Term neg, Term pos) {
@@ -512,6 +516,7 @@ void store_pair(Pairs *pairs, Term neg, Term pos) {
 }
 
 void link_redexes() {
+  BOOM("time to fix this");
   Pairs pushing;
   pushing.count = 0;
 
@@ -548,14 +553,20 @@ void link_redexes() {
 	    immediate.rdxs[immediate.count++][1] = val;
 	    break;
 
-	  case VAR:
-	    if (1) {
+	  case VAR: {
 	      Term deferred = pair_make(SUB, 4, neg, val);
 	      Term newVal = swapStore(term_loc(val), deferred);
-	      if (term_tag(newVal) == SUB) {
+	      switch(term_tag(newVal)) {
+	      case SUB:
 		if (newVal != SUB)
 		  BOOM("This shouldn't happen, should it?");
-	      } else {
+		break;
+
+	      case LAZ:
+		BOOM("Looks like this is needed");
+		break;
+
+	      default:
 		// printf("deferred sub: %.3x\n", term_loc(deferred));
 		// print_term("neg", neg);
 		// print_term("val", val);
@@ -642,16 +653,26 @@ void link_redexes() {
   }
 }
 
+// defer a reduction
 void DEFR(Term neg, Term var) {
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
     Location varLoc = term_loc(var);
     Term deferred = pair_make(SUB, 2, neg, var);
     Term newVar = swapStore(varLoc, deferred);
-    if (term_tag(newVar) != SUB) {
+    switch(term_tag(newVar)) {
+    case SUB:
+      break;
+
+    case LAZ:
+      BOOM("submit the lazy redex");
+      break;
+
+    default:
       pair_free(term_loc(deferred));
       freeLoc(varLoc);
       store_redex(neg, newVar);
+      break;
     }
   } else {
     interact(neg, var);
@@ -947,6 +968,18 @@ void YNUM(Term opy, Term num) {
   u64 res;
   Lab op = term_lab(opy);
 
+#ifdef SAFETY
+  switch (term_tag(x)) {
+  case I60:
+  case F60:
+    break;
+
+  default:
+    BOOM("wrong value to OPY");
+    break;
+  }
+#endif
+
   switch (y_type) {
   case I60: PERFORM_OP(get_u64(x), get_u64(num), op, i64); break;
     // case F60: PERFORM_OP(x, y, op, f64); break;
@@ -1076,16 +1109,16 @@ void forceLazy(Term z) {
     if (term_tag(neg) == DUP && term_tag(pos) == LAZ) {
       BOOM("we do need this, it appears");
       /*
-      Term curr = swap(port(1, term_loc(neg)), SUB);
-      if (curr != z)
+	Term curr = swap(port(1, term_loc(neg)), SUB);
+	if (curr != z)
 	set(port(1, term_loc(neg)), curr);
-      BOOM("don't swap");
-      curr = swap(port(2, term_loc(neg)), SUB);
-      if (curr != z)
+	BOOM("don't swap");
+	curr = swap(port(2, term_loc(neg)), SUB);
+	if (curr != z)
 	set(port(2, term_loc(neg)), curr);
-      // set(posLoc, pair_make(SUB, neg, term_new(VAR, 0, posLoc)));
-      forceLazy(pos);
-      // */
+	// set(posLoc, pair_make(SUB, neg, term_new(VAR, 0, posLoc)));
+	forceLazy(pos);
+	// */
     } else if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
       // if this is a lazy DUP, which ever port points to itself
       // gets replaced with SUB
@@ -1099,11 +1132,11 @@ void forceLazy(Term z) {
       Term newPos = take(term_loc(pos));
       // newPos is the term being duped
       /*
-      while (term_tag(newPos) == VAR) {
+	while (term_tag(newPos) == VAR) {
 	pos = newPos;
 	newPos = take(term_loc(pos));
-      }
-      // */
+	}
+	// */
       switch(term_tag(newPos)) {
       case LAZ:
 	BOOM("this is totally wrong");
@@ -1114,7 +1147,7 @@ void forceLazy(Term z) {
 	break;
 
       case VAR:
-	set(term_loc(newPos), pair_make(SUB, 6, neg, newPos)));
+	set(term_loc(newPos), pair_make(SUB, 6, neg, newPos));
 	break;
 
       default:
@@ -1133,11 +1166,11 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   // 'args' will only ever be an APP term
   Tag argsTag = term_tag(args);
   if (argsTag == APP) {
-    Term arg = take(port(1, term_loc(args)));
     if (expected == 0) {
       return args;
     }
 
+    Term arg = take(port(1, term_loc(args)));
     // 'arg' will only ever be a positive term
     Tag argTag = term_tag(arg);
     switch(argTag) {
@@ -1163,45 +1196,45 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       case I60:
       case F60:
       case REF: {
-	  argsStruct->args[argsStruct->count++] = val;
-	  if (expected > 1)
-	    return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
-	  else
-	    return args;
-	}
+	argsStruct->args[argsStruct->count++] = val;
+	if (expected > 1)
+	  return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+	else
+	  return args;
+      }
 	break;
 
       case VAR: {
-	  Term val = get(term_loc(arg));
-	  if (val != SUB)
-	    BOOM("nativeArgs");
-	  else {
-	    // add the remaining args to argsStruct
-	    argsStruct->args[argsStruct->count++] = args;
+	Term val = get(term_loc(arg));
+	if (val != SUB)
+	  BOOM("nativeArgs");
+	else {
+	  // add the remaining args to argsStruct
+	  argsStruct->args[argsStruct->count++] = args;
 
-	    // create a chain of APP terms from argsStruct
-	    Term newArgs = argsNet(argsStruct);
+	  // create a chain of APP terms from argsStruct
+	  Term newArgs = argsNet(argsStruct);
 
-	    // put 'arg' back in it's place
-	    swapStore(port(1, term_loc(args)), arg);
+	  // put 'arg' back in it's place
+	  swapStore(port(1, term_loc(args)), arg);
 
-	    // make a deferred redex to retry the APP/REF pair when the value becomes available
-	    Term retry = pair_make(SUB, 5, newArgs, ref);
+	  // make a deferred redex to retry the APP/REF pair when the value becomes available
+	  Term retry = pair_make(SUB, 5, newArgs, ref);
 
-	    // and put it in the location 'arg' points to
-	    Term newArg = swapStore(term_loc(arg), retry);
-	    if (newArg != SUB) {
-	      // someone slipped the needed arg in since we last looked
-	      swapStore(term_loc(arg), newArg);
-	      pair_free(term_loc(retry));
+	  // and put it in the location 'arg' points to
+	  Term newArg = swapStore(term_loc(arg), retry);
+	  if (newArg != SUB) {
+	    // someone slipped the needed arg in since we last looked
+	    swapStore(term_loc(arg), newArg);
+	    pair_free(term_loc(retry));
 
-	      // so retry the original APP/REF redex
-	      store_redex(newArgs, ref);
-	    }
-	    argsStruct->count = -1;
-	    return 0;
+	    // so retry the original APP/REF redex
+	    store_redex(newArgs, ref);
 	  }
+	  argsStruct->count = -1;
+	  return 0;
 	}
+      }
 	break;
 
       default: {
