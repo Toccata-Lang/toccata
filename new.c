@@ -73,29 +73,29 @@ void *boom(char *msg, char *file, int line) {
   abort();
 }
 
+void store_redex(Term neg, Term pos) {
+#ifdef SAFETY
+  if (neg == 0 && pos == 0)
+    // shutdown the threads
+    neg = 0;
+  else if (is_positive(neg) || is_negative(pos)) {
+    BOOM("bad redex");
+  } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
+    BOOM("bad redex");
+  }
+#endif
+
+  pairs.rdxs[pairs.count][0] = neg;
+  pairs.rdxs[pairs.count++][1] = pos;
+  if (pairs.count >= LOCAL_PAIRS_SIZE) {
+    link_redexes();
+  }
+}
+
 // Get term at location
 Term get(Location loc) {
   Term result = atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
   return result;
-}
-
-// Atomic swap operation
-// If a deferred redex is found, queue it up and return SUB
-// Otherwise, return a positive value.
-Term swapStore(Location loc, Term term) {
-#ifdef SAFETY
-  if (term == 0)
-    BOOM("bad swap");
-#endif
-  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
-  if (term_tag(result) == SUB && result != SUB) {
-    Term neg = get(port(1, term_loc(result)));
-    Term pos = get(port(2, term_loc(result)));
-    store_redex(neg, pos);
-    pair_free(term_loc(result));
-    return SUB;
-  } else
-    return result;
 }
 
 void freeLoc(Location loc) {
@@ -139,22 +139,80 @@ Term take(Location loc) {
   }
 }
 
-void store_redex(Term neg, Term pos) {
+// Atomic swap operation
+// If a deferred redex is found, queue it up and return SUB
+// Otherwise, return a positive value.
+Term swapStore(Location loc, Term term) {
 #ifdef SAFETY
-  if (neg == 0 && pos == 0)
-    // shutdown the threads
-    neg = 0;
-  else if (is_positive(neg) || is_negative(pos)) {
-    BOOM("bad redex");
-  } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
-    BOOM("bad redex");
-  }
+  if (term == 0)
+    BOOM("bad swap");
 #endif
+  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
+  if (term_tag(result) == SUB && result != SUB) {
+    Term neg = get(port(1, term_loc(result)));
+    Term pos = get(port(2, term_loc(result)));
+    store_redex(neg, pos);
+    pair_free(term_loc(result));
+    return SUB;
+  } else
+    return result;
+}
 
-  pairs.rdxs[pairs.count][0] = neg;
-  pairs.rdxs[pairs.count++][1] = pos;
-  if (pairs.count >= LOCAL_PAIRS_SIZE) {
-    link_redexes();
+void eraseLazy(Term lazyVar) {
+  if (term_tag(lazyVar) != VAR)
+    BOOM("Trying to erase a non-var LAZ");
+
+  Term laz = swapStore(term_loc(lazyVar), ERA);
+  Location lazyLoc = term_loc(laz);
+  Term negLaz = get(port(1, lazyLoc));
+  Term posLaz = get(port(2, lazyLoc));
+  switch(term_tag(negLaz)) {
+  case DUP:
+    if (1) {
+      Term dup1 = get(port(1, term_loc(negLaz)));
+      Term dup2 = get(port(2, term_loc(negLaz)));
+
+      if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
+	take(port(1, term_loc(negLaz)));
+	take(port(2, term_loc(negLaz)));
+	eraseLazy(posLaz);
+      }
+    }
+    break;
+
+  case APP:
+    BOOM("does this free the lazy node?");
+    store_redex(negLaz, NUL);
+    store_redex(ERA, posLaz);
+    break;
+
+  default:
+    if (1) {
+      char s[50];
+      sprintf(s, "unhandled kind of lazy  %s", tag_to_string(term_tag(negLaz)));
+      BOOM(s);
+    }
+    break;
+  }
+}
+
+void forceLazy(Term z) {
+  // 'z' is a LAZ term
+  Term neg = take(port(1, term_loc(z)));
+  Term pos = take(port(2, term_loc(z)));
+  if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
+    // this is a lazy DUP, which ever port points to itself
+    // gets replaced with SUB
+    Term curr = get(port(1, term_loc(neg)));
+    if (curr == z)
+      swapStore(port(1, term_loc(neg)), SUB);
+    curr = get(port(2, term_loc(neg)));
+    if (curr == z)
+      swapStore(port(2, term_loc(neg)), SUB);
+
+    swapStore(term_loc(pos), pair_make(SUB, 6, neg, pos));
+  } else {
+    store_redex(neg, pos);
   }
 }
 
@@ -175,7 +233,12 @@ void moveStore(Location neg_loc, Term pos) {
     BOOM(s);
   }
 #endif
-  if (term_tag(neg) != SUB) {
+  Tag negTag = term_tag(neg);
+  if (negTag == LAZ) {
+    BOOM("does this work");
+    swapStore(neg_loc, pos);
+    forceLazy(neg);
+  } else if (negTag != SUB) {
     freeLoc(neg_loc);
     store_redex(neg, pos);
   }
@@ -1100,66 +1163,6 @@ Term argsNet(NativeArgs *args) {
   return args->args[0];
 }
 
-#ifdef NADA
-void forceLazy(Term z) {
-  // 'z' is a LAZ term
-  Term neg = take(port(1, term_loc(z)));
-  if (neg != VOID) {
-    Term pos = take(port(2, term_loc(z)));
-    if (term_tag(neg) == DUP && term_tag(pos) == LAZ) {
-      BOOM("we do need this, it appears");
-      /*
-	Term curr = swap(port(1, term_loc(neg)), SUB);
-	if (curr != z)
-	set(port(1, term_loc(neg)), curr);
-	BOOM("don't swap");
-	curr = swap(port(2, term_loc(neg)), SUB);
-	if (curr != z)
-	set(port(2, term_loc(neg)), curr);
-	// set(posLoc, pair_make(SUB, neg, term_new(VAR, 0, posLoc)));
-	forceLazy(pos);
-	// */
-    } else if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
-      // if this is a lazy DUP, which ever port points to itself
-      // gets replaced with SUB
-      Term curr = get(port(1, term_loc(neg)));
-      if (curr == z)
-	set(port(1, term_loc(neg)), SUB);
-      curr = get(port(2, term_loc(neg)));
-      if (curr == z)
-	set(port(2, term_loc(neg)), SUB);
-
-      Term newPos = take(term_loc(pos));
-      // newPos is the term being duped
-      /*
-	while (term_tag(newPos) == VAR) {
-	pos = newPos;
-	newPos = take(term_loc(pos));
-	}
-	// */
-      switch(term_tag(newPos)) {
-      case LAZ:
-	BOOM("this is totally wrong");
-	// see the loop commented out above
-	set(term_loc(pos), pair_make(SUB, neg, pos));
-	BOOM("*** what if newPos is not lazy? %d\n");
-	forceLazy(newPos);
-	break;
-
-      case VAR:
-	set(term_loc(newPos), pair_make(SUB, 6, neg, newPos));
-	break;
-
-      default:
-	store_redex(neg, newPos);
-      }
-    } else {
-      store_redex(neg, pos);
-    }
-  }
-}
-#endif
-
 // extract the requested number of native args. I60, F60, REF or VAL terms
 //*
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
@@ -1189,63 +1192,35 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
 
     case VAR: {
-      Term val = take(term_loc(arg));
-      switch(term_tag(val)) {
-	// the strict arg types
-      case VAL:
-      case I60:
-      case F60:
-      case REF: {
-	argsStruct->args[argsStruct->count++] = val;
-	if (expected > 1)
-	  return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
-	else
-	  return args;
-      }
-	break;
+      Term val = get(term_loc(arg));
+      if (val != SUB)
+	BOOM("nativeArgs");
+      else {
+	// add the remaining args to argsStruct
+	argsStruct->args[argsStruct->count++] = args;
 
-      case VAR: {
-	Term val = get(term_loc(arg));
-	if (val != SUB)
-	  BOOM("nativeArgs");
-	else {
-	  // add the remaining args to argsStruct
-	  argsStruct->args[argsStruct->count++] = args;
+	// create a chain of APP terms from argsStruct
+	Term newArgs = argsNet(argsStruct);
 
-	  // create a chain of APP terms from argsStruct
-	  Term newArgs = argsNet(argsStruct);
+	// put 'arg' back in it's place
+	swapStore(port(1, term_loc(args)), arg);
 
-	  // put 'arg' back in it's place
-	  swapStore(port(1, term_loc(args)), arg);
+	// make a deferred redex to retry the APP/REF pair when the value becomes available
+	Term retry = pair_make(SUB, 5, newArgs, ref);
 
-	  // make a deferred redex to retry the APP/REF pair when the value becomes available
-	  Term retry = pair_make(SUB, 5, newArgs, ref);
+	// and put it in the location 'arg' points to
+	Term newArg = swapStore(term_loc(arg), retry);
+	if (newArg != SUB) {
+	  // someone slipped the needed arg in since we last looked
+	  swapStore(term_loc(arg), newArg);
+	  pair_free(term_loc(retry));
 
-	  // and put it in the location 'arg' points to
-	  Term newArg = swapStore(term_loc(arg), retry);
-	  if (newArg != SUB) {
-	    // someone slipped the needed arg in since we last looked
-	    swapStore(term_loc(arg), newArg);
-	    pair_free(term_loc(retry));
-
-	    // so retry the original APP/REF redex
-	    store_redex(newArgs, ref);
-	  }
-	  argsStruct->count = -1;
-	  return 0;
+	  // so retry the original APP/REF redex
+	  store_redex(newArgs, ref);
 	}
+	argsStruct->count = -1;
+	return 0;
       }
-	break;
-
-      default: {
-	char s[50];
-	sprintf(s, "bad %s val", tag_to_string(term_tag(val)));
-	BOOM(s);
-      }
-	break;
-      }
-      argsStruct->count = -1;
-      return 0;
     }
       break;
 
