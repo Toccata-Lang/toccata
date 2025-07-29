@@ -134,8 +134,8 @@ void sumNodeFn(Term ref, Term args) {
   Term sumRgt = pair_make(APP, 0, term_new(VAR, 0, port(1, term_loc(l1))), s);
   swapStore(port(1, term_loc(s)), term_new(VAR, 0, port(2, term_loc(sumLft))));
   store_redex(sumRgt, sum);
-  store_redex(args, l0);
   store_redex(sumLft, sum);
+  store_redex(args, l0);
   return;
 }
 Term sumNode = new_ref(sumNodeFn);

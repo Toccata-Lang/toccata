@@ -336,6 +336,8 @@ bool pop_redex(Term* neg, Term* pos) {
     *pos = pairs.rdxs[pairs.count][1];
     return true;
   }
+  // TODO: remove this eventually
+  return result;
 
   u64 currTop;
   u64 waitingThreads;
@@ -1069,6 +1071,11 @@ void YNUM(Term opy, Term num) {
   return;
 }
 
+void DECR(Term neg, Term pos) {
+  dec_and_free(pos, 1);
+  return;
+}
+
 // The Void Interaction.
 void NOP(Term neg, Term pos) {
   return;
@@ -1096,7 +1103,7 @@ void NOP(Term neg, Term pos) {
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define ERA_INTERACTIONS						\
-  &ABRT,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
+  &DECR,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
 // VAL   VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS						\
@@ -1279,9 +1286,9 @@ void print_raw_term(Term t) {
       printf("%s %x", tag_to_str(tag), lab);
       break;
 
-    case REF:
-      printf("REF %s", refName(t));
-      break;
+      // case REF:
+      // printf("REF %s", refName(t));
+      // break;
 
     default:
       printf("%s %x %.3x", tag_to_str(tag), lab, term_loc(t));

@@ -66,7 +66,7 @@ char *refName(Term ref);
 #define LAM 0x05 // positive constructor
 #define APP 0x06 // negative constructor
 #define REF 0x07 // positive reference
-#define VL1 0x08 // positive native value alieas
+#define VL1 0x08 // positive native value alias
 #define SUP 0x09 // positive duplicator
 #define DUP 0x0a // negative duplicator
 #define OPX 0x0b // negative operation

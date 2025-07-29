@@ -2923,6 +2923,7 @@ int main (int argc, char **argv) {
   outstream = stdout;
 
   hvm_init(1024);
+  hvm_reset();
 
   u64 start = time64();
 
