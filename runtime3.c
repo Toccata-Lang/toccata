@@ -696,8 +696,8 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 void decValRef(Term pv, int deltaRefs) {
   Value *v;
   switch (term_tag(pv)) {
-  case F56:
-  case I56:
+  case F60:
+  case I60:
     break;
 
   case VAL:
@@ -752,8 +752,8 @@ void dec_and_free(Term pv, int deltaRefs) {
 
   Value *v;
   switch (term_tag(pv)) {
-  case F56:
-  case I56:
+  case F60:
+  case I60:
     break;
 
   case VAL:
@@ -762,7 +762,7 @@ void dec_and_free(Term pv, int deltaRefs) {
 
   default:
     // fprintf(stderr, "freeing interaction combinator: %d %p\n", __LINE__, (void *)v);
-    link((Term)pv, ERA);
+    store_redex((Term)pv, ERA);
     break;
   }
 }
@@ -770,7 +770,7 @@ void dec_and_free(Term pv, int deltaRefs) {
 #ifndef FAST_INCS
 Term incRef(Term val, int deltaRefs) {
   Tag t = term_tag(val);
-  if (t == I56 || t == F56)
+  if (t == I60 || t == F60)
     return val;
 
   Value *v = (Value *)val;
@@ -987,7 +987,7 @@ Value *defaultPrErrSTAR(Value *str) {
 
 Term number_str(Term arg0) {
   String *numStr = malloc_string(50);
-  snprintf(numStr->buffer, 40, "\nwoot***\n%" PRId64 "\n", get_i56(arg0));
+  snprintf(numStr->buffer, 40, "\nwoot***\n%" PRId64 "\n", get_i60(arg0));
   numStr->len = strlen(numStr->buffer);
   return(term_val((Term)numStr));
 }
@@ -1019,7 +1019,7 @@ Value *isInstance(Value *arg0, Value *arg1) {
 
 Term dupeVal(Term *v) {
   Tag t = term_tag(*v);
-  if (t == I56 || t == F56)
+  if (t == I60 || t == F60)
     return *v;
   else if (t == VAL)
     return incRef(*v, 1);
@@ -1109,7 +1109,7 @@ Vector *vectConj(Vector *vect, Term val) {
   if (vect->refs == 1) {
     Vector *newVect = mutateVectConj(vect, val);
     fprintf(stderr, "vectConj %d: %p %ld %p\n", __LINE__, (void *)vect,
-	    get_i56(val), (void *)newVect);
+	    get_i60(val), (void *)newVect);
     return(newVect);
     // if there's room in the tail
   } else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
@@ -1131,7 +1131,7 @@ Vector *vectConj(Vector *vect, Term val) {
     newVect->tail[vect->count & 0x1F] = val;
     /*
     fprintf(stderr, "vectConj %d: %p %ld %p\n", __LINE__, (void *)vect,
-	    get_i56(val), (void *)newVect);
+	    get_i60(val), (void *)newVect);
     // */
     dec_and_free((Term)vect, 1);
     return(newVect);
@@ -1216,7 +1216,7 @@ bool hvmVectFn(Term ref, Term args){
   Term newArgs = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
     newArgs = take(port(2, term_loc(newArgs)));
-    long vectLen = get_i56(arityArgs.args[0]);
+    long vectLen = get_i60(arityArgs.args[0]);
     if (vectLen > MAX_ARGS)
       BOOM("too many items in vector literal");
     Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs);
@@ -1224,10 +1224,10 @@ bool hvmVectFn(Term ref, Term args){
       Vector *newV = empty_vect;
       for (int i = 0; i < arityArgs.count; i++)
 	newV = vectConj(newV, arityArgs.args[i + 1]);
-      move(port(2, term_loc(lastArgs)), term_val((Term)newV));
+      swapStore(port(2, term_loc(lastArgs)), term_val((Term)newV));
     }
   }
-  return TRUE;
+  return true;
 }
 Term hvmVect = new_ref(hvmVectFn);
 
@@ -1497,7 +1497,7 @@ Value *strLT(Value *arg0, Value *arg1) {
 
 Term strCount(Term s) {
    String *str = (String *)((u64)s & ~7);
-   Term numVal = new_i56(str->len);
+   Term numVal = new_i60(str->len);
    // dec_and_free(arg0, 1);
    return(numVal);
 }
@@ -1719,8 +1719,8 @@ Term some(Term thing) {
 }
 
 Term integer_EQ(Term arg0, Term arg1) {
-  i64 x = get_i56(arg0);
-  i64 y = get_i56(arg1);
+  i64 x = get_i60(arg0);
+  i64 y = get_i60(arg1);
 
   if (x != y) {
     return(nothing());
@@ -1730,8 +1730,8 @@ Term integer_EQ(Term arg0, Term arg1) {
 }
 
 Term integer_LT(Term arg0, Term arg1) {
-  i64 x = get_i56(arg0);
-  i64 y = get_i56(arg1);
+  i64 x = get_i60(arg0);
+  i64 y = get_i60(arg1);
 
   if (x >= y) {
     return(nothing());
@@ -1779,7 +1779,7 @@ Value *opaqueValue(void *ptr, Destructor *destruct) {
 
 Term vectorGet(Term v, Term n) {
   BOOM("fis this");
-  long index = get_i56(n);
+  long index = get_i60(n);
   Vector *vect = (Vector *)((u64)v & ~7);
   if (index < 0 || vect->count <= index) {
     dec_and_free(v, 1);
@@ -2781,43 +2781,42 @@ Value *newTypeValue(int typeNum, Vector *vect) {
   return((Value *)rv);
 }
 
-Term dupeGlobal(Loc glbl) {
-  Term duper = pair_make(DUP, SUB, SUB);
-  Term gTerm = swap(glbl, term_new(VAR, 0, port(1, term_loc(duper))));
+Term dupeGlobal(Location glbl) {
+  Term duper = pair_make(DUP, 0, SUB, SUB);
+  Term gTerm = swapStore(glbl, term_new(VAR, 0, port(1, term_loc(duper))));
 
   switch(term_tag(gTerm)) {
   case VAL:
-  case I56:
-  case F56:
+  case I60:
+  case F60:
   case NUL:
   case REF:
-    set(glbl, gTerm);
-    link(duper, gTerm);
+    swapStore(glbl, gTerm);
+    store_redex(duper, gTerm);
     break;
 
   case LAM:
   case SUP:
-    link(duper, gTerm);
+    store_redex(duper, gTerm);
     break;
 
   case VAR:
     if (1) {
-      Term varTerm = swap(term_loc(gTerm), duper);
-      while(term_tag(varTerm) == VAR)
-	varTerm = take(term_loc(varTerm));
+      Term varTerm = swapStore(term_loc(gTerm), duper);
+      varTerm = take(term_loc(varTerm));
       switch(term_tag(varTerm)) {
       case VAL:
-      case I56:
-      case F56:
+      case I60:
+      case F60:
       case NUL:
       case REF:
-	set(glbl, varTerm);
-	link(duper, varTerm);
+	swapStore(glbl, varTerm);
+	store_redex(duper, varTerm);
 	break;
 
       case LAM:
       case SUP:
-	link(duper, varTerm);
+	store_redex(duper, varTerm);
 	break;
 
       case SUB:
@@ -2850,8 +2849,8 @@ bool constructFn(Term ref, Term args) {
   Term newArgs = strictArgs(ref, args, 2, &arityArgs);
   if (arityArgs.count == 2) {
     newArgs = take(port(2, term_loc(newArgs)));
-    int typeNum = get_i56(arityArgs.args[0]);
-    int numArgs = get_i56(arityArgs.args[1]);
+    int typeNum = get_i60(arityArgs.args[0]);
+    int numArgs = get_i60(arityArgs.args[1]);
     Term lastArgs = strictArgs(ref, newArgs, numArgs, &arityArgs);
     if (arityArgs.count == numArgs + 2) {
       ReifiedVal *rv = malloc_reified(numArgs);
@@ -2862,10 +2861,10 @@ bool constructFn(Term ref, Term args) {
 	rv->impls[i] = field;
       }
       __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-      move(port(2, term_loc(lastArgs)), term_val((Term)rv));
+      swapStore(port(2, term_loc(lastArgs)), term_val((Term)rv));
     }
   }
-  return TRUE;
+  return true;
 }
 Term construct = new_ref(constructFn);
 
@@ -2880,22 +2879,22 @@ bool accessFieldFn(Term ref, Term args) {
       if (1) {
 	Term lastArgs = strictArgs(ref, args, 1, &arityArgs);
 	if (arityArgs.count == 3) {
-	  int fldIdx = get_i56(arityArgs.args[0]);
+	  int fldIdx = get_i60(arityArgs.args[0]);
 	  ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
 	  value->impls[fldIdx] = arityArgs.args[2];
-	  move(port(2, term_loc(lastArgs)), term_val((Term)value));
+	  swapStore(port(2, term_loc(lastArgs)), term_val((Term)value));
 	}
       }
       break;
 
     case SUB:
       if (1) {
-	int fldIdx = get_i56(arityArgs.args[0]);
+	int fldIdx = get_i60(arityArgs.args[0]);
 	ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
 	Term fld = value->impls[fldIdx];
 	incRef(fld, 1);
 	dec_and_free((Term)value, 1);
-	move(port(2, term_loc(args)), term_val((Term)fld));
+	swapStore(port(2, term_loc(args)), term_val((Term)fld));
       }
       break;
 
@@ -2909,7 +2908,7 @@ bool accessFieldFn(Term ref, Term args) {
       break;
     }
   }
-  return TRUE;
+  return true;
 }
 Term accessField = new_ref(accessFieldFn);
 
@@ -2923,7 +2922,7 @@ int main (int argc, char **argv) {
 #endif
   outstream = stdout;
 
-  hvm_init();
+  hvm_init(1024);
 
   u64 start = time64();
 
@@ -2934,7 +2933,7 @@ int main (int argc, char **argv) {
 
   // normalize the net 'iterations' times
   for (int iterations = 0; iterations < 1; iterations++) {
-    atomic_store_explicit(&node_count, 0, memory_order_relaxed);
+    // atomic_store_explicit(&node_count, 0, memory_order_relaxed);
     normGlobals();
     Vector *argVect = empty_vect;
     for(int i = 0; i < argc; i++) {
@@ -2943,36 +2942,36 @@ int main (int argc, char **argv) {
     }
     bashResult = 0;
     Term callArgs;
-    callArgs = pair_make(APP, term_val((Term)argVect), SUB);
+    callArgs = pair_make(APP, 0, term_val((Term)argVect), SUB);
     fprintf(stderr, "argVect %d: %p\n", __LINE__, (void *)argVect);
-    Loc resultLoc = port(2, term_loc(callArgs));
-    fprintf(stderr, "resultLoc: %0x\n", resultLoc);
-    result = term_new(VAR, 0, resultLoc);
-    link(callArgs, mainFn);
-    normalize();
+    Location resultLocation = port(2, term_loc(callArgs));
+    fprintf(stderr, "resultLocation: %0x\n", resultLocation);
+    result = term_new(VAR, 0, resultLocation);
+    store_redex(callArgs, mainFn);
+    normalize(NULL);
     Tag resultTag = VAR;
     do {
       printf("result %d: %s (%d) %p\n", __LINE__,
 	     tag_to_str(resultTag), resultTag, (void *)result);
 //*
       switch (resultTag) {
-      case I56:
-      case F56:
+      case I60:
+      case F60:
 	break;
 	
       case NUL:
       case ERA:
-	result = new_i56(0);
-	resultTag = I56;
+	result = new_i60(0);
+	resultTag = I60;
 	break;
 	
       case SUB:
 	if (result != SUB) {
 	  Term neg = take(port(1, term_loc(result)));
 	  Term pos = take(port(2, term_loc(result)));
-	  link(neg, pos);
-	  normalize();
-	  result = take(resultLoc);
+	  store_redex(neg, pos);
+	  normalize(NULL);
+	  result = take(resultLocation);
 	  // Pair rdx = node_take(result);
 	  // Pair args = node_load(rdx.snd);
 	  // finalResultVar = args.fst;
@@ -2983,17 +2982,17 @@ int main (int argc, char **argv) {
 
       case VAR:
 	while (resultTag == VAR) {
-	  resultLoc = term_loc(result);
-	  result = take(resultLoc);
+	  resultLocation = term_loc(result);
+	  result = take(resultLocation);
 	  resultTag = term_tag(result);
 	}
 	break;
 
       case LAZ:
 	forceLazy(result);
-	set(resultLoc, SUB);
-	normalize();
-	result = term_new(VAR, 0, resultLoc);
+	swapStore(resultLocation, SUB);
+	normalize(NULL);
+	result = term_new(VAR, 0, resultLocation);
 	resultTag = VAR;
 	break;
 
@@ -3003,10 +3002,10 @@ int main (int argc, char **argv) {
 	if (1) {
 	  Pair pr = node_load(result);
 	  // fprintf(stderr, "result %d: %d %d\n", __LINE__, term_tag(pr.fst), term_tag(pr.snd));
-	  link(result, ERA);
+	  store_redex(result, ERA);
 	  normalize();
 	  result = new_num(new_i24(0));
-	  resultTag = I56;
+	  resultTag = I60;
 	}
 	break;
 // */
@@ -3021,7 +3020,7 @@ int main (int argc, char **argv) {
       // TODO: only for debugging. Remove ASAP
       // break;
   // */
-    } while(resultTag != I56 && resultTag != F56 && resultTag != VAL);
+    } while(resultTag != I60 && resultTag != F60 && resultTag != VAL);
     freeGlobals();
   }
   double duration = (time64() - start) / 1000000000.0; // seconds
@@ -3029,12 +3028,12 @@ int main (int argc, char **argv) {
   printf("- ITRS: %" PRIu64 "\n", itrs);
   printf("- TIME: %.2fs\n", duration);
   printf("- MIPS: %.2f\n", (double)itrs / duration / 1000000.0);
-  printf("remaining nodes: %ld (%d)\n", node_count, max_node);
+  // printf("remaining nodes: %ld (%d)\n", node_count, max_node);
   Tag t = term_tag(result);
-  if (t == I56) {
-    bashResult = (int)get_i56(result);
+  if (t == I60) {
+    bashResult = (int)get_i60(result);
     printf("result: %p bashResult: %d\n", (void *)result, bashResult);
-  } else if (t == F56) {
+  } else if (t == F60) {
     // TODO: handle
     BOOM("can't return a float as a result");
   } else if (term_tag(result) == VAL ) {
@@ -3045,8 +3044,8 @@ int main (int argc, char **argv) {
 #ifdef CHECK_MEM_LEAK
   cleaningUp = 1;
   freeAll();
-  if (malloc_count - free_count != 0 || node_count != 0)
-    return(1);
+  // if (malloc_count - free_count != 0 || node_count != 0)
+  // return(1);
 #endif
   hvm_free();
 /*

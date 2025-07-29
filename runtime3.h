@@ -6,7 +6,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include "hvm3.h"
+#include "new.h"
 
 #define CLOSURE_INFO 1
 
@@ -338,7 +338,7 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount);
 void moveFreeToCentral();
 void freeGlobals();
 void normGlobals();
-Term dupeGlobal(Loc glbl);
+Term dupeGlobal(Location glbl);
 Term dupeVal(Term *v);
 extern Term construct;
 Term nothing();

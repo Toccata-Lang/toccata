@@ -26,7 +26,7 @@ pthread_mutex_t redex_mutex;
 pthread_cond_t redex_cond;
 
 // Convert a tag to its string representation
-const char* tag_to_string(Tag tag) {
+const char* tag_to_str(Tag tag) {
   switch (tag) {
   case VAL: return "VAL";
   case VAR: return "VAR";
@@ -49,13 +49,20 @@ const char* tag_to_string(Tag tag) {
 }
 
 const char* tag_str(Term t) {
-  return tag_to_string(term_tag(t));
+  return tag_to_str(term_tag(t));
+}
+
+// TODO: write a time64() function that returns the time as fast as possible as a u64
+u64 time64() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (u64)ts.tv_sec * 1000000000ULL + (u64)ts.tv_nsec;
 }
 
 // abort on invalid reduction
 void ABRT(Term neg, Term pos) {
   fprintf(stderr, "Bad interaction: %s %s\n",
-	  tag_to_string(term_tag(neg)), tag_to_string(term_tag(pos)));
+	  tag_to_str(term_tag(neg)), tag_to_str(term_tag(pos)));
   fprintf(stderr, "a: %p b: %p\n", (void *)neg, (void *)pos);
   /*
     if (term_tag(pos) == VAL) {
@@ -71,6 +78,75 @@ void *boom(char *msg, char *file, int line) {
 #endif
   fprintf(stderr, "%s at %s:%d\n", msg, file, line);
   abort();
+}
+
+// Create a new term with given tag, label, and location
+Term term_new(Tag tag, Lab lab, Location loc) {
+  u64 loc_bits = ((u64)loc) & LOC_MASK;
+  u64 lab_bits = ((u64)lab) & LAB_MASK;
+  u64 tag_bits = ((u64)tag) & TAG_MASK;
+  return (loc_bits << (TAG_SIZE + LAB_SIZE)) |
+    (lab_bits << TAG_SIZE) |
+    tag_bits;
+}
+
+// Get the tag of a term
+Tag term_tag(Term term) {
+  Tag t = (Tag)(term & TAG_MASK);
+  if (t == VL1)
+    return VAL;
+  else
+    return t;
+}
+
+Term term_val(Term val) {
+  // ensure a Term is a native value
+  if (val & VAL_MASK) {
+    fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__); 
+    fprintf(stderr, "val: %p\n", (void *)val);
+    abort();
+  }
+  return val;
+}
+
+// Get the label of a term
+Lab term_lab(Term term) {
+  return (Lab)((term >> TAG_SIZE) & LAB_MASK);
+}
+
+// Get the location of a term
+Location term_loc(Term term) {
+#ifdef SAFETY
+  switch(term_tag(term)) {
+  case VAL:
+  case NUL:
+  case REF:
+  case ERA:
+  case I60:
+  case F60:
+    BOOM("term has no location");
+    break;
+
+  // Allow SUB terms to have locations
+  case SUB:
+  default:
+    return (Location)(term >> (TAG_SIZE + LAB_SIZE));
+    break;
+  }
+  return 0;
+#else
+  return (Location)(term >> (TAG_SIZE + LAB_SIZE));
+#endif
+}
+
+Location port(u64 n, Location x) {
+#ifdef SAFETY
+  if (n != 1 && n != 2) {
+    fprintf(stderr, "Error: Invalid port number %lu. Port must be 1 or 2.\n", n);
+    abort();
+  }
+#endif
+  return n + x - 1;
 }
 
 void store_redex(Term neg, Term pos) {
@@ -189,7 +265,7 @@ void eraseLazy(Term lazyVar) {
   default:
     if (1) {
       char s[50];
-      sprintf(s, "unhandled kind of lazy  %s", tag_to_string(term_tag(negLaz)));
+      sprintf(s, "unhandled kind of lazy  %s", tag_to_str(term_tag(negLaz)));
       BOOM(s);
     }
     break;
@@ -383,65 +459,6 @@ void pair_free(Location loc) {
   } while (currTop == LOCK_FREE_LIST);
 }
 
-// Create a new term with given tag, label, and location
-Term term_new(Tag tag, Lab lab, Location loc) {
-  u64 loc_bits = ((u64)loc) & LOC_MASK;
-  u64 lab_bits = ((u64)lab) & LAB_MASK;
-  u64 tag_bits = ((u64)tag) & TAG_MASK;
-  return (loc_bits << (TAG_SIZE + LAB_SIZE)) |
-    (lab_bits << TAG_SIZE) |
-    tag_bits;
-}
-
-// Get the tag of a term
-Tag term_tag(Term term) {
-  Tag t = (Tag)(term & TAG_MASK);
-  if (t == VL1)
-    return VAL;
-  else
-    return t;
-}
-
-// Get the label of a term
-Lab term_lab(Term term) {
-  return (Lab)((term >> TAG_SIZE) & LAB_MASK);
-}
-
-// Get the location of a term
-Location term_loc(Term term) {
-#ifdef SAFETY
-  switch(term_tag(term)) {
-  case VAL:
-  case NUL:
-  case REF:
-  case ERA:
-  case I60:
-  case F60:
-    BOOM("term has no location");
-    break;
-
-  // Allow SUB terms to have locations
-  case SUB:
-  default:
-    return (Location)(term >> (TAG_SIZE + LAB_SIZE));
-    break;
-  }
-  return 0;
-#else
-  return (Location)(term >> (TAG_SIZE + LAB_SIZE));
-#endif
-}
-
-Location port(u64 n, Location x) {
-#ifdef SAFETY
-  if (n != 1 && n != 2) {
-    fprintf(stderr, "Error: Invalid port number %lu. Port must be 1 or 2.\n", n);
-    abort();
-  }
-#endif
-  return n + x - 1;
-}
-
 // Check if a term is positive
 bool is_positive(Term term) {
   switch (term_tag(term)) {
@@ -485,14 +502,14 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
   case LAM:
     // Port 1 must be negative
     if (!is_negative(fst)) {
-      fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
-      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+      fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_str(tag));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
       abort();
     }
     // Port 2 must be positive
     if (!is_positive(snd)) {
-      fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
-      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+      fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_str(tag));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
       abort();
     }
     break;
@@ -502,14 +519,14 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
   case APP:
     // Port 1 must be positive
     if (!is_positive(fst)) {
-      fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
-      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+      fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
       abort();
     }
     // Port 2 must be negative
     if (!is_negative(snd)) {
-      fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
-      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+      fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_str(tag));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
       abort();
     }
     break;
@@ -517,14 +534,14 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
   case DUP:
     // Port 1 must be negative
     if (!is_negative(fst)) {
-      fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_string(tag));
-      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+      fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_str(tag));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
       abort();
     }
     // Port 2 must be negative
     if (!is_negative(snd)) {
-      fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_string(tag));
-      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+      fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_str(tag));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
       abort();
     }
     break;
@@ -532,21 +549,21 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
   case SUP:
     // Port 1 must be positive
     if (!is_positive(fst)) {
-      fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_string(tag));
-      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_string(term_tag(snd)));
+      fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
       abort();
     }
     // Port 2 must be positive
     if (!is_positive(snd)) {
-      fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_string(tag));
-      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_string(term_tag(snd)));
+      fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_str(tag));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
       abort();
     }
     break;
 
   default:
     fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
-	    tag_to_string(tag), tag);
+	    tag_to_str(tag), tag);
     abort();
   }
 #endif
@@ -566,7 +583,7 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
 
   Term new_pair = term_new(tag, lab, loc);
   /*
-  printf("new pair at line %u: %s %.3x %p %p\n", line, tag_to_string(tag), loc,
+  printf("new pair at line %u: %s %.3x %p %p\n", line, tag_to_str(tag), loc,
 	 (void *)get(port(1, loc)),
 	 (void *)get(port(2, loc)));
   // */
@@ -892,7 +909,7 @@ void copy(Term dup, Term trm) {
   // Verify term polarities
   if (!is_negative(dup) || !is_positive(trm)) {
     fprintf(stderr, "Error in copy: incorrect term polarities. dup=%s, trm=%s\n",
-            tag_to_string(term_tag(dup)), tag_to_string(term_tag(trm)));
+            tag_to_str(term_tag(dup)), tag_to_str(term_tag(trm)));
     abort();
   }
 #endif
@@ -1229,7 +1246,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     case LAZ:
     case NUL:
     default:
-      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_string(term_tag(arg)),
+      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
 	     term_tag(arg), __LINE__);
       abort();
       break;
@@ -1239,7 +1256,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     return 0;
   } else {
     printf("unhandled tag %s (0x%x) %p line: %d\n",
-	   tag_to_string(argsTag), argsTag, (void *)args, __LINE__);
+	   tag_to_str(argsTag), argsTag, (void *)args, __LINE__);
     abort();
     return 0;
   }
@@ -1259,7 +1276,7 @@ void print_raw_term(Term t) {
     case ERA:
     case I60:
     case F60:
-      printf("%s %x", tag_to_string(tag), lab);
+      printf("%s %x", tag_to_str(tag), lab);
       break;
 
     case REF:
@@ -1267,7 +1284,7 @@ void print_raw_term(Term t) {
       break;
 
     default:
-      printf("%s %x %.3x", tag_to_string(tag), lab, term_loc(t));
+      printf("%s %x %.3x", tag_to_str(tag), lab, term_loc(t));
       break;
     }
   }
@@ -1276,7 +1293,7 @@ void print_raw_term(Term t) {
 // Helper to print a term's details
 void print_term(const char* prefix, Term term) {
   printf("%s:\n", prefix);
-  printf("  Tag: %s (%d)\n", tag_to_string(term_tag(term)), term_tag(term));
+  printf("  Tag: %s (%d)\n", tag_to_str(term_tag(term)), term_tag(term));
   switch(term_tag(term)) {
   case VAL:
   case NUL:

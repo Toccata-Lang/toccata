@@ -25,6 +25,7 @@ typedef atomic_uint_least64_t a64;
 #define TAG_MASK 0xFULL
 #define LAB_MASK 0xFFFFFFFULL
 #define LOC_MASK 0xFFFFFFFFULL
+#define VAL_MASK 0x7
 
 // Term is a 64-bit value:
 // - Highest 32 bits: Location
@@ -120,8 +121,9 @@ void init_free_list(u64 start, u64 end);
 Location pair_alloc(void);
 void pair_free(Location loc);
 Term pair_make( Tag tag, Lab lab, Term fst, Term snd);
-const char* tag_to_string(Tag tag);
+const char* tag_to_str(Tag tag);
 Term term_new(Tag tag, Lab lab, Location loc);
+Term term_val(Term val);
 Tag term_tag(Term term);
 Lab term_lab(Term term);
 Location term_loc(Term term);
@@ -129,6 +131,10 @@ Location port(u64 n, Location x);
 // Check term polarity
 bool is_positive(Term term);
 bool is_negative(Term term);
+
+// this abuses the compile time functionality
+// to create a Port value
+#define term_new_(tag, x) (((u64)x + tag))
 
 // Get term at location
 Term get(Location loc);
@@ -146,6 +152,7 @@ void store_redex(Term neg, Term pos);
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
 void *normalize(void *v);
+void forceLazy(Term z);
 void spawn_threads();
 extern pthread_t threads[];
 
@@ -155,6 +162,7 @@ typedef void (*interactionFn)(Term a, Term b);
 // Create a REF term with a specific interaction function
 Term ref_make(interactionFn fn);
 
+u64 time64();
 void *boom(char *msg, char *file, int line);
 #define BOOM(msg) boom(msg, __FILE__, __LINE__)
 #endif // NEW_H
