@@ -1571,7 +1571,6 @@ Term dupeArg(Term arg, Term dupedArg) {
   }
 }
 
-
 /*
 int main(int argc, char *argv[]) {
   printf("50: %ld\n", get_i56_(new_i56_(50)));

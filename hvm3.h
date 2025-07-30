@@ -124,3 +124,4 @@ void normalize();
 Loc port(u64 n, Loc x);
 Term dupeArg(Term arg, Term dupedArg);
 char* tag_to_str(Tag tag);
+void freeGlobal(Port p);

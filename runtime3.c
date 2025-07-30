@@ -2912,6 +2912,12 @@ bool accessFieldFn(Term ref, Term args) {
 }
 Term accessField = new_ref(accessFieldFn);
 
+void freeGlobal(Term p) {
+  p = take(p);
+  // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
+  store_redex(ERA, p);
+}
+
 int main (int argc, char **argv) {
   prErrSTAR = &defaultPrErrSTAR;
 #ifdef SINGLE_THREADED
