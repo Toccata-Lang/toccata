@@ -145,6 +145,7 @@ void push_redex(Term neg, Term pos);
 bool pop_redex(Term* neg, Term* pos);
 void store_redex(Term neg, Term pos);
 Term swapStore(Location loc, Term term);
+void moveStore(Location neg_loc, Term pos);
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
 void link_redexes();
 void store_redex(Term neg, Term pos);

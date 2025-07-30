@@ -1,5 +1,6 @@
-#include "new.h"
 #include <string.h>
+#include "new.h"
+#include "runtime3.h"
 
 // Global heap
 static a64* BUFF = NULL;
