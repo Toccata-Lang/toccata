@@ -111,31 +111,33 @@
 (defn generic-call [ast]
   (assert (instance? ast/call-ast ast))
   (let [tgt (.call-target ast)
-        args (.args ast)
+        args (reverse (.args ast))
         result-var (.var ast)
         num-args (count args)]
     (se/state-error ["// call " (either (or (instance? c/TaggedSymbol tgt)
                                             (get tgt .fn-sym))
                                         "")
                      " at " (ast/location args) "\n"
+                     "callArgs = pair_make(APP, 0, "
+                     (either (map (first args) .var)
+                             "NUL")
+                     ", SUB);\n"
                      (cond (b/is-glbl result-var)
                            ""
                            "Term ")
-                     result-var " = vars_alloc();\n"
-                     (-> args
+                     (-> (rest args)
                          (map .var)
-                         (reverse)
-                         (conj result-var)
-                         (reduce (str "callArgs = endArgs;\n")
+                         (reduce [result-var " = term_new(VAR, 0, port(2, term_loc(callArgs)));\n"]
                                  (fn [args arg]
-                                   (str args
-                                        "callArgs = pair_make(APP, 0, " arg
-                                        ", callArgs);\n"))))
+                                   [args
+                                    "callArgs = pair_make(APP, 0, " arg ", callArgs);\n"])))
                      (cond (b/is-glbl result-var)
-                           ["store_redex(" (.var tgt) ", callArgs);"]
+                           ["store_redex(callArgs, " (.var tgt) ");"]
 
-                           ["vars_create(" result-var ", pair_make(RDX, "
-                            (.var tgt) ", callArgs));"])
+                           ["store_redex(callArgs, " (.var tgt) ");"]
+                           ;; ["vars_create(" result-var ", pair_make(RDX, "
+                           ;;  (.var tgt) ", callArgs));"]
+                           )
                      "\n"])))
 
 (defprotocol CodeGen
@@ -325,17 +327,27 @@
 
   DestParams
   (dest-params [ast]
-    (let [var (.var ast)]
-      (-> (reverse (.fixed ast))
-          (reduce (ParamInit var (str "Term " var " = new_port(APP, 0, 0);\n"))
-                  (fn [args arg]
-                    (assert (instance? ParamInit args))
-                    (assert (instance? ParamInit arg))
+    (let [var (.var ast)
+          args (reverse (.fixed ast))]
+      (either (map (first args)
+                   (fn [last-arg]
+                     (reduce (rest args)
+                             (ParamInit var (str "Term " var " = pair_make(LAM, 0, SUB, NUL);\n"
+                                                 ;; TODO: this will cause problems whend
+                                                 ;; destructuring vectors
+                                                 "Location resultLoc = port(2, term_loc(" var "));\n"
+                                                 "Term " (.var last-arg)
+                                                 " = term_new(VAR, 0, port(1, term_loc(" var ")));\n"))
+                             (fn [args arg]
+                               (assert (instance? ParamInit args))
+                               (assert (instance? ParamInit arg))
 
-                    (.init args [(.init args)
-                                 (.init arg)
-                                 (str var " = pair_make(APP, 0, " (.var arg)
-                                      ", " var ");\n")])))))))
+                               (.init args [(.init args)
+                                            (.init arg)
+                                            (str var " = pair_make(LAM, 0, SUB, " var ");\n"
+                                                 "Term " (.var arg) " = term_new(VAR, );\n")])))))
+              (ParamInit var (str "Term " var " = pair_make(LAM, 0, SUB, NUL);\n"
+                                  "Location resultLoc = port(2, term_loc(" var "));\n"))))))
 
 (extend-type c/TaggedSymbol
   DestParams
@@ -362,10 +374,13 @@
                                       (cond (instance? c/TaggedSymbol ast)
                                             (either (map (get rm (.var ast))
                                                          (fn [_]
-                                                           [(str "Term " (.var ast)
-                                                                 " = vars_alloc();\n")]))
+                                                           ["Term l_" (.var ast)
+                                                            " = pair_make(LAM, 0, SUB, NUL);\n"
+                                                            "Term " (.var ast)
+                                                            " = term_new(VAR, 0, port(1, term_loc(l_"
+                                                            (.var ast) ")));\n"]))
 
-                                                    (str "Term " (.var ast) " = ERA;\n"))
+                                                    "")
 
                                             (instance? ast/params-ast ast)
                                             (.fixed ast)
@@ -477,8 +492,7 @@
                                                          ", new_i60(81));\n"]
 
                                                         ""))))
-                                         (.var params) " = pair_make(APP, 0, " last-v
-                                         ", " (.var params) ");\n"]))]
+                                          "swapStore(resultLoc, " last-v ");\n"]))]
                                (.var ast (.var params)))))))
               (b/compilation-error "Invalid function body at:" (ast/location ast))))))
 
@@ -512,13 +526,11 @@
                                       ["Term callArgs;\n"])
                                 init
                                 (cond inline?
-                                      ["\nmoveStore(port(2, term_loc(args)), result);\n}\n"
-                                       "return;\n}\n"
-                                       "Term " (.var ast) " = term_new_(REF, " c-fn ");\n"]
+                                      ["\nmoveStore(port(2, term_loc(args)), result);\n}\n"]
 
-                                      ["store_redex(" (.var params) ", args);\n"
-                                       "return TRUE;\n}\n"
-                                       "Term " (.var ast) " = term_new_(REF, " c-fn ");\n"])]))]
+                                      ["store_redex(args, " (.var params) ");\n"])
+                                "return;\n}\n"
+                                "Term " (.var ast) " = term_new_(REF, " c-fn ");\n"]))]
         ast)))
 
   (gen-call [sym call-ast]
@@ -904,7 +916,7 @@
                           "")
                     (map dyn-glbls
                          (fn [var]
-                           (str "  " var " = enter(" var ");\n")))
+                           (str "  " var " = take(" var ");\n")))
                     "}\n"
                     "void freeGlobals(){\n"
                     (map dyn-glbls

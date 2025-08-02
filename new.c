@@ -1284,6 +1284,7 @@ void print_raw_term(Term t) {
     case ERA:
     case I60:
     case F60:
+    case REF:
       printf("%s %x", tag_to_str(tag), lab);
       break;
 
