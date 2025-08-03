@@ -987,7 +987,6 @@ Value *defaultPrErrSTAR(Value *str) {
 
 Term number_str(Term arg0) {
   String *numStr = malloc_string(50);
-  snprintf(numStr->buffer, 40, "\nwoot***\n%" PRId64 "\n", get_i60(arg0));
   numStr->len = strlen(numStr->buffer);
   return(term_val((Term)numStr));
 }
@@ -2913,9 +2912,8 @@ bool accessFieldFn(Term ref, Term args) {
 Term accessField = new_ref(accessFieldFn);
 
 void freeGlobal(Term p) {
-  p = take(p);
   // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
-  store_redex(ERA, p);
+  interact(ERA, p);
 }
 
 int main (int argc, char **argv) {
@@ -3043,7 +3041,7 @@ int main (int argc, char **argv) {
   } else if (t == F60) {
     // TODO: handle
     BOOM("can't return a float as a result");
-  } else if (term_tag(result) == VAL ) {
+  } else if (term_tag(result) == VAL) {
     result = (u64)result & ~7;
     printf("result %d:  %p\n", __LINE__, (void *)result);
     dec_and_free(result, 1);
