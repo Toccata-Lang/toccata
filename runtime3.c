@@ -3052,7 +3052,8 @@ int main (int argc, char **argv) {
   cleaningUp = 1;
   freeAll();
   // if (malloc_count - free_count != 0 || node_count != 0)
-  // return(1);
+  if (malloc_count - free_count != 0)
+    return(1);
 #endif
   hvm_free();
 /*

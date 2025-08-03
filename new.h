@@ -120,7 +120,8 @@ void hvm_reset(void);
 void init_free_list(u64 start, u64 end);
 Location pair_alloc(void);
 void pair_free(Location loc);
-Term pair_make( Tag tag, Lab lab, Term fst, Term snd);
+// Term pair_make(Tag tag, Lab lab, Term fst, Term snd);
+Term maker(int line, Tag tag, Lab lab, Term fst, Term snd);
 const char* tag_to_str(Tag tag);
 Term term_new(Tag tag, Lab lab, Location loc);
 Term term_val(Term val);
@@ -149,6 +150,7 @@ void moveStore(Location neg_loc, Term pos);
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
 void link_redexes();
 void store_redex(Term neg, Term pos);
+Term dupeArg(Term arg, Term *dupedArg);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
@@ -169,3 +171,5 @@ void *boom(char *msg, char *file, int line);
 #endif // NEW_H
 
 extern pthread_mutex_t buff_mutex;
+
+#define pair_make(tag, lab, fst, snd) maker(__LINE__, tag, lab, fst, snd)

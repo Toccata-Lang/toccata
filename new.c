@@ -157,8 +157,8 @@ void store_redex(Term neg, Term pos) {
     neg = 0;
   else if (is_positive(neg) || is_negative(pos)) {
     BOOM("bad redex");
-  } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
-    BOOM("bad redex");
+    // } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
+    // BOOM("bad redex");
   }
 #endif
 
@@ -497,7 +497,7 @@ bool is_negative(Term term) {
 }
 
 // Create a new pair with given tag, label, and terms
-Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
+Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
 #ifdef SAFETY
   // Check port polarities based on pair type
   switch (tag) {
@@ -507,12 +507,14 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     if (!is_negative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_str(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     // Port 2 must be positive
     if (!is_positive(snd)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_str(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     break;
@@ -524,12 +526,14 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     if (!is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     // Port 2 must be negative
     if (!is_negative(snd)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_str(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     break;
@@ -539,12 +543,14 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     if (!is_negative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_str(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     // Port 2 must be negative
     if (!is_negative(snd)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_str(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     break;
@@ -554,12 +560,14 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
     if (!is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     // Port 2 must be positive
     if (!is_positive(snd)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_str(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     break;
@@ -567,6 +575,7 @@ Term pair_make(Tag tag, Lab lab, Term fst, Term snd) {
   default:
     fprintf(stderr, "Error: pair_make called with invalid tag: %s (%d)\n",
 	    tag_to_str(tag), tag);
+    fprintf(stderr, "  Line: %d\n", line);
     abort();
   }
 #endif
@@ -997,6 +1006,29 @@ void subnul(Term sub, Term nul) {
   return;
 }
 
+void dupvar(Term dup, Term var) {
+  var = take(term_loc(var));
+  if (term_tag(var) == VAR) {
+    Term val = swapStore(term_loc(var), dup);
+    if (term_tag(val) != SUB) {
+      BOOM("test this");
+      take(term_loc(var));
+      interact(dup, val);
+    }
+  } else {
+    interact(dup, var);
+  }
+  return;
+}
+
+void dupval(Term dup, Term val) {
+  Location dp1 = port(1, term_loc(dup));
+  Location dp2 = port(2, term_loc(dup));
+  incRef(val, 1);
+  moveStore(dp1, val);
+  moveStore(dp2, val);
+}
+
 void XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
   Term arg = swapStore(port(1, opx_loc), num);
@@ -1112,8 +1144,8 @@ void NOP(Term neg, Term pos) {
 // VAL   VAR   SUB    NUL    ERA    LAM    APP    REF    VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
 
 #define DUP_INTERACTIONS						\
-  &ABRT,&ABRT,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&ABRT,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
-// VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
+  &dupval,&dupvar,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&dupval,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
+//  VAL     VAR    SUB   NUL   ERA   LAM   APP   REF    VL1    SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
@@ -1492,3 +1524,29 @@ void print_free_list(void) {
   printf("END (count: %d)\n", count);
 }
 
+Term dupeArg(Term arg, Term *dupedArg) {
+  // fprintf(stderr, "arg: %d %p\n", __LINE__, (void *)arg);
+  switch(term_tag(arg)) {
+  case VAL:
+    *dupedArg = incRef(arg, 1);
+    return arg;
+    break;
+
+  case F60:
+  case I60:
+  case REF:
+    *dupedArg = arg;
+    return arg;
+    break;
+
+  default:
+    if (1) {
+      // TODO: this pair label needs to match the enclosing fn
+      Term newDup = pair_make(DUP, 0, SUB, SUB);
+      store_redex(newDup, arg);
+      *dupedArg = term_new(VAR, 0, port(2, term_loc(newDup)));
+      return term_new(VAR, 0, port(1, term_loc(newDup)));
+    }
+    break;
+  }
+}
