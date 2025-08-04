@@ -103,7 +103,7 @@ Tag term_tag(Term term) {
 Term term_val(Term val) {
   // ensure a Term is a native value
   if (val & VAL_MASK) {
-    fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__); 
+    fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__);
     fprintf(stderr, "val: %p\n", (void *)val);
     abort();
   }
@@ -192,17 +192,23 @@ Term take(Location loc) {
   do {
     taken = get(loc);
     takenTag = term_tag(taken);
-    if (takenTag != SUB) {
+    switch(takenTag){
+    case SUB:
+#ifdef SAFETY
+      if (taken != SUB) {
+	char msg[200];
+	sprintf(msg, "should never happen! %p", (void *)taken);
+	BOOM(msg);
+      }
+#endif
+    case LAZ:
+      break;
+
+    default:
       freeLoc(loc);
       if (takenTag == VAR) {
 	loc = term_loc(taken);
       }
-#ifdef SAFETY
-    } else if (taken != SUB) {
-      char msg[200];
-      sprintf(msg, "should never happen! %p", (void *)taken);
-      BOOM(msg);
-#endif
     }
   } while (takenTag == VAR);
 
@@ -416,7 +422,7 @@ Location pair_alloc(void) {
 	abort();
       }
       break;
-      
+
     default:
       if (1) {
 	// Get the next free pair location
@@ -503,6 +509,7 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
   switch (tag) {
   case SUB:
   case LAM:
+  case LAZ:
     // Port 1 must be negative
     if (!is_negative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_str(tag));
@@ -1226,11 +1233,11 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   // 'args' will only ever be an APP term
   Tag argsTag = term_tag(args);
   if (argsTag == APP) {
+    Term arg = take(port(1, term_loc(args)));
     if (expected == 0) {
       return args;
     }
 
-    Term arg = take(port(1, term_loc(args)));
     // 'arg' will only ever be a positive term
     Tag argTag = term_tag(arg);
     switch(argTag) {
@@ -1250,9 +1257,13 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 
     case VAR: {
       Term val = get(term_loc(arg));
-      if (val != SUB)
-	BOOM("nativeArgs");
-      else {
+      switch(term_tag(val)) {
+      case LAZ:
+	forceLazy(val);
+	swapStore(term_loc(arg), SUB);
+	// fall through
+	
+      case SUB:
 	// add the remaining args to argsStruct
 	argsStruct->args[argsStruct->count++] = args;
 
@@ -1277,6 +1288,12 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	}
 	argsStruct->count = -1;
 	return 0;
+
+      default:
+	print_raw_term(val);
+	printf("\n");
+	BOOM("nativeArgs");
+	break;
       }
     }
       break;
@@ -1398,7 +1415,7 @@ void spawn_threads() {
 // Initialize the virtual machine with a given heap size
 void hvm_init(u64 size) {
   srand(time(NULL));
-  
+
   BUFF = (a64*)calloc(size, sizeof(a64));
   if (!BUFF) {
     fprintf(stderr, "Failed to allocate memory\n");
@@ -1489,7 +1506,7 @@ void print_buff(Location start, Location end) {
   printf("BUFF contents from %u to %u:\n", start, end);
   for (Location i = start; i < end; i += 2) {
     Term t1 = buff[i];
-    if (term_tag(t1) != NUL) {
+    if (term_tag(t1) != NUL || buff[i + 1] != 0) {
       printf(" %.3x  ", i);
       print_raw_term(t1);
       printf("  ");

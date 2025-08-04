@@ -2938,7 +2938,6 @@ int main (int argc, char **argv) {
 
   // normalize the net 'iterations' times
   for (int iterations = 0; iterations < 1; iterations++) {
-    // atomic_store_explicit(&node_count, 0, memory_order_relaxed);
     normGlobals();
     Vector *argVect = empty_vect;
     for(int i = 0; i < argc; i++) {
@@ -3030,10 +3029,12 @@ int main (int argc, char **argv) {
   }
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = 0; // atomic_load(&globalNet->itrs);
+  u64 node_count = atomic_load(&glblAlloced);
+  u64 max_node = atomic_load(&RNOD_END);
   printf("- ITRS: %" PRIu64 "\n", itrs);
   printf("- TIME: %.2fs\n", duration);
   printf("- MIPS: %.2f\n", (double)itrs / duration / 1000000.0);
-  // printf("remaining nodes: %ld (%d)\n", node_count, max_node);
+  printf("remaining nodes: %ld (%ld)\n", node_count, max_node);
   Tag t = term_tag(result);
   if (t == I60) {
     bashResult = (int)get_i60(result);
@@ -3049,8 +3050,7 @@ int main (int argc, char **argv) {
 #ifdef CHECK_MEM_LEAK
   cleaningUp = 1;
   freeAll();
-  // if (malloc_count - free_count != 0 || node_count != 0)
-  if (malloc_count - free_count != 0)
+  if (malloc_count - free_count != 0 || node_count != 0)
     return(1);
 #endif
   hvm_free();
