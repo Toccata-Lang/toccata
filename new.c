@@ -242,29 +242,39 @@ Term swapStore(Location loc, Term term) {
 }
 
 void eraseLazy(Term lazyVar) {
-  if (term_tag(lazyVar) != VAR)
-    BOOM("Trying to erase a non-var LAZ");
+  Term laz;
+  switch (term_tag(lazyVar)) {
+  case VAR:
+    laz = swapStore(term_loc(lazyVar), ERA);
+    break;
 
-  Term laz = swapStore(term_loc(lazyVar), ERA);
+  case LAZ:
+    laz = lazyVar;
+    break;
+
+  default:
+    BOOM("Trying to erase a non-var/lazy Term");
+    break;
+  }
   Location lazyLoc = term_loc(laz);
   Term negLaz = get(port(1, lazyLoc));
   Term posLaz = get(port(2, lazyLoc));
   switch(term_tag(negLaz)) {
-  case DUP:
-    if (1) {
-      Term dup1 = get(port(1, term_loc(negLaz)));
-      Term dup2 = get(port(2, term_loc(negLaz)));
+  case DUP: {
+    Term dup1 = get(port(1, term_loc(negLaz)));
+    Term dup2 = get(port(2, term_loc(negLaz)));
 
-      if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
-	take(port(1, term_loc(negLaz)));
-	take(port(2, term_loc(negLaz)));
-	eraseLazy(posLaz);
-      }
+    if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
+      take(port(1, term_loc(negLaz)));
+      take(port(2, term_loc(negLaz)));
+      eraseLazy(posLaz);
     }
+  }
     break;
 
   case APP:
-    BOOM("does this free the lazy node?");
+    freeLoc(port(1, lazyLoc));
+    freeLoc(port(2, lazyLoc));
     store_redex(negLaz, NUL);
     store_redex(ERA, posLaz);
     break;
@@ -953,7 +963,20 @@ void eravar(Term era, Term var) {
   if (term_tag(val) == VAR) {
     Term lz = swapStore(term_loc(val), ERA);
     if (lz != SUB) {
-      freeLoc(term_loc(val));
+      Term lzNeg = get(port(1, term_loc(lz)));
+      switch(term_tag(lzNeg)) {
+      case DUP:
+	BOOM("Freeing a lazy DUP");
+	break;
+
+      case APP:
+	break;
+
+      default:
+	BOOM("freeing a lazy something");
+	freeLoc(term_loc(val));
+	break;
+      }
       interact(ERA, lz);
     }
   } else {
@@ -969,6 +992,10 @@ void eralam(Term era, Term lam) {
   store_redex(ERA, take(port(2, lam_loc)));
   moveStore(port(1, lam_loc), NUL);
   return;
+}
+
+void eralaz(Term era, Term laz) {
+  eraseLazy(laz);
 }
 
 // Eraser-Superposition interaction
@@ -1050,6 +1077,91 @@ void dupval(Term dup, Term val) {
   incRef(val, 1);
   moveStore(dp1, val);
   moveStore(dp2, val);
+}
+
+void duplaz(Term dup, Term laz) {
+  Term dup1 = get(port(1, term_loc(dup)));
+  Term dup2 = get(port(2, term_loc(dup)));
+  Term lzVar = term_new(VAR, 0, laz);
+
+  // TODO: remove when not needed
+  char s[150];
+
+  if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
+    sprintf(s, "test duplaz line: %d", __LINE__);
+    BOOM(s);
+    // the lazy value is no longer needed
+    take(port(1, term_loc(dup)));
+    take(port(2, term_loc(dup)));
+    eraseLazy(lzVar);
+  } else if (term_tag(dup1) == ERA) {
+    sprintf(s, "test duplaz line: %d", __LINE__);
+    BOOM(s);
+    // the dupe is no longer needed on one branch
+    take(port(1, term_loc(dup)));
+    moveStore(port(2, term_loc(dup)), lzVar);
+  } else if (term_tag(dup2) == ERA) {
+    // the dupe is no longer needed on the other branch
+    take(port(2, term_loc(dup)));
+    moveStore(port(1, term_loc(dup)), lzVar);
+  } else {
+    sprintf(s, "test duplaz line: %d", __LINE__);
+    BOOM(s);
+    Term newZ = pair_make(LAZ, 0, dup, lzVar);
+    dup1 = swapStore(port(1, term_loc(dup)), newZ);
+    switch (term_tag(dup1)) {
+    case DUP:
+      sprintf(s, "test duplaz line: %d", __LINE__);
+      BOOM(s);
+      store_redex(dup1, term_new(VAR, 0, port(1, term_loc(dup))));
+      break;
+
+    case SUB:
+      sprintf(s, "test duplaz line: %d", __LINE__);
+      BOOM(s);
+      if (dup1 != SUB) {
+	Location sub_loc = term_loc(dup1);
+	Term subDup = take(port(1, sub_loc));
+	Term subPos = take(port(2, sub_loc));
+	store_redex(subDup, subPos);
+      }
+      break;
+
+    default: {
+      char s[150];
+      sprintf(s, "unhandled kind of duped %s", tag_to_str(term_tag(dup1)));
+      BOOM(s);
+    }
+      break;
+    }
+
+    dup2 = swapStore(port(2, term_loc(dup)), newZ);
+    switch (term_tag(dup2)) {
+    case DUP:
+      sprintf(s, "test duplaz line: %d", __LINE__);
+      BOOM(s);
+      store_redex(dup2, term_new(VAR, 0, port(2, term_loc(dup))));
+      break;
+
+    case SUB:
+      sprintf(s, "test duplaz line: %d", __LINE__);
+      BOOM(s);
+      if (dup2 != SUB) {
+	Location sub_loc = term_loc(dup2);
+	Term subDup = take(port(1, sub_loc));
+	Term subPos = take(port(2, sub_loc));
+	store_redex(subDup, subPos);
+      }
+      break;
+
+    default: {
+      char s[250];
+      sprintf(s, "unhandled kind of duped %s", tag_to_str(term_tag(dup2)));
+      BOOM(s);
+    }
+      break;
+    }
+  }
 }
 
 void XNUM(Term opx, Term num) {
@@ -1159,7 +1271,7 @@ void NOP(Term neg, Term pos) {
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define ERA_INTERACTIONS						\
-  &DECR,&eravar,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
+  &DECR,&eravar,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&eralaz
 // VAL    VAR    SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS						\
@@ -1167,7 +1279,7 @@ void NOP(Term neg, Term pos) {
 // VAL   VAR   SUB    NUL    ERA    LAM    APP    REF    VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
 
 #define DUP_INTERACTIONS						\
-  &dupval,&dupvar,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&dupval,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
+  &dupval,&dupvar,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&dupval,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
 //  VAL     VAR    SUB   NUL   ERA   LAM   APP   REF    VL1    SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 // Initialize the interactions array with the same values in each row
