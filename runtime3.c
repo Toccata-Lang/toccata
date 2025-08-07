@@ -2950,13 +2950,22 @@ int main (int argc, char **argv) {
     fprintf(stderr, "argVect %d: %p\n", __LINE__, (void *)argVect);
     Location resultLocation = port(2, term_loc(callArgs));
     fprintf(stderr, "resultLocation: %0x\n", resultLocation);
-    result = term_new(VAR, 0, resultLocation);
     store_redex(callArgs, mainFn);
-    normalize(NULL);
-    Tag resultTag = VAR;
+    Tag resultTag;
     do {
-      printf("result %d: %s (%d) %p\n", __LINE__,
-	     tag_to_str(resultTag), resultTag, (void *)result);
+      normalize(NULL);
+      result = take(resultLocation);
+      resultTag = term_tag(result);
+      if (resultTag == VAR) {
+	resultLocation = term_loc(result);
+	result = get(resultLocation);
+	freeLoc(resultLocation);
+	resultTag = term_tag(result);
+      }
+
+      printf("result %d:\n", __LINE__);
+      print_raw_term(result);
+      printf("\n");
 //*
       switch (resultTag) {
       case I60:
@@ -2974,32 +2983,23 @@ int main (int argc, char **argv) {
 	  Term neg = take(port(1, term_loc(result)));
 	  Term pos = take(port(2, term_loc(result)));
 	  store_redex(neg, pos);
-	  normalize(NULL);
-	  result = take(resultLocation);
-	  // Pair rdx = node_take(result);
-	  // Pair args = node_load(rdx.snd);
-	  // finalResultVar = args.fst;
-	  // push_redex(rdx);
 	} else
 	  BOOM("Compiler screwed up. Incomplete result.");
 	break;
 
-      case VAR:
-	while (resultTag == VAR) {
-	  resultLocation = term_loc(result);
-	  result = take(resultLocation);
-	  resultTag = term_tag(result);
-	}
-	break;
-
       case LAZ:
-	forceLazy(result);
 	swapStore(resultLocation, SUB);
+	forceLazy(result);
 	normalize(NULL);
-	result = term_new(VAR, 0, resultLocation);
-	resultTag = VAR;
+	result = take(resultLocation);
+	resultTag = term_tag(result);
 	break;
 
+      case VAL:
+	dec_and_free(result, 1);
+	result = new_i60(0);
+	resultTag = I60;
+	break;
 /*
       case DUP:
       case CON:
@@ -3013,12 +3013,11 @@ int main (int argc, char **argv) {
 	}
 	break;
 // */
-      default:
-	if (1) {
-	  char s[50];
-	  sprintf(s, "bad result %s (%d) pair", tag_to_str(resultTag), resultTag);
-	  BOOM(s);
-	}
+      default: {
+	char s[50];
+	sprintf(s, "bad result %s (%d) pair", tag_to_str(resultTag), resultTag);
+	BOOM(s);
+      }
 	break;
       }
       // TODO: only for debugging. Remove ASAP

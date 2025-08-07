@@ -439,12 +439,14 @@ Location pair_alloc(void) {
       break;
     }
   } while (loc == LOCK_FREE_LIST);
+  // printf("alloc: %x\n", loc);
   return (Location)loc;
 }
 
 // Free a pair by adding it to the free list - O(1)
 void pair_free(Location loc) {
   // printf("free pair at: %d\n", loc);
+  // printf("free:  %x\n", loc);
 #ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
 #endif
@@ -945,6 +947,21 @@ void copy(Term dup, Term trm) {
   return;
 }
 
+// Eeraser-Var interaction
+void eravar(Term era, Term var) {
+  Term val = take(term_loc(var));
+  if (term_tag(val) == VAR) {
+    Term lz = swapStore(term_loc(val), ERA);
+    if (lz != SUB) {
+      freeLoc(term_loc(val));
+      interact(ERA, lz);
+    }
+  } else {
+    interact(ERA, val);
+  }
+  return;
+}
+
 // Eraser-Lambda interaction
 void eralam(Term era, Term lam) {
   BOOM("eralam");
@@ -1018,7 +1035,6 @@ void dupvar(Term dup, Term var) {
   if (term_tag(var) == VAR) {
     Term val = swapStore(term_loc(var), dup);
     if (term_tag(val) != SUB) {
-      BOOM("test this");
       take(term_loc(var));
       interact(dup, val);
     }
@@ -1143,8 +1159,8 @@ void NOP(Term neg, Term pos) {
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define ERA_INTERACTIONS						\
-  &DECR,&ABRT,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
-// VAL   VAR   SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
+  &DECR,&eravar,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&ABRT
+// VAL    VAR    SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS						\
   &ABRT,&DEFR,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
@@ -1333,8 +1349,11 @@ void print_raw_term(Term t) {
     case ERA:
     case I60:
     case F60:
-    case REF:
       printf("%s %x", tag_to_str(tag), lab);
+      break;
+
+    case REF:
+      printf("REF %llx", t & ~TAG_MASK);
       break;
 
       // case REF:
