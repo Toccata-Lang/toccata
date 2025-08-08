@@ -2990,9 +2990,6 @@ int main (int argc, char **argv) {
       case LAZ:
 	swapStore(resultLocation, SUB);
 	forceLazy(result);
-	normalize(NULL);
-	result = take(resultLocation);
-	resultTag = term_tag(result);
 	break;
 
       case VAL:

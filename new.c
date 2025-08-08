@@ -987,7 +987,6 @@ void eravar(Term era, Term var) {
 
 // Eraser-Lambda interaction
 void eralam(Term era, Term lam) {
-  BOOM("eralam");
   Location lam_loc = term_loc(lam);
   store_redex(ERA, take(port(2, lam_loc)));
   moveStore(port(1, lam_loc), NUL);
