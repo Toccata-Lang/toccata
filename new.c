@@ -776,7 +776,7 @@ void DEFR(Term neg, Term var) {
       break;
 
     case LAZ:
-      BOOM("submit the lazy redex");
+      forceLazy(newVar);
       break;
 
     default:
@@ -1061,9 +1061,22 @@ void dupvar(Term dup, Term var) {
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
     Term val = swapStore(term_loc(var), dup);
-    if (term_tag(val) != SUB) {
+    switch(term_tag(val)) {
+    case SUB:
+      break;
+
+    case LAZ: {
+      forceLazy(val);
+    }
+      break;
+
+    default:
+      BOOM("Duping a bad var");
+      // this might be the way to do it.
+      // but this shouldn't happen
       take(term_loc(var));
       interact(dup, val);
+      break;
     }
   } else {
     interact(dup, var);
@@ -1687,14 +1700,13 @@ Term dupeArg(Term arg, Term *dupedArg) {
     return arg;
     break;
 
-  default:
-    if (1) {
-      // TODO: this pair label needs to match the enclosing fn
-      Term newDup = pair_make(DUP, 0, SUB, SUB);
-      store_redex(newDup, arg);
-      *dupedArg = term_new(VAR, 0, port(2, term_loc(newDup)));
-      return term_new(VAR, 0, port(1, term_loc(newDup)));
-    }
+  default: {
+    // TODO: this pair label needs to match the enclosing fn
+    Term newDup = pair_make(DUP, 0, SUB, SUB);
+    store_redex(newDup, arg);
+    *dupedArg = term_new(VAR, 0, port(2, term_loc(newDup)));
+    return term_new(VAR, 0, port(1, term_loc(newDup)));
+  }
     break;
   }
 }
