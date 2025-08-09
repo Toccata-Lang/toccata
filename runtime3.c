@@ -2861,7 +2861,7 @@ bool constructFn(Term ref, Term args) {
 	rv->impls[i] = field;
       }
       __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-      swapStore(port(2, term_loc(lastArgs)), term_val((Term)rv));
+      moveStore(port(2, term_loc(lastArgs)), term_val((Term)rv));
     }
   }
   return true;

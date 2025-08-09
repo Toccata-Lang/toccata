@@ -260,23 +260,17 @@
                            (fn [decl]
                              [decl
                               "Term " (.var ast) ";\n"
-                              "bool " c-fn "(Term ref, Term args) {\n"
-                              "Pair pr = node_take(args);\n"
-                              "Term resultVar = pr.fst;\n"
-                              "args = pr.snd;\n"
-                              "args = pair_make(APP, 0, new_num_(new_i24_(" (.idx ast) ")), args);\n"
-                              "args = pair_make(APP, 0, resultVar, args);\n"
+                              "void " c-fn "(Term ref, Term args) {\n"
+                              "args = pair_make(APP, 0, new_i60(" (.idx ast) "), args);\n"
                               "store_redex(accessField, args);\n"
-                              "return TRUE;\n}\n"
-                              "Term " (.var ast) " = term_new_(REF, " c-fn ");\n"])))
+                              "return;\n}\n"
+                              "Term " (.var ast) " = new_ref(" c-fn ");\n"])))
           
           (let [val-var (.val-var ast)
-                get-field ["Term " (.var ast) " = vars_alloc();\n"
-                           "callArgs = endArgs;\n"
-                           "callArgs = pair_make(APP, 0, " val-var ", callArgs);\n"
+                get-field ["callArgs = pair_make(APP, 0, " val-var ", SUB);\n"
+                           "Term " (.var ast) " = term_new(VAR, 0, port(2, term_loc(callArgs)));\n"
                            "callArgs = pair_make(APP, 0, new_i60(" (.idx ast) "), callArgs);\n"
-                           "callArgs = pair_make(APP, 0, " (.var ast) ", callArgs);\n"
-                           "store_redex(accessField, callArgs);\n"]]
+                           "store_redex(callArgs, accessField);\n"]]
             (comp (for [refs (se/update-in-val [.refs-map val-var] inc)
                         :let [dupe-var (str val-var "_" refs)]
                         _ (se/update-val .init
@@ -529,7 +523,7 @@
 
                                       ["store_redex(args, " (.var params) ");\n"])
                                 "return;\n}\n"
-                                "Term " (.var ast) " = term_new_(REF, " c-fn ");\n"]))]
+                                "Term " (.var ast) " = new_ref(" c-fn ");\n"]))]
         ast)))
 
   (gen-call [sym call-ast]
@@ -722,8 +716,9 @@
                             "callArgs = pair_make(APP, 0, " arg
                             ", callArgs);\n"))))
          (cond (b/is-glbl (.var call-ast))
-               ["store_redex(" (.var tgt) ", callArgs);"]
+               ["store_redex(callArgs, " (.var tgt) ");"]
 
+               ;; TODO: this still needs to be updated
                ["vars_create(" (.var call-ast) ", pair_make(RDX, "
                 (.var tgt) ", callArgs));"])
          line-sep]))))
@@ -817,27 +812,20 @@
                    (fn [decl]
                      [decl
                       "Term " (.var ptype) ";\n"
-                      "bool " c-fn "(Term ref, Term args) {\n"
-                      "  Pair pr = node_take(args);\n"
-                      "  Term resultVar = pr.fst;\n"
-                      "  args = pr.snd;\n"
-                      "  Term result = ERA;\n"
-                      "  NativeArgs arityArgs = {0, {}, resultVar};"
-                      line-sep
-                      (repeat 3 (str "    args = nativeArg(ref, args"
-                                     ", &arityArgs);\n"))
-                      "    if (arityArgs.count == 3) {\n"
-                      "String *fileStr = (String *)arityArgs.args[0];\n"
-                      "Value *dispVal = (Value *)arityArgs.args[2];\n"
-                      "args = pair_make(APP, 0, (Term)dispVal, args);\n"
-                      "args = pair_make(APP, 0, resultVar, args);\n"
-                      "if (term_tag((Term)dispVal) == NUM) {\n"
+                      "void " c-fn "(Term ref, Term args) {\n"
+                      "  NativeArgs arityArgs = {0, {}};\n"
+                      "  args = strictArgs(ref, args, 3, &arityArgs);\n"
+                      "  if (arityArgs.count == 3) {\n"
+                      "    String *fileStr = (String *)arityArgs.args[0];\n"
+                      "    Value *dispVal = (Value *)arityArgs.args[2];\n"
+                      "    args = pair_make(APP, 0, (Term)dispVal, args);\n"
+                      "    if (term_tag((Term)dispVal) == I60) {\n"
                       (either (map (get-in ptype [.impls c/IntegerType])
                                    (fn [impl-arity]
                                      ["store_redex(" (.var impl-arity) ", args);\n"]))
-                              ["fprintf(stderr, \"No implementation found for '" (.fn-name ptype)
-                               "' at %.*s: %ld\\n\", (int)fileStr->len, fileStr->buffer,"
-                               "get_i24(get_val(arityArgs.args[1])));\n"
+                              ["fprintf(stderr, \"No implementation of '" (.fn-name ptype)
+                               "' found for integers called from %.*s: %ld\\n\", (int)fileStr->len,"
+                               " fileStr->buffer, get_i60(arityArgs.args[1]));\n"
                                "abort();\n"])
                       "} else {\n"
                       "switch(dispVal->type) {\n"
@@ -857,10 +845,10 @@
                                      ["store_redex(" (.var def-arity) ", args);\n"]))
                               ["fprintf(stderr, \"No implementation found for '" (.fn-name ptype)
                                "' at %.*s: %ld\\n\", (int)fileStr->len, fileStr->buffer,"
-                               "get_i24(get_val(arityArgs.args[1])));\n"
+                               "get_i60(arityArgs.args[1]));\n"
                                "abort();\n"])
-                      "}\n}\n}\nreturn TRUE;\n}\n"
-                      "Term " (.var ptype) " = term_new_(REF, " c-fn ");\n"]))))
+                      "}\n}\n}\nreturn;\n}\n"
+                      "Term " (.var ptype) " = new_ref(" c-fn ");\n"]))))
 
 (defn emit-protos [code-context]
   (let [mod-prom (promise)
@@ -929,7 +917,7 @@
                           "")
                     "}\n"
 
-                    "Term mainFn = term_new_(REF, " main-fn ");\n"
+                    "Term mainFn = new_ref(" main-fn ");\n"
                     "int typeCount = " (extract b/type-counter) ";\n"))
     (deliver done-promise 'done)
     code-context))
