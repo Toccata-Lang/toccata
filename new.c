@@ -961,7 +961,7 @@ void copy(Term dup, Term trm) {
 void eravar(Term era, Term var) {
   Term val = take(term_loc(var));
   if (term_tag(val) == VAR) {
-    Term lz = swapStore(term_loc(val), ERA);
+    Term lz = swapStore(term_loc(val), era);
     if (lz != SUB) {
       Term lzNeg = get(port(1, term_loc(lz)));
       switch(term_tag(lzNeg)) {
@@ -977,10 +977,10 @@ void eravar(Term era, Term var) {
 	freeLoc(term_loc(val));
 	break;
       }
-      interact(ERA, lz);
+      interact(era, lz);
     }
   } else {
-    interact(ERA, val);
+    interact(era, val);
   }
   return;
 }
@@ -994,7 +994,10 @@ void eralam(Term era, Term lam) {
 }
 
 void eralaz(Term era, Term laz) {
-  eraseLazy(laz);
+  if (term_lab(era) > 0) {
+    forceLazy(laz);
+  } else
+    eraseLazy(laz);
 }
 
 // Eraser-Superposition interaction

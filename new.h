@@ -76,6 +76,8 @@ char *refName(Term ref);
 #define LAZ 0x0f // positive lazy node
 typedef u32 Tag; // Tag is now just an unsigned integer
 
+#define sideEffects 0x10 + ERA
+
 // Operators
 #define OP_ADD 0x00
 #define OP_SUB 0x01
