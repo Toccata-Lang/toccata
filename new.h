@@ -153,6 +153,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
 void link_redexes();
 void store_redex(Term neg, Term pos);
 Term dupeArg(Term arg, Term *dupedArg);
+Term make_op(int op, Term x, Term y);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed

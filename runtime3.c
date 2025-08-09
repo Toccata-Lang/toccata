@@ -988,6 +988,7 @@ Value *defaultPrErrSTAR(Value *str) {
 Term number_str(Term arg0) {
   String *numStr = malloc_string(50);
   numStr->len = strlen(numStr->buffer);
+  sprintf(numStr->buffer, "%ld", get_i60(arg0));
   return(term_val((Term)numStr));
 }
 

@@ -290,6 +290,9 @@ void eraseLazy(Term lazyVar) {
 }
 
 void forceLazy(Term z) {
+  if (term_tag(z) != LAZ)
+    return;
+
   // 'z' is a LAZ term
   Term neg = take(port(1, term_loc(z)));
   Term pos = take(port(2, term_loc(z)));
@@ -1032,7 +1035,6 @@ void appnum(Term app, Term num) {
 }
 
 void opnul(Term op, Term nul) {
-  BOOM("opnul");
   Location op_loc = term_loc(op);
   moveStore(port(2, op_loc), nul);
   store_redex(ERA, take(port(1, op_loc)));
@@ -1711,4 +1713,11 @@ Term dupeArg(Term arg, Term *dupedArg) {
   }
     break;
   }
+}
+
+Term make_op(int op, Term x, Term y) {
+  Term t = pair_make(OPX, 0, x, SUB);
+  Term ret = term_new(VAR, 0, port(2, term_loc(t)));
+  interact(t, y);
+  return ret;
 }
