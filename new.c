@@ -83,6 +83,9 @@ void *boom(char *msg, char *file, int line) {
 
 // Create a new term with given tag, label, and location
 Term term_new(Tag tag, Lab lab, Location loc) {
+  if (tag == VAL) {
+    BOOM("Can't create VAL's with 'term-new'\n");
+  }
   u64 loc_bits = ((u64)loc) & LOC_MASK;
   u64 lab_bits = ((u64)lab) & LAB_MASK;
   u64 tag_bits = ((u64)tag) & TAG_MASK;
@@ -101,7 +104,8 @@ Tag term_tag(Term term) {
 }
 
 Term term_val(Term val) {
-  // ensure a Term is a native value
+  // ensure a Term is a valid native value
+  unsigned type = ((Value *)val)->type;
   if (val & VAL_MASK) {
     fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__);
     fprintf(stderr, "val: %p\n", (void *)val);
@@ -1443,10 +1447,14 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     }
       break;
 
+    case NUL:
+      if (argsStruct->count > 0)
+	interact(argsNet(argsStruct), NUL);
+      break;
+
     case SUP:
     case LAM:
     case LAZ:
-    case NUL:
     default:
       printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
 	     term_tag(arg), __LINE__);
@@ -1663,6 +1671,10 @@ void print_buff(Location start, Location end) {
     }
   }
   printf("\n");
+}
+
+void pb() {
+  print_buff(0, RNOD_END);
 }
 
 // Print the free list for debugging

@@ -2872,41 +2872,40 @@ bool accessFieldFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 2, &arityArgs);
   if (arityArgs.count == 2) {
-    args = take(port(2, term_loc(args)));
-    Tag argsTag = term_tag(args);
-    switch(argsTag) {
-    case APP:
-      if (1) {
-	Term lastArgs = strictArgs(ref, args, 1, &arityArgs);
-	if (arityArgs.count == 3) {
-	  int fldIdx = get_i60(arityArgs.args[0]);
-	  ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
-	  value->impls[fldIdx] = arityArgs.args[2];
-	  swapStore(port(2, term_loc(lastArgs)), term_val((Term)value));
-	}
+    int fldIdx = get_i60(arityArgs.args[0]);
+    ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
+    Term fld = value->impls[fldIdx];
+    incRef(fld, 1);
+    dec_and_free((Term)value, 1);
+    swapStore(port(2, term_loc(args)), (Term)fld);
+    /*
+      args = take(port(2, term_loc(args)));
+      Tag argsTag = term_tag(args);
+      switch(argsTag) {
+      case APP: {
+      Term lastArgs = strictArgs(ref, args, 1, &arityArgs);
+      if (arityArgs.count == 3) {
+      int fldIdx = get_i60(arityArgs.args[0]);
+      ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
+      value->impls[fldIdx] = arityArgs.args[2];
+      swapStore(port(2, term_loc(lastArgs)), term_val((Term)value));
+      }
       }
       break;
 
-    case SUB:
-      if (1) {
-	int fldIdx = get_i60(arityArgs.args[0]);
-	ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
-	Term fld = value->impls[fldIdx];
-	incRef(fld, 1);
-	dec_and_free((Term)value, 1);
-	swapStore(port(2, term_loc(args)), term_val((Term)fld));
+      case SUB: {
       }
       break;
 
       // TODO: what other tags need to be handled
-    default:
-      if (1) {
-	char s[50];
-	sprintf(s,"unhandled tag %s (%0d) line: %d\n", tag_to_str(argsTag), argsTag, __LINE__);
-	BOOM(s);
+      default: {
+      char s[50];
+      sprintf(s,"unhandled tag %s (%0d) line: %d\n", tag_to_str(argsTag), argsTag, __LINE__);
+      BOOM(s);
       }
       break;
-    }
+      }
+      // */
   }
   return true;
 }

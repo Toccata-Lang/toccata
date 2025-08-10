@@ -262,7 +262,7 @@
                               "Term " (.var ast) ";\n"
                               "void " c-fn "(Term ref, Term args) {\n"
                               "args = pair_make(APP, 0, new_i60(" (.idx ast) "), args);\n"
-                              "store_redex(accessField, args);\n"
+                              "store_redex(args, accessField);\n"
                               "return;\n}\n"
                               "Term " (.var ast) " = new_ref(" c-fn ");\n"])))
           
@@ -688,40 +688,43 @@
 
   (gen-call [proto call-ast]
     (let [tgt (.call-target call-ast)
-          args (.args call-ast)
           result-var (.var call-ast)
-          num-args (count args)
+          arg-vars (reverse (map (.args call-ast) .var))
           loc (ast/location call-ast)]
-      (for [file-str (-> (.file loc)
-                         (str)
-                         (ast/string-ast loc (b/global-var 'Str)
-                                         c/string-constraint)
-                         gen-code)]
-        ["// call " (either (or (instance? c/TaggedSymbol tgt)
-                                (get tgt .fn-sym))
-                            "")
-         " at " (ast/location args) "\n"
-         (cond (b/is-glbl (.var call-ast))
-               ""
-               "Term ")
-         (.var call-ast) " = vars_alloc();\n"
-         (-> args
-             (map .var)
-             (reverse)
-             (comp [(str "new_num_(new_i24_(" (.line loc) "))")
-                    (.var file-str) (.var call-ast)])
-             (reduce (str "callArgs = endArgs;\n")
-                     (fn [args arg]
-                       (str args
-                            "callArgs = pair_make(APP, 0, " arg
-                            ", callArgs);\n"))))
-         (cond (b/is-glbl (.var call-ast))
-               ["store_redex(callArgs, " (.var tgt) ");"]
+      (either (map (first arg-vars)
+                   (fn [last-arg]
+                     (for [file-str (-> (.file loc)
+                                        (str)
+                                        (ast/string-ast loc (b/global-var 'Str)
+                                                        c/string-constraint)
+                                        gen-code)]
+                       ["// call " (either (or (instance? c/TaggedSymbol tgt)
+                                               (get tgt .fn-sym))
+                                           "")
+                        " at " loc "\n"
+                        (-> (rest arg-vars)
+                            (comp [(str "new_i60(" (.line loc) ")")
+                                   (.var file-str)])
+                            (reduce ["callArgs = pair_make(APP, 0, " last-arg
+                                     ", SUB);\n"
+                                     (cond (b/is-glbl result-var)
+                                           ""
+                                           "Term ")
+                                     result-var
+                                     " = term_new(VAR, 0, port(2, term_loc(callArgs)));\n"]
+                                    (fn [args arg]
+                                      (comp args
+                                            ["callArgs = pair_make(APP, 0, " arg
+                                             ", callArgs);\n"]))))
+                        (cond (b/is-glbl (.var call-ast))
+                              ["store_redex(callArgs, " (.var tgt) ");\n"]
 
-               ;; TODO: this still needs to be updated
-               ["vars_create(" (.var call-ast) ", pair_make(RDX, "
-                (.var tgt) ", callArgs));"])
-         line-sep]))))
+                              ["swapStore(term_loc(" result-var
+                               "), pair_make(LAZ, 0, callArgs, " (.var tgt) "));\n"])])))
+              (do
+                (b/status "Call to prototype fn is invalide. Needs at least one argument.")
+                (b/wait-for-err-out)
+                (abort))))))
 
 (extend-type ast/superposition-ast
   CodeGen
@@ -818,11 +821,11 @@
                       "  if (arityArgs.count == 3) {\n"
                       "    String *fileStr = (String *)arityArgs.args[0];\n"
                       "    Value *dispVal = (Value *)arityArgs.args[2];\n"
-                      "    args = pair_make(APP, 0, (Term)dispVal, args);\n"
+                      "    swapStore(term_loc(args), (Term)dispVal);\n"
                       "    if (term_tag((Term)dispVal) == I60) {\n"
                       (either (map (get-in ptype [.impls c/IntegerType])
                                    (fn [impl-arity]
-                                     ["store_redex(" (.var impl-arity) ", args);\n"]))
+                                     ["store_redex(args, " (.var impl-arity) ");\n"]))
                               ["fprintf(stderr, \"No implementation of '" (.fn-name ptype)
                                "' found for integers called from %.*s: %ld\\n\", (int)fileStr->len,"
                                " fileStr->buffer, get_i60(arityArgs.args[1]));\n"
@@ -838,11 +841,11 @@
 
                                              [cases
                                               "case " (str type-num) ":\n"
-                                              "store_redex(" (.var impl-arity) ", args);\nbreak;\n"]))))
+                                              "store_redex(args, " (.var impl-arity) ");\nbreak;\n"]))))
                       "default:\n"
                       (either (map (get-in ptype [.impls c/UnknownType])
                                    (fn [def-arity]
-                                     ["store_redex(" (.var def-arity) ", args);\n"]))
+                                     ["store_redex(args, " (.var def-arity) ");\n"]))
                               ["fprintf(stderr, \"No implementation found for '" (.fn-name ptype)
                                "' at %.*s: %ld\\n\", (int)fileStr->len, fileStr->buffer,"
                                "get_i60(arityArgs.args[1]));\n"
