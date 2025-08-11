@@ -1185,10 +1185,15 @@ void duplaz(Term dup, Term laz) {
   }
 }
 
+void YNUM(Term opy, Term num);
 void XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
   Term arg = swapStore(port(1, opx_loc), num);
-  store_redex(term_new(OPY, term_lab(opx), port(1, opx_loc)), arg);
+  Lab op = term_lab(opx);
+  if (term_tag(arg) == I60)
+    YNUM(term_new(OPY, op, port(1, opx_loc)), arg);
+  else
+    store_redex(term_new(OPY, op, port(1, opx_loc)), arg);
   return;
 }
 
@@ -1727,9 +1732,9 @@ Term dupeArg(Term arg, Term *dupedArg) {
   }
 }
 
-Term make_op(int op, Term x, Term y) {
-  Term t = pair_make(OPX, 0, x, SUB);
+Term make_op(Lab op, Term x, Term y) {
+  Term t = pair_make(OPX, op, y, SUB);
   Term ret = term_new(VAR, 0, port(2, term_loc(t)));
-  interact(t, y);
+  interact(t, x);
   return ret;
 }
