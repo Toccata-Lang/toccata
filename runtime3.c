@@ -17,6 +17,8 @@ REFS_SIZE refsError = -10;
 REFS_SIZE refsConstant = -1;
 REFS_SIZE refsStatic = REFS_STATIC;
 
+unsigned hght = HEIGHT;
+
 Value *universalProtoFn = (Value *)0;
 int cleaningUp = 0;
 
@@ -2947,9 +2949,9 @@ int main (int argc, char **argv) {
     bashResult = 0;
     Term callArgs;
     callArgs = pair_make(APP, 0, term_val((Term)argVect), SUB);
-    fprintf(stderr, "argVect %d: %p\n", __LINE__, (void *)argVect);
+    // fprintf(stderr, "argVect %d: %p\n", __LINE__, (void *)argVect);
     Location resultLocation = port(2, term_loc(callArgs));
-    fprintf(stderr, "resultLocation: %0x\n", resultLocation);
+    // fprintf(stderr, "resultLocation: %0x\n", resultLocation);
     store_redex(callArgs, mainFn);
     Tag resultTag;
     do {
@@ -2963,8 +2965,8 @@ int main (int argc, char **argv) {
 	resultTag = term_tag(result);
       }
 
-      printf("result %d:\n", __LINE__);
-      print_raw_term(result);
+      // printf("result %d:\n", __LINE__);
+      // print_raw_term(result);
       printf("\n");
 //*
       switch (resultTag) {
@@ -3024,7 +3026,7 @@ int main (int argc, char **argv) {
     freeGlobals();
   }
   double duration = (time64() - start) / 1000000000.0; // seconds
-  u64 itrs = 0; // atomic_load(&globalNet->itrs);
+  u64 itrs = atomic_load(&rdxCount);
   u64 node_count = atomic_load(&glblAlloced);
   u64 max_node = atomic_load(&RNOD_END);
   printf("- ITRS: %" PRIu64 "\n", itrs);

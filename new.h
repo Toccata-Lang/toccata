@@ -1,6 +1,15 @@
 #ifndef NEW_H
 #define NEW_H
 
+// #define CHECK_MEM_LEAK 1
+// #define STATS 1
+// #define NON_ATOMIC 1
+// #define SAFETY 1
+// #define STRICT 1
+
+#define HEIGHT 20 
+extern unsigned hght;
+
 #include <stdatomic.h>
 
 #include <stdint.h>
@@ -41,15 +50,14 @@ extern a64 RBAG_END;
 extern Term* RBAG_BUFF;
 #define LOCK_REDEX_STACK 0xFFFFFFFF
 extern a64 waiting;
-extern __thread u64 rdxCount;
 
 // Global VM state
 extern a64 glblAlloced;
+extern a64 rdxCount;
 extern a64 RNOD_END;
 extern int threadCount;
 extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
 extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
-extern a64* get_buff(void);  // For testing only
 extern Term* get_rbag_buff(void);  // For testing only
 void print_free_list(void);   // For debugging
 void print_raw_term(Term t);

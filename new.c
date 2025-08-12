@@ -3,7 +3,11 @@
 #include "runtime3.h"
 
 // Global heap
+#ifdef NON_ATOMIC
+static u64* BUFF = NULL;
+#else
 static a64* BUFF = NULL;
+#endif
 a64 RNOD_END = 0; // Only need to track the end of the node space
 static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
 
@@ -15,7 +19,6 @@ __thread Pairs pairs;
 Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
 static u64 RBAG_SIZE = 0x1000;
 a64 RBAG_END; // Only need to track the end of the redex stack
-__thread u64 rdxCount = 0;
 
 // interaction jump table
 interactionFn interactions[16][16];
@@ -175,12 +178,20 @@ void store_redex(Term neg, Term pos) {
 
 // Get term at location
 Term get(Location loc) {
+#ifdef NON_ATOMIC
+  Term result = BUFF[loc];
+#else
   Term result = atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+#endif
   return result;
 }
 
 void freeLoc(Location loc) {
+#ifdef NON_ATOMIC
+  BUFF[loc] = 0;
+#else
   atomic_store_explicit(&BUFF[loc], 0, memory_order_relaxed);
+#endif
   Location evenLoc = loc & 0xFFFFFFFE;
   if (get(evenLoc) == 0 && get(evenLoc + 1) == 0) {
     pair_free(evenLoc);
@@ -234,7 +245,12 @@ Term swapStore(Location loc, Term term) {
   if (term == 0)
     BOOM("bad swap");
 #endif
+#ifdef NON_ATOMIC
+  Term result = BUFF[loc];
+  BUFF[loc] = term;
+#else
   Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
+#endif
   if (term_tag(result) == SUB && result != SUB) {
     Term neg = get(port(1, term_loc(result)));
     Term pos = get(port(2, term_loc(result)));
@@ -469,7 +485,11 @@ void pair_free(Location loc) {
 #endif
 
   // Clear the second cell
+#ifdef NON_ATOMIC
+  BUFF[loc + 1] = 0;
+#else
   atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
+#endif
 
   Location currTop;
   do {
@@ -480,7 +500,11 @@ void pair_free(Location loc) {
 
     default:
       // Set up the node to point to the current head
+#ifdef NON_ATOMIC
+      BUFF[loc] = term_new(NUL, 0, currTop);
+#else
       atomic_store_explicit(&BUFF[loc], term_new(NUL, 0, currTop), memory_order_relaxed);
+#endif
       FREE_LIST = loc;
       break;
     }
@@ -616,8 +640,13 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
 #endif
 
   // Store terms in their respective ports
+#ifdef NON_ATOMIC
+  BUFF[port(1, loc)] = fst;
+  BUFF[port(2, loc)] = snd;
+#else
   atomic_store_explicit(&BUFF[port(1, loc)], fst, memory_order_relaxed);
   atomic_store_explicit(&BUFF[port(2, loc)], snd, memory_order_relaxed);
+#endif
 
   Term new_pair = term_new(tag, lab, loc);
   /*
@@ -1328,12 +1357,15 @@ interactionFn interactions[16][16] = {
   { POS_INTERACTIONS }  // LAZ  + {+ -}
 };
 
+a64 rdxCount;
 void interact(Term neg, Term pos) {
   // print_raw_term(neg);
   // printf("  ");
   // print_raw_term(pos);
   // printf("\n");
-  rdxCount++;
+#ifdef STATS
+  atomic_fetch_add_explicit(&rdxCount, 1, memory_order_relaxed);
+#endif
   // Gets the rule type.
   interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
 
@@ -1352,7 +1384,7 @@ void *normalize(void *v) {
     // Perform the interaction
     interact(neg, pos);
   }
-  //*
+  /*
   u64 waitingThreads = atomic_load_explicit(&waiting, memory_order_relaxed);
   if (waitingThreads > 0) {
     pthread_mutex_lock(&redex_mutex);
@@ -1362,7 +1394,7 @@ void *normalize(void *v) {
   // */
 
   u64 *res = malloc(sizeof(u64));
-  *res = rdxCount;
+  // *res = rdxCount;
   return res;
 }
 
@@ -1555,7 +1587,11 @@ void print_term(const char* prefix, Term term) {
   printf("\n");
 }
 
+#ifdef NON_ATOMIC
+u64* get_buff(void) {
+#else
 a64* get_buff(void) {
+#endif
   return BUFF;
 }
 
@@ -1577,7 +1613,11 @@ void spawn_threads() {
 void hvm_init(u64 size) {
   srand(time(NULL));
 
+#ifdef NON_ATOMIC
+  BUFF = (u64*)calloc(size, sizeof(a64));
+#else
   BUFF = (a64*)calloc(size, sizeof(a64));
+#endif
   if (!BUFF) {
     fprintf(stderr, "Failed to allocate memory\n");
     abort();
@@ -1644,6 +1684,7 @@ void hvm_reset(void) {
   // Initialize the free list (initially empty)
   FREE_LIST = EMPTY_FREE_LIST;
   atomic_store_explicit(&glblAlloced, 0, memory_order_relaxed);
+  atomic_store_explicit(&rdxCount, 0, memory_order_relaxed);
   atomic_store_explicit(&waiting, 0, memory_order_relaxed);
   rdxCount = 0;
 }
@@ -1655,7 +1696,11 @@ Term* get_rbag_buff(void) {
 
 // Print contents of BUFF between start and end locations
 void print_buff(Location start, Location end) {
+#ifdef NON_ATOMIC
+  u64* buff = get_buff();
+#else
   a64* buff = get_buff();
+#endif
   if (!buff) {
     printf("BUFF is not initialized\n");
     return;
@@ -1733,6 +1778,8 @@ Term dupeArg(Term arg, Term *dupedArg) {
 }
 
 Term make_op(Lab op, Term x, Term y) {
+  // TODO: make operations lazy
+  // and optimize of x and y are numbers
   Term t = pair_make(OPX, op, y, SUB);
   Term ret = term_new(VAR, 0, port(2, term_loc(t)));
   interact(t, x);
