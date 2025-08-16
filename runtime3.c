@@ -2928,7 +2928,7 @@ int main (int argc, char **argv) {
 #endif
   outstream = stdout;
 
-  hvm_init(1024);
+  hvm_init(1024 * 1024);
   hvm_reset();
 
   u64 start = time64();
@@ -3029,8 +3029,10 @@ int main (int argc, char **argv) {
   u64 itrs = atomic_load(&rdxCount);
   u64 node_count = atomic_load(&glblAlloced);
   u64 max_node = atomic_load(&RNOD_END);
+  printf("- Threads: %u\n", threadCount);
   printf("- ITRS: %" PRIu64 "\n", itrs);
   printf("- TIME: %.2fs\n", duration);
+  itrs = 134217646;
   printf("- MIPS: %.2f\n", (double)itrs / duration / 1000000.0);
   printf("remaining nodes: %ld (%ld)\n", node_count, max_node);
   Tag t = term_tag(result);

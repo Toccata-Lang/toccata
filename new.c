@@ -361,7 +361,7 @@ void moveStore(Location neg_loc, Term pos) {
 }
 
 int threadCount = 1;
-pthread_t threads[200];
+pthread_t threads[2050];
 
 a64 waiting;
 
