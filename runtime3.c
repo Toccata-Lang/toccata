@@ -2879,7 +2879,7 @@ bool accessFieldFn(Term ref, Term args) {
     Term fld = value->impls[fldIdx];
     incRef(fld, 1);
     dec_and_free((Term)value, 1);
-    swapStore(port(2, term_loc(args)), (Term)fld);
+    moveStore(port(2, term_loc(args)), (Term)fld);
     /*
       args = take(port(2, term_loc(args)));
       Tag argsTag = term_tag(args);

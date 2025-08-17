@@ -5,7 +5,7 @@
 // #define STATS 1
 // #define NON_ATOMIC 1
 // #define SAFETY 1
-#define STRICT 1
+// #define STRICT 1
 
 #define HEIGHT 20
 extern unsigned hght;
