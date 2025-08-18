@@ -210,11 +210,13 @@ Term take(Location loc) {
     switch(takenTag){
     case SUB:
 #ifdef SAFETY
+      /*
       if (taken != SUB) {
 	char msg[200];
 	sprintf(msg, "should never happen! %p", (void *)taken);
 	BOOM(msg);
       }
+      // */
 #endif
     case LAZ:
       break;
@@ -1076,7 +1078,6 @@ void opnul(Term op, Term nul) {
 
 // SUB-NUL interaction
 void subnul(Term sub, Term nul) {
-  BOOM("subnul");
   // Check if the SUB term has a location (label > 0)
   if (sub != SUB) {
     // The SUB term has a location pointing to a pair
@@ -1127,6 +1128,15 @@ void dupval(Term dup, Term val) {
   incRef(val, 1);
   moveStore(dp1, val);
   moveStore(dp2, val);
+}
+
+void dupnul(Term dup, Term nul) {
+  Location dp1 = port(1, term_loc(dup));
+  Location dp2 = port(2, term_loc(dup));
+  store_redex(get(dp1), nul);
+  freeLoc(dp1);
+  store_redex(get(dp2), nul);
+  freeLoc(dp2);
 }
 
 void duplaz(Term dup, Term laz) {
@@ -1330,12 +1340,12 @@ void NOP(Term neg, Term pos) {
 // VAL    VAR    SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS						\
-  &ABRT,&DEFR,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&appnul,&ABRT
+  &ABRT,&DEFR,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&ABRT,&ABRT
 // VAL   VAR   SUB    NUL    ERA    LAM    APP    REF    VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
 
 #define DUP_INTERACTIONS						\
-  &dupval,&dupvar,&ABRT,&copy,&ABRT,&DLAM,&ABRT,&copy,&dupval,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
-//  VAL     VAR    SUB   NUL   ERA   LAM   APP   REF    VL1    SUP   DUP   OPX   OPY   I60   F60   LAZ
+  &dupval,&dupvar,&ABRT,&dupnul,&ABRT,&DLAM,&ABRT,&copy,&dupval,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
+//  VAL     VAR    SUB    NUL    ERA   LAM   APP   REF    VL1    SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
@@ -1441,6 +1451,15 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	return args;
       break;
 
+    case NUL:
+      if (argsStruct->count > 0) {
+	interact(get(port(2, term_loc(args))), NUL);
+	// freeLoc(port(2, term_loc(args)));
+	argsStruct->args[argsStruct->count++] = ERA;
+	interact(argsNet(argsStruct), NUL);
+      }
+      break;
+
     case VAR: {
       Term val = get(term_loc(arg));
       switch(term_tag(val)) {
@@ -1482,11 +1501,6 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	break;
       }
     }
-      break;
-
-    case NUL:
-      if (argsStruct->count > 0)
-	interact(argsNet(argsStruct), NUL);
       break;
 
     case SUP:
