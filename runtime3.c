@@ -1110,8 +1110,6 @@ VectorNode *pushTail(unsigned count, int level, VectorNode *parent, VectorNode *
 Vector *vectConj(Vector *vect, Term val) {
   if (vect->refs == 1) {
     Vector *newVect = mutateVectConj(vect, val);
-    fprintf(stderr, "vectConj %d: %p %ld %p\n", __LINE__, (void *)vect,
-	    get_i60(val), (void *)newVect);
     return(newVect);
     // if there's room in the tail
   } else if (vect->count - vect->tailOffset < VECTOR_ARRAY_LEN) {
