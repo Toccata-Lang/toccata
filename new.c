@@ -1417,14 +1417,12 @@ Term argsNet(NativeArgs *args) {
 
   for (int i = args->count - 2; i >= 0; i--) {
     tail = pair_make(APP, 0, args->args[i], tail);
-    args->args[i] = tail;
   }
 
-  return args->args[0];
+  return tail;
 }
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
-//*
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   // 'args' will only ever be an APP term
   Tag argsTag = term_tag(args);
@@ -1491,8 +1489,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	  // so retry the original APP/REF redex
 	  store_redex(newArgs, ref);
 	}
-	argsStruct->count = -1;
-	return 0;
+	break;
 
       default:
 	print_raw_term(val);
@@ -1504,6 +1501,13 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
 
     case SUP:
+      /*
+      for(int i = 0; i < argsStruct->count; i++)
+	incRef(argsStruct->args[i], 1);
+
+      break;
+      // */
+
     case LAM:
     case LAZ:
     default:
@@ -1513,7 +1517,6 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
     }
     argsStruct->count = -1;
-    // /
     return 0;
   } else {
     printf("unhandled tag %s (0x%x) %p line: %d\n",
@@ -1522,7 +1525,6 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     return 0;
   }
 }
-// */
 
 // For testing only
 void print_raw_term(Term t) {
