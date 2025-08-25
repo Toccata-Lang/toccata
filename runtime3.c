@@ -1213,13 +1213,13 @@ Vector *mutateVectConj(Vector *vect, Term val) {
 
 bool hvmVectFn(Term ref, Term args){
   NativeArgs arityArgs = {0, {}};
-  Term newArgs = strictArgs(ref, args, 1, &arityArgs);
+  Term newArgs = strictArgs(ref, args, 1, &arityArgs, 3);
   if (arityArgs.count == 1) {
     newArgs = take(port(2, term_loc(newArgs)));
     long vectLen = get_i60(arityArgs.args[0]);
     if (vectLen > MAX_ARGS)
       BOOM("too many items in vector literal");
-    Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs);
+    Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs, 3);
     if (arityArgs.count == vectLen + 1) {
       Vector *newV = empty_vect;
       for (int i = 0; i < arityArgs.count; i++)
@@ -1778,7 +1778,6 @@ Value *opaqueValue(void *ptr, Destructor *destruct) {
 };
 
 Term vectorGet(Term v, Term n) {
-  BOOM("fis this");
   long index = get_i60(n);
   Vector *vect = (Vector *)((u64)v & ~7);
   if (index < 0 || vect->count <= index) {
@@ -2846,12 +2845,12 @@ Term dupeGlobal(Location glbl) {
 
 bool constructFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
-  Term newArgs = strictArgs(ref, args, 2, &arityArgs);
+  Term newArgs = strictArgs(ref, args, 2, &arityArgs, 1);
   if (arityArgs.count == 2) {
     newArgs = take(port(2, term_loc(newArgs)));
     int typeNum = get_i60(arityArgs.args[0]);
     int numArgs = get_i60(arityArgs.args[1]);
-    Term lastArgs = strictArgs(ref, newArgs, numArgs, &arityArgs);
+    Term lastArgs = strictArgs(ref, newArgs, numArgs, &arityArgs, 1);
     if (arityArgs.count == numArgs + 2) {
       ReifiedVal *rv = malloc_reified(numArgs);
       rv->type = typeNum;
@@ -2870,7 +2869,7 @@ Term construct = new_ref(constructFn);
 
 bool accessFieldFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
-  args = strictArgs(ref, args, 2, &arityArgs);
+  args = strictArgs(ref, args, 2, &arityArgs, 2);
   if (arityArgs.count == 2) {
     int fldIdx = get_i60(arityArgs.args[0]);
     ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];

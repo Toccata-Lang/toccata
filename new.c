@@ -517,11 +517,11 @@ void pair_free(Location loc) {
 bool is_positive(Term term) {
   switch (term_tag(term)) {
   case VAL:
+  case VL1:
   case VAR:
   case NUL:
   case LAM:
   case REF:
-  case VL1:
   case SUP:
   case I60:
   case F60:
@@ -852,20 +852,17 @@ void applam(Term app, Term lam) {
 
 // Distribure a negative term
 void DNEG(Term neg, Term sup) {
-  BOOM("DNEG\n");
-  Tag neg_tag = term_tag(neg);
-  Lab sup_lab = term_lab(sup);
-  Lab neg_lab = term_lab(neg);
-  Location neg_loc = term_loc(neg);
   Location sup_loc = term_loc(sup);
+  Lab sup_lab = term_lab(sup);
+  Location neg_loc = term_loc(neg);
+  Tag neg_tag = term_tag(neg);
+  Lab neg_lab = term_lab(neg);
 
   Term arg = take(port(1, neg_loc));
   Location ret = port(2, neg_loc);
   Term tm1 = take(port(1, sup_loc));
   Term tm2 = take(port(2, sup_loc));
-  Term dp1 = pair_make(DUP, sup_lab,
-		       SUB,
-		       SUB);
+  Term dp1 = pair_make(DUP, sup_lab, SUB, SUB);
   Term cn1 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(1, term_loc(dp1))),
 		       SUB);
@@ -876,8 +873,34 @@ void DNEG(Term neg, Term sup) {
 		       term_new(VAR, 0, port(2, term_loc(cn1))),
 		       term_new(VAR, 0, port(2, term_loc(cn2))));
   moveStore(ret, dp2);
-  store_redex(cn2, tm2);
-  store_redex(cn1, tm1);
+  if (term_tag(tm1) == VAR) {
+    Term newVar = swapStore(term_loc(tm1), cn1);
+    switch(term_tag(newVar)) {
+    case SUB:
+      break;
+
+    default:
+      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
+	     term_tag(arg), __LINE__);
+      abort();
+      break;
+    }
+  } else
+    store_redex(cn1, tm1);
+  if (term_tag(tm2) == VAR) {
+    Term newVar = swapStore(term_loc(tm2), cn2);
+    switch(term_tag(newVar)) {
+    case SUB:
+      break;
+
+    default:
+      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
+	     term_tag(arg), __LINE__);
+      abort();
+      break;
+    }
+  } else
+    store_redex(cn2, tm2);
   store_redex(dp1, arg);
   return;
 }
@@ -892,23 +915,16 @@ void appnul(Term app, Term nul) {
 
 // Duplication-Lambda interaction
 void DLAM(Term dup, Term lam) {
-  BOOM("DLAM");
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
   Location var = port(1, lam_loc);
   Term bod = take(port(2, lam_loc));
-  Term co1 = pair_make(LAM, 0,
-		       SUB,
-		       term_new(VAR, 0, 0));
-  Term co2 = pair_make(LAM, 0,
-		       SUB,
-		       term_new(VAR, 0, 0));
+  Term co1 = pair_make(LAM, 0, SUB, NUL);
+  Term co2 = pair_make(LAM, 0, SUB, NUL);
   Term du1 = pair_make(SUP, dup_lab,
 		       term_new(VAR, 0, port(1, term_loc(co1))),
 		       term_new(VAR, 0, port(1, term_loc(co2))));
-  Term du2 = pair_make(DUP, dup_lab,
-		       SUB,
-		       SUB);
+  Term du2 = pair_make(DUP, dup_lab, SUB, SUB);
   swapStore(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
   swapStore(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
   moveStore(port(1, term_loc(dup)), co1);
@@ -920,7 +936,6 @@ void DLAM(Term dup, Term lam) {
 
 // Duplication-Superposition interaction
 void DSUP(Term dup, Term sup) {
-  printf("DSUP\n");
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
 
@@ -1423,7 +1438,7 @@ Term argsNet(NativeArgs *args) {
 }
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
-Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsigned dupLabel) {
   // 'args' will only ever be an APP term
   Tag argsTag = term_tag(args);
   if (argsTag == APP) {
@@ -1444,18 +1459,37 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       argsStruct->args[argsStruct->count++] = arg;
       if (expected > 1)
 	// need to get more strict args
-	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct, dupLabel);
       else
 	return args;
       break;
 
     case NUL:
-      if (argsStruct->count > 0) {
-	interact(get(port(2, term_loc(args))), NUL);
-	// freeLoc(port(2, term_loc(args)));
-	argsStruct->args[argsStruct->count++] = ERA;
-	interact(argsNet(argsStruct), NUL);
-      }
+      moveStore(port(2, term_loc(args)), NUL);
+      for (int i = 0; i < argsStruct->count; i++)
+	dec_and_free(argsStruct->args[i], 1);
+      break;
+
+    case SUP:
+      for(int i = 0; i < argsStruct->count; i++)
+	incRef(argsStruct->args[i], 1);
+      Term s1 = take(port(1, term_loc(arg)));
+      Term s2 = take(port(2, term_loc(arg)));
+      int argsCount = argsStruct->count;
+      argsStruct->count += 1;
+
+      Term tail1 = pair_make(APP, 0, s1, SUB);
+      argsStruct->args[argsCount] = tail1;
+      store_redex(argsNet(argsStruct), ref);
+
+      Term tail2 = pair_make(APP, 0, s2, SUB);
+      argsStruct->args[argsCount] = tail2;
+      store_redex(argsNet(argsStruct), ref);
+
+      Term newSup = pair_make(SUP, dupLabel,
+			      term_new(VAR, 0, port(2, term_loc(tail1))),
+			      term_new(VAR, 0, port(2, term_loc(tail2))));
+      moveStore(port(2, term_loc(args)), newSup);
       break;
 
     case VAR: {
@@ -1464,7 +1498,8 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       case LAZ:
 	forceLazy(val);
 	swapStore(term_loc(arg), SUB);
-	// fall through
+	// TODO:
+	// BOOM("don't fall through");
 	
       case SUB:
 	// add the remaining args to argsStruct
@@ -1500,14 +1535,6 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     }
       break;
 
-    case SUP:
-      /*
-      for(int i = 0; i < argsStruct->count; i++)
-	incRef(argsStruct->args[i], 1);
-
-      break;
-      // */
-
     case LAM:
     case LAZ:
     default:
@@ -1534,7 +1561,6 @@ void print_raw_term(Term t) {
     Tag tag = term_tag(t);
     Lab lab = term_lab(t);
     switch(term_tag(t)) {
-    case VAL:
     case NUL:
     case ERA:
     case I60:
@@ -1542,8 +1568,12 @@ void print_raw_term(Term t) {
       printf("%s %x", tag_to_str(tag), lab);
       break;
 
+    case VAL:
+      printf("%s %llx", tag_to_str(tag), t & ~VAL_MASK);
+      break;
+
     case REF:
-      printf("REF %llx", t & ~TAG_MASK);
+      printf("%s %llx", tag_to_str(tag), t & ~TAG_MASK);
       break;
 
       // case REF:
@@ -1742,6 +1772,16 @@ void print_buff(Location start, Location end) {
 void pb() {
   print_buff(0, RNOD_END);
 }
+
+ void pr() {
+   for (int i = 0; i < pairs.count; i++) {
+     printf(" %.3x  ", i);
+     print_raw_term(pairs.rdxs[i][0]);
+     printf("  ");
+     print_raw_term(pairs.rdxs[i][1]);
+     printf("\n");
+   }
+ }
 
 // Print the free list for debugging
 void print_free_list(void) {

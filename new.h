@@ -34,7 +34,7 @@ typedef atomic_uint_least64_t a64;
 #define TAG_MASK 0xFULL
 #define LAB_MASK 0xFFFFFFFULL
 #define LOC_MASK 0xFFFFFFFFULL
-#define VAL_MASK 0x7
+#define VAL_MASK 0x7ULL
 
 // Term is a 64-bit value:
 // - Highest 32 bits: Location
@@ -68,20 +68,20 @@ char *refName(Term ref);
 // Tags for different term types
 #define VAL 0x00 // positive native value
 #define VAR 0x01 // positive variable
-#define SUB 0x02 // negative possible deferred redex
+#define SUB 0x02 // negative possible deferred redex {- +}
 #define NUL 0x03 // positive eraser
 #define ERA 0x04 // negative eraser
-#define LAM 0x05 // positive constructor
-#define APP 0x06 // negative constructor
+#define LAM 0x05 // positive constructor {- +}
+#define APP 0x06 // negative constructor {+ -}
 #define REF 0x07 // positive reference
 #define VL1 0x08 // positive native value alias
-#define SUP 0x09 // positive duplicator
-#define DUP 0x0a // negative duplicator
-#define OPX 0x0b // negative operation
-#define OPY 0x0c // negative operation
+#define SUP 0x09 // positive duplicator {+ +}
+#define DUP 0x0a // negative duplicator {- -}
+#define OPX 0x0b // negative operation {- +}
+#define OPY 0x0c // negative operation {- +}
 #define I60 0x0d // positive 56 bit int
 #define F60 0x0e // positive 56 bit float
-#define LAZ 0x0f // positive lazy node
+#define LAZ 0x0f // positive lazy node {- +}
 typedef u32 Tag; // Tag is now just an unsigned integer
 
 #define sideEffects 0x10 + ERA
@@ -157,7 +157,7 @@ bool pop_redex(Term* neg, Term* pos);
 void store_redex(Term neg, Term pos);
 Term swapStore(Location loc, Term term);
 void moveStore(Location neg_loc, Term pos);
-Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsigned dupLabel);
 void link_redexes();
 void store_redex(Term neg, Term pos);
 Term dupeArg(Term arg, Term *dupedArg);
