@@ -764,7 +764,7 @@ void dec_and_free(Term pv, int deltaRefs) {
 
   default:
     // fprintf(stderr, "freeing interaction combinator: %d %p\n", __LINE__, (void *)v);
-    store_redex((Term)pv, ERA);
+    store_redex(ERA, (Term)pv);
     break;
   }
 }

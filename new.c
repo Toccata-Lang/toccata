@@ -1148,10 +1148,8 @@ void dupval(Term dup, Term val) {
 void dupnul(Term dup, Term nul) {
   Location dp1 = port(1, term_loc(dup));
   Location dp2 = port(2, term_loc(dup));
-  store_redex(get(dp1), nul);
-  freeLoc(dp1);
-  store_redex(get(dp2), nul);
-  freeLoc(dp2);
+  swapStore(dp1, nul);
+  swapStore(dp2, nul);
 }
 
 void duplaz(Term dup, Term laz) {
