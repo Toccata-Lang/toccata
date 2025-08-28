@@ -915,6 +915,7 @@ void appnul(Term app, Term nul) {
 
 // Duplication-Lambda interaction
 void DLAM(Term dup, Term lam) {
+  // TODO: don't duplicate ERA/NUL
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
   Location var = port(1, lam_loc);
@@ -936,6 +937,7 @@ void DLAM(Term dup, Term lam) {
 
 // Duplication-Superposition interaction
 void DSUP(Term dup, Term sup) {
+  // TODO: don't duplicate ERA/NUL
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
 
@@ -983,7 +985,6 @@ void DSUP(Term dup, Term sup) {
     store_redex(dup2, sup_p2);
     store_redex(dup1, sup_p1);
   }
-
   return;
 }
 

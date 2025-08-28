@@ -196,34 +196,27 @@
   CodeGen
   (gen-code [ast]
     (let [var (.var ast)]
-      (comp (cond (= "" var)
-                  (se/state-error ast)
+      (cond (= "" var)
+            (se/state-error ast)
 
-                  se/zero-se)
-            (for [refs (se/update-in-val [.refs-map var] inc)
-                  :let [dupe-var (str var "_" refs)]
-                  _ (se/update-val .init
-                                   (fn [init]
-                                     ["Term " dupe-var ";\n"
-                                      var " = dupeArg(" var, ", &" dupe-var ");\n\n"
-                                      init]))]
-              (.var ast dupe-var))
-            (cond (b/is-glbl var)
-                  (flat-map (get-value ast)
-                            (fn [val]
-                              (cond (or (instance? b/StaticArity val)
-                                        (instance? ast/integer-ast val))
-                                    (se/state-error ast)
+            (b/is-glbl var)
+            (comp (for [val (get-value ast)
+                        :when-not (or (instance? b/StaticArity val)
+                                      (instance? ast/integer-ast val))
+                        refs (comp (se/update-in-val [.refs-map var] inc)
+                                   (for [_ (se/assoc-in-val [.refs-map var] 2)]
+                                     1))
+                        :let [dupe-var (str var "_" refs)]
+                        _ (se/update-val .init
+                                         (fn [init]
+                                           ["Term " dupe-var ";\n"
+                                            var " = dupeArg(" var, ", &" dupe-var ");\n\n"
+                                            init]))]
+                    (.var ast dupe-var))
+                  (se/state-error ast))
 
-                                    (for [_ (se/assoc-in-val [.refs-map var] 2)
-                                          :let [dupe-var (str var "_" 1)]
-                                          _ (se/update-val .init
-                                                           (fn [init]
-                                                             ["\nTerm " dupe-var ";\n"
-                                                              var " = dupeArg(" var, ", &"
-                                                              dupe-var ");\n"
-                                                              init]))]
-                                      (.var ast dupe-var)))))
+            (comp (for [refs (se/update-in-val [.refs-map var] inc)]
+                    (.var ast (str var "_" refs)))
                   (for [_ (se/assoc-in-val [.refs-map var] 1)]
                     ast)))))
 
@@ -351,28 +344,33 @@
                                 ast))
                         dest-params params)]
     (for [rm (se/get-val .refs-map)
-          _ (se/update-val .init
-                           (fn [init]
-                             [(.init args-init)
-                              "// allocate args at " (ast/location params) "\n"
-                              (cata (fn [ast]
-                                      (cond (instance? c/TaggedSymbol ast)
-                                            (either (map (get rm (.var ast))
-                                                         (fn [refs]
-                                                           ""
-                                                           ;; ["Term " (.var ast)
-                                                           ;;  " = term_new(VAR, 0, port(1, term_loc(l_"
-                                                           ;;  (.var ast) ")));\n"]
-                                                           ))
+          _ (se/update-val
+             .init
+             (fn [init]
+               [(.init args-init)
+                "// allocate args at " (ast/location params) "\n"
+                (cata (fn [ast]
+                        (let [var (.var ast)]
+                          (cond (instance? c/TaggedSymbol ast)
+                                (either (map (get rm var)
+                                             (fn [refs]
+                                               (reduce (range (dec refs))
+                                                       []
+                                                       (fn [dupes idx]
+                                                         (let [dupe-var (str var "_" (inc idx))]
+                                                           (conj dupes
+                                                                 ["\nTerm " dupe-var ";\n"
+                                                                  var " = dupeArg(" var,
+                                                                  ", &" dupe-var ");\n"]))))))
 
-                                                    ["swapStore(term_loc(" (.var ast) "), ERA);\n"])
+                                        ["swapStore(term_loc(" var "), ERA);\n"])
 
-                                            (instance? ast/params-ast ast)
-                                            (.fixed ast)
+                                (instance? ast/params-ast ast)
+                                (.fixed ast)
 
-                                            ""))
-                                    params)
-                              init]))]
+                                "")))
+                      params)
+                init]))]
       '_)))
 
 ;; (defn checking-fn [params c-fn]
