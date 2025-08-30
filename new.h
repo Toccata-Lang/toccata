@@ -160,7 +160,7 @@ void moveStore(Location neg_loc, Term pos);
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsigned dupLabel);
 void link_redexes();
 void store_redex(Term neg, Term pos);
-Term dupeArg(Term arg, Term *dupedArg);
+Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel);
 Term make_op(Lab op, Term x, Term y);
 
 // Perform interactions until the redex stack is empty

@@ -1806,7 +1806,7 @@ void print_free_list(void) {
   printf("END (count: %d)\n", count);
 }
 
-Term dupeArg(Term arg, Term *dupedArg) {
+Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
   // fprintf(stderr, "arg: %d %p\n", __LINE__, (void *)arg);
   switch(term_tag(arg)) {
   case VAL:
@@ -1823,7 +1823,7 @@ Term dupeArg(Term arg, Term *dupedArg) {
 
   default: {
     // TODO: this pair label needs to match the enclosing fn
-    Term newDup = pair_make(DUP, 0, SUB, SUB);
+    Term newDup = pair_make(DUP, dupLabel, SUB, SUB);
     store_redex(newDup, arg);
     *dupedArg = term_new(VAR, 0, port(2, term_loc(newDup)));
     return term_new(VAR, 0, port(1, term_loc(newDup)));
