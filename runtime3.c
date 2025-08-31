@@ -260,6 +260,7 @@ String *malloc_string(int len) {
 }
 
 void freeString(Value *v) {
+  // fprintf(stderr, "freeing string %d: %p\n", __LINE__, (void *)v);
   int64_t len = ((String *)v)->len;
   if (len <= STRING_RECYCLE_LEN) {
     v->next = freeStrings.head;
@@ -377,6 +378,7 @@ Vector *malloc_vector() {
 }
 
 void freeVector(Value *val) {
+  // fprintf(stderr, "freeVector %d: %p\n", __LINE__, (void *)val);
   Vector *v = (Vector *)val;
   VectorNode *root = ((Vector *)v)->root;
   if (root != (VectorNode *)NULL) {
@@ -1785,7 +1787,6 @@ Term vectorGet(Term v, Term n) {
     return(nothing());
   } else {
     Term val = vectGet(vect, index);
-    incRef(val, 1);
     dec_and_free(v, 1);
     return(some(val));
   }
