@@ -295,6 +295,7 @@ void eraseLazy(Term lazyVar) {
     break;
 
   case APP:
+  case OPX:
     freeLoc(port(1, lazyLoc));
     freeLoc(port(2, lazyLoc));
     store_redex(negLaz, NUL);
@@ -1024,11 +1025,15 @@ void eravar(Term era, Term var) {
 	break;
 
       case APP:
+      case OPX:
 	break;
 
-      default:
-	BOOM("freeing a lazy something");
+      default: {
+	char s[150];
+	sprintf(s, "unhandled freeing lazy: %s", tag_to_str(term_tag(lzNeg)));
+	BOOM(s);
 	freeLoc(term_loc(val));
+      }
 	break;
       }
       interact(era, lz);
@@ -1243,10 +1248,18 @@ void XNUM(Term opx, Term num) {
   Location opx_loc = term_loc(opx);
   Term arg = swapStore(port(1, opx_loc), num);
   Lab op = term_lab(opx);
-  if (term_tag(arg) == I60)
+  switch (term_tag(arg)) {
+  case I60:
     YNUM(term_new(OPY, op, port(1, opx_loc)), arg);
-  else
+    break;
+
+  case VAR:
+    interact(term_new(OPY, op, port(1, opx_loc)), arg);
+    break;
+
+  default:
     store_redex(term_new(OPY, op, port(1, opx_loc)), arg);
+  }
   return;
 }
 
@@ -1833,10 +1846,8 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
 }
 
 Term make_op(Lab op, Term x, Term y) {
-  // TODO: make operations lazy
-  // and optimize of x and y are numbers
   Term t = pair_make(OPX, op, y, SUB);
   Term ret = term_new(VAR, 0, port(2, term_loc(t)));
-  interact(t, x);
+  swapStore(term_loc(ret), pair_make(LAZ, 0, t, x));
   return ret;
 }
