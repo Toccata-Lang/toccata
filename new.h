@@ -63,6 +63,7 @@ void print_free_list(void);   // For debugging
 void print_raw_term(Term t);
 void print_term(const char* prefix, Term term);
 void print_buff(Location start, Location end);
+void pb();
 char *refName(Term ref);
 
 // Tags for different term types

@@ -259,8 +259,9 @@ Term swapStore(Location loc, Term term) {
     store_redex(neg, pos);
     pair_free(term_loc(result));
     return SUB;
-  } else
+  } else {
     return result;
+  }
 }
 
 void eraseLazy(Term lazyVar) {
@@ -319,7 +320,7 @@ void forceLazy(Term z) {
   // 'z' is a LAZ term
   Term neg = take(port(1, term_loc(z)));
   Term pos = take(port(2, term_loc(z)));
-  if (term_tag(neg) == DUP && term_tag(pos) == VAR) {
+  if (term_tag(neg) == DUP) {
     // this is a lazy DUP, which ever port points to itself
     // gets replaced with SUB
     Term curr = get(port(1, term_loc(neg)));
@@ -329,7 +330,10 @@ void forceLazy(Term z) {
     if (curr == z)
       swapStore(port(2, term_loc(neg)), SUB);
 
-    swapStore(term_loc(pos), pair_make(SUB, 6, neg, pos));
+    if (term_tag(pos) == VAR)
+      swapStore(term_loc(pos), pair_make(SUB, 6, neg, pos));
+    else
+      store_redex(neg, pos);
   } else {
     store_redex(neg, pos);
   }
@@ -340,6 +344,8 @@ void forceLazy(Term z) {
 // negative and should be reduced with 'pos'
 void moveStore(Location neg_loc, Term pos) {
   Term neg = swapStore(neg_loc, pos);
+  Tag negTag = term_tag(neg);
+
 #ifdef SAFETY
   if (is_negative(pos)) {
     char s[50];
@@ -348,18 +354,60 @@ void moveStore(Location neg_loc, Term pos) {
   }
   if (is_positive(neg)) {
     char s[50];
+    print_term("moved pos", pos);
+    print_term("pos at neg", neg);
     sprintf(s,"found positive at move target %.3x: %p", neg_loc, (void *)neg);
     BOOM(s);
   }
 #endif
-  Tag negTag = term_tag(neg);
-  if (negTag == LAZ) {
-    BOOM("does this work");
-    swapStore(neg_loc, pos);
-    forceLazy(neg);
-  } else if (negTag != SUB) {
+  if (negTag != SUB) {
     freeLoc(neg_loc);
     store_redex(neg, pos);
+  }
+}
+
+void moveDuped(Location neg_loc, Term pos) {
+  Term neg = get(neg_loc);
+  Tag negTag = term_tag(neg);
+  switch (negTag) {
+  case SUB:
+    swapStore(neg_loc, pos);
+    break;
+    
+  case LAZ: {
+    Location lazyLoc = term_loc(neg);
+    Term negLaz = get(port(1, lazyLoc));
+    Term posLaz = get(port(2, lazyLoc));
+    switch(term_tag(negLaz)) {
+    case DUP: {
+      Term dup1 = get(port(1, term_loc(negLaz)));
+      Term dup2 = get(port(2, term_loc(negLaz)));
+
+      if (lazyLoc == neg_loc || lazyLoc == neg_loc + 1) {
+	BOOM("duping");
+      }
+      else
+	BOOM("check this out");
+    }
+      break;
+
+    default:
+      if (1) {
+	char s[50];
+	sprintf(s, "unhandled kind of lazy %s", tag_to_str(term_tag(negLaz)));
+	BOOM(s);
+      }
+      break;
+    }
+  }
+
+  default:
+    if (1) {
+      char s[50];
+      sprintf(s, "unhandled kind of lazy %s", tag_to_str(negTag));
+      BOOM(s);
+    }
+    break;
   }
 }
 
@@ -916,6 +964,7 @@ void appnul(Term app, Term nul) {
 
 // Duplication-Lambda interaction
 void DLAM(Term dup, Term lam) {
+  BOOM("DLAM");
   // TODO: don't duplicate ERA/NUL
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
@@ -991,15 +1040,6 @@ void DSUP(Term dup, Term sup) {
 
 // Duplication interaction with copyable term
 void copy(Term dup, Term trm) {
-#ifdef SAFETY
-  // Verify term polarities
-  if (!is_negative(dup) || !is_positive(trm)) {
-    fprintf(stderr, "Error in copy: incorrect term polarities. dup=%s, trm=%s\n",
-            tag_to_str(term_tag(dup)), tag_to_str(term_tag(trm)));
-    abort();
-  }
-#endif
-
   Location dup_loc = term_loc(dup);
 
   // Get port locations
@@ -1007,8 +1047,8 @@ void copy(Term dup, Term trm) {
   Location dp2_loc = port(2, dup_loc);
 
   // put trm in both copy ports
-  moveStore(dp2_loc, trm);
-  moveStore(dp1_loc, trm);
+  moveDuped(dp2_loc, trm);
+  moveDuped(dp1_loc, trm);
   return;
 }
 
@@ -1047,7 +1087,7 @@ void eravar(Term era, Term var) {
 // Eraser-Lambda interaction
 void eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
-  store_redex(ERA, take(port(2, lam_loc)));
+  store_redex(era, take(port(2, lam_loc)));
   moveStore(port(1, lam_loc), NUL);
   return;
 }
@@ -1062,8 +1102,8 @@ void eralaz(Term era, Term laz) {
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  store_redex(ERA, take(port(2, sup_loc)));
-  store_redex(ERA, take(port(1, sup_loc)));
+  store_redex(era, take(port(2, sup_loc)));
+  store_redex(era, take(port(1, sup_loc)));
   return;
 }
 
@@ -1147,8 +1187,8 @@ void dupval(Term dup, Term val) {
   Location dp1 = port(1, term_loc(dup));
   Location dp2 = port(2, term_loc(dup));
   incRef(val, 1);
-  moveStore(dp1, val);
-  moveStore(dp2, val);
+  moveDuped(dp1, val);
+  moveDuped(dp2, val);
 }
 
 void dupnul(Term dup, Term nul) {
@@ -1167,26 +1207,28 @@ void duplaz(Term dup, Term laz) {
   char s[150];
 
   if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
-    sprintf(s, "test duplaz line: %d", __LINE__);
+    sprintf(s, "test duplaz line: %p %p", (void *)dup1, (void *)dup2);
     BOOM(s);
     // the lazy value is no longer needed
     take(port(1, term_loc(dup)));
     take(port(2, term_loc(dup)));
     eraseLazy(lzVar);
   } else if (term_tag(dup1) == ERA) {
-    sprintf(s, "test duplaz line: %d", __LINE__);
+    sprintf(s, "test duplaz line: %p", (void *)dup1);
     BOOM(s);
     // the dupe is no longer needed on one branch
     take(port(1, term_loc(dup)));
     moveStore(port(2, term_loc(dup)), lzVar);
   } else if (term_tag(dup2) == ERA) {
+    sprintf(s, "test duplaz line: %p", (void *)dup2);
+    BOOM(s);
     // the dupe is no longer needed on the other branch
     take(port(2, term_loc(dup)));
     moveStore(port(1, term_loc(dup)), lzVar);
   } else {
     sprintf(s, "test duplaz line: %d", __LINE__);
     BOOM(s);
-    Term newZ = pair_make(LAZ, 0, dup, lzVar);
+    Term newZ = pair_make(LAZ, 3, dup, lzVar);
     dup1 = swapStore(port(1, term_loc(dup)), newZ);
     switch (term_tag(dup1)) {
     case DUP:
@@ -1602,7 +1644,7 @@ void print_raw_term(Term t) {
 // Helper to print a term's details
 void print_term(const char* prefix, Term term) {
   printf("%s:\n", prefix);
-  printf("  Tag: %s (%d)\n", tag_to_str(term_tag(term)), term_tag(term));
+  printf("  Tag: %s (%d, 0x%x)\n", tag_to_str(term_tag(term)), term_tag(term), term_tag(term));
   switch(term_tag(term)) {
   case VAL:
   case NUL:
@@ -1835,9 +1877,12 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
     break;
 
   default: {
-    // TODO: this pair label needs to match the enclosing fn
     Term newDup = pair_make(DUP, dupLabel, SUB, SUB);
-    store_redex(newDup, arg);
+
+    Term z = pair_make(LAZ, 1, newDup, arg);
+    swapStore(port(1, term_loc(newDup)), z);
+    swapStore(port(2, term_loc(newDup)), z);
+
     *dupedArg = term_new(VAR, 0, port(2, term_loc(newDup)));
     return term_new(VAR, 0, port(1, term_loc(newDup)));
   }
@@ -1848,6 +1893,6 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
 Term make_op(Lab op, Term x, Term y) {
   Term t = pair_make(OPX, op, y, SUB);
   Term ret = term_new(VAR, 0, port(2, term_loc(t)));
-  swapStore(term_loc(ret), pair_make(LAZ, 0, t, x));
+  swapStore(term_loc(ret), pair_make(LAZ, 2, t, x));
   return ret;
 }
