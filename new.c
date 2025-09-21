@@ -290,7 +290,16 @@ void eraseLazy(Term lazyVar) {
     if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
       take(port(1, term_loc(negLaz)));
       take(port(2, term_loc(negLaz)));
-      eraseLazy(posLaz);
+      freeLoc(port(1, lazyLoc));
+      freeLoc(port(2, lazyLoc));
+      interact(negLaz, NUL);
+      interact(ERA, posLaz);
+    } else {
+      print_term("laz", laz);
+      print_term("dup1", dup1);
+      print_term("dup2", dup2);
+      pb();
+      BOOM("what to do here");
     }
   }
     break;
@@ -299,8 +308,8 @@ void eraseLazy(Term lazyVar) {
   case OPX:
     freeLoc(port(1, lazyLoc));
     freeLoc(port(2, lazyLoc));
-    store_redex(negLaz, NUL);
-    store_redex(ERA, posLaz);
+    interact(negLaz, NUL);
+    interact(ERA, posLaz);
     break;
 
   default:
@@ -330,9 +339,11 @@ void forceLazy(Term z) {
     if (curr == z)
       swapStore(port(2, term_loc(neg)), SUB);
 
-    if (term_tag(pos) == VAR)
-      swapStore(term_loc(pos), pair_make(SUB, 6, neg, pos));
-    else
+    if (term_tag(pos) == VAR) {
+      Term lz = swapStore(term_loc(pos), pair_make(SUB, 6, neg, pos));
+      if (term_tag(lz) == LAZ)
+	forceLazy(lz);
+    } else
       store_redex(neg, pos);
   } else {
     store_redex(neg, pos);
@@ -1065,12 +1076,20 @@ void eravar(Term era, Term var) {
     if (lz != SUB) {
       Term lzNeg = get(port(1, term_loc(lz)));
       switch(term_tag(lzNeg)) {
-      case DUP:
-	// BOOM("Freeing a lazy DUP");
+      case DUP: {
+	/*
+	pb();
+	Term dp1 = get(port(1, term_loc(lzNeg)));
+	Term dp2 = get(port(2, term_loc(lzNeg)));
+	print_term("dp1", dp1);
+	print_term("dp2", dp2);
+	// */
+      }
 	break;
 
       case APP:
       case OPX:
+	interact(era, lz);
 	break;
 
       default: {
@@ -1081,7 +1100,6 @@ void eravar(Term era, Term var) {
       }
 	break;
       }
-      interact(era, lz);
     }
   } else {
     interact(era, val);
@@ -1137,8 +1155,14 @@ void appnum(Term app, Term num) {
 
 void opnul(Term op, Term nul) {
   Location op_loc = term_loc(op);
-  moveStore(port(2, op_loc), nul);
-  store_redex(ERA, take(port(1, op_loc)));
+  if (term_lab(nul) == 0) {
+    interact(take(port(2, op_loc)), NUL);
+    interact(ERA, take(port(1, op_loc)));
+  } else {
+    BOOM("test this");
+    moveStore(port(2, op_loc), nul);
+    store_redex(sideEffects, take(port(1, op_loc)));
+  }
   return;
 }
 
@@ -1555,8 +1579,8 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsig
       Term val = get(term_loc(arg));
       switch(term_tag(val)) {
       case LAZ:
-	forceLazy(val);
 	swapStore(term_loc(arg), SUB);
+	forceLazy(val);
 	// TODO:
 	// BOOM("don't fall through");
 	
@@ -1867,7 +1891,6 @@ void print_free_list(void) {
 }
 
 Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
-  // fprintf(stderr, "arg: %d %p\n", __LINE__, (void *)arg);
   switch(term_tag(arg)) {
   case VAL:
     *dupedArg = incRef(arg, 1);
@@ -1883,13 +1906,9 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
 
   default: {
     Term newDup = pair_make(DUP, dupLabel, SUB, SUB);
-    // TODO: this needs to be replaced with the below code
-    // in order to make it lazy. But it currently leaks nodes
-    store_redex(newDup, arg);
-
-    // Term z = pair_make(LAZ, 1, newDup, arg);
-    // swapStore(port(1, term_loc(newDup)), z);
-    // swapStore(port(2, term_loc(newDup)), z);
+    Term z = pair_make(LAZ, 1, newDup, arg);
+    swapStore(port(1, term_loc(newDup)), z);
+    swapStore(port(2, term_loc(newDup)), z);
 
     *dupedArg = term_new(VAR, 0, port(2, term_loc(newDup)));
     return term_new(VAR, 0, port(1, term_loc(newDup)));
