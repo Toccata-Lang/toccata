@@ -1077,13 +1077,16 @@ void eravar(Term era, Term var) {
       Term lzNeg = get(port(1, term_loc(lz)));
       switch(term_tag(lzNeg)) {
       case DUP: {
-	/*
-	pb();
 	Term dp1 = get(port(1, term_loc(lzNeg)));
 	Term dp2 = get(port(2, term_loc(lzNeg)));
-	print_term("dp1", dp1);
-	print_term("dp2", dp2);
-	// */
+	if (dp1 == ERA && dp2 == ERA) {
+	  take(port(1, term_loc(lz)));
+	  take(port(1, term_loc(lzNeg)));
+	  take(port(2, term_loc(lzNeg)));
+	  interact(lzNeg, NUL);
+	  interact(ERA, take(port(2, term_loc(lz))));
+	} else if (dp1 == sideEffects || dp2 == sideEffects)
+	  forceLazy(lz);
       }
 	break;
 
