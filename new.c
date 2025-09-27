@@ -253,15 +253,23 @@ Term swapStore(Location loc, Term term) {
 #else
   Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
 #endif
-  if (term_tag(result) == SUB && result != SUB) {
-    Term neg = get(port(1, term_loc(result)));
-    Term pos = get(port(2, term_loc(result)));
-    store_redex(neg, pos);
-    pair_free(term_loc(result));
-    return SUB;
-  } else {
-    return result;
+  switch(term_tag(result)) {
+  case SUB:
+    if (result != SUB) {
+      Term neg = get(port(1, term_loc(result)));
+      Term pos = get(port(2, term_loc(result)));
+      store_redex(neg, pos);
+      pair_free(term_loc(result));
+      result = SUB;
+    }
+    break;
+
+  case ERA:
+    freeLoc(loc);
+    store_redex(result, term);
+    break;
   }
+  return result;
 }
 
 void eraseLazy(Term lazyVar) {
@@ -371,7 +379,7 @@ void moveStore(Location neg_loc, Term pos) {
     BOOM(s);
   }
 #endif
-  if (negTag != SUB) {
+  if (negTag != SUB && negTag != ERA) {
     freeLoc(neg_loc);
     store_redex(neg, pos);
   }
@@ -973,7 +981,8 @@ void DNEG(Term neg, Term sup) {
 // Application-Null interaction
 void appnul(Term app, Term nul) {
   Location app_loc = term_loc(app);
-  store_redex(ERA, take(port(1, app_loc)));
+  Term pos = take(port(1, app_loc));
+  interact(ERA, pos);
   moveStore(port(2, app_loc), NUL);
   return;
 }
