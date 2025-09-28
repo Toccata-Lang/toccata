@@ -923,6 +923,15 @@ void applam(Term app, Term lam) {
   return;
 }
 
+Term makeLazyDup(Lab lb, Term arg) {
+  Term dp = pair_make(DUP, lb, SUB, SUB);
+  Location loc = term_loc(dp);
+  Term lz = pair_make(LAZ, 0, dp, arg);
+  swapStore(port(1, loc), lz);
+  swapStore(port(2, loc), lz);
+  return dp;
+}
+
 // Distribure a negative term
 void DNEG(Term neg, Term sup) {
   Location sup_loc = term_loc(sup);
@@ -935,10 +944,7 @@ void DNEG(Term neg, Term sup) {
   Location ret = port(2, neg_loc);
   Term tm1 = take(port(1, sup_loc));
   Term tm2 = take(port(2, sup_loc));
-  Term dp1 = pair_make(DUP, sup_lab, SUB, SUB);
-  Term lz = pair_make(LAZ, 0, dp1, arg);
-  swapStore(port(1, term_loc(dp1)), lz);
-  swapStore(port(2, term_loc(dp1)), lz);
+  Term dp1 = makeLazyDup(sup_lab, arg);
   Term cn1 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(1, term_loc(dp1))),
 		       SUB);
@@ -1002,6 +1008,7 @@ void DLAM(Term dup, Term lam) {
   Term du1 = pair_make(SUP, dup_lab,
 		       term_new(VAR, 0, port(1, term_loc(co1))),
 		       term_new(VAR, 0, port(1, term_loc(co2))));
+  BOOM("make this DUP lazy");
   Term du2 = pair_make(DUP, dup_lab, SUB, SUB);
   swapStore(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
   swapStore(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
@@ -1045,8 +1052,8 @@ void DSUP(Term dup, Term sup) {
     Term sup_p2 = take(port(2, sup_loc));
 
     // Create two new DUP nodes with the same label
-    Term dup1 = pair_make(DUP, dup_lab, SUB, SUB);
-    Term dup2 = pair_make(DUP, dup_lab, SUB, SUB);
+    Term dup1 = makeLazyDup(dup_lab, sup_p1);;
+    Term dup2 = makeLazyDup(dup_lab, sup_p2);;
 
     // Create two new SUP nodes with the same label
     Term sup1 = pair_make(SUP, sup_lab,
@@ -1059,8 +1066,6 @@ void DSUP(Term dup, Term sup) {
     // Connect the new nodes
     moveStore(dup_p1, sup1);
     moveStore(dup_p2, sup2);
-    store_redex(dup2, sup_p2);
-    store_redex(dup1, sup_p1);
   }
   return;
 }
