@@ -936,6 +936,9 @@ void DNEG(Term neg, Term sup) {
   Term tm1 = take(port(1, sup_loc));
   Term tm2 = take(port(2, sup_loc));
   Term dp1 = pair_make(DUP, sup_lab, SUB, SUB);
+  Term lz = pair_make(LAZ, 0, dp1, arg);
+  swapStore(port(1, term_loc(dp1)), lz);
+  swapStore(port(2, term_loc(dp1)), lz);
   Term cn1 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(1, term_loc(dp1))),
 		       SUB);
@@ -974,7 +977,6 @@ void DNEG(Term neg, Term sup) {
     }
   } else
     store_redex(cn2, tm2);
-  store_redex(dp1, arg);
   return;
 }
 
