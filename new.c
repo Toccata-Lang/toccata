@@ -427,6 +427,9 @@ void moveDuped(Location neg_loc, Term pos) {
     break;
 
   default: {
+    print_term("moveDuped neg", neg);
+    print_term("moveDuped pos", pos);
+    pb();
     char s[50];
     sprintf(s, "unhandled kind of lazy %s", tag_to_str(negTag));
     BOOM(s);
@@ -880,20 +883,23 @@ void DEFR(Term neg, Term var) {
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
     Location varLoc = term_loc(var);
-    Term deferred = pair_make(SUB, 2, neg, var);
-    Term newVar = swapStore(varLoc, deferred);
+    Term newVar = get(varLoc);
     switch(term_tag(newVar)) {
-    case SUB:
+    case SUB: {
+      Term deferred = pair_make(SUB, 2, neg, var);
+      newVar = swapStore(varLoc, deferred);
+    }
       break;
 
     case LAZ:
-      forceLazy(newVar);
+      forceLazy(swapStore(varLoc, neg));
       break;
 
     default:
-      pair_free(term_loc(deferred));
-      freeLoc(varLoc);
-      store_redex(neg, newVar);
+      BOOM("yep this gets hit");
+      // pair_free(term_loc(deferred));
+      // freeLoc(varLoc);
+      // store_redex(neg, newVar);
       break;
     }
   } else {
@@ -932,8 +938,8 @@ Term makeLazyDup(Lab lb, Term arg) {
   return dp;
 }
 
-// Distribure a negative term
-void DNEG(Term neg, Term sup) {
+// distribute a negative through a SUP
+void negsup(Term neg, Term sup) {
   Location sup_loc = term_loc(sup);
   Lab sup_lab = term_lab(sup);
   Location neg_loc = term_loc(neg);
@@ -948,42 +954,18 @@ void DNEG(Term neg, Term sup) {
   Term cn1 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(1, term_loc(dp1))),
 		       SUB);
+  Term lz1 = pair_make(LAZ, 5, cn1, tm1);
+  swapStore(port(2, term_loc(cn1)), lz1);
   Term cn2 = pair_make(neg_tag, neg_lab,
 		       term_new(VAR, 0, port(2, term_loc(dp1))),
 		       SUB);
+  swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 6, cn2, tm2));
+  // TODO: could you make the ports of the SUP store direct LAZ terms
+  // and not VAR's?
   Term dp2 = pair_make(SUP, sup_lab,
 		       term_new(VAR, 0, port(2, term_loc(cn1))),
 		       term_new(VAR, 0, port(2, term_loc(cn2))));
   moveStore(ret, dp2);
-  if (term_tag(tm1) == VAR) {
-    Term newVar = swapStore(term_loc(tm1), cn1);
-    switch(term_tag(newVar)) {
-    case SUB:
-      break;
-
-    default:
-      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
-	     term_tag(arg), __LINE__);
-      abort();
-      break;
-    }
-  } else
-    store_redex(cn1, tm1);
-  if (term_tag(tm2) == VAR) {
-    Term newVar = swapStore(term_loc(tm2), cn2);
-    switch(term_tag(newVar)) {
-    case SUB:
-      break;
-
-    default:
-      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
-	     term_tag(arg), __LINE__);
-      abort();
-      break;
-    }
-  } else
-    store_redex(cn2, tm2);
-  return;
 }
 
 // Application-Null interaction
@@ -1144,8 +1126,8 @@ void eralaz(Term era, Term laz) {
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  store_redex(era, take(port(2, sup_loc)));
-  store_redex(era, take(port(1, sup_loc)));
+  store_redex(era, term_new(VAR, 0, port(2, sup_loc)));
+  store_redex(era, term_new(VAR, 0, port(1, sup_loc)));
   return;
 }
 
@@ -1194,11 +1176,11 @@ void subnul(Term sub, Term nul) {
 
     // Take the first port and link it with NUL
     Term t = take(port(1, sub_loc));
-    store_redex(t, NUL);
+    interact(t, NUL);
 
     // Take the second port and link it with ERA
     t = take(port(2, sub_loc));
-    store_redex(ERA, t);
+    interact(ERA, t);
   }
 
   return;
@@ -1249,6 +1231,7 @@ void dupnul(Term dup, Term nul) {
 void duplaz(Term dup, Term laz) {
   Term dup1 = get(port(1, term_loc(dup)));
   Term dup2 = get(port(2, term_loc(dup)));
+  BOOM("this call to term_new is wrong");
   Term lzVar = term_new(VAR, 0, laz);
 
   // TODO: remove when not needed
@@ -1445,11 +1428,11 @@ void NOP(Term neg, Term pos) {
 // VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60  F60  LAZ
 
 #define OPX_INTERACTIONS\
-  &ABRT,&DEFR,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
+  &ABRT,&DEFR,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define OPY_INTERACTIONS						\
-  &ABRT,&DEFR,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
+  &ABRT,&DEFR,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define ERA_INTERACTIONS						\
@@ -1457,7 +1440,7 @@ void NOP(Term neg, Term pos) {
 // VAL    VAR    SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS						\
-  &ABRT,&DEFR,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&DNEG,&ABRT,&ABRT,&ABRT,&appnum,&ABRT,&ABRT
+  &ABRT,&DEFR,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&appnum,&ABRT,&ABRT
 // VAL   VAR   SUB    NUL    ERA    LAM    APP    REF    VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
 
 #define DUP_INTERACTIONS						\
@@ -1541,9 +1524,9 @@ Term argsNet(NativeArgs *args) {
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsigned dupLabel) {
-  // 'args' will only ever be an APP term
   Tag argsTag = term_tag(args);
   if (argsTag == APP) {
+    // if 'args' is an APP term
     Term arg = take(port(1, term_loc(args)));
     if (expected == 0) {
       return args;
@@ -1582,11 +1565,11 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsig
 
       Term tail1 = pair_make(APP, 0, s1, SUB);
       argsStruct->args[argsCount] = tail1;
-      store_redex(argsNet(argsStruct), ref);
+      swapStore(port(2, term_loc(tail1)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
 
       Term tail2 = pair_make(APP, 0, s2, SUB);
       argsStruct->args[argsCount] = tail2;
-      store_redex(argsNet(argsStruct), ref);
+      swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
 
       Term newSup = pair_make(SUP, dupLabel,
 			      term_new(VAR, 0, port(2, term_loc(tail1))),
@@ -1718,6 +1701,7 @@ void print_term(const char* prefix, Term term) {
 
   default:
     printf("  Location: %.3x\n", term_loc(term));
+    printf("  Label: %.3x\n", term_lab(term));
     // If this is a pair, print its contents
     if (term_loc(term) >= 0) {
       Term first = get(port(1, term_loc(term)));

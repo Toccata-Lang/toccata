@@ -78,8 +78,8 @@ char *refName(Term ref);
 #define VL1 0x08 // positive native value alias
 #define SUP 0x09 // positive duplicator {+ +}
 #define DUP 0x0a // negative duplicator {- -}
-#define OPX 0x0b // negative operation {- +}
-#define OPY 0x0c // negative operation {- +}
+#define OPX 0x0b // negative operation {+ -}
+#define OPY 0x0c // negative operation {+ -}
 #define I60 0x0d // positive 56 bit int
 #define F60 0x0e // positive 56 bit float
 #define LAZ 0x0f // positive lazy node {- +}
