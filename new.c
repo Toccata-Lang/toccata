@@ -420,8 +420,11 @@ void moveDuped(Location neg_loc, Term pos) {
     }
   }
 
+  case APP:
   case ERA:
   case DUP:
+  case OPX:
+  case OPY:
     take(neg_loc);
     store_redex(neg, pos);
     break;
@@ -880,6 +883,7 @@ void link_redexes() {
 
 // defer a reduction
 void DEFR(Term neg, Term var) {
+  // TODO: it seems this is redundant
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
     Location varLoc = term_loc(var);
@@ -900,6 +904,33 @@ void DEFR(Term neg, Term var) {
       // pair_free(term_loc(deferred));
       // freeLoc(varLoc);
       // store_redex(neg, newVar);
+      break;
+    }
+  } else {
+    interact(neg, var);
+  }
+  return;
+}
+
+void negvar(Term neg, Term var) {
+  var = take(term_loc(var));
+  if (term_tag(var) == VAR) {
+    Term val = swapStore(term_loc(var), neg);
+    switch(term_tag(val)) {
+    case SUB:
+      break;
+
+    case LAZ: {
+      forceLazy(val);
+    }
+      break;
+
+    default:
+      BOOM("Duping a bad var");
+      // this might be the way to do it.
+      // but this shouldn't happen
+      take(term_loc(var));
+      interact(neg, val);
       break;
     }
   } else {
@@ -1186,33 +1217,6 @@ void subnul(Term sub, Term nul) {
   return;
 }
 
-void dupvar(Term dup, Term var) {
-  var = take(term_loc(var));
-  if (term_tag(var) == VAR) {
-    Term val = swapStore(term_loc(var), dup);
-    switch(term_tag(val)) {
-    case SUB:
-      break;
-
-    case LAZ: {
-      forceLazy(val);
-    }
-      break;
-
-    default:
-      BOOM("Duping a bad var");
-      // this might be the way to do it.
-      // but this shouldn't happen
-      take(term_loc(var));
-      interact(dup, val);
-      break;
-    }
-  } else {
-    interact(dup, var);
-  }
-  return;
-}
-
 void dupval(Term dup, Term val) {
   Location dp1 = port(1, term_loc(dup));
   Location dp2 = port(2, term_loc(dup));
@@ -1428,11 +1432,11 @@ void NOP(Term neg, Term pos) {
 // VAL   VAR   SUB   NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60  F60  LAZ
 
 #define OPX_INTERACTIONS\
-  &ABRT,&DEFR,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
+  &ABRT,&negvar,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define OPY_INTERACTIONS						\
-  &ABRT,&DEFR,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
+  &ABRT,&negvar,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
 // VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 #define ERA_INTERACTIONS						\
@@ -1440,11 +1444,11 @@ void NOP(Term neg, Term pos) {
 // VAL    VAR    SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS						\
-  &ABRT,&DEFR,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&appnum,&ABRT,&ABRT
+  &ABRT,&negvar,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&appnum,&ABRT,&ABRT
 // VAL   VAR   SUB    NUL    ERA    LAM    APP    REF    VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
 
 #define DUP_INTERACTIONS						\
-  &dupval,&dupvar,&ABRT,&dupnul,&ABRT,&DLAM,&ABRT,&copy,&dupval,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
+  &dupval,&negvar,&ABRT,&dupnul,&ABRT,&DLAM,&ABRT,&copy,&dupval,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
 //  VAL     VAR    SUB    NUL    ERA   LAM   APP   REF    VL1    SUP   DUP   OPX   OPY   I60   F60   LAZ
 
 // Initialize the interactions array with the same values in each row
@@ -1630,7 +1634,11 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsig
     }
     argsStruct->count = -1;
     return 0;
+    // } else if (argsTag == VAR) {
+    // if 'args' is a VAR term
   } else {
+    printf("strictArgs expected: %d\n", expected);
+    print_term("strictArgs args", args);
     printf("unhandled tag %s (0x%x) %p line: %d\n",
 	   tag_to_str(argsTag), argsTag, (void *)args, __LINE__);
     abort();
