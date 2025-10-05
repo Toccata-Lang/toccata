@@ -393,33 +393,6 @@ void moveDuped(Location neg_loc, Term pos) {
     swapStore(neg_loc, pos);
     break;
     
-  case LAZ: {
-    BOOM("test 1");
-    Location lazyLoc = term_loc(neg);
-    Term negLaz = get(port(1, lazyLoc));
-    Term posLaz = get(port(2, lazyLoc));
-    switch(term_tag(negLaz)) {
-    case DUP: {
-      Term dup1 = get(port(1, term_loc(negLaz)));
-      Term dup2 = get(port(2, term_loc(negLaz)));
-
-      if (lazyLoc == neg_loc || lazyLoc == neg_loc + 1) {
-	BOOM("duping");
-      }
-      else
-	BOOM("check this out");
-    }
-      break;
-
-    default: {
-      char s[50];
-      sprintf(s, "unhandled kind of lazy %s", tag_to_str(term_tag(negLaz)));
-      BOOM(s);
-    }
-      break;
-    }
-  }
-
   case APP:
   case ERA:
   case DUP:
@@ -715,7 +688,6 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
   Location loc = pair_alloc();
 
 #ifdef SAFETY
-  // TODO: remove
   if (loc & 0x1)
     BOOM("Bad pair_alloc return");
 #endif
@@ -881,37 +853,6 @@ void link_redexes() {
   }
 }
 
-// defer a reduction
-void DEFR(Term neg, Term var) {
-  // TODO: it seems this is redundant
-  var = take(term_loc(var));
-  if (term_tag(var) == VAR) {
-    Location varLoc = term_loc(var);
-    Term newVar = get(varLoc);
-    switch(term_tag(newVar)) {
-    case SUB: {
-      Term deferred = pair_make(SUB, 2, neg, var);
-      newVar = swapStore(varLoc, deferred);
-    }
-      break;
-
-    case LAZ:
-      forceLazy(swapStore(varLoc, neg));
-      break;
-
-    default:
-      BOOM("yep this gets hit");
-      // pair_free(term_loc(deferred));
-      // freeLoc(varLoc);
-      // store_redex(neg, newVar);
-      break;
-    }
-  } else {
-    interact(neg, var);
-  }
-  return;
-}
-
 void negvar(Term neg, Term var) {
   var = take(term_loc(var));
   if (term_tag(var) == VAR) {
@@ -1033,8 +974,7 @@ void DLAM(Term dup, Term lam) {
 }
 
 // Duplication-Superposition interaction
-void DSUP(Term dup, Term sup) {
-  // TODO: don't duplicate ERA/NUL
+void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
 
@@ -1090,6 +1030,9 @@ void copy(Term dup, Term trm) {
   // Get port locations
   Location dp1_loc = port(1, dup_loc);
   Location dp2_loc = port(2, dup_loc);
+
+  if (term_tag(trm) == VAL)
+    incRef(trm, 1);
 
   // put trm in both copy ports
   moveDuped(dp2_loc, trm);
@@ -1215,14 +1158,6 @@ void subnul(Term sub, Term nul) {
   }
 
   return;
-}
-
-void dupval(Term dup, Term val) {
-  Location dp1 = port(1, term_loc(dup));
-  Location dp2 = port(2, term_loc(dup));
-  incRef(val, 1);
-  moveDuped(dp1, val);
-  moveDuped(dp2, val);
 }
 
 void dupnul(Term dup, Term nul) {
@@ -1433,23 +1368,23 @@ void NOP(Term neg, Term pos) {
 
 #define OPX_INTERACTIONS\
   &ABRT,&negvar,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&XNUM,&XNUM,&ABRT
-// VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
+// VAL    VAR    SUB    NUL   ERA   LAM   APP   REF   VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
-#define OPY_INTERACTIONS						\
+#define OPY_INTERACTIONS\
   &ABRT,&negvar,&ABRT,&opnul,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&YNUM,&YNUM,&ABRT
-// VAL   VAR   SUB    NUL   ERA   LAM   APP   REF   VL1   SUP   DUP   OPX   OPY   I60   F60   LAZ
+// VAL    VAR    SUB    NUL   ERA   LAM   APP   REF   VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
-#define ERA_INTERACTIONS						\
+#define ERA_INTERACTIONS\
   &DECR,&eravar,&ABRT,&NOP,&ABRT,&eralam,&ABRT,&NOP,&ABRT,&erasup,&ABRT,&ABRT,&ABRT,&NOP,&NOP,&eralaz
 // VAL    VAR    SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
-#define APP_INTERACTIONS						\
-  &ABRT,&negvar,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&appnum,&ABRT,&ABRT
-// VAL   VAR   SUB    NUL    ERA    LAM    APP    REF    VL1   SUP   DUP   OPX   OPY    I60     F60   LAZ
+#define APP_INTERACTIONS\
+  &ABRT,&negvar,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+// VAL    VAR   SUB     NUL    ERA    LAM    APP    REF    VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
-#define DUP_INTERACTIONS						\
-  &dupval,&negvar,&ABRT,&dupnul,&ABRT,&DLAM,&ABRT,&copy,&dupval,&DSUP,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
-//  VAL     VAR    SUB    NUL    ERA   LAM   APP   REF    VL1    SUP   DUP   OPX   OPY   I60   F60   LAZ
+#define DUP_INTERACTIONS\
+  &copy,&negvar,&ABRT,&dupnul,&ABRT,&DLAM,&ABRT,&copy,&copy,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
+//  VAL   VAR    SUB    NUL    ERA   LAM   APP   REF   VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
