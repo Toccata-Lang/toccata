@@ -1735,11 +1735,15 @@ Term integer_LT(Term arg0, Term arg1) {
   i64 x = get_i60(arg0);
   i64 y = get_i60(arg1);
 
+  Term result;
+
   if (x >= y) {
-    return(nothing());
+    result = nothing();
   } else {
-    return(some(arg0));
+    result = some(arg0);
   }
+  printf("x: %ld  y: %ld  type: %ld\n", x, y, ((Value *)result)->type);
+  return result;
 }
 
 int8_t equal(Value *v1, Value *v2) {

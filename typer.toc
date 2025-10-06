@@ -47,8 +47,6 @@
                                                   delta)
                                                 prev-max)))
                          starts)))))
-;; A few DUP/SUP labels are used in runtime3.c
-(def dup-labels (integer-gen 4))
 
 (defn append-value-type [sym constraint loc]
   (assert (instance? c/OptionalSym sym))
@@ -455,10 +453,7 @@
                                            (append-value-type sym
                                                               (c/param fn-sym (- arg-count idx))
                                                               loc)))))]
-              (-> ast
-                  ;; TODO: need to be more efficient when allocating DUP/SUP labels
-                  (.dup-label (new-int dup-labels))
-                  (.params new-params))))))
+              (.params ast new-params)))))
 
   (type-check [ast old-ast]
     (let [arg-count (count (.fixed (.params old-ast)))
@@ -722,7 +717,6 @@
           arity-id (cond (= (.arity-id ast) c/no-symbol)
                          (c/tag (gensym "fn-arity"))
                          (.arity-id ast))
-          dup-label (new-int dup-labels)
           ast (.arity-id ast arity-id)
           body (.body ast)
           body (either (map (last body)
@@ -748,7 +742,8 @@
             ;;                            lflf 'const (.constraint ast))
             ;;                    nothing)))]
             _ (b/set-value b/curr-arity arity-id)
-            _ (b/set-value b/dup-label dup-label)
+            _ (b/set-value b/has-closures 0)
+            _ (b/set-value b/dup-label 0)
             new-params (set-local-var (.params ast))
             _ (cata (fn [x]
                       (cond (instance? c/TaggedSymbol x)
@@ -778,8 +773,6 @@
                                                                (- arg-count (new-int idxs)))
                                                       loc))))]
         (-> ast
-            ;; TODO: need to be more efficient when allocating DUP/SUP labels
-            (.dup-label dup-label)
             (.params new-params)
             (.body (comp (filter body (partial instance? c/Constraints))
                          (remove body (fn [ast]
@@ -881,7 +874,9 @@
     (cond (= (.var ast) "")
           (map (b/local-var ast)
                (fn [new-var]
-                 (.var ast new-var)))
+                 (-> ast
+                     (.arity-id b/global-sym)
+                     (.var new-var))))
           (se/state-error ast)))
 
   (set-global-var [ast]
@@ -907,6 +902,20 @@
                       (set-local-var new-s)
 
                       (se/state-error new-s))
+          _ (either (map (and (instance? c/TaggedSymbol new-s)
+                              (get new-s .arity-id))
+                         (fn [arity-id]
+                           (flat-map (b/get-value b/curr-arity)
+                                     (fn [curr-arity-id]
+                                       (cond (or (= arity-id c/no-symbol)
+                                                 (= arity-id curr-arity-id))
+                                             b/se-nop
+
+                                             (map (b/set-value b/has-closures 1)
+                                                  (fn [_]
+                                                    (b/status "Closure:" (ast/location s) s
+                                                              arity-id curr-arity-id))))))))
+                    b/se-nop)
           ;; new-s (se/try
           ;;         (for [arity-id (b/get-value b/curr-arity)
           ;;               r (cond (or (b/is-glbl (.var new-s))
@@ -1571,7 +1580,12 @@
           (.var ast (b/global-var 'Val))))
 
   (pre-check [ast]
-    (for [dup-label (b/get-value b/dup-label)]
+    (for [curr-dup-label (b/get-value b/dup-label)
+          :let [dup-label (either (< 0 curr-dup-label)
+                                  (new-int b/dup-labels))]
+          _ (cond (= 0 curr-dup-label)
+                  (b/set-value b/dup-label dup-label)
+                  b/se-nop)]
       (.label ast dup-label)))
 
   (type-check [ast old-ast]
