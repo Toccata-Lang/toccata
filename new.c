@@ -188,17 +188,17 @@ Term get(Location loc) {
 
 void freeLoc(Location loc) {
 #ifdef NON_ATOMIC
-  BUFF[loc] = 0;
+  BUFF[loc] = VOID;
 #else
-  atomic_store_explicit(&BUFF[loc], 0, memory_order_relaxed);
+  atomic_store_explicit(&BUFF[loc], VOID, memory_order_relaxed);
 #endif
   Location evenLoc = loc & 0xFFFFFFFE;
-  if (get(evenLoc) == 0 && get(evenLoc + 1) == 0) {
+  if (get(evenLoc) == VOID && get(evenLoc + 1) == VOID) {
     pair_free(evenLoc);
   }
 }
 
-// Take the term at the given location, replacing it with 0
+// Take the term at the given location, replacing it with VOID
 // And freeing a VAR chain if needed
 // Returns a positive value.
 Term take(Location loc) {
@@ -244,7 +244,7 @@ Term take(Location loc) {
 // Otherwise, return a positive value.
 Term swapStore(Location loc, Term term) {
 #ifdef SAFETY
-  if (term == 0)
+  if (term == VOID)
     BOOM("bad swap");
 #endif
 #ifdef NON_ATOMIC
@@ -540,9 +540,9 @@ void pair_free(Location loc) {
 
   // Clear the second cell
 #ifdef NON_ATOMIC
-  BUFF[loc + 1] = 0;
+  BUFF[loc + 1] = VOID;
 #else
-  atomic_store_explicit(&BUFF[loc + 1], 0, memory_order_relaxed);
+  atomic_store_explicit(&BUFF[loc + 1], VOID, memory_order_relaxed);
 #endif
 
   Location currTop;
@@ -1055,8 +1055,8 @@ void eravar(Term era, Term var) {
 	  take(port(1, term_loc(lz)));
 	  take(port(1, term_loc(lzNeg)));
 	  take(port(2, term_loc(lzNeg)));
-	  interact(lzNeg, NUL);
-	  interact(ERA, take(port(2, term_loc(lz))));
+	  Term lzPos = take(port(2, term_loc(lz)));
+	  interact(ERA, lzPos);
 	} else if (dp1 == sideEffects || dp2 == sideEffects)
 	  forceLazy(lz);
       }
@@ -1499,6 +1499,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsig
 	incRef(argsStruct->args[i], 1);
       Term s1 = take(port(1, term_loc(arg)));
       Term s2 = take(port(2, term_loc(arg)));
+      Lab supLabel = term_lab(arg);
       int argsCount = argsStruct->count;
       argsStruct->count += 1;
 
@@ -1510,7 +1511,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsig
       argsStruct->args[argsCount] = tail2;
       swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
 
-      Term newSup = pair_make(SUP, dupLabel,
+      Term newSup = pair_make(SUP, supLabel,
 			      term_new(VAR, 0, port(2, term_loc(tail1))),
 			      term_new(VAR, 0, port(2, term_loc(tail2))));
       moveStore(port(2, term_loc(args)), newSup);
@@ -1809,6 +1810,25 @@ void pb() {
      printf("  ");
      print_raw_term(pairs.rdxs[i][1]);
      printf("\n");
+   }
+ }
+
+ void check_buff() {
+#ifdef NON_ATOMIC
+   u64* buff = get_buff();
+#else
+   a64* buff = get_buff();
+#endif
+   if (!buff) {
+     printf("BUFF is not initialized\n");
+     return;
+   }
+   for (Location i = 0; i < RNOD_END; i += 2) {
+     Term t1 = buff[i];
+     if (term_tag(t1) != NUL || buff[i + 1] != 0) {
+       pb();
+       abort();
+     }
    }
  }
 

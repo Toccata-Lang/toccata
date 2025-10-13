@@ -1742,7 +1742,7 @@ Term integer_LT(Term arg0, Term arg1) {
   } else {
     result = some(arg0);
   }
-  printf("x: %ld  y: %ld  type: %ld\n", x, y, ((Value *)result)->type);
+  printf("integer_LT x: %ld  y: %ld  type: %ld\n", x, y, ((Value *)result)->type);
   return result;
 }
 

@@ -35,6 +35,7 @@ typedef atomic_uint_least64_t a64;
 #define LAB_MASK 0xFFFFFFFULL
 #define LOC_MASK 0xFFFFFFFFULL
 #define VAL_MASK 0x7ULL
+#define VOID 0
 
 // Term is a 64-bit value:
 // - Highest 32 bits: Location
@@ -64,6 +65,7 @@ void print_raw_term(Term t);
 void print_term(const char* prefix, Term term);
 void print_buff(Location start, Location end);
 void pb();
+void check_buff();
 char *refName(Term ref);
 
 // Tags for different term types
