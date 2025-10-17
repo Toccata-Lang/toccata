@@ -950,26 +950,20 @@ void appnul(Term app, Term nul) {
 }
 
 // Duplication-Lambda interaction
-void DLAM(Term dup, Term lam) {
-  BOOM("DLAM");
-  // TODO: don't duplicate ERA/NUL
+void duplam(Term dup, Term lam) {
   Lab dup_lab = term_lab(dup);
   Location lam_loc = term_loc(lam);
   Location var = port(1, lam_loc);
   Term bod = take(port(2, lam_loc));
-  Term co1 = pair_make(LAM, 0, SUB, NUL);
-  Term co2 = pair_make(LAM, 0, SUB, NUL);
+  Term l1 = pair_make(LAM, 0, SUB, NUL);
+  Term l2 = pair_make(LAM, 0, SUB, NUL);
   Term du1 = pair_make(SUP, dup_lab,
-		       term_new(VAR, 0, port(1, term_loc(co1))),
-		       term_new(VAR, 0, port(1, term_loc(co2))));
-  BOOM("make this DUP lazy");
-  Term du2 = pair_make(DUP, dup_lab, SUB, SUB);
-  swapStore(port(2, term_loc(co1)), term_new(VAR, 0, port(1, term_loc(du2))));
-  swapStore(port(2, term_loc(co2)), term_new(VAR, 0, port(2, term_loc(du2))));
-  moveStore(port(1, term_loc(dup)), co1);
-  moveStore(port(2, term_loc(dup)), co2);
+		       term_new(VAR, 0, port(1, term_loc(l1))),
+		       term_new(VAR, 0, port(1, term_loc(l2))));
+  Term du2 = makeLazyDup(dup_lab, bod);
+  swapStore(port(2, term_loc(l1)), term_new(VAR, 0, port(1, term_loc(du2))));
+  swapStore(port(2, term_loc(l2)), term_new(VAR, 0, port(2, term_loc(du2))));
   moveStore(var, du1);
-  store_redex(du2, bod);
   return;
 }
 
@@ -1383,8 +1377,8 @@ void NOP(Term neg, Term pos) {
 // VAL    VAR   SUB     NUL    ERA    LAM    APP    REF    VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
 #define DUP_INTERACTIONS\
-  &copy,&negvar,&ABRT,&dupnul,&ABRT,&DLAM,&ABRT,&copy,&copy,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
-//  VAL   VAR    SUB    NUL    ERA   LAM   APP   REF   VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
+  &copy,&negvar,&ABRT,&dupnul,&ABRT,&duplam,&ABRT,&copy,&copy,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
+//  VAL   VAR    SUB    NUL    ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
 // Initialize the interactions array with the same values in each row
 interactionFn interactions[16][16] = {
@@ -1623,11 +1617,14 @@ void print_term(const char* prefix, Term term) {
   switch(term_tag(term)) {
   case VAL:
   case NUL:
-  case REF:
   case ERA:
   case F60:
     break;
 
+  case REF:
+      printf("  Fn: %llx\n", term & ~TAG_MASK);
+      break;
+      
   case I60:
     printf("  Val: %ld", get_i60(term));
     break;
