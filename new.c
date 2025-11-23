@@ -964,6 +964,8 @@ void duplam(Term dup, Term lam) {
   swapStore(port(2, term_loc(l1)), term_new(VAR, 0, port(1, term_loc(du2))));
   swapStore(port(2, term_loc(l2)), term_new(VAR, 0, port(2, term_loc(du2))));
   moveStore(var, du1);
+  moveStore(port(1, term_loc(dup)), l1);
+  moveStore(port(2, term_loc(dup)), l2);
   return;
 }
 
