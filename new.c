@@ -1925,8 +1925,32 @@ unsigned graphSubTree(unsigned nodeNum, Term tree) {
   }
   char xLbl[100];
   switch(term_tag(tree)) {
-  case VAR:
-    return graphSubTree(nodeNum, get(term_loc(tree)));
+  case VAR: {
+    Location loc = term_loc(tree);
+    Term trm = get(loc);
+    if (term_tag(trm) == LAZ) {
+      graphSubTree(nodeNum, trm);
+    }
+    for (all_elements_on_stack(graphNode, gn, nodeStack)) {
+      switch(term_tag(gn.trm)) {
+      case VAL:
+      case NUL:
+      case REF:
+      case ERA:
+      case I60:
+      case F60:
+	break;
+
+	// Allow SUB terms to have locations
+      case SUB:
+      default:
+	if (term_loc(gn.trm) == (loc & 0xFFFFFFFE))
+	  return gn.node;
+	break;
+      }
+    }
+    return 65536;
+  }
     break;
 
   case ERA:
@@ -1978,9 +2002,18 @@ unsigned graphSubTree(unsigned nodeNum, Term tree) {
     if (term_tag(left) == LAZ && leftNode != 65536) {
       fprintf(dotFile, "x%d:sw -- x%d:w\n", nodeNum, leftNode);
     } else {
-      unsigned left = graphSubTree(leftLoc, get(leftLoc));
-      if (left != 65536)
-	fprintf(dotFile, "x%d:sw -- x%d:n\n", nodeNum, leftLoc);
+      Term lftTerm = get(leftLoc);
+      unsigned left = graphSubTree(leftLoc, lftTerm);
+      if (left != 65536) {
+	if (term_tag(left) == VAR) {
+	  if (term_loc(left) & 1)
+	    fprintf(dotFile, "x%d:sw -- x%d:sw\n", nodeNum, leftLoc);
+	  else
+	    fprintf(dotFile, "x%d:sw -- x%d:se\n", nodeNum, leftLoc);
+	} else {
+	  fprintf(dotFile, "x%d:sw -- x%d:n\n", nodeNum, leftLoc);
+	}
+      }
     }
 
     Location rghtLoc = port(2, term_loc(tree));
