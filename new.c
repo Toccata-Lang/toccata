@@ -1,6 +1,7 @@
 #include <string.h>
 #include "new.h"
 #include "runtime3.h"
+#include "stack.h"
 
 // Global heap
 #ifdef NON_ATOMIC
@@ -73,6 +74,8 @@ void ABRT(Term neg, Term pos) {
     fprintf(stderr, "val type %d: %ld\n", __LINE__, ((Value *)((u64)a & ~7))->type);
     }
     // */
+  fprintf(dotFile, "}\n");
+  fclose(dotFile);
   abort();
 }
 
@@ -1664,11 +1667,13 @@ void print_term(const char* prefix, Term term) {
 
 #ifdef NON_ATOMIC
 u64* get_buff(void) {
-#else
-a64* get_buff(void) {
-#endif
   return BUFF;
 }
+#else
+a64* get_buff(void) {
+  return BUFF;
+}
+#endif
 
 void spawn_threads() {
   /*
@@ -1802,34 +1807,34 @@ void pb() {
   print_buff(0, RNOD_END);
 }
 
- void pr() {
-   for (int i = 0; i < pairs.count; i++) {
-     printf(" %.3x  ", i);
-     print_raw_term(pairs.rdxs[i][0]);
-     printf("  ");
-     print_raw_term(pairs.rdxs[i][1]);
-     printf("\n");
-   }
- }
+void pr() {
+  for (int i = 0; i < pairs.count; i++) {
+    printf(" %.3x  ", i);
+    print_raw_term(pairs.rdxs[i][0]);
+    printf("  ");
+    print_raw_term(pairs.rdxs[i][1]);
+    printf("\n");
+  }
+}
 
- void check_buff() {
+void check_buff() {
 #ifdef NON_ATOMIC
-   u64* buff = get_buff();
+  u64* buff = get_buff();
 #else
-   a64* buff = get_buff();
+  a64* buff = get_buff();
 #endif
-   if (!buff) {
-     printf("BUFF is not initialized\n");
-     return;
-   }
-   for (Location i = 0; i < RNOD_END; i += 2) {
-     Term t1 = buff[i];
-     if (term_tag(t1) != NUL || buff[i + 1] != 0) {
-       pb();
-       abort();
-     }
-   }
- }
+  if (!buff) {
+    printf("BUFF is not initialized\n");
+    return;
+  }
+  for (Location i = 0; i < RNOD_END; i += 2) {
+    Term t1 = buff[i];
+    if (term_tag(t1) != NUL || buff[i + 1] != 0) {
+      pb();
+      abort();
+    }
+  }
+}
 
 // Print the free list for debugging
 void print_free_list(void) {
@@ -1887,4 +1892,157 @@ Term make_op(Lab op, Term x, Term y) {
   Term ret = term_new(VAR, 0, port(2, term_loc(t)));
   swapStore(term_loc(ret), pair_make(LAZ, 2, t, x));
   return ret;
+}
+
+char *nodeFormat =  "x%d [label=\"%d\",  height=0.4, width=0.4, fixedsize=true,  shape=triangle, orientation=%d]\n";
+char *noOutline =  "x%d [label=\"%s\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n";
+char *nodeXlblFormat =  "x%d [label=\"%s\",  height=0.4, width=0.4, fixedsize=true,  shape=triangle, orientation=%d, xlabel=\"%s\"]\n";
+char *eraseFormat =  "x%d [label=\"\", height=0.1, width=0.1, color=black, fixedsize=true,  shape=circle, style=filled]\n";
+
+char *nodeLabels[25] = {"V", " ", " ", " ", " ", "L", "A", "F", "V", "S", "D",
+                        " ", " ", "#", "#", "Z"};
+
+typedef struct {
+  Term trm;
+  Location node;
+} graphNode;
+
+struct {
+  graphNode *begin, *end, *allocated;
+} nodeStack;
+
+void fatal_error(char *fmt, unsigned bytes) {
+  fprintf(stderr, fmt, bytes);
+  abort();
+}
+
+unsigned graphSubTree(unsigned nodeNum, Term tree) {
+  graphNode gn;
+  
+  for (all_elements_on_stack(graphNode, gn, nodeStack)) {
+    if (gn.trm == tree)
+      return gn.node;
+  }
+  char xLbl[100];
+  switch(term_tag(tree)) {
+  case VAR:
+    return graphSubTree(nodeNum, get(term_loc(tree)));
+    break;
+
+  case ERA:
+    fprintf(dotFile, eraseFormat, nodeNum);
+    break;
+
+  case SUB:
+    return 65536;
+    break;
+
+  case OPX:
+  case OPY:
+    snprintf(xLbl, 95, "%s", "-");
+    fprintf(dotFile, noOutline, nodeNum, xLbl);
+    break;
+
+  case I60:
+    snprintf(xLbl, 95, "%ld", get_i60(tree));
+    fprintf(dotFile, noOutline, nodeNum, xLbl);
+    break;
+
+  case VAL:
+  case REF:
+    fprintf(dotFile, noOutline, nodeNum, nodeLabels[term_tag(tree)]);
+    gn.trm = tree;
+    gn.node = nodeNum;
+    PUSH(nodeStack, gn);
+    break;
+
+  case LAZ:
+  case LAM:
+  case APP:
+  case DUP: {
+    snprintf(xLbl, 95, "%x:", term_loc(tree));
+    fprintf(dotFile, nodeXlblFormat, nodeNum, nodeLabels[term_tag(tree)], 0, xLbl);
+    gn.trm = tree;
+    gn.node = nodeNum;
+    PUSH(nodeStack, gn);
+
+    Location leftLoc = port(1, term_loc(tree));
+    Term left = get(leftLoc);
+    unsigned leftNode = 65536;
+    for (all_elements_on_stack(graphNode, gn, nodeStack)) {
+      if (gn.trm == left) {
+	leftNode = gn.node;
+	break;
+      }
+    }
+    if (term_tag(left) == LAZ && leftNode != 65536) {
+      fprintf(dotFile, "x%d:sw -- x%d:w\n", nodeNum, leftNode);
+    } else {
+      unsigned left = graphSubTree(leftLoc, get(leftLoc));
+      if (left != 65536)
+	fprintf(dotFile, "x%d:sw -- x%d:n\n", nodeNum, leftLoc);
+    }
+
+    Location rghtLoc = port(2, term_loc(tree));
+    Term rght = get(rghtLoc);
+    unsigned rghtNode = 65536;
+    for (all_elements_on_stack(graphNode, gn, nodeStack)) {
+      if (gn.trm == rght) {
+	rghtNode = gn.node;
+	break;
+      }
+    }
+    if (term_tag(rght) == LAZ && rghtNode != 65536) {
+      fprintf(dotFile, "x%d:se -- x%d:s\n", nodeNum, rghtNode);
+    } else {
+      unsigned right = graphSubTree(rghtLoc, get(rghtLoc));
+      if (right != 65536)
+	fprintf(dotFile, "x%d:se -- x%d:n\n", nodeNum, rghtLoc);
+    }
+  }
+    break;
+    
+ #if 0
+  case LAZ:
+  case LAM: {
+    snprintf(xLbl, 95, "%x:", term_loc(tree));
+    fprintf(dotFile, nodeXlblFormat, nodeNum, nodeLabels[term_tag(tree)], 0, xLbl);
+    gn.trm = tree;
+    gn.node = nodeNum;
+    PUSH(nodeStack, gn);
+
+    Location leftLoc = port(1, term_loc(tree));
+    Location rghtLoc = port(2, term_loc(tree));
+    unsigned left = graphSubTree(leftLoc, get(leftLoc));
+    unsigned right = graphSubTree(rghtLoc, get(rghtLoc));
+    if (left != 65536)
+      fprintf(dotFile, "x%d:sw -- x%d:n\n", nodeNum, leftLoc);
+    if (right != 65536)
+      fprintf(dotFile, "x%d:se -- x%d:n\n", nodeNum, rghtLoc);
+  }
+    break;
+#endif
+    
+  default:
+    break;
+  }
+  /*
+  unsigned trueChild = graph_subtree(bTree->truthy);
+  unsigned falseChild = graph_subtree(bTree->falsey);
+  if (trueChild > 0)
+    fprintf(dotFile, "x%d:se -- x%d:n\n", rootNode, trueChild);
+  if (falseChild > 0)
+    fprintf(dotFile, "x%d:sw -- x%d:n\n", rootNode, falseChild);
+    // */
+  return tree;
+}
+
+unsigned subGraphs = 0;
+Term graphTree(char *title, Term root) {
+  INIT_STACK(nodeStack);
+  fprintf(dotFile, "subgraph cluster%d {\ngraph [color=none, label=\"%s\"]\n", subGraphs++, title);
+  Term rootNode = graphSubTree(65536, root);
+  fprintf(dotFile, "}\n");
+  RELEASE_STACK(nodeStack);
+  return rootNode;
 }

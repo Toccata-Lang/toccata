@@ -12,6 +12,8 @@ If the bit is not set, the ref update could be done immediately.
 #include <stdatomic.h>
 #include "runtime3.h"
 
+FILE *dotFile;
+
 REFS_SIZE refsInit = 1;
 REFS_SIZE refsError = -10;
 REFS_SIZE refsConstant = -1;
@@ -2930,6 +2932,9 @@ int main (int argc, char **argv) {
 #endif
   outstream = stdout;
 
+  dotFile = fopen("graphs.dot", "w");
+  fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
+
   hvm_init(1024 * 1024);
   hvm_reset();
 
@@ -3027,6 +3032,9 @@ int main (int argc, char **argv) {
     } while(resultTag != I60 && resultTag != F60 && resultTag != VAL);
     freeGlobals();
   }
+  fprintf(dotFile, "}\n");
+  fclose(dotFile);
+
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = atomic_load(&rdxCount);
   u64 node_count = atomic_load(&glblAlloced);
@@ -3037,6 +3045,7 @@ int main (int argc, char **argv) {
   itrs = 134217646;
   printf("- MIPS: %.2f\n", (double)itrs / duration / 1000000.0);
   printf("remaining nodes: %ld (%ld)\n", node_count, max_node);
+
   Tag t = term_tag(result);
   if (t == I60) {
     bashResult = (int)get_i60(result);

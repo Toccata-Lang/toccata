@@ -187,3 +187,5 @@ void *boom(char *msg, char *file, int line);
 extern pthread_mutex_t buff_mutex;
 
 #define pair_make(tag, lab, fst, snd) maker(__LINE__, tag, lab, fst, snd)
+
+Term graphTree(char *title, Term root);
