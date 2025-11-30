@@ -1744,7 +1744,7 @@ Term integer_LT(Term arg0, Term arg1) {
   } else {
     result = some(arg0);
   }
-  printf("integer_LT x: %ld  y: %ld  type: %ld\n", x, y, ((Value *)result)->type);
+  // printf("integer_LT x: %ld  y: %ld  type: %ld\n", x, y, ((Value *)result)->type);
   return result;
 }
 
@@ -2851,6 +2851,7 @@ Term dupeGlobal(Location glbl) {
 }
 
 void constructFn(Term ref, Term args) {
+  // graphTree("construct args", args);
   NativeArgs arityArgs = {0, {}};
   Term newArgs = strictArgs(ref, args, 2, &arityArgs, 1);
   if (arityArgs.count == 2) {

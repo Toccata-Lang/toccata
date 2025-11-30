@@ -796,7 +796,7 @@
 (defn emit-proto [ptype]
   (assert (instance? ast/prototype-ast ptype))
 
-  (let [c-fn (b/global-var b/CFn)]
+  (let [c-fn (.c-fn ptype)]
     (se/update-val .decl
                    (fn [decl]
                      [decl
@@ -866,6 +866,45 @@
     (let [[_ code-context] (emitter code-context)]
       code-context)))
 
+(defn emit-ref-map [code-context]
+  (let [mod-prom (promise)
+        _ (send b/modules (fn [mods]
+                            (deliver mod-prom mods)
+                            mods))
+        mods (extract mod-prom)
+        refs (for [mod (vals mods)
+                   [sym val] (either (map (get-in mod [.namespaces c/no-symbol .values 0])
+                                          seq)
+                                     [])
+                   :let [_ (b/status 'val _LINE_ val)]
+                   :when (or (instance? b/StaticArity val)
+                             (instance? ast/prototype-ast val))]
+               [sym val])
+        emitter (for [_ (se/set-val .decl ["refMap refNames[" (+ 5 (count refs))
+                                           "] = {{(interactionFn)" (+ 3 (count refs)) ", \"\"},\n"
+                                           "{accessFieldFn, \"accessField\"},\n"
+                                           "{hvmVectFn, \"hvmVect\"},\n"
+                                           "{constructFn, \"construct\"}"])
+                      _ (se/traverse refs (fn [[sym val]]
+                                            (se/try
+                                              (se/update-val .decl
+                                                             (fn [decl]
+                                                               [decl ",\n"
+                                                                "{" (.c-fn val) ", \""
+                                                                sym "\"}"]))
+                                              (fn [err]
+                                                (b/status (.val err))
+                                                (b/wait-for-err-out)
+                                                (abort)))))
+                      _ (se/update-val .decl
+                                       (fn [decl]
+                                         [decl "};\n"]))
+                      refs-decl (se/get-val .decl)
+                      _ (se/set-val .decl [])]
+                  (code-out refs-decl))]
+    (let [[_ code-context] (emitter code-context)]
+      code-context)))
+
 (defn emit-main [code-context done-promise main-module]
   (let [main-fn (either (get-in main-module [.namespaces c/no-symbol .values 0
                                              ast/main .c-fn])
@@ -875,6 +914,7 @@
                           ;; (abort)
                           ))
         code-context (emit-protos code-context)
+        code-context (emit-ref-map code-context)
         mod-prom (promise)
         _ (send b/modules (fn [mods]
                             (deliver mod-prom mods)

@@ -84,6 +84,8 @@ void *boom(char *msg, char *file, int line) {
   pthread_mutex_lock(&redex_mutex);
 #endif
   fprintf(stderr, "%s at %s:%d\n", msg, file, line);
+  fprintf(dotFile, "}\n");
+  fclose(dotFile);
   abort();
 }
 
@@ -1584,6 +1586,8 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsig
     print_term("strictArgs args", args);
     printf("unhandled tag %s (0x%x) %p line: %d\n",
 	   tag_to_str(argsTag), argsTag, (void *)args, __LINE__);
+    fprintf(dotFile, "}\n");
+    fclose(dotFile);
     abort();
     return 0;
   }
@@ -1998,13 +2002,20 @@ unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
     break;
 
   case VAL:
+    fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
+    break;
+
   case REF: {
-    if (tree == construct)
-      fprintf(dotFile, noOutline, graphNum, nodeNum, "construct");
-    else if (tree == accessField)
-      fprintf(dotFile, noOutline, graphNum, nodeNum, "accessField");
-    else
-      fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
+    char *refName = "F";
+    unsigned refsCount = (unsigned)refNames[0].fn;
+    for (unsigned i = 1; i <= refsCount; i++) {
+      if (refNames[i].fn == (interactionFn)(tree & ~7)) {
+	refName = refNames[i].name;
+	break;
+      }
+    }
+    fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
+	    graphNum, nodeNum, refName);
   }
     break;
 

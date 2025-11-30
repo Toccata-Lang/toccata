@@ -347,3 +347,7 @@ extern Term construct;
 Term nothing();
 extern Term accessField;
 extern Term hvmVect;
+
+void accessFieldFn(Term ref, Term args);
+void constructFn(Term ref, Term args);
+void hvmVectFn(Term ref, Term args);

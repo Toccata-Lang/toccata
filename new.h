@@ -176,6 +176,11 @@ extern pthread_t threads[];
 typedef void (*interactionFn)(Term a, Term b);
 #define new_ref(x) (((u64)x + REF))
 
+typedef struct {
+  interactionFn fn;
+  char *name;} refMap;
+extern refMap refNames[];
+
 // Create a REF term with a specific interaction function
 Term ref_make(interactionFn fn);
 
