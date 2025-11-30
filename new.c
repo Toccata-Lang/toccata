@@ -164,6 +164,11 @@ Location port(u64 n, Location x) {
 }
 
 void store_redex(Term neg, Term pos) {
+  // printf("store: ");
+  // print_raw_term(neg);
+  // printf("  ");
+  // print_raw_term(pos);
+  // printf("\n");
 #ifdef SAFETY
   if (neg == 0 && pos == 0)
     // shutdown the threads

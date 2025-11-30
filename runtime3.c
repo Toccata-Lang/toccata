@@ -1215,7 +1215,7 @@ Vector *mutateVectConj(Vector *vect, Term val) {
   }
 }
 
-bool hvmVectFn(Term ref, Term args){
+void hvmVectFn(Term ref, Term args){
   NativeArgs arityArgs = {0, {}};
   Term newArgs = strictArgs(ref, args, 1, &arityArgs, 3);
   if (arityArgs.count == 1) {
@@ -1231,7 +1231,7 @@ bool hvmVectFn(Term ref, Term args){
       swapStore(port(2, term_loc(lastArgs)), term_val((Term)newV));
     }
   }
-  return true;
+  return;
 }
 Term hvmVect = new_ref(hvmVectFn);
 
@@ -2850,7 +2850,7 @@ Term dupeGlobal(Location glbl) {
   return term_new(VAR, 0, port(2, term_loc(duper)));
 }
 
-bool constructFn(Term ref, Term args) {
+void constructFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   Term newArgs = strictArgs(ref, args, 2, &arityArgs, 1);
   if (arityArgs.count == 2) {
@@ -2870,11 +2870,11 @@ bool constructFn(Term ref, Term args) {
       moveStore(port(2, term_loc(lastArgs)), term_val((Term)rv));
     }
   }
-  return true;
+  return;
 }
 Term construct = new_ref(constructFn);
 
-bool accessFieldFn(Term ref, Term args) {
+void accessFieldFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 2, &arityArgs, 2);
   if (arityArgs.count == 2) {
@@ -2913,7 +2913,7 @@ bool accessFieldFn(Term ref, Term args) {
       }
       // */
   }
-  return true;
+  return;
 }
 Term accessField = new_ref(accessFieldFn);
 
