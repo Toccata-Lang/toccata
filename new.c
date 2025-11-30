@@ -1977,7 +1977,10 @@ unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
     break;
 
   case ERA:
-    fprintf(dotFile, eraseFormat, graphNum, nodeNum);
+    if (term_lab(tree) == 1)
+      fprintf(dotFile, noOutline, graphNum, nodeNum, "SE");
+    else
+      fprintf(dotFile, eraseFormat, graphNum, nodeNum);
     break;
 
   case SUB:
@@ -1990,8 +1993,14 @@ unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
     break;
 
   case VAL:
-  case REF:
-    fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
+  case REF: {
+    if (tree == construct)
+      fprintf(dotFile, noOutline, graphNum, nodeNum, "construct");
+    else if (tree == accessField)
+      fprintf(dotFile, noOutline, graphNum, nodeNum, "accessField");
+    else
+      fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
+  }
     break;
 
   case OPX:
@@ -2056,10 +2065,6 @@ unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
 	rghtNode = gn.node;
 	break;
       }
-    }
-    if (term_tag(tree) == LAZ && term_loc(tree) == 0x24) {
-      printf("rghtNode: %x\n", rghtNode);
-      print_term("LAZ", tree);
     }
     Tag rt = term_tag(rght);
     rghtNode = graphSubTree(graphNum, rghtLoc, get(rghtLoc));
