@@ -2851,7 +2851,8 @@ Term dupeGlobal(Location glbl) {
 }
 
 void constructFn(Term ref, Term args) {
-  // graphTree("construct args", args);
+  graphDown("construct args", args);
+  graphUp("construct args", args);
   NativeArgs arityArgs = {0, {}};
   Term newArgs = strictArgs(ref, args, 2, &arityArgs, 1);
   if (arityArgs.count == 2) {

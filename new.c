@@ -1954,7 +1954,7 @@ char hasLocation(tree) {
   }
 }
 
-unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree);
+unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree);
 void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   Tag t = term_tag(tree);
   char *branchPort = pt == 1 ? "sw" : "se";
@@ -1969,7 +1969,7 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   }
 
   Tag bt = term_tag(branch);
-  branchNode = graphSubTree(graphNum, loc, branch);
+  branchNode = graphSubDown(graphNum, loc, branch);
   if (pt == 1 && t == LAZ && bt == DUP) {
     fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n", graphNum, nodeNum, branchPort, graphNum, branchNode);
   } else if (pt == 2 && (t== APP || t == OPX || t == OPY) && bt == LAZ) {
@@ -1994,7 +1994,7 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   }
 }
 
-unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
+unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   char xLbl[100];
   graphNode gn;
   Tag t = term_tag(tree);
@@ -2016,7 +2016,7 @@ unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
     Location loc = term_loc(tree);
     Term trm = get(loc);
     if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
-      return graphSubTree(graphNum, nodeNum, trm);
+      return graphSubDown(graphNum, nodeNum, trm);
     } else {
       for (all_elements_on_stack(graphNode, gn, nodeStack)) {
 	if (hasLocation(gn.trm) && term_loc(gn.trm) == (loc & 0xFFFFFFFE))
@@ -2024,7 +2024,6 @@ unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
       }
     }
     return 65536;
-    // */
   }
     break;
 
@@ -2077,7 +2076,7 @@ unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
   case DUP:
     snprintf(xLbl, 95, "%x:", nodeNum);
     if (t == OPX || t == OPY) {
-      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "-", 0,xLbl);
+      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "-", 0, xLbl);
     } else {
       fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 0, xLbl);
     }
@@ -2093,22 +2092,16 @@ unsigned graphSubTree(unsigned graphNum, unsigned nodeNum, Term tree) {
     return 65536;
     break;
   }
-  /*
-  unsigned trueChild = graph_subtree(bTree->truthy);
-  unsigned falseChild = graph_subtree(bTree->falsey);
-  if (trueChild > 0)
-    fprintf(dotFile, "x%d:se -- x%d:n\n", rootNode, trueChild);
-  if (falseChild > 0)
-    fprintf(dotFile, "x%d:sw -- x%d:n\n", rootNode, falseChild);
-    // */
   return nodeNum;
 }
 
 unsigned subGraphs = 0;
-void graphTree(char *title, Term root) {
+void graphDown(char *title, Term root) {
   graphNode gn;
   char xLbl[100];
   unsigned graphNum = subGraphs++;
+  if (graphNum != 6)
+    return;
 
   other_nodes = RNOD_END;
   INIT_STACK(nodeStack);
@@ -2120,9 +2113,13 @@ void graphTree(char *title, Term root) {
     fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "L", 0, xLbl);
     fprintf(dotFile, "{rank=min; x%d_%x;}\n", graphNum, nodeNum);
 
+    gn.trm = root;
+    gn.node = rootNode;
+    PUSH(nodeStack, gn);
+
     Term left = get(port(1, rootNode));
     if (term_tag(left) != SUB) {
-      unsigned leftNode = graphSubTree(graphNum, 65536, left);
+      unsigned leftNode = graphSubDown(graphNum, 65536, left);
       fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, leftNode);
     } else {
       fprintf(dotFile, "x%d_%x [label=\"\", shape=plaintext, height=0, width=0, peripheries=0]\n",
@@ -2130,16 +2127,224 @@ void graphTree(char *title, Term root) {
       fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, rootNode);
       fprintf(dotFile, "{rank=max; x%d_%x;}\n", graphNum, rootNode);
     }
-    gn.trm = root;
-    gn.node = rootNode;
-    PUSH(nodeStack, gn);
 
-    unsigned rightNode = graphSubTree(graphNum, 65536, get(port(2, term_loc(root))));
+    unsigned rightNode = graphSubDown(graphNum, 65536, get(port(2, term_loc(root))));
     if (rightNode != 65536)
       fprintf(dotFile, "x%d_%x:se -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightNode);
   } else {
-    unsigned rootNode = graphSubTree(graphNum, 65536, root);
+    unsigned rootNode = graphSubDown(graphNum, 65536, root);
   }
+  fprintf(dotFile, "}\n");
+  RELEASE_STACK(nodeStack);
+  return;
+}
+
+unsigned graphSubUp(unsigned graphNum, Term tree);
+unsigned upBranch(Term tree, unsigned pt, unsigned graphNum) {
+  Tag t = term_tag(tree);
+  unsigned nodeNum;
+  char *branchPort = pt == 1 ? "nw" : "ne";
+  Location loc = port(pt, term_loc(tree));
+  Term branch = get(loc);
+  unsigned branchNode = 65536;
+  for (all_elements_on_stack(graphNode, gn, nodeStack)) {
+    if (gn.trm == branch) {
+      branchNode = gn.node;
+      break;
+    }
+  }
+
+  Tag bt = term_tag(branch);
+  return graphSubUp(graphNum, branch);
+}
+
+void graphLink( unsigned graphNum, unsigned nodeNum, unsigned pt, Term branch, unsigned branchNode) {
+  char *branchPort = pt == 1 ? "nw" : "ne";
+
+  if (term_tag(branch) == VAR &&
+      ((term_tag(get(term_loc(branch))) == LAZ &&
+	term_tag(get(port(1, term_loc(get(term_loc(branch)))))) == DUP) ||
+       term_tag(get(term_loc(branch))) == SUB)) {
+    if (term_loc(branch) & 1)
+      fprintf(dotFile, "x%d_%x:ne -- x%d_%x:%s\n",
+	      graphNum, (term_loc(branch) & 0xFFFFFFFE), graphNum, nodeNum, branchPort);
+    else
+      fprintf(dotFile, "x%d_%x:nw -- x%d_%x:%s\n",
+	      graphNum, (term_loc(branch) & 0xFFFFFFFE), graphNum, nodeNum, branchPort);
+  } else {
+    fprintf(dotFile, "x%d_%x:s -- x%d_%x:%s\n",
+	    graphNum, branchNode, graphNum, nodeNum, branchPort);
+  }
+}
+
+unsigned graphSubUp(unsigned graphNum, Term tree) {
+  char xLbl[100];
+  graphNode gn;
+  unsigned nodeNum = 65536;
+  unsigned rightBranch = 65536;
+  unsigned leftBranch = 65536;
+  Tag leftTag = NUL;
+
+  if (tree == SUB) {
+    return 65536;
+  } else if (hasLocation(tree)) {
+    nodeNum = term_loc(tree) & 0xFFFFFFFE;
+    for (all_elements_on_stack(graphNode, gn, nodeStack)) {
+      if (gn.node == nodeNum)
+	return gn.node;
+    }
+  } else {
+    nodeNum = other_nodes++;
+  }
+
+  Tag t = term_tag(tree);
+  switch(t) {
+  case VAR: {
+    Location loc = term_loc(tree);
+    Term trm = get(loc);
+    if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
+      return graphSubUp(graphNum, trm);
+    } else {
+      for (all_elements_on_stack(graphNode, gn, nodeStack)) {
+	if (hasLocation(gn.trm) && term_loc(gn.trm) == (loc & 0xFFFFFFFE))
+	  return gn.node;
+      }
+    }
+    return 65536;
+  }
+    break;
+
+  case ERA:
+    if (term_lab(tree) == 1)
+      fprintf(dotFile, noOutline, graphNum, nodeNum, "SE");
+    else
+      fprintf(dotFile, eraseFormat, graphNum, nodeNum);
+    break;
+
+  case I60:
+    snprintf(xLbl, 95, "%ld", get_i60(tree));
+    fprintf(dotFile, noOutline, graphNum, nodeNum, xLbl);
+    break;
+
+  case VAL:
+    fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
+    break;
+
+  case REF: {
+    char *refName = "F";
+    unsigned refsCount = (unsigned)refNames[0].fn;
+    for (unsigned i = 1; i <= refsCount; i++) {
+      if (refNames[i].fn == (interactionFn)(tree & ~7)) {
+	refName = refNames[i].name;
+	break;
+      }
+    }
+    fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
+	    graphNum, nodeNum, refName);
+  }
+    break;
+
+  case SUB:
+    gn.trm = tree;
+    gn.node = nodeNum;
+    PUSH(nodeStack, gn);
+
+    leftTag = term_tag(get(port(1, term_loc(tree))));
+    switch(leftTag) {
+    case REF:
+    case VAL:
+    case ERA:
+    case I60:
+    case SUB:
+    case VAR:
+      rightBranch = upBranch(tree, 2, graphNum);
+      leftBranch = upBranch(tree, 1, graphNum);
+      break;
+
+    default:
+      leftBranch = upBranch(tree, 1, graphNum);
+      rightBranch = upBranch(tree, 2, graphNum);
+      break;
+    }
+
+    fprintf(dotFile, "x%d_%x [label=\"%s\",  height=0.22, width=0.22, fixedsize=true,  shape=circle]\n",
+	    graphNum, nodeNum, "");
+    break;
+
+  case OPX:
+  case OPY:
+  case LAZ:
+  case LAM:
+  case APP:
+  case DUP:
+    gn.trm = tree;
+    gn.node = nodeNum;
+    PUSH(nodeStack, gn);
+
+    leftTag = term_tag(get(port(1, term_loc(tree))));
+    switch(leftTag) {
+    case REF:
+    case VAL:
+    case ERA:
+    case I60:
+    case SUB:
+    case VAR:
+      rightBranch = upBranch(tree, 2, graphNum);
+      leftBranch = upBranch(tree, 1, graphNum);
+      break;
+
+    default:
+      leftBranch = upBranch(tree, 1, graphNum);
+      rightBranch = upBranch(tree, 2, graphNum);
+      break;
+    }
+
+    snprintf(xLbl, 95, "%x:", nodeNum);
+    if (t == OPX || t == OPY) {
+      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "-", 180, xLbl);
+    } else {
+      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 180, xLbl);
+    }
+    break;
+    
+  default:
+    return 65536;
+    break;
+  }
+
+  if (leftBranch != 65536) {
+    Term branch = get(port(1, term_loc(tree)));
+    Tag bt = term_tag(branch);
+    if (t == LAZ && bt == DUP) {
+      fprintf(dotFile, "x%d_%x:s -- x%d_%x:nw\n", graphNum, leftBranch, graphNum, nodeNum);
+    } else if (t != DUP) {
+      graphLink(graphNum, nodeNum, 1, branch, leftBranch);
+    }
+  }
+
+  if (rightBranch != 65536) {
+    Term branch = get(port(2, term_loc(tree)));
+    Tag bt = term_tag(branch);
+    if ((t == APP || t == OPX || t == OPY) && bt == LAZ) {
+      fprintf(dotFile, "x%d_%x:ne -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightBranch);
+    } else if (t != DUP) {
+      graphLink(graphNum, nodeNum, 2, branch, rightBranch);
+    }
+  }
+  return nodeNum;
+}
+
+void graphUp(char *title, Term root) {
+  graphNode gn;
+  char xLbl[100];
+  unsigned graphNum = subGraphs++;
+  if (graphNum != 7)
+    return;
+
+  other_nodes = RNOD_END;
+  INIT_STACK(nodeStack);
+  fprintf(dotFile, "subgraph cluster%d {\ngraph [color=none, label=\"%s\"]\n", graphNum, title);
+  graphSubUp(graphNum, root);
   fprintf(dotFile, "}\n");
   RELEASE_STACK(nodeStack);
   return;
