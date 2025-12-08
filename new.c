@@ -2100,7 +2100,7 @@ void graphDown(char *title, Term root) {
   graphNode gn;
   char xLbl[100];
   unsigned graphNum = subGraphs++;
-  if (graphNum != 6)
+  if (graphNum != 10)
     return;
 
   other_nodes = RNOD_END;
@@ -2200,6 +2200,7 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
   Tag t = term_tag(tree);
   switch(t) {
   case VAR: {
+    //*
     Location loc = term_loc(tree);
     Term trm = get(loc);
     if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
@@ -2210,6 +2211,7 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
 	  return gn.node;
       }
     }
+    // */
     return 65536;
   }
     break;
@@ -2326,7 +2328,8 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
     Term branch = get(port(2, term_loc(tree)));
     Tag bt = term_tag(branch);
     if ((t == APP || t == OPX || t == OPY) && bt == LAZ) {
-      fprintf(dotFile, "x%d_%x:ne -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightBranch);
+      // TODO: figure out a better solution later
+      // fprintf(dotFile, "x%d_%x:ne -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightBranch);
     } else if (t != DUP) {
       graphLink(graphNum, nodeNum, 2, branch, rightBranch);
     }
@@ -2338,7 +2341,7 @@ void graphUp(char *title, Term root) {
   graphNode gn;
   char xLbl[100];
   unsigned graphNum = subGraphs++;
-  if (graphNum != 7)
+  if (graphNum != 11)
     return;
 
   other_nodes = RNOD_END;
