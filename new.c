@@ -1914,21 +1914,21 @@ char *eraseFormat =  "x%d_%x [label=\"\", height=0.1, width=0.1, color=black, fi
 char *nodeLabels[25] = {"V", " ", " ", " ", " ", "L", "A", "F", "V", "S", "D",
                         " ", " ", "#", "#", "Z"};
 
-typedef struct {
+typedef struct graphNode {
   Term trm;
   Location node;
+  struct graphNode *left;
+  struct graphNode *right;
+  Location lazyAPP;
 } graphNode;
 
-struct {
-  graphNode *begin, *end, *allocated;
-} nodeStack;
+#define NODE_STACK_SIZE 1000
+graphNode nodeStack[NODE_STACK_SIZE];
 
 void fatal_error(char *fmt, unsigned bytes) {
   fprintf(stderr, fmt, bytes);
   abort();
 }
-
-unsigned other_nodes;
 
 char hasLocation(tree) {
   Tag t = term_tag(tree);
@@ -1961,9 +1961,10 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   Location loc = port(pt, term_loc(tree));
   Term branch = get(loc);
   unsigned branchNode = 65536;
-  for (all_elements_on_stack(graphNode, gn, nodeStack)) {
-    if (gn.trm == branch) {
-      branchNode = gn.node;
+  for (unsigned i = 0; i < nodeCount; i++) {
+    graphNode *gn = &nodeStack[i];
+    if (gn->trm == branch) {
+      branchNode = gn->node;
       break;
     }
   }
@@ -1996,19 +1997,19 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
 
 unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   char xLbl[100];
-  graphNode gn;
   Tag t = term_tag(tree);
 
   if (tree == SUB) {
     return 65536;
   } else if (hasLocation(tree)) {
     nodeNum = term_loc(tree) & 0xFFFFFFFE;
-    for (all_elements_on_stack(graphNode, gn, nodeStack)) {
-      if (gn.node == nodeNum)
-	return gn.node;
+    for (unsigned i = 0; i < nodeCount; i++) {
+      graphNode *gn = &nodeStack[i];
+      if (gn->node == nodeNum)
+	return gn->node;
     }
   } else {
-    nodeNum = other_nodes++;
+    nodeNum = otherNodes++;
   }
   
   switch(t) {
@@ -2018,9 +2019,10 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
       return graphSubDown(graphNum, nodeNum, trm);
     } else {
-      for (all_elements_on_stack(graphNode, gn, nodeStack)) {
-	if (hasLocation(gn.trm) && term_loc(gn.trm) == (loc & 0xFFFFFFFE))
-	  return gn.node;
+      for (unsigned i = 0; i < nodeCount; i++) {
+	graphNode *gn = &nodeStack[i];
+	if (hasLocation(gn->trm) && term_loc(gn->trm) == (loc & 0xFFFFFFFE))
+	  return gn->node;
       }
     }
     return 65536;
@@ -2057,15 +2059,18 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   }
     break;
 
-  case SUB:
+  case SUB: {
     fprintf(dotFile, "x%d_%x [label=\"%s\",  height=0.22, width=0.22, fixedsize=true,  shape=circle]\n",
 	    graphNum, nodeNum, "");
-    gn.trm = tree;
-    gn.node = nodeNum;
-    PUSH(nodeStack, gn);
+    graphNode *gn = &nodeStack[nodeCount++];
+    if (nodeCount > 999)
+      BOOM("nodeCount!");
+    gn->trm = tree;
+    gn->node = nodeNum;
 
     downBranch(tree, 1, graphNum, nodeNum);
     downBranch(tree, 2, graphNum, nodeNum);
+  }
     break;
 
   case OPX:
@@ -2073,19 +2078,22 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   case LAZ:
   case LAM:
   case APP:
-  case DUP:
+  case DUP: {
     snprintf(xLbl, 95, "%x:", nodeNum);
     if (t == OPX || t == OPY) {
       fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "-", 0, xLbl);
     } else {
       fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 0, xLbl);
     }
-    gn.trm = tree;
-    gn.node = nodeNum;
-    PUSH(nodeStack, gn);
+    graphNode *gn = &nodeStack[nodeCount++];
+    if (nodeCount > 999)
+      BOOM("nodeCount!");
+    gn->trm = tree;
+    gn->node = nodeNum;
 
     downBranch(tree, 1, graphNum, nodeNum);
     downBranch(tree, 2, graphNum, nodeNum);
+  }
     break;
     
   default:
@@ -2095,27 +2103,21 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   return nodeNum;
 }
 
-unsigned subGraphs = 0;
-void graphDown(char *title, Term root) {
-  graphNode gn;
+unsigned graphDown(char *title, Term root) {
   char xLbl[100];
-  unsigned graphNum = subGraphs++;
-  if (graphNum != 10)
-    return;
-
-  other_nodes = RNOD_END;
-  INIT_STACK(nodeStack);
-  fprintf(dotFile, "subgraph cluster%d {\ngraph [color=none, label=\"%s\"]\n", graphNum, title);
+  unsigned graphNum = subGraphs - 1;
   if (term_tag(root) == LAM) {
-    unsigned nodeNum = other_nodes++;
+    unsigned nodeNum = otherNodes++;
     unsigned rootNode = term_loc(root);
     snprintf(xLbl, 95, "%x:", rootNode);
     fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "L", 0, xLbl);
-    fprintf(dotFile, "{rank=min; x%d_%x;}\n", graphNum, nodeNum);
+    // fprintf(dotFile, "{rank=min; x%d_%x;}\n", graphNum, nodeNum);
 
-    gn.trm = root;
-    gn.node = rootNode;
-    PUSH(nodeStack, gn);
+    graphNode *gn = &nodeStack[nodeCount++];
+    if (nodeCount > 999)
+      BOOM("nodeCount!");
+    gn->trm = root;
+    gn->node = rootNode;
 
     Term left = get(port(1, rootNode));
     if (term_tag(left) != SUB) {
@@ -2131,15 +2133,13 @@ void graphDown(char *title, Term root) {
     unsigned rightNode = graphSubDown(graphNum, 65536, get(port(2, term_loc(root))));
     if (rightNode != 65536)
       fprintf(dotFile, "x%d_%x:se -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightNode);
+    return nodeNum;
   } else {
     unsigned rootNode = graphSubDown(graphNum, 65536, root);
+    return rootNode;
   }
-  fprintf(dotFile, "}\n");
-  RELEASE_STACK(nodeStack);
-  return;
 }
 
-unsigned graphSubUp(unsigned graphNum, Term tree);
 unsigned upBranch(Term tree, unsigned pt, unsigned graphNum) {
   Tag t = term_tag(tree);
   unsigned nodeNum;
@@ -2147,9 +2147,10 @@ unsigned upBranch(Term tree, unsigned pt, unsigned graphNum) {
   Location loc = port(pt, term_loc(tree));
   Term branch = get(loc);
   unsigned branchNode = 65536;
-  for (all_elements_on_stack(graphNode, gn, nodeStack)) {
-    if (gn.trm == branch) {
-      branchNode = gn.node;
+  for (unsigned i = 0; i < nodeCount; i++) {
+    graphNode *gn = &nodeStack[i];
+    if (gn->trm == branch) {
+      branchNode = gn->node;
       break;
     }
   }
@@ -2179,7 +2180,6 @@ void graphLink( unsigned graphNum, unsigned nodeNum, unsigned pt, Term branch, u
 
 unsigned graphSubUp(unsigned graphNum, Term tree) {
   char xLbl[100];
-  graphNode gn;
   unsigned nodeNum = 65536;
   unsigned rightBranch = 65536;
   unsigned leftBranch = 65536;
@@ -2189,12 +2189,13 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
     return 65536;
   } else if (hasLocation(tree)) {
     nodeNum = term_loc(tree) & 0xFFFFFFFE;
-    for (all_elements_on_stack(graphNode, gn, nodeStack)) {
-      if (gn.node == nodeNum)
-	return gn.node;
+    for (unsigned i = 0; i < nodeCount; i++) {
+      graphNode *gn = &nodeStack[i];
+      if (gn->node == nodeNum)
+	return gn->node;
     }
   } else {
-    nodeNum = other_nodes++;
+    nodeNum = otherNodes++;
   }
 
   Tag t = term_tag(tree);
@@ -2206,9 +2207,10 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
     if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
       return graphSubUp(graphNum, trm);
     } else {
-      for (all_elements_on_stack(graphNode, gn, nodeStack)) {
-	if (hasLocation(gn.trm) && term_loc(gn.trm) == (loc & 0xFFFFFFFE))
-	  return gn.node;
+      for (unsigned i = 0; i < nodeCount; i++) {
+	graphNode *gn = &nodeStack[i];
+	if (hasLocation(gn->trm) && term_loc(gn->trm) == (loc & 0xFFFFFFFE))
+	  return gn->node;
       }
     }
     // */
@@ -2246,10 +2248,12 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
   }
     break;
 
-  case SUB:
-    gn.trm = tree;
-    gn.node = nodeNum;
-    PUSH(nodeStack, gn);
+  case SUB: {
+    graphNode *gn = &nodeStack[nodeCount++];
+    if (nodeCount > 999)
+      BOOM("nodeCount!");
+    gn->trm = tree;
+    gn->node = nodeNum;
 
     leftTag = term_tag(get(port(1, term_loc(tree))));
     switch(leftTag) {
@@ -2271,6 +2275,7 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
 
     fprintf(dotFile, "x%d_%x [label=\"%s\",  height=0.22, width=0.22, fixedsize=true,  shape=circle]\n",
 	    graphNum, nodeNum, "");
+  }
     break;
 
   case OPX:
@@ -2278,10 +2283,12 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
   case LAZ:
   case LAM:
   case APP:
-  case DUP:
-    gn.trm = tree;
-    gn.node = nodeNum;
-    PUSH(nodeStack, gn);
+  case DUP: {
+    graphNode *gn = &nodeStack[nodeCount++];
+    if (nodeCount > 999)
+      BOOM("nodeCount!");
+    gn->trm = tree;
+    gn->node = nodeNum;
 
     leftTag = term_tag(get(port(1, term_loc(tree))));
     switch(leftTag) {
@@ -2307,6 +2314,7 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
     } else {
       fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 180, xLbl);
     }
+  }
     break;
     
   default:
@@ -2338,17 +2346,12 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
 }
 
 void graphUp(char *title, Term root) {
-  graphNode gn;
-  char xLbl[100];
+  nodeCount = 0;
   unsigned graphNum = subGraphs++;
-  if (graphNum != 11)
-    return;
 
-  other_nodes = RNOD_END;
-  INIT_STACK(nodeStack);
+  otherNodes = RNOD_END;
   fprintf(dotFile, "subgraph cluster%d {\ngraph [color=none, label=\"%s\"]\n", graphNum, title);
   graphSubUp(graphNum, root);
   fprintf(dotFile, "}\n");
-  RELEASE_STACK(nodeStack);
   return;
 }

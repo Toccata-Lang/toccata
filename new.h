@@ -193,5 +193,5 @@ extern pthread_mutex_t buff_mutex;
 
 #define pair_make(tag, lab, fst, snd) maker(__LINE__, tag, lab, fst, snd)
 
-void graphDown(char *title, Term root);
+unsigned graphDown(char *title, Term root);
 void graphUp(char *title, Term root);
