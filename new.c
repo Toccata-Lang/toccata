@@ -1954,6 +1954,11 @@ char hasLocation(tree) {
   }
 }
 
+unsigned nodeCount = 0;
+unsigned otherNodes;
+unsigned subGraphs = 0;
+
+unsigned graphSubUp(unsigned graphNum, Term tree);
 unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree);
 void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   Tag t = term_tag(tree);
