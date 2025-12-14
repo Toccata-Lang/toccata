@@ -2974,7 +2974,7 @@ int main (int argc, char **argv) {
 
       // printf("result %d:\n", __LINE__);
       // print_raw_term(result);
-      printf("\n");
+      // printf("\n");
 //*
       switch (resultTag) {
       case I60:
