@@ -304,7 +304,7 @@ abort();
     "Integer")
 
   (str-vect [n]
-    (vect-conj [] (number-str n)))
+    [(number-str n)])
 
   (= [x y]
     (int-= x y))
@@ -323,27 +323,12 @@ abort();
   (either (< x y)
           y))
 
-;; (defn str-malloc [len]
-;;   ! len Integer
-;;   (inline StringBuffer "
-;; abort();
-;;   String *strVal = malloc_string(get_i24(get_val(len_1)));
-;;   strVal->len = 0;
-;;   strVal->buffer[0] = 0;
-;;   result = new_port(VAL, (Port)strVal);"))
-
-;; (defn mutate-vect-conj [v x]
-;;   ! v Vector
-;;   (inline Vector "
-;; abort();
-;;     result = new_port(VAL, (Port)mutateVectConj((Vector *)v_1, x_2));"))
-
 (defn vect-count [v]
   ! v Vector
   (inline Integer "
    Vector *v = (Vector *)((u64)v_1 & ~7);
    result = new_i60(v->count);
-   dec_and_free(v, 1);"))
+   dec_and_free((Term)v, 1);"))
 
 (defn identity [x]
   x)
@@ -376,6 +361,26 @@ abort();
   (inline Integer "
     result = strCount(s_1);"))
 
+(defn str-malloc [len]
+  ;; ! len WholeInt
+  (inline StringBuffer "
+  String *strVal = malloc_string(get_i60(len_1));
+  strVal->len = 0;
+  strVal->buffer[0] = 0;
+  dec_and_free(len_1, 1);
+  result = term_val((Term)strVal);\n"))
+
+(defn str-append [dest src]
+  ! dest StringBuffer
+  ! src StringBuffer
+  (inline StringBuffer "
+  String *s_1 = (String *)dest_1;
+  String *s_2 = (String *)src_2;
+  strncat(s_1->buffer, s_2->buffer, s_2->len);
+  s_1->len += s_2->len;
+  dec_and_free(src_2, 1);
+  result = term_val(dest_1);"))
+
 (defp subs [s start len])
 
 (deftype String
@@ -394,6 +399,9 @@ abort();
               (SubString s (+ start new-start) final-len))))))
 
 (extend-type StringBuffer
+  (count [s]
+    77)
+
   (subs [s start len]
     (pr* "StringBuffer subs\n")
     (let [new-len (min len (- (+ start len) (count s)))]
@@ -565,12 +573,16 @@ abort();
   (reduce [v result f]
     (vect-reduce (first v) v 1 result f))
 
-  ;; (to-str [coll]
-  ;;   (let [ss-list (cons "" (flat-map (seq coll) string-list))
-  ;;         new-len (reduce ss-list 0 (fn [len s]
-  ;;                                     (+ len (count s))))]
-  ;;     (reduce ss-list (str-malloc new-len) str-append)))
-  )
+  (flat-map [v f]
+    (reduce v []
+            (fn [result x]
+              (reduce (f x) result vect-conj)))))
+
+(defn to-str [vect]
+  (let [ss-vect (flat-map vect str-vect)
+        new-len (reduce ss-vect 0 (fn [len s]
+                                    (+ len (count s))))]
+    (reduce ss-vect (str-malloc new-len) str-append)))
 
 ;; (defn interpose [coll sep]
 ;;   ;; build vector by inserting `sep` between each of the elements of `coll`
@@ -612,10 +624,16 @@ abort();
   ! List l
   (Cons v l (inc (count l))))
 
-(defn println* [vals]
-  ! vals Vector
-  (reduce (conj vals "\n") []
+(defn println* [vs]
+  ! vs Vector
+  (reduce (conj vs "\n") []
           (fn [v val]
             (conj v (reduce (conj (str-vect val) " ") []
                             (fn [v s]
                               (conj v (pr* s))))))))
+
+(defn str* [vs]
+  ;; Converts the list of arguments into a single string of characters. Every argument
+  ;; must implment the `str-vect` protocol function.
+  ! vs Vector
+  (to-str vs))

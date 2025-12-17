@@ -86,44 +86,12 @@
                 '* (call-op "OP_MUL")
                 })
 
-(defn generic-call [ast]
-  (assert (instance? ast/call-ast ast))
-  (let [tgt (.call-target ast)
-        args (reverse (.args ast))
-        result-var (.var ast)
-        num-args (count args)]
-    (se/state-error ["// call " (either (or (instance? c/TaggedSymbol tgt)
-                                            (get tgt .fn-sym))
-                                        "")
-                     " at " (either (map (first args) ast/location)
-                                    (ast/location tgt)) "\n"
-                     "Term " result-var "Args = pair_make(APP, 0, "
-                     (either (map (first args) .var)
-                             "NUL")
-                     ", SUB);\n"
-                     (cond (b/is-glbl result-var)
-                           ""
-                           "Term ")
-                     result-var " = term_new(VAR, 0, port(2, term_loc(" result-var "Args)));\n"
-                     (-> (rest args)
-                         (map .var)
-                         (reduce []
-                                 (fn [args arg]
-                                   [args
-                                    result-var "Args = pair_make(APP, 0, " arg ", "
-                                    result-var "Args);\n"])))
-                     (cond (b/is-glbl result-var)
-                           ["store_redex(" result-var "Args, " (.var tgt) ");"]
-
-                           ["#ifdef STRICT\n"
-                            "store_redex(" result-var "Args, " (.var tgt) ");\n"
-                            "#else\n"
-                            "swapStore(term_loc(" result-var
-                            "), pair_make(LAZ, 0, " result-var "Args, " (.var tgt) "));\n"
-                            "#endif\n"])
-                     "\n"])))
-
+(def generic-call)
 (defprotocol CodeGen
+  (wrap-proto [ast loc]
+    (assert (instance? c/Location loc))
+    (se/state-error (.var ast)))
+
   (gen-code [ast]
     (assert-result r (instance? se/StateError r))
     )
@@ -135,6 +103,44 @@
 
   (gen-call [ast call-ast]
     (generic-call call-ast)))
+
+(defn generic-call [ast]
+  (assert (instance? ast/call-ast ast))
+  (let [tgt (.call-target ast)
+        args (reverse (.args ast))
+        result-var (.var ast)
+        num-args (count args)
+        loc (ast/location ast)]
+    (for [args (se/traverse (rest args) (fn [arg]
+                                          (wrap-proto arg loc)))]
+      ["// call " (either (or (instance? c/TaggedSymbol tgt)
+                              (get tgt .fn-sym))
+                          "")
+       " at " loc "\n"
+       "Term " result-var "Args = pair_make(APP, 0, "
+       (either (first args)
+               "NUL")
+       ", SUB);\n"
+       (cond (b/is-glbl result-var)
+             ""
+             "Term ")
+       result-var " = term_new(VAR, 0, port(2, term_loc(" result-var "Args)));\n"
+       (-> (rest args)
+           (reduce []
+                   (fn [args arg]
+                     [args
+                      result-var "Args = pair_make(APP, 0, " arg ", "
+                      result-var "Args);\n"])))
+       (cond (b/is-glbl result-var)
+             ["store_redex(" result-var "Args, " (.var tgt) ");"]
+
+             ["#ifdef STRICT\n"
+              "store_redex(" result-var "Args, " (.var tgt) ");\n"
+              "#else\n"
+              "swapStore(term_loc(" result-var
+              "), pair_make(LAZ, 0, " result-var "Args, " (.var tgt) "));\n"
+              "#endif\n"])
+       "\n"])))
 
 (extend-type Vector
   CodeGen
@@ -195,6 +201,33 @@
 
 (extend-type c/TaggedSymbol
   CodeGen
+  (wrap-proto [ast loc]
+    (se/try
+      (flat-map (get-value ast)
+                (fn [val]
+                  (cond (instance? ast/prototype-ast val)
+                        (let [new-var (str (.var ast) "_" (extract b/global-vars))]
+                          (for [file-str (-> (.file loc)
+                                             (str)
+                                             (ast/string-ast loc (b/global-var 'Str)
+                                                             c/string-constraint)
+                                             gen-code)
+                                _ (se/update-val .decl
+                                                 (fn [decl]
+                                                   [decl
+                                                    "void " new-var "(Term ref, Term args) {\n"
+                                                    "  args = pair_make(APP, 0, new_i60(" (.line loc )
+                                                    "), args);\n"
+                                                    "  args = pair_make(APP, 0, " (.var file-str)
+                                                    ", args);\n"
+                                                    "  interact(args, " (.var ast) ");\n"
+                                                    "}\n"]))]
+                            (str "new_ref(" new-var ")")))
+
+                        (se/state-error (.var ast)))))
+      (fn [c]
+        (se/state-error (.var ast)))))
+
   (gen-code [ast]
     (let [var (.var ast)]
       (cond (= "" var)
@@ -715,7 +748,7 @@
   (gen-call [proto call-ast]
     (let [tgt (.call-target call-ast)
           result-var (.var call-ast)
-          arg-vars (reverse (map (.args call-ast) .var))
+          arg-vars (reverse (.args call-ast))
           loc (ast/location call-ast)]
       (either (map (first arg-vars)
                    (fn [last-arg]
@@ -723,12 +756,15 @@
                                         (str)
                                         (ast/string-ast loc (b/global-var 'Str)
                                                         c/string-constraint)
-                                        gen-code)]
+                                        gen-code)
+                           last-arg (wrap-proto last-arg loc)
+                           rest-args (se/traverse (rest arg-vars) (fn [arg]
+                                                                    (wrap-proto arg loc)))]
                        ["// call " (either (or (instance? c/TaggedSymbol tgt)
                                                (get tgt .fn-sym))
                                            "")
                         " at " loc "\n"
-                        (-> (rest arg-vars)
+                        (-> rest-args
                             (comp [(str "new_i60(" (.line loc) ")")
                                    (.var file-str)])
                             (reduce ["Term " result-var "Args = pair_make(APP, 0, " last-arg
@@ -752,7 +788,7 @@
                                "), pair_make(LAZ, 0, " result-var "Args, " (.var tgt) "));\n"
                                "#endif\n"])])))
               (do
-                (b/status "Call to prototype fn is invalide. Needs at least one argument.")
+                (b/status "Call to prototype fn is invalid. Needs at least one argument.")
                 (b/wait-for-err-out)
                 (abort))))))
 
