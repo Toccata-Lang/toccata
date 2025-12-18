@@ -1612,8 +1612,17 @@ void print_raw_term(Term t) {
       printf("%s %llx", tag_to_str(tag), t & ~VAL_MASK);
       break;
 
-    case REF:
-      printf("%s %llx", tag_to_str(tag), t & ~TAG_MASK);
+    case REF: {
+      char *refName = "";
+      unsigned refsCount = (unsigned)refNames[0].fn;
+      for (unsigned i = 1; i <= refsCount; i++) {
+	if (refNames[i].fn == (interactionFn)(t & ~TAG_MASK)) {
+	  refName = refNames[i].name;
+	  break;
+	}
+      }
+      printf("%s %llx %s", tag_to_str(tag), t & ~TAG_MASK, refName);
+    }
       break;
 
       // case REF:
