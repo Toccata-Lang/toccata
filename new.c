@@ -2117,43 +2117,6 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   return nodeNum;
 }
 
-unsigned graphDown(char *title, Term root) {
-  char xLbl[100];
-  unsigned graphNum = subGraphs - 1;
-  if (term_tag(root) == LAM) {
-    unsigned nodeNum = otherNodes++;
-    unsigned rootNode = term_loc(root);
-    snprintf(xLbl, 95, "%x:", rootNode);
-    fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "L", 0, xLbl);
-    // fprintf(dotFile, "{rank=min; x%d_%x;}\n", graphNum, nodeNum);
-
-    graphNode *gn = &nodeStack[nodeCount++];
-    if (nodeCount > 999)
-      BOOM("nodeCount!");
-    gn->trm = root;
-    gn->node = rootNode;
-
-    Term left = get(port(1, rootNode));
-    if (term_tag(left) != SUB) {
-      unsigned leftNode = graphSubDown(graphNum, 65536, left);
-      fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, leftNode);
-    } else {
-      fprintf(dotFile, "x%d_%x [label=\"\", shape=plaintext, height=0, width=0, peripheries=0]\n",
-	      graphNum, rootNode);
-      fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, rootNode);
-      fprintf(dotFile, "{rank=max; x%d_%x;}\n", graphNum, rootNode);
-    }
-
-    unsigned rightNode = graphSubDown(graphNum, 65536, get(port(2, term_loc(root))));
-    if (rightNode != 65536)
-      fprintf(dotFile, "x%d_%x:se -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightNode);
-    return nodeNum;
-  } else {
-    unsigned rootNode = graphSubDown(graphNum, 65536, root);
-    return rootNode;
-  }
-}
-
 unsigned upBranch(Term tree, unsigned pt, unsigned graphNum) {
   Tag t = term_tag(tree);
   unsigned nodeNum;
@@ -2368,4 +2331,48 @@ void graphUp(char *title, Term root) {
   graphSubUp(graphNum, root);
   fprintf(dotFile, "}\n");
   return;
+}
+
+unsigned graphDown(char *title, Term root) {
+  char xLbl[100];
+  nodeCount = 0;
+  unsigned graphNum = subGraphs++;
+
+  otherNodes = RNOD_END;
+  fprintf(dotFile, "subgraph cluster%d {\ngraph [color=none, label=\"%s\"]\n", graphNum, title);
+
+  if (term_tag(root) == LAM) {
+    unsigned nodeNum = otherNodes++;
+    unsigned rootNode = term_loc(root);
+    snprintf(xLbl, 95, "%x:", rootNode);
+    fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "L", 0, xLbl);
+    // fprintf(dotFile, "{rank=min; x%d_%x;}\n", graphNum, nodeNum);
+
+    graphNode *gn = &nodeStack[nodeCount++];
+    if (nodeCount > 999)
+      BOOM("nodeCount!");
+    gn->trm = root;
+    gn->node = rootNode;
+
+    Term left = get(port(1, rootNode));
+    if (term_tag(left) != SUB) {
+      unsigned leftNode = graphSubDown(graphNum, 65536, left);
+      fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, leftNode);
+    } else {
+      fprintf(dotFile, "x%d_%x [label=\"\", shape=plaintext, height=0, width=0, peripheries=0]\n",
+	      graphNum, rootNode);
+      fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, rootNode);
+      fprintf(dotFile, "{rank=max; x%d_%x;}\n", graphNum, rootNode);
+    }
+
+    unsigned rightNode = graphSubDown(graphNum, 65536, get(port(2, term_loc(root))));
+    if (rightNode != 65536)
+      fprintf(dotFile, "x%d_%x:se -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightNode);
+    fprintf(dotFile, "}\n");
+    return nodeNum;
+  } else {
+    unsigned rootNode = graphSubDown(graphNum, 65536, root);
+    fprintf(dotFile, "}\n");
+    return rootNode;
+  }
 }
