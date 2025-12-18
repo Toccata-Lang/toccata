@@ -1574,6 +1574,8 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsig
     default:
       printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
 	     term_tag(arg), __LINE__);
+      fprintf(dotFile, "}\n");
+      fclose(dotFile);
       abort();
       break;
     }
