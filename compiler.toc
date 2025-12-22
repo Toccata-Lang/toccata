@@ -57,6 +57,20 @@
 (def code-gen (agent (b/CodeContext {} (b/new-module "" 0 {})
                                     {} [] [] [])))
 
+(def compile-module)
+
+(defn add-mod [result-prom file-path root-dir proj-dir core-mod]
+  (fn [mods]
+    (either (map (get mods file-path)
+                 (fn [mod]
+                   (b/status 'delivering _LINE_ file-path)
+                   (deliver result-prom mod)
+                   mods))
+            (let [new-mod (compile-module file-path root-dir proj-dir 1 core-mod)]
+              (b/status 'spawned _LINE_ file-path)
+              (deliver result-prom new-mod)
+              (assoc mods file-path new-mod)))))
+
 (def parse-forms
   (rd/parser
    (apply-to (fn [x]
@@ -82,6 +96,57 @@
                                           :when (delivered result-prom)]
                                       (extract result-prom))
                                     rd/parser-fail)))
+
+                        (apply-to (fn [ast type-checker curr-file-name root-dir proj-dir core-mod]
+                                    (send type-checker
+                                          (fn [curr-mod]
+                                            (let [ast (.ast ast)
+                                                  mod-prom (promise)
+                                                  file-path (either (map (sys/file-directory curr-file-name)
+                                                                         (fn [file-path]
+                                                                           (str file-path
+                                                                                (-> ast .module .ast
+                                                                                    .file-path .string))))
+                                                                    (do
+                                                                      (b/status "Could not import module"
+                                                                                (str "'" curr-file-name "' at")
+                                                                                (ast/location ast))
+                                                                      (b/wait-for-err-out)
+                                                                      (abort)))
+                                                  _ (send b/modules
+                                                          (add-mod mod-prom file-path root-dir
+                                                                   proj-dir core-mod))
+                                                  new-mod (extract mod-prom)
+                                                  _ (b/status "waiting for" file-path)
+                                                  new-mod (either (map (instance? Promise new-mod) extract)
+                                                                  new-mod)
+                                                  _ (b/status "got" file-path)
+                                                  _ (b/status 'new-mod _LINE_
+                                                              (flat-map (get-in new-mod
+                                                                                [.namespaces
+                                                                                 c/no-symbol
+                                                                                 .values])
+                                                                        first))
+                                                  mod-syms (either (get-in new-mod
+                                                                           [.namespaces c/no-symbol])
+                                                                   (b/SymTable file-path
+                                                                               {} (list {})))]
+                                              (b/status 'mod-syms _LINE_ (.sym ast) mod-syms)
+                                              (send code-gen update-context
+                                                    (for [fn (se/get-in-val [.module .file-name])
+                                                          _ (b/se-debug 'adding-ns _LINE_ (.sym ast)
+                                                                        fn)
+                                                          r (se/assoc-in-val [.module .namespaces (.sym ast)]
+                                                                             mod-syms)]
+                                                      r))
+                                              curr-mod))))
+                                  rdr/read-add-ns
+                                  (grmr/get-value 'type-checker)
+                                  (grmr/get-value 'file-name)
+                                  (grmr/get-value 'root-directory)
+                                  (grmr/get-value 'project-directory)
+                                  (grmr/get-value 'core-module))
+
                         (apply-to (fn [type-checker result-prom ast]
                                     ;; (b/status 'ast _LINE_ ast)
                                     (send type-checker update-context
@@ -130,6 +195,7 @@
                        parse-result (parse-forms {'file-name file-name
                                                   'root-directory root-dir
                                                   'project-directory proj-dir
+                                                  'core-module core-mod
                                                   'line-number 1
                                                   'type-checker ast-checker
                                                   'result-prom loading}

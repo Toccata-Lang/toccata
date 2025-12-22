@@ -1026,3 +1026,142 @@
                      ") = " arity-var ";\n"))))
   code-context)
 
+;; (def repo-cloner (agent {}))
+
+;; (defn clone-repo* [ast proj-dir]
+;;   (let [opts (.args ast)
+;;         checkout (either (or (get opts 'tag)
+;;                              (get opts 'sha)
+;;                              (get opts 'branch))
+;;                          "master")
+;;         branch (either (or (get opts 'tag)
+;;                            (get opts 'branch))
+;;                        "master")
+;;         dep-path (str proj-dir "dependencies/git/" (.repo ast) "/" checkout)]
+;;     (either (and (sh/command "/usr/bin/git" (list "clone" "--branch" branch
+;;                                                   (.repo ast) dep-path))
+;;                  (or (map (get opts 'sha)
+;;                           (fn [sha]
+;;                             ;; working with the OS. Give it a chance to catch up
+;;                             (sys/sleep 3)
+;;                             (or (sh/command "/usr/bin/git"
+;;                                             (list "-C" dep-path "checkout" sha))
+;;                                 (do
+;;                                   (print-err "Failed checkout of" sha "in" dep-path)
+;;                                   (abort)))
+;;                             (sys/sleep 3)))
+;;                      (maybe (sys/sleep 3))))
+;;             (do
+;;               (print-err "Cloning git dependency" (.repo ast) "failed.")
+;;               (abort)))
+;;     dep-path))
+
+;; (defn clone-repo [cloned ast waiter proj-dir]
+;;   (assert (instance? HashMap cloned))
+;;   (let [opts (.args ast)
+;;         checkout (either (or (get opts 'tag)
+;;                              (get opts 'sha)
+;;                              (get opts 'branch))
+;;                          "master")
+;;         dep-path (str proj-dir "dependencies/git/" (.repo ast) "/" checkout)
+;;         module-path (str dep-path "/" (.file ast))]
+;;     (either (or (map (sys/access module-path) (fn [_]
+;;                                                 (deliver waiter dep-path)
+;;                                                 cloned))
+;;                 (and (sys/access dep-path)
+;;                      (do
+;;                        (print-err "Dependency file" (.file ast)
+;;                                   "missing from existing copy of repository"
+;;                                   (.repo ast) ":" (ast/file-name ast) (ast/line-number ast))
+;;                        (abort)))
+;;                 (update cloned dep-path (fn [cloning-future]
+;;                                           (map cloning-future (partial deliver waiter))
+;;                                           cloning-future)))
+;;             (assoc cloned dep-path (future (fn []
+;;                                              (let [dep-path (clone-repo* ast proj-dir)]
+;;                                                (deliver waiter dep-path)
+;;                                                dep-path)))))))
+
+;; (extend-type ast/git-dep-ast
+;;   ev/Evaluator
+;;   (ev/eval [ast]
+;;     ;; Only called when interpreting a file (I think)
+;;     (let [file (.file ast)]
+;;       (either (and (-> file
+;;                       seq
+;;                       (some (partial = "/")))
+;;                    (maybe (ev/abort-interp "For git dependencies,"
+;;                                            "files may only be imported from root of repository,"
+;;                                            file "is invalid.")))
+;;               (comp (for [script-dir (sm/get-val .script-dir)
+;;                           :let [clone-waiter (promise)
+;;                                 dep-path (do
+;;                                            (clone-repo {} ast clone-waiter script-dir)
+;;                                            (extract clone-waiter))
+;;                                 module-path (str dep-path "/" file)
+;;                                 _ (or (sys/access module-path)
+;;                                       (do
+;;                                         (print-err "Dependency file" file "missing from cloned repository"
+;;                                                    (.repo ast) ":" (ast/file-name ast) (ast/line-number ast))
+;;                                         (abort)))]
+;;                           curr-file-name (sm/get-val .file-name)
+;;                           _ (sm/set-val .file-name module-path)
+;;                           r (ev/eval (ast/module-ast file))
+;;                           _ (sm/set-val .file-name curr-file-name)]
+;;                       r)
+;;                     (ev/abort-interp "Could not import module" (str "'" file "'") "from git repo at"
+;;                                      (ev/ast-location-str ast))))))
+
+;;   ASTEmitter
+;;   (load-module [ast root-dir proj-dir]
+;;     (let [file (.file ast)]
+;;       (or (-> file
+;;               seq
+;;               (filter (partial = "/"))
+;;               empty?)
+;;           (do
+;;             (print-err "For git dependencies,"
+;;                        "files may only be imported from root of repository,"
+;;                        file "is invalid.")
+;;             (abort)))
+
+;;       (let [clone-waiter (promise)
+;;             dep-path (do
+;;                        (send repo-cloner clone-repo ast clone-waiter proj-dir)
+;;                        (extract clone-waiter))
+;;             waiter (promise)
+;;             module-path (str dep-path "/" file)]
+;;         (or (sys/access module-path)
+;;             (do
+;;               (print-err "Dependency file" file "missing from cloned repository"
+;;                          (.repo ast) ":" (ast/file-name ast) (ast/line-number ast))
+;;               (abort)))
+;;         (send module-compiler compile-module module-path waiter (str dep-path "/") proj-dir)
+;;         [waiter module-path]))))
+
+;; (extend-type ast/add-ns-ast
+;;   ASTEmitter
+;;   (add-namespace [ast root-dir proj-dir]
+;;     (let [[waiter mod-file-name] (load-module (.mod ast) root-dir proj-dir)]
+;;       (send ast-emitter
+;;             (fn [context]
+;;               (update-context context
+;;                               (sm/assoc-in-val [.namespaces (ast/file-name ast) (.ns-sym ast)]
+;;                                                mod-file-name))))
+;;       [waiter ast])))
+
+                        ;; (apply-to (fn [ast root-dir proj-dir core-mod]
+                        ;;             (b/status "Check for already loaded module!!!")
+                        ;;             (compile-module (-> ast .ast .module .ast .file-path .string)
+                        ;;                             root-dir
+                        ;;                             proj-dir
+                        ;;                             1 core-mod))
+                        ;;           rdr/read-add-ns
+                        ;;           (grmr/get-value 'root-directory)
+                        ;;           (grmr/get-value 'project-directory)
+                        ;;           (grmr/get-value 'core-module))
+
+;; (extend-type ast/add-ns-ast
+;;   CodeGen
+;;   (gen-code [ast]
+;;     (se/set-val [.namespaces (.sym ast)] (.module-syms ast))))
