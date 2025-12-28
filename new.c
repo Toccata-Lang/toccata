@@ -1941,7 +1941,7 @@ void fatal_error(char *fmt, unsigned bytes) {
   abort();
 }
 
-char hasLocation(tree) {
+char hasLocation(Term tree) {
   Tag t = term_tag(tree);
 
   if (tree == SUB)
