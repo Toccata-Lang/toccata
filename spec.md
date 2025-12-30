@@ -169,7 +169,7 @@ Likewise, constraining the keys and values in a hash map are done by
 (deftype IntStrMap {Integer String})
 ```
 #### Type Expressions
-String, Integer, Float, and Vector can be further constrained by expressions. Any string or number literal can be a type constraint. Constraints can be composed to form more precise constraints.
+String, Integer, Float, and Vector can be further constrained by expressions. Any string or number literal can be a type constraint. If a symbol is used as a constraint, it evaluates to the type constraint of that symbol in the code at that point. Constraints can be composed to form more precise constraints.
 
 ##### min
 Specifies a number with a minimum value.
