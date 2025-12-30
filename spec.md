@@ -70,6 +70,7 @@ Toccata has the following atomic literals:
       - `module`: Only valid when in an "add-ns" form. Contains a string which is a file path relative to the file it appears in, of another file to get definitions from.
       - Type constraints: Start with "!", followed by a symbol and then a type expression.
       - `->`: Threading. The result of each expression gets inserted as the first argument in the next expression.
+      - `match`: Takes an expression, then a sequence of type/value expression pairs, and then an optional expression. It checks the type of the first expression against the type expression of each pair and when it finds a match, returns the value expression of that pair. The final, optional expression is returned if no other match is found. If no match is found and no default value is provided, an exception is thrown.
 - **Vector Expressions**: Like an expression but surrounded by brackets (`[]`).
   Example:
   ```
