@@ -89,7 +89,63 @@ Toccata has the following atomic literals:
 ## 3. Semantics
 
 ### 3.1 Types
-*(To be defined)*
+Toccata is a gradual, dependently typed language. Type constraints are optional. There are several built-in types.
+
+#### Integer
+Integers are always 60 bits wide.
+
+#### Float
+*(Details to be specified)*
+
+#### String
+*(Details to be specified)*
+
+#### Vector
+Plain vectors may hold values of any type. They are always appended to at the end and are indexed by an integer position.
+
+#### HashMap
+Plain hash maps may map any hashable value to any other value.
+
+#### Named Types
+Named types are defined using 'deftype' in various forms.
+
+The simplest example is `(deftype Some [x])` where the name of the type and the name of the constructor function are the same.
+If no fields are given, as in `(deftype None [])`, a single value with the same name as the type is created instead of a constructor function.
+
+Constructors with fields are product types. Sum types may be created using `deftype` by giving a number of constructors
+```
+(deftype Maybe
+    (None [])
+    (Some [x]))
+```
+In this case, None and Some are also types.
+
+Constructors may also specify implementations of protocol functions.
+```
+(deftype SomeType [x y]
+   (proto-fn [v n]
+      (+ x n)))
+```
+
+Type constraints may be defined for fields. (Type constraints are described below)
+```
+(deftype List
+    (EndOfList [])
+    (Cons [head tail]
+      ! tail List
+      ))
+```
+where `List` is a recursive type and the `tail` field of a `Cons` must either be and EndOfList or a Cons type.
+
+Defining a vector of a values whose types are constrained in some way is done like
+```
+(deftyp IntVect [Integer])
+```
+
+Likewise, constraining the keys and values in a hash map are done by
+```
+(deftype IntStrMap {Integer String})
+```
 
 ### 3.2 Execution Model
 *(To be defined)*
