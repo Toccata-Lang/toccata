@@ -71,6 +71,9 @@ Toccata has the following atomic literals:
       - Type constraints: Start with "!", followed by a symbol and then a type expression.
       - `->`: Threading. The result of each expression gets inserted as the first argument in the next expression.
       - `match`: Takes an expression, then a sequence of type/value expression pairs, and then an optional expression. It checks the type of the first expression against the type expression of each pair and when it finds a match, returns the value expression of that pair. The final, optional expression is returned if no other match is found. If no match is found and no default value is provided, an exception is thrown.
+    - The following symbols have special meaning in Toccata:
+      - `_FILE_`: evaluates to the file name in which it appears
+      - `_LINE_`: evaluates to the line number on which it appears
 - **Vector Expressions**: Like an expression but surrounded by brackets (`[]`).
   Example:
   ```
@@ -106,10 +109,29 @@ Plain vectors may hold values of any type. They are always appended to at the en
 #### HashMap
 Plain hash maps may map any hashable value to any other value.
 
+### 3.1 Types
+Toccata is a gradual, dependently typed language. Type constraints are optional. There are several built-in types.
+
+#### Integer
+Integers are always 60 bits wide.
+
+#### Float
+*(Details to be specified)*
+
+#### String
+*(Details to be specified)*
+
+#### Vector
+Plain vectors may hold values of any type. They are always appended to at the end and are indexed by an integer position.
+
+#### HashMap
+Plain hash maps may map any hashable value to any other value.
+
 #### Named Types
 Named types are defined using 'deftype' in various forms.
 
 The simplest example is `(deftype Some [x])` where the name of the type and the name of the constructor function are the same.
+
 If no fields are given, as in `(deftype None [])`, a single value with the same name as the type is created instead of a constructor function.
 
 Constructors with fields are product types. Sum types may be created using `deftype` by giving a number of constructors
@@ -145,6 +167,57 @@ Defining a vector of a values whose types are constrained in some way is done li
 Likewise, constraining the keys and values in a hash map are done by
 ```
 (deftype IntStrMap {Integer String})
+```
+#### Type Expressions
+String, Integer, Float, and Vector can be further constrained by expressions. Any string or number literal can be a type constraint. Constraints can be composed to form more precise constraints.
+
+##### min
+Specifies a number with a minimum value.
+Example:
+```
+(min 2)
+```
+
+##### max
+Specifies a number with a maximum value.
+Example:
+```
+(max 10)
+```
+
+##### min-length
+Specifies the minimum length for vectors and strings.
+Example:
+```
+(min-length 3)
+```
+
+##### max-length
+Specifies the maximum length for vectors and strings.
+Example:
+```
+(max-length 5)
+```
+
+##### length
+Specifies an exact length for vectors and strings.
+Example:
+```
+(length 4)
+```
+
+##### any-of
+At least one of the sub expressions must be satisfied
+Example:
+```
+(any-of Integer Float)
+```
+
+##### all-of
+All sub expressions must be satisfied.
+Example:
+```
+(all-of Integer (min 0) (max 5))
 ```
 
 ### 3.2 Execution Model
