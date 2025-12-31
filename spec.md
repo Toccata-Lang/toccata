@@ -109,24 +109,6 @@ Plain vectors may hold values of any type. They are always appended to at the en
 #### HashMap
 Plain hash maps may map any hashable value to any other value.
 
-### 3.1 Types
-Toccata is a gradual, dependently typed language. Type constraints are optional. There are several built-in types.
-
-#### Integer
-Integers are always 60 bits wide.
-
-#### Float
-*(Details to be specified)*
-
-#### String
-*(Details to be specified)*
-
-#### Vector
-Plain vectors may hold values of any type. They are always appended to at the end and are indexed by an integer position.
-
-#### HashMap
-Plain hash maps may map any hashable value to any other value.
-
 #### Named Types
 Named types are defined using 'deftype' in various forms.
 
@@ -168,6 +150,9 @@ Likewise, constraining the keys and values in a hash map are done by
 ```
 (deftype IntStrMap {Integer String})
 ```
+#### Type Constraints
+Symbols may be constrained to only allow a set of values. These type constraints are indicated by a line starting with "!", followed by the symbol and then a type expression describing the values allowed. For a function, the special symbol "->" denotes a constraint that the value returned by the function must satisfy.
+
 #### Type Expressions
 String, Integer, Float, and Vector can be further constrained by expressions. Any string or number literal can be a type constraint. If a symbol is used as a constraint, it evaluates to the type constraint of that symbol in the code at that point. Constraints can be composed to form more precise constraints.
 
