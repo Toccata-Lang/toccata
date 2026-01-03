@@ -1785,7 +1785,7 @@ int8_t equal(Value *v1, Value *v2) {
 
 Value *stringValue(char *s) {
   int64_t len = strlen(s);
-  String *strVal = malloc_string(len);
+  String *strVal = malloc_string(len + 5);
   strncpy(strVal->buffer, s, len);
   strVal->buffer[len] = 0;
   return((Value *)strVal);
@@ -2931,6 +2931,16 @@ void accessFieldFn(Term ref, Term args) {
   return;
 }
 Term accessField = new_ref(accessFieldFn);
+
+char *typeName(unsigned typeNum) {
+  for (unsigned i = 0; i < typeCount; i++) {
+    if (typeNames[i].typeNum == typeNum) {
+      printf("typeName: %s\n", typeNames[i].name);
+      return typeNames[i].name;
+    }
+  }
+  return "<unknown>";
+}
 
 void freeGlobal(Term p) {
   // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);

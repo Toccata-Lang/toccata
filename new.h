@@ -176,6 +176,7 @@ extern pthread_t threads[];
 typedef void (*interactionFn)(Term a, Term b);
 #define new_ref(x) (((u64)x + REF))
 
+extern unsigned refsCount;
 typedef struct {
   interactionFn fn;
   char *name;} refMap;

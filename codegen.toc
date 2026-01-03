@@ -134,6 +134,13 @@
        (cond (b/is-glbl result-var)
              ["store_redex(" result-var "Args, " (.var tgt) ");"]
 
+             (= "" (.var tgt))
+             (do
+               (b/status 'boom _FILE_ _LINE_)
+               (b/status ast (ast/location ast))
+               (b/wait-for-err-out)
+               (abort))
+
              ["#ifdef STRICT\n"
               "store_redex(" result-var "Args, " (.var tgt) ");\n"
               "#else\n"
@@ -878,15 +885,15 @@
                                              [cases
                                               "case " (str type-num) ":\n"
                                               "store_redex(args, " (.var impl-arity) ");\nbreak;\n"]))))
-                      "default:\n"
+                      "default: {\n"
                       (either (map (get-in ptype [.impls c/UnknownType])
                                    (fn [def-arity]
                                      ["store_redex(args, " (.var def-arity) ");\n"]))
-                              ["fprintf(stderr, \"No implementation found for '" (.fn-name ptype)
-                               "' at %.*s: %ld\\n\", (int)fileStr->len, fileStr->buffer,"
-                               "get_i60(arityArgs.args[1]));\n"
+                              ["fprintf(stderr, \"No implementation of '" (.fn-name ptype)
+                               "' found for type %s (%ld) called from %.*s: %ld\\n\", typeName(dispVal->type), "
+                               "dispVal->type, (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));\n"
                                "abort();\n"])
-                      "}\n}\n}\nreturn;\n}\n"
+                      "}\n}\n}\n}\nreturn;\n}\n"
                       "Term " (.var ptype) " = new_ref(" c-fn ");\n"]))))
 
 (defn emit-protos [code-context]
@@ -930,8 +937,10 @@
                              (and (instance? ast/inline-ast val)
                                   (instance? c/fn-arity (.constraint val))))]
                [sym val])
-        emitter (for [_ (se/set-val .decl ["refMap refNames[" (+ 5 (count refs))
-                                           "] = {{(interactionFn)" (+ 3 (count refs)) ", \"\"},\n"
+        emitter (for [_ (se/set-val .decl ["unsigned refsCount = " (count refs) ";\n"
+                                           "unsigned refNameCount = " (count refs) ";\n"
+                                           "refMap refNames[" (+ 5 (count refs))
+                                           "] = {"
                                            "{vectConjFn, \"vectConj\"},\n"
                                            "{accessFieldFn, \"accessField\"},\n"
                                            "{hvmVectFn, \"hvmVect\"},\n"
@@ -956,6 +965,49 @@
     (let [[_ code-context] (emitter code-context)]
       code-context)))
 
+(defn emit-type-map [code-context]
+  (let [mod-prom (promise)
+        _ (send b/modules (fn [mods]
+                            (deliver mod-prom mods)
+                            mods))
+        mods (extract mod-prom)
+        types (for [mod (vals mods)
+                   [sym constraint] (either (map (get-in mod [.namespaces c/no-symbol .types])
+                                          seq)
+                                            [])
+                    :when (instance? c/ReifiedConstraint constraint)]
+               (do
+                 (b/status 'type _LINE_ sym constraint)
+                 [sym constraint]))
+        emitter (for [_ (se/set-val .decl ["typeNameMap typeNames[" (+ 5 (count types))
+                                           "] = {{1, \"Integer\"},\n"
+                                           "{2, \"String\"},\n"
+                                           "{8, \"Vector\"},\n"
+                                           "{9, \"VectorNode\"},\n"
+                                           "{11, \"HashMap\"},\n"
+                                           "{12, \"HashMap\"},\n"
+                                           "{13, \"HashMap\"},\n"
+                                           "{14, \"HashMap\"}\n"])
+                      _ (se/traverse types (fn [[sym val]]
+                                            (se/try
+                                              (se/update-val .decl
+                                                             (fn [decl]
+                                                               [decl ",\n"
+                                                                "{" (.type-number val) ", \""
+                                                                sym "\"}"]))
+                                              (fn [err]
+                                                (b/status (.val err))
+                                                (b/wait-for-err-out)
+                                                (abort)))))
+                      _ (se/update-val .decl
+                                       (fn [decl]
+                                         [decl "};\n"]))
+                      types-decl (se/get-val .decl)
+                      _ (se/set-val .decl [])]
+                  (code-out types-decl))]
+    (let [[_ code-context] (emitter code-context)]
+      code-context)))
+
 (defn emit-main [code-context done-promise main-module]
   (let [main-fn (either (get-in main-module [.namespaces c/no-symbol .values 0
                                              ast/main .c-fn])
@@ -966,6 +1018,7 @@
                           ))
         code-context (emit-protos code-context)
         code-context (emit-ref-map code-context)
+        code-context (emit-type-map code-context)
         mod-prom (promise)
         _ (send b/modules (fn [mods]
                             (deliver mod-prom mods)

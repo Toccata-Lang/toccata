@@ -182,6 +182,12 @@ extern REFS_SIZE refsStatic;
 #define SomeType 43
 #define TypeCount 44
 
+typedef struct {
+  unsigned typeNum;
+  char *name;} typeNameMap;
+extern typeNameMap typeNames[];
+char *typeName(unsigned typeNum);
+
 extern FILE *outstream;
 extern Vector *empty_vect;
 extern Vector empty_vect_struct;
