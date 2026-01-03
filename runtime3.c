@@ -1170,6 +1170,21 @@ Vector *vectConj(Vector *vect, Term val) {
   }
 }
 
+void vectConjFn(Term ref, Term args) {
+  NativeArgs arityArgs = {0, {}};
+  args = strictArgs(ref, args, 2, &arityArgs);
+  Term result = NUL;
+  if (arityArgs.count == 2) {
+    Term vect_1 = arityArgs.args[0];
+    Term v_2 = arityArgs.args[1];
+
+    result = term_val((Term)vectConj((Vector *)vect_1, v_2));
+    moveStore(port(2, term_loc(args)), result);
+  }
+  return;
+}
+Term vectConjRef = new_ref(vectConjFn);
+
 Vector *mutateVectConj(Vector *vect, Term val) {
   // if 'vect' is a static vector
   if (vect->refs <= refsConstant) {
@@ -1217,13 +1232,13 @@ Vector *mutateVectConj(Vector *vect, Term val) {
 
 void hvmVectFn(Term ref, Term args){
   NativeArgs arityArgs = {0, {}};
-  Term newArgs = strictArgs(ref, args, 1, &arityArgs, 3);
+  Term newArgs = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
     newArgs = take(port(2, term_loc(newArgs)));
     long vectLen = get_i60(arityArgs.args[0]);
     if (vectLen > MAX_ARGS)
       BOOM("too many items in vector literal");
-    Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs, 3);
+    Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs);
     if (arityArgs.count == vectLen + 1) {
       Vector *newV = empty_vect;
       for (int i = 0; i < arityArgs.count; i++)
@@ -2852,12 +2867,12 @@ Term dupeGlobal(Location glbl) {
 
 void constructFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
-  Term newArgs = strictArgs(ref, args, 2, &arityArgs, 1);
+  Term newArgs = strictArgs(ref, args, 2, &arityArgs);
   if (arityArgs.count == 2) {
     newArgs = take(port(2, term_loc(newArgs)));
     int typeNum = get_i60(arityArgs.args[0]);
     int numArgs = get_i60(arityArgs.args[1]);
-    Term lastArgs = strictArgs(ref, newArgs, numArgs, &arityArgs, 1);
+    Term lastArgs = strictArgs(ref, newArgs, numArgs, &arityArgs);
     if (arityArgs.count == numArgs + 2) {
       ReifiedVal *rv = malloc_reified(numArgs);
       rv->type = typeNum;
@@ -2876,7 +2891,7 @@ Term construct = new_ref(constructFn);
 
 void accessFieldFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
-  args = strictArgs(ref, args, 2, &arityArgs, 2);
+  args = strictArgs(ref, args, 2, &arityArgs);
   if (arityArgs.count == 2) {
     int fldIdx = get_i60(arityArgs.args[0]);
     ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];

@@ -1471,7 +1471,7 @@ Term argsNet(NativeArgs *args) {
 }
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
-Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsigned dupLabel) {
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   Tag argsTag = term_tag(args);
   if (argsTag == APP) {
     // if 'args' is an APP term
@@ -1492,7 +1492,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct, unsig
       argsStruct->args[argsStruct->count++] = arg;
       if (expected > 1)
 	// need to get more strict args
-	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct, dupLabel);
+	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
       else
 	return args;
       break;

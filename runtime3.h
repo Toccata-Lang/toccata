@@ -249,6 +249,8 @@ Term integer_EQ(Term arg0, Term arg1);
 Term integer_LT(Term arg0, Term arg1);
 Value *integerValue(int64_t n);
 Vector *vectConj(Vector *vect, Term val);
+void vectConjFn(Term ref, Term args);
+extern Term vectConjRef;
 Vector *mutateVectConj(Vector *vect, Term val);
 Vector *vectStore(Vector *vect, unsigned index, Term val);
 ReifiedVal *updateField(ReifiedVal *rval, Term field, int64_t idx);
