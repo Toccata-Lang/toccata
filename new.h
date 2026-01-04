@@ -114,7 +114,7 @@ typedef struct {
   Term args[MAX_ARGS + 2];
 } NativeArgs;
 
-#define LOCAL_PAIRS_SIZE 2000
+#define LOCAL_PAIRS_SIZE 4000
 typedef struct {
   unsigned count;
   Term rdxs[LOCAL_PAIRS_SIZE][2];
