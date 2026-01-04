@@ -1616,7 +1616,7 @@ void print_raw_term(Term t) {
 
     case REF: {
       char *refName = "";
-      for (unsigned i = 1; i <= refsCount; i++) {
+      for (unsigned i = 0; i <= refsCount; i++) {
 	if (refNames[i].fn == (interactionFn)(t & ~TAG_MASK)) {
 	  refName = refNames[i].name;
 	  break;
@@ -2062,7 +2062,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
 
   case REF: {
     char *refName = "F";
-    for (unsigned i = 1; i <= refsCount; i++) {
+    for (unsigned i = 0; i <= refsCount; i++) {
       if (refNames[i].fn == (interactionFn)(tree & ~7)) {
 	refName = refNames[i].name;
 	break;
@@ -2213,7 +2213,7 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
 
   case REF: {
     char *refName = "F";
-    for (unsigned i = 1; i <= refsCount; i++) {
+    for (unsigned i = 0; i <= refsCount; i++) {
       if (refNames[i].fn == (interactionFn)(tree & ~7)) {
 	refName = refNames[i].name;
 	break;
