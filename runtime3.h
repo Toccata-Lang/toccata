@@ -265,7 +265,7 @@ Vector *vectorReverse(Vector *v);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
                    Value **args[]);
 Term strCount(Term s);
-Value *strEQ(Value *arg0, Value *arg1);
+Term strEQ(Term arg0, Term arg1);
 Value *strVect(Value *arg0);
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);

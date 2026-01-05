@@ -263,7 +263,8 @@ String *malloc_string(int len) {
 
 void freeString(Value *v) {
   // fprintf(stderr, "freeing string %d: %p\n", __LINE__, (void *)v);
-  int64_t len = ((String *)v)->len;
+  String *str = ((String *)v);
+  int64_t len = str->len;
   if (len <= STRING_RECYCLE_LEN) {
     v->next = freeStrings.head;
     freeStrings.head = v;
@@ -1422,54 +1423,43 @@ Vector *vectorReverse(Vector *v) {
   // */
 }
 
-Value *strEQ(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
+Term nothing() {
+  ReifiedVal *rv = malloc_reified(0);
+  rv->type = NoneType;
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  return(term_val((Term)rv));
+}
+
+Term some(Term thing) {
+  ReifiedVal *rv = malloc_reified(1);
+  rv->type = SomeType;
+  rv->impls[0] = thing;
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  return(term_val((Term)rv));
+}
+
+Term strEQ(Term arg0, Term arg1) {
+  String *str0 = (String *)arg0; 
+  String *str1 = (String *)arg1; 
   char *s1, *s2;
   long int len;
 
-  if (arg0->type == StringBufferType &&
-      arg1->type == StringBufferType &&
-      ((String *)arg0)->len == ((String *)arg1)->len) {
-    s1 = ((String *)arg0)->buffer;
-    len = ((String *)arg0)->len;
-    s2 = ((String *)arg1)->buffer;
-  } else if (arg0->type == SubStringType &&
-             arg1->type == SubStringType &&
-             ((SubString *)arg0)->len == ((SubString *)arg1)->len) {
-    s1 = ((SubString *)arg0)->buffer;
-    len = ((SubString *)arg0)->len;
-    s2 = ((SubString *)arg1)->buffer;
-  } else if (arg0->type == StringBufferType &&
-             arg1->type == SubStringType &&
-             ((String *)arg0)->len == ((SubString *)arg1)->len) {
-    s1 = ((String *)arg0)->buffer;
-    len = ((String *)arg0)->len;
-    s2 = ((SubString *)arg1)->buffer;
-  } else if (arg0->type == SubStringType &&
-             arg1->type == StringBufferType &&
-             ((SubString *)arg0)->len == ((String *)arg1)->len) {
-    s1 = ((SubString *)arg0)->buffer;
-    len = ((SubString *)arg0)->len;
-    s2 = ((String *)arg1)->buffer;
-  } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
+  if (str0->type == StringBufferType &&
+      str1->type == StringBufferType &&
+      ((String *)str0)->len == ((String *)str1)->len) {
+    s1 = str0->buffer;
+    len = str0->len;
+    s2 = str1->buffer;
   }
 
   if (strncmp(s1, s2, len) == 0) {
     dec_and_free(arg1, 1);
-    return(maybe((FnArity *)0, (Value *)0, arg0));
+    return(some((Term)arg0));
   } else {
     dec_and_free(arg0, 1);
     dec_and_free(arg1, 1);
-    return(nothing);
+    return(nothing());
   }
-  // */
 }
 
 Value *strLT(Value *arg0, Value *arg1) {
@@ -1745,21 +1735,6 @@ int64_t integerSha1(Value *arg0) {
   dec_and_free(arg0, 1);
   // */
   return(shaVal);
-}
-
-Term nothing() {
-  ReifiedVal *rv = malloc_reified(0);
-  rv->type = NoneType;
-  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  return(term_val((Term)rv));
-}
-
-Term some(Term thing) {
-  ReifiedVal *rv = malloc_reified(1);
-  rv->type = SomeType;
-  rv->impls[0] = thing;
-  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  return(term_val((Term)rv));
 }
 
 Term integer_EQ(Term arg0, Term arg1) {
