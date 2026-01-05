@@ -1045,10 +1045,6 @@ Vector *newVector(Term array[], int indexToSkip) {
 }
 
 VectorNode *newVectorNode(Term array[], int indexToSkip) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((VectorNode *)NULL);
-  /*
   VectorNode *ret = malloc_vectorNode();
   for (int i = 0; i < VECTOR_ARRAY_LEN; i++) {
     if (array[i] != 0 && i != indexToSkip) {
@@ -1057,7 +1053,6 @@ VectorNode *newVectorNode(Term array[], int indexToSkip) {
     }
   }
   return(ret);
-  // */
 }
 
 Term *arrayFor(Vector *v, unsigned index) {
