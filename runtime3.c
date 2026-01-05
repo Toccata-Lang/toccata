@@ -776,7 +776,7 @@ void dec_and_free(Term pv, int deltaRefs) {
 #ifndef FAST_INCS
 Term incRef(Term val, int deltaRefs) {
   Tag t = term_tag(val);
-  if (t == I60 || t == F60)
+  if (t == I60 || t == F60 || t == REF)
     return val;
 
   Value *v = (Value *)val;
@@ -1201,19 +1201,11 @@ void vectMap(Term ref, Term args) {
       else
 	f_1 = f;
       Term mArgs = pair_make(APP, 0, vectGet(vect, i), SUB);
-#ifdef STRICT
-      store_redex(mArgs, f_1);
-#else
       swapStore(port(2, term_loc(mArgs)), pair_make(LAZ, 0, mArgs, f_1));
-#endif
       Term cArgs1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(mArgs))), SUB);
       Term cArgs2 = pair_make(APP, 0, newV, cArgs1);
-#ifdef STRICT
-      store_redex(cArgs2, vectConjRef);
-#else
       Term conjNode = pair_make(LAZ, 0, cArgs2, vectConjRef);
       swapStore(port(2, term_loc(cArgs1)), conjNode);
-#endif
       newV = term_new(VAR, 0, port(2, term_loc(cArgs1)));
     }
     dec_and_free((Term)vect, 1);

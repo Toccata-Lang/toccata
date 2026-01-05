@@ -1570,9 +1570,15 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
 
     case LAM:
+      fprintf(stderr, "Wrap LAM in Value line: %d\n", __LINE__);
+      fprintf(dotFile, "}\n");
+      fclose(dotFile);
+      abort();
+      break;
+
     case LAZ:
     default:
-      printf("unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
+      fprintf(stderr, "unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
 	     term_tag(arg), __LINE__);
       fprintf(dotFile, "}\n");
       fclose(dotFile);
