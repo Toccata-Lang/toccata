@@ -48,6 +48,7 @@ typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
   int64_t hashVal;
+  Value *parent;
   int64_t len;
   char buffer[0];
 } String;
