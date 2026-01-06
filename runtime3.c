@@ -257,6 +257,7 @@ String *malloc_string(int len) {
   str->refs = refsInit;
   str->hashVal = 0;
   str->type = StringBufferType;
+  str->parent = NULL;
   str->len = len;
   return(str);
 }
@@ -265,6 +266,8 @@ void freeString(Value *v) {
   // fprintf(stderr, "freeing string %d: %p\n", __LINE__, (void *)v);
   String *str = ((String *)v);
   int64_t len = str->len;
+  if (str->parent != NULL)
+    dec_and_free((Term)str->parent, 1);
   if (len <= STRING_RECYCLE_LEN) {
     v->next = freeStrings.head;
     freeStrings.head = v;

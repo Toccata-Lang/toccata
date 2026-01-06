@@ -47,6 +47,11 @@ typedef struct Value {
 typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
+  Term trm;
+} TermVal;
+typedef struct {
+  TYPE_SIZE type;
+  REFS_SIZE refs;
   int64_t hashVal;
   Value *parent;
   int64_t len;
