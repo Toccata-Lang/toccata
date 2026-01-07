@@ -280,6 +280,33 @@ void freeString(Value *v) {
   }
 }
 
+FreeValList centralFreeTerms = (FreeValList){(Value *)0, 0};
+__thread FreeValList freeTerms = {(Value *)0, 0};
+TermVal *malloc_term() {
+  TermVal *trm;
+  trm = (TermVal *)freeTerms.head;
+  if (trm == (TermVal *)0) {
+    trm = (TermVal *)removeFreeValue(&centralFreeTerms);
+    if (trm == (TermVal *)0) {
+      trm = (TermVal *)my_malloc(sizeof(TermVal));
+    }
+  } else {
+    freeTerms.head = freeTerms.head->next;
+  }
+  // fprintf(stderr, "newTerm %d: %p\n", __LINE__, (void *)trm);
+  trm->refs = refsInit;
+  trm->type = TermType;
+  return(trm);
+}
+
+void freeTerm(Value *v) {
+  // fprintf(stderr, "freeing term %d: %p\n", __LINE__, (void *)v);
+  TermVal *trm = ((TermVal *)v);
+  v->next = freeStrings.head;
+  freeStrings.head = v;
+  store_redex(ERA, trm->trm);
+}
+
 FreeValList centralFreeFnArities = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeFnArities = {(Value *)0, 0};
 FnArity *malloc_fnArity() {
@@ -687,7 +714,7 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 				       NULL,
 				       &freeString,
 				       &freeFnArity,
-				       NULL,
+				       &freeTerm,
 				       NULL,
 				       NULL,
 				       NULL,

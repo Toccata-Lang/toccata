@@ -154,6 +154,7 @@ extern REFS_SIZE refsStatic;
 #define StringBufferType 2
 #define FnArityType 3
 #define FunctionType 4
+#define TermType 5
 #define VectorType 8
 #define VectorNodeType 9
 #define BitmapIndexedType 11

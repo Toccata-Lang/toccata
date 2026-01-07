@@ -1392,7 +1392,7 @@ void NOP(Term neg, Term pos) {
 // VAL    VAR   SUB     NUL    ERA    LAM    APP    REF    VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
 #define DUP_INTERACTIONS\
-  &copy,&negvar,&ABRT,&dupnul,&ABRT,&duplam,&ABRT,&copy,&copy,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&duplaz
+  &copy,&negvar,&ABRT,&dupnul,&ABRT,&duplam,&ABRT,&copy,&copy,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
 //  VAL   VAR    SUB    NUL    ERA    LAM    APP   REF   VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
 // Initialize the interactions array with the same values in each row
