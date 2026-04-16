@@ -13,21 +13,20 @@ TARGET = $(PROJECT_NAME)
 TESTS = test1 test2
 TEST_SOURCES = new.c runtime3.c
 
-# Generic rule for test targets
-.PHONY: $(TESTS)
-$(TESTS): %: %.c $(TEST_SOURCES)
-	$(CC) $(CFLAGS) -o regression-tests/$@ $(TOC_FLAGS) $(LDFLAGS) $(TEST_SOURCES) regression-tests/$*.c
-	regression-tests/$@ party-pooper | sort > regression-tests/$*.rslt
-
-# Generate C files from .toc files using TESTS
-.PHONY: $(addsuffix .c, $(TESTS))
-$(addsuffix .c, $(TESTS)): %.c: new-toc regression-tests/%.toc
-	@echo "Building $@"
+# Generate C files from .toc files using pattern rules
+regression-tests/%.c: new-toc regression-tests/%.toc
+	@echo "Building $*.c"
 	./new-toc regression-tests/$*.toc > regression-tests/$*.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' \
           regression-tests/$*.tmp > regression-tests/$*.c
 	rm regression-tests/$*.tmp
 	@echo "$*.c generated successfully"
+
+# Generic rule for test targets
+.PHONY: $(TESTS)
+$(TESTS): %: regression-tests/%.c $(TEST_SOURCES)
+	$(CC) $(CFLAGS) -o regression-tests/$@ $(TOC_FLAGS) $(LDFLAGS) $(TEST_SOURCES) regression-tests/$*.c
+	regression-tests/$@ party-pooper | sort > regression-tests/$*.rslt
 
 # Run all tests
 .PHONY: tests
@@ -37,8 +36,9 @@ tests: $(TESTS)
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  tests   - Build and run all tests"
-	@echo "  help    - Show this help message"
+	@echo "  tests     - Build and run all tests"
+	@echo "  clean-c   - Remove all test C files"
+	@echo "  help      - Show this help message"
 
 # Clean build files
 # .PHONY: clean
@@ -47,3 +47,8 @@ help:
 
 # Default help if no target specified
 .DEFAULT_GOAL := help
+
+# Clean C files
+.PHONY: clean-c
+clean-c:
+	rm -f $(addprefix regression-tests/, $(addsuffix .c, $(TESTS)))
