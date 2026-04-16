@@ -9,30 +9,35 @@ LDFLAGS = -lpthread -latomic
 TOC_FLAGS = -march=native -I/home/jim/toccata -DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1 -lm 
 TARGET = $(PROJECT_NAME)
 
-# .PHONY: toccata
-# toccata: toccata.c core.c
-# 	echo "Building toccata"; \
-# 	$(CC) -O3 $(CFLAGS) -o toccata toccata.c core.c $(LDFLAGS); \
+# Test targets pattern
+TESTS = test1 test2
+TEST_SOURCES = new.c runtime3.c
 
-# Test1 target
-.PHONY: test1
-test1: test1.c new.c runtime3.c
-	$(CC) $(CFLAGS) -o regression-tests/test1 $(TOC_FLAGS) $(LDFLAGS) runtime3.c new.c regression-tests/test1.c
-	regression-tests/test1 party-pooper | sort > regression-tests/test1.rslt
+# Generic rule for test targets
+.PHONY: $(TESTS)
+$(TESTS): %: %.c $(TEST_SOURCES)
+	$(CC) $(CFLAGS) -o regression-tests/$@ $(TOC_FLAGS) $(LDFLAGS) $(TEST_SOURCES) regression-tests/$*.c
+	regression-tests/$@ party-pooper | sort > regression-tests/$*.rslt
 
-test1.c: new-toc regression-tests/test1.toc
-	@echo "Building test1"
-	./new-toc regression-tests/test1.toc > regression-tests/test1.tmp
+# Generate C files from .toc files using TESTS
+.PHONY: $(addsuffix .c, $(TESTS))
+$(addsuffix .c, $(TESTS)): %.c: new-toc regression-tests/%.toc
+	@echo "Building $@"
+	./new-toc regression-tests/$*.toc > regression-tests/$*.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' \
-          regression-tests/test1.tmp > regression-tests/test1.c
-	rm regression-tests/test1.tmp
-	@echo "test1.c generated successfully"
+          regression-tests/$*.tmp > regression-tests/$*.c
+	rm regression-tests/$*.tmp
+	@echo "$*.c generated successfully"
+
+# Run all tests
+.PHONY: tests
+tests: $(TESTS)
 
 # Help target
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  test1   - Build and run test1"
+	@echo "  tests   - Build and run all tests"
 	@echo "  help    - Show this help message"
 
 # Clean build files
