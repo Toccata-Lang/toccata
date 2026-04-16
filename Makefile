@@ -9,13 +9,10 @@ LDFLAGS = -lpthread -latomic
 TOC_FLAGS = -march=native -I/home/jim/toccata -DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1 -lm 
 TARGET = $(PROJECT_NAME)
 
-# Default target
-.PHONY: toccata
-toccata: toccata.c core.c
-	@if [ -z "$$PIAGENT" ]; then \
-		echo "Building toccata"; \
-		$(CC) -O3 $(CFLAGS) -o toccata toccata.c core.c $(LDFLAGS); \
-	fi
+# .PHONY: toccata
+# toccata: toccata.c core.c
+# 	echo "Building toccata"; \
+# 	$(CC) -O3 $(CFLAGS) -o toccata toccata.c core.c $(LDFLAGS); \
 
 # Test1 target
 .PHONY: test1
