@@ -137,7 +137,7 @@ void cleanupMemory (Value *the_final_answer, Value *maybeNothing, List *argVect)
 #endif
 }
 
-typedef struct {Value *head; uintptr_t aba;} FreeValList;
+typedef struct {Value *head; uintptr_t aba;} FreeValList __attribute__((aligned(16)));
 
 Value *removeFreeValue(FreeValList *freeList) {
   Value *item = (Value *)0;

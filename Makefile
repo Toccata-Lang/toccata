@@ -20,6 +20,7 @@ new-toc: compiler.toc base.toc typer.toc codegen.toc toccata
 	./toccata compiler.toc > new-toc.tmp
 	sed -i 's/maybe((FnArity/maybe((Vector/' new-toc.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "new-toc.c"; next; } { print; }' new-toc.tmp > new-toc.c
+	clang-format -i new-toc.c
 	$(CC) $(TOC_FLAGS) -DWAIT_FOR_LINGERING=1 -o new-toc -std=c99 core.c new-toc.c $(LDFLAGS)
 
 # Generate C files from .toc files using pattern rules
@@ -27,6 +28,7 @@ regression-tests/%.c: new-toc regression-tests/%.toc hvm-core.toc
 	./new-toc regression-tests/$*.toc > regression-tests/$*.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' \
           regression-tests/$*.tmp > regression-tests/$*.c
+	clang-format -i regression-tests/$*.c
 	rm regression-tests/$*.tmp
 
 # Generic rule for test targets

@@ -44,7 +44,6 @@
 (def FnStruct "FnStruct")
 (def curr-arity (c/tag "#curr-arity"))
 (def dup-label (c/tag "#dup-label"))
-(def has-closures (c/tag "#has-closures"))
 (def global-sym (c/tag "#global-sym"))
 
 ;; A few DUP/SUP labels are used in runtime3.c
@@ -107,7 +106,7 @@
   Stringable
   (string-list [_] (list "<SymTable '" (str path) "'>")))
 
-(deftype Module [file-name index namespaces var-count glbl-exprs]
+(deftype Module [file-name index namespaces var-count glbl-exprs closures]
   ;; index            this module's index
   (assert (instance? Integer index))
   ;; namespaces      imported namespaces
@@ -118,6 +117,8 @@
   (assert (instance? IntGenerator var-count))
   ;; glbl-exprs      list of vars of top level expression results
   (assert (instance? List glbl-exprs))
+  ;; closures     maps arity-id -> list of [sym arity-id] captured by that arity
+  (assert (instance? HashMap closures))
 
   Stringable
   (string-list [_] (list "<Module '" (str file-name) "'>")))
@@ -128,7 +129,8 @@
                      c/fn-arity
                      c/MultiConstraint))
 
-(deftype StaticArity [arity c-fn var constraint]
+(deftype StaticArity [arity c-fn var curr-init constraint]
+  (assert (instance? Vector curr-init))
   (assert (instance? ast/fn-arity-ast arity))
   (assert (instance? String c-fn))
   (assert (instance? StaticC constraint))
@@ -184,7 +186,8 @@
                                               dup-label (c/tag "")
                                               curr-arity (c/tag "")}))}
                 (int-generator 0)
-                empty-list)
+                empty-list
+                {})
         (Module file-name module-index
                 {core (either (get-in core-mod [.namespaces c/no-symbol])
                               (SymTable core
@@ -194,7 +197,8 @@
                                        {}
                                        (list {}))}
                 (int-generator 0)
-                empty-list)))
+                empty-list
+                {})))
 
 (defn report-type-stack [& msg]
   (map (se/get-in-val [.namespaces c/no-symbol .values])
@@ -221,6 +225,18 @@
                                    (fn [values]
                                      (cons values (drop vals-list 2))))
                               vals-list))))
+
+(defn add-closure [sym arity-id]
+  (se/update-in-val [.closures]
+                    (fn [m]
+                      (either (map (get m arity-id)
+                                   (fn [closed-over]
+                                     (assoc m arity-id (conj closed-over sym))))
+                              (assoc m arity-id [sym])))))
+
+(defn get-closures [arity-id]
+  (comp (map (se/get-in-val [.closures arity-id]) maybe)
+        (se/state-error nothing)))
 
 (defn set-val-hist [sym val]
   (fn [vals-list]
