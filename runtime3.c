@@ -104,7 +104,7 @@ Value *my_malloc(int64_t sz) {
   return(val);
 }
 
-typedef struct {Value *head; uintptr_t aba;} FreeValList;
+typedef struct {Value *head; uintptr_t aba;} FreeValList __attribute__((aligned(16)));
 
 Value *removeFreeValue(FreeValList *freeList) {
   Value *item = (Value *)0;
