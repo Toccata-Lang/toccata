@@ -106,7 +106,7 @@
   Stringable
   (string-list [_] (list "<SymTable '" (str path) "'>")))
 
-(deftype Module [file-name index namespaces var-count glbl-exprs closures]
+(deftype Module [file-name index namespaces var-count glbl-exprs closures arity-stack]
   ;; index            this module's index
   (assert (instance? Integer index))
   ;; namespaces      imported namespaces
@@ -119,13 +119,15 @@
   (assert (instance? List glbl-exprs))
   ;; closures     maps arity-id -> list of [sym arity-id] captured by that arity
   (assert (instance? HashMap closures))
+  ;; arity-stack
+  (assert (instance? List arity-stack))
 
   Stringable
   (string-list [_] (list "<Module '" (str file-name) "'>")))
 
 (def modules (agent {}))
 
-(def StaticC (any-of c/AllValues
+(def ArityC (any-of c/AllValues
                      c/fn-arity
                      c/MultiConstraint))
 
@@ -133,11 +135,29 @@
   (assert (instance? Vector curr-init))
   (assert (instance? ast/fn-arity-ast arity))
   (assert (instance? String c-fn))
-  (assert (instance? StaticC constraint))
+  (assert (instance? ArityC constraint))
 
   Stringable
   (string-list [_]
     (list "(b/StaticArity " (str arity) ")"))
+
+  Container
+  (map [x f]
+    (.arity x (f arity)))
+
+  (map [x f embed]
+    (map (f arity)
+         (fn [new-arity]
+           (.arity x new-arity)))))
+
+(deftype ClosureArity [arity var constraint]
+  (assert (instance? ast/fn-arity-ast arity))
+  (assert (instance? String var))
+  (assert (instance? ArityC constraint))
+
+  Stringable
+  (string-list [_]
+    (list "(b/ClosureArity " (str arity) ")"))
 
   Container
   (map [x f]
@@ -187,7 +207,8 @@
                                               curr-arity (c/tag "")}))}
                 (int-generator 0)
                 empty-list
-                {})
+                {}
+                empty-list)
         (Module file-name module-index
                 {core (either (get-in core-mod [.namespaces c/no-symbol])
                               (SymTable core
@@ -198,7 +219,8 @@
                                        (list {}))}
                 (int-generator 0)
                 empty-list
-                {})))
+                {}
+                empty-list)))
 
 (defn report-type-stack [& msg]
   (map (se/get-in-val [.namespaces c/no-symbol .values])
@@ -233,6 +255,17 @@
                                    (fn [closed-over]
                                      (assoc m arity-id (conj closed-over sym))))
                               (assoc m arity-id [sym])))))
+
+(defn add-closures [curr-arity-id sym arity-id]
+  (flat-map (se/get-val .arity-stack)
+            (fn [arity-stack]
+              (se/traverse (take-while arity-stack
+                                       (fn [id]
+                                         (cond (= arity-id id)
+                                               nothing
+                                               (maybe id))))
+                           (fn [closure-id]
+                             (add-closure sym closure-id))))))
 
 (defn get-closures [arity-id]
   (comp (map (se/get-in-val [.closures arity-id]) maybe)
