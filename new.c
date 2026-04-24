@@ -166,11 +166,13 @@ Location port(u64 n, Location x) {
 }
 
 void store_redex(Term neg, Term pos) {
-  // printf("store: ");
-  // print_raw_term(neg);
-  // printf("  ");
-  // print_raw_term(pos);
-  // printf("\n");
+  /*
+  fprintf(stderr, "store: ");
+  print_raw_term(neg);
+  fprintf(stderr, "  ");
+  print_raw_term(pos);
+  fprintf(stderr, "\n");
+  // */
 #ifdef SAFETY
   if (neg == 0 && pos == 0)
     // shutdown the threads
@@ -545,8 +547,6 @@ Location pair_alloc(void) {
 
 // Free a pair by adding it to the free list - O(1)
 void pair_free(Location loc) {
-  // printf("free pair at: %d\n", loc);
-  // printf("free:  %x\n", loc);
 #ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
 #endif
@@ -911,6 +911,9 @@ void applam(Term app, Term lam) {
   // Move terms to their new locations
   moveStore(var_loc, arg_val);
   moveStore(ret_loc, bod_val);
+  return;
+}
+
 // Application-Value interaction
 void appval(Term app, Term val) {
   if (((Value *)val)->type != TermType) {
@@ -948,6 +951,33 @@ void negsup(Term neg, Term sup) {
   Location neg_loc = term_loc(neg);
   Tag neg_tag = term_tag(neg);
   Lab neg_lab = term_lab(neg);
+
+  if (sup_lab == 1) {
+    // fprintf(stderr, "Interaction neg and SUP %s: %d\n", __FILE__, __LINE__);
+    // print_term("sup", sup);
+    // print_term("neg", neg);
+    // fprintf(stderr, "Refs: %ld\n", get_i60(port(1, term_loc(sup))));
+    // pb();
+
+    Term dup = pair_make(DUP, 0, SUB, SUB);
+    Term redex = pair_make(SUB, 5, neg, term_new(VAR, 0, port(1, term_loc(dup))));
+    swapStore(port(1, term_loc(dup)), redex);
+
+    Term taken = swapStore(port(2, term_loc(sup)), term_new(VAR, 0, port(2, term_loc(dup))));
+    if (term_tag(taken) == VAR) {
+      Location l = term_loc(taken);
+      taken = take(l);
+    }
+    // print_term("dup", dup);
+    // print_term("taken", taken);
+
+    store_redex(dup, taken);
+
+    // pb();
+    // interact(dup, taken);
+    // pb();
+    return;
+  }
 
   Term arg = take(port(1, neg_loc));
   Location ret = port(2, neg_loc);
@@ -1004,6 +1034,21 @@ void duplam(Term dup, Term lam) {
 void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
+
+  if (sup_lab == 1) {
+    // fprintf(stderr, "Duping SUP %s: %d\n", __FILE__, __LINE__);
+    // print_term("dup", dup);
+    // print_term("sup", sup);
+    // fprintf(stderr, "Refs: %ld\n", get_i60(port(1, term_loc(sup))));
+    // pb();
+
+    Location dup_loc = term_loc(dup);
+    Location dup_p1 = port(1, dup_loc);
+    Location dup_p2 = port(2, dup_loc);
+    swapStore(dup_p1, sup);
+    swapStore(dup_p2, sup);
+    return;
+  }
 
   if (dup_lab == sup_lab) {
     // Special case: when DUP and SUP have the same label, they annihilate
@@ -1126,6 +1171,16 @@ void eralaz(Term era, Term laz) {
 
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
+  Lab lab = term_lab(sup);
+  if (lab == 1) {
+    return;
+  } else if (lab == 2) {
+    fprintf(stderr, "Erasing SUP %s: %d\n", __FILE__, __LINE__);
+    print_term("interacting", sup);
+    fprintf(stderr, "Refs: %ld\n", get_i60(port(1, term_loc(sup))));
+    pb();
+    abort();
+  }
   Location sup_loc = term_loc(sup);
   store_redex(era, term_new(VAR, 0, port(2, sup_loc)));
   store_redex(era, term_new(VAR, 0, port(1, sup_loc)));
@@ -1490,6 +1545,20 @@ Term argsNet(NativeArgs *args) {
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
+  /*
+  char *refName = NULL;
+  for (unsigned i = 0; i <= refsCount; i++) {
+    if (refNames[i].fn == (interactionFn)(ref & ~TAG_MASK)) {
+      refName = refNames[i].name;
+      break;
+    }
+  }
+  if (refName != NULL && strcmp(refName, "accessField") == 0) {
+    char msg[200];
+    sprintf(msg, "%s\n%p\n%p", refName, (void *)BUFF[0x1a], (void *)get(term_loc(args)));
+  }
+  graphDown(refName, args);
+  // */
   Tag argsTag = term_tag(args);
   if (argsTag == APP) {
     // if 'args' is an APP term
@@ -1522,9 +1591,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       fprintf(stderr, "Wrap LAM in Value line: %d\n", __LINE__);
       print_raw_term(arg);
       fprintf(stderr, "\n");
-      // fprintf(dotFile, "}\n");
-      // fclose(dotFile);
-      // abort();
+
       // add it to argsStruct
       argsStruct->args[argsStruct->count++] = (Term)tv;
       if (expected > 1)
@@ -1541,27 +1608,59 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	dec_and_free(argsStruct->args[i], 1);
       break;
 
-    case SUP:
-      for(int i = 0; i < argsStruct->count; i++)
-	incRef(argsStruct->args[i], 1);
-      Term s1 = take(port(1, term_loc(arg)));
-      Term s2 = take(port(2, term_loc(arg)));
-      Lab supLabel = term_lab(arg);
-      int argsCount = argsStruct->count;
-      argsStruct->count += 1;
+    case SUP: {
+      Lab l = term_lab(arg);
+      if (l == 1) {
+	Term dup = pair_make(DUP, 0, SUB, SUB);
+	// fprintf(stderr, "strictArgs: SUP ");
+	// print_raw_term(args);
+	// fprintf(stderr, " ");
+	// print_raw_term(ref);
+	// fprintf(stderr, "\n");
+	// pb();
+	// print_term("arg", arg);
+	// print_term("dup", dup);
+	Term taken = swapStore(port(2, term_loc(arg)), term_new(VAR, 0, port(2, term_loc(dup))));
+	if (term_tag(taken) == VAR) {
+	  Location l = term_loc(taken);
+	  taken = take(l);
+	}
+	// print_term("taken", taken);
 
-      Term tail1 = pair_make(APP, 0, s1, SUB);
-      argsStruct->args[argsCount] = tail1;
-      swapStore(port(2, term_loc(tail1)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
+	swapStore(port(1, term_loc(args)), term_new(VAR, 0, port(1, term_loc(dup))));
+	argsStruct->args[argsStruct->count++] = args;
+	Term newArgs = argsNet(argsStruct);
+	Term retry = pair_make(SUB, 5, newArgs, ref);
+	swapStore(port(1, term_loc(dup)), retry);
+	store_redex(dup, taken);
 
-      Term tail2 = pair_make(APP, 0, s2, SUB);
-      argsStruct->args[argsCount] = tail2;
-      swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
+	// pb();
+	// interact(dup, taken);
+	// pb();
 
-      Term newSup = pair_make(SUP, supLabel,
-			      term_new(VAR, 0, port(2, term_loc(tail1))),
-			      term_new(VAR, 0, port(2, term_loc(tail2))));
-      moveStore(port(2, term_loc(args)), newSup);
+      } else {
+	for(int i = 0; i < argsStruct->count; i++)
+	  incRef(argsStruct->args[i], 1);
+	Term s1 = take(port(1, term_loc(arg)));
+	Term s2 = take(port(2, term_loc(arg)));
+	Lab supLabel = term_lab(arg);
+	int argsCount = argsStruct->count;
+	argsStruct->count += 1;
+
+	Term tail1 = pair_make(APP, 0, s1, SUB);
+	argsStruct->args[argsCount] = tail1;
+	swapStore(port(2, term_loc(tail1)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
+
+	Term tail2 = pair_make(APP, 0, s2, SUB);
+	argsStruct->args[argsCount] = tail2;
+	swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
+
+	Term newSup = pair_make(SUP, supLabel,
+				term_new(VAR, 0, port(2, term_loc(tail1))),
+				term_new(VAR, 0, port(2, term_loc(tail2))));
+	moveStore(port(2, term_loc(args)), newSup);
+      }
+    }
       break;
 
     case VAR: {
@@ -1635,7 +1734,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 // For testing only
 void print_raw_term(Term t) {
   if (t == 0) {
-    printf("  FREE   ");
+    fprintf(stderr, "  FREE   ");
   } else {
     Tag tag = term_tag(t);
     Lab lab = term_lab(t);
@@ -1644,11 +1743,11 @@ void print_raw_term(Term t) {
     case ERA:
     case I60:
     case F60:
-      printf("%s %x", tag_to_str(tag), lab);
+      fprintf(stderr, "%s %x", tag_to_str(tag), lab);
       break;
 
     case VAL:
-      printf("%s %llx", tag_to_str(tag), t & ~VAL_MASK);
+      fprintf(stderr, "%s %llx", tag_to_str(tag), t & ~VAL_MASK);
       break;
 
     case REF: {
@@ -1659,7 +1758,7 @@ void print_raw_term(Term t) {
 	  break;
 	}
       }
-      printf("%s %llx %s", tag_to_str(tag), t & ~TAG_MASK, refName);
+      fprintf(stderr, "%s %llx %s", tag_to_str(tag), t & ~TAG_MASK, refName);
     }
       break;
 
@@ -1668,7 +1767,7 @@ void print_raw_term(Term t) {
       // break;
 
     default:
-      printf("%s %x %.3x", tag_to_str(tag), lab, term_loc(t));
+      fprintf(stderr, "%s %x %.3x", tag_to_str(tag), lab, term_loc(t));
       break;
     }
   }
@@ -1676,8 +1775,8 @@ void print_raw_term(Term t) {
 
 // Helper to print a term's details
 void print_term(const char* prefix, Term term) {
-  printf("%s:\n", prefix);
-  printf("  Tag: %s (%d, 0x%x)\n", tag_to_str(term_tag(term)), term_tag(term), term_tag(term));
+  fprintf(stderr, "%s:\n", prefix);
+  fprintf(stderr, "  Tag: %s (%d, 0x%x)\n", tag_to_str(term_tag(term)), term_tag(term), term_tag(term));
   switch(term_tag(term)) {
   case VAL:
   case NUL:
@@ -1686,42 +1785,42 @@ void print_term(const char* prefix, Term term) {
     break;
 
   case REF:
-      printf("  Fn: %llx\n", term & ~TAG_MASK);
+      fprintf(stderr, "  Fn: %llx\n", term & ~TAG_MASK);
       break;
       
   case I60:
-    printf("  Val: %ld", get_i60(term));
+    fprintf(stderr, "  Val: %ld", get_i60(term));
     break;
 
   case VAR:
-    printf("  Location: %.3x\n", term_loc(term));
+    fprintf(stderr, "  Location: %.3x\n", term_loc(term));
     // If this is a pair, print its contents
     if (term_loc(term) >= 0) {
       Term first = get(port(1, term_loc(term)));
-      printf("  term: ");
+      fprintf(stderr, "  term: ");
       print_raw_term(first);
-      printf("\n");
+      fprintf(stderr, "\n");
     }
     break;
 
   default:
-    printf("  Location: %.3x\n", term_loc(term));
-    printf("  Label: %.3x\n", term_lab(term));
+    fprintf(stderr, "  Location: %.3x\n", term_loc(term));
+    fprintf(stderr, "  Label: %.3x\n", term_lab(term));
     // If this is a pair, print its contents
     if (term_loc(term) >= 0) {
       Term first = get(port(1, term_loc(term)));
       Term second = get(port(2, term_loc(term)));
-      printf("  First term: ");
+      fprintf(stderr, "  First term: ");
       print_raw_term(first);
-      printf("\n");
-      printf("  Second term: ");
+      fprintf(stderr, "\n");
+      fprintf(stderr, "  Second term: ");
       print_raw_term(second);
-      printf("\n");
+      fprintf(stderr, "\n");
     }
     break;
   }
 
-  printf("\n");
+  fprintf(stderr, "\n");
 }
 
 #ifdef NON_ATOMIC
@@ -1841,25 +1940,25 @@ void print_buff(Location start, Location end) {
   a64* buff = get_buff();
 #endif
   if (!buff) {
-    printf("BUFF is not initialized\n");
+    fprintf(stderr, "BUFF is not initialized\n");
     return;
   }
   if (start >= end) {
-    printf("Invalid range: start=%u end=%u\n", start, end);
+    fprintf(stderr, "Invalid range: start=%u end=%u\n", start, end);
     return;
   }
-  printf("BUFF contents from %u to %u:\n", start, end);
+  fprintf(stderr, "BUFF contents from %u to %u:\n", start, end);
   for (Location i = start; i < end; i += 2) {
     Term t1 = buff[i];
     if (term_tag(t1) != NUL || buff[i + 1] != 0) {
-      printf(" %.3x  ", i);
+      fprintf(stderr," %.3x  ", i);
       print_raw_term(t1);
-      printf("  ");
+      fprintf(stderr,"  ");
       print_raw_term(buff[i + 1]);
-      printf("\n");
+      fprintf(stderr,"\n");
     }
   }
-  printf("\n");
+  fprintf(stderr, "\n");
 }
 
 void pb() {
@@ -1917,6 +2016,24 @@ void print_free_list(void) {
   }
 
   printf("END (count: %d)\n", count);
+}
+
+Term autoDupe(int refs, Lab lab, Term trm) {
+  Tag t = term_tag(trm);
+  if (t == VAR)
+    trm = take(term_loc(trm));
+  t = term_tag(trm);
+
+  if (t == VAL || t == REF || t == I60 || t == F60)
+    return trm;
+
+  // fprintf(stderr, "autoDupe: ");
+  // print_raw_term(trm);
+  // fprintf(stderr, "\n");
+
+  Term r = pair_make(SUP, lab, new_i60(refs), trm);
+  // print_term("duped", r);
+  return r;
 }
 
 Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {

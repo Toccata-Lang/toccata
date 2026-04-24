@@ -293,18 +293,18 @@ TermVal *malloc_term() {
   } else {
     freeTerms.head = freeTerms.head->next;
   }
-  // fprintf(stderr, "newTerm %d: %p\n", __LINE__, (void *)trm);
+  fprintf(stderr, "newTerm %d: %p\n", __LINE__, (void *)trm);
   trm->refs = refsInit;
   trm->type = TermType;
   return(trm);
 }
 
 void freeTerm(Value *v) {
-  // fprintf(stderr, "freeing term %d: %p\n", __LINE__, (void *)v);
+  fprintf(stderr, "freeing term %d: %p\n", __LINE__, (void *)v);
   TermVal *trm = ((TermVal *)v);
   v->next = freeStrings.head;
   freeStrings.head = v;
-  store_redex(ERA, trm->trm);
+  store_redex(ERA, take(trm->trmLoc));
 }
 
 FreeValList centralFreeFnArities = (FreeValList){(Value *)0, 0};
@@ -2974,7 +2974,11 @@ char *typeName(unsigned typeNum) {
 
 void freeGlobal(Term p) {
   // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
-  interact(ERA, p);
+  if (term_tag(p) == SUP) {
+    store_redex(ERA, term_new(VAR, 0, port(1, term_loc(p))));
+    store_redex(ERA, term_new(VAR, 0, port(2, term_loc(p))));
+  } else
+    interact(ERA, p);
 }
 
 int main (int argc, char **argv) {
@@ -3099,6 +3103,10 @@ int main (int argc, char **argv) {
   // printf("- TIME: %.2fs\n", duration);
   // printf("- MIPS: %.2f\n", (double)itrs / duration / 1000000.0);
   printf("remaining nodes: %ld (%ld)\n", node_count, max_node);
+  if (node_count != 0) {
+    fprintf(stderr, "remaining nodes: %ld (%ld)\n", node_count, max_node);
+    exit(1);
+  }
 
   Tag t = term_tag(result);
   if (t == I60) {
