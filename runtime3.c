@@ -2975,10 +2975,13 @@ char *typeName(unsigned typeNum) {
 void freeGlobal(Term p) {
   // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
   if (term_tag(p) == SUP) {
-    store_redex(ERA, term_new(VAR, 0, port(1, term_loc(p))));
-    store_redex(ERA, term_new(VAR, 0, port(2, term_loc(p))));
-  } else
-    interact(ERA, p);
+    swapStore(port(1, term_loc(p)), 1);
+    p = term_new(SUP, 2, term_loc(p));
+  }
+#ifdef STATS
+  atomic_fetch_sub_explicit(&rdxCount, 1, memory_order_relaxed);
+#endif
+  interact(ERA, p);
 }
 
 int main (int argc, char **argv) {

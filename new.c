@@ -674,7 +674,7 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
 
   case SUP:
     // Port 1 must be positive
-    if (!is_positive(fst)) {
+    if (lab != 2 && !is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
@@ -952,30 +952,30 @@ void negsup(Term neg, Term sup) {
   Tag neg_tag = term_tag(neg);
   Lab neg_lab = term_lab(neg);
 
-  if (sup_lab == 1) {
-    // fprintf(stderr, "Interaction neg and SUP %s: %d\n", __FILE__, __LINE__);
-    // print_term("sup", sup);
-    // print_term("neg", neg);
-    // fprintf(stderr, "Refs: %ld\n", get_i60(port(1, term_loc(sup))));
-    // pb();
-
+  if (sup_lab == 1 || sup_lab == 2) {
     Term dup = pair_make(DUP, 0, SUB, SUB);
     Term redex = pair_make(SUB, 5, neg, term_new(VAR, 0, port(1, term_loc(dup))));
     swapStore(port(1, term_loc(dup)), redex);
 
     Term taken = swapStore(port(2, term_loc(sup)), term_new(VAR, 0, port(2, term_loc(dup))));
+    if (sup_lab == 2) {
+      int refs = atomic_fetch_sub_explicit(&BUFF[term_loc(sup)], 1, memory_order_relaxed);
+      if (refs == 1) {
+	Location loc = term_loc(sup);\
+	Term trm = take(port(2, loc));
+
+	// You would expect this to be needed. But because port 1 of the SUB was 0 when
+	// port 2 was taken, that freed the pair. So this is extraneous.
+	// pair_free(loc);
+
+	store_redex(ERA, trm);
+      }
+    }
     if (term_tag(taken) == VAR) {
       Location l = term_loc(taken);
       taken = take(l);
     }
-    // print_term("dup", dup);
-    // print_term("taken", taken);
-
     store_redex(dup, taken);
-
-    // pb();
-    // interact(dup, taken);
-    // pb();
     return;
   }
 
@@ -1035,13 +1035,10 @@ void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
 
-  if (sup_lab == 1) {
-    // fprintf(stderr, "Duping SUP %s: %d\n", __FILE__, __LINE__);
-    // print_term("dup", dup);
-    // print_term("sup", sup);
-    // fprintf(stderr, "Refs: %ld\n", get_i60(port(1, term_loc(sup))));
-    // pb();
-
+  if (sup_lab == 1 | sup_lab == 2) {
+    if (sup_lab == 2) {
+      atomic_fetch_add_explicit(&BUFF[term_loc(sup)], 1, memory_order_relaxed);
+    }
     Location dup_loc = term_loc(dup);
     Location dup_p1 = port(1, dup_loc);
     Location dup_p2 = port(2, dup_loc);
@@ -1175,11 +1172,18 @@ void erasup(Term era, Term sup) {
   if (lab == 1) {
     return;
   } else if (lab == 2) {
-    fprintf(stderr, "Erasing SUP %s: %d\n", __FILE__, __LINE__);
-    print_term("interacting", sup);
-    fprintf(stderr, "Refs: %ld\n", get_i60(port(1, term_loc(sup))));
-    pb();
-    abort();
+    int refs = atomic_fetch_sub_explicit(&BUFF[term_loc(sup)], 1, memory_order_relaxed);
+    if (refs == 1) {
+      Location loc = term_loc(sup);\
+      Term trm = take(port(2, loc));
+
+      // You would expect this to be needed. But because port 1 of the SUP was 0 when
+      // port 2 was taken, that freed the pair. So this is extraneous.
+      // pair_free(loc);
+
+      store_redex(era, trm);
+    }
+    return;
   }
   Location sup_loc = term_loc(sup);
   store_redex(era, term_new(VAR, 0, port(2, sup_loc)));
@@ -1553,10 +1557,10 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
     }
   }
-  if (refName != NULL && strcmp(refName, "accessField") == 0) {
-    char msg[200];
-    sprintf(msg, "%s\n%p\n%p", refName, (void *)BUFF[0x1a], (void *)get(term_loc(args)));
-  }
+  // if (refName != NULL && strcmp(refName, "accessField") == 0) {
+  // char msg[200];
+  // sprintf(msg, "%s\n%p\n%p", refName, (void *)BUFF[0x1a], (void *)get(term_loc(args)));
+  // }
   graphDown(refName, args);
   // */
   Tag argsTag = term_tag(args);
@@ -1610,22 +1614,20 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 
     case SUP: {
       Lab l = term_lab(arg);
-      if (l == 1) {
+      if (l == 1 || l == 2) {
 	Term dup = pair_make(DUP, 0, SUB, SUB);
-	// fprintf(stderr, "strictArgs: SUP ");
-	// print_raw_term(args);
-	// fprintf(stderr, " ");
-	// print_raw_term(ref);
-	// fprintf(stderr, "\n");
-	// pb();
-	// print_term("arg", arg);
-	// print_term("dup", dup);
 	Term taken = swapStore(port(2, term_loc(arg)), term_new(VAR, 0, port(2, term_loc(dup))));
+	if (l == 2) {
+	  int refs = atomic_fetch_sub_explicit(&BUFF[term_loc(arg)], 1, memory_order_relaxed);
+	  if (refs == 1) {
+	    pair_free(term_loc(arg));
+	    swapStore(port(2, term_loc(dup)), ERA);
+	  }
+	}
 	if (term_tag(taken) == VAR) {
 	  Location l = term_loc(taken);
 	  taken = take(l);
 	}
-	// print_term("taken", taken);
 
 	swapStore(port(1, term_loc(args)), term_new(VAR, 0, port(1, term_loc(dup))));
 	argsStruct->args[argsStruct->count++] = args;
@@ -1633,11 +1635,6 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	Term retry = pair_make(SUB, 5, newArgs, ref);
 	swapStore(port(1, term_loc(dup)), retry);
 	store_redex(dup, taken);
-
-	// pb();
-	// interact(dup, taken);
-	// pb();
-
       } else {
 	for(int i = 0; i < argsStruct->count; i++)
 	  incRef(argsStruct->args[i], 1);
@@ -1989,7 +1986,7 @@ void check_buff() {
     Term t1 = buff[i];
     if (term_tag(t1) != NUL || buff[i + 1] != 0) {
       pb();
-      abort();
+      BOOM("Leak pairs");
     }
   }
 }
@@ -2019,20 +2016,42 @@ void print_free_list(void) {
 }
 
 Term autoDupe(int refs, Lab lab, Term trm) {
+  if (refs == 1)
+    return trm;
+
   Tag t = term_tag(trm);
   if (t == VAR)
     trm = take(term_loc(trm));
   t = term_tag(trm);
 
-  if (t == VAL || t == REF || t == I60 || t == F60)
-    return trm;
+  Term r;
+  switch (t) {
+  case REF:
+  case I60:
+  case F60:
+    r = trm;
+    break;
 
-  // fprintf(stderr, "autoDupe: ");
-  // print_raw_term(trm);
-  // fprintf(stderr, "\n");
+  case VAL:
+    incRef(trm, refs);
+    r = trm;
+    break;
 
-  Term r = pair_make(SUP, lab, new_i60(refs), trm);
-  // print_term("duped", r);
+  case SUP:
+    if (term_lab(trm) == 2) {
+      atomic_fetch_add_explicit(&BUFF[term_loc(trm)], refs, memory_order_relaxed);
+    }
+    r = trm;
+    break;
+
+  default:
+    // fprintf(stderr, "autoDupe: ");
+    // print_raw_term(trm);
+    // fprintf(stderr, "\n");
+
+    r = pair_make(SUP, lab, refs, trm);
+    // print_term("duped", r);
+  }
   return r;
 }
 
@@ -2139,7 +2158,14 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   }
 
   Tag bt = term_tag(branch);
-  branchNode = graphSubDown(graphNum, loc, branch);
+  Lab l = term_lab(tree);
+  if (pt == 1 && t == SUP && (l == 1 || l == 2)) {
+    branchNode = otherNodes++;
+    char xLbl[100];
+    snprintf(xLbl, 95, "%ld", branch);
+    fprintf(dotFile, noOutline, graphNum, branchNode, xLbl);
+  } else
+    branchNode = graphSubDown(graphNum, loc, branch);
   if (pt == 1 && t == LAZ && bt == DUP) {
     fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n", graphNum, nodeNum, branchPort, graphNum, branchNode);
   } else if (pt == 2 && (t== APP || t == OPX || t == OPY) && bt == LAZ) {
