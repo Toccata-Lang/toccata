@@ -47,7 +47,7 @@ typedef struct Value {
 typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
-  Term trm;
+  Location trmLoc;
 } TermVal;
 typedef struct {
   TYPE_SIZE type;
@@ -252,6 +252,7 @@ FnArity *malloc_fnArity();
 String *malloc_string(int len);
 Vector *malloc_vector();
 ReifiedVal *malloc_reified(int64_t implCount);
+TermVal *malloc_term();
 
 char *extractStr(Value *v);
 Value *isInstance(Value *arg0, Value *arg1);

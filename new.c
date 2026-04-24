@@ -911,6 +911,24 @@ void applam(Term app, Term lam) {
   // Move terms to their new locations
   moveStore(var_loc, arg_val);
   moveStore(ret_loc, bod_val);
+// Application-Value interaction
+void appval(Term app, Term val) {
+  if (((Value *)val)->type != TermType) {
+    fprintf(stderr, "Invalid APP VAL pair: %d %ld\n", __LINE__, ((Value *)val)->type);
+    abort();
+  }
+  TermVal *tv = (TermVal *)val;
+
+
+  Term dup = pair_make(DUP, 0, SUB, SUB);
+  Term sub = pair_make(SUB, 7, app, term_new(VAR, 0, port(1, term_loc(dup))));
+  swapStore(port(1, term_loc(dup)), sub);
+
+  Term taken = swapStore(tv->trmLoc, term_new(VAR, 0, port(2, term_loc(dup))));
+  if (term_tag(taken) == VAR)
+    taken = take(term_loc(taken));
+  store_redex(app, taken);
+
   return;
 }
 
@@ -1388,8 +1406,8 @@ void NOP(Term neg, Term pos) {
 // VAL    VAR    SUB   NUL   ERA   LAM    APP   REF  VL1    SUP    DUP   OPX   OPY   I60  F60  LAZ
 
 #define APP_INTERACTIONS\
-  &ABRT,&negvar,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&ABRT,&negsup,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
-// VAL    VAR   SUB     NUL    ERA    LAM    APP    REF    VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
+  &appval,&negvar,&ABRT,&appnul,&ABRT,&applam,&ABRT,&appref,&appval,&negsup,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT,&ABRT
+//   VAL     VAR   SUB     NUL    ERA    LAM    APP    REF     VL1    SUP    DUP   OPX   OPY   I60   F60   LAZ
 
 #define DUP_INTERACTIONS\
   &copy,&negvar,&ABRT,&dupnul,&ABRT,&duplam,&ABRT,&copy,&copy,&dupsup,&ABRT,&ABRT,&ABRT,&copy,&copy,&ABRT
@@ -1497,6 +1515,26 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	return args;
       break;
 
+    case LAM: {
+      TermVal *tv = malloc_term();
+      tv->trmLoc = pair_alloc();
+      swapStore(tv->trmLoc, arg);
+      fprintf(stderr, "Wrap LAM in Value line: %d\n", __LINE__);
+      print_raw_term(arg);
+      fprintf(stderr, "\n");
+      // fprintf(dotFile, "}\n");
+      // fclose(dotFile);
+      // abort();
+      // add it to argsStruct
+      argsStruct->args[argsStruct->count++] = (Term)tv;
+      if (expected > 1)
+	// need to get more strict args
+	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+      else
+	return args;
+    }
+      break;
+
     case NUL:
       moveStore(port(2, term_loc(args)), NUL);
       for (int i = 0; i < argsStruct->count; i++)
@@ -1567,13 +1605,6 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	break;
       }
     }
-      break;
-
-    case LAM:
-      fprintf(stderr, "Wrap LAM in Value line: %d\n", __LINE__);
-      fprintf(dotFile, "}\n");
-      fclose(dotFile);
-      abort();
       break;
 
     case LAZ:
@@ -2063,7 +2094,10 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     break;
 
   case VAL:
-    fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
+    if (tree == VOID)
+      fprintf(dotFile, noOutline, graphNum, nodeNum, "VOID");
+    else
+      fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
     break;
 
   case REF: {
@@ -2098,6 +2132,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   case LAZ:
   case LAM:
   case APP:
+  case SUP:
   case DUP: {
     snprintf(xLbl, 95, "%x:", nodeNum);
     if (t == OPX || t == OPY) {
