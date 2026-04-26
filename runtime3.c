@@ -246,7 +246,7 @@ String *malloc_string(int len) {
       str = (String *)removeFreeValue(&centralFreeStrings);
       if (str == (String *)0) {
 	str = (String *)my_malloc(sizeof(String) + STRING_RECYCLE_LEN + 4);
-	memset(str->buffer, 0, STRING_RECYCLE_LEN);
+	memset(str->buffer, 0, STRING_RECYCLE_LEN + 4);
       }
     } else {
       freeStrings.head = freeStrings.head->next;
@@ -1023,7 +1023,6 @@ Value *defaultPrErrSTAR(Value *str) {
 
 Term number_str(Term arg0) {
   String *numStr = malloc_string(50);
-  numStr->len = strlen(numStr->buffer);
   sprintf(numStr->buffer, "%ld", get_i60(arg0));
   return(term_val((Term)numStr));
 }

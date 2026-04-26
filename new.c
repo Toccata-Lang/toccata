@@ -94,12 +94,16 @@ Term term_new(Tag tag, Lab lab, Location loc) {
   if (tag == VAL) {
     BOOM("Can't create VAL's with 'term-new'\n");
   }
+
   u64 loc_bits = ((u64)loc) & LOC_MASK;
   u64 lab_bits = ((u64)lab) & LAB_MASK;
   u64 tag_bits = ((u64)tag) & TAG_MASK;
-  return (loc_bits << (TAG_SIZE + LAB_SIZE)) |
+
+  Term r = (loc_bits << (TAG_SIZE + LAB_SIZE)) |
     (lab_bits << TAG_SIZE) |
     tag_bits;
+
+  return r;
 }
 
 // Get the tag of a term
@@ -674,7 +678,7 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
 
   case SUP:
     // Port 1 must be positive
-    if (lab != 2 && !is_positive(fst)) {
+    if (lab != 1 && lab != 2 && !is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
@@ -917,8 +921,9 @@ void applam(Term app, Term lam) {
 // Application-Value interaction
 void appval(Term app, Term val) {
   if (((Value *)val)->type != TermType) {
-    fprintf(stderr, "Invalid APP VAL pair: %d %ld\n", __LINE__, ((Value *)val)->type);
-    abort();
+    char msg[200];
+    sprintf(msg, "Invalid APP VAL pair: %d %ld\n", __LINE__, ((Value *)val)->type);
+    BOOM(msg);
   }
   TermVal *tv = (TermVal *)val;
   if (tv->refs == 1) {
@@ -971,7 +976,7 @@ void negsup(Term neg, Term sup) {
 
 	// You would expect this to be needed. But because port 1 of the SUB was 0 when
 	// port 2 was taken, that freed the pair. So this is extraneous.
-	// pair_free(loc);
+	// pair_free(sup_loc);
 
 	store_redex(ERA, trm);
       }
@@ -1047,8 +1052,8 @@ void dupsup(Term dup, Term sup) {
     if (sup_lab == 2) {
       atomic_fetch_add_explicit(&BUFF[term_loc(sup)], 1, memory_order_relaxed);
     }
-    swapStore(dup_p1, sup);
-    swapStore(dup_p2, sup);
+    moveStore(dup_p1, sup);
+    moveStore(dup_p2, sup);
   } else if (dup_lab == sup_lab) {
     // Special case: when DUP and SUP have the same label, they annihilate
     // Get the ports of the SUP node
@@ -1549,10 +1554,11 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
     }
   }
-  // if (refName != NULL && strcmp(refName, "accessField") == 0) {
-  // char msg[200];
-  // sprintf(msg, "%s\n%p\n%p", refName, (void *)BUFF[0x1a], (void *)get(term_loc(args)));
-  // }
+  if (refName != NULL && strcmp(refName, "reduce") == 0 && term_loc(args) == 0x88) {
+    // char msg[200];
+    // sprintf(msg, "%s\n%p\n%p", refName, (void *)BUFF[0x1a], (void *)get(term_loc(args)));
+    print_term("reduce args", args);
+  }
   graphDown(refName, args);
   // */
   Tag argsTag = term_tag(args);
@@ -1768,6 +1774,7 @@ void print_raw_term(Term t) {
 void print_term(const char* prefix, Term term) {
   fprintf(stderr, "%s:\n", prefix);
   fprintf(stderr, "  Tag: %s (%d, 0x%x)\n", tag_to_str(term_tag(term)), term_tag(term), term_tag(term));
+  Lab lab = term_lab(term);
   switch(term_tag(term)) {
   case VAL:
   case NUL:
@@ -1794,9 +1801,36 @@ void print_term(const char* prefix, Term term) {
     }
     break;
 
+  case SUP:
+    if (lab == 1 || lab == 2) {
+      fprintf(stderr, "  Location: %.3x\n", term_loc(term));
+      fprintf(stderr, "  Label: %.3x\n", lab);
+	Term first = get(port(1, term_loc(term)));
+	Term second = get(port(2, term_loc(term)));
+	fprintf(stderr, "  Refs: %d\n", (int)first);
+	fprintf(stderr, "  Second term: ");
+	print_raw_term(second);
+	fprintf(stderr, "\n");
+    } else {
+      fprintf(stderr, "  Location: %.3x\n", term_loc(term));
+      fprintf(stderr, "  Label: %.3x\n", lab);
+      // If this is a pair, print its contents
+      if (term_loc(term) >= 0) {
+	Term first = get(port(1, term_loc(term)));
+	Term second = get(port(2, term_loc(term)));
+	fprintf(stderr, "  First term: ");
+	print_raw_term(first);
+	fprintf(stderr, "\n");
+	fprintf(stderr, "  Second term: ");
+	print_raw_term(second);
+	fprintf(stderr, "\n");
+      }
+    }
+    break;
+
   default:
     fprintf(stderr, "  Location: %.3x\n", term_loc(term));
-    fprintf(stderr, "  Label: %.3x\n", term_lab(term));
+    fprintf(stderr, "  Label: %.3x\n", lab);
     // If this is a pair, print its contents
     if (term_loc(term) >= 0) {
       Term first = get(port(1, term_loc(term)));
@@ -2264,16 +2298,19 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   }
     break;
 
+  case SUP:
   case OPX:
   case OPY:
   case LAZ:
   case LAM:
   case APP:
-  case SUP:
   case DUP: {
+    Lab lab = term_lab(tree);
     snprintf(xLbl, 95, "%x:", nodeNum);
     if (t == OPX || t == OPY) {
       fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "-", 0, xLbl);
+    } else if (t == SUP && (lab == 1 || lab == 2)) {
+      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "R", 0, xLbl);
     } else {
       fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 0, xLbl);
     }
