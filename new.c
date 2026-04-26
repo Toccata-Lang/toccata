@@ -921,17 +921,22 @@ void appval(Term app, Term val) {
     abort();
   }
   TermVal *tv = (TermVal *)val;
+  if (tv->refs == 1) {
+    Term trm = swapStore(tv->trmLoc, NUL);
+    if (term_tag(trm) == VAR)
+      trm = take(term_loc(trm));
+    store_redex(app, trm);
+  } else {
+    Term dup = pair_make(DUP, 0, SUB, SUB);
+    Term sub = pair_make(SUB, 7, app, term_new(VAR, 0, port(1, term_loc(dup))));
+    swapStore(port(1, term_loc(dup)), sub);
 
-
-  Term dup = pair_make(DUP, 0, SUB, SUB);
-  Term sub = pair_make(SUB, 7, app, term_new(VAR, 0, port(1, term_loc(dup))));
-  swapStore(port(1, term_loc(dup)), sub);
-
-  Term taken = swapStore(tv->trmLoc, term_new(VAR, 0, port(2, term_loc(dup))));
-  if (term_tag(taken) == VAR)
-    taken = take(term_loc(taken));
-  store_redex(app, taken);
-
+    Term trm = swapStore(tv->trmLoc, term_new(VAR, 0, port(2, term_loc(dup))));
+    if (term_tag(trm) == VAR)
+      trm = take(term_loc(trm));
+    store_redex(dup, trm);
+  }
+  dec_and_free(val, 1);
   return;
 }
 
@@ -954,15 +959,15 @@ void negsup(Term neg, Term sup) {
 
   if (sup_lab == 1 || sup_lab == 2) {
     Term dup = pair_make(DUP, 0, SUB, SUB);
-    Term redex = pair_make(SUB, 5, neg, term_new(VAR, 0, port(1, term_loc(dup))));
-    swapStore(port(1, term_loc(dup)), redex);
+    Location dup_loc = term_loc(dup);
+    Term redex = pair_make(SUB, 5, neg, term_new(VAR, 0, port(1, dup_loc)));
+    swapStore(port(1, dup_loc), redex);
 
-    Term taken = swapStore(port(2, term_loc(sup)), term_new(VAR, 0, port(2, term_loc(dup))));
+    Term taken = swapStore(port(2, sup_loc), term_new(VAR, 0, port(2, dup_loc)));
     if (sup_lab == 2) {
-      int refs = atomic_fetch_sub_explicit(&BUFF[term_loc(sup)], 1, memory_order_relaxed);
+      int refs = atomic_fetch_sub_explicit(&BUFF[sup_loc], 1, memory_order_relaxed);
       if (refs == 1) {
-	Location loc = term_loc(sup);\
-	Term trm = take(port(2, loc));
+	Term trm = take(port(2, sup_loc));
 
 	// You would expect this to be needed. But because port 1 of the SUB was 0 when
 	// port 2 was taken, that freed the pair. So this is extraneous.
@@ -976,29 +981,29 @@ void negsup(Term neg, Term sup) {
       taken = take(l);
     }
     store_redex(dup, taken);
-    return;
-  }
+  } else {
 
-  Term arg = take(port(1, neg_loc));
-  Location ret = port(2, neg_loc);
-  Term tm1 = take(port(1, sup_loc));
-  Term tm2 = take(port(2, sup_loc));
-  Term dp1 = makeLazyDup(sup_lab, arg);
-  Term cn1 = pair_make(neg_tag, neg_lab,
-		       term_new(VAR, 0, port(1, term_loc(dp1))),
-		       SUB);
-  Term lz1 = pair_make(LAZ, 5, cn1, tm1);
-  swapStore(port(2, term_loc(cn1)), lz1);
-  Term cn2 = pair_make(neg_tag, neg_lab,
-		       term_new(VAR, 0, port(2, term_loc(dp1))),
-		       SUB);
-  swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 6, cn2, tm2));
-  // TODO: could you make the ports of the SUP store direct LAZ terms
-  // and not VAR's?
-  Term dp2 = pair_make(SUP, sup_lab,
-		       term_new(VAR, 0, port(2, term_loc(cn1))),
-		       term_new(VAR, 0, port(2, term_loc(cn2))));
-  moveStore(ret, dp2);
+    Term arg = take(port(1, neg_loc));
+    Location ret = port(2, neg_loc);
+    Term tm1 = take(port(1, sup_loc));
+    Term tm2 = take(port(2, sup_loc));
+    Term dp1 = makeLazyDup(sup_lab, arg);
+    Term cn1 = pair_make(neg_tag, neg_lab,
+			 term_new(VAR, 0, port(1, term_loc(dp1))),
+			 SUB);
+    Term lz1 = pair_make(LAZ, 5, cn1, tm1);
+    swapStore(port(2, term_loc(cn1)), lz1);
+    Term cn2 = pair_make(neg_tag, neg_lab,
+			 term_new(VAR, 0, port(2, term_loc(dp1))),
+			 SUB);
+    swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 6, cn2, tm2));
+    // TODO: could you make the ports of the SUP store direct LAZ terms
+    // and not VAR's?
+    Term dp2 = pair_make(SUP, sup_lab,
+			 term_new(VAR, 0, port(2, term_loc(cn1))),
+			 term_new(VAR, 0, port(2, term_loc(cn2))));
+    moveStore(ret, dp2);
+  }
 }
 
 // Application-Null interaction
@@ -1034,26 +1039,18 @@ void duplam(Term dup, Term lam) {
 void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
+  Location dup_loc = term_loc(dup);
+  Location dup_p1 = port(1, dup_loc);
+  Location dup_p2 = port(2, dup_loc);
 
   if (sup_lab == 1 | sup_lab == 2) {
     if (sup_lab == 2) {
       atomic_fetch_add_explicit(&BUFF[term_loc(sup)], 1, memory_order_relaxed);
     }
-    Location dup_loc = term_loc(dup);
-    Location dup_p1 = port(1, dup_loc);
-    Location dup_p2 = port(2, dup_loc);
     swapStore(dup_p1, sup);
     swapStore(dup_p2, sup);
-    return;
-  }
-
-  if (dup_lab == sup_lab) {
+  } else if (dup_lab == sup_lab) {
     // Special case: when DUP and SUP have the same label, they annihilate
-    // Get the ports of the DUP node
-    Location dup_loc = term_loc(dup);
-    Location dup_p1 = port(1, dup_loc);
-    Location dup_p2 = port(2, dup_loc);
-
     // Get the ports of the SUP node
     Location sup_loc = term_loc(sup);
     Term sup_p1 = take(port(1, sup_loc));
@@ -1063,11 +1060,6 @@ void dupsup(Term dup, Term sup) {
     moveStore(dup_p1, sup_p1);
     moveStore(dup_p2, sup_p2);
   } else {
-    // Get the ports of the DUP node
-    Location dup_loc = term_loc(dup);
-    Location dup_p1 = port(1, dup_loc);
-    Location dup_p2 = port(2, dup_loc);
-
     // Get the ports of the SUP node
     Location sup_loc = term_loc(sup);
     Term sup_p1 = take(port(1, sup_loc));
@@ -1183,11 +1175,11 @@ void erasup(Term era, Term sup) {
 
       store_redex(era, trm);
     }
-    return;
+  } else {
+    Location sup_loc = term_loc(sup);
+    store_redex(era, term_new(VAR, 0, port(2, sup_loc)));
+    store_redex(era, term_new(VAR, 0, port(1, sup_loc)));
   }
-  Location sup_loc = term_loc(sup);
-  store_redex(era, term_new(VAR, 0, port(2, sup_loc)));
-  store_redex(era, term_new(VAR, 0, port(1, sup_loc)));
   return;
 }
 
@@ -1613,15 +1605,17 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
 
     case SUP: {
+      Location arg_loc = term_loc(arg);
       Lab l = term_lab(arg);
       if (l == 1 || l == 2) {
 	Term dup = pair_make(DUP, 0, SUB, SUB);
-	Term taken = swapStore(port(2, term_loc(arg)), term_new(VAR, 0, port(2, term_loc(dup))));
+	Location dup_loc = term_loc(dup);
+	Term taken = swapStore(port(2, arg_loc), term_new(VAR, 0, port(2, dup_loc)));
 	if (l == 2) {
-	  int refs = atomic_fetch_sub_explicit(&BUFF[term_loc(arg)], 1, memory_order_relaxed);
+	  int refs = atomic_fetch_sub_explicit(&BUFF[arg_loc], 1, memory_order_relaxed);
 	  if (refs == 1) {
-	    pair_free(term_loc(arg));
-	    swapStore(port(2, term_loc(dup)), ERA);
+	    pair_free(arg_loc);
+	    swapStore(port(2, dup_loc), ERA);
 	  }
 	}
 	if (term_tag(taken) == VAR) {
@@ -1629,17 +1623,17 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	  taken = take(l);
 	}
 
-	swapStore(port(1, term_loc(args)), term_new(VAR, 0, port(1, term_loc(dup))));
+	swapStore(port(1, term_loc(args)), term_new(VAR, 0, port(1, dup_loc)));
 	argsStruct->args[argsStruct->count++] = args;
 	Term newArgs = argsNet(argsStruct);
 	Term retry = pair_make(SUB, 5, newArgs, ref);
-	swapStore(port(1, term_loc(dup)), retry);
+	swapStore(port(1, dup_loc), retry);
 	store_redex(dup, taken);
       } else {
 	for(int i = 0; i < argsStruct->count; i++)
 	  incRef(argsStruct->args[i], 1);
-	Term s1 = take(port(1, term_loc(arg)));
-	Term s2 = take(port(2, term_loc(arg)));
+	Term s1 = take(port(1, arg_loc));
+	Term s2 = take(port(2, arg_loc));
 	Lab supLabel = term_lab(arg);
 	int argsCount = argsStruct->count;
 	argsStruct->count += 1;

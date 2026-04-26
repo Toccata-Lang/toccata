@@ -293,7 +293,6 @@ TermVal *malloc_term() {
   } else {
     freeTerms.head = freeTerms.head->next;
   }
-  fprintf(stderr, "newTerm %d: %p\n", __LINE__, (void *)trm);
   trm->refs = refsInit;
   trm->type = TermType;
   return(trm);
