@@ -1211,21 +1211,16 @@ Term vectConjRef = new_ref(vectConjFn);
 
 void vectMap(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
-  args = strictArgs(ref, args, 1, &arityArgs);
-  Term result = NUL;
-  if (arityArgs.count == 1) {
-    args = take(port(2, term_loc(args)));
+  args = strictArgs(ref, args, 2, &arityArgs);
+  if (arityArgs.count == 2) {
     Vector *vect = (Vector *)arityArgs.args[0];
-    Term f = take(port(1, term_loc(args)));
+    Term f = arityArgs.args[1];
     Term newV = term_val((Term)empty_vect);
+    incRef(f, vect->count);
     for (unsigned i = 0; i < vect->count; i++) {
-      Term f_1;
-      if (i < vect->count - 1)
-	f = dupeArg(f, &f_1, 0);
-      else
-	f_1 = f;
       Term mArgs = pair_make(APP, 0, vectGet(vect, i), SUB);
-      swapStore(port(2, term_loc(mArgs)), pair_make(LAZ, 0, mArgs, f_1));
+      BOOM("make this non-lazy");
+      swapStore(port(2, term_loc(mArgs)), pair_make(LAZ, 0, mArgs, f));
       Term cArgs1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(mArgs))), SUB);
       Term cArgs2 = pair_make(APP, 0, newV, cArgs1);
       Term conjNode = pair_make(LAZ, 0, cArgs2, vectConjRef);
@@ -1233,8 +1228,8 @@ void vectMap(Term ref, Term args) {
       newV = term_new(VAR, 0, port(2, term_loc(cArgs1)));
     }
     dec_and_free((Term)vect, 1);
-    result = newV;
-    moveStore(port(2, term_loc(args)), result);
+    dec_and_free(f, 1);
+    moveStore(port(2, term_loc(args)), newV);
   }
   return;
 }
@@ -3052,8 +3047,11 @@ int main (int argc, char **argv) {
 	  Term neg = take(port(1, term_loc(result)));
 	  Term pos = take(port(2, term_loc(result)));
 	  store_redex(neg, pos);
-	} else
+	} else {
+	  graphDown("BOOM", result);
+	  print_term("result", result);
 	  BOOM("Compiler screwed up. Incomplete result.");
+	}
 	break;
 
       case LAZ:
@@ -3079,9 +3077,27 @@ int main (int argc, char **argv) {
 	}
 	break;
 // */
+
+      case SUP: {
+	Lab l = term_lab(result);
+	Location loc = term_loc(result);
+	if (l == 1 || l == 2) {
+	  graphDown("result", result);
+	  int refs = decSubRefs(loc);
+	  resultLocation = port(2, loc);
+	} else {
+	  char s[50];
+	  sprintf(s, "bad result %s (%d) pair", tag_to_str(resultTag), resultTag);
+	  graphDown("result", result);
+	  BOOM(s);
+	}
+      }
+	break;
+	
       default: {
 	char s[50];
 	sprintf(s, "bad result %s (%d) pair", tag_to_str(resultTag), resultTag);
+	graphDown("result", result);
 	BOOM(s);
       }
 	break;

@@ -954,6 +954,10 @@ Term makeLazyDup(Lab lb, Term arg) {
   return dp;
 }
 
+int decSubRefs(Location sup_loc) {
+  return atomic_fetch_sub_explicit(&BUFF[sup_loc], 1, memory_order_relaxed);
+}
+
 // distribute a negative through a SUP
 void negsup(Term neg, Term sup) {
   Location sup_loc = term_loc(sup);
@@ -970,7 +974,7 @@ void negsup(Term neg, Term sup) {
 
     Term taken = swapStore(port(2, sup_loc), term_new(VAR, 0, port(2, dup_loc)));
     if (sup_lab == 2) {
-      int refs = atomic_fetch_sub_explicit(&BUFF[sup_loc], 1, memory_order_relaxed);
+      int refs = decSubRefs(sup_loc);
       if (refs == 1) {
 	Term trm = take(port(2, sup_loc));
 
@@ -1169,7 +1173,7 @@ void erasup(Term era, Term sup) {
   if (lab == 1) {
     return;
   } else if (lab == 2) {
-    int refs = atomic_fetch_sub_explicit(&BUFF[term_loc(sup)], 1, memory_order_relaxed);
+    int refs = decSubRefs(term_loc(sup));
     if (refs == 1) {
       Location loc = term_loc(sup);\
       Term trm = take(port(2, loc));
@@ -1554,12 +1558,14 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
     }
   }
-  if (refName != NULL && strcmp(refName, "reduce") == 0 && term_loc(args) == 0x88) {
-    // char msg[200];
-    // sprintf(msg, "%s\n%p\n%p", refName, (void *)BUFF[0x1a], (void *)get(term_loc(args)));
-    print_term("reduce args", args);
+  if (refName != NULL) {
+    char msg[200];
+    sprintf(msg, "%s %03x:", refName, term_loc(args));
+    graphDown(msg, args);
   }
-  graphDown(refName, args);
+  if (strcmp(refName, "vect-get") == 0) {
+    print_term("vect-get args", args);
+  }
   // */
   Tag argsTag = term_tag(args);
   if (argsTag == APP) {
@@ -1618,7 +1624,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	Location dup_loc = term_loc(dup);
 	Term taken = swapStore(port(2, arg_loc), term_new(VAR, 0, port(2, dup_loc)));
 	if (l == 2) {
-	  int refs = atomic_fetch_sub_explicit(&BUFF[arg_loc], 1, memory_order_relaxed);
+	  int refs = decSubRefs(arg_loc);
 	  if (refs == 1) {
 	    pair_free(arg_loc);
 	    swapStore(port(2, dup_loc), ERA);
