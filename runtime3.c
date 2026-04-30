@@ -1219,7 +1219,6 @@ void vectMap(Term ref, Term args) {
     incRef(f, vect->count);
     for (unsigned i = 0; i < vect->count; i++) {
       Term mArgs = pair_make(APP, 0, vectGet(vect, i), SUB);
-      BOOM("make this non-lazy");
       swapStore(port(2, term_loc(mArgs)), pair_make(LAZ, 0, mArgs, f));
       Term cArgs1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(mArgs))), SUB);
       Term cArgs2 = pair_make(APP, 0, newV, cArgs1);
