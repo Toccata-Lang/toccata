@@ -2205,20 +2205,25 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   } else if (pt == 2 && (t== APP || t == OPX || t == OPY) && bt == LAZ) {
     fprintf(dotFile, "x%d_%x:s -- x%d_%x:se\n", graphNum, branchNode, graphNum, nodeNum);
   } else {
-    if (branchNode != 65536 && t != DUP) {
-      if (term_tag(branch) == VAR &&
-	  ((term_tag(get(term_loc(branch))) == LAZ &&
-	    term_tag(get(port(1, term_loc(get(term_loc(branch)))))) == DUP) ||
-	   term_tag(get(term_loc(branch))) == SUB)) {
-	if (term_loc(branch) & 1)
-	  fprintf(dotFile, "x%d_%x:%s -- x%d_%x:se\n",
-		  graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE));
-	else
-	  fprintf(dotFile, "x%d_%x:%s -- x%d_%x:sw\n",
-		  graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE));
-      } else {
+    if (branchNode != 65536) {
+      if (t == DUP ) {
 	fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
 		graphNum, nodeNum, branchPort, graphNum, branchNode);
+      } else {
+	if (bt == VAR &&
+	    ((term_tag(get(term_loc(branch))) == LAZ &&
+	      term_tag(get(port(1, term_loc(get(term_loc(branch)))))) == DUP) ||
+	     term_tag(get(term_loc(branch))) == SUB)) {
+	  if (bt & 1)
+	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:se\n",
+		    graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE));
+	  else
+	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:sw\n",
+		    graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE));
+	} else {
+	  fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
+		  graphNum, nodeNum, branchPort, graphNum, branchNode);
+	}
       }
     }
   }
