@@ -1402,8 +1402,14 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
   }
 
 void YNUM(Term opy, Term num) {
+  NativeArgs arityArgs = {0, {}};
+  opy = strictArgs(num, opy, 1, &arityArgs);
+  if (arityArgs.count != 1) {
+    return;
+  }
+
   Location op_loc = term_loc(opy);
-  Term x = take(port(1, op_loc));
+  Term x = arityArgs.args[0];
   Tag y_type = term_tag(num);
   Location ret = port(2, op_loc);
   u64 res;
@@ -1415,8 +1421,11 @@ void YNUM(Term opy, Term num) {
   case F60:
     break;
 
-  default:
-    BOOM("wrong value to OPY");
+  default: {
+    char msg[200];
+    sprintf(msg, "wrong value to OPY: %s", tag_to_str(term_tag(x))); 
+    BOOM(msg);
+  }
     break;
   }
 #endif
@@ -1568,7 +1577,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   }
   // */
   Tag argsTag = term_tag(args);
-  if (argsTag == APP) {
+  if (argsTag == APP || argsTag == OPY) {
     // if 'args' is an APP term
     Term arg = take(port(1, term_loc(args)));
     if (expected == 0) {
@@ -1596,9 +1605,6 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       TermVal *tv = malloc_term();
       tv->trmLoc = pair_alloc();
       swapStore(tv->trmLoc, arg);
-      fprintf(stderr, "Wrap LAM in Value line: %d\n", __LINE__);
-      print_raw_term(arg);
-      fprintf(stderr, "\n");
 
       // add it to argsStruct
       argsStruct->args[argsStruct->count++] = (Term)tv;
@@ -1723,9 +1729,9 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     // } else if (argsTag == VAR) {
     // if 'args' is a VAR term
   } else {
-    printf("strictArgs expected: %d\n", expected);
+    fprintf(stderr, "strictArgs expected: %d\n", expected);
     print_term("strictArgs args", args);
-    printf("unhandled tag %s (0x%x) %p line: %d\n",
+    fprintf(stderr, "unhandled tag %s (0x%x) %p line: %d\n",
 	   tag_to_str(argsTag), argsTag, (void *)args, __LINE__);
     fprintf(dotFile, "}\n");
     fclose(dotFile);
@@ -2214,12 +2220,9 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
 	    ((term_tag(get(term_loc(branch))) == LAZ &&
 	      term_tag(get(port(1, term_loc(get(term_loc(branch)))))) == DUP) ||
 	     term_tag(get(term_loc(branch))) == SUB)) {
-	  if (bt & 1)
-	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:se\n",
-		    graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE));
-	  else
-	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:sw\n",
-		    graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE));
+	  fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
+		  graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE),
+		  (term_loc(branch) & 1) ? "se" : "sw");
 	} else {
 	  fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
 		  graphNum, nodeNum, branchPort, graphNum, branchNode);

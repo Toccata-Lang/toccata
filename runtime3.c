@@ -299,7 +299,7 @@ TermVal *malloc_term() {
 }
 
 void freeTerm(Value *v) {
-  fprintf(stderr, "freeing term %d: %p\n", __LINE__, (void *)v);
+  // fprintf(stderr, "freeing term %d: %p\n", __LINE__, (void *)v);
   TermVal *trm = ((TermVal *)v);
   v->next = freeStrings.head;
   freeStrings.head = v;
