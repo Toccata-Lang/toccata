@@ -1216,19 +1216,23 @@ void vectMap(Term ref, Term args) {
     Vector *vect = (Vector *)arityArgs.args[0];
     Term f = arityArgs.args[1];
     Term newV = term_val((Term)empty_vect);
-    incRef(f, vect->count);
-    for (unsigned i = 0; i < vect->count; i++) {
-      Term mArgs = pair_make(APP, 0, vectGet(vect, i), SUB);
-      swapStore(port(2, term_loc(mArgs)), pair_make(LAZ, 0, mArgs, f));
-      Term cArgs1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(mArgs))), SUB);
-      Term cArgs2 = pair_make(APP, 0, newV, cArgs1);
-      Term conjNode = pair_make(LAZ, 0, cArgs2, vectConjRef);
-      swapStore(port(2, term_loc(cArgs1)), conjNode);
-      newV = term_new(VAR, 0, port(2, term_loc(cArgs1)));
+    if (vect->count == 0) {
+      dec_and_free(f, 1);
+      moveStore(port(2, term_loc(args)), (Term)vect);
+    } else {
+      incRef(f, vect->count - 1);
+      for (unsigned i = 0; i < vect->count; i++) {
+	Term mArgs = pair_make(APP, 0, vectGet(vect, i), SUB);
+	swapStore(port(2, term_loc(mArgs)), pair_make(LAZ, 0, mArgs, f));
+	Term cArgs1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(mArgs))), SUB);
+	Term cArgs2 = pair_make(APP, 0, newV, cArgs1);
+	Term conjNode = pair_make(LAZ, 0, cArgs2, vectConjRef);
+	swapStore(port(2, term_loc(cArgs1)), conjNode);
+	newV = term_new(VAR, 0, port(2, term_loc(cArgs1)));
+      }
+      dec_and_free((Term)vect, 1);
+      moveStore(port(2, term_loc(args)), newV);
     }
-    dec_and_free((Term)vect, 1);
-    dec_and_free(f, 1);
-    moveStore(port(2, term_loc(args)), newV);
   }
   return;
 }
