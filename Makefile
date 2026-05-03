@@ -4,7 +4,7 @@
 PROJECT_NAME = toccata
 VERSION = 1.0.0
 CC = clang
-CFLAGS = -g
+CFLAGS = -g # -fsanitize=address
 LDFLAGS = -lpthread -latomic
 TOC_FLAGS = -march=native -I. -DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1 -lm 
 TARGET = $(PROJECT_NAME)

@@ -48,6 +48,7 @@ typedef struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
   Location trmLoc;
+  char padding[sizeof(Value *) - sizeof(Location)];
 } TermVal;
 typedef struct {
   TYPE_SIZE type;
@@ -267,7 +268,8 @@ void vectConjFn(Term ref, Term args);
 void vectMap(Term ref, Term args);
 extern Term vectConjRef;
 Vector *mutateVectConj(Vector *vect, Term val);
-Vector *vectStore(Vector *vect, unsigned index, Term val);
+Term vectGet(Vector *vect, unsigned index);
+Term vectStore(Vector *vect, unsigned index, Term val);
 ReifiedVal *updateField(ReifiedVal *rval, Term field, int64_t idx);
 Vector *vectorReverse(Vector *v);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
@@ -346,7 +348,6 @@ Value *mutateAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift);
 Value *newTypeValue(int typeNum, Vector *fields);
 Vector *listVec(Value *list);
 Value *defaultPrErrSTAR(Value *str);
-Term vectGet(Vector *vect, unsigned index);
 Value *hashMapVec(Value *m);
 void incTypeMalloc(TYPE_SIZE type, int delta);
 void incTypeFree(TYPE_SIZE type, int delta);

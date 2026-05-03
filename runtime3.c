@@ -301,9 +301,10 @@ TermVal *malloc_term() {
 void freeTerm(Value *v) {
   // fprintf(stderr, "freeing term %d: %p\n", __LINE__, (void *)v);
   TermVal *trm = ((TermVal *)v);
-  v->next = freeStrings.head;
-  freeStrings.head = v;
-  store_redex(ERA, take(trm->trmLoc));
+  Term trmVal = take(trm->trmLoc);
+  v->next = freeTerms.head;
+  freeTerms.head = v;
+  store_redex(ERA, trmVal);
 }
 
 FreeValList centralFreeFnArities = (FreeValList){(Value *)0, 0};
@@ -852,6 +853,7 @@ void moveFreeToCentral() {
   for (int i = 0; i < 20; i++) {
     moveToCentral(&freeReified[i], &centralFreeReified[i]);
   }
+  moveToCentral(&freeTerms, &centralFreeTerms);
   moveToCentral(&freeStrings, &centralFreeStrings);
   moveToCentral(&freeArrayNodes, &centralFreeArrayNodes);
   moveToCentral(&freeVectors, &centralFreeVectors);
@@ -889,6 +891,7 @@ void freeAll() {
   emptyFreeList(&centralFreeVectors);
   emptyFreeList(&centralFreeVectorNodes);
   emptyFreeList(&centralFreeStrings);
+  emptyFreeList(&centralFreeTerms);
 
 //*
 #ifdef SINGLE_THREADED
@@ -1302,7 +1305,6 @@ void hvmVectFn(Term ref, Term args){
 }
 Term hvmVect = new_ref(hvmVectFn);
 
-#if 0
 VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Term val) {
   if (level == 0) {
     int arrayIndex = index & 0x1f;
@@ -1319,10 +1321,10 @@ VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Term val)
   }
 }
 
-Vector *vectStore(Vector *vect, unsigned index, Term val) {
+Term vectStore(Vector *vect, unsigned index, Term val) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
-  return ((Vector *)NULL);
+  return VOID;
   /*
   TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   // TODO: check the refs count and mutate if equal 1
@@ -1361,7 +1363,6 @@ Vector *vectStore(Vector *vect, unsigned index, Term val) {
   }
   // */
 }
-#endif
 
 Vector *fastVectStore(Vector *vect, unsigned index, Term val) {
   if (index < vect->count &&
