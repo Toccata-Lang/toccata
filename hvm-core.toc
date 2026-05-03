@@ -246,10 +246,11 @@ abort();
 (defn + [x y]
   ! x Integer
   ! y Integer
-  ;; This function is optimized away with OP_ADD
   (inline Integer "
-  fprintf(stderr, \"'+' should be optimized away\\n\");
-  abort();
+    if (term_tag(x_1) != I60 && term_tag(y_2) != I60) {
+      BOOM(\"Invalid inputs to '+'\");
+    }
+    result = new_i60(get_i60(x_1) + get_i60(y_2));
 "))
 
 (defn inc [x]
@@ -609,6 +610,7 @@ abort();
   (range* [] n 0))
 
 ;; TODO: this would be simpler with a 'match' expression
+;; it's more effecient to dispatch on the type of 'v'
 (defp vect-reduce [v vect n result f]
   ! vect Vector
   ! n Integer ;; WholeInt
@@ -622,20 +624,38 @@ abort();
   (vect-reduce [el vect n result f]
     (vect-reduce (get vect n) vect (inc n) (f result (.x el)) f)))
 
-(defn subvec* [v curr-index max-index result]
-  ! v Vector
-  ! curr-index Integer ;; WholeInt
-  ! max-index Integer ;; WholeInt
-  ! result Vector
-  (either (and (<= curr-index max-index)
-               (map (vect-get v curr-index)
-                    (fn [x]
-                      (subvec* v (inc curr-index) max-index (vect-conj result x)))))
-          result))
+;; TODO: this would be simpler with a 'match' expression
+;; it's more effecient to dispatch on the type of 'v'
+(defp vect-reverse [v vect n result]
+  ! vect Vector
+  ! n Integer
+  )
+
+(extend-type None
+  (vect-reverse [el vect n result]
+    result))
+(extend-type Some
+  (vect-reverse [el vect n result]
+    (vect-reverse (and (<= 0 n) (get vect n))
+                  vect (dec n) (conj result (.x el)))))
+
+(defp vect-sub [v vect n max-n result]
+  ! vect Vector
+  ! n Integer ;; WholeInt
+  ! max-n Integer ;; WholeInt
+  )
+
+(extend-type None
+  (vect-sub [el vect n max-n result]
+    result))
+(extend-type Some
+  (vect-sub [el vect n max-n result]
+    (vect-sub (and (< n max-n) (get vect n))
+              vect (inc n) max-n (conj result (.x el)))))
 
 (defn subvec [v start len]
   ;; Extract a smaller vector from a larger one
-  (subvec* v start (dec (+ start len)) empty-vector))
+  (vect-sub (vect-get v start) v (inc start) (+ start len) []))
 
 (def vect-map (inline "new_ref(vectMap)"))
 
@@ -661,7 +681,6 @@ abort();
   !returns Some 
   (inline C "
   result = vectStore((Vector *)v_1, get_i60(n_2), (Term)x_3);
-  dec_and_free(v_1, 1);
   dec_and_free(n_2, 1);"))
 
 (extend-type Vector
@@ -701,13 +720,19 @@ abort();
     (get v (dec (count v))))
 
   (rest [v]
-    (subvec* v 1 (dec (count v)) []))
+    (subvec v 1 (dec (count v))))
 
   (conj [vect v]
     (vect-conj vect v))
 
+  (store [vect n v]
+    (vect-store vect n v))
+
   (reduce [v result f]
     (vect-reduce (first v) v 1 result f))
+
+  (reverse [v]
+    (vect-reverse (last v) v (- (count v) 2) []))
 
   (map [v f]
     ;; ! f (-> [_] _)

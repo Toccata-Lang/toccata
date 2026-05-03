@@ -1321,18 +1321,29 @@ VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Term val)
   }
 }
 
+Term nothing() {
+  ReifiedVal *rv = malloc_reified(0);
+  rv->type = NoneType;
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  return(term_val((Term)rv));
+}
+
+Term some(Term thing) {
+  ReifiedVal *rv = malloc_reified(1);
+  rv->type = SomeType;
+  rv->impls[0] = thing;
+  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+  return(term_val((Term)rv));
+}
+
 Term vectStore(Vector *vect, unsigned index, Term val) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return VOID;
-  /*
-  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
   // TODO: check the refs count and mutate if equal 1
   // but only if all nodes 'above' this one are mutate-able
   // and if you do mutate this vect, clear the cached hash value (once that's implemented)
   if (index < vect->count) {
     if (index >= vect->tailOffset) {
-      unsigned newIndex = index & 0x1f;
+      // storing into the tail
+      unsigned newIndex = index & (VECTOR_ARRAY_LEN - 1);
       Vector *ret = newVector(vect->tail, newIndex);
       ret->tail[newIndex] = val;
       ret->count = vect->count;
@@ -1340,30 +1351,30 @@ Term vectStore(Vector *vect, unsigned index, Term val) {
       ret->shift = vect->shift;
       ret->root = vect->root;
       if (ret->root != (VectorNode *)0) {
-        incRef((Value *)ret->root, 1);
+        incRef((Term)(ret->root), 1);
       }
-      Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
-      return(mval);
+      dec_and_free((Term)vect, 1);
+      return(some((Term)ret));
     } else {
       Vector *ret = newVector(vect->tail, VECTOR_ARRAY_LEN);
       ret->count = vect->count;
       ret->tailOffset = vect->tailOffset;
       ret->shift = vect->shift;
       ret->root = copyVectStore(vect->shift, vect->root, index, val);
-      Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
-      return(mval);
+      dec_and_free((Term)vect, 1);
+      return(some((Term)ret));
     }
   } else if (index == vect->count) {
-    Value *ret = (Value *)vectConj(vect, val);
-    Value *mval = maybe((FnArity *)0, (Value *)0, (Value *)ret);
-    return(mval);
+    Vector *ret = vectConj(vect, val);
+    return(some((Term)ret));
   } else {
+    dec_and_free((Term)vect, 1);
     dec_and_free(val, 1);
-    return(nothing);
+    return(nothing());
   }
-  // */
 }
 
+#if 0
 Vector *fastVectStore(Vector *vect, unsigned index, Term val) {
   if (index < vect->count &&
       index >= vect->tailOffset &&
@@ -1426,13 +1437,6 @@ ReifiedVal *updateField(ReifiedVal *rval, Term field, int64_t idx) {
   // */
 }
 
-Term vectGet(Vector *vect, unsigned index) {
-  // this fn does not dec_and_free vect on purpose
-  // it lets calling functions do that.
-  Term *array = arrayFor(vect, index);
-  return(dupeVal(&array[index & 0x1f]));
-}
-
 Vector *vectorReverse(Vector *v) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
@@ -1449,20 +1453,13 @@ Vector *vectorReverse(Vector *v) {
   return(newVect);
   // */
 }
+#endif
 
-Term nothing() {
-  ReifiedVal *rv = malloc_reified(0);
-  rv->type = NoneType;
-  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  return(term_val((Term)rv));
-}
-
-Term some(Term thing) {
-  ReifiedVal *rv = malloc_reified(1);
-  rv->type = SomeType;
-  rv->impls[0] = thing;
-  __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  return(term_val((Term)rv));
+Term vectGet(Vector *vect, unsigned index) {
+  // this fn does not dec_and_free vect on purpose
+  // it lets calling functions do that.
+  Term *array = arrayFor(vect, index);
+  return(dupeVal(&array[index & 0x1f]));
 }
 
 Term strEQ(Term arg0, Term arg1) {
@@ -1472,14 +1469,13 @@ Term strEQ(Term arg0, Term arg1) {
   long int len;
 
   if (str0->type == StringBufferType &&
-      str1->type == StringBufferType &&
-      ((String *)str0)->len == ((String *)str1)->len) {
+      str1->type == StringBufferType) {
     s1 = str0->buffer;
     len = str0->len;
     s2 = str1->buffer;
   }
 
-  if (strncmp(s1, s2, len) == 0) {
+  if (str0->len == str1->len && strncmp(s1, s2, len) == 0) {
     dec_and_free(arg1, 1);
     return(some((Term)arg0));
   } else {

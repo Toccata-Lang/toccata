@@ -14,7 +14,9 @@ extern FILE *dotFile;
 
 extern void abort();
 
+// make sure VECTOR_ARRAY_LEN is always a power of 2
 #define VECTOR_ARRAY_LEN 32
+// make sure ARRAY_NODE_LEN is always a power of 2
 #define ARRAY_NODE_LEN 32
 
 #ifdef TOCCATA_WASM

@@ -1571,9 +1571,11 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     char msg[200];
     sprintf(msg, "%s %03x:", refName, term_loc(args));
     graphDown(msg, args);
+  } else {
+    graphDown("unknown", args);
   }
-  if (strcmp(refName, "vect-get") == 0) {
-    print_term("vect-get args", args);
+  if (strcmp(refName, "str-eq") == 0) {
+    print_term("str-eq args", args);
   }
   // */
   Tag argsTag = term_tag(args);
