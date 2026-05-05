@@ -157,7 +157,8 @@ extern REFS_SIZE refsStatic;
 #define StringBufferType 2
 #define FnArityType 3
 #define FunctionType 4
-#define TermType 5
+#define SubStringType 5
+#define TermType 6
 #define VectorType 8
 #define VectorNodeType 9
 #define BitmapIndexedType 11
@@ -277,7 +278,7 @@ Vector *vectorReverse(Vector *v);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
                    Value **args[]);
 Term strCount(Term s);
-Term strEQ(Term arg0, Term arg1);
+Term strEQ(Term sT, Term startT, Term lenT, Term tgtT);
 Value *strVect(Value *arg0);
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);

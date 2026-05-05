@@ -1462,25 +1462,44 @@ Term vectGet(Vector *vect, unsigned index) {
   return(dupeVal(&array[index & 0x1f]));
 }
 
-Term strEQ(Term arg0, Term arg1) {
-  String *str0 = (String *)arg0; 
-  String *str1 = (String *)arg1; 
+Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
+  prefs("sT", (Value *)sT);
+  prefs("tgtT", (Value *)tgtT);
+  String *str0 = (String *)sT; 
   char *s1, *s2;
-  long int len;
+  long start = get_i60(startT);
+  int len = (int)get_i60(lenT);
 
-  if (str0->type == StringBufferType &&
-      str1->type == StringBufferType) {
-    s1 = str0->buffer;
-    len = str0->len;
+  s1 = &str0->buffer[start];
+
+  if (((Value *)tgtT)->type == StringBufferType) {
+    String *str1 = (String *)tgtT; 
+    if (len != str1->len)
+      return(nothing());
+
     s2 = str1->buffer;
+  } else if (((Value *)tgtT)->type == SubStringType) {
+    ReifiedVal *str1 = (ReifiedVal *)tgtT;
+    String *parent = (String *)str1->impls[0];
+    long start = get_i60(str1->impls[1]);
+
+    if ((int)get_i60(str1->impls[2]) != len)
+      return(nothing());
+
+    s2 = &parent->buffer[start];
   }
 
-  if (str0->len == str1->len && strncmp(s1, s2, len) == 0) {
-    dec_and_free(arg1, 1);
-    return(some((Term)arg0));
+  if (strncmp(s1, s2, len) == 0) {
+    if (start == 0) {
+      dec_and_free(tgtT, 1);
+      return(some(sT));
+    } else {
+      dec_and_free(sT, 1);
+      return(some(tgtT));
+    }
   } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    dec_and_free(sT, 1);
+    dec_and_free(tgtT, 1);
     return(nothing());
   }
 }

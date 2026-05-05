@@ -2112,6 +2112,7 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
     break;
 
   default: {
+    // TODO: make this create lazy DUP nodes
     Term newDup = pair_make(DUP, dupLabel, SUB, SUB);
     Term z = pair_make(LAZ, 1, newDup, arg);
     swapStore(port(1, term_loc(newDup)), z);
