@@ -1536,7 +1536,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     // print_term("str-eq args", args);
     // }
   }
-    // */
+  // */
   Tag argsTag = term_tag(args);
   if (argsTag == APP || argsTag == OPY) {
     // if 'args' is an APP term
