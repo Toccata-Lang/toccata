@@ -164,7 +164,6 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
 void link_redexes();
 void store_redex(Term neg, Term pos);
 Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel);
-Term autoDupe(int refs, Lab lab, Term trm);
 int decSubRefs(Location sup_loc);
 Term make_op(Lab op, Term x, Term y);
 

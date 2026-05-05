@@ -895,6 +895,8 @@ void freeAll() {
 
 //*
 #ifdef SINGLE_THREADED
+  printf("\nmalloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
+          malloc_count, free_count, malloc_count - free_count);
   fprintf(stderr, "\nmalloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
           malloc_count, free_count, malloc_count - free_count);
 #else
@@ -902,6 +904,8 @@ void freeAll() {
   __atomic_load(&malloc_count, &mallocs, __ATOMIC_RELAXED);
   int64_t frees;
   __atomic_load(&free_count, &frees, __ATOMIC_RELAXED);
+  printf("malloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
+          mallocs, frees, mallocs - frees);
   fprintf(stderr, "malloc count: %" PRId64 "  free count: %" PRId64 "  diff: %" PRId64 "\n",
           mallocs, frees, mallocs - frees);
 
@@ -1463,8 +1467,6 @@ Term vectGet(Vector *vect, unsigned index) {
 }
 
 Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
-  prefs("sT", (Value *)sT);
-  prefs("tgtT", (Value *)tgtT);
   String *str0 = (String *)sT; 
   char *s1, *s2;
   long start = get_i60(startT);
@@ -2986,13 +2988,6 @@ char *typeName(unsigned typeNum) {
 
 void freeGlobal(Term p) {
   // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
-  if (term_tag(p) == SUP) {
-    swapStore(port(1, term_loc(p)), 1);
-    p = term_new(SUP, 2, term_loc(p));
-  }
-#ifdef STATS
-  atomic_fetch_sub_explicit(&rdxCount, 1, memory_order_relaxed);
-#endif
   interact(ERA, p);
 }
 
@@ -3100,16 +3095,10 @@ int main (int argc, char **argv) {
       case SUP: {
 	Lab l = term_lab(result);
 	Location loc = term_loc(result);
-	if (l == 1 || l == 2) {
-	  graphDown("result", result);
-	  int refs = decSubRefs(loc);
-	  resultLocation = port(2, loc);
-	} else {
 	  char s[50];
 	  sprintf(s, "bad result %s (%d) pair", tag_to_str(resultTag), resultTag);
 	  graphDown("result", result);
 	  BOOM(s);
-	}
       }
 	break;
 	

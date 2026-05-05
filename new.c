@@ -678,7 +678,7 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
 
   case SUP:
     // Port 1 must be positive
-    if (lab != 1 && lab != 2 && !is_positive(fst)) {
+    if (!is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
@@ -966,53 +966,26 @@ void negsup(Term neg, Term sup) {
   Tag neg_tag = term_tag(neg);
   Lab neg_lab = term_lab(neg);
 
-  if (sup_lab == 1 || sup_lab == 2) {
-    Term dup = pair_make(DUP, 0, SUB, SUB);
-    Location dup_loc = term_loc(dup);
-    Term redex = pair_make(SUB, 5, neg, term_new(VAR, 0, port(1, dup_loc)));
-    swapStore(port(1, dup_loc), redex);
-
-    Term taken = swapStore(port(2, sup_loc), term_new(VAR, 0, port(2, dup_loc)));
-    if (sup_lab == 2) {
-      int refs = decSubRefs(sup_loc);
-      if (refs == 1) {
-	Term trm = take(port(2, sup_loc));
-
-	// You would expect this to be needed. But because port 1 of the SUB was 0 when
-	// port 2 was taken, that freed the pair. So this is extraneous.
-	// pair_free(sup_loc);
-
-	store_redex(ERA, trm);
-      }
-    }
-    if (term_tag(taken) == VAR) {
-      Location l = term_loc(taken);
-      taken = take(l);
-    }
-    store_redex(dup, taken);
-  } else {
-
-    Term arg = take(port(1, neg_loc));
-    Location ret = port(2, neg_loc);
-    Term tm1 = take(port(1, sup_loc));
-    Term tm2 = take(port(2, sup_loc));
-    Term dp1 = makeLazyDup(sup_lab, arg);
-    Term cn1 = pair_make(neg_tag, neg_lab,
-			 term_new(VAR, 0, port(1, term_loc(dp1))),
-			 SUB);
-    Term lz1 = pair_make(LAZ, 5, cn1, tm1);
-    swapStore(port(2, term_loc(cn1)), lz1);
-    Term cn2 = pair_make(neg_tag, neg_lab,
-			 term_new(VAR, 0, port(2, term_loc(dp1))),
-			 SUB);
-    swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 6, cn2, tm2));
-    // TODO: could you make the ports of the SUP store direct LAZ terms
-    // and not VAR's?
-    Term dp2 = pair_make(SUP, sup_lab,
-			 term_new(VAR, 0, port(2, term_loc(cn1))),
-			 term_new(VAR, 0, port(2, term_loc(cn2))));
-    moveStore(ret, dp2);
-  }
+  Term arg = take(port(1, neg_loc));
+  Location ret = port(2, neg_loc);
+  Term tm1 = take(port(1, sup_loc));
+  Term tm2 = take(port(2, sup_loc));
+  Term dp1 = makeLazyDup(sup_lab, arg);
+  Term cn1 = pair_make(neg_tag, neg_lab,
+		       term_new(VAR, 0, port(1, term_loc(dp1))),
+		       SUB);
+  Term lz1 = pair_make(LAZ, 5, cn1, tm1);
+  swapStore(port(2, term_loc(cn1)), lz1);
+  Term cn2 = pair_make(neg_tag, neg_lab,
+		       term_new(VAR, 0, port(2, term_loc(dp1))),
+		       SUB);
+  swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 6, cn2, tm2));
+  // TODO: could you make the ports of the SUP store direct LAZ terms
+  // and not VAR's?
+  Term dp2 = pair_make(SUP, sup_lab,
+		       term_new(VAR, 0, port(2, term_loc(cn1))),
+		       term_new(VAR, 0, port(2, term_loc(cn2))));
+  moveStore(ret, dp2);
 }
 
 // Application-Null interaction
@@ -1048,18 +1021,14 @@ void duplam(Term dup, Term lam) {
 void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
-  Location dup_loc = term_loc(dup);
-  Location dup_p1 = port(1, dup_loc);
-  Location dup_p2 = port(2, dup_loc);
 
-  if (sup_lab == 1 | sup_lab == 2) {
-    if (sup_lab == 2) {
-      atomic_fetch_add_explicit(&BUFF[term_loc(sup)], 1, memory_order_relaxed);
-    }
-    moveStore(dup_p1, sup);
-    moveStore(dup_p2, sup);
-  } else if (dup_lab == sup_lab) {
+  if (dup_lab == sup_lab) {
     // Special case: when DUP and SUP have the same label, they annihilate
+    // Get the ports of the DUP node
+    Location dup_loc = term_loc(dup);
+    Location dup_p1 = port(1, dup_loc);
+    Location dup_p2 = port(2, dup_loc);
+
     // Get the ports of the SUP node
     Location sup_loc = term_loc(sup);
     Term sup_p1 = take(port(1, sup_loc));
@@ -1069,6 +1038,11 @@ void dupsup(Term dup, Term sup) {
     moveStore(dup_p1, sup_p1);
     moveStore(dup_p2, sup_p2);
   } else {
+    // Get the ports of the DUP node
+    Location dup_loc = term_loc(dup);
+    Location dup_p1 = port(1, dup_loc);
+    Location dup_p2 = port(2, dup_loc);
+
     // Get the ports of the SUP node
     Location sup_loc = term_loc(sup);
     Term sup_p1 = take(port(1, sup_loc));
@@ -1169,26 +1143,9 @@ void eralaz(Term era, Term laz) {
 
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
-  Lab lab = term_lab(sup);
-  if (lab == 1) {
-    return;
-  } else if (lab == 2) {
-    int refs = decSubRefs(term_loc(sup));
-    if (refs == 1) {
-      Location loc = term_loc(sup);\
-      Term trm = take(port(2, loc));
-
-      // You would expect this to be needed. But because port 1 of the SUP was 0 when
-      // port 2 was taken, that freed the pair. So this is extraneous.
-      // pair_free(loc);
-
-      store_redex(era, trm);
-    }
-  } else {
-    Location sup_loc = term_loc(sup);
-    store_redex(era, term_new(VAR, 0, port(2, sup_loc)));
-    store_redex(era, term_new(VAR, 0, port(1, sup_loc)));
-  }
+  Location sup_loc = term_loc(sup);
+  store_redex(era, term_new(VAR, 0, port(2, sup_loc)));
+  store_redex(era, term_new(VAR, 0, port(1, sup_loc)));
   return;
 }
 
@@ -1567,17 +1524,19 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       break;
     }
   }
-  if (refName != NULL) {
-    char msg[200];
-    sprintf(msg, "%s %03x:", refName, term_loc(args));
-    graphDown(msg, args);
-  } else {
-    graphDown("unknown", args);
+  if (expected == 1) {
+    if (refName != NULL) {
+      char msg[200];
+      sprintf(msg, "%s %03x:", refName, term_loc(args));
+      graphDown(msg, args);
+    } else {
+      graphDown("unknown", args);
+    }
+    // if (strcmp(refName, "str-eq") == 0) {
+    // print_term("str-eq args", args);
+    // }
   }
-  if (strcmp(refName, "str-eq") == 0) {
-    print_term("str-eq args", args);
-  }
-  // */
+    // */
   Tag argsTag = term_tag(args);
   if (argsTag == APP || argsTag == OPY) {
     // if 'args' is an APP term
@@ -1624,54 +1583,27 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	dec_and_free(argsStruct->args[i], 1);
       break;
 
-    case SUP: {
-      Location arg_loc = term_loc(arg);
-      Lab l = term_lab(arg);
-      if (l == 1 || l == 2) {
-	Term dup = pair_make(DUP, 0, SUB, SUB);
-	Location dup_loc = term_loc(dup);
-	Term taken = swapStore(port(2, arg_loc), term_new(VAR, 0, port(2, dup_loc)));
-	if (l == 2) {
-	  int refs = decSubRefs(arg_loc);
-	  if (refs == 1) {
-	    pair_free(arg_loc);
-	    swapStore(port(2, dup_loc), ERA);
-	  }
-	}
-	if (term_tag(taken) == VAR) {
-	  Location l = term_loc(taken);
-	  taken = take(l);
-	}
+    case SUP:
+      for(int i = 0; i < argsStruct->count; i++)
+	incRef(argsStruct->args[i], 1);
+      Term s1 = take(port(1, term_loc(arg)));
+      Term s2 = take(port(2, term_loc(arg)));
+      Lab supLabel = term_lab(arg);
+      int argsCount = argsStruct->count;
+      argsStruct->count += 1;
 
-	swapStore(port(1, term_loc(args)), term_new(VAR, 0, port(1, dup_loc)));
-	argsStruct->args[argsStruct->count++] = args;
-	Term newArgs = argsNet(argsStruct);
-	Term retry = pair_make(SUB, 5, newArgs, ref);
-	swapStore(port(1, dup_loc), retry);
-	store_redex(dup, taken);
-      } else {
-	for(int i = 0; i < argsStruct->count; i++)
-	  incRef(argsStruct->args[i], 1);
-	Term s1 = take(port(1, arg_loc));
-	Term s2 = take(port(2, arg_loc));
-	Lab supLabel = term_lab(arg);
-	int argsCount = argsStruct->count;
-	argsStruct->count += 1;
+      Term tail1 = pair_make(APP, 0, s1, SUB);
+      argsStruct->args[argsCount] = tail1;
+      swapStore(port(2, term_loc(tail1)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
 
-	Term tail1 = pair_make(APP, 0, s1, SUB);
-	argsStruct->args[argsCount] = tail1;
-	swapStore(port(2, term_loc(tail1)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
+      Term tail2 = pair_make(APP, 0, s2, SUB);
+      argsStruct->args[argsCount] = tail2;
+      swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
 
-	Term tail2 = pair_make(APP, 0, s2, SUB);
-	argsStruct->args[argsCount] = tail2;
-	swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
-
-	Term newSup = pair_make(SUP, supLabel,
-				term_new(VAR, 0, port(2, term_loc(tail1))),
-				term_new(VAR, 0, port(2, term_loc(tail2))));
-	moveStore(port(2, term_loc(args)), newSup);
-      }
-    }
+      Term newSup = pair_make(SUP, supLabel,
+			      term_new(VAR, 0, port(2, term_loc(tail1))),
+			      term_new(VAR, 0, port(2, term_loc(tail2))));
+      moveStore(port(2, term_loc(args)), newSup);
       break;
 
     case VAR: {
@@ -2057,46 +1989,6 @@ void print_free_list(void) {
   printf("END (count: %d)\n", count);
 }
 
-Term autoDupe(int refs, Lab lab, Term trm) {
-  if (refs == 1)
-    return trm;
-
-  Tag t = term_tag(trm);
-  if (t == VAR)
-    trm = take(term_loc(trm));
-  t = term_tag(trm);
-
-  Term r;
-  switch (t) {
-  case REF:
-  case I60:
-  case F60:
-    r = trm;
-    break;
-
-  case VAL:
-    incRef(trm, refs);
-    r = trm;
-    break;
-
-  case SUP:
-    if (term_lab(trm) == 2) {
-      atomic_fetch_add_explicit(&BUFF[term_loc(trm)], refs, memory_order_relaxed);
-    }
-    r = trm;
-    break;
-
-  default:
-    // fprintf(stderr, "autoDupe: ");
-    // print_raw_term(trm);
-    // fprintf(stderr, "\n");
-
-    r = pair_make(SUP, lab, refs, trm);
-    // print_term("duped", r);
-  }
-  return r;
-}
-
 Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
   switch(term_tag(arg)) {
   case VAL:
@@ -2112,7 +2004,6 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
     break;
 
   default: {
-    // TODO: make this create lazy DUP nodes
     Term newDup = pair_make(DUP, dupLabel, SUB, SUB);
     Term z = pair_make(LAZ, 1, newDup, arg);
     swapStore(port(1, term_loc(newDup)), z);
@@ -2185,170 +2076,6 @@ unsigned otherNodes;
 unsigned subGraphs = 0;
 
 unsigned graphSubUp(unsigned graphNum, Term tree);
-unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree);
-void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
-  Tag t = term_tag(tree);
-  char *branchPort = pt == 1 ? "sw" : "se";
-  Location loc = port(pt, term_loc(tree));
-  Term branch = get(loc);
-  unsigned branchNode = 65536;
-  for (unsigned i = 0; i < nodeCount; i++) {
-    graphNode *gn = &nodeStack[i];
-    if (gn->trm == branch) {
-      branchNode = gn->node;
-      break;
-    }
-  }
-
-  Tag bt = term_tag(branch);
-  Lab l = term_lab(tree);
-  if (pt == 1 && t == SUP && (l == 1 || l == 2)) {
-    branchNode = otherNodes++;
-    char xLbl[100];
-    snprintf(xLbl, 95, "%ld", branch);
-    fprintf(dotFile, noOutline, graphNum, branchNode, xLbl);
-  } else
-    branchNode = graphSubDown(graphNum, loc, branch);
-  if (pt == 1 && t == LAZ && bt == DUP) {
-    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n", graphNum, nodeNum, branchPort, graphNum, branchNode);
-  } else if (pt == 2 && (t== APP || t == OPX || t == OPY) && bt == LAZ) {
-    fprintf(dotFile, "x%d_%x:s -- x%d_%x:se\n", graphNum, branchNode, graphNum, nodeNum);
-  } else {
-    if (branchNode != 65536) {
-      if (t == DUP ) {
-	fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
-		graphNum, nodeNum, branchPort, graphNum, branchNode);
-      } else {
-	if (bt == VAR &&
-	    ((term_tag(get(term_loc(branch))) == LAZ &&
-	      term_tag(get(port(1, term_loc(get(term_loc(branch)))))) == DUP) ||
-	     term_tag(get(term_loc(branch))) == SUB)) {
-	  fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
-		  graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE),
-		  (term_loc(branch) & 1) ? "se" : "sw");
-	} else {
-	  fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
-		  graphNum, nodeNum, branchPort, graphNum, branchNode);
-	}
-      }
-    }
-  }
-}
-
-unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
-  char xLbl[100];
-  Tag t = term_tag(tree);
-
-  if (tree == SUB) {
-    return 65536;
-  } else if (hasLocation(tree)) {
-    nodeNum = term_loc(tree) & 0xFFFFFFFE;
-    for (unsigned i = 0; i < nodeCount; i++) {
-      graphNode *gn = &nodeStack[i];
-      if (gn->node == nodeNum)
-	return gn->node;
-    }
-  } else {
-    nodeNum = otherNodes++;
-  }
-  
-  switch(t) {
-  case VAR: {
-    Location loc = term_loc(tree);
-    Term trm = get(loc);
-    if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
-      return graphSubDown(graphNum, nodeNum, trm);
-    } else {
-      for (unsigned i = 0; i < nodeCount; i++) {
-	graphNode *gn = &nodeStack[i];
-	if (hasLocation(gn->trm) && term_loc(gn->trm) == (loc & 0xFFFFFFFE))
-	  return gn->node;
-      }
-    }
-    return 65536;
-  }
-    break;
-
-  case ERA:
-    if (term_lab(tree) == 1)
-      fprintf(dotFile, noOutline, graphNum, nodeNum, "SE");
-    else
-      fprintf(dotFile, eraseFormat, graphNum, nodeNum);
-    break;
-
-  case I60:
-    snprintf(xLbl, 95, "%ld", get_i60(tree));
-    fprintf(dotFile, noOutline, graphNum, nodeNum, xLbl);
-    break;
-
-  case VAL:
-    if (tree == VOID)
-      fprintf(dotFile, noOutline, graphNum, nodeNum, "VOID");
-    else
-      fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
-    break;
-
-  case REF: {
-    char *refName = "F";
-    for (unsigned i = 0; i <= refsCount; i++) {
-      if (refNames[i].fn == (interactionFn)(tree & ~7)) {
-	refName = refNames[i].name;
-	break;
-      }
-    }
-    fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
-	    graphNum, nodeNum, refName);
-  }
-    break;
-
-  case SUB: {
-    fprintf(dotFile, "x%d_%x [label=\"%s\",  height=0.22, width=0.22, fixedsize=true,  shape=circle]\n",
-	    graphNum, nodeNum, "");
-    graphNode *gn = &nodeStack[nodeCount++];
-    if (nodeCount > 999)
-      BOOM("nodeCount!");
-    gn->trm = tree;
-    gn->node = nodeNum;
-
-    downBranch(tree, 1, graphNum, nodeNum);
-    downBranch(tree, 2, graphNum, nodeNum);
-  }
-    break;
-
-  case SUP:
-  case OPX:
-  case OPY:
-  case LAZ:
-  case LAM:
-  case APP:
-  case DUP: {
-    Lab lab = term_lab(tree);
-    snprintf(xLbl, 95, "%x:", nodeNum);
-    if (t == OPX || t == OPY) {
-      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "-", 0, xLbl);
-    } else if (t == SUP && (lab == 1 || lab == 2)) {
-      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "R", 0, xLbl);
-    } else {
-      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 0, xLbl);
-    }
-    graphNode *gn = &nodeStack[nodeCount++];
-    if (nodeCount > 999)
-      BOOM("nodeCount!");
-    gn->trm = tree;
-    gn->node = nodeNum;
-
-    downBranch(tree, 1, graphNum, nodeNum);
-    downBranch(tree, 2, graphNum, nodeNum);
-  }
-    break;
-    
-  default:
-    return 65536;
-    break;
-  }
-  return nodeNum;
-}
-
 unsigned upBranch(Term tree, unsigned pt, unsigned graphNum) {
   Tag t = term_tag(tree);
   unsigned nodeNum;
@@ -2562,6 +2289,188 @@ void graphUp(char *title, Term root) {
   graphSubUp(graphNum, root);
   fprintf(dotFile, "}\n");
   return;
+}
+
+unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree);
+void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
+  Tag t = term_tag(tree);
+  char *branchPort = pt == 1 ? "sw" : "se";
+  Location loc = port(pt, term_loc(tree));
+  Term branch = get(loc);
+  while (term_tag(branch) == VAR) {
+    branch = get(term_loc(branch));
+  }
+  unsigned branchNode = 65536;
+  for (unsigned i = 0; i < nodeCount; i++) {
+    graphNode *gn = &nodeStack[i];
+    if (gn->trm == branch) {
+      branchNode = gn->node;
+      break;
+    }
+  }
+
+  Tag bt = term_tag(branch);
+  Lab l = term_lab(tree);
+  branchNode = graphSubDown(graphNum, loc, branch);
+
+  if (pt == 2 && (t== APP || t == OPX || t == OPY) && bt == LAZ) {
+    fprintf(dotFile, "x%d_%x:s -- x%d_%x:se\n", graphNum, branchNode, graphNum, nodeNum);
+  } else {
+    if (branchNode != 65536) {
+      if (t == DUP && (bt != LAZ || get(port(1, term_loc(branch))) != tree)) {
+	fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
+		graphNum, nodeNum, branchPort, graphNum, branchNode);
+      } else if (t == DUP && (bt != LAZ || get(port(1, term_loc(branch))) == tree)) {
+	return;
+      } else {
+	if (bt == VAR) {
+	  if (term_tag(get(term_loc(branch))) == SUB || term_tag(get(term_loc(branch))) == LAZ) {
+	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
+		    graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE),
+		    (term_loc(branch) & 1) ? "se" : "sw");
+	  } else if (term_tag(get(term_loc(branch))) == LAZ &&
+		     term_tag(get(port(1, term_loc(get(term_loc(branch)))))) == DUP) {
+	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
+		    graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE),
+		    (term_loc(branch) & 1) ? "se" : "sw");
+	  } else {
+	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
+		    graphNum, nodeNum, branchPort, graphNum, branchNode);
+	  }
+	} else {
+	  fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
+		  graphNum, nodeNum, branchPort, graphNum, branchNode);
+	}
+      }
+    }
+  }
+}
+
+unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
+  char xLbl[100];
+  Tag t = term_tag(tree);
+
+  if (tree == SUB) {
+    return 65536;
+  } else if (hasLocation(tree)) {
+    nodeNum = term_loc(tree) & 0xFFFFFFFE;
+    for (unsigned i = 0; i < nodeCount; i++) {
+      graphNode *gn = &nodeStack[i];
+      if (gn->node == nodeNum)
+	return gn->node;
+    }
+  } else {
+    nodeNum = otherNodes++;
+  }
+
+  switch(t) {
+  case VAR: {
+    Location loc = term_loc(tree);
+    Term trm = get(loc);
+    if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
+      return graphSubDown(graphNum, nodeNum, trm);
+    } else {
+      for (unsigned i = 0; i < nodeCount; i++) {
+	graphNode *gn = &nodeStack[i];
+	if (hasLocation(gn->trm) && term_loc(gn->trm) == (loc & 0xFFFFFFFE))
+	  return gn->node;
+      }
+    }
+    return 65536;
+  }
+    break;
+
+  case ERA:
+    if (term_lab(tree) == 1)
+      fprintf(dotFile, noOutline, graphNum, nodeNum, "SE");
+    else
+      fprintf(dotFile, eraseFormat, graphNum, nodeNum);
+    break;
+
+  case I60:
+    snprintf(xLbl, 95, "%ld", get_i60(tree));
+    fprintf(dotFile, noOutline, graphNum, nodeNum, xLbl);
+    break;
+
+  case VAL:
+    if (tree == VOID)
+      fprintf(dotFile, noOutline, graphNum, nodeNum, "VOID");
+    else
+      fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
+    break;
+
+  case REF: {
+    char *refName = "F";
+    for (unsigned i = 0; i <= refsCount; i++) {
+      if (refNames[i].fn == (interactionFn)(tree & ~7)) {
+	refName = refNames[i].name;
+	break;
+      }
+    }
+    fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
+	    graphNum, nodeNum, refName);
+  }
+    break;
+
+  case SUB: {
+    fprintf(dotFile, "x%d_%x [label=\"%s\",  height=0.22, width=0.22, fixedsize=true,  shape=circle]\n",
+	    graphNum, nodeNum, "");
+    graphNode *gn = &nodeStack[nodeCount++];
+    if (nodeCount > 999)
+      BOOM("nodeCount!");
+    gn->trm = tree;
+    gn->node = nodeNum;
+
+    downBranch(tree, 1, graphNum, nodeNum);
+    downBranch(tree, 2, graphNum, nodeNum);
+  }
+    break;
+
+  case SUP:
+  case OPX:
+  case OPY:
+  case LAZ:
+  case LAM:
+  case APP:
+  case DUP: {
+    Lab lab = term_lab(tree);
+    snprintf(xLbl, 95, "%x:", nodeNum);
+    if (t == OPX || t == OPY) {
+      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "-", 0, xLbl);
+    } else {
+      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 0, xLbl);
+    }
+    graphNode *gn = &nodeStack[nodeCount++];
+    if (nodeCount > 999)
+      BOOM("nodeCount!");
+    gn->trm = tree;
+    gn->node = nodeNum;
+
+    if (t == DUP) {
+      Location dLoc = term_loc(tree);
+      Term b1 = get(port(1, dLoc));
+      Tag bt1 = term_tag(b1);
+      if (bt1 == LAZ && tree != get(port(1, term_loc(b1)))) {
+	downBranch(tree, 1, graphNum, nodeNum);
+      }
+
+      Term b2 = get(port(2, dLoc));
+      Tag bt2 = term_tag(b2);
+      if (bt2 == LAZ && tree != get(port(2, term_loc(b2)))) {
+	downBranch(tree, 2, graphNum, nodeNum);
+      }
+    } else {
+      downBranch(tree, 1, graphNum, nodeNum);
+      downBranch(tree, 2, graphNum, nodeNum);
+    }
+  }
+    break;
+    
+  default:
+    return 65536;
+    break;
+  }
+  return nodeNum;
 }
 
 unsigned graphDown(char *title, Term root) {
