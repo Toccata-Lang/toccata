@@ -41,6 +41,7 @@ $(REG_TESTS): %: regression-tests/%.c $(TEST_SOURCES)
 .PHONY: tests
 tests: $(REG_TESTS)
 
+# Interpeter
 intrp.c: intrp-ast.toc intrp-rdr.toc hvm-core.toc new-toc
 	./new-toc intrp-rdr.toc > $*.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' $*.tmp > $*.c
@@ -50,6 +51,18 @@ intrp.c: intrp-ast.toc intrp-rdr.toc hvm-core.toc new-toc
 intrp: intrp.c
 	$(CC) $(CFLAGS) -o $* $(TOC_FLAGS) $(LDFLAGS) $*.c
 	./intrp
+
+# Sidequest
+sidequest.c: new-toc sidequest.toc hvm-core.toc
+	./new-toc sidequest.toc > sidequest.tmp
+	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' \
+          sidequest.tmp > sidequest.c
+	clang-format -i sidequest.c
+	rm sidequest.tmp
+
+sidequest: sidequest.c $(TEST_SOURCES)
+	$(CC) $(CFLAGS) -o sidequest $(TOC_FLAGS) $(LDFLAGS) $(TEST_SOURCES) sidequest.c
+	./sidequest || dot -Tsvg graphs.dot > graphs.svg
 
 # Help target
 .PHONY: help

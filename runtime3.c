@@ -2991,6 +2991,8 @@ void freeGlobal(Term p) {
   interact(ERA, p);
 }
 
+Location resultLocation;
+
 int main (int argc, char **argv) {
   prErrSTAR = &defaultPrErrSTAR;
 #ifdef SINGLE_THREADED
@@ -3026,7 +3028,7 @@ int main (int argc, char **argv) {
     Term callArgs;
     callArgs = pair_make(APP, 0, term_val((Term)argVect), SUB);
     // fprintf(stderr, "argVect %d: %p\n", __LINE__, (void *)argVect);
-    Location resultLocation = port(2, term_loc(callArgs));
+    resultLocation = port(2, term_loc(callArgs));
     // fprintf(stderr, "resultLocation: %0x\n", resultLocation);
     store_redex(callArgs, mainFn);
     Tag resultTag;
@@ -3062,7 +3064,7 @@ int main (int argc, char **argv) {
 	  Term pos = take(port(2, term_loc(result)));
 	  store_redex(neg, pos);
 	} else {
-	  graphDown("BOOM", result);
+	  // graphDown("BOOM", result);
 	  print_term("result", result);
 	  BOOM("Compiler screwed up. Incomplete result.");
 	}
@@ -3095,18 +3097,18 @@ int main (int argc, char **argv) {
       case SUP: {
 	Lab l = term_lab(result);
 	Location loc = term_loc(result);
-	  char s[50];
-	  sprintf(s, "bad result %s (%d) pair", tag_to_str(resultTag), resultTag);
-	  graphDown("result", result);
-	  BOOM(s);
+	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
+	// graphDown("result", result);
+	result = nothing();
+	resultTag = term_tag(result);
       }
 	break;
-	
+
       default: {
-	char s[50];
-	sprintf(s, "bad result %s (%d) pair", tag_to_str(resultTag), resultTag);
+	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
 	graphDown("result", result);
-	BOOM(s);
+	result = new_i60(1);
+	resultTag = term_tag(result);
       }
 	break;
       }

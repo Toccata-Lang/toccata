@@ -299,18 +299,19 @@
   CodeGen
   (gen-code [ast]
     (cond (b/is-glbl (.var ast))
-          (let [c-fn (b/global-var 'FldFn)]
+          (let [c-fn (.c-fn ast)
+                var (.var ast)]
             (se/update-val .decl
                            (fn [decl]
                              [decl
-                              "Term " (.var ast) ";\n"
+                              "Term " var ";\n"
                               "void " c-fn "(Term ref, Term args) {\n"
                               "args = pair_make(APP, 0, new_i60(" (.idx ast) "), args);\n"
                               "store_redex(args, accessField);\n"
                               "return;\n}\n"
-                              "Term " (.var ast) " = new_ref(" c-fn ");\n"])))
+                              "Term " var " = new_ref(" c-fn ");\n"])))
           
-          (let [val-var (.val-var ast)]
+          (let [val-var (.c-fn ast)]
             (comp (for [refs (se/update-in-val [.refs-map val-var] inc)
                         :let [var (str val-var "_" refs)]
                         _ (se/update-val .init
@@ -363,10 +364,10 @@
   (dest-params [ast]
     (assert-result r (instance? ParamInit r))))
 
-(deftype PlainParams [fixed var]
+(deftype PlainParams [dup-label fixed var]
   Container
   (map [x f]
-    (PlainParams (map fixed f) var))
+    (PlainParams dup-label (map fixed f) var))
 
   DestParams
   (dest-params [ast]
@@ -375,9 +376,7 @@
       (either (map (first args)
                    (fn [last-arg]
                      (reduce (rest args)
-                             (ParamInit var (str "Term " var " = pair_make(LAM, 0, SUB, NUL);\n"
-                                                 ;; TODO: this will cause problems when
-                                                 ;; destructuring vectors
+                             (ParamInit var (str "Term " var " = pair_make(LAM, " dup-label ", SUB, NUL);\n"
                                                  "Location r_" var " = port(2, term_loc(" var "));\n"
                                                  "Term " (.var last-arg)
                                                  " = term_new(VAR, 0, port(1, term_loc(" var ")));\n"))
@@ -387,11 +386,11 @@
 
                                (.init args [(.init args)
                                             (.init arg)
-                                            (str var " = pair_make(LAM, 0, SUB, " var ");\n"
+                                            (str var " = pair_make(LAM, " dup-label ", SUB, " var ");\n"
                                                  "Term " (.var arg)
                                                  " = term_new(VAR, 0, port(1, term_loc(" var
                                                  ")));\n")])))))
-              (ParamInit var (str "Term " var " = pair_make(LAM, 0, ERA, NUL);\n"
+              (ParamInit var (str "Term " var " = pair_make(LAM, " dup-label ", ERA, NUL);\n"
                                   "Location r_" var " = port(2, term_loc(" var "));\n"))))))
 
 (extend-type c/TaggedSymbol
@@ -407,7 +406,7 @@
 (defn destruct-params [params dup-label]
   (let [args-init (hylo (fn [ast]
                           (cond (instance? ast/params-ast ast)
-                                (PlainParams (.fixed ast) (.var ast))
+                                (PlainParams dup-label (.fixed ast) (.var ast))
 
                                 ast))
                         dest-params params)]
@@ -517,6 +516,7 @@
   CodeGen
   (gen-code [ast]
     (let [params (.params ast)
+          dup-label (.dup-label ast)
           body (remove (.body ast) (fn [expr]
                                      (instance? ast/block-comment-ast expr)))]
       (either (map (last body)
@@ -540,7 +540,7 @@
                                                   "V)));\n\n"]
                                                  ["\nV = get(" var-loc ");\n"
                                                   "apps = pair_make(APP, 0, V, SUB);\n"
-                                                  "lams = pair_make(LAM, 0, SUB, NUL);\n"
+                                                  "lams = pair_make(LAM, " dup-label ", SUB, NUL);\n"
                                                   "swapStore(port(2, term_loc(lams)),"
                                                   "term_new(VAR, 0, port(1, term_loc(lams))));\n"])
                                            "vLoc = port(2, term_loc(apps));\n"
@@ -551,8 +551,8 @@
                                                          (conj s
                                                                ["apps = pair_make(APP, 0, "
                                                                 (.var expr) ", apps);\n"
-                                                                "lams = pair_make(LAM, 0,"
-                                                                " sideEffects, lams);\n\n"]))))
+                                                                "lams = pair_make(LAM, " dup-label
+                                                                ", sideEffects, lams);\n\n"]))))
                                            (cond (instance? ast/call-ast last-ast)
                                                  ["swapStore(term_loc(" last-v
                                                   "), pair_make(LAZ, 0, apps, lams));\n"]
@@ -963,17 +963,25 @@
                    [sym val] (either (map (get-in mod [.namespaces c/no-symbol .values 0])
                                           seq)
                                      [])
+                   [sym val] (cond (instance? ast/prototype-ast val)
+                                   (conj (map (seq (.impls val))
+                                              (fn [[type-num impl-arity]]
+                                                [(str sym " " type-num) impl-arity]))
+                                         [sym val])
+                                   (list [sym val]))
                    :when (or (instance? b/StaticArity val)
+                             (instance? ast/field-ast val)
                              (instance? ast/prototype-ast val)
                              (and (instance? ast/inline-ast val)
                                   (instance? c/fn-arity (.constraint val))))]
                [sym val])
-        emitter (for [_ (se/set-val .decl ["unsigned refsCount = " (count refs) ";\n"
-                                           "unsigned refNameCount = " (count refs) ";\n"
-                                           "refMap refNames[" (+ 6 (count refs))
+        emitter (for [_ (se/set-val .decl ["unsigned refsCount = " (+ 7 (count refs)) ";\n"
+                                           "unsigned refNameCount = " (+ 7 (count refs)) ";\n"
+                                           "refMap refNames[" (+ 7 (count refs))
                                            "] = {"
                                            "{vectMap, \"vectMap\"},\n"
                                            "{vectConjFn, \"vectConj\"},\n"
+                                           "{graphFn, \"graph\"},\n"
                                            "{accessFieldFn, \"accessField\"},\n"
                                            "{hvmVectFn, \"hvmVect\"},\n"
                                            "{constructFn, \"construct\"}"])
