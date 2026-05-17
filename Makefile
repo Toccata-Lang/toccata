@@ -80,6 +80,16 @@ help:
 # Default help if no target specified
 .DEFAULT_GOAL := help
 
+# Graphs
+DOT_FILES := $(wildcard graphs/*.dot)
+SVG_FILES := $(DOT_FILES:.dot=.svg)
+
+.PHONY: graphs
+graphs: $(SVG_FILES)
+
+graphs/%.svg: graphs/%.dot
+	dot -Tsvg $< > $@
+
 # Clean C files
 .PHONY: clean-c
 clean-c:
