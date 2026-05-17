@@ -40,7 +40,7 @@ LOC_SHIFT = TAG_SIZE + 28
 def display(term):
     tag = term & 0xF
     lab = (term >> TAG_SIZE) & LAB_MASK
-    if tag == 0x01 or tag == 0x07:
+    if tag == 0x01 or tag == 0x08 or tag == 0x07:
         return f"{tag_to_str(tag)} {lab:03x}"
     else:
         loc = term >> LOC_SHIFT

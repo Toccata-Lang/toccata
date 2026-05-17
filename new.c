@@ -1387,6 +1387,18 @@ interactionFn interactions[16][16] = {
 
 a64 rdxCount;
 void interact(Term neg, Term pos) {
+  FILE *currDOT = dotFile;
+
+  char dotName[100];
+  sprintf(dotName, "graphs/%04ld-%ld-%ld.dot", rdxCount, neg, pos);
+  dotFile = fopen(dotName, "w");
+  fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
+  graphDown("NEG", neg);
+  graphDown("POS", neg);
+  fprintf(dotFile, "}\n");
+  fclose(dotFile);
+  dotFile = currDOT;
+
   // if (term_lab(pos) == SUP && term_loc(pos) == 0x15a) {
   // print_term("NEG", neg);
   // print_term("POS", pos);
