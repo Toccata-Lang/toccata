@@ -62,6 +62,8 @@ sidequest.c: new-toc sidequest.toc hvm-core.toc
 
 sidequest: sidequest.c $(TEST_SOURCES)
 	$(CC) $(CFLAGS) -o sidequest $(TOC_FLAGS) $(LDFLAGS) $(TEST_SOURCES) sidequest.c
+	rm graphs/*.dot
+	rm graphs/*.svg
 	./sidequest || dot -Tsvg graphs.dot > graphs.svg
 
 # Help target
