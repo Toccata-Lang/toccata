@@ -65,6 +65,7 @@ void print_raw_term(Term t);
 void print_term(const char* prefix, Term term);
 void print_buff(Location start, Location end);
 void pb();
+void pr();
 void check_buff();
 char *refName(Term ref);
 

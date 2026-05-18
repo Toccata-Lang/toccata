@@ -285,7 +285,7 @@ Term swapStore(Location loc, Term term) {
 
   case ERA:
     freeLoc(loc);
-    store_redex(result, term);
+    interact(result, term);
     break;
   }
   return result;
@@ -405,7 +405,10 @@ void moveStore(Location neg_loc, Term pos) {
 #endif
   if (negTag != SUB && negTag != ERA) {
     freeLoc(neg_loc);
-    store_redex(neg, pos);
+    if (pos == NUL)
+      interact(neg, pos);
+    else 
+      store_redex(neg, pos);
   }
 }
 
@@ -1010,23 +1013,31 @@ void appnul(Term app, Term nul) {
 
 // Duplication-Lambda interaction
 void duplam(Term dup, Term lam) {
-  Lab lam_lab = term_lab(lam);
-  Lab dup_lab = term_lab(dup);
   Location dup_loc = term_loc(dup);
   Location lam_loc = term_loc(lam);
-  Location var = port(1, lam_loc);
-  Term bod = take(port(2, lam_loc));
-  Term l1 = pair_make(LAM, lam_lab, SUB, NUL);
-  Term l2 = pair_make(LAM, lam_lab, SUB, NUL);
-  Term du1 = pair_make(SUP, dup_lab,
-		       term_new(VAR, 0, port(1, term_loc(l1))),
-		       term_new(VAR, 0, port(1, term_loc(l2))));
-  Term du2 = makeLazyDup(dup_lab, bod);
-  swapStore(port(2, term_loc(l1)), term_new(VAR, 0, port(1, term_loc(du2))));
-  swapStore(port(2, term_loc(l2)), term_new(VAR, 0, port(2, term_loc(du2))));
-  moveStore(var, du1);
-  moveStore(port(1, dup_loc), l1);
-  moveStore(port(2, dup_loc), l2);
+  if (get(port(1, dup_loc)) == ERA) {
+    take(port(1, dup_loc));
+    moveStore(port(2, dup_loc), lam);
+  } else if (get(port(2, dup_loc)) == ERA) {
+    take(port(2, dup_loc));
+    moveStore(port(1, dup_loc), lam);
+  } else {
+    Lab lam_lab = term_lab(lam);
+    Lab dup_lab = term_lab(dup);
+    Location var = port(1, lam_loc);
+    Term bod = take(port(2, lam_loc));
+    Term l1 = pair_make(LAM, lam_lab, SUB, NUL);
+    Term l2 = pair_make(LAM, lam_lab, SUB, NUL);
+    Term du1 = pair_make(SUP, dup_lab,
+			 term_new(VAR, 0, port(1, term_loc(l1))),
+			 term_new(VAR, 0, port(1, term_loc(l2))));
+    Term du2 = makeLazyDup(dup_lab, bod);
+    swapStore(port(2, term_loc(l1)), term_new(VAR, 0, port(1, term_loc(du2))));
+    swapStore(port(2, term_loc(l2)), term_new(VAR, 0, port(2, term_loc(du2))));
+    moveStore(var, du1);
+    moveStore(port(1, dup_loc), l1);
+    moveStore(port(2, dup_loc), l2);
+  }
   return;
 }
 
@@ -1034,11 +1045,17 @@ void duplam(Term dup, Term lam) {
 void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
+  Location dup_loc = term_loc(dup);
 
-  if (dup_lab == sup_lab) {
+  if (get(port(1, dup_loc)) == ERA) {
+    take(port(1, dup_loc));
+    moveStore(port(2, dup_loc), sup);
+  } else if (get(port(2, dup_loc)) == ERA) {
+    take(port(2, dup_loc));
+    moveStore(port(1, dup_loc), sup);
+  } else if (dup_lab == sup_lab) {
     // Special case: when DUP and SUP have the same label, they annihilate
     // Get the ports of the DUP node
-    Location dup_loc = term_loc(dup);
     Location dup_p1 = port(1, dup_loc);
     Location dup_p2 = port(2, dup_loc);
 
@@ -1143,7 +1160,7 @@ void eravar(Term era, Term var) {
 void eralam(Term era, Term lam) {
   Location lam_loc = term_loc(lam);
   Term body = take(port(2, lam_loc));
-  store_redex(era, body);
+  interact(era, body);
   moveStore(port(1, lam_loc), NUL);
   return;
 }
@@ -1158,8 +1175,8 @@ void eralaz(Term era, Term laz) {
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
   Location sup_loc = term_loc(sup);
-  store_redex(era, term_new(VAR, 0, port(2, sup_loc)));
-  store_redex(era, term_new(VAR, 0, port(1, sup_loc)));
+  interact(era, term_new(VAR, 0, port(2, sup_loc)));
+  interact(era, term_new(VAR, 0, port(1, sup_loc)));
   return;
 }
 
@@ -1386,18 +1403,26 @@ interactionFn interactions[16][16] = {
 };
 
 a64 rdxCount;
+long graphCount = 0;
 void interact(Term neg, Term pos) {
-  FILE *currDOT = dotFile;
-
-  char dotName[100];
-  sprintf(dotName, "graphs/%04ld-%ld-%ld.dot", rdxCount, neg, pos);
-  dotFile = fopen(dotName, "w");
-  fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
-  graphDown("NEG", neg);
-  graphDown("POS", neg);
-  fprintf(dotFile, "}\n");
-  fclose(dotFile);
-  dotFile = currDOT;
+  /*
+  if (term_tag(neg) != ERA && term_tag(pos) != NUL) {
+    if (graphCount == 235) {
+      pr();
+      pb();
+    }
+    FILE *currDOT = dotFile;
+    char dotName[100];
+    sprintf(dotName, "graphs/%04ld-%ld-%ld.dot", graphCount++, neg, pos);
+    dotFile = fopen(dotName, "w");
+    fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
+    graphDown("NEG", neg);
+    graphDown("POS", pos);
+    fprintf(dotFile, "}\n");
+    fclose(dotFile);
+    dotFile = currDOT;
+  }
+  // */
 
   // if (term_lab(pos) == SUP && term_loc(pos) == 0x15a) {
   // print_term("NEG", neg);
@@ -1881,12 +1906,13 @@ void pb() {
 }
 
 void pr() {
+  fprintf(stderr, "Redexes: %d\n", pairs.count);
   for (int i = 0; i < pairs.count; i++) {
-    printf(" %.3x  ", i);
+    fprintf(stderr, " %.3x  ", i);
     print_raw_term(pairs.rdxs[i][0]);
-    printf("  ");
+    fprintf(stderr, "  ");
     print_raw_term(pairs.rdxs[i][1]);
-    printf("\n");
+    fprintf(stderr, "\n");
   }
 }
 
@@ -1909,7 +1935,7 @@ void check_buff() {
   }
   if (leaks) {
     fprintf(stderr, "\nLeaked pairs!!\n");
-    graphDown("leaked", get(2));
+    graphDown("leaked", get(0x42));
     pb();
       // BOOM("Leak pairs");
   }
@@ -2324,7 +2350,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   case VAR: {
     Location loc = term_loc(tree);
     Term trm = get(loc);
-    if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
+    if (term_tag(trm) != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
       return graphSubDown(graphNum, nodeNum, trm);
     } else {
       for (unsigned i = 0; i < nodeCount; i++) {
@@ -2332,6 +2358,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
 	if (hasLocation(gn->trm) && term_loc(gn->trm) == (loc & 0xFFFFFFFE))
 	  return gn->node;
       }
+      return graphSubDown(graphNum, nodeNum, trm);
     }
     return 65536;
   }
