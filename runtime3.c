@@ -3126,7 +3126,8 @@ int main (int argc, char **argv) {
   u64 node_count = atomic_load(&glblAlloced);
   u64 max_node = atomic_load(&RNOD_END);
   printf("- Threads: %u\n", threadCount);
-  printf("- ITRS: %" PRIu64 " TIME: %.2fs  MIPS: %.2f\n", itrs, duration, (double)itrs / duration / 1000000.0);
+  printf("- ITRS: %" PRIu64 "\n", itrs);
+  // printf("- ITRS: %" PRIu64 " TIME: %.2fs  MIPS: %.2f\n", itrs, duration, (double)itrs / duration / 1000000.0);
   printf("remaining nodes: %ld (%ld)\n", node_count, max_node);
   if (node_count != 0) {
     fprintf(stderr, "remaining nodes: %ld (%ld)\n", node_count, max_node);
