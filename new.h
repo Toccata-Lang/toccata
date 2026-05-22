@@ -199,3 +199,4 @@ extern pthread_mutex_t buff_mutex;
 unsigned graphDown(char *title, Term root);
 void graphUp(char *title, Term root);
 void graphFn(Term ref, Term args);
+void intCond(Term ref, Term args);

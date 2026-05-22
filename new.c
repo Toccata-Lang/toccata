@@ -975,31 +975,39 @@ int decSubRefs(Location sup_loc) {
 // distribute a negative through a SUP
 void negsup(Term neg, Term sup) {
   Location sup_loc = term_loc(sup);
-  Lab sup_lab = term_lab(sup);
-  Location neg_loc = term_loc(neg);
-  Tag neg_tag = term_tag(neg);
-  Lab neg_lab = term_lab(neg);
+  if (get(port(1, sup_loc)) == NUL) {
+    take(port(1, sup_loc));
+    moveStore(port(2, sup_loc), neg);
+  } else if (get(port(1, sup_loc)) == NUL) {
+    take(port(2, sup_loc));
+    moveStore(port(1, sup_loc), neg);
+  } else {
+    Lab sup_lab = term_lab(sup);
+    Location neg_loc = term_loc(neg);
+    Tag neg_tag = term_tag(neg);
+    Lab neg_lab = term_lab(neg);
 
-  Term arg = take(port(1, neg_loc));
-  Location ret = port(2, neg_loc);
-  Term tm1 = take(port(1, sup_loc));
-  Term tm2 = take(port(2, sup_loc));
-  Term dp1 = makeLazyDup(sup_lab, arg);
-  Term cn1 = pair_make(neg_tag, neg_lab,
-		       term_new(VAR, 0, port(1, term_loc(dp1))),
-		       SUB);
-  Term lz1 = pair_make(LAZ, 5, cn1, tm1);
-  swapStore(port(2, term_loc(cn1)), lz1);
-  Term cn2 = pair_make(neg_tag, neg_lab,
-		       term_new(VAR, 0, port(2, term_loc(dp1))),
-		       SUB);
-  swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 6, cn2, tm2));
-  // TODO: could you make the ports of the SUP store direct LAZ terms
-  // and not VAR's?
-  Term dp2 = pair_make(SUP, sup_lab,
-		       term_new(VAR, 0, port(2, term_loc(cn1))),
-		       term_new(VAR, 0, port(2, term_loc(cn2))));
-  moveStore(ret, dp2);
+    Term arg = take(port(1, neg_loc));
+    Location ret = port(2, neg_loc);
+    Term tm1 = take(port(1, sup_loc));
+    Term tm2 = take(port(2, sup_loc));
+    Term dp1 = makeLazyDup(sup_lab, arg);
+    Term cn1 = pair_make(neg_tag, neg_lab,
+			 term_new(VAR, 0, port(1, term_loc(dp1))),
+			 SUB);
+    Term lz1 = pair_make(LAZ, 5, cn1, tm1);
+    swapStore(port(2, term_loc(cn1)), lz1);
+    Term cn2 = pair_make(neg_tag, neg_lab,
+			 term_new(VAR, 0, port(2, term_loc(dp1))),
+			 SUB);
+    swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 6, cn2, tm2));
+    // TODO: could you make the ports of the SUP store direct LAZ terms
+    // and not VAR's?
+    Term dp2 = pair_make(SUP, sup_lab,
+			 term_new(VAR, 0, port(2, term_loc(cn1))),
+			 term_new(VAR, 0, port(2, term_loc(cn2))));
+    moveStore(ret, dp2);
+  }
 }
 
 // Application-Null interaction
@@ -1046,6 +1054,7 @@ void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
   Location dup_loc = term_loc(dup);
+  Location sup_loc = term_loc(sup);
 
   if (get(port(1, dup_loc)) == ERA) {
     take(port(1, dup_loc));
@@ -1053,6 +1062,12 @@ void dupsup(Term dup, Term sup) {
   } else if (get(port(2, dup_loc)) == ERA) {
     take(port(2, dup_loc));
     moveStore(port(1, dup_loc), sup);
+  } else if (get(port(1, sup_loc)) == NUL) {
+    take(port(1, sup_loc));
+    moveStore(port(2, sup_loc), dup);
+  } else if (get(port(2, sup_loc)) == NUL) {
+    take(port(2, sup_loc));
+    moveStore(port(1, sup_loc), dup);
   } else if (dup_lab == sup_lab) {
     // Special case: when DUP and SUP have the same label, they annihilate
     // Get the ports of the DUP node
@@ -1060,7 +1075,6 @@ void dupsup(Term dup, Term sup) {
     Location dup_p2 = port(2, dup_loc);
 
     // Get the ports of the SUP node
-    Location sup_loc = term_loc(sup);
     Term sup_p1 = take(port(1, sup_loc));
     Term sup_p2 = take(port(2, sup_loc));
 
@@ -1407,10 +1421,6 @@ long graphCount = 0;
 void interact(Term neg, Term pos) {
   /*
   if (term_tag(neg) != ERA && term_tag(pos) != NUL) {
-    if (graphCount == 235) {
-      pr();
-      pb();
-    }
     FILE *currDOT = dotFile;
     char dotName[100];
     sprintf(dotName, "graphs/%04ld-%ld-%ld.dot", graphCount++, neg, pos);
@@ -1483,6 +1493,47 @@ Term argsNet(NativeArgs *args) {
   }
 
   return tail;
+}
+
+void varArg(Term trm, Term ref, Term args, NativeArgs *argsStruct) {
+  Location trmLoc = term_loc(trm);
+  Term val = get(trmLoc);
+  switch(term_tag(val)) {
+  case LAZ:
+    swapStore(trmLoc, SUB);
+    forceLazy(val);
+	
+  case SUB:
+    // add the remaining args to argsStruct
+    argsStruct->args[argsStruct->count++] = args;
+
+    // create a chain of APP terms from argsStruct
+    Term newArgs = argsNet(argsStruct);
+
+    // put 'trm' back in it's place
+    swapStore(port(1, term_loc(args)), trm);
+
+    // make a deferred redex to retry the APP/REF pair when the value becomes available
+    Term retry = pair_make(SUB, 5, newArgs, ref);
+
+    // and put it in the location 'trm' points to
+    Term newArg = swapStore(trmLoc, retry);
+    if (newArg != SUB) {
+      // someone slipped the needed trm in since we last looked
+      swapStore(trmLoc, newArg);
+      pair_free(term_loc(retry));
+
+      // so retry the original APP/REF redex
+      store_redex(newArgs, ref);
+    }
+    break;
+
+  default:
+    print_raw_term(val);
+    printf("\n");
+    BOOM("nativeArgs");
+    break;
+  }
 }
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
@@ -1577,45 +1628,8 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       moveStore(port(2, term_loc(args)), newSup);
       break;
 
-    case VAR: {
-      Term val = get(term_loc(arg));
-      switch(term_tag(val)) {
-      case LAZ:
-	swapStore(term_loc(arg), SUB);
-	forceLazy(val);
-	
-      case SUB:
-	// add the remaining args to argsStruct
-	argsStruct->args[argsStruct->count++] = args;
-
-	// create a chain of APP terms from argsStruct
-	Term newArgs = argsNet(argsStruct);
-
-	// put 'arg' back in it's place
-	swapStore(port(1, term_loc(args)), arg);
-
-	// make a deferred redex to retry the APP/REF pair when the value becomes available
-	Term retry = pair_make(SUB, 5, newArgs, ref);
-
-	// and put it in the location 'arg' points to
-	Term newArg = swapStore(term_loc(arg), retry);
-	if (newArg != SUB) {
-	  // someone slipped the needed arg in since we last looked
-	  swapStore(term_loc(arg), newArg);
-	  pair_free(term_loc(retry));
-
-	  // so retry the original APP/REF redex
-	  store_redex(newArgs, ref);
-	}
-	break;
-
-      default:
-	print_raw_term(val);
-	printf("\n");
-	BOOM("nativeArgs");
-	break;
-      }
-    }
+    case VAR:
+      varArg(arg, ref, args, argsStruct);
       break;
 
     case LAZ:
@@ -1926,7 +1940,8 @@ void check_buff() {
     printf("BUFF is not initialized\n");
     return;
   }
-    unsigned leaks = 0;
+  /*
+  unsigned leaks = 0;
   for (Location i = 0; i < RNOD_END; i += 2) {
     Term t1 = buff[i];
     if (term_tag(t1) != NUL || buff[i + 1] != 0) {
@@ -1935,10 +1950,12 @@ void check_buff() {
   }
   if (leaks) {
     fprintf(stderr, "\nLeaked pairs!!\n");
-    graphDown("leaked", get(0x42));
+    print_term("leaked", get(0x9c));
+    graphDown("leaked", get(0x9c));
     pb();
       // BOOM("Leak pairs");
   }
+  // */
 }
 
 // Print the free list for debugging
@@ -2574,5 +2591,38 @@ void graphFn(Term ref, Term args) {
     sprintf(cap, "%-.*s", (int)((String *)s)->len, ((String *)s)->buffer);
     graphDown(cap, arg);
     moveStore(port(2, term_loc(args)), arg);
+  }
+}
+
+void intCond(Term ref, Term args) {
+  NativeArgs argsStruct = {0, {}};
+  args = strictArgs(ref, args, 1, &argsStruct);
+  if (argsStruct.count != 1) {
+    return;
+  }
+
+  args = take(port(2, term_loc(args))); 
+  Term trueBranch = take(port(1, term_loc(args))); 
+
+  if (term_tag(trueBranch) == VAR) {
+    varArg(trueBranch, ref, args, &argsStruct);
+    return;
+  }
+
+  args = take(port(2, term_loc(args))); 
+  Term falseBranch = take(port(1, term_loc(args))); 
+
+  if (term_tag(falseBranch) == VAR) {
+    varArg(falseBranch, ref, args, &argsStruct);
+    return;
+  }
+
+  long x = get_i60(argsStruct.args[0]);
+  if (x == 0) {
+    interact(ERA, trueBranch);
+    moveStore(port(2, term_loc(args)), falseBranch);
+  } else {
+    interact(ERA, falseBranch);
+    moveStore(port(2, term_loc(args)), trueBranch);
   }
 }
