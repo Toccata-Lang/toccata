@@ -1,0 +1,209 @@
+
+(defn str-to-int [str]
+  (inline "
+    if (term_tag(str_1) != VAL) {
+      fprintf(stderr, \"\\ninvalid type for 'pr*': Integer or Float\\n\");
+      abort();
+    }
+    char dest[100];
+    int len;
+    char *src;
+    int num = 0;
+    Value *s = (Value *)((u64)str_1 & ~7);
+    if (s->type == StringBufferType) {
+      src = ((String *)s)->buffer;
+      len = (int)((String *)s)->len;
+    } else if (s->type == SubStringType) {
+      ReifiedVal *ss = (ReifiedVal *)str_1;
+      String *parent = (String *)ss->impls[0];
+      long start = get_i60(ss->impls[1]);
+      len = (int)get_i60(ss->impls[2]);
+      src = &parent->buffer[start];
+    } else {
+      fprintf(stdout, \"\\ninvalid type for 'pr*': %ld\\n\", s->type);
+      abort();
+    }
+    strncpy(dest, src, len);
+    dest[len] = 0;
+    sscanf(dest, \"%d\", &num);
+    dec_and_free(str_1, 1);
+    result = new_i60(num);"))
+
+(defn bit-and [x y]
+  (inline "
+    unsigned x = (unsigned)get_i60(x_1);
+    unsigned y = (unsigned)get_i60(y_2);
+    result = new_i60(x & y);
+"))
+
+(defn /2 [x]
+  (inline "
+    unsigned x = (unsigned)get_i60(x_1);
+    result = new_i60(x >> 1);
+"))
+
+(defn >> [x n]
+  (inline "
+    unsigned x = (unsigned)get_i60(x_1);
+    unsigned n = (unsigned)get_i60(n_2);
+    result = new_i60(x >> n);
+"))
+
+;; printing 
+(def pr0)
+(def pr1)
+
+(defn prLF [p]
+  (pr* "LF\n"))
+
+(defn pr0 [p]
+  (pr* "0")
+  (p pr0 pr1 prLF))
+
+(defn pr1 [p]
+  (pr* "1")
+  (p pr0 pr1 prLF))
+
+(defn output [bits]
+  (bits pr0 pr1 prLF))
+
+(defn hbin [N]
+  (int-cond N
+        ((fn hbin-step [l]
+           (fn hbin-n [n]
+             ((fn hbin-cond [x]
+                (int-cond x
+                      (fn hbin-1 [o i e]
+                        (i ((hbin (- l 1)) (/2 n))))
+                      (fn hbin-0 [o i e]
+                        (o ((hbin (- l 1)) (/2 n))))))
+              (bit-and n 1))))
+         N)
+
+        (fn hbin-done [n]
+          (fn hbin-e [o i e]
+            e))))
+
+;; @clr = λx. λ&o. λi. λe. x(λp.o(@clr(p)), λp.o(@clr(p)), e)
+;; This goes into a spin, probably an infinite loop
+(def clr1)
+(defn clr1 [x]
+  (fn clr1-f [o i e]
+    (x (fn [p]
+         (pr* "clr1 0 bit\n")
+         (o (clr1 p)))
+       (fn [p]
+         (pr* "clr1 1 bit\n")
+         (o (clr1 p)))
+       e)))
+
+;; @clr = λx. λo. λi. λe. x(λp.λo.o(@clr(p)), λp.λo.o(@clr(p)), λo.e, o)
+(def clr2)
+(defn clr2 [x]
+  (fn clr2-f [o i e]
+    ((x (fn clr2-0 [p]
+          (fn clr2-0-c [o]
+            (pr* "clr2 0 bit\n")
+            (o (clr2 p))))
+        (fn clr2-1 [p]
+          (fn clr2-1-c [o]
+            (pr* "clr2 1 bit\n")
+            (o (clr2 p))))
+        (fn clr-2-done [o]
+          e))
+     o)))
+
+(def clr3)
+(defn clr3 [x o i e]
+  ((x (fn clr3-0 [p o]
+        ;; (pr* "clr3 0 bit\n")
+        (o (clr3 p)))
+      (fn clr3-1 [p o]
+        ;; (pr* "clr3 1 bit\n")
+        (o (clr3 p)))
+      (fn clr-3-done [o]
+        e))
+   o))
+
+;; (def end-0)
+;; (def end-1)
+;; (def end-E)
+;; (defn end-0 [c]
+;;   ((c end-0 end-1 end-E)))
+;; (defn end-1 [c]
+;;   ((c end-0 end-1 end-E)))
+;; (defn end-E [c]
+;;   (fn [x] x))
+
+(def rep)
+(defn rep [xs]
+  (xs (fn rep-O [p f x]
+        ;; (pr* "rep-O\n")
+        ((rep p)
+         (fn rep-0-c [k]
+           ;; (pr* "rep-0-c\n")
+           (f (f k)))
+         x))
+      (fn rep-I [p f x]
+        ;; (pr* "rep-I\n")
+        ((rep p)
+         (fn rep-1-c [k]
+           ;; (pr* "rep-I-c\n")
+           (f (f k)))
+         (f x)))
+      (fn rep-E [f x]
+        x)))
+        
+(defn simplest [b]
+  (fn [t]
+    (fn [f]
+      (b f f))))
+
+(defn counter [b]
+  (fn [t]
+    (fn [f]
+      (b (f f) f))))
+
+(main [args]
+      (let [reps (either (map (nth args 1) str-to-int)
+                         4)]
+        ;; (((rep ((hbin 32) reps))
+        ;;   simplest
+        ;;   (fn input [t f]
+        ;;     ;; (pr* "input\n")
+        ;;     t))
+        ;;  "boogity"
+        ;;  (fn false [f]
+        ;;    f)
+        ;;  95)
+
+        ;; (((rep ((hbin 32) reps))
+        ;;   counter
+        ;;   (fn input [t f]
+        ;;     ;; (pr* "input\n")
+        ;;     t))
+        ;;  "boogity"
+        ;;  (fn false [f]
+        ;;    f)
+        ;;  95)
+
+        ;; (map (range 14)
+        ;;      (fn [reps]
+        ;;        (do
+        ;;          (println reps)
+        ;;          (graph (str "reps:" reps)
+        ;;                 ((rep (bin 4 reps))
+        ;;                  simplest
+        ;;                  (fn input [t f]
+        ;;                    t))))
+        ;;        reps))
+
+        ((output ((rep ((hbin 3) reps))
+                  clr1
+                  ((hbin 16) 7))))
+        
+        ;; ((output ((rep ((hbin 32) reps))
+        ;;           clr2
+        ;;           ((hbin 16) 7))))
+        ))
+
