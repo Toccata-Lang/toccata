@@ -196,7 +196,8 @@ extern pthread_mutex_t buff_mutex;
 
 #define pair_make(tag, lab, fst, snd) maker(__LINE__, tag, lab, fst, snd)
 
-unsigned graphDown(char *title, Term root);
+extern unsigned subGraphs;
+unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned graphNum);
 void graphUp(char *title, Term root);
 void graphFn(Term ref, Term args);
 void intCond(Term ref, Term args);

@@ -972,15 +972,16 @@ int decSubRefs(Location sup_loc) {
   return atomic_fetch_sub_explicit(&BUFF[sup_loc], 1, memory_order_relaxed);
 }
 
+long graphCount = 0;
 // distribute a negative through a SUP
 void negsup(Term neg, Term sup) {
   Location sup_loc = term_loc(sup);
-  if (get(port(1, sup_loc)) == NUL) {
-    take(port(1, sup_loc));
-    moveStore(port(2, sup_loc), neg);
-  } else if (get(port(1, sup_loc)) == NUL) {
-    take(port(2, sup_loc));
-    moveStore(port(1, sup_loc), neg);
+  Term tm1 = take(port(1, sup_loc));
+  Term tm2 = take(port(2, sup_loc));
+  if (term_tag(tm1) == NUL) {
+    store_redex(neg, tm2);
+  } else if (term_tag(tm2) == NUL) {
+    store_redex(neg, tm1);
   } else {
     Lab sup_lab = term_lab(sup);
     Location neg_loc = term_loc(neg);
@@ -989,18 +990,16 @@ void negsup(Term neg, Term sup) {
 
     Term arg = take(port(1, neg_loc));
     Location ret = port(2, neg_loc);
-    Term tm1 = take(port(1, sup_loc));
-    Term tm2 = take(port(2, sup_loc));
     Term dp1 = makeLazyDup(sup_lab, arg);
     Term cn1 = pair_make(neg_tag, neg_lab,
 			 term_new(VAR, 0, port(1, term_loc(dp1))),
 			 SUB);
-    Term lz1 = pair_make(LAZ, 5, cn1, tm1);
+    Term lz1 = pair_make(LAZ, 0, cn1, tm1);
     swapStore(port(2, term_loc(cn1)), lz1);
     Term cn2 = pair_make(neg_tag, neg_lab,
 			 term_new(VAR, 0, port(2, term_loc(dp1))),
 			 SUB);
-    swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 6, cn2, tm2));
+    swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 0, cn2, tm2));
     // TODO: could you make the ports of the SUP store direct LAZ terms
     // and not VAR's?
     Term dp2 = pair_make(SUP, sup_lab,
@@ -1056,19 +1055,7 @@ void dupsup(Term dup, Term sup) {
   Location dup_loc = term_loc(dup);
   Location sup_loc = term_loc(sup);
 
-  if (get(port(1, dup_loc)) == ERA) {
-    take(port(1, dup_loc));
-    moveStore(port(2, dup_loc), sup);
-  } else if (get(port(2, dup_loc)) == ERA) {
-    take(port(2, dup_loc));
-    moveStore(port(1, dup_loc), sup);
-  } else if (get(port(1, sup_loc)) == NUL) {
-    take(port(1, sup_loc));
-    moveStore(port(2, sup_loc), dup);
-  } else if (get(port(2, sup_loc)) == NUL) {
-    take(port(2, sup_loc));
-    moveStore(port(1, sup_loc), dup);
-  } else if (dup_lab == sup_lab) {
+  if (dup_lab == sup_lab) {
     // Special case: when DUP and SUP have the same label, they annihilate
     // Get the ports of the DUP node
     Location dup_p1 = port(1, dup_loc);
@@ -1081,7 +1068,13 @@ void dupsup(Term dup, Term sup) {
     // Direct connection of the ports
     moveStore(dup_p1, sup_p1);
     moveStore(dup_p2, sup_p2);
-  } else {
+  } else if (get(port(1, dup_loc)) == ERA) {
+    take(port(1, dup_loc));
+    moveStore(port(2, dup_loc), sup);
+  } else if (get(port(2, dup_loc)) == ERA) {
+    take(port(2, dup_loc));
+    moveStore(port(1, dup_loc), sup);
+  } else  {
     // Get the ports of the DUP node
     Location dup_loc = term_loc(dup);
     Location dup_p1 = port(1, dup_loc);
@@ -1133,20 +1126,33 @@ void eravar(Term era, Term var) {
   Term val = take(term_loc(var));
   if (term_tag(val) == VAR) {
     Term lz = swapStore(term_loc(val), era);
+    Location lzLoc = term_loc(lz);
     if (lz != SUB) {
-      Term lzNeg = get(port(1, term_loc(lz)));
+      Term lzNeg = get(port(1, lzLoc));
       switch(term_tag(lzNeg)) {
       case DUP: {
-	Term dp1 = get(port(1, term_loc(lzNeg)));
-	Term dp2 = get(port(2, term_loc(lzNeg)));
+	Location dupLoc = term_loc(lzNeg);
+	Term dp1 = get(port(1, dupLoc));
+	Term dp2 = get(port(2, dupLoc));
 	if (dp1 == ERA && dp2 == ERA) {
-	  take(port(1, term_loc(lz)));
-	  take(port(1, term_loc(lzNeg)));
-	  take(port(2, term_loc(lzNeg)));
-	  Term lzPos = take(port(2, term_loc(lz)));
+	  take(port(1, lzLoc));
+	  take(port(1, dupLoc));
+	  take(port(2, dupLoc));
+	  Term lzPos = take(port(2, lzLoc));
 	  interact(ERA, lzPos);
-	} else if (dp1 == sideEffects || dp2 == sideEffects)
+	} else if (dp1 == sideEffects || dp2 == sideEffects) {
 	  forceLazy(lz);
+	} else if (dp1 == lz) {
+	  take(port(2, dupLoc));
+	  take(port(1, lzLoc));
+	  swapStore(port(1, dupLoc), take(port(2, lzLoc)));
+	} else if (dp2 == lz) {
+	  take(port(1, dupLoc));
+	  take(port(1, lzLoc));
+	  swapStore(port(2, dupLoc), take(port(2, lzLoc)));
+	}
+	// else if (dp1 == lz || dp2 == lz)
+	// eraseCycle(get(port(2, lzLoc)), lz);
       }
 	break;
 
@@ -1417,21 +1423,34 @@ interactionFn interactions[16][16] = {
 };
 
 a64 rdxCount;
-long graphCount = 0;
+unsigned nodeCount = 0;
+unsigned otherNodes;
+unsigned subGraphs = 0;
+
 void interact(Term neg, Term pos) {
   /*
-  if (term_tag(neg) != ERA && term_tag(pos) != NUL) {
-    FILE *currDOT = dotFile;
-    char dotName[100];
-    sprintf(dotName, "graphs/%04ld-%ld-%ld.dot", graphCount++, neg, pos);
-    dotFile = fopen(dotName, "w");
-    fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
-    graphDown("NEG", neg);
-    graphDown("POS", pos);
-    fprintf(dotFile, "}\n");
-    fclose(dotFile);
-    dotFile = currDOT;
+  if (1) {
+    if (term_tag(neg) != ERA && term_tag(pos) != NUL) {
+      if (1) {
+	FILE *currDOT = dotFile;
+	unsigned currSubG = subGraphs;
+	subGraphs = 0;
+	char dotName[100];
+	sprintf(dotName, "graphs/%04ld-%ld-%ld.dot", graphCount, neg, pos);
+	dotFile = fopen(dotName, "w");
+	fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
+	graphDown("NEG", neg, 0, 0);
+	graphDown("POS", pos, nodeCount, 0);
+	fprintf(dotFile, "}\n");
+	fclose(dotFile);
+	dotFile = currDOT;
+	subGraphs = currSubG;
+      }
+      graphCount++;
+    }
   }
+  if (rdxCount == 1484)
+    BOOM("all done");
   // */
 
   // if (term_lab(pos) == SUP && term_loc(pos) == 0x15a) {
@@ -1442,10 +1461,12 @@ void interact(Term neg, Term pos) {
   // print_term("NEG", neg);
   // print_term("POS", pos);
   // }
-    // print_raw_term(neg);
-    // printf("  ");
-    // print_raw_term(pos);
-    // printf("\n");
+
+  // fprintf(stderr, "inter: %ld ", rdxCount);
+  // print_raw_term(neg);
+  // fprintf(stderr, " - ");
+  // print_raw_term(pos);
+  // fprintf(stderr, "\n");
 #ifdef STATS
   atomic_fetch_add_explicit(&rdxCount, 1, memory_order_relaxed);
 #endif
@@ -1616,11 +1637,11 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 
       Term tail1 = pair_make(APP, 0, s1, SUB);
       argsStruct->args[argsCount] = tail1;
-      swapStore(port(2, term_loc(tail1)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
+      swapStore(port(2, term_loc(tail1)), pair_make(LAZ, 0, argsNet(argsStruct), ref));
 
       Term tail2 = pair_make(APP, 0, s2, SUB);
       argsStruct->args[argsCount] = tail2;
-      swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 7, argsNet(argsStruct), ref));
+      swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 0, argsNet(argsStruct), ref));
 
       Term newSup = pair_make(SUP, supLabel,
 			      term_new(VAR, 0, port(2, term_loc(tail1))),
@@ -1998,7 +2019,7 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
 
   default: {
     Term newDup = pair_make(DUP, dupLabel, SUB, SUB);
-    Term z = pair_make(LAZ, 1, newDup, arg);
+    Term z = pair_make(LAZ, 0, newDup, arg);
     swapStore(port(1, term_loc(newDup)), z);
     swapStore(port(2, term_loc(newDup)), z);
 
@@ -2012,7 +2033,7 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
 Term make_op(Lab op, Term x, Term y) {
   Term t = pair_make(OPX, op, y, SUB);
   Term ret = term_new(VAR, 0, port(2, term_loc(t)));
-  swapStore(term_loc(ret), pair_make(LAZ, 2, t, x));
+  swapStore(term_loc(ret), pair_make(LAZ, 0, t, x));
   return ret;
 }
 
@@ -2032,41 +2053,12 @@ typedef struct graphNode {
   Location lazyAPP;
 } graphNode;
 
-#define NODE_STACK_SIZE 1000
 graphNode nodeStack[NODE_STACK_SIZE];
 
 void fatal_error(char *fmt, unsigned bytes) {
   fprintf(stderr, fmt, bytes);
   abort();
 }
-
-char hasLocation(Term tree) {
-  Tag t = term_tag(tree);
-
-  if (tree == SUB)
-    return 0;
-  
-  switch(t) {
-  case VAL:
-  case NUL:
-  case REF:
-  case ERA:
-  case I60:
-  case F60:
-    return 0;
-    break;
-
-    // Allow SUB terms to have locations
-  case SUB:
-  default:
-    return 1;
-    break;
-  }
-}
-
-unsigned nodeCount = 0;
-unsigned otherNodes;
-unsigned subGraphs = 0;
 
 unsigned graphSubUp(unsigned graphNum, Term tree);
 unsigned upBranch(Term tree, unsigned pt, unsigned graphNum) {
@@ -2377,7 +2369,6 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
       }
       return graphSubDown(graphNum, nodeNum, trm);
     }
-    return 65536;
   }
     break;
 
@@ -2493,20 +2484,19 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   return nodeNum;
 }
 
-unsigned graphDown(char *title, Term root) {
+unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned graphNum) {
   char xLbl[100];
-  nodeCount = 0;
-  unsigned graphNum = subGraphs++;
+  nodeCount = currNodeCount;
+  fprintf(dotFile, "subgraph cluster%d {\ngraph [color=none, label=\"%s\"]\n", subGraphs++, title);
 
-  otherNodes = RNOD_END;
-  fprintf(dotFile, "subgraph cluster%d {\ngraph [color=none, label=\"%s\"]\n", graphNum, title);
-
+  if (currNodeCount == 0)
+    otherNodes = RNOD_END;
   if (term_tag(root) == LAM) {
     unsigned nodeNum = otherNodes++;
     unsigned rootNode = term_loc(root);
     snprintf(xLbl, 95, "%x:\n%d", rootNode, term_lab(root));
     fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "L", 0, xLbl);
-    // fprintf(dotFile, "{rank=min; x%d_%x;}\n", graphNum, nodeNum);
+    fprintf(dotFile, "{rank=min; x%d_%x;}\n", graphNum, nodeNum);
 
     graphNode *gn = &nodeStack[nodeCount++];
     if (nodeCount > 999)
@@ -2525,9 +2515,7 @@ unsigned graphDown(char *title, Term root) {
       fprintf(dotFile, "{rank=max; x%d_%x;}\n", graphNum, rootNode);
     }
 
-    unsigned rightNode = graphSubDown(graphNum, 65536, get(port(2, term_loc(root))));
-    if (rightNode != 65536)
-      fprintf(dotFile, "x%d_%x:se -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightNode);
+    downBranch(root, 2,graphNum, nodeNum);
     fprintf(dotFile, "}\n");
     return nodeNum;
   } else {
@@ -2589,7 +2577,7 @@ void graphFn(Term ref, Term args) {
     String *s = (String *)argsStruct.args[0];
     char cap[200];
     sprintf(cap, "%-.*s", (int)((String *)s)->len, ((String *)s)->buffer);
-    graphDown(cap, arg);
+    graphDown(cap, arg, 0, subGraphs++);
     moveStore(port(2, term_loc(args)), arg);
   }
 }
