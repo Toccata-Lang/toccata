@@ -201,3 +201,4 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
 void graphUp(char *title, Term root);
 void graphFn(Term ref, Term args);
 void intCond(Term ref, Term args);
+extern char *dupLabels[];

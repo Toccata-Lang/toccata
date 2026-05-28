@@ -3035,6 +3035,7 @@ int main (int argc, char **argv) {
     do {
       normalize(NULL);
       result = take(resultLocation);
+      // graphDown("result", result, 0, subGraphs++);
       resultTag = term_tag(result);
       if (resultTag == VAR) {
 	resultLocation = term_loc(result);
@@ -3098,15 +3099,19 @@ int main (int argc, char **argv) {
 	Lab l = term_lab(result);
 	Location loc = term_loc(result);
 	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
-	// graphDown("result", result);
+	Term newResult = swapStore(port(1, loc), NUL) ;
+	if (term_tag(newResult) == NUL)
+	  newResult = swapStore(port(2, loc), NUL) ;
+	interact(ERA, result);
 	result = nothing();
 	resultTag = term_tag(result);
+	graphDown("result", result, 0, subGraphs++);
       }
 	break;
 
       default: {
 	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
-	graphDown("result", result);
+	graphDown("result", result, 0, subGraphs++);
 	result = new_i60(1);
 	resultTag = term_tag(result);
       }
