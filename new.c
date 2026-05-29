@@ -344,10 +344,14 @@ void eraseSubCycle(Term tree, Location tgtLoc) {
     Location loc = port(1, term_loc(tree));
     Term branch = get(loc);
     eraseSubCycle(branch, tgtLoc);
+    if (term_tag(branch) == VAR && term_loc(branch) == tgtLoc)
+      swapStore(loc, NUL);
 
     loc = port(2, term_loc(tree));
     branch = get(loc);
     eraseSubCycle(branch, tgtLoc);
+    if (term_tag(branch) == VAR && term_loc(branch) == tgtLoc)
+      swapStore(loc, NUL);
   }
     break;
     
@@ -423,8 +427,7 @@ void eraseLazy(Term lazyVar) {
     if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
       take(port(1, term_loc(negLaz)));
       take(port(2, term_loc(negLaz)));
-      freeLoc(port(1, lazyLoc));
-      freeLoc(port(2, lazyLoc));
+      pair_free(lazyLoc);
       interact(negLaz, NUL);
       interact(ERA, posLaz);
     } else {
@@ -729,6 +732,7 @@ bool is_negative(Term term) {
   }
 }
 
+long graphCount = 0;
 // Create a new pair with given tag, label, and terms
 Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
 #ifdef SAFETY
@@ -983,8 +987,23 @@ void link_redexes() {
   }
 }
 
+void eraseDupCycle(Term dup, Term pos) {
+  Location dup_p1 = port(1, term_loc(dup));
+  Location dup_p2 = port(2, term_loc(dup));
+  Term dp1 = get(dup_p1);
+  Term dp2 = get(dup_p2);
+
+  if (dp1 == sideEffects)
+    eraseCycle(pos, dup_p2);
+  if (dp2 == sideEffects)
+    eraseCycle(pos, dup_p1);
+}
+
 void negvar(Term neg, Term var) {
   var = take(term_loc(var));
+  if (term_tag(neg) == DUP)
+    eraseDupCycle(neg, var);
+  
   if (term_tag(var) == VAR) {
     Term val = swapStore(term_loc(var), neg);
     switch(term_tag(val)) {
@@ -1078,7 +1097,6 @@ int decSubRefs(Location sup_loc) {
   return atomic_fetch_sub_explicit(&BUFF[sup_loc], 1, memory_order_relaxed);
 }
 
-long graphCount = 0;
 // distribute a negative through a SUP
 void negsup(Term neg, Term sup) {
   Location sup_loc = term_loc(sup);
@@ -1124,6 +1142,7 @@ void appnul(Term app, Term nul) {
   return;
 }
 
+unsigned nodeCount = 0;
 // Duplication-Lambda interaction
 void duplam(Term dup, Term lam) {
   Location dup_loc = term_loc(dup);
@@ -1135,6 +1154,9 @@ void duplam(Term dup, Term lam) {
     take(port(2, dup_loc));
     moveStore(port(1, dup_loc), lam);
   } else {
+    if (dup_loc == 0x1c && lam_loc == 0xb2) {
+     pb();
+    }
     Lab lam_lab = term_lab(lam);
     Lab dup_lab = term_lab(dup);
     Location var = port(1, lam_loc);
@@ -1150,11 +1172,16 @@ void duplam(Term dup, Term lam) {
     moveStore(var, du1);
     moveStore(port(1, dup_loc), l1);
     moveStore(port(2, dup_loc), l2);
+
+    if (dup_loc == 0x1c && lam_loc == 0xb2) {
+      graphDown("l1", l1, 0, subGraphs++);
+      graphDown("l2", l2, nodeCount, subGraphs++);
+      pb();
+    }
   }
   return;
 }
 
-unsigned nodeCount = 0;
 // Duplication-Superposition interaction
 void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
@@ -1176,13 +1203,9 @@ void dupsup(Term dup, Term sup) {
     moveStore(dup_p1, sup_p1);
     moveStore(dup_p2, sup_p2);
   } else {
+    eraseDupCycle(dup, sup);
     Term dp1 = get(dup_p1);
     Term dp2 = get(dup_p2);
-
-    if (dp1 == sideEffects)
-      eraseCycle(sup, dup_p2);
-    if (dp2 == sideEffects)
-      eraseCycle(sup, dup_p1);
 
     dp1 = get(dup_p1);
     dp2 = get(dup_p2);
@@ -1539,10 +1562,16 @@ unsigned otherNodes;
 unsigned subGraphs = 0;
 
 void interact(Term neg, Term pos) {
-  /*
+  //*
   if (1) {
     if (term_tag(neg) != ERA && term_tag(pos) != NUL) {
       if (1) {
+	fprintf(stderr, "%ld: ", graphCount);
+	print_raw_term(neg);
+	fprintf(stderr, " - ");
+	print_raw_term(pos);
+	fprintf(stderr, "\n");
+
 	FILE *currDOT = dotFile;
 	unsigned currSubG = subGraphs;
 	subGraphs = 0;
@@ -1573,11 +1602,6 @@ void interact(Term neg, Term pos) {
   // print_term("POS", pos);
   // }
 
-  // fprintf(stderr, "inter: %ld ", rdxCount);
-  // print_raw_term(neg);
-  // fprintf(stderr, " - ");
-  // print_raw_term(pos);
-  // fprintf(stderr, "\n");
 #ifdef STATS
   atomic_fetch_add_explicit(&rdxCount, 1, memory_order_relaxed);
 #endif
@@ -2076,7 +2100,7 @@ void check_buff() {
     printf("BUFF is not initialized\n");
     return;
   }
-  /*
+  //*
   unsigned leaks = 0;
   for (Location i = 0; i < RNOD_END; i += 2) {
     Term t1 = buff[i];
@@ -2084,10 +2108,10 @@ void check_buff() {
       leaks++;
     }
   }
+  graphDown("leaked", get(0x4c), 0, subGraphs++);
   if (leaks) {
     fprintf(stderr, "\nLeaked pairs!!\n");
-    print_term("leaked", get(0x9c));
-    graphDown("leaked", get(0x9c));
+    // print_term("leaked", get(0x9c));
     pb();
       // BOOM("Leak pairs");
   }
@@ -2394,15 +2418,34 @@ void graphUp(char *title, Term root) {
 unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree);
 void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   Tag t = term_tag(tree);
+  Location treeLoc = term_loc(tree);
   char *branchPort = pt == 1 ? "sw" : "se";
-  Location loc = port(pt, term_loc(tree));
+  Location loc = port(pt, treeLoc);
   Term branch = get(loc);
   while (term_tag(branch) == VAR) {
     Term val = get(term_loc(branch));
     if (val != SUB) {
       branch = val;
-    } else
+    } else {
+      // BOOM("Draw an edge here");
       return;
+    }
+  }
+
+  if (branch == SUB) {
+    for (unsigned i = 0; i < nodeCount; i++) {
+      graphNode *gn = &nodeStack[i];
+      Term left = get(port(1, gn->node));
+      Term right = get(port(2, gn->node));
+      if (term_tag(left) == VAR && term_loc(left) == treeLoc) {
+	fprintf(dotFile, "x%d_%x:sw -- x%d_%x:sw\n", graphNum, gn->node, graphNum, treeLoc);
+	break;
+      } else if (term_tag(right) == VAR && term_loc(right) == treeLoc) {
+	fprintf(dotFile, "x%d_%x:se -- x%d_%x:sw\n", graphNum, gn->node, graphNum, treeLoc);
+	break;
+      }
+    }
+    return;
   }
 
   unsigned branchNode = 65536;
@@ -2430,15 +2473,16 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
 	return;
       } else {
 	if (bt == VAR) {
-	  if (term_tag(get(term_loc(branch))) == SUB || term_tag(get(term_loc(branch))) == LAZ) {
+	  Location branchLoc = term_loc(branch);
+	  if (term_tag(get(branchLoc)) == SUB || term_tag(get(branchLoc)) == LAZ) {
 	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
-		    graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE),
-		    (term_loc(branch) & 1) ? "se" : "sw");
-	  } else if (term_tag(get(term_loc(branch))) == LAZ &&
-		     term_tag(get(port(1, term_loc(get(term_loc(branch)))))) == DUP) {
+		    graphNum, nodeNum, branchPort, graphNum, (branchLoc & 0xFFFFFFFE),
+		    (branchLoc & 1) ? "se" : "sw");
+	  } else if (term_tag(get(branchLoc)) == LAZ &&
+		     term_tag(get(port(1, term_loc(get(branchLoc))))) == DUP) {
 	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
-		    graphNum, nodeNum, branchPort, graphNum, (term_loc(branch) & 0xFFFFFFFE),
-		    (term_loc(branch) & 1) ? "se" : "sw");
+		    graphNum, nodeNum, branchPort, graphNum, (branchLoc & 0xFFFFFFFE),
+		    (branchLoc & 1) ? "se" : "sw");
 	  } else {
 	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
 		    graphNum, nodeNum, branchPort, graphNum, branchNode);
@@ -2483,6 +2527,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     nodeNum = otherNodes++;
   }
 
+  Lab lab = term_lab(tree);
   switch(t) {
   case VAR: {
     Location loc = term_loc(tree);
@@ -2625,6 +2670,8 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
 
   if (currNodeCount == 0)
     otherNodes = RNOD_END;
+
+  //*
   if (term_tag(root) == LAM) {
     unsigned nodeNum = otherNodes++;
     unsigned rootNode = term_loc(root);
@@ -2649,13 +2696,37 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     } else {
       fprintf(dotFile, "x%d_%x [label=\"\", shape=plaintext, height=0, width=0, peripheries=0]\n",
 	      graphNum, rootNode);
-      fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, rootNode);
       fprintf(dotFile, "{rank=max; x%d_%x;}\n", graphNum, rootNode);
+
+      char foundVar = 0;
+      for (unsigned i = 0; i < nodeCount; i++) {
+	graphNode *gn = &nodeStack[i];
+	Term left = get(port(1, gn->node));
+	Term right = get(port(2, gn->node));
+	if (term_tag(left) == VAR && term_loc(left) == rootNode) {
+	  fprintf(dotFile, "x%d_%x:sw -- x%d_%x:sw\n", graphNum, gn->node, graphNum, nodeNum);
+	  foundVar = 1;
+	  break;
+	} else if (term_tag(right) == VAR && term_loc(right) == rootNode) {
+	  fprintf(dotFile, "x%d_%x:se -- x%d_%x:sw\n", graphNum, gn->node, graphNum, nodeNum);
+	  foundVar = 1;
+	  break;
+	}
+      }
+      if (!foundVar) {
+	fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, rootNode);
+      }
     }
 
     downBranch(root, 2,graphNum, nodeNum);
     fprintf(dotFile, "}\n");
     return nodeNum;
+  } else
+  // */
+  if (root == sideEffects) {
+    fprintf(dotFile, "x%d_SE [label=\"SE\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n", graphNum);
+    fprintf(dotFile, "}\n");
+    return 65536;
   } else {
     unsigned rootNode = graphSubDown(graphNum, 65536, root);
     fprintf(dotFile, "}\n");

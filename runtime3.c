@@ -3099,6 +3099,7 @@ int main (int argc, char **argv) {
 	Lab l = term_lab(result);
 	Location loc = term_loc(result);
 	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
+	graphDown("result", result, 0, subGraphs++);
 	Term newResult = swapStore(port(1, loc), NUL) ;
 	if (term_tag(newResult) == NUL)
 	  newResult = swapStore(port(2, loc), NUL) ;
@@ -3112,6 +3113,7 @@ int main (int argc, char **argv) {
       default: {
 	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
 	graphDown("result", result, 0, subGraphs++);
+	interact(ERA, result);
 	result = new_i60(1);
 	resultTag = term_tag(result);
       }
