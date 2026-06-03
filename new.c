@@ -1,37 +1,26 @@
 #include <string.h>
 #include "new.h"
-#include "runtime3.h"
-#include "stack.h"
 
 // Global heap
 #ifdef NON_ATOMIC
-static u64* BUFF = NULL;
+static u64* nodeBuff = NULL;
 #else
-static a64* BUFF = NULL;
+static a64* nodeBuff = NULL;
 #endif
-a64 RNOD_END = 0; // Only need to track the end of the node space
-static u64 BUFF_SIZE = 0; // Size of the main buffer for bounds checking
+a64 buffEnd = 0; // Only need to track the end of the node space
+static u64 buffSize = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
-__thread Location FREE_LIST = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
+__thread Location freeList = EMPTY_FREE_LIST; // Head of the free list (atomic for thread safety)
 
 // Redex stack
 __thread Pairs pairs;
-Term* RBAG_BUFF = NULL; // Using Term (u64) instead of atomic (a64)
-static u64 RBAG_SIZE = 0x1000;
-a64 RBAG_END; // Only need to track the end of the redex stack
 
 // interaction jump table
 interactionFn interactions[16][16];
 
-// Mutex for thread-safe redex operations
-pthread_mutex_t redex_mutex;
-
-// Condition variable for signaling when redex is available
-pthread_cond_t redex_cond;
-
 // Convert a tag to its string representation
-const char* tag_to_str(Tag tag) {
+const char* tagStr(Tag tag) {
   switch (tag) {
   case VAL: return "VAL";
   case VAR: return "VAR";
@@ -53,30 +42,11 @@ const char* tag_to_str(Tag tag) {
   }
 }
 
-const char* tag_str(Term t) {
-  return tag_to_str(term_tag(t));
-}
-
 // TODO: write a time64() function that returns the time as fast as possible as a u64
 u64 time64() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (u64)ts.tv_sec * 1000000000ULL + (u64)ts.tv_nsec;
-}
-
-// abort on invalid reduction
-void ABRT(Term neg, Term pos) {
-  fprintf(stderr, "Bad interaction: %s %s\n",
-	  tag_to_str(term_tag(neg)), tag_to_str(term_tag(pos)));
-  fprintf(stderr, "a: %p b: %p\n", (void *)neg, (void *)pos);
-  /*
-    if (term_tag(pos) == VAL) {
-    fprintf(stderr, "val type %d: %ld\n", __LINE__, ((Value *)((u64)a & ~7))->type);
-    }
-    // */
-  fprintf(dotFile, "}\n");
-  fclose(dotFile);
-  abort();
 }
 
 void *boom(char *msg, char *file, int line) {
@@ -89,8 +59,17 @@ void *boom(char *msg, char *file, int line) {
   abort();
 }
 
+// abort on invalid reduction
+void badrdx(Term neg, Term pos) {
+  char msg[200];
+  sprintf(msg, "Bad interaction: %s %s\na: %p b: %p\n",
+	  tag_to_str(termTag(neg)), tag_to_str(termTag(pos)),
+	  (void *)neg, (void *)pos);
+  BOOM(msg);
+}
+
 // Create a new term with given tag, label, and location
-Term term_new(Tag tag, Lab lab, Location loc) {
+Term newTerm(Tag tag, Lab lab, Location loc) {
   if (tag == VAL) {
     BOOM("Can't create VAL's with 'term-new'\n");
   }
@@ -107,7 +86,7 @@ Term term_new(Tag tag, Lab lab, Location loc) {
 }
 
 // Get the tag of a term
-Tag term_tag(Term term) {
+Tag termTag(Term term) {
   Tag t = (Tag)(term & TAG_MASK);
   if (t == VL1)
     return VAL;
@@ -115,7 +94,7 @@ Tag term_tag(Term term) {
     return t;
 }
 
-Term term_val(Term val) {
+Term valTerm(Term val) {
   // ensure a Term is a valid native value
   unsigned type = ((Value *)val)->type;
   if (val & VAL_MASK) {
@@ -127,49 +106,58 @@ Term term_val(Term val) {
 }
 
 // Get the label of a term
-Lab term_lab(Term term) {
+Lab termLab(Term term) {
   return (Lab)((term >> TAG_SIZE) & LAB_MASK);
 }
 
-// Get the location of a term
-Location term_loc(Term term) {
-#ifdef SAFETY
-  switch(term_tag(term)) {
+char hasLocation(Term tree) {
+  Tag t = termTag(tree);
+
+  if (tree == SUB)
+    return 0;
+  
+  switch(t) {
   case VAL:
   case NUL:
   case REF:
   case ERA:
   case I60:
-  case F60: {
-    char msg[100];
-    snprintf(msg, 95, "term has no location: %s", tag_to_str(term_tag(term))); 
-    BOOM(msg);
-  }
+  case F60:
+    return 0;
     break;
 
-  // Allow SUB terms to have locations
+    // Allow SUB terms to have locations
   case SUB:
   default:
-    return (Location)(term >> (TAG_SIZE + LAB_SIZE));
+    return 1;
     break;
   }
-  return 0;
+}
+
+// Get the location of a term
+Location termLoc(Term term) {
+#ifdef SAFETY
+  if (!hasLocation(term)) {
+    char msg[100];
+    snprintf(msg, 95, "term has no location: %s", tagStr(termTag(term))); 
+    BOOM(msg);
+  }
 #else
   return (Location)(term >> (TAG_SIZE + LAB_SIZE));
 #endif
 }
 
-Location port(u64 n, Location x) {
+Location port(u64 n, Term trm) {
 #ifdef SAFETY
   if (n != 1 && n != 2) {
     fprintf(stderr, "Error: Invalid port number %lu. Port must be 1 or 2.\n", n);
     abort();
   }
 #endif
-  return n + x - 1;
+  return n + termLoc(trm) - 1;
 }
 
-void store_redex(Term neg, Term pos) {
+void pushRedex(Term neg, Term pos) {
   /*
   fprintf(stderr, "store: ");
   print_raw_term(neg);
@@ -183,7 +171,7 @@ void store_redex(Term neg, Term pos) {
     neg = 0;
   else if (is_positive(neg) || is_negative(pos)) {
     BOOM("bad redex");
-    // } else if (interactions[term_tag(neg)][term_tag(pos)] == &ABRT) {
+    // } else if (interactions[termTag(neg)][termTag(pos)] == &ABRT) {
     // BOOM("bad redex");
   }
 #endif
@@ -198,22 +186,55 @@ void store_redex(Term neg, Term pos) {
 // Get term at location
 Term get(Location loc) {
 #ifdef NON_ATOMIC
-  Term result = BUFF[loc];
+  Term result = nodeBuff[loc];
 #else
-  Term result = atomic_load_explicit(&BUFF[loc], memory_order_relaxed);
+  Term result = atomic_load_explicit(&nodeBuff[loc], memory_order_relaxed);
 #endif
   return result;
 }
 
+// Free a pair by adding it to the free list - O(1)
+void freePair(Location loc) {
+#ifdef SAFETY
+  atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
+#endif
+
+  // Clear the second cell
+#ifdef NON_ATOMIC
+  nodeBuff[loc + 1] = VOID;
+#else
+  atomic_store_explicit(&nodeBuff[loc + 1], VOID, memory_order_relaxed);
+#endif
+
+  Location currTop;
+  do {
+    currTop = freeList;
+    switch(currTop) {
+    case LOCK_FREE_LIST:
+      break;
+
+    default:
+      // Set up the node to point to the current head
+#ifdef NON_ATOMIC
+      nodeBuff[loc] = newTerm(NUL, 0xFF, currTop);
+#else
+      atomic_store_explicit(&nodeBuff[loc], newTerm(NUL, 0xFF, currTop), memory_order_relaxed);
+#endif
+      freeList = loc;
+      break;
+    }
+  } while (currTop == LOCK_FREE_LIST);
+}
+
 void freeLoc(Location loc) {
 #ifdef NON_ATOMIC
-  BUFF[loc] = VOID;
+  nodeBuff[loc] = VOID;
 #else
-  atomic_store_explicit(&BUFF[loc], VOID, memory_order_relaxed);
+  atomic_store_explicit(&nodeBuff[loc], VOID, memory_order_relaxed);
 #endif
   Location evenLoc = loc & 0xFFFFFFFE;
   if (get(evenLoc) == VOID && get(evenLoc + 1) == VOID) {
-    pair_free(evenLoc);
+    freePair(evenLoc);
   }
 }
 
@@ -225,7 +246,7 @@ Term take(Location loc) {
   Term taken;
   do {
     taken = get(loc);
-    takenTag = term_tag(taken);
+    takenTag = termTag(taken);
     switch(takenTag){
     case SUB:
 #ifdef SAFETY
@@ -243,7 +264,7 @@ Term take(Location loc) {
     default:
       freeLoc(loc);
       if (takenTag == VAR) {
-	loc = term_loc(taken);
+	loc = termLoc(taken);
       }
     }
   } while (takenTag == VAR);
@@ -251,7 +272,7 @@ Term take(Location loc) {
   switch(takenTag) {
   case SUB:
   case LAZ:
-    return term_new(VAR, 0, loc);
+    return newTerm(VAR, 0, loc);
 
   default:
     return taken;
@@ -277,40 +298,14 @@ char findCycleNode(Location nodeLoc) {
   return 0;
 }
 
-char hasLocation(Term tree) {
-  Tag t = term_tag(tree);
-
-  if (tree == SUB)
-    return 0;
-  
-  switch(t) {
-  case VAL:
-  case NUL:
-  case REF:
-  case ERA:
-  case I60:
-  case F60:
-    return 0;
-    break;
-
-    // Allow SUB terms to have locations
-  case SUB:
-  default:
-    return 1;
-    break;
-  }
-}
-
-// TODO: this must be made thread safe
-// graph the node and the tree under it, if needed. Return the node number
 unsigned callCount = 0;
-void eraseSubCycle(Term tree, Location tgtLoc) {
+int eraseSubCycle(Term tree, Location tgtLoc) {
 #ifndef CHECK_MEM_LEAK
   BOOM("Not thread safe");
 #endif
 
-  if (!hasLocation(tree) || findCycleNode(term_loc(tree) & 0xFFFFFFFE)) {
-    return;
+  if (!hasLocation(tree) || findCycleNode(termLoc(tree) & 0xFFFFFFFE)) {
+    return 0;
   }
   // fprintf(stderr, "tgtLoc: %lx\n", tgtLoc);
   // print_term("tree", tree);
@@ -318,17 +313,17 @@ void eraseSubCycle(Term tree, Location tgtLoc) {
   cycleNode *cn = &cycleNodes[cycleNodeCount++];
   if (cycleNodeCount > 999)
     BOOM("cycleNodeCount!");
-  cn->loc = hasLocation(tree) ? term_loc(tree) : RNOD_END;
+  cn->loc = hasLocation(tree) ? termLoc(tree) : RNOD_END;
   cn->trm = tree;
 
-  Tag t = term_tag(tree);
+  Tag t = termTag(tree);
   switch(t) {
   case VAR: {
-    Location loc = term_loc(tree);
+    Location loc = termLoc(tree);
     if (loc == tgtLoc) {
-      swapStore(loc, ERA);
+      return 1;
     } else {
-      eraseSubCycle(get(loc), tgtLoc);
+      return eraseSubCycle(get(loc), tgtLoc);
     }
     // */
   }
@@ -341,54 +336,50 @@ void eraseSubCycle(Term tree, Location tgtLoc) {
   case LAZ:
   case LAM:
   case APP: {
-    Location loc = port(1, term_loc(tree));
+    Location loc = port(1, termLoc(tree));
     Term branch = get(loc);
     eraseSubCycle(branch, tgtLoc);
-    if (term_tag(branch) == VAR && term_loc(branch) == tgtLoc)
-      swapStore(loc, NUL);
+    if (termTag(branch) == VAR && termLoc(branch) == tgtLoc)
+      return 1;
 
-    loc = port(2, term_loc(tree));
+    loc = port(2, termLoc(tree));
     branch = get(loc);
     eraseSubCycle(branch, tgtLoc);
-    if (term_tag(branch) == VAR && term_loc(branch) == tgtLoc)
-      swapStore(loc, NUL);
+    if (termTag(branch) == VAR && termLoc(branch) == tgtLoc)
+      return 1;
   }
     break;
-    
-  default: 
-    break;
-    
   }
-  return;
+  return 0;
 }
 
-void eraseCycle(Term tree, Location tgtLoc) {
+int eraseCycle(Term tree, Location tgtLoc) {
   callCount = 0;
   cycleNodeCount = 0;
-  eraseSubCycle(tree, tgtLoc);
+  return eraseSubCycle(tree, tgtLoc);
 }
 
 // Atomic swap operation
 // If a deferred redex is found, queue it up and return SUB
 // Otherwise, return a positive value.
-Term swapStore(Location loc, Term term) {
+Term swap(Location loc, Term term) {
 #ifdef SAFETY
   if (term == VOID)
     BOOM("bad swap");
 #endif
 #ifdef NON_ATOMIC
-  Term result = BUFF[loc];
-  BUFF[loc] = term;
+  Term result = nodeBuff[loc];
+  nodeBuff[loc] = term;
 #else
-  Term result = atomic_exchange_explicit(&BUFF[loc], term, memory_order_relaxed);
+  Term result = atomic_exchange_explicit(&nodeBuff[loc], term, memory_order_relaxed);
 #endif
-  switch(term_tag(result)) {
+  switch(termTag(result)) {
   case SUB:
     if (result != SUB) {
-      Term neg = get(port(1, term_loc(result)));
-      Term pos = get(port(2, term_loc(result)));
-      store_redex(neg, pos);
-      pair_free(term_loc(result));
+      Term neg = get(port(1, termLoc(result)));
+      Term pos = get(port(2, termLoc(result)));
+      pushRedex(neg, pos);
+      freePair(termLoc(result));
       result = SUB;
     }
     break;
@@ -401,132 +392,75 @@ Term swapStore(Location loc, Term term) {
   return result;
 }
 
-void eraseLazy(Term lazyVar) {
-  Term laz;
-  switch (term_tag(lazyVar)) {
-  case VAR:
-    laz = swapStore(term_loc(lazyVar), ERA);
-    break;
-
-  case LAZ:
-    laz = lazyVar;
-    break;
-
-  default:
-    BOOM("Trying to erase a non-var/lazy Term");
-    break;
-  }
-  Location lazyLoc = term_loc(laz);
-  Term negLaz = get(port(1, lazyLoc));
-  Term posLaz = get(port(2, lazyLoc));
-  switch(term_tag(negLaz)) {
-  case DUP: {
-    Term dup1 = get(port(1, term_loc(negLaz)));
-    Term dup2 = get(port(2, term_loc(negLaz)));
-
-    if (term_tag(dup1) == ERA && term_tag(dup2) == ERA) {
-      take(port(1, term_loc(negLaz)));
-      take(port(2, term_loc(negLaz)));
-      pair_free(lazyLoc);
-      interact(negLaz, NUL);
-      interact(ERA, posLaz);
-    } else {
-      print_term("laz", laz);
-      print_term("dup1", dup1);
-      print_term("dup2", dup2);
-      pb();
-      BOOM("what to do here");
-    }
-  }
-    break;
-
-  case APP:
-  case OPX:
-    freeLoc(port(1, lazyLoc));
-    freeLoc(port(2, lazyLoc));
-    interact(negLaz, NUL);
-    interact(ERA, posLaz);
-    break;
-
-  default:
-    if (1) {
-      char s[50];
-      sprintf(s, "unhandled kind of lazy  %s", tag_to_str(term_tag(negLaz)));
-      BOOM(s);
-    }
-    break;
-  }
-}
-
 void forceLazy(Term z) {
-  if (term_tag(z) != LAZ)
+  if (termTag(z) != LAZ)
     return;
 
-  Location lazLoc = term_loc(z);
+  Location lazLoc = termLoc(z);
   // 'z' is a LAZ term
   Term neg = take(port(1, lazLoc));
   Term pos = take(port(2, lazLoc));
 
-  if (term_tag(neg) == DUP) {
-    Location negLoc = term_loc(neg);
+  if (termTag(neg) == DUP) {
+    Location negLoc = termLoc(neg);
 
     // this is a lazy DUP, which ever port points to itself
     // gets replaced with SUB
     Term curr = get(port(1, negLoc));
     if (curr == z)
-      swapStore(port(1, negLoc), SUB);
+      swap(port(1, negLoc), SUB);
     curr = get(port(2, negLoc));
     if (curr == z)
-      swapStore(port(2, negLoc), SUB);
+      swap(port(2, negLoc), SUB);
 
-    if (term_tag(pos) == VAR) {
-      Location posLoc = term_loc(pos);
-      Term lz = swapStore(posLoc, pair_make(SUB, 6, neg, pos));
-      if (term_tag(lz) == LAZ)
+    if (termTag(pos) == VAR) {
+      Location posLoc = termLoc(pos);
+      Term lz = swap(posLoc, pair_make(SUB, 6, neg, pos));
+      if (termTag(lz) == LAZ)
 	forceLazy(lz);
     } else
-      store_redex(neg, pos);
+      pushRedex(neg, pos);
   } else {
-    store_redex(neg, pos);
+    pushRedex(neg, pos);
   }
 }
 
 // Move a positive term into a negative location
 // If anything besides a deferred redex is there, it must be a
 // negative and should be reduced with 'pos'
-void moveStore(Location neg_loc, Term pos) {
-  Term neg = swapStore(neg_loc, pos);
-  Tag negTag = term_tag(neg);
+void move(Location negLoc, Term pos) {
+  Term neg = swap(negLoc, pos);
+  Tag negTag = termTag(neg);
 
 #ifdef SAFETY
   if (is_negative(pos)) {
     char s[50];
-    sprintf(s,"trying to move a negative to location %.3x: %p", neg_loc, (void *)neg);
+    sprintf(s,"trying to move a negative to location %.3x: %p", negLoc, (void *)neg);
     BOOM(s);
   }
   if (is_positive(neg)) {
     char s[50];
     print_term("moved pos", pos);
     print_term("pos at neg", neg);
-    sprintf(s,"found positive at move target %.3x: %p", neg_loc, (void *)neg);
+    sprintf(s,"found positive at move target %.3x: %p", negLoc, (void *)neg);
     BOOM(s);
   }
 #endif
   if (negTag != SUB && negTag != ERA) {
-    freeLoc(neg_loc);
+    freeLoc(negLoc);
     if (pos == NUL)
       interact(neg, pos);
     else 
-      store_redex(neg, pos);
+      pushRedex(neg, pos);
   }
 }
 
 void moveDuped(Location neg_loc, Term pos) {
   Term neg = get(neg_loc);
-  Tag negTag = term_tag(neg);
+  Tag negTag = termTag(neg);
   switch (negTag) {
   case SUB:
-    swapStore(neg_loc, pos);
+    swap(neg_loc, pos);
     break;
     
   case APP:
@@ -535,7 +469,7 @@ void moveDuped(Location neg_loc, Term pos) {
   case OPX:
   case OPY:
     take(neg_loc);
-    store_redex(neg, pos);
+    pushRedex(neg, pos);
     break;
 
   default: {
@@ -557,7 +491,7 @@ a64 waiting;
 
 // Pop a redex (pair of terms) from the reduction bag
 // Returns false if the bag is empty, true otherwise
-bool pop_redex(Term* neg, Term* pos) {
+bool popRedex(Term* neg, Term* pos) {
   bool result = false;
 
   if (pairs.count > 0) {
@@ -566,57 +500,6 @@ bool pop_redex(Term* neg, Term* pos) {
     *pos = pairs.rdxs[pairs.count][1];
     return true;
   }
-  // TODO: remove this eventually
-  return result;
-
-  u64 currTop;
-  u64 waitingThreads;
-  do {
-    currTop = atomic_exchange_explicit(&RBAG_END, LOCK_REDEX_STACK, memory_order_relaxed);
-
-    switch(currTop) {
-    case LOCK_REDEX_STACK:
-      break;
-
-    case 0:
-      pthread_mutex_lock(&redex_mutex);
-      waitingThreads = atomic_fetch_add_explicit(&waiting, 1, memory_order_relaxed);
-      atomic_store_explicit(&RBAG_END, 0, memory_order_relaxed);
-      pthread_cond_wait(&redex_cond, &redex_mutex);
-      u64 currWaiting = atomic_fetch_add_explicit(&waiting, -1, memory_order_relaxed);
-      if (currWaiting > 0) {
-	pthread_cond_signal(&redex_cond);
-      }
-      pthread_mutex_unlock(&redex_mutex);
-      currTop = LOCK_REDEX_STACK;
-      break;
-
-    default:
-      currTop -= 2;
-      *neg = RBAG_BUFF[currTop];
-      *pos = RBAG_BUFF[currTop + 1];
-      atomic_store_explicit(&RBAG_END, currTop, memory_order_relaxed);
-      if (*neg == 0 && *pos == 0) {
-	/*
-	waitingThreads = atomic_load_explicit(&waiting, memory_order_relaxed);
-	if (waitingThreads > 0) {
-	  pthread_mutex_lock(&redex_mutex);
-	  printf("signal %d %lu %lu\n", __LINE__, currTop, waitingThreads);
-	  pthread_cond_signal(&redex_cond);
-	  pthread_mutex_unlock(&redex_mutex);
-	}
-	// */
-	result = false;
-      } else
-	result = true;
-      break;
-    }
-  } while (currTop == LOCK_REDEX_STACK);
-
-#ifdef SAFETY
-  if (*neg == 0 || *pos == 0)
-    abort();
-#endif
   return result;
 }
 
@@ -630,7 +513,7 @@ Location pair_alloc(void) {
 #endif
   Location loc;
   do {
-    loc = FREE_LIST;
+    loc = freeList;
     switch(loc) {
     case LOCK_FREE_LIST:
       break;
@@ -639,9 +522,9 @@ Location pair_alloc(void) {
       loc = atomic_fetch_add_explicit(&RNOD_END, 2, memory_order_relaxed);
       // printf("new pair: %d\n", loc);
       // Check if we have space in the buffer
-      if (loc >= BUFF_SIZE) {
-	fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%u, BUFF_SIZE=%lu\n",
-		loc, BUFF_SIZE);
+      if (loc >= nodeBuff_SIZE) {
+	fprintf(stderr, "Error: Not enough space to allocate pair. RNOD_END=%u, nodeBuff_SIZE=%lu\n",
+		loc, nodeBuff_SIZE);
 	abort();
       }
       break;
@@ -650,7 +533,7 @@ Location pair_alloc(void) {
       // Get the next free pair location
       Term next = get(loc);
       Location new_free_list = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-      FREE_LIST = new_free_list;
+      freeList = new_free_list;
     }
 
       /* for the redex stack
@@ -665,42 +548,9 @@ Location pair_alloc(void) {
   return (Location)loc;
 }
 
-// Free a pair by adding it to the free list - O(1)
-void pair_free(Location loc) {
-#ifdef SAFETY
-  atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
-#endif
-
-  // Clear the second cell
-#ifdef NON_ATOMIC
-  BUFF[loc + 1] = VOID;
-#else
-  atomic_store_explicit(&BUFF[loc + 1], VOID, memory_order_relaxed);
-#endif
-
-  Location currTop;
-  do {
-    currTop = FREE_LIST;
-    switch(currTop) {
-    case LOCK_FREE_LIST:
-      break;
-
-    default:
-      // Set up the node to point to the current head
-#ifdef NON_ATOMIC
-      BUFF[loc] = term_new(NUL, 0xFF, currTop);
-#else
-      atomic_store_explicit(&BUFF[loc], term_new(NUL, 0xFF, currTop), memory_order_relaxed);
-#endif
-      FREE_LIST = loc;
-      break;
-    }
-  } while (currTop == LOCK_FREE_LIST);
-}
-
 // Check if a term is positive
 bool is_positive(Term term) {
-  switch (term_tag(term)) {
+  switch (termTag(term)) {
   case VAL:
   case VL1:
   case VAR:
@@ -719,7 +569,7 @@ bool is_positive(Term term) {
 
 // Check if a term is negative
 bool is_negative(Term term) {
-  switch (term_tag(term)) {
+  switch (termTag(term)) {
   case SUB:
   case ERA:
   case APP:
@@ -744,14 +594,14 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
     // Port 1 must be negative
     if (!is_negative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_str(tag));
-      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(termTag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     // Port 2 must be positive
     if (!is_positive(snd)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_str(tag));
-      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(termTag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
@@ -763,14 +613,14 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
     // Port 1 must be positive
     if (!is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
-      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(termTag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     // Port 2 must be negative
     if (!is_negative(snd)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_str(tag));
-      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(termTag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
@@ -780,14 +630,14 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
     // Port 1 must be negative
     if (!is_negative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tag_to_str(tag));
-      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(termTag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     // Port 2 must be negative
     if (!is_negative(snd)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tag_to_str(tag));
-      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(termTag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
@@ -797,14 +647,14 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
     // Port 1 must be positive
     if (!is_positive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tag_to_str(tag));
-      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Port 1 term tag: %s\n", tag_to_str(termTag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
     // Port 2 must be positive
     if (!is_positive(snd)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tag_to_str(tag));
-      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(term_tag(snd)));
+      fprintf(stderr, "  Port 2 term tag: %s\n", tag_to_str(termTag(snd)));
       fprintf(stderr, "  Line: %d\n", line);
       abort();
     }
@@ -828,14 +678,14 @@ Term maker(int line, Tag tag, Lab lab, Term fst, Term snd) {
 
   // Store terms in their respective ports
 #ifdef NON_ATOMIC
-  BUFF[port(1, loc)] = fst;
-  BUFF[port(2, loc)] = snd;
+  nodeBuff[port(1, loc)] = fst;
+  nodeBuff[port(2, loc)] = snd;
 #else
-  atomic_store_explicit(&BUFF[port(1, loc)], fst, memory_order_relaxed);
-  atomic_store_explicit(&BUFF[port(2, loc)], snd, memory_order_relaxed);
+  atomic_store_explicit(&nodeBuff[port(1, loc)], fst, memory_order_relaxed);
+  atomic_store_explicit(&nodeBuff[port(2, loc)], snd, memory_order_relaxed);
 #endif
 
-  Term new_pair = term_new(tag, lab, loc);
+  Term new_pair = newTerm(tag, lab, loc);
   /*
   printf("new pair at line %u: %s %.3x %p %p\n", line, tag_to_str(tag), loc,
 	 (void *)get(port(1, loc)),
@@ -849,147 +699,9 @@ void store_pair(Pairs *pairs, Term neg, Term pos) {
   pairs->rdxs[pairs->count++][1] = pos;
 }
 
-void link_redexes() {
-  BOOM("time to fix this");
-  Pairs pushing;
-  pushing.count = 0;
-
-  Pairs immediate;
-  immediate.count = 0;
-
-  for (int i = 0; i < pairs.count; i++) {
-    Term neg = pairs.rdxs[i][0];
-    Term pos = pairs.rdxs[i][1];
-
-    switch(term_tag(neg)) {
-    case ERA:
-      immediate.rdxs[immediate.count][0] = neg;
-      immediate.rdxs[immediate.count++][1] = pos;
-      break;
-
-    default:
-      switch(term_tag(pos)) {
-      case I60:
-      case F60:
-      case NUL:
-      case REF:
-	immediate.rdxs[immediate.count][0] = neg;
-	immediate.rdxs[immediate.count++][1] = pos;
-	break;
-
-      case VAR: {
-	  Term val = take(term_loc(pos));
-	  switch(term_tag(val)) {
-	  case I60:
-	  case F60:
-	  case NUL:
-	    immediate.rdxs[immediate.count][0] = neg;
-	    immediate.rdxs[immediate.count++][1] = val;
-	    break;
-
-	  case VAR: {
-	      Term deferred = pair_make(SUB, 4, neg, val);
-	      Term newVal = swapStore(term_loc(val), deferred);
-	      switch(term_tag(newVal)) {
-	      case SUB:
-		if (newVal != SUB)
-		  BOOM("This shouldn't happen, should it?");
-		break;
-
-	      case LAZ:
-		BOOM("Looks like this is needed");
-		break;
-
-	      default:
-		// printf("deferred sub: %.3x\n", term_loc(deferred));
-		// print_term("neg", neg);
-		// print_term("val", val);
-		// print_term("newVal", newVal);
-		pair_free(term_loc(deferred));
-		freeLoc(term_loc(val));
-		store_redex(neg, newVal);
-	      }
-	    }
-	    break;
-
-	  default:
-	    pushing.rdxs[pushing.count][0] = neg;
-	    pushing.rdxs[pushing.count++][1] = val;
-	    break;
-	  }
-	}
-	break;
-
-      default:
-	pushing.rdxs[pushing.count][0] = neg;
-	pushing.rdxs[pushing.count++][1] = pos;
-	break;
-      }
-    }
-  }
-  pairs.count = 0;
-  unsigned pushCount = LOCAL_PAIRS_SIZE / 2;
-  if (pushCount > pushing.count)
-    pushCount = pushing.count;
-  printf("pushing: %u immediate: %u  pushed: %u\n", pushing.count, immediate.count, pushCount);
-
-  if (pushing.count > 0) {
-    u64 currTop;
-    do {
-      currTop = atomic_exchange_explicit(&RBAG_END, LOCK_REDEX_STACK, memory_order_relaxed);
-      switch (currTop) {
-      case LOCK_REDEX_STACK:
-	break;
-
-      default:
-	if (1) {
-#ifdef SAFETY
-	  // Check if there's space in the bag
-	  if (currTop + pushCount > RBAG_SIZE) {
-	    fprintf(stderr, "Error: Redex bag is full. RBAG_END=%lu, RBAG_SIZE=%lu\n",
-		    currTop, RBAG_SIZE);
-	    abort();
-	  }
-#endif
-	  u64 newTop = currTop;
-	  for (int i = 1; i < pushCount; i++, newTop += 2) {
-	    // Store the redex in the bag
-	    RBAG_BUFF[newTop] = pushing.rdxs[i][0];
-	    RBAG_BUFF[newTop + 1] = pushing.rdxs[i][1];
-	  }
-
-#ifndef SINGLE_THREAD
-	  u64 waitingThreads = atomic_load_explicit(&waiting, memory_order_relaxed);
-	  if (waitingThreads > 0) {
-	    pthread_mutex_lock(&redex_mutex);
-	    pthread_cond_signal(&redex_cond);
-	    pthread_mutex_unlock(&redex_mutex);
-	  }
-#endif
-	  atomic_store_explicit(&RBAG_END, newTop, memory_order_relaxed);
-	}
-      }
-    } while (currTop == LOCK_REDEX_STACK);
-  }
-
-  for (int i = pushCount; i < pushing.count; i++) {
-    Term neg = pushing.rdxs[i][0];
-    Term pos = pushing.rdxs[i][1];
-
-    store_redex(neg, pos);
-  }
-
-  for (int i = 0; i < immediate.count; i++) {
-    Term neg = immediate.rdxs[i][0];
-    Term pos = immediate.rdxs[i][1];
-
-    store_redex(neg, pos);
-  }
-}
-
 void eraseDupCycle(Term dup, Term pos) {
-  Location dup_p1 = port(1, term_loc(dup));
-  Location dup_p2 = port(2, term_loc(dup));
+  Location dup_p1 = port(1, termLoc(dup));
+  Location dup_p2 = port(2, termLoc(dup));
   Term dp1 = get(dup_p1);
   Term dp2 = get(dup_p2);
 
@@ -1000,13 +712,10 @@ void eraseDupCycle(Term dup, Term pos) {
 }
 
 void negvar(Term neg, Term var) {
-  var = take(term_loc(var));
-  if (term_tag(neg) == DUP)
-    eraseDupCycle(neg, var);
-  
-  if (term_tag(var) == VAR) {
-    Term val = swapStore(term_loc(var), neg);
-    switch(term_tag(val)) {
+  var = take(termLoc(var));
+  if (termTag(var) == VAR) {
+    Term val = swap(termLoc(var), neg);
+    switch(termTag(val)) {
     case SUB:
       break;
 
@@ -1019,7 +728,7 @@ void negvar(Term neg, Term var) {
       BOOM("Duping a bad var");
       // this might be the way to do it.
       // but this shouldn't happen
-      take(term_loc(var));
+      take(termLoc(var));
       interact(neg, val);
       break;
     }
@@ -1031,8 +740,8 @@ void negvar(Term neg, Term var) {
 
 // Application-Lambda interaction
 void applam(Term app, Term lam) {
-  Location app_loc = term_loc(app);
-  Location lam_loc = term_loc(lam);
+  Location app_loc = termLoc(app);
+  Location lam_loc = termLoc(lam);
 
   // Get locations for each port
   Location arg_loc = port(1, app_loc);
@@ -1045,8 +754,8 @@ void applam(Term app, Term lam) {
   Term bod_val = take(bod_loc);
 
   // Move terms to their new locations
-  moveStore(var_loc, arg_val);
-  moveStore(ret_loc, bod_val);
+  move(var_loc, arg_val);
+  move(ret_loc, bod_val);
   return;
 }
 
@@ -1059,19 +768,19 @@ void appval(Term app, Term val) {
   }
   TermVal *tv = (TermVal *)val;
   if (tv->refs == 1) {
-    Term trm = swapStore(tv->trmLoc, NUL);
-    if (term_tag(trm) == VAR)
-      trm = take(term_loc(trm));
-    store_redex(app, trm);
+    Term trm = swap(tv->trmLoc, NUL);
+    if (termTag(trm) == VAR)
+      trm = take(termLoc(trm));
+    pushRedex(app, trm);
   } else {
     Term dup = pair_make(DUP, 0, SUB, SUB);
-    Term sub = pair_make(SUB, 7, app, term_new(VAR, 0, port(1, term_loc(dup))));
-    swapStore(port(1, term_loc(dup)), sub);
+    Term sub = pair_make(SUB, 7, app, newTerm(VAR, 0, port(1, termLoc(dup))));
+    swap(port(1, termLoc(dup)), sub);
 
-    Term trm = swapStore(tv->trmLoc, term_new(VAR, 0, port(2, term_loc(dup))));
-    if (term_tag(trm) == VAR)
-      trm = take(term_loc(trm));
-    store_redex(dup, trm);
+    Term trm = swap(tv->trmLoc, newTerm(VAR, 0, port(2, termLoc(dup))));
+    if (termTag(trm) == VAR)
+      trm = take(termLoc(trm));
+    pushRedex(dup, trm);
   }
   dec_and_free(val, 1);
   return;
@@ -1079,80 +788,80 @@ void appval(Term app, Term val) {
 
 Term makeLazyDup(Lab lb, Term arg) {
   Term dp = pair_make(DUP, lb, SUB, SUB);
-  Location loc = term_loc(dp);
-  Tag t = term_tag(arg);
+  Location loc = termLoc(dp);
+  Tag t = termTag(arg);
   if (t == I60 || t == F60 || t == REF || t == VAL) {
     incRef(arg, 1);
-    swapStore(port(1, loc), arg);
-    swapStore(port(2, loc), arg);
+    swap(port(1, loc), arg);
+    swap(port(2, loc), arg);
   } else {
     Term lz = pair_make(LAZ, 0, dp, arg);
-    swapStore(port(1, loc), lz);
-    swapStore(port(2, loc), lz);
+    swap(port(1, loc), lz);
+    swap(port(2, loc), lz);
   }
   return dp;
 }
 
 int decSubRefs(Location sup_loc) {
-  return atomic_fetch_sub_explicit(&BUFF[sup_loc], 1, memory_order_relaxed);
+  return atomic_fetch_sub_explicit(&nodeBuff[sup_loc], 1, memory_order_relaxed);
 }
 
 // distribute a negative through a SUP
 void negsup(Term neg, Term sup) {
-  Location sup_loc = term_loc(sup);
+  Location sup_loc = termLoc(sup);
   Term tm1 = take(port(1, sup_loc));
   Term tm2 = take(port(2, sup_loc));
-  if (term_tag(tm1) == NUL) {
-    store_redex(neg, tm2);
-  } else if (term_tag(tm2) == NUL) {
-    store_redex(neg, tm1);
+  if (termTag(tm1) == NUL) {
+    pushRedex(neg, tm2);
+  } else if (termTag(tm2) == NUL) {
+    pushRedex(neg, tm1);
   } else {
     Lab sup_lab = term_lab(sup);
-    Location neg_loc = term_loc(neg);
-    Tag neg_tag = term_tag(neg);
+    Location neg_loc = termLoc(neg);
+    Tag neg_tag = termTag(neg);
     Lab neg_lab = term_lab(neg);
 
     Term arg = take(port(1, neg_loc));
     Location ret = port(2, neg_loc);
     Term dp1 = makeLazyDup(sup_lab, arg);
     Term cn1 = pair_make(neg_tag, neg_lab,
-			 term_new(VAR, 0, port(1, term_loc(dp1))),
+			 newTerm(VAR, 0, port(1, termLoc(dp1))),
 			 SUB);
     Term lz1 = pair_make(LAZ, 0, cn1, tm1);
-    swapStore(port(2, term_loc(cn1)), lz1);
+    swap(port(2, termLoc(cn1)), lz1);
     Term cn2 = pair_make(neg_tag, neg_lab,
-			 term_new(VAR, 0, port(2, term_loc(dp1))),
+			 newTerm(VAR, 0, port(2, termLoc(dp1))),
 			 SUB);
-    swapStore(port(2, term_loc(cn2)), pair_make(LAZ, 0, cn2, tm2));
+    swap(port(2, termLoc(cn2)), pair_make(LAZ, 0, cn2, tm2));
     // TODO: could you make the ports of the SUP store direct LAZ terms
     // and not VAR's?
     Term dp2 = pair_make(SUP, sup_lab,
-			 term_new(VAR, 0, port(2, term_loc(cn1))),
-			 term_new(VAR, 0, port(2, term_loc(cn2))));
-    moveStore(ret, dp2);
+			 newTerm(VAR, 0, port(2, termLoc(cn1))),
+			 newTerm(VAR, 0, port(2, termLoc(cn2))));
+    move(ret, dp2);
   }
 }
 
 // Application-Null interaction
 void appnul(Term app, Term nul) {
-  Location app_loc = term_loc(app);
+  Location app_loc = termLoc(app);
   Term pos = take(port(1, app_loc));
   interact(ERA, pos);
-  moveStore(port(2, app_loc), NUL);
+  move(port(2, app_loc), NUL);
   return;
 }
 
 unsigned nodeCount = 0;
 // Duplication-Lambda interaction
 void duplam(Term dup, Term lam) {
-  Location dup_loc = term_loc(dup);
-  Location lam_loc = term_loc(lam);
+  Location dup_loc = termLoc(dup);
+  Location lam_loc = termLoc(lam);
   if (get(port(1, dup_loc)) == ERA) {
     take(port(1, dup_loc));
-    moveStore(port(2, dup_loc), lam);
+    move(port(2, dup_loc), lam);
   } else if (get(port(2, dup_loc)) == ERA) {
     take(port(2, dup_loc));
-    moveStore(port(1, dup_loc), lam);
+    move(port(1, dup_loc), lam);
   } else {
     if (dup_loc == 0x1c && lam_loc == 0xb2) {
      pb();
@@ -1164,14 +873,14 @@ void duplam(Term dup, Term lam) {
     Term l1 = pair_make(LAM, lam_lab, SUB, NUL);
     Term l2 = pair_make(LAM, lam_lab, SUB, NUL);
     Term du1 = pair_make(SUP, dup_lab,
-			 term_new(VAR, 0, port(1, term_loc(l1))),
-			 term_new(VAR, 0, port(1, term_loc(l2))));
+			 newTerm(VAR, 0, port(1, termLoc(l1))),
+			 newTerm(VAR, 0, port(1, termLoc(l2))));
     Term du2 = makeLazyDup(dup_lab, bod);
-    swapStore(port(2, term_loc(l1)), term_new(VAR, 0, port(1, term_loc(du2))));
-    swapStore(port(2, term_loc(l2)), term_new(VAR, 0, port(2, term_loc(du2))));
-    moveStore(var, du1);
-    moveStore(port(1, dup_loc), l1);
-    moveStore(port(2, dup_loc), l2);
+    swap(port(2, termLoc(l1)), newTerm(VAR, 0, port(1, termLoc(du2))));
+    swap(port(2, termLoc(l2)), newTerm(VAR, 0, port(2, termLoc(du2))));
+    move(var, du1);
+    move(port(1, dup_loc), l1);
+    move(port(2, dup_loc), l2);
 
     if (dup_loc == 0x1c && lam_loc == 0xb2) {
       graphDown("l1", l1, 0, subGraphs++);
@@ -1186,8 +895,8 @@ void duplam(Term dup, Term lam) {
 void dupsup(Term dup, Term sup) {
   Lab dup_lab = term_lab(dup);
   Lab sup_lab = term_lab(sup);
-  Location dup_loc = term_loc(dup);
-  Location sup_loc = term_loc(sup);
+  Location dup_loc = termLoc(dup);
+  Location sup_loc = termLoc(sup);
 
   // Get the ports of the DUP node
   Location dup_p1 = port(1, dup_loc);
@@ -1200,10 +909,9 @@ void dupsup(Term dup, Term sup) {
     Term sup_p2 = take(port(2, sup_loc));
 
     // Direct connection of the ports
-    moveStore(dup_p1, sup_p1);
-    moveStore(dup_p2, sup_p2);
+    move(dup_p1, sup_p1);
+    move(dup_p2, sup_p2);
   } else {
-    eraseDupCycle(dup, sup);
     Term dp1 = get(dup_p1);
     Term dp2 = get(dup_p2);
 
@@ -1211,10 +919,10 @@ void dupsup(Term dup, Term sup) {
     dp2 = get(dup_p2);
     if (dp1 == ERA) {
       Term trm = take(port(1, dup_loc));
-      moveStore(port(2, dup_loc), sup);
+      move(port(2, dup_loc), sup);
     } else if (dp2 == ERA) {
       Term trm = take(port(2, dup_loc));
-      moveStore(port(1, dup_loc), sup);
+      move(port(1, dup_loc), sup);
     } else  {
       // Get the ports of the SUP node
       Term sup_p1 = take(port(1, sup_loc));
@@ -1226,15 +934,15 @@ void dupsup(Term dup, Term sup) {
 
       // Create two new SUP nodes with the same label
       Term sup1 = pair_make(SUP, sup_lab,
-			    term_new(VAR, 0, port(1, term_loc(dup1))),
-			    term_new(VAR, 0, port(1, term_loc(dup2))));
+			    newTerm(VAR, 0, port(1, termLoc(dup1))),
+			    newTerm(VAR, 0, port(1, termLoc(dup2))));
       Term sup2 = pair_make(SUP, sup_lab,
-			    term_new(VAR, 0, port(2, term_loc(dup1))),
-			    term_new(VAR, 0, port(2, term_loc(dup2))));
+			    newTerm(VAR, 0, port(2, termLoc(dup1))),
+			    newTerm(VAR, 0, port(2, termLoc(dup2))));
 
       // Connect the new nodes
-      moveStore(dup_p1, sup1);
-      moveStore(dup_p2, sup2);
+      move(dup_p1, sup1);
+      move(dup_p2, sup2);
     }
   }
   return;
@@ -1242,13 +950,13 @@ void dupsup(Term dup, Term sup) {
 
 // Duplication interaction with copyable term
 void copy(Term dup, Term trm) {
-  Location dup_loc = term_loc(dup);
+  Location dup_loc = termLoc(dup);
 
   // Get port locations
   Location dp1_loc = port(1, dup_loc);
   Location dp2_loc = port(2, dup_loc);
 
-  if (term_tag(trm) == VAL)
+  if (termTag(trm) == VAL)
     incRef(trm, 1);
 
   // put trm in both copy ports
@@ -1259,17 +967,20 @@ void copy(Term dup, Term trm) {
 
 // Eeraser-Var interaction
 void eravar(Term era, Term var) {
-  Term val = take(term_loc(var));
-  if (term_tag(val) == VAR) {
-    Term lz = swapStore(term_loc(val), era);
-    Location lzLoc = term_loc(lz);
+  Term val = take(termLoc(var));
+  if (termTag(val) == VAR) {
+    Term lz = swap(termLoc(val), era);
     if (lz != SUB) {
+      eraseLazy(lz, era);
+#if 0
+      // TODO: remove this
       Term lzNeg = get(port(1, lzLoc));
-      switch(term_tag(lzNeg)) {
+      switch(termTag(lzNeg)) {
       case DUP: {
-	Location dupLoc = term_loc(lzNeg);
+	Location dupLoc = termLoc(lzNeg);
 	Term dp1 = get(port(1, dupLoc));
 	Term dp2 = get(port(2, dupLoc));
+
 	if (dp1 == ERA && dp2 == ERA) {
 	  take(port(1, lzLoc));
 	  take(port(1, dupLoc));
@@ -1281,11 +992,11 @@ void eravar(Term era, Term var) {
 	} else if (dp1 == lz) {
 	  take(port(2, dupLoc));
 	  take(port(1, lzLoc));
-	  swapStore(port(1, dupLoc), take(port(2, lzLoc)));
+	  swap(port(1, dupLoc), take(port(2, lzLoc)));
 	} else if (dp2 == lz) {
 	  take(port(1, dupLoc));
 	  take(port(1, lzLoc));
-	  swapStore(port(2, dupLoc), take(port(2, lzLoc)));
+	  swap(port(2, dupLoc), take(port(2, lzLoc)));
 	}
 	// else if (dp1 == lz || dp2 == lz)
       }
@@ -1298,12 +1009,13 @@ void eravar(Term era, Term var) {
 
       default: {
 	char s[150];
-	sprintf(s, "unhandled freeing lazy: %s", tag_to_str(term_tag(lzNeg)));
+	sprintf(s, "unhandled freeing lazy: %s", tag_to_str(termTag(lzNeg)));
 	BOOM(s);
-	freeLoc(term_loc(val));
+	freeLoc(termLoc(val));
       }
 	break;
       }
+#endif
     }
   } else {
     interact(era, val);
@@ -1313,10 +1025,10 @@ void eravar(Term era, Term var) {
 
 // Eraser-Lambda interaction
 void eralam(Term era, Term lam) {
-  Location lam_loc = term_loc(lam);
+  Location lam_loc = termLoc(lam);
   Term body = take(port(2, lam_loc));
   interact(era, body);
-  moveStore(port(1, lam_loc), NUL);
+  move(port(1, lam_loc), NUL);
   return;
 }
 
@@ -1324,14 +1036,14 @@ void eralaz(Term era, Term laz) {
   if (term_lab(era) > 0) {
     forceLazy(laz);
   } else
-    eraseLazy(laz);
+    eraseLazy(laz, ERA);
 }
 
 // Eraser-Superposition interaction
 void erasup(Term era, Term sup) {
-  Location sup_loc = term_loc(sup);
-  interact(era, term_new(VAR, 0, port(2, sup_loc)));
-  interact(era, term_new(VAR, 0, port(1, sup_loc)));
+  Location sup_loc = termLoc(sup);
+  interact(era, newTerm(VAR, 0, port(2, sup_loc)));
+  interact(era, newTerm(VAR, 0, port(1, sup_loc)));
   return;
 }
 
@@ -1352,21 +1064,21 @@ void appref(Term app, Term ref) {
 
 void appnum(Term app, Term num) {
   BOOM("appnum");
-  Location app_loc = term_loc(app);
-  moveStore(port(2, app_loc), num);
-  store_redex(ERA, take(port(1, app_loc)));
+  Location app_loc = termLoc(app);
+  move(port(2, app_loc), num);
+  pushRedex(ERA, take(port(1, app_loc)));
   return;
 }
 
 void opnul(Term op, Term nul) {
-  Location op_loc = term_loc(op);
+  Location op_loc = termLoc(op);
   if (term_lab(nul) == 0) {
     interact(take(port(2, op_loc)), NUL);
     interact(ERA, take(port(1, op_loc)));
   } else {
     BOOM("test this");
-    moveStore(port(2, op_loc), nul);
-    store_redex(sideEffects, take(port(1, op_loc)));
+    move(port(2, op_loc), nul);
+    pushRedex(sideEffects, take(port(1, op_loc)));
   }
   return;
 }
@@ -1376,7 +1088,7 @@ void subnul(Term sub, Term nul) {
   // Check if the SUB term has a location (label > 0)
   if (sub != SUB) {
     // The SUB term has a location pointing to a pair
-    Location sub_loc = term_loc(sub);
+    Location sub_loc = termLoc(sub);
 
     // Take the first port and link it with NUL
     Term t = take(port(1, sub_loc));
@@ -1391,28 +1103,28 @@ void subnul(Term sub, Term nul) {
 }
 
 void dupnul(Term dup, Term nul) {
-  Location dp1 = port(1, term_loc(dup));
-  Location dp2 = port(2, term_loc(dup));
-  moveStore(dp1, nul);
-  moveStore(dp2, nul);
+  Location dp1 = port(1, termLoc(dup));
+  Location dp2 = port(2, termLoc(dup));
+  move(dp1, nul);
+  move(dp2, nul);
 }
 
 void YNUM(Term opy, Term num);
 void XNUM(Term opx, Term num) {
-  Location opx_loc = term_loc(opx);
-  Term arg = swapStore(port(1, opx_loc), num);
+  Location opx_loc = termLoc(opx);
+  Term arg = swap(port(1, opx_loc), num);
   Lab op = term_lab(opx);
-  switch (term_tag(arg)) {
+  switch (termTag(arg)) {
   case I60:
-    YNUM(term_new(OPY, op, port(1, opx_loc)), arg);
+    YNUM(newTerm(OPY, op, port(1, opx_loc)), arg);
     break;
 
   case VAR:
-    interact(term_new(OPY, op, port(1, opx_loc)), arg);
+    interact(newTerm(OPY, op, port(1, opx_loc)), arg);
     break;
 
   default:
-    store_redex(term_new(OPY, op, port(1, opx_loc)), arg);
+    pushRedex(newTerm(OPY, op, port(1, opx_loc)), arg);
   }
   return;
 }
@@ -1463,22 +1175,22 @@ void YNUM(Term opy, Term num) {
     return;
   }
 
-  Location op_loc = term_loc(opy);
+  Location op_loc = termLoc(opy);
   Term x = arityArgs.args[0];
-  Tag y_type = term_tag(num);
+  Tag y_type = termTag(num);
   Location ret = port(2, op_loc);
   u64 res;
   Lab op = term_lab(opy);
 
 #ifdef SAFETY
-  switch (term_tag(x)) {
+  switch (termTag(x)) {
   case I60:
   case F60:
     break;
 
   default: {
     char msg[200];
-    sprintf(msg, "wrong value to OPY: %s", tag_to_str(term_tag(x))); 
+    sprintf(msg, "wrong value to OPY: %s", tag_to_str(termTag(x))); 
     BOOM(msg);
   }
     break;
@@ -1490,7 +1202,7 @@ void YNUM(Term opy, Term num) {
     // case F60: PERFORM_OP(x, y, op, f64); break;
   }
 
-  moveStore(ret, new_num(y_type, res));
+  move(ret, new_num(y_type, res));
   return;
 }
 
@@ -1503,6 +1215,24 @@ void DECR(Term neg, Term pos) {
 void NOP(Term neg, Term pos) {
   return;
 }
+
+// subnul - done
+// negvar - 
+// opnul - done
+// XNUM - done
+// YNUM - done
+// negsup - done
+// erasup - done
+// eralaz - done
+// eralam - done
+// appnul - done
+// applam - done
+// appref -
+// copy - done
+// dupnul - done
+// duplam - done
+// dupsup - done
+
 
 // Define a macro for the default interaction functions
 #define POS_INTERACTIONS\
@@ -1562,15 +1292,15 @@ unsigned otherNodes;
 unsigned subGraphs = 0;
 
 void interact(Term neg, Term pos) {
-  //*
+  /*
   if (1) {
-    if (term_tag(neg) != ERA && term_tag(pos) != NUL) {
+    if (termTag(neg) != ERA && termTag(pos) != NUL) {
       if (1) {
-	fprintf(stderr, "%ld: ", graphCount);
-	print_raw_term(neg);
-	fprintf(stderr, " - ");
-	print_raw_term(pos);
-	fprintf(stderr, "\n");
+	// fprintf(stderr, "%ld: ", graphCount);
+	// print_raw_term(neg);
+	// fprintf(stderr, " - ");
+	// print_raw_term(pos);
+	// fprintf(stderr, "\n");
 
 	FILE *currDOT = dotFile;
 	unsigned currSubG = subGraphs;
@@ -1593,11 +1323,11 @@ void interact(Term neg, Term pos) {
     BOOM("all done");
   // */
 
-  // if (term_lab(pos) == SUP && term_loc(pos) == 0x15a) {
+  // if (term_lab(pos) == SUP && termLoc(pos) == 0x15a) {
   // print_term("NEG", neg);
   // print_term("POS", pos);
   // }
-  // if (term_lab(neg) == APP && term_loc(pos) == 0x2c) {
+  // if (term_lab(neg) == APP && termLoc(pos) == 0x2c) {
   // print_term("NEG", neg);
   // print_term("POS", pos);
   // }
@@ -1606,7 +1336,7 @@ void interact(Term neg, Term pos) {
   atomic_fetch_add_explicit(&rdxCount, 1, memory_order_relaxed);
 #endif
   // Gets the rule type.
-  interactionFn rule = interactions[term_tag(neg)][term_tag(pos)];
+  interactionFn rule = interactions[termTag(neg)][termTag(pos)];
 
   // Swaps ports if necessary.
   rule(neg, pos);
@@ -1619,18 +1349,10 @@ void *normalize(void *v) {
   Term neg, pos;
 
   // Process redexes until the stack is empty
-  while (pop_redex(&neg, &pos)) {
+  while (popRedex(&neg, &pos)) {
     // Perform the interaction
     interact(neg, pos);
   }
-  /*
-  u64 waitingThreads = atomic_load_explicit(&waiting, memory_order_relaxed);
-  if (waitingThreads > 0) {
-    pthread_mutex_lock(&redex_mutex);
-    pthread_cond_signal(&redex_cond);
-    pthread_mutex_unlock(&redex_mutex);
-  }
-  // */
 
   u64 *res = malloc(sizeof(u64));
   // *res = rdxCount;
@@ -1652,11 +1374,11 @@ Term argsNet(NativeArgs *args) {
 }
 
 void varArg(Term trm, Term ref, Term args, NativeArgs *argsStruct) {
-  Location trmLoc = term_loc(trm);
+  Location trmLoc = termLoc(trm);
   Term val = get(trmLoc);
-  switch(term_tag(val)) {
+  switch(termTag(val)) {
   case LAZ:
-    swapStore(trmLoc, SUB);
+    swap(trmLoc, SUB);
     forceLazy(val);
 	
   case SUB:
@@ -1667,20 +1389,20 @@ void varArg(Term trm, Term ref, Term args, NativeArgs *argsStruct) {
     Term newArgs = argsNet(argsStruct);
 
     // put 'trm' back in it's place
-    swapStore(port(1, term_loc(args)), trm);
+    swap(port(1, termLoc(args)), trm);
 
     // make a deferred redex to retry the APP/REF pair when the value becomes available
     Term retry = pair_make(SUB, 5, newArgs, ref);
 
     // and put it in the location 'trm' points to
-    Term newArg = swapStore(trmLoc, retry);
+    Term newArg = swap(trmLoc, retry);
     if (newArg != SUB) {
       // someone slipped the needed trm in since we last looked
-      swapStore(trmLoc, newArg);
-      pair_free(term_loc(retry));
+      swap(trmLoc, newArg);
+      freePair(termLoc(retry));
 
       // so retry the original APP/REF redex
-      store_redex(newArgs, ref);
+      pushRedex(newArgs, ref);
     }
     break;
 
@@ -1705,7 +1427,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   if (expected == 1) {
     if (refName != NULL) {
       char msg[200];
-      sprintf(msg, "%s %03x:", refName, term_loc(args));
+      sprintf(msg, "%s %03x:", refName, termLoc(args));
       graphDown(msg, args);
     } else {
       graphDown("unknown", args);
@@ -1715,16 +1437,16 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     // }
   }
   // */
-  Tag argsTag = term_tag(args);
+  Tag argsTag = termTag(args);
   if (argsTag == APP || argsTag == OPY) {
     // if 'args' is an APP term
-    Term arg = take(port(1, term_loc(args)));
+    Term arg = take(port(1, termLoc(args)));
     if (expected == 0) {
       return args;
     }
 
     // 'arg' will only ever be a positive term
-    Tag argTag = term_tag(arg);
+    Tag argTag = termTag(arg);
     switch(argTag) {
       // the strict arg types
     case VAL:
@@ -1735,7 +1457,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
       argsStruct->args[argsStruct->count++] = arg;
       if (expected > 1)
 	// need to get more strict args
-	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+	return strictArgs(ref, take(port(2, termLoc(args))), expected - 1, argsStruct);
       else
 	return args;
       break;
@@ -1743,20 +1465,20 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     case LAM: {
       TermVal *tv = malloc_term();
       tv->trmLoc = pair_alloc();
-      swapStore(tv->trmLoc, arg);
+      swap(tv->trmLoc, arg);
 
       // add it to argsStruct
       argsStruct->args[argsStruct->count++] = (Term)tv;
       if (expected > 1)
 	// need to get more strict args
-	return strictArgs(ref, take(port(2, term_loc(args))), expected - 1, argsStruct);
+	return strictArgs(ref, take(port(2, termLoc(args))), expected - 1, argsStruct);
       else
 	return args;
     }
       break;
 
     case NUL:
-      moveStore(port(2, term_loc(args)), NUL);
+      move(port(2, termLoc(args)), NUL);
       for (int i = 0; i < argsStruct->count; i++)
 	dec_and_free(argsStruct->args[i], 1);
       break;
@@ -1764,24 +1486,24 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     case SUP:
       for(int i = 0; i < argsStruct->count; i++)
 	incRef(argsStruct->args[i], 1);
-      Term s1 = take(port(1, term_loc(arg)));
-      Term s2 = take(port(2, term_loc(arg)));
+      Term s1 = take(port(1, termLoc(arg)));
+      Term s2 = take(port(2, termLoc(arg)));
       Lab supLabel = term_lab(arg);
       int argsCount = argsStruct->count;
       argsStruct->count += 1;
 
       Term tail1 = pair_make(APP, 0, s1, SUB);
       argsStruct->args[argsCount] = tail1;
-      swapStore(port(2, term_loc(tail1)), pair_make(LAZ, 0, argsNet(argsStruct), ref));
+      swap(port(2, termLoc(tail1)), pair_make(LAZ, 0, argsNet(argsStruct), ref));
 
       Term tail2 = pair_make(APP, 0, s2, SUB);
       argsStruct->args[argsCount] = tail2;
-      swapStore(port(2, term_loc(tail2)), pair_make(LAZ, 0, argsNet(argsStruct), ref));
+      swap(port(2, termLoc(tail2)), pair_make(LAZ, 0, argsNet(argsStruct), ref));
 
       Term newSup = pair_make(SUP, supLabel,
-			      term_new(VAR, 0, port(2, term_loc(tail1))),
-			      term_new(VAR, 0, port(2, term_loc(tail2))));
-      moveStore(port(2, term_loc(args)), newSup);
+			      newTerm(VAR, 0, port(2, termLoc(tail1))),
+			      newTerm(VAR, 0, port(2, termLoc(tail2))));
+      move(port(2, termLoc(args)), newSup);
       break;
 
     case VAR:
@@ -1790,8 +1512,8 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 
     case LAZ:
     default:
-      fprintf(stderr, "unhandled tag %s (0x%x) line: %d\n", tag_to_str(term_tag(arg)),
-	     term_tag(arg), __LINE__);
+      fprintf(stderr, "unhandled tag %s (0x%x) line: %d\n", tag_to_str(termTag(arg)),
+	     termTag(arg), __LINE__);
       fprintf(dotFile, "}\n");
       fclose(dotFile);
       abort();
@@ -1818,9 +1540,9 @@ void print_raw_term(Term t) {
   if (t == 0) {
     fprintf(stderr, "  FREE   ");
   } else {
-    Tag tag = term_tag(t);
+    Tag tag = termTag(t);
     Lab lab = term_lab(t);
-    switch(term_tag(t)) {
+    switch(termTag(t)) {
     case NUL:
     case ERA:
     case I60:
@@ -1849,7 +1571,7 @@ void print_raw_term(Term t) {
       // break;
 
     default:
-      fprintf(stderr, "%s %x %.3x", tag_to_str(tag), lab, term_loc(t));
+      fprintf(stderr, "%s %x %.3x", tag_to_str(tag), lab, termLoc(t));
       break;
     }
   }
@@ -1858,9 +1580,9 @@ void print_raw_term(Term t) {
 // Helper to print a term's details
 void print_term(const char* prefix, Term term) {
   fprintf(stderr, "%s:\n", prefix);
-  fprintf(stderr, "  Tag: %s (%d, 0x%x)\n", tag_to_str(term_tag(term)), term_tag(term), term_tag(term));
+  fprintf(stderr, "  Tag: %s (%d, 0x%x)\n", tag_to_str(termTag(term)), termTag(term), termTag(term));
   Lab lab = term_lab(term);
-  switch(term_tag(term)) {
+  switch(termTag(term)) {
   case VAL:
   case NUL:
   case ERA:
@@ -1876,10 +1598,10 @@ void print_term(const char* prefix, Term term) {
     break;
 
   case VAR:
-    fprintf(stderr, "  Location: %.3x\n", term_loc(term));
+    fprintf(stderr, "  Location: %.3x\n", termLoc(term));
     // If this is a pair, print its contents
-    if (term_loc(term) >= 0) {
-      Term first = get(port(1, term_loc(term)));
+    if (termLoc(term) >= 0) {
+      Term first = get(port(1, termLoc(term)));
       fprintf(stderr, "  term: ");
       print_raw_term(first);
       fprintf(stderr, "\n");
@@ -1888,21 +1610,21 @@ void print_term(const char* prefix, Term term) {
 
   case SUP:
     if (lab == 1 || lab == 2) {
-      fprintf(stderr, "  Location: %.3x\n", term_loc(term));
+      fprintf(stderr, "  Location: %.3x\n", termLoc(term));
       fprintf(stderr, "  Label: %.3x\n", lab);
-	Term first = get(port(1, term_loc(term)));
-	Term second = get(port(2, term_loc(term)));
+	Term first = get(port(1, termLoc(term)));
+	Term second = get(port(2, termLoc(term)));
 	fprintf(stderr, "  Refs: %d\n", (int)first);
 	fprintf(stderr, "  Second term: ");
 	print_raw_term(second);
 	fprintf(stderr, "\n");
     } else {
-      fprintf(stderr, "  Location: %.3x\n", term_loc(term));
+      fprintf(stderr, "  Location: %.3x\n", termLoc(term));
       fprintf(stderr, "  Label: %.3x\n", lab);
       // If this is a pair, print its contents
-      if (term_loc(term) >= 0) {
-	Term first = get(port(1, term_loc(term)));
-	Term second = get(port(2, term_loc(term)));
+      if (termLoc(term) >= 0) {
+	Term first = get(port(1, termLoc(term)));
+	Term second = get(port(2, termLoc(term)));
 	fprintf(stderr, "  First term: ");
 	print_raw_term(first);
 	fprintf(stderr, "\n");
@@ -1918,12 +1640,12 @@ void print_term(const char* prefix, Term term) {
       break;
     
   default:
-    fprintf(stderr, "  Location: %.3x\n", term_loc(term));
+    fprintf(stderr, "  Location: %.3x\n", termLoc(term));
     fprintf(stderr, "  Label: %.3x\n", lab);
     // If this is a pair, print its contents
-    if (term_loc(term) >= 0) {
-      Term first = get(port(1, term_loc(term)));
-      Term second = get(port(2, term_loc(term)));
+    if (termLoc(term) >= 0) {
+      Term first = get(port(1, termLoc(term)));
+      Term second = get(port(2, termLoc(term)));
       fprintf(stderr, "  First term: ");
       print_raw_term(first);
       fprintf(stderr, "\n");
@@ -1939,11 +1661,11 @@ void print_term(const char* prefix, Term term) {
 
 #ifdef NON_ATOMIC
 u64* get_buff(void) {
-  return BUFF;
+  return nodeBuff;
 }
 #else
 a64* get_buff(void) {
-  return BUFF;
+  return nodeBuff;
 }
 #endif
 
@@ -1966,66 +1688,50 @@ void hvm_init(u64 size) {
   srand(time(NULL));
 
 #ifdef NON_ATOMIC
-  BUFF = (u64*)calloc(size, sizeof(a64));
+  nodeBuff = (u64*)calloc(size, sizeof(a64));
 #else
-  BUFF = (a64*)calloc(size, sizeof(a64));
+  nodeBuff = (a64*)calloc(size, sizeof(a64));
 #endif
-  if (!BUFF) {
+  if (!nodeBuff) {
     fprintf(stderr, "Failed to allocate memory\n");
     abort();
   }
 
-  RBAG_BUFF = (Term*)calloc(RBAG_SIZE, sizeof(Term));
-  if (!RBAG_BUFF) {
+  RBAG_nodeBuff = (Term*)calloc(RBAG_SIZE, sizeof(Term));
+  if (!RBAG_nodeBuff) {
     fprintf(stderr, "Failed to allocate memory for redex stack\n");
-    free(BUFF);
-    BUFF = NULL;
+    free(nodeBuff);
+    nodeBuff = NULL;
     abort();
   }
 
   // Store the size of the buffer for bounds checking in pair_alloc
-  BUFF_SIZE = size;
-
-  // Initialize mutex for thread-safe redex operations
-  if (pthread_mutex_init(&redex_mutex, NULL) != 0) {
-    fprintf(stderr, "Failed to initialize mutex\n");
-    abort();
-  }
-
-  // Initialize condition variable for redex signaling
-  if (pthread_cond_init(&redex_cond, NULL) != 0) {
-    fprintf(stderr, "Failed to initialize condition variable\n");
-    abort();
-  }
-}
+  nodeBuff_SIZE = size;
 
 // Free allocated memory
 void hvm_free(void) {
-  if (BUFF == NULL) {
+  if (nodeBuff == NULL) {
     return;
   }
 
-  // Destroy mutex and condition variable
-  pthread_cond_destroy(&redex_cond);
-  pthread_mutex_destroy(&redex_mutex);
-  free(BUFF);
-  BUFF = NULL;
+  free(nodeBuff);
+  nodeBuff = NULL;
 
-  if (RBAG_BUFF != NULL) {
-    free(RBAG_BUFF);
-    RBAG_BUFF = NULL;
+  if (RBAG_nodeBuff != NULL) {
+    free(RBAG_nodeBuff);
+    RBAG_nodeBuff = NULL;
   }
 }
 
 void hvm_reset(void) {
-  if (BUFF == NULL || RBAG_BUFF == NULL) {
+  if (nodeBuff == NULL || RBAG_nodeBuff == NULL) {
     fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvm_init first.\n");
     abort();
   }
 
   // Clear memory to prevent stale data
-  // memset(BUFF, 0, BUFF_SIZE * sizeof(Term));
-  memset(RBAG_BUFF, 0, RBAG_SIZE * sizeof(Term));
+  // memset(nodeBuff, 0, nodeBuff_SIZE * sizeof(Term));
+  memset(RBAG_nodeBuff, 0, RBAG_SIZE * sizeof(Term));
 
   // Reset node index
   atomic_store_explicit(&RNOD_END, 0, memory_order_relaxed);;
@@ -2034,19 +1740,14 @@ void hvm_reset(void) {
   atomic_store_explicit(&RBAG_END, 0, memory_order_relaxed);;
 
   // Initialize the free list (initially empty)
-  FREE_LIST = EMPTY_FREE_LIST;
+  freeList = EMPTY_FREE_LIST;
   atomic_store_explicit(&glblAlloced, 0, memory_order_relaxed);
   atomic_store_explicit(&rdxCount, 0, memory_order_relaxed);
   atomic_store_explicit(&waiting, 0, memory_order_relaxed);
   rdxCount = 0;
 }
 
-// For testing only
-Term* get_rbag_buff(void) {
-  return RBAG_BUFF;
-}
-
-// Print contents of BUFF between start and end locations
+// For// Print contents of nodeBuff between start and end locations
 void print_buff(Location start, Location end) {
 #ifdef NON_ATOMIC
   u64* buff = get_buff();
@@ -2054,17 +1755,17 @@ void print_buff(Location start, Location end) {
   a64* buff = get_buff();
 #endif
   if (!buff) {
-    fprintf(stderr, "BUFF is not initialized\n");
+    fprintf(stderr, "nodeBuff is not initialized\n");
     return;
   }
   if (start >= end) {
     fprintf(stderr, "Invalid range: start=%u end=%u\n", start, end);
     return;
   }
-  fprintf(stderr, "BUFF contents from %u to %u:\n", start, end);
+  fprintf(stderr, "nodeBuff contents from %u to %u:\n", start, end);
   for (Location i = start; i < end; i += 2) {
     Term t1 = buff[i];
-    if ((term_tag(t1) != NUL || term_lab(t1) != 0xFF) || buff[i + 1] != 0) {
+    if ((termTag(t1) != NUL || term_lab(t1) != 0xFF) || buff[i + 1] != 0) {
       fprintf(stderr," %.3x  ", i);
       print_raw_term(t1);
       fprintf(stderr,"  ");
@@ -2097,31 +1798,30 @@ void check_buff() {
   a64* buff = get_buff();
 #endif
   if (!buff) {
-    printf("BUFF is not initialized\n");
+    printf("nodeBuff is not initialized\n");
     return;
   }
-  //*
   unsigned leaks = 0;
   for (Location i = 0; i < RNOD_END; i += 2) {
     Term t1 = buff[i];
-    if (term_tag(t1) != NUL || buff[i + 1] != 0) {
+    if (termTag(t1) != NUL || buff[i + 1] != 0) {
       leaks++;
     }
   }
-  graphDown("leaked", get(0x4c), 0, subGraphs++);
+  graphDown("leaked", get(0xaf), 0, subGraphs++);
   if (leaks) {
     fprintf(stderr, "\nLeaked pairs!!\n");
     // print_term("leaked", get(0x9c));
     pb();
+    pr();
       // BOOM("Leak pairs");
   }
-  // */
 }
 
 // Print the free list for debugging
 void print_free_list(void) {
   printf("Free list: ");
-  Location ptr = FREE_LIST;
+  Location ptr = freeList;
   int count = 0;
 
   if (ptr == EMPTY_FREE_LIST) {
@@ -2130,7 +1830,7 @@ void print_free_list(void) {
     while (ptr != EMPTY_FREE_LIST && count < 100) { // Limit to prevent infinite loops
       printf("%u -> ", ptr);
       Term next = get(ptr);
-      if (term_tag(next) != NUL) {
+      if (termTag(next) != NUL) {
         printf("(INVALID: not NUL) ");
         break;
       }
@@ -2143,7 +1843,7 @@ void print_free_list(void) {
 }
 
 Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
-  switch(term_tag(arg)) {
+  switch(termTag(arg)) {
   case VAL:
     *dupedArg = incRef(arg, 1);
     return arg;
@@ -2159,11 +1859,11 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
   default: {
     Term newDup = pair_make(DUP, dupLabel, SUB, SUB);
     Term z = pair_make(LAZ, 0, newDup, arg);
-    swapStore(port(1, term_loc(newDup)), z);
-    swapStore(port(2, term_loc(newDup)), z);
+    swap(port(1, termLoc(newDup)), z);
+    swap(port(2, termLoc(newDup)), z);
 
-    *dupedArg = term_new(VAR, 0, port(2, term_loc(newDup)));
-    return term_new(VAR, 0, port(1, term_loc(newDup)));
+    *dupedArg = newTerm(VAR, 0, port(2, termLoc(newDup)));
+    return newTerm(VAR, 0, port(1, termLoc(newDup)));
   }
     break;
   }
@@ -2171,8 +1871,8 @@ Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
 
 Term make_op(Lab op, Term x, Term y) {
   Term t = pair_make(OPX, op, y, SUB);
-  Term ret = term_new(VAR, 0, port(2, term_loc(t)));
-  swapStore(term_loc(ret), pair_make(LAZ, 0, t, x));
+  Term ret = newTerm(VAR, 0, port(2, termLoc(t)));
+  swap(termLoc(ret), pair_make(LAZ, 0, t, x));
   return ret;
 }
 
@@ -2201,10 +1901,10 @@ void fatal_error(char *fmt, unsigned bytes) {
 
 unsigned graphSubUp(unsigned graphNum, Term tree);
 unsigned upBranch(Term tree, unsigned pt, unsigned graphNum) {
-  Tag t = term_tag(tree);
+  Tag t = termTag(tree);
   unsigned nodeNum;
   char *branchPort = pt == 1 ? "nw" : "ne";
-  Location loc = port(pt, term_loc(tree));
+  Location loc = port(pt, termLoc(tree));
   Term branch = get(loc);
   unsigned branchNode = 65536;
   for (unsigned i = 0; i < nodeCount; i++) {
@@ -2215,23 +1915,23 @@ unsigned upBranch(Term tree, unsigned pt, unsigned graphNum) {
     }
   }
 
-  Tag bt = term_tag(branch);
+  Tag bt = termTag(branch);
   return graphSubUp(graphNum, branch);
 }
 
 void graphLink( unsigned graphNum, unsigned nodeNum, unsigned pt, Term branch, unsigned branchNode) {
   char *branchPort = pt == 1 ? "nw" : "ne";
 
-  if (term_tag(branch) == VAR &&
-      ((term_tag(get(term_loc(branch))) == LAZ &&
-	term_tag(get(port(1, term_loc(get(term_loc(branch)))))) == DUP) ||
-       term_tag(get(term_loc(branch))) == SUB)) {
-    if (term_loc(branch) & 1)
+  if (termTag(branch) == VAR &&
+      ((termTag(get(termLoc(branch))) == LAZ &&
+	termTag(get(port(1, termLoc(get(termLoc(branch)))))) == DUP) ||
+       termTag(get(termLoc(branch))) == SUB)) {
+    if (termLoc(branch) & 1)
       fprintf(dotFile, "x%d_%x:ne -- x%d_%x:%s\n",
-	      graphNum, (term_loc(branch) & 0xFFFFFFFE), graphNum, nodeNum, branchPort);
+	      graphNum, (termLoc(branch) & 0xFFFFFFFE), graphNum, nodeNum, branchPort);
     else
       fprintf(dotFile, "x%d_%x:nw -- x%d_%x:%s\n",
-	      graphNum, (term_loc(branch) & 0xFFFFFFFE), graphNum, nodeNum, branchPort);
+	      graphNum, (termLoc(branch) & 0xFFFFFFFE), graphNum, nodeNum, branchPort);
   } else {
     fprintf(dotFile, "x%d_%x:s -- x%d_%x:%s\n",
 	    graphNum, branchNode, graphNum, nodeNum, branchPort);
@@ -2248,7 +1948,7 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
   if (tree == SUB) {
     return 65536;
   } else if (hasLocation(tree)) {
-    nodeNum = term_loc(tree) & 0xFFFFFFFE;
+    nodeNum = termLoc(tree) & 0xFFFFFFFE;
     for (unsigned i = 0; i < nodeCount; i++) {
       graphNode *gn = &nodeStack[i];
       if (gn->node == nodeNum)
@@ -2258,18 +1958,18 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
     nodeNum = otherNodes++;
   }
 
-  Tag t = term_tag(tree);
+  Tag t = termTag(tree);
   switch(t) {
   case VAR: {
     //*
-    Location loc = term_loc(tree);
+    Location loc = termLoc(tree);
     Term trm = get(loc);
-    if (trm != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
+    if (trm != LAZ || termTag(get(port(1, termLoc(trm)))) != DUP) {
       return graphSubUp(graphNum, trm);
     } else {
       for (unsigned i = 0; i < nodeCount; i++) {
 	graphNode *gn = &nodeStack[i];
-	if (hasLocation(gn->trm) && term_loc(gn->trm) == (loc & 0xFFFFFFFE))
+	if (hasLocation(gn->trm) && termLoc(gn->trm) == (loc & 0xFFFFFFFE))
 	  return gn->node;
       }
     }
@@ -2314,7 +2014,7 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
     gn->trm = tree;
     gn->node = nodeNum;
 
-    leftTag = term_tag(get(port(1, term_loc(tree))));
+    leftTag = termTag(get(port(1, termLoc(tree))));
     switch(leftTag) {
     case REF:
     case VAL:
@@ -2349,7 +2049,7 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
     gn->trm = tree;
     gn->node = nodeNum;
 
-    leftTag = term_tag(get(port(1, term_loc(tree))));
+    leftTag = termTag(get(port(1, termLoc(tree))));
     switch(leftTag) {
     case REF:
     case VAL:
@@ -2382,8 +2082,8 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
   }
 
   if (leftBranch != 65536) {
-    Term branch = get(port(1, term_loc(tree)));
-    Tag bt = term_tag(branch);
+    Term branch = get(port(1, termLoc(tree)));
+    Tag bt = termTag(branch);
     if (t == LAZ && bt == DUP) {
       fprintf(dotFile, "x%d_%x:s -- x%d_%x:nw\n", graphNum, leftBranch, graphNum, nodeNum);
     } else if (t != DUP) {
@@ -2392,8 +2092,8 @@ unsigned graphSubUp(unsigned graphNum, Term tree) {
   }
 
   if (rightBranch != 65536) {
-    Term branch = get(port(2, term_loc(tree)));
-    Tag bt = term_tag(branch);
+    Term branch = get(port(2, termLoc(tree)));
+    Tag bt = termTag(branch);
     if ((t == APP || t == OPX || t == OPY) && bt == LAZ) {
       // TODO: figure out a better solution later
       // fprintf(dotFile, "x%d_%x:ne -- x%d_%x:n\n", graphNum, nodeNum, graphNum, rightBranch);
@@ -2417,13 +2117,13 @@ void graphUp(char *title, Term root) {
 
 unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree);
 void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
-  Tag t = term_tag(tree);
-  Location treeLoc = term_loc(tree);
+  Tag t = termTag(tree);
+  Location treeLoc = termLoc(tree);
   char *branchPort = pt == 1 ? "sw" : "se";
   Location loc = port(pt, treeLoc);
   Term branch = get(loc);
-  while (term_tag(branch) == VAR) {
-    Term val = get(term_loc(branch));
+  while (termTag(branch) == VAR) {
+    Term val = get(termLoc(branch));
     if (val != SUB) {
       branch = val;
     } else {
@@ -2437,10 +2137,10 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
       graphNode *gn = &nodeStack[i];
       Term left = get(port(1, gn->node));
       Term right = get(port(2, gn->node));
-      if (term_tag(left) == VAR && term_loc(left) == treeLoc) {
+      if (termTag(left) == VAR && termLoc(left) == treeLoc) {
 	fprintf(dotFile, "x%d_%x:sw -- x%d_%x:sw\n", graphNum, gn->node, graphNum, treeLoc);
 	break;
-      } else if (term_tag(right) == VAR && term_loc(right) == treeLoc) {
+      } else if (termTag(right) == VAR && termLoc(right) == treeLoc) {
 	fprintf(dotFile, "x%d_%x:se -- x%d_%x:sw\n", graphNum, gn->node, graphNum, treeLoc);
 	break;
       }
@@ -2459,27 +2159,27 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   if (branchNode == 65536)
     branchNode = graphSubDown(graphNum, loc, branch);
 
-  Tag bt = term_tag(branch);
+  Tag bt = termTag(branch);
   Lab l = term_lab(tree);
 
   if (pt == 2 && (t == APP || t == OPX || t == OPY) && bt == LAZ) {
     fprintf(dotFile, "x%d_%x:s -- x%d_%x:se\n", graphNum, branchNode, graphNum, nodeNum);
   } else {
     if (branchNode != 65536 ) {
-      if (t == DUP && (bt != LAZ || get(port(1, term_loc(branch))) != tree)) {
+      if (t == DUP && (bt != LAZ || get(port(1, termLoc(branch))) != tree)) {
 	fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
 		graphNum, nodeNum, branchPort, graphNum, branchNode);
-      } else if (t == DUP && (bt != LAZ || get(port(1, term_loc(branch))) == tree)) {
+      } else if (t == DUP && (bt != LAZ || get(port(1, termLoc(branch))) == tree)) {
 	return;
       } else {
 	if (bt == VAR) {
-	  Location branchLoc = term_loc(branch);
-	  if (term_tag(get(branchLoc)) == SUB || term_tag(get(branchLoc)) == LAZ) {
+	  Location branchLoc = termLoc(branch);
+	  if (termTag(get(branchLoc)) == SUB || termTag(get(branchLoc)) == LAZ) {
 	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
 		    graphNum, nodeNum, branchPort, graphNum, (branchLoc & 0xFFFFFFFE),
 		    (branchLoc & 1) ? "se" : "sw");
-	  } else if (term_tag(get(branchLoc)) == LAZ &&
-		     term_tag(get(port(1, term_loc(get(branchLoc))))) == DUP) {
+	  } else if (termTag(get(branchLoc)) == LAZ &&
+		     termTag(get(port(1, termLoc(get(branchLoc))))) == DUP) {
 	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
 		    graphNum, nodeNum, branchPort, graphNum, (branchLoc & 0xFFFFFFFE),
 		    (branchLoc & 1) ? "se" : "sw");
@@ -2499,19 +2199,19 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
 // graph the node and the tree under it, if needed. Return the node number
 unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   char xLbl[100];
-  Tag t = term_tag(tree);
+  Tag t = termTag(tree);
 
   if (tree == SUB) {
     return 65536;
   } else if (hasLocation(tree)) {
-    unsigned treeNode = term_loc(tree) & 0xFFFFFFFE;
+    unsigned treeNode = termLoc(tree) & 0xFFFFFFFE;
     for (unsigned i = 0; i < nodeCount; i++) {
       graphNode *gn = &nodeStack[i];
       if (gn->node == treeNode) {
 	if (nodeNum == 65536) {
-	  while (term_tag(tree) == VAR) {
-	    tree = get(term_loc(tree));
-	    treeNode = term_loc(tree) & 0xFFFFFFFE;
+	  while (termTag(tree) == VAR) {
+	    tree = get(termLoc(tree));
+	    treeNode = termLoc(tree) & 0xFFFFFFFE;
 	  }
 	  fprintf(dotFile, "x%d_0 [label=\"\", shape=plaintext, height=0, width=0, peripheries=0]\n",
 		  graphNum);
@@ -2530,16 +2230,16 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   Lab lab = term_lab(tree);
   switch(t) {
   case VAR: {
-    Location loc = term_loc(tree);
+    Location loc = termLoc(tree);
     Term trm = get(loc);
     if (trm == SUB) {
       return 65536;
-    } else if (term_tag(trm) != LAZ || term_tag(get(port(1, term_loc(trm)))) != DUP) {
+    } else if (termTag(trm) != LAZ || termTag(get(port(1, termLoc(trm)))) != DUP) {
       return graphSubDown(graphNum, nodeNum, trm);
     } else {
       for (unsigned i = 0; i < nodeCount; i++) {
 	graphNode *gn = &nodeStack[i];
-	if (hasLocation(gn->trm) && term_loc(gn->trm) == (loc & 0xFFFFFFFE))
+	if (hasLocation(gn->trm) && termLoc(gn->trm) == (loc & 0xFFFFFFFE))
 	  return gn->node;
       }
       return graphSubDown(graphNum, nodeNum, trm);
@@ -2634,16 +2334,16 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     gn->node = nodeNum;
 
     if (t == DUP) {
-      Location dLoc = term_loc(tree);
+      Location dLoc = termLoc(tree);
       Term b1 = get(port(1, dLoc));
-      Tag bt1 = term_tag(b1);
-      if (bt1 != LAZ || tree == get(port(1, term_loc(b1)))) {
+      Tag bt1 = termTag(b1);
+      if (bt1 != LAZ || tree == get(port(1, termLoc(b1)))) {
 	downBranch(tree, 1, graphNum, nodeNum);
       }
 
       Term b2 = get(port(2, dLoc));
-      Tag bt2 = term_tag(b2);
-      if (bt2 != LAZ || tree == get(port(2, term_loc(b2)))) {
+      Tag bt2 = termTag(b2);
+      if (bt2 != LAZ || tree == get(port(2, termLoc(b2)))) {
 	downBranch(tree, 2, graphNum, nodeNum);
       }
     } else {
@@ -2672,9 +2372,9 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     otherNodes = RNOD_END;
 
   //*
-  if (term_tag(root) == LAM) {
+  if (termTag(root) == LAM) {
     unsigned nodeNum = otherNodes++;
-    unsigned rootNode = term_loc(root);
+    unsigned rootNode = termLoc(root);
     Lab rootLab = term_lab(root);
     if (rootLab == 0 || strlen(dupLabels[rootLab]) == 0)
       snprintf(xLbl, 95, "%x:\n%d", rootNode, rootLab);
@@ -2690,7 +2390,7 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     gn->node = rootNode;
 
     Term left = get(port(1, rootNode));
-    if (term_tag(left) != SUB) {
+    if (termTag(left) != SUB) {
       unsigned leftNode = graphSubDown(graphNum, 65536, left);
       fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, leftNode);
     } else {
@@ -2703,11 +2403,11 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
 	graphNode *gn = &nodeStack[i];
 	Term left = get(port(1, gn->node));
 	Term right = get(port(2, gn->node));
-	if (term_tag(left) == VAR && term_loc(left) == rootNode) {
+	if (termTag(left) == VAR && termLoc(left) == rootNode) {
 	  fprintf(dotFile, "x%d_%x:sw -- x%d_%x:sw\n", graphNum, gn->node, graphNum, nodeNum);
 	  foundVar = 1;
 	  break;
-	} else if (term_tag(right) == VAR && term_loc(right) == rootNode) {
+	} else if (termTag(right) == VAR && termLoc(right) == rootNode) {
 	  fprintf(dotFile, "x%d_%x:se -- x%d_%x:sw\n", graphNum, gn->node, graphNum, nodeNum);
 	  foundVar = 1;
 	  break;
@@ -2741,14 +2441,14 @@ void graphFn(Term ref, Term args) {
     return;
   }
 
-  args = take(port(2, term_loc(args))); 
-  Term arg = take(port(1, term_loc(args))); 
+  args = take(port(2, termLoc(args))); 
+  Term arg = take(port(1, termLoc(args))); 
 
-  if (term_tag(arg) == VAR) {
-    Term val = get(term_loc(arg));
-    switch(term_tag(val)) {
+  if (termTag(arg) == VAR) {
+    Term val = get(termLoc(arg));
+    switch(termTag(val)) {
     case LAZ:
-      swapStore(term_loc(arg), SUB);
+      swap(termLoc(arg), SUB);
       forceLazy(val);
 	
     case SUB:
@@ -2759,20 +2459,20 @@ void graphFn(Term ref, Term args) {
       Term newArgs = argsNet(&argsStruct);
 
       // put 'arg' back in it's place
-      swapStore(port(1, term_loc(args)), arg);
+      swap(port(1, termLoc(args)), arg);
 
       // make a deferred redex to retry the APP/REF pair when the value becomes available
       Term retry = pair_make(SUB, 5, newArgs, ref);
 
       // and put it in the location 'arg' points to
-      Term newArg = swapStore(term_loc(arg), retry);
+      Term newArg = swap(termLoc(arg), retry);
       if (newArg != SUB) {
 	// someone slipped the needed arg in since we last looked
-	swapStore(term_loc(arg), newArg);
-	pair_free(term_loc(retry));
+	swap(termLoc(arg), newArg);
+	freePair(termLoc(retry));
 
 	// so retry the original APP/REF redex
-	store_redex(newArgs, ref);
+	pushRedex(newArgs, ref);
       }
       break;
 
@@ -2787,7 +2487,7 @@ void graphFn(Term ref, Term args) {
     char cap[200];
     sprintf(cap, "%-.*s", (int)((String *)s)->len, ((String *)s)->buffer);
     graphDown(cap, arg, 0, subGraphs++);
-    moveStore(port(2, term_loc(args)), arg);
+    move(port(2, termLoc(args)), arg);
   }
 }
 
@@ -2798,18 +2498,18 @@ void intCond(Term ref, Term args) {
     return;
   }
 
-  args = take(port(2, term_loc(args))); 
-  Term trueBranch = take(port(1, term_loc(args))); 
+  args = take(port(2, termLoc(args))); 
+  Term trueBranch = take(port(1, termLoc(args))); 
 
-  if (term_tag(trueBranch) == VAR) {
+  if (termTag(trueBranch) == VAR) {
     varArg(trueBranch, ref, args, &argsStruct);
     return;
   }
 
-  args = take(port(2, term_loc(args))); 
-  Term falseBranch = take(port(1, term_loc(args))); 
+  args = take(port(2, termLoc(args))); 
+  Term falseBranch = take(port(1, termLoc(args))); 
 
-  if (term_tag(falseBranch) == VAR) {
+  if (termTag(falseBranch) == VAR) {
     varArg(falseBranch, ref, args, &argsStruct);
     return;
   }
@@ -2817,9 +2517,9 @@ void intCond(Term ref, Term args) {
   long x = get_i60(argsStruct.args[0]);
   if (x == 0) {
     interact(ERA, trueBranch);
-    moveStore(port(2, term_loc(args)), falseBranch);
+    move(port(2, termLoc(args)), falseBranch);
   } else {
     interact(ERA, falseBranch);
-    moveStore(port(2, term_loc(args)), trueBranch);
+    move(port(2, termLoc(args)), trueBranch);
   }
 }
