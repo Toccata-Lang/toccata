@@ -81,8 +81,9 @@ help:
 # Test HVM
 .PHONY: test-hvm
 test-hvm:
-	$(CC) $(CFLAGS) -o test-hvm $(TOC_FLAGS) $(LDFLAGS) new.c test-hvm.c
+	$(CC) $(CFLAGS) -o test-hvm $(TOC_FLAGS) $(LDFLAGS) new.c test-hvm.c graph.c
 	./test-hvm
+	dot -Tsvg graphs.dot > graphs.svg
 
 # Default help if no target specified
 .DEFAULT_GOAL := help

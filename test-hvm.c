@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "new.h"
+#include "graph.h"
 
 unsigned refsCount = 0;
 refMap refNames[0];
