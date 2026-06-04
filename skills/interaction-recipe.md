@@ -2,6 +2,15 @@
 
 This recipe documents the process for implementing and testing HVM interaction rules.
 
+**⛔ CRITICAL: When committing, ONLY stage and commit the files that were actually changed.**
+Never run `git add -A` or `git add .` — it will pick up untracked files (backup files, generated files, dependencies, build artifacts) that are not part of your changes. Instead, explicitly list only the files you modified:
+
+```bash
+git add test-hvm.c new.c graph.c
+```
+
+Then commit. If you see untracked files (`??`) in `git status`, they must NOT be included in the commit.
+
 ## Prerequisites
 
 - `test-hvm.c` with `hvmInit()` / `hvmFree()` in `main()`
