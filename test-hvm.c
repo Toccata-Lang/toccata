@@ -63,11 +63,28 @@ void test_move_era(void) {
   }
 }
 
+void test_era_both(void) {
+  char msg[100];
+
+  // Both negative ports are ERA — both moves trigger interact(ERA, leaf)
+  Term lam = makePair(LAM, 0, ERA, newI60(7));
+  Term app = makePair(APP, 0, newI60(42), ERA);
+
+  interact(app, lam);
+
+  // Both ERA locations freed by swap, both pairs completed by take
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
   test_app_lam();
   test_move_era();
+  test_era_both();
 
   hvmFree();
   return 0;
