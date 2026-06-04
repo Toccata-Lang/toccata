@@ -86,19 +86,32 @@ When the stack overflows, the system aborts (designed for bounded depth).
 
 #### `take(Location loc)`
 
-Removes and returns the term at a location, following `VAR` chains. Replaces the taken location with a `VAR` pointing back (for lazy thunks).
+Removes and returns the term at a location, following `VAR` chains. Each location in the chain is freed.
+
+- **Normal terms**: Frees the location, returns the term.
+- **`VAR` chains**: Follows each link, freeing each location, until a non-VAR term is found.
+- **`SUB` and `LAZ`**: Does **not** free the location. Returns `newTerm(VAR, 0, loc)` — a VAR pointing to the location.
+
+**⚠️ Important:** `take` on LAZ/SUB leaves the location allocated. The returned VAR can be moved elsewhere, but the original location remains in the buffer.
 
 #### `swap(Location loc, Term term)`
 
 Atomically swaps a term into a location. If the old value was:
 
-- **`SUB`** (deferred redex): Extracts the stored pair, pushes it as a new redex, frees the pair, returns `SUB`.
-- **`ERA`** (eraser): Frees the location, then triggers `interact()` with the incoming term.
-- **Other**: Returns the old term (caller handles interaction).
+- **`SUB`** (deferred redex, and not exactly the SUB literal): Extracts the stored pair, pushes it as a new redex, frees the pair, returns `SUB`.
+- **`SUB`** (exactly the SUB literal): Returns `SUB` unchanged. No freeing or redex pushing.
+- **`ERA`** (eraser): **Frees the location after the exchange**, then triggers `interact()` with the old ERA and the new term. **The new term is lost** — the location is overwritten with VOID.
+- **Other**: Returns the old term. The new term remains at the location.
+
+**⚠️ Important:** When `swap` encounters ERA, the incoming `term` is passed to `interact(ERA, term)` but the location itself is freed (set to VOID). The location does **not** contain the new term.
 
 #### `move(Location negLoc, Term pos)`
 
-Moves a positive term into a negative location. If the location contains another negative term, frees the old term and triggers `interact()`.
+Moves a positive term into a negative location. Internally calls `swap(negLoc, pos)`:
+
+- If old value is **`ERA`**: `swap` already freed the location and called `interact(ERA, pos)`. `move` does nothing further.
+- If old value is **`SUB`**: No special handling. `move` returns.
+- If old value is **another negative term**: Frees the location, then calls `interact(neg, pos)` if `pos == NUL`, otherwise `pushRedex(neg, pos)`.
 
 #### `forceLazy(Term z)`
 
@@ -173,8 +186,10 @@ Creates an operator term: builds an `OPX` pair with the operation code, wraps it
 ## Initialization
 
 ```c
-void hvmInit(u64 size);   // Allocate buffer, init mutex/condvar
+void hvmInit(u64 size);   // Allocate buffer, init mutex/condvar, set buffSize, open graphs.dot
 void hvmReset(void);       // Clear buffer, reset counters
 void hvmFree(void);        // Free buffer and destroy mutex
 void spawn_threads();      // Create worker threads
 ```
+
+**⚠️ Important:** `hvmInit` must set `buffSize` (for bounds checking in `allocPair`) and open `dotFile` (for debug output in `boom`). Both are required for correct operation.
