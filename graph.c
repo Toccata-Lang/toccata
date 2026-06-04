@@ -1,4 +1,12 @@
 
+#include "new.h"
+#include <string.h>
+
+char *dupLabels[] = {};
+unsigned otherNodes;
+unsigned subGraphs = 0;
+long graphCount = 0;
+
 char *nodeFormat =  "x%x [label=\"%d\",  height=0.4, width=0.4, fixedsize=true,  shape=triangle, orientation=%d]\n";
 char *noOutline =  "x%d_%x [label=\"%s\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n";
 char *nodeXlblFormat =  "x%d_%x [label=\"%s\",  height=0.4, width=0.4, fixedsize=true,  shape=triangle, orientation=%d, xlabel=\"%s\"]\n";
@@ -6,10 +14,6 @@ char *eraseFormat =  "x%d_%x [label=\"\", height=0.1, width=0.1, color=black, fi
 
 char *nodeLabels[25] = {"V", " ", " ", " ", " ", "L", "A", "F", "V", "S", "D",
                         " ", " ", "#", "#", "Z"};
-
-unsigned otherNodes;
-unsigned subGraphs = 0;
-long graphCount = 0;
 
 typedef struct graphNode {
   Term trm;
@@ -26,7 +30,7 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   Tag t = termTag(tree);
   Location treeLoc = termLoc(tree);
   char *branchPort = pt == 1 ? "sw" : "se";
-  Location loc = port(pt, treeLoc);
+  Location loc = portLoc(pt, treeLoc);
   Term branch = get(loc);
   while (termTag(branch) == VAR) {
     Term val = get(termLoc(branch));
@@ -41,8 +45,8 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   if (branch == SUB) {
     for (unsigned i = 0; i < nodeCount; i++) {
       graphNode *gn = &nodeStack[i];
-      Term left = get(port(1, gn->node));
-      Term right = get(port(2, gn->node));
+      Term left = get(portLoc(1, gn->node));
+      Term right = get(portLoc(2, gn->node));
       if (termTag(left) == VAR && termLoc(left) == treeLoc) {
 	fprintf(dotFile, "x%d_%x:sw -- x%d_%x:sw\n", graphNum, gn->node, graphNum, treeLoc);
 	break;
@@ -72,10 +76,10 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
     fprintf(dotFile, "x%d_%x:s -- x%d_%x:se\n", graphNum, branchNode, graphNum, nodeNum);
   } else {
     if (branchNode != 65536 ) {
-      if (t == DUP && (bt != LAZ || get(port(1, termLoc(branch))) != tree)) {
+      if (t == DUP && (bt != LAZ || get(portLoc(1, termLoc(branch))) != tree)) {
 	fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
 		graphNum, nodeNum, branchPort, graphNum, branchNode);
-      } else if (t == DUP && (bt != LAZ || get(port(1, termLoc(branch))) == tree)) {
+      } else if (t == DUP && (bt != LAZ || get(portLoc(1, termLoc(branch))) == tree)) {
 	return;
       } else {
 	if (bt == VAR) {
@@ -85,7 +89,7 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
 		    graphNum, nodeNum, branchPort, graphNum, (branchLoc & 0xFFFFFFFE),
 		    (branchLoc & 1) ? "se" : "sw");
 	  } else if (termTag(get(branchLoc)) == LAZ &&
-		     termTag(get(port(1, termLoc(get(branchLoc))))) == DUP) {
+		     termTag(get(portLoc(1, termLoc(get(branchLoc))))) == DUP) {
 	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
 		    graphNum, nodeNum, branchPort, graphNum, (branchLoc & 0xFFFFFFFE),
 		    (branchLoc & 1) ? "se" : "sw");
@@ -140,7 +144,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     Term trm = get(loc);
     if (trm == SUB) {
       return 65536;
-    } else if (termTag(trm) != LAZ || termTag(get(port(1, termLoc(trm)))) != DUP) {
+    } else if (termTag(trm) != LAZ || termTag(get(portLoc(1, termLoc(trm)))) != DUP) {
       return graphSubDown(graphNum, nodeNum, trm);
     } else {
       for (unsigned i = 0; i < nodeCount; i++) {
@@ -161,27 +165,14 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     break;
 
   case I60:
-    snprintf(xLbl, 95, "%ld", get_i60(tree));
+    snprintf(xLbl, 95, "%ld", getI60(tree));
     fprintf(dotFile, noOutline, graphNum, nodeNum, xLbl);
     break;
 
   case VAL:
     if (tree == VOID)
       fprintf(dotFile, noOutline, graphNum, nodeNum, "VOID");
-    else if (((Value *)tree)->type == StringBufferType) {
-      int len = (int)((String *)tree)->len;
-      len = len > 10 ? 10 : len;
-      fprintf(dotFile, "x%d_%x [label=\"'%-.*s'\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n",
-	      graphNum, nodeNum, len, ((String *)tree)->buffer);
-    } else if (((Value *)tree)->type == SubStringType) {
-      ReifiedVal *ss = (ReifiedVal *)tree;
-      String *parent = (String *)ss->impls[0];
-      long start = get_i60(ss->impls[1]);
-      int len = (int)get_i60(ss->impls[2]);
-      len = len > 10 ? 10 : len;
-      fprintf(dotFile, "x%d_%x [label=\"'%-.*s'\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n",
-	      graphNum, nodeNum, len, &parent->buffer[start]);
-    } else
+    else
       fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
     break;
 
@@ -241,15 +232,15 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
 
     if (t == DUP) {
       Location dLoc = termLoc(tree);
-      Term b1 = get(port(1, dLoc));
+      Term b1 = get(portLoc(1, dLoc));
       Tag bt1 = termTag(b1);
-      if (bt1 != LAZ || tree == get(port(1, termLoc(b1)))) {
+      if (bt1 != LAZ || tree == get(portLoc(1, termLoc(b1)))) {
 	downBranch(tree, 1, graphNum, nodeNum);
       }
 
-      Term b2 = get(port(2, dLoc));
+      Term b2 = get(portLoc(2, dLoc));
       Tag bt2 = termTag(b2);
-      if (bt2 != LAZ || tree == get(port(2, termLoc(b2)))) {
+      if (bt2 != LAZ || tree == get(portLoc(2, termLoc(b2)))) {
 	downBranch(tree, 2, graphNum, nodeNum);
       }
     } else {
@@ -261,7 +252,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     
   default: {
     fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
-	    graphNum, nodeNum, tag_to_str(t));
+	    graphNum, nodeNum, tagStr(t));
   }
     break;
     
@@ -295,7 +286,7 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     gn->trm = root;
     gn->node = rootNode;
 
-    Term left = get(port(1, rootNode));
+    Term left = get(portLoc(1, rootNode));
     if (termTag(left) != SUB) {
       unsigned leftNode = graphSubDown(graphNum, 65536, left);
       fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, leftNode);
@@ -307,8 +298,8 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
       char foundVar = 0;
       for (unsigned i = 0; i < nodeCount; i++) {
 	graphNode *gn = &nodeStack[i];
-	Term left = get(port(1, gn->node));
-	Term right = get(port(2, gn->node));
+	Term left = get(portLoc(1, gn->node));
+	Term right = get(portLoc(2, gn->node));
 	if (termTag(left) == VAR && termLoc(left) == rootNode) {
 	  fprintf(dotFile, "x%d_%x:sw -- x%d_%x:sw\n", graphNum, gn->node, graphNum, nodeNum);
 	  foundVar = 1;
@@ -329,70 +320,9 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     return nodeNum;
   } else
   // */
-  if (root == sideEffects) {
-    fprintf(dotFile, "x%d_SE [label=\"SE\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n", graphNum);
-    fprintf(dotFile, "}\n");
-    return 65536;
-  } else {
+  {
     unsigned rootNode = graphSubDown(graphNum, 65536, root);
     fprintf(dotFile, "}\n");
     return rootNode;
-  }
-}
-
-void graphFn(Term ref, Term args) {
-  NativeArgs argsStruct = {0, {}};
-  args = strictArgs(ref, args, 1, &argsStruct);
-  if (argsStruct.count != 1) {
-    return;
-  }
-
-  args = take(port(2, termLoc(args))); 
-  Term arg = take(port(1, termLoc(args))); 
-
-  if (termTag(arg) == VAR) {
-    Term val = get(termLoc(arg));
-    switch(termTag(val)) {
-    case LAZ:
-      swap(termLoc(arg), SUB);
-      forceLazy(val);
-	
-    case SUB:
-      // add the remaining args to argsStruct
-      argsStruct.args[argsStruct.count++] = args;
-
-      // create a chain of APP terms from argsStruct
-      Term newArgs = argsNet(&argsStruct);
-
-      // put 'arg' back in it's place
-      swap(port(1, termLoc(args)), arg);
-
-      // make a deferred redex to retry the APP/REF pair when the value becomes available
-      Term retry = pair_make(SUB, 5, newArgs, ref);
-
-      // and put it in the location 'arg' points to
-      Term newArg = swap(termLoc(arg), retry);
-      if (newArg != SUB) {
-	// someone slipped the needed arg in since we last looked
-	swap(termLoc(arg), newArg);
-	freePair(termLoc(retry));
-
-	// so retry the original APP/REF redex
-	pushRedex(newArgs, ref);
-      }
-      break;
-
-    default:
-      printRawTerm(val);
-      printf("\n");
-      BOOM("nativeArgs");
-      break;
-    }
-  } else {
-    String *s = (String *)argsStruct.args[0];
-    char cap[200];
-    sprintf(cap, "%-.*s", (int)((String *)s)->len, ((String *)s)->buffer);
-    graphDown(cap, arg, 0, subGraphs++);
-    move(port(2, termLoc(args)), arg);
   }
 }

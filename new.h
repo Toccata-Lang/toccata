@@ -52,7 +52,9 @@ extern a64 waiting;
 
 // Global VM state
 extern unsigned nodeCount;
+extern FILE *dotFile;
 extern a64 glblAlloced;
+extern a64 buffEnd;
 extern a64 rdxCount;
 extern int threadCount;
 extern pthread_mutex_t redexMutex; // Mutex for thread-safe redex operations
@@ -110,6 +112,7 @@ typedef struct {
   Term args[MAX_ARGS + 2];
 } NativeArgs;
 
+#define NODE_STACK_SIZE 1000
 #define LOCAL_PAIRS_SIZE 16000
 typedef struct {
   unsigned count;
