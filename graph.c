@@ -172,7 +172,22 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   case VAL:
     if (tree == VOID)
       fprintf(dotFile, noOutline, graphNum, nodeNum, "VOID");
-    else
+    /*
+    else if (((Value *)tree)->type == StringBufferType) {
+      int len = (int)((String *)tree)->len;
+      len = len > 10 ? 10 : len;
+      fprintf(dotFile, "x%d_%x [label=\"'%-.*s'\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n",
+	      graphNum, nodeNum, len, ((String *)tree)->buffer);
+    } else if (((Value *)tree)->type == SubStringType) {
+      ReifiedVal *ss = (ReifiedVal *)tree;
+      String *parent = (String *)ss->impls[0];
+      long start = getI60(ss->impls[1]);
+      int len = (int)getI60(ss->impls[2]);
+      len = len > 10 ? 10 : len;
+      fprintf(dotFile, "x%d_%x [label=\"'%-.*s'\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n",
+	      graphNum, nodeNum, len, &parent->buffer[start]);
+    } else
+    */
       fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
     break;
 
@@ -320,6 +335,13 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     return nodeNum;
   } else
   // */
+  /*
+  if (root == sideEffects) {
+    fprintf(dotFile, "x%d_SE [label=\"SE\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n", graphNum);
+    fprintf(dotFile, "}\n");
+    return 65536;
+  } else
+  */
   {
     unsigned rootNode = graphSubDown(graphNum, 65536, root);
     fprintf(dotFile, "}\n");
