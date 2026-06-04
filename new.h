@@ -51,6 +51,7 @@ typedef u64 Term;
 extern a64 waiting;
 
 // Global VM state
+extern unsigned nodeCount;
 extern a64 glblAlloced;
 extern a64 rdxCount;
 extern int threadCount;

@@ -713,6 +713,21 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
     res = type##_to_u64(val);			\
   }
 
+// APP/LAM interaction - beta reduction
+void app_lam(Term neg, Term pos) {
+  // Take APP's port 1 (positive argument)
+  Term arg = take(portLoc(1, neg));
+
+  // Take LAM's port 2 (positive body)
+  Term body = take(portLoc(2, pos));
+
+  // Move body to APP's port 2 location (negative)
+  move(portLoc(2, neg), body);
+
+  // Move argument to LAM's port 1 location (negative)
+  move(portLoc(1, pos), arg);
+}
+
 // interaction jump table - all entries default to badrdx
 interactionFn interactions[16][16] = {
   [0 ... 15] = {[0 ... 15] = &badrdx}
@@ -953,6 +968,12 @@ void spawn_threads() {
 void hvmInit(u64 size) {
   srand(time(NULL));
 
+  dotFile = fopen("graphs.dot", "w");
+  if (!dotFile) {
+    fprintf(stderr, "Failed to open graphs.dot\n");
+    abort();
+  }
+
 #ifdef NON_ATOMIC
   nodeBuff = (u64*)calloc(size, sizeof(a64));
 #else
@@ -962,6 +983,9 @@ void hvmInit(u64 size) {
     fprintf(stderr, "Failed to allocate memory\n");
     abort();
   }
+  buffSize = size;
+
+  interactions[APP][LAM] = &app_lam;
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redexMutex, NULL) != 0) {
