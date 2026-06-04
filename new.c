@@ -713,8 +713,13 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
     res = type##_to_u64(val);			\
   }
 
+// ERA/leaf interaction - eraser consumes any leaf term
+void eraLeaf(Term neg, Term pos) {
+  // Both sides are leaf terms — nothing to do, both are already freed by swap/interact
+}
+
 // APP/LAM interaction - beta reduction
-void app_lam(Term neg, Term pos) {
+void appLam(Term neg, Term pos) {
   // Take APP's port 1 (positive argument)
   Term arg = take(portLoc(1, neg));
 
@@ -985,7 +990,8 @@ void hvmInit(u64 size) {
   }
   buffSize = size;
 
-  interactions[APP][LAM] = &app_lam;
+  interactions[APP][LAM] = &appLam;
+  interactions[ERA][NUL] = &eraLeaf;
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redexMutex, NULL) != 0) {
