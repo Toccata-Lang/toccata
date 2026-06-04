@@ -78,6 +78,12 @@ help:
 # clean:
 # 	rm -f toccata
 
+# Test HVM
+.PHONY: test-hvm
+test-hvm:
+	$(CC) $(CFLAGS) -o test-hvm $(TOC_FLAGS) $(LDFLAGS) new.c test-hvm.c
+	./test-hvm
+
 # Default help if no target specified
 .DEFAULT_GOAL := help
 

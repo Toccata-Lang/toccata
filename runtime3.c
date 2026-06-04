@@ -2992,8 +2992,337 @@ void freeGlobal(Term p) {
 }
 
 Location resultLocation;
+u64 start;
+int bashResult = 1;
+u64 node_count = 1;
+
+void exitProg(Term ref, Term args) {
+  graphDown("exitProg", args, 0, subGraphs++);
+  NativeArgs arityArgs = {0, {}};
+  args = strictArgs(ref, args, 1, &arityArgs);
+  if (arityArgs.count == 1) {
+    Term result = arityArgs.args[0];
+    Tag resultTag = term_tag(result);
+    switch (resultTag) {
+    case I60:
+      bashResult = (int)get_i60(result);
+      printf("result: %p bashResult: %d\n", (void *)result, bashResult);
+      break;
+
+    case F60:
+      // TODO: handle
+      BOOM("can't return a float as a result");
+      break;
+	
+    case VAL:
+      fprintf(stderr, "val: %ld\n", ((Value *)result)->type);
+      dec_and_free(result, 1);
+      result = new_i60(0);
+      break;
+
+    default: {
+      fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
+      graphDown("result", result, 0, subGraphs++);
+      exit(1);
+    }
+      break;
+    }
+
+    double duration = (time64() - start) / 1000000000.0; // seconds
+    u64 itrs = atomic_load(&rdxCount);
+    printf("- Threads: %u\n", threadCount);
+    printf("- ITRS: %" PRIu64 "\n", itrs);
+
+    Term neg, pos;
+    while (pop_redex(&neg, &pos)) {
+      graphDown("NEG", neg, 0, subGraphs++);
+      graphDown("POS", pos, nodeCount, subGraphs++);
+      interact(neg, NUL);
+      interact(ERA, pos);
+    }
+    node_count = atomic_load(&glblAlloced);
+    u64 max_node = atomic_load(&RNOD_END);
+    // printf("- ITRS: %" PRIu64 " TIME: %.2fs  MIPS: %.2f\n", itrs, duration, (double)itrs / duration / 1000000.0);
+    if (node_count != 0) {
+      fprintf(stderr, "remaining nodes: %ld (%ld)\n", node_count, max_node);
+      check_buff();
+    }
+
+    fprintf(dotFile, "}\n");
+    fclose(dotFile);
+
+#ifdef CHECK_MEM_LEAK
+    freeGlobals();
+    cleaningUp = 1;
+    freeAll();
+    if (malloc_count - free_count != 0 || node_count != 0)
+      exit(1);
+#endif
+    hvm_free();
+    /*
+      free_static_tms();
+      free(globalNet);
+      // */
+
+    exit(bashResult);
+
+  }
+  return;
+}
+Term exitRef = new_ref(exitProg);
+
+Term valTerm(Term val) {
+  // ensure a Term is a valid native value
+  unsigned type = ((Value *)val)->type;
+  if (val & VAL_MASK) {
+    fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__);
+    fprintf(stderr, "val: %p\n", (void *)val);
+    abort();
+  }
+  return val;
+}
+
+Term argsNet(NativeArgs *args) {
+  Term tail;
+  if(args->count < 1)
+    BOOM("argsNet");
+  else
+    tail = args->args[args->count - 1];
+
+  for (int i = args->count - 2; i >= 0; i--) {
+    tail = makePair(APP, 0, args->args[i], tail);
+  }
+
+  return tail;
+}
+
+void varArg(Term trm, Term ref, Term args, NativeArgs *argsStruct) {
+  Location trmLoc = termLoc(trm);
+  Term val = get(trmLoc);
+  switch(termTag(val)) {
+  case LAZ:
+    swap(trmLoc, SUB);
+    forceLazy(val);
+	
+  case SUB:
+    // add the remaining args to argsStruct
+    argsStruct->args[argsStruct->count++] = args;
+
+    // create a chain of APP terms from argsStruct
+    Term newArgs = argsNet(argsStruct);
+
+    // put 'trm' back in it's place
+    swap(portLoc(1, args), trm);
+
+    // make a deferred redex to retry the APP/REF pair when the value becomes available
+    Term retry = makePair(SUB, 5, newArgs, ref);
+
+    // and put it in the location 'trm' points to
+    Term newArg = swap(trmLoc, retry);
+    if (newArg != SUB) {
+      // someone slipped the needed trm in since we last looked
+      swap(trmLoc, newArg);
+      freePair(termLoc(retry));
+
+      // so retry the original APP/REF redex
+      pushRedex(newArgs, ref);
+    }
+    break;
+
+  default:
+    printRawTerm(val);
+    printf("\n");
+    BOOM("nativeArgs");
+    break;
+  }
+}
+
+// extract the requested number of native args. I60, F60, REF or VAL terms
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
+  /*
+  char *refName = NULL;
+  for (unsigned i = 0; i <= refsCount; i++) {
+    if (refNames[i].fn == (interactionFn)(ref & ~TAG_MASK)) {
+      refName = refNames[i].name;
+      break;
+    }
+  }
+  if (expected == 1) {
+    if (refName != NULL) {
+      char msg[200];
+      sprintf(msg, "%s %03x:", refName, termLoc(args));
+      graphDown(msg, args);
+    } else {
+      graphDown("unknown", args);
+    }
+    // if (strcmp(refName, "str-eq") == 0) {
+    // printTerm("str-eq args", args);
+    // }
+  }
+  // */
+  Tag argsTag = termTag(args);
+  if (argsTag == APP || argsTag == OPY) {
+    // if 'args' is an APP term
+    Term arg = take(portLoc(1, args));
+    if (expected == 0) {
+      return args;
+    }
+
+    // 'arg' will only ever be a positive term
+    Tag argTag = termTag(arg);
+    switch(argTag) {
+      // the strict arg types
+    case VAL:
+    case I60:
+    case F60:
+    case REF:
+      // add it to argsStruct
+      argsStruct->args[argsStruct->count++] = arg;
+      if (expected > 1)
+	// need to get more strict args
+	return strictArgs(ref, take(portLoc(2, args)), expected - 1, argsStruct);
+      else
+	return args;
+      break;
+
+    case LAM: {
+      TermVal *tv = malloc_term();
+      tv->trmLoc = allocPair();
+      swap(tv->trmLoc, arg);
+
+      // add it to argsStruct
+      argsStruct->args[argsStruct->count++] = (Term)tv;
+      if (expected > 1)
+	// need to get more strict args
+	return strictArgs(ref, take(portLoc(2, args)), expected - 1, argsStruct);
+      else
+	return args;
+    }
+      break;
+
+    case NUL:
+      move(portLoc(2, args), NUL);
+      for (int i = 0; i < argsStruct->count; i++)
+	dec_and_free(argsStruct->args[i], 1);
+      break;
+
+    case SUP:
+      for(int i = 0; i < argsStruct->count; i++)
+	incRef(argsStruct->args[i], 1);
+      Term s1 = take(portLoc(1, arg));
+      Term s2 = take(portLoc(2, arg));
+      Lab supLabel = termLab(arg);
+      int argsCount = argsStruct->count;
+      argsStruct->count += 1;
+
+      Term tail1 = makePair(APP, 0, s1, SUB);
+      argsStruct->args[argsCount] = tail1;
+      swap(portLoc(2, tail1), makePair(LAZ, 0, argsNet(argsStruct), ref));
+
+      Term tail2 = makePair(APP, 0, s2, SUB);
+      argsStruct->args[argsCount] = tail2;
+      swap(portLoc(2, tail2), makePair(LAZ, 0, argsNet(argsStruct), ref));
+
+      Term newSup = makePair(SUP, supLabel,
+			      newTerm(VAR, 0, portLoc(2, tail1)),
+			      newTerm(VAR, 0, portLoc(2, tail2)));
+      move(portLoc(2, args), newSup);
+      break;
+
+    case VAR:
+      varArg(arg, ref, args, argsStruct);
+      break;
+
+    case LAZ:
+    default:
+      fprintf(stderr, "unhandled tag %s (0x%x) line: %d\n", tagStr(termTag(arg)),
+	     termTag(arg), __LINE__);
+      fprintf(dotFile, "}\n");
+      fclose(dotFile);
+      abort();
+      break;
+    }
+    argsStruct->count = -1;
+    return 0;
+    // } else if (argsTag == VAR) {
+    // if 'args' is a VAR term
+  } else {
+    fprintf(stderr, "strictArgs expected: %d\n", expected);
+    printTerm("strictArgs args", args);
+    fprintf(stderr, "unhandled tag %s (0x%x) %p line: %d\n",
+	   tagStr(argsTag), argsTag, (void *)args, __LINE__);
+    fprintf(dotFile, "}\n");
+    fclose(dotFile);
+    abort();
+    return 0;
+  }
+
+}
+
+Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
+  switch(termTag(arg)) {
+  case VAL:
+    *dupedArg = incRef(arg, 1);
+    return arg;
+    break;
+
+  case F60:
+  case I60:
+  case REF:
+    *dupedArg = arg;
+    return arg;
+    break;
+
+  default: {
+    Term newDup = makePair(DUP, dupLabel, SUB, SUB);
+    Term z = makePair(LAZ, 0, newDup, arg);
+    swap(portLoc(1, newDup), z);
+    swap(portLoc(2, newDup), z);
+
+    *dupedArg = newTerm(VAR, 0, portLoc(2, newDup));
+    return newTerm(VAR, 0, portLoc(1, newDup));
+  }
+    break;
+  }
+}
+
+void intCond(Term ref, Term args) {
+  NativeArgs argsStruct = {0, {}};
+  args = strictArgs(ref, args, 1, &argsStruct);
+  if (argsStruct.count != 1) {
+    return;
+  }
+
+  args = take(portLoc(2, args)); 
+  Term trueBranch = take(portLoc(1, args)); 
+
+  if (termTag(trueBranch) == VAR) {
+    varArg(trueBranch, ref, args, &argsStruct);
+    return;
+  }
+
+  args = take(portLoc(2, args)); 
+  Term falseBranch = take(portLoc(1, args)); 
+
+  if (termTag(falseBranch) == VAR) {
+    varArg(falseBranch, ref, args, &argsStruct);
+    return;
+  }
+
+  long x = getI60(argsStruct.args[0]);
+  if (x == 0) {
+    interact(ERA, trueBranch);
+    move(portLoc(2, args), falseBranch);
+  } else {
+    interact(ERA, falseBranch);
+    move(portLoc(2, args), trueBranch);
+  }
+}
 
 int main (int argc, char **argv) {
+  Term alts[200];
+  unsigned altsCount = 0;
+  
   prErrSTAR = &defaultPrErrSTAR;
 #ifdef SINGLE_THREADED
 #ifdef CHECK_MEM_LEAK
@@ -3009,7 +3338,7 @@ int main (int argc, char **argv) {
   hvm_init(1024 * 1024 * 1024);
   hvm_reset();
 
-  u64 start = time64();
+  start = time64();
 
   int bashResult;
   Term result;
@@ -3031,11 +3360,12 @@ int main (int argc, char **argv) {
     resultLocation = port(2, term_loc(callArgs));
     // fprintf(stderr, "resultLocation: %0x\n", resultLocation);
     store_redex(callArgs, mainFn);
+
     Tag resultTag;
     do {
       normalize(NULL);
       result = take(resultLocation);
-      // graphDown("result", result, 0, subGraphs++);
+      graphDown("result", result, 0, subGraphs++);
       resultTag = term_tag(result);
       if (resultTag == VAR) {
 	resultLocation = term_loc(result);
@@ -3047,7 +3377,6 @@ int main (int argc, char **argv) {
       // printf("result %d:\n", __LINE__);
       // print_raw_term(result);
       // printf("\n");
-//*
       switch (resultTag) {
       case I60:
       case F60:
@@ -3055,8 +3384,14 @@ int main (int argc, char **argv) {
 	
       case NUL:
       case ERA:
-	result = new_i60(0);
-	resultTag = I60;
+	if (altsCount > 0) {
+	  result = alts[--altsCount];
+	  resultTag = term_tag(result);
+	  swapStore(resultLocation, result);
+	} else {
+	  result = new_i60(0);
+	  resultTag = I60;
+	}
 	break;
 	
       case SUB:
@@ -3064,6 +3399,10 @@ int main (int argc, char **argv) {
 	  Term neg = take(port(1, term_loc(result)));
 	  Term pos = take(port(2, term_loc(result)));
 	  store_redex(neg, pos);
+	} else if (altsCount > 0) {
+	  result = alts[--altsCount];
+	  resultTag = term_tag(result);
+	  swapStore(resultLocation, result);
 	} else {
 	  // graphDown("BOOM", result);
 	  print_term("result", result);
@@ -3081,32 +3420,20 @@ int main (int argc, char **argv) {
 	result = new_i60(0);
 	resultTag = I60;
 	break;
-/*
-      case DUP:
-      case CON:
-	if (1) {
-	  Pair pr = node_load(result);
-	  // fprintf(stderr, "result %d: %d %d\n", __LINE__, term_tag(pr.fst), term_tag(pr.snd));
-	  store_redex(result, ERA);
-	  normalize();
-	  result = new_num(new_i24(0));
-	  resultTag = I60;
-	}
-	break;
-// */
 
       case SUP: {
 	Lab l = term_lab(result);
 	Location loc = term_loc(result);
 	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
-	graphDown("result", result, 0, subGraphs++);
-	Term newResult = swapStore(port(1, loc), NUL) ;
-	if (term_tag(newResult) == NUL)
-	  newResult = swapStore(port(2, loc), NUL) ;
-	interact(ERA, result);
-	result = nothing();
+	graphDown("SUP result", result, 0, subGraphs++);
+	Term newResult = take(port(2, loc)) ;
+	alts[altsCount++] = newResult;
+	graphDown("newResult", newResult, 0, subGraphs++);
+	newResult = take(port(1, loc)) ;
+	graphDown("newResult", newResult, 0, subGraphs++);
+	result = newResult;
 	resultTag = term_tag(result);
-	graphDown("result", result, 0, subGraphs++);
+	swapStore(resultLocation, result);
       }
 	break;
 
@@ -3119,14 +3446,17 @@ int main (int argc, char **argv) {
       }
 	break;
       }
-      // TODO: only for debugging. Remove ASAP
-      // break;
-  // */
     } while(resultTag != I60 && resultTag != F60 && resultTag != VAL);
-    freeGlobals();
   }
-  fprintf(dotFile, "}\n");
-  fclose(dotFile);
+  for (int i = 0; i < altsCount; i++) {
+    Term alt = alts[i];
+    graphDown("alt", alt, 0, subGraphs++);
+    print_term("alt", alt);
+    if (hasLocation(alt))
+      eraseCycle(alt, term_loc(alt));
+    interact(ERA, alts[i]);
+  }
+  freeGlobals();
 
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = atomic_load(&rdxCount);
@@ -3138,8 +3468,13 @@ int main (int argc, char **argv) {
   printf("remaining nodes: %ld (%ld)\n", node_count, max_node);
   if (node_count != 0) {
     fprintf(stderr, "remaining nodes: %ld (%ld)\n", node_count, max_node);
+    check_buff();
+    fprintf(dotFile, "}\n");
+    fclose(dotFile);
     exit(1);
   }
+  fprintf(dotFile, "}\n");
+  fclose(dotFile);
 
   Tag t = term_tag(result);
   if (t == I60) {

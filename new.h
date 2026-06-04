@@ -47,26 +47,22 @@ typedef u64 Term;
 #define EMPTY_FREE_LIST 0xFFFFFFFE
 #define LOCK_FREE_LIST 0xFFFFFFFF
 
-extern a64 RBAG_END;
-extern Term* RBAG_BUFF;
 #define LOCK_REDEX_STACK 0xFFFFFFFF
 extern a64 waiting;
 
 // Global VM state
 extern a64 glblAlloced;
 extern a64 rdxCount;
-extern a64 RNOD_END;
 extern int threadCount;
-extern pthread_mutex_t redex_mutex; // Mutex for thread-safe redex operations
-extern pthread_cond_t redex_cond; // Condition variable for signaling when redex is available
-extern Term* get_rbag_buff(void);  // For testing only
-void print_free_list(void);   // For debugging
-void print_raw_term(Term t);
-void print_term(const char* prefix, Term term);
-void print_buff(Location start, Location end);
+extern pthread_mutex_t redexMutex; // Mutex for thread-safe redex operations
+extern pthread_cond_t redexCond; // Condition variable for signaling when redex is available
+void printFreeList(void);   // For debugging
+void printRawTerm(Term t);
+void printTerm(const char* prefix, Term term);
+void printBuff(Location start, Location end);
 void pb();
 void pr();
-void check_buff();
+void checkBuff();
 char *refName(Term ref);
 
 // Tags for different term types
@@ -87,8 +83,6 @@ char *refName(Term ref);
 #define F60 0x0e // positive 56 bit float
 #define LAZ 0x0f // positive lazy node {- +}
 typedef u32 Tag; // Tag is now just an unsigned integer
-
-#define sideEffects 0x10 + ERA
 
 // Operators
 #define OP_ADD 0x00
@@ -122,51 +116,47 @@ typedef struct {
 } Pairs;
 
 // creating number terms
-#define new_i60(x) (((i64)(x) << TAG_SIZE) | I60)
-#define get_i60(x) (i64)((i64)(x) >> TAG_SIZE)
-#define get_u64(x) (i64)((u64)(x) >> TAG_SIZE)
-#define new_num(type, x) (((u64)(x) << TAG_SIZE) | type)
+#define newI60(x) (((i64)(x) << TAG_SIZE) | I60)
+#define getI60(x) (i64)((i64)(x) >> TAG_SIZE)
+#define getU64(x) (i64)((u64)(x) >> TAG_SIZE)
+#define newNum(type, x) (((u64)(x) << TAG_SIZE) | type)
 
 // Function declarations
-void hvm_init(u64 size);
-void hvm_free(void);
-void hvm_reset(void);
-void init_free_list(u64 start, u64 end);
-Location pair_alloc(void);
-void pair_free(Location loc);
-// Term pair_make(Tag tag, Lab lab, Term fst, Term snd);
-Term maker(int line, Tag tag, Lab lab, Term fst, Term snd);
-const char* tag_to_str(Tag tag);
-Term term_new(Tag tag, Lab lab, Location loc);
-Term term_val(Term val);
-Tag term_tag(Term term);
-Lab term_lab(Term term);
-Location term_loc(Term term);
-Location port(u64 n, Location x);
+void hvmInit(u64 size);
+void hvmFree(void);
+void hvmReset(void);
+void initFreeList(u64 start, u64 end);
+Location allocPair(void);
+void freePair(Location loc);
+Term makePair(Tag tag, Lab lab, Term fst, Term snd);
+const char* tagStr(Tag tag);
+Term termNew(Tag tag, Lab lab, Location loc);
+Term termVal(Term val);
+Tag termTag(Term term);
+Lab termLab(Term term);
+Location termLoc(Term term);
+Location portLoc(u64 n, Term trm);
 // Check term polarity
-bool is_positive(Term term);
-bool is_negative(Term term);
+bool isPositive(Term term);
+bool isNegative(Term term);
 
 // this abuses the compile time functionality
 // to create a Port value
-#define term_new_(tag, x) (((u64)x + tag))
+#define termNew_(tag, x) (((u64)x + tag))
 
 // Get term at location
 Term get(Location loc);
 Term take(Location loc);
 void freeLoc(Location loc);
 void interact(Term neg, Term pos);
-void push_redex(Term neg, Term pos);
-bool pop_redex(Term* neg, Term* pos);
-void store_redex(Term neg, Term pos);
-Term swapStore(Location loc, Term term);
-void moveStore(Location neg_loc, Term pos);
+void pushRedex(Term neg, Term pos);
+bool popRedex(Term* neg, Term* pos);
+Term swap(Location loc, Term term);
+void move(Location neg_loc, Term pos);
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
-void link_redexes();
-void store_redex(Term neg, Term pos);
 Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel);
 int decSubRefs(Location sup_loc);
-Term make_op(Lab op, Term x, Term y);
+Term makeOp(Lab op, Term x, Term y);
 
 // Perform interactions until the redex stack is empty
 // Returns the number of interactions performed
@@ -176,7 +166,7 @@ void spawn_threads();
 extern pthread_t threads[];
 
 typedef void (*interactionFn)(Term a, Term b);
-#define new_ref(x) (((u64)x + REF))
+#define newRef(x) (((u64)x + REF))
 
 extern unsigned refsCount;
 typedef struct {
@@ -185,20 +175,15 @@ typedef struct {
 extern refMap refNames[];
 
 // Create a REF term with a specific interaction function
-Term ref_make(interactionFn fn);
+Term refMake(interactionFn fn);
 
 u64 time64();
 void *boom(char *msg, char *file, int line);
 #define BOOM(msg) boom(msg, __FILE__, __LINE__)
 #endif // NEW_H
 
-extern pthread_mutex_t buff_mutex;
-
-#define pair_make(tag, lab, fst, snd) maker(__LINE__, tag, lab, fst, snd)
-
-extern unsigned subGraphs;
-unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned graphNum);
-void graphUp(char *title, Term root);
-void graphFn(Term ref, Term args);
 void intCond(Term ref, Term args);
 extern char *dupLabels[];
+
+char hasLocation(Term tree);
+int eraseCycle(Term tree, Location tgtLoc);
