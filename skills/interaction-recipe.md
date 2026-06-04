@@ -16,8 +16,6 @@ Place test functions **before** `main()` (no forward declarations needed).
 void test_app_lam(void) {
   char msg[100];
 
-  // Pre-checks (e.g., glblAlloced == 0)
-
   // Build terms
 
   // Trigger interaction
@@ -59,6 +57,8 @@ Term lam = makePair(LAM, 0, SUB, newI60(7));
 Term app = makePair(APP, 0, newI60(7), SUB);
 ```
 
+**⚠️ Lesson:** Never put a negative term (like SUB) in APP's port 1 — it must be positive. If you need to test `take` with SUB, use a VAR chain: create a separate location holding SUB, then put a VAR pointing to it in APP's port 1.
+
 ## Step 3: Trigger the interaction
 
 ```c
@@ -75,19 +75,21 @@ Place the function **before** the `interactions` jump table declaration in `new.
 
 **`take(Location loc)`**:
 - Extracts the term at `loc`, freeing the location
-- Follows VAR chains
+- Follows VAR chains (freeing each location in the chain)
 - Returns a positive value
-- Special case: for `SUB` and `LAZ`, returns a `VAR` pointing back to the location
+- **Special case:** for `SUB` and `LAZ`, returns a `VAR` pointing to the location **without freeing it**
 
 **`move(Location negLoc, Term pos)`**:
 - Moves a **positive** term into a **negative** location
 - Internally calls `swap`; handles `ERA` (triggers interact) and `SUB` (deferred redex)
 - Requires: location must contain a negative term, term must be positive
 
+**⚠️ Lesson:** `swap` handles ERA by calling `freeLoc(loc)` **after** the atomic exchange. This overwrites the new value with VOID. When `move` encounters ERA, the location is freed and the new value is lost — the value is passed to `interact(ERA, pos)` instead.
+
 ### APP/LAM example
 
 ```c
-void app_lam(Term neg, Term pos) {
+void appLam(Term neg, Term pos) {
   // neg = APP, pos = LAM
 
   // Take APP's port 1 (positive argument)
@@ -109,7 +111,16 @@ void app_lam(Term neg, Term pos) {
 In `hvmInit()`, set the jump table entry:
 
 ```c
-interactions[APP][LAM] = &app_lam;
+interactions[APP][LAM] = &appLam;
+```
+
+Register `eraLeaf` for all positive leaf types that ERA should consume:
+
+```c
+interactions[ERA][NUL] = &eraLeaf;
+interactions[ERA][I60] = &eraLeaf;
+interactions[ERA][F60] = &eraLeaf;
+interactions[ERA][LAM] = &eraLeaf;
 ```
 
 ## Step 6: Verify results
@@ -117,23 +128,14 @@ interactions[APP][LAM] = &app_lam;
 Use `take()` to extract and verify rewired values:
 
 ```c
-Term result1 = take(portLoc(2, app));
-Term result2 = take(portLoc(1, lam));
-
-if (termTag(result1) != I60 || getI60(result1) != 7) {
-  sprintf(msg, "result1 should be I60(7), got tag %s", tagStr(termTag(result1)));
+Term result = take(portLoc(1, lam));
+if (termTag(result) != I60 || getI60(result) != 7) {
+  sprintf(msg, "LAM port 1 should be I60(7), got tag %s", tagStr(termTag(result)));
   BOOM(msg);
 }
 ```
 
-Check all nodes freed:
-
-```c
-if (glblAlloced != 0) {
-  sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
-  BOOM(msg);
-}
-```
+**⚠️ Lesson:** Don't check `glblAlloced == 0` across multiple tests. Tests accumulate dangling pairs (LAZ/SUB locations aren't freed by `take`, VAR chain targets aren't freed). Check `glblAlloced` relative to what's expected given the test's setup.
 
 ## Error handling
 
@@ -155,5 +157,15 @@ BOOM(msg);
 - [ ] Rule uses `take`/`move` (not `get`/`free`)
 - [ ] Port polarities verified: `move` needs positive term → negative location
 - [ ] Rule registered in `interactions` table in `hvmInit()`
-- [ ] Results verified with `take()` and `glblAlloced == 0`
+- [ ] Results verified with `take()` and tag comparisons
 - [ ] Errors use `BOOM(msg)` with `sprintf` into local char array
+
+## Lessons Learned
+
+1. **`take` on LAZ/SUB doesn't free** — returns a VAR pointing to the location. The location remains allocated.
+2. **`swap` on ERA frees the location** — the new value is lost (overwritten by VOID). The value goes to `interact(ERA, pos)` instead.
+3. **`move` with ERA does nothing** — `swap` handles ERA internally (frees location + calls interact), so `move`'s own logic is skipped.
+4. **Never put negative terms in APP port 1** — APP port 1 must be positive. To test `take` with SUB, use a VAR chain pointing to a separate location.
+5. **Don't depend on specific location values** — the free list reuses locations across tests, making absolute location checks fragile. Use relative checks (tag comparisons, `portLoc` results).
+6. **`eraLeaf` must be registered per leaf type** — each positive leaf (NUL, I60, F60, LAM, etc.) needs its own entry in the interactions table.
+7. **Tests accumulate state** — dangling pairs from LAZ/SUB and VAR chain targets mean `glblAlloced` doesn't reset to 0 between tests.
