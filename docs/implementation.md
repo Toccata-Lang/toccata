@@ -115,7 +115,7 @@ interactionFn interactions[16][16];  // Jump table indexed by [neg_tag][pos_tag]
 void interact(Term neg, Term pos);   // Looks up and calls the appropriate rule
 ```
 
-The 16×16 table covers all possible tag combinations. Unknown/unhandled combinations abort via `ABRT`.
+The 16×16 table is statically initialized to `&badrdx` for all entries. Rules are installed as they are implemented; unhandled combinations abort via `badrdx`.
 
 ### Reduction Loop
 

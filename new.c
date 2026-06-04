@@ -32,9 +32,6 @@ __thread Location freeList = EMPTY_FREE_LIST; // Head of the free list (atomic f
 // Redex stack
 __thread Pairs pairs;
 
-// interaction jump table
-interactionFn interactions[16][16];
-
 // Convert a tag to its string representation
 const char* tagStr(Tag tag) {
   switch (tag) {
@@ -175,7 +172,7 @@ void pushRedex(Term neg, Term pos) {
     neg = 0;
   else if (isPositive(neg) || isNegative(pos)) {
     BOOM("bad redex");
-    // } else if (interactions[termTag(neg)][termTag(pos)] == &ABRT) {
+    // } else if (interactions[termTag(neg)][termTag(pos)] == &badrdx) {
     // BOOM("bad redex");
   }
 #endif
@@ -715,6 +712,11 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
 	}					\
     res = type##_to_u64(val);			\
   }
+
+// interaction jump table - all entries default to badrdx
+interactionFn interactions[16][16] = {
+  [0 ... 15] = {[0 ... 15] = &badrdx}
+};
 
 void interact(Term neg, Term pos) {
   /*
