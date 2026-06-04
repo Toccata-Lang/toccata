@@ -335,13 +335,6 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     return nodeNum;
   } else
   // */
-  /*
-  if (root == sideEffects) {
-    fprintf(dotFile, "x%d_SE [label=\"SE\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n", graphNum);
-    fprintf(dotFile, "}\n");
-    return 65536;
-  } else
-  */
   {
     unsigned rootNode = graphSubDown(graphNum, 65536, root);
     fprintf(dotFile, "}\n");
