@@ -5,7 +5,7 @@
 unsigned refsCount = 0;
 refMap refNames[0];
 
-void test_app_lam(void) {
+void testAppLam(void) {
   char msg[100];
 
   if (glblAlloced != 0) {
@@ -13,7 +13,7 @@ void test_app_lam(void) {
     BOOM(msg);
   }
 
-  Term lam = makePair(LAM, 0, SUB, newI60(7));
+  Term lam = makePair(LAM, 0, SUB, newI60(8));
   Term app = makePair(APP, 0, newI60(7), SUB);
 
   interact(app, lam);
@@ -22,7 +22,7 @@ void test_app_lam(void) {
   Term result1 = take(portLoc(2, app));
   Term result2 = take(portLoc(1, lam));
 
-  if (termTag(result1) != I60 || getI60(result1) != 7) {
+  if (termTag(result1) != I60 || getI60(result1) != 8) {
     sprintf(msg, "result1 should be I60(7), got tag %s", tagStr(termTag(result1)));
     BOOM(msg);
   }
@@ -38,7 +38,7 @@ void test_app_lam(void) {
   }
 }
 
-void test_move_era(void) {
+void testMoveEra(void) {
   char msg[100];
 
   Term lam = makePair(LAM, 0, SUB, NUL);
@@ -50,9 +50,9 @@ void test_move_era(void) {
   // swap frees the ERA location and calls interact(ERA, NUL)
   // Then move(LAM port 1, I60(7)) wires the argument into LAM
   // Verify the successful wiring
-  Term lam_port1 = take(portLoc(1, lam));
-  if (termTag(lam_port1) != I60 || getI60(lam_port1) != 7) {
-    sprintf(msg, "LAM port 1 should be I60(7), got tag %s", tagStr(termTag(lam_port1)));
+  Term lamPort1 = take(portLoc(1, lam));
+  if (termTag(lamPort1) != I60 || getI60(lamPort1) != 7) {
+    sprintf(msg, "LAM port 1 should be I60(7), got tag %s", tagStr(termTag(lamPort1)));
     BOOM(msg);
   }
 
@@ -65,7 +65,7 @@ void test_move_era(void) {
 }
 
 // Test take following VAR chains through APP/LAM
-void test_take_var_chain(void) {
+void testTakeVarChain(void) {
   char msg[100];
 
   // Create a separate LAM whose port 2 holds I60(7) — this is the VAR target
@@ -77,6 +77,7 @@ void test_take_var_chain(void) {
 
   // Create APP with VAR pointing to target's port 2
   Term varTerm = newTerm(VAR, 0, targetLoc);
+  varTerm = newTerm(VAR, 0, termLoc(varTerm));
   Term app = makePair(APP, 0, varTerm, ERA);
 
   interact(app, lam);
@@ -93,10 +94,18 @@ void test_take_var_chain(void) {
     sprintf(msg, "glblAlloced should be 1, got %lld", (long long)glblAlloced);
     BOOM(msg);
   }
+
+  // Clean up target pair
+  take(portLoc(2, target));
+  freePair(termLoc(target));
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0 after cleanup, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
 }
 
 // Test take with LAZ — returns VAR, doesn't free
-void test_take_laz(void) {
+void testTakeLaz(void) {
   char msg[100];
 
   // Create a LAZ term to put in APP port 1
@@ -116,7 +125,7 @@ void test_take_laz(void) {
 }
 
 // Test take with SUB — returns VAR, doesn't free
-void test_take_sub(void) {
+void testTakeSub(void) {
   char msg[100];
 
   // Create a separate LAM holding SUB in port 1
@@ -139,7 +148,7 @@ void test_take_sub(void) {
 }
 
 // Test cascading: inner LAM rewired into APP's ERA port triggers interact
-void test_cascading(void) {
+void testCascading(void) {
   char msg[100];
 
   // Inner LAM: port1=SUB, port2=NUL
@@ -169,7 +178,7 @@ void test_cascading(void) {
 
 // Test move with NUL as the positive term
 // move(ERA, NUL) triggers interact(ERA, NUL) via swap's ERA handling
-void test_move_nul(void) {
+void testMoveNul(void) {
   char msg[100];
 
   Term lam = makePair(LAM, 0, SUB, NUL);
@@ -184,12 +193,12 @@ void test_move_nul(void) {
   }
 }
 
-void test_era_both(void) {
+void testEraBoth(void) {
   char msg[100];
 
   // Both negative ports are ERA — both moves trigger interact(ERA, leaf)
   Term lam = makePair(LAM, 0, ERA, newI60(7));
-  Term app = makePair(APP, 0, newI60(42), ERA);
+  Term app = makePair(APP, 0, newI60(8), ERA);
 
   interact(app, lam);
 
@@ -203,14 +212,14 @@ void test_era_both(void) {
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
-  test_app_lam();
-  test_move_era();
-  test_era_both();
-  test_take_var_chain();
-  test_take_laz();
-  test_take_sub();
-  test_cascading();
-  test_move_nul();
+  testAppLam();
+  testMoveEra();
+  testEraBoth();
+  testTakeVarChain();
+  testTakeLaz();
+  testTakeSub();
+  testCascading();
+  testMoveNul();
 
   hvmFree();
   return 0;

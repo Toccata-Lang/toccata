@@ -8,6 +8,24 @@ This recipe documents the process for implementing and testing HVM interaction r
 - `new.c` with `interactions[16][16]` jump table initialized to `&badrdx`
 - `new.h` exposing `glblAlloced`, `nodeCount`, and all term construction functions
 
+## Files to Read for Context
+
+Before implementing or modifying interaction rules, read these files in order:
+
+| # | File | Purpose |
+|---|---|---|
+| 1 | `skills/interaction-recipe.md` | This recipe — how to implement & test interaction rules |
+| 2 | `docs/calculus.md` | Formal calculus — node types, polarities, all 15 interaction rules |
+| 3 | `docs/interactions.dot` | Visual before/after diagrams for each interaction rule |
+| 4 | `docs/implementation.md` | Architecture reference — term layout, memory, reduction engine |
+| 5 | `new.h` | Type definitions, tag constants, function declarations |
+| 6 | `new.c` | Core implementation — `take`, `swap`, `move`, `interact`, existing rules |
+| 7 | `test-hvm.c` | Test suite — patterns for building terms, triggering interactions, verifying results |
+| 8 | `graph.c` | DOT graph generation for debugging (called by `test-hvm.c` via `graphDown`) |
+| 9 | `Makefile` | Build command for `test-hvm` — flags (`SAFETY`, `CHECK_MEM_LEAK`, `STATS`) and source files |
+
+Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
+
 ## Step 1: Create the test function
 
 Place test functions **before** `main()` (no forward declarations needed).

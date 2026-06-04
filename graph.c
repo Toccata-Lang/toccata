@@ -30,7 +30,7 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   Tag t = termTag(tree);
   Location treeLoc = termLoc(tree);
   char *branchPort = pt == 1 ? "sw" : "se";
-  Location loc = portLoc(pt, treeLoc);
+  Location loc = portLoc(pt, tree);
   Term branch = get(loc);
   while (termTag(branch) == VAR) {
     Term val = get(termLoc(branch));
@@ -45,8 +45,8 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
   if (branch == SUB) {
     for (unsigned i = 0; i < nodeCount; i++) {
       graphNode *gn = &nodeStack[i];
-      Term left = get(portLoc(1, gn->node));
-      Term right = get(portLoc(2, gn->node));
+      Term left = get(gn->node);
+      Term right = get(gn->node + 1);
       if (termTag(left) == VAR && termLoc(left) == treeLoc) {
 	fprintf(dotFile, "x%d_%x:sw -- x%d_%x:sw\n", graphNum, gn->node, graphNum, treeLoc);
 	break;
@@ -76,10 +76,10 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
     fprintf(dotFile, "x%d_%x:s -- x%d_%x:se\n", graphNum, branchNode, graphNum, nodeNum);
   } else {
     if (branchNode != 65536 ) {
-      if (t == DUP && (bt != LAZ || get(portLoc(1, termLoc(branch))) != tree)) {
+      if (t == DUP && (bt != LAZ || get(portLoc(1, branch)) != tree)) {
 	fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
 		graphNum, nodeNum, branchPort, graphNum, branchNode);
-      } else if (t == DUP && (bt != LAZ || get(portLoc(1, termLoc(branch))) == tree)) {
+      } else if (t == DUP && (bt != LAZ || get(portLoc(1, branch)) == tree)) {
 	return;
       } else {
 	if (bt == VAR) {
@@ -89,7 +89,7 @@ void downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum) {
 		    graphNum, nodeNum, branchPort, graphNum, (branchLoc & 0xFFFFFFFE),
 		    (branchLoc & 1) ? "se" : "sw");
 	  } else if (termTag(get(branchLoc)) == LAZ &&
-		     termTag(get(portLoc(1, termLoc(get(branchLoc))))) == DUP) {
+		     termTag(get(portLoc(1, get(branchLoc)))) == DUP) {
 	    fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
 		    graphNum, nodeNum, branchPort, graphNum, (branchLoc & 0xFFFFFFFE),
 		    (branchLoc & 1) ? "se" : "sw");
@@ -144,7 +144,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     Term trm = get(loc);
     if (trm == SUB) {
       return 65536;
-    } else if (termTag(trm) != LAZ || termTag(get(portLoc(1, termLoc(trm)))) != DUP) {
+    } else if (termTag(trm) != LAZ || termTag(get(portLoc(1, trm))) != DUP) {
       return graphSubDown(graphNum, nodeNum, trm);
     } else {
       for (unsigned i = 0; i < nodeCount; i++) {
@@ -158,10 +158,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     break;
 
   case ERA:
-    if (termLab(tree) == 1)
-      fprintf(dotFile, noOutline, graphNum, nodeNum, "SE");
-    else
-      fprintf(dotFile, eraseFormat, graphNum, nodeNum);
+    fprintf(dotFile, eraseFormat, graphNum, nodeNum);
     break;
 
   case I60:
@@ -246,16 +243,15 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     gn->node = nodeNum;
 
     if (t == DUP) {
-      Location dLoc = termLoc(tree);
-      Term b1 = get(portLoc(1, dLoc));
+      Term b1 = get(portLoc(1, tree));
       Tag bt1 = termTag(b1);
-      if (bt1 != LAZ || tree == get(portLoc(1, termLoc(b1)))) {
+      if (bt1 != LAZ || tree == get(portLoc(1, b1))) {
 	downBranch(tree, 1, graphNum, nodeNum);
       }
 
-      Term b2 = get(portLoc(2, dLoc));
+      Term b2 = get(portLoc(2, tree));
       Tag bt2 = termTag(b2);
-      if (bt2 != LAZ || tree == get(portLoc(2, termLoc(b2)))) {
+      if (bt2 != LAZ || tree == get(portLoc(2, b2))) {
 	downBranch(tree, 2, graphNum, nodeNum);
       }
     } else {
@@ -286,7 +282,7 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
   //*
   if (termTag(root) == LAM) {
     unsigned nodeNum = otherNodes++;
-    unsigned rootNode = termLoc(root);
+    Location rootNode = termLoc(root);
     Lab rootLab = termLab(root);
     if (rootLab == 0 || strlen(dupLabels[rootLab]) == 0)
       snprintf(xLbl, 95, "%x:\n%d", rootNode, rootLab);
@@ -301,7 +297,7 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     gn->trm = root;
     gn->node = rootNode;
 
-    Term left = get(portLoc(1, rootNode));
+    Term left = get(portLoc(1, root));
     if (termTag(left) != SUB) {
       unsigned leftNode = graphSubDown(graphNum, 65536, left);
       fprintf(dotFile, "x%d_%x:sw -- x%d_%x\n", graphNum, nodeNum, graphNum, leftNode);
@@ -313,8 +309,8 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
       char foundVar = 0;
       for (unsigned i = 0; i < nodeCount; i++) {
 	graphNode *gn = &nodeStack[i];
-	Term left = get(portLoc(1, gn->node));
-	Term right = get(portLoc(2, gn->node));
+	Term left = get(gn->node);
+	Term right = get(gn->node + 1);
 	if (termTag(left) == VAR && termLoc(left) == rootNode) {
 	  fprintf(dotFile, "x%d_%x:sw -- x%d_%x:sw\n", graphNum, gn->node, graphNum, nodeNum);
 	  foundVar = 1;

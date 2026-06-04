@@ -833,6 +833,7 @@ void printRawTerm(Term t) {
     case ERA:
     case I60:
     case F60:
+    case SUB:
       fprintf(stderr, "%s %x", tagStr(tag), lab);
       break;
 
@@ -975,9 +976,9 @@ void hvmInit(u64 size) {
 
   dotFile = fopen("graphs.dot", "w");
   if (!dotFile) {
-    fprintf(stderr, "Failed to open graphs.dot\n");
-    abort();
+    BOOM( "Failed to open graphs.dot\n");
   }
+  fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
 
 #ifdef NON_ATOMIC
   nodeBuff = (u64*)calloc(size, sizeof(a64));
@@ -1017,6 +1018,9 @@ void hvmFree(void) {
 
   free(nodeBuff);
   nodeBuff = NULL;
+
+  fprintf(dotFile, "}\n");
+  fclose(dotFile);
 }
 
 void hvmReset(void) {
