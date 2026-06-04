@@ -994,6 +994,7 @@ void hvmInit(u64 size) {
   interactions[ERA][NUL] = &eraLeaf;
   interactions[ERA][I60] = &eraLeaf;
   interactions[ERA][F60] = &eraLeaf;
+  interactions[ERA][LAM] = &eraLeaf;
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redexMutex, NULL) != 0) {

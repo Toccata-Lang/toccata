@@ -132,6 +132,7 @@ void freePair(Location loc);
 Term makePair(Tag tag, Lab lab, Term fst, Term snd);
 const char* tagStr(Tag tag);
 Term termNew(Tag tag, Lab lab, Location loc);
+Term newTerm(Tag tag, Lab lab, Location loc);
 Term termVal(Term val);
 Tag termTag(Term term);
 Lab termLab(Term term);
