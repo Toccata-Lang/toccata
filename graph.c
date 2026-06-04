@@ -326,3 +326,64 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     return rootNode;
   }
 }
+
+/*
+// graphFn - native graphing function
+// Needs: sideEffects, argsNet, strictArgs, makePair
+void graphFn(Term ref, Term args) {
+  NativeArgs argsStruct = {0, {}};
+  args = strictArgs(ref, args, 1, &argsStruct);
+  if (argsStruct.count != 1) {
+    return;
+  }
+
+  args = take(portLoc(2, termLoc(args))); 
+  Term arg = take(portLoc(1, termLoc(args))); 
+
+  if (termTag(arg) == VAR) {
+    Term val = get(termLoc(arg));
+    switch(termTag(val)) {
+    case LAZ:
+      swap(termLoc(arg), SUB);
+      forceLazy(val);
+
+    case SUB:
+      // add the remaining args to argsStruct
+      argsStruct.args[argsStruct.count++] = args;
+
+      // create a chain of APP terms from argsStruct
+      Term newArgs = argsNet(&argsStruct);
+
+      // put 'arg' back in it's place
+      swap(portLoc(1, termLoc(args)), arg);
+
+      // make a deferred redex to retry the APP/REF pair when the value becomes available
+      Term retry = makePair(SUB, 5, newArgs, ref);
+
+      // and put it in the location 'arg' points to
+      Term newArg = swap(termLoc(arg), retry);
+      if (newArg != SUB) {
+        // someone slipped the needed arg in since we last looked
+        swap(termLoc(arg), newArg);
+        freePair(termLoc(retry));
+
+        // so retry the original APP/REF redex
+        pushRedex(newArgs, ref);
+      }
+      break;
+
+    default:
+      printRawTerm(val);
+      printf("\n");
+      BOOM("nativeArgs");
+      break;
+    }
+  } else {
+    String *s = (String *)argsStruct.args[0];
+    char cap[200];
+    sprintf(cap, "%-.*s", (int)((String *)s)->len, ((String *)s)->buffer);
+    graphDown(cap, arg, 0, subGraphs++);
+    move(portLoc(2, termLoc(args)), arg);
+  }
+}
+*/
