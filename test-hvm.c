@@ -114,10 +114,7 @@ void testTakeLaz(void) {
   Term lam = makePair(LAM, 0, SUB, NUL);
   Term app = makePair(APP, 0, laz, ERA);
 
-  graphDown("take", app, 0, subGraphs++);
-  graphDown("Laz", lam, nodeCount, subGraphs++);
   interact(app, lam);
-  pb();
 
   // take(APP port 1) found LAZ, returned VAR
   Term result = take(portLoc(1, lam));
@@ -145,7 +142,10 @@ void testTakeSub(void) {
   Term lam = makePair(LAM, 0, SUB, NUL);
   Term app = makePair(APP, 0, varTerm, ERA);
 
+  graphDown("app", app, 0, subGraphs++);
+  graphDown("lam", lam, nodeCount, subGraphs++);
   interact(app, lam);
+  pb();
 
   // take followed VAR to subLoc, found SUB, returned VAR
   Term result = take(portLoc(1, lam));
@@ -153,6 +153,11 @@ void testTakeSub(void) {
     sprintf(msg, "LAM port 1 should be VAR, got tag %s", tagStr(termTag(result)));
     BOOM(msg);
   }
+
+  // Clean up: SUB locations aren't freed by take (returns VAR without freeing)
+  freeLoc(portLoc(2, subTarget));  // free NUL at subTarget port 2
+  freeLoc(subLoc);                  // free SUB at subTarget port 1 → pair freed
+  freeLoc(portLoc(1, lam));         // free SUB at lam port 1 → pair freed
 }
 
 // Test cascading: inner LAM rewired into APP's ERA port triggers interact
