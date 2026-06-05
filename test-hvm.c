@@ -373,16 +373,37 @@ void testCascadingRedex(void) {
   interact(neg, pos);
 
   // After second interact:
-  // innerApp: port1=VOID(taken), port2=SUB(take returns VAR, not freed)
-  // innerLam: port1=SUB(take returns VAR, not freed), port2=VOID(taken)
-  // outerApp: both ports VOID
-  // outerLam: both ports VOID
+  // innerApp: port1=VOID, port2=I60(137) (move swapped body in)
+  // innerLam: port1=I60(7) (move swapped arg in), port2=VOID
+  // outerApp: both ports VOID (pair already freed by move during first interact)
+  // outerLam: port1=NUL, port2=VOID
   //
-  // Clean up dangling pairs
-  // outerApp pair was already freed by move's freeLoc during first interact
-  freeLoc(portLoc(2, innerApp));   // frees SUB at port2, coalesces into freePair
-  freeLoc(portLoc(1, innerLam));   // frees SUB at port1, coalesces into freePair
-  freeLoc(portLoc(1, outerLam));   // port1=NUL → VOID, coalesces into freePair
+  // Clean up using take — each take frees its location and coalesces into freePair
+  Term r;
+  // innerApp port1: already VOID, take returns 0
+  r = take(portLoc(1, innerApp));
+  if (r != 0) { sprintf(msg, "innerApp port1 should be VOID"); BOOM(msg); }
+  // innerApp port2: has I60, take frees location
+  r = take(portLoc(2, innerApp));
+  if (termTag(r) != I60 || getI60(r) != 137) {
+    sprintf(msg, "innerApp port2 should be I60(137), got tag %s", tagStr(termTag(r)));
+    BOOM(msg);
+  }
+  // innerLam port1: has I60, take frees location
+  r = take(portLoc(1, innerLam));
+  if (termTag(r) != I60 || getI60(r) != 7) {
+    sprintf(msg, "innerLam port1 should be I60(7), got tag %s", tagStr(termTag(r)));
+    BOOM(msg);
+  }
+  // innerLam port2: already VOID
+  r = take(portLoc(2, innerLam));
+  if (r != 0) { sprintf(msg, "innerLam port2 should be VOID"); BOOM(msg); }
+  // outerLam port1: has NUL, take frees location
+  r = take(portLoc(1, outerLam));
+  if (termTag(r) != NUL) { sprintf(msg, "outerLam port1 should be NUL"); BOOM(msg); }
+  // outerLam port2: already VOID
+  r = take(portLoc(2, outerLam));
+  if (r != 0) { sprintf(msg, "outerLam port2 should be VOID"); BOOM(msg); }
 
   if (glblAlloced != initialAlloced) {
     sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)initialAlloced, (long long)glblAlloced);

@@ -228,11 +228,41 @@ BOOM(msg);
 - [ ] Results verified with `take()` and tag comparisons
 - [ ] Errors use `BOOM(msg)` with `sprintf` into local char array
 - [ ] Test saves `u64 initialAlloced = glblAlloced;` and compares at end
+- [ ] Uses `take` (not `freeLoc`) to clean up ports after tests, verifying returned values
 - [ ] Uses `make test-hvm` to build (not manual clang)
 - [ ] Uses `swap` not `move` when writing negative terms (ERA)
 - [ ] Uses `take` + `freePair` pattern when erasing pair bodies
 - [ ] Uses `hasLocation(body)` before calling `freePair` on body
 - [ ] Handles old values at ports BEFORE overwriting (via `get` + tag dispatch)
+
+## Cleanup Pattern
+
+Never use `freeLoc` directly in tests. Use `take` to clean up ports and verify returned values.
+
+**Pattern for each port:**
+
+```c
+Term r = take(portLoc(n, term));
+```
+
+- **Non-VAR return** (leaf or pair body): the returned value is the term that was at the port. Verify it matches expectations. The port location was freed by `take`'s internal `freeLoc`, which coalesces into `freePair` if both ports are now VOID.
+- **VAR return** (port had SUB or LAZ): the location was NOT freed. Use `swap` to replace the SUB/LAZ with NUL, then `take` to free:
+
+```c
+// Port had SUB — take returns VAR
+r = take(portLoc(n, term));
+if (termTag(r) != VAR) BOOM("expected VAR");
+
+// Replace SUB with NUL
+r = swap(portLoc(n, term), NUL);
+if (termTag(r) != SUB) BOOM("expected SUB from swap");
+
+// Free the location
+r = take(portLoc(n, term));
+if (termTag(r) != NUL) BOOM("expected NUL");
+```
+
+**⚠️ Lesson:** `move` uses `swap` internally, so after a `move`, the target port may contain the moved-in value (not the old SUB). Always check what `take` returns rather than assuming SUB.
 
 ## Lessons Learned
 
