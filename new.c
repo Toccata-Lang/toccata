@@ -814,16 +814,8 @@ void eraSup(Term neg, Term pos) {
   interact(ERA, newTerm(VAR, 0, portLoc(1, pos)));
 }
 
-// DUP/NUL interaction: DUP principal connects to NUL
-// After: both DUP aux ports connect to NUL (a and b erased)
-void dupNul(Term neg, Term pos) {
-  move(portLoc(1, neg), pos);
-  move(portLoc(2, neg), pos);
-}
-
-// DUP/NUM interaction: DUP principal connects to I60 (#)
-// After: a → #, b → # (both ports get the number)
-void dupNum(Term neg, Term pos) {
+// DUP/NUL and DUP/NUM: both ports get the positive term
+void dupLeaf(Term neg, Term pos) {
   move(portLoc(1, neg), pos);
   move(portLoc(2, neg), pos);
 }
@@ -1180,8 +1172,8 @@ void hvmInit(u64 size) {
   interactions[ERA][LAM] = &eraLam;
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
   interactions[ERA][SUP] = &eraSup;
-  interactions[DUP][NUL] = &dupNul;
-  interactions[DUP][I60] = &dupNum;
+  interactions[DUP][NUL] = &dupLeaf;
+  interactions[DUP][I60] = &dupLeaf;
   interactions[OPX][I60] = &opxNum;
   interactions[OPY][I60] = &opyNum;
 
