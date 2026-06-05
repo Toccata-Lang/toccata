@@ -701,7 +701,7 @@ int main(int argc, char *argv[]) {
   testOpxNum();
   testOpYNum();
   // 
-  // testAppNulLamArg();
+  testAppNulLamArg();
   // testSubNulLamBody();
   // testSwapSub();
 
