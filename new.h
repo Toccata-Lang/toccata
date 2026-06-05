@@ -118,6 +118,7 @@ typedef struct {
   unsigned count;
   Term rdxs[LOCAL_PAIRS_SIZE][2];
 } Pairs;
+extern __thread Pairs pairs;
 
 // creating number terms
 #define newI60(x) (((i64)(x) << TAG_SIZE) | I60)

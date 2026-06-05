@@ -249,3 +249,4 @@ BOOM(msg);
 11. **`swap` + `freePair` pattern for erasing bodies** — when implementing rules where a term is erased (like ERA/LAM), use: `take(port)` to free port location and get body, `freePair(termLoc(body) & 0xFFFFFFFE)` if body has location, then `swap(port, newVal)` to write the replacement.
 12. **Always use `make test-hvm`** — not manual `clang`. Ensures correct flags (`CHECK_MEM_LEAK`, `SAFETY`, `STATS`) and source files.
 13. **Handle old values BEFORE overwriting ports** — use `get` to read the old value, handle it based on tag (SUB → push redex, ERA → interact, other → consumed by the rule), then `swap` the new value. Don't silently discard old values.
+14. **Never use 42 as a test integer value** — it's cliche and irritating. Pick something else.

@@ -281,8 +281,8 @@ void testEraLamLamBody(void) {
   char msg[100];
   u64 initialAlloced = glblAlloced;
 
-  // Inner LAM: port1=SUB, port2=I60(42)
-  Term innerLam = makePair(LAM, 0, SUB, newI60(42));
+  // Inner LAM: port1=SUB, port2=I60(137)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(137));
 
   // Outer LAM: port1=SUB, port2=innerLam
   Term lam = makePair(LAM, 0, SUB, innerLam);
@@ -321,6 +321,75 @@ void testEraBoth(void) {
   }
 }
 
+// Test cascading: outer APP/outer LAM interaction creates a redex of inner APP/inner LAM
+void testCascadingRedex(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Inner APP: port1=I60(7), port2=SUB
+  Term innerApp = makePair(APP, 0, newI60(7), SUB);
+
+  // Inner LAM: port1=SUB, port2=I60(137)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(137));
+
+  // Outer APP: port1=NUL, port2=innerApp
+  // APP port2 accepts negative terms, so innerApp goes directly there
+  Term outerApp = makePair(APP, 0, NUL, innerApp);
+
+  // Outer LAM: port1=SUB, port2=innerLam
+  Term outerLam = makePair(LAM, 0, SUB, innerLam);
+
+  interact(outerApp, outerLam);
+
+  // After APP/LAM interaction (appLam):
+  // 1. take(APP port1) takes NUL, frees port1 loc, returns NUL
+  // 2. take(LAM port2) takes innerLam, frees LAM port2 loc, returns innerLam
+  // 3. move(APP port2, innerLam) — old value=innerApp(APP,neg)
+  //    swap returns innerApp, move pushes redex(innerApp, innerLam)
+  // 4. move(LAM port1, NUL) — old value=SUB, no redex pushed
+  //
+  // Result: one redex on stack = (innerAPP, innerLAM)
+
+  Term neg, pos;
+  if (!popRedex(&neg, &pos)) {
+    BOOM("expected one redex on stack");
+  }
+  if (pairs.count != 0) {
+    sprintf(msg, "pairs.count should be 0 after pop, got %u", pairs.count);
+    BOOM(msg);
+  }
+
+  // Verify the popped redex terms
+  if (termTag(neg) != APP) {
+    sprintf(msg, "redex neg should be APP, got tag %s", tagStr(termTag(neg)));
+    BOOM(msg);
+  }
+  if (termTag(pos) != LAM) {
+    sprintf(msg, "redex pos should be LAM, got tag %s", tagStr(termTag(pos)));
+    BOOM(msg);
+  }
+
+  // Interact the redex — another APP/LAM beta reduction
+  interact(neg, pos);
+
+  // After second interact:
+  // innerApp: port1=VOID(taken), port2=SUB(take returns VAR, not freed)
+  // innerLam: port1=SUB(take returns VAR, not freed), port2=VOID(taken)
+  // outerApp: both ports VOID
+  // outerLam: both ports VOID
+  //
+  // Clean up dangling pairs
+  // outerApp pair was already freed by move's freeLoc during first interact
+  freeLoc(portLoc(2, innerApp));   // frees SUB at port2, coalesces into freePair
+  freeLoc(portLoc(1, innerLam));   // frees SUB at port1, coalesces into freePair
+  freeLoc(portLoc(1, outerLam));   // port1=NUL → VOID, coalesces into freePair
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
@@ -335,6 +404,7 @@ int main(int argc, char *argv[]) {
   testEraLam();
   testEraLamNulBody();
   testEraLamLamBody();
+  testCascadingRedex();
 
   hvmFree();
   return 0;
