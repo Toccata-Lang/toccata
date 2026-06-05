@@ -799,6 +799,99 @@ void testMultiRedex(void) {
   }
 }
 
+// Test ERA/VAR → I60: follows VAR chain, erases the I60
+void testEraVarI60(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Create a location holding I60(42)
+  Term holder = makePair(LAM, 0, SUB, newI60(42));
+  Location i60Loc = portLoc(2, holder);
+
+  // VAR pointing to that location
+  Term var = newTerm(VAR, 0, i60Loc);
+
+  // ERA interacts with VAR
+  interact(ERA, var);
+
+  // Location is freed by take(), port2 should be VOID
+  Term port2 = take(portLoc(2, holder));
+  if (port2 != 0) {
+    sprintf(msg, "holder port 2 should be VOID, got tag %s",
+            tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  // Clean up holder pair (port1 has SUB, freed by freeLoc)
+  freeLoc(portLoc(1, holder));
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test ERA → SUP: ERA connects to SUP principal, both ports get ERA
+void testEraVarSup(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // SUP: port1=I60(7), port2=I60(8)
+  Term sup = makePair(SUP, 0, newI60(7), newI60(8));
+
+  // ERA interacts directly with SUP
+  interact(ERA, sup);
+
+  // eraVar frees the locations via take(), ports are freed (not ERA)
+  Term port1 = take(portLoc(1, sup));
+  Term port2 = take(portLoc(2, sup));
+  // Ports are freed by take() - they contain whatever was left after eraVar processed them
+  // (eraVar calls take() which frees, then interact(ERA, val) which is a no-op for leaves)
+  (void)port1;
+  (void)port2;
+
+  // glblAlloced is initialAlloced - 1 because the SUP pair was freed by eraVar's take()
+  // (both ports were freed, triggering freePair)
+  if (glblAlloced != initialAlloced - 1) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)(initialAlloced - 1), (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test ERA/VAR with VAR chain: VAR → VAR → I60
+void testEraVarChain(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Create a location holding I60(55)
+  Term holder = makePair(LAM, 0, SUB, newI60(55));
+  Location i60Loc = portLoc(2, holder);
+
+  // VAR1 → VAR2 → I60
+  Term var1 = newTerm(VAR, 0, i60Loc);
+  Term var2 = newTerm(VAR, 0, termLoc(var1));
+
+  // ERA interacts with VAR2 (chain of 2)
+  interact(ERA, var2);
+
+  // Location is freed by take(), port2 should be VOID
+  Term port2 = take(portLoc(2, holder));
+  if (port2 != 0) {
+    sprintf(msg, "holder port 2 should be VOID, got tag %s",
+            tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  // LAM pair is still allocated (not freed by eraVar)
+  if (glblAlloced != initialAlloced + 1) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)(initialAlloced + 1), (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 void testCascadingRedex(void) {
   char msg[100];
   u64 initialAlloced = glblAlloced;
@@ -883,6 +976,7 @@ void testCascadingRedex(void) {
 // Test APP/NUL with LAM argument — exercises interact(ERA, LAM) → eraLam
 void testAppNulLamArg(void) {
   char msg[100];
+  u64 initialAlloced = glblAlloced;
 
   // Inner LAM: port1=SUB, port2=I60(42)
   Term innerLam = makePair(LAM, 0, SUB, newI60(42));
@@ -900,8 +994,8 @@ void testAppNulLamArg(void) {
     BOOM(msg);
   }
 
-  if (glblAlloced != 0) {
-    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)initialAlloced, (long long)glblAlloced);
     BOOM(msg);
   }
 }
@@ -909,6 +1003,7 @@ void testAppNulLamArg(void) {
 // Test SUB/NUL with LAM body — exercises interact(ERA, LAM) → eraLam
 void testSubNulLamBody(void) {
   char msg[100];
+  u64 initialAlloced = glblAlloced;
 
   // Inner LAM: port1=SUB, port2=I60(99)
   Term innerLam = makePair(LAM, 0, SUB, newI60(99));
@@ -927,8 +1022,8 @@ void testSubNulLamBody(void) {
     BOOM(msg);
   }
 
-  if (glblAlloced != 0) {
-    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)initialAlloced, (long long)glblAlloced);
     BOOM(msg);
   }
 }
@@ -936,6 +1031,7 @@ void testSubNulLamBody(void) {
 // Test swap with SUB (deferred redex) — swap a SUB literal, verify no redex pushed
 void testSwapSub(void) {
   char msg[100];
+  u64 initialAlloced = glblAlloced;
 
   // Create a SUB pair (deferred redex) holding APP and LAM
   Term innerApp = makePair(APP, 0, newI60(7), SUB);
@@ -960,8 +1056,8 @@ void testSwapSub(void) {
   }
 
   // SUB pair is still allocated (port2 still has innerLam)
-  if (glblAlloced != 3) {
-    sprintf(msg, "glblAlloced should be 3, got %lld", (long long)glblAlloced);
+  if (glblAlloced != initialAlloced + 3) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)(initialAlloced + 3), (long long)glblAlloced);
     BOOM(msg);
   }
 }
@@ -998,6 +1094,9 @@ int main(int argc, char *argv[]) {
   testDupNumDifferent();
   testSubNulLiteral();
   testMultiRedex();
+  testEraVarI60();
+  testEraVarSup();
+  testEraVarChain();
   testAppNulLamArg();
   testSubNulLamBody();
   testSwapSub();

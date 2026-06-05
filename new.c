@@ -1053,6 +1053,22 @@ void opyNum(Term neg, Term pos) {
   return;
 }
 
+void eraseLazy(Term lazyVar, Term era) {
+}
+
+void eraVar(Term era, Term var) {
+  Term val = take(termLoc(var));
+  if (termTag(val) == VAR) {
+    Term lz = swap(termLoc(val), ERA);
+    if (lz != SUB) {
+      eraseLazy(lz, ERA);
+    }
+  } else {
+    interact(ERA, val);
+  }
+  return;
+}
+
 // interaction jump table - all entries default to badrdx
 interactionFn interactions[16][16] = {
   [0 ... 15] = {[0 ... 15] = &badrdx}
@@ -1322,6 +1338,7 @@ void hvmInit(u64 size) {
   interactions[ERA][LAM] = &eraLam;
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
   interactions[ERA][SUP] = &eraSup;
+  interactions[ERA][VAR] = &eraVar;
   interactions[DUP][NUL] = &dupLeaf;
   interactions[DUP][I60] = &dupLeaf;
   interactions[OPX][I60] = &opxNum;

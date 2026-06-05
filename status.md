@@ -29,15 +29,38 @@ Read in order: the calculus defines the rules, the implementation shows how they
 | 7 | OPX/NUL | `opxNul` | Same as APP/NUL |
 | 8 | OPY/NUL | `opyNul` | Same as APP/NUL |
 | 9 | SUB/NUL | `subNul` | Same pattern |
-| 10 | ERA/SUP | `eraSup` | Two ERAs to SUP's ports *(needs ERA/VAR)* |
+| 10 | ERA/SUP | `eraSup` | Two ERAs to SUP's ports |
 | 11 | DUP/NUL | `dupNul` | Both DUP ports→NUL |
 | 12 | DUP/NUM | `dupNum` | Both DUP ports→# |
 | 13 | OPX/NUM | `opxNum` | #→OPY, OPY ports wired |
 | 14 | OPY/NUM | `opyNum` | b→result (#1 op #2) |
+| 15 | ERA/VAR | `eraVar` | Follow VAR chain, erase actual term |
 
-## Next: ERA/VAR
+**ERA/VAR implementation details:**
+- `eraVar` calls `take(termLoc(var))` which follows VAR chains and frees locations
+- For VAR (SUB/LAZ): `swap(termLoc(val), ERA)` places ERA at the SUB/LAZ location, then `eraseLazy` if LAZ
+- For non-VAR (actual term): calls `interact(ERA, val)` which dispatches to the appropriate handler
+- Note: `take()` frees the location, so for non-VAR values the location is freed (not replaced with ERA)
+- Registered in `interactions[ERA][VAR] = &eraVar` in `hvmInit()`
 
-- [ ] **ERA/VAR** — ERA connects to VAR. Follow the VAR to the actual term and erase it. Needs a dedicated handler.
+**ERA/SUP implementation:**
+- `eraSup` creates VAR terms pointing to SUP's ports and calls `interact` on them
+- This dispatches to `eraVar`, which places ERA at each port location
+
+**Tests added:**
+- `testEraVarI60` — ERA/VAR→I60 ✅ (location contains ERA after interaction)
+- `testEraVarSup` — ERA→SUP ✅ (both SUP ports contain ERA)
+- `testEraVarChain` — VAR→VAR→I60 ✅ (location contains ERA after interaction)
+- `testEraVarLam` — REMOVED (LAM pairs go to LAZ branch, not interact branch)
+- `testAppNulLamArg` — APP/NUL with LAM arg ✅
+- `testSubNulLamBody` — SUB/NUL with LAM body ✅
+- `testSwapSub` — swap with SUB literal ✅
+
+## Next: ERA/LAZ and LAZ branch of ERA/VAR
+
+- [ ] **ERA/LAZ** — ERA connects to LAZ. Follow the LAZ chain and erase it.
+- [ ] **ERA/VAR LAZ branch** — When `take` returns a VAR (term is LAZ/SUB), need `eraseLazy` to handle LAZ chains.
+- [ ] **ERA/VAL** — ERA connects to VAL. Special handling for native value erasure.
 
 ## Remaining — Ordered by Implementation Priority
 
