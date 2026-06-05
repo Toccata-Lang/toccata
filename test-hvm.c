@@ -95,9 +95,9 @@ void testTakeVarChain(void) {
     BOOM(msg);
   }
 
-  // Clean up target pair
+  // Clean up target pair — free port 1 first so freeLoc triggers freePair
+  freeLoc(portLoc(1, target));
   take(portLoc(2, target));
-  freePair(termLoc(target));
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0 after cleanup, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -152,10 +152,10 @@ void testTakeSub(void) {
   }
 
   // Clean up: SUB locations aren't freed by take (returns VAR without freeing)
+  // Note: APP pair already freed by swap handling ERA during interact
   freeLoc(portLoc(2, subTarget));  // free NUL at subTarget port 2
   freeLoc(subLoc);                  // free SUB at subTarget port 1 → pair freed
   freeLoc(portLoc(1, lam));         // free SUB at lam port 1 → pair freed
-  freePair(termLoc(app));           // free the APP pair
 }
 
 // Test cascading: inner LAM rewired into APP's ERA port triggers interact
@@ -187,8 +187,13 @@ void testCascading(void) {
   }
 
   // Clean up: innerLam's ports still have SUB and NUL after take
+  // Note: APP pair already freed by swap handling ERA during interact
   freeLoc(portLoc(2, innerLam));  // free NUL at innerLam port 2
   freeLoc(portLoc(1, innerLam));  // free SUB at innerLam port 1 → pair freed
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
 }
 
 // Test move with NUL as the positive term
@@ -204,6 +209,10 @@ void testMoveNul(void) {
   Term result = take(portLoc(1, lam));
   if (termTag(result) != I60 || getI60(result) != 7) {
     sprintf(msg, "LAM port 1 should be I60(7), got tag %s", tagStr(termTag(result)));
+    BOOM(msg);
+  }
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
   }
 }

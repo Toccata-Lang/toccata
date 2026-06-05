@@ -495,7 +495,7 @@ void move(Location negLoc, Term pos) {
     BOOM(s);
   }
 #endif
-  if (negTag != SUB && negTag != ERA) {
+  if (neg != 0 && negTag != SUB && negTag != ERA) {
     freeLoc(negLoc);
     if (pos == NUL)
       interact(neg, pos);
