@@ -855,15 +855,6 @@ void dupNul(Term neg, Term pos) {
   }
 }
 
-// ERA interaction for OPX/OPY: erase both ports
-void eraOpXY(Term neg, Term pos) {
-  // neg = ERA, pos = OPX|OPY
-  eraseBody(get(portLoc(1, pos)));
-  eraseBody(get(portLoc(2, pos)));
-  writePort(portLoc(1, pos), ERA);
-  writePort(portLoc(2, pos), ERA);
-}
-
 // DUP/NUM interaction: DUP principal connects to I60 (#)
 // After: a → #, b → # (both ports get the number)
 void dupNum(Term neg, Term pos) {
@@ -1241,8 +1232,6 @@ void hvmInit(u64 size) {
   interactions[ERA][LAM] = &eraLam;
   interactions[ERA][VAL] = &eraLeaf;
   interactions[ERA][SUP] = &eraSup;
-  interactions[ERA][OPX] = &eraOpXY;
-  interactions[ERA][OPY] = &eraOpXY;
   interactions[DUP][NUL] = &dupNul;
   interactions[DUP][I60] = &dupNum;
   interactions[OPX][I60] = &opxNum;
