@@ -703,7 +703,7 @@ int main(int argc, char *argv[]) {
   // 
   testAppNulLamArg();
   testSubNulLamBody();
-  // testSwapSub();
+  testSwapSub();
 
   hvmFree();
   // testTakeLaz();
