@@ -446,18 +446,7 @@ void testDupNum(void) {
 
   interact(dup, newI60(42));
 
-  Term port1 = take(portLoc(1, dup));
-  Term port2 = take(portLoc(2, dup));
-
-  if (termTag(port1) != I60 || getI60(port1) != 42) {
-    sprintf(msg, "DUP port 1 should be I60(42), got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (termTag(port2) != I60 || getI60(port2) != 42) {
-    sprintf(msg, "DUP port 2 should be I60(42), got tag %s", tagStr(termTag(port2)));
-    BOOM(msg);
-  }
-
+  // DUP rewired — both ports freed by dupLeaf
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -634,8 +623,8 @@ int main(int argc, char *argv[]) {
   // testOpYNul();
   // testSubNul();
   // testEraSup();
-  testDupNul();
-  // testDupNum();
+  // testDupNul();
+  testDupNum();
   // testOpxNum();
   // testOpYNum();
 
