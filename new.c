@@ -722,7 +722,6 @@ void eraLeaf(Term neg, Term pos) {
 // ERA/LAM interaction: ERA connects to LAM principal
 // After: ERA → port1, NUL → port2, body is erased
 void eraLam(Term neg, Term pos) {
-  // neg = ERA, pos = LAM
   Term body = get(portLoc(2, pos));
   interact(ERA, body);
   swap(portLoc(2, pos), NUL);
