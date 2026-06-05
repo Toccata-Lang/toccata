@@ -719,6 +719,16 @@ void eraLeaf(Term neg, Term pos) {
   // Both sides are leaf terms — nothing to do, both are already freed by swap/interact
 }
 
+// ERA/LAM interaction: ERA connects to LAM principal
+// After: ERA → port1, NUL → port2, body is erased
+void eraLam(Term neg, Term pos) {
+  // neg = ERA, pos = LAM
+  Term body = get(portLoc(2, pos));
+  interact(ERA, body);
+  swap(portLoc(2, pos), NUL);
+  swap(portLoc(1, pos), ERA);
+}
+
 // APP/LAM interaction - beta reduction
 void appLam(Term neg, Term pos) {
   // Take APP's port 1 (positive argument)
@@ -996,7 +1006,7 @@ void hvmInit(u64 size) {
   interactions[ERA][NUL] = &eraLeaf;
   interactions[ERA][I60] = &eraLeaf;
   interactions[ERA][F60] = &eraLeaf;
-  interactions[ERA][LAM] = &eraLeaf;
+  interactions[ERA][LAM] = &eraLam;
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redexMutex, NULL) != 0) {

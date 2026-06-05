@@ -327,7 +327,7 @@ int main(int argc, char *argv[]) {
   testTakeSub();
   testCascading();
   testMoveNul();
-  // testEraLam();
+  testEraLam();
   // testEraLamNulBody();
   // testEraLamLamBody();
 
