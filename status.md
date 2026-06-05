@@ -1,5 +1,21 @@
 # HVM Interaction Rules — Implementation Status
 
+## Before Implementing a New Rule
+
+Read these files for context before starting any new interaction:
+
+1. `skills/interaction-recipe.md` — The full recipe: how to implement & test interaction rules, with lessons learned and patterns
+2. `docs/calculus.md` — Formal calculus: node types, polarities, all 15 interaction rules with before/after descriptions
+3. `docs/interactions.dot` — Visual diagrams for each rule
+4. `docs/implementation.md` — Architecture reference: term layout, memory, reduction engine
+5. `new.h` — Type definitions, tag constants, function declarations
+6. `new.c` — Core implementation: `take`, `swap`, `move`, `interact`, existing rules
+7. `test-hvm.c` — Test suite: patterns for building terms and verifying results
+8. `graph.c` — DOT graph generation for debugging
+9. `Makefile` — Build command for `test-hvm`
+
+Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
+
 ## Implemented
 
 | # | Rule | Handler | Notes |
