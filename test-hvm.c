@@ -486,26 +486,27 @@ void testOpxNum(void) {
 // After: result (#1 op #2) in both ports
 void testOpYNum(void) {
   char msg[100];
+  u64 initialAlloced = glblAlloced;
 
-  // Build OPY: port1=I60(3), port2=ERA
+  // Build OPY: port1=I60(3) [#1], port2=ERA [b]
   Term opy = makePair(OPY, OP_ADD, newI60(3), ERA);
 
+  // Interact with NUM I60(5) [#2]
+  // OPY/NUM: computes #1 op #2 = 3 + 5 = 8, result goes to port 2 (b)
   interact(opy, newI60(5));
 
-  Term port1 = take(portLoc(1, opy));
+  // Port 1 was consumed by strictArgs (took #1)
+  // Port 2 holds the result (3 + 5 = 8)
   Term port2 = take(portLoc(2, opy));
-
-  if (termTag(port1) != I60 || getI60(port1) != 8) {
-    sprintf(msg, "OPY port 1 should be I60(8), got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
   if (termTag(port2) != I60 || getI60(port2) != 8) {
-    sprintf(msg, "OPY port 2 should be I60(8), got tag %s", tagStr(termTag(port2)));
+    sprintf(msg, "OPY port 2 should be I60(8), got tag %s val %ld",
+            tagStr(termTag(port2)), (long)getI60(port2));
     BOOM(msg);
   }
 
-  if (glblAlloced != 0) {
-    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
     BOOM(msg);
   }
 }
@@ -698,7 +699,7 @@ int main(int argc, char *argv[]) {
   testDupNul();
   testDupNum();
   testOpxNum();
-  // testOpYNum();
+  testOpYNum();
   // 
   // testAppNulLamArg();
   // testSubNulLamBody();
