@@ -142,10 +142,7 @@ void testTakeSub(void) {
   Term lam = makePair(LAM, 0, SUB, NUL);
   Term app = makePair(APP, 0, varTerm, ERA);
 
-  graphDown("app", app, 0, subGraphs++);
-  graphDown("lam", lam, nodeCount, subGraphs++);
   interact(app, lam);
-  pb();
 
   // take followed VAR to subLoc, found SUB, returned VAR
   Term result = take(portLoc(1, lam));
@@ -187,6 +184,10 @@ void testCascading(void) {
     sprintf(msg, "outerLAM port 1 should be I60(7), got tag %s", tagStr(termTag(result)));
     BOOM(msg);
   }
+
+  // Clean up: innerLam's ports still have SUB and NUL after take
+  freeLoc(portLoc(2, innerLam));  // free NUL at innerLam port 2
+  freeLoc(portLoc(1, innerLam));  // free SUB at innerLam port 1 → pair freed
 }
 
 // Test move with NUL as the positive term
