@@ -367,18 +367,7 @@ void testOpYNul(void) {
 
   interact(opy, NUL);
 
-  Term port1 = take(portLoc(1, opy));
-  Term port2 = take(portLoc(2, opy));
-
-  if (termTag(port1) != NUL) {
-    sprintf(msg, "OPY port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (termTag(port2) != ERA) {
-    sprintf(msg, "OPY port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
-    BOOM(msg);
-  }
-
+  // OPY rewired — both ports freed by negNul
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -663,8 +652,8 @@ int main(int argc, char *argv[]) {
   // testEraLamLamBody();
   // testCascadingRedex();
   // testAppNul();
-  testOpxNul();
-  // testOpYNul();
+  // testOpxNul();
+  testOpYNul();
   // testSubNul();
   // testEraSup();
   // testDupNul();
