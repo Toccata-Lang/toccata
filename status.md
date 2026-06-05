@@ -31,8 +31,8 @@ Read in order: the calculus defines the rules, the implementation shows how they
 ### Tier 1: Simple leaf redirections (same pattern as APP/LAM)
 
 - [ ] **APP/NUL** — APP principal connects to NUL. Redirect: port1 → NUL, port2 → ERA.
-- [ ] **SUB/NUL** — Same as APP/NUL. SUB circle node connects to NUL.
-- [ ] **OP/NUL** — OPX or OPY principal connects to NUL. Same redirection pattern.
+- [ ] **OPX/NUL, OPY/NUL** — Identical to APP/NUL. OPX or OPY principal connects to NUL. Redirect: port1 → NUL, port2 → ERA.
+- [ ] **SUB/NUL** — Same pattern. SUB circle node connects to NUL. Redirect: port1 → NUL, port2 → ERA.
 
 ### Tier 2: ERA on constructors
 
