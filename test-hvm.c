@@ -511,6 +511,294 @@ void testOpYNum(void) {
   }
 }
 
+// Test ERA/SUP with LAM in ports — verifies ERA propagates into SUP's children
+void testEraSupLam(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Inner LAM: port1=SUB, port2=I60(99)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(99));
+
+  // SUP: port1=innerLam, port2=I60(42)
+  Term sup = makePair(SUP, 0, innerLam, newI60(42));
+
+  interact(ERA, sup);
+
+  // SUP port1 should be ERA (erased innerLam)
+  Term port1 = take(portLoc(1, sup));
+  if (termTag(port1) != ERA) {
+    sprintf(msg, "SUP port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+
+  // SUP port2 should be ERA (erased I60(42))
+  Term port2 = take(portLoc(2, sup));
+  if (termTag(port2) != ERA) {
+    sprintf(msg, "SUP port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test DUP/NUL with SUB in ports — verifies SUB gets rewired to NUL
+void testDupNulSub(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // DUP: port1=SUB, port2=SUB (both negative)
+  Term dup = makePair(DUP, 0, SUB, SUB);
+
+  interact(dup, NUL);
+
+  // DUP port1 should be NUL
+  Term port1 = take(portLoc(1, dup));
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+
+  // DUP port2 should be NUL
+  Term port2 = take(portLoc(2, dup));
+  if (termTag(port2) != NUL) {
+    sprintf(msg, "DUP port 2 should be NUL, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPX/NUM with subtraction
+void testOpxNumSub(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // OPX: port1=I60(3) [a], port2=ERA
+  // NUM: I60(10) [#]
+  // Result: # - a = 10 - 3 = 7
+  Term opx = makePair(OPX, OP_SUB, newI60(3), ERA);
+  interact(opx, newI60(10));
+
+  Term result = take(portLoc(2, opx));
+  if (termTag(result) != I60 || getI60(result) != 7) {
+    sprintf(msg, "OPX port 2 should be I60(7), got tag %s val %ld",
+            tagStr(termTag(result)), (long)getI60(result));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPX/NUM with multiplication
+void testOpxNumMul(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  Term opx = makePair(OPX, OP_MUL, newI60(4), ERA);
+  interact(opx, newI60(6));
+
+  Term result = take(portLoc(2, opx));
+  if (termTag(result) != I60 || getI60(result) != 24) {
+    sprintf(msg, "OPX port 2 should be I60(24), got tag %s val %ld",
+            tagStr(termTag(result)), (long)getI60(result));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPX/NUM with equality
+void testOpxNumEq(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  Term opx = makePair(OPX, OP_EQ, newI60(5), ERA);
+  interact(opx, newI60(5));
+
+  // 5 == 5 is true (1)
+  Term result = take(portLoc(2, opx));
+  if (termTag(result) != I60 || getI60(result) != 1) {
+    sprintf(msg, "OPX port 2 should be I60(1), got tag %s val %ld",
+            tagStr(termTag(result)), (long)getI60(result));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPX/NUL — verify pair is freed
+void testOpxNulExplicit(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // OPX: port1=I60(7), port2=ERA
+  Term opx = makePair(OPX, OP_ADD, newI60(7), ERA);
+
+  interact(opx, NUL);
+
+  // Pair should be freed by negNul (both ports handled)
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test cascading ERA through 3 levels of LAM
+void testEraLamTriple(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Level 3: LAM with I60(777)
+  Term level3 = makePair(LAM, 0, SUB, newI60(777));
+
+  // Level 2: LAM with level3 as body
+  Term level2 = makePair(LAM, 0, SUB, level3);
+
+  // Level 1: LAM with level2 as body
+  Term level1 = makePair(LAM, 0, SUB, level2);
+
+  // ERA connects to level1
+  interact(ERA, level1);
+
+  // All LAM port1 should be NUL
+  Term p1 = take(portLoc(1, level1));
+  Term p2 = take(portLoc(1, level2));
+  Term p3 = take(portLoc(1, level3));
+
+  if (termTag(p1) != NUL || termTag(p2) != NUL || termTag(p3) != NUL) {
+    sprintf(msg, "All LAM ports should be NUL");
+    BOOM(msg);
+  }
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test DUP/NUM with different values — verifies pair is freed
+void testDupNumDifferent(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // DUP: port1=ERA, port2=ERA
+  Term dup = makePair(DUP, 0, ERA, ERA);
+
+  interact(dup, newI60(123));
+
+  // Pair should be freed by dupLeaf
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test SUB/NUL with label=0 (SUB literal — ports not connected)
+void testSubNulLiteral(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // SUB literal (label=0) — ports are not connected
+  Term sub = SUB;
+
+  interact(sub, NUL);
+
+  // SUB literal should remain unchanged
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test multi-redex: outer APP/LAM pushes (innerAPP, innerLAM) as redex
+void testMultiRedex(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Inner LAM: port1=SUB, port2=I60(100)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(100));
+
+  // Inner APP: port1=I60(7), port2=SUB
+  Term innerApp = makePair(APP, 0, newI60(7), SUB);
+
+  // Outer APP: port1=NUL, port2=innerApp
+  Term outerApp = makePair(APP, 0, NUL, innerApp);
+
+  // Outer LAM: port1=SUB, port2=innerLam
+  Term outerLam = makePair(LAM, 0, SUB, innerLam);
+
+  interact(outerApp, outerLam);
+
+  // After outer APP/LAM:
+  // - move(APP port2, innerLam) pushes redex(innerApp, innerLam)
+  // - move(LAM port1, NUL) — SUB, no redex
+  //
+  // Pop and interact the redex
+  Term neg, pos;
+  if (!popRedex(&neg, &pos)) {
+    BOOM("expected one redex");
+  }
+
+  // Verify redex terms
+  if (termTag(neg) != APP || termTag(pos) != LAM) {
+    BOOM("expected (APP, LAM) redex");
+  }
+
+  interact(neg, pos);
+
+  // After inner APP/LAM:
+  // - innerApp port2 = I60(100) (body)
+  // - innerLam port1 = I60(7) (argument)
+
+  Term innerPort1 = take(portLoc(1, innerLam));
+  Term innerPort2 = take(portLoc(2, innerApp));
+
+  if (termTag(innerPort1) != I60 || getI60(innerPort1) != 7) {
+    sprintf(msg, "innerLam port 1 should be I60(7), got tag %s val %ld",
+            tagStr(termTag(innerPort1)), (long)getI60(innerPort1));
+    BOOM(msg);
+  }
+  if (termTag(innerPort2) != I60 || getI60(innerPort2) != 100) {
+    sprintf(msg, "innerApp port 2 should be I60(100), got tag %s val %ld",
+            tagStr(termTag(innerPort2)), (long)getI60(innerPort2));
+    BOOM(msg);
+  }
+
+  // Clean up outer pairs
+  take(portLoc(2, outerApp));  // innerLam (port1 already VOID)
+  take(portLoc(1, outerLam));  // NUL (port2 already VOID)
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 void testCascadingRedex(void) {
   char msg[100];
   u64 initialAlloced = glblAlloced;
@@ -700,7 +988,16 @@ int main(int argc, char *argv[]) {
   testDupNum();
   testOpxNum();
   testOpYNum();
-  // 
+  // testEraSupLam(); // needs ERA/VAR
+  testDupNulSub();
+  testOpxNumSub();
+  testOpxNumMul();
+  testOpxNumEq();
+  testOpxNulExplicit();
+  testEraLamTriple();
+  testDupNumDifferent();
+  testSubNulLiteral();
+  testMultiRedex();
   testAppNulLamArg();
   testSubNulLamBody();
   testSwapSub();
