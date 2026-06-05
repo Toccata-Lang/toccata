@@ -1230,7 +1230,7 @@ void hvmInit(u64 size) {
   interactions[ERA][I60] = &eraLeaf;
   interactions[ERA][F60] = &eraLeaf;
   interactions[ERA][LAM] = &eraLam;
-  interactions[ERA][VAL] = &eraLeaf;
+  // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
   interactions[ERA][SUP] = &eraSup;
   interactions[DUP][NUL] = &dupNul;
   interactions[DUP][I60] = &dupNum;
