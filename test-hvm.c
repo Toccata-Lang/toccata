@@ -97,7 +97,6 @@ void testTakeVarChain(void) {
 
   // Clean up target pair — free port 1 first so freeLoc triggers freePair
   freeLoc(portLoc(1, target));
-  take(portLoc(2, target));
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0 after cleanup, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -145,9 +144,9 @@ void testTakeSub(void) {
   interact(app, lam);
 
   // take followed VAR to subLoc, found SUB, returned VAR
-  Term result = take(portLoc(1, lam));
-  if (termTag(result) != VAR) {
-    sprintf(msg, "LAM port 1 should be VAR, got tag %s", tagStr(termTag(result)));
+  Term result = get(portLoc(1, lam));
+  if (result != newTerm(VAR, 0, portLoc(1, subTarget))) {
+    sprintf(msg, "LAM port 1 should be VAR pointing to subTarget\n");
     BOOM(msg);
   }
 
@@ -186,10 +185,9 @@ void testCascading(void) {
     BOOM(msg);
   }
 
-  // Clean up: innerLam's ports still have SUB and NUL after take
+  // Clean up: innerLam's port 1 still has NUL after take
   // Note: APP pair already freed by swap handling ERA during interact
-  freeLoc(portLoc(2, innerLam));  // free NUL at innerLam port 2
-  freeLoc(portLoc(1, innerLam));  // free SUB at innerLam port 1 → pair freed
+  take(portLoc(1, innerLam));  // free NUL at innerLam port 2
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -291,15 +289,13 @@ void testEraLamLamBody(void) {
 
   interact(ERA, lam);
 
-  Term port1 = take(portLoc(1, lam));
-  Term port2 = take(portLoc(2, lam));
-
-  if (termTag(port1) != NUL) {
-    sprintf(msg, "LAM port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
+  if (take(portLoc(1, lam)) != NUL) {
+    sprintf(msg, "LAM port 1 should be NUL");
     BOOM(msg);
   }
-  if (port2 != 0) {
-    sprintf(msg, "LAM port 2 should be VOID, got tag %s", tagStr(termTag(port2)));
+
+  if (take(portLoc(1, innerLam)) != NUL) {
+    sprintf(msg, "Inner LAM port 1 should be NUL");
     BOOM(msg);
   }
 
@@ -338,7 +334,7 @@ int main(int argc, char *argv[]) {
   testMoveNul();
   testEraLam();
   testEraLamNulBody();
-  // testEraLamLamBody();
+  testEraLamLamBody();
 
   hvmFree();
   return 0;
