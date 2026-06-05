@@ -34,6 +34,11 @@ This calculus is based on **interaction nets**. Each node has a polarity (positi
 | **NUL** | positive | — | — |
 | **ERA** | negative | — | — |
 | **#** | positive | — | — |
+| **SUB** | negative | negative | positive |
+
+### SUB semantics
+
+SUB is a deferred redex — it stores a pair of terms waiting to be reduced. Its ports are only connected when the label is non-zero. When the label is 0 (the term equals the SUB literal), nothing is connected to its ports and it acts as a no-op in interactions.
 
 ## Interaction rules
 
@@ -52,7 +57,7 @@ Each rule is a subgraph with a **Before** case (the redex) and an **After** case
 - **After:** `a → NUL`, `b → ERA`.
 
 ### SUB/NUL
-- **Before:** Unnamed circle node connects to NUL. Circle aux ports carry `a`, `b`.
+- **Before:** SUB principal connects to NUL. SUB aux ports carry `a`, `b` (only if label ≠ 0).
 - **After:** `a → NUL`, `b → ERA`.
 
 ### OP/NUL
