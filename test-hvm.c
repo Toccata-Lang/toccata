@@ -603,10 +603,96 @@ void testCascadingRedex(void) {
   }
 }
 
+// Test APP/NUL with LAM argument — exercises interact(ERA, LAM) → eraLam
+void testAppNulLamArg(void) {
+  char msg[100];
+
+  // Inner LAM: port1=SUB, port2=I60(42)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(42));
+
+  // APP: port1=innerLam, port2=ERA
+  Term app = makePair(APP, 0, innerLam, ERA);
+
+  interact(app, NUL);
+
+  // APP port1 freed by take in negNul, port2 freed by swap with ERA
+  // innerLam port1 rewired to NUL by eraLam, port2 freed by take
+  Term innerPort1 = take(portLoc(1, innerLam));
+  if (termTag(innerPort1) != NUL) {
+    sprintf(msg, "innerLAM port 1 should be NUL, got tag %s", tagStr(termTag(innerPort1)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test SUB/NUL with LAM body — exercises interact(ERA, LAM) → eraLam
+void testSubNulLamBody(void) {
+  char msg[100];
+
+  // Inner LAM: port1=SUB, port2=I60(99)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(99));
+
+  // SUB: port1=ERA, port2=innerLam — label > 0 so ports are connected
+  Term sub = makePair(SUB, 1, ERA, innerLam);
+
+  interact(sub, NUL);
+
+  // SUB port1 should be freed (was ERA, freed by swap)
+  // SUB port2 should be freed (was LAM, erased by eraLam)
+  // innerLam port1 should be NUL (eraLam rewired it)
+  Term innerPort1 = take(portLoc(1, innerLam));
+  if (termTag(innerPort1) != NUL) {
+    sprintf(msg, "innerLAM port 1 should be NUL, got tag %s", tagStr(termTag(innerPort1)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test swap with SUB (deferred redex) — swap a SUB literal, verify no redex pushed
+void testSwapSub(void) {
+  char msg[100];
+
+  // Create a SUB pair (deferred redex) holding APP and LAM
+  Term innerApp = makePair(APP, 0, newI60(7), SUB);
+  Term innerLam = makePair(LAM, 0, SUB, newI60(137));
+  Term subPair = makePair(SUB, 0, innerApp, innerLam);
+
+  // Swap NUL into the SUB pair's port1 location
+  // The old value at port1 is innerApp (APP term)
+  Term result = swap(portLoc(1, subPair), NUL);
+
+  // swap should return innerApp (the old value) since it's not SUB/ERA
+  if (termTag(result) != APP) {
+    sprintf(msg, "swap should return APP, got tag %s", tagStr(termTag(result)));
+    BOOM(msg);
+  }
+
+  // The SUB pair's port1 should now contain NUL
+  Term locVal = get(portLoc(1, subPair));
+  if (termTag(locVal) != NUL) {
+    sprintf(msg, "SUB port1 should be NUL after swap, got tag %s", tagStr(termTag(locVal)));
+    BOOM(msg);
+  }
+
+  // SUB pair is still allocated (port2 still has innerLam)
+  if (glblAlloced != 3) {
+    sprintf(msg, "glblAlloced should be 3, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
-    testAppLam();
+  testAppLam();
   testMoveEra();
   testEraBoth();
   testTakeVarChain();
@@ -627,6 +713,10 @@ int main(int argc, char *argv[]) {
   testDupNum();
   // testOpxNum();
   // testOpYNum();
+
+  testAppNulLamArg();
+  testSubNulLamBody();
+  testSwapSub();
 
   hvmFree();
   return 0;
