@@ -221,16 +221,16 @@ void testEraLam(void) {
   // Trigger ERA/LAM interaction
   interact(ERA, lam);
 
-  // Post-checks: LAM ports rewired to ERA and NUL
+  // Post-checks: LAM rewired — port1 gets NUL, port2 freed, body erased
   Term port1 = take(portLoc(1, lam));
   Term port2 = take(portLoc(2, lam));
 
-  if (termTag(port1) != ERA) {
-    sprintf(msg, "LAM port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "LAM port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
     BOOM(msg);
   }
-  if (termTag(port2) != NUL) {
-    sprintf(msg, "LAM port 2 should be NUL, got tag %s", tagStr(termTag(port2)));
+  if (port2 != 0) {
+    sprintf(msg, "LAM port 2 should be VOID, got tag %s", tagStr(termTag(port2)));
     BOOM(msg);
   }
 
