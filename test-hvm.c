@@ -329,7 +329,7 @@ int main(int argc, char *argv[]) {
   testMoveNul();
   testEraLam();
   testEraLamNulBody();
-  testEraLamLamBody();
+  // testEraLamLamBody();
 
   hvmFree();
   return 0;

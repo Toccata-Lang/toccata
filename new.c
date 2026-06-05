@@ -724,8 +724,6 @@ void eraLeaf(Term neg, Term pos) {
 void eraLam(Term neg, Term pos) {
   Term body = take(portLoc(2, pos));
   interact(ERA, body);
-  if (hasLocation(body))
-    freePair(termLoc(body) & 0xFFFFFFFE);
   move(portLoc(1, pos), NUL);
 }
 
