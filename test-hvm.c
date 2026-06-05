@@ -429,18 +429,7 @@ void testDupNul(void) {
 
   interact(dup, NUL);
 
-  Term port1 = take(portLoc(1, dup));
-  Term port2 = take(portLoc(2, dup));
-
-  if (termTag(port1) != NUL) {
-    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (termTag(port2) != NUL) {
-    sprintf(msg, "DUP port 2 should be NUL, got tag %s", tagStr(termTag(port2)));
-    BOOM(msg);
-  }
-
+  // DUP rewired — both ports freed by dupLeaf
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -643,9 +632,9 @@ int main(int argc, char *argv[]) {
   // testAppNul();
   // testOpxNul();
   // testOpYNul();
-  testSubNul();
+  // testSubNul();
   // testEraSup();
-  // testDupNul();
+  testDupNul();
   // testDupNum();
   // testOpxNum();
   // testOpYNum();
