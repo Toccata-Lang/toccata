@@ -351,18 +351,7 @@ void testOpxNul(void) {
 
   interact(opx, NUL);
 
-  Term port1 = take(portLoc(1, opx));
-  Term port2 = take(portLoc(2, opx));
-
-  if (termTag(port1) != NUL) {
-    sprintf(msg, "OPX port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (termTag(port2) != ERA) {
-    sprintf(msg, "OPX port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
-    BOOM(msg);
-  }
-
+  // OPX rewired — both ports freed by negNul
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -673,8 +662,8 @@ int main(int argc, char *argv[]) {
   // testEraLamNulBody();
   // testEraLamLamBody();
   // testCascadingRedex();
-  testAppNul();
-  // testOpxNul();
+  // testAppNul();
+  testOpxNul();
   // testOpYNul();
   // testSubNul();
   // testEraSup();
