@@ -114,7 +114,10 @@ void testTakeLaz(void) {
   Term lam = makePair(LAM, 0, SUB, NUL);
   Term app = makePair(APP, 0, laz, ERA);
 
+  graphDown("take", app, 0, subGraphs++);
+  graphDown("Laz", lam, nodeCount, subGraphs++);
   interact(app, lam);
+  pb();
 
   // take(APP port 1) found LAZ, returned VAR
   Term result = take(portLoc(1, lam));
@@ -122,6 +125,11 @@ void testTakeLaz(void) {
     sprintf(msg, "LAM port 1 should be VAR, got tag %s", tagStr(termTag(result)));
     BOOM(msg);
   }
+
+  // NOTE: Buffer is not clean after this test. 'take' on LAZ returns a VAR
+  // without freeing the location (by design — LAZ nodes are shared). The
+  // locations left behind will be cleaned up when ERA/VAR and ERA/LAZ
+  // interactions are implemented.
 }
 
 // Test take with SUB — returns VAR, doesn't free
