@@ -863,7 +863,13 @@ void testEraVarChain(void) {
     BOOM(msg);
   }
 
-  // Clean up holder pair (port1 has SUB)
+  // Clean up: port1 should be SUB (use get+freeLoc for SUB)
+  Term port1 = get(portLoc(1, holder));
+  if (termTag(port1) != SUB) {
+    sprintf(msg, "holder port 1 should be SUB, got tag %s",
+            tagStr(termTag(port1)));
+    BOOM(msg);
+  }
   freeLoc(portLoc(1, holder));
 
   if (glblAlloced != 0) {
@@ -1035,17 +1041,43 @@ void testSwapSub(void) {
     BOOM(msg);
   }
 
-  // Clean up: free all pairs
+  // Clean up: use take() for non-SUB/LAZ, get+freeLoc for SUB
   // subPair: port1=NUL, port2=innerLam
   // innerLam: port1=SUB, port2=I60(137)
   // innerApp: port1=I60(7), port2=SUB
   // Free inner pairs first, then subPair
-  freeLoc(portLoc(2, innerLam));  // frees I60, leaves SUB at port1
-  freeLoc(portLoc(1, innerLam));  // frees SUB, innerLam pair freed (both ports VOID)
-  freeLoc(portLoc(2, subPair));   // frees innerLam reference, leaves NUL at port1
-  freeLoc(portLoc(1, subPair));   // frees NUL, subPair pair freed (both ports VOID)
-  freeLoc(portLoc(2, innerApp));  // frees SUB, leaves I60 at port1
-  freeLoc(portLoc(1, innerApp));  // frees I60, innerApp pair freed (both ports VOID)
+  Term p2_innerLam = take(portLoc(2, innerLam));  // should be I60
+  if (termTag(p2_innerLam) != I60) {
+    sprintf(msg, "innerLam port2 should be I60, got tag %s", tagStr(termTag(p2_innerLam)));
+    BOOM(msg);
+  }
+  Term p1_innerLam = get(portLoc(1, innerLam));  // should be SUB
+  if (termTag(p1_innerLam) != SUB) {
+    sprintf(msg, "innerLam port1 should be SUB, got tag %s", tagStr(termTag(p1_innerLam)));
+    BOOM(msg);
+  }
+  freeLoc(portLoc(1, innerLam));
+  Term p2_subPair = take(portLoc(2, subPair));  // should be innerLam (a LAM pair)
+  if (termTag(p2_subPair) != LAM) {
+    sprintf(msg, "subPair port2 should be LAM, got tag %s", tagStr(termTag(p2_subPair)));
+    BOOM(msg);
+  }
+  Term p1_subPair = take(portLoc(1, subPair));  // should be NUL
+  if (termTag(p1_subPair) != NUL) {
+    sprintf(msg, "subPair port1 should be NUL, got tag %s", tagStr(termTag(p1_subPair)));
+    BOOM(msg);
+  }
+  Term p2_innerApp = get(portLoc(2, innerApp));  // should be SUB
+  if (termTag(p2_innerApp) != SUB) {
+    sprintf(msg, "innerApp port2 should be SUB, got tag %s", tagStr(termTag(p2_innerApp)));
+    BOOM(msg);
+  }
+  freeLoc(portLoc(2, innerApp));
+  Term p1_innerApp = take(portLoc(1, innerApp));  // should be I60
+  if (termTag(p1_innerApp) != I60) {
+    sprintf(msg, "innerApp port1 should be I60, got tag %s", tagStr(termTag(p1_innerApp)));
+    BOOM(msg);
+  }
 
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
