@@ -778,27 +778,9 @@ void negNul(Term neg, Term pos) {
 void subNul(Term neg, Term pos) {
   // neg = SUB, pos = NUL
   // SUB: port1=negative, port2=positive
-  Term arg = get(portLoc(1, neg)); // negative
-  Term body = get(portLoc(2, neg)); // positive
-
-  // Erase old values
-  eraseBody(arg);
-  eraseBody(body);
-
-  // Write NUL to port 1 (negative port)
-  Term old1 = get(portLoc(1, neg));
-  if (termTag(old1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, neg)], NUL, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, neg), NUL);
-  }
-
-  // Write ERA to port 2 (positive port)
-  Term old2 = get(portLoc(2, neg));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, neg)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, neg), ERA);
+  if (neg != SUB) {
+    interact(ERA, take(portLoc(2, neg)));
+    move(portLoc(1, neg), NUL);
   }
 }
 
@@ -811,14 +793,8 @@ void eraSup(Term neg, Term pos) {
 
 // DUP/NUL interaction: DUP principal connects to NUL
 // After: both DUP aux ports connect to NUL (a and b erased)
-void dupNul(Term neg, Term pos) {
-  move(portLoc(1, neg), pos);
-  move(portLoc(2, neg), pos);
-}
-
-// DUP/NUM interaction: DUP principal connects to I60 (#)
-// After: a → #, b → # (both ports get the number)
-void dupNum(Term neg, Term pos) {
+// DUP/NUL and DUP/NUM: both ports get the positive term
+void dupLeaf(Term neg, Term pos) {
   move(portLoc(1, neg), pos);
   move(portLoc(2, neg), pos);
 }
@@ -1175,8 +1151,8 @@ void hvmInit(u64 size) {
   interactions[ERA][LAM] = &eraLam;
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
   interactions[ERA][SUP] = &eraSup;
-  interactions[DUP][NUL] = &dupNul;
-  interactions[DUP][I60] = &dupNum;
+  interactions[DUP][NUL] = &dupLeaf;
+  interactions[DUP][I60] = &dupLeaf;
   interactions[OPX][I60] = &opxNum;
   interactions[OPY][I60] = &opyNum;
 
