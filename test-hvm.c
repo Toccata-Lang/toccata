@@ -155,6 +155,7 @@ void testTakeSub(void) {
   freeLoc(portLoc(2, subTarget));  // free NUL at subTarget port 2
   freeLoc(subLoc);                  // free SUB at subTarget port 1 → pair freed
   freeLoc(portLoc(1, lam));         // free SUB at lam port 1 → pair freed
+  freePair(termLoc(app));           // free the APP pair
 }
 
 // Test cascading: inner LAM rewired into APP's ERA port triggers interact
@@ -324,7 +325,7 @@ int main(int argc, char *argv[]) {
   testTakeVarChain();
   // testTakeLaz();
   testTakeSub();
-  // testCascading();
+  testCascading();
   testMoveNul();
   // testEraLam();
   // testEraLamNulBody();

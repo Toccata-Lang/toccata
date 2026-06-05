@@ -276,6 +276,7 @@ Location allocPair(void) {
 }
 
 void freeLoc(Location loc) {
+  if (get(loc) == VOID) return;
 #ifdef NON_ATOMIC
   nodeBuff[loc] = VOID;
 #else
