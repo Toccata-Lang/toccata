@@ -702,7 +702,7 @@ int main(int argc, char *argv[]) {
   testOpYNum();
   // 
   testAppNulLamArg();
-  // testSubNulLamBody();
+  testSubNulLamBody();
   // testSwapSub();
 
   hvmFree();
