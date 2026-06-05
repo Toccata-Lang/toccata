@@ -285,12 +285,12 @@ void testEraLamLamBody(void) {
   Term port1 = take(portLoc(1, lam));
   Term port2 = take(portLoc(2, lam));
 
-  if (termTag(port1) != ERA) {
-    sprintf(msg, "LAM port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "LAM port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
     BOOM(msg);
   }
-  if (termTag(port2) != NUL) {
-    sprintf(msg, "LAM port 2 should be NUL, got tag %s", tagStr(termTag(port2)));
+  if (port2 != 0) {
+    sprintf(msg, "LAM port 2 should be VOID, got tag %s", tagStr(termTag(port2)));
     BOOM(msg);
   }
 
@@ -329,7 +329,7 @@ int main(int argc, char *argv[]) {
   testMoveNul();
   testEraLam();
   testEraLamNulBody();
-  // testEraLamLamBody();
+  testEraLamLamBody();
 
   hvmFree();
   return 0;
