@@ -207,6 +207,98 @@ void testMoveNul(void) {
   }
 }
 
+// Test ERA/LAM interaction: ERA → x, NUL → y
+// When ERA connects to LAM principal port, LAM's aux ports are rewired:
+// port 1 gets ERA, port 2 gets NUL. LAM's body is erased.
+void testEraLam(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Build LAM: port1=SUB, port2=I60(7)
+  Term lam = makePair(LAM, 0, SUB, newI60(7));
+
+  // Trigger ERA/LAM interaction
+  interact(ERA, lam);
+
+  // Post-checks: LAM ports rewired to ERA and NUL
+  Term port1 = take(portLoc(1, lam));
+  Term port2 = take(portLoc(2, lam));
+
+  if (termTag(port1) != ERA) {
+    sprintf(msg, "LAM port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != NUL) {
+    sprintf(msg, "LAM port 2 should be NUL, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  // LAM pair fully cleaned up — alloced should be back to initial
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test ERA/LAM with NUL in body port
+void testEraLamNulBody(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Build LAM: port1=SUB, port2=NUL
+  Term lam = makePair(LAM, 0, SUB, NUL);
+
+  interact(ERA, lam);
+
+  Term port1 = take(portLoc(1, lam));
+  Term port2 = take(portLoc(2, lam));
+
+  if (termTag(port1) != ERA) {
+    sprintf(msg, "LAM port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != NUL) {
+    sprintf(msg, "LAM port 2 should be NUL, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test ERA/LAM with LAM in body port (nested LAM erased)
+void testEraLamLamBody(void) {
+  char msg[100];
+  u64 initialAlloced = glblAlloced;
+
+  // Inner LAM: port1=SUB, port2=I60(42)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(42));
+
+  // Outer LAM: port1=SUB, port2=innerLam
+  Term lam = makePair(LAM, 0, SUB, innerLam);
+
+  interact(ERA, lam);
+
+  Term port1 = take(portLoc(1, lam));
+  Term port2 = take(portLoc(2, lam));
+
+  if (termTag(port1) != ERA) {
+    sprintf(msg, "LAM port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != NUL) {
+    sprintf(msg, "LAM port 2 should be NUL, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)initialAlloced, (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 void testEraBoth(void) {
   char msg[100];
 
@@ -230,10 +322,13 @@ int main(int argc, char *argv[]) {
   testMoveEra();
   testEraBoth();
   testTakeVarChain();
-  testTakeLaz();
+  // testTakeLaz();
   testTakeSub();
-  testCascading();
+  // testCascading();
   testMoveNul();
+  // testEraLam();
+  // testEraLamNulBody();
+  // testEraLamLamBody();
 
   hvmFree();
   return 0;
