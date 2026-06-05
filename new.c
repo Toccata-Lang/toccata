@@ -747,87 +747,35 @@ void appLam(Term neg, Term pos) {
   move(portLoc(1, pos), arg);
 }
 
-// APP/NUL interaction - APP principal connects to NUL
-// After: port1 → NUL, port2 → ERA
+// Helper: erase a body term, handling ERA specially to avoid interact(ERA, ERA)
 static void eraseBody(Term body) {
-  // Erase a body term, handling ERA specially to avoid interact(ERA, ERA)
-  Tag bodyTag = termTag(body);
-  if (bodyTag == ERA) {
-    // Already an eraser — just need to ensure it's gone
-    // (the body was taken from a port, so it's already freed from that port)
+  if (termTag(body) == ERA) {
     return;
   }
   interact(ERA, body);
 }
 
-void appNul(Term neg, Term pos) {
-  // neg = APP, pos = NUL
-  // Get old values without freeing locations
-  Term arg = get(portLoc(1, neg)); // positive argument
-  Term body = get(portLoc(2, neg)); // negative body
-
-  // Erase old values
-  eraseBody(arg);
-  eraseBody(body);
-
-  // Write NUL to port 1 (positive port)
-  Term old1 = get(portLoc(1, neg));
-  if (termTag(old1) == ERA) {
-    // swap would free the location — write directly
-    atomic_store_explicit(&nodeBuff[portLoc(1, neg)], NUL, memory_order_relaxed);
+// Helper: write a value to a port, bypassing swap when old is ERA
+// (swap with ERA frees the location, which we don't want)
+static void writePort(Location loc, Term value) {
+  Term old = get(loc);
+  if (termTag(old) == ERA) {
+    atomic_store_explicit(&nodeBuff[loc], value, memory_order_relaxed);
   } else {
-    swap(portLoc(1, neg), NUL);
-  }
-
-  // Write ERA to port 2
-  Term old2 = get(portLoc(2, neg));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, neg)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, neg), ERA);
+    swap(loc, value);
   }
 }
 
-// OPX/NUL interaction - OPX principal connects to NUL
-// After: port1 → NUL, port2 → ERA (same as APP/NUL)
-void opxNul(Term neg, Term pos) {
-  Term arg = get(portLoc(1, neg));
-  Term body = get(portLoc(2, neg));
+// NUL interaction for negative triangle nodes (APP, OPX, OPY)
+// All have port structure {+ -}, same behavior: port1→NUL, port2→ERA
+void negNul(Term neg, Term pos) {
+  // neg = APP|OPX|OPY, pos = NUL
+  Term arg = get(portLoc(1, neg)); // positive
+  Term body = get(portLoc(2, neg)); // negative
   eraseBody(arg);
   eraseBody(body);
-  Term old1 = get(portLoc(1, neg));
-  if (termTag(old1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, neg)], NUL, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, neg), NUL);
-  }
-  Term old2 = get(portLoc(2, neg));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, neg)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, neg), ERA);
-  }
-}
-
-// OPY/NUL interaction - OPY principal connects to NUL
-// After: port1 → NUL, port2 → ERA (same as APP/NUL)
-void opyNul(Term neg, Term pos) {
-  Term arg = get(portLoc(1, neg));
-  Term body = get(portLoc(2, neg));
-  eraseBody(arg);
-  eraseBody(body);
-  Term old1 = get(portLoc(1, neg));
-  if (termTag(old1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, neg)], NUL, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, neg), NUL);
-  }
-  Term old2 = get(portLoc(2, neg));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, neg)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, neg), ERA);
-  }
+  writePort(portLoc(1, neg), NUL);
+  writePort(portLoc(2, neg), ERA);
 }
 
 // SUB/NUL interaction - circle node connects to NUL
@@ -907,46 +855,13 @@ void dupNul(Term neg, Term pos) {
   }
 }
 
-// ERA/OPX interaction: ERA connects to OPX
-void eraOpX(Term neg, Term pos) {
-  // neg = ERA, pos = OPX
-  Term old1 = get(portLoc(1, pos));
-  Term old2 = get(portLoc(2, pos));
-  eraseBody(old1);
-  eraseBody(old2);
-  Term o1 = get(portLoc(1, pos));
-  if (termTag(o1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, pos)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, pos), ERA);
-  }
-  Term o2 = get(portLoc(2, pos));
-  if (termTag(o2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, pos)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, pos), ERA);
-  }
-}
-
-// ERA/OPY interaction: ERA connects to OPY
-void eraOpY(Term neg, Term pos) {
-  // neg = ERA, pos = OPY
-  Term old1 = get(portLoc(1, pos));
-  Term old2 = get(portLoc(2, pos));
-  eraseBody(old1);
-  eraseBody(old2);
-  Term o1 = get(portLoc(1, pos));
-  if (termTag(o1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, pos)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, pos), ERA);
-  }
-  Term o2 = get(portLoc(2, pos));
-  if (termTag(o2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, pos)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, pos), ERA);
-  }
+// ERA interaction for OPX/OPY: erase both ports
+void eraOpXY(Term neg, Term pos) {
+  // neg = ERA, pos = OPX|OPY
+  eraseBody(get(portLoc(1, pos)));
+  eraseBody(get(portLoc(2, pos)));
+  writePort(portLoc(1, pos), ERA);
+  writePort(portLoc(2, pos), ERA);
 }
 
 // DUP/NUM interaction: DUP principal connects to I60 (#)
@@ -1316,9 +1231,9 @@ void hvmInit(u64 size) {
   buffSize = size;
 
   interactions[APP][LAM] = &appLam;
-  interactions[APP][NUL] = &appNul;
-  interactions[OPX][NUL] = &opxNul;
-  interactions[OPY][NUL] = &opyNul;
+  interactions[APP][NUL] = &negNul;
+  interactions[OPX][NUL] = &negNul;
+  interactions[OPY][NUL] = &negNul;
   interactions[SUB][NUL] = &subNul;
   interactions[ERA][NUL] = &eraLeaf;
   interactions[ERA][I60] = &eraLeaf;
@@ -1326,8 +1241,8 @@ void hvmInit(u64 size) {
   interactions[ERA][LAM] = &eraLam;
   interactions[ERA][VAL] = &eraLeaf;
   interactions[ERA][SUP] = &eraSup;
-  interactions[ERA][OPX] = &eraOpX;
-  interactions[ERA][OPY] = &eraOpY;
+  interactions[ERA][OPX] = &eraOpXY;
+  interactions[ERA][OPY] = &eraOpXY;
   interactions[DUP][NUL] = &dupNul;
   interactions[DUP][I60] = &dupNum;
   interactions[OPX][I60] = &opxNum;
