@@ -769,17 +769,12 @@ static void writePort(Location loc, Term value) {
 // NUL interaction for negative triangle nodes (APP, OPX, OPY)
 // All have port structure {+ -}, same behavior: port1→NUL, port2→ERA
 void negNul(Term neg, Term pos) {
-  // neg = APP|OPX|OPY, pos = NUL
-  Term arg = get(portLoc(1, neg)); // positive
-  Term body = get(portLoc(2, neg)); // negative
-  eraseBody(arg);
-  eraseBody(body);
-  writePort(portLoc(1, neg), NUL);
-  writePort(portLoc(2, neg), ERA);
+  interact(ERA, take(portLoc(1, neg)));
+  move(portLoc(2, neg), NUL);
 }
 
 // SUB/NUL interaction - circle node connects to NUL
-// After: port1 → NUL, port2 → ERA
+// SUB has {- +} polarities — different from APP/OPX/OPY
 void subNul(Term neg, Term pos) {
   // neg = SUB, pos = NUL
   // SUB: port1=negative, port2=positive
@@ -814,8 +809,16 @@ void eraSup(Term neg, Term pos) {
   interact(ERA, newTerm(VAR, 0, portLoc(1, pos)));
 }
 
-// DUP/NUL and DUP/NUM: both ports get the positive term
-void dupLeaf(Term neg, Term pos) {
+// DUP/NUL interaction: DUP principal connects to NUL
+// After: both DUP aux ports connect to NUL (a and b erased)
+void dupNul(Term neg, Term pos) {
+  move(portLoc(1, neg), pos);
+  move(portLoc(2, neg), pos);
+}
+
+// DUP/NUM interaction: DUP principal connects to I60 (#)
+// After: a → #, b → # (both ports get the number)
+void dupNum(Term neg, Term pos) {
   move(portLoc(1, neg), pos);
   move(portLoc(2, neg), pos);
 }
@@ -1172,8 +1175,8 @@ void hvmInit(u64 size) {
   interactions[ERA][LAM] = &eraLam;
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
   interactions[ERA][SUP] = &eraSup;
-  interactions[DUP][NUL] = &dupLeaf;
-  interactions[DUP][I60] = &dupLeaf;
+  interactions[DUP][NUL] = &dupNul;
+  interactions[DUP][I60] = &dupNum;
   interactions[OPX][I60] = &opxNum;
   interactions[OPY][I60] = &opyNum;
 
