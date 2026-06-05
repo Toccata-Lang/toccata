@@ -230,6 +230,7 @@ BOOM(msg);
 - [ ] Errors use `BOOM(msg)` with `sprintf` into local char array
 - [ ] Test saves `u64 initialAlloced = glblAlloced;` and compares at end
 - [ ] Uses `take` (not `freeLoc`) to clean up ports after tests, verifying returned values
+  - Exception: for SUB/LAZ ports, use `get` + `freeLoc` since `take` returns VAR without freeing
 - [ ] Uses `make test-hvm` to build (not manual clang)
 - [ ] Uses `swap` not `move` when writing negative terms (ERA)
 - [ ] Uses `take` + `freePair` pattern when erasing pair bodies
@@ -239,6 +240,8 @@ BOOM(msg);
 ## Cleanup Pattern
 
 Never use `freeLoc` directly in tests. Use `take` to clean up ports and verify returned values.
+
+**Exception:** When you expect SUB or LAZ at a port, use `get` + `freeLoc` instead of `take` (since `take` returns VAR for SUB/LAZ and doesn't free the location).
 
 **Pattern for each port:**
 
@@ -253,21 +256,32 @@ The port location was freed by `take`'s internal `freeLoc`, which coalesces into
 
 - **Ports already VOID**: do not take — `glblAlloced` verifies all pairs are freed automatically.
 
-- **VAR return** (port had SUB or LAZ): the location was NOT freed. Use `swap` to replace the SUB/LAZ with NUL, then `take` to free:
+- **VAR return** (port had SUB or LAZ): the location was NOT freed. Two options:
 
-```c
-// Port had SUB — take returns VAR
-r = take(portLoc(n, term));
-if (termTag(r) != VAR) BOOM("expected VAR");
+  **Option A — swap + take** (verifies SUB was replaced):
 
-// Replace SUB with NUL
-r = swap(portLoc(n, term), NUL);
-if (termTag(r) != SUB) BOOM("expected SUB from swap");
+  ```c
+  // Port had SUB — take returns VAR
+  r = take(portLoc(n, term));
+  if (termTag(r) != VAR) BOOM("expected VAR");
 
-// Free the location
-r = take(portLoc(n, term));
-if (termTag(r) != NUL) BOOM("expected NUL");
-```
+  // Replace SUB with NUL
+  r = swap(portLoc(n, term), NUL);
+  if (termTag(r) != SUB) BOOM("expected SUB from swap");
+
+  // Free the location
+  r = take(portLoc(n, term));
+  if (termTag(r) != NUL) BOOM("expected NUL");
+  ```
+
+  **Option B — get + freeLoc** (simpler when you just need to verify and free):
+
+  ```c
+  // Verify SUB, then free
+  r = get(portLoc(n, term));
+  if (termTag(r) != SUB) BOOM("expected SUB");
+  freeLoc(portLoc(n, term));
+  ```
 
 **⚠️ Lesson:** `move` uses `swap` internally, so after a `move`, the target port may contain the moved-in value (not the old SUB). Always check what `take` returns rather than assuming SUB.
 
