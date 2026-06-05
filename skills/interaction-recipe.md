@@ -241,11 +241,17 @@ Never use `freeLoc` directly in tests. Use `take` to clean up ports and verify r
 
 **Pattern for each port:**
 
+- **Ports with content** (leaf, I60, or pair body): use `take` to retrieve and free:
+
 ```c
 Term r = take(portLoc(n, term));
+if (termTag(r) != EXPECTED_TAG) BOOM("expected EXPECTED_TAG");
 ```
 
-- **Non-VAR return** (leaf or pair body): the returned value is the term that was at the port. Verify it matches expectations. The port location was freed by `take`'s internal `freeLoc`, which coalesces into `freePair` if both ports are now VOID.
+The port location was freed by `take`'s internal `freeLoc`, which coalesces into `freePair` if both ports are now VOID.
+
+- **Ports already VOID**: do not take — `glblAlloced` verifies all pairs are freed automatically.
+
 - **VAR return** (port had SUB or LAZ): the location was NOT freed. Use `swap` to replace the SUB/LAZ with NUL, then `take` to free:
 
 ```c
