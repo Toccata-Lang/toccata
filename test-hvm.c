@@ -379,23 +379,12 @@ void testOpYNul(void) {
 void testSubNul(void) {
   char msg[100];
 
-  // Build SUB: port1=ERA, port2=I60(7)
-  Term sub = makePair(SUB, 0, ERA, newI60(7));
+  // Build SUB: port1=ERA, port2=I60(7) — label > 0 so ports are connected
+  Term sub = makePair(SUB, 1, ERA, newI60(7));
 
   interact(sub, NUL);
 
-  Term port1 = take(portLoc(1, sub));
-  Term port2 = take(portLoc(2, sub));
-
-  if (termTag(port1) != NUL) {
-    sprintf(msg, "SUB port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (termTag(port2) != ERA) {
-    sprintf(msg, "SUB port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
-    BOOM(msg);
-  }
-
+  // SUB rewired — both ports freed by subNul
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -653,8 +642,8 @@ int main(int argc, char *argv[]) {
   // testCascadingRedex();
   // testAppNul();
   // testOpxNul();
-  testOpYNul();
-  // testSubNul();
+  // testOpYNul();
+  testSubNul();
   // testEraSup();
   // testDupNul();
   // testDupNum();
