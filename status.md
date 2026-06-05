@@ -29,11 +29,15 @@ Read in order: the calculus defines the rules, the implementation shows how they
 | 7 | OPX/NUL | `opxNul` | Same as APP/NUL |
 | 8 | OPY/NUL | `opyNul` | Same as APP/NUL |
 | 9 | SUB/NUL | `subNul` | Same pattern |
-| 10 | ERA/SUP | `eraSup` | Two ERAs to SUP's ports |
+| 10 | ERA/SUP | `eraSup` | Two ERAs to SUP's ports *(needs ERA/VAR)* |
 | 11 | DUP/NUL | `dupNul` | Both DUP ports→NUL |
 | 12 | DUP/NUM | `dupNum` | Both DUP ports→# |
 | 13 | OPX/NUM | `opxNum` | #→OPY, OPY ports wired |
 | 14 | OPY/NUM | `opyNum` | b→result (#1 op #2) |
+
+## Next: ERA/VAR
+
+- [ ] **ERA/VAR** — ERA connects to VAR. Follow the VAR to the actual term and erase it. Needs a dedicated handler.
 
 ## Remaining — Ordered by Implementation Priority
 
@@ -69,6 +73,8 @@ Read in order: the calculus defines the rules, the implementation shows how they
 ## Notes
 
 - `eraLeaf` handles all three leaf cases (NUL, I60, F60) — it's a no-op since both sides are already freed by `swap`/`interact`.
+- ERA/VAR is needed by `eraSup` (and potentially other rules) — follows the VAR to the actual term and erases it.
+- ERA/VAL needs special handling for native value erasure.
 - Rules are registered in `hvmInit()` via the `interactions[16][16]` jump table.
 - Each rule needs a corresponding test in `test-hvm.c`.
 - LAZ rules are the most complex due to lazy evaluation semantics and self-referential structures.
