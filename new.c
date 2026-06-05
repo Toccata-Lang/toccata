@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "new.h"
+#include "runtime3.h"
 
 int threadCount = 1;
 pthread_t threads[2050];
@@ -719,6 +720,196 @@ u64 i64_to_u64(i64 i) { return *(u64*)&i; }
     res = type##_to_u64(val);			\
   }
 
+Term argsNet(NativeArgs *args) {
+  Term tail;
+  if(args->count < 1)
+    BOOM("argsNet");
+  else
+    tail = args->args[args->count - 1];
+
+  for (int i = args->count - 2; i >= 0; i--) {
+    tail = makePair(APP, 0, args->args[i], tail);
+  }
+
+  return tail;
+}
+
+void varArg(Term trm, Term ref, Term args, NativeArgs *argsStruct) {
+  Location trmLoc = termLoc(trm);
+  Term val = get(trmLoc);
+  switch(termTag(val)) {
+  case LAZ:
+    swap(trmLoc, SUB);
+    forceLazy(val);
+	
+  case SUB:
+    // add the remaining args to argsStruct
+    argsStruct->args[argsStruct->count++] = args;
+
+    // create a chain of APP terms from argsStruct
+    Term newArgs = argsNet(argsStruct);
+
+    // put 'trm' back in it's place
+    swap(portLoc(1, args), trm);
+
+    // make a deferred redex to retry the APP/REF pair when the value becomes available
+    Term retry = makePair(SUB, 5, newArgs, ref);
+
+    // and put it in the location 'trm' points to
+    Term newArg = swap(trmLoc, retry);
+    if (newArg != SUB) {
+      // someone slipped the needed trm in since we last looked
+      swap(trmLoc, newArg);
+      freePair(termLoc(retry));
+
+      // so retry the original APP/REF redex
+      pushRedex(newArgs, ref);
+    }
+    break;
+
+  default:
+    printRawTerm(val);
+    printf("\n");
+    BOOM("nativeArgs");
+    break;
+  }
+}
+
+Term termVal(Term val) {
+  // ensure a Term is a valid native value
+  unsigned type = ((Value *)val)->type;
+  if (val & VAL_MASK) {
+    fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__);
+    fprintf(stderr, "val: %p\n", (void *)val);
+    abort();
+  }
+  return val;
+}
+
+// extract the requested number of native args. I60, F60, REF or VAL terms
+Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
+  /*
+  char *refName = NULL;
+  for (unsigned i = 0; i <= refsCount; i++) {
+    if (refNames[i].fn == (interactionFn)(ref & ~TAG_MASK)) {
+      refName = refNames[i].name;
+      break;
+    }
+  }
+  if (expected == 1) {
+    if (refName != NULL) {
+      char msg[200];
+      sprintf(msg, "%s %03x:", refName, termLoc(args));
+      graphDown(msg, args);
+    } else {
+      graphDown("unknown", args);
+    }
+    // if (strcmp(refName, "str-eq") == 0) {
+    // print_term("str-eq args", args);
+    // }
+  }
+  // */
+  Location resultLoc = portLoc(2, args);
+  Tag argsTag = termTag(args);
+  if (argsTag == APP || argsTag == OPY) {
+    // if 'args' is an APP term
+    Location argLoc = portLoc(1, args);
+    Term arg = take(argLoc);
+    if (expected == 0) {
+      return args;
+    }
+
+    // 'arg' will only ever be a positive term
+    Tag argTag = termTag(arg);
+    switch(argTag) {
+      // the strict arg types
+    case VAL:
+    case I60:
+    case F60:
+    case REF:
+      // add it to argsStruct
+      argsStruct->args[argsStruct->count++] = arg;
+      if (expected > 1)
+	// need to get more strict args
+	return strictArgs(ref, take(resultLoc), expected - 1, argsStruct);
+      else
+	return args;
+      break;
+
+    case LAM: {
+      TermVal *tv = malloc_term();
+      tv->trmLoc = allocPair();
+      swap(tv->trmLoc, arg);
+
+      // add it to argsStruct
+      argsStruct->args[argsStruct->count++] = (Term)tv;
+      if (expected > 1)
+	// need to get more strict args
+	return strictArgs(ref, take(resultLoc), expected - 1, argsStruct);
+      else
+	return args;
+    }
+      break;
+
+    case NUL:
+      move(resultLoc, NUL);
+      for (int i = 0; i < argsStruct->count; i++)
+	dec_and_free(argsStruct->args[i], 1);
+      break;
+
+    case SUP:
+      for(int i = 0; i < argsStruct->count; i++)
+	incRef(argsStruct->args[i], 1);
+      Term s1 = take(argLoc);
+      Term s2 = take(portLoc(2, arg));
+      Lab supLabel = termLab(arg);
+      int argsCount = argsStruct->count;
+      argsStruct->count += 1;
+
+      Term tail1 = makePair(APP, 0, s1, SUB);
+      Location tailLoc1 = portLoc(2, tail1);
+      argsStruct->args[argsCount] = tail1;
+      swap(tailLoc1, makePair(LAZ, 0, argsNet(argsStruct), ref));
+
+      Term tail2 = makePair(APP, 0, s2, SUB);
+      Location tailLoc2 = portLoc(2, tail2);
+      argsStruct->args[argsCount] = tail2;
+      swap(tailLoc2, makePair(LAZ, 0, argsNet(argsStruct), ref));
+
+      Term newSup = makePair(SUP, supLabel,
+			      newTerm(VAR, 0, tailLoc1),
+			      newTerm(VAR, 0, tailLoc2));
+      move(resultLoc, newSup);
+      break;
+
+    case VAR:
+      varArg(arg, ref, args, argsStruct);
+      break;
+
+    case LAZ:
+    default: {
+      char msg[100];
+      sprintf(msg, "unhandled tag %s (0x%x) line: %d\n", tagStr(termTag(arg)),
+	     termTag(arg), __LINE__);
+      BOOM(msg);
+    }
+      break;
+    }
+    argsStruct->count = -1;
+    return 0;
+  } else {
+    // not using BOOM because I want to use printTerm
+    fprintf(stderr, "strictArgs expected: %d\n", expected);
+    printTerm("strictArgs args", args);
+    fprintf(stderr, "unhandled tag %s (0x%x) %p line: %d\n",
+	   tagStr(argsTag), argsTag, (void *)args, __LINE__);
+    fprintf(dotFile, "}\n");
+    fclose(dotFile);
+    abort();
+    return 0;
+  }
+}
+
 // ERA/leaf interaction - eraser consumes any leaf term
 void eraLeaf(Term neg, Term pos) {
   // Both sides are leaf terms — nothing to do, both are already freed by swap/interact
@@ -755,22 +946,13 @@ static void eraseBody(Term body) {
   interact(ERA, body);
 }
 
-// Helper: write a value to a port, bypassing swap when old is ERA
-// (swap with ERA frees the location, which we don't want)
-static void writePort(Location loc, Term value) {
-  Term old = get(loc);
-  if (termTag(old) == ERA) {
-    atomic_store_explicit(&nodeBuff[loc], value, memory_order_relaxed);
-  } else {
-    swap(loc, value);
-  }
-}
-
 // NUL interaction for negative triangle nodes (APP, OPX, OPY)
 // All have port structure {+ -}, same behavior: port1→NUL, port2→ERA
 void negNul(Term neg, Term pos) {
-  interact(ERA, take(portLoc(1, neg)));
+  // get the other possible redex queued up
   move(portLoc(2, neg), NUL);
+  // before freeing the entire tree at 'neg'
+  interact(ERA, take(portLoc(1, neg)));
 }
 
 // SUB/NUL interaction - circle node connects to NUL
@@ -779,16 +961,18 @@ void subNul(Term neg, Term pos) {
   // neg = SUB, pos = NUL
   // SUB: port1=negative, port2=positive
   if (neg != SUB) {
-    interact(ERA, take(portLoc(2, neg)));
+    // get the other possible redex queued up
     move(portLoc(1, neg), NUL);
+    // before freeing the entire tree at 'neg'
+    interact(ERA, take(portLoc(2, neg)));
   }
 }
 
 // ERA/SUP interaction: ERA connects to SUP principal
 // After: two ERAs connect to SUP's ports (x and y erased)
 void eraSup(Term neg, Term pos) {
-  interact(ERA, newTerm(VAR, 0, portLoc(2, pos)));
   interact(ERA, newTerm(VAR, 0, portLoc(1, pos)));
+  interact(ERA, newTerm(VAR, 0, portLoc(2, pos)));
 }
 
 // DUP/NUL interaction: DUP principal connects to NUL
@@ -801,85 +985,72 @@ void dupLeaf(Term neg, Term pos) {
 
 // OPX/NUM interaction: OPX principal connects to I60 (#)
 // After: # connects to OPY, OPY ports wired: port1=#, port2=b, principal=a
+void opyNum(Term neg, Term pos);
 void opxNum(Term neg, Term pos) {
-  // neg = OPX, pos = I60
-  // OPX: port1=positive (a), port2=negative (b)
-  // Get old values
-  Term a = get(portLoc(1, neg)); // positive
-  Term b = get(portLoc(2, neg)); // negative
-  // Erase old values
-  eraseBody(a);
-  eraseBody(b);
-  // Create OPY with: port1=# (pos), port2=b (neg)
-  Term opy = makePair(OPY, termLab(neg), pos, b);
-  // Write # to OPX port 1 (was a)
-  Term old1 = get(portLoc(1, neg));
-  if (termTag(old1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, neg)], pos, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, neg), pos);
+  Term arg = swap(portLoc(1, neg), pos);
+  Lab op = termLab(neg);
+  switch (termTag(arg)) {
+  case I60:
+    opyNum(newTerm(OPY, op, portLoc(1, neg)), arg);
+    break;
+
+  case VAR:
+    interact(newTerm(OPY, op, portLoc(1, neg)), arg);
+    break;
+
+  default:
+    pushRedex(newTerm(OPY, op, portLoc(1, neg)), arg);
   }
-  // Write OPY to OPX port 2 (was b)
-  // If old is ERA, swap would free the location — write directly
-  Term old2 = get(portLoc(2, neg));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, neg)], opy, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, neg), opy);
-  }
+  return;
 }
 
 // OPY/NUM interaction: OPY principal connects to I60 (#)
 // After: b connects to result (#1 op #2)
 void opyNum(Term neg, Term pos) {
-  // neg = OPY, pos = I60
-  // OPY: port1=positive (#1), port2=negative (b)
-  Term num1 = get(portLoc(1, neg)); // positive #1
-  Term b = get(portLoc(2, neg)); // negative
-  Term num2 = pos; // positive #2
-  // Compute result: num1 op num2
-  // The op code is in the OPY label
-  i64 val1 = getI60(num1);
-  i64 val2 = getI60(num2);
+  NativeArgs arityArgs = {0, {}};
+  neg = strictArgs(pos, neg, 1, &arityArgs);
+  if (arityArgs.count != 1) {
+    return;
+  }
+
+  Term x = arityArgs.args[0];
+  Tag yType = termTag(pos);
+  Location ret = portLoc(2, neg);
+  u64 res;
   Lab op = termLab(neg);
-  i64 result;
-  switch (op) {
-  case OP_ADD: result = val1 + val2; break;
-  case OP_SUB: result = val1 - val2; break;
-  case OP_MUL: result = val1 * val2; break;
-  case OP_DIV: result = val1 / val2; break;
-  case OP_MOD: result = val1 % val2; break;
-  case OP_EQ:  result = (val1 == val2) ? 1 : 0; break;
-  case OP_NE:  result = (val1 != val2) ? 1 : 0; break;
-  case OP_LT:  result = (val1 < val2) ? 1 : 0; break;
-  case OP_GT:  result = (val1 > val2) ? 1 : 0; break;
-  case OP_LTE: result = (val1 <= val2) ? 1 : 0; break;
-  case OP_GTE: result = (val1 >= val2) ? 1 : 0; break;
-  case OP_AND: result = val1 & val2; break;
-  case OP_OR:  result = val1 | val2; break;
-  case OP_XOR: result = val1 ^ val2; break;
-  case OP_LSH: result = val1 << val2; break;
-  case OP_RSH: result = val1 >> val2; break;
-  default: result = 0; break;
+
+#ifdef SAFETY
+  switch (termTag(x)) {
+  case I60:
+  case F60:
+    break;
+
+  default: {
+    char msg[200];
+    sprintf(msg, "wrong value to OPY: %s", tagStr(termTag(x))); 
+    BOOM(msg);
   }
-  Term resultTerm = newI60(result);
-  // Erase old values
-  eraseBody(num1);
-  eraseBody(b);
-  // Write result to port 1 (was #1)
-  Term old1 = get(portLoc(1, neg));
-  if (termTag(old1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, neg)], resultTerm, memory_order_relaxed);
+    break;
+  }
+#endif
+
+  switch (yType) {
+  case I60: PERFORM_OP(getU64(x), getU64(pos), op, i64); break;
+    // case F60: PERFORM_OP(x, y, op, f64); break;
+  }
+
+  Term result = newNum(yType, res);
+  // If old value is ERA, swap would erase the result.
+  // Free the pair first, then store result directly.
+  Term old = get(ret);
+  if (termTag(old) == ERA) {
+    Location evenLoc = ret & 0xFFFFFFFE;
+    freePair(evenLoc);  // free pair while ERA is still at ret
+    atomic_store_explicit(&nodeBuff[ret], result, memory_order_relaxed);
   } else {
-    swap(portLoc(1, neg), resultTerm);
+    move(ret, result);
   }
-  // Write result to port 2 (was b)
-  Term old2 = get(portLoc(2, neg));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, neg)], resultTerm, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, neg), resultTerm);
-  }
+  return;
 }
 
 // interaction jump table - all entries default to badrdx
@@ -919,11 +1090,11 @@ void interact(Term neg, Term pos) {
     BOOM("all done");
   // */
 
-  // if (term_lab(pos) == SUP && term_loc(pos) == 0x15a) {
+  // if (termLab(pos) == SUP && termLoc(pos) == 0x15a) {
   // printTerm("NEG", neg);
   // printTerm("POS", pos);
   // }
-  // if (term_lab(neg) == APP && term_loc(pos) == 0x2c) {
+  // if (termLab(neg) == APP && termLoc(pos) == 0x2c) {
   // printTerm("NEG", neg);
   // printTerm("POS", pos);
   // }
@@ -1203,7 +1374,7 @@ void hvmReset(void) {
   rdxCount = 0;
 }
 
-void check_buff() {
+void checkBuff() {
 #ifdef NON_ATOMIC
   u64* buff = get_buff();
 #else

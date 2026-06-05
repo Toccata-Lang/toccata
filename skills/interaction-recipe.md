@@ -31,9 +31,10 @@ Before implementing or modifying interaction rules, read these files in order:
 | 6 | `new.c` | Core implementation — `take`, `swap`, `move`, `interact`, existing rules |
 | 7 | `test-hvm.c` | Test suite — patterns for building terms, triggering interactions, verifying results |
 | 8 | `graph.c` | DOT graph generation for debugging (called by `test-hvm.c` via `graphDown`) |
-| 9 | `Makefile` | Build command for `test-hvm` — flags (`SAFETY`, `CHECK_MEM_LEAK`, `STATS`) and source files |
+| 9 | `runtime3.c` | Runtime support — reference counting, memory management, free lists, native functions, vector/hash-map ops |
+| 10 | `Makefile` | Build command for `test-hvm` — flags (`SAFETY`, `CHECK_MEM_LEAK`, `STATS`) and source files |
 
-Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
+Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug/runtime files help diagnose issues.
 
 ## Step 1: Create the test function
 

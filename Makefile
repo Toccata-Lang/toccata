@@ -81,7 +81,7 @@ help:
 # Test HVM
 .PHONY: test-hvm
 test-hvm:
-	$(CC) $(CFLAGS) -o test-hvm $(TOC_FLAGS) $(LDFLAGS) new.c test-hvm.c graph.c
+	$(CC) $(CFLAGS) -o test-hvm $(TOC_FLAGS) $(LDFLAGS) -DTESTING_HVM=1 new.c test-hvm.c graph.c runtime3.c
 	./test-hvm
 	dot -Tsvg graphs.dot > graphs.svg
 

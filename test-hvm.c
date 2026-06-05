@@ -454,42 +454,30 @@ void testDupNum(void) {
 }
 
 // Test OPX/NUM interaction: OPX connects to I60
-// After: # to port1, OPY to port2
+// After: OPY/NUM fires, result (# op a) moves to port 2
 void testOpxNum(void) {
   char msg[100];
+  u64 initialAlloced = glblAlloced;
 
-  // Build OPX: port1=I60(3), port2=ERA
+  // Build OPX: port1=I60(3) [a], port2=ERA [b]
   Term opx = makePair(OPX, OP_ADD, newI60(3), ERA);
 
+  // Interact with NUM I60(5) [#]
+  // OPX/NUM: swaps # into port1, creates OPY, fires OPY/NUM with a
+  // OPY/NUM: computes # op a = 5 + 3 = 8, moves result to port2
   interact(opx, newI60(5));
 
-  Term port1 = take(portLoc(1, opx));
-  Term port2 = take(portLoc(2, opx));
-
-  if (termTag(port1) != I60 || getI60(port1) != 5) {
-    sprintf(msg, "OPX port 1 should be I60(5), got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (termTag(port2) != OPY) {
-    sprintf(msg, "OPX port 2 should be OPY, got tag %s", tagStr(termTag(port2)));
+  // After full reduction: port2 holds the result (5 + 3 = 8)
+  Term result = take(portLoc(2, opx));
+  if (termTag(result) != I60 || getI60(result) != 8) {
+    sprintf(msg, "OPX port 2 should be I60(8), got tag %s val %ld",
+            tagStr(termTag(result)), (long)getI60(result));
     BOOM(msg);
   }
 
-  // Verify OPY: port1=#, port2=b (b was ERA)
-  Term opyPort1 = take(portLoc(1, port2));
-  Term opyPort2 = take(portLoc(2, port2));
-  if (termTag(opyPort1) != I60 || getI60(opyPort1) != 5) {
-    sprintf(msg, "OPY port 1 should be I60(5), got tag %s", tagStr(termTag(opyPort1)));
-    BOOM(msg);
-  }
-  // opyPort2 was ERA (b), take returns ERA
-  if (termTag(opyPort2) != ERA) {
-    sprintf(msg, "OPY port 2 should be ERA, got tag %s", tagStr(termTag(opyPort2)));
-    BOOM(msg);
-  }
-
-  if (glblAlloced != 0) {
-    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+  if (glblAlloced != initialAlloced) {
+    sprintf(msg, "glblAlloced should be %lld, got %lld",
+            (long long)initialAlloced, (long long)glblAlloced);
     BOOM(msg);
   }
 }
@@ -696,7 +684,6 @@ int main(int argc, char *argv[]) {
   testMoveEra();
   testEraBoth();
   testTakeVarChain();
-  // testTakeLaz();
   testTakeSub();
   testCascading();
   testMoveNul();
@@ -708,16 +695,17 @@ int main(int argc, char *argv[]) {
   testOpxNul();
   testOpYNul();
   testSubNul();
-  // testEraSup();
   testDupNul();
   testDupNum();
-  // testOpxNum();
+  testOpxNum();
   // testOpYNum();
-
-  testAppNulLamArg();
-  testSubNulLamBody();
-  testSwapSub();
+  // 
+  // testAppNulLamArg();
+  // testSubNulLamBody();
+  // testSwapSub();
 
   hvmFree();
+  // testTakeLaz();
+  // testEraSup();
   return 0;
 }

@@ -11,8 +11,7 @@ If the bit is not set, the ref update could be done immediately.
 #include <stdlib.h>
 #include <stdatomic.h>
 #include "runtime3.h"
-
-FILE *dotFile;
+#include "graph.h"
 
 REFS_SIZE refsInit = 1;
 REFS_SIZE refsError = -10;
@@ -304,7 +303,7 @@ void freeTerm(Value *v) {
   Term trmVal = take(trm->trmLoc);
   v->next = freeTerms.head;
   freeTerms.head = v;
-  store_redex(ERA, trmVal);
+  pushRedex(ERA, trmVal);
 }
 
 FreeValList centralFreeFnArities = (FreeValList){(Value *)0, 0};
@@ -732,7 +731,7 @@ freeValFn freeJmpTbl[CoreTypeCount] = {NULL,
 
 void decValRef(Term pv, int deltaRefs) {
   Value *v;
-  switch (term_tag(pv)) {
+  switch (termTag(pv)) {
   case F60:
   case I60:
     break;
@@ -788,7 +787,7 @@ void dec_and_free(Term pv, int deltaRefs) {
   }
 
   Value *v;
-  switch (term_tag(pv)) {
+  switch (termTag(pv)) {
   case F60:
   case I60:
     break;
@@ -799,14 +798,14 @@ void dec_and_free(Term pv, int deltaRefs) {
 
   default:
     // fprintf(stderr, "freeing interaction combinator: %d %p\n", __LINE__, (void *)v);
-    store_redex(ERA, (Term)pv);
+    pushRedex(ERA, (Term)pv);
     break;
   }
 }
 
 #ifndef FAST_INCS
 Term incRef(Term val, int deltaRefs) {
-  Tag t = term_tag(val);
+  Tag t = termTag(val);
   if (t == I60 || t == F60 || t == REF)
     return val;
 
@@ -1030,8 +1029,8 @@ Value *defaultPrErrSTAR(Value *str) {
 
 Term number_str(Term arg0) {
   String *numStr = malloc_string(50);
-  sprintf(numStr->buffer, "%ld", get_i60(arg0));
-  return(term_val((Term)numStr));
+  sprintf(numStr->buffer, "%ld", getI60(arg0));
+  return(termVal((Term)numStr));
 }
 
 Value *isInstance(Value *arg0, Value *arg1) {
@@ -1060,7 +1059,7 @@ Value *isInstance(Value *arg0, Value *arg1) {
 }
 
 Term dupeVal(Term *v) {
-  Tag t = term_tag(*v);
+  Tag t = termTag(*v);
   if (t == I60 || t == F60)
     return *v;
   else if (t == VAL)
@@ -1166,7 +1165,7 @@ Vector *vectConj(Vector *vect, Term val) {
     newVect->tail[vect->count & 0x1F] = val;
     /*
     fprintf(stderr, "vectConj %d: %p %ld %p\n", __LINE__, (void *)vect,
-	    get_i60(val), (void *)newVect);
+	    getI60(val), (void *)newVect);
     // */
     dec_and_free((Term)vect, 1);
     return(newVect);
@@ -1209,12 +1208,12 @@ void vectConjFn(Term ref, Term args) {
     Term vect_1 = arityArgs.args[0];
     Term v_2 = arityArgs.args[1];
 
-    result = term_val((Term)vectConj((Vector *)vect_1, v_2));
-    moveStore(port(2, term_loc(args)), result);
+    result = termVal((Term)vectConj((Vector *)vect_1, v_2));
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term vectConjRef = new_ref(vectConjFn);
+Term vectConjRef = newRef(vectConjFn);
 
 void vectMap(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -1222,23 +1221,23 @@ void vectMap(Term ref, Term args) {
   if (arityArgs.count == 2) {
     Vector *vect = (Vector *)arityArgs.args[0];
     Term f = arityArgs.args[1];
-    Term newV = term_val((Term)empty_vect);
+    Term newV = termVal((Term)empty_vect);
     if (vect->count == 0) {
       dec_and_free(f, 1);
-      moveStore(port(2, term_loc(args)), (Term)vect);
+      move(portLoc(2, args), (Term)vect);
     } else {
       incRef(f, vect->count - 1);
       for (unsigned i = 0; i < vect->count; i++) {
-	Term mArgs = pair_make(APP, 0, vectGet(vect, i), SUB);
-	swapStore(port(2, term_loc(mArgs)), pair_make(LAZ, 0, mArgs, f));
-	Term cArgs1 = pair_make(APP, 0, term_new(VAR, 0, port(2, term_loc(mArgs))), SUB);
-	Term cArgs2 = pair_make(APP, 0, newV, cArgs1);
-	Term conjNode = pair_make(LAZ, 0, cArgs2, vectConjRef);
-	swapStore(port(2, term_loc(cArgs1)), conjNode);
-	newV = term_new(VAR, 0, port(2, term_loc(cArgs1)));
+	Term mArgs = makePair(APP, 0, vectGet(vect, i), SUB);
+	swap(portLoc(2, mArgs), makePair(LAZ, 0, mArgs, f));
+	Term cArgs1 = makePair(APP, 0, newTerm(VAR, 0, portLoc(2, mArgs)), SUB);
+	Term cArgs2 = makePair(APP, 0, newV, cArgs1);
+	Term conjNode = makePair(LAZ, 0, cArgs2, vectConjRef);
+	swap(portLoc(2, cArgs1), conjNode);
+	newV = newTerm(VAR, 0, portLoc(2, cArgs1));
       }
       dec_and_free((Term)vect, 1);
-      moveStore(port(2, term_loc(args)), newV);
+      move(portLoc(2, args), newV);
     }
   }
   return;
@@ -1293,8 +1292,8 @@ void hvmVectFn(Term ref, Term args){
   NativeArgs arityArgs = {0, {}};
   Term newArgs = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    newArgs = take(port(2, term_loc(newArgs)));
-    long vectLen = get_i60(arityArgs.args[0]);
+    newArgs = take(portLoc(2, newArgs));
+    long vectLen = getI60(arityArgs.args[0]);
     if (vectLen > MAX_ARGS)
       BOOM("too many items in vector literal");
     Term lastArgs = strictArgs(ref, newArgs, vectLen, &arityArgs);
@@ -1302,12 +1301,12 @@ void hvmVectFn(Term ref, Term args){
       Vector *newV = empty_vect;
       for (int i = 0; i < arityArgs.count; i++)
 	newV = vectConj(newV, arityArgs.args[i + 1]);
-      swapStore(port(2, term_loc(lastArgs)), term_val((Term)newV));
+      swap(portLoc(2, lastArgs), termVal((Term)newV));
     }
   }
   return;
 }
-Term hvmVect = new_ref(hvmVectFn);
+Term hvmVect = newRef(hvmVectFn);
 
 VectorNode *copyVectStore(int level, VectorNode *node, unsigned index, Term val) {
   if (level == 0) {
@@ -1329,7 +1328,7 @@ Term nothing() {
   ReifiedVal *rv = malloc_reified(0);
   rv->type = NoneType;
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  return(term_val((Term)rv));
+  return(termVal((Term)rv));
 }
 
 Term some(Term thing) {
@@ -1337,7 +1336,7 @@ Term some(Term thing) {
   rv->type = SomeType;
   rv->impls[0] = thing;
   __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-  return(term_val((Term)rv));
+  return(termVal((Term)rv));
 }
 
 Term vectStore(Vector *vect, unsigned index, Term val) {
@@ -1469,8 +1468,8 @@ Term vectGet(Vector *vect, unsigned index) {
 Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
   String *str0 = (String *)sT; 
   char *s1, *s2;
-  long start = get_i60(startT);
-  int len = (int)get_i60(lenT);
+  long start = getI60(startT);
+  int len = (int)getI60(lenT);
 
   s1 = &str0->buffer[start];
 
@@ -1483,9 +1482,9 @@ Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
   } else if (((Value *)tgtT)->type == SubStringType) {
     ReifiedVal *str1 = (ReifiedVal *)tgtT;
     String *parent = (String *)str1->impls[0];
-    long start = get_i60(str1->impls[1]);
+    long start = getI60(str1->impls[1]);
 
-    if ((int)get_i60(str1->impls[2]) != len)
+    if ((int)getI60(str1->impls[2]) != len)
       return(nothing());
 
     s2 = &parent->buffer[start];
@@ -1575,7 +1574,7 @@ Value *strLT(Value *arg0, Value *arg1) {
 
 Term strCount(Term s) {
    String *str = (String *)((u64)s & ~7);
-   Term numVal = new_i60(str->len);
+   Term numVal = newI60(str->len);
    // dec_and_free(arg0, 1);
    return(numVal);
 }
@@ -1782,8 +1781,8 @@ int64_t integerSha1(Value *arg0) {
 }
 
 Term integer_EQ(Term arg0, Term arg1) {
-  i64 x = get_i60(arg0);
-  i64 y = get_i60(arg1);
+  i64 x = getI60(arg0);
+  i64 y = getI60(arg1);
 
   if (x != y) {
     return(nothing());
@@ -1793,8 +1792,8 @@ Term integer_EQ(Term arg0, Term arg1) {
 }
 
 Term integer_LT(Term arg0, Term arg1) {
-  i64 x = get_i60(arg0);
-  i64 y = get_i60(arg1);
+  i64 x = getI60(arg0);
+  i64 y = getI60(arg1);
 
   Term result;
 
@@ -1845,7 +1844,7 @@ Value *opaqueValue(void *ptr, Destructor *destruct) {
 };
 
 Term vectorGet(Term v, Term n) {
-  long index = get_i60(n);
+  long index = getI60(n);
   Vector *vect = (Vector *)((u64)v & ~7);
   if (index < 0 || vect->count <= index) {
     dec_and_free(v, 1);
@@ -2847,41 +2846,41 @@ Value *newTypeValue(int typeNum, Vector *vect) {
 }
 
 Term dupeGlobal(Location glbl) {
-  Term duper = pair_make(DUP, 0, SUB, SUB);
-  Term gTerm = swapStore(glbl, term_new(VAR, 0, port(1, term_loc(duper))));
+  Term duper = makePair(DUP, 0, SUB, SUB);
+  Term gTerm = swap(glbl, newTerm(VAR, 0, portLoc(1, duper)));
 
-  switch(term_tag(gTerm)) {
+  switch(termTag(gTerm)) {
   case VAL:
   case I60:
   case F60:
   case NUL:
   case REF:
-    swapStore(glbl, gTerm);
-    store_redex(duper, gTerm);
+    swap(glbl, gTerm);
+    pushRedex(duper, gTerm);
     break;
 
   case LAM:
   case SUP:
-    store_redex(duper, gTerm);
+    pushRedex(duper, gTerm);
     break;
 
   case VAR:
     if (1) {
-      Term varTerm = swapStore(term_loc(gTerm), duper);
-      varTerm = take(term_loc(varTerm));
-      switch(term_tag(varTerm)) {
+      Term varTerm = swap(termLoc(gTerm), duper);
+      varTerm = take(termLoc(varTerm));
+      switch(termTag(varTerm)) {
       case VAL:
       case I60:
       case F60:
       case NUL:
       case REF:
-	swapStore(glbl, varTerm);
-	store_redex(duper, varTerm);
+	swap(glbl, varTerm);
+	pushRedex(duper, varTerm);
 	break;
 
       case LAM:
       case SUP:
-	store_redex(duper, varTerm);
+	pushRedex(duper, varTerm);
 	break;
 
       case SUB:
@@ -2890,7 +2889,7 @@ Term dupeGlobal(Location glbl) {
       default:
 	if (1) {
 	  char s[50];
-	  sprintf(s, "bad global tag %s", tag_to_str(term_tag(varTerm)));
+	  sprintf(s, "bad global tag %s", tagStr(termTag(varTerm)));
 	  BOOM(s);
 	}
       }
@@ -2902,58 +2901,58 @@ Term dupeGlobal(Location glbl) {
   default:
     if (1) {
       char s[50];
-      sprintf(s, "bad global tag %s", tag_to_str(term_tag(gTerm)));
+      sprintf(s, "bad global tag %s", tagStr(termTag(gTerm)));
       BOOM(s);
     }
   }
-  return term_new(VAR, 0, port(2, term_loc(duper)));
+  return newTerm(VAR, 0, portLoc(2, duper));
 }
 
 void constructFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   Term newArgs = strictArgs(ref, args, 2, &arityArgs);
   if (arityArgs.count == 2) {
-    newArgs = take(port(2, term_loc(newArgs)));
-    int typeNum = get_i60(arityArgs.args[0]);
-    int numArgs = get_i60(arityArgs.args[1]);
+    newArgs = take(portLoc(2, newArgs));
+    int typeNum = getI60(arityArgs.args[0]);
+    int numArgs = getI60(arityArgs.args[1]);
     Term lastArgs = strictArgs(ref, newArgs, numArgs, &arityArgs);
     if (arityArgs.count == numArgs + 2) {
       ReifiedVal *rv = malloc_reified(numArgs);
       rv->type = typeNum;
       for (int i = 0; i < numArgs; i++) {
 	Term field = arityArgs.args[i + 2];
-	// fprintf(stderr, "field val %d: %d %p\n", __LINE__, term_tag((Term)field), field); 
+	// fprintf(stderr, "field val %d: %d %p\n", __LINE__, termTag((Term)field), field); 
 	rv->impls[i] = field;
       }
       __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
-      moveStore(port(2, term_loc(lastArgs)), term_val((Term)rv));
+      move(portLoc(2, lastArgs), termVal((Term)rv));
     }
   }
   return;
 }
-Term construct = new_ref(constructFn);
+Term construct = newRef(constructFn);
 
 void accessFieldFn(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 2, &arityArgs);
   if (arityArgs.count == 2) {
-    int fldIdx = get_i60(arityArgs.args[0]);
+    int fldIdx = getI60(arityArgs.args[0]);
     ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
     Term fld = value->impls[fldIdx];
     incRef(fld, 1);
     dec_and_free((Term)value, 1);
-    moveStore(port(2, term_loc(args)), (Term)fld);
+    move(portLoc(2, args), (Term)fld);
     /*
-      args = take(port(2, term_loc(args)));
-      Tag argsTag = term_tag(args);
+      args = take(portLoc(2, args));
+      Tag argsTag = termTag(args);
       switch(argsTag) {
       case APP: {
       Term lastArgs = strictArgs(ref, args, 1, &arityArgs);
       if (arityArgs.count == 3) {
-      int fldIdx = get_i60(arityArgs.args[0]);
+      int fldIdx = getI60(arityArgs.args[0]);
       ReifiedVal *value = (ReifiedVal *)arityArgs.args[1];
       value->impls[fldIdx] = arityArgs.args[2];
-      swapStore(port(2, term_loc(lastArgs)), term_val((Term)value));
+      swap(portLoc(2, lastArgs), termVal((Term)value));
       }
       }
       break;
@@ -2965,7 +2964,7 @@ void accessFieldFn(Term ref, Term args) {
       // TODO: what other tags need to be handled
       default: {
       char s[50];
-      sprintf(s,"unhandled tag %s (%0d) line: %d\n", tag_to_str(argsTag), argsTag, __LINE__);
+      sprintf(s,"unhandled tag %s (%0d) line: %d\n", tagStr(argsTag), argsTag, __LINE__);
       BOOM(s);
       }
       break;
@@ -2974,102 +2973,12 @@ void accessFieldFn(Term ref, Term args) {
   }
   return;
 }
-Term accessField = new_ref(accessFieldFn);
-
-char *typeName(unsigned typeNum) {
-  for (unsigned i = 0; i < typeCount; i++) {
-    if (typeNames[i].typeNum == typeNum) {
-      printf("typeName: %s\n", typeNames[i].name);
-      return typeNames[i].name;
-    }
-  }
-  return "<unknown>";
-}
-
-void freeGlobal(Term p) {
-  // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
-  interact(ERA, p);
-}
+Term accessField = newRef(accessFieldFn);
 
 Location resultLocation;
 u64 start;
 int bashResult = 1;
 u64 node_count = 1;
-
-void exitProg(Term ref, Term args) {
-  graphDown("exitProg", args, 0, subGraphs++);
-  NativeArgs arityArgs = {0, {}};
-  args = strictArgs(ref, args, 1, &arityArgs);
-  if (arityArgs.count == 1) {
-    Term result = arityArgs.args[0];
-    Tag resultTag = term_tag(result);
-    switch (resultTag) {
-    case I60:
-      bashResult = (int)get_i60(result);
-      printf("result: %p bashResult: %d\n", (void *)result, bashResult);
-      break;
-
-    case F60:
-      // TODO: handle
-      BOOM("can't return a float as a result");
-      break;
-	
-    case VAL:
-      fprintf(stderr, "val: %ld\n", ((Value *)result)->type);
-      dec_and_free(result, 1);
-      result = new_i60(0);
-      break;
-
-    default: {
-      fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
-      graphDown("result", result, 0, subGraphs++);
-      exit(1);
-    }
-      break;
-    }
-
-    double duration = (time64() - start) / 1000000000.0; // seconds
-    u64 itrs = atomic_load(&rdxCount);
-    printf("- Threads: %u\n", threadCount);
-    printf("- ITRS: %" PRIu64 "\n", itrs);
-
-    Term neg, pos;
-    while (pop_redex(&neg, &pos)) {
-      graphDown("NEG", neg, 0, subGraphs++);
-      graphDown("POS", pos, nodeCount, subGraphs++);
-      interact(neg, NUL);
-      interact(ERA, pos);
-    }
-    node_count = atomic_load(&glblAlloced);
-    u64 max_node = atomic_load(&RNOD_END);
-    // printf("- ITRS: %" PRIu64 " TIME: %.2fs  MIPS: %.2f\n", itrs, duration, (double)itrs / duration / 1000000.0);
-    if (node_count != 0) {
-      fprintf(stderr, "remaining nodes: %ld (%ld)\n", node_count, max_node);
-      check_buff();
-    }
-
-    fprintf(dotFile, "}\n");
-    fclose(dotFile);
-
-#ifdef CHECK_MEM_LEAK
-    freeGlobals();
-    cleaningUp = 1;
-    freeAll();
-    if (malloc_count - free_count != 0 || node_count != 0)
-      exit(1);
-#endif
-    hvm_free();
-    /*
-      free_static_tms();
-      free(globalNet);
-      // */
-
-    exit(bashResult);
-
-  }
-  return;
-}
-Term exitRef = new_ref(exitProg);
 
 Term valTerm(Term val) {
   // ensure a Term is a valid native value
@@ -3080,183 +2989,6 @@ Term valTerm(Term val) {
     abort();
   }
   return val;
-}
-
-Term argsNet(NativeArgs *args) {
-  Term tail;
-  if(args->count < 1)
-    BOOM("argsNet");
-  else
-    tail = args->args[args->count - 1];
-
-  for (int i = args->count - 2; i >= 0; i--) {
-    tail = makePair(APP, 0, args->args[i], tail);
-  }
-
-  return tail;
-}
-
-void varArg(Term trm, Term ref, Term args, NativeArgs *argsStruct) {
-  Location trmLoc = termLoc(trm);
-  Term val = get(trmLoc);
-  switch(termTag(val)) {
-  case LAZ:
-    swap(trmLoc, SUB);
-    forceLazy(val);
-	
-  case SUB:
-    // add the remaining args to argsStruct
-    argsStruct->args[argsStruct->count++] = args;
-
-    // create a chain of APP terms from argsStruct
-    Term newArgs = argsNet(argsStruct);
-
-    // put 'trm' back in it's place
-    swap(portLoc(1, args), trm);
-
-    // make a deferred redex to retry the APP/REF pair when the value becomes available
-    Term retry = makePair(SUB, 5, newArgs, ref);
-
-    // and put it in the location 'trm' points to
-    Term newArg = swap(trmLoc, retry);
-    if (newArg != SUB) {
-      // someone slipped the needed trm in since we last looked
-      swap(trmLoc, newArg);
-      freePair(termLoc(retry));
-
-      // so retry the original APP/REF redex
-      pushRedex(newArgs, ref);
-    }
-    break;
-
-  default:
-    printRawTerm(val);
-    printf("\n");
-    BOOM("nativeArgs");
-    break;
-  }
-}
-
-// extract the requested number of native args. I60, F60, REF or VAL terms
-Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
-  /*
-  char *refName = NULL;
-  for (unsigned i = 0; i <= refsCount; i++) {
-    if (refNames[i].fn == (interactionFn)(ref & ~TAG_MASK)) {
-      refName = refNames[i].name;
-      break;
-    }
-  }
-  if (expected == 1) {
-    if (refName != NULL) {
-      char msg[200];
-      sprintf(msg, "%s %03x:", refName, termLoc(args));
-      graphDown(msg, args);
-    } else {
-      graphDown("unknown", args);
-    }
-    // if (strcmp(refName, "str-eq") == 0) {
-    // printTerm("str-eq args", args);
-    // }
-  }
-  // */
-  Tag argsTag = termTag(args);
-  if (argsTag == APP || argsTag == OPY) {
-    // if 'args' is an APP term
-    Term arg = take(portLoc(1, args));
-    if (expected == 0) {
-      return args;
-    }
-
-    // 'arg' will only ever be a positive term
-    Tag argTag = termTag(arg);
-    switch(argTag) {
-      // the strict arg types
-    case VAL:
-    case I60:
-    case F60:
-    case REF:
-      // add it to argsStruct
-      argsStruct->args[argsStruct->count++] = arg;
-      if (expected > 1)
-	// need to get more strict args
-	return strictArgs(ref, take(portLoc(2, args)), expected - 1, argsStruct);
-      else
-	return args;
-      break;
-
-    case LAM: {
-      TermVal *tv = malloc_term();
-      tv->trmLoc = allocPair();
-      swap(tv->trmLoc, arg);
-
-      // add it to argsStruct
-      argsStruct->args[argsStruct->count++] = (Term)tv;
-      if (expected > 1)
-	// need to get more strict args
-	return strictArgs(ref, take(portLoc(2, args)), expected - 1, argsStruct);
-      else
-	return args;
-    }
-      break;
-
-    case NUL:
-      move(portLoc(2, args), NUL);
-      for (int i = 0; i < argsStruct->count; i++)
-	dec_and_free(argsStruct->args[i], 1);
-      break;
-
-    case SUP:
-      for(int i = 0; i < argsStruct->count; i++)
-	incRef(argsStruct->args[i], 1);
-      Term s1 = take(portLoc(1, arg));
-      Term s2 = take(portLoc(2, arg));
-      Lab supLabel = termLab(arg);
-      int argsCount = argsStruct->count;
-      argsStruct->count += 1;
-
-      Term tail1 = makePair(APP, 0, s1, SUB);
-      argsStruct->args[argsCount] = tail1;
-      swap(portLoc(2, tail1), makePair(LAZ, 0, argsNet(argsStruct), ref));
-
-      Term tail2 = makePair(APP, 0, s2, SUB);
-      argsStruct->args[argsCount] = tail2;
-      swap(portLoc(2, tail2), makePair(LAZ, 0, argsNet(argsStruct), ref));
-
-      Term newSup = makePair(SUP, supLabel,
-			      newTerm(VAR, 0, portLoc(2, tail1)),
-			      newTerm(VAR, 0, portLoc(2, tail2)));
-      move(portLoc(2, args), newSup);
-      break;
-
-    case VAR:
-      varArg(arg, ref, args, argsStruct);
-      break;
-
-    case LAZ:
-    default:
-      fprintf(stderr, "unhandled tag %s (0x%x) line: %d\n", tagStr(termTag(arg)),
-	     termTag(arg), __LINE__);
-      fprintf(dotFile, "}\n");
-      fclose(dotFile);
-      abort();
-      break;
-    }
-    argsStruct->count = -1;
-    return 0;
-    // } else if (argsTag == VAR) {
-    // if 'args' is a VAR term
-  } else {
-    fprintf(stderr, "strictArgs expected: %d\n", expected);
-    printTerm("strictArgs args", args);
-    fprintf(stderr, "unhandled tag %s (0x%x) %p line: %d\n",
-	   tagStr(argsTag), argsTag, (void *)args, __LINE__);
-    fprintf(dotFile, "}\n");
-    fclose(dotFile);
-    abort();
-    return 0;
-  }
-
 }
 
 Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel) {
@@ -3319,6 +3051,22 @@ void intCond(Term ref, Term args) {
   }
 }
 
+#ifndef TESTING_HVM
+char *typeName(unsigned typeNum) {
+  for (unsigned i = 0; i < typeCount; i++) {
+    if (typeNames[i].typeNum == typeNum) {
+      printf("typeName: %s\n", typeNames[i].name);
+      return typeNames[i].name;
+    }
+  }
+  return "<unknown>";
+}
+
+void freeGlobal(Term p) {
+  // fprintf(stderr, "glbl: %d %p\n", __LINE__, (void *)p);
+  interact(ERA, p);
+}
+
 int main (int argc, char **argv) {
   Term alts[200];
   unsigned altsCount = 0;
@@ -3335,8 +3083,8 @@ int main (int argc, char **argv) {
   dotFile = fopen("graphs.dot", "w");
   fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
 
-  hvm_init(1024 * 1024 * 1024);
-  hvm_reset();
+  hvmInit(1024 * 1024 * 1024);
+  hvmReset();
 
   start = time64();
 
@@ -3351,27 +3099,27 @@ int main (int argc, char **argv) {
     Vector *argVect = empty_vect;
     for(int i = 0; i < argc; i++) {
       Value* sv = stringValue(argv[i]);
-      argVect = mutateVectConj(argVect, term_val((Term)sv));
+      argVect = mutateVectConj(argVect, termVal((Term)sv));
     }
     bashResult = 0;
     Term callArgs;
-    callArgs = pair_make(APP, 0, term_val((Term)argVect), SUB);
+    callArgs = makePair(APP, 0, termVal((Term)argVect), SUB);
     // fprintf(stderr, "argVect %d: %p\n", __LINE__, (void *)argVect);
-    resultLocation = port(2, term_loc(callArgs));
+    resultLocation = portLoc(2, callArgs);
     // fprintf(stderr, "resultLocation: %0x\n", resultLocation);
-    store_redex(callArgs, mainFn);
+    pushRedex(callArgs, mainFn);
 
     Tag resultTag;
     do {
       normalize(NULL);
       result = take(resultLocation);
       graphDown("result", result, 0, subGraphs++);
-      resultTag = term_tag(result);
+      resultTag = termTag(result);
       if (resultTag == VAR) {
-	resultLocation = term_loc(result);
+	resultLocation = termLoc(result);
 	result = get(resultLocation);
 	freeLoc(resultLocation);
-	resultTag = term_tag(result);
+	resultTag = termTag(result);
       }
 
       // printf("result %d:\n", __LINE__);
@@ -3386,63 +3134,63 @@ int main (int argc, char **argv) {
       case ERA:
 	if (altsCount > 0) {
 	  result = alts[--altsCount];
-	  resultTag = term_tag(result);
-	  swapStore(resultLocation, result);
+	  resultTag = termTag(result);
+	  swap(resultLocation, result);
 	} else {
-	  result = new_i60(0);
+	  result = newI60(0);
 	  resultTag = I60;
 	}
 	break;
 	
       case SUB:
 	if (result != SUB) {
-	  Term neg = take(port(1, term_loc(result)));
-	  Term pos = take(port(2, term_loc(result)));
-	  store_redex(neg, pos);
+	  Term neg = take(portLoc(1, result));
+	  Term pos = take(portLoc(2, result));
+	  pushRedex(neg, pos);
 	} else if (altsCount > 0) {
 	  result = alts[--altsCount];
-	  resultTag = term_tag(result);
-	  swapStore(resultLocation, result);
+	  resultTag = termTag(result);
+	  swap(resultLocation, result);
 	} else {
 	  // graphDown("BOOM", result);
-	  print_term("result", result);
+	  printTerm("result", result);
 	  BOOM("Compiler screwed up. Incomplete result.");
 	}
 	break;
 
       case LAZ:
-	swapStore(resultLocation, SUB);
+	swap(resultLocation, SUB);
 	forceLazy(result);
 	break;
 
       case VAL:
 	dec_and_free(result, 1);
-	result = new_i60(0);
+	result = newI60(0);
 	resultTag = I60;
 	break;
 
       case SUP: {
-	Lab l = term_lab(result);
-	Location loc = term_loc(result);
-	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
+	Lab l = termLab(result);
+	Location loc = termLoc(result);
+	fprintf(stderr, "bad result %s (%d) pair\n", tagStr(resultTag), resultTag);
 	graphDown("SUP result", result, 0, subGraphs++);
-	Term newResult = take(port(2, loc)) ;
+	Term newResult = take(loc + 1) ;
 	alts[altsCount++] = newResult;
 	graphDown("newResult", newResult, 0, subGraphs++);
-	newResult = take(port(1, loc)) ;
+	newResult = take(loc) ;
 	graphDown("newResult", newResult, 0, subGraphs++);
 	result = newResult;
-	resultTag = term_tag(result);
-	swapStore(resultLocation, result);
+	resultTag = termTag(result);
+	swap(resultLocation, result);
       }
 	break;
 
       default: {
-	fprintf(stderr, "bad result %s (%d) pair\n", tag_to_str(resultTag), resultTag);
+	fprintf(stderr, "bad result %s (%d) pair\n", tagStr(resultTag), resultTag);
 	graphDown("result", result, 0, subGraphs++);
 	interact(ERA, result);
-	result = new_i60(1);
-	resultTag = term_tag(result);
+	result = newI60(1);
+	resultTag = termTag(result);
       }
 	break;
       }
@@ -3451,24 +3199,26 @@ int main (int argc, char **argv) {
   for (int i = 0; i < altsCount; i++) {
     Term alt = alts[i];
     graphDown("alt", alt, 0, subGraphs++);
-    print_term("alt", alt);
+    printTerm("alt", alt);
     if (hasLocation(alt))
-      eraseCycle(alt, term_loc(alt));
+      eraseCycle(alt, termLoc(alt));
     interact(ERA, alts[i]);
   }
+#ifdef CHECK_MEM_LEAK
   freeGlobals();
+#endif
 
   double duration = (time64() - start) / 1000000000.0; // seconds
   u64 itrs = atomic_load(&rdxCount);
   u64 node_count = atomic_load(&glblAlloced);
-  u64 max_node = atomic_load(&RNOD_END);
+  u64 max_node = atomic_load(&buffEnd);
   printf("- Threads: %u\n", threadCount);
   printf("- ITRS: %" PRIu64 "\n", itrs);
   // printf("- ITRS: %" PRIu64 " TIME: %.2fs  MIPS: %.2f\n", itrs, duration, (double)itrs / duration / 1000000.0);
   printf("remaining nodes: %ld (%ld)\n", node_count, max_node);
   if (node_count != 0) {
     fprintf(stderr, "remaining nodes: %ld (%ld)\n", node_count, max_node);
-    check_buff();
+    checkBuff();
     fprintf(dotFile, "}\n");
     fclose(dotFile);
     exit(1);
@@ -3476,14 +3226,14 @@ int main (int argc, char **argv) {
   fprintf(dotFile, "}\n");
   fclose(dotFile);
 
-  Tag t = term_tag(result);
+  Tag t = termTag(result);
   if (t == I60) {
-    bashResult = (int)get_i60(result);
+    bashResult = (int)getI60(result);
     printf("result: %p bashResult: %d\n", (void *)result, bashResult);
   } else if (t == F60) {
     // TODO: handle
     BOOM("can't return a float as a result");
-  } else if (term_tag(result) == VAL) {
+  } else if (termTag(result) == VAL) {
     result = (u64)result & ~7;
     printf("result %d:  %p\n", __LINE__, (void *)result);
     dec_and_free(result, 1);
@@ -3494,10 +3244,11 @@ int main (int argc, char **argv) {
   if (malloc_count - free_count != 0 || node_count != 0)
     return(1);
 #endif
-  hvm_free();
+  hvmFree();
 /*
   free_static_tms();
   free(globalNet);
 // */
   return(bashResult);
 }
+#endif

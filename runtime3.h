@@ -8,8 +8,6 @@
 #include <sys/wait.h>
 #include "new.h"
 
-extern FILE *dotFile;
-
 #define CLOSURE_INFO 1
 
 extern void abort();
