@@ -322,6 +322,271 @@ void testEraBoth(void) {
 }
 
 // Test cascading: outer APP/outer LAM interaction creates a redex of inner APP/inner LAM
+// Test APP/NUL interaction: APP principal connects to NUL
+// After: port1 → NUL, port2 → ERA
+void testAppNul(void) {
+  char msg[100];
+
+  // Build APP: port1=I60(7), port2=ERA
+  Term app = makePair(APP, 0, newI60(7), ERA);
+
+  // Trigger APP/NUL interaction
+  interact(app, NUL);
+
+  // Post-checks: APP rewired — port1=NUL, port2=ERA
+  Term port1 = take(portLoc(1, app));
+  Term port2 = take(portLoc(2, app));
+
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "APP port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != ERA) {
+    sprintf(msg, "APP port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPX/NUL interaction
+void testOpxNul(void) {
+  char msg[100];
+
+  // Build OPX: port1=I60(7), port2=ERA
+  Term opx = makePair(OPX, 0, newI60(7), ERA);
+
+  interact(opx, NUL);
+
+  Term port1 = take(portLoc(1, opx));
+  Term port2 = take(portLoc(2, opx));
+
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "OPX port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != ERA) {
+    sprintf(msg, "OPX port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPY/NUL interaction
+void testOpYNul(void) {
+  char msg[100];
+
+  // Build OPY: port1=I60(7), port2=ERA
+  Term opy = makePair(OPY, 0, newI60(7), ERA);
+
+  interact(opy, NUL);
+
+  Term port1 = take(portLoc(1, opy));
+  Term port2 = take(portLoc(2, opy));
+
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "OPY port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != ERA) {
+    sprintf(msg, "OPY port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test SUB/NUL interaction: circle node connects to NUL
+// After: port1 → NUL, port2 → ERA
+void testSubNul(void) {
+  char msg[100];
+
+  // Build SUB: port1=ERA, port2=I60(7)
+  Term sub = makePair(SUB, 0, ERA, newI60(7));
+
+  interact(sub, NUL);
+
+  Term port1 = take(portLoc(1, sub));
+  Term port2 = take(portLoc(2, sub));
+
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "SUB port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != ERA) {
+    sprintf(msg, "SUB port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test ERA/SUP interaction: ERA connects to SUP principal
+// After: two ERAs connect to SUP's ports
+void testEraSup(void) {
+  char msg[100];
+
+  // Build SUP: port1=I60(7), port2=I60(8)
+  Term sup = makePair(SUP, 0, newI60(7), newI60(8));
+
+  interact(ERA, sup);
+
+  Term port1 = take(portLoc(1, sup));
+  Term port2 = take(portLoc(2, sup));
+
+  if (termTag(port1) != ERA) {
+    sprintf(msg, "SUP port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != ERA) {
+    sprintf(msg, "SUP port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test DUP/NUL interaction: DUP principal connects to NUL
+// After: both DUP aux ports connect to NUL
+void testDupNul(void) {
+  char msg[100];
+
+  // Build DUP: port1=ERA, port2=ERA
+  Term dup = makePair(DUP, 0, ERA, ERA);
+
+  interact(dup, NUL);
+
+  Term port1 = take(portLoc(1, dup));
+  Term port2 = take(portLoc(2, dup));
+
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != NUL) {
+    sprintf(msg, "DUP port 2 should be NUL, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test DUP/NUM interaction: DUP connects to I60
+// After: both ports get the number
+void testDupNum(void) {
+  char msg[100];
+
+  // Build DUP: port1=ERA, port2=ERA
+  Term dup = makePair(DUP, 0, ERA, ERA);
+
+  interact(dup, newI60(42));
+
+  Term port1 = take(portLoc(1, dup));
+  Term port2 = take(portLoc(2, dup));
+
+  if (termTag(port1) != I60 || getI60(port1) != 42) {
+    sprintf(msg, "DUP port 1 should be I60(42), got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != I60 || getI60(port2) != 42) {
+    sprintf(msg, "DUP port 2 should be I60(42), got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPX/NUM interaction: OPX connects to I60
+// After: # to port1, OPY to port2
+void testOpxNum(void) {
+  char msg[100];
+
+  // Build OPX: port1=I60(3), port2=ERA
+  Term opx = makePair(OPX, OP_ADD, newI60(3), ERA);
+
+  interact(opx, newI60(5));
+
+  Term port1 = take(portLoc(1, opx));
+  Term port2 = take(portLoc(2, opx));
+
+  if (termTag(port1) != I60 || getI60(port1) != 5) {
+    sprintf(msg, "OPX port 1 should be I60(5), got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != OPY) {
+    sprintf(msg, "OPX port 2 should be OPY, got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  // Verify OPY: port1=#, port2=b (b was ERA)
+  Term opyPort1 = take(portLoc(1, port2));
+  Term opyPort2 = take(portLoc(2, port2));
+  if (termTag(opyPort1) != I60 || getI60(opyPort1) != 5) {
+    sprintf(msg, "OPY port 1 should be I60(5), got tag %s", tagStr(termTag(opyPort1)));
+    BOOM(msg);
+  }
+  // opyPort2 was ERA (b), take returns ERA
+  if (termTag(opyPort2) != ERA) {
+    sprintf(msg, "OPY port 2 should be ERA, got tag %s", tagStr(termTag(opyPort2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPY/NUM interaction: OPY connects to I60
+// After: result (#1 op #2) in both ports
+void testOpYNum(void) {
+  char msg[100];
+
+  // Build OPY: port1=I60(3), port2=ERA
+  Term opy = makePair(OPY, OP_ADD, newI60(3), ERA);
+
+  interact(opy, newI60(5));
+
+  Term port1 = take(portLoc(1, opy));
+  Term port2 = take(portLoc(2, opy));
+
+  if (termTag(port1) != I60 || getI60(port1) != 8) {
+    sprintf(msg, "OPY port 1 should be I60(8), got tag %s", tagStr(termTag(port1)));
+    BOOM(msg);
+  }
+  if (termTag(port2) != I60 || getI60(port2) != 8) {
+    sprintf(msg, "OPY port 2 should be I60(8), got tag %s", tagStr(termTag(port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 void testCascadingRedex(void) {
   char msg[100];
   u64 initialAlloced = glblAlloced;
@@ -418,6 +683,15 @@ int main(int argc, char *argv[]) {
   testEraLamNulBody();
   testEraLamLamBody();
   testCascadingRedex();
+  testAppNul();
+  testOpxNul();
+  testOpYNul();
+  testSubNul();
+  testEraSup();
+  testDupNul();
+  testDupNum();
+  testOpxNum();
+  testOpYNum();
 
   hvmFree();
   return 0;

@@ -25,25 +25,34 @@ Read in order: the calculus defines the rules, the implementation shows how they
 | 3 | ERA/NUL | `eraLeaf` | No-op — both leaves, already freed |
 | 4 | ERA/I60 | `eraLeaf` | No-op — both leaves, already freed |
 | 5 | ERA/F60 | `eraLeaf` | No-op — both leaves, already freed |
+| 6 | APP/NUL | `appNul` | Redirect: port1→NUL, port2→ERA |
+| 7 | OPX/NUL | `opxNul` | Same as APP/NUL |
+| 8 | OPY/NUL | `opyNul` | Same as APP/NUL |
+| 9 | SUB/NUL | `subNul` | Same pattern |
+| 10 | ERA/SUP | `eraSup` | Two ERAs to SUP's ports |
+| 11 | DUP/NUL | `dupNul` | Both DUP ports→NUL |
+| 12 | DUP/NUM | `dupNum` | Both DUP ports→# |
+| 13 | OPX/NUM | `opxNum` | #→OPY, OPY ports wired |
+| 14 | OPY/NUM | `opyNum` | b→result (#1 op #2) |
 
 ## Remaining — Ordered by Implementation Priority
 
 ### Tier 1: Simple leaf redirections (same pattern as APP/LAM)
 
-- [ ] **APP/NUL** — APP principal connects to NUL. Redirect: port1 → NUL, port2 → ERA.
-- [ ] **OPX/NUL, OPY/NUL** — Identical to APP/NUL. OPX or OPY principal connects to NUL. Redirect: port1 → NUL, port2 → ERA.
-- [ ] **SUB/NUL** — Same pattern. SUB circle node connects to NUL. Redirect: port1 → NUL, port2 → ERA.
+- [x] **APP/NUL** — APP principal connects to NUL. Redirect: port1 → NUL, port2 → ERA.
+- [x] **OPX/NUL, OPY/NUL** — Identical to APP/NUL. OPX or OPY principal connects to NUL. Redirect: port1 → NUL, port2 → ERA.
+- [x] **SUB/NUL** — Same pattern. SUB circle node connects to NUL. Redirect: port1 → NUL, port2 → ERA.
 
 ### Tier 2: ERA on constructors
 
-- [ ] **ERA/SUP** — ERA connects to SUP. After: two ERAs to SUP's ports.
-- [ ] **DUP/NUL** — DUP connects to NUL. After: NUL to both DUP ports.
+- [x] **ERA/SUP** — ERA connects to SUP. After: two ERAs to SUP's ports.
+- [x] **DUP/NUL** — DUP connects to NUL. After: NUL to both DUP ports.
 
 ### Tier 3: NUM (#) interactions
 
-- [ ] **DUP/NUM** — DUP connects to #. After: # to both DUP ports.
-- [ ] **OPX/NUM** — OPX connects to #. After: # connects to OPY, OPY ports wired.
-- [ ] **OPY/NUM** — OPY connects to #. After: b connects to result (#1 op #2).
+- [x] **DUP/NUM** — DUP connects to #. After: # to both DUP ports.
+- [x] **OPX/NUM** — OPX connects to #. After: # connects to OPY, OPY ports wired.
+- [x] **OPY/NUM** — OPY connects to #. After: b connects to result (#1 op #2).
 
 ### Tier 4: Constructor interactions
 
