@@ -810,74 +810,22 @@ void subNul(Term neg, Term pos) {
 // ERA/SUP interaction: ERA connects to SUP principal
 // After: two ERAs connect to SUP's ports (x and y erased)
 void eraSup(Term neg, Term pos) {
-  // neg = ERA, pos = SUP
-  // SUP: port1=positive, port2=positive
-  // Take both ports of SUP and erase them
-  Term x = get(portLoc(1, pos));
-  Term y = get(portLoc(2, pos));
-  eraseBody(x);
-  eraseBody(y);
-  // Write ERA to both ports
-  Term old1 = get(portLoc(1, pos));
-  if (termTag(old1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, pos)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, pos), ERA);
-  }
-  Term old2 = get(portLoc(2, pos));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, pos)], ERA, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, pos), ERA);
-  }
+  interact(ERA, newTerm(VAR, 0, portLoc(2, pos)));
+  interact(ERA, newTerm(VAR, 0, portLoc(1, pos)));
 }
 
 // DUP/NUL interaction: DUP principal connects to NUL
 // After: both DUP aux ports connect to NUL (a and b erased)
 void dupNul(Term neg, Term pos) {
-  // neg = DUP, pos = NUL
-  // DUP: port1=negative, port2=negative
-  Term a = get(portLoc(1, neg));
-  Term b = get(portLoc(2, neg));
-  eraseBody(a);
-  eraseBody(b);
-  Term old1 = get(portLoc(1, neg));
-  if (termTag(old1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, neg)], NUL, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, neg), NUL);
-  }
-  Term old2 = get(portLoc(2, neg));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, neg)], NUL, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, neg), NUL);
-  }
+  move(portLoc(1, neg), pos);
+  move(portLoc(2, neg), pos);
 }
 
 // DUP/NUM interaction: DUP principal connects to I60 (#)
 // After: a → #, b → # (both ports get the number)
 void dupNum(Term neg, Term pos) {
-  // neg = DUP, pos = I60
-  // DUP: port1=negative, port2=negative
-  Term num = pos; // the I60 value
-  Term a = get(portLoc(1, neg));
-  Term b = get(portLoc(2, neg));
-  eraseBody(a);
-  eraseBody(b);
-  // Write num to both ports
-  Term old1 = get(portLoc(1, neg));
-  if (termTag(old1) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(1, neg)], num, memory_order_relaxed);
-  } else {
-    swap(portLoc(1, neg), num);
-  }
-  Term old2 = get(portLoc(2, neg));
-  if (termTag(old2) == ERA) {
-    atomic_store_explicit(&nodeBuff[portLoc(2, neg)], num, memory_order_relaxed);
-  } else {
-    swap(portLoc(2, neg), num);
-  }
+  move(portLoc(1, neg), pos);
+  move(portLoc(2, neg), pos);
 }
 
 // OPX/NUM interaction: OPX principal connects to I60 (#)
