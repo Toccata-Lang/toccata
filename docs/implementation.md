@@ -164,6 +164,27 @@ Creates an operator term: builds an `OPX` pair with the operation code, wraps it
 1. **Normal case**: Push the thunk body as a redex.
 2. **Lazy DUP self-reference**: Detect circular lazy dups, replace self-pointing ports with `SUB` (deferred redexes), and set up the reduction graph.
 
+### LAZ structural constraints
+
+LAZ nodes are **positive-polarity** but can only be stored in **negative ports** (APP port 2, DUP ports). This breaks the standard interactive combinator model — LAZ nodes have **two incoming edges**, which means they can only be pointed to by **VAR nodes** (not by direct port connections in most cases).
+
+**Lazy DUP pattern:**
+```
+DUP port 1 ──→ LAZ (same location)
+DUP port 2 ──→ LAZ (same location)
+LAZ port 1 (negative) ──→ DUP (back to DUP's negative port)
+LAZ port 2 (positive) ──→ VAR chain ──→ DUP
+```
+Both DUP ports contain the **same LAZ term** (same location). The LAZ's thunk body (port 1) points back to the DUP's negative port, forming a self-referential loop. The LAZ's context (port 2) is a **positive** term, so it cannot directly contain the DUP (negative). It must be a **VAR** that chains to the DUP. Cycle detection from the context follows VAR chains to find the DUP.
+
+**Lazy APP pattern:**
+```
+APP port 2 (negative) ──→ LAZ
+LAZ port 1 (negative) ──→ APP (back to APP node)
+LAZ port 2 (positive) ──→ positive context value
+```
+The LAZ's thunk body points back to the APP node, and the LAZ's context carries the positive value the APP will interact with when forced.
+
 ## Thread Safety
 
 - **Non-atomic mode** (`NON_ATOMIC`): Single-threaded, direct array access.
@@ -181,7 +202,7 @@ Creates an operator term: builds an `OPX` pair with the operation code, wraps it
 | `printFreeList()` | Dumps the free list chain |
 | `pb()` / `pr()` | Print buffer / print redexes (convenience wrappers) |
 | `check_buff()` | Checks for leaked pairs (non-NUL entries still in use) |
-| `eraseCycle()` | Detects cycles in term graphs (for `CHECK_MEM_LEAK`) |
+| `isCycle()` | Detects cycles in term graphs (for `CHECK_MEM_LEAK`) |
 
 ## Initialization
 

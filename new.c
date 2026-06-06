@@ -349,8 +349,7 @@ char findCycleNode(Location nodeLoc) {
   return 0;
 }
 
-unsigned cycleCallCount = 0;
-int eraseSubCycle(Term tree, Location tgtLoc) {
+int findCycle(Term tree, Location tgtLoc) {
 #ifndef CHECK_MEM_LEAK
   BOOM("Not thread safe");
 #endif
@@ -361,12 +360,6 @@ int eraseSubCycle(Term tree, Location tgtLoc) {
   // fprintf(stderr, "tgtLoc: %lx\n", tgtLoc);
   // printTerm("tree", tree);
 
-  cycleNode *cn = &cycleNodes[cycleNodeCount++];
-  if (cycleNodeCount > 999)
-    BOOM("cycleNodeCount!");
-  cn->loc = hasLocation(tree) ? termLoc(tree) : buffEnd;
-  cn->trm = tree;
-
   Tag t = termTag(tree);
   switch(t) {
   case VAR: {
@@ -374,11 +367,16 @@ int eraseSubCycle(Term tree, Location tgtLoc) {
     if (loc == tgtLoc) {
       return 1;
     } else {
-      return eraseSubCycle(get(loc), tgtLoc);
+      return findCycle(get(loc), tgtLoc);
     }
     // */
   }
     break;
+
+  case SUB:
+    if (termLab(tree) == 0)
+      break;
+    // else fall through
 
   case SUP:
   case DUP: 
@@ -387,15 +385,21 @@ int eraseSubCycle(Term tree, Location tgtLoc) {
   case LAZ:
   case LAM:
   case APP: {
+    cycleNode *cn = &cycleNodes[cycleNodeCount++];
+    if (cycleNodeCount > 999)
+      BOOM("cycleNodeCount!");
+    cn->loc = termLoc(tree);
+    cn->trm = tree;
+
     Location loc = portLoc(1, tree);
     Term branch = get(loc);
-    eraseSubCycle(branch, tgtLoc);
+    findCycle(branch, tgtLoc);
     if (termTag(branch) == VAR && termLoc(branch) == tgtLoc)
       return 1;
 
     loc = portLoc(2, tree);
     branch = get(loc);
-    eraseSubCycle(branch, tgtLoc);
+    findCycle(branch, tgtLoc);
     if (termTag(branch) == VAR && termLoc(branch) == tgtLoc)
       return 1;
   }
@@ -404,10 +408,9 @@ int eraseSubCycle(Term tree, Location tgtLoc) {
   return 0;
 }
 
-int eraseCycle(Term tree, Location tgtLoc) {
-  cycleCallCount = 0;
+int isCycle(Term tree, Location tgtLoc) {
   cycleNodeCount = 0;
-  return eraseSubCycle(tree, tgtLoc);
+  return findCycle(tree, tgtLoc);
 }
 
 // Atomic swap operation
