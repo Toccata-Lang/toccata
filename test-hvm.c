@@ -1223,7 +1223,6 @@ void testIsCycleVarThruSup(void) {
     BOOM(msg);
   }
 
-  subGraph("laz", laz, 0);
 
   int result = isCycle(get(portLoc(2, laz)), lazLoc);
   if (result != 1) {
@@ -1275,7 +1274,6 @@ void testIsCycleVarThruSupI60(void) {
     BOOM(msg);
   }
 
-  subGraph("laz", laz, 0);
 
   int result = isCycle(get(portLoc(2, laz)), lazLoc);
   if (result != 1) {
@@ -1329,7 +1327,6 @@ void testIsCycleVarThruLamI60(void) {
     BOOM(msg);
   }
 
-  subGraph("laz", laz, 0);
 
   int result = isCycle(get(portLoc(2, laz)), lazLoc);
   if (result != 1) {
@@ -1383,7 +1380,6 @@ void testIsCycleVarThruSupNul(void) {
     BOOM(msg);
   }
 
-  subGraph("laz", laz, 0);
 
   int result = isCycle(get(portLoc(2, laz)), lazLoc);
   if (result != 1) {
@@ -1437,7 +1433,6 @@ void testIsCycleVarThruLamNulPort2(void) {
     BOOM(msg);
   }
 
-  subGraph("laz", laz, 0);
 
   int result = isCycle(get(portLoc(2, laz)), lazLoc);
   if (result != 1) {
@@ -1494,7 +1489,6 @@ void testIsCycleVarThruSupDupPort2(void) {
     BOOM(msg);
   }
 
-  subGraph("laz", laz, 0);
 
   int result = isCycle(get(portLoc(2, laz)), lazLoc);
   if (result != 1) {
@@ -1643,7 +1637,6 @@ void testEraVarThruSupI60(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
@@ -1670,7 +1663,6 @@ void testEraVarThruLamI60(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
@@ -1695,7 +1687,6 @@ void testEraVarThruSupNul(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
@@ -1722,7 +1713,6 @@ void testEraVarThruLamNulPort2(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
@@ -1747,7 +1737,6 @@ void testEraVarThruSupVarToDupPort1(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
@@ -1775,7 +1764,6 @@ void testEraVarThruSupDupPort2(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
