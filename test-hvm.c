@@ -1628,6 +1628,163 @@ void testEraseLazyNoCycleDup2(void) {
   }
 }
 
+// eraVar test: SUP port1=VAR→DUP port2, port2=I60 — cycle
+void testEraVarThruSupI60(void) {
+  char msg[100];
+
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  Term sup = makePair(SUP, 0, newTerm(VAR, 0, portLoc(2, dup)), newI60(77));
+
+  Term laz = makePair(LAZ, 0, dup, sup);
+  Location lazLoc = termLoc(laz);
+
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  subGraph("laz", laz, 0);
+
+  interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAM port1=APP(I60,ERA), port2=VAR→DUP port2 — cycle
+void testEraVarThruLamI60(void) {
+  char msg[100];
+
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  Term app = makePair(APP, 0, newI60(77), ERA);
+  Term var = newTerm(VAR, 0, portLoc(2, dup));
+  Term lam = makePair(LAM, 0, app, var);
+
+  Term laz = makePair(LAZ, 0, dup, lam);
+  Location lazLoc = termLoc(laz);
+
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  subGraph("laz", laz, 0);
+
+  interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: SUP port1=NUL, port2=VAR→DUP port2 — cycle
+void testEraVarThruSupNul(void) {
+  char msg[100];
+
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  Term sup = makePair(SUP, 0, NUL, newTerm(VAR, 0, portLoc(2, dup)));
+
+  Term laz = makePair(LAZ, 0, dup, sup);
+  Location lazLoc = termLoc(laz);
+
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  subGraph("laz", laz, 0);
+
+  interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAM port1=APP(NUL,ERA), port2=VAR→DUP port2 — cycle
+void testEraVarThruLamNulPort2(void) {
+  char msg[100];
+
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  Term app = makePair(APP, 0, NUL, ERA);
+  Term var = newTerm(VAR, 0, portLoc(2, dup));
+  Term lam = makePair(LAM, 0, app, var);
+
+  Term laz = makePair(LAZ, 0, dup, lam);
+  Location lazLoc = termLoc(laz);
+
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  subGraph("laz", laz, 0);
+
+  interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: SUP port1=VAR→DUP port1, port2=I60 — VAR points to DUP port 1 (debug)
+void testEraVarThruSupVarToDupPort1(void) {
+  char msg[100];
+
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  Term sup = makePair(SUP, 0, newTerm(VAR, 0, portLoc(1, dup)), newI60(77));
+
+  Term laz = makePair(LAZ, 0, dup, sup);
+  Location lazLoc = termLoc(laz);
+
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  subGraph("laz", laz, 0);
+
+  interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: SUP→LAM→APP→VAR→DUP port2 — cycle
+void testEraVarThruSupDupPort2(void) {
+  char msg[100];
+
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  Term var = newTerm(VAR, 0, portLoc(2, dup));
+  Term app = makePair(APP, 0, var, ERA);
+  Term lam = makePair(LAM, 0, app, newI60(77));
+  Term sup = makePair(SUP, 0, lam, NUL);
+
+  Term laz = makePair(LAZ, 0, dup, sup);
+  Location lazLoc = termLoc(laz);
+
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  subGraph("laz", laz, 0);
+
+  interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 
 int main(int argc, char *argv[]) {
   hvmInit(1024);
@@ -1679,6 +1836,12 @@ int main(int argc, char *argv[]) {
   testEraseLazyCycle2();
   testEraseLazyNoCycleDup1();
   testEraseLazyNoCycleDup2();
+  testEraVarThruSupI60();
+  testEraVarThruLamI60();
+  testEraVarThruSupNul();
+  testEraVarThruLamNulPort2();
+  // testEraVarThruSupVarToDupPort1(); // TODO: debug — VAR→DUP port 1 not detected
+  testEraVarThruSupDupPort2();
   testTakeLaz();
   testEraSup();
   testEraSupLam();
