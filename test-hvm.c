@@ -1191,6 +1191,58 @@ void testIsCycleVarToI60(void) {
   }
 }
 
+// Test isCycle: VAR → SUP — DUP port - LAZ, cycle
+void testIsCycleVarThruSup(void) {
+  char msg[100];
+
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  Term sup = makePair(SUP, 0, newTerm(VAR, 0, portLoc(1, dup)), newI60(77));
+
+  Term laz = makePair(LAZ, 0, dup, sup);
+  Location lazLoc = termLoc(laz);
+
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  if (termTag(get(portLoc(1, laz))) != DUP) {
+    sprintf(msg, "LAZ port 1 should be DUP, got %s", tagStr(termTag(get(portLoc(1, laz)))));
+    BOOM(msg);
+  }
+  if (termTag(get(portLoc(2, laz))) != SUP) {
+    sprintf(msg, "LAZ port 2 should be SUP, got %s", tagStr(termTag(get(portLoc(2, laz)))));
+    BOOM(msg);
+  }
+  if (termTag(get(portLoc(1, dup))) != LAZ) {
+    sprintf(msg, "DUP port 1 should be LAZ, got %s", tagStr(termTag(get(portLoc(1, dup)))));
+    BOOM(msg);
+  }
+  if (termTag(get(portLoc(2, dup))) != LAZ) {
+    sprintf(msg, "DUP port 2 should be LAZ, got %s", tagStr(termTag(get(portLoc(2, dup)))));
+    BOOM(msg);
+  }
+
+  subGraph("laz", laz, 0);
+
+  int result = isCycle(get(portLoc(2, laz)), lazLoc);
+  if (result != 1) {
+    sprintf(msg, "isCycle should return 1 for LAZ→SUP→LAZ, got %d", result);
+    BOOM(msg);
+  }
+
+  take(portLoc(1, laz));  // DUP
+  take(portLoc(2, laz));  // VAR follows chain to SUP port 2 (frees it)
+  take(portLoc(1, sup));  // NUL (SUP pair coalesced)
+  take(portLoc(2, sup));
+  freePair(dupLoc);
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 // Test eraseLazy: cycle case — LAZ with DUP thunk, both DUP ports → LAZ, context cycles back
 void testEraseLazyCycle1(void) {
   char msg[100];

@@ -68,7 +68,9 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - `findCycle` traverses VAR chains and pair node ports, checking for both VAR→lazLoc and direct LAZ term matches
 - The cycle closes when a port directly contains the LAZ term (DUP's ports contain LAZ directly, not via VAR)
 - Linear scan visited set — O(n²) worst case, hash set TODO for optimization
-- Tests: `testIsCycleLazyDup`, `testIsCycleNoCycle`, `testIsCycleVarToLaz`, `testIsCycleVarToI60`
+- Tests: `testIsCycleLazyDup`, `testIsCycleNoCycle`, `testIsCycleVarToLaz`, `testIsCycleVarToI60` — some pass, more coverage needed
+
+**eraVar tests:** `testEraVarI60`, `testEraVarChain` — some pass, more coverage needed
 
 ## Remaining — Ordered by Implementation Priority
 
