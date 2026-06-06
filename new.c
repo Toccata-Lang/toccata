@@ -1079,20 +1079,30 @@ void eraseLazy(Term lazyVar) {
   Term posLaz = get(portLoc(2, laz));
   switch (termTag(negLaz)) {
   case DUP: {
-    // Two-phase process: capture DUP ports, then process
+    // Phase 1: capture DUP ports atomically
     Term dup1 = swap(portLoc(1, negLaz), SUB);
     Term dup2 = swap(portLoc(2, negLaz), SUB);
-    // One port has ERA (from eraVar), one has LAZ
-    if (termTag(dup1) == ERA && termTag(dup2) == LAZ) {
-      Term context = get(portLoc(2, dup2));
-      freePair(lazyLoc);
-      move(portLoc(2, negLaz), context);
-      freeLoc(portLoc(1, negLaz));
-    } else if (termTag(dup1) == LAZ && termTag(dup2) == ERA) {
-      Term context = get(portLoc(2, dup1));
-      freePair(lazyLoc);
-      move(portLoc(1, negLaz), context);
-      freeLoc(portLoc(2, negLaz));
+    // Phase 2: identify which port has LAZ, check for cycle
+    Term lazTerm, context;
+    Location lazPort;
+    if (termTag(dup1) == LAZ) {
+      lazTerm = dup1;
+      lazPort = 1;
+      context = get(portLoc(2, lazTerm));
+      if (isCycle(context, lazyLoc)) {
+        // TODO: cycle detected
+      } else {
+        // TODO: no cycle
+      }
+    } else if (termTag(dup2) == LAZ) {
+      lazTerm = dup2;
+      lazPort = 2;
+      context = get(portLoc(2, lazTerm));
+      if (isCycle(context, lazyLoc)) {
+        // TODO: cycle detected
+      } else {
+        // TODO: no cycle
+      }
     }
     break;
   }
