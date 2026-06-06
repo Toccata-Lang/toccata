@@ -1085,6 +1085,144 @@ void testSwapSub(void) {
   }
 }
 
+// Test isCycle: lazy DUP cycle — context VAR → DUP, DUP ports → LAZ
+void testIsCycleLazyDup(void) {
+  char msg[100];
+
+  // Build the lazy DUP cycle using swap to avoid makePair polarity issues
+  // Step 1: Create DUP with SUB placeholders
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  // Step 2: Create LAZ with SUB in port 1, VAR→dupLoc in port 2
+  Term laz = makePair(LAZ, 0, SUB, newTerm(VAR, 0, dupLoc));
+  Location lazLoc = termLoc(laz);
+
+  // Step 3: Swap LAZ into DUP ports (bypass makePair polarity check)
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  // Step 4: Swap DUP into LAZ port 1
+  swap(portLoc(1, laz), dup);
+
+  // Verify structure
+  if (termTag(get(portLoc(1, laz))) != DUP) {
+    sprintf(msg, "LAZ port 1 should be DUP, got %s", tagStr(termTag(get(portLoc(1, laz)))));
+    BOOM(msg);
+  }
+  if (termTag(get(portLoc(2, laz))) != VAR) {
+    sprintf(msg, "LAZ port 2 should be VAR, got %s", tagStr(termTag(get(portLoc(2, laz)))));
+    BOOM(msg);
+  }
+  if (termTag(get(portLoc(1, dup))) != LAZ) {
+    sprintf(msg, "DUP port 1 should be LAZ, got %s", tagStr(termTag(get(portLoc(1, dup)))));
+    BOOM(msg);
+  }
+  if (termTag(get(portLoc(2, dup))) != LAZ) {
+    sprintf(msg, "DUP port 2 should be LAZ, got %s", tagStr(termTag(get(portLoc(2, dup)))));
+    BOOM(msg);
+  }
+
+  // Check: is there a cycle from context back to LAZ?
+  int result = isCycle(get(portLoc(2, laz)), lazLoc);
+  if (result != 1) {
+    sprintf(msg, "isCycle should detect lazy DUP cycle, got %d", result);
+    BOOM(msg);
+  }
+
+  // Clean up: laz port1=DUP, port2=VAR; dup both ports=LAZ
+  // take() frees non-SUB/LAZ locations; LAZ ports need explicit free
+  take(portLoc(1, laz));  // DUP (freed)
+  take(portLoc(2, laz));  // VAR (coalesces → frees LAZ pair)
+  // DUP ports contain LAZ — take doesn't free LAZ locations
+  // Free DUP pair explicitly (also clears both port locations)
+  freePair(termLoc(dup) & 0xFFFFFFFE);
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test isCycle: no cycle — context is a leaf (I60)
+void testIsCycleNoCycle(void) {
+  char msg[100];
+
+  Term laz = makePair(LAZ, 0, SUB, newI60(42));
+  Location lazLoc = termLoc(laz);
+
+  int result = isCycle(newI60(42), lazLoc);
+  if (result != 0) {
+    sprintf(msg, "isCycle should return 0 for leaf context, got %d", result);
+    BOOM(msg);
+  }
+
+  // Clean up
+  Term p1_laz = get(portLoc(1, laz));
+  if (termTag(p1_laz) != SUB) {
+    sprintf(msg, "LAZ port 1 should be SUB, got tag %s", tagStr(termTag(p1_laz)));
+    BOOM(msg);
+  }
+  freeLoc(portLoc(1, laz));
+  Term p2_laz = get(portLoc(2, laz));
+  if (termTag(p2_laz) != I60) {
+    sprintf(msg, "LAZ port 2 should be I60, got tag %s", tagStr(termTag(p2_laz)));
+    BOOM(msg);
+  }
+  freeLoc(portLoc(2, laz));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test isCycle: VAR chain → LAZ directly (not via DUP)
+void testIsCycleVarToLaz(void) {
+  char msg[100];
+
+  // Create LAZ: port 1 = SUB, port 2 = VAR → lazLoc
+  Term laz = makePair(LAZ, 0, SUB, newTerm(VAR, 0, 0));
+  Location lazLoc = termLoc(laz);
+
+  // Replace port 2's VAR with VAR → lazLoc
+  Term context = newTerm(VAR, 0, lazLoc);
+  swap(portLoc(2, laz), context);
+
+  int result = isCycle(get(portLoc(2, laz)), lazLoc);
+  if (result != 1) {
+    sprintf(msg, "isCycle should detect VAR→LAZ cycle, got %d", result);
+    BOOM(msg);
+  }
+
+  // Clean up: laz port1=SUB, port2=VAR
+  // SUB ports need explicit free (take doesn't free SUB locations)
+  freeLoc(portLoc(1, laz));  // SUB
+  take(portLoc(2, laz));  // VAR (coalesces lazLoc+1 with freed lazLoc)
+}
+
+// Test isCycle: VAR chain → I60 (no cycle)
+void testIsCycleVarToI60(void) {
+  char msg[100];
+
+  // Create LAZ with I60 in port 2 (context is I60, no cycle)
+  Term laz = makePair(LAZ, 0, SUB, newI60(99));
+  Location lazLoc = termLoc(laz);
+
+  // Context is I60 (leaf, no cycle possible)
+  Term context = get(portLoc(2, laz));
+
+  int result = isCycle(context, lazLoc);
+  if (result != 0) {
+    sprintf(msg, "isCycle should return 0 for I60, got %d", result);
+    BOOM(msg);
+  }
+
+  // Clean up
+  take(portLoc(1, laz));  // SUB
+  take(portLoc(2, laz));  // I60 (coalesces LAZ pair)
+}
+
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
@@ -1123,6 +1261,10 @@ int main(int argc, char *argv[]) {
   testAppNulLamArg();
   testSubNulLamBody();
   testSwapSub();
+  testIsCycleLazyDup();
+  testIsCycleNoCycle();
+  testIsCycleVarToLaz();
+  testIsCycleVarToI60();
 
   hvmFree();
   // testTakeLaz();

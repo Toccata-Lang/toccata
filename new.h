@@ -193,4 +193,5 @@ void intCond(Term ref, Term args);
 extern char *dupLabels[];
 
 char hasLocation(Term tree);
+int isCycle(Term tree, Location tgtLoc);
 int eraseCycle(Term tree, Location tgtLoc);

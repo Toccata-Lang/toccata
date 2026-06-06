@@ -357,8 +357,6 @@ int findCycle(Term tree, Location tgtLoc) {
   if (!hasLocation(tree) || findCycleNode(termLoc(tree) & 0xFFFFFFFE)) {
     return 0;
   }
-  // fprintf(stderr, "tgtLoc: %lx\n", tgtLoc);
-  // printTerm("tree", tree);
 
   Tag t = termTag(tree);
   switch(t) {
@@ -385,6 +383,9 @@ int findCycle(Term tree, Location tgtLoc) {
   case LAZ:
   case LAM:
   case APP: {
+    if (t == LAZ && termLoc(tree) == tgtLoc)
+      return 1;
+
     cycleNode *cn = &cycleNodes[cycleNodeCount++];
     if (cycleNodeCount > 999)
       BOOM("cycleNodeCount!");
@@ -393,14 +394,12 @@ int findCycle(Term tree, Location tgtLoc) {
 
     Location loc = portLoc(1, tree);
     Term branch = get(loc);
-    findCycle(branch, tgtLoc);
-    if (termTag(branch) == VAR && termLoc(branch) == tgtLoc)
+    if (findCycle(branch, tgtLoc))
       return 1;
 
     loc = portLoc(2, tree);
     branch = get(loc);
-    findCycle(branch, tgtLoc);
-    if (termTag(branch) == VAR && termLoc(branch) == tgtLoc)
+    if (findCycle(branch, tgtLoc))
       return 1;
   }
     break;
