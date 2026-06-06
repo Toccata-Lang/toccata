@@ -455,6 +455,12 @@ Term swap(Location loc, Term term) {
 }
 
 void forceLazy(Term z) {
+  // ⚠️ RACE CONDITION with eraseLazy: forceLazy takes LAZ ports (freeing
+  // those locations) but does NOT free the LAZ pair itself. If eraseLazy
+  // runs concurrently (via eraVar → swap → eraseLazy), it reads LAZ ports
+  // that forceLazy already freed → use-after-free (reads VOID).
+  // TODO: freePair(termLoc(z) & 0xFFFFFFFE) after the two take() calls,
+  // and add a VOID early-return guard in eraseLazy.
   if (termTag(z) != LAZ)
     return;
 
@@ -1059,77 +1065,47 @@ void opyNum(Term neg, Term pos) {
   return;
 }
 
-void eraseLazy(Term lazyVar) {
-  Term laz;
-  switch (termTag(lazyVar)) {
-  case VAR:
-    laz = swap(termLoc(lazyVar), ERA);
-    break;
-
-  case LAZ:
-    laz = lazyVar;
-    break;
-
-  default:
-    BOOM("Trying to erase a non-var/lazy Term");
-  }
-
-  Location lazyLoc = termLoc(laz);
+void eraseLazy(Term laz) {
+  // peek at the negative port of the LAZ node
   Term negLaz = get(portLoc(1, laz));
-  Term posLaz = get(portLoc(2, laz));
   switch (termTag(negLaz)) {
   case DUP: {
-    // Context already read in posLaz before DUP case
-    Term context = posLaz;
-    // Phase 1: read DUP ports before swap (cycle detection needs original values)
-        Term origDup1 = get(portLoc(1, negLaz));
-    Term origDup2 = get(portLoc(2, negLaz));
-        // Phase 2: identify which port had LAZ, check for cycle BEFORE swap
-    Term lazTerm = VOID;
-    int contextCycle = 0;
-    if (termTag(origDup1) == LAZ)
-      lazTerm = origDup1;
-    else if (termTag(origDup2) == LAZ)
-      lazTerm = origDup2;
+#ifndef CHECK_MEM_LEAK
+    // this may cause a race condition with forceLazy
+    BOOM("Make this threadsafe");
+#endif  
+    // get the first port of the DUP
+    Term origDup1 = swap(portLoc(1, negLaz), SUB);
+    if (origDup1 == SUB) {
+      // another thread beat us here. Let them handle it.
+      break;
+    }
+    negLaz = take(portLoc(1, laz));
+    Term posLaz = take(portLoc(2, laz));
+    Term origDup2 = swap(portLoc(2, negLaz), SUB);
+    int contextCycle = isCycle(posLaz, termLoc(laz));
+    Tag t1 = termTag(origDup1);
+    Tag t2 = termTag(origDup2);
 
-    if (lazTerm != VOID) {
-      contextCycle = isCycle(context, lazyLoc);
-    }
-    // Phase 3: atomic capture — handle ERA ports specially (swap would call interact)
-    Term dup1, dup2;
-    if (termTag(origDup1) == ERA) {
-      freeLoc(portLoc(1, negLaz));
-      dup1 = ERA;
-    } else {
-      dup1 = swap(portLoc(1, negLaz), SUB);
-    }
-    if (termTag(origDup2) == ERA) {
-      freeLoc(portLoc(2, negLaz));
-      dup2 = ERA;
-    } else {
-      dup2 = swap(portLoc(2, negLaz), SUB);
-    }
-
-    if (contextCycle) {
-      freePair(lazyLoc);
+    if (contextCycle || (t1 == ERA && t2 == ERA)) {
+      // Put NUL back in both DUP ports, to break the cycle so it can be freed
+      swap(portLoc(1, negLaz), NUL);
+      swap(portLoc(2, negLaz), NUL);
+      interact(ERA, posLaz);
       freePair(termLoc(negLaz));
-      interact(ERA, context);
     } else if (termTag(origDup1) == LAZ) {
-      freePair(lazyLoc);
-      take(portLoc(2, negLaz));
-      move(portLoc(1, negLaz), context);
+      move(portLoc(1, negLaz), posLaz);
     } else if (termTag(origDup2) == LAZ) {
-      freePair(lazyLoc);
-      take(portLoc(1, negLaz));
-      move(portLoc(2, negLaz), context);
+      move(portLoc(2, negLaz), posLaz);
     }
   }
     break;
 
+  case OPX:
+  case OPY:
   case APP:
-    interact(negLaz, NUL);
-    interact(ERA, posLaz);
-    freePair(lazyLoc);
+    move(portLoc(1, laz), NUL);
+    interact(ERA, take(portLoc(2, laz)));
     break;
 
   default:
