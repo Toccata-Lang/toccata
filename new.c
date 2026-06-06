@@ -1073,6 +1073,7 @@ void eraseLazy(Term lazyVar, Term era) {
   default:
     BOOM("Trying to erase a non-var/lazy Term");
   }
+
   Location lazyLoc = termLoc(laz);
   Term negLaz = get(portLoc(1, laz));
   Term posLaz = get(portLoc(2, laz));
@@ -1082,7 +1083,9 @@ void eraseLazy(Term lazyVar, Term era) {
     break;
 
   case APP:
-    // TODO: erase APP thunk body with NUL, erase context with ERA, free LAZ pair
+    interact(negLaz, NUL);
+    interact(ERA, posLaz);
+    freePair(lazyLoc);
     break;
 
   default:
