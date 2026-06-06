@@ -58,9 +58,17 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 ## Next: ERA/LAZ and LAZ branch of ERA/VAR
 
+- [x] **`isCycle` / `findCycle`** — Cycle detection infrastructure for lazy DUP erasure. Traverses from LAZ context, checks VAR chains and direct LAZ terms in ports.
 - [ ] **ERA/LAZ** — ERA connects to LAZ. Follow the LAZ chain and erase it.
 - [ ] **ERA/VAR LAZ branch** — When `take` returns a VAR (term is LAZ/SUB), need `eraseLazy` to handle LAZ chains.
 - [ ] **ERA/VAL** — ERA connects to VAL. Special handling for native value erasure.
+
+**Cycle detection details:**
+- `isCycle(context, lazLoc)` starts from LAZ's positive port (context) and looks for a path back to the LAZ
+- `findCycle` traverses VAR chains and pair node ports, checking for both VAR→lazLoc and direct LAZ term matches
+- The cycle closes when a port directly contains the LAZ term (DUP's ports contain LAZ directly, not via VAR)
+- Linear scan visited set — O(n²) worst case, hash set TODO for optimization
+- Tests: `testIsCycleLazyDup`, `testIsCycleNoCycle`, `testIsCycleVarToLaz`, `testIsCycleVarToI60`
 
 ## Remaining — Ordered by Implementation Priority
 
@@ -101,3 +109,4 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - Rules are registered in `hvmInit()` via the `interactions[16][16]` jump table.
 - Each rule needs a corresponding test in `test-hvm.c`.
 - LAZ rules are the most complex due to lazy evaluation semantics and self-referential structures.
+- **LAZ structural constraint:** LAZ is positive-polarity but stored only in negative ports (APP port 2, DUP). LAZ's context (port 2) is positive, so it can't directly contain DUP — must go through VAR chain. Cycle detection follows this VAR chain from context to find the DUP, then checks if DUP's ports directly contain the LAZ.
