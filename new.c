@@ -1059,11 +1059,11 @@ void opyNum(Term neg, Term pos) {
   return;
 }
 
-void eraseLazy(Term lazyVar, Term era) {
+void eraseLazy(Term lazyVar) {
   Term laz;
   switch (termTag(lazyVar)) {
   case VAR:
-    laz = swap(termLoc(lazyVar), era);
+    laz = swap(termLoc(lazyVar), ERA);
     break;
 
   case LAZ:
@@ -1073,13 +1073,28 @@ void eraseLazy(Term lazyVar, Term era) {
   default:
     BOOM("Trying to erase a non-var/lazy Term");
   }
+
   Location lazyLoc = termLoc(laz);
   Term negLaz = get(portLoc(1, laz));
   Term posLaz = get(portLoc(2, laz));
   switch (termTag(negLaz)) {
   case DUP:
     if (isCycle(posLaz, lazyLoc)) {
-      // TODO: cycle detected — break the loop
+      // Cycle detected — two-phase cycle break
+      Term dup1 = swap(portLoc(1, negLaz), SUB);
+      Term dup2 = swap(portLoc(2, negLaz), SUB);
+      // One should be ERA, one should be LAZ
+      if (termTag(dup1) == ERA && termTag(dup2) == LAZ) {
+        Term context = get(portLoc(2, dup2));
+        freePair(lazyLoc);
+        move(portLoc(2, negLaz), context);
+        freeLoc(portLoc(1, negLaz));
+      } else if (termTag(dup1) == LAZ && termTag(dup2) == ERA) {
+        Term context = get(portLoc(2, dup1));
+        freePair(lazyLoc);
+        move(portLoc(1, negLaz), context);
+        freeLoc(portLoc(2, negLaz));
+      }
     } else {
       // DUP is not self-referential — erase both ports and context
       move(portLoc(1, negLaz), NUL);
@@ -1105,7 +1120,7 @@ void eraVar(Term era, Term var) {
   if (termTag(val) == VAR) {
     Term lz = swap(termLoc(val), ERA);
     if (lz != SUB) {
-      eraseLazy(lz, ERA);
+      eraseLazy(lz);
     }
   } else {
     interact(ERA, val);
