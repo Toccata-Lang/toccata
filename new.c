@@ -1060,6 +1060,34 @@ void opyNum(Term neg, Term pos) {
 }
 
 void eraseLazy(Term lazyVar, Term era) {
+  Term laz;
+  switch (termTag(lazyVar)) {
+  case VAR:
+    laz = swap(termLoc(lazyVar), era);
+    break;
+
+  case LAZ:
+    laz = lazyVar;
+    break;
+
+  default:
+    BOOM("Trying to erase a non-var/lazy Term");
+  }
+  Location lazyLoc = termLoc(laz);
+  Term negLaz = get(portLoc(1, laz));
+  Term posLaz = get(portLoc(2, laz));
+  switch (termTag(negLaz)) {
+  case DUP:
+    // TODO: handle DUP self-referential lazy dup
+    break;
+
+  case APP:
+    // TODO: erase APP thunk body with NUL, erase context with ERA, free LAZ pair
+    break;
+
+  default:
+    BOOM("eraseLazy: unhandled kind of lazy");
+  }
 }
 
 void eraVar(Term era, Term var) {
