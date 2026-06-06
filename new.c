@@ -1081,7 +1081,11 @@ void eraseLazy(Term lazyVar, Term era) {
     if (isCycle(posLaz, lazyLoc)) {
       // TODO: cycle detected — break the loop
     } else {
-      // TODO: no cycle — handle normally
+      // DUP is not self-referential — erase both ports and context
+      move(portLoc(1, negLaz), NUL);
+      move(portLoc(2, negLaz), NUL);
+      interact(ERA, posLaz);
+      freePair(lazyLoc);
     }
     break;
 
