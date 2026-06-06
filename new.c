@@ -1073,12 +1073,16 @@ void eraseLazy(Term lazyVar, Term era) {
   default:
     BOOM("Trying to erase a non-var/lazy Term");
   }
-
+  Location lazyLoc = termLoc(laz);
   Term negLaz = get(portLoc(1, laz));
   Term posLaz = get(portLoc(2, laz));
   switch (termTag(negLaz)) {
   case DUP:
-    // TODO: handle DUP self-referential lazy dup
+    if (isCycle(posLaz, lazyLoc)) {
+      // TODO: cycle detected — break the loop
+    } else {
+      // TODO: no cycle — handle normally
+    }
     break;
 
   case APP:
