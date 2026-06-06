@@ -1773,6 +1773,210 @@ void testEraVarThruSupDupPort2(void) {
   }
 }
 
+// eraVar test: LAZ thunk is APP, context is I60
+void testEraVarAppThunkI60(void) {
+  char msg[100];
+
+  Term holder = makePair(LAM, 0, SUB, newI60(0));
+  Location holderLoc = portLoc(2, holder);
+
+  Term app = makePair(APP, 0, newI60(77), ERA);
+  Term laz = makePair(LAZ, 0, app, newI60(88));
+
+  swap(holderLoc, laz);
+
+  interact(ERA, newTerm(VAR, 0, holderLoc));
+
+  swap(portLoc(1, holder), NUL);
+  take(portLoc(1, holder));
+  take(portLoc(2, holder));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAZ thunk is APP, context is NUL
+void testEraVarAppThunkNul(void) {
+  char msg[100];
+
+  Term holder = makePair(LAM, 0, SUB, newI60(0));
+  Location holderLoc = portLoc(2, holder);
+
+  Term app = makePair(APP, 0, newI60(77), ERA);
+  Term laz = makePair(LAZ, 0, app, NUL);
+
+  swap(holderLoc, laz);
+
+  interact(ERA, newTerm(VAR, 0, holderLoc));
+
+  swap(portLoc(1, holder), NUL);
+  take(portLoc(1, holder));
+  take(portLoc(2, holder));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAZ thunk is APP, context is SUP(I60,NUL)
+void testEraVarAppThunkSupI60(void) {
+  char msg[100];
+
+  Term holder = makePair(LAM, 0, SUB, newI60(0));
+  Location holderLoc = portLoc(2, holder);
+
+  Term app = makePair(APP, 0, newI60(77), ERA);
+  Term sup = makePair(SUP, 0, newI60(88), NUL);
+  Term laz = makePair(LAZ, 0, app, sup);
+
+  swap(holderLoc, laz);
+
+  interact(ERA, newTerm(VAR, 0, holderLoc));
+
+  swap(portLoc(1, holder), NUL);
+  take(portLoc(1, holder));
+  take(portLoc(2, holder));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAZ thunk is APP, context is SUP(NUL,I60)
+void testEraVarAppThunkSupNul(void) {
+  char msg[100];
+
+  Term holder = makePair(LAM, 0, SUB, newI60(0));
+  Location holderLoc = portLoc(2, holder);
+
+  Term app = makePair(APP, 0, newI60(77), ERA);
+  Term sup = makePair(SUP, 0, NUL, newI60(88));
+  Term laz = makePair(LAZ, 0, app, sup);
+
+  swap(holderLoc, laz);
+
+  interact(ERA, newTerm(VAR, 0, holderLoc));
+
+  swap(portLoc(1, holder), NUL);
+  take(portLoc(1, holder));
+  take(portLoc(2, holder));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAZ thunk is APP, context is LAM(APP(I60,ERA),I60)
+void testEraVarAppThunkLamI60(void) {
+  char msg[100];
+
+  Term holder = makePair(LAM, 0, SUB, newI60(0));
+  Location holderLoc = portLoc(2, holder);
+
+  Term innerApp = makePair(APP, 0, newI60(77), ERA);
+  Term lam = makePair(LAM, 0, innerApp, newI60(88));
+  Term app = makePair(APP, 0, newI60(99), ERA);
+  Term laz = makePair(LAZ, 0, app, lam);
+
+  swap(holderLoc, laz);
+
+  interact(ERA, newTerm(VAR, 0, holderLoc));
+
+  swap(portLoc(1, holder), NUL);
+  take(portLoc(1, holder));
+  take(portLoc(2, holder));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAZ thunk is APP, context is LAM(APP(NUL,ERA),NUL)
+void testEraVarAppThunkLamNul(void) {
+  char msg[100];
+
+  Term holder = makePair(LAM, 0, SUB, newI60(0));
+  Location holderLoc = portLoc(2, holder);
+
+  Term innerApp = makePair(APP, 0, NUL, ERA);
+  Term lam = makePair(LAM, 0, innerApp, NUL);
+  Term app = makePair(APP, 0, newI60(77), ERA);
+  Term laz = makePair(LAZ, 0, app, lam);
+
+  swap(holderLoc, laz);
+
+  interact(ERA, newTerm(VAR, 0, holderLoc));
+
+  swap(portLoc(1, holder), NUL);
+  take(portLoc(1, holder));
+  take(portLoc(2, holder));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAZ thunk is APP, context is SUP(I60,LAM(APP(NUL,ERA),I60))
+void testEraVarAppThunkSupLamI60(void) {
+  char msg[100];
+
+  Term holder = makePair(LAM, 0, SUB, newI60(0));
+  Location holderLoc = portLoc(2, holder);
+
+  Term innerApp = makePair(APP, 0, NUL, ERA);
+  Term lam = makePair(LAM, 0, innerApp, newI60(88));
+  Term sup = makePair(SUP, 0, newI60(77), lam);
+  Term app = makePair(APP, 0, newI60(99), ERA);
+  Term laz = makePair(LAZ, 0, app, sup);
+
+  swap(holderLoc, laz);
+
+  interact(ERA, newTerm(VAR, 0, holderLoc));
+
+  swap(portLoc(1, holder), NUL);
+  take(portLoc(1, holder));
+  take(portLoc(2, holder));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// eraVar test: LAZ thunk is APP, context is SUP(NUL,LAM(APP(I60,ERA),NUL))
+void testEraVarAppThunkSupLamNul(void) {
+  char msg[100];
+
+  Term holder = makePair(LAM, 0, SUB, newI60(0));
+  Location holderLoc = portLoc(2, holder);
+
+  Term innerApp = makePair(APP, 0, newI60(88), ERA);
+  Term lam = makePair(LAM, 0, innerApp, NUL);
+  Term sup = makePair(SUP, 0, NUL, lam);
+  Term app = makePair(APP, 0, newI60(77), ERA);
+  Term laz = makePair(LAZ, 0, app, sup);
+
+  swap(holderLoc, laz);
+
+  interact(ERA, newTerm(VAR, 0, holderLoc));
+
+  swap(portLoc(1, holder), NUL);
+  take(portLoc(1, holder));
+  take(portLoc(2, holder));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 
 int main(int argc, char *argv[]) {
   hvmInit(1024);
@@ -1830,6 +2034,14 @@ int main(int argc, char *argv[]) {
   testEraVarThruLamNulPort2();
   // testEraVarThruSupVarToDupPort1(); // TODO: debug — VAR→DUP port 1 not detected
   testEraVarThruSupDupPort2();
+  testEraVarAppThunkI60();
+  testEraVarAppThunkNul();
+  testEraVarAppThunkSupI60();
+  testEraVarAppThunkSupNul();
+  testEraVarAppThunkLamI60();
+  testEraVarAppThunkLamNul();
+  testEraVarAppThunkSupLamI60();
+  testEraVarAppThunkSupLamNul();
   testTakeLaz();
   testEraSup();
   testEraSupLam();
