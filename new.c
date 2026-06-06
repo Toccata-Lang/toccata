@@ -1074,7 +1074,6 @@ void eraseLazy(Term lazyVar, Term era) {
     BOOM("Trying to erase a non-var/lazy Term");
   }
 
-  Location lazyLoc = termLoc(laz);
   Term negLaz = get(portLoc(1, laz));
   Term posLaz = get(portLoc(2, laz));
   switch (termTag(negLaz)) {
