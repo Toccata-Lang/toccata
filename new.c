@@ -408,6 +408,10 @@ int findCycle(Term tree, Location tgtLoc) {
 }
 
 int isCycle(Term tree, Location tgtLoc) {
+  // TODO: perf optimization — replace linear findCycleNode scan with
+  // a hash set for O(1) visited lookups. Each isCycle call traverses
+  // a completely different subtree, so old entries are dead weight.
+  // A hash set would eliminate the O(n²) worst case.
   cycleNodeCount = 0;
   return findCycle(tree, tgtLoc);
 }
