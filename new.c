@@ -1083,29 +1083,32 @@ void eraseLazy(Term lazyVar) {
     Term dup1 = swap(portLoc(1, negLaz), SUB);
     Term dup2 = swap(portLoc(2, negLaz), SUB);
     // Phase 2: identify which port has LAZ, check for cycle
-    Term lazTerm, context;
+    Term lazTerm = VOID;
+    Term context = VOID;
     Location lazPort;
-    if (termTag(dup1) == LAZ) {
+    int contextCycle = 0;
+    if (termTag(dup1) == LAZ)
       lazTerm = dup1;
-      lazPort = 1;
-      context = get(portLoc(2, lazTerm));
-      if (isCycle(context, lazyLoc)) {
-        // TODO: cycle detected
-      } else {
-        // TODO: no cycle
-      }
-    } else if (termTag(dup2) == LAZ) {
+    else if (termTag(dup2) == LAZ)
       lazTerm = dup2;
-      lazPort = 2;
+
+    if (lazTerm != VOID) {
       context = get(portLoc(2, lazTerm));
-      if (isCycle(context, lazyLoc)) {
-        // TODO: cycle detected
-      } else {
-        // TODO: no cycle
-      }
+      contextCycle = isCycle(context, lazyLoc);
     }
-    break;
+    if (contextCycle) {
+      freePair(lazyLoc);
+      freePair(termLoc(negLaz));
+      interact(ERA, context);
+    } else if (termTag(dup1) == LAZ) {
+      take(portLoc(2, negLaz));
+      move(portLoc(1, negLaz), context);
+    } else if (termTag(dup2) == LAZ) {
+      take(portLoc(1, negLaz));
+      move(portLoc(2, negLaz), context);
+    }
   }
+    break;
 
   case APP:
     interact(negLaz, NUL);
@@ -1115,6 +1118,7 @@ void eraseLazy(Term lazyVar) {
 
   default:
     BOOM("eraseLazy: unhandled kind of lazy");
+    break;
   }
 }
 
