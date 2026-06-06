@@ -1138,10 +1138,6 @@ void eraseLazy(Term lazyVar) {
   }
 }
 
-void eraLaz(Term era, Term laz) {
-  eraseLazy(laz);
-}
-
 void eraVar(Term era, Term var) {
   Term val = take(termLoc(var));
   if (termTag(val) == VAR) {
@@ -1425,7 +1421,6 @@ void hvmInit(u64 size) {
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
   interactions[ERA][SUP] = &eraSup;
   interactions[ERA][VAR] = &eraVar;
-  interactions[ERA][LAZ] = &eraLaz;
   interactions[DUP][NUL] = &dupLeaf;
   interactions[DUP][I60] = &dupLeaf;
   interactions[OPX][I60] = &opxNum;

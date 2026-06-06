@@ -1225,30 +1225,24 @@ void testIsCycleVarToI60(void) {
 
 // Test eraseLazy: cycle case — LAZ with DUP thunk, both DUP ports → LAZ, context cycles back
 void testEraseLazyCycle(void) {
-    char msg[100];
+  char msg[100];
 
-  // Create LAZ with DUP as thunk body
-  Term laz = makePair(LAZ, 0, SUB, newTerm(VAR, 0, 0));
-  Location lazLoc = termLoc(laz);
-
-  // Create DUP, both ports → LAZ
+  // Create DUP first
   Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
 
-  // Wire LAZ port 1 to DUP
-  swap(portLoc(1, laz), dup);
-
-  // Wire LAZ port 2 to VAR → dup (context that cycles back)
-  Term context = newTerm(VAR, 0, termLoc(dup));
-  swap(portLoc(2, laz), context);
+  // Create LAZ with DUP in port 1, VAR->dup in port 2
+  Term context = newTerm(VAR, 0, dupLoc);
+  Term laz = makePair(LAZ, 0, dup, context);
+  Location lazLoc = termLoc(laz);
 
   // Wire DUP ports to LAZ (lazy DUP pattern)
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  // Trigger ERA/LAZ interaction
-  interact(ERA, laz);
+  // Call eraseLazy directly (simulating eraVar following VAR chain to LAZ)
+  eraseLazy(laz);
 
-  // After interaction: LAZ pair freed, DUP pair freed, context erased
   // Verify LAZ pair is freed
   Term p1_laz = get(portLoc(1, laz));
   if (termTag(p1_laz) != NUL) {
@@ -1257,10 +1251,9 @@ void testEraseLazyCycle(void) {
   }
   Term p2_laz = get(portLoc(2, laz));
   if (termTag(p2_laz) != NUL && termTag(p2_laz) != VAL) {
-    sprintf(msg, "LAZ port 2 should be NUL (freed), got %s", tagStr(termTag(p2_laz)));
+    sprintf(msg, "LAZ port 2 should be VOID/NUL (freed), got %s", tagStr(termTag(p2_laz)));
     BOOM(msg);
   }
-  // Verify DUP pair is freed
   Term p1_dup = get(portLoc(1, dup));
   if (termTag(p1_dup) != NUL) {
     sprintf(msg, "DUP port 1 should be NUL (freed), got %s", tagStr(termTag(p1_dup)));
@@ -1268,39 +1261,30 @@ void testEraseLazyCycle(void) {
   }
   Term p2_dup = get(portLoc(2, dup));
   if (termTag(p2_dup) != NUL && termTag(p2_dup) != VAL) {
-    sprintf(msg, "DUP port 2 should be NUL (freed), got %s", tagStr(termTag(p2_dup)));
+    sprintf(msg, "DUP port 2 should be VOID/NUL (freed), got %s", tagStr(termTag(p2_dup)));
     BOOM(msg);
   }
 }
 
-
-// Test eraseLazy: no-cycle case — LAZ with DUP thunk, dup1=LAZ, dup2=ERA, no cycle
 void testEraseLazyNoCycleDup1(void) {
-    char msg[100];
+  char msg[100];
 
-  // Create LAZ with DUP as thunk body
-  Term laz = makePair(LAZ, 0, SUB, newTerm(VAR, 0, 0));
-  Location lazLoc = termLoc(laz);
-  
-  // Create DUP with placeholder
+  // Create DUP first
   Term dup = makePair(DUP, 0, SUB, SUB);
-  
-  // Wire LAZ port 2 to I60 (context, no cycle) FIRST
-  Term context = newI60(42);
-  swap(portLoc(2, laz), context);
+  Location dupLoc = termLoc(dup);
 
-  // Wire DUP ports to LAZ/ERA
+  // Create LAZ with DUP in port 1, I60 in port 2 (context, no cycle)
+  Term laz = makePair(LAZ, 0, dup, newI60(42));
+  Location lazLoc = termLoc(laz);
+
+  // Wire DUP port 1 to LAZ, port 2 to ERA (simulating eraVar already ran)
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), ERA);
 
-  // Wire LAZ port 1 to DUP LAST
-  swap(portLoc(1, laz), dup);
+  // Call eraseLazy directly
+  eraseLazy(laz);
 
-  // Trigger ERA/LAZ interaction
-  interact(ERA, laz);
-
-  // After: LAZ pair freed, DUP pair freed, context (I60) wired to dup1
-  // Verify LAZ pair is freed (freePair sets port2=VOID, port1=NUL)
+  // Verify LAZ pair is freed
   Term p1_laz = get(portLoc(1, laz));
   if (termTag(p1_laz) != NUL) {
     sprintf(msg, "LAZ port 1 should be NUL (freed), got %s", tagStr(termTag(p1_laz)));
@@ -1324,32 +1308,24 @@ void testEraseLazyNoCycleDup1(void) {
   }
 }
 
-// Test eraseLazy: no-cycle case — LAZ with DUP thunk, dup2=LAZ, dup1=ERA, no cycle
 void testEraseLazyNoCycleDup2(void) {
-    char msg[100];
+  char msg[100];
 
-  // Create LAZ with DUP as thunk body
-  Term laz = makePair(LAZ, 0, SUB, newTerm(VAR, 0, 0));
-  Location lazLoc = termLoc(laz);
-
-  // Create DUP with placeholder
+  // Create DUP first
   Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
 
-  // Wire LAZ port 2 to I60 (context, no cycle) FIRST
-  Term context = newI60(99);
-  swap(portLoc(2, laz), context);
+  // Create LAZ with DUP in port 1, I60 in port 2 (context, no cycle)
+  Term laz = makePair(LAZ, 0, dup, newI60(99));
+  Location lazLoc = termLoc(laz);
 
   // Wire DUP port 1 to ERA, port 2 to LAZ
   swap(portLoc(1, dup), ERA);
   swap(portLoc(2, dup), laz);
 
-  // Wire LAZ port 1 to DUP LAST
-  swap(portLoc(1, laz), dup);
+  // Call eraseLazy directly
+  eraseLazy(laz);
 
-  // Trigger ERA/LAZ interaction
-  interact(ERA, laz);
-
-  // After: LAZ pair freed, DUP pair freed, context (I60) wired to dup2
   // Verify LAZ pair is freed
   Term p1_laz = get(portLoc(1, laz));
   if (termTag(p1_laz) != NUL) {
@@ -1373,6 +1349,7 @@ void testEraseLazyNoCycleDup2(void) {
     BOOM(msg);
   }
 }
+
 
 int main(int argc, char *argv[]) {
   hvmInit(1024);
@@ -1417,9 +1394,15 @@ int main(int argc, char *argv[]) {
   testIsCycleVarToLaz();
   testIsCycleVarToI60();
   hvmReset();
+  hvmReset();
+  hvmReset();
   testEraseLazyCycle();
   hvmReset();
+  hvmReset();
+  hvmReset();
   testEraseLazyNoCycleDup1();
+  hvmReset();
+  hvmReset();
   hvmReset();
   testEraseLazyNoCycleDup2();
 

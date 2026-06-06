@@ -169,6 +169,7 @@ Term makeOp(Lab op, Term x, Term y);
 // Returns the number of interactions performed
 void *normalize(void *v);
 void forceLazy(Term z);
+void eraseLazy(Term lazyVar);
 void spawn_threads();
 extern pthread_t threads[];
 
