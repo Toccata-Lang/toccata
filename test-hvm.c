@@ -1785,6 +1785,8 @@ void testEraVarAppThunkI60(void) {
 
   swap(holderLoc, laz);
 
+  subGraph("laz", laz, 0);
+
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -1808,6 +1810,8 @@ void testEraVarAppThunkNul(void) {
   Term laz = makePair(LAZ, 0, app, NUL);
 
   swap(holderLoc, laz);
+
+  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
@@ -1834,6 +1838,8 @@ void testEraVarAppThunkSupI60(void) {
 
   swap(holderLoc, laz);
 
+  subGraph("laz", laz, 0);
+
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -1858,6 +1864,8 @@ void testEraVarAppThunkSupNul(void) {
   Term laz = makePair(LAZ, 0, app, sup);
 
   swap(holderLoc, laz);
+
+  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
@@ -1885,6 +1893,8 @@ void testEraVarAppThunkLamI60(void) {
 
   swap(holderLoc, laz);
 
+  subGraph("laz", laz, 0);
+
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -1910,6 +1920,8 @@ void testEraVarAppThunkLamNul(void) {
   Term laz = makePair(LAZ, 0, app, lam);
 
   swap(holderLoc, laz);
+
+  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
@@ -1938,6 +1950,8 @@ void testEraVarAppThunkSupLamI60(void) {
 
   swap(holderLoc, laz);
 
+  subGraph("laz", laz, 0);
+
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -1964,6 +1978,8 @@ void testEraVarAppThunkSupLamNul(void) {
   Term laz = makePair(LAZ, 0, app, sup);
 
   swap(holderLoc, laz);
+
+  subGraph("laz", laz, 0);
 
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
