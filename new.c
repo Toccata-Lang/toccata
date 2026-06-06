@@ -209,7 +209,7 @@ Term get(Location loc) {
 
 // Free a pair by adding it to the free list - O(1)
 void freePair(Location loc) {
-#ifdef SAFETY
+  #ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
 #endif
 
@@ -1079,31 +1079,47 @@ void eraseLazy(Term lazyVar) {
   Term posLaz = get(portLoc(2, laz));
   switch (termTag(negLaz)) {
   case DUP: {
-    // Phase 1: capture DUP ports atomically
-    Term dup1 = swap(portLoc(1, negLaz), SUB);
-    Term dup2 = swap(portLoc(2, negLaz), SUB);
-    // Phase 2: identify which port has LAZ, check for cycle
+    // Context already read in posLaz before DUP case
+    Term context = posLaz;
+    // Phase 1: read DUP ports before swap (cycle detection needs original values)
+        Term origDup1 = get(portLoc(1, negLaz));
+    Term origDup2 = get(portLoc(2, negLaz));
+        // Phase 2: identify which port had LAZ, check for cycle BEFORE swap
     Term lazTerm = VOID;
-    Term context = VOID;
-    Location lazPort;
     int contextCycle = 0;
-    if (termTag(dup1) == LAZ)
-      lazTerm = dup1;
-    else if (termTag(dup2) == LAZ)
-      lazTerm = dup2;
+    if (termTag(origDup1) == LAZ)
+      lazTerm = origDup1;
+    else if (termTag(origDup2) == LAZ)
+      lazTerm = origDup2;
 
     if (lazTerm != VOID) {
-      context = get(portLoc(2, lazTerm));
       contextCycle = isCycle(context, lazyLoc);
     }
+    // Phase 3: atomic capture — handle ERA ports specially (swap would call interact)
+    Term dup1, dup2;
+    if (termTag(origDup1) == ERA) {
+      freeLoc(portLoc(1, negLaz));
+      dup1 = ERA;
+    } else {
+      dup1 = swap(portLoc(1, negLaz), SUB);
+    }
+    if (termTag(origDup2) == ERA) {
+      freeLoc(portLoc(2, negLaz));
+      dup2 = ERA;
+    } else {
+      dup2 = swap(portLoc(2, negLaz), SUB);
+    }
+
     if (contextCycle) {
       freePair(lazyLoc);
       freePair(termLoc(negLaz));
       interact(ERA, context);
-    } else if (termTag(dup1) == LAZ) {
+    } else if (termTag(origDup1) == LAZ) {
+      freePair(lazyLoc);
       take(portLoc(2, negLaz));
       move(portLoc(1, negLaz), context);
-    } else if (termTag(dup2) == LAZ) {
+    } else if (termTag(origDup2) == LAZ) {
+      freePair(lazyLoc);
       take(portLoc(1, negLaz));
       move(portLoc(2, negLaz), context);
     }
@@ -1120,6 +1136,10 @@ void eraseLazy(Term lazyVar) {
     BOOM("eraseLazy: unhandled kind of lazy");
     break;
   }
+}
+
+void eraLaz(Term era, Term laz) {
+  eraseLazy(laz);
 }
 
 void eraVar(Term era, Term var) {
@@ -1405,6 +1425,7 @@ void hvmInit(u64 size) {
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
   interactions[ERA][SUP] = &eraSup;
   interactions[ERA][VAR] = &eraVar;
+  interactions[ERA][LAZ] = &eraLaz;
   interactions[DUP][NUL] = &dupLeaf;
   interactions[DUP][I60] = &dupLeaf;
   interactions[OPX][I60] = &opxNum;
