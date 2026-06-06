@@ -398,3 +398,11 @@ void graphFn(Term ref, Term args) {
   }
 }
 */
+
+void subGraph(char *cap, Term pos, unsigned nc) {
+  graphDown(cap, pos, nc, subGraphs++);
+}
+
+void graph(char *cap, Term pos, unsigned nc) {
+  graphDown(cap, pos, nc, 0);
+}

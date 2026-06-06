@@ -301,3 +301,4 @@ The port location was freed by `take`'s internal `freeLoc`, which coalesces into
 12. **Always use `make test-hvm`** — not manual `clang`. Ensures correct flags (`CHECK_MEM_LEAK`, `SAFETY`, `STATS`) and source files.
 13. **Handle old values BEFORE overwriting ports** — use `get` to read the old value, handle it based on tag (SUB → push redex, ERA → interact, other → consumed by the rule), then `swap` the new value. Don't silently discard old values.
 14. **Never use 42 as a test integer value** — it's cliche and irritating. Pick something else.
+15. **`eraseLazy` must not be called directly** — it is an internal helper invoked only by `eraVar` (when `take` returns a LAZ/SUB). To test `eraseLazy` behavior, always interact `ERA` with a `VAR` that points to a `LAZ` term in a port of the thunk term. Never call `eraseLazy(laz)` directly in tests — it bypasses the interaction dispatch and has known race conditions with `forceLazy`.

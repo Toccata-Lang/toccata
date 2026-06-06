@@ -430,26 +430,12 @@ Term swap(Location loc, Term term) {
 #else
   Term result = atomic_exchange_explicit(&nodeBuff[loc], term, memory_order_relaxed);
 #endif
-  switch(termTag(result)) {
-  case SUB:
-    if (result != SUB) {
-      Term neg = get(portLoc(1, result));
-      Term pos = get(portLoc(2, result));
-      pushRedex(neg, pos);
-      freePair(termLoc(result));
-      result = SUB;
-    }
-    break;
-
-  case ERA:
-    if (termTag(term) == ERA) {
-      // Both old and new are ERA — just free, no interact needed
-      freeLoc(loc);
-      break;
-    }
-    freeLoc(loc);
-    interact(result, term);
-    break;
+  if (termTag(result) == SUB && result != SUB) {
+    Term neg = get(portLoc(1, result));
+    Term pos = get(portLoc(2, result));
+    pushRedex(neg, pos);
+    freePair(termLoc(result));
+    result = SUB;
   }
   return result;
 }
@@ -513,9 +499,9 @@ void move(Location negLoc, Term pos) {
     BOOM(s);
   }
 #endif
-  if (negTag != SUB && negTag != ERA) {
+  if (negTag != SUB) {
     freeLoc(negLoc);
-    if (pos == NUL)
+    if (pos == NUL || neg == ERA)
       interact(neg, pos);
     else 
       pushRedex(neg, pos);
@@ -1083,9 +1069,15 @@ void eraseLazy(Term laz) {
     negLaz = take(portLoc(1, laz));
     Term posLaz = take(portLoc(2, laz));
     Term origDup2 = swap(portLoc(2, negLaz), SUB);
-    int contextCycle = isCycle(posLaz, termLoc(laz));
     Tag t1 = termTag(origDup1);
     Tag t2 = termTag(origDup2);
+
+    int contextCycle;
+    if (t1 == LAZ) {
+      contextCycle = isCycle(posLaz, portLoc(1, negLaz));
+    } else if (t2 == LAZ) {
+      contextCycle = isCycle(posLaz, portLoc(2, negLaz));
+    }
 
     if (contextCycle || (t1 == ERA && t2 == ERA)) {
       // Put NUL back in both DUP ports, to break the cycle so it can be freed
@@ -1094,8 +1086,10 @@ void eraseLazy(Term laz) {
       interact(ERA, posLaz);
       freePair(termLoc(negLaz));
     } else if (termTag(origDup1) == LAZ) {
+      freeLoc(portLoc(2, negLaz));
       move(portLoc(1, negLaz), posLaz);
     } else if (termTag(origDup2) == LAZ) {
+      freeLoc(portLoc(1, negLaz));
       move(portLoc(2, negLaz), posLaz);
     }
   }

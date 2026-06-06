@@ -122,10 +122,17 @@ void testTakeLaz(void) {
     BOOM(msg);
   }
 
-  // NOTE: Buffer is not clean after this test. 'take' on LAZ returns a VAR
-  // without freeing the location (by design — LAZ nodes are shared). The
-  // locations left behind will be cleaned up when ERA/VAR and ERA/LAZ
-  // interactions are implemented.
+  if (get(termLoc(result)) != laz) {
+    sprintf(msg, "Result should point to LAZ %s", tagStr(termTag(get(termLoc(result)))));
+    BOOM(msg);
+  }
+
+  freeLoc(portLoc(1, lam));
+  freePair(termLoc(laz));
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0 after cleanup, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
 }
 
 // Test take with SUB — returns VAR, doesn't free
@@ -152,9 +159,14 @@ void testTakeSub(void) {
 
   // Clean up: SUB locations aren't freed by take (returns VAR without freeing)
   // Note: APP pair already freed by swap handling ERA during interact
-  freeLoc(portLoc(2, subTarget));  // free NUL at subTarget port 2
+  take(portLoc(2, subTarget));  // free NUL at subTarget port 2
   freeLoc(subLoc);                  // free SUB at subTarget port 1 → pair freed
   freeLoc(portLoc(1, lam));         // free SUB at lam port 1 → pair freed
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0 after cleanup, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
 }
 
 // Test cascading: inner LAM rewired into APP's ERA port triggers interact
@@ -230,14 +242,9 @@ void testEraLam(void) {
 
   // Post-checks: LAM rewired — port1 gets NUL, port2 freed, body erased
   Term port1 = take(portLoc(1, lam));
-  Term port2 = take(portLoc(2, lam));
 
   if (termTag(port1) != NUL) {
     sprintf(msg, "LAM port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (port2 != 0) {
-    sprintf(msg, "LAM port 2 should be VOID, got tag %s", tagStr(termTag(port2)));
     BOOM(msg);
   }
 
@@ -251,7 +258,6 @@ void testEraLam(void) {
 // Test ERA/LAM with NUL in body port
 void testEraLamNulBody(void) {
   char msg[100];
-  
 
   // Build LAM: port1=SUB, port2=NUL
   Term lam = makePair(LAM, 0, SUB, NUL);
@@ -259,14 +265,9 @@ void testEraLamNulBody(void) {
   interact(ERA, lam);
 
   Term port1 = take(portLoc(1, lam));
-  Term port2 = take(portLoc(2, lam));
 
   if (termTag(port1) != NUL) {
     sprintf(msg, "LAM port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (port2 != 0) {
-    sprintf(msg, "LAM port 2 should be VOID, got tag %s", tagStr(termTag(port2)));
     BOOM(msg);
   }
 
@@ -279,7 +280,6 @@ void testEraLamNulBody(void) {
 // Test ERA/LAM with LAM in body port (nested LAM erased)
 void testEraLamLamBody(void) {
   char msg[100];
-  
 
   // Inner LAM: port1=SUB, port2=I60(137)
   Term innerLam = makePair(LAM, 0, SUB, newI60(137));
@@ -401,18 +401,6 @@ void testEraSup(void) {
 
   interact(ERA, sup);
 
-  Term port1 = take(portLoc(1, sup));
-  Term port2 = take(portLoc(2, sup));
-
-  if (termTag(port1) != ERA) {
-    sprintf(msg, "SUP port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-  if (termTag(port2) != ERA) {
-    sprintf(msg, "SUP port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
-    BOOM(msg);
-  }
-
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -444,7 +432,7 @@ void testDupNum(void) {
   // Build DUP: port1=ERA, port2=ERA
   Term dup = makePair(DUP, 0, ERA, ERA);
 
-  interact(dup, newI60(42));
+  interact(dup, newI60(87));
 
   // DUP rewired — both ports freed by dupLeaf
   if (glblAlloced != 0) {
@@ -513,26 +501,18 @@ void testOpYNum(void) {
 void testEraSupLam(void) {
   char msg[100];
   
-
   // Inner LAM: port1=SUB, port2=I60(99)
   Term innerLam = makePair(LAM, 0, SUB, newI60(99));
 
-  // SUP: port1=innerLam, port2=I60(42)
-  Term sup = makePair(SUP, 0, innerLam, newI60(42));
+  // SUP: port1=innerLam, port2=I60(52)
+  Term sup = makePair(SUP, 0, innerLam, newI60(52));
 
   interact(ERA, sup);
 
-  // SUP port1 should be ERA (erased innerLam)
-  Term port1 = take(portLoc(1, sup));
-  if (termTag(port1) != ERA) {
-    sprintf(msg, "SUP port 1 should be ERA, got tag %s", tagStr(termTag(port1)));
-    BOOM(msg);
-  }
-
-  // SUP port2 should be ERA (erased I60(42))
-  Term port2 = take(portLoc(2, sup));
-  if (termTag(port2) != ERA) {
-    sprintf(msg, "SUP port 2 should be ERA, got tag %s", tagStr(termTag(port2)));
+  // LAM port1 should be NUL
+  Term port1 = take(portLoc(1, innerLam));
+  if (termTag(port1) != NUL) {
+    sprintf(msg, "LAM port 1 should be NUL, got tag %s", tagStr(termTag(port1)));
     BOOM(msg);
   }
 
@@ -792,8 +772,8 @@ void testEraVarI60(void) {
   char msg[100];
   
 
-  // Create a location holding I60(42)
-  Term holder = makePair(LAM, 0, SUB, newI60(42));
+  // Create a location holding I60(74)
+  Term holder = makePair(LAM, 0, SUB, newI60(74));
   Location i60Loc = portLoc(2, holder);
 
   // VAR pointing to that location
@@ -801,14 +781,6 @@ void testEraVarI60(void) {
 
   // ERA interacts with VAR
   interact(ERA, var);
-
-  // Location is freed by take(), port2 should be VOID
-  Term port2 = take(portLoc(2, holder));
-  if (port2 != 0) {
-    sprintf(msg, "holder port 2 should be VOID, got tag %s",
-            tagStr(termTag(port2)));
-    BOOM(msg);
-  }
 
   // Clean up holder pair (port1 has SUB, freed by freeLoc)
   freeLoc(portLoc(1, holder));
@@ -854,14 +826,6 @@ void testEraVarChain(void) {
 
   // ERA interacts with VAR2 (chain of 2)
   interact(ERA, var2);
-
-  // Location is freed by take(), port2 should be VOID
-  Term port2 = take(portLoc(2, holder));
-  if (port2 != 0) {
-    sprintf(msg, "holder port 2 should be VOID, got tag %s",
-            tagStr(termTag(port2)));
-    BOOM(msg);
-  }
 
   // Clean up: port1 should be SUB (use get+freeLoc for SUB)
   Term port1 = get(portLoc(1, holder));
@@ -962,10 +926,9 @@ void testCascadingRedex(void) {
 // Test APP/NUL with LAM argument — exercises interact(ERA, LAM) → eraLam
 void testAppNulLamArg(void) {
   char msg[100];
-  
 
-  // Inner LAM: port1=SUB, port2=I60(42)
-  Term innerLam = makePair(LAM, 0, SUB, newI60(42));
+  // Inner LAM: port1=SUB, port2=I60(74)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(74));
 
   // APP: port1=innerLam, port2=ERA
   Term app = makePair(APP, 0, innerLam, ERA);
@@ -1148,10 +1111,10 @@ void testIsCycleLazyDup(void) {
 void testIsCycleNoCycle(void) {
   char msg[100];
 
-  Term laz = makePair(LAZ, 0, SUB, newI60(42));
+  Term laz = makePair(LAZ, 0, SUB, newI60(73));
   Location lazLoc = termLoc(laz);
 
-  int result = isCycle(newI60(42), lazLoc);
+  int result = isCycle(newI60(73), lazLoc);
   if (result != 0) {
     sprintf(msg, "isCycle should return 0 for leaf context, got %d", result);
     BOOM(msg);
@@ -1221,10 +1184,40 @@ void testIsCycleVarToI60(void) {
   // Clean up
   take(portLoc(1, laz));  // SUB
   take(portLoc(2, laz));  // I60 (coalesces LAZ pair)
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
 }
 
 // Test eraseLazy: cycle case — LAZ with DUP thunk, both DUP ports → LAZ, context cycles back
-void testEraseLazyCycle(void) {
+void testEraseLazyCycle1(void) {
+  char msg[100];
+
+  // Create DUP first
+  Term dup = makePair(DUP, 0, SUB, SUB);
+  Location dupLoc = termLoc(dup);
+
+  // Create LAZ with DUP in port 1, VAR->dup in port 2
+  Term context = newTerm(VAR, 0, dupLoc + 1);
+  Term laz = makePair(LAZ, 0, dup, context);
+  Location lazLoc = termLoc(laz);
+
+  // Wire DUP ports to LAZ (lazy DUP pattern)
+  swap(portLoc(1, dup), laz);
+  swap(portLoc(2, dup), laz);
+
+  interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test eraseLazy: cycle case — LAZ with DUP thunk, both DUP ports → LAZ, context cycles back
+void testEraseLazyCycle2(void) {
   char msg[100];
 
   // Create DUP first
@@ -1240,28 +1233,10 @@ void testEraseLazyCycle(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  // Call eraseLazy directly (simulating eraVar following VAR chain to LAZ)
-  eraseLazy(laz);
+  interact(ERA, newTerm(VAR, 0, dupLoc + 1));
 
-  // Verify LAZ pair is freed
-  Term p1_laz = get(portLoc(1, laz));
-  if (termTag(p1_laz) != NUL) {
-    sprintf(msg, "LAZ port 1 should be NUL (freed), got %s", tagStr(termTag(p1_laz)));
-    BOOM(msg);
-  }
-  Term p2_laz = get(portLoc(2, laz));
-  if (termTag(p2_laz) != NUL && termTag(p2_laz) != VAL) {
-    sprintf(msg, "LAZ port 2 should be VOID/NUL (freed), got %s", tagStr(termTag(p2_laz)));
-    BOOM(msg);
-  }
-  Term p1_dup = get(portLoc(1, dup));
-  if (termTag(p1_dup) != NUL) {
-    sprintf(msg, "DUP port 1 should be NUL (freed), got %s", tagStr(termTag(p1_dup)));
-    BOOM(msg);
-  }
-  Term p2_dup = get(portLoc(2, dup));
-  if (termTag(p2_dup) != NUL && termTag(p2_dup) != VAL) {
-    sprintf(msg, "DUP port 2 should be VOID/NUL (freed), got %s", tagStr(termTag(p2_dup)));
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
   }
 }
@@ -1274,36 +1249,24 @@ void testEraseLazyNoCycleDup1(void) {
   Location dupLoc = termLoc(dup);
 
   // Create LAZ with DUP in port 1, I60 in port 2 (context, no cycle)
-  Term laz = makePair(LAZ, 0, dup, newI60(42));
+  Term laz = makePair(LAZ, 0, dup, newI60(88));
   Location lazLoc = termLoc(laz);
 
-  // Wire DUP port 1 to LAZ, port 2 to ERA (simulating eraVar already ran)
+  // Wire DUP port 1 to LAZ, port 2 to LAZ
   swap(portLoc(1, dup), laz);
-  swap(portLoc(2, dup), ERA);
+  swap(portLoc(2, dup), laz);
 
-  // Call eraseLazy directly
-  eraseLazy(laz);
+  interact(ERA, newTerm(VAR, 0, dupLoc));
 
-  // Verify LAZ pair is freed
-  Term p1_laz = get(portLoc(1, laz));
-  if (termTag(p1_laz) != NUL) {
-    sprintf(msg, "LAZ port 1 should be NUL (freed), got %s", tagStr(termTag(p1_laz)));
-    BOOM(msg);
-  }
-  Term p2_laz = get(portLoc(2, laz));
-  if (termTag(p2_laz) != NUL && termTag(p2_laz) != VAL) {
-    sprintf(msg, "LAZ port 2 should be VOID/NUL (freed), got %s", tagStr(termTag(p2_laz)));
-    BOOM(msg);
-  }
-  // Verify DUP port 1 has context (I60), port 2 freed
-  Term p1_dup = get(portLoc(1, dup));
+  // Verify DUP port 2 has context (I60), port 2 freed
+  Term p1_dup = take(portLoc(2, dup));
   if (termTag(p1_dup) != I60) {
     sprintf(msg, "DUP port 1 should be I60 (context wired), got %s", tagStr(termTag(p1_dup)));
     BOOM(msg);
   }
-  Term p2_dup = get(portLoc(2, dup));
-  if (termTag(p2_dup) != NUL && termTag(p2_dup) != VAL) {
-    sprintf(msg, "DUP port 2 should be VOID/NUL (freed), got %s", tagStr(termTag(p2_dup)));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
   }
 }
@@ -1319,33 +1282,21 @@ void testEraseLazyNoCycleDup2(void) {
   Term laz = makePair(LAZ, 0, dup, newI60(99));
   Location lazLoc = termLoc(laz);
 
-  // Wire DUP port 1 to ERA, port 2 to LAZ
-  swap(portLoc(1, dup), ERA);
+  // Wire DUP port 1 to LAZ, port 2 to LAZ
+  swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  // Call eraseLazy directly
-  eraseLazy(laz);
+  interact(ERA, newTerm(VAR, 0, dupLoc + 1));
 
-  // Verify LAZ pair is freed
-  Term p1_laz = get(portLoc(1, laz));
-  if (termTag(p1_laz) != NUL) {
-    sprintf(msg, "LAZ port 1 should be NUL (freed), got %s", tagStr(termTag(p1_laz)));
+  // Verify DUP port 1 has context (I60), port 2 freed
+  Term p1_dup = take(portLoc(1, dup));
+  if (termTag(p1_dup) != I60) {
+    sprintf(msg, "DUP port 1 should be I60 (context wired), got %s", tagStr(termTag(p1_dup)));
     BOOM(msg);
   }
-  Term p2_laz = get(portLoc(2, laz));
-  if (termTag(p2_laz) != NUL && termTag(p2_laz) != VAL) {
-    sprintf(msg, "LAZ port 2 should be VOID/NUL (freed), got %s", tagStr(termTag(p2_laz)));
-    BOOM(msg);
-  }
-  // Verify DUP port 2 has context (I60), port 1 freed
-  Term p1_dup = get(portLoc(1, dup));
-  if (termTag(p1_dup) != NUL && termTag(p1_dup) != VAL) {
-    sprintf(msg, "DUP port 1 should be VOID/NUL (freed), got %s", tagStr(termTag(p1_dup)));
-    BOOM(msg);
-  }
-  Term p2_dup = get(portLoc(2, dup));
-  if (termTag(p2_dup) != I60) {
-    sprintf(msg, "DUP port 2 should be I60 (context wired), got %s", tagStr(termTag(p2_dup)));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
   }
 }
@@ -1373,7 +1324,6 @@ int main(int argc, char *argv[]) {
   testDupNum();
   testOpxNum();
   testOpYNum();
-  // testEraSupLam(); // needs ERA/VAR
   testDupNulSub();
   testOpxNumSub();
   testOpxNumMul();
@@ -1393,21 +1343,14 @@ int main(int argc, char *argv[]) {
   testIsCycleNoCycle();
   testIsCycleVarToLaz();
   testIsCycleVarToI60();
-  hvmReset();
-  hvmReset();
-  hvmReset();
-  testEraseLazyCycle();
-  hvmReset();
-  hvmReset();
-  hvmReset();
+  testEraseLazyCycle1();
+  testEraseLazyCycle2();
   testEraseLazyNoCycleDup1();
-  hvmReset();
-  hvmReset();
-  hvmReset();
   testEraseLazyNoCycleDup2();
+  testTakeLaz();
+  testEraSup();
+  testEraSupLam();
 
   hvmFree();
-  // testTakeLaz();
-  // testEraSup();
   return 0;
 }

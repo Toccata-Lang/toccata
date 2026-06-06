@@ -4,6 +4,7 @@
 extern FILE *dotFile;
 
 extern unsigned subGraphs;
-unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned graphNum);
+unsigned subGraph(char *title, Term root, unsigned currNodeCount);
+unsigned graph(char *title, Term root, unsigned currNodeCount);
 
 #endif
