@@ -185,6 +185,22 @@ LAZ port 2 (positive) ──→ positive context value
 ```
 The LAZ's thunk body points back to the APP node, and the LAZ's context carries the positive value the APP will interact with when forced.
 
+### Cycle detection for lazy DUP erasure
+
+When erasing a LAZ whose thunk body is a DUP, we need to detect if there's a cycle: LAZ → context → ... → DUP → LAZ.
+
+**How `isCycle` works:**
+- Entry: `isCycle(context, lazLoc)` where `context` = term at LAZ port 2 (positive), `lazLoc` = LAZ's location
+- `findCycle` traverses from the context, following VAR chains and recursing into pair node ports
+- For each port, checks two things:
+  1. **VAR chain match:** port contains VAR → `lazLoc` (follows VAR chain to target)
+  2. **Direct LAZ match:** port directly contains LAZ term at `lazLoc` (the cycle-closing point — DUP's ports contain LAZ directly)
+- Returns 1 if cycle found, 0 otherwise
+
+**Why both checks are needed:** The DUP's ports contain the LAZ **directly** (not via VAR). A VAR chain from the context leads to the DUP, but the DUP itself points to LAZ via a direct term reference. The cycle closes when `findCycle` encounters a port containing the LAZ term directly.
+
+**Performance note:** The visited set uses a linear scan (`findCycleNode`), giving O(n²) worst case. The population of visited nodes is completely different between calls, so a hash set for O(1) lookups would be the right optimization when this becomes a real bottleneck. The TODO comment in `isCycle` tracks this.
+
 ## Thread Safety
 
 - **Non-atomic mode** (`NON_ATOMIC`): Single-threaded, direct array access.
