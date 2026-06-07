@@ -808,14 +808,7 @@ void testNegSupOpYYNul(void) {
 
   // OPY: port1=I60(77) (a), port2=ERA (b)
   Term opy = makePair(OPY, OP_ADD, newI60(77), ERA);
-
-  subGraph("negSupOpYYNul-before", opy, 0);
-  subGraph("negSupOpYYNul-before", sup, nodeCount);
-
   interact(opy, sup);
-
-  pr();
-  pb();
 
   // After (y=NUL case):
   // - Both SUP ports taken, SUP pair freed
