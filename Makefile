@@ -40,7 +40,7 @@ $(REG_TESTS): %: regression-tests/%.c $(TEST_SOURCES)
 
 # Run all tests
 .PHONY: tests
-tests: $(REG_TESTS)
+tests: test-hvm $(REG_TESTS)
 
 # Interpeter
 intrp.c: intrp-ast.toc intrp-rdr.toc hvm-core.toc new-toc
@@ -81,8 +81,8 @@ help:
 # Test HVM
 .PHONY: test-hvm
 test-hvm:
-	$(CC) $(CFLAGS) -o test-hvm $(TOC_FLAGS) $(LDFLAGS) -DTESTING_HVM=1 new.c test-hvm.c graph.c runtime3.c
-	./test-hvm
+	$(CC) $(CFLAGS) -o regression-tests/test-hvm $(TOC_FLAGS) $(LDFLAGS) -DTESTING_HVM=1 new.c regression-tests/test-hvm.c graph.c runtime3.c
+	./regression-tests/test-hvm
 	dot -Tsvg graphs.dot > graphs.svg
 
 # Default help if no target specified
