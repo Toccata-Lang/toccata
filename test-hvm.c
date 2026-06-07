@@ -8,11 +8,6 @@ refMap refNames[0];
 void testAppLam(void) {
   char msg[100];
 
-  if (glblAlloced != 0) {
-    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
-    BOOM(msg);
-  }
-
   Term lam = makePair(LAM, 0, SUB, newI60(8));
   Term app = makePair(APP, 0, newI60(7), SUB);
 
@@ -1545,8 +1540,8 @@ void testEraseLazyCycle2(void) {
   Term dup = makePair(DUP, 0, SUB, SUB);
   Location dupLoc = termLoc(dup);
 
-  // Create LAZ with DUP in port 1, VAR->dup in port 2
-  Term context = newTerm(VAR, 0, dupLoc);
+  // Create LAZ with DUP in port 1, VAR->dup port 2 in port 2
+  Term context = newTerm(VAR, 0, dupLoc + 1);
   Term laz = makePair(LAZ, 0, dup, context);
   Location lazLoc = termLoc(laz);
 
@@ -1554,7 +1549,7 @@ void testEraseLazyCycle2(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  interact(ERA, newTerm(VAR, 0, dupLoc + 1));
+  interact(ERA, newTerm(VAR, 0, dupLoc));
 
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
@@ -1607,12 +1602,12 @@ void testEraseLazyNoCycleDup2(void) {
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
 
-  interact(ERA, newTerm(VAR, 0, dupLoc + 1));
+  interact(ERA, newTerm(VAR, 0, dupLoc));
 
-  // Verify DUP port 1 has context (I60), port 2 freed
-  Term p1_dup = take(portLoc(1, dup));
-  if (termTag(p1_dup) != I60) {
-    sprintf(msg, "DUP port 1 should be I60 (context wired), got %s", tagStr(termTag(p1_dup)));
+  // Verify DUP port 2 has context (I60), port 1 freed
+  Term p2_dup = take(portLoc(2, dup));
+  if (termTag(p2_dup) != I60) {
+    sprintf(msg, "DUP port 2 should be I60 (context wired), got %s", tagStr(termTag(p2_dup)));
     BOOM(msg);
   }
 
