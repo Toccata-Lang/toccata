@@ -1123,6 +1123,55 @@ void eraVar(Term era, Term var) {
   return;
 }
 
+Term makeLazyDup(Lab lb, Term arg) {
+  Term dp = makePair(DUP, lb, SUB, SUB);
+  Tag t = termTag(arg);
+  if (t == I60 || t == F60 || t == REF || t == VAL) {
+    incRef(arg, 1);
+    swap(portLoc(1, dp), arg);
+    swap(portLoc(2, dp), arg);
+  } else {
+    Term lz = makePair(LAZ, 0, dp, arg);
+    swap(portLoc(1, dp), lz);
+    swap(portLoc(2, dp), lz);
+  }
+  return dp;
+}
+
+// distribute a negative through a SUP
+void negSup(Term neg, Term sup) {
+  Term tm1 = take(portLoc(1, sup));
+  Term tm2 = take(portLoc(2, sup));
+  if (termTag(tm1) == NUL) {
+    pushRedex(neg, tm2);
+  } else if (termTag(tm2) == NUL) {
+    pushRedex(neg, tm1);
+  } else {
+    Lab supLab = termLab(sup);
+    Tag negTag = termTag(neg);
+    Lab negLab = termLab(neg);
+
+    Term arg = take(portLoc(1, neg));
+    Location ret = portLoc(2, neg);
+    Term dp1 = makeLazyDup(supLab, arg);
+    Term cn1 = makePair(negTag, negLab,
+			 newTerm(VAR, 0, portLoc(1, dp1)),
+			 SUB);
+    Term lz1 = makePair(LAZ, 0, cn1, tm1);
+    swap(portLoc(2, cn1), lz1);
+    Term cn2 = makePair(negTag, negLab,
+			 newTerm(VAR, 0, portLoc(2, dp1)),
+			 SUB);
+    swap(portLoc(2, cn2), makePair(LAZ, 0, cn2, tm2));
+    // TODO: could you make the ports of the SUP store direct LAZ terms
+    // and not VAR's?
+    Term dp2 = makePair(SUP, supLab,
+			 newTerm(VAR, 0, portLoc(2, cn1)),
+			 newTerm(VAR, 0, portLoc(2, cn2)));
+    move(ret, dp2);
+  }
+}
+
 // interaction jump table - all entries default to badrdx
 interactionFn interactions[16][16] = {
   [0 ... 15] = {[0 ... 15] = &badrdx}
@@ -1390,13 +1439,16 @@ void hvmInit(u64 size) {
   interactions[ERA][I60] = &eraLeaf;
   interactions[ERA][F60] = &eraLeaf;
   interactions[ERA][LAM] = &eraLam;
-  // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
   interactions[ERA][SUP] = &eraSup;
   interactions[ERA][VAR] = &eraVar;
   interactions[DUP][NUL] = &dupLeaf;
   interactions[DUP][I60] = &dupLeaf;
   interactions[OPX][I60] = &opxNum;
   interactions[OPY][I60] = &opyNum;
+  interactions[APP][SUP] = &negSup;
+  interactions[OPX][SUP] = &negSup;
+  interactions[OPY][SUP] = &negSup;
+  // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redexMutex, NULL) != 0) {

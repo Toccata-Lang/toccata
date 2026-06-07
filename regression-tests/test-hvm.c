@@ -517,6 +517,248 @@ void testEraSupLam(void) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* negSup tests — APP/SUP, OPX/SUP, OPY/SUP wildcard handler          */
+/* ------------------------------------------------------------------ */
+
+// Test APP/SUP with x=NUL
+// After (x=NUL): SUP aux port 1 carries NUL. * (APP) principal connects directly to y.
+void testNegSupXNul(void) {
+  char msg[100];
+
+  // SUP: port1=NUL (x), port2=I60(42) (y)
+  Term sup = makePair(SUP, 0, NUL, newI60(42));
+
+  // APP: port1=I60(77) (a), port2=ERA (b)
+  Term app = makePair(APP, 0, newI60(77), ERA);
+
+  interact(app, sup);
+
+  // After (x=NUL case):
+  // - APP aux port 2 → y (I60(42))
+  // - SUP aux port 1 → NUL (unchanged)
+
+  // Verify APP port 2 now contains y
+  Term result = take(portLoc(2, app));
+  if (termTag(result) != I60 || getI60(result) != 42) {
+    sprintf(msg, "APP port 2 should be I60(42), got tag %s val %ld",
+            tagStr(termTag(result)), (long)getI60(result));
+    BOOM(msg);
+  }
+
+  // Verify SUP port 1 is still NUL
+  Term supPort1 = take(portLoc(1, sup));
+  if (termTag(supPort1) != NUL) {
+    sprintf(msg, "SUP port 1 should be NUL, got tag %s", tagStr(termTag(supPort1)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test APP/SUP with y=NUL
+// After (y=NUL): SUP aux port 2 carries NUL. * (APP) principal connects directly to x.
+void testNegSupYNul(void) {
+  char msg[100];
+
+  // SUP: port1=I60(42) (x), port2=NUL (y)
+  Term sup = makePair(SUP, 0, newI60(42), NUL);
+
+  // APP: port1=I60(77) (a), port2=ERA (b)
+  Term app = makePair(APP, 0, newI60(77), ERA);
+
+  interact(app, sup);
+
+  // After (y=NUL case):
+  // - APP aux port 2 → x (I60(42))
+  // - SUP aux port 2 → NUL (unchanged)
+
+  // Verify APP port 2 now contains x
+  Term result = take(portLoc(2, app));
+  if (termTag(result) != I60 || getI60(result) != 42) {
+    sprintf(msg, "APP port 2 should be I60(42), got tag %s val %ld",
+            tagStr(termTag(result)), (long)getI60(result));
+    BOOM(msg);
+  }
+
+  // Verify SUP port 2 is still NUL
+  Term supPort2 = take(portLoc(2, sup));
+  if (termTag(supPort2) != NUL) {
+    sprintf(msg, "SUP port 2 should be NUL, got tag %s", tagStr(termTag(supPort2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test APP/SUP general case (both x and y are non-NUL)
+// After: SUP principal → b. SUP aux ports → two * wildcards → LAZ → DUP, a/b.
+//         * other aux ports → x/y.
+void testNegSupGeneral(void) {
+  char msg[100];
+
+  // SUP: port1=I60(42) (x), port2=I60(99) (y)
+  Term sup = makePair(SUP, 0, newI60(42), newI60(99));
+
+  // APP: port1=I60(77) (a), port2=ERA (b)
+  Term app = makePair(APP, 0, newI60(77), ERA);
+
+  interact(app, sup);
+
+  // After general case:
+  // - SUP aux port 1 → * wildcard (APP/OPX/OPY)
+  // - SUP aux port 2 → * wildcard (APP/OPX/OPY)
+  //
+  // Each * wildcard:
+  //   - aux port 1 → x or y
+  //   - principal → LAZ → DUP, a or b
+
+  // Verify SUP port 1 contains a * wildcard (APP, OPX, OPY, or DUP)
+  Term supPort1 = get(portLoc(1, sup));
+  Tag supPort1Tag = termTag(supPort1);
+  if (supPort1Tag != APP && supPort1Tag != OPX && supPort1Tag != OPY && supPort1Tag != DUP) {
+    sprintf(msg, "SUP port 1 should be * wildcard (APP/OPX/OPY/DUP), got tag %s",
+            tagStr(supPort1Tag));
+    BOOM(msg);
+  }
+
+  // Verify SUP port 2 contains a * wildcard
+  Term supPort2 = get(portLoc(2, sup));
+  Tag supPort2Tag = termTag(supPort2);
+  if (supPort2Tag != APP && supPort2Tag != OPX && supPort2Tag != OPY && supPort2Tag != DUP) {
+    sprintf(msg, "SUP port 2 should be * wildcard (APP/OPX/OPY/DUP), got tag %s",
+            tagStr(supPort2Tag));
+    BOOM(msg);
+  }
+
+  // Verify the * wildcard at SUP port 1 has LAZ at its principal (port 2)
+  Term sup1Wildcard = get(portLoc(1, sup));
+  Term sup1WildcardPort2 = get(portLoc(2, sup1Wildcard));
+  while (termTag(sup1WildcardPort2) == VAR) {
+    sup1WildcardPort2 = get(termLoc(sup1WildcardPort2));
+  }
+  if (termTag(sup1WildcardPort2) != LAZ) {
+    sprintf(msg, "SUP port 1 wildcard's principal should be LAZ, got tag %s",
+            tagStr(termTag(sup1WildcardPort2)));
+    BOOM(msg);
+  }
+
+  // Verify the LAZ's positive aux port (port 2) connects to a (I60(77))
+  Term laz = sup1WildcardPort2;
+  Term lazPort2 = get(portLoc(2, laz));
+  while (termTag(lazPort2) == VAR) {
+    lazPort2 = get(termLoc(lazPort2));
+  }
+  if (termTag(lazPort2) != I60 || getI60(lazPort2) != 77) {
+    sprintf(msg, "LAZ port 2 should be I60(77) (a), got tag %s val %ld",
+            tagStr(termTag(lazPort2)), (long)getI60(lazPort2));
+    BOOM(msg);
+  }
+
+  // Verify the * wildcard at SUP port 2 has LAZ at its principal (port 2)
+  Term sup2Wildcard = get(portLoc(2, sup));
+  Term sup2WildcardPort2 = get(portLoc(2, sup2Wildcard));
+  while (termTag(sup2WildcardPort2) == VAR) {
+    sup2WildcardPort2 = get(termLoc(sup2WildcardPort2));
+  }
+  if (termTag(sup2WildcardPort2) != LAZ) {
+    sprintf(msg, "SUP port 2 wildcard's principal should be LAZ, got tag %s",
+            tagStr(termTag(sup2WildcardPort2)));
+    BOOM(msg);
+  }
+
+  // Verify the LAZ's positive aux port (port 2) connects to b (ERA)
+  Term laz2 = sup2WildcardPort2;
+  Term laz2Port2 = get(portLoc(2, laz2));
+  while (termTag(laz2Port2) == VAR) {
+    laz2Port2 = get(termLoc(laz2Port2));
+  }
+  if (termTag(laz2Port2) != ERA) {
+    sprintf(msg, "LAZ port 2 should be ERA (b), got tag %s",
+            tagStr(termTag(laz2Port2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPX/SUP with x=NUL
+void testNegSupOpxXNul(void) {
+  char msg[100];
+
+  // SUP: port1=NUL (x), port2=I60(42) (y)
+  Term sup = makePair(SUP, 0, NUL, newI60(42));
+
+  // OPX: port1=I60(77) (a), port2=ERA (b)
+  Term opx = makePair(OPX, OP_ADD, newI60(77), ERA);
+
+  interact(opx, sup);
+
+  // After (x=NUL case):
+  // - OPX aux port 2 → y (I60(42))
+
+  Term result = take(portLoc(2, opx));
+  if (termTag(result) != I60 || getI60(result) != 42) {
+    sprintf(msg, "OPX port 2 should be I60(42), got tag %s val %ld",
+            tagStr(termTag(result)), (long)getI60(result));
+    BOOM(msg);
+  }
+
+  Term supPort1 = take(portLoc(1, sup));
+  if (termTag(supPort1) != NUL) {
+    sprintf(msg, "SUP port 1 should be NUL, got tag %s", tagStr(termTag(supPort1)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// Test OPY/SUP with y=NUL
+void testNegSupOpYYNul(void) {
+  char msg[100];
+
+  // SUP: port1=I60(42) (x), port2=NUL (y)
+  Term sup = makePair(SUP, 0, newI60(42), NUL);
+
+  // OPY: port1=I60(77) (a), port2=ERA (b)
+  Term opy = makePair(OPY, OP_ADD, newI60(77), ERA);
+
+  interact(opy, sup);
+
+  // After (y=NUL case):
+  // - OPY aux port 2 → x (I60(42))
+
+  Term result = take(portLoc(2, opy));
+  if (termTag(result) != I60 || getI60(result) != 42) {
+    sprintf(msg, "OPY port 2 should be I60(42), got tag %s val %ld",
+            tagStr(termTag(result)), (long)getI60(result));
+    BOOM(msg);
+  }
+
+  Term supPort2 = take(portLoc(2, sup));
+  if (termTag(supPort2) != NUL) {
+    sprintf(msg, "SUP port 2 should be NUL, got tag %s", tagStr(termTag(supPort2)));
+    BOOM(msg);
+  }
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 // Test DUP/NUL with SUB in ports — verifies SUB gets rewired to NUL
 void testDupNulSub(void) {
   char msg[100];
@@ -2055,6 +2297,11 @@ int main(int argc, char *argv[]) {
   testTakeLaz();
   testEraSup();
   testEraSupLam();
+  testNegSupXNul();
+  testNegSupYNul();
+  testNegSupGeneral();
+  testNegSupOpxXNul();
+  testNegSupOpYYNul();
 
   hvmFree();
   return 0;

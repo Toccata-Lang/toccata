@@ -55,24 +55,51 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - `testAppNulLamArg` — APP/NUL with LAM arg ✅
 - `testSubNulLamBody` — SUB/NUL with LAM body ✅
 - `testSwapSub` — swap with SUB literal ✅
+- `testEraVarThruSupI60` — ERA/VAR→DUP port1, context SUP→DUP port2 ✅
+- `testEraVarThruLamI60` — ERA/VAR→DUP port1, context LAM→VAR→DUP port2 ✅
+- `testEraVarThruSupNul` — ERA/VAR→DUP port1, context SUP(NUL,VAR→DUP port2) ✅
+- `testEraVarThruLamNulPort2` — ERA/VAR→DUP port1, context LAM(APP,VAR→DUP port2) ✅
+- `testEraVarThruSupVarToDupPort1` — ERA/VAR→DUP port1, context SUP(VAR→DUP port2) ✅
+- `testEraVarThruSupDupPort2` — ERA/VAR→DUP port1, context SUP→LAM→APP→VAR→DUP port2 ✅
+- `testEraVarAppThunkI60` — LAZ thunk=APP, context=I60 ✅
+- `testEraVarAppThunkNul` — LAZ thunk=APP, context=NUL ✅
+- `testEraVarAppThunkSupI60` — LAZ thunk=APP, context=SUP(I60,NUL) ✅
+- `testEraVarAppThunkSupNul` — LAZ thunk=APP, context=SUP(NUL,I60) ✅
+- `testEraVarAppThunkLamI60` — LAZ thunk=APP, context=LAM(APP,I60) ✅
+- `testEraVarAppThunkLamNul` — LAZ thunk=APP, context=LAM(APP,NUL) ✅
+- `testEraVarAppThunkSupLamI60` — LAZ thunk=APP, context=SUP(I60,LAM) ✅
+- `testEraVarAppThunkSupLamNul` — LAZ thunk=APP, context=SUP(NUL,LAM) ✅
+- `testEraseLazyCycle1` — LAZ DUP cycle, ERA→port1, context→port2 ✅
+- `testEraseLazyCycle2` — LAZ DUP cycle, ERA→port1, context→port2 ✅
+- `testEraseLazyNoCycleDup1` — LAZ DUP no-cycle, ERA→port1, context=I60 ✅
+- `testEraseLazyNoCycleDup2` — LAZ DUP no-cycle, ERA→port1, context=I60 ✅
 
-## Next: ERA/LAZ and LAZ branch of ERA/VAR
+## Next: Tier 4 constructor interactions
 
 - [x] **`isCycle` / `findCycle`** — Cycle detection infrastructure for lazy DUP erasure. Traverses from LAZ context, checks VAR chains and direct LAZ terms in ports.
-- [ ] **ERA/LAZ** — ERA connects to LAZ. Follow the LAZ chain and erase it.
-- [ ] **ERA/VAR LAZ branch** — When `take` returns a VAR (term is LAZ/SUB), need `eraseLazy` to handle LAZ chains.
-- [ ] **ERA/VAL** — ERA connects to VAL. Special handling for native value erasure.
+
+**Note: ERA/LAZ is not a separate implementation gap.** An ERA can only reach a LAZ node through a VAR chain (LAZ is positive-polarity but stored only in negative ports, so it's always pointed to by VAR). Therefore `eraVar` covers that case — when `take` returns LAZ, `eraVar` calls `eraseLazy` which handles all LAZ sub-cases (DUP with cycle detection, APP/OP wildcard erasure).
 
 **Cycle detection details:**
 - `isCycle(context, lazLoc)` starts from LAZ's positive port (context) and looks for a path back to the LAZ
 - `findCycle` traverses VAR chains and pair node ports, checking for both VAR→lazLoc and direct LAZ term matches
 - The cycle closes when a port directly contains the LAZ term (DUP's ports contain LAZ directly, not via VAR)
 - Linear scan visited set — O(n²) worst case, hash set TODO for optimization
-- Tests: `testIsCycleLazyDup`, `testIsCycleNoCycle`, `testIsCycleVarToLaz`, `testIsCycleVarToI60` — some pass, more coverage needed
+- Tests: `testIsCycleLazyDup`, `testIsCycleNoCycle`, `testIsCycleVarToLaz`, `testIsCycleVarToI60`, `testIsCycleVarThruSup`, `testIsCycleVarThruSupI60`, `testIsCycleVarThruLamI60`, `testIsCycleVarThruSupNul`, `testIsCycleVarThruLamNulPort2`, `testIsCycleVarThruSupDupPort2` — all pass, good coverage of VAR chains through SUP/LAM/APP to DUP
 
-**eraVar tests:** `testEraVarI60`, `testEraVarChain` — some pass, more coverage needed
+**eraVar tests:** `testEraVarI60`, `testEraVarChain`, `testEraVarThruSupI60`, `testEraVarThruLamI60`, `testEraVarThruSupNul`, `testEraVarThruLamNulPort2`, `testEraVarThruSupVarToDupPort1`, `testEraVarThruSupDupPort2`, `testEraVarAppThunkI60`, `testEraVarAppThunkNul`, `testEraVarAppThunkSupI60`, `testEraVarAppThunkSupNul`, `testEraVarAppThunkLamI60`, `testEraVarAppThunkLamNul`, `testEraVarAppThunkSupLamI60`, `testEraVarAppThunkSupLamNul` — all pass, covers cycle and non-cycle cases with varied context trees
+
+**eraseLazy tests:** `testEraseLazyCycle1`, `testEraseLazyCycle2`, `testEraseLazyNoCycleDup1`, `testEraseLazyNoCycleDup2` — all pass
+
+**Lazy DUP port convention:** When testing eraVar with a LAZ whose thunk is a DUP, the context (LAZ port 2) loops back to one DUP port and the VAR given to `interact(ERA, var)` targets the other. All tests use context→port2, interact→port1.
 
 ## Remaining — Ordered by Implementation Priority
+
+### Deferred — Leaf redirections (done after all constructor rules)
+
+- [ ] **ERA/VAL** — ERA connects to VAL. Handler: `eraVal` (not `eraLeaf` — special handling needed for native value erasure).
+- [ ] **DUP/VAL** — DUP connects to VAL. Handler: `dupVal`.
+- [ ] **APP/VAL** — APP connects to VAL. Handler: `appVal`.
 
 ### Tier 1: Simple leaf redirections (same pattern as APP/LAM)
 
@@ -93,15 +120,16 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 ### Tier 4: Constructor interactions
 
-- [ ] **DUP/LAM** — DUP connects to LAM. After: two LAMs with SUP and LAZ/DUP chains.
-- [ ] **DUP/SUP** — DUP connects to SUP. After: complex rewiring with SUP chains.
+- [ ] **APP/SUP, OPX/SUP, OPY/SUP** — `*/SUP` wildcard. Negative constructor connects to SUP. After: SUP principal connects to `b`, aux ports connect to two `*` wildcards, LAZ/DUP chains to `x`/`y`. Handler: `negSup`.
+- [ ] **DUP/LAM** — DUP connects to LAM. After: two LAMs with SUP and LAZ/DUP chains. Handler: `dupLam`.
+- [ ] **DUP/SUP** — DUP connects to SUP. After: complex rewiring with SUP chains. Handler: `dupSup`.
 
 ### Tier 5: LAZ interactions (most complex)
 
-- [ ] **ERA/LAZ DUP** — ERA connects to LAZ with DUP. After: rewiring with DUP chain.
-- [ ] **ERA/LAZ (APP/OP)** — ERA connects to LAZ with APP/OP wildcard. After: two ERAs + NUL.
-- [ ] **(APP/OPX/OPY/DUP)/LAZ DUP** — Empty triangle connects to LAZ with DUP. After: DUP rewiring.
-- [ ] **(APP/OP)/LAZ (APP/OP)** — Empty triangle connects to LAZ with APP/OP wildcard. After: complex rewiring.
+- [ ] **(APP/OPX/OPY/DUP)/LAZ DUP** — Empty triangle connects to LAZ with DUP thunk. After: new DUP node created, LAZ unwrapped. Handler: `lazDup`.
+- [ ] **(APP/OP)/LAZ (APP/OP)** — Empty triangle connects to LAZ with APP/OP thunk. After: new empty triangle created, LAZ unwrapped. Handler: `lazAppOp`.
+
+**Note: ERA/LAZ DUP and ERA/LAZ (APP/OP) are handled by `eraVar` → `eraseLazy`.** These are not separate interaction rules — ERA reaches LAZ only through VAR chains, so `eraVar` covers both cases.
 
 ## Notes
 
