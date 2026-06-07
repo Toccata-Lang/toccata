@@ -74,7 +74,7 @@ Each rule is a subgraph with a **Before** case (the redex) and an **After** case
 
 ### `*/SUP`
 - **Before:** `*` wildcard principal connects to SUP principal. `*` aux ports carry `a`, `b`. SUP aux ports carry `x`, `y`.
-- **After:** SUP principal connects to `b`. SUP aux ports connect to two `*` wildcards. Each `*` aux port connects to LAZ principal. LAZ aux ports connect to DUP and `a`/`b`. `*` other aux ports connect to `x`/`y`.
+- **After:** SUP principal connects to `b`. SUP aux ports connect to two LAZ nodes. Each LAZ aux port connects to a `*` wildcard. Each `*` aux port connects back to its LAZ. LAZ aux ports connect to `x`/`y`. `*` principal ports connect to LAZ. LAZ aux ports connect to DUP and `a`.
 - **After (x=NUL):** SUP aux port carries NUL. `*` principal connects directly to `y`.
 - **After (y=NUL):** SUP aux port carries NUL. `*` principal connects directly to `x`.
 
