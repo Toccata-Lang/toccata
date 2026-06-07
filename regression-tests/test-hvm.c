@@ -809,21 +809,49 @@ void testNegSupOpYYNul(void) {
   // OPY: port1=I60(77) (a), port2=ERA (b)
   Term opy = makePair(OPY, OP_ADD, newI60(77), ERA);
 
+  subGraph("negSupOpYYNul-before", opy, 0);
+  subGraph("negSupOpYYNul-before", sup, nodeCount);
+
   interact(opy, sup);
 
-  // After (y=NUL case):
-  // - OPY aux port 2 → x (I60(83))
+  pr();
+  pb();
 
-  Term result = take(portLoc(2, opy));
-  if (termTag(result) != I60 || getI60(result) != 83) {
-    sprintf(msg, "OPY port 2 should be I60(83), got tag %s val %ld",
-            tagStr(termTag(result)), (long)getI60(result));
+  // After (y=NUL case):
+  // - Both SUP ports taken, SUP pair freed
+  // - Redex (OPY, I60(83)) pushed to stack
+
+  // Verify the redex (OPY, I60(83)) was pushed
+  Term neg, pos;
+  if (!popRedex(&neg, &pos)) {
+    BOOM("expected one redex on stack");
+  }
+  if (pairs.count != 0) {
+    sprintf(msg, "pairs.count should be 0 after pop, got %u", pairs.count);
+    BOOM(msg);
+  }
+  if (termTag(neg) != OPY) {
+    sprintf(msg, "redex neg should be OPY, got tag %s", tagStr(termTag(neg)));
+    BOOM(msg);
+  }
+  if (termTag(pos) != I60 || getI60(pos) != 83) {
+    sprintf(msg, "redex pos should be I60(83), got tag %s val %ld",
+            tagStr(termTag(pos)), (long)getI60(pos));
     BOOM(msg);
   }
 
-  Term supPort2 = take(portLoc(2, sup));
-  if (termTag(supPort2) != NUL) {
-    sprintf(msg, "SUP port 2 should be NUL, got tag %s", tagStr(termTag(supPort2)));
+  // Verify OPY port 1 still has a (I60(77))
+  Term opyPort1 = take(portLoc(1, opy));
+  if (termTag(opyPort1) != I60 || getI60(opyPort1) != 77) {
+    sprintf(msg, "OPY port 1 should be I60(77), got tag %s val %ld",
+            tagStr(termTag(opyPort1)), (long)getI60(opyPort1));
+    BOOM(msg);
+  }
+
+  // Clean up OPY port 2 (ERA)
+  Term opyPort2 = take(portLoc(2, opy));
+  if (termTag(opyPort2) != ERA) {
+    sprintf(msg, "OPY port 2 should be ERA, got tag %s", tagStr(termTag(opyPort2)));
     BOOM(msg);
   }
 
@@ -2353,7 +2381,7 @@ int main(int argc, char *argv[]) {
   testNegSupYNul();
   // testNegSupGeneral();
   testNegSupOpxXNul();
-  // testNegSupOpYYNul();
+  testNegSupOpYYNul();
 
   hvmFree();
   return 0;
