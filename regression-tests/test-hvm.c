@@ -662,7 +662,13 @@ void testNegSupGeneral(void) {
   // APP: port1=I60(77) (a), port2=ERA (b)
   Term app = makePair(APP, 0, newI60(77), ERA);
 
+  subGraph("negSupGeneral-before", app, 0);
+  subGraph("negSupGeneral-before", sup, nodeCount);
+
   interact(app, sup);
+
+  pr();
+  pb();
 
   // After general case:
   // - SUP aux port 1 → * wildcard (APP/OPX/OPY)
