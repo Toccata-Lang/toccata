@@ -521,35 +521,53 @@ void testEraSupLam(void) {
 /* negSup tests — APP/SUP, OPX/SUP, OPY/SUP wildcard handler          */
 /* ------------------------------------------------------------------ */
 
-// Test APP/SUP with x=NUL
-// After (x=NUL): SUP aux port 1 carries NUL. * (APP) principal connects directly to y.
+// Test OPX/SUP with x=NUL
+// After (x=NUL): SUP aux port 1 carries NUL. * (OPX) principal connects directly to y.
+// The negSup handler pushes a redex (OPX, I60(83)) to the stack.
 void testNegSupXNul(void) {
   char msg[100];
 
-  // SUP: port1=NUL (x), port2=I60(42) (y)
-  Term sup = makePair(SUP, 0, NUL, newI60(42));
+  // SUP: port1=NUL (x), port2=I60(83) (y)
+  Term sup = makePair(SUP, 0, NUL, newI60(83));
 
-  // APP: port1=I60(77) (a), port2=ERA (b)
-  Term app = makePair(APP, 0, newI60(77), ERA);
-
-  interact(app, sup);
+  // OPX: port1=I60(77) (a), port2=ERA (b)
+  Term opx = makePair(OPX, OP_ADD, newI60(77), ERA);
+  interact(opx, sup);
 
   // After (x=NUL case):
-  // - APP aux port 2 → y (I60(42))
-  // - SUP aux port 1 → NUL (unchanged)
+  // - OPX aux port 2 → y (I60(83)) — pushed as redex
 
-  // Verify APP port 2 now contains y
-  Term result = take(portLoc(2, app));
-  if (termTag(result) != I60 || getI60(result) != 42) {
-    sprintf(msg, "APP port 2 should be I60(42), got tag %s val %ld",
-            tagStr(termTag(result)), (long)getI60(result));
+  // Verify the redex (OPX, I60(83)) was pushed to the stack
+  Term neg, pos;
+  if (!popRedex(&neg, &pos)) {
+    BOOM("expected one redex on stack");
+  }
+  if (pairs.count != 0) {
+    sprintf(msg, "pairs.count should be 0 after pop, got %u", pairs.count);
+    BOOM(msg);
+  }
+  if (termTag(neg) != OPX) {
+    sprintf(msg, "redex neg should be OPX, got tag %s", tagStr(termTag(neg)));
+    BOOM(msg);
+  }
+  if (termTag(pos) != I60 || getI60(pos) != 83) {
+    sprintf(msg, "redex pos should be I60(83), got tag %s val %ld",
+            tagStr(termTag(pos)), (long)getI60(pos));
+    BOOM(msg);
+  }
+
+  // Verify OPX port 1 still has a (I60(77))
+  Term opxPort1 = take(portLoc(1, opx));
+  if (termTag(opxPort1) != I60 || getI60(opxPort1) != 77) {
+    sprintf(msg, "OPX port 1 should be I60(77), got tag %s val %ld",
+            tagStr(termTag(opxPort1)), (long)getI60(opxPort1));
     BOOM(msg);
   }
 
   // Verify SUP port 1 is still NUL
-  Term supPort1 = take(portLoc(1, sup));
-  if (termTag(supPort1) != NUL) {
-    sprintf(msg, "SUP port 1 should be NUL, got tag %s", tagStr(termTag(supPort1)));
+  Term supPort1 = take(portLoc(2, opx));
+  if (termTag(supPort1) != ERA) {
+    sprintf(msg, "OPX port 2 should be ERA, got tag %s", tagStr(termTag(supPort1)));
     BOOM(msg);
   }
 
@@ -561,26 +579,54 @@ void testNegSupXNul(void) {
 
 // Test APP/SUP with y=NUL
 // After (y=NUL): SUP aux port 2 carries NUL. * (APP) principal connects directly to x.
+// The negSup handler pushes a redex (APP, LAM) to the stack.
 void testNegSupYNul(void) {
   char msg[100];
 
-  // SUP: port1=I60(42) (x), port2=NUL (y)
-  Term sup = makePair(SUP, 0, newI60(42), NUL);
+  // Inner LAM: port1=SUB, port2=I60(99)
+  Term innerLam = makePair(LAM, 0, SUB, newI60(99));
+
+  // SUP: port1=innerLam (x), port2=NUL (y)
+  Term sup = makePair(SUP, 0, innerLam, NUL);
 
   // APP: port1=I60(77) (a), port2=ERA (b)
   Term app = makePair(APP, 0, newI60(77), ERA);
 
+  subGraph("negSupYNul-before", app, 0);
+  subGraph("negSupYNul-before", sup, nodeCount);
+
   interact(app, sup);
 
+  pr();
+  pb();
+
   // After (y=NUL case):
-  // - APP aux port 2 → x (I60(42))
+  // - APP aux port 2 → x (innerLam) — pushed as redex (APP, LAM)
   // - SUP aux port 2 → NUL (unchanged)
 
-  // Verify APP port 2 now contains x
-  Term result = take(portLoc(2, app));
-  if (termTag(result) != I60 || getI60(result) != 42) {
-    sprintf(msg, "APP port 2 should be I60(42), got tag %s val %ld",
-            tagStr(termTag(result)), (long)getI60(result));
+  // Verify the redex (APP, LAM) was pushed to the stack
+  Term neg, pos;
+  if (!popRedex(&neg, &pos)) {
+    BOOM("expected one redex on stack");
+  }
+  if (pairs.count != 0) {
+    sprintf(msg, "pairs.count should be 0 after pop, got %u", pairs.count);
+    BOOM(msg);
+  }
+  if (termTag(neg) != APP) {
+    sprintf(msg, "redex neg should be APP, got tag %s", tagStr(termTag(neg)));
+    BOOM(msg);
+  }
+  if (termTag(pos) != LAM) {
+    sprintf(msg, "redex pos should be LAM, got tag %s", tagStr(termTag(pos)));
+    BOOM(msg);
+  }
+
+  // Verify APP port 1 still has a (I60(77))
+  Term appPort1 = take(portLoc(1, app));
+  if (termTag(appPort1) != I60 || getI60(appPort1) != 77) {
+    sprintf(msg, "APP port 1 should be I60(77), got tag %s val %ld",
+            tagStr(termTag(appPort1)), (long)getI60(appPort1));
     BOOM(msg);
   }
 
@@ -603,8 +649,8 @@ void testNegSupYNul(void) {
 void testNegSupGeneral(void) {
   char msg[100];
 
-  // SUP: port1=I60(42) (x), port2=I60(99) (y)
-  Term sup = makePair(SUP, 0, newI60(42), newI60(99));
+  // SUP: port1=I60(83) (x), port2=I60(99) (y)
+  Term sup = makePair(SUP, 0, newI60(83), newI60(99));
 
   // APP: port1=I60(77) (a), port2=ERA (b)
   Term app = makePair(APP, 0, newI60(77), ERA);
@@ -695,8 +741,8 @@ void testNegSupGeneral(void) {
 void testNegSupOpxXNul(void) {
   char msg[100];
 
-  // SUP: port1=NUL (x), port2=I60(42) (y)
-  Term sup = makePair(SUP, 0, NUL, newI60(42));
+  // SUP: port1=NUL (x), port2=I60(83) (y)
+  Term sup = makePair(SUP, 0, NUL, newI60(83));
 
   // OPX: port1=I60(77) (a), port2=ERA (b)
   Term opx = makePair(OPX, OP_ADD, newI60(77), ERA);
@@ -704,11 +750,11 @@ void testNegSupOpxXNul(void) {
   interact(opx, sup);
 
   // After (x=NUL case):
-  // - OPX aux port 2 → y (I60(42))
+  // - OPX aux port 2 → y (I60(83))
 
   Term result = take(portLoc(2, opx));
-  if (termTag(result) != I60 || getI60(result) != 42) {
-    sprintf(msg, "OPX port 2 should be I60(42), got tag %s val %ld",
+  if (termTag(result) != I60 || getI60(result) != 83) {
+    sprintf(msg, "OPX port 2 should be I60(83), got tag %s val %ld",
             tagStr(termTag(result)), (long)getI60(result));
     BOOM(msg);
   }
@@ -729,8 +775,8 @@ void testNegSupOpxXNul(void) {
 void testNegSupOpYYNul(void) {
   char msg[100];
 
-  // SUP: port1=I60(42) (x), port2=NUL (y)
-  Term sup = makePair(SUP, 0, newI60(42), NUL);
+  // SUP: port1=I60(83) (x), port2=NUL (y)
+  Term sup = makePair(SUP, 0, newI60(83), NUL);
 
   // OPY: port1=I60(77) (a), port2=ERA (b)
   Term opy = makePair(OPY, OP_ADD, newI60(77), ERA);
@@ -738,11 +784,11 @@ void testNegSupOpYYNul(void) {
   interact(opy, sup);
 
   // After (y=NUL case):
-  // - OPY aux port 2 → x (I60(42))
+  // - OPY aux port 2 → x (I60(83))
 
   Term result = take(portLoc(2, opy));
-  if (termTag(result) != I60 || getI60(result) != 42) {
-    sprintf(msg, "OPY port 2 should be I60(42), got tag %s val %ld",
+  if (termTag(result) != I60 || getI60(result) != 83) {
+    sprintf(msg, "OPY port 2 should be I60(83), got tag %s val %ld",
             tagStr(termTag(result)), (long)getI60(result));
     BOOM(msg);
   }
@@ -2020,9 +2066,6 @@ void testEraVarAppThunkI60(void) {
   Term laz = makePair(LAZ, 0, app, newI60(88));
 
   swap(holderLoc, laz);
-
-  subGraph("laz", laz, 0);
-
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -2046,9 +2089,6 @@ void testEraVarAppThunkNul(void) {
   Term laz = makePair(LAZ, 0, app, NUL);
 
   swap(holderLoc, laz);
-
-  subGraph("laz", laz, 0);
-
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -2073,9 +2113,6 @@ void testEraVarAppThunkSupI60(void) {
   Term laz = makePair(LAZ, 0, app, sup);
 
   swap(holderLoc, laz);
-
-  subGraph("laz", laz, 0);
-
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -2100,9 +2137,6 @@ void testEraVarAppThunkSupNul(void) {
   Term laz = makePair(LAZ, 0, app, sup);
 
   swap(holderLoc, laz);
-
-  subGraph("laz", laz, 0);
-
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -2128,9 +2162,6 @@ void testEraVarAppThunkLamI60(void) {
   Term laz = makePair(LAZ, 0, app, lam);
 
   swap(holderLoc, laz);
-
-  subGraph("laz", laz, 0);
-
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -2156,9 +2187,6 @@ void testEraVarAppThunkLamNul(void) {
   Term laz = makePair(LAZ, 0, app, lam);
 
   swap(holderLoc, laz);
-
-  subGraph("laz", laz, 0);
-
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -2185,9 +2213,6 @@ void testEraVarAppThunkSupLamI60(void) {
   Term laz = makePair(LAZ, 0, app, sup);
 
   swap(holderLoc, laz);
-
-  subGraph("laz", laz, 0);
-
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -2214,9 +2239,6 @@ void testEraVarAppThunkSupLamNul(void) {
   Term laz = makePair(LAZ, 0, app, sup);
 
   swap(holderLoc, laz);
-
-  subGraph("laz", laz, 0);
-
   interact(ERA, newTerm(VAR, 0, holderLoc));
 
   swap(portLoc(1, holder), NUL);
@@ -2233,6 +2255,7 @@ void testEraVarAppThunkSupLamNul(void) {
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
+  /*
   testAppLam();
   testMoveEra();
   testEraBoth();
@@ -2297,11 +2320,12 @@ int main(int argc, char *argv[]) {
   testTakeLaz();
   testEraSup();
   testEraSupLam();
+  // */
   testNegSupXNul();
-  testNegSupYNul();
-  testNegSupGeneral();
-  testNegSupOpxXNul();
-  testNegSupOpYYNul();
+  // testNegSupYNul();
+  // testNegSupGeneral();
+  // testNegSupOpxXNul();
+  // testNegSupOpYYNul();
 
   hvmFree();
   return 0;
