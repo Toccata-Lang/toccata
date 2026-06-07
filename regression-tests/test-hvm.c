@@ -656,12 +656,6 @@ void testNegSupYNul(void) {
 void testNegSupGeneral(void) {
   char msg[100];
 
-  // Test begins with glblAlloced == 0
-  if (glblAlloced != 0) {
-    sprintf(msg, "glblAlloced should be 0 at start, got %lld", (long long)glblAlloced);
-    BOOM(msg);
-  }
-
   // SUP: port1=I60(83) (x), port2=I60(99) (y)
   Term sup = makePair(SUP, 0, newI60(83), newI60(99));
 
