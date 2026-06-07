@@ -1053,6 +1053,7 @@ void opyNum(Term neg, Term pos) {
 
 void eraseLazy(Term laz) {
   // peek at the negative port of the LAZ node
+  // TODO: instead of peeking, use the label of 'laz' to tell what kind of thunk this is
   Term negLaz = get(portLoc(1, laz));
   switch (termTag(negLaz)) {
   case DUP: {
@@ -1066,7 +1067,8 @@ void eraseLazy(Term laz) {
       // another thread beat us here. Let them handle it.
       break;
     }
-    negLaz = take(portLoc(1, laz));
+    take(portLoc(1, negLaz));
+    take(portLoc(1, laz));
     Term posLaz = take(portLoc(2, laz));
     Term origDup2 = swap(portLoc(2, negLaz), SUB);
     Tag t1 = termTag(origDup1);

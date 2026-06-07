@@ -1729,14 +1729,13 @@ void testEraVarThruSupVarToDupPort1(void) {
   Term dup = makePair(DUP, 0, SUB, SUB);
   Location dupLoc = termLoc(dup);
 
-  Term sup = makePair(SUP, 0, newTerm(VAR, 0, portLoc(1, dup)), newI60(77));
+  Term sup = makePair(SUP, 0, newTerm(VAR, 0, portLoc(2, dup)), newI60(77));
 
   Term laz = makePair(LAZ, 0, dup, sup);
   Location lazLoc = termLoc(laz);
 
   swap(portLoc(1, dup), laz);
   swap(portLoc(2, dup), laz);
-
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
@@ -2048,8 +2047,8 @@ int main(int argc, char *argv[]) {
   testEraVarThruLamI60();
   testEraVarThruSupNul();
   testEraVarThruLamNulPort2();
-  // testEraVarThruSupVarToDupPort1(); // TODO: debug — VAR→DUP port 1 not detected
   testEraVarThruSupDupPort2();
+  testEraVarThruSupVarToDupPort1();
   testEraVarAppThunkI60();
   testEraVarAppThunkNul();
   testEraVarAppThunkSupI60();
