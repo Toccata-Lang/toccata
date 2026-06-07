@@ -578,8 +578,7 @@ void testNegSupXNul(void) {
 }
 
 // Test APP/SUP with y=NUL
-// After (y=NUL): SUP aux port 2 carries NUL. * (APP) principal connects directly to x.
-// The negSup handler pushes a redex (APP, LAM) to the stack.
+// After (y=NUL): Both SUP ports are taken, non-null port's term pushed as redex with neg.
 void testNegSupYNul(void) {
   char msg[100];
 
@@ -591,18 +590,11 @@ void testNegSupYNul(void) {
 
   // APP: port1=I60(77) (a), port2=ERA (b)
   Term app = makePair(APP, 0, newI60(77), ERA);
-
-  subGraph("negSupYNul-before", app, 0);
-  subGraph("negSupYNul-before", sup, nodeCount);
-
   interact(app, sup);
 
-  pr();
-  pb();
-
   // After (y=NUL case):
-  // - APP aux port 2 → x (innerLam) — pushed as redex (APP, LAM)
-  // - SUP aux port 2 → NUL (unchanged)
+  // - Both SUP ports taken, SUP pair freed
+  // - Redex (APP, innerLam) pushed to stack
 
   // Verify the redex (APP, LAM) was pushed to the stack
   Term neg, pos;
@@ -630,10 +622,25 @@ void testNegSupYNul(void) {
     BOOM(msg);
   }
 
-  // Verify SUP port 2 is still NUL
-  Term supPort2 = take(portLoc(2, sup));
-  if (termTag(supPort2) != NUL) {
-    sprintf(msg, "SUP port 2 should be NUL, got tag %s", tagStr(termTag(supPort2)));
+  // Clean up APP port 2 (ERA)
+  Term appPort2 = take(portLoc(2, app));
+  if (termTag(appPort2) != ERA) {
+    sprintf(msg, "APP port 2 should be ERA, got tag %s", tagStr(termTag(appPort2)));
+    BOOM(msg);
+  }
+
+  // Clean up LAM ports (pos is the LAM term)
+  // take() on SUB returns VAR and doesn't free — use get + freeLoc
+  Term lamPort1 = get(portLoc(1, pos));
+  if (termTag(lamPort1) != SUB) {
+    sprintf(msg, "LAM port 1 should be SUB, got tag %s", tagStr(termTag(lamPort1)));
+    BOOM(msg);
+  }
+  freeLoc(portLoc(1, pos));
+  Term lamPort2 = take(portLoc(2, pos));
+  if (termTag(lamPort2) != I60 || getI60(lamPort2) != 99) {
+    sprintf(msg, "LAM port 2 should be I60(99), got tag %s val %ld",
+            tagStr(termTag(lamPort2)), (long)getI60(lamPort2));
     BOOM(msg);
   }
 
@@ -2322,7 +2329,7 @@ int main(int argc, char *argv[]) {
   testEraSupLam();
   // */
   testNegSupXNul();
-  // testNegSupYNul();
+  testNegSupYNul();
   // testNegSupGeneral();
   // testNegSupOpxXNul();
   // testNegSupOpYYNul();
