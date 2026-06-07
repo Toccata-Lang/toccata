@@ -656,7 +656,11 @@ void testNegSupYNul(void) {
 void testNegSupGeneral(void) {
   char msg[100];
 
-  u64 initialAlloced = glblAlloced;
+  // Test begins with glblAlloced == 0
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0 at start, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
 
   // SUP: port1=I60(83) (x), port2=I60(99) (y)
   Term sup = makePair(SUP, 0, newI60(83), newI60(99));
@@ -677,12 +681,10 @@ void testNegSupGeneral(void) {
   // - Original APP freed (port 1 taken by take(), port 2 freed by move())
   // - 6 new nodes created: dp1 (DUP), cn1 (APP), lz1 (LAZ), cn2 (APP), lz2 (LAZ), dp2 (SUP)
   // - move() loses dp2 when old value is ERA, so APP port 2 is freed
-
-  // move() loses dp2 when old value is ERA, then interact(ERA, dp2) erases all new nodes
-  // So glblAlloced should be back to initial (all freed)
-  if (glblAlloced != initialAlloced) {
-    sprintf(msg, "glblAlloced should be %lld, got %lld",
-            (long long)initialAlloced, (long long)glblAlloced);
+  // - interact(ERA, dp2) erases all new nodes
+  // Test ends with glblAlloced == 0
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0 at end, got %lld", (long long)glblAlloced);
     BOOM(msg);
   }
 }
