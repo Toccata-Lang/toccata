@@ -753,22 +753,43 @@ void testNegSupOpxXNul(void) {
 
   // OPX: port1=I60(77) (a), port2=ERA (b)
   Term opx = makePair(OPX, OP_ADD, newI60(77), ERA);
-
   interact(opx, sup);
 
   // After (x=NUL case):
-  // - OPX aux port 2 → y (I60(83))
+  // - Both SUP ports taken, SUP pair freed
+  // - Redex (OPX, I60(83)) pushed to stack
 
-  Term result = take(portLoc(2, opx));
-  if (termTag(result) != I60 || getI60(result) != 83) {
-    sprintf(msg, "OPX port 2 should be I60(83), got tag %s val %ld",
-            tagStr(termTag(result)), (long)getI60(result));
+  // Verify the redex (OPX, I60(83)) was pushed
+  Term neg, pos;
+  if (!popRedex(&neg, &pos)) {
+    BOOM("expected one redex on stack");
+  }
+  if (pairs.count != 0) {
+    sprintf(msg, "pairs.count should be 0 after pop, got %u", pairs.count);
+    BOOM(msg);
+  }
+  if (termTag(neg) != OPX) {
+    sprintf(msg, "redex neg should be OPX, got tag %s", tagStr(termTag(neg)));
+    BOOM(msg);
+  }
+  if (termTag(pos) != I60 || getI60(pos) != 83) {
+    sprintf(msg, "redex pos should be I60(83), got tag %s val %ld",
+            tagStr(termTag(pos)), (long)getI60(pos));
     BOOM(msg);
   }
 
-  Term supPort1 = take(portLoc(1, sup));
-  if (termTag(supPort1) != NUL) {
-    sprintf(msg, "SUP port 1 should be NUL, got tag %s", tagStr(termTag(supPort1)));
+  // Verify OPX port 1 still has a (I60(77))
+  Term opxPort1 = take(portLoc(1, opx));
+  if (termTag(opxPort1) != I60 || getI60(opxPort1) != 77) {
+    sprintf(msg, "OPX port 1 should be I60(77), got tag %s val %ld",
+            tagStr(termTag(opxPort1)), (long)getI60(opxPort1));
+    BOOM(msg);
+  }
+
+  // Clean up OPX port 2 (ERA)
+  Term opxPort2 = take(portLoc(2, opx));
+  if (termTag(opxPort2) != ERA) {
+    sprintf(msg, "OPX port 2 should be ERA, got tag %s", tagStr(termTag(opxPort2)));
     BOOM(msg);
   }
 
@@ -2331,7 +2352,7 @@ int main(int argc, char *argv[]) {
   testNegSupXNul();
   testNegSupYNul();
   // testNegSupGeneral();
-  // testNegSupOpxXNul();
+  testNegSupOpxXNul();
   // testNegSupOpYYNul();
 
   hvmFree();
