@@ -1179,6 +1179,33 @@ void negSup(Term neg, Term sup) {
   }
 }
 
+void dupLam(Term dup, Term lam) {
+  if (get(portLoc(1, dup)) == ERA) {
+    take(portLoc(1, dup));
+    move(portLoc(2, dup), lam);
+  } else if (get(portLoc(2, dup)) == ERA) {
+    take(portLoc(2, dup));
+    move(portLoc(1, dup), lam);
+  } else {
+    Lab lamLab = termLab(lam);
+    Lab dupLab = termLab(dup);
+    Location var = portLoc(1, lam);
+    Term bod = take(portLoc(2, lam));
+    Term l1 = makePair(LAM, lamLab, SUB, NUL);
+    Term l2 = makePair(LAM, lamLab, SUB, NUL);
+    Term du1 = makePair(SUP, dupLab,
+			 newTerm(VAR, 0, portLoc(1, l1)),
+			 newTerm(VAR, 0, portLoc(1, l2)));
+    Term du2 = makeLazyDup(dupLab, bod);
+    swap(portLoc(2, l1), newTerm(VAR, 0, portLoc(1, du2)));
+    swap(portLoc(2, l2), newTerm(VAR, 0, portLoc(2, du2)));
+    move(var, du1);
+    move(portLoc(1, dup), l1);
+    move(portLoc(2, dup), l2);
+  }
+  return;
+}
+
 // interaction jump table - all entries default to badrdx
 interactionFn interactions[16][16] = {
   [0 ... 15] = {[0 ... 15] = &badrdx}
@@ -1455,6 +1482,7 @@ void hvmInit(u64 size) {
   interactions[APP][SUP] = &negSup;
   interactions[OPX][SUP] = &negSup;
   interactions[OPY][SUP] = &negSup;
+  interactions[DUP][LAM] = &dupLam;
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
 
   // Initialize mutex for thread-safe redex operations

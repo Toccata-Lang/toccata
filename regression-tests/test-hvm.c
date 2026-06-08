@@ -663,9 +663,6 @@ void testNegSupGeneral(void) {
   // OPX: port1=I60(77) (a), port2=SUB (b) — SUB so dp2 stays at port2
   Term opx = makePair(OPX, 0, newI60(77), SUB);
 
-  subGraph("negSupGeneral-before", opx, 0);
-  subGraph("negSupGeneral-before", sup, nodeCount);
-
   interact(opx, sup);
 
   // After general case:
@@ -684,9 +681,6 @@ void testNegSupGeneral(void) {
     sprintf(msg, "APP port2 should be SUP, got tag %s", tagStr(termTag(dp2)));
     BOOM(msg);
   }
-
-  // Graph the full result structure for visual verification
-  subGraph("negSupGeneral-after", dp2, 0);
 
   // Clean up: erase dp2 and everything it references
   // dp2 = SUP(VAR→cn1_port2, VAR→cn2_port2)
@@ -2267,6 +2261,109 @@ void testEraVarAppThunkSupLamNul(void) {
 }
 
 // =============================================================================
+// DUP/LAM Interaction Tests
+// =============================================================================
+// DUP principal connects to LAM principal.
+// After: a,b each connect to a LAM. LAM aux ports connect to SUP. SUP
+// principal connects to x. LAZ aux ports connect to DUP and y.
+//
+// NOTE: DUP ports are initialized with ERA. When the handler moves new
+// LAMs into the DUP's ports, swap encounters ERA which triggers
+// interact(ERA, new_value) → eraLam erases the new LAM. The handler
+// must handle old ERA values before moving new LAMs in.
+
+void testDupLam(void) {
+  char msg[100];
+
+  // Original LAM: port1=SUB, port2=I60(88) (y)
+  Term lam = makePair(LAM, 0, SUB, newI60(88));
+
+  // DUP: port1=ERA, port2=ERA — old values that handler must handle
+  Term dup = makePair(DUP, 0, ERA, ERA);
+
+  subGraph("testDupLam-before", dup, 0);
+  subGraph("testDupLam-before", lam, nodeCount);
+
+  // Trigger DUP/LAM interaction
+  interact(dup, lam);
+
+  // Original LAM pair freed by interaction — verify port1 is VOID
+  if (take(portLoc(1, lam)) != NUL) {
+    sprintf(msg, "original LAM port1 should be NUL after interaction");
+    BOOM(msg);
+  }
+  // All nodes freed
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+void testDupLamWithDifferentValues(void) {
+  char msg[100];
+
+  // Original LAM: port1=SUB, port2=I60(55) (y)
+  Term lam = makePair(LAM, 0, SUB, newI60(55));
+
+  // DUP: port1=ERA, port2=ERA
+  Term dup = makePair(DUP, 0, ERA, ERA);
+
+  subGraph("testDupLamWithDifferentValues-before", dup, 0);
+  subGraph("testDupLamWithDifferentValues-before", lam, nodeCount);
+
+  interact(dup, lam);
+
+  // DUP port1 should be new LAM1
+  Term lam1 = take(portLoc(1, dup));
+  if (termTag(lam1) != LAM) BOOM("DUP port1 should be LAM");
+
+  // LAM1 port1 (SW) should be SUP
+  Term sup = get(portLoc(1, lam1));
+  if (termTag(sup) != SUP) BOOM("LAM1 port1 should be SUP");
+
+  // LAM1 port2 (SE) should be LAZ
+  Term laz = get(portLoc(2, lam1));
+  if (termTag(laz) != LAZ) BOOM("LAM1 port2 should be LAZ");
+
+  // LAZ port1 (SW) should be DUP
+  if (termTag(get(portLoc(1, laz))) != DUP) BOOM("LAZ port1 should be DUP");
+
+  // LAZ port2 (SE) should be I60(55) (original y)
+  if (get(portLoc(2, laz)) != newI60(55)) BOOM("LAZ port2 should be I60(55)");
+
+  // SUP port1 (NW) should be LAM1
+  if (get(portLoc(1, sup)) != lam1) BOOM("SUP port1 should be LAM1");
+
+  // DUP port2 should be LAM2
+  Term lam2 = take(portLoc(2, dup));
+  if (termTag(lam2) != LAM) BOOM("DUP port2 should be LAM");
+
+  // LAM2 port1 (SW) should be same SUP
+  if (get(portLoc(1, lam2)) != sup) BOOM("LAM2 port1 should be same SUP");
+
+  // LAM2 port2 (SE) should be same LAZ
+  if (get(portLoc(2, lam2)) != laz) BOOM("LAM2 port2 should be same LAZ");
+
+  // SUP port2 (NE) should be LAM2
+  if (get(portLoc(2, sup)) != lam2) BOOM("SUP port2 should be LAM2");
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+
+  // Cleanup
+  take(portLoc(1, lam1));
+  take(portLoc(2, lam1));
+  take(portLoc(1, lam2));
+  take(portLoc(2, lam2));
+  take(portLoc(1, laz));
+  take(portLoc(2, laz));
+  take(portLoc(1, sup));
+  take(portLoc(2, sup));
+}
+
+// =============================================================================
 // Free/Alloc Pair Tests
 // =============================================================================
 void testAllocPairReturnsEven(void) {
@@ -2459,6 +2556,9 @@ int main(int argc, char *argv[]) {
   testEraVarAppThunkLamNul();
   testEraVarAppThunkSupLamI60();
   testEraVarAppThunkSupLamNul();
+
+  testDupLam();
+  // testDupLamWithDifferentValues();
 
   hvmFree();
   return 0;
