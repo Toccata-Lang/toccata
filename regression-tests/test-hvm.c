@@ -1048,7 +1048,8 @@ void testMultiRedex(void) {
   }
 
   // Clean up outer pairs
-  take(portLoc(2, outerApp));  // innerLam (port1 already VOID)
+  // outerApp pair was freed by freePair during interact (both ports coalesced)
+  // outerLam pair: port2 already freed, port1 has NUL
   take(portLoc(1, outerLam));  // NUL (port2 already VOID)
 
   if (glblAlloced != 0) {
@@ -2379,9 +2380,84 @@ void testFreeListEntryFormat(void) {
 }
 int main(int argc, char *argv[]) {
   hvmInit(1024);
-
   testAllocPairReturnsEven();
   testFreeLocCoalesces();
+  testFreeLocSingleCellDoesNotFreePair();
+  testInterleavedFreeLoc();
+  testMakePairStoresTerms();
+  testStressAllocFree();
+  testFreeListEntryFormat();
+  testAppLam();
+  testMoveEra();
+  testTakeVarChain();
+  testTakeLaz();
+  testTakeSub();
+  testCascading();
+  testMoveNul();
+  testEraLam();
+  testEraLamNulBody();
+  testEraLamLamBody();
+  testEraBoth();
+  testAppNul();
+  testOpxNul();
+  testOpYNul();
+  testSubNul();
+  testEraSup();
+  testDupNul();
+  testDupNum();
+  testOpxNum();
+  testOpYNum();
+  testEraSupLam();
+  testNegSupXNul();
+  testNegSupYNul();
+  testNegSupGeneral();
+  testNegSupOpxXNul();
+  testNegSupOpYYNul();
+  testDupNulSub();
+  testOpxNumSub();
+  testOpxNumMul();
+  testOpxNumEq();
+  testOpxNulExplicit();
+  testEraLamTriple();
+  testDupNumDifferent();
+  testSubNulLiteral();
+  testMultiRedex();
+  testEraVarI60();
+  testEraVarSup();
+  testEraVarChain();
+  testEraVarChain();
+  testCascadingRedex();
+  testAppNulLamArg();
+  testSubNulLamBody();
+  testSwapSub();
+  testIsCycleLazyDup();
+  testIsCycleNoCycle();
+  testIsCycleVarToLaz();
+  testIsCycleVarToI60();
+  testIsCycleVarThruSup();
+  testIsCycleVarThruSupI60();
+  testIsCycleVarThruLamI60();
+  testIsCycleVarThruSupNul();
+  testIsCycleVarThruLamNulPort2();
+  testIsCycleVarThruSupDupPort2();
+  testEraseLazyCycle1();
+  testEraseLazyCycle2();
+  testEraseLazyNoCycleDup1();
+  testEraseLazyNoCycleDup2();
+  testEraVarThruSupI60();
+  testEraVarThruLamI60();
+  testEraVarThruSupNul();
+  testEraVarThruLamNulPort2();
+  testEraVarThruSupVarToDupPort1();
+  testEraVarThruSupDupPort2();
+  testEraVarAppThunkI60();
+  testEraVarAppThunkNul();
+  testEraVarAppThunkSupI60();
+  testEraVarAppThunkSupNul();
+  testEraVarAppThunkLamI60();
+  testEraVarAppThunkLamNul();
+  testEraVarAppThunkSupLamI60();
+  testEraVarAppThunkSupLamNul();
   testFreeLocSingleCellDoesNotFreePair();
   testInterleavedFreeLoc();
   testMakePairStoresTerms();
