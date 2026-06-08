@@ -140,3 +140,25 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - Each rule needs a corresponding test in `test-hvm.c`.
 - LAZ rules are the most complex due to lazy evaluation semantics and self-referential structures.
 - **LAZ structural constraint:** LAZ is positive-polarity but stored only in negative ports (APP port 2, DUP). LAZ's context (port 2) is positive, so it can't directly contain DUP — must go through VAR chain. Cycle detection follows this VAR chain from context to find the DUP, then checks if DUP's ports directly contain the LAZ.
+
+## Bugs Fixed
+
+### Location 0 collision with leaf terms (fixed 2026-06-07)
+
+**Symptom:** `testSwapSub` would crash with `term has no location: SUB` when run after certain preceding tests in randomized order.
+
+**Root cause:** `allocPair()` could return location 0 when `buffEnd` was 0 or when location 0 was on the free list. A pair allocated at location 0 would produce `newTerm(tag, lab, 0)`, which for SUB tag equals the SUB literal (`0x2`). This made `makePair(SUB, ...)` return the SUB literal instead of a valid SUB pair, causing `termLoc(SUB_literal)` to crash.
+
+**Fix:** Skip location 0 in both `allocPair()` (don't return it from free list or extend past it) and `freePair()` (never free location 0). This ensures location 0 is never allocated or freed, eliminating the collision with leaf term values.
+
+## Known Issues
+
+### Order-dependent state leakage (unresolved)
+
+Running all 70 tests with randomized ordering reveals pre-existing order-dependent bugs:
+
+1. **`glblAlloced != 0` failures**: Some tests leave 2+ pairs allocated, causing subsequent tests to fail their `glblAlloced == 0` checks. The leaking test's own check passes because it checks against a non-zero baseline left by a prior test.
+
+2. **`move` finds positive term**: `move()` sometimes encounters NUL (positive) where it expects a negative term at the target location, triggering the SAFETY abort `found positive at move target`.
+
+These indicate that some test(s) leave the HVM in a corrupted state — likely through improper pair freeing or free list corruption. The bug is order-dependent and manifests when specific test sequences leave stale data in reused locations. Needs binary-search narrowing to identify the specific leaking test(s).
