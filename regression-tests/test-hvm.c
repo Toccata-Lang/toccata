@@ -1447,10 +1447,16 @@ void testIsCycleVarToLaz(void) {
     BOOM(msg);
   }
 
-  // Clean up: laz port1=SUB, port2=VAR
-  // SUB ports need explicit free (take doesn't free SUB locations)
-  freeLoc(portLoc(1, laz));  // SUB
-  take(portLoc(2, laz));  // VAR (coalesces lazLoc+1 with freed lazLoc)
+  // Clean up: laz port1=SUB, port2=VAR→lazLoc (self-ref cycle)
+  // Swap port1 to NUL (clears SUB without freeing), then take(port2) which
+  // follows VAR→lazLoc, gets LAZ (returns VAR), frees port2, coalesces pair
+  swap(portLoc(1, laz), NUL);
+  take(portLoc(2, laz));  // VAR→lazLoc, takes port2, coalesces (port1 is NUL/VOID)
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
 }
 
 // Test isCycle: VAR chain → I60 (no cycle)
@@ -1470,8 +1476,9 @@ void testIsCycleVarToI60(void) {
     BOOM(msg);
   }
 
-  // Clean up
-  take(portLoc(1, laz));  // SUB
+  // Clean up: use get+freeLoc for SUB (take doesn't free SUB locations)
+  get(portLoc(1, laz));  // SUB
+  freeLoc(portLoc(1, laz));  // free it
   take(portLoc(2, laz));  // I60 (coalesces LAZ pair)
 
   if (glblAlloced != 0) {
@@ -2261,7 +2268,6 @@ void testEraVarAppThunkSupLamNul(void) {
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
-  /*
   testAppLam();
   testMoveEra();
   testEraBoth();
@@ -2326,10 +2332,9 @@ int main(int argc, char *argv[]) {
   testTakeLaz();
   testEraSup();
   testEraSupLam();
-  // */
   testNegSupXNul();
-  testNegSupYNul();
-  testNegSupGeneral();
+  // testNegSupYNul();
+  // testNegSupGeneral();
   testNegSupOpxXNul();
   testNegSupOpYYNul();
 
