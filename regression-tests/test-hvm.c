@@ -2268,7 +2268,7 @@ void testEraVarAppThunkSupLamNul(void) {
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
-  // testTakeLaz();
+  testTakeLaz();
   testAppLam();
   testMoveEra();
   testEraBoth();
