@@ -277,7 +277,11 @@ Location allocPair(void) {
 }
 
 void freeLoc(Location loc) {
-  if (get(loc) == VOID) return;
+  Term currVal = get(loc);
+  if (currVal == VOID)
+    BOOM("double free of odd location");
+  else if (termTag(currVal) == NUL && termLab(currVal) == 0xff)
+    BOOM("double free of even location");
 #ifdef NON_ATOMIC
   nodeBuff[loc] = VOID;
 #else

@@ -123,7 +123,7 @@ void testTakeLaz(void) {
     BOOM(msg);
   }
 
-  freeLoc(portLoc(1, lam));
+  freeLoc(termLoc(result));
   freePair(termLoc(laz));
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0 after cleanup, got %lld", (long long)glblAlloced);
@@ -2339,16 +2339,6 @@ void testMakePairStoresTerms(void) {
   if (glblAlloced != 0) BOOM("glblAlloced should be 0");
 }
 
-void testFreeLocVoidIsNoop(void) {
-  char msg[100];
-  Term p = makePair(SUP, 0, newI60(1), newI60(2));
-  freeLoc(portLoc(1, p));
-  freeLoc(portLoc(2, p));
-  if (glblAlloced != 0) BOOM("should be 0");
-  freeLoc(portLoc(2, p));  // VOID, should be no-op
-  if (glblAlloced != 0) BOOM("freeing VOID port should be no-op");
-}
-
 void testStressAllocFree(void) {
   char msg[100];
   for (int cycle = 0; cycle < 20; cycle++) {
@@ -2395,7 +2385,6 @@ int main(int argc, char *argv[]) {
   testFreeLocSingleCellDoesNotFreePair();
   testInterleavedFreeLoc();
   testMakePairStoresTerms();
-  testFreeLocVoidIsNoop();
   testStressAllocFree();
   testFreeListEntryFormat();
 
@@ -2403,6 +2392,7 @@ int main(int argc, char *argv[]) {
   testMoveEra();
   testTakeVarChain();
   testTakeSub();
+  testTakeLaz();
   testCascading();
   testMoveNul();
   testEraLam();
@@ -2473,4 +2463,3 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
-// testTakeLaz();
