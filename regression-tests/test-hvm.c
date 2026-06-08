@@ -2268,7 +2268,7 @@ void testEraVarAppThunkSupLamNul(void) {
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
-  /*
+  // testTakeLaz();
   testAppLam();
   testMoveEra();
   testEraBoth();
@@ -2330,17 +2330,13 @@ int main(int argc, char *argv[]) {
   testEraVarAppThunkLamNul();
   testEraVarAppThunkSupLamI60();
   testEraVarAppThunkSupLamNul();
-  // */
-  testTakeLaz();
-  /*
   testEraSup();
   testEraSupLam();
   testNegSupXNul();
-  // */
   testNegSupYNul();
-  // testNegSupGeneral();
-  // testNegSupOpxXNul();
-  // testNegSupOpYYNul();
+  testNegSupGeneral();
+  testNegSupOpxXNul();
+  testNegSupOpYYNul();
 
   hvmFree();
   return 0;
