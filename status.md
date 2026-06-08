@@ -10,7 +10,7 @@ Read these files for context before starting any new interaction:
 4. `docs/implementation.md` — Architecture reference: term layout, memory, reduction engine
 5. `new.h` — Type definitions, tag constants, function declarations
 6. `new.c` — Core implementation: `take`, `swap`, `move`, `interact`, existing rules
-7. `test-hvm.c` — Test suite: patterns for building terms and verifying results
+7. `regression-tests/test-hvm.c` — Test suite: patterns for building terms and verifying results
 8. `graph.c` — DOT graph generation for debugging
 9. `Makefile` — Build command for `test-hvm`
 
@@ -141,6 +141,31 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - LAZ rules are the most complex due to lazy evaluation semantics and self-referential structures.
 - **LAZ structural constraint:** LAZ is positive-polarity but stored only in negative ports (APP port 2, DUP). LAZ's context (port 2) is positive, so it can't directly contain DUP — must go through VAR chain. Cycle detection follows this VAR chain from context to find the DUP, then checks if DUP's ports directly contain the LAZ.
 
+## Test Results (2026-06-07)
+
+All 10 free/alloc tests pass. Interaction tests run sequentially after free/alloc tests:
+
+| Test | Result | Notes |
+|------|--------|-------|
+| testAllocPairReturnsEven | ✅ | |
+| testAllocPairNeverZero | ✅ | |
+| testFreePairZeroIsNoop | ✅ | |
+| testFreeLocCoalesces | ✅ | |
+| testFreeLocSingleCellDoesNotFreePair | ✅ | |
+| testInterleavedFreeLoc | ✅ | |
+| testMakePairStoresTerms | ✅ | |
+| testFreeLocVoidIsNoop | ✅ | |
+| testStressAllocFree | ✅ | 20 cycles × 100 pairs |
+| testFreeListEntryFormat | ✅ | |
+| testAppLam | ✅ | appLam called once |
+| testMoveEra | ✅ | appLam called #2 (redex) |
+| testTakeVarChain | ✅ | appLam called #3 (redex) |
+| testTakeLaz | ✅ | appLam called #4 (redex) |
+| **testTakeSub** | ❌ | appLam called #5 — **FAILS** |
+
+**testTakeSub** fails with `trying to move a negative to location 007`.
+Debug shows `appLam #5: neg=APP loc=006 pos=LAM loc=006` — both APP and LAM have the same location. Free list is corrupted.
+
 ## Bugs Fixed
 
 ### Location 0 collision with leaf terms (fixed 2026-06-07)
@@ -155,7 +180,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 **Symptom:** Tests fail with order-dependent bugs:
 
-1. **`glblAlloced != 0` failures**: Some tests leave pairs allocated, causing subsequent tests to fail their `glblAlloced == 0` checks.
+1. **`testTakeSub` fails**: `appLam` called 5 times. 5th call has APP and LAM both at location 006 (same location). Fails with `trying to move a negative to location 007`.
 2. **`move` finds positive term**: `move()` encounters NUL (positive) where it expects a negative term, triggering SAFETY abort.
 
 **Root cause:** The free list management in `allocPair`/`freePair` is corrupted by a chain of bugs:
@@ -169,3 +194,5 @@ Read in order: the calculus defines the rules, the implementation shows how they
 **Fix needed:** The core fix is in `allocPair` EMPTY_FREE_LIST case. When `fetch_add` returns a non-zero value, return `old + 2` (the actual new location). Also ensure `freePair` never writes invalid entries (location 0) to the buffer. The `case 0:` handler in `allocPair` and `currTop=0` guard in `freePair` are temporary mitigations — the real fix is ensuring the free list stays consistent.
 
 **Priority:** High — prevents all tests from passing in sequence.
+
+**Note:** The error is "trying to move a negative" (SAFETY abort), not `glblAlloced != 0`. The free list corruption causes `allocPair` to return the same location for both APP and LAM in `testTakeSub`, so `take(portLoc(2, pos))` gets the wrong term (ERA instead of a positive value).

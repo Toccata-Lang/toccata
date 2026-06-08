@@ -24,7 +24,7 @@ static u64* nodeBuff = NULL;
 #else
 static a64* nodeBuff = NULL;
 #endif
-a64 buffEnd = 0; // Only need to track the end of the node space
+a64 buffEnd = 0; // Only need to track the end of the node space.
 static u64 buffSize = 0; // Size of the main buffer for bounds checking
 
 // Free list for O(1) pair allocation
@@ -208,12 +208,7 @@ Term get(Location loc) {
 }
 
 // Free a pair by adding it to the free list - O(1)
-// Note: location 0 is never freed because it would produce
-// leaf-term-like values when reallocated.
 void freePair(Location loc) {
-  // Skip location 0 — never free it
-  if (loc == 0) return;
-
   #ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, -1, memory_order_relaxed);
 #endif
@@ -247,8 +242,6 @@ void freePair(Location loc) {
 
 // Allocate a pair from the free list - O(1)
 // By popping a value from the free stack
-// Note: location 0 is never allocated because newTerm(tag, lab, 0)
-// produces the same value as leaf terms (e.g., SUB literal = 0x2).
 Location allocPair(void) {
 #ifdef SAFETY
   atomic_fetch_add_explicit(&glblAlloced, 1, memory_order_relaxed);
@@ -262,11 +255,6 @@ Location allocPair(void) {
 
     case EMPTY_FREE_LIST:
       loc = atomic_fetch_add_explicit(&buffEnd, 2, memory_order_relaxed);
-      // Skip location 0 — it would produce leaf-term-like values
-      if (loc == 0) {
-        atomic_fetch_add_explicit(&buffEnd, 2, memory_order_relaxed);
-        loc = atomic_fetch_add_explicit(&buffEnd, 2, memory_order_relaxed);
-      }
       // printf("new pair: %d\n", loc);
       // Check if we have space in the buffer
       if (loc >= buffSize) {
@@ -277,19 +265,13 @@ Location allocPair(void) {
       break;
 
     default: {
-      // Skip location 0 — it would produce leaf-term-like values
-      if (loc == 0) {
-        Term next = get(loc);
-        freeList = (Location)(next >> (TAG_SIZE + LAB_SIZE));
-        continue;
-      }
       // Get the next free pair location
       Term next = get(loc);
       freeList = (Location)(next >> (TAG_SIZE + LAB_SIZE));
     }
       break;
     }
-  } while (loc == LOCK_FREE_LIST || loc == 0);
+  } while (loc == LOCK_FREE_LIST);
   // printf("alloc: %x\n", loc);
   return (Location)loc;
 }
@@ -595,6 +577,9 @@ Term makePair(Tag tag, Lab lab, Term fst, Term snd) {
   // Check port polarities based on pair type
   switch (tag) {
   case SUB:
+    if (lab == 0)
+      BOOM("Invalid SUB pair creation");
+    
   case LAM:
   case LAZ:
     // Port 1 must be negative
