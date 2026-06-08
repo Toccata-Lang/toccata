@@ -187,16 +187,7 @@ if (termTag(result) != I60 || getI60(result) != 7) {
 }
 ```
 
-**⚠️ Lesson:** Don't check `glblAlloced == 0` across multiple tests. Tests accumulate dangling pairs (LAZ/SUB locations aren't freed by `take`, VAR chain targets aren't freed). Save `u64 initialAlloced = glblAlloced;` at the start of each test and compare at the end:
-
-```c
-u64 initialAlloced = glblAlloced;
-// ... build terms, interact, take ...
-if (glblAlloced != initialAlloced) {
-  sprintf(msg, "glblAlloced should be %lld, got %lld", (long long)initialAlloced, (long long)glblAlloced);
-  BOOM(msg);
-}
-```
+**⚠️ Lesson:** `glblAlloced` is always 0 before and after each individual test. Check it after each test to verify no leaks — there's no need to check before each test.
 
 ## Build command
 
@@ -228,7 +219,7 @@ BOOM(msg);
 - [ ] Rule registered in `interactions` table in `hvmInit()`
 - [ ] Results verified with `take()` and tag comparisons
 - [ ] Errors use `BOOM(msg)` with `sprintf` into local char array
-- [ ] Test saves `u64 initialAlloced = glblAlloced;` and compares at end
+- [ ] Test checks `glblAlloced == 0` after the interaction to verify no leaks
 - [ ] Uses `take` (not `freeLoc`) to clean up ports after tests, verifying returned values
   - Exception: for SUB/LAZ ports, use `get` + `freeLoc` since `take` returns VAR without freeing
 - [ ] Uses `make test-hvm` to build (not manual clang)
@@ -293,7 +284,7 @@ The port location was freed by `take`'s internal `freeLoc`, which coalesces into
 4. **Never put negative terms in APP port 1** — APP port 1 must be positive. To test `take` with SUB, use a VAR chain pointing to a separate location.
 5. **Don't depend on specific location values** — the free list reuses locations across tests, making absolute location checks fragile. Use relative checks (tag comparisons, `portLoc` results).
 6. **`eraLeaf` must be registered per leaf type** — each positive leaf (NUL, I60, F60) needs its own entry in the interactions table. Constructors like LAM need dedicated handlers.
-7. **Tests accumulate state** — dangling pairs from LAZ/SUB and VAR chain targets mean `glblAlloced` doesn't reset to 0 between tests. Save `u64 initialAlloced = glblAlloced;` at test start and compare at end.
+7. **`glblAlloced` is always 0 before and after each test** — check it after each test to verify no leaks.
 8. **`move` rejects negative terms** — the SAFETY check in `move` aborts if `isNegative(pos)`. To put ERA (negative) into a location, use `swap` directly instead of `move`.
 9. **`move` assumes old value is negative** — `move` calls `swap`, gets the old value, and if it's not SUB/ERA, pushes it as a redex. If the old value is positive (e.g., LAM body), this creates an invalid redex. Use `take` + `swap` pattern instead when the location may contain a positive term.
 10. **Erased pair bodies must be freed** — when ERA erases a body that is a pair (like a nested LAM), `take` frees the port location but not the pair's own location. After `take`, call `freePair(termLoc(body) & 0xFFFFFFFE)` if `hasLocation(body)` is true.

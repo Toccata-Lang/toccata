@@ -659,26 +659,44 @@ void testNegSupGeneral(void) {
   // SUP: port1=I60(83) (x), port2=I60(99) (y)
   Term sup = makePair(SUP, 0, newI60(83), newI60(99));
 
-  // APP: port1=I60(77) (a), port2=ERA (b)
-  Term app = makePair(APP, 0, newI60(77), ERA);
+  // OPX: port1=I60(77) (a), port2=SUB (b) — SUB so dp2 stays at port2
+  Term opx = makePair(OPX, 0, newI60(77), SUB);
 
-  subGraph("negSupGeneral-before", app, 0);
+  subGraph("negSupGeneral-before", opx, 0);
   subGraph("negSupGeneral-before", sup, nodeCount);
 
-  interact(app, sup);
-
-  pr();
-  pb();
+  interact(opx, sup);
 
   // After general case:
   // - Original SUP freed (both ports taken)
-  // - Original APP freed (port 1 taken by take(), port 2 freed by move())
+  // - Original APP: port1 taken, port2 holds dp2 (SUB→dp2 swap returns SUB, no erasure)
   // - 6 new nodes created: dp1 (DUP), cn1 (APP), lz1 (LAZ), cn2 (APP), lz2 (LAZ), dp2 (SUP)
-  // - move() loses dp2 when old value is ERA, so APP port 2 is freed
-  // - interact(ERA, dp2) erases all new nodes
-  // Test ends with glblAlloced == 0
+  // - glblAlloced == 7 (6 new + APP pair)
+  if (glblAlloced != 7) {
+    sprintf(msg, "glblAlloced should be 7, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+
+  // dp2 should be at OPX port2
+  Term dp2 = get(portLoc(2, opx));
+  if (termTag(dp2) != SUP) {
+    sprintf(msg, "APP port2 should be SUP, got tag %s", tagStr(termTag(dp2)));
+    BOOM(msg);
+  }
+
+  // Graph the full result structure for visual verification
+  subGraph("negSupGeneral-after", dp2, 0);
+
+  // Clean up: erase dp2 and everything it references
+  // dp2 = SUP(VAR→cn1_port2, VAR→cn2_port2)
+  // Erase both SUP ports via eraVar → eraseLazy
+  interact(ERA, newTerm(VAR, 0, portLoc(1, dp2)));
+  interact(ERA, newTerm(VAR, 0, portLoc(2, dp2)));
+  // OPX port2 still has dp2 (now erased), free it
+  take(portLoc(2, opx));
+  // glblAlloced should be 0
   if (glblAlloced != 0) {
-    sprintf(msg, "glblAlloced should be 0 at end, got %lld", (long long)glblAlloced);
+    sprintf(msg, "glblAlloced should be 0 after cleanup, got %lld", (long long)glblAlloced);
     BOOM(msg);
   }
 }
