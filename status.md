@@ -151,14 +151,21 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 **Fix:** Skip location 0 in both `allocPair()` (don't return it from free list or extend past it) and `freePair()` (never free location 0). This ensures location 0 is never allocated or freed, eliminating the collision with leaf term values.
 
-## Known Issues
+## Next: Fix free list corruption (order-dependent state leakage)
 
-### Order-dependent state leakage (unresolved)
+**Symptom:** Tests fail with order-dependent bugs:
 
-Running all 70 tests with randomized ordering reveals pre-existing order-dependent bugs:
+1. **`glblAlloced != 0` failures**: Some tests leave pairs allocated, causing subsequent tests to fail their `glblAlloced == 0` checks.
+2. **`move` finds positive term**: `move()` encounters NUL (positive) where it expects a negative term, triggering SAFETY abort.
 
-1. **`glblAlloced != 0` failures**: Some tests leave 2+ pairs allocated, causing subsequent tests to fail their `glblAlloced == 0` checks. The leaking test's own check passes because it checks against a non-zero baseline left by a prior test.
+**Root cause:** The free list management in `allocPair`/`freePair` is corrupted by a chain of bugs:
 
-2. **`move` finds positive term**: `move()` sometimes encounters NUL (positive) where it expects a negative term at the target location, triggering the SAFETY abort `found positive at move target`.
+1. **`allocPair` EMPTY_FREE_LIST returns wrong value**: `fetch_add(&buffEnd, 2)` returns the OLD `buffEnd` value. When `buffEnd=2`, it returns 2 and sets `buffEnd=4`. The code was returning 2 (the old value) instead of 4 (the actual new location). This causes pairs to be allocated at wrong locations.
 
-These indicate that some test(s) leave the HVM in a corrupted state — likely through improper pair freeing or free list corruption. The bug is order-dependent and manifests when specific test sequences leave stale data in reused locations. Needs binary-search narrowing to identify the specific leaking test(s).
+2. **`freeList` gets corrupted to 0**: When `freePair` is called with `freeList=0` (corrupted from step 1), it writes `newTerm(NUL, 0xFF, 0)` to the buffer — a self-referential entry. Subsequent `allocPair` reads this and sets `freeList = 0xFF3 >> 36 = 0`, perpetuating the corruption.
+
+3. **Cascading allocation corruption**: Once the free list is corrupted, all subsequent allocations go to wrong locations, causing pairs to overwrite each other and tests to fail with "trying to move a negative" or "found positive at move target" errors.
+
+**Fix needed:** The core fix is in `allocPair` EMPTY_FREE_LIST case. When `fetch_add` returns a non-zero value, return `old + 2` (the actual new location). Also ensure `freePair` never writes invalid entries (location 0) to the buffer. The `case 0:` handler in `allocPair` and `currTop=0` guard in `freePair` are temporary mitigations — the real fix is ensuring the free list stays consistent.
+
+**Priority:** High — prevents all tests from passing in sequence.

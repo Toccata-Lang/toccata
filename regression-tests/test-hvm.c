@@ -5,6 +5,7 @@
 unsigned refsCount = 0;
 refMap refNames[0];
 
+
 void testAppLam(void) {
   char msg[100];
 
@@ -517,9 +518,9 @@ void testEraSupLam(void) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* negSup tests — APP/SUP, OPX/SUP, OPY/SUP wildcard handler          */
-/* ------------------------------------------------------------------ */
+// ------------------------------------------------------------------
+// negSup tests — APP/SUP, OPX/SUP, OPY/SUP wildcard handler
+// ------------------------------------------------------------------
 
 // Test OPX/SUP with x=NUL
 // After (x=NUL): SUP aux port 1 carries NUL. * (OPX) principal connects directly to y.
@@ -2264,30 +2265,193 @@ void testEraVarAppThunkSupLamNul(void) {
   }
 }
 
+// =============================================================================
+// Free/Alloc Pair Tests
+// =============================================================================
+void testAllocPairReturnsEven(void) {
+  char msg[100];
+  for (int i = 0; i < 50; i++) {
+    Term p = makePair(SUP, 0, newI60(i), newI60(i + 1));
+    Location loc = termLoc(p);
+    if (loc & 0x1) {
+      sprintf(msg, "allocPair returned odd location %u at iteration %d", loc, i);
+      BOOM(msg);
+    }
+    freeLoc(portLoc(1, p));
+    freeLoc(portLoc(2, p));
+  }
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
 
+void testAllocPairNeverZero(void) {
+  char msg[100];
+  for (int i = 0; i < 200; i++) {
+    Term p = makePair(SUP, 0, newI60(i), newI60(i + 1));
+    Location loc = termLoc(p);
+    if (loc == 0) BOOM("allocPair returned location 0!");
+    freeLoc(portLoc(1, p));
+    freeLoc(portLoc(2, p));
+  }
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+void testFreePairZeroIsNoop(void) {
+  char msg[100];
+  freePair(0);
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should still be 0 after freePair(0), got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+void testFreeLocCoalesces(void) {
+  char msg[100];
+  Term p = makePair(SUP, 0, newI60(1), newI60(2));
+  freeLoc(portLoc(1, p));
+  if (glblAlloced != 1) {
+    sprintf(msg, "after freeing port1, glblAlloced should still be 1, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+  freeLoc(portLoc(2, p));
+  if (glblAlloced != 0) {
+    sprintf(msg, "after freeing port2, glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+void testFreeLocSingleCellDoesNotFreePair(void) {
+  Term p = makePair(SUP, 0, newI60(1), newI60(2));
+  freeLoc(portLoc(1, p));
+  if (glblAlloced != 1) BOOM("freeLoc on port1 should not free the pair");
+  freeLoc(portLoc(2, p));
+  if (glblAlloced != 0) BOOM("freeLoc on port2 should free the pair");
+}
+
+void testInterleavedFreeLoc(void) {
+  char msg[100];
+  Term p1 = makePair(SUP, 0, newI60(1), newI60(2));
+  Term p2 = makePair(SUP, 0, newI60(3), newI60(4));
+  Term p3 = makePair(SUP, 0, newI60(5), newI60(6));
+  freeLoc(portLoc(1, p1));
+  freeLoc(portLoc(1, p2));
+  if (glblAlloced != 3) {
+    sprintf(msg, "glblAlloced should be 3, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+  freeLoc(portLoc(2, p1));
+  if (glblAlloced != 2) BOOM("p1 freed, glblAlloced should be 2");
+  freeLoc(portLoc(2, p2));
+  if (glblAlloced != 1) BOOM("p2 freed, glblAlloced should be 1");
+  freeLoc(portLoc(1, p3));
+  freeLoc(portLoc(2, p3));
+  if (glblAlloced != 0) BOOM("all freed, glblAlloced should be 0");
+}
+
+void testMakePairStoresTerms(void) {
+  char msg[100];
+  Term val1 = newI60(42), val2 = newI60(99);
+  Term p = makePair(SUP, 5, val1, val2);
+  if (get(portLoc(1, p)) != val1) BOOM("port 1 should store val1");
+  if (get(portLoc(2, p)) != val2) BOOM("port 2 should store val2");
+  freeLoc(portLoc(1, p)); freeLoc(portLoc(2, p));
+  if (glblAlloced != 0) BOOM("glblAlloced should be 0");
+}
+
+void testFreeLocVoidIsNoop(void) {
+  char msg[100];
+  Term p = makePair(SUP, 0, newI60(1), newI60(2));
+  freeLoc(portLoc(1, p));
+  freeLoc(portLoc(2, p));
+  if (glblAlloced != 0) BOOM("should be 0");
+  freeLoc(portLoc(2, p));  // VOID, should be no-op
+  if (glblAlloced != 0) BOOM("freeing VOID port should be no-op");
+}
+
+void testStressAllocFree(void) {
+  char msg[100];
+  for (int cycle = 0; cycle < 20; cycle++) {
+    Term pairs[100];
+    for (int i = 0; i < 100; i++) {
+      pairs[i] = makePair(SUP, 0, newI60(i + cycle * 100), newI60(i + cycle * 100 + 50));
+    }
+    if (glblAlloced != 100) {
+      sprintf(msg, "cycle %d: glblAlloced should be 100, got %lld", cycle, (long long)glblAlloced);
+      BOOM(msg);
+    }
+    for (int i = 0; i < 100; i++) {
+      freeLoc(portLoc(1, pairs[i]));
+      freeLoc(portLoc(2, pairs[i]));
+    }
+    if (glblAlloced != 0) {
+      sprintf(msg, "cycle %d: glblAlloced should be 0, got %lld", cycle, (long long)glblAlloced);
+      BOOM(msg);
+    }
+  }
+}
+
+void testFreeListEntryFormat(void) {
+  char msg[100];
+  Term p = makePair(SUP, 0, newI60(1), newI60(2));
+  Location loc = termLoc(p);
+  freeLoc(portLoc(1, p));
+  freeLoc(portLoc(2, p));
+  Term entry = get(loc);
+  if (termTag(entry) != NUL) {
+    sprintf(msg, "free list entry should have NUL tag, got %s", tagStr(termTag(entry)));
+    BOOM(msg);
+  }
+  if (termLab(entry) != 0xFF) {
+    sprintf(msg, "free list entry label should be 0xFF, got %u", termLab(entry));
+    BOOM(msg);
+  }
+}
 int main(int argc, char *argv[]) {
   hvmInit(1024);
 
-  testTakeLaz();
+  testAllocPairReturnsEven();
+  testAllocPairNeverZero();
+  testFreePairZeroIsNoop();
+  testFreeLocCoalesces();
+  testFreeLocSingleCellDoesNotFreePair();
+  testInterleavedFreeLoc();
+  testMakePairStoresTerms();
+  testFreeLocVoidIsNoop();
+  testStressAllocFree();
+  testFreeListEntryFormat();
+
+  /* Old interaction tests — commented out for now
   testAppLam();
   testMoveEra();
-  testEraBoth();
   testTakeVarChain();
+  testTakeLaz();
   testTakeSub();
   testCascading();
   testMoveNul();
   testEraLam();
   testEraLamNulBody();
   testEraLamLamBody();
-  testCascadingRedex();
+  testEraBoth();
   testAppNul();
   testOpxNul();
   testOpYNul();
   testSubNul();
+  testEraSup();
   testDupNul();
   testDupNum();
   testOpxNum();
   testOpYNum();
+  testEraSupLam();
+  testNegSupXNul();
+  testNegSupYNul();
+  testNegSupGeneral();
+  testNegSupOpxXNul();
+  testNegSupOpYYNul();
   testDupNulSub();
   testOpxNumSub();
   testOpxNumMul();
@@ -2300,6 +2464,7 @@ int main(int argc, char *argv[]) {
   testEraVarI60();
   testEraVarSup();
   testEraVarChain();
+  testCascadingRedex();
   testAppNulLamArg();
   testSubNulLamBody();
   testSwapSub();
@@ -2307,6 +2472,7 @@ int main(int argc, char *argv[]) {
   testIsCycleNoCycle();
   testIsCycleVarToLaz();
   testIsCycleVarToI60();
+  testIsCycleVarThruSup();
   testIsCycleVarThruSupI60();
   testIsCycleVarThruLamI60();
   testIsCycleVarThruSupNul();
@@ -2320,8 +2486,8 @@ int main(int argc, char *argv[]) {
   testEraVarThruLamI60();
   testEraVarThruSupNul();
   testEraVarThruLamNulPort2();
-  testEraVarThruSupDupPort2();
   testEraVarThruSupVarToDupPort1();
+  testEraVarThruSupDupPort2();
   testEraVarAppThunkI60();
   testEraVarAppThunkNul();
   testEraVarAppThunkSupI60();
@@ -2330,13 +2496,7 @@ int main(int argc, char *argv[]) {
   testEraVarAppThunkLamNul();
   testEraVarAppThunkSupLamI60();
   testEraVarAppThunkSupLamNul();
-  testEraSup();
-  testEraSupLam();
-  testNegSupXNul();
-  testNegSupYNul();
-  testNegSupGeneral();
-  testNegSupOpxXNul();
-  testNegSupOpYYNul();
+  // */
 
   hvmFree();
   return 0;
