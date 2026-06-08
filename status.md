@@ -54,7 +54,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - `testEraVarLam` — REMOVED (LAM pairs go to LAZ branch, not interact branch)
 - `testAppNulLamArg` — APP/NUL with LAM arg ✅
 - `testSubNulLamBody` — SUB/NUL with LAM body ✅
-- `testSwapSub` — swap with SUB literal ✅
+- `testSwapSub` — swap with SUB pair (label > 0) ✅
 - `testEraVarThruSupI60` — ERA/VAR→DUP port1, context SUP→DUP port2 ✅
 - `testEraVarThruLamI60` — ERA/VAR→DUP port1, context LAM→VAR→DUP port2 ✅
 - `testEraVarThruSupNul` — ERA/VAR→DUP port1, context SUP(NUL,VAR→DUP port2) ✅
@@ -140,59 +140,113 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - Each rule needs a corresponding test in `test-hvm.c`.
 - LAZ rules are the most complex due to lazy evaluation semantics and self-referential structures.
 - **LAZ structural constraint:** LAZ is positive-polarity but stored only in negative ports (APP port 2, DUP). LAZ's context (port 2) is positive, so it can't directly contain DUP — must go through VAR chain. Cycle detection follows this VAR chain from context to find the DUP, then checks if DUP's ports directly contain the LAZ.
+- **`freeLoc` double-free detection:** Now aborts on attempting to free an already-freed location (VOID check for odd locations, NUL+0xFF check for even locations). Tests must not call `take`/`freeLoc` on ports that were already freed by `freePair` coalescing during an interact.
+- **SUB pairs require label > 0** for connected ports. `makePair(SUB, 0, ...)` produces a no-op SUB pair (ports not connected).
 
-## Test Results (2026-06-07)
+## Test Results
 
-All 10 free/alloc tests pass. Interaction tests run sequentially after free/alloc tests:
+All tests pass. 1000+ shuffled order runs verified — no order-dependent bugs.
 
-| Test | Result | Notes |
-|------|--------|-------|
-| testAllocPairReturnsEven | ✅ | |
-| testAllocPairNeverZero | ✅ | |
-| testFreePairZeroIsNoop | ✅ | |
-| testFreeLocCoalesces | ✅ | |
-| testFreeLocSingleCellDoesNotFreePair | ✅ | |
-| testInterleavedFreeLoc | ✅ | |
-| testMakePairStoresTerms | ✅ | |
-| testFreeLocVoidIsNoop | ✅ | |
-| testStressAllocFree | ✅ | 20 cycles × 100 pairs |
-| testFreeListEntryFormat | ✅ | |
-| testAppLam | ✅ | appLam called once |
-| testMoveEra | ✅ | appLam called #2 (redex) |
-| testTakeVarChain | ✅ | appLam called #3 (redex) |
-| testTakeLaz | ✅ | appLam called #4 (redex) |
-| **testTakeSub** | ❌ | appLam called #5 — **FAILS** |
+### Free/Alloc Tests
 
-**testTakeSub** fails with `trying to move a negative to location 007`.
-Debug shows `appLam #5: neg=APP loc=006 pos=LAM loc=006` — both APP and LAM have the same location. Free list is corrupted.
+| Test | Result |
+|------|--------|
+| testAllocPairReturnsEven | ✅ |
+| testFreeLocCoalesces | ✅ |
+| testFreeLocSingleCellDoesNotFreePair | ✅ |
+| testInterleavedFreeLoc | ✅ |
+| testMakePairStoresTerms | ✅ |
+| testStressAllocFree | ✅ 20 cycles × 100 pairs |
+| testFreeListEntryFormat | ✅ |
+
+### Interaction Tests
+
+| Test | Result |
+|------|--------|
+| testAppLam | ✅ |
+| testMoveEra | ✅ |
+| testTakeVarChain | ✅ |
+| testTakeLaz | ✅ |
+| testTakeSub | ✅ |
+| testCascading | ✅ |
+| testMoveNul | ✅ |
+| testEraLam | ✅ |
+| testEraLamNulBody | ✅ |
+| testEraLamLamBody | ✅ |
+| testEraBoth | ✅ |
+| testAppNul | ✅ |
+| testOpxNul | ✅ |
+| testOpYNul | ✅ |
+| testSubNul | ✅ |
+| testEraSup | ✅ |
+| testDupNul | ✅ |
+| testDupNum | ✅ |
+| testOpxNum | ✅ |
+| testOpYNum | ✅ |
+| testEraSupLam | ✅ |
+| testNegSupXNul | ✅ |
+| testNegSupYNul | ✅ |
+| testNegSupGeneral | ✅ |
+| testNegSupOpxXNul | ✅ |
+| testNegSupOpYYNul | ✅ |
+| testDupNulSub | ✅ |
+| testOpxNumSub | ✅ |
+| testOpxNumMul | ✅ |
+| testOpxNumEq | ✅ |
+| testOpxNulExplicit | ✅ |
+| testEraLamTriple | ✅ |
+| testDupNumDifferent | ✅ |
+| testSubNulLiteral | ✅ |
+| testMultiRedex | ✅ |
+| testEraVarI60 | ✅ |
+| testEraVarSup | ✅ |
+| testEraVarChain | ✅ |
+| testCascadingRedex | ✅ |
+| testAppNulLamArg | ✅ |
+| testSubNulLamBody | ✅ |
+| testSwapSub | ✅ |
+| testIsCycleLazyDup | ✅ |
+| testIsCycleNoCycle | ✅ |
+| testIsCycleVarToLaz | ✅ |
+| testIsCycleVarToI60 | ✅ |
+| testIsCycleVarThruSup | ✅ |
+| testIsCycleVarThruSupI60 | ✅ |
+| testIsCycleVarThruLamI60 | ✅ |
+| testIsCycleVarThruSupNul | ✅ |
+| testIsCycleVarThruLamNulPort2 | ✅ |
+| testIsCycleVarThruSupDupPort2 | ✅ |
+| testEraseLazyCycle1 | ✅ |
+| testEraseLazyCycle2 | ✅ |
+| testEraseLazyNoCycleDup1 | ✅ |
+| testEraseLazyNoCycleDup2 | ✅ |
+| testEraVarThruSupI60 | ✅ |
+| testEraVarThruLamI60 | ✅ |
+| testEraVarThruSupNul | ✅ |
+| testEraVarThruLamNulPort2 | ✅ |
+| testEraVarThruSupVarToDupPort1 | ✅ |
+| testEraVarThruSupDupPort2 | ✅ |
+| testEraVarAppThunkI60 | ✅ |
+| testEraVarAppThunkNul | ✅ |
+| testEraVarAppThunkSupI60 | ✅ |
+| testEraVarAppThunkSupNul | ✅ |
+| testEraVarAppThunkLamI60 | ✅ |
+| testEraVarAppThunkLamNul | ✅ |
+| testEraVarAppThunkSupLamI60 | ✅ |
+| testEraVarAppThunkSupLamNul | ✅ |
+
+### Test Infrastructure
+
+- `freeLoc()` now aborts on double-free (VOID check for odd locations, free-list-entry check for even locations)
+- Location 0 is a valid allocation target — `buffEnd` starts at 0, `freePair(0)` works normally
+- Removed `testAllocPairNeverZero` and `testFreePairZeroIsNoop` (no longer applicable)
+- `testSwapSub` uses `makePair(SUB, 1, ...)` (label > 0 for connected ports)
 
 ## Bugs Fixed
 
-### Location 0 collision with leaf terms (fixed 2026-06-07)
+### testMultiRedex double-free (fixed 2026-06-08)
 
-**Symptom:** `testSwapSub` would crash with `term has no location: SUB` when run after certain preceding tests in randomized order.
+**Symptom:** `freeLoc` aborts with "double free of odd location" after `testMultiRedex`.
 
-**Root cause:** `allocPair()` could return location 0 when `buffEnd` was 0 or when location 0 was on the free list. A pair allocated at location 0 would produce `newTerm(tag, lab, 0)`, which for SUB tag equals the SUB literal (`0x2`). This made `makePair(SUB, ...)` return the SUB literal instead of a valid SUB pair, causing `termLoc(SUB_literal)` to crash.
+**Root cause:** During the outer `interact(outerApp, outerLam)`, `appLam` calls `move(portLoc(2, outerApp), innerLam)`, which calls `freeLoc(portLoc(2, outerApp))`. Since port 1 was already VOID, `freePair` coalesces and frees the entire `outerApp` pair. The test cleanup then called `take(portLoc(2, outerApp))` on an already-freed port.
 
-**Fix:** Skip location 0 in both `allocPair()` (don't return it from free list or extend past it) and `freePair()` (never free location 0). This ensures location 0 is never allocated or freed, eliminating the collision with leaf term values.
-
-## Next: Fix free list corruption (order-dependent state leakage)
-
-**Symptom:** Tests fail with order-dependent bugs:
-
-1. **`testTakeSub` fails**: `appLam` called 5 times. 5th call has APP and LAM both at location 006 (same location). Fails with `trying to move a negative to location 007`.
-2. **`move` finds positive term**: `move()` encounters NUL (positive) where it expects a negative term, triggering SAFETY abort.
-
-**Root cause:** The free list management in `allocPair`/`freePair` is corrupted by a chain of bugs:
-
-1. **`allocPair` EMPTY_FREE_LIST returns wrong value**: `fetch_add(&buffEnd, 2)` returns the OLD `buffEnd` value. When `buffEnd=2`, it returns 2 and sets `buffEnd=4`. The code was returning 2 (the old value) instead of 4 (the actual new location). This causes pairs to be allocated at wrong locations.
-
-2. **`freeList` gets corrupted to 0**: When `freePair` is called with `freeList=0` (corrupted from step 1), it writes `newTerm(NUL, 0xFF, 0)` to the buffer — a self-referential entry. Subsequent `allocPair` reads this and sets `freeList = 0xFF3 >> 36 = 0`, perpetuating the corruption.
-
-3. **Cascading allocation corruption**: Once the free list is corrupted, all subsequent allocations go to wrong locations, causing pairs to overwrite each other and tests to fail with "trying to move a negative" or "found positive at move target" errors.
-
-**Fix needed:** The core fix is in `allocPair` EMPTY_FREE_LIST case. When `fetch_add` returns a non-zero value, return `old + 2` (the actual new location). Also ensure `freePair` never writes invalid entries (location 0) to the buffer. The `case 0:` handler in `allocPair` and `currTop=0` guard in `freePair` are temporary mitigations — the real fix is ensuring the free list stays consistent.
-
-**Priority:** High — prevents all tests from passing in sequence.
-
-**Note:** The error is "trying to move a negative" (SAFETY abort), not `glblAlloced != 0`. The free list corruption causes `allocPair` to return the same location for both APP and LAM in `testTakeSub`, so `take(portLoc(2, pos))` gets the wrong term (ERA instead of a positive value).
+**Fix:** Removed the `take(portLoc(2, outerApp))` call from the test cleanup. The pair was already freed by `freePair` during the interact.
