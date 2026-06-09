@@ -95,9 +95,15 @@ Each rule is a subgraph with a **Before** case (the redex) and an **After** case
 - **After:** `a`, `b` each connect to a LAM. LAM aux ports connect to SUP. SUP principal connects to `x`. LAZ aux ports connect to DUP and `y`.
 
 ### DUP/SUP
-- **Before (n):** `D_n` principal connects to `S_n` principal. DUP aux ports carry `a`, `b`. SUP aux ports carry `x`, `y`.
-- **After (m,n):** `D_m` principal connects to `S_n` principal. DUP aux ports carry `a`, `b`. SUP aux ports carry `x`, `y`.
-- **After (cont, m,n):** `a`, `b` each connect to an `S_n`. Each `S_n` aux ports connect to LAZ and DUP chains routing to `x`, `y`.
+DUP/SUP has two variants depending on whether the DUP and SUP labels match.
+
+#### DUP/SUP — same labels (annihilation)
+- **Before:** `D_n` principal connects to `S_n` principal. DUP aux ports carry `a`, `b`. SUP aux ports carry `x`, `y`.
+- **After:** Direct wiring: `a → x`, `b → y`. Both DUP and SUP nodes are consumed.
+
+#### DUP/SUP — different labels (commutation/expansion)
+- **Before:** `D_m` principal connects to `S_n` principal (m ≠ n). DUP aux ports carry `a`, `b`. SUP aux ports carry `x`, `y`.
+- **After:** `a` connects to a new `S_n`. `b` connects to a new `S_n`. Each new `S_n` aux ports connect to LAZ and DUP chains routing to `x`, `y`. The LAZ aux ports connect to DUP and the respective x/y terminals. DUP aux ports connect to LAZ and the other LAZ, forming cross-chains.
 
 ### ERA/LAZ DUP
 - **Before:** ERA connects to LAZ principal. `a` connects to LAZ principal. LAZ aux ports connect to `D` and `x`.

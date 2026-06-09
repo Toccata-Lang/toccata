@@ -1206,6 +1206,105 @@ void dupLam(Term dup, Term lam) {
   return;
 }
 
+// Duplication-Superposition interaction
+// DUP connects to SUP. Two variants:
+// - Same label: annihilation — aux ports rewired, both nodes consumed
+// - Different labels: commutation/expansion — new SUP + LAZ/DUP chains
+void dupSup(Term dup, Term sup) {
+  Lab dupLab = termLab(dup);
+  Lab supLab = termLab(sup);
+
+  if (dupLab == supLab) {
+    // Annihilation: both nodes consumed
+    // Take SUP's aux ports
+    Term s1 = take(portLoc(1, sup));
+    Term s2 = take(portLoc(2, sup));
+
+    // move to DUP's ports
+    move(portLoc(1, dup), s1);
+    move(portLoc(2, dup), s2);
+  } else {
+    // Different labels: check for ERA in DUP ports
+    Term dp1 = get(portLoc(1, dup));
+    Term dp2 = get(portLoc(2, dup));
+
+    if (dp1 == ERA) {
+      take(portLoc(1, dup));
+      move(portLoc(2, dup), sup);
+    } else if (dp2 == ERA) {
+      take(portLoc(2, dup));
+      move(portLoc(1, dup), sup);
+    } else {
+      // Expansion: take all aux ports
+      Term a = take(portLoc(1, dup));
+      Term b = take(portLoc(2, dup));
+      Term x = take(portLoc(1, sup));
+      Term y = take(portLoc(2, sup));
+
+      // a → new SUP_supLab, b → new SUP_supLab
+      Term sup1 = makePair(SUP, supLab, a, b);
+      Term sup2 = makePair(SUP, supLab, x, y);
+
+      // Wire DUP aux ports to new SUPs
+      move(portLoc(1, dup), sup1);
+      move(portLoc(2, dup), sup2);
+    }
+  }
+  return;
+}
+
+#if 0
+void dupsup(Term dup, Term sup) {
+  Lab dupLab = termLab(dup);
+  Lab supLab = termLab(sup);
+
+  if (dupLab == supLab) {
+    // Special case: when DUP and SUP have the same label, they annihilate
+    // Get the ports of the SUP node
+    Term sup_p1 = take(port(1, supLoc));
+    Term sup_p2 = take(port(2, supLoc));
+
+    // Direct connection of the ports
+    moveStore(dup_p1, sup_p1);
+    moveStore(dup_p2, sup_p2);
+  } else {
+    Term dp1 = get(dup_p1);
+    Term dp2 = get(dup_p2);
+
+    dp1 = get(dup_p1);
+    dp2 = get(dup_p2);
+    if (dp1 == ERA) {
+      Term trm = take(port(1, dupLoc));
+      moveStore(port(2, dupLoc), sup);
+    } else if (dp2 == ERA) {
+      Term trm = take(port(2, dupLoc));
+      moveStore(port(1, dupLoc), sup);
+    } else  {
+      // Get the ports of the SUP node
+      Term sup_p1 = take(port(1, supLoc));
+      Term sup_p2 = take(port(2, supLoc));
+
+      // Create two new DUP nodes with the same label
+      Term dup1 = makeLazyDup(dupLab, sup_p1);;
+      Term dup2 = makeLazyDup(dupLab, sup_p2);;
+
+      // Create two new SUP nodes with the same label
+      Term sup1 = pair_make(SUP, supLab,
+			    term_new(VAR, 0, port(1, termLoc(dup1))),
+			    term_new(VAR, 0, port(1, termLoc(dup2))));
+      Term sup2 = pair_make(SUP, supLab,
+			    term_new(VAR, 0, port(2, termLoc(dup1))),
+			    term_new(VAR, 0, port(2, termLoc(dup2))));
+
+      // Connect the new nodes
+      moveStore(dup_p1, sup1);
+      moveStore(dup_p2, sup2);
+    }
+  }
+  return;
+}
+#endif
+
 // interaction jump table - all entries default to badrdx
 interactionFn interactions[16][16] = {
   [0 ... 15] = {[0 ... 15] = &badrdx}
@@ -1483,6 +1582,7 @@ void hvmInit(u64 size) {
   interactions[OPX][SUP] = &negSup;
   interactions[OPY][SUP] = &negSup;
   interactions[DUP][LAM] = &dupLam;
+  interactions[DUP][SUP] = &dupSup;
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
 
   // Initialize mutex for thread-safe redex operations

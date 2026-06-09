@@ -2261,6 +2261,30 @@ void testEraVarAppThunkSupLamNul(void) {
 }
 
 // =============================================================================
+// DUP/SUP Interaction Tests
+// =============================================================================
+
+// DUP/SUP annihilation: same labels, DUP aux ports wire to SUP aux ports
+void testDupSupAnnihilation(void) {
+  char msg[100];
+
+  // DUP: label=0, aux ports=SUB, SUB
+  Term dup = makePair(DUP, 0, SUB, SUB);
+
+  // SUP: label=0 (same as DUP), aux ports=I60(7), I60(8)
+  Term sup = makePair(SUP, 0, newI60(7), newI60(8));
+
+  // Trigger DUP/SUP interaction — should annihilate
+  interact(dup, sup);
+
+  // Both DUP and SUP pairs consumed
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0 after annihilation, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
+// =============================================================================
 // DUP/LAM Interaction Tests
 // =============================================================================
 // DUP principal connects to LAM principal.
@@ -2690,6 +2714,7 @@ int main(int argc, char *argv[]) {
   testEraVarAppThunkLamNul();
   testEraVarAppThunkSupLamI60();
   testEraVarAppThunkSupLamNul();
+  testDupSupAnnihilation();
   testDupLam();
   testDupLamWithSub();
   testDupIdentity();

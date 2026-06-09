@@ -35,6 +35,8 @@ Read in order: the calculus defines the rules, the implementation shows how they
 | 13 | OPX/NUM | `opxNum` | #→OPY, OPY ports wired |
 | 14 | OPY/NUM | `opyNum` | b→result (#1 op #2) |
 | 15 | ERA/VAR | `eraVar` | Follow VAR chain, erase actual term |
+| 16 | DUP/LAM | `dupLam` | DUP connects to LAM. After: two LAMs with SUP and LAZ/DUP chains. |
+| 17 | DUP/SUP | `dupSup` | Same label: annihilation (aux ports rewired, both consumed). Different labels: commutation/expansion (new SUP + LAZ/DUP chains). |
 
 **ERA/VAR implementation details:**
 - `eraVar` calls `take(termLoc(var))` which follows VAR chains and frees locations
@@ -46,6 +48,13 @@ Read in order: the calculus defines the rules, the implementation shows how they
 **ERA/SUP implementation:**
 - `eraSup` creates VAR terms pointing to SUP's ports and calls `interact` on them
 - This dispatches to `eraVar`, which places ERA at each port location
+
+**DUP/LAM implementation:**
+- Three branches: ERA in port1 (take+move), ERA in port2 (take+move), or full expansion
+- Full expansion: creates two new LAMs, a SUP, and a lazy DUP (or direct DUP if bod is I60)
+- The `makeLazyDup` helper creates either a DUP with native values in both ports, or a LAZ→DUP self-referential chain
+- Handler must check for ERA in DUP ports before moving new LAMs in (swap on ERA triggers interact)
+- Tests: `testDupLam` (ERA/ERA ports), `testDupLamWithSub` (SUB/SUB ports, bod=I60), `testDupIdentity` (SUB/SUB ports, self-referential LAM → lazy DUP chain) — all pass
 
 **Tests added:**
 - `testEraVarI60` — ERA/VAR→I60 ✅ (location contains ERA after interaction)
@@ -121,7 +130,8 @@ Read in order: the calculus defines the rules, the implementation shows how they
 ### Tier 4: Constructor interactions
 
 - [ ] **APP/SUP, OPX/SUP, OPY/SUP** — `*/SUP` wildcard. Negative constructor connects to SUP. After: SUP principal connects to `b`, aux ports connect to two `*` wildcards, LAZ/DUP chains to `x`/`y`. Handler: `negSup`.
-- [ ] **DUP/LAM** — DUP connects to LAM. After: two LAMs with SUP and LAZ/DUP chains. Handler: `dupLam`.
+- [x] **DUP/LAM** — DUP connects to LAM. After: two LAMs with SUP and LAZ/DUP chains. Handler: `dupLam`. Tests: `testDupLam` (ERA/ERA), `testDupLamWithSub` (SUB/SUB, bod=I60), `testDupIdentity` (SUB/SUB, self-referential LAM → lazy DUP chain).
+- [x] **DUP/SUP** — DUP connects to SUP. Same label: annihilation (aux ports rewired, both consumed). Different labels: commutation/expansion (new SUP + LAZ/DUP chains). Handler: `dupSup`. Test: `testDupSupAnnihilation` (matching labels, SUB/SUP ports).
 - [ ] **DUP/SUP** — DUP connects to SUP. After: complex rewiring with SUP chains. Handler: `dupSup`.
 
 ### Tier 5: LAZ interactions (most complex)
@@ -233,6 +243,10 @@ All tests pass. 1000+ shuffled order runs verified — no order-dependent bugs.
 | testEraVarAppThunkLamNul | ✅ |
 | testEraVarAppThunkSupLamI60 | ✅ |
 | testEraVarAppThunkSupLamNul | ✅ |
+| testDupLam | ✅ (ERA/ERA ports, full erasure) |
+| testDupLamWithSub | ✅ (SUB/SUB ports, bod=I60) |
+| testDupIdentity | ✅ (SUB/SUB ports, self-referential LAM → lazy DUP chain) |
+| testDupSupAnnihilation | ✅ (matching labels, SUB aux ports, I60 aux ports) |
 
 ### Test Infrastructure
 
@@ -240,6 +254,8 @@ All tests pass. 1000+ shuffled order runs verified — no order-dependent bugs.
 - Location 0 is a valid allocation target — `buffEnd` starts at 0, `freePair(0)` works normally
 - Removed `testAllocPairNeverZero` and `testFreePairZeroIsNoop` (no longer applicable)
 - `testSwapSub` uses `makePair(SUB, 1, ...)` (label > 0 for connected ports)
+- `graph.c` `downBranch`: fixed duplicate edge drawing when VAR chain leads to SUB (while loop draws edge, SUB case was also drawing it)
+- `testDupIdentity` cleanup order matters: `take` on VAR→SUP follows the chain and frees the target location, so original LAM port1 must be verified with `get()` before taking du2 port2
 
 ## Bugs Fixed
 
