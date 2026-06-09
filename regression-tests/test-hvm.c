@@ -2361,6 +2361,74 @@ void testDupSupCommutation(void) {
   }
 }
 
+// DUP/SUP commutation with identity LAMs in SUP ports
+void testDupSupCommutationLam(void) {
+  char msg[100];
+
+  // DUP: label=0, aux ports=SUB, SUB
+  Term dup = makePair(DUP, 0, SUB, SUB);
+
+  // Identity LAM: port1=SUB, port2=VAR→port1
+  Term lam1 = makePair(LAM, 0, SUB, NUL);
+  swap(portLoc(2, lam1), newTerm(VAR, 0, portLoc(1, lam1)));
+  Term lam2 = makePair(LAM, 0, SUB, NUL);
+  swap(portLoc(2, lam2), newTerm(VAR, 0, portLoc(1, lam2)));
+
+  // SUP: label=1 (different from DUP), aux ports=lam1, lam2
+  Term sup = makePair(SUP, 1, lam1, lam2);
+
+  // Trigger DUP/SUP interaction
+  subGraph("dup", dup, 0);
+  subGraph("sup", sup, nodeCount);
+  interact(dup, sup);
+  subGraph("after", dup, nodeCount);
+
+  // DUP aux ports should contain new SUP nodes
+  Term s1 = take(portLoc(1, dup));
+  if (termTag(s1) != SUP) {
+    sprintf(msg, "dup port1 should be SUP, got %s", tagStr(termTag(s1)));
+    BOOM(msg);
+  }
+  Term s2 = take(portLoc(2, dup));
+  if (termTag(s2) != SUP) {
+    sprintf(msg, "dup port2 should be SUP, got %s", tagStr(termTag(s2)));
+    BOOM(msg);
+  }
+
+  // SUPs have VARs into LAZ/DUP chains (LAM is not a native value)
+  Term s1p1 = take(portLoc(1, s1));
+  if (termTag(s1p1) != VAR) {
+    sprintf(msg, "sup1 port1 should be VAR, got %s", tagStr(termTag(s1p1)));
+    BOOM(msg);
+  }
+  Term s1p2 = take(portLoc(2, s1));
+  if (termTag(s1p2) != VAR) {
+    sprintf(msg, "sup1 port2 should be VAR, got %s", tagStr(termTag(s1p2)));
+    BOOM(msg);
+  }
+  Term s2p1 = take(portLoc(1, s2));
+  if (termTag(s2p1) != VAR) {
+    sprintf(msg, "sup2 port1 should be VAR, got %s", tagStr(termTag(s2p1)));
+    BOOM(msg);
+  }
+  Term s2p2 = take(portLoc(2, s2));
+  if (termTag(s2p2) != VAR) {
+    sprintf(msg, "sup2 port2 should be VAR, got %s", tagStr(termTag(s2p2)));
+    BOOM(msg);
+  }
+
+  // Follow VAR chains to DUP nodes and erase them
+  interact(ERA, newTerm(VAR, 0, termLoc(s1p1)));
+  interact(ERA, newTerm(VAR, 0, termLoc(s1p2)));
+  interact(ERA, newTerm(VAR, 0, termLoc(s2p1)));
+  interact(ERA, newTerm(VAR, 0, termLoc(s2p2)));
+
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 // =============================================================================
 // DUP/LAM Interaction Tests
 // =============================================================================
@@ -2793,6 +2861,7 @@ int main(int argc, char *argv[]) {
   testEraVarAppThunkSupLamNul();
   testDupSupAnnihilation();
   testDupSupCommutation();
+  testDupSupCommutationLam();
   testDupLam();
   testDupLamWithSub();
   testDupIdentity();
