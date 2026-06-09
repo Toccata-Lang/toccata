@@ -157,6 +157,42 @@ Allocates a location, stores both terms, and returns the new term.
 
 Creates an operator term: builds an `OPX` pair with the operation code, wraps it in a `LAZ` thunk, and returns a variable reference to the second port.
 
+### `makeLazyDup(Lab lb, Term arg)`
+
+Creates a duplication structure for a given label and argument. Two variants:
+
+- **Native value** (I60/F60/REF/VAL): Creates a `DUP` node with `arg` in both ports. No LAZ wrapping.
+- **Other value** (LAM, SUP, etc.): Creates a `LAZ`/`DUP` self-referential chain:
+  ```
+  DUP port 1 ──→ LAZ (same location)
+  DUP port 2 ──→ LAZ (same location)
+  LAZ port 1 (negative) ──→ DUP (back to DUP's negative port)
+  LAZ port 2 (positive) ──→ arg
+  ```
+  Returns the DUP node. The LAZ's context (port 2) carries `arg`.
+
+## DUP/SUP Interaction
+
+`dupSup` implements the DUP/SUP interaction with two label-dependent variants:
+
+### Annihilation (same labels)
+- `termLab(dup) == termLab(sup)`
+- Take SUP aux ports (x, y), move them into DUP aux ports
+- Both DUP and SUP nodes consumed
+
+### Commutation (different labels)
+- `termLab(dup) != termLab(sup)`
+- Take SUP aux ports (x, y)
+- Create two new DUP chains via `makeLazyDup(dupLab, x)` and `makeLazyDup(dupLab, y)`
+- Create two new SUP nodes with VAR chains into the DUP chains
+- Wire DUP aux ports to the new SUPs
+- Original DUP and SUP consumed; new SUP + DUP chains remain
+
+### ERA handling
+- If DUP port 1 is ERA: take it, move SUP to DUP port 2
+- If DUP port 2 is ERA: take it, move SUP to DUP port 1
+- These branches are checked before the full expansion path
+
 ## Lazy Evaluation
 
 `LAZ` nodes represent thunks. The `forceLazy()` function handles:
