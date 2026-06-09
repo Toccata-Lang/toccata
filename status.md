@@ -56,6 +56,12 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - Handler must check for ERA in DUP ports before moving new LAMs in (swap on ERA triggers interact)
 - Tests: `testDupLam` (ERA/ERA ports), `testDupLamWithSub` (SUB/SUB ports, bod=I60), `testDupIdentity` (SUB/SUB ports, self-referential LAM → lazy DUP chain) — all pass
 
+**DUP/SUP implementation:**
+- Two label-dependent variants: same label = annihilation (SUP aux values wired into DUP ports, both consumed); different labels = commutation/expansion (creates new SUP + LAZ/DUP chains via `makeLazyDup`)
+- ERA in DUP ports handled before expansion (take ERA, move SUP to other port)
+- `makeLazyDup` with native values puts values directly in DUP ports; with other values creates LAZ/DUP chains
+- Tests: `testDupSupAnnihilation` (matching labels), `testDupSupCommutation` (different labels, I60 SUP ports), `testDupSupCommutationLam` (different labels, identity LAM SUP ports) — all pass
+
 **Tests added:**
 - `testEraVarI60` — ERA/VAR→I60 ✅ (location contains ERA after interaction)
 - `testEraVarSup` — ERA→SUP ✅ (both SUP ports contain ERA)
@@ -131,8 +137,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 - [ ] **APP/SUP, OPX/SUP, OPY/SUP** — `*/SUP` wildcard. Negative constructor connects to SUP. After: SUP principal connects to `b`, aux ports connect to two `*` wildcards, LAZ/DUP chains to `x`/`y`. Handler: `negSup`.
 - [x] **DUP/LAM** — DUP connects to LAM. After: two LAMs with SUP and LAZ/DUP chains. Handler: `dupLam`. Tests: `testDupLam` (ERA/ERA), `testDupLamWithSub` (SUB/SUB, bod=I60), `testDupIdentity` (SUB/SUB, self-referential LAM → lazy DUP chain).
-- [x] **DUP/SUP** — DUP connects to SUP. Same label: annihilation (aux ports rewired, both consumed). Different labels: commutation/expansion (new SUP + LAZ/DUP chains). Handler: `dupSup`. Test: `testDupSupAnnihilation` (matching labels, SUB/SUP ports).
-- [ ] **DUP/SUP** — DUP connects to SUP. After: complex rewiring with SUP chains. Handler: `dupSup`.
+- [x] **DUP/SUP** — DUP connects to SUP. Same label: annihilation (aux ports rewired, both consumed). Different labels: commutation/expansion (new SUP + LAZ/DUP chains). Handler: `dupSup`. Tests: `testDupSupAnnihilation` (matching labels), `testDupSupCommutation` (different labels, I60 SUP ports), `testDupSupCommutationLam` (different labels, identity LAM SUP ports).
 
 ### Tier 5: LAZ interactions (most complex)
 
@@ -247,6 +252,8 @@ All tests pass. 1000+ shuffled order runs verified — no order-dependent bugs.
 | testDupLamWithSub | ✅ (SUB/SUB ports, bod=I60) |
 | testDupIdentity | ✅ (SUB/SUB ports, self-referential LAM → lazy DUP chain) |
 | testDupSupAnnihilation | ✅ (matching labels, SUB aux ports, I60 aux ports) |
+| testDupSupCommutation | ✅ (different labels, I60 SUP ports) |
+| testDupSupCommutationLam | ✅ (different labels, identity LAM SUP ports) |
 
 ### Test Infrastructure
 
