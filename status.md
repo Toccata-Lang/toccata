@@ -1,5 +1,7 @@
 # HVM Interaction Rules — Implementation Status
 
+**All 20 interaction rules are implemented.** Three leaf redirections (ERA/VAL, DUP/VAL, APP/VAL) are implemented but not tested.
+
 ## Before Implementing a New Rule
 
 Read these files for context before starting any new interaction:
@@ -112,9 +114,9 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 ### Deferred — Leaf redirections (done after all constructor rules)
 
-- [ ] **ERA/VAL** — ERA connects to VAL. Handler: `eraVal` (not `eraLeaf` — special handling needed for native value erasure).
-- [ ] **DUP/VAL** — DUP connects to VAL. Handler: `dupVal`.
-- [ ] **APP/VAL** — APP connects to VAL. Handler: `appVal`.
+- [x] **ERA/VAL** — ERA connects to VAL. Handler: `eraVal` (special handling for native value erasure). Implemented but not tested.
+- [x] **DUP/VAL** — DUP connects to VAL. Handler: `dupVal`. Implemented but not tested.
+- [x] **APP/VAL** — APP connects to VAL. Handler: `appVal`. Implemented but not tested.
 
 ### Tier 1: Simple leaf redirections (same pattern as APP/LAM)
 
