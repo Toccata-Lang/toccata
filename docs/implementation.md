@@ -275,3 +275,90 @@ void spawn_threads();      // Create worker threads
 ```
 
 **⚠️ Important:** `hvmInit` must set `buffSize` (for bounds checking in `allocPair`) and open `dotFile` (for debug output in `boom`). Both are required for correct operation.
+
+## Testing
+
+### Test Structure
+
+Place test functions **before** `main()` (no forward declarations needed).
+
+```c
+void test_app_lam(void) {
+  char msg[100];
+
+  // Build terms
+  Term lam = makePair(LAM, 0, SUB, newI60(8));
+  Term app = makePair(APP, 0, newI60(7), SUB);
+
+  // Trigger interaction (neg first, pos second)
+  interact(app, lam);
+
+  // Verify results
+  Term result = take(portLoc(1, lam));
+  if (termTag(result) != I60 || getI60(result) != 7) {
+    sprintf(msg, "expected I60(7), got tag %s", tagStr(termTag(result)));
+    BOOM(msg);
+  }
+
+  // Verify no leaks
+  if (glblAlloced != 0) {
+    BOOM("memory leak");
+  }
+}
+```
+
+### Key Conventions
+
+- **`interact(neg, pos)`** — negative term first, positive term second
+- **`glblAlloced == 0`** — always 0 before and after each test. Check after each test to verify no leaks.
+- **`BOOM(msg)`** — prints message, file, and line number, then aborts. Use `sprintf` into a local `char msg[100]`.
+- **Build command:** `make test-hvm` (not manual `clang`). Ensures correct flags (`CHECK_MEM_LEAK`, `SAFETY`, `STATS`) and source files.
+
+### Cleanup Patterns
+
+**Never use `freeLoc` directly in tests.** Use `take` to clean up ports and verify returned values.
+
+**Exception:** When you expect SUB or LAZ at a port, use `get` + `freeLoc` instead of `take` (since `take` returns VAR for SUB/LAZ and doesn't free the location).
+
+- **Ports with content** (leaf, I60, or pair body): use `take` to retrieve and free
+- **Ports already VOID**: do not take — `glblAlloced` verifies all pairs are freed automatically
+- **VAR return** (port had SUB or LAZ): location was NOT freed. Use `get` + `freeLoc` to verify and free
+
+### Polarity Constraints
+
+`makePair` validates port polarities when `SAFETY` is enabled:
+
+| Tag | Port 1 | Port 2 |
+|---|---|---|
+| `SUB`, `LAM`, `LAZ` | negative | positive |
+| `APP`, `OPX`, `OPY` | positive | negative |
+| `DUP` | negative | negative |
+| `SUP` | positive | positive |
+
+Leaf terms (NUL, ERA, SUB, I60, VAL, etc.) are self-contained — no buffer location needed.
+
+**⚠️ Lesson:** Never put a negative term (like SUB) in APP's port 1 — it must be positive. If you need to test `take` with SUB, use a VAR chain: create a separate location holding SUB, then put a VAR pointing to it in APP's port 1.
+
+## Lessons Learned
+
+1. **`take` on LAZ/SUB doesn't free** — returns a VAR pointing to the location. The location remains allocated.
+2. **`swap` on ERA frees the location** — the new value is lost (overwritten by VOID). The value goes to `interact(ERA, pos)` instead.
+3. **`move` with ERA does nothing** — `swap` handles ERA internally (frees location + calls interact), so `move`'s own logic is skipped.
+4. **Never put negative terms in APP port 1** — APP port 1 must be positive. To test `take` with SUB, use a VAR chain pointing to a separate location.
+5. **Don't depend on specific location values** — the free list reuses locations across tests, making absolute location checks fragile. Use relative checks (tag comparisons, `portLoc` results).
+6. **`eraLeaf` must be registered per leaf type** — each positive leaf (NUL, I60, F60) needs its own entry in the interactions table. Constructors like LAM need dedicated handlers.
+7. **`glblAlloced` is always 0 before and after each test** — check it after each test to verify no leaks.
+8. **`move` rejects negative terms** — the SAFETY check in `move` aborts if `isNegative(pos)`. To put ERA (negative) into a location, use `swap` directly instead of `move`.
+9. **`move` assumes old value is negative** — `move` calls `swap`, gets the old value, and if it's not SUB/ERA, pushes it as a redex. If the old value is positive (e.g., LAM body), this creates an invalid redex. Use `take` + `swap` pattern instead when the location may contain a positive term.
+10. **Erased pair bodies must be freed** — when ERA erases a body that is a pair (like a nested LAM), `take` frees the port location but not the pair's own location. After `take`, call `freePair(termLoc(body) & 0xFFFFFFFE)` if `hasLocation(body)` is true.
+11. **`swap` + `freePair` pattern for erasing bodies** — when implementing rules where a term is erased (like ERA/LAM), use: `take(port)` to free port location and get body, `freePair(termLoc(body) & 0xFFFFFFFE)` if body has location, then `swap(port, newVal)` to write the replacement.
+12. **Always use `make test-hvm`** — not manual `clang`. Ensures correct flags (`CHECK_MEM_LEAK`, `SAFETY`, `STATS`) and source files.
+13. **Handle old values BEFORE overwriting ports** — use `get` to read the old value, handle it based on tag (SUB → push redex, ERA → interact, other → consumed by the rule), then `swap` the new value. Don't silently discard old values.
+14. **Never use 42 as a test integer value** — it's cliche and irritating. Pick something else.
+15. **`eraseLazy` must not be called directly** — it is an internal helper invoked only by `eraVar` (when `take` returns a LAZ/SUB). To test `eraseLazy` behavior, always interact `ERA` with a `VAR` that points to a `LAZ` term in a port of the thunk term. Never call `eraseLazy(laz)` directly in tests — it bypasses the interaction dispatch and has known race conditions with `forceLazy`.
+16. **ERA/VAR + lazy DUP: context and VAR must target different DUP ports** — When testing `eraVar` with a LAZ whose thunk is a DUP (lazy DUP pattern), the context (LAZ port 2) loops back to one port of DUP, and the VAR given to `interact(ERA, var)` must point to the *other* port of DUP. They must target different ports. In actual usage they will never be the same port — if both target the same DUP port the test configuration is invalid.
+17. **DUP/SUP has two label-dependent variants** — Same label: annihilation (SUP aux values wired into DUP ports, both consumed). Different labels: commutation/expansion (creates new SUP + LAZ/DUP chains). The handler must check `termLab(dup) == termLab(sup)` to dispatch.
+18. **`makeLazyDup` behavior depends on argument type** — For native values (I60/F60/REF/VAL), it puts the value directly in DUP ports. For other values (LAM, SUP, etc.), it creates a LAZ/DUP self-referential chain. Tests must account for both cases.
+19. **Don't take ports you're about to overwrite** — When `move()` will overwrite a port (e.g., DUP aux ports in commutation), there's no need to `take()` them first. The `move`/`swap` handles the old value. Taking first adds no value and can introduce bugs.
+20. **When SUP ports contain VARs into DUP chains, erase the DUP nodes** — `makeLazyDup` creates DUP nodes that remain allocated. To clean up in tests, follow VAR chains and call `interact(ERA, newTerm(VAR, 0, termLoc(var)))` for each VAR to erase the DUP nodes.
+21. **Verify calculus against actual implementation** — The calculus description of DUP/SUP annihilation initially said `a → x, b → y` but the actual behavior is `x → a, y → b` (SUP values into DUP ports). Always verify the calculus matches the code with a test.
