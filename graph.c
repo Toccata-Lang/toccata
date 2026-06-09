@@ -3,6 +3,7 @@
 #include <string.h>
 
 char *dupLabels[] = {};
+unsigned labelsCount = 0;
 unsigned otherNodes;
 unsigned subGraphs = 0;
 long graphCount = 0;
@@ -230,7 +231,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   case APP: {
     Lab lab = termLab(tree);
     if (t == DUP || t == SUP || t == LAM) {
-      if (lab == 0 || strlen(dupLabels[lab]) == 0)
+      if (lab == 0 || lab >= labelsCount || strlen(dupLabels[lab]) == 0)
 	snprintf(xLbl, 95, "%x:\n%d", nodeNum, lab);
       else
 	snprintf(xLbl, 95, "%x:\n%s", nodeNum, dupLabels[lab]);
