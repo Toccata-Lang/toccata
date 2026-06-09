@@ -2323,33 +2323,37 @@ void testDupSupCommutation(void) {
     BOOM(msg);
   }
 
-  // s1: port1=a (SUB→NUL), port2=b (SUB→NUL)
+  // s1: port1=VAR→dup1 port1, port2=VAR→dup2 port1
   Term s1p1 = take(portLoc(1, s1));
-  if (termTag(s1p1) != NUL) {
-    sprintf(msg, "sup1 port1 should be NUL, got %s", tagStr(termTag(s1p1)));
+  if (termTag(s1p1) != VAR) {
+    sprintf(msg, "sup1 port1 should be VAR, got %s", tagStr(termTag(s1p1)));
     BOOM(msg);
   }
   Term s1p2 = take(portLoc(2, s1));
-  if (termTag(s1p2) != NUL) {
-    sprintf(msg, "sup1 port2 should be NUL, got %s", tagStr(termTag(s1p2)));
+  if (termTag(s1p2) != VAR) {
+    sprintf(msg, "sup1 port2 should be VAR, got %s", tagStr(termTag(s1p2)));
     BOOM(msg);
   }
 
-  // s2: port1=x (I60(7)), port2=y (I60(8))
+  // s2: port1=VAR→dup1 port2, port2=VAR→dup2 port2
   Term s2p1 = take(portLoc(1, s2));
-  if (termTag(s2p1) != I60 || getI60(s2p1) != 7) {
-    sprintf(msg, "sup2 port1 should be I60(7), got tag %s val %ld",
-            tagStr(termTag(s2p1)), (long)getI60(s2p1));
+  if (termTag(s2p1) != VAR) {
+    sprintf(msg, "sup2 port1 should be VAR, got %s", tagStr(termTag(s2p1)));
     BOOM(msg);
   }
   Term s2p2 = take(portLoc(2, s2));
-  if (termTag(s2p2) != I60 || getI60(s2p2) != 8) {
-    sprintf(msg, "sup2 port2 should be I60(8), got tag %s val %ld",
-            tagStr(termTag(s2p2)), (long)getI60(s2p2));
+  if (termTag(s2p2) != VAR) {
+    sprintf(msg, "sup2 port2 should be VAR, got %s", tagStr(termTag(s2p2)));
     BOOM(msg);
   }
 
-  // All pairs consumed (DUP, SUP, and 2 new SUPs freed by takes)
+  // Follow VAR chains to DUP nodes and erase them
+  interact(ERA, newTerm(VAR, 0, termLoc(s1p1)));
+  interact(ERA, newTerm(VAR, 0, termLoc(s1p2)));
+  interact(ERA, newTerm(VAR, 0, termLoc(s2p1)));
+  interact(ERA, newTerm(VAR, 0, termLoc(s2p2)));
+
+  // All pairs consumed
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);

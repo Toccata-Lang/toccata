@@ -1237,7 +1237,7 @@ void dupSup(Term dup, Term sup) {
     } else {
       // Expansion: take all aux ports
       Term a = take(portLoc(1, dup));
-      if (termTag(a) == VAR) a = NUL;  // SUB taken, no location to keep
+      if (termTag(a) == VAR) a = NUL;
       Term b = take(portLoc(2, dup));
       if (termTag(b) == VAR) b = NUL;
       Term x = take(portLoc(1, sup));
@@ -1245,9 +1245,17 @@ void dupSup(Term dup, Term sup) {
       Term y = take(portLoc(2, sup));
       if (termTag(y) == VAR) y = NUL;
 
-      // a → new SUP_supLab, b → new SUP_supLab
-      Term sup1 = makePair(SUP, supLab, a, b);
-      Term sup2 = makePair(SUP, supLab, x, y);
+      // a,b → new DUP nodes (lazy DUP chains)
+      Term dup1 = makeLazyDup(dupLab, a);
+      Term dup2 = makeLazyDup(dupLab, b);
+
+      // Two new SUP nodes: each connects to both DUP chains
+      Term sup1 = makePair(SUP, supLab,
+			   newTerm(VAR, 0, portLoc(1, dup1)),
+			   newTerm(VAR, 0, portLoc(1, dup2)));
+      Term sup2 = makePair(SUP, supLab,
+			   newTerm(VAR, 0, portLoc(2, dup1)),
+			   newTerm(VAR, 0, portLoc(2, dup2)));
 
       // Wire DUP aux ports to new SUPs
       move(portLoc(1, dup), sup1);
@@ -1256,58 +1264,6 @@ void dupSup(Term dup, Term sup) {
   }
   return;
 }
-
-#if 0
-void dupsup(Term dup, Term sup) {
-  Lab dupLab = termLab(dup);
-  Lab supLab = termLab(sup);
-
-  if (dupLab == supLab) {
-    // Special case: when DUP and SUP have the same label, they annihilate
-    // Get the ports of the SUP node
-    Term sup_p1 = take(port(1, supLoc));
-    Term sup_p2 = take(port(2, supLoc));
-
-    // Direct connection of the ports
-    moveStore(dup_p1, sup_p1);
-    moveStore(dup_p2, sup_p2);
-  } else {
-    Term dp1 = get(dup_p1);
-    Term dp2 = get(dup_p2);
-
-    dp1 = get(dup_p1);
-    dp2 = get(dup_p2);
-    if (dp1 == ERA) {
-      Term trm = take(port(1, dupLoc));
-      moveStore(port(2, dupLoc), sup);
-    } else if (dp2 == ERA) {
-      Term trm = take(port(2, dupLoc));
-      moveStore(port(1, dupLoc), sup);
-    } else  {
-      // Get the ports of the SUP node
-      Term sup_p1 = take(port(1, supLoc));
-      Term sup_p2 = take(port(2, supLoc));
-
-      // Create two new DUP nodes with the same label
-      Term dup1 = makeLazyDup(dupLab, sup_p1);;
-      Term dup2 = makeLazyDup(dupLab, sup_p2);;
-
-      // Create two new SUP nodes with the same label
-      Term sup1 = pair_make(SUP, supLab,
-			    term_new(VAR, 0, port(1, termLoc(dup1))),
-			    term_new(VAR, 0, port(1, termLoc(dup2))));
-      Term sup2 = pair_make(SUP, supLab,
-			    term_new(VAR, 0, port(2, termLoc(dup1))),
-			    term_new(VAR, 0, port(2, termLoc(dup2))));
-
-      // Connect the new nodes
-      moveStore(dup_p1, sup1);
-      moveStore(dup_p2, sup2);
-    }
-  }
-  return;
-}
-#endif
 
 // interaction jump table - all entries default to badrdx
 interactionFn interactions[16][16] = {
