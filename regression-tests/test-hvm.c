@@ -2298,6 +2298,64 @@ void testDupSupAnnihilation(void) {
   }
 }
 
+// DUP/SUP commutation: different labels, DUP aux ports get new SUP nodes
+void testDupSupCommutation(void) {
+  char msg[100];
+
+  // DUP: label=0, aux ports=SUB, SUB
+  Term dup = makePair(DUP, 0, SUB, SUB);
+
+  // SUP: label=1 (different from DUP), aux ports=I60(7), I60(8)
+  Term sup = makePair(SUP, 1, newI60(7), newI60(8));
+
+  // Trigger DUP/SUP interaction — should commute/expand
+  interact(dup, sup);
+
+  // DUP aux ports should contain new SUP nodes
+  Term s1 = take(portLoc(1, dup));
+  if (termTag(s1) != SUP) {
+    sprintf(msg, "dup port1 should be SUP, got %s", tagStr(termTag(s1)));
+    BOOM(msg);
+  }
+  Term s2 = take(portLoc(2, dup));
+  if (termTag(s2) != SUP) {
+    sprintf(msg, "dup port2 should be SUP, got %s", tagStr(termTag(s2)));
+    BOOM(msg);
+  }
+
+  // s1: port1=a (SUB→NUL), port2=b (SUB→NUL)
+  Term s1p1 = take(portLoc(1, s1));
+  if (termTag(s1p1) != NUL) {
+    sprintf(msg, "sup1 port1 should be NUL, got %s", tagStr(termTag(s1p1)));
+    BOOM(msg);
+  }
+  Term s1p2 = take(portLoc(2, s1));
+  if (termTag(s1p2) != NUL) {
+    sprintf(msg, "sup1 port2 should be NUL, got %s", tagStr(termTag(s1p2)));
+    BOOM(msg);
+  }
+
+  // s2: port1=x (I60(7)), port2=y (I60(8))
+  Term s2p1 = take(portLoc(1, s2));
+  if (termTag(s2p1) != I60 || getI60(s2p1) != 7) {
+    sprintf(msg, "sup2 port1 should be I60(7), got tag %s val %ld",
+            tagStr(termTag(s2p1)), (long)getI60(s2p1));
+    BOOM(msg);
+  }
+  Term s2p2 = take(portLoc(2, s2));
+  if (termTag(s2p2) != I60 || getI60(s2p2) != 8) {
+    sprintf(msg, "sup2 port2 should be I60(8), got tag %s val %ld",
+            tagStr(termTag(s2p2)), (long)getI60(s2p2));
+    BOOM(msg);
+  }
+
+  // All pairs consumed (DUP, SUP, and 2 new SUPs freed by takes)
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
+}
+
 // =============================================================================
 // DUP/LAM Interaction Tests
 // =============================================================================
@@ -2729,6 +2787,7 @@ int main(int argc, char *argv[]) {
   testEraVarAppThunkSupLamI60();
   testEraVarAppThunkSupLamNul();
   testDupSupAnnihilation();
+  testDupSupCommutation();
   testDupLam();
   testDupLamWithSub();
   testDupIdentity();

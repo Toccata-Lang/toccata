@@ -1237,9 +1237,13 @@ void dupSup(Term dup, Term sup) {
     } else {
       // Expansion: take all aux ports
       Term a = take(portLoc(1, dup));
+      if (termTag(a) == VAR) a = NUL;  // SUB taken, no location to keep
       Term b = take(portLoc(2, dup));
+      if (termTag(b) == VAR) b = NUL;
       Term x = take(portLoc(1, sup));
+      if (termTag(x) == VAR) x = NUL;
       Term y = take(portLoc(2, sup));
+      if (termTag(y) == VAR) y = NUL;
 
       // a → new SUP_supLab, b → new SUP_supLab
       Term sup1 = makePair(SUP, supLab, a, b);
