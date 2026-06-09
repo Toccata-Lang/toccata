@@ -980,10 +980,16 @@ void eraSup(Term neg, Term pos) {
   interact(ERA, newTerm(VAR, 0, portLoc(2, pos)));
 }
 
+void eraVal(Term neg, Term pos) {
+  dec_and_free(pos, 1);
+}
+
 // DUP/NUL interaction: DUP principal connects to NUL
 // After: both DUP aux ports connect to NUL (a and b erased)
 // DUP/NUL and DUP/NUM: both ports get the positive term
 void dupLeaf(Term neg, Term pos) {
+  if (termTag(pos) == VAL)
+    incRef(pos, 1);
   move(portLoc(1, neg), pos);
   move(portLoc(2, neg), pos);
 }
@@ -1256,6 +1262,33 @@ void dupSup(Term dup, Term sup) {
       move(portLoc(2, dup), sup2);
     }
   }
+  return;
+}
+
+// Application-Value interaction
+void appVal(Term app, Term val) {
+  if (((Value *)val)->type != TermType) {
+    char msg[200];
+    sprintf(msg, "Invalid APP VAL pair: %d %ld\n", __LINE__, ((Value *)val)->type);
+    BOOM(msg);
+  }
+  TermVal *tv = (TermVal *)val;
+  if (tv->refs == 1) {
+    Term trm = swap(tv->trmLoc, NUL);
+    if (termTag(trm) == VAR)
+      trm = take(termLoc(trm));
+    pushRedex(app, trm);
+  } else {
+    Term dup = makePair(DUP, 0, SUB, SUB);
+    Term sub = makePair(SUB, 7, app, newTerm(VAR, 0, portLoc(1, dup)));
+    swap(portLoc(1, dup), sub);
+
+    Term trm = swap(tv->trmLoc, newTerm(VAR, 0, portLoc(2, dup)));
+    if (termTag(trm) == VAR)
+      trm = take(termLoc(trm));
+    pushRedex(dup, trm);
+  }
+  dec_and_free(val, 1);
   return;
 }
 
@@ -1537,6 +1570,12 @@ void hvmInit(u64 size) {
   interactions[OPY][SUP] = &negSup;
   interactions[DUP][LAM] = &dupLam;
   interactions[DUP][SUP] = &dupSup;
+  interactions[DUP][VAL] = &dupLeaf;
+  interactions[ERA][VAL] = &dupLeaf;
+  interactions[APP][VAL] = &appVal;
+  interactions[DUP][VL1] = &dupLeaf;
+  interactions[ERA][VL1] = &dupLeaf;
+  interactions[APP][VL1] = &appVal;
   // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
 
   // Initialize mutex for thread-safe redex operations
