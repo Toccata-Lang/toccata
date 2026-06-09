@@ -204,6 +204,15 @@ Creates a duplication structure for a given label and argument. Two variants:
 
 LAZ nodes are **positive-polarity** but can only be stored in **negative ports** (APP port 2, DUP ports). This breaks the standard interactive combinator model — LAZ nodes have **two incoming edges**, which means they can only be pointed to by **VAR nodes** (not by direct port connections in most cases).
 
+### LAZ interactions — handled through VAR chains, not as jump table rules
+
+LAZ nodes are **never the principal port of an interaction** in the reduction engine. The `interactions[16][16]` jump table has no entries for `[neg_tag][LAZ]` — all LAZ interactions are handled through VAR chains:
+
+- **ERA → LAZ**: `eraVar` calls `take(termLoc(var))` which follows VAR chains. When `take` returns LAZ, `eraVar` calls `eraseLazy(laz)` which dispatches based on thunk type (DUP with cycle detection, APP/OP wildcard erasure).
+- **Non-ERA negative → LAZ**: The negative term reaches LAZ through a VAR chain. The dispatch goes through `negVar` path where the VAR chain is followed and the appropriate handler is called based on the negative term's tag and LAZ's thunk type.
+
+**Key insight:** The four LAZ interactions in the calculus (ERA/LAZ DUP, ERA/LAZ DUP loop, (APP/OPX/OPY/DUP)/LAZ DUP, ERA/LAZ (APP/OP), (APP/OP)/LAZ (APP/OP)) are **logical descriptions** of the reduct, not physical interaction rules. The physical implementation handles them through the VAR chain mechanism.
+
 **Lazy DUP pattern:**
 ```
 DUP port 1 ──→ LAZ (same location)

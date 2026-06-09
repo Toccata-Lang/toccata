@@ -105,22 +105,35 @@ DUP/SUP has two variants depending on whether the DUP and SUP labels match.
 - **Before:** `D_m` principal connects to `S_n` principal (m ≠ n). DUP aux ports carry `a`, `b`. SUP aux ports carry `x`, `y`.
 - **After:** `a` connects to a new `S_n`. `b` connects to a new `S_n`. Each new `S_n` aux ports connect to LAZ and DUP chains routing to `x`, `y`. The LAZ aux ports connect to DUP and the respective x/y terminals. DUP aux ports connect to LAZ and the other LAZ, forming cross-chains.
 
+### LAZ interactions — logical rules, not physical interaction rules
+
+**⚠️ Important:** LAZ nodes are positive-polarity but stored only in negative ports (APP port 2, DUP ports). A negative term can never interact with LAZ directly at its principal port — it always reaches LAZ through a VAR chain. Therefore these are **logical descriptions** of the reduct, not physical interaction rules in the jump table.
+
+**Physical dispatch:**
+- **ERA → LAZ**: `eraVar` → `eraseLazy` (dispatches based on thunk type)
+- **Non-ERA negative → LAZ**: Through VAR chain → `negVar` dispatch
+
 ### ERA/LAZ DUP
 - **Before:** ERA connects to LAZ principal. `a` connects to LAZ principal. LAZ aux ports connect to `D` and `x`.
 - **After:** Empty triangle principal connects to LAZ. `a`, `b` connect to empty triangle aux ports. `c` connects to LAZ principal. LAZ aux ports connect to `D` and `x`.
+- **Physical handler:** `eraVar` → `eraseLazy` (DUP case with cycle detection)
 
 ### ERA/LAZ DUP (loop)
 - **Before:** ERA connects to LAZ principal. `a` connects to LAZ principal. LAZ aux ports connect to `D` and `a` (looping back).
 - **After:** ERA connects to `a`. `a` connects to NUL.
+- **Physical handler:** `eraVar` → `eraseLazy` (DUP case with cycle detection — cycle detected)
 
 ### (APP/OPX/OPY/DUP)/LAZ DUP
 - **Before:** Empty triangle principal connects to LAZ. `a`, `b` connect to empty triangle aux ports. `c` connects to LAZ principal. LAZ aux ports connect to `D` and `x`.
 - **After:** `x` connects to DUP principal. DUP aux ports connect to `c` and empty triangle principal. Empty triangle aux ports connect to `a`, `b`.
+- **Physical handler:** Non-ERA negative → VAR → dispatch via `negVar` path
 
 ### ERA/LAZ (APP/OP)
 - **Before:** ERA connects to LAZ principal. LAZ aux ports connect to `*` wildcard and `x`. `*` aux ports carry `a`, `b` with a loop back to LAZ principal.
 - **After:** Two ERAs connect to `x` and ERA. NUL connects to `*` wildcard principal. `*` aux ports carry `a`, `b`. `a` connects to ERA.
+- **Physical handler:** `eraVar` → `eraseLazy` (APP/OP case)
 
 ### (APP/OP)/LAZ (APP/OP)
 - **Before:** Empty triangle principal connects to LAZ. LAZ aux ports connect to `*` wildcard and `x`. `*` aux ports carry `c`, `d` with `d` looping back to LAZ principal.
 - **After:** `x` connects to `*` wildcard principal. `*` aux ports carry `c`, `d`. Empty triangle principal connects to `d`. Empty triangle aux ports carry `a`, `b`.
+- **Physical handler:** Non-ERA negative → VAR → dispatch via `negVar` path

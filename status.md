@@ -135,16 +135,18 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 ### Tier 4: Constructor interactions
 
-- [ ] **APP/SUP, OPX/SUP, OPY/SUP** — `*/SUP` wildcard. Negative constructor connects to SUP. After: SUP principal connects to `b`, aux ports connect to two `*` wildcards, LAZ/DUP chains to `x`/`y`. Handler: `negSup`.
+- [x] **APP/SUP, OPX/SUP, OPY/SUP** — `*/SUP` wildcard. Negative constructor connects to SUP. After: SUP principal connects to `b`, aux ports connect to two `*` wildcards, LAZ/DUP chains to `x`/`y`. Handler: `negSup`.
 - [x] **DUP/LAM** — DUP connects to LAM. After: two LAMs with SUP and LAZ/DUP chains. Handler: `dupLam`. Tests: `testDupLam` (ERA/ERA), `testDupLamWithSub` (SUB/SUB, bod=I60), `testDupIdentity` (SUB/SUB, self-referential LAM → lazy DUP chain).
 - [x] **DUP/SUP** — DUP connects to SUP. Same label: annihilation (aux ports rewired, both consumed). Different labels: commutation/expansion (new SUP + LAZ/DUP chains). Handler: `dupSup`. Tests: `testDupSupAnnihilation` (matching labels), `testDupSupCommutation` (different labels, I60 SUP ports), `testDupSupCommutationLam` (different labels, identity LAM SUP ports).
 
-### Tier 5: LAZ interactions (most complex)
+### LAZ interactions — handled through VAR chains, not as separate rules
 
-- [ ] **(APP/OPX/OPY/DUP)/LAZ DUP** — Empty triangle connects to LAZ with DUP thunk. After: new DUP node created, LAZ unwrapped. Handler: `lazDup`.
-- [ ] **(APP/OP)/LAZ (APP/OP)** — Empty triangle connects to LAZ with APP/OP thunk. After: new empty triangle created, LAZ unwrapped. Handler: `lazAppOp`.
+LAZ nodes are **positive-polarity but stored only in negative ports** (APP port 2, DUP ports). A negative term can never interact with LAZ directly at its principal port — it always reaches LAZ through a VAR chain. Therefore:
 
-**Note: ERA/LAZ DUP and ERA/LAZ (APP/OP) are handled by `eraVar` → `eraseLazy`.** These are not separate interaction rules — ERA reaches LAZ only through VAR chains, so `eraVar` covers both cases.
+- **ERA → LAZ**: Handled by `eraVar` → `eraseLazy`. When `take` returns LAZ, `eraVar` calls `eraseLazy` which dispatches based on thunk type (DUP with cycle detection, APP/OP wildcard erasure).
+- **Non-ERA negative → LAZ**: Handled through `negVar` path. The VAR chain dispatches to the appropriate handler based on the negative term's tag and LAZ's thunk type.
+
+All four LAZ interactions in the calculus (ERA/LAZ DUP, ERA/LAZ DUP loop, (APP/OPX/OPY/DUP)/LAZ DUP, ERA/LAZ (APP/OP), (APP/OP)/LAZ (APP/OP)) are **logical descriptions** of the reduct, not physical interaction rules in the jump table. They are handled through the VAR chain mechanism.
 
 ## Notes
 
@@ -153,7 +155,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - ERA/VAL needs special handling for native value erasure.
 - Rules are registered in `hvmInit()` via the `interactions[16][16]` jump table.
 - Each rule needs a corresponding test in `test-hvm.c`.
-- LAZ rules are the most complex due to lazy evaluation semantics and self-referential structures.
+- LAZ interactions are **not separate rules in the jump table**. LAZ is positive-polarity but stored only in negative ports, so it's always reached through VAR chains. ERA → `eraVar` → `eraseLazy`. Non-ERA negative → through VAR → `negVar`.
 - **LAZ structural constraint:** LAZ is positive-polarity but stored only in negative ports (APP port 2, DUP). LAZ's context (port 2) is positive, so it can't directly contain DUP — must go through VAR chain. Cycle detection follows this VAR chain from context to find the DUP, then checks if DUP's ports directly contain the LAZ.
 - **`freeLoc` double-free detection:** Now aborts on attempting to free an already-freed location (VOID check for odd locations, NUL+0xFF check for even locations). Tests must not call `take`/`freeLoc` on ports that were already freed by `freePair` coalescing during an interact.
 - **SUB pairs require label > 0** for connected ports. `makePair(SUB, 0, ...)` produces a no-op SUB pair (ports not connected).
