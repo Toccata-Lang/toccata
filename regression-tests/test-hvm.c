@@ -2383,54 +2383,112 @@ void testDupIdentity(void) {
 
   // Trigger DUP/LAM interaction
   interact(dup, lam);
-  pb();
 
-  // DUP port1 should be new LAM1
+  // After interaction:
+  // dup port1 = l1 (LAM), port2 = l2 (LAM)
+  // l1 port1 = SUB, port2 = VAR→du2 port1
+  // l2 port1 = SUB, port2 = VAR→du2 port2
+  // du2 port1 = DUP (dp), port2 = VAR→original LAM port1
+  // dp port1 = LAZ (du2), port2 = LAZ (du2)
+  // original LAM port1 = sup (SUP), port2 = freed
+  // sup port1 = VAR→l1 port1, port2 = VAR→l2 port1
+
+  // --- Take l1 and l2 from dup ---
   Term lam1 = take(portLoc(1, dup));
   if (termTag(lam1) != LAM) {
-    sprintf(msg, "DUP port1 should be LAM, got %s", tagStr(termTag(lam1)));
+    sprintf(msg, "dup port1 should be LAM, got %s", tagStr(termTag(lam1)));
     BOOM(msg);
   }
-
-  // DUP port2 should be new LAM2
   Term lam2 = take(portLoc(2, dup));
   if (termTag(lam2) != LAM) {
-    sprintf(msg, "DUP port2 should be LAM, got %s", tagStr(termTag(lam2)));
+    sprintf(msg, "dup port2 should be LAM, got %s", tagStr(termTag(lam2)));
     BOOM(msg);
   }
 
-  // Free lam1/lam2 port2
-  Term laz1 = get(termLoc(take(portLoc(2, lam1))));
-  if (termTag(laz1) != LAZ) {
-    sprintf(msg, "LAM 1 port 2 should be LAZ, got %s", tagStr(termTag(laz1)));
+  // --- Take l1 port2 and l2 port2 (both VAR→du2) ---
+  Term laz1 = take(portLoc(2, lam1));
+  if (termTag(laz1) != VAR) {
+    sprintf(msg, "l1 port2 should be VAR, got %s", tagStr(termTag(laz1)));
+    BOOM(msg);
+  }
+  Term laz2 = take(portLoc(2, lam2));
+  if (termTag(laz2) != VAR) {
+    sprintf(msg, "l2 port2 should be VAR, got %s", tagStr(termTag(laz2)));
     BOOM(msg);
   }
 
-  Term laz2 = get(termLoc(take(portLoc(2, lam2))));
-  if (termTag(laz2) != LAZ) {
-    sprintf(msg, "LAM 2 port 2 should be LAZ, got %s", tagStr(termTag(laz1)));
+  // Both point to the same LAZ (mask to even to compare pair locations)
+  if ((termLoc(laz1) & 0xFFFFFFFE) != (termLoc(laz2) & 0xFFFFFFFE)) {
+    BOOM("both LAMs should point to the same LAZ");
+  }
+  Location du2Loc = termLoc(laz1) & 0xFFFFFFFE;
+  Term du2 = get(du2Loc);
+  if (termTag(du2) != LAZ) {
+    sprintf(msg, "du2 should be LAZ, got %s", tagStr(termTag(du2)));
     BOOM(msg);
   }
 
-  if (laz1 != laz2) {
-    BOOM("Both LAM's should point to the same LAZ");
+  // --- Verify original LAM port1 is SUP (take on du2 port2 will free it) ---
+  Term supAtLamPort1 = get(portLoc(1, lam));
+  if (termTag(supAtLamPort1) != SUP) {
+    sprintf(msg, "original LAM port1 should be SUP, got %s", tagStr(termTag(supAtLamPort1)));
+    BOOM(msg);
   }
 
-  // Free lam1/lam2 port 1
+  // --- Take du2 port1 (DUP) and port2 (VAR chain → SUP, frees LAM port1) ---
+  Term dp = take(portLoc(1, du2));
+  if (termTag(dp) != DUP) {
+    sprintf(msg, "du2 port1 should be DUP, got %s", tagStr(termTag(dp)));
+    BOOM(msg);
+  }
+  Term sup = take(portLoc(2, du2));
+  if (termTag(sup) != SUP) {
+    sprintf(msg, "du2 port2 should be SUP (via VAR chain), got %s", tagStr(termTag(sup)));
+    BOOM(msg);
+  }
+
+  // --- Take sup's ports (both VAR→l1/l2 port1) ---
+  Term varToL1 = take(portLoc(1, sup));
+  if (termTag(varToL1) != VAR) {
+    sprintf(msg, "sup port1 should be VAR, got %s", tagStr(termTag(varToL1)));
+    BOOM(msg);
+  }
+  Term varToL2 = take(portLoc(2, sup));
+  if (termTag(varToL2) != VAR) {
+    sprintf(msg, "sup port2 should be VAR, got %s", tagStr(termTag(varToL2)));
+    BOOM(msg);
+  }
+
+  // --- Take dp's ports (both LAZ→du2, take returns VAR without freeing) ---
+  Term lazDp1 = take(portLoc(1, dp));
+  if (termTag(lazDp1) != VAR) {
+    sprintf(msg, "dp port1 take should return VAR, got %s", tagStr(termTag(lazDp1)));
+    BOOM(msg);
+  }
+  Term lazDp2 = take(portLoc(2, dp));
+  if (termTag(lazDp2) != VAR) {
+    sprintf(msg, "dp port2 take should return VAR, got %s", tagStr(termTag(lazDp2)));
+    BOOM(msg);
+  }
+
+  // --- Free dp's ports ---
+  freeLoc(portLoc(1, dp));
+  freeLoc(portLoc(2, dp));
+
+  // --- Free l1 port1 (SUB) and l2 port1 (SUB) ---
   Term trm = get(portLoc(1, lam1));
-  freeLoc(portLoc(1, lam1));
-  if (trm != SUB ) {
-    sprintf(msg, "LAM 1 port 1 should be SUB, got %s", tagStr(termTag(trm)));
+  if (termTag(trm) != SUB) {
+    sprintf(msg, "l1 port1 should be SUB, got %s", tagStr(termTag(trm)));
     BOOM(msg);
   }
+  freeLoc(portLoc(1, lam1));
 
   trm = get(portLoc(1, lam2));
-  freeLoc(portLoc(1, lam2));
-  if (trm != SUB) {
-    sprintf(msg, "LAM 2 port 1 should be SUB, got %s", tagStr(termTag(trm)));
+  if (termTag(trm) != SUB) {
+    sprintf(msg, "l2 port1 should be SUB, got %s", tagStr(termTag(trm)));
     BOOM(msg);
   }
-  pb();
+  freeLoc(portLoc(1, lam2));
 
   // All nodes freed
   if (glblAlloced != 0) {
