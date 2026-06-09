@@ -1193,13 +1193,13 @@ void dupLam(Term dup, Term lam) {
     Term bod = take(portLoc(2, lam));
     Term l1 = makePair(LAM, lamLab, SUB, NUL);
     Term l2 = makePair(LAM, lamLab, SUB, NUL);
-    Term du1 = makePair(SUP, dupLab,
+    Term sup = makePair(SUP, dupLab,
 			 newTerm(VAR, 0, portLoc(1, l1)),
 			 newTerm(VAR, 0, portLoc(1, l2)));
     Term du2 = makeLazyDup(dupLab, bod);
     swap(portLoc(2, l1), newTerm(VAR, 0, portLoc(1, du2)));
     swap(portLoc(2, l2), newTerm(VAR, 0, portLoc(2, du2)));
-    move(var, du1);
+    move(var, sup);
     move(portLoc(1, dup), l1);
     move(portLoc(2, dup), l2);
   }

@@ -2281,9 +2281,6 @@ void testDupLam(void) {
   // DUP: port1=ERA, port2=ERA — old values that handler must handle
   Term dup = makePair(DUP, 0, ERA, ERA);
 
-  subGraph("testDupLam-before", dup, 0);
-  subGraph("testDupLam-before", lam, nodeCount);
-
   // Trigger DUP/LAM interaction
   interact(dup, lam);
 
@@ -2299,68 +2296,155 @@ void testDupLam(void) {
   }
 }
 
-void testDupLamWithDifferentValues(void) {
+// Test DUP/LAM with SUB in both DUP ports — full expansion path
+void testDupLamWithSub(void) {
   char msg[100];
 
-  // Original LAM: port1=SUB, port2=I60(55) (y)
-  Term lam = makePair(LAM, 0, SUB, newI60(55));
+  // Original LAM: port1=SUB, port2=I60(88) (y)
+  Term lam = makePair(LAM, 0, ERA, newI60(88));
 
-  // DUP: port1=ERA, port2=ERA
-  Term dup = makePair(DUP, 0, ERA, ERA);
+  // DUP: port1=SUB, port2=SUB — old values that handler must handle
+  Term dup = makePair(DUP, 0, SUB, SUB);
 
-  subGraph("testDupLamWithDifferentValues-before", dup, 0);
-  subGraph("testDupLamWithDifferentValues-before", lam, nodeCount);
-
+  // Trigger DUP/LAM interaction
   interact(dup, lam);
+
+  // With SUB ports, handler takes full expansion path:
+  // - Original LAM port1 gets SUP (moved via move(var, du1))
+  // - Original LAM port2 freed by take(bod)
+  // - DUP port1 = new LAM1, DUP port2 = new LAM2
+  // Original LAM pair remains allocated (not freed like ERA case)
+
+  // Original LAM port2 was freed by take(bod) in handler — not taken here
+  // to avoid double-free. glblAlloced verifies all pairs freed.
 
   // DUP port1 should be new LAM1
   Term lam1 = take(portLoc(1, dup));
-  if (termTag(lam1) != LAM) BOOM("DUP port1 should be LAM");
+  if (termTag(lam1) != LAM) {
+    sprintf(msg, "DUP port1 should be LAM, got %s", tagStr(termTag(lam1)));
+    BOOM(msg);
+  }
 
-  // LAM1 port1 (SW) should be SUP
-  Term sup = get(portLoc(1, lam1));
-  if (termTag(sup) != SUP) BOOM("LAM1 port1 should be SUP");
-
-  // LAM1 port2 (SE) should be LAZ
-  Term laz = get(portLoc(2, lam1));
-  if (termTag(laz) != LAZ) BOOM("LAM1 port2 should be LAZ");
-
-  // LAZ port1 (SW) should be DUP
-  if (termTag(get(portLoc(1, laz))) != DUP) BOOM("LAZ port1 should be DUP");
-
-  // LAZ port2 (SE) should be I60(55) (original y)
-  if (get(portLoc(2, laz)) != newI60(55)) BOOM("LAZ port2 should be I60(55)");
-
-  // SUP port1 (NW) should be LAM1
-  if (get(portLoc(1, sup)) != lam1) BOOM("SUP port1 should be LAM1");
-
-  // DUP port2 should be LAM2
+  // DUP port2 should be new LAM2
   Term lam2 = take(portLoc(2, dup));
-  if (termTag(lam2) != LAM) BOOM("DUP port2 should be LAM");
+  if (termTag(lam2) != LAM) {
+    sprintf(msg, "DUP port2 should be LAM, got %s", tagStr(termTag(lam2)));
+    BOOM(msg);
+  }
 
-  // LAM2 port1 (SW) should be same SUP
-  if (get(portLoc(1, lam2)) != sup) BOOM("LAM2 port1 should be same SUP");
+  // Cleanup remaining pairs created by handler in correct order:
+  // l1: port1=SUB, port2=VAR→dp port1
+  // l2: port1=SUB, port2=VAR→dp port2
+  // dp: port1=I60, port2=I60
 
-  // LAM2 port2 (SE) should be same LAZ
-  if (get(portLoc(2, lam2)) != laz) BOOM("LAM2 port2 should be same LAZ");
+  // Free lam1/lam2 port 1
+  Term trm = take(portLoc(1, lam1));
+  if (trm != ERA) {
+    sprintf(msg, "LAM 1 port 1 should be ERA, got %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
 
-  // SUP port2 (NE) should be LAM2
-  if (get(portLoc(2, sup)) != lam2) BOOM("SUP port2 should be LAM2");
+  trm = take(portLoc(1, lam2));
+  if (trm != ERA) {
+    sprintf(msg, "LAM 22port 1 should be ERA, got %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
 
+  // Free lam1/lam2 port2
+  trm = take(portLoc(2, lam1));
+  if (trm != newI60(88)) {
+    sprintf(msg, "LAM 1 port 2 should be I60(88), got %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
+  trm = take(portLoc(2, lam2));
+  if (trm != newI60(88)) {
+    sprintf(msg, "LAM 2 port 2 should be I60(88), got %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
+  // All nodes freed
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
   }
+}
 
-  // Cleanup
-  take(portLoc(1, lam1));
-  take(portLoc(2, lam1));
-  take(portLoc(1, lam2));
-  take(portLoc(2, lam2));
-  take(portLoc(1, laz));
-  take(portLoc(2, laz));
-  take(portLoc(1, sup));
-  take(portLoc(2, sup));
+// Test DUP/LAM with SUB in both DUP ports and Identity LAM — full expansion path
+void testDupIdentity(void) {
+  char msg[100];
+
+  // Original LAM: port1=SUB, port2=I60(88) (y)
+  Term lam = makePair(LAM, 0, SUB, NUL);
+  swap(portLoc(2, lam), newTerm(VAR, 0, portLoc(1, lam)));
+
+  // DUP: port1=SUB, port2=SUB — old values that handler must handle
+  Term dup = makePair(DUP, 0, SUB, SUB);
+
+  // Trigger DUP/LAM interaction
+  interact(dup, lam);
+  subGraph("after", dup, 0);
+  pb();
+
+  // With SUB ports, handler takes full expansion path:
+  // - Original LAM port1 gets SUP (moved via move(var, du1))
+  // - Original LAM port2 freed by take(bod)
+  // - DUP port1 = new LAM1, DUP port2 = new LAM2
+  // Original LAM pair remains allocated (not freed like ERA case)
+
+  // Original LAM port2 was freed by take(bod) in handler — not taken here
+  // to avoid double-free. glblAlloced verifies all pairs freed.
+
+  // DUP port1 should be new LAM1
+  Term lam1 = take(portLoc(1, dup));
+  if (termTag(lam1) != LAM) {
+    sprintf(msg, "DUP port1 should be LAM, got %s", tagStr(termTag(lam1)));
+    BOOM(msg);
+  }
+
+  // DUP port2 should be new LAM2
+  Term lam2 = take(portLoc(2, dup));
+  if (termTag(lam2) != LAM) {
+    sprintf(msg, "DUP port2 should be LAM, got %s", tagStr(termTag(lam2)));
+    BOOM(msg);
+  }
+
+  // Cleanup remaining pairs created by handler in correct order:
+  // l1: port1=SUB, port2=VAR→dp port1
+  // l2: port1=SUB, port2=VAR→dp port2
+  // dp: port1=I60, port2=I60
+
+  // Free lam1/lam2 port 1
+  Term trm = take(portLoc(1, lam1));
+  if (trm != ERA) {
+    sprintf(msg, "LAM 1 port 1 should be ERA, got %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
+  trm = take(portLoc(1, lam2));
+  if (trm != ERA) {
+    sprintf(msg, "LAM 22port 1 should be ERA, got %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
+  // Free lam1/lam2 port2
+  trm = take(portLoc(2, lam1));
+  if (trm != newI60(88)) {
+    sprintf(msg, "LAM 1 port 2 should be I60(88), got %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
+  trm = take(portLoc(2, lam2));
+  if (trm != newI60(88)) {
+    sprintf(msg, "LAM 2 port 2 should be I60(88), got %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
+  // All nodes freed
+  if (glblAlloced != 0) {
+    sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
+    BOOM(msg);
+  }
 }
 
 // =============================================================================
@@ -2556,9 +2640,9 @@ int main(int argc, char *argv[]) {
   testEraVarAppThunkLamNul();
   testEraVarAppThunkSupLamI60();
   testEraVarAppThunkSupLamNul();
-
   testDupLam();
-  // testDupLamWithDifferentValues();
+  testDupLamWithSub();
+  testDupIdentity();
 
   hvmFree();
   return 0;
