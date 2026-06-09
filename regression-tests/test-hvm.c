@@ -2309,7 +2309,10 @@ void testDupSupCommutation(void) {
   Term sup = makePair(SUP, 1, newI60(7), newI60(8));
 
   // Trigger DUP/SUP interaction — should commute/expand
+  subGraph("dup", dup, 0);
+  subGraph("sup", sup, nodeCount);
   interact(dup, sup);
+  subGraph("after", dup, nodeCount);
 
   // DUP aux ports should contain new SUP nodes
   Term s1 = take(portLoc(1, dup));
