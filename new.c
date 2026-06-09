@@ -1235,15 +1235,9 @@ void dupSup(Term dup, Term sup) {
       take(portLoc(2, dup));
       move(portLoc(1, dup), sup);
     } else {
-      // Expansion: take all aux ports
-      Term a = take(portLoc(1, dup));
-      if (termTag(a) == VAR) a = NUL;
-      Term b = take(portLoc(2, dup));
-      if (termTag(b) == VAR) b = NUL;
+      // Expansion: take SUP aux ports
       Term x = take(portLoc(1, sup));
-      if (termTag(x) == VAR) x = NUL;
       Term y = take(portLoc(2, sup));
-      if (termTag(y) == VAR) y = NUL;
 
       // x,y → new DUP nodes (lazy DUP chains)
       Term dup1 = makeLazyDup(dupLab, x);
