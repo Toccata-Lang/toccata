@@ -160,6 +160,7 @@ bool popRedex(Term* neg, Term* pos);
 Term swap(Location loc, Term term);
 void move(Location neg_loc, Term pos);
 void varArg(Term trm, Term ref, Term args, NativeArgs *argsStruct);
+Term argsNet(NativeArgs *args);
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct);
 Term dupeArg(Term arg, Term *dupedArg, unsigned dupLabel);
 int decSubRefs(Location sup_loc);
@@ -195,4 +196,3 @@ extern char *dupLabels[];
 
 char hasLocation(Term tree);
 int isCycle(Term tree, Location tgtLoc);
-int eraseCycle(Term tree, Location tgtLoc);

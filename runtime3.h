@@ -371,3 +371,4 @@ void accessFieldFn(Term ref, Term args);
 void constructFn(Term ref, Term args);
 void hvmVectFn(Term ref, Term args);
 void exitProg(Term ref, Term args);
+void graphFn(Term ref, Term args);

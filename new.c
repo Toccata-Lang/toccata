@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "new.h"
 #include "runtime3.h"
+#include "graph.h"
 
 int threadCount = 1;
 pthread_t threads[2050];
@@ -1292,6 +1293,42 @@ void appVal(Term app, Term val) {
   return;
 }
 
+void appRef(Term app, Term ref) {
+  interactionFn fnPtr;
+  fnPtr = (interactionFn)(ref & ~0xF);
+  fnPtr(ref, app);
+}
+
+void negVar(Term neg, Term var) {
+  var = take(termLoc(var));
+  if (termTag(var) == VAR) {
+    Term val = swap(termLoc(var), neg);
+    switch(termTag(val)) {
+    case SUB:
+      break;
+
+    case LAZ: {
+      forceLazy(val);
+    }
+      break;
+
+    default:
+      BOOM("Duping a bad var");
+      // this might be the way to do it.
+      // but this shouldn't happen
+      take(termLoc(var));
+      interact(neg, val);
+      break;
+    }
+  } else {
+    interact(neg, var);
+  }
+  return;
+}
+
+void nop(Term app, Term ref) {
+}
+
 // interaction jump table - all entries default to badrdx
 interactionFn interactions[16][16] = {
   [0 ... 15] = {[0 ... 15] = &badrdx}
@@ -1315,8 +1352,8 @@ void interact(Term neg, Term pos) {
 	sprintf(dotName, "graphs/%04ld-%ld-%ld.dot", graphCount, neg, pos);
 	dotFile = fopen(dotName, "w");
 	fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
-	graphDown("NEG", neg, 0, 0);
-	graphDown("POS", pos, nodeCount, 0);
+	subGraph("NEG", neg, 0);
+	subGraph("POS", pos, nodeCount);
 	fprintf(dotFile, "}\n");
 	fclose(dotFile);
 	dotFile = currDOT;
@@ -1571,12 +1608,18 @@ void hvmInit(u64 size) {
   interactions[DUP][LAM] = &dupLam;
   interactions[DUP][SUP] = &dupSup;
   interactions[DUP][VAL] = &dupLeaf;
-  interactions[ERA][VAL] = &dupLeaf;
+  interactions[ERA][VAL] = &eraLeaf;
   interactions[APP][VAL] = &appVal;
   interactions[DUP][VL1] = &dupLeaf;
-  interactions[ERA][VL1] = &dupLeaf;
+  interactions[ERA][VL1] = &eraLeaf;
   interactions[APP][VL1] = &appVal;
-  // interactions[ERA][VAL] = &eraLeaf;  // TODO: special handling for VAL erasure
+  interactions[APP][REF] = &appRef;
+  interactions[APP][VAR] = &negVar;
+  interactions[OPX][VAR] = &negVar;
+  interactions[OPY][VAR] = &negVar;
+  interactions[DUP][VAR] = &negVar;
+  interactions[DUP][REF] = &dupLeaf;
+  interactions[ERA][REF] = &nop;
 
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redexMutex, NULL) != 0) {

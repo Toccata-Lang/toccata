@@ -5,8 +5,8 @@
 extern FILE *dotFile;
 
 extern unsigned subGraphs;
+extern long graphCount;
 unsigned subGraph(char *title, Term root, unsigned currNodeCount);
-void graphFn(Term ref, Term args);
 unsigned graph(char *title, Term root, unsigned currNodeCount);
 
 #endif

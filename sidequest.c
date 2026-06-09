@@ -1,5 +1,6 @@
 
 #define _XOPEN_SOURCE 600
+#include "graph.h"
 #include "runtime3.h"
 #include <limits.h>
 #include <stdatomic.h>
@@ -21,48 +22,48 @@ void glblCFn0(Term ref, Term args) {
   Term result = NUL;
   if (arityArgs.count == 1) {
     Term x_1 = arityArgs.args[0];
-    if (term_tag(x_1) == I60) {
-      result = term_val((Term)stringValue("Integer"));
+    if (termTag(x_1) == I60) {
+      result = termVal((Term)stringValue("Integer"));
     } else {
       char *name = typeName(((Value *)x_1)->type);
-      result = term_val((Term)stringValue(name));
+      result = termVal((Term)stringValue(name));
     };
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn1 = new_ref(glblCFn0);
+Term glblFn1 = newRef(glblCFn0);
 Term glbltype_name6;
 void glblglbl5(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_5 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_5 = port(2, term_loc(seq_5));
-  Term x_4 = term_new(VAR, 0, port(1, term_loc(seq_5)));
-  // allocate args at core: 38
-  // call default-type-name at core: 40
-  Term Rslt_7Args = pair_make(APP, 0, x_4, SUB);
-  Term Rslt_7 = term_new(VAR, 0, port(2, term_loc(Rslt_7Args)));
+  Term seq_5 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_5 = portLoc(2, seq_5);
+  Term x_4 = newTerm(VAR, 0, portLoc(1, seq_5));
+  // allocate args at core: 39
+  // call default-type-name at core: 41
+  Term Rslt_7Args = makePair(APP, 0, x_4, SUB);
+  Term Rslt_7 = newTerm(VAR, 0, portLoc(2, Rslt_7Args));
 #ifdef STRICT
-  store_redex(Rslt_7Args, glblFn1);
+  pushRedex(Rslt_7Args, glblFn1);
 #else
-  swapStore(term_loc(Rslt_7), pair_make(LAZ, 0, Rslt_7Args, glblFn1));
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, Rslt_7Args, glblFn1));
 #endif
 
   dupLabels[0] = "type-name";
   // link args to body
-  swapStore(r_seq_5, Rslt_7);
+  swap(r_seq_5, Rslt_7);
 
-  Term Rslt_7V = get(term_loc(Rslt_7));
-  apps = take(port(1, term_loc(Rslt_7V)));
-  lams = take(port(2, term_loc(Rslt_7V)));
+  Term Rslt_7V = get(termLoc(Rslt_7));
+  apps = take(portLoc(1, Rslt_7V));
+  lams = take(portLoc(2, Rslt_7V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_7), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_5);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_5);
   return;
 }
-Term glbltype_name6 = new_ref(glblglbl5);
+Term glbltype_name6 = newRef(glblglbl5);
 Term glblProto3;
 Term glblFn8;
 void glblCFn7(Term ref, Term args) {
@@ -72,13 +73,13 @@ void glblCFn7(Term ref, Term args) {
   if (arityArgs.count == 1) {
     Term x_1 = arityArgs.args[0];
 
-    switch (term_tag(x_1)) {
+    switch (termTag(x_1)) {
     case I60:
-      result = new_i60(IntegerType);
+      result = newI60(IntegerType);
       break;
 
     case F60:
-      result = new_i60(FloatType);
+      result = newI60(FloatType);
       break;
 
     case REF:
@@ -86,43 +87,43 @@ void glblCFn7(Term ref, Term args) {
       break;
 
     default:
-      result = new_i60(((Value *)x_1)->type);
+      result = newI60(((Value *)x_1)->type);
       dec_and_free(x_1, 1);
     }
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn8 = new_ref(glblCFn7);
-Term glblVal9 = new_ref(graphFn);
+Term glblFn8 = newRef(glblCFn7);
+Term glblVal10 = newRef(graphFn);
 ;
-Term glblVal9;
-Term glblProto15;
-void glblSome17(Term ref, Term args) {
-  Term callArgs = pair_make(APP, 0, new_i60(1), args);
-  callArgs = pair_make(APP, 0, new_i60(43), callArgs);
+Term glblVal10;
+Term glblProto16;
+void glblSome19(Term ref, Term args) {
+  Term callArgs = makePair(APP, 0, newI60(1), args);
+  callArgs = makePair(APP, 0, newI60(43), callArgs);
   interact(callArgs, construct);
   return;
 }
 void glblNone12(Term ref, Term args) {
-  Term callArgs = pair_make(APP, 0, new_i60(0), args);
-  callArgs = pair_make(APP, 0, new_i60(42), callArgs);
+  Term callArgs = makePair(APP, 0, newI60(0), args);
+  callArgs = makePair(APP, 0, newI60(42), callArgs);
   interact(callArgs, construct);
   return;
 }
-Term glblVal14 = new_ref(glblNone12);
+Term glblVal14 = newRef(glblNone12);
 Term glblVal14;
 Term glblRslt13;
-Term glblVal20 = new_ref(glblSome17);
-Term glblVal20;
-Term glblFld19;
-void glblFldFn18(Term ref, Term args) {
-  args = pair_make(APP, 0, new_i60(0), args);
-  store_redex(args, accessField);
+Term glblVal22 = newRef(glblSome19);
+Term glblVal22;
+Term glblFld21;
+void glblFldFn20(Term ref, Term args) {
+  args = makePair(APP, 0, newI60(0), args);
+  pushRedex(args, accessField);
   return;
 }
-Term glblFld19 = new_ref(glblFldFn18);
-Term glblProto21;
+Term glblFld21 = newRef(glblFldFn20);
+Term glblProto15;
 Term glblProto23;
 Term glblProto25;
 Term glblProto27;
@@ -175,7 +176,7 @@ void glblCFn111(Term ref, Term args) {
   if (arityArgs.count == 1) {
     Term str_1 = arityArgs.args[0];
 
-    if (term_tag(str_1) != VAL) {
+    if (termTag(str_1) != VAL) {
       fprintf(stderr, "\ninvalid type for 'abort': Integer or Float\n");
       abort();
     }
@@ -187,11 +188,11 @@ void glblCFn111(Term ref, Term args) {
       abort();
     }
     abort();
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn112 = new_ref(glblCFn111);
+Term glblFn112 = newRef(glblCFn111);
 Term glblFn115;
 void glblCFn114(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -200,7 +201,7 @@ void glblCFn114(Term ref, Term args) {
   if (arityArgs.count == 1) {
     Term str_1 = arityArgs.args[0];
 
-    if (term_tag(str_1) != VAL) {
+    if (termTag(str_1) != VAL) {
       fprintf(stderr, "\ninvalid type for 'pr*': Integer or Float\n");
       abort();
     }
@@ -210,20 +211,20 @@ void glblCFn114(Term ref, Term args) {
     } else if (s->type == SubStringType) {
       ReifiedVal *ss = (ReifiedVal *)str_1;
       String *parent = (String *)ss->impls[0];
-      long start = get_i60(ss->impls[1]);
-      int len = (int)get_i60(ss->impls[2]);
+      long start = getI60(ss->impls[1]);
+      int len = (int)getI60(ss->impls[2]);
       fprintf(stdout, "%-.*s", len, &parent->buffer[start]);
     } else {
       fprintf(stdout, "\ninvalid type for 'pr*': %ld\n", s->type);
       abort();
     }
     dec_and_free(str_1, 1);
-    result = new_i60(0);
-    moveStore(port(2, term_loc(args)), result);
+    result = newI60(0);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn115 = new_ref(glblCFn114);
+Term glblFn115 = newRef(glblCFn114);
 Term glblFn118;
 void glblCFn117(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -233,39 +234,39 @@ void glblCFn117(Term ref, Term args) {
     Term x_1 = arityArgs.args[0];
     Term y_2 = arityArgs.args[1];
 
-    if (term_tag(x_1) != I60 && term_tag(y_2) != I60) {
+    if (termTag(x_1) != I60 && termTag(y_2) != I60) {
       BOOM("Invalid inputs to '+'");
     }
-    result = new_i60(get_i60(x_1) + get_i60(y_2));
+    result = newI60(getI60(x_1) + getI60(y_2));
 
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn118 = new_ref(glblCFn117);
-Term glblFn121;
-void glblCFn120(Term ref, Term args) {
+Term glblFn118 = newRef(glblCFn117);
+Term glblFn120;
+void glblCFn119(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 9, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 264
-  Term Rslt_4 = make_op(OP_ADD, new_i60(1), x_1);
+  Term seq_2 = makePair(LAM, 9, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_2));
+  // allocate args at core: 265
+  Term Rslt_4 = makeOp(OP_ADD, newI60(1), x_1);
   dupLabels[9] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_4);
+  swap(r_seq_2, Rslt_4);
 
-  Term Rslt_4V = get(term_loc(Rslt_4));
-  apps = take(port(1, term_loc(Rslt_4V)));
-  lams = take(port(2, term_loc(Rslt_4V)));
+  Term Rslt_4V = get(termLoc(Rslt_4));
+  apps = take(portLoc(1, Rslt_4V));
+  lams = take(portLoc(2, Rslt_4V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn121 = new_ref(glblCFn120);
+Term glblFn120 = newRef(glblCFn119);
 Term glblFn124;
 void glblCFn123(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -278,34 +279,34 @@ void glblCFn123(Term ref, Term args) {
     fprintf(stderr, "'-' should be optimized away\n");
     abort();
 
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn124 = new_ref(glblCFn123);
+Term glblFn124 = newRef(glblCFn123);
 Term glblFn127;
 void glblCFn126(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 11, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 276
-  Term Rslt_4 = make_op(OP_SUB, x_1, new_i60(1));
+  Term seq_2 = makePair(LAM, 11, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_2));
+  // allocate args at core: 277
+  Term Rslt_4 = makeOp(OP_SUB, x_1, newI60(1));
   dupLabels[11] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_4);
+  swap(r_seq_2, Rslt_4);
 
-  Term Rslt_4V = get(term_loc(Rslt_4));
-  apps = take(port(1, term_loc(Rslt_4V)));
-  lams = take(port(2, term_loc(Rslt_4V)));
+  Term Rslt_4V = get(termLoc(Rslt_4));
+  apps = take(portLoc(1, Rslt_4V));
+  lams = take(portLoc(2, Rslt_4V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn127 = new_ref(glblCFn126);
+Term glblFn127 = newRef(glblCFn126);
 Term glblFn130;
 void glblCFn129(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -318,11 +319,11 @@ void glblCFn129(Term ref, Term args) {
     fprintf(stderr, "'*' should be optimized away\n");
     abort();
 
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn130 = new_ref(glblCFn129);
+Term glblFn130 = newRef(glblCFn129);
 Term glblVal131 = (Term)&empty_vect_struct;
 Term glblVal131;
 Term glblFn134;
@@ -334,12 +335,12 @@ void glblCFn133(Term ref, Term args) {
     Term vect_1 = arityArgs.args[0];
     Term v_2 = arityArgs.args[1];
 
-    result = term_val((Term)vectConj((Vector *)vect_1, v_2));
-    moveStore(port(2, term_loc(args)), result);
+    result = termVal((Term)vectConj((Vector *)vect_1, v_2));
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn134 = new_ref(glblCFn133);
+Term glblFn134 = newRef(glblCFn133);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -348,228 +349,228 @@ struct {
   int64_t len;
   char buffer[5];
 } str0 = {StringBufferType, REFS_STATIC, 0, 0, 4, "core"};
-Term glblStr151 = term_new_(VAL, (Term)&str0);
-void glblProto21_150(Term ref, Term args) {
+Term glblStr151 = newTerm_(VAL, (Term)&str0);
+void glblProto15_150(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(296), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto21);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(297), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto15);
   }
 }
 Term glbl_EQ_149;
 void glbl_EQ_148(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_8 = pair_make(LAM, 20, SUB, NUL);
-  Location r_seq_8 = port(2, term_loc(seq_8));
-  Term y_7 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  seq_8 = pair_make(LAM, 20, SUB, seq_8);
-  Term x_6 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  // allocate args at core: 295
-  // call type-num at core: 296
-  Term Rslt_10Args = pair_make(APP, 0, x_6, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
+  Term seq_8 = makePair(LAM, 20, SUB, NUL);
+  Location r_seq_8 = portLoc(2, seq_8);
+  Term y_7 = newTerm(VAR, 0, portLoc(1, seq_8));
+  seq_8 = makePair(LAM, 20, SUB, seq_8);
+  Term x_6 = newTerm(VAR, 0, portLoc(1, seq_8));
+  // allocate args at core: 296
+  // call type-num at core: 297
+  Term Rslt_10Args = makePair(APP, 0, x_6, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
 #ifdef STRICT
-  store_redex(Rslt_10Args, glblFn8);
+  pushRedex(Rslt_10Args, glblFn8);
 #else
-  swapStore(term_loc(Rslt_10), pair_make(LAZ, 0, Rslt_10Args, glblFn8));
+  swap(termLoc(Rslt_10), makePair(LAZ, 0, Rslt_10Args, glblFn8));
 #endif
 
-  // call type-num at core: 296
-  Term Rslt_11Args = pair_make(APP, 0, y_7, SUB);
-  Term Rslt_11 = term_new(VAR, 0, port(2, term_loc(Rslt_11Args)));
+  // call type-num at core: 297
+  Term Rslt_11Args = makePair(APP, 0, y_7, SUB);
+  Term Rslt_11 = newTerm(VAR, 0, portLoc(2, Rslt_11Args));
 #ifdef STRICT
-  store_redex(Rslt_11Args, glblFn8);
+  pushRedex(Rslt_11Args, glblFn8);
 #else
-  swapStore(term_loc(Rslt_11), pair_make(LAZ, 0, Rslt_11Args, glblFn8));
+  swap(termLoc(Rslt_11), makePair(LAZ, 0, Rslt_11Args, glblFn8));
 #endif
 
-  // call = at core: 296
-  Term Rslt_12Args = pair_make(APP, 0, Rslt_11, SUB);
-  Term Rslt_12 = term_new(VAR, 0, port(2, term_loc(Rslt_12Args)));
-  Rslt_12Args = pair_make(APP, 0, Rslt_10, Rslt_12Args);
+  // call = at core: 297
+  Term Rslt_12Args = makePair(APP, 0, Rslt_11, SUB);
+  Term Rslt_12 = newTerm(VAR, 0, portLoc(2, Rslt_12Args));
+  Rslt_12Args = makePair(APP, 0, Rslt_10, Rslt_12Args);
 #ifdef STRICT
-  store_redex(Rslt_12Args, new_ref(glblProto21_150));
+  pushRedex(Rslt_12Args, newRef(glblProto15_150));
 #else
-  swapStore(term_loc(Rslt_12),
-            pair_make(LAZ, 0, Rslt_12Args, new_ref(glblProto21_150)));
+  swap(termLoc(Rslt_12),
+       makePair(LAZ, 0, Rslt_12Args, newRef(glblProto15_150)));
 #endif
   dupLabels[20] = "=";
   // link args to body
-  swapStore(r_seq_8, Rslt_12);
+  swap(r_seq_8, Rslt_12);
 
-  Term Rslt_12V = get(term_loc(Rslt_12));
-  apps = take(port(1, term_loc(Rslt_12V)));
-  lams = take(port(2, term_loc(Rslt_12V)));
+  Term Rslt_12V = get(termLoc(Rslt_12));
+  apps = take(portLoc(1, Rslt_12V));
+  lams = take(portLoc(2, Rslt_12V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_12), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_8);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_12), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_8);
   return;
 }
-Term glbl_EQ_149 = new_ref(glbl_EQ_148);
+Term glbl_EQ_149 = newRef(glbl_EQ_148);
 Term glblrecurse147;
 void glblrecurse146(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_16 = pair_make(LAM, 19, SUB, NUL);
-  Location r_seq_16 = port(2, term_loc(seq_16));
-  Term f_15 = term_new(VAR, 0, port(1, term_loc(seq_16)));
-  seq_16 = pair_make(LAM, 19, SUB, seq_16);
-  Term v_14 = term_new(VAR, 0, port(1, term_loc(seq_16)));
-  // allocate args at core: 297
-  swapStore(term_loc(f_15), ERA);
+  Term seq_16 = makePair(LAM, 19, SUB, NUL);
+  Location r_seq_16 = portLoc(2, seq_16);
+  Term f_15 = newTerm(VAR, 0, portLoc(1, seq_16));
+  seq_16 = makePair(LAM, 19, SUB, seq_16);
+  Term v_14 = newTerm(VAR, 0, portLoc(1, seq_16));
+  // allocate args at core: 298
+  swap(termLoc(f_15), ERA);
   dupLabels[19] = "recurse";
   // link args to body
-  swapStore(r_seq_16, v_14);
+  swap(r_seq_16, v_14);
 
   V = get(r_seq_16);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 19, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_16, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_16);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 19, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_16, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_16);
   return;
 }
-Term glblrecurse147 = new_ref(glblrecurse146);
+Term glblrecurse147 = newRef(glblrecurse146);
 Term glbleither145;
 void glbleither144(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_21 = pair_make(LAM, 18, SUB, NUL);
-  Location r_seq_21 = port(2, term_loc(seq_21));
-  Term cont_20 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 18, SUB, seq_21);
-  Term v_19 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  // allocate args at core: 299
-  swapStore(term_loc(v_19), ERA);
+  Term seq_21 = makePair(LAM, 18, SUB, NUL);
+  Location r_seq_21 = portLoc(2, seq_21);
+  Term cont_20 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 18, SUB, seq_21);
+  Term v_19 = newTerm(VAR, 0, portLoc(1, seq_21));
+  // allocate args at core: 300
+  swap(termLoc(v_19), ERA);
   dupLabels[18] = "either";
   // link args to body
-  swapStore(r_seq_21, cont_20);
+  swap(r_seq_21, cont_20);
 
   V = get(r_seq_21);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 18, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_21, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_21);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 18, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_21, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_21);
   return;
 }
-Term glbleither145 = new_ref(glbleither144);
+Term glbleither145 = newRef(glbleither144);
 Term glblcond143;
 void glblcond142(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_27 = pair_make(LAM, 17, SUB, NUL);
-  Location r_seq_27 = port(2, term_loc(seq_27));
-  Term cont_26 = term_new(VAR, 0, port(1, term_loc(seq_27)));
-  seq_27 = pair_make(LAM, 17, SUB, seq_27);
-  Term x_25 = term_new(VAR, 0, port(1, term_loc(seq_27)));
-  seq_27 = pair_make(LAM, 17, SUB, seq_27);
-  Term v_24 = term_new(VAR, 0, port(1, term_loc(seq_27)));
-  // allocate args at core: 301
-  swapStore(term_loc(v_24), ERA);
-  swapStore(term_loc(x_25), ERA);
+  Term seq_27 = makePair(LAM, 17, SUB, NUL);
+  Location r_seq_27 = portLoc(2, seq_27);
+  Term cont_26 = newTerm(VAR, 0, portLoc(1, seq_27));
+  seq_27 = makePair(LAM, 17, SUB, seq_27);
+  Term x_25 = newTerm(VAR, 0, portLoc(1, seq_27));
+  seq_27 = makePair(LAM, 17, SUB, seq_27);
+  Term v_24 = newTerm(VAR, 0, portLoc(1, seq_27));
+  // allocate args at core: 302
+  swap(termLoc(v_24), ERA);
+  swap(termLoc(x_25), ERA);
   dupLabels[17] = "cond";
   // link args to body
-  swapStore(r_seq_27, cont_26);
+  swap(r_seq_27, cont_26);
 
   V = get(r_seq_27);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 17, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_27, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_27);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 17, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_27, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_27);
   return;
 }
-Term glblcond143 = new_ref(glblcond142);
+Term glblcond143 = newRef(glblcond142);
 Term glbland141;
 void glbland140(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_32 = pair_make(LAM, 16, SUB, NUL);
-  Location r_seq_32 = port(2, term_loc(seq_32));
-  Term arg_31 = term_new(VAR, 0, port(1, term_loc(seq_32)));
-  seq_32 = pair_make(LAM, 16, SUB, seq_32);
-  Term x_30 = term_new(VAR, 0, port(1, term_loc(seq_32)));
-  // allocate args at core: 303
-  swapStore(term_loc(arg_31), ERA);
+  Term seq_32 = makePair(LAM, 16, SUB, NUL);
+  Location r_seq_32 = portLoc(2, seq_32);
+  Term arg_31 = newTerm(VAR, 0, portLoc(1, seq_32));
+  seq_32 = makePair(LAM, 16, SUB, seq_32);
+  Term x_30 = newTerm(VAR, 0, portLoc(1, seq_32));
+  // allocate args at core: 304
+  swap(termLoc(arg_31), ERA);
   dupLabels[16] = "and";
   // link args to body
-  swapStore(r_seq_32, x_30);
+  swap(r_seq_32, x_30);
 
   V = get(r_seq_32);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 16, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_32, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_32);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 16, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_32, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_32);
   return;
 }
-Term glbland141 = new_ref(glbland140);
+Term glbland141 = newRef(glbland140);
 Term glblor139;
 void glblor138(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_37 = pair_make(LAM, 15, SUB, NUL);
-  Location r_seq_37 = port(2, term_loc(seq_37));
-  Term y_36 = term_new(VAR, 0, port(1, term_loc(seq_37)));
-  seq_37 = pair_make(LAM, 15, SUB, seq_37);
-  Term arg_35 = term_new(VAR, 0, port(1, term_loc(seq_37)));
-  // allocate args at core: 305
-  swapStore(term_loc(arg_35), ERA);
+  Term seq_37 = makePair(LAM, 15, SUB, NUL);
+  Location r_seq_37 = portLoc(2, seq_37);
+  Term y_36 = newTerm(VAR, 0, portLoc(1, seq_37));
+  seq_37 = makePair(LAM, 15, SUB, seq_37);
+  Term arg_35 = newTerm(VAR, 0, portLoc(1, seq_37));
+  // allocate args at core: 306
+  swap(termLoc(arg_35), ERA);
   dupLabels[15] = "or";
   // link args to body
-  swapStore(r_seq_37, y_36);
+  swap(r_seq_37, y_36);
 
   V = get(r_seq_37);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 15, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_37, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_37);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 15, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_37, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_37);
   return;
 }
-Term glblor139 = new_ref(glblor138);
+Term glblor139 = newRef(glblor138);
 Term glblmap137;
 void glblmap136(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_42 = pair_make(LAM, 14, SUB, NUL);
-  Location r_seq_42 = port(2, term_loc(seq_42));
-  Term f_41 = term_new(VAR, 0, port(1, term_loc(seq_42)));
-  seq_42 = pair_make(LAM, 14, SUB, seq_42);
-  Term x_40 = term_new(VAR, 0, port(1, term_loc(seq_42)));
-  // allocate args at core: 307
-  swapStore(term_loc(f_41), ERA);
+  Term seq_42 = makePair(LAM, 14, SUB, NUL);
+  Location r_seq_42 = portLoc(2, seq_42);
+  Term f_41 = newTerm(VAR, 0, portLoc(1, seq_42));
+  seq_42 = makePair(LAM, 14, SUB, seq_42);
+  Term x_40 = newTerm(VAR, 0, portLoc(1, seq_42));
+  // allocate args at core: 308
+  swap(termLoc(f_41), ERA);
   dupLabels[14] = "map";
   // link args to body
-  swapStore(r_seq_42, x_40);
+  swap(r_seq_42, x_40);
 
   V = get(r_seq_42);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 14, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_42, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_42);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 14, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_42, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_42);
   return;
 }
-Term glblmap137 = new_ref(glblmap136);
+Term glblmap137 = newRef(glblmap136);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -578,14 +579,14 @@ struct {
   int64_t len;
   char buffer[2];
 } str1 = {StringBufferType, REFS_STATIC, 0, 0, 1, "\n"};
-Term glblStr161 = term_new_(VAL, (Term)&str1);
+Term glblStr161 = newTerm_(VAL, (Term)&str1);
 void glblProto65_167(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(312), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(313), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto65);
   }
 }
@@ -593,9 +594,9 @@ void glblProto107_169(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(314), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(315), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto107);
   }
 }
@@ -607,14 +608,14 @@ struct {
   int64_t len;
   char buffer[2];
 } str2 = {StringBufferType, REFS_STATIC, 0, 0, 1, " "};
-Term glblStr162 = term_new_(VAL, (Term)&str2);
+Term glblStr162 = newTerm_(VAL, (Term)&str2);
 void glblProto65_171(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(314), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(315), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto65);
   }
 }
@@ -622,9 +623,9 @@ void glblProto65_173(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(316), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(317), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto65);
   }
 }
@@ -632,52 +633,52 @@ Term glblc164;
 void glblc163(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_15 = pair_make(LAM, 22, SUB, NUL);
-  Location r_seq_15 = port(2, term_loc(seq_15));
-  Term s_14 = term_new(VAR, 0, port(1, term_loc(seq_15)));
-  seq_15 = pair_make(LAM, 22, SUB, seq_15);
-  Term v_13 = term_new(VAR, 0, port(1, term_loc(seq_15)));
-  // allocate args at core: 315
-  // call pr* at core: 316
-  Term Rslt_17Args = pair_make(APP, 0, s_14, SUB);
-  Term Rslt_17 = term_new(VAR, 0, port(2, term_loc(Rslt_17Args)));
+  Term seq_15 = makePair(LAM, 22, SUB, NUL);
+  Location r_seq_15 = portLoc(2, seq_15);
+  Term s_14 = newTerm(VAR, 0, portLoc(1, seq_15));
+  seq_15 = makePair(LAM, 22, SUB, seq_15);
+  Term v_13 = newTerm(VAR, 0, portLoc(1, seq_15));
+  // allocate args at core: 316
+  // call pr* at core: 317
+  Term Rslt_17Args = makePair(APP, 0, s_14, SUB);
+  Term Rslt_17 = newTerm(VAR, 0, portLoc(2, Rslt_17Args));
 #ifdef STRICT
-  store_redex(Rslt_17Args, glblFn115);
+  pushRedex(Rslt_17Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_17), pair_make(LAZ, 0, Rslt_17Args, glblFn115));
+  swap(termLoc(Rslt_17), makePair(LAZ, 0, Rslt_17Args, glblFn115));
 #endif
 
-  // call conj at core: 316
-  Term Rslt_18Args = pair_make(APP, 0, Rslt_17, SUB);
-  Term Rslt_18 = term_new(VAR, 0, port(2, term_loc(Rslt_18Args)));
-  Rslt_18Args = pair_make(APP, 0, v_13, Rslt_18Args);
+  // call conj at core: 317
+  Term Rslt_18Args = makePair(APP, 0, Rslt_17, SUB);
+  Term Rslt_18 = newTerm(VAR, 0, portLoc(2, Rslt_18Args));
+  Rslt_18Args = makePair(APP, 0, v_13, Rslt_18Args);
 #ifdef STRICT
-  store_redex(Rslt_18Args, new_ref(glblProto65_173));
+  pushRedex(Rslt_18Args, newRef(glblProto65_173));
 #else
-  swapStore(term_loc(Rslt_18),
-            pair_make(LAZ, 0, Rslt_18Args, new_ref(glblProto65_173)));
+  swap(termLoc(Rslt_18),
+       makePair(LAZ, 0, Rslt_18Args, newRef(glblProto65_173)));
 #endif
   dupLabels[22] = "";
   // link args to body
-  swapStore(r_seq_15, Rslt_18);
+  swap(r_seq_15, Rslt_18);
 
-  Term Rslt_18V = get(term_loc(Rslt_18));
-  apps = take(port(1, term_loc(Rslt_18V)));
-  lams = take(port(2, term_loc(Rslt_18V)));
+  Term Rslt_18V = get(termLoc(Rslt_18));
+  apps = take(portLoc(1, Rslt_18V));
+  lams = take(portLoc(2, Rslt_18V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_18), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_15);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_18), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_15);
   return;
 }
-Term glblc164 = new_ref(glblc163);
+Term glblc164 = newRef(glblc163);
 void glblProto69_176(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(314), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(315), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto69);
   }
 }
@@ -685,9 +686,9 @@ void glblProto65_178(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(314), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(315), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto65);
   }
 }
@@ -695,76 +696,76 @@ Term glblc166;
 void glblc165(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_8 = pair_make(LAM, 23, SUB, NUL);
-  Location r_seq_8 = port(2, term_loc(seq_8));
-  Term val_7 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  seq_8 = pair_make(LAM, 23, SUB, seq_8);
-  Term v_6 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  // allocate args at core: 313
+  Term seq_8 = makePair(LAM, 23, SUB, NUL);
+  Location r_seq_8 = portLoc(2, seq_8);
+  Term val_7 = newTerm(VAR, 0, portLoc(1, seq_8));
+  seq_8 = makePair(LAM, 23, SUB, seq_8);
+  Term v_6 = newTerm(VAR, 0, portLoc(1, seq_8));
+  // allocate args at core: 314
   Term glblVal131_2;
   glblVal131 = dupeArg(glblVal131, &glblVal131_2, 0);
 
-  // call str-vect at core: 314
-  Term Rslt_10Args = pair_make(APP, 0, val_7, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
+  // call str-vect at core: 315
+  Term Rslt_10Args = makePair(APP, 0, val_7, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
 #ifdef STRICT
-  store_redex(Rslt_10Args, new_ref(glblProto107_169));
+  pushRedex(Rslt_10Args, newRef(glblProto107_169));
 #else
-  swapStore(term_loc(Rslt_10),
-            pair_make(LAZ, 0, Rslt_10Args, new_ref(glblProto107_169)));
+  swap(termLoc(Rslt_10),
+       makePair(LAZ, 0, Rslt_10Args, newRef(glblProto107_169)));
 #endif
-  // call conj at core: 314
-  Term Rslt_11Args = pair_make(APP, 0, glblStr162, SUB);
-  Term Rslt_11 = term_new(VAR, 0, port(2, term_loc(Rslt_11Args)));
-  Rslt_11Args = pair_make(APP, 0, Rslt_10, Rslt_11Args);
+  // call conj at core: 315
+  Term Rslt_11Args = makePair(APP, 0, glblStr162, SUB);
+  Term Rslt_11 = newTerm(VAR, 0, portLoc(2, Rslt_11Args));
+  Rslt_11Args = makePair(APP, 0, Rslt_10, Rslt_11Args);
 #ifdef STRICT
-  store_redex(Rslt_11Args, new_ref(glblProto65_171));
+  pushRedex(Rslt_11Args, newRef(glblProto65_171));
 #else
-  swapStore(term_loc(Rslt_11),
-            pair_make(LAZ, 0, Rslt_11Args, new_ref(glblProto65_171)));
+  swap(termLoc(Rslt_11),
+       makePair(LAZ, 0, Rslt_11Args, newRef(glblProto65_171)));
 #endif
-  // call reduce at core: 314
-  Term Rslt_19Args = pair_make(APP, 0, glblc164, SUB);
-  Term Rslt_19 = term_new(VAR, 0, port(2, term_loc(Rslt_19Args)));
-  Rslt_19Args = pair_make(APP, 0, glblVal131_2, Rslt_19Args);
-  Rslt_19Args = pair_make(APP, 0, Rslt_11, Rslt_19Args);
+  // call reduce at core: 315
+  Term Rslt_19Args = makePair(APP, 0, glblc164, SUB);
+  Term Rslt_19 = newTerm(VAR, 0, portLoc(2, Rslt_19Args));
+  Rslt_19Args = makePair(APP, 0, glblVal131_2, Rslt_19Args);
+  Rslt_19Args = makePair(APP, 0, Rslt_11, Rslt_19Args);
 #ifdef STRICT
-  store_redex(Rslt_19Args, new_ref(glblProto69_176));
+  pushRedex(Rslt_19Args, newRef(glblProto69_176));
 #else
-  swapStore(term_loc(Rslt_19),
-            pair_make(LAZ, 0, Rslt_19Args, new_ref(glblProto69_176)));
+  swap(termLoc(Rslt_19),
+       makePair(LAZ, 0, Rslt_19Args, newRef(glblProto69_176)));
 #endif
-  // call conj at core: 314
-  Term Rslt_20Args = pair_make(APP, 0, Rslt_19, SUB);
-  Term Rslt_20 = term_new(VAR, 0, port(2, term_loc(Rslt_20Args)));
-  Rslt_20Args = pair_make(APP, 0, v_6, Rslt_20Args);
+  // call conj at core: 315
+  Term Rslt_20Args = makePair(APP, 0, Rslt_19, SUB);
+  Term Rslt_20 = newTerm(VAR, 0, portLoc(2, Rslt_20Args));
+  Rslt_20Args = makePair(APP, 0, v_6, Rslt_20Args);
 #ifdef STRICT
-  store_redex(Rslt_20Args, new_ref(glblProto65_178));
+  pushRedex(Rslt_20Args, newRef(glblProto65_178));
 #else
-  swapStore(term_loc(Rslt_20),
-            pair_make(LAZ, 0, Rslt_20Args, new_ref(glblProto65_178)));
+  swap(termLoc(Rslt_20),
+       makePair(LAZ, 0, Rslt_20Args, newRef(glblProto65_178)));
 #endif
   dupLabels[23] = "";
   // link args to body
-  swapStore(r_seq_8, Rslt_20);
+  swap(r_seq_8, Rslt_20);
 
-  Term Rslt_20V = get(term_loc(Rslt_20));
-  apps = take(port(1, term_loc(Rslt_20V)));
-  lams = take(port(2, term_loc(Rslt_20V)));
+  Term Rslt_20V = get(termLoc(Rslt_20));
+  apps = take(portLoc(1, Rslt_20V));
+  lams = take(portLoc(2, Rslt_20V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_20), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_8);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_20), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_8);
   return;
 }
-Term glblc166 = new_ref(glblc165);
+Term glblc166 = newRef(glblc165);
 void glblProto69_181(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(312), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(313), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto69);
   }
 }
@@ -772,48 +773,47 @@ Term glblFn160;
 void glblCFn159(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 21, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term vs_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 310
+  Term seq_2 = makePair(LAM, 21, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term vs_1 = newTerm(VAR, 0, portLoc(1, seq_2));
+  // allocate args at core: 311
   Term glblVal131_1;
   glblVal131 = dupeArg(glblVal131, &glblVal131_1, 0);
 
-  // call conj at core: 312
-  Term Rslt_4Args = pair_make(APP, 0, glblStr161, SUB);
-  Term Rslt_4 = term_new(VAR, 0, port(2, term_loc(Rslt_4Args)));
-  Rslt_4Args = pair_make(APP, 0, vs_1, Rslt_4Args);
+  // call conj at core: 313
+  Term Rslt_4Args = makePair(APP, 0, glblStr161, SUB);
+  Term Rslt_4 = newTerm(VAR, 0, portLoc(2, Rslt_4Args));
+  Rslt_4Args = makePair(APP, 0, vs_1, Rslt_4Args);
 #ifdef STRICT
-  store_redex(Rslt_4Args, new_ref(glblProto65_167));
+  pushRedex(Rslt_4Args, newRef(glblProto65_167));
 #else
-  swapStore(term_loc(Rslt_4),
-            pair_make(LAZ, 0, Rslt_4Args, new_ref(glblProto65_167)));
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, Rslt_4Args, newRef(glblProto65_167)));
 #endif
-  // call reduce at core: 312
-  Term Rslt_21Args = pair_make(APP, 0, glblc166, SUB);
-  Term Rslt_21 = term_new(VAR, 0, port(2, term_loc(Rslt_21Args)));
-  Rslt_21Args = pair_make(APP, 0, glblVal131_1, Rslt_21Args);
-  Rslt_21Args = pair_make(APP, 0, Rslt_4, Rslt_21Args);
+  // call reduce at core: 313
+  Term Rslt_21Args = makePair(APP, 0, glblc166, SUB);
+  Term Rslt_21 = newTerm(VAR, 0, portLoc(2, Rslt_21Args));
+  Rslt_21Args = makePair(APP, 0, glblVal131_1, Rslt_21Args);
+  Rslt_21Args = makePair(APP, 0, Rslt_4, Rslt_21Args);
 #ifdef STRICT
-  store_redex(Rslt_21Args, new_ref(glblProto69_181));
+  pushRedex(Rslt_21Args, newRef(glblProto69_181));
 #else
-  swapStore(term_loc(Rslt_21),
-            pair_make(LAZ, 0, Rslt_21Args, new_ref(glblProto69_181)));
+  swap(termLoc(Rslt_21),
+       makePair(LAZ, 0, Rslt_21Args, newRef(glblProto69_181)));
 #endif
   dupLabels[21] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_21);
+  swap(r_seq_2, Rslt_21);
 
-  Term Rslt_21V = get(term_loc(Rslt_21));
-  apps = take(port(1, term_loc(Rslt_21V)));
-  lams = take(port(2, term_loc(Rslt_21V)));
+  Term Rslt_21V = get(termLoc(Rslt_21));
+  apps = take(portLoc(1, Rslt_21V));
+  lams = take(portLoc(2, Rslt_21V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_21), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_21), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn160 = new_ref(glblCFn159);
+Term glblFn160 = newRef(glblCFn159);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -822,24 +822,24 @@ struct {
   int64_t len;
   char buffer[7];
 } str3 = {StringBufferType, REFS_STATIC, 0, 0, 6, "(Some "};
-Term glblStr207 = term_new_(VAL, (Term)&str3);
-void glblProto15_215(Term ref, Term args) {
+Term glblStr207 = newTerm_(VAL, (Term)&str3);
+void glblProto16_215(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(321), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(322), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 void glblProto107_217(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(321), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(322), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto107);
   }
 }
@@ -847,9 +847,9 @@ void glblProto35_219(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(321), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(322), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto35);
   }
 }
@@ -861,127 +861,127 @@ struct {
   int64_t len;
   char buffer[2];
 } str4 = {StringBufferType, REFS_STATIC, 0, 0, 1, ")"};
-Term glblStr206 = term_new_(VAL, (Term)&str4);
+Term glblStr206 = newTerm_(VAL, (Term)&str4);
 Term glblstr_vect203;
 void glblstr_vect202(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_24 = pair_make(LAM, 33, SUB, NUL);
-  Location r_seq_24 = port(2, term_loc(seq_24));
-  Term s_23 = term_new(VAR, 0, port(1, term_loc(seq_24)));
-  // allocate args at core: 319
+  Term seq_24 = makePair(LAM, 33, SUB, NUL);
+  Location r_seq_24 = portLoc(2, seq_24);
+  Term s_23 = newTerm(VAR, 0, portLoc(1, seq_24));
+  // allocate args at core: 320
   Term glblVal131_3;
   glblVal131 = dupeArg(glblVal131, &glblVal131_3, 0);
 
-  // call vect-conj at core: 320
-  Term Rslt_26Args = pair_make(APP, 0, glblStr207, SUB);
-  Term Rslt_26 = term_new(VAR, 0, port(2, term_loc(Rslt_26Args)));
-  Rslt_26Args = pair_make(APP, 0, glblVal131_3, Rslt_26Args);
+  // call vect-conj at core: 321
+  Term Rslt_26Args = makePair(APP, 0, glblStr207, SUB);
+  Term Rslt_26 = newTerm(VAR, 0, portLoc(2, Rslt_26Args));
+  Rslt_26Args = makePair(APP, 0, glblVal131_3, Rslt_26Args);
 #ifdef STRICT
-  store_redex(Rslt_26Args, glblFn134);
+  pushRedex(Rslt_26Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, Rslt_26Args, glblFn134));
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, Rslt_26Args, glblFn134));
 #endif
 
-  // call .x at core: 321
-  Term Rslt_27Args = pair_make(APP, 0, s_23, SUB);
-  Term Rslt_27 = term_new(VAR, 0, port(2, term_loc(Rslt_27Args)));
+  // call .x at core: 322
+  Term Rslt_27Args = makePair(APP, 0, s_23, SUB);
+  Term Rslt_27 = newTerm(VAR, 0, portLoc(2, Rslt_27Args));
 #ifdef STRICT
-  store_redex(Rslt_27Args, new_ref(glblProto15_215));
+  pushRedex(Rslt_27Args, newRef(glblProto16_215));
 #else
-  swapStore(term_loc(Rslt_27),
-            pair_make(LAZ, 0, Rslt_27Args, new_ref(glblProto15_215)));
+  swap(termLoc(Rslt_27),
+       makePair(LAZ, 0, Rslt_27Args, newRef(glblProto16_215)));
 #endif
-  // call str-vect at core: 321
-  Term Rslt_28Args = pair_make(APP, 0, Rslt_27, SUB);
-  Term Rslt_28 = term_new(VAR, 0, port(2, term_loc(Rslt_28Args)));
+  // call str-vect at core: 322
+  Term Rslt_28Args = makePair(APP, 0, Rslt_27, SUB);
+  Term Rslt_28 = newTerm(VAR, 0, portLoc(2, Rslt_28Args));
 #ifdef STRICT
-  store_redex(Rslt_28Args, new_ref(glblProto107_217));
+  pushRedex(Rslt_28Args, newRef(glblProto107_217));
 #else
-  swapStore(term_loc(Rslt_28),
-            pair_make(LAZ, 0, Rslt_28Args, new_ref(glblProto107_217)));
+  swap(termLoc(Rslt_28),
+       makePair(LAZ, 0, Rslt_28Args, newRef(glblProto107_217)));
 #endif
-  // call comp at core: 321
-  Term Rslt_29Args = pair_make(APP, 0, Rslt_28, SUB);
-  Term Rslt_29 = term_new(VAR, 0, port(2, term_loc(Rslt_29Args)));
-  Rslt_29Args = pair_make(APP, 0, Rslt_26, Rslt_29Args);
+  // call comp at core: 322
+  Term Rslt_29Args = makePair(APP, 0, Rslt_28, SUB);
+  Term Rslt_29 = newTerm(VAR, 0, portLoc(2, Rslt_29Args));
+  Rslt_29Args = makePair(APP, 0, Rslt_26, Rslt_29Args);
 #ifdef STRICT
-  store_redex(Rslt_29Args, new_ref(glblProto35_219));
+  pushRedex(Rslt_29Args, newRef(glblProto35_219));
 #else
-  swapStore(term_loc(Rslt_29),
-            pair_make(LAZ, 0, Rslt_29Args, new_ref(glblProto35_219)));
+  swap(termLoc(Rslt_29),
+       makePair(LAZ, 0, Rslt_29Args, newRef(glblProto35_219)));
 #endif
-  // call vect-conj at core: 322
-  Term Rslt_30Args = pair_make(APP, 0, glblStr206, SUB);
-  Term Rslt_30 = term_new(VAR, 0, port(2, term_loc(Rslt_30Args)));
-  Rslt_30Args = pair_make(APP, 0, Rslt_29, Rslt_30Args);
+  // call vect-conj at core: 323
+  Term Rslt_30Args = makePair(APP, 0, glblStr206, SUB);
+  Term Rslt_30 = newTerm(VAR, 0, portLoc(2, Rslt_30Args));
+  Rslt_30Args = makePair(APP, 0, Rslt_29, Rslt_30Args);
 #ifdef STRICT
-  store_redex(Rslt_30Args, glblFn134);
+  pushRedex(Rslt_30Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_30), pair_make(LAZ, 0, Rslt_30Args, glblFn134));
+  swap(termLoc(Rslt_30), makePair(LAZ, 0, Rslt_30Args, glblFn134));
 #endif
 
   dupLabels[33] = "str-vect";
   // link args to body
-  swapStore(r_seq_24, Rslt_30);
+  swap(r_seq_24, Rslt_30);
 
-  Term Rslt_30V = get(term_loc(Rslt_30));
-  apps = take(port(1, term_loc(Rslt_30V)));
-  lams = take(port(2, term_loc(Rslt_30V)));
+  Term Rslt_30V = get(termLoc(Rslt_30));
+  apps = take(portLoc(1, Rslt_30V));
+  lams = take(portLoc(2, Rslt_30V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_30), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_24);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_30), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_24);
   return;
 }
-Term glblstr_vect203 = new_ref(glblstr_vect202);
-void glblProto21_222(Term ref, Term args) {
+Term glblstr_vect203 = newRef(glblstr_vect202);
+void glblProto15_222(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(324), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto21);
-  }
-}
-void glblProto15_224(Term ref, Term args) {
-  NativeArgs arityArgs = {0, {}};
-  args = strictArgs(ref, args, 1, &arityArgs);
-  if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(325), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(325), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto15);
   }
 }
-void glblProto15_226(Term ref, Term args) {
+void glblProto16_224(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(325), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(326), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
-void glblProto21_228(Term ref, Term args) {
+void glblProto16_226(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(325), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto21);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(326), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
+  }
+}
+void glblProto15_228(Term ref, Term args) {
+  NativeArgs arityArgs = {0, {}};
+  args = strictArgs(ref, args, 1, &arityArgs);
+  if (arityArgs.count == 1) {
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(326), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto15);
   }
 }
 void glblProto25_230(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(324), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(325), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto25);
   }
 }
@@ -989,444 +989,444 @@ Term glbl_EQ_201;
 void glbl_EQ_200(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_34 = pair_make(LAM, 32, SUB, NUL);
-  Location r_seq_34 = port(2, term_loc(seq_34));
-  Term y_33 = term_new(VAR, 0, port(1, term_loc(seq_34)));
-  seq_34 = pair_make(LAM, 32, SUB, seq_34);
-  Term x_32 = term_new(VAR, 0, port(1, term_loc(seq_34)));
-  // allocate args at core: 323
+  Term seq_34 = makePair(LAM, 32, SUB, NUL);
+  Location r_seq_34 = portLoc(2, seq_34);
+  Term y_33 = newTerm(VAR, 0, portLoc(1, seq_34));
+  seq_34 = makePair(LAM, 32, SUB, seq_34);
+  Term x_32 = newTerm(VAR, 0, portLoc(1, seq_34));
+  // allocate args at core: 324
 
   Term x_32_1;
   x_32 = dupeArg(x_32, &x_32_1, 32);
 
   Term y_33_1;
   y_33 = dupeArg(y_33, &y_33_1, 32);
-  // call type-num at core: 324
-  Term Rslt_36Args = pair_make(APP, 0, x_32, SUB);
-  Term Rslt_36 = term_new(VAR, 0, port(2, term_loc(Rslt_36Args)));
+  // call type-num at core: 325
+  Term Rslt_36Args = makePair(APP, 0, x_32, SUB);
+  Term Rslt_36 = newTerm(VAR, 0, portLoc(2, Rslt_36Args));
 #ifdef STRICT
-  store_redex(Rslt_36Args, glblFn8);
+  pushRedex(Rslt_36Args, glblFn8);
 #else
-  swapStore(term_loc(Rslt_36), pair_make(LAZ, 0, Rslt_36Args, glblFn8));
+  swap(termLoc(Rslt_36), makePair(LAZ, 0, Rslt_36Args, glblFn8));
 #endif
 
-  // call type-num at core: 324
-  Term Rslt_37Args = pair_make(APP, 0, y_33, SUB);
-  Term Rslt_37 = term_new(VAR, 0, port(2, term_loc(Rslt_37Args)));
+  // call type-num at core: 325
+  Term Rslt_37Args = makePair(APP, 0, y_33, SUB);
+  Term Rslt_37 = newTerm(VAR, 0, portLoc(2, Rslt_37Args));
 #ifdef STRICT
-  store_redex(Rslt_37Args, glblFn8);
+  pushRedex(Rslt_37Args, glblFn8);
 #else
-  swapStore(term_loc(Rslt_37), pair_make(LAZ, 0, Rslt_37Args, glblFn8));
+  swap(termLoc(Rslt_37), makePair(LAZ, 0, Rslt_37Args, glblFn8));
 #endif
 
-  // call = at core: 324
-  Term Rslt_38Args = pair_make(APP, 0, Rslt_37, SUB);
-  Term Rslt_38 = term_new(VAR, 0, port(2, term_loc(Rslt_38Args)));
-  Rslt_38Args = pair_make(APP, 0, Rslt_36, Rslt_38Args);
-#ifdef STRICT
-  store_redex(Rslt_38Args, new_ref(glblProto21_222));
-#else
-  swapStore(term_loc(Rslt_38),
-            pair_make(LAZ, 0, Rslt_38Args, new_ref(glblProto21_222)));
-#endif
-  // call .x at core: 325
-  Term Rslt_39Args = pair_make(APP, 0, x_32_1, SUB);
-  Term Rslt_39 = term_new(VAR, 0, port(2, term_loc(Rslt_39Args)));
-#ifdef STRICT
-  store_redex(Rslt_39Args, new_ref(glblProto15_224));
-#else
-  swapStore(term_loc(Rslt_39),
-            pair_make(LAZ, 0, Rslt_39Args, new_ref(glblProto15_224)));
-#endif
-  // call .x at core: 325
-  Term Rslt_40Args = pair_make(APP, 0, y_33_1, SUB);
-  Term Rslt_40 = term_new(VAR, 0, port(2, term_loc(Rslt_40Args)));
-#ifdef STRICT
-  store_redex(Rslt_40Args, new_ref(glblProto15_226));
-#else
-  swapStore(term_loc(Rslt_40),
-            pair_make(LAZ, 0, Rslt_40Args, new_ref(glblProto15_226)));
-#endif
   // call = at core: 325
-  Term Rslt_41Args = pair_make(APP, 0, Rslt_40, SUB);
-  Term Rslt_41 = term_new(VAR, 0, port(2, term_loc(Rslt_41Args)));
-  Rslt_41Args = pair_make(APP, 0, Rslt_39, Rslt_41Args);
+  Term Rslt_38Args = makePair(APP, 0, Rslt_37, SUB);
+  Term Rslt_38 = newTerm(VAR, 0, portLoc(2, Rslt_38Args));
+  Rslt_38Args = makePair(APP, 0, Rslt_36, Rslt_38Args);
 #ifdef STRICT
-  store_redex(Rslt_41Args, new_ref(glblProto21_228));
+  pushRedex(Rslt_38Args, newRef(glblProto15_222));
 #else
-  swapStore(term_loc(Rslt_41),
-            pair_make(LAZ, 0, Rslt_41Args, new_ref(glblProto21_228)));
+  swap(termLoc(Rslt_38),
+       makePair(LAZ, 0, Rslt_38Args, newRef(glblProto15_222)));
 #endif
-  // call and at core: 324
-  Term Rslt_42Args = pair_make(APP, 0, Rslt_41, SUB);
-  Term Rslt_42 = term_new(VAR, 0, port(2, term_loc(Rslt_42Args)));
-  Rslt_42Args = pair_make(APP, 0, Rslt_38, Rslt_42Args);
+  // call .x at core: 326
+  Term Rslt_39Args = makePair(APP, 0, x_32_1, SUB);
+  Term Rslt_39 = newTerm(VAR, 0, portLoc(2, Rslt_39Args));
 #ifdef STRICT
-  store_redex(Rslt_42Args, new_ref(glblProto25_230));
+  pushRedex(Rslt_39Args, newRef(glblProto16_224));
 #else
-  swapStore(term_loc(Rslt_42),
-            pair_make(LAZ, 0, Rslt_42Args, new_ref(glblProto25_230)));
+  swap(termLoc(Rslt_39),
+       makePair(LAZ, 0, Rslt_39Args, newRef(glblProto16_224)));
+#endif
+  // call .x at core: 326
+  Term Rslt_40Args = makePair(APP, 0, y_33_1, SUB);
+  Term Rslt_40 = newTerm(VAR, 0, portLoc(2, Rslt_40Args));
+#ifdef STRICT
+  pushRedex(Rslt_40Args, newRef(glblProto16_226));
+#else
+  swap(termLoc(Rslt_40),
+       makePair(LAZ, 0, Rslt_40Args, newRef(glblProto16_226)));
+#endif
+  // call = at core: 326
+  Term Rslt_41Args = makePair(APP, 0, Rslt_40, SUB);
+  Term Rslt_41 = newTerm(VAR, 0, portLoc(2, Rslt_41Args));
+  Rslt_41Args = makePair(APP, 0, Rslt_39, Rslt_41Args);
+#ifdef STRICT
+  pushRedex(Rslt_41Args, newRef(glblProto15_228));
+#else
+  swap(termLoc(Rslt_41),
+       makePair(LAZ, 0, Rslt_41Args, newRef(glblProto15_228)));
+#endif
+  // call and at core: 325
+  Term Rslt_42Args = makePair(APP, 0, Rslt_41, SUB);
+  Term Rslt_42 = newTerm(VAR, 0, portLoc(2, Rslt_42Args));
+  Rslt_42Args = makePair(APP, 0, Rslt_38, Rslt_42Args);
+#ifdef STRICT
+  pushRedex(Rslt_42Args, newRef(glblProto25_230));
+#else
+  swap(termLoc(Rslt_42),
+       makePair(LAZ, 0, Rslt_42Args, newRef(glblProto25_230)));
 #endif
   dupLabels[32] = "=";
   // link args to body
-  swapStore(r_seq_34, Rslt_42);
+  swap(r_seq_34, Rslt_42);
 
-  Term Rslt_42V = get(term_loc(Rslt_42));
-  apps = take(port(1, term_loc(Rslt_42V)));
-  lams = take(port(2, term_loc(Rslt_42V)));
+  Term Rslt_42V = get(termLoc(Rslt_42));
+  apps = take(portLoc(1, Rslt_42V));
+  lams = take(portLoc(2, Rslt_42V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_42), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_34);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_42), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_34);
   return;
 }
-Term glbl_EQ_201 = new_ref(glbl_EQ_200);
-void glblProto15_233(Term ref, Term args) {
+Term glbl_EQ_201 = newRef(glbl_EQ_200);
+void glblProto16_233(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(327), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(328), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 Term glblextract199;
 void glblextract198(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_45 = pair_make(LAM, 31, SUB, NUL);
-  Location r_seq_45 = port(2, term_loc(seq_45));
-  Term v_44 = term_new(VAR, 0, port(1, term_loc(seq_45)));
-  // allocate args at core: 326
-  // call .x at core: 327
-  Term Rslt_47Args = pair_make(APP, 0, v_44, SUB);
-  Term Rslt_47 = term_new(VAR, 0, port(2, term_loc(Rslt_47Args)));
+  Term seq_45 = makePair(LAM, 31, SUB, NUL);
+  Location r_seq_45 = portLoc(2, seq_45);
+  Term v_44 = newTerm(VAR, 0, portLoc(1, seq_45));
+  // allocate args at core: 327
+  // call .x at core: 328
+  Term Rslt_47Args = makePair(APP, 0, v_44, SUB);
+  Term Rslt_47 = newTerm(VAR, 0, portLoc(2, Rslt_47Args));
 #ifdef STRICT
-  store_redex(Rslt_47Args, new_ref(glblProto15_233));
+  pushRedex(Rslt_47Args, newRef(glblProto16_233));
 #else
-  swapStore(term_loc(Rslt_47),
-            pair_make(LAZ, 0, Rslt_47Args, new_ref(glblProto15_233)));
+  swap(termLoc(Rslt_47),
+       makePair(LAZ, 0, Rslt_47Args, newRef(glblProto16_233)));
 #endif
   dupLabels[31] = "extract";
   // link args to body
-  swapStore(r_seq_45, Rslt_47);
+  swap(r_seq_45, Rslt_47);
 
-  Term Rslt_47V = get(term_loc(Rslt_47));
-  apps = take(port(1, term_loc(Rslt_47V)));
-  lams = take(port(2, term_loc(Rslt_47V)));
+  Term Rslt_47V = get(termLoc(Rslt_47));
+  apps = take(portLoc(1, Rslt_47V));
+  lams = take(portLoc(2, Rslt_47V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_47), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_45);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_47), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_45);
   return;
 }
-Term glblextract199 = new_ref(glblextract198);
-void glblProto15_236(Term ref, Term args) {
+Term glblextract199 = newRef(glblextract198);
+void glblProto16_236(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(329), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(330), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 Term glblrecurse197;
 void glblrecurse196(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_51 = pair_make(LAM, 30, SUB, NUL);
-  Location r_seq_51 = port(2, term_loc(seq_51));
-  Term f_50 = term_new(VAR, 0, port(1, term_loc(seq_51)));
-  seq_51 = pair_make(LAM, 30, SUB, seq_51);
-  Term v_49 = term_new(VAR, 0, port(1, term_loc(seq_51)));
-  // allocate args at core: 328
-  Term glblVal20_1;
-  glblVal20 = dupeArg(glblVal20, &glblVal20_1, 0);
+  Term seq_51 = makePair(LAM, 30, SUB, NUL);
+  Location r_seq_51 = portLoc(2, seq_51);
+  Term f_50 = newTerm(VAR, 0, portLoc(1, seq_51));
+  seq_51 = makePair(LAM, 30, SUB, seq_51);
+  Term v_49 = newTerm(VAR, 0, portLoc(1, seq_51));
+  // allocate args at core: 329
+  Term glblVal22_1;
+  glblVal22 = dupeArg(glblVal22, &glblVal22_1, 0);
 
-  // call .x at core: 329
-  Term Rslt_53Args = pair_make(APP, 0, v_49, SUB);
-  Term Rslt_53 = term_new(VAR, 0, port(2, term_loc(Rslt_53Args)));
+  // call .x at core: 330
+  Term Rslt_53Args = makePair(APP, 0, v_49, SUB);
+  Term Rslt_53 = newTerm(VAR, 0, portLoc(2, Rslt_53Args));
 #ifdef STRICT
-  store_redex(Rslt_53Args, new_ref(glblProto15_236));
+  pushRedex(Rslt_53Args, newRef(glblProto16_236));
 #else
-  swapStore(term_loc(Rslt_53),
-            pair_make(LAZ, 0, Rslt_53Args, new_ref(glblProto15_236)));
+  swap(termLoc(Rslt_53),
+       makePair(LAZ, 0, Rslt_53Args, newRef(glblProto16_236)));
 #endif
-  // call f at core: 328
-  Term Rslt_54Args = pair_make(APP, 0, Rslt_53, SUB);
-  Term Rslt_54 = term_new(VAR, 0, port(2, term_loc(Rslt_54Args)));
+  // call f at core: 329
+  Term Rslt_54Args = makePair(APP, 0, Rslt_53, SUB);
+  Term Rslt_54 = newTerm(VAR, 0, portLoc(2, Rslt_54Args));
 #ifdef STRICT
-  store_redex(Rslt_54Args, f_50);
+  pushRedex(Rslt_54Args, f_50);
 #else
-  swapStore(term_loc(Rslt_54), pair_make(LAZ, 0, Rslt_54Args, f_50));
+  swap(termLoc(Rslt_54), makePair(LAZ, 0, Rslt_54Args, f_50));
 #endif
 
-  // call Some at core: 329
-  Term Rslt_55Args = pair_make(APP, 0, Rslt_54, SUB);
-  Term Rslt_55 = term_new(VAR, 0, port(2, term_loc(Rslt_55Args)));
+  // call Some at core: 330
+  Term Rslt_55Args = makePair(APP, 0, Rslt_54, SUB);
+  Term Rslt_55 = newTerm(VAR, 0, portLoc(2, Rslt_55Args));
 #ifdef STRICT
-  store_redex(Rslt_55Args, glblVal20_1);
+  pushRedex(Rslt_55Args, glblVal22_1);
 #else
-  swapStore(term_loc(Rslt_55), pair_make(LAZ, 0, Rslt_55Args, glblVal20_1));
+  swap(termLoc(Rslt_55), makePair(LAZ, 0, Rslt_55Args, glblVal22_1));
 #endif
 
   dupLabels[30] = "recurse";
   // link args to body
-  swapStore(r_seq_51, Rslt_55);
+  swap(r_seq_51, Rslt_55);
 
-  Term Rslt_55V = get(term_loc(Rslt_55));
-  apps = take(port(1, term_loc(Rslt_55V)));
-  lams = take(port(2, term_loc(Rslt_55V)));
+  Term Rslt_55V = get(termLoc(Rslt_55));
+  apps = take(portLoc(1, Rslt_55V));
+  lams = take(portLoc(2, Rslt_55V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_55), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_51);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_55), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_51);
   return;
 }
-Term glblrecurse197 = new_ref(glblrecurse196);
-void glblProto15_239(Term ref, Term args) {
+Term glblrecurse197 = newRef(glblrecurse196);
+void glblProto16_239(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(331), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(332), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 Term glbleither195;
 void glbleither194(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_59 = pair_make(LAM, 29, SUB, NUL);
-  Location r_seq_59 = port(2, term_loc(seq_59));
-  Term arg_58 = term_new(VAR, 0, port(1, term_loc(seq_59)));
-  seq_59 = pair_make(LAM, 29, SUB, seq_59);
-  Term v_57 = term_new(VAR, 0, port(1, term_loc(seq_59)));
-  // allocate args at core: 330
-  swapStore(term_loc(arg_58), ERA);
-  // call .x at core: 331
-  Term Rslt_61Args = pair_make(APP, 0, v_57, SUB);
-  Term Rslt_61 = term_new(VAR, 0, port(2, term_loc(Rslt_61Args)));
+  Term seq_59 = makePair(LAM, 29, SUB, NUL);
+  Location r_seq_59 = portLoc(2, seq_59);
+  Term arg_58 = newTerm(VAR, 0, portLoc(1, seq_59));
+  seq_59 = makePair(LAM, 29, SUB, seq_59);
+  Term v_57 = newTerm(VAR, 0, portLoc(1, seq_59));
+  // allocate args at core: 331
+  swap(termLoc(arg_58), ERA);
+  // call .x at core: 332
+  Term Rslt_61Args = makePair(APP, 0, v_57, SUB);
+  Term Rslt_61 = newTerm(VAR, 0, portLoc(2, Rslt_61Args));
 #ifdef STRICT
-  store_redex(Rslt_61Args, new_ref(glblProto15_239));
+  pushRedex(Rslt_61Args, newRef(glblProto16_239));
 #else
-  swapStore(term_loc(Rslt_61),
-            pair_make(LAZ, 0, Rslt_61Args, new_ref(glblProto15_239)));
+  swap(termLoc(Rslt_61),
+       makePair(LAZ, 0, Rslt_61Args, newRef(glblProto16_239)));
 #endif
   dupLabels[29] = "either";
   // link args to body
-  swapStore(r_seq_59, Rslt_61);
+  swap(r_seq_59, Rslt_61);
 
-  Term Rslt_61V = get(term_loc(Rslt_61));
-  apps = take(port(1, term_loc(Rslt_61V)));
-  lams = take(port(2, term_loc(Rslt_61V)));
+  Term Rslt_61V = get(termLoc(Rslt_61));
+  apps = take(portLoc(1, Rslt_61V));
+  lams = take(portLoc(2, Rslt_61V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_61), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_59);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_61), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_59);
   return;
 }
-Term glbleither195 = new_ref(glbleither194);
+Term glbleither195 = newRef(glbleither194);
 Term glblcond193;
 void glblcond192(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_66 = pair_make(LAM, 28, SUB, NUL);
-  Location r_seq_66 = port(2, term_loc(seq_66));
-  Term arg_65 = term_new(VAR, 0, port(1, term_loc(seq_66)));
-  seq_66 = pair_make(LAM, 28, SUB, seq_66);
-  Term clause_64 = term_new(VAR, 0, port(1, term_loc(seq_66)));
-  seq_66 = pair_make(LAM, 28, SUB, seq_66);
-  Term v_63 = term_new(VAR, 0, port(1, term_loc(seq_66)));
-  // allocate args at core: 332
-  swapStore(term_loc(v_63), ERA);
-  swapStore(term_loc(arg_65), ERA);
+  Term seq_66 = makePair(LAM, 28, SUB, NUL);
+  Location r_seq_66 = portLoc(2, seq_66);
+  Term arg_65 = newTerm(VAR, 0, portLoc(1, seq_66));
+  seq_66 = makePair(LAM, 28, SUB, seq_66);
+  Term clause_64 = newTerm(VAR, 0, portLoc(1, seq_66));
+  seq_66 = makePair(LAM, 28, SUB, seq_66);
+  Term v_63 = newTerm(VAR, 0, portLoc(1, seq_66));
+  // allocate args at core: 333
+  swap(termLoc(v_63), ERA);
+  swap(termLoc(arg_65), ERA);
   dupLabels[28] = "cond";
   // link args to body
-  swapStore(r_seq_66, clause_64);
+  swap(r_seq_66, clause_64);
 
   V = get(r_seq_66);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 28, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_66, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_66);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 28, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_66, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_66);
   return;
 }
-Term glblcond193 = new_ref(glblcond192);
+Term glblcond193 = newRef(glblcond192);
 Term glbland191;
 void glbland190(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_71 = pair_make(LAM, 27, SUB, NUL);
-  Location r_seq_71 = port(2, term_loc(seq_71));
-  Term y_70 = term_new(VAR, 0, port(1, term_loc(seq_71)));
-  seq_71 = pair_make(LAM, 27, SUB, seq_71);
-  Term arg_69 = term_new(VAR, 0, port(1, term_loc(seq_71)));
-  // allocate args at core: 334
-  swapStore(term_loc(arg_69), ERA);
+  Term seq_71 = makePair(LAM, 27, SUB, NUL);
+  Location r_seq_71 = portLoc(2, seq_71);
+  Term y_70 = newTerm(VAR, 0, portLoc(1, seq_71));
+  seq_71 = makePair(LAM, 27, SUB, seq_71);
+  Term arg_69 = newTerm(VAR, 0, portLoc(1, seq_71));
+  // allocate args at core: 335
+  swap(termLoc(arg_69), ERA);
   dupLabels[27] = "and";
   // link args to body
-  swapStore(r_seq_71, y_70);
+  swap(r_seq_71, y_70);
 
   V = get(r_seq_71);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 27, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_71, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_71);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 27, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_71, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_71);
   return;
 }
-Term glbland191 = new_ref(glbland190);
+Term glbland191 = newRef(glbland190);
 Term glblor189;
 void glblor188(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_76 = pair_make(LAM, 26, SUB, NUL);
-  Location r_seq_76 = port(2, term_loc(seq_76));
-  Term arg_75 = term_new(VAR, 0, port(1, term_loc(seq_76)));
-  seq_76 = pair_make(LAM, 26, SUB, seq_76);
-  Term q_74 = term_new(VAR, 0, port(1, term_loc(seq_76)));
-  // allocate args at core: 336
-  swapStore(term_loc(arg_75), ERA);
+  Term seq_76 = makePair(LAM, 26, SUB, NUL);
+  Location r_seq_76 = portLoc(2, seq_76);
+  Term arg_75 = newTerm(VAR, 0, portLoc(1, seq_76));
+  seq_76 = makePair(LAM, 26, SUB, seq_76);
+  Term q_74 = newTerm(VAR, 0, portLoc(1, seq_76));
+  // allocate args at core: 337
+  swap(termLoc(arg_75), ERA);
   dupLabels[26] = "or";
   // link args to body
-  swapStore(r_seq_76, q_74);
+  swap(r_seq_76, q_74);
 
   V = get(r_seq_76);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 26, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_76, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_76);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 26, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_76, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_76);
   return;
 }
-Term glblor189 = new_ref(glblor188);
-void glblProto15_245(Term ref, Term args) {
+Term glblor189 = newRef(glblor188);
+void glblProto16_245(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(339), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(340), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 Term glblmap187;
 void glblmap186(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_81 = pair_make(LAM, 25, SUB, NUL);
-  Location r_seq_81 = port(2, term_loc(seq_81));
-  Term f_80 = term_new(VAR, 0, port(1, term_loc(seq_81)));
-  seq_81 = pair_make(LAM, 25, SUB, seq_81);
-  Term v_79 = term_new(VAR, 0, port(1, term_loc(seq_81)));
-  // allocate args at core: 338
-  Term glblVal20_2;
-  glblVal20 = dupeArg(glblVal20, &glblVal20_2, 0);
+  Term seq_81 = makePair(LAM, 25, SUB, NUL);
+  Location r_seq_81 = portLoc(2, seq_81);
+  Term f_80 = newTerm(VAR, 0, portLoc(1, seq_81));
+  seq_81 = makePair(LAM, 25, SUB, seq_81);
+  Term v_79 = newTerm(VAR, 0, portLoc(1, seq_81));
+  // allocate args at core: 339
+  Term glblVal22_2;
+  glblVal22 = dupeArg(glblVal22, &glblVal22_2, 0);
 
-  // call .x at core: 339
-  Term Rslt_83Args = pair_make(APP, 0, v_79, SUB);
-  Term Rslt_83 = term_new(VAR, 0, port(2, term_loc(Rslt_83Args)));
+  // call .x at core: 340
+  Term Rslt_83Args = makePair(APP, 0, v_79, SUB);
+  Term Rslt_83 = newTerm(VAR, 0, portLoc(2, Rslt_83Args));
 #ifdef STRICT
-  store_redex(Rslt_83Args, new_ref(glblProto15_245));
+  pushRedex(Rslt_83Args, newRef(glblProto16_245));
 #else
-  swapStore(term_loc(Rslt_83),
-            pair_make(LAZ, 0, Rslt_83Args, new_ref(glblProto15_245)));
+  swap(termLoc(Rslt_83),
+       makePair(LAZ, 0, Rslt_83Args, newRef(glblProto16_245)));
 #endif
-  // call f at core: 338
-  Term Rslt_84Args = pair_make(APP, 0, Rslt_83, SUB);
-  Term Rslt_84 = term_new(VAR, 0, port(2, term_loc(Rslt_84Args)));
+  // call f at core: 339
+  Term Rslt_84Args = makePair(APP, 0, Rslt_83, SUB);
+  Term Rslt_84 = newTerm(VAR, 0, portLoc(2, Rslt_84Args));
 #ifdef STRICT
-  store_redex(Rslt_84Args, f_80);
+  pushRedex(Rslt_84Args, f_80);
 #else
-  swapStore(term_loc(Rslt_84), pair_make(LAZ, 0, Rslt_84Args, f_80));
+  swap(termLoc(Rslt_84), makePair(LAZ, 0, Rslt_84Args, f_80));
 #endif
 
-  // call Some at core: 339
-  Term Rslt_85Args = pair_make(APP, 0, Rslt_84, SUB);
-  Term Rslt_85 = term_new(VAR, 0, port(2, term_loc(Rslt_85Args)));
+  // call Some at core: 340
+  Term Rslt_85Args = makePair(APP, 0, Rslt_84, SUB);
+  Term Rslt_85 = newTerm(VAR, 0, portLoc(2, Rslt_85Args));
 #ifdef STRICT
-  store_redex(Rslt_85Args, glblVal20_2);
+  pushRedex(Rslt_85Args, glblVal22_2);
 #else
-  swapStore(term_loc(Rslt_85), pair_make(LAZ, 0, Rslt_85Args, glblVal20_2));
+  swap(termLoc(Rslt_85), makePair(LAZ, 0, Rslt_85Args, glblVal22_2));
 #endif
 
   dupLabels[25] = "map";
   // link args to body
-  swapStore(r_seq_81, Rslt_85);
+  swap(r_seq_81, Rslt_85);
 
-  Term Rslt_85V = get(term_loc(Rslt_85));
-  apps = take(port(1, term_loc(Rslt_85V)));
-  lams = take(port(2, term_loc(Rslt_85V)));
+  Term Rslt_85V = get(termLoc(Rslt_85));
+  apps = take(portLoc(1, Rslt_85V));
+  lams = take(portLoc(2, Rslt_85V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_85), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_81);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_85), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_81);
   return;
 }
-Term glblmap187 = new_ref(glblmap186);
-void glblProto15_248(Term ref, Term args) {
+Term glblmap187 = newRef(glblmap186);
+void glblProto16_248(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(341), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(342), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 Term glblflat_map185;
 void glblflat_map184(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_89 = pair_make(LAM, 24, SUB, NUL);
-  Location r_seq_89 = port(2, term_loc(seq_89));
-  Term f_88 = term_new(VAR, 0, port(1, term_loc(seq_89)));
-  seq_89 = pair_make(LAM, 24, SUB, seq_89);
-  Term v_87 = term_new(VAR, 0, port(1, term_loc(seq_89)));
-  // allocate args at core: 340
-  // call .x at core: 341
-  Term Rslt_91Args = pair_make(APP, 0, v_87, SUB);
-  Term Rslt_91 = term_new(VAR, 0, port(2, term_loc(Rslt_91Args)));
+  Term seq_89 = makePair(LAM, 24, SUB, NUL);
+  Location r_seq_89 = portLoc(2, seq_89);
+  Term f_88 = newTerm(VAR, 0, portLoc(1, seq_89));
+  seq_89 = makePair(LAM, 24, SUB, seq_89);
+  Term v_87 = newTerm(VAR, 0, portLoc(1, seq_89));
+  // allocate args at core: 341
+  // call .x at core: 342
+  Term Rslt_91Args = makePair(APP, 0, v_87, SUB);
+  Term Rslt_91 = newTerm(VAR, 0, portLoc(2, Rslt_91Args));
 #ifdef STRICT
-  store_redex(Rslt_91Args, new_ref(glblProto15_248));
+  pushRedex(Rslt_91Args, newRef(glblProto16_248));
 #else
-  swapStore(term_loc(Rslt_91),
-            pair_make(LAZ, 0, Rslt_91Args, new_ref(glblProto15_248)));
+  swap(termLoc(Rslt_91),
+       makePair(LAZ, 0, Rslt_91Args, newRef(glblProto16_248)));
 #endif
-  // call f at core: 340
-  Term Rslt_92Args = pair_make(APP, 0, Rslt_91, SUB);
-  Term Rslt_92 = term_new(VAR, 0, port(2, term_loc(Rslt_92Args)));
+  // call f at core: 341
+  Term Rslt_92Args = makePair(APP, 0, Rslt_91, SUB);
+  Term Rslt_92 = newTerm(VAR, 0, portLoc(2, Rslt_92Args));
 #ifdef STRICT
-  store_redex(Rslt_92Args, f_88);
+  pushRedex(Rslt_92Args, f_88);
 #else
-  swapStore(term_loc(Rslt_92), pair_make(LAZ, 0, Rslt_92Args, f_88));
+  swap(termLoc(Rslt_92), makePair(LAZ, 0, Rslt_92Args, f_88));
 #endif
 
   dupLabels[24] = "flat-map";
   // link args to body
-  swapStore(r_seq_89, Rslt_92);
+  swap(r_seq_89, Rslt_92);
 
-  Term Rslt_92V = get(term_loc(Rslt_92));
-  apps = take(port(1, term_loc(Rslt_92V)));
-  lams = take(port(2, term_loc(Rslt_92V)));
+  Term Rslt_92V = get(termLoc(Rslt_92));
+  apps = take(portLoc(1, Rslt_92V));
+  lams = take(portLoc(2, Rslt_92V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_92), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_89);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_92), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_89);
   return;
 }
-Term glblflat_map185 = new_ref(glblflat_map184);
+Term glblflat_map185 = newRef(glblflat_map184);
 Term glblFn205;
 void glblCFn204(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -1436,12 +1436,12 @@ void glblCFn204(Term ref, Term args) {
     Term x_1 = arityArgs.args[0];
     Term y_2 = arityArgs.args[1];
 
-    result = term_val(integer_EQ(x_1, y_2));
-    moveStore(port(2, term_loc(args)), result);
+    result = termVal(integer_EQ(x_1, y_2));
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn205 = new_ref(glblCFn204);
+Term glblFn205 = newRef(glblCFn204);
 Term glblFn209;
 void glblCFn208(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -1451,12 +1451,12 @@ void glblCFn208(Term ref, Term args) {
     Term x_1 = arityArgs.args[0];
     Term y_2 = arityArgs.args[1];
 
-    result = term_val(integer_LT(x_1, y_2));
-    moveStore(port(2, term_loc(args)), result);
+    result = termVal(integer_LT(x_1, y_2));
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn209 = new_ref(glblCFn208);
+Term glblFn209 = newRef(glblCFn208);
 Term glblFn211;
 void glblCFn210(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -1465,24 +1465,24 @@ void glblCFn210(Term ref, Term args) {
   if (arityArgs.count == 1) {
     Term n_1 = arityArgs.args[0];
 
-    if (term_tag(n_1) == VAL) {
+    if (termTag(n_1) == VAL) {
       fprintf(stderr, "\ninvalid type for 'number-str': Value\n");
       abort();
     }
     result = number_str(n_1);
 
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn211 = new_ref(glblCFn210);
+Term glblFn211 = newRef(glblCFn210);
 void glblProto27_254(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(366), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(367), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto27);
   }
 }
@@ -1490,63 +1490,62 @@ Term glblFn213;
 void glblCFn212(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 37, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term y_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 37, SUB, seq_3);
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  // allocate args at core: 365
+  Term seq_3 = makePair(LAM, 37, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term y_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 37, SUB, seq_3);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_3));
+  // allocate args at core: 366
 
   Term x_1_1;
   x_1 = dupeArg(x_1, &x_1_1, 37);
 
   Term y_2_1;
   y_2 = dupeArg(y_2, &y_2_1, 37);
-  // call int-< at core: 366
-  Term Rslt_5Args = pair_make(APP, 0, y_2, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
-  Rslt_5Args = pair_make(APP, 0, x_1, Rslt_5Args);
+  // call int-< at core: 367
+  Term Rslt_5Args = makePair(APP, 0, y_2, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
+  Rslt_5Args = makePair(APP, 0, x_1, Rslt_5Args);
 #ifdef STRICT
-  store_redex(Rslt_5Args, glblFn209);
+  pushRedex(Rslt_5Args, glblFn209);
 #else
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, Rslt_5Args, glblFn209));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, glblFn209));
 #endif
 
-  // call int-= at core: 367
-  Term Rslt_6Args = pair_make(APP, 0, y_2_1, SUB);
-  Term Rslt_6 = term_new(VAR, 0, port(2, term_loc(Rslt_6Args)));
-  Rslt_6Args = pair_make(APP, 0, x_1_1, Rslt_6Args);
+  // call int-= at core: 368
+  Term Rslt_6Args = makePair(APP, 0, y_2_1, SUB);
+  Term Rslt_6 = newTerm(VAR, 0, portLoc(2, Rslt_6Args));
+  Rslt_6Args = makePair(APP, 0, x_1_1, Rslt_6Args);
 #ifdef STRICT
-  store_redex(Rslt_6Args, glblFn205);
+  pushRedex(Rslt_6Args, glblFn205);
 #else
-  swapStore(term_loc(Rslt_6), pair_make(LAZ, 0, Rslt_6Args, glblFn205));
+  swap(termLoc(Rslt_6), makePair(LAZ, 0, Rslt_6Args, glblFn205));
 #endif
 
-  // call or at core: 366
-  Term Rslt_7Args = pair_make(APP, 0, Rslt_6, SUB);
-  Term Rslt_7 = term_new(VAR, 0, port(2, term_loc(Rslt_7Args)));
-  Rslt_7Args = pair_make(APP, 0, Rslt_5, Rslt_7Args);
+  // call or at core: 367
+  Term Rslt_7Args = makePair(APP, 0, Rslt_6, SUB);
+  Term Rslt_7 = newTerm(VAR, 0, portLoc(2, Rslt_7Args));
+  Rslt_7Args = makePair(APP, 0, Rslt_5, Rslt_7Args);
 #ifdef STRICT
-  store_redex(Rslt_7Args, new_ref(glblProto27_254));
+  pushRedex(Rslt_7Args, newRef(glblProto27_254));
 #else
-  swapStore(term_loc(Rslt_7),
-            pair_make(LAZ, 0, Rslt_7Args, new_ref(glblProto27_254)));
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, Rslt_7Args, newRef(glblProto27_254)));
 #endif
   dupLabels[37] = "";
   // link args to body
-  swapStore(r_seq_3, Rslt_7);
+  swap(r_seq_3, Rslt_7);
 
-  Term Rslt_7V = get(term_loc(Rslt_7));
-  apps = take(port(1, term_loc(Rslt_7V)));
-  lams = take(port(2, term_loc(Rslt_7V)));
+  Term Rslt_7V = get(termLoc(Rslt_7));
+  apps = take(portLoc(1, Rslt_7V));
+  lams = take(portLoc(2, Rslt_7V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_7), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_3);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblFn213 = new_ref(glblCFn212);
-Term glblVal214 = new_ref(intCond);
+Term glblFn213 = newRef(glblCFn212);
+Term glblVal214 = newRef(intCond);
 ;
 Term glblVal214;
 struct {
@@ -1557,190 +1556,190 @@ struct {
   int64_t len;
   char buffer[8];
 } str5 = {StringBufferType, REFS_STATIC, 0, 0, 7, "Integer"};
-Term glblStr267 = term_new_(VAL, (Term)&str5);
+Term glblStr267 = newTerm_(VAL, (Term)&str5);
 Term glbltype_name266;
 void glbltype_name265(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 42, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term arg_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 372
-  swapStore(term_loc(arg_1), ERA);
+  Term seq_2 = makePair(LAM, 42, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term arg_1 = newTerm(VAR, 0, portLoc(1, seq_2));
+  // allocate args at core: 373
+  swap(termLoc(arg_1), ERA);
   dupLabels[42] = "type-name";
   // link args to body
-  swapStore(r_seq_2, glblStr267);
+  swap(r_seq_2, glblStr267);
 
   V = get(r_seq_2);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 42, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_2, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_2);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 42, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_2, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_2);
   return;
 }
-Term glbltype_name266 = new_ref(glbltype_name265);
+Term glbltype_name266 = newRef(glbltype_name265);
 Term glblstr_vect264;
 void glblstr_vect263(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_6 = pair_make(LAM, 41, SUB, NUL);
-  Location r_seq_6 = port(2, term_loc(seq_6));
-  Term n_5 = term_new(VAR, 0, port(1, term_loc(seq_6)));
-  // allocate args at core: 375
+  Term seq_6 = makePair(LAM, 41, SUB, NUL);
+  Location r_seq_6 = portLoc(2, seq_6);
+  Term n_5 = newTerm(VAR, 0, portLoc(1, seq_6));
+  // allocate args at core: 376
   Term glblVal131_4;
   glblVal131 = dupeArg(glblVal131, &glblVal131_4, 0);
 
-  // call number-str at core: 376
-  Term Rslt_8Args = pair_make(APP, 0, n_5, SUB);
-  Term Rslt_8 = term_new(VAR, 0, port(2, term_loc(Rslt_8Args)));
+  // call number-str at core: 377
+  Term Rslt_8Args = makePair(APP, 0, n_5, SUB);
+  Term Rslt_8 = newTerm(VAR, 0, portLoc(2, Rslt_8Args));
 #ifdef STRICT
-  store_redex(Rslt_8Args, glblFn211);
+  pushRedex(Rslt_8Args, glblFn211);
 #else
-  swapStore(term_loc(Rslt_8), pair_make(LAZ, 0, Rslt_8Args, glblFn211));
+  swap(termLoc(Rslt_8), makePair(LAZ, 0, Rslt_8Args, glblFn211));
 #endif
 
-  // call vect-conj at core: 376
-  Term Rslt_9Args = pair_make(APP, 0, Rslt_8, SUB);
-  Term Rslt_9 = term_new(VAR, 0, port(2, term_loc(Rslt_9Args)));
-  Rslt_9Args = pair_make(APP, 0, glblVal131_4, Rslt_9Args);
+  // call vect-conj at core: 377
+  Term Rslt_9Args = makePair(APP, 0, Rslt_8, SUB);
+  Term Rslt_9 = newTerm(VAR, 0, portLoc(2, Rslt_9Args));
+  Rslt_9Args = makePair(APP, 0, glblVal131_4, Rslt_9Args);
 #ifdef STRICT
-  store_redex(Rslt_9Args, glblFn134);
+  pushRedex(Rslt_9Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, Rslt_9Args, glblFn134));
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, Rslt_9Args, glblFn134));
 #endif
 
   dupLabels[41] = "str-vect";
   // link args to body
-  swapStore(r_seq_6, Rslt_9);
+  swap(r_seq_6, Rslt_9);
 
-  Term Rslt_9V = get(term_loc(Rslt_9));
-  apps = take(port(1, term_loc(Rslt_9V)));
-  lams = take(port(2, term_loc(Rslt_9V)));
+  Term Rslt_9V = get(termLoc(Rslt_9));
+  apps = take(portLoc(1, Rslt_9V));
+  lams = take(portLoc(2, Rslt_9V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_6);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_6);
   return;
 }
-Term glblstr_vect264 = new_ref(glblstr_vect263);
+Term glblstr_vect264 = newRef(glblstr_vect263);
 Term glbl_EQ_262;
 void glbl_EQ_261(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_13 = pair_make(LAM, 40, SUB, NUL);
-  Location r_seq_13 = port(2, term_loc(seq_13));
-  Term y_12 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 40, SUB, seq_13);
-  Term x_11 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  // allocate args at core: 378
-  // call int-= at core: 379
-  Term Rslt_15Args = pair_make(APP, 0, y_12, SUB);
-  Term Rslt_15 = term_new(VAR, 0, port(2, term_loc(Rslt_15Args)));
-  Rslt_15Args = pair_make(APP, 0, x_11, Rslt_15Args);
+  Term seq_13 = makePair(LAM, 40, SUB, NUL);
+  Location r_seq_13 = portLoc(2, seq_13);
+  Term y_12 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 40, SUB, seq_13);
+  Term x_11 = newTerm(VAR, 0, portLoc(1, seq_13));
+  // allocate args at core: 379
+  // call int-= at core: 380
+  Term Rslt_15Args = makePair(APP, 0, y_12, SUB);
+  Term Rslt_15 = newTerm(VAR, 0, portLoc(2, Rslt_15Args));
+  Rslt_15Args = makePair(APP, 0, x_11, Rslt_15Args);
 #ifdef STRICT
-  store_redex(Rslt_15Args, glblFn205);
+  pushRedex(Rslt_15Args, glblFn205);
 #else
-  swapStore(term_loc(Rslt_15), pair_make(LAZ, 0, Rslt_15Args, glblFn205));
+  swap(termLoc(Rslt_15), makePair(LAZ, 0, Rslt_15Args, glblFn205));
 #endif
 
   dupLabels[40] = "=";
   // link args to body
-  swapStore(r_seq_13, Rslt_15);
+  swap(r_seq_13, Rslt_15);
 
-  Term Rslt_15V = get(term_loc(Rslt_15));
-  apps = take(port(1, term_loc(Rslt_15V)));
-  lams = take(port(2, term_loc(Rslt_15V)));
+  Term Rslt_15V = get(termLoc(Rslt_15));
+  apps = take(portLoc(1, Rslt_15V));
+  lams = take(portLoc(2, Rslt_15V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_15), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_13);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_15), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_13);
   return;
 }
-Term glbl_EQ_262 = new_ref(glbl_EQ_261);
+Term glbl_EQ_262 = newRef(glbl_EQ_261);
 Term glbl_LT_260;
 void glbl_LT_259(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_19 = pair_make(LAM, 39, SUB, NUL);
-  Location r_seq_19 = port(2, term_loc(seq_19));
-  Term y_18 = term_new(VAR, 0, port(1, term_loc(seq_19)));
-  seq_19 = pair_make(LAM, 39, SUB, seq_19);
-  Term x_17 = term_new(VAR, 0, port(1, term_loc(seq_19)));
-  // allocate args at core: 381
-  // call int-< at core: 382
-  Term Rslt_21Args = pair_make(APP, 0, y_18, SUB);
-  Term Rslt_21 = term_new(VAR, 0, port(2, term_loc(Rslt_21Args)));
-  Rslt_21Args = pair_make(APP, 0, x_17, Rslt_21Args);
+  Term seq_19 = makePair(LAM, 39, SUB, NUL);
+  Location r_seq_19 = portLoc(2, seq_19);
+  Term y_18 = newTerm(VAR, 0, portLoc(1, seq_19));
+  seq_19 = makePair(LAM, 39, SUB, seq_19);
+  Term x_17 = newTerm(VAR, 0, portLoc(1, seq_19));
+  // allocate args at core: 382
+  // call int-< at core: 383
+  Term Rslt_21Args = makePair(APP, 0, y_18, SUB);
+  Term Rslt_21 = newTerm(VAR, 0, portLoc(2, Rslt_21Args));
+  Rslt_21Args = makePair(APP, 0, x_17, Rslt_21Args);
 #ifdef STRICT
-  store_redex(Rslt_21Args, glblFn209);
+  pushRedex(Rslt_21Args, glblFn209);
 #else
-  swapStore(term_loc(Rslt_21), pair_make(LAZ, 0, Rslt_21Args, glblFn209));
+  swap(termLoc(Rslt_21), makePair(LAZ, 0, Rslt_21Args, glblFn209));
 #endif
 
   dupLabels[39] = "<";
   // link args to body
-  swapStore(r_seq_19, Rslt_21);
+  swap(r_seq_19, Rslt_21);
 
-  Term Rslt_21V = get(term_loc(Rslt_21));
-  apps = take(port(1, term_loc(Rslt_21V)));
-  lams = take(port(2, term_loc(Rslt_21V)));
+  Term Rslt_21V = get(termLoc(Rslt_21));
+  apps = take(portLoc(1, Rslt_21V));
+  lams = take(portLoc(2, Rslt_21V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_21), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_19);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_21), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_19);
   return;
 }
-Term glbl_LT_260 = new_ref(glbl_LT_259);
+Term glbl_LT_260 = newRef(glbl_LT_259);
 Term glblcond258;
 void glblcond257(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_26 = pair_make(LAM, 38, SUB, NUL);
-  Location r_seq_26 = port(2, term_loc(seq_26));
-  Term z_25 = term_new(VAR, 0, port(1, term_loc(seq_26)));
-  seq_26 = pair_make(LAM, 38, SUB, seq_26);
-  Term non_z_24 = term_new(VAR, 0, port(1, term_loc(seq_26)));
-  seq_26 = pair_make(LAM, 38, SUB, seq_26);
-  Term n_23 = term_new(VAR, 0, port(1, term_loc(seq_26)));
-  // allocate args at core: 384
+  Term seq_26 = makePair(LAM, 38, SUB, NUL);
+  Location r_seq_26 = portLoc(2, seq_26);
+  Term z_25 = newTerm(VAR, 0, portLoc(1, seq_26));
+  seq_26 = makePair(LAM, 38, SUB, seq_26);
+  Term non_z_24 = newTerm(VAR, 0, portLoc(1, seq_26));
+  seq_26 = makePair(LAM, 38, SUB, seq_26);
+  Term n_23 = newTerm(VAR, 0, portLoc(1, seq_26));
+  // allocate args at core: 385
   Term glblVal214_1;
   glblVal214 = dupeArg(glblVal214, &glblVal214_1, 0);
 
-  // call int-cond at core: 385
-  Term Rslt_28Args = pair_make(APP, 0, z_25, SUB);
-  Term Rslt_28 = term_new(VAR, 0, port(2, term_loc(Rslt_28Args)));
-  Rslt_28Args = pair_make(APP, 0, non_z_24, Rslt_28Args);
-  Rslt_28Args = pair_make(APP, 0, n_23, Rslt_28Args);
+  // call int-cond at core: 386
+  Term Rslt_28Args = makePair(APP, 0, z_25, SUB);
+  Term Rslt_28 = newTerm(VAR, 0, portLoc(2, Rslt_28Args));
+  Rslt_28Args = makePair(APP, 0, non_z_24, Rslt_28Args);
+  Rslt_28Args = makePair(APP, 0, n_23, Rslt_28Args);
 #ifdef STRICT
-  store_redex(Rslt_28Args, glblVal214_1);
+  pushRedex(Rslt_28Args, glblVal214_1);
 #else
-  swapStore(term_loc(Rslt_28), pair_make(LAZ, 0, Rslt_28Args, glblVal214_1));
+  swap(termLoc(Rslt_28), makePair(LAZ, 0, Rslt_28Args, glblVal214_1));
 #endif
 
   dupLabels[38] = "cond";
   // link args to body
-  swapStore(r_seq_26, Rslt_28);
+  swap(r_seq_26, Rslt_28);
 
-  Term Rslt_28V = get(term_loc(Rslt_28));
-  apps = take(port(1, term_loc(Rslt_28V)));
-  lams = take(port(2, term_loc(Rslt_28V)));
+  Term Rslt_28V = get(termLoc(Rslt_28));
+  apps = take(portLoc(1, Rslt_28V));
+  lams = take(portLoc(2, Rslt_28V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_28), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_26);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_28), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_26);
   return;
 }
-Term glblcond258 = new_ref(glblcond257);
-void glblProto23_277(Term ref, Term args) {
+Term glblcond258 = newRef(glblcond257);
+void glblProto23_279(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(395), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(396), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto23);
   }
 }
@@ -1748,9 +1747,9 @@ void glblProto29_281(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(395), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(396), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto29);
   }
 }
@@ -1758,51 +1757,49 @@ Term glblFn269;
 void glblCFn268(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 43, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term y_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 43, SUB, seq_3);
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  // allocate args at core: 391
+  Term seq_3 = makePair(LAM, 43, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term y_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 43, SUB, seq_3);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_3));
+  // allocate args at core: 392
 
   Term y_2_1;
   y_2 = dupeArg(y_2, &y_2_1, 43);
-  // call < at core: 395
-  Term Rslt_5Args = pair_make(APP, 0, y_2, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
-  Rslt_5Args = pair_make(APP, 0, x_1, Rslt_5Args);
+  // call < at core: 396
+  Term Rslt_5Args = makePair(APP, 0, y_2, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
+  Rslt_5Args = makePair(APP, 0, x_1, Rslt_5Args);
 #ifdef STRICT
-  store_redex(Rslt_5Args, new_ref(glblProto23_277));
+  pushRedex(Rslt_5Args, newRef(glblProto23_279));
 #else
-  swapStore(term_loc(Rslt_5),
-            pair_make(LAZ, 0, Rslt_5Args, new_ref(glblProto23_277)));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, newRef(glblProto23_279)));
 #endif
-  // call either at core: 395
-  Term Rslt_6Args = pair_make(APP, 0, y_2_1, SUB);
-  Term Rslt_6 = term_new(VAR, 0, port(2, term_loc(Rslt_6Args)));
-  Rslt_6Args = pair_make(APP, 0, Rslt_5, Rslt_6Args);
+  // call either at core: 396
+  Term Rslt_6Args = makePair(APP, 0, y_2_1, SUB);
+  Term Rslt_6 = newTerm(VAR, 0, portLoc(2, Rslt_6Args));
+  Rslt_6Args = makePair(APP, 0, Rslt_5, Rslt_6Args);
 #ifdef STRICT
-  store_redex(Rslt_6Args, new_ref(glblProto29_281));
+  pushRedex(Rslt_6Args, newRef(glblProto29_281));
 #else
-  swapStore(term_loc(Rslt_6),
-            pair_make(LAZ, 0, Rslt_6Args, new_ref(glblProto29_281)));
+  swap(termLoc(Rslt_6), makePair(LAZ, 0, Rslt_6Args, newRef(glblProto29_281)));
 #endif
   dupLabels[43] = "";
   // link args to body
-  swapStore(r_seq_3, Rslt_6);
+  swap(r_seq_3, Rslt_6);
 
-  Term Rslt_6V = get(term_loc(Rslt_6));
-  apps = take(port(1, term_loc(Rslt_6V)));
-  lams = take(port(2, term_loc(Rslt_6V)));
+  Term Rslt_6V = get(termLoc(Rslt_6));
+  apps = take(portLoc(1, Rslt_6V));
+  lams = take(portLoc(2, Rslt_6V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_6), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_3);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_6), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblFn269 = new_ref(glblCFn268);
-Term glblFn272;
-void glblCFn271(Term ref, Term args) {
+Term glblFn269 = newRef(glblCFn268);
+Term glblFn271;
+void glblCFn270(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   Term result = NUL;
@@ -1810,43 +1807,43 @@ void glblCFn271(Term ref, Term args) {
     Term v_1 = arityArgs.args[0];
 
     Vector *v = (Vector *)((u64)v_1 & ~7);
-    result = new_i60(v->count);
+    result = newI60(v->count);
     dec_and_free((Term)v, 1);
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn272 = new_ref(glblCFn271);
-Term glblFn280;
-void glblCFn279(Term ref, Term args) {
+Term glblFn271 = newRef(glblCFn270);
+Term glblFn275;
+void glblCFn274(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 45, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 405
+  Term seq_2 = makePair(LAM, 45, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_2));
+  // allocate args at core: 406
   dupLabels[45] = "";
   // link args to body
-  swapStore(r_seq_2, x_1);
+  swap(r_seq_2, x_1);
 
   V = get(r_seq_2);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 45, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_2, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_2);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 45, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_2, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn280 = new_ref(glblCFn279);
+Term glblFn275 = newRef(glblCFn274);
 void glblProto37_288(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(410), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(411), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto37);
   }
 }
@@ -1854,75 +1851,75 @@ Term glblFn287;
 void glblCFn286(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 46, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term f_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 46, SUB, seq_3);
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  // allocate args at core: 409
+  Term seq_3 = makePair(LAM, 46, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term f_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 46, SUB, seq_3);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_3));
+  // allocate args at core: 410
 
   Term f_2_1;
   f_2 = dupeArg(f_2, &f_2_1, 46);
-  Term seq_7 = pair_make(LAM, 47, SUB, NUL);
-  Location r_seq_7 = port(2, term_loc(seq_7));
-  Term v_6 = term_new(VAR, 0, port(1, term_loc(seq_7)));
-  // allocate args at core: 410
-  // call fold at core: 409
-  Term Rslt_9Args = pair_make(APP, 0, f_2_1, SUB);
-  Term Rslt_9 = term_new(VAR, 0, port(2, term_loc(Rslt_9Args)));
-  Rslt_9Args = pair_make(APP, 0, v_6, Rslt_9Args);
+  Term seq_7 = makePair(LAM, 47, SUB, NUL);
+  Location r_seq_7 = portLoc(2, seq_7);
+  Term v_6 = newTerm(VAR, 0, portLoc(1, seq_7));
+  // allocate args at core: 411
+  // call fold at core: 410
+  Term Rslt_9Args = makePair(APP, 0, f_2_1, SUB);
+  Term Rslt_9 = newTerm(VAR, 0, portLoc(2, Rslt_9Args));
+  Rslt_9Args = makePair(APP, 0, v_6, Rslt_9Args);
 #ifdef STRICT
-  store_redex(Rslt_9Args, glblFn287);
+  pushRedex(Rslt_9Args, glblFn287);
 #else
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, Rslt_9Args, glblFn287));
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, Rslt_9Args, glblFn287));
 #endif
 
   dupLabels[47] = "";
   // link args to body
-  swapStore(r_seq_7, Rslt_9);
+  swap(r_seq_7, Rslt_9);
 
-  Term Rslt_9V = get(term_loc(Rslt_9));
-  apps = take(port(1, term_loc(Rslt_9V)));
-  lams = take(port(2, term_loc(Rslt_9V)));
+  Term Rslt_9V = get(termLoc(Rslt_9));
+  apps = take(portLoc(1, Rslt_9V));
+  lams = take(portLoc(2, Rslt_9V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, apps, lams));
-  // call recurse at core: 410
-  Term Rslt_10Args = pair_make(APP, 0, seq_7, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
-  Rslt_10Args = pair_make(APP, 0, x_1, Rslt_10Args);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, apps, lams));
+  // call recurse at core: 411
+  Term Rslt_10Args = makePair(APP, 0, seq_7, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
+  Rslt_10Args = makePair(APP, 0, x_1, Rslt_10Args);
 #ifdef STRICT
-  store_redex(Rslt_10Args, new_ref(glblProto37_288));
+  pushRedex(Rslt_10Args, newRef(glblProto37_288));
 #else
-  swapStore(term_loc(Rslt_10),
-            pair_make(LAZ, 0, Rslt_10Args, new_ref(glblProto37_288)));
+  swap(termLoc(Rslt_10),
+       makePair(LAZ, 0, Rslt_10Args, newRef(glblProto37_288)));
 #endif
-  // call f at core: 409
-  Term Rslt_12Args = pair_make(APP, 0, Rslt_10, SUB);
-  Term Rslt_12 = term_new(VAR, 0, port(2, term_loc(Rslt_12Args)));
+  // call f at core: 410
+  Term Rslt_12Args = makePair(APP, 0, Rslt_10, SUB);
+  Term Rslt_12 = newTerm(VAR, 0, portLoc(2, Rslt_12Args));
 #ifdef STRICT
-  store_redex(Rslt_12Args, f_2);
+  pushRedex(Rslt_12Args, f_2);
 #else
-  swapStore(term_loc(Rslt_12), pair_make(LAZ, 0, Rslt_12Args, f_2));
+  swap(termLoc(Rslt_12), makePair(LAZ, 0, Rslt_12Args, f_2));
 #endif
 
   dupLabels[46] = "";
   // link args to body
-  swapStore(r_seq_3, Rslt_12);
+  swap(r_seq_3, Rslt_12);
 
-  Term Rslt_12V = get(term_loc(Rslt_12));
-  apps = take(port(1, term_loc(Rslt_12V)));
-  lams = take(port(2, term_loc(Rslt_12V)));
+  Term Rslt_12V = get(termLoc(Rslt_12));
+  apps = take(portLoc(1, Rslt_12V));
+  lams = take(portLoc(2, Rslt_12V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_12), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_3);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_12), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblFn287 = new_ref(glblCFn286);
+Term glblFn287 = newRef(glblCFn286);
 void glblLeaf295(Term ref, Term args) {
-  Term callArgs = pair_make(APP, 0, new_i60(0), args);
-  callArgs = pair_make(APP, 0, new_i60(44), callArgs);
+  Term callArgs = makePair(APP, 0, newI60(0), args);
+  callArgs = makePair(APP, 0, newI60(44), callArgs);
   interact(callArgs, construct);
   return;
 }
@@ -1930,9 +1927,9 @@ void glblProto37_298(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(420), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(421), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto37);
   }
 }
@@ -1940,73 +1937,73 @@ Term glblFn292;
 void glblCFn291(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 48, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term f_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 48, SUB, seq_3);
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  // allocate args at core: 419
+  Term seq_3 = makePair(LAM, 48, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term f_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 48, SUB, seq_3);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_3));
+  // allocate args at core: 420
 
   Term f_2_1;
   f_2 = dupeArg(f_2, &f_2_1, 48);
-  Term seq_8 = pair_make(LAM, 49, SUB, NUL);
-  Location r_seq_8 = port(2, term_loc(seq_8));
-  Term v_7 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  // allocate args at core: 420
-  // call f at core: 419
-  Term Rslt_5Args = pair_make(APP, 0, x_1, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
+  Term seq_8 = makePair(LAM, 50, SUB, NUL);
+  Location r_seq_8 = portLoc(2, seq_8);
+  Term v_7 = newTerm(VAR, 0, portLoc(1, seq_8));
+  // allocate args at core: 421
+  // call f at core: 420
+  Term Rslt_5Args = makePair(APP, 0, x_1, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
 #ifdef STRICT
-  store_redex(Rslt_5Args, f_2);
+  pushRedex(Rslt_5Args, f_2);
 #else
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, Rslt_5Args, f_2));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, f_2));
 #endif
 
-  // call unfold at core: 419
-  Term Rslt_10Args = pair_make(APP, 0, f_2_1, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
-  Rslt_10Args = pair_make(APP, 0, v_7, Rslt_10Args);
+  // call unfold at core: 420
+  Term Rslt_10Args = makePair(APP, 0, f_2_1, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
+  Rslt_10Args = makePair(APP, 0, v_7, Rslt_10Args);
 #ifdef STRICT
-  store_redex(Rslt_10Args, glblFn292);
+  pushRedex(Rslt_10Args, glblFn292);
 #else
-  swapStore(term_loc(Rslt_10), pair_make(LAZ, 0, Rslt_10Args, glblFn292));
+  swap(termLoc(Rslt_10), makePair(LAZ, 0, Rslt_10Args, glblFn292));
 #endif
 
-  dupLabels[49] = "";
+  dupLabels[50] = "";
   // link args to body
-  swapStore(r_seq_8, Rslt_10);
+  swap(r_seq_8, Rslt_10);
 
-  Term Rslt_10V = get(term_loc(Rslt_10));
-  apps = take(port(1, term_loc(Rslt_10V)));
-  lams = take(port(2, term_loc(Rslt_10V)));
+  Term Rslt_10V = get(termLoc(Rslt_10));
+  apps = take(portLoc(1, Rslt_10V));
+  lams = take(portLoc(2, Rslt_10V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_10), pair_make(LAZ, 0, apps, lams));
-  // call recurse at core: 420
-  Term Rslt_11Args = pair_make(APP, 0, seq_8, SUB);
-  Term Rslt_11 = term_new(VAR, 0, port(2, term_loc(Rslt_11Args)));
-  Rslt_11Args = pair_make(APP, 0, Rslt_5, Rslt_11Args);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_10), makePair(LAZ, 0, apps, lams));
+  // call recurse at core: 421
+  Term Rslt_11Args = makePair(APP, 0, seq_8, SUB);
+  Term Rslt_11 = newTerm(VAR, 0, portLoc(2, Rslt_11Args));
+  Rslt_11Args = makePair(APP, 0, Rslt_5, Rslt_11Args);
 #ifdef STRICT
-  store_redex(Rslt_11Args, new_ref(glblProto37_298));
+  pushRedex(Rslt_11Args, newRef(glblProto37_298));
 #else
-  swapStore(term_loc(Rslt_11),
-            pair_make(LAZ, 0, Rslt_11Args, new_ref(glblProto37_298)));
+  swap(termLoc(Rslt_11),
+       makePair(LAZ, 0, Rslt_11Args, newRef(glblProto37_298)));
 #endif
   dupLabels[48] = "";
   // link args to body
-  swapStore(r_seq_3, Rslt_11);
+  swap(r_seq_3, Rslt_11);
 
-  Term Rslt_11V = get(term_loc(Rslt_11));
-  apps = take(port(1, term_loc(Rslt_11V)));
-  lams = take(port(2, term_loc(Rslt_11V)));
+  Term Rslt_11V = get(termLoc(Rslt_11));
+  apps = take(portLoc(1, Rslt_11V));
+  lams = take(portLoc(2, Rslt_11V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_11), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_3);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_11), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblFn292 = new_ref(glblCFn291);
-Term glblVal297 = new_ref(glblLeaf295);
+Term glblFn292 = newRef(glblCFn291);
+Term glblVal297 = newRef(glblLeaf295);
 Term glblVal297;
 Term glblRslt296;
 Term glblFn294;
@@ -2019,30 +2016,30 @@ void glblCFn293(Term ref, Term args) {
 
     result = strCount(s_1);
     dec_and_free(s_1, 1);
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn294 = new_ref(glblCFn293);
-Term glblFn303;
-void glblCFn302(Term ref, Term args) {
+Term glblFn294 = newRef(glblCFn293);
+Term glblFn302;
+void glblCFn301(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   Term result = NUL;
   if (arityArgs.count == 1) {
     Term len_1 = arityArgs.args[0];
 
-    String *strVal = malloc_string(get_i60(len_1));
+    String *strVal = malloc_string(getI60(len_1));
     strVal->len = 0;
     strVal->buffer[0] = 0;
     dec_and_free(len_1, 1);
-    result = term_val((Term)strVal);
+    result = termVal((Term)strVal);
 
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn303 = new_ref(glblCFn302);
+Term glblFn302 = newRef(glblCFn301);
 Term glblFn306;
 void glblCFn305(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -2057,12 +2054,12 @@ void glblCFn305(Term ref, Term args) {
     strncat(s_1->buffer, s_2->buffer, s_2->len);
     s_1->len += s_2->len;
     dec_and_free(src_2, 1);
-    result = term_val(dest_1);
-    moveStore(port(2, term_loc(args)), result);
+    result = termVal(dest_1);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn306 = new_ref(glblCFn305);
+Term glblFn306 = newRef(glblCFn305);
 Term glblProto307;
 Term glblFn311;
 void glblCFn310(Term ref, Term args) {
@@ -2075,142 +2072,142 @@ void glblCFn310(Term ref, Term args) {
     Term len_3 = arityArgs.args[2];
     Term tgt_4 = arityArgs.args[3];
     result = strEQ(s_1, start_2, len_3, tgt_4);
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn311 = new_ref(glblCFn310);
+Term glblFn311 = newRef(glblCFn310);
 Term glblProto317;
 Term glblProto315;
 Term glblProto313;
 void glblSubString327(Term ref, Term args) {
-  Term callArgs = pair_make(APP, 0, new_i60(3), args);
-  callArgs = pair_make(APP, 0, new_i60(5), callArgs);
+  Term callArgs = makePair(APP, 0, newI60(3), args);
+  callArgs = makePair(APP, 0, newI60(5), callArgs);
   interact(callArgs, construct);
   return;
 }
-Term glblVal334 = new_ref(glblSubString327);
+Term glblVal334 = newRef(glblSubString327);
 Term glblVal334;
 Term glblstr_vect320;
 void glblstr_vect319(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 54, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term s_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 472
-  Term s_1Args = pair_make(APP, 0, s_1, SUB);
-  Term Rslt_4 = term_new(VAR, 0, port(2, term_loc(s_1Args)));
-  s_1Args = pair_make(APP, 0, new_i60(0), s_1Args);
-  store_redex(s_1Args, accessField);
+  Term seq_2 = makePair(LAM, 54, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term s_1 = newTerm(VAR, 0, portLoc(1, seq_2));
+  // allocate args at core: 473
+  Term s_1Args = makePair(APP, 0, s_1, SUB);
+  Term Rslt_4 = newTerm(VAR, 0, portLoc(2, s_1Args));
+  s_1Args = makePair(APP, 0, newI60(0), s_1Args);
+  pushRedex(s_1Args, accessField);
   Term glblVal131_5;
   glblVal131 = dupeArg(glblVal131, &glblVal131_5, 0);
 
-  // call vect-conj at core: 472
-  Term Rslt_5Args = pair_make(APP, 0, Rslt_4, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
-  Rslt_5Args = pair_make(APP, 0, glblVal131_5, Rslt_5Args);
+  // call vect-conj at core: 473
+  Term Rslt_5Args = makePair(APP, 0, Rslt_4, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
+  Rslt_5Args = makePair(APP, 0, glblVal131_5, Rslt_5Args);
 #ifdef STRICT
-  store_redex(Rslt_5Args, glblFn134);
+  pushRedex(Rslt_5Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, Rslt_5Args, glblFn134));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, glblFn134));
 #endif
 
   dupLabels[54] = "str-vect";
   // link args to body
-  swapStore(r_seq_2, Rslt_5);
+  swap(r_seq_2, Rslt_5);
 
-  Term Rslt_5V = get(term_loc(Rslt_5));
-  apps = take(port(1, term_loc(Rslt_5V)));
-  lams = take(port(2, term_loc(Rslt_5V)));
+  Term Rslt_5V = get(termLoc(Rslt_5));
+  apps = take(portLoc(1, Rslt_5V));
+  lams = take(portLoc(2, Rslt_5V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblstr_vect320 = new_ref(glblstr_vect319);
+Term glblstr_vect320 = newRef(glblstr_vect319);
 Term glblcount322;
 void glblcount321(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_8 = pair_make(LAM, 55, SUB, NUL);
-  Location r_seq_8 = port(2, term_loc(seq_8));
-  Term arg_7 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  // allocate args at core: 473
-  Term arg_7Args = pair_make(APP, 0, arg_7, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(arg_7Args)));
-  arg_7Args = pair_make(APP, 0, new_i60(2), arg_7Args);
-  store_redex(arg_7Args, accessField);
+  Term seq_8 = makePair(LAM, 55, SUB, NUL);
+  Location r_seq_8 = portLoc(2, seq_8);
+  Term arg_7 = newTerm(VAR, 0, portLoc(1, seq_8));
+  // allocate args at core: 474
+  Term arg_7Args = makePair(APP, 0, arg_7, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, arg_7Args));
+  arg_7Args = makePair(APP, 0, newI60(2), arg_7Args);
+  pushRedex(arg_7Args, accessField);
   dupLabels[55] = "count";
   // link args to body
-  swapStore(r_seq_8, Rslt_10);
+  swap(r_seq_8, Rslt_10);
 
   V = get(r_seq_8);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 55, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_8, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_8);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 55, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_8, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_8);
   return;
 }
-Term glblcount322 = new_ref(glblcount321);
+Term glblcount322 = newRef(glblcount321);
 Term glbl_EQ_324;
 void glbl_EQ_323(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_14 = pair_make(LAM, 56, SUB, NUL);
-  Location r_seq_14 = port(2, term_loc(seq_14));
-  Term y_13 = term_new(VAR, 0, port(1, term_loc(seq_14)));
-  seq_14 = pair_make(LAM, 56, SUB, seq_14);
-  Term x_12 = term_new(VAR, 0, port(1, term_loc(seq_14)));
-  // allocate args at core: 475
+  Term seq_14 = makePair(LAM, 56, SUB, NUL);
+  Location r_seq_14 = portLoc(2, seq_14);
+  Term y_13 = newTerm(VAR, 0, portLoc(1, seq_14));
+  seq_14 = makePair(LAM, 56, SUB, seq_14);
+  Term x_12 = newTerm(VAR, 0, portLoc(1, seq_14));
+  // allocate args at core: 476
 
   Term x_12_2;
   x_12 = dupeArg(x_12, &x_12_2, 56);
 
   Term x_12_1;
   x_12 = dupeArg(x_12, &x_12_1, 56);
-  Term x_12_2Args = pair_make(APP, 0, x_12_2, SUB);
-  Term Rslt_18 = term_new(VAR, 0, port(2, term_loc(x_12_2Args)));
-  x_12_2Args = pair_make(APP, 0, new_i60(2), x_12_2Args);
-  store_redex(x_12_2Args, accessField);
-  Term x_12_1Args = pair_make(APP, 0, x_12_1, SUB);
-  Term Rslt_17 = term_new(VAR, 0, port(2, term_loc(x_12_1Args)));
-  x_12_1Args = pair_make(APP, 0, new_i60(1), x_12_1Args);
-  store_redex(x_12_1Args, accessField);
-  Term x_12Args = pair_make(APP, 0, x_12, SUB);
-  Term Rslt_16 = term_new(VAR, 0, port(2, term_loc(x_12Args)));
-  x_12Args = pair_make(APP, 0, new_i60(0), x_12Args);
-  store_redex(x_12Args, accessField);
-  // call str= at core: 476
-  Term Rslt_19Args = pair_make(APP, 0, y_13, SUB);
-  Term Rslt_19 = term_new(VAR, 0, port(2, term_loc(Rslt_19Args)));
-  Rslt_19Args = pair_make(APP, 0, Rslt_18, Rslt_19Args);
-  Rslt_19Args = pair_make(APP, 0, Rslt_17, Rslt_19Args);
-  Rslt_19Args = pair_make(APP, 0, Rslt_16, Rslt_19Args);
+  Term x_12_2Args = makePair(APP, 0, x_12_2, SUB);
+  Term Rslt_18 = newTerm(VAR, 0, portLoc(2, x_12_2Args));
+  x_12_2Args = makePair(APP, 0, newI60(2), x_12_2Args);
+  pushRedex(x_12_2Args, accessField);
+  Term x_12_1Args = makePair(APP, 0, x_12_1, SUB);
+  Term Rslt_17 = newTerm(VAR, 0, portLoc(2, x_12_1Args));
+  x_12_1Args = makePair(APP, 0, newI60(1), x_12_1Args);
+  pushRedex(x_12_1Args, accessField);
+  Term x_12Args = makePair(APP, 0, x_12, SUB);
+  Term Rslt_16 = newTerm(VAR, 0, portLoc(2, x_12Args));
+  x_12Args = makePair(APP, 0, newI60(0), x_12Args);
+  pushRedex(x_12Args, accessField);
+  // call str= at core: 477
+  Term Rslt_19Args = makePair(APP, 0, y_13, SUB);
+  Term Rslt_19 = newTerm(VAR, 0, portLoc(2, Rslt_19Args));
+  Rslt_19Args = makePair(APP, 0, Rslt_18, Rslt_19Args);
+  Rslt_19Args = makePair(APP, 0, Rslt_17, Rslt_19Args);
+  Rslt_19Args = makePair(APP, 0, Rslt_16, Rslt_19Args);
 #ifdef STRICT
-  store_redex(Rslt_19Args, glblFn311);
+  pushRedex(Rslt_19Args, glblFn311);
 #else
-  swapStore(term_loc(Rslt_19), pair_make(LAZ, 0, Rslt_19Args, glblFn311));
+  swap(termLoc(Rslt_19), makePair(LAZ, 0, Rslt_19Args, glblFn311));
 #endif
 
   dupLabels[56] = "=";
   // link args to body
-  swapStore(r_seq_14, Rslt_19);
+  swap(r_seq_14, Rslt_19);
 
-  Term Rslt_19V = get(term_loc(Rslt_19));
-  apps = take(port(1, term_loc(Rslt_19V)));
-  lams = take(port(2, term_loc(Rslt_19V)));
+  Term Rslt_19V = get(termLoc(Rslt_19));
+  apps = take(portLoc(1, Rslt_19V));
+  lams = take(portLoc(2, Rslt_19V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_19), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_14);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_19), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_14);
   return;
 }
-Term glbl_EQ_324 = new_ref(glbl_EQ_323);
+Term glbl_EQ_324 = newRef(glbl_EQ_323);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -2219,14 +2216,14 @@ struct {
   int64_t len;
   char buffer[1];
 } str6 = {StringBufferType, REFS_STATIC, 0, 0, 0, ""};
-Term glblStr335 = term_new_(VAL, (Term)&str6);
+Term glblStr335 = newTerm_(VAL, (Term)&str6);
 void glblProto31_339(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(480), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(481), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto31);
   }
 }
@@ -2234,9 +2231,9 @@ void glblProto61_341(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(479), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(480), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
@@ -2244,14 +2241,14 @@ Term glblsubs326;
 void glblsubs325(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_24 = pair_make(LAM, 57, SUB, NUL);
-  Location r_seq_24 = port(2, term_loc(seq_24));
-  Term new_len_23 = term_new(VAR, 0, port(1, term_loc(seq_24)));
-  seq_24 = pair_make(LAM, 57, SUB, seq_24);
-  Term new_start_22 = term_new(VAR, 0, port(1, term_loc(seq_24)));
-  seq_24 = pair_make(LAM, 57, SUB, seq_24);
-  Term s_21 = term_new(VAR, 0, port(1, term_loc(seq_24)));
-  // allocate args at core: 478
+  Term seq_24 = makePair(LAM, 57, SUB, NUL);
+  Location r_seq_24 = portLoc(2, seq_24);
+  Term new_len_23 = newTerm(VAR, 0, portLoc(1, seq_24));
+  seq_24 = makePair(LAM, 57, SUB, seq_24);
+  Term new_start_22 = newTerm(VAR, 0, portLoc(1, seq_24));
+  seq_24 = makePair(LAM, 57, SUB, seq_24);
+  Term s_21 = newTerm(VAR, 0, portLoc(1, seq_24));
+  // allocate args at core: 479
 
   Term s_21_4;
   s_21 = dupeArg(s_21, &s_21_4, 57);
@@ -2264,265 +2261,265 @@ void glblsubs325(Term ref, Term args) {
 
   Term s_21_1;
   s_21 = dupeArg(s_21, &s_21_1, 57);
-  Term s_21_4Args = pair_make(APP, 0, s_21_4, SUB);
-  Term Rslt_39 = term_new(VAR, 0, port(2, term_loc(s_21_4Args)));
-  s_21_4Args = pair_make(APP, 0, new_i60(0), s_21_4Args);
-  store_redex(s_21_4Args, accessField);
-  Term s_21_3Args = pair_make(APP, 0, s_21_3, SUB);
-  Term Rslt_37 = term_new(VAR, 0, port(2, term_loc(s_21_3Args)));
-  s_21_3Args = pair_make(APP, 0, new_i60(2), s_21_3Args);
-  store_redex(s_21_3Args, accessField);
-  Term s_21_2Args = pair_make(APP, 0, s_21_2, SUB);
-  Term Rslt_36 = term_new(VAR, 0, port(2, term_loc(s_21_2Args)));
-  s_21_2Args = pair_make(APP, 0, new_i60(1), s_21_2Args);
-  store_redex(s_21_2Args, accessField);
-  Term seq_28 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_28 = port(2, term_loc(seq_28));
-  Term final_len_27 = term_new(VAR, 0, port(1, term_loc(seq_28)));
-  // allocate args at core: 479
+  Term s_21_4Args = makePair(APP, 0, s_21_4, SUB);
+  Term Rslt_39 = newTerm(VAR, 0, portLoc(2, s_21_4Args));
+  s_21_4Args = makePair(APP, 0, newI60(0), s_21_4Args);
+  pushRedex(s_21_4Args, accessField);
+  Term s_21_3Args = makePair(APP, 0, s_21_3, SUB);
+  Term Rslt_37 = newTerm(VAR, 0, portLoc(2, s_21_3Args));
+  s_21_3Args = makePair(APP, 0, newI60(2), s_21_3Args);
+  pushRedex(s_21_3Args, accessField);
+  Term s_21_2Args = makePair(APP, 0, s_21_2, SUB);
+  Term Rslt_36 = newTerm(VAR, 0, portLoc(2, s_21_2Args));
+  s_21_2Args = makePair(APP, 0, newI60(1), s_21_2Args);
+  pushRedex(s_21_2Args, accessField);
+  Term seq_28 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_28 = portLoc(2, seq_28);
+  Term final_len_27 = newTerm(VAR, 0, portLoc(1, seq_28));
+  // allocate args at core: 480
 
   Term final_len_27_1;
   final_len_27 = dupeArg(final_len_27, &final_len_27_1, 0);
-  Term s_21_1Args = pair_make(APP, 0, s_21_1, SUB);
-  Term Rslt_32 = term_new(VAR, 0, port(2, term_loc(s_21_1Args)));
-  s_21_1Args = pair_make(APP, 0, new_i60(1), s_21_1Args);
-  store_redex(s_21_1Args, accessField);
-  Term s_21Args = pair_make(APP, 0, s_21, SUB);
-  Term Rslt_31 = term_new(VAR, 0, port(2, term_loc(s_21Args)));
-  s_21Args = pair_make(APP, 0, new_i60(0), s_21Args);
-  store_redex(s_21Args, accessField);
+  Term s_21_1Args = makePair(APP, 0, s_21_1, SUB);
+  Term Rslt_32 = newTerm(VAR, 0, portLoc(2, s_21_1Args));
+  s_21_1Args = makePair(APP, 0, newI60(1), s_21_1Args);
+  pushRedex(s_21_1Args, accessField);
+  Term s_21Args = makePair(APP, 0, s_21, SUB);
+  Term Rslt_31 = newTerm(VAR, 0, portLoc(2, s_21Args));
+  s_21Args = makePair(APP, 0, newI60(0), s_21Args);
+  pushRedex(s_21Args, accessField);
   Term glblVal334_1;
   glblVal334 = dupeArg(glblVal334, &glblVal334_1, 0);
 
-  // call <= at core: 480
-  Term Rslt_30Args = pair_make(APP, 0, new_i60(0), SUB);
-  Term Rslt_30 = term_new(VAR, 0, port(2, term_loc(Rslt_30Args)));
-  Rslt_30Args = pair_make(APP, 0, final_len_27, Rslt_30Args);
+  // call <= at core: 481
+  Term Rslt_30Args = makePair(APP, 0, newI60(0), SUB);
+  Term Rslt_30 = newTerm(VAR, 0, portLoc(2, Rslt_30Args));
+  Rslt_30Args = makePair(APP, 0, final_len_27, Rslt_30Args);
 #ifdef STRICT
-  store_redex(Rslt_30Args, glblFn213);
+  pushRedex(Rslt_30Args, glblFn213);
 #else
-  swapStore(term_loc(Rslt_30), pair_make(LAZ, 0, Rslt_30Args, glblFn213));
+  swap(termLoc(Rslt_30), makePair(LAZ, 0, Rslt_30Args, glblFn213));
 #endif
 
-  Term Rslt_33 = make_op(OP_ADD, Rslt_32, new_start_22);
-  // call SubString at core: 482
-  Term Rslt_34Args = pair_make(APP, 0, final_len_27_1, SUB);
-  Term Rslt_34 = term_new(VAR, 0, port(2, term_loc(Rslt_34Args)));
-  Rslt_34Args = pair_make(APP, 0, Rslt_33, Rslt_34Args);
-  Rslt_34Args = pair_make(APP, 0, Rslt_31, Rslt_34Args);
+  Term Rslt_33 = makeOp(OP_ADD, Rslt_32, new_start_22);
+  // call SubString at core: 483
+  Term Rslt_34Args = makePair(APP, 0, final_len_27_1, SUB);
+  Term Rslt_34 = newTerm(VAR, 0, portLoc(2, Rslt_34Args));
+  Rslt_34Args = makePair(APP, 0, Rslt_33, Rslt_34Args);
+  Rslt_34Args = makePair(APP, 0, Rslt_31, Rslt_34Args);
 #ifdef STRICT
-  store_redex(Rslt_34Args, glblVal334_1);
+  pushRedex(Rslt_34Args, glblVal334_1);
 #else
-  swapStore(term_loc(Rslt_34), pair_make(LAZ, 0, Rslt_34Args, glblVal334_1));
+  swap(termLoc(Rslt_34), makePair(LAZ, 0, Rslt_34Args, glblVal334_1));
 #endif
 
-  // call cond at core: 480
-  Term Rslt_35Args = pair_make(APP, 0, Rslt_34, SUB);
-  Term Rslt_35 = term_new(VAR, 0, port(2, term_loc(Rslt_35Args)));
-  Rslt_35Args = pair_make(APP, 0, glblStr335, Rslt_35Args);
-  Rslt_35Args = pair_make(APP, 0, Rslt_30, Rslt_35Args);
+  // call cond at core: 481
+  Term Rslt_35Args = makePair(APP, 0, Rslt_34, SUB);
+  Term Rslt_35 = newTerm(VAR, 0, portLoc(2, Rslt_35Args));
+  Rslt_35Args = makePair(APP, 0, glblStr335, Rslt_35Args);
+  Rslt_35Args = makePair(APP, 0, Rslt_30, Rslt_35Args);
 #ifdef STRICT
-  store_redex(Rslt_35Args, new_ref(glblProto31_339));
+  pushRedex(Rslt_35Args, newRef(glblProto31_339));
 #else
-  swapStore(term_loc(Rslt_35),
-            pair_make(LAZ, 0, Rslt_35Args, new_ref(glblProto31_339)));
+  swap(termLoc(Rslt_35),
+       makePair(LAZ, 0, Rslt_35Args, newRef(glblProto31_339)));
 #endif
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_28, Rslt_35);
+  swap(r_seq_28, Rslt_35);
 
-  Term Rslt_35V = get(term_loc(Rslt_35));
-  apps = take(port(1, term_loc(Rslt_35V)));
-  lams = take(port(2, term_loc(Rslt_35V)));
+  Term Rslt_35V = get(termLoc(Rslt_35));
+  apps = take(portLoc(1, Rslt_35V));
+  lams = take(portLoc(2, Rslt_35V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_35), pair_make(LAZ, 0, apps, lams));
-  Term Rslt_38 = make_op(OP_ADD, Rslt_36, Rslt_37);
-  // call count at core: 479
-  Term Rslt_40Args = pair_make(APP, 0, Rslt_39, SUB);
-  Term Rslt_40 = term_new(VAR, 0, port(2, term_loc(Rslt_40Args)));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_35), makePair(LAZ, 0, apps, lams));
+  Term Rslt_38 = makeOp(OP_ADD, Rslt_36, Rslt_37);
+  // call count at core: 480
+  Term Rslt_40Args = makePair(APP, 0, Rslt_39, SUB);
+  Term Rslt_40 = newTerm(VAR, 0, portLoc(2, Rslt_40Args));
 #ifdef STRICT
-  store_redex(Rslt_40Args, new_ref(glblProto61_341));
+  pushRedex(Rslt_40Args, newRef(glblProto61_341));
 #else
-  swapStore(term_loc(Rslt_40),
-            pair_make(LAZ, 0, Rslt_40Args, new_ref(glblProto61_341)));
+  swap(termLoc(Rslt_40),
+       makePair(LAZ, 0, Rslt_40Args, newRef(glblProto61_341)));
 #endif
-  Term Rslt_41 = make_op(OP_SUB, Rslt_38, Rslt_40);
-  // call min at core: 479
-  Term Rslt_42Args = pair_make(APP, 0, Rslt_41, SUB);
-  Term Rslt_42 = term_new(VAR, 0, port(2, term_loc(Rslt_42Args)));
-  Rslt_42Args = pair_make(APP, 0, new_len_23, Rslt_42Args);
+  Term Rslt_41 = makeOp(OP_SUB, Rslt_38, Rslt_40);
+  // call min at core: 480
+  Term Rslt_42Args = makePair(APP, 0, Rslt_41, SUB);
+  Term Rslt_42 = newTerm(VAR, 0, portLoc(2, Rslt_42Args));
+  Rslt_42Args = makePair(APP, 0, new_len_23, Rslt_42Args);
 #ifdef STRICT
-  store_redex(Rslt_42Args, glblFn269);
+  pushRedex(Rslt_42Args, glblFn269);
 #else
-  swapStore(term_loc(Rslt_42), pair_make(LAZ, 0, Rslt_42Args, glblFn269));
+  swap(termLoc(Rslt_42), makePair(LAZ, 0, Rslt_42Args, glblFn269));
 #endif
 
-  // call  at core: 479
-  Term Rslt_43Args = pair_make(APP, 0, Rslt_42, SUB);
-  Term Rslt_43 = term_new(VAR, 0, port(2, term_loc(Rslt_43Args)));
+  // call  at core: 480
+  Term Rslt_43Args = makePair(APP, 0, Rslt_42, SUB);
+  Term Rslt_43 = newTerm(VAR, 0, portLoc(2, Rslt_43Args));
 #ifdef STRICT
-  store_redex(Rslt_43Args, seq_28);
+  pushRedex(Rslt_43Args, seq_28);
 #else
-  swapStore(term_loc(Rslt_43), pair_make(LAZ, 0, Rslt_43Args, seq_28));
+  swap(termLoc(Rslt_43), makePair(LAZ, 0, Rslt_43Args, seq_28));
 #endif
 
   dupLabels[57] = "subs";
   // link args to body
-  swapStore(r_seq_24, Rslt_43);
+  swap(r_seq_24, Rslt_43);
 
-  Term Rslt_43V = get(term_loc(Rslt_43));
-  apps = take(port(1, term_loc(Rslt_43V)));
-  lams = take(port(2, term_loc(Rslt_43V)));
+  Term Rslt_43V = get(termLoc(Rslt_43));
+  apps = take(portLoc(1, Rslt_43V));
+  lams = take(portLoc(2, Rslt_43V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_43), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_24);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_43), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_24);
   return;
 }
-Term glblsubs326 = new_ref(glblsubs325);
+Term glblsubs326 = newRef(glblsubs325);
 Term glblFld329;
 void glblFldFn328(Term ref, Term args) {
-  args = pair_make(APP, 0, new_i60(0), args);
-  store_redex(args, accessField);
+  args = makePair(APP, 0, newI60(0), args);
+  pushRedex(args, accessField);
   return;
 }
-Term glblFld329 = new_ref(glblFldFn328);
+Term glblFld329 = newRef(glblFldFn328);
 Term glblFld331;
 void glblFldFn330(Term ref, Term args) {
-  args = pair_make(APP, 0, new_i60(1), args);
-  store_redex(args, accessField);
+  args = makePair(APP, 0, newI60(1), args);
+  pushRedex(args, accessField);
   return;
 }
-Term glblFld331 = new_ref(glblFldFn330);
+Term glblFld331 = newRef(glblFldFn330);
 Term glblFld333;
 void glblFldFn332(Term ref, Term args) {
-  args = pair_make(APP, 0, new_i60(2), args);
-  store_redex(args, accessField);
+  args = makePair(APP, 0, newI60(2), args);
+  pushRedex(args, accessField);
   return;
 }
-Term glblFld333 = new_ref(glblFldFn332);
+Term glblFld333 = newRef(glblFldFn332);
 Term glblstr_vect351;
 void glblstr_vect350(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_46 = pair_make(LAM, 61, SUB, NUL);
-  Location r_seq_46 = port(2, term_loc(seq_46));
-  Term s_45 = term_new(VAR, 0, port(1, term_loc(seq_46)));
-  // allocate args at core: 485
+  Term seq_46 = makePair(LAM, 61, SUB, NUL);
+  Location r_seq_46 = portLoc(2, seq_46);
+  Term s_45 = newTerm(VAR, 0, portLoc(1, seq_46));
+  // allocate args at core: 486
   Term glblVal131_6;
   glblVal131 = dupeArg(glblVal131, &glblVal131_6, 0);
 
-  // call vect-conj at core: 486
-  Term Rslt_48Args = pair_make(APP, 0, s_45, SUB);
-  Term Rslt_48 = term_new(VAR, 0, port(2, term_loc(Rslt_48Args)));
-  Rslt_48Args = pair_make(APP, 0, glblVal131_6, Rslt_48Args);
+  // call vect-conj at core: 487
+  Term Rslt_48Args = makePair(APP, 0, s_45, SUB);
+  Term Rslt_48 = newTerm(VAR, 0, portLoc(2, Rslt_48Args));
+  Rslt_48Args = makePair(APP, 0, glblVal131_6, Rslt_48Args);
 #ifdef STRICT
-  store_redex(Rslt_48Args, glblFn134);
+  pushRedex(Rslt_48Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_48), pair_make(LAZ, 0, Rslt_48Args, glblFn134));
+  swap(termLoc(Rslt_48), makePair(LAZ, 0, Rslt_48Args, glblFn134));
 #endif
 
   dupLabels[61] = "str-vect";
   // link args to body
-  swapStore(r_seq_46, Rslt_48);
+  swap(r_seq_46, Rslt_48);
 
-  Term Rslt_48V = get(term_loc(Rslt_48));
-  apps = take(port(1, term_loc(Rslt_48V)));
-  lams = take(port(2, term_loc(Rslt_48V)));
+  Term Rslt_48V = get(termLoc(Rslt_48));
+  apps = take(portLoc(1, Rslt_48V));
+  lams = take(portLoc(2, Rslt_48V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_48), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_46);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_48), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_46);
   return;
 }
-Term glblstr_vect351 = new_ref(glblstr_vect350);
+Term glblstr_vect351 = newRef(glblstr_vect350);
 Term glblcount349;
 void glblcount348(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_51 = pair_make(LAM, 60, SUB, NUL);
-  Location r_seq_51 = port(2, term_loc(seq_51));
-  Term s_50 = term_new(VAR, 0, port(1, term_loc(seq_51)));
-  // allocate args at core: 488
-  // call str-count at core: 489
-  Term Rslt_53Args = pair_make(APP, 0, s_50, SUB);
-  Term Rslt_53 = term_new(VAR, 0, port(2, term_loc(Rslt_53Args)));
+  Term seq_51 = makePair(LAM, 60, SUB, NUL);
+  Location r_seq_51 = portLoc(2, seq_51);
+  Term s_50 = newTerm(VAR, 0, portLoc(1, seq_51));
+  // allocate args at core: 489
+  // call str-count at core: 490
+  Term Rslt_53Args = makePair(APP, 0, s_50, SUB);
+  Term Rslt_53 = newTerm(VAR, 0, portLoc(2, Rslt_53Args));
 #ifdef STRICT
-  store_redex(Rslt_53Args, glblFn294);
+  pushRedex(Rslt_53Args, glblFn294);
 #else
-  swapStore(term_loc(Rslt_53), pair_make(LAZ, 0, Rslt_53Args, glblFn294));
+  swap(termLoc(Rslt_53), makePair(LAZ, 0, Rslt_53Args, glblFn294));
 #endif
 
   dupLabels[60] = "count";
   // link args to body
-  swapStore(r_seq_51, Rslt_53);
+  swap(r_seq_51, Rslt_53);
 
-  Term Rslt_53V = get(term_loc(Rslt_53));
-  apps = take(port(1, term_loc(Rslt_53V)));
-  lams = take(port(2, term_loc(Rslt_53V)));
+  Term Rslt_53V = get(termLoc(Rslt_53));
+  apps = take(portLoc(1, Rslt_53V));
+  lams = take(portLoc(2, Rslt_53V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_53), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_51);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_53), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_51);
   return;
 }
-Term glblcount349 = new_ref(glblcount348);
+Term glblcount349 = newRef(glblcount348);
 Term glbl_EQ_347;
 void glbl_EQ_346(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_57 = pair_make(LAM, 59, SUB, NUL);
-  Location r_seq_57 = port(2, term_loc(seq_57));
-  Term y_56 = term_new(VAR, 0, port(1, term_loc(seq_57)));
-  seq_57 = pair_make(LAM, 59, SUB, seq_57);
-  Term x_55 = term_new(VAR, 0, port(1, term_loc(seq_57)));
-  // allocate args at core: 491
+  Term seq_57 = makePair(LAM, 59, SUB, NUL);
+  Location r_seq_57 = portLoc(2, seq_57);
+  Term y_56 = newTerm(VAR, 0, portLoc(1, seq_57));
+  seq_57 = makePair(LAM, 59, SUB, seq_57);
+  Term x_55 = newTerm(VAR, 0, portLoc(1, seq_57));
+  // allocate args at core: 492
 
   Term x_55_1;
   x_55 = dupeArg(x_55, &x_55_1, 59);
-  // call str-count at core: 492
-  Term Rslt_59Args = pair_make(APP, 0, x_55_1, SUB);
-  Term Rslt_59 = term_new(VAR, 0, port(2, term_loc(Rslt_59Args)));
+  // call str-count at core: 493
+  Term Rslt_59Args = makePair(APP, 0, x_55_1, SUB);
+  Term Rslt_59 = newTerm(VAR, 0, portLoc(2, Rslt_59Args));
 #ifdef STRICT
-  store_redex(Rslt_59Args, glblFn294);
+  pushRedex(Rslt_59Args, glblFn294);
 #else
-  swapStore(term_loc(Rslt_59), pair_make(LAZ, 0, Rslt_59Args, glblFn294));
+  swap(termLoc(Rslt_59), makePair(LAZ, 0, Rslt_59Args, glblFn294));
 #endif
 
-  // call str= at core: 492
-  Term Rslt_60Args = pair_make(APP, 0, y_56, SUB);
-  Term Rslt_60 = term_new(VAR, 0, port(2, term_loc(Rslt_60Args)));
-  Rslt_60Args = pair_make(APP, 0, Rslt_59, Rslt_60Args);
-  Rslt_60Args = pair_make(APP, 0, new_i60(0), Rslt_60Args);
-  Rslt_60Args = pair_make(APP, 0, x_55, Rslt_60Args);
+  // call str= at core: 493
+  Term Rslt_60Args = makePair(APP, 0, y_56, SUB);
+  Term Rslt_60 = newTerm(VAR, 0, portLoc(2, Rslt_60Args));
+  Rslt_60Args = makePair(APP, 0, Rslt_59, Rslt_60Args);
+  Rslt_60Args = makePair(APP, 0, newI60(0), Rslt_60Args);
+  Rslt_60Args = makePair(APP, 0, x_55, Rslt_60Args);
 #ifdef STRICT
-  store_redex(Rslt_60Args, glblFn311);
+  pushRedex(Rslt_60Args, glblFn311);
 #else
-  swapStore(term_loc(Rslt_60), pair_make(LAZ, 0, Rslt_60Args, glblFn311));
+  swap(termLoc(Rslt_60), makePair(LAZ, 0, Rslt_60Args, glblFn311));
 #endif
 
   dupLabels[59] = "=";
   // link args to body
-  swapStore(r_seq_57, Rslt_60);
+  swap(r_seq_57, Rslt_60);
 
-  Term Rslt_60V = get(term_loc(Rslt_60));
-  apps = take(port(1, term_loc(Rslt_60V)));
-  lams = take(port(2, term_loc(Rslt_60V)));
+  Term Rslt_60V = get(termLoc(Rslt_60));
+  apps = take(portLoc(1, Rslt_60V));
+  lams = take(portLoc(2, Rslt_60V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_60), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_57);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_60), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_57);
   return;
 }
-Term glbl_EQ_347 = new_ref(glbl_EQ_346);
+Term glbl_EQ_347 = newRef(glbl_EQ_346);
 void glblProto31_356(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(496), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(497), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto31);
   }
 }
@@ -2530,9 +2527,9 @@ void glblProto61_358(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(495), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(496), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
@@ -2540,115 +2537,115 @@ Term glblsubs345;
 void glblsubs344(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_65 = pair_make(LAM, 58, SUB, NUL);
-  Location r_seq_65 = port(2, term_loc(seq_65));
-  Term len_64 = term_new(VAR, 0, port(1, term_loc(seq_65)));
-  seq_65 = pair_make(LAM, 58, SUB, seq_65);
-  Term start_63 = term_new(VAR, 0, port(1, term_loc(seq_65)));
-  seq_65 = pair_make(LAM, 58, SUB, seq_65);
-  Term s_62 = term_new(VAR, 0, port(1, term_loc(seq_65)));
-  // allocate args at core: 494
+  Term seq_65 = makePair(LAM, 58, SUB, NUL);
+  Location r_seq_65 = portLoc(2, seq_65);
+  Term len_64 = newTerm(VAR, 0, portLoc(1, seq_65));
+  seq_65 = makePair(LAM, 58, SUB, seq_65);
+  Term start_63 = newTerm(VAR, 0, portLoc(1, seq_65));
+  seq_65 = makePair(LAM, 58, SUB, seq_65);
+  Term s_62 = newTerm(VAR, 0, portLoc(1, seq_65));
+  // allocate args at core: 495
 
   Term s_62_1;
   s_62 = dupeArg(s_62, &s_62_1, 58);
 
   Term start_63_1;
   start_63 = dupeArg(start_63, &start_63_1, 58);
-  Term seq_69 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_69 = port(2, term_loc(seq_69));
-  Term final_len_68 = term_new(VAR, 0, port(1, term_loc(seq_69)));
-  // allocate args at core: 495
+  Term seq_69 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_69 = portLoc(2, seq_69);
+  Term final_len_68 = newTerm(VAR, 0, portLoc(1, seq_69));
+  // allocate args at core: 496
 
   Term final_len_68_1;
   final_len_68 = dupeArg(final_len_68, &final_len_68_1, 0);
   Term glblVal334_2;
   glblVal334 = dupeArg(glblVal334, &glblVal334_2, 0);
 
-  // call <= at core: 496
-  Term Rslt_71Args = pair_make(APP, 0, new_i60(0), SUB);
-  Term Rslt_71 = term_new(VAR, 0, port(2, term_loc(Rslt_71Args)));
-  Rslt_71Args = pair_make(APP, 0, final_len_68, Rslt_71Args);
+  // call <= at core: 497
+  Term Rslt_71Args = makePair(APP, 0, newI60(0), SUB);
+  Term Rslt_71 = newTerm(VAR, 0, portLoc(2, Rslt_71Args));
+  Rslt_71Args = makePair(APP, 0, final_len_68, Rslt_71Args);
 #ifdef STRICT
-  store_redex(Rslt_71Args, glblFn213);
+  pushRedex(Rslt_71Args, glblFn213);
 #else
-  swapStore(term_loc(Rslt_71), pair_make(LAZ, 0, Rslt_71Args, glblFn213));
+  swap(termLoc(Rslt_71), makePair(LAZ, 0, Rslt_71Args, glblFn213));
 #endif
 
-  // call SubString at core: 498
-  Term Rslt_72Args = pair_make(APP, 0, final_len_68_1, SUB);
-  Term Rslt_72 = term_new(VAR, 0, port(2, term_loc(Rslt_72Args)));
-  Rslt_72Args = pair_make(APP, 0, start_63, Rslt_72Args);
-  Rslt_72Args = pair_make(APP, 0, s_62, Rslt_72Args);
+  // call SubString at core: 499
+  Term Rslt_72Args = makePair(APP, 0, final_len_68_1, SUB);
+  Term Rslt_72 = newTerm(VAR, 0, portLoc(2, Rslt_72Args));
+  Rslt_72Args = makePair(APP, 0, start_63, Rslt_72Args);
+  Rslt_72Args = makePair(APP, 0, s_62, Rslt_72Args);
 #ifdef STRICT
-  store_redex(Rslt_72Args, glblVal334_2);
+  pushRedex(Rslt_72Args, glblVal334_2);
 #else
-  swapStore(term_loc(Rslt_72), pair_make(LAZ, 0, Rslt_72Args, glblVal334_2));
+  swap(termLoc(Rslt_72), makePair(LAZ, 0, Rslt_72Args, glblVal334_2));
 #endif
 
-  // call cond at core: 496
-  Term Rslt_73Args = pair_make(APP, 0, Rslt_72, SUB);
-  Term Rslt_73 = term_new(VAR, 0, port(2, term_loc(Rslt_73Args)));
-  Rslt_73Args = pair_make(APP, 0, glblStr335, Rslt_73Args);
-  Rslt_73Args = pair_make(APP, 0, Rslt_71, Rslt_73Args);
+  // call cond at core: 497
+  Term Rslt_73Args = makePair(APP, 0, Rslt_72, SUB);
+  Term Rslt_73 = newTerm(VAR, 0, portLoc(2, Rslt_73Args));
+  Rslt_73Args = makePair(APP, 0, glblStr335, Rslt_73Args);
+  Rslt_73Args = makePair(APP, 0, Rslt_71, Rslt_73Args);
 #ifdef STRICT
-  store_redex(Rslt_73Args, new_ref(glblProto31_356));
+  pushRedex(Rslt_73Args, newRef(glblProto31_356));
 #else
-  swapStore(term_loc(Rslt_73),
-            pair_make(LAZ, 0, Rslt_73Args, new_ref(glblProto31_356)));
+  swap(termLoc(Rslt_73),
+       makePair(LAZ, 0, Rslt_73Args, newRef(glblProto31_356)));
 #endif
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_69, Rslt_73);
+  swap(r_seq_69, Rslt_73);
 
-  Term Rslt_73V = get(term_loc(Rslt_73));
-  apps = take(port(1, term_loc(Rslt_73V)));
-  lams = take(port(2, term_loc(Rslt_73V)));
+  Term Rslt_73V = get(termLoc(Rslt_73));
+  apps = take(portLoc(1, Rslt_73V));
+  lams = take(portLoc(2, Rslt_73V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_73), pair_make(LAZ, 0, apps, lams));
-  // call count at core: 495
-  Term Rslt_74Args = pair_make(APP, 0, s_62_1, SUB);
-  Term Rslt_74 = term_new(VAR, 0, port(2, term_loc(Rslt_74Args)));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_73), makePair(LAZ, 0, apps, lams));
+  // call count at core: 496
+  Term Rslt_74Args = makePair(APP, 0, s_62_1, SUB);
+  Term Rslt_74 = newTerm(VAR, 0, portLoc(2, Rslt_74Args));
 #ifdef STRICT
-  store_redex(Rslt_74Args, new_ref(glblProto61_358));
+  pushRedex(Rslt_74Args, newRef(glblProto61_358));
 #else
-  swapStore(term_loc(Rslt_74),
-            pair_make(LAZ, 0, Rslt_74Args, new_ref(glblProto61_358)));
+  swap(termLoc(Rslt_74),
+       makePair(LAZ, 0, Rslt_74Args, newRef(glblProto61_358)));
 #endif
-  Term Rslt_75 = make_op(OP_SUB, Rslt_74, start_63_1);
-  // call min at core: 495
-  Term Rslt_76Args = pair_make(APP, 0, len_64, SUB);
-  Term Rslt_76 = term_new(VAR, 0, port(2, term_loc(Rslt_76Args)));
-  Rslt_76Args = pair_make(APP, 0, Rslt_75, Rslt_76Args);
+  Term Rslt_75 = makeOp(OP_SUB, Rslt_74, start_63_1);
+  // call min at core: 496
+  Term Rslt_76Args = makePair(APP, 0, len_64, SUB);
+  Term Rslt_76 = newTerm(VAR, 0, portLoc(2, Rslt_76Args));
+  Rslt_76Args = makePair(APP, 0, Rslt_75, Rslt_76Args);
 #ifdef STRICT
-  store_redex(Rslt_76Args, glblFn269);
+  pushRedex(Rslt_76Args, glblFn269);
 #else
-  swapStore(term_loc(Rslt_76), pair_make(LAZ, 0, Rslt_76Args, glblFn269));
+  swap(termLoc(Rslt_76), makePair(LAZ, 0, Rslt_76Args, glblFn269));
 #endif
 
-  // call  at core: 495
-  Term Rslt_77Args = pair_make(APP, 0, Rslt_76, SUB);
-  Term Rslt_77 = term_new(VAR, 0, port(2, term_loc(Rslt_77Args)));
+  // call  at core: 496
+  Term Rslt_77Args = makePair(APP, 0, Rslt_76, SUB);
+  Term Rslt_77 = newTerm(VAR, 0, portLoc(2, Rslt_77Args));
 #ifdef STRICT
-  store_redex(Rslt_77Args, seq_69);
+  pushRedex(Rslt_77Args, seq_69);
 #else
-  swapStore(term_loc(Rslt_77), pair_make(LAZ, 0, Rslt_77Args, seq_69));
+  swap(termLoc(Rslt_77), makePair(LAZ, 0, Rslt_77Args, seq_69));
 #endif
 
   dupLabels[58] = "subs";
   // link args to body
-  swapStore(r_seq_65, Rslt_77);
+  swap(r_seq_65, Rslt_77);
 
-  Term Rslt_77V = get(term_loc(Rslt_77));
-  apps = take(port(1, term_loc(Rslt_77V)));
-  lams = take(port(2, term_loc(Rslt_77V)));
+  Term Rslt_77V = get(termLoc(Rslt_77));
+  apps = take(portLoc(1, Rslt_77V));
+  lams = take(portLoc(2, Rslt_77V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_77), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_65);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_77), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_65);
   return;
 }
-Term glblsubs345 = new_ref(glblsubs344);
+Term glblsubs345 = newRef(glblsubs344);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -2657,177 +2654,177 @@ struct {
   int64_t len;
   char buffer[7];
 } str7 = {StringBufferType, REFS_STATIC, 0, 0, 6, "String"};
-Term glblStr373 = term_new_(VAL, (Term)&str7);
+Term glblStr373 = newTerm_(VAL, (Term)&str7);
 Term glbltype_name370;
 void glbltype_name369(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_80 = pair_make(LAM, 66, SUB, NUL);
-  Location r_seq_80 = port(2, term_loc(seq_80));
-  Term arg_79 = term_new(VAR, 0, port(1, term_loc(seq_80)));
-  // allocate args at core: 509
-  swapStore(term_loc(arg_79), ERA);
+  Term seq_80 = makePair(LAM, 66, SUB, NUL);
+  Location r_seq_80 = portLoc(2, seq_80);
+  Term arg_79 = newTerm(VAR, 0, portLoc(1, seq_80));
+  // allocate args at core: 510
+  swap(termLoc(arg_79), ERA);
   dupLabels[66] = "type-name";
   // link args to body
-  swapStore(r_seq_80, glblStr373);
+  swap(r_seq_80, glblStr373);
 
   V = get(r_seq_80);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 66, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_80, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_80);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 66, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_80, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_80);
   return;
 }
-Term glbltype_name370 = new_ref(glbltype_name369);
+Term glbltype_name370 = newRef(glbltype_name369);
 Term glbltype_name372;
 void glbltype_name371(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_84 = pair_make(LAM, 67, SUB, NUL);
-  Location r_seq_84 = port(2, term_loc(seq_84));
-  Term arg_83 = term_new(VAR, 0, port(1, term_loc(seq_84)));
-  // allocate args at core: 509
-  swapStore(term_loc(arg_83), ERA);
+  Term seq_84 = makePair(LAM, 67, SUB, NUL);
+  Location r_seq_84 = portLoc(2, seq_84);
+  Term arg_83 = newTerm(VAR, 0, portLoc(1, seq_84));
+  // allocate args at core: 510
+  swap(termLoc(arg_83), ERA);
   dupLabels[67] = "type-name";
   // link args to body
-  swapStore(r_seq_84, glblStr373);
+  swap(r_seq_84, glblStr373);
 
   V = get(r_seq_84);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 67, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_84, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_84);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 67, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_84, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_84);
   return;
 }
-Term glbltype_name372 = new_ref(glbltype_name371);
+Term glbltype_name372 = newRef(glbltype_name371);
 Term glblstr_vect366;
 void glblstr_vect365(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_88 = pair_make(LAM, 64, SUB, NUL);
-  Location r_seq_88 = port(2, term_loc(seq_88));
-  Term s_87 = term_new(VAR, 0, port(1, term_loc(seq_88)));
-  // allocate args at core: 512
+  Term seq_88 = makePair(LAM, 64, SUB, NUL);
+  Location r_seq_88 = portLoc(2, seq_88);
+  Term s_87 = newTerm(VAR, 0, portLoc(1, seq_88));
+  // allocate args at core: 513
   Term glblVal131_7;
   glblVal131 = dupeArg(glblVal131, &glblVal131_7, 0);
 
-  // call vect-conj at core: 513
-  Term Rslt_90Args = pair_make(APP, 0, s_87, SUB);
-  Term Rslt_90 = term_new(VAR, 0, port(2, term_loc(Rslt_90Args)));
-  Rslt_90Args = pair_make(APP, 0, glblVal131_7, Rslt_90Args);
+  // call vect-conj at core: 514
+  Term Rslt_90Args = makePair(APP, 0, s_87, SUB);
+  Term Rslt_90 = newTerm(VAR, 0, portLoc(2, Rslt_90Args));
+  Rslt_90Args = makePair(APP, 0, glblVal131_7, Rslt_90Args);
 #ifdef STRICT
-  store_redex(Rslt_90Args, glblFn134);
+  pushRedex(Rslt_90Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_90), pair_make(LAZ, 0, Rslt_90Args, glblFn134));
+  swap(termLoc(Rslt_90), makePair(LAZ, 0, Rslt_90Args, glblFn134));
 #endif
 
   dupLabels[64] = "str-vect";
   // link args to body
-  swapStore(r_seq_88, Rslt_90);
+  swap(r_seq_88, Rslt_90);
 
-  Term Rslt_90V = get(term_loc(Rslt_90));
-  apps = take(port(1, term_loc(Rslt_90V)));
-  lams = take(port(2, term_loc(Rslt_90V)));
+  Term Rslt_90V = get(termLoc(Rslt_90));
+  apps = take(portLoc(1, Rslt_90V));
+  lams = take(portLoc(2, Rslt_90V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_90), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_88);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_90), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_88);
   return;
 }
-Term glblstr_vect366 = new_ref(glblstr_vect365);
+Term glblstr_vect366 = newRef(glblstr_vect365);
 Term glblstr_vect368;
 void glblstr_vect367(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_93 = pair_make(LAM, 65, SUB, NUL);
-  Location r_seq_93 = port(2, term_loc(seq_93));
-  Term s_92 = term_new(VAR, 0, port(1, term_loc(seq_93)));
-  // allocate args at core: 512
+  Term seq_93 = makePair(LAM, 65, SUB, NUL);
+  Location r_seq_93 = portLoc(2, seq_93);
+  Term s_92 = newTerm(VAR, 0, portLoc(1, seq_93));
+  // allocate args at core: 513
   Term glblVal131_8;
   glblVal131 = dupeArg(glblVal131, &glblVal131_8, 0);
 
-  // call vect-conj at core: 513
-  Term Rslt_95Args = pair_make(APP, 0, s_92, SUB);
-  Term Rslt_95 = term_new(VAR, 0, port(2, term_loc(Rslt_95Args)));
-  Rslt_95Args = pair_make(APP, 0, glblVal131_8, Rslt_95Args);
+  // call vect-conj at core: 514
+  Term Rslt_95Args = makePair(APP, 0, s_92, SUB);
+  Term Rslt_95 = newTerm(VAR, 0, portLoc(2, Rslt_95Args));
+  Rslt_95Args = makePair(APP, 0, glblVal131_8, Rslt_95Args);
 #ifdef STRICT
-  store_redex(Rslt_95Args, glblFn134);
+  pushRedex(Rslt_95Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_95), pair_make(LAZ, 0, Rslt_95Args, glblFn134));
+  swap(termLoc(Rslt_95), makePair(LAZ, 0, Rslt_95Args, glblFn134));
 #endif
 
   dupLabels[65] = "str-vect";
   // link args to body
-  swapStore(r_seq_93, Rslt_95);
+  swap(r_seq_93, Rslt_95);
 
-  Term Rslt_95V = get(term_loc(Rslt_95));
-  apps = take(port(1, term_loc(Rslt_95V)));
-  lams = take(port(2, term_loc(Rslt_95V)));
+  Term Rslt_95V = get(termLoc(Rslt_95));
+  apps = take(portLoc(1, Rslt_95V));
+  lams = take(portLoc(2, Rslt_95V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_95), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_93);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_95), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_93);
   return;
 }
-Term glblstr_vect368 = new_ref(glblstr_vect367);
+Term glblstr_vect368 = newRef(glblstr_vect367);
 Term glblrecurse362;
 void glblrecurse361(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_99 = pair_make(LAM, 62, SUB, NUL);
-  Location r_seq_99 = port(2, term_loc(seq_99));
-  Term f_98 = term_new(VAR, 0, port(1, term_loc(seq_99)));
-  seq_99 = pair_make(LAM, 62, SUB, seq_99);
-  Term s_97 = term_new(VAR, 0, port(1, term_loc(seq_99)));
-  // allocate args at core: 515
-  swapStore(term_loc(f_98), ERA);
+  Term seq_99 = makePair(LAM, 62, SUB, NUL);
+  Location r_seq_99 = portLoc(2, seq_99);
+  Term f_98 = newTerm(VAR, 0, portLoc(1, seq_99));
+  seq_99 = makePair(LAM, 62, SUB, seq_99);
+  Term s_97 = newTerm(VAR, 0, portLoc(1, seq_99));
+  // allocate args at core: 516
+  swap(termLoc(f_98), ERA);
   dupLabels[62] = "recurse";
   // link args to body
-  swapStore(r_seq_99, s_97);
+  swap(r_seq_99, s_97);
 
   V = get(r_seq_99);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 62, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_99, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_99);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 62, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_99, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_99);
   return;
 }
-Term glblrecurse362 = new_ref(glblrecurse361);
+Term glblrecurse362 = newRef(glblrecurse361);
 Term glblrecurse364;
 void glblrecurse363(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_104 = pair_make(LAM, 63, SUB, NUL);
-  Location r_seq_104 = port(2, term_loc(seq_104));
-  Term f_103 = term_new(VAR, 0, port(1, term_loc(seq_104)));
-  seq_104 = pair_make(LAM, 63, SUB, seq_104);
-  Term s_102 = term_new(VAR, 0, port(1, term_loc(seq_104)));
-  // allocate args at core: 515
-  swapStore(term_loc(f_103), ERA);
+  Term seq_104 = makePair(LAM, 63, SUB, NUL);
+  Location r_seq_104 = portLoc(2, seq_104);
+  Term f_103 = newTerm(VAR, 0, portLoc(1, seq_104));
+  seq_104 = makePair(LAM, 63, SUB, seq_104);
+  Term s_102 = newTerm(VAR, 0, portLoc(1, seq_104));
+  // allocate args at core: 516
+  swap(termLoc(f_103), ERA);
   dupLabels[63] = "recurse";
   // link args to body
-  swapStore(r_seq_104, s_102);
+  swap(r_seq_104, s_102);
 
   V = get(r_seq_104);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 63, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_104, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_104);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 63, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_104, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_104);
   return;
 }
-Term glblrecurse364 = new_ref(glblrecurse363);
+Term glblrecurse364 = newRef(glblrecurse363);
 Term glblFn376;
 void glblCFn375(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -2837,29 +2834,29 @@ void glblCFn375(Term ref, Term args) {
     Term v_1 = arityArgs.args[0];
     Term n_2 = arityArgs.args[1];
 
-    result = term_val((Term)vectorGet(v_1, n_2));
-    moveStore(port(2, term_loc(args)), result);
+    result = termVal((Term)vectorGet(v_1, n_2));
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn376 = new_ref(glblCFn375);
-void glblProto21_386(Term ref, Term args) {
+Term glblFn376 = newRef(glblCFn375);
+void glblProto15_386(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(619), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto21);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(620), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto15);
   }
 }
 void glblProto65_388(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(621), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(622), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto65);
   }
 }
@@ -2867,9 +2864,9 @@ void glblProto31_390(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(619), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(620), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto31);
   }
 }
@@ -2877,14 +2874,14 @@ Term glblFn385;
 void glblCFn384(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_4 = pair_make(LAM, 69, SUB, NUL);
-  Location r_seq_4 = port(2, term_loc(seq_4));
-  Term x_3 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  seq_4 = pair_make(LAM, 69, SUB, seq_4);
-  Term n_2 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  seq_4 = pair_make(LAM, 69, SUB, seq_4);
-  Term v_1 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  // allocate args at core: 614
+  Term seq_4 = makePair(LAM, 69, SUB, NUL);
+  Location r_seq_4 = portLoc(2, seq_4);
+  Term x_3 = newTerm(VAR, 0, portLoc(1, seq_4));
+  seq_4 = makePair(LAM, 69, SUB, seq_4);
+  Term n_2 = newTerm(VAR, 0, portLoc(1, seq_4));
+  seq_4 = makePair(LAM, 69, SUB, seq_4);
+  Term v_1 = newTerm(VAR, 0, portLoc(1, seq_4));
+  // allocate args at core: 615
 
   Term v_1_1;
   v_1 = dupeArg(v_1, &v_1_1, 69);
@@ -2897,170 +2894,168 @@ void glblCFn384(Term ref, Term args) {
 
   Term x_3_1;
   x_3 = dupeArg(x_3, &x_3_1, 69);
-  // call = at core: 619
-  Term Rslt_6Args = pair_make(APP, 0, x_3, SUB);
-  Term Rslt_6 = term_new(VAR, 0, port(2, term_loc(Rslt_6Args)));
-  Rslt_6Args = pair_make(APP, 0, n_2, Rslt_6Args);
+  // call = at core: 620
+  Term Rslt_6Args = makePair(APP, 0, x_3, SUB);
+  Term Rslt_6 = newTerm(VAR, 0, portLoc(2, Rslt_6Args));
+  Rslt_6Args = makePair(APP, 0, n_2, Rslt_6Args);
 #ifdef STRICT
-  store_redex(Rslt_6Args, new_ref(glblProto21_386));
+  pushRedex(Rslt_6Args, newRef(glblProto15_386));
 #else
-  swapStore(term_loc(Rslt_6),
-            pair_make(LAZ, 0, Rslt_6Args, new_ref(glblProto21_386)));
+  swap(termLoc(Rslt_6), makePair(LAZ, 0, Rslt_6Args, newRef(glblProto15_386)));
 #endif
-  // call conj at core: 621
-  Term Rslt_7Args = pair_make(APP, 0, x_3_1, SUB);
-  Term Rslt_7 = term_new(VAR, 0, port(2, term_loc(Rslt_7Args)));
-  Rslt_7Args = pair_make(APP, 0, v_1_1, Rslt_7Args);
+  // call conj at core: 622
+  Term Rslt_7Args = makePair(APP, 0, x_3_1, SUB);
+  Term Rslt_7 = newTerm(VAR, 0, portLoc(2, Rslt_7Args));
+  Rslt_7Args = makePair(APP, 0, v_1_1, Rslt_7Args);
 #ifdef STRICT
-  store_redex(Rslt_7Args, new_ref(glblProto65_388));
+  pushRedex(Rslt_7Args, newRef(glblProto65_388));
 #else
-  swapStore(term_loc(Rslt_7),
-            pair_make(LAZ, 0, Rslt_7Args, new_ref(glblProto65_388)));
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, Rslt_7Args, newRef(glblProto65_388)));
 #endif
-  // call inc at core: 621
-  Term Rslt_8Args = pair_make(APP, 0, x_3_2, SUB);
-  Term Rslt_8 = term_new(VAR, 0, port(2, term_loc(Rslt_8Args)));
+  // call inc at core: 622
+  Term Rslt_8Args = makePair(APP, 0, x_3_2, SUB);
+  Term Rslt_8 = newTerm(VAR, 0, portLoc(2, Rslt_8Args));
 #ifdef STRICT
-  store_redex(Rslt_8Args, glblFn121);
+  pushRedex(Rslt_8Args, glblFn120);
 #else
-  swapStore(term_loc(Rslt_8), pair_make(LAZ, 0, Rslt_8Args, glblFn121));
+  swap(termLoc(Rslt_8), makePair(LAZ, 0, Rslt_8Args, glblFn120));
 #endif
 
-  // call range* at core: 614
-  Term Rslt_9Args = pair_make(APP, 0, Rslt_8, SUB);
-  Term Rslt_9 = term_new(VAR, 0, port(2, term_loc(Rslt_9Args)));
-  Rslt_9Args = pair_make(APP, 0, n_2_1, Rslt_9Args);
-  Rslt_9Args = pair_make(APP, 0, Rslt_7, Rslt_9Args);
+  // call range* at core: 615
+  Term Rslt_9Args = makePair(APP, 0, Rslt_8, SUB);
+  Term Rslt_9 = newTerm(VAR, 0, portLoc(2, Rslt_9Args));
+  Rslt_9Args = makePair(APP, 0, n_2_1, Rslt_9Args);
+  Rslt_9Args = makePair(APP, 0, Rslt_7, Rslt_9Args);
 #ifdef STRICT
-  store_redex(Rslt_9Args, glblFn385);
+  pushRedex(Rslt_9Args, glblFn385);
 #else
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, Rslt_9Args, glblFn385));
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, Rslt_9Args, glblFn385));
 #endif
 
-  // call cond at core: 619
-  Term Rslt_10Args = pair_make(APP, 0, Rslt_9, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
-  Rslt_10Args = pair_make(APP, 0, v_1, Rslt_10Args);
-  Rslt_10Args = pair_make(APP, 0, Rslt_6, Rslt_10Args);
+  // call cond at core: 620
+  Term Rslt_10Args = makePair(APP, 0, Rslt_9, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
+  Rslt_10Args = makePair(APP, 0, v_1, Rslt_10Args);
+  Rslt_10Args = makePair(APP, 0, Rslt_6, Rslt_10Args);
 #ifdef STRICT
-  store_redex(Rslt_10Args, new_ref(glblProto31_390));
+  pushRedex(Rslt_10Args, newRef(glblProto31_390));
 #else
-  swapStore(term_loc(Rslt_10),
-            pair_make(LAZ, 0, Rslt_10Args, new_ref(glblProto31_390)));
+  swap(termLoc(Rslt_10),
+       makePair(LAZ, 0, Rslt_10Args, newRef(glblProto31_390)));
 #endif
   dupLabels[69] = "";
   // link args to body
-  swapStore(r_seq_4, Rslt_10);
+  swap(r_seq_4, Rslt_10);
 
-  Term Rslt_10V = get(term_loc(Rslt_10));
-  apps = take(port(1, term_loc(Rslt_10V)));
-  lams = take(port(2, term_loc(Rslt_10V)));
+  Term Rslt_10V = get(termLoc(Rslt_10));
+  apps = take(portLoc(1, Rslt_10V));
+  lams = take(portLoc(2, Rslt_10V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_10), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_4);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_10), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_4);
   return;
 }
-Term glblFn385 = new_ref(glblCFn384);
+Term glblFn385 = newRef(glblCFn384);
 Term glblFn394;
 void glblCFn393(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 70, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term n_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 623
+  Term seq_2 = makePair(LAM, 70, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term n_1 = newTerm(VAR, 0, portLoc(1, seq_2));
+  // allocate args at core: 624
   Term glblVal131_9;
   glblVal131 = dupeArg(glblVal131, &glblVal131_9, 0);
 
-  // call range* at core: 626
-  Term Rslt_4Args = pair_make(APP, 0, new_i60(0), SUB);
-  Term Rslt_4 = term_new(VAR, 0, port(2, term_loc(Rslt_4Args)));
-  Rslt_4Args = pair_make(APP, 0, n_1, Rslt_4Args);
-  Rslt_4Args = pair_make(APP, 0, glblVal131_9, Rslt_4Args);
+  // call range* at core: 627
+  Term Rslt_4Args = makePair(APP, 0, newI60(0), SUB);
+  Term Rslt_4 = newTerm(VAR, 0, portLoc(2, Rslt_4Args));
+  Rslt_4Args = makePair(APP, 0, n_1, Rslt_4Args);
+  Rslt_4Args = makePair(APP, 0, glblVal131_9, Rslt_4Args);
 #ifdef STRICT
-  store_redex(Rslt_4Args, glblFn385);
+  pushRedex(Rslt_4Args, glblFn385);
 #else
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, Rslt_4Args, glblFn385));
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, Rslt_4Args, glblFn385));
 #endif
 
   dupLabels[70] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_4);
+  swap(r_seq_2, Rslt_4);
 
-  Term Rslt_4V = get(term_loc(Rslt_4));
-  apps = take(port(1, term_loc(Rslt_4V)));
-  lams = take(port(2, term_loc(Rslt_4V)));
+  Term Rslt_4V = get(termLoc(Rslt_4));
+  apps = take(portLoc(1, Rslt_4V));
+  lams = take(portLoc(2, Rslt_4V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn394 = new_ref(glblCFn393);
+Term glblFn394 = newRef(glblCFn393);
 Term glblProto396;
 Term glblvect_reduce399;
 void glblvect_reduce398(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_13 = pair_make(LAM, 71, SUB, NUL);
-  Location r_seq_13 = port(2, term_loc(seq_13));
-  Term f_12 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 71, SUB, seq_13);
-  Term result_11 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 71, SUB, seq_13);
-  Term n_10 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 71, SUB, seq_13);
-  Term vect_9 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 71, SUB, seq_13);
-  Term el_8 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  // allocate args at core: 637
-  swapStore(term_loc(el_8), ERA);
-  swapStore(term_loc(vect_9), ERA);
-  swapStore(term_loc(n_10), ERA);
-  swapStore(term_loc(f_12), ERA);
+  Term seq_13 = makePair(LAM, 71, SUB, NUL);
+  Location r_seq_13 = portLoc(2, seq_13);
+  Term f_12 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 71, SUB, seq_13);
+  Term result_11 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 71, SUB, seq_13);
+  Term n_10 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 71, SUB, seq_13);
+  Term vect_9 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 71, SUB, seq_13);
+  Term el_8 = newTerm(VAR, 0, portLoc(1, seq_13));
+  // allocate args at core: 638
+  swap(termLoc(el_8), ERA);
+  swap(termLoc(vect_9), ERA);
+  swap(termLoc(n_10), ERA);
+  swap(termLoc(f_12), ERA);
   dupLabels[71] = "vect-reduce";
   // link args to body
-  swapStore(r_seq_13, result_11);
+  swap(r_seq_13, result_11);
 
   V = get(r_seq_13);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 71, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_13, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_13);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 71, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_13, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_13);
   return;
 }
-Term glblvect_reduce399 = new_ref(glblvect_reduce398);
+Term glblvect_reduce399 = newRef(glblvect_reduce398);
 void glblProto101_405(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(641), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(642), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto101);
   }
 }
-void glblProto15_407(Term ref, Term args) {
+void glblProto16_407(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(641), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(642), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 void glblProto396_409(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(641), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(642), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto396);
   }
 }
@@ -3068,18 +3063,18 @@ Term glblvect_reduce402;
 void glblvect_reduce401(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_21 = pair_make(LAM, 72, SUB, NUL);
-  Location r_seq_21 = port(2, term_loc(seq_21));
-  Term f_20 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 72, SUB, seq_21);
-  Term result_19 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 72, SUB, seq_21);
-  Term n_18 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 72, SUB, seq_21);
-  Term vect_17 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 72, SUB, seq_21);
-  Term el_16 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  // allocate args at core: 640
+  Term seq_21 = makePair(LAM, 72, SUB, NUL);
+  Location r_seq_21 = portLoc(2, seq_21);
+  Term f_20 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 72, SUB, seq_21);
+  Term result_19 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 72, SUB, seq_21);
+  Term n_18 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 72, SUB, seq_21);
+  Term vect_17 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 72, SUB, seq_21);
+  Term el_16 = newTerm(VAR, 0, portLoc(1, seq_21));
+  // allocate args at core: 641
 
   Term vect_17_1;
   vect_17 = dupeArg(vect_17, &vect_17_1, 72);
@@ -3089,111 +3084,111 @@ void glblvect_reduce401(Term ref, Term args) {
 
   Term f_20_1;
   f_20 = dupeArg(f_20, &f_20_1, 72);
-  // call get at core: 641
-  Term Rslt_23Args = pair_make(APP, 0, n_18, SUB);
-  Term Rslt_23 = term_new(VAR, 0, port(2, term_loc(Rslt_23Args)));
-  Rslt_23Args = pair_make(APP, 0, vect_17, Rslt_23Args);
+  // call get at core: 642
+  Term Rslt_23Args = makePair(APP, 0, n_18, SUB);
+  Term Rslt_23 = newTerm(VAR, 0, portLoc(2, Rslt_23Args));
+  Rslt_23Args = makePair(APP, 0, vect_17, Rslt_23Args);
 #ifdef STRICT
-  store_redex(Rslt_23Args, new_ref(glblProto101_405));
+  pushRedex(Rslt_23Args, newRef(glblProto101_405));
 #else
-  swapStore(term_loc(Rslt_23),
-            pair_make(LAZ, 0, Rslt_23Args, new_ref(glblProto101_405)));
+  swap(termLoc(Rslt_23),
+       makePair(LAZ, 0, Rslt_23Args, newRef(glblProto101_405)));
 #endif
-  // call inc at core: 641
-  Term Rslt_24Args = pair_make(APP, 0, n_18_1, SUB);
-  Term Rslt_24 = term_new(VAR, 0, port(2, term_loc(Rslt_24Args)));
+  // call inc at core: 642
+  Term Rslt_24Args = makePair(APP, 0, n_18_1, SUB);
+  Term Rslt_24 = newTerm(VAR, 0, portLoc(2, Rslt_24Args));
 #ifdef STRICT
-  store_redex(Rslt_24Args, glblFn121);
+  pushRedex(Rslt_24Args, glblFn120);
 #else
-  swapStore(term_loc(Rslt_24), pair_make(LAZ, 0, Rslt_24Args, glblFn121));
-#endif
-
-  // call .x at core: 641
-  Term Rslt_25Args = pair_make(APP, 0, el_16, SUB);
-  Term Rslt_25 = term_new(VAR, 0, port(2, term_loc(Rslt_25Args)));
-#ifdef STRICT
-  store_redex(Rslt_25Args, new_ref(glblProto15_407));
-#else
-  swapStore(term_loc(Rslt_25),
-            pair_make(LAZ, 0, Rslt_25Args, new_ref(glblProto15_407)));
-#endif
-  // call f at core: 640
-  Term Rslt_26Args = pair_make(APP, 0, Rslt_25, SUB);
-  Term Rslt_26 = term_new(VAR, 0, port(2, term_loc(Rslt_26Args)));
-  Rslt_26Args = pair_make(APP, 0, result_19, Rslt_26Args);
-#ifdef STRICT
-  store_redex(Rslt_26Args, f_20);
-#else
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, Rslt_26Args, f_20));
+  swap(termLoc(Rslt_24), makePair(LAZ, 0, Rslt_24Args, glblFn120));
 #endif
 
-  // call vect-reduce at core: 641
-  Term Rslt_27Args = pair_make(APP, 0, f_20_1, SUB);
-  Term Rslt_27 = term_new(VAR, 0, port(2, term_loc(Rslt_27Args)));
-  Rslt_27Args = pair_make(APP, 0, Rslt_26, Rslt_27Args);
-  Rslt_27Args = pair_make(APP, 0, Rslt_24, Rslt_27Args);
-  Rslt_27Args = pair_make(APP, 0, vect_17_1, Rslt_27Args);
-  Rslt_27Args = pair_make(APP, 0, Rslt_23, Rslt_27Args);
+  // call .x at core: 642
+  Term Rslt_25Args = makePair(APP, 0, el_16, SUB);
+  Term Rslt_25 = newTerm(VAR, 0, portLoc(2, Rslt_25Args));
 #ifdef STRICT
-  store_redex(Rslt_27Args, new_ref(glblProto396_409));
+  pushRedex(Rslt_25Args, newRef(glblProto16_407));
 #else
-  swapStore(term_loc(Rslt_27),
-            pair_make(LAZ, 0, Rslt_27Args, new_ref(glblProto396_409)));
+  swap(termLoc(Rslt_25),
+       makePair(LAZ, 0, Rslt_25Args, newRef(glblProto16_407)));
+#endif
+  // call f at core: 641
+  Term Rslt_26Args = makePair(APP, 0, Rslt_25, SUB);
+  Term Rslt_26 = newTerm(VAR, 0, portLoc(2, Rslt_26Args));
+  Rslt_26Args = makePair(APP, 0, result_19, Rslt_26Args);
+#ifdef STRICT
+  pushRedex(Rslt_26Args, f_20);
+#else
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, Rslt_26Args, f_20));
+#endif
+
+  // call vect-reduce at core: 642
+  Term Rslt_27Args = makePair(APP, 0, f_20_1, SUB);
+  Term Rslt_27 = newTerm(VAR, 0, portLoc(2, Rslt_27Args));
+  Rslt_27Args = makePair(APP, 0, Rslt_26, Rslt_27Args);
+  Rslt_27Args = makePair(APP, 0, Rslt_24, Rslt_27Args);
+  Rslt_27Args = makePair(APP, 0, vect_17_1, Rslt_27Args);
+  Rslt_27Args = makePair(APP, 0, Rslt_23, Rslt_27Args);
+#ifdef STRICT
+  pushRedex(Rslt_27Args, newRef(glblProto396_409));
+#else
+  swap(termLoc(Rslt_27),
+       makePair(LAZ, 0, Rslt_27Args, newRef(glblProto396_409)));
 #endif
   dupLabels[72] = "vect-reduce";
   // link args to body
-  swapStore(r_seq_21, Rslt_27);
+  swap(r_seq_21, Rslt_27);
 
-  Term Rslt_27V = get(term_loc(Rslt_27));
-  apps = take(port(1, term_loc(Rslt_27V)));
-  lams = take(port(2, term_loc(Rslt_27V)));
+  Term Rslt_27V = get(termLoc(Rslt_27));
+  apps = take(portLoc(1, Rslt_27V));
+  lams = take(portLoc(2, Rslt_27V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_27), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_21);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_27), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_21);
   return;
 }
-Term glblvect_reduce402 = new_ref(glblvect_reduce401);
+Term glblvect_reduce402 = newRef(glblvect_reduce401);
 Term glblProto403;
 Term glblvect_reverse413;
 void glblvect_reverse412(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_11 = pair_make(LAM, 73, SUB, NUL);
-  Location r_seq_11 = port(2, term_loc(seq_11));
-  Term result_10 = term_new(VAR, 0, port(1, term_loc(seq_11)));
-  seq_11 = pair_make(LAM, 73, SUB, seq_11);
-  Term n_9 = term_new(VAR, 0, port(1, term_loc(seq_11)));
-  seq_11 = pair_make(LAM, 73, SUB, seq_11);
-  Term vect_8 = term_new(VAR, 0, port(1, term_loc(seq_11)));
-  seq_11 = pair_make(LAM, 73, SUB, seq_11);
-  Term el_7 = term_new(VAR, 0, port(1, term_loc(seq_11)));
-  // allocate args at core: 651
-  swapStore(term_loc(el_7), ERA);
-  swapStore(term_loc(vect_8), ERA);
-  swapStore(term_loc(n_9), ERA);
+  Term seq_11 = makePair(LAM, 73, SUB, NUL);
+  Location r_seq_11 = portLoc(2, seq_11);
+  Term result_10 = newTerm(VAR, 0, portLoc(1, seq_11));
+  seq_11 = makePair(LAM, 73, SUB, seq_11);
+  Term n_9 = newTerm(VAR, 0, portLoc(1, seq_11));
+  seq_11 = makePair(LAM, 73, SUB, seq_11);
+  Term vect_8 = newTerm(VAR, 0, portLoc(1, seq_11));
+  seq_11 = makePair(LAM, 73, SUB, seq_11);
+  Term el_7 = newTerm(VAR, 0, portLoc(1, seq_11));
+  // allocate args at core: 652
+  swap(termLoc(el_7), ERA);
+  swap(termLoc(vect_8), ERA);
+  swap(termLoc(n_9), ERA);
   dupLabels[73] = "vect-reverse";
   // link args to body
-  swapStore(r_seq_11, result_10);
+  swap(r_seq_11, result_10);
 
   V = get(r_seq_11);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 73, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_11, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_11);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 73, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_11, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_11);
   return;
 }
-Term glblvect_reverse413 = new_ref(glblvect_reverse412);
+Term glblvect_reverse413 = newRef(glblvect_reverse412);
 void glblProto101_419(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(655), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(656), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto101);
   }
 }
@@ -3201,29 +3196,29 @@ void glblProto25_421(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(655), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(656), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto25);
   }
 }
-void glblProto15_423(Term ref, Term args) {
+void glblProto16_423(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(656), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(657), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 void glblProto65_425(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(656), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(657), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto65);
   }
 }
@@ -3231,9 +3226,9 @@ void glblProto403_427(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(655), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(656), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto403);
   }
 }
@@ -3241,16 +3236,16 @@ Term glblvect_reverse416;
 void glblvect_reverse415(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_18 = pair_make(LAM, 74, SUB, NUL);
-  Location r_seq_18 = port(2, term_loc(seq_18));
-  Term result_17 = term_new(VAR, 0, port(1, term_loc(seq_18)));
-  seq_18 = pair_make(LAM, 74, SUB, seq_18);
-  Term n_16 = term_new(VAR, 0, port(1, term_loc(seq_18)));
-  seq_18 = pair_make(LAM, 74, SUB, seq_18);
-  Term vect_15 = term_new(VAR, 0, port(1, term_loc(seq_18)));
-  seq_18 = pair_make(LAM, 74, SUB, seq_18);
-  Term el_14 = term_new(VAR, 0, port(1, term_loc(seq_18)));
-  // allocate args at core: 654
+  Term seq_18 = makePair(LAM, 74, SUB, NUL);
+  Location r_seq_18 = portLoc(2, seq_18);
+  Term result_17 = newTerm(VAR, 0, portLoc(1, seq_18));
+  seq_18 = makePair(LAM, 74, SUB, seq_18);
+  Term n_16 = newTerm(VAR, 0, portLoc(1, seq_18));
+  seq_18 = makePair(LAM, 74, SUB, seq_18);
+  Term vect_15 = newTerm(VAR, 0, portLoc(1, seq_18));
+  seq_18 = makePair(LAM, 74, SUB, seq_18);
+  Term el_14 = newTerm(VAR, 0, portLoc(1, seq_18));
+  // allocate args at core: 655
 
   Term vect_15_1;
   vect_15 = dupeArg(vect_15, &vect_15_1, 74);
@@ -3260,133 +3255,133 @@ void glblvect_reverse415(Term ref, Term args) {
 
   Term n_16_1;
   n_16 = dupeArg(n_16, &n_16_1, 74);
-  // call <= at core: 655
-  Term Rslt_20Args = pair_make(APP, 0, n_16, SUB);
-  Term Rslt_20 = term_new(VAR, 0, port(2, term_loc(Rslt_20Args)));
-  Rslt_20Args = pair_make(APP, 0, new_i60(0), Rslt_20Args);
+  // call <= at core: 656
+  Term Rslt_20Args = makePair(APP, 0, n_16, SUB);
+  Term Rslt_20 = newTerm(VAR, 0, portLoc(2, Rslt_20Args));
+  Rslt_20Args = makePair(APP, 0, newI60(0), Rslt_20Args);
 #ifdef STRICT
-  store_redex(Rslt_20Args, glblFn213);
+  pushRedex(Rslt_20Args, glblFn213);
 #else
-  swapStore(term_loc(Rslt_20), pair_make(LAZ, 0, Rslt_20Args, glblFn213));
+  swap(termLoc(Rslt_20), makePair(LAZ, 0, Rslt_20Args, glblFn213));
 #endif
 
-  // call get at core: 655
-  Term Rslt_21Args = pair_make(APP, 0, n_16_1, SUB);
-  Term Rslt_21 = term_new(VAR, 0, port(2, term_loc(Rslt_21Args)));
-  Rslt_21Args = pair_make(APP, 0, vect_15, Rslt_21Args);
+  // call get at core: 656
+  Term Rslt_21Args = makePair(APP, 0, n_16_1, SUB);
+  Term Rslt_21 = newTerm(VAR, 0, portLoc(2, Rslt_21Args));
+  Rslt_21Args = makePair(APP, 0, vect_15, Rslt_21Args);
 #ifdef STRICT
-  store_redex(Rslt_21Args, new_ref(glblProto101_419));
+  pushRedex(Rslt_21Args, newRef(glblProto101_419));
 #else
-  swapStore(term_loc(Rslt_21),
-            pair_make(LAZ, 0, Rslt_21Args, new_ref(glblProto101_419)));
+  swap(termLoc(Rslt_21),
+       makePair(LAZ, 0, Rslt_21Args, newRef(glblProto101_419)));
 #endif
-  // call and at core: 655
-  Term Rslt_22Args = pair_make(APP, 0, Rslt_21, SUB);
-  Term Rslt_22 = term_new(VAR, 0, port(2, term_loc(Rslt_22Args)));
-  Rslt_22Args = pair_make(APP, 0, Rslt_20, Rslt_22Args);
+  // call and at core: 656
+  Term Rslt_22Args = makePair(APP, 0, Rslt_21, SUB);
+  Term Rslt_22 = newTerm(VAR, 0, portLoc(2, Rslt_22Args));
+  Rslt_22Args = makePair(APP, 0, Rslt_20, Rslt_22Args);
 #ifdef STRICT
-  store_redex(Rslt_22Args, new_ref(glblProto25_421));
+  pushRedex(Rslt_22Args, newRef(glblProto25_421));
 #else
-  swapStore(term_loc(Rslt_22),
-            pair_make(LAZ, 0, Rslt_22Args, new_ref(glblProto25_421)));
+  swap(termLoc(Rslt_22),
+       makePair(LAZ, 0, Rslt_22Args, newRef(glblProto25_421)));
 #endif
-  // call dec at core: 656
-  Term Rslt_23Args = pair_make(APP, 0, n_16_2, SUB);
-  Term Rslt_23 = term_new(VAR, 0, port(2, term_loc(Rslt_23Args)));
+  // call dec at core: 657
+  Term Rslt_23Args = makePair(APP, 0, n_16_2, SUB);
+  Term Rslt_23 = newTerm(VAR, 0, portLoc(2, Rslt_23Args));
 #ifdef STRICT
-  store_redex(Rslt_23Args, glblFn127);
+  pushRedex(Rslt_23Args, glblFn127);
 #else
-  swapStore(term_loc(Rslt_23), pair_make(LAZ, 0, Rslt_23Args, glblFn127));
+  swap(termLoc(Rslt_23), makePair(LAZ, 0, Rslt_23Args, glblFn127));
 #endif
 
-  // call .x at core: 656
-  Term Rslt_24Args = pair_make(APP, 0, el_14, SUB);
-  Term Rslt_24 = term_new(VAR, 0, port(2, term_loc(Rslt_24Args)));
+  // call .x at core: 657
+  Term Rslt_24Args = makePair(APP, 0, el_14, SUB);
+  Term Rslt_24 = newTerm(VAR, 0, portLoc(2, Rslt_24Args));
 #ifdef STRICT
-  store_redex(Rslt_24Args, new_ref(glblProto15_423));
+  pushRedex(Rslt_24Args, newRef(glblProto16_423));
 #else
-  swapStore(term_loc(Rslt_24),
-            pair_make(LAZ, 0, Rslt_24Args, new_ref(glblProto15_423)));
+  swap(termLoc(Rslt_24),
+       makePair(LAZ, 0, Rslt_24Args, newRef(glblProto16_423)));
 #endif
-  // call conj at core: 656
-  Term Rslt_25Args = pair_make(APP, 0, Rslt_24, SUB);
-  Term Rslt_25 = term_new(VAR, 0, port(2, term_loc(Rslt_25Args)));
-  Rslt_25Args = pair_make(APP, 0, result_17, Rslt_25Args);
+  // call conj at core: 657
+  Term Rslt_25Args = makePair(APP, 0, Rslt_24, SUB);
+  Term Rslt_25 = newTerm(VAR, 0, portLoc(2, Rslt_25Args));
+  Rslt_25Args = makePair(APP, 0, result_17, Rslt_25Args);
 #ifdef STRICT
-  store_redex(Rslt_25Args, new_ref(glblProto65_425));
+  pushRedex(Rslt_25Args, newRef(glblProto65_425));
 #else
-  swapStore(term_loc(Rslt_25),
-            pair_make(LAZ, 0, Rslt_25Args, new_ref(glblProto65_425)));
+  swap(termLoc(Rslt_25),
+       makePair(LAZ, 0, Rslt_25Args, newRef(glblProto65_425)));
 #endif
-  // call vect-reverse at core: 655
-  Term Rslt_26Args = pair_make(APP, 0, Rslt_25, SUB);
-  Term Rslt_26 = term_new(VAR, 0, port(2, term_loc(Rslt_26Args)));
-  Rslt_26Args = pair_make(APP, 0, Rslt_23, Rslt_26Args);
-  Rslt_26Args = pair_make(APP, 0, vect_15_1, Rslt_26Args);
-  Rslt_26Args = pair_make(APP, 0, Rslt_22, Rslt_26Args);
+  // call vect-reverse at core: 656
+  Term Rslt_26Args = makePair(APP, 0, Rslt_25, SUB);
+  Term Rslt_26 = newTerm(VAR, 0, portLoc(2, Rslt_26Args));
+  Rslt_26Args = makePair(APP, 0, Rslt_23, Rslt_26Args);
+  Rslt_26Args = makePair(APP, 0, vect_15_1, Rslt_26Args);
+  Rslt_26Args = makePair(APP, 0, Rslt_22, Rslt_26Args);
 #ifdef STRICT
-  store_redex(Rslt_26Args, new_ref(glblProto403_427));
+  pushRedex(Rslt_26Args, newRef(glblProto403_427));
 #else
-  swapStore(term_loc(Rslt_26),
-            pair_make(LAZ, 0, Rslt_26Args, new_ref(glblProto403_427)));
+  swap(termLoc(Rslt_26),
+       makePair(LAZ, 0, Rslt_26Args, newRef(glblProto403_427)));
 #endif
   dupLabels[74] = "vect-reverse";
   // link args to body
-  swapStore(r_seq_18, Rslt_26);
+  swap(r_seq_18, Rslt_26);
 
-  Term Rslt_26V = get(term_loc(Rslt_26));
-  apps = take(port(1, term_loc(Rslt_26V)));
-  lams = take(port(2, term_loc(Rslt_26V)));
+  Term Rslt_26V = get(termLoc(Rslt_26));
+  apps = take(portLoc(1, Rslt_26V));
+  lams = take(portLoc(2, Rslt_26V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_18);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_18);
   return;
 }
-Term glblvect_reverse416 = new_ref(glblvect_reverse415);
+Term glblvect_reverse416 = newRef(glblvect_reverse415);
 Term glblProto417;
 Term glblvect_sub431;
 void glblvect_sub430(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_13 = pair_make(LAM, 75, SUB, NUL);
-  Location r_seq_13 = port(2, term_loc(seq_13));
-  Term result_12 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 75, SUB, seq_13);
-  Term max_n_11 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 75, SUB, seq_13);
-  Term n_10 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 75, SUB, seq_13);
-  Term vect_9 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  seq_13 = pair_make(LAM, 75, SUB, seq_13);
-  Term el_8 = term_new(VAR, 0, port(1, term_loc(seq_13)));
-  // allocate args at core: 665
-  swapStore(term_loc(el_8), ERA);
-  swapStore(term_loc(vect_9), ERA);
-  swapStore(term_loc(n_10), ERA);
-  swapStore(term_loc(max_n_11), ERA);
+  Term seq_13 = makePair(LAM, 75, SUB, NUL);
+  Location r_seq_13 = portLoc(2, seq_13);
+  Term result_12 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 75, SUB, seq_13);
+  Term max_n_11 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 75, SUB, seq_13);
+  Term n_10 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 75, SUB, seq_13);
+  Term vect_9 = newTerm(VAR, 0, portLoc(1, seq_13));
+  seq_13 = makePair(LAM, 75, SUB, seq_13);
+  Term el_8 = newTerm(VAR, 0, portLoc(1, seq_13));
+  // allocate args at core: 666
+  swap(termLoc(el_8), ERA);
+  swap(termLoc(vect_9), ERA);
+  swap(termLoc(n_10), ERA);
+  swap(termLoc(max_n_11), ERA);
   dupLabels[75] = "vect-sub";
   // link args to body
-  swapStore(r_seq_13, result_12);
+  swap(r_seq_13, result_12);
 
   V = get(r_seq_13);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 75, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_13, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_13);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 75, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_13, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_13);
   return;
 }
-Term glblvect_sub431 = new_ref(glblvect_sub430);
+Term glblvect_sub431 = newRef(glblvect_sub430);
 void glblProto23_435(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(669), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(670), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto23);
   }
 }
@@ -3394,9 +3389,9 @@ void glblProto101_437(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(669), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(670), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto101);
   }
 }
@@ -3404,29 +3399,29 @@ void glblProto25_439(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(669), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(670), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto25);
   }
 }
-void glblProto15_441(Term ref, Term args) {
+void glblProto16_441(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(670), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(671), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 void glblProto65_443(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(670), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(671), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto65);
   }
 }
@@ -3434,9 +3429,9 @@ void glblProto417_445(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(669), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(670), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto417);
   }
 }
@@ -3444,18 +3439,18 @@ Term glblvect_sub434;
 void glblvect_sub433(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_21 = pair_make(LAM, 76, SUB, NUL);
-  Location r_seq_21 = port(2, term_loc(seq_21));
-  Term result_20 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 76, SUB, seq_21);
-  Term max_n_19 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 76, SUB, seq_21);
-  Term n_18 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 76, SUB, seq_21);
-  Term vect_17 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  seq_21 = pair_make(LAM, 76, SUB, seq_21);
-  Term el_16 = term_new(VAR, 0, port(1, term_loc(seq_21)));
-  // allocate args at core: 668
+  Term seq_21 = makePair(LAM, 76, SUB, NUL);
+  Location r_seq_21 = portLoc(2, seq_21);
+  Term result_20 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 76, SUB, seq_21);
+  Term max_n_19 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 76, SUB, seq_21);
+  Term n_18 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 76, SUB, seq_21);
+  Term vect_17 = newTerm(VAR, 0, portLoc(1, seq_21));
+  seq_21 = makePair(LAM, 76, SUB, seq_21);
+  Term el_16 = newTerm(VAR, 0, portLoc(1, seq_21));
+  // allocate args at core: 669
 
   Term vect_17_1;
   vect_17 = dupeArg(vect_17, &vect_17_1, 76);
@@ -3468,98 +3463,98 @@ void glblvect_sub433(Term ref, Term args) {
 
   Term max_n_19_1;
   max_n_19 = dupeArg(max_n_19, &max_n_19_1, 76);
-  // call < at core: 669
-  Term Rslt_23Args = pair_make(APP, 0, max_n_19, SUB);
-  Term Rslt_23 = term_new(VAR, 0, port(2, term_loc(Rslt_23Args)));
-  Rslt_23Args = pair_make(APP, 0, n_18, Rslt_23Args);
+  // call < at core: 670
+  Term Rslt_23Args = makePair(APP, 0, max_n_19, SUB);
+  Term Rslt_23 = newTerm(VAR, 0, portLoc(2, Rslt_23Args));
+  Rslt_23Args = makePair(APP, 0, n_18, Rslt_23Args);
 #ifdef STRICT
-  store_redex(Rslt_23Args, new_ref(glblProto23_435));
+  pushRedex(Rslt_23Args, newRef(glblProto23_435));
 #else
-  swapStore(term_loc(Rslt_23),
-            pair_make(LAZ, 0, Rslt_23Args, new_ref(glblProto23_435)));
+  swap(termLoc(Rslt_23),
+       makePair(LAZ, 0, Rslt_23Args, newRef(glblProto23_435)));
 #endif
-  // call get at core: 669
-  Term Rslt_24Args = pair_make(APP, 0, n_18_1, SUB);
-  Term Rslt_24 = term_new(VAR, 0, port(2, term_loc(Rslt_24Args)));
-  Rslt_24Args = pair_make(APP, 0, vect_17, Rslt_24Args);
+  // call get at core: 670
+  Term Rslt_24Args = makePair(APP, 0, n_18_1, SUB);
+  Term Rslt_24 = newTerm(VAR, 0, portLoc(2, Rslt_24Args));
+  Rslt_24Args = makePair(APP, 0, vect_17, Rslt_24Args);
 #ifdef STRICT
-  store_redex(Rslt_24Args, new_ref(glblProto101_437));
+  pushRedex(Rslt_24Args, newRef(glblProto101_437));
 #else
-  swapStore(term_loc(Rslt_24),
-            pair_make(LAZ, 0, Rslt_24Args, new_ref(glblProto101_437)));
+  swap(termLoc(Rslt_24),
+       makePair(LAZ, 0, Rslt_24Args, newRef(glblProto101_437)));
 #endif
-  // call and at core: 669
-  Term Rslt_25Args = pair_make(APP, 0, Rslt_24, SUB);
-  Term Rslt_25 = term_new(VAR, 0, port(2, term_loc(Rslt_25Args)));
-  Rslt_25Args = pair_make(APP, 0, Rslt_23, Rslt_25Args);
+  // call and at core: 670
+  Term Rslt_25Args = makePair(APP, 0, Rslt_24, SUB);
+  Term Rslt_25 = newTerm(VAR, 0, portLoc(2, Rslt_25Args));
+  Rslt_25Args = makePair(APP, 0, Rslt_23, Rslt_25Args);
 #ifdef STRICT
-  store_redex(Rslt_25Args, new_ref(glblProto25_439));
+  pushRedex(Rslt_25Args, newRef(glblProto25_439));
 #else
-  swapStore(term_loc(Rslt_25),
-            pair_make(LAZ, 0, Rslt_25Args, new_ref(glblProto25_439)));
+  swap(termLoc(Rslt_25),
+       makePair(LAZ, 0, Rslt_25Args, newRef(glblProto25_439)));
 #endif
-  // call inc at core: 670
-  Term Rslt_26Args = pair_make(APP, 0, n_18_2, SUB);
-  Term Rslt_26 = term_new(VAR, 0, port(2, term_loc(Rslt_26Args)));
+  // call inc at core: 671
+  Term Rslt_26Args = makePair(APP, 0, n_18_2, SUB);
+  Term Rslt_26 = newTerm(VAR, 0, portLoc(2, Rslt_26Args));
 #ifdef STRICT
-  store_redex(Rslt_26Args, glblFn121);
+  pushRedex(Rslt_26Args, glblFn120);
 #else
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, Rslt_26Args, glblFn121));
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, Rslt_26Args, glblFn120));
 #endif
 
-  // call .x at core: 670
-  Term Rslt_27Args = pair_make(APP, 0, el_16, SUB);
-  Term Rslt_27 = term_new(VAR, 0, port(2, term_loc(Rslt_27Args)));
+  // call .x at core: 671
+  Term Rslt_27Args = makePair(APP, 0, el_16, SUB);
+  Term Rslt_27 = newTerm(VAR, 0, portLoc(2, Rslt_27Args));
 #ifdef STRICT
-  store_redex(Rslt_27Args, new_ref(glblProto15_441));
+  pushRedex(Rslt_27Args, newRef(glblProto16_441));
 #else
-  swapStore(term_loc(Rslt_27),
-            pair_make(LAZ, 0, Rslt_27Args, new_ref(glblProto15_441)));
+  swap(termLoc(Rslt_27),
+       makePair(LAZ, 0, Rslt_27Args, newRef(glblProto16_441)));
 #endif
-  // call conj at core: 670
-  Term Rslt_28Args = pair_make(APP, 0, Rslt_27, SUB);
-  Term Rslt_28 = term_new(VAR, 0, port(2, term_loc(Rslt_28Args)));
-  Rslt_28Args = pair_make(APP, 0, result_20, Rslt_28Args);
+  // call conj at core: 671
+  Term Rslt_28Args = makePair(APP, 0, Rslt_27, SUB);
+  Term Rslt_28 = newTerm(VAR, 0, portLoc(2, Rslt_28Args));
+  Rslt_28Args = makePair(APP, 0, result_20, Rslt_28Args);
 #ifdef STRICT
-  store_redex(Rslt_28Args, new_ref(glblProto65_443));
+  pushRedex(Rslt_28Args, newRef(glblProto65_443));
 #else
-  swapStore(term_loc(Rslt_28),
-            pair_make(LAZ, 0, Rslt_28Args, new_ref(glblProto65_443)));
+  swap(termLoc(Rslt_28),
+       makePair(LAZ, 0, Rslt_28Args, newRef(glblProto65_443)));
 #endif
-  // call vect-sub at core: 669
-  Term Rslt_29Args = pair_make(APP, 0, Rslt_28, SUB);
-  Term Rslt_29 = term_new(VAR, 0, port(2, term_loc(Rslt_29Args)));
-  Rslt_29Args = pair_make(APP, 0, max_n_19_1, Rslt_29Args);
-  Rslt_29Args = pair_make(APP, 0, Rslt_26, Rslt_29Args);
-  Rslt_29Args = pair_make(APP, 0, vect_17_1, Rslt_29Args);
-  Rslt_29Args = pair_make(APP, 0, Rslt_25, Rslt_29Args);
+  // call vect-sub at core: 670
+  Term Rslt_29Args = makePair(APP, 0, Rslt_28, SUB);
+  Term Rslt_29 = newTerm(VAR, 0, portLoc(2, Rslt_29Args));
+  Rslt_29Args = makePair(APP, 0, max_n_19_1, Rslt_29Args);
+  Rslt_29Args = makePair(APP, 0, Rslt_26, Rslt_29Args);
+  Rslt_29Args = makePair(APP, 0, vect_17_1, Rslt_29Args);
+  Rslt_29Args = makePair(APP, 0, Rslt_25, Rslt_29Args);
 #ifdef STRICT
-  store_redex(Rslt_29Args, new_ref(glblProto417_445));
+  pushRedex(Rslt_29Args, newRef(glblProto417_445));
 #else
-  swapStore(term_loc(Rslt_29),
-            pair_make(LAZ, 0, Rslt_29Args, new_ref(glblProto417_445)));
+  swap(termLoc(Rslt_29),
+       makePair(LAZ, 0, Rslt_29Args, newRef(glblProto417_445)));
 #endif
   dupLabels[76] = "vect-sub";
   // link args to body
-  swapStore(r_seq_21, Rslt_29);
+  swap(r_seq_21, Rslt_29);
 
-  Term Rslt_29V = get(term_loc(Rslt_29));
-  apps = take(port(1, term_loc(Rslt_29V)));
-  lams = take(port(2, term_loc(Rslt_29V)));
+  Term Rslt_29V = get(termLoc(Rslt_29));
+  apps = take(portLoc(1, Rslt_29V));
+  lams = take(portLoc(2, Rslt_29V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_29), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_21);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_29), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_21);
   return;
 }
-Term glblvect_sub434 = new_ref(glblvect_sub433);
+Term glblvect_sub434 = newRef(glblvect_sub433);
 void glblProto417_451(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(674), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(675), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto417);
   }
 }
@@ -3567,14 +3562,14 @@ Term glblFn449;
 void glblCFn448(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_4 = pair_make(LAM, 77, SUB, NUL);
-  Location r_seq_4 = port(2, term_loc(seq_4));
-  Term len_3 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  seq_4 = pair_make(LAM, 77, SUB, seq_4);
-  Term start_2 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  seq_4 = pair_make(LAM, 77, SUB, seq_4);
-  Term v_1 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  // allocate args at core: 672
+  Term seq_4 = makePair(LAM, 77, SUB, NUL);
+  Location r_seq_4 = portLoc(2, seq_4);
+  Term len_3 = newTerm(VAR, 0, portLoc(1, seq_4));
+  seq_4 = makePair(LAM, 77, SUB, seq_4);
+  Term start_2 = newTerm(VAR, 0, portLoc(1, seq_4));
+  seq_4 = makePair(LAM, 77, SUB, seq_4);
+  Term v_1 = newTerm(VAR, 0, portLoc(1, seq_4));
+  // allocate args at core: 673
 
   Term v_1_1;
   v_1 = dupeArg(v_1, &v_1_1, 77);
@@ -3587,62 +3582,61 @@ void glblCFn448(Term ref, Term args) {
   Term glblVal131_10;
   glblVal131 = dupeArg(glblVal131, &glblVal131_10, 0);
 
-  // call vect-get at core: 674
-  Term Rslt_6Args = pair_make(APP, 0, start_2, SUB);
-  Term Rslt_6 = term_new(VAR, 0, port(2, term_loc(Rslt_6Args)));
-  Rslt_6Args = pair_make(APP, 0, v_1, Rslt_6Args);
+  // call vect-get at core: 675
+  Term Rslt_6Args = makePair(APP, 0, start_2, SUB);
+  Term Rslt_6 = newTerm(VAR, 0, portLoc(2, Rslt_6Args));
+  Rslt_6Args = makePair(APP, 0, v_1, Rslt_6Args);
 #ifdef STRICT
-  store_redex(Rslt_6Args, glblFn376);
+  pushRedex(Rslt_6Args, glblFn376);
 #else
-  swapStore(term_loc(Rslt_6), pair_make(LAZ, 0, Rslt_6Args, glblFn376));
+  swap(termLoc(Rslt_6), makePair(LAZ, 0, Rslt_6Args, glblFn376));
 #endif
 
-  // call inc at core: 674
-  Term Rslt_7Args = pair_make(APP, 0, start_2_1, SUB);
-  Term Rslt_7 = term_new(VAR, 0, port(2, term_loc(Rslt_7Args)));
+  // call inc at core: 675
+  Term Rslt_7Args = makePair(APP, 0, start_2_1, SUB);
+  Term Rslt_7 = newTerm(VAR, 0, portLoc(2, Rslt_7Args));
 #ifdef STRICT
-  store_redex(Rslt_7Args, glblFn121);
+  pushRedex(Rslt_7Args, glblFn120);
 #else
-  swapStore(term_loc(Rslt_7), pair_make(LAZ, 0, Rslt_7Args, glblFn121));
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, Rslt_7Args, glblFn120));
 #endif
 
-  Term Rslt_8 = make_op(OP_ADD, start_2_2, len_3);
-  // call vect-sub at core: 674
-  Term Rslt_9Args = pair_make(APP, 0, glblVal131_10, SUB);
-  Term Rslt_9 = term_new(VAR, 0, port(2, term_loc(Rslt_9Args)));
-  Rslt_9Args = pair_make(APP, 0, Rslt_8, Rslt_9Args);
-  Rslt_9Args = pair_make(APP, 0, Rslt_7, Rslt_9Args);
-  Rslt_9Args = pair_make(APP, 0, v_1_1, Rslt_9Args);
-  Rslt_9Args = pair_make(APP, 0, Rslt_6, Rslt_9Args);
+  Term Rslt_8 = makeOp(OP_ADD, start_2_2, len_3);
+  // call vect-sub at core: 675
+  Term Rslt_9Args = makePair(APP, 0, glblVal131_10, SUB);
+  Term Rslt_9 = newTerm(VAR, 0, portLoc(2, Rslt_9Args));
+  Rslt_9Args = makePair(APP, 0, Rslt_8, Rslt_9Args);
+  Rslt_9Args = makePair(APP, 0, Rslt_7, Rslt_9Args);
+  Rslt_9Args = makePair(APP, 0, v_1_1, Rslt_9Args);
+  Rslt_9Args = makePair(APP, 0, Rslt_6, Rslt_9Args);
 #ifdef STRICT
-  store_redex(Rslt_9Args, new_ref(glblProto417_451));
+  pushRedex(Rslt_9Args, newRef(glblProto417_451));
 #else
-  swapStore(term_loc(Rslt_9),
-            pair_make(LAZ, 0, Rslt_9Args, new_ref(glblProto417_451)));
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, Rslt_9Args, newRef(glblProto417_451)));
 #endif
   dupLabels[77] = "";
   // link args to body
-  swapStore(r_seq_4, Rslt_9);
+  swap(r_seq_4, Rslt_9);
 
-  Term Rslt_9V = get(term_loc(Rslt_9));
-  apps = take(port(1, term_loc(Rslt_9V)));
-  lams = take(port(2, term_loc(Rslt_9V)));
+  Term Rslt_9V = get(termLoc(Rslt_9));
+  apps = take(portLoc(1, Rslt_9V));
+  lams = take(portLoc(2, Rslt_9V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_4);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_4);
   return;
 }
-Term glblFn449 = new_ref(glblCFn448);
-Term glblVal450 = new_ref(vectMap);
+Term glblFn449 = newRef(glblCFn448);
+Term glblVal450 = newRef(vectMap);
 Term glblVal450;
 void glblProto73_458(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(683), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(684), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto73);
   }
 }
@@ -3650,9 +3644,9 @@ void glblProto396_460(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(683), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(684), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto396);
   }
 }
@@ -3660,9 +3654,9 @@ void glblProto73_462(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(680), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(681), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto73);
   }
 }
@@ -3670,9 +3664,9 @@ void glblProto61_464(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(682), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(683), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
@@ -3680,43 +3674,43 @@ Term glblc457;
 void glblc456(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_19 = pair_make(LAM, 79, SUB, NUL);
-  Location r_seq_19 = port(2, term_loc(seq_19));
-  Term s_18 = term_new(VAR, 0, port(1, term_loc(seq_19)));
-  seq_19 = pair_make(LAM, 79, SUB, seq_19);
-  Term len_17 = term_new(VAR, 0, port(1, term_loc(seq_19)));
-  // allocate args at core: 681
-  // call count at core: 682
-  Term Rslt_21Args = pair_make(APP, 0, s_18, SUB);
-  Term Rslt_21 = term_new(VAR, 0, port(2, term_loc(Rslt_21Args)));
+  Term seq_19 = makePair(LAM, 79, SUB, NUL);
+  Location r_seq_19 = portLoc(2, seq_19);
+  Term s_18 = newTerm(VAR, 0, portLoc(1, seq_19));
+  seq_19 = makePair(LAM, 79, SUB, seq_19);
+  Term len_17 = newTerm(VAR, 0, portLoc(1, seq_19));
+  // allocate args at core: 682
+  // call count at core: 683
+  Term Rslt_21Args = makePair(APP, 0, s_18, SUB);
+  Term Rslt_21 = newTerm(VAR, 0, portLoc(2, Rslt_21Args));
 #ifdef STRICT
-  store_redex(Rslt_21Args, new_ref(glblProto61_464));
+  pushRedex(Rslt_21Args, newRef(glblProto61_464));
 #else
-  swapStore(term_loc(Rslt_21),
-            pair_make(LAZ, 0, Rslt_21Args, new_ref(glblProto61_464)));
+  swap(termLoc(Rslt_21),
+       makePair(LAZ, 0, Rslt_21Args, newRef(glblProto61_464)));
 #endif
-  Term Rslt_22 = make_op(OP_ADD, len_17, Rslt_21);
+  Term Rslt_22 = makeOp(OP_ADD, len_17, Rslt_21);
   dupLabels[79] = "";
   // link args to body
-  swapStore(r_seq_19, Rslt_22);
+  swap(r_seq_19, Rslt_22);
 
-  Term Rslt_22V = get(term_loc(Rslt_22));
-  apps = take(port(1, term_loc(Rslt_22V)));
-  lams = take(port(2, term_loc(Rslt_22V)));
+  Term Rslt_22V = get(termLoc(Rslt_22));
+  apps = take(portLoc(1, Rslt_22V));
+  lams = take(portLoc(2, Rslt_22V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_22), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_19);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_22), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_19);
   return;
 }
-Term glblc457 = new_ref(glblc456);
+Term glblc457 = newRef(glblc456);
 void glblProto396_467(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(680), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(681), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto396);
   }
 }
@@ -3724,9 +3718,9 @@ void glblProto43_469(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(679), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(680), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto43);
   }
 }
@@ -3734,9 +3728,9 @@ void glblProto107_471(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(679), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(680), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto107);
   }
 }
@@ -3744,14 +3738,14 @@ Term glblFn455;
 void glblCFn454(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 78, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term vect_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 678
-  Term seq_6 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_6 = port(2, term_loc(seq_6));
-  Term ss_vect_5 = term_new(VAR, 0, port(1, term_loc(seq_6)));
+  Term seq_2 = makePair(LAM, 78, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term vect_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at core: 679
+  Term seq_6 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_6 = portLoc(2, seq_6);
+  Term ss_vect_5 = newTerm(VAR, 0, portLoc(1, seq_6));
+  // allocate args at core: 680
 
   Term ss_vect_5_3;
   ss_vect_5 = dupeArg(ss_vect_5, &ss_vect_5_3, 0);
@@ -3761,132 +3755,132 @@ void glblCFn454(Term ref, Term args) {
 
   Term ss_vect_5_1;
   ss_vect_5 = dupeArg(ss_vect_5, &ss_vect_5_1, 0);
-  Term seq_10 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_10 = port(2, term_loc(seq_10));
-  Term new_len_9 = term_new(VAR, 0, port(1, term_loc(seq_10)));
-  // allocate args at core: 680
-  // call first at core: 683
-  Term Rslt_12Args = pair_make(APP, 0, ss_vect_5, SUB);
-  Term Rslt_12 = term_new(VAR, 0, port(2, term_loc(Rslt_12Args)));
+  Term seq_10 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_10 = portLoc(2, seq_10);
+  Term new_len_9 = newTerm(VAR, 0, portLoc(1, seq_10));
+  // allocate args at core: 681
+  // call first at core: 684
+  Term Rslt_12Args = makePair(APP, 0, ss_vect_5, SUB);
+  Term Rslt_12 = newTerm(VAR, 0, portLoc(2, Rslt_12Args));
 #ifdef STRICT
-  store_redex(Rslt_12Args, new_ref(glblProto73_458));
+  pushRedex(Rslt_12Args, newRef(glblProto73_458));
 #else
-  swapStore(term_loc(Rslt_12),
-            pair_make(LAZ, 0, Rslt_12Args, new_ref(glblProto73_458)));
+  swap(termLoc(Rslt_12),
+       makePair(LAZ, 0, Rslt_12Args, newRef(glblProto73_458)));
 #endif
-  // call str-malloc at core: 683
-  Term Rslt_13Args = pair_make(APP, 0, new_len_9, SUB);
-  Term Rslt_13 = term_new(VAR, 0, port(2, term_loc(Rslt_13Args)));
+  // call str-malloc at core: 684
+  Term Rslt_13Args = makePair(APP, 0, new_len_9, SUB);
+  Term Rslt_13 = newTerm(VAR, 0, portLoc(2, Rslt_13Args));
 #ifdef STRICT
-  store_redex(Rslt_13Args, glblFn303);
+  pushRedex(Rslt_13Args, glblFn302);
 #else
-  swapStore(term_loc(Rslt_13), pair_make(LAZ, 0, Rslt_13Args, glblFn303));
+  swap(termLoc(Rslt_13), makePair(LAZ, 0, Rslt_13Args, glblFn302));
 #endif
 
-  // call vect-reduce at core: 683
-  Term Rslt_14Args = pair_make(APP, 0, glblFn306, SUB);
-  Term Rslt_14 = term_new(VAR, 0, port(2, term_loc(Rslt_14Args)));
-  Rslt_14Args = pair_make(APP, 0, Rslt_13, Rslt_14Args);
-  Rslt_14Args = pair_make(APP, 0, new_i60(1), Rslt_14Args);
-  Rslt_14Args = pair_make(APP, 0, ss_vect_5_1, Rslt_14Args);
-  Rslt_14Args = pair_make(APP, 0, Rslt_12, Rslt_14Args);
+  // call vect-reduce at core: 684
+  Term Rslt_14Args = makePair(APP, 0, glblFn306, SUB);
+  Term Rslt_14 = newTerm(VAR, 0, portLoc(2, Rslt_14Args));
+  Rslt_14Args = makePair(APP, 0, Rslt_13, Rslt_14Args);
+  Rslt_14Args = makePair(APP, 0, newI60(1), Rslt_14Args);
+  Rslt_14Args = makePair(APP, 0, ss_vect_5_1, Rslt_14Args);
+  Rslt_14Args = makePair(APP, 0, Rslt_12, Rslt_14Args);
 #ifdef STRICT
-  store_redex(Rslt_14Args, new_ref(glblProto396_460));
+  pushRedex(Rslt_14Args, newRef(glblProto396_460));
 #else
-  swapStore(term_loc(Rslt_14),
-            pair_make(LAZ, 0, Rslt_14Args, new_ref(glblProto396_460)));
+  swap(termLoc(Rslt_14),
+       makePair(LAZ, 0, Rslt_14Args, newRef(glblProto396_460)));
 #endif
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_10, Rslt_14);
+  swap(r_seq_10, Rslt_14);
 
-  Term Rslt_14V = get(term_loc(Rslt_14));
-  apps = take(port(1, term_loc(Rslt_14V)));
-  lams = take(port(2, term_loc(Rslt_14V)));
+  Term Rslt_14V = get(termLoc(Rslt_14));
+  apps = take(portLoc(1, Rslt_14V));
+  lams = take(portLoc(2, Rslt_14V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_14), pair_make(LAZ, 0, apps, lams));
-  // call first at core: 680
-  Term Rslt_15Args = pair_make(APP, 0, ss_vect_5_2, SUB);
-  Term Rslt_15 = term_new(VAR, 0, port(2, term_loc(Rslt_15Args)));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_14), makePair(LAZ, 0, apps, lams));
+  // call first at core: 681
+  Term Rslt_15Args = makePair(APP, 0, ss_vect_5_2, SUB);
+  Term Rslt_15 = newTerm(VAR, 0, portLoc(2, Rslt_15Args));
 #ifdef STRICT
-  store_redex(Rslt_15Args, new_ref(glblProto73_462));
+  pushRedex(Rslt_15Args, newRef(glblProto73_462));
 #else
-  swapStore(term_loc(Rslt_15),
-            pair_make(LAZ, 0, Rslt_15Args, new_ref(glblProto73_462)));
+  swap(termLoc(Rslt_15),
+       makePair(LAZ, 0, Rslt_15Args, newRef(glblProto73_462)));
 #endif
-  // call vect-reduce at core: 680
-  Term Rslt_23Args = pair_make(APP, 0, glblc457, SUB);
-  Term Rslt_23 = term_new(VAR, 0, port(2, term_loc(Rslt_23Args)));
-  Rslt_23Args = pair_make(APP, 0, new_i60(0), Rslt_23Args);
-  Rslt_23Args = pair_make(APP, 0, new_i60(1), Rslt_23Args);
-  Rslt_23Args = pair_make(APP, 0, ss_vect_5_3, Rslt_23Args);
-  Rslt_23Args = pair_make(APP, 0, Rslt_15, Rslt_23Args);
+  // call vect-reduce at core: 681
+  Term Rslt_23Args = makePair(APP, 0, glblc457, SUB);
+  Term Rslt_23 = newTerm(VAR, 0, portLoc(2, Rslt_23Args));
+  Rslt_23Args = makePair(APP, 0, newI60(0), Rslt_23Args);
+  Rslt_23Args = makePair(APP, 0, newI60(1), Rslt_23Args);
+  Rslt_23Args = makePair(APP, 0, ss_vect_5_3, Rslt_23Args);
+  Rslt_23Args = makePair(APP, 0, Rslt_15, Rslt_23Args);
 #ifdef STRICT
-  store_redex(Rslt_23Args, new_ref(glblProto396_467));
+  pushRedex(Rslt_23Args, newRef(glblProto396_467));
 #else
-  swapStore(term_loc(Rslt_23),
-            pair_make(LAZ, 0, Rslt_23Args, new_ref(glblProto396_467)));
+  swap(termLoc(Rslt_23),
+       makePair(LAZ, 0, Rslt_23Args, newRef(glblProto396_467)));
+#endif
+  // call  at core: 681
+  Term Rslt_24Args = makePair(APP, 0, Rslt_23, SUB);
+  Term Rslt_24 = newTerm(VAR, 0, portLoc(2, Rslt_24Args));
+#ifdef STRICT
+  pushRedex(Rslt_24Args, seq_10);
+#else
+  swap(termLoc(Rslt_24), makePair(LAZ, 0, Rslt_24Args, seq_10));
+#endif
+
+  dupLabels[0] = "";
+  // link args to body
+  swap(r_seq_6, Rslt_24);
+
+  Term Rslt_24V = get(termLoc(Rslt_24));
+  apps = take(portLoc(1, Rslt_24V));
+  lams = take(portLoc(2, Rslt_24V));
+
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_24), makePair(LAZ, 0, apps, lams));
+  // call flat-map at core: 680
+  Term Rslt_25Args = makePair(APP, 0, newRef(glblProto107_471), SUB);
+  Term Rslt_25 = newTerm(VAR, 0, portLoc(2, Rslt_25Args));
+  Rslt_25Args = makePair(APP, 0, vect_1, Rslt_25Args);
+#ifdef STRICT
+  pushRedex(Rslt_25Args, newRef(glblProto43_469));
+#else
+  swap(termLoc(Rslt_25),
+       makePair(LAZ, 0, Rslt_25Args, newRef(glblProto43_469)));
 #endif
   // call  at core: 680
-  Term Rslt_24Args = pair_make(APP, 0, Rslt_23, SUB);
-  Term Rslt_24 = term_new(VAR, 0, port(2, term_loc(Rslt_24Args)));
+  Term Rslt_26Args = makePair(APP, 0, Rslt_25, SUB);
+  Term Rslt_26 = newTerm(VAR, 0, portLoc(2, Rslt_26Args));
 #ifdef STRICT
-  store_redex(Rslt_24Args, seq_10);
+  pushRedex(Rslt_26Args, seq_6);
 #else
-  swapStore(term_loc(Rslt_24), pair_make(LAZ, 0, Rslt_24Args, seq_10));
-#endif
-
-  dupLabels[0] = "";
-  // link args to body
-  swapStore(r_seq_6, Rslt_24);
-
-  Term Rslt_24V = get(term_loc(Rslt_24));
-  apps = take(port(1, term_loc(Rslt_24V)));
-  lams = take(port(2, term_loc(Rslt_24V)));
-
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_24), pair_make(LAZ, 0, apps, lams));
-  // call flat-map at core: 679
-  Term Rslt_25Args = pair_make(APP, 0, new_ref(glblProto107_471), SUB);
-  Term Rslt_25 = term_new(VAR, 0, port(2, term_loc(Rslt_25Args)));
-  Rslt_25Args = pair_make(APP, 0, vect_1, Rslt_25Args);
-#ifdef STRICT
-  store_redex(Rslt_25Args, new_ref(glblProto43_469));
-#else
-  swapStore(term_loc(Rslt_25),
-            pair_make(LAZ, 0, Rslt_25Args, new_ref(glblProto43_469)));
-#endif
-  // call  at core: 679
-  Term Rslt_26Args = pair_make(APP, 0, Rslt_25, SUB);
-  Term Rslt_26 = term_new(VAR, 0, port(2, term_loc(Rslt_26Args)));
-#ifdef STRICT
-  store_redex(Rslt_26Args, seq_6);
-#else
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, Rslt_26Args, seq_6));
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, Rslt_26Args, seq_6));
 #endif
 
   dupLabels[78] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_26);
+  swap(r_seq_2, Rslt_26);
 
-  Term Rslt_26V = get(term_loc(Rslt_26));
-  apps = take(port(1, term_loc(Rslt_26V)));
-  lams = take(port(2, term_loc(Rslt_26V)));
+  Term Rslt_26V = get(termLoc(Rslt_26));
+  apps = take(portLoc(1, Rslt_26V));
+  lams = take(portLoc(2, Rslt_26V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn455 = new_ref(glblCFn454);
+Term glblFn455 = newRef(glblCFn454);
 void glblProto23_478(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(698), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(699), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto23);
   }
 }
@@ -3894,59 +3888,59 @@ void glblProto95_480(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(700), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(701), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto95);
   }
 }
-void glblProto15_482(Term ref, Term args) {
+void glblProto16_482(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(700), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(701), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
 void glblProto95_484(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(700), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(701), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto95);
   }
 }
-void glblProto15_486(Term ref, Term args) {
+void glblProto16_486(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(700), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto15);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(701), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto16);
   }
 }
-void glblProto21_488(Term ref, Term args) {
+void glblProto15_488(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(700), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto21);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(701), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto15);
   }
 }
 void glblProto25_490(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(700), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(701), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto25);
   }
 }
@@ -3954,9 +3948,9 @@ void glblProto31_492(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(698), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(699), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto31);
   }
 }
@@ -3964,14 +3958,14 @@ Term glblFn475;
 void glblCFn474(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_4 = pair_make(LAM, 80, SUB, NUL);
-  Location r_seq_4 = port(2, term_loc(seq_4));
-  Term start_3 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  seq_4 = pair_make(LAM, 80, SUB, seq_4);
-  Term y_2 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  seq_4 = pair_make(LAM, 80, SUB, seq_4);
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_4)));
-  // allocate args at core: 685
+  Term seq_4 = makePair(LAM, 80, SUB, NUL);
+  Location r_seq_4 = portLoc(2, seq_4);
+  Term start_3 = newTerm(VAR, 0, portLoc(1, seq_4));
+  seq_4 = makePair(LAM, 80, SUB, seq_4);
+  Term y_2 = newTerm(VAR, 0, portLoc(1, seq_4));
+  seq_4 = makePair(LAM, 80, SUB, seq_4);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_4));
+  // allocate args at core: 686
 
   Term x_1_2;
   x_1 = dupeArg(x_1, &x_1_2, 80);
@@ -3990,131 +3984,128 @@ void glblCFn474(Term ref, Term args) {
 
   Term start_3_1;
   start_3 = dupeArg(start_3, &start_3_1, 80);
-  Term glblVal20_3;
-  glblVal20 = dupeArg(glblVal20, &glblVal20_3, 0);
+  Term glblVal22_3;
+  glblVal22 = dupeArg(glblVal22, &glblVal22_3, 0);
 
-  // call < at core: 698
-  Term Rslt_6Args = pair_make(APP, 0, new_i60(0), SUB);
-  Term Rslt_6 = term_new(VAR, 0, port(2, term_loc(Rslt_6Args)));
-  Rslt_6Args = pair_make(APP, 0, start_3, Rslt_6Args);
+  // call < at core: 699
+  Term Rslt_6Args = makePair(APP, 0, newI60(0), SUB);
+  Term Rslt_6 = newTerm(VAR, 0, portLoc(2, Rslt_6Args));
+  Rslt_6Args = makePair(APP, 0, start_3, Rslt_6Args);
 #ifdef STRICT
-  store_redex(Rslt_6Args, new_ref(glblProto23_478));
+  pushRedex(Rslt_6Args, newRef(glblProto23_478));
 #else
-  swapStore(term_loc(Rslt_6),
-            pair_make(LAZ, 0, Rslt_6Args, new_ref(glblProto23_478)));
+  swap(termLoc(Rslt_6), makePair(LAZ, 0, Rslt_6Args, newRef(glblProto23_478)));
 #endif
-  // call Some at core: 699
-  Term Rslt_7Args = pair_make(APP, 0, x_1, SUB);
-  Term Rslt_7 = term_new(VAR, 0, port(2, term_loc(Rslt_7Args)));
+  // call Some at core: 700
+  Term Rslt_7Args = makePair(APP, 0, x_1, SUB);
+  Term Rslt_7 = newTerm(VAR, 0, portLoc(2, Rslt_7Args));
 #ifdef STRICT
-  store_redex(Rslt_7Args, glblVal20_3);
+  pushRedex(Rslt_7Args, glblVal22_3);
 #else
-  swapStore(term_loc(Rslt_7), pair_make(LAZ, 0, Rslt_7Args, glblVal20_3));
-#endif
-
-  // call nth at core: 700
-  Term Rslt_8Args = pair_make(APP, 0, start_3_1, SUB);
-  Term Rslt_8 = term_new(VAR, 0, port(2, term_loc(Rslt_8Args)));
-  Rslt_8Args = pair_make(APP, 0, x_1_1, Rslt_8Args);
-#ifdef STRICT
-  store_redex(Rslt_8Args, new_ref(glblProto95_480));
-#else
-  swapStore(term_loc(Rslt_8),
-            pair_make(LAZ, 0, Rslt_8Args, new_ref(glblProto95_480)));
-#endif
-  // call .x at core: 700
-  Term Rslt_9Args = pair_make(APP, 0, Rslt_8, SUB);
-  Term Rslt_9 = term_new(VAR, 0, port(2, term_loc(Rslt_9Args)));
-#ifdef STRICT
-  store_redex(Rslt_9Args, new_ref(glblProto15_482));
-#else
-  swapStore(term_loc(Rslt_9),
-            pair_make(LAZ, 0, Rslt_9Args, new_ref(glblProto15_482)));
-#endif
-  // call nth at core: 700
-  Term Rslt_10Args = pair_make(APP, 0, start_3_2, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
-  Rslt_10Args = pair_make(APP, 0, y_2, Rslt_10Args);
-#ifdef STRICT
-  store_redex(Rslt_10Args, new_ref(glblProto95_484));
-#else
-  swapStore(term_loc(Rslt_10),
-            pair_make(LAZ, 0, Rslt_10Args, new_ref(glblProto95_484)));
-#endif
-  // call .x at core: 700
-  Term Rslt_11Args = pair_make(APP, 0, Rslt_10, SUB);
-  Term Rslt_11 = term_new(VAR, 0, port(2, term_loc(Rslt_11Args)));
-#ifdef STRICT
-  store_redex(Rslt_11Args, new_ref(glblProto15_486));
-#else
-  swapStore(term_loc(Rslt_11),
-            pair_make(LAZ, 0, Rslt_11Args, new_ref(glblProto15_486)));
-#endif
-  // call = at core: 700
-  Term Rslt_12Args = pair_make(APP, 0, Rslt_11, SUB);
-  Term Rslt_12 = term_new(VAR, 0, port(2, term_loc(Rslt_12Args)));
-  Rslt_12Args = pair_make(APP, 0, Rslt_9, Rslt_12Args);
-#ifdef STRICT
-  store_redex(Rslt_12Args, new_ref(glblProto21_488));
-#else
-  swapStore(term_loc(Rslt_12),
-            pair_make(LAZ, 0, Rslt_12Args, new_ref(glblProto21_488)));
-#endif
-  // call dec at core: 701
-  Term Rslt_13Args = pair_make(APP, 0, start_3_3, SUB);
-  Term Rslt_13 = term_new(VAR, 0, port(2, term_loc(Rslt_13Args)));
-#ifdef STRICT
-  store_redex(Rslt_13Args, glblFn127);
-#else
-  swapStore(term_loc(Rslt_13), pair_make(LAZ, 0, Rslt_13Args, glblFn127));
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, Rslt_7Args, glblVal22_3));
 #endif
 
-  // call vect-= at core: 685
-  Term Rslt_14Args = pair_make(APP, 0, Rslt_13, SUB);
-  Term Rslt_14 = term_new(VAR, 0, port(2, term_loc(Rslt_14Args)));
-  Rslt_14Args = pair_make(APP, 0, y_2_1, Rslt_14Args);
-  Rslt_14Args = pair_make(APP, 0, x_1_2, Rslt_14Args);
+  // call nth at core: 701
+  Term Rslt_8Args = makePair(APP, 0, start_3_1, SUB);
+  Term Rslt_8 = newTerm(VAR, 0, portLoc(2, Rslt_8Args));
+  Rslt_8Args = makePair(APP, 0, x_1_1, Rslt_8Args);
 #ifdef STRICT
-  store_redex(Rslt_14Args, glblFn475);
+  pushRedex(Rslt_8Args, newRef(glblProto95_480));
 #else
-  swapStore(term_loc(Rslt_14), pair_make(LAZ, 0, Rslt_14Args, glblFn475));
+  swap(termLoc(Rslt_8), makePair(LAZ, 0, Rslt_8Args, newRef(glblProto95_480)));
+#endif
+  // call .x at core: 701
+  Term Rslt_9Args = makePair(APP, 0, Rslt_8, SUB);
+  Term Rslt_9 = newTerm(VAR, 0, portLoc(2, Rslt_9Args));
+#ifdef STRICT
+  pushRedex(Rslt_9Args, newRef(glblProto16_482));
+#else
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, Rslt_9Args, newRef(glblProto16_482)));
+#endif
+  // call nth at core: 701
+  Term Rslt_10Args = makePair(APP, 0, start_3_2, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
+  Rslt_10Args = makePair(APP, 0, y_2, Rslt_10Args);
+#ifdef STRICT
+  pushRedex(Rslt_10Args, newRef(glblProto95_484));
+#else
+  swap(termLoc(Rslt_10),
+       makePair(LAZ, 0, Rslt_10Args, newRef(glblProto95_484)));
+#endif
+  // call .x at core: 701
+  Term Rslt_11Args = makePair(APP, 0, Rslt_10, SUB);
+  Term Rslt_11 = newTerm(VAR, 0, portLoc(2, Rslt_11Args));
+#ifdef STRICT
+  pushRedex(Rslt_11Args, newRef(glblProto16_486));
+#else
+  swap(termLoc(Rslt_11),
+       makePair(LAZ, 0, Rslt_11Args, newRef(glblProto16_486)));
+#endif
+  // call = at core: 701
+  Term Rslt_12Args = makePair(APP, 0, Rslt_11, SUB);
+  Term Rslt_12 = newTerm(VAR, 0, portLoc(2, Rslt_12Args));
+  Rslt_12Args = makePair(APP, 0, Rslt_9, Rslt_12Args);
+#ifdef STRICT
+  pushRedex(Rslt_12Args, newRef(glblProto15_488));
+#else
+  swap(termLoc(Rslt_12),
+       makePair(LAZ, 0, Rslt_12Args, newRef(glblProto15_488)));
+#endif
+  // call dec at core: 702
+  Term Rslt_13Args = makePair(APP, 0, start_3_3, SUB);
+  Term Rslt_13 = newTerm(VAR, 0, portLoc(2, Rslt_13Args));
+#ifdef STRICT
+  pushRedex(Rslt_13Args, glblFn127);
+#else
+  swap(termLoc(Rslt_13), makePair(LAZ, 0, Rslt_13Args, glblFn127));
 #endif
 
-  // call and at core: 700
-  Term Rslt_15Args = pair_make(APP, 0, Rslt_14, SUB);
-  Term Rslt_15 = term_new(VAR, 0, port(2, term_loc(Rslt_15Args)));
-  Rslt_15Args = pair_make(APP, 0, Rslt_12, Rslt_15Args);
+  // call vect-= at core: 686
+  Term Rslt_14Args = makePair(APP, 0, Rslt_13, SUB);
+  Term Rslt_14 = newTerm(VAR, 0, portLoc(2, Rslt_14Args));
+  Rslt_14Args = makePair(APP, 0, y_2_1, Rslt_14Args);
+  Rslt_14Args = makePair(APP, 0, x_1_2, Rslt_14Args);
 #ifdef STRICT
-  store_redex(Rslt_15Args, new_ref(glblProto25_490));
+  pushRedex(Rslt_14Args, glblFn475);
 #else
-  swapStore(term_loc(Rslt_15),
-            pair_make(LAZ, 0, Rslt_15Args, new_ref(glblProto25_490)));
+  swap(termLoc(Rslt_14), makePair(LAZ, 0, Rslt_14Args, glblFn475));
 #endif
-  // call cond at core: 698
-  Term Rslt_16Args = pair_make(APP, 0, Rslt_15, SUB);
-  Term Rslt_16 = term_new(VAR, 0, port(2, term_loc(Rslt_16Args)));
-  Rslt_16Args = pair_make(APP, 0, Rslt_7, Rslt_16Args);
-  Rslt_16Args = pair_make(APP, 0, Rslt_6, Rslt_16Args);
+
+  // call and at core: 701
+  Term Rslt_15Args = makePair(APP, 0, Rslt_14, SUB);
+  Term Rslt_15 = newTerm(VAR, 0, portLoc(2, Rslt_15Args));
+  Rslt_15Args = makePair(APP, 0, Rslt_12, Rslt_15Args);
 #ifdef STRICT
-  store_redex(Rslt_16Args, new_ref(glblProto31_492));
+  pushRedex(Rslt_15Args, newRef(glblProto25_490));
 #else
-  swapStore(term_loc(Rslt_16),
-            pair_make(LAZ, 0, Rslt_16Args, new_ref(glblProto31_492)));
+  swap(termLoc(Rslt_15),
+       makePair(LAZ, 0, Rslt_15Args, newRef(glblProto25_490)));
+#endif
+  // call cond at core: 699
+  Term Rslt_16Args = makePair(APP, 0, Rslt_15, SUB);
+  Term Rslt_16 = newTerm(VAR, 0, portLoc(2, Rslt_16Args));
+  Rslt_16Args = makePair(APP, 0, Rslt_7, Rslt_16Args);
+  Rslt_16Args = makePair(APP, 0, Rslt_6, Rslt_16Args);
+#ifdef STRICT
+  pushRedex(Rslt_16Args, newRef(glblProto31_492));
+#else
+  swap(termLoc(Rslt_16),
+       makePair(LAZ, 0, Rslt_16Args, newRef(glblProto31_492)));
 #endif
   dupLabels[80] = "";
   // link args to body
-  swapStore(r_seq_4, Rslt_16);
+  swap(r_seq_4, Rslt_16);
 
-  Term Rslt_16V = get(term_loc(Rslt_16));
-  apps = take(port(1, term_loc(Rslt_16V)));
-  lams = take(port(2, term_loc(Rslt_16V)));
+  Term Rslt_16V = get(termLoc(Rslt_16));
+  apps = take(portLoc(1, Rslt_16V));
+  lams = take(portLoc(2, Rslt_16V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_16), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_4);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_16), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_4);
   return;
 }
-Term glblFn475 = new_ref(glblCFn474);
+Term glblFn475 = newRef(glblCFn474);
 Term glblFn477;
 void glblCFn476(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -4125,40 +4116,40 @@ void glblCFn476(Term ref, Term args) {
     Term n_2 = arityArgs.args[1];
     Term x_3 = arityArgs.args[2];
 
-    result = vectStore((Vector *)v_1, get_i60(n_2), (Term)x_3);
+    result = vectStore((Vector *)v_1, getI60(n_2), (Term)x_3);
     dec_and_free(n_2, 1);
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn477 = new_ref(glblCFn476);
-void glblProto21_548(Term ref, Term args) {
+Term glblFn477 = newRef(glblCFn476);
+void glblProto15_552(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(715), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto21);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(716), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto15);
   }
 }
-void glblProto21_553(Term ref, Term args) {
+void glblProto15_557(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(716), args);
-    args = pair_make(APP, 0, glblStr151, args);
-    interact(args, glblProto21);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(717), args);
+    args = makePair(APP, 0, glblStr151, args);
+    interact(args, glblProto15);
   }
 }
-void glblProto61_557(Term ref, Term args) {
+void glblProto61_559(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(717), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(718), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
@@ -4166,9 +4157,9 @@ void glblProto25_561(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(716), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(717), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto25);
   }
 }
@@ -4176,9 +4167,9 @@ void glblProto25_563(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(715), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(716), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto25);
   }
 }
@@ -4186,12 +4177,12 @@ Term glbl_EQ_539;
 void glbl_EQ_538(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_9 = pair_make(LAM, 103, SUB, NUL);
-  Location r_seq_9 = port(2, term_loc(seq_9));
-  Term y_8 = term_new(VAR, 0, port(1, term_loc(seq_9)));
-  seq_9 = pair_make(LAM, 103, SUB, seq_9);
-  Term x_7 = term_new(VAR, 0, port(1, term_loc(seq_9)));
-  // allocate args at core: 713
+  Term seq_9 = makePair(LAM, 103, SUB, NUL);
+  Location r_seq_9 = portLoc(2, seq_9);
+  Term y_8 = newTerm(VAR, 0, portLoc(1, seq_9));
+  seq_9 = makePair(LAM, 103, SUB, seq_9);
+  Term x_7 = newTerm(VAR, 0, portLoc(1, seq_9));
+  // allocate args at core: 714
 
   Term x_7_3;
   x_7 = dupeArg(x_7, &x_7_3, 103);
@@ -4207,125 +4198,125 @@ void glbl_EQ_538(Term ref, Term args) {
 
   Term y_8_1;
   y_8 = dupeArg(y_8, &y_8_1, 103);
-  // call type-num at core: 715
-  Term Rslt_11Args = pair_make(APP, 0, x_7, SUB);
-  Term Rslt_11 = term_new(VAR, 0, port(2, term_loc(Rslt_11Args)));
+  // call type-num at core: 716
+  Term Rslt_11Args = makePair(APP, 0, x_7, SUB);
+  Term Rslt_11 = newTerm(VAR, 0, portLoc(2, Rslt_11Args));
 #ifdef STRICT
-  store_redex(Rslt_11Args, glblFn8);
+  pushRedex(Rslt_11Args, glblFn8);
 #else
-  swapStore(term_loc(Rslt_11), pair_make(LAZ, 0, Rslt_11Args, glblFn8));
+  swap(termLoc(Rslt_11), makePair(LAZ, 0, Rslt_11Args, glblFn8));
 #endif
 
-  // call type-num at core: 715
-  Term Rslt_12Args = pair_make(APP, 0, y_8, SUB);
-  Term Rslt_12 = term_new(VAR, 0, port(2, term_loc(Rslt_12Args)));
+  // call type-num at core: 716
+  Term Rslt_12Args = makePair(APP, 0, y_8, SUB);
+  Term Rslt_12 = newTerm(VAR, 0, portLoc(2, Rslt_12Args));
 #ifdef STRICT
-  store_redex(Rslt_12Args, glblFn8);
+  pushRedex(Rslt_12Args, glblFn8);
 #else
-  swapStore(term_loc(Rslt_12), pair_make(LAZ, 0, Rslt_12Args, glblFn8));
-#endif
-
-  // call = at core: 715
-  Term Rslt_13Args = pair_make(APP, 0, Rslt_12, SUB);
-  Term Rslt_13 = term_new(VAR, 0, port(2, term_loc(Rslt_13Args)));
-  Rslt_13Args = pair_make(APP, 0, Rslt_11, Rslt_13Args);
-#ifdef STRICT
-  store_redex(Rslt_13Args, new_ref(glblProto21_548));
-#else
-  swapStore(term_loc(Rslt_13),
-            pair_make(LAZ, 0, Rslt_13Args, new_ref(glblProto21_548)));
-#endif
-  // call vect-count at core: 716
-  Term Rslt_14Args = pair_make(APP, 0, x_7_1, SUB);
-  Term Rslt_14 = term_new(VAR, 0, port(2, term_loc(Rslt_14Args)));
-#ifdef STRICT
-  store_redex(Rslt_14Args, glblFn272);
-#else
-  swapStore(term_loc(Rslt_14), pair_make(LAZ, 0, Rslt_14Args, glblFn272));
-#endif
-
-  // call vect-count at core: 716
-  Term Rslt_15Args = pair_make(APP, 0, y_8_1, SUB);
-  Term Rslt_15 = term_new(VAR, 0, port(2, term_loc(Rslt_15Args)));
-#ifdef STRICT
-  store_redex(Rslt_15Args, glblFn272);
-#else
-  swapStore(term_loc(Rslt_15), pair_make(LAZ, 0, Rslt_15Args, glblFn272));
+  swap(termLoc(Rslt_12), makePair(LAZ, 0, Rslt_12Args, glblFn8));
 #endif
 
   // call = at core: 716
-  Term Rslt_16Args = pair_make(APP, 0, Rslt_15, SUB);
-  Term Rslt_16 = term_new(VAR, 0, port(2, term_loc(Rslt_16Args)));
-  Rslt_16Args = pair_make(APP, 0, Rslt_14, Rslt_16Args);
+  Term Rslt_13Args = makePair(APP, 0, Rslt_12, SUB);
+  Term Rslt_13 = newTerm(VAR, 0, portLoc(2, Rslt_13Args));
+  Rslt_13Args = makePair(APP, 0, Rslt_11, Rslt_13Args);
 #ifdef STRICT
-  store_redex(Rslt_16Args, new_ref(glblProto21_553));
+  pushRedex(Rslt_13Args, newRef(glblProto15_552));
 #else
-  swapStore(term_loc(Rslt_16),
-            pair_make(LAZ, 0, Rslt_16Args, new_ref(glblProto21_553)));
+  swap(termLoc(Rslt_13),
+       makePair(LAZ, 0, Rslt_13Args, newRef(glblProto15_552)));
 #endif
-  // call count at core: 717
-  Term Rslt_17Args = pair_make(APP, 0, x_7_3, SUB);
-  Term Rslt_17 = term_new(VAR, 0, port(2, term_loc(Rslt_17Args)));
+  // call vect-count at core: 717
+  Term Rslt_14Args = makePair(APP, 0, x_7_1, SUB);
+  Term Rslt_14 = newTerm(VAR, 0, portLoc(2, Rslt_14Args));
 #ifdef STRICT
-  store_redex(Rslt_17Args, new_ref(glblProto61_557));
+  pushRedex(Rslt_14Args, glblFn271);
 #else
-  swapStore(term_loc(Rslt_17),
-            pair_make(LAZ, 0, Rslt_17Args, new_ref(glblProto61_557)));
-#endif
-  // call dec at core: 717
-  Term Rslt_18Args = pair_make(APP, 0, Rslt_17, SUB);
-  Term Rslt_18 = term_new(VAR, 0, port(2, term_loc(Rslt_18Args)));
-#ifdef STRICT
-  store_redex(Rslt_18Args, glblFn127);
-#else
-  swapStore(term_loc(Rslt_18), pair_make(LAZ, 0, Rslt_18Args, glblFn127));
+  swap(termLoc(Rslt_14), makePair(LAZ, 0, Rslt_14Args, glblFn271));
 #endif
 
-  // call vect-= at core: 717
-  Term Rslt_19Args = pair_make(APP, 0, Rslt_18, SUB);
-  Term Rslt_19 = term_new(VAR, 0, port(2, term_loc(Rslt_19Args)));
-  Rslt_19Args = pair_make(APP, 0, y_8_2, Rslt_19Args);
-  Rslt_19Args = pair_make(APP, 0, x_7_2, Rslt_19Args);
+  // call vect-count at core: 717
+  Term Rslt_15Args = makePair(APP, 0, y_8_1, SUB);
+  Term Rslt_15 = newTerm(VAR, 0, portLoc(2, Rslt_15Args));
 #ifdef STRICT
-  store_redex(Rslt_19Args, glblFn475);
+  pushRedex(Rslt_15Args, glblFn271);
 #else
-  swapStore(term_loc(Rslt_19), pair_make(LAZ, 0, Rslt_19Args, glblFn475));
+  swap(termLoc(Rslt_15), makePair(LAZ, 0, Rslt_15Args, glblFn271));
 #endif
 
+  // call = at core: 717
+  Term Rslt_16Args = makePair(APP, 0, Rslt_15, SUB);
+  Term Rslt_16 = newTerm(VAR, 0, portLoc(2, Rslt_16Args));
+  Rslt_16Args = makePair(APP, 0, Rslt_14, Rslt_16Args);
+#ifdef STRICT
+  pushRedex(Rslt_16Args, newRef(glblProto15_557));
+#else
+  swap(termLoc(Rslt_16),
+       makePair(LAZ, 0, Rslt_16Args, newRef(glblProto15_557)));
+#endif
+  // call count at core: 718
+  Term Rslt_17Args = makePair(APP, 0, x_7_3, SUB);
+  Term Rslt_17 = newTerm(VAR, 0, portLoc(2, Rslt_17Args));
+#ifdef STRICT
+  pushRedex(Rslt_17Args, newRef(glblProto61_559));
+#else
+  swap(termLoc(Rslt_17),
+       makePair(LAZ, 0, Rslt_17Args, newRef(glblProto61_559)));
+#endif
+  // call dec at core: 718
+  Term Rslt_18Args = makePair(APP, 0, Rslt_17, SUB);
+  Term Rslt_18 = newTerm(VAR, 0, portLoc(2, Rslt_18Args));
+#ifdef STRICT
+  pushRedex(Rslt_18Args, glblFn127);
+#else
+  swap(termLoc(Rslt_18), makePair(LAZ, 0, Rslt_18Args, glblFn127));
+#endif
+
+  // call vect-= at core: 718
+  Term Rslt_19Args = makePair(APP, 0, Rslt_18, SUB);
+  Term Rslt_19 = newTerm(VAR, 0, portLoc(2, Rslt_19Args));
+  Rslt_19Args = makePair(APP, 0, y_8_2, Rslt_19Args);
+  Rslt_19Args = makePair(APP, 0, x_7_2, Rslt_19Args);
+#ifdef STRICT
+  pushRedex(Rslt_19Args, glblFn475);
+#else
+  swap(termLoc(Rslt_19), makePair(LAZ, 0, Rslt_19Args, glblFn475));
+#endif
+
+  // call and at core: 717
+  Term Rslt_20Args = makePair(APP, 0, Rslt_19, SUB);
+  Term Rslt_20 = newTerm(VAR, 0, portLoc(2, Rslt_20Args));
+  Rslt_20Args = makePair(APP, 0, Rslt_16, Rslt_20Args);
+#ifdef STRICT
+  pushRedex(Rslt_20Args, newRef(glblProto25_561));
+#else
+  swap(termLoc(Rslt_20),
+       makePair(LAZ, 0, Rslt_20Args, newRef(glblProto25_561)));
+#endif
   // call and at core: 716
-  Term Rslt_20Args = pair_make(APP, 0, Rslt_19, SUB);
-  Term Rslt_20 = term_new(VAR, 0, port(2, term_loc(Rslt_20Args)));
-  Rslt_20Args = pair_make(APP, 0, Rslt_16, Rslt_20Args);
+  Term Rslt_21Args = makePair(APP, 0, Rslt_20, SUB);
+  Term Rslt_21 = newTerm(VAR, 0, portLoc(2, Rslt_21Args));
+  Rslt_21Args = makePair(APP, 0, Rslt_13, Rslt_21Args);
 #ifdef STRICT
-  store_redex(Rslt_20Args, new_ref(glblProto25_561));
+  pushRedex(Rslt_21Args, newRef(glblProto25_563));
 #else
-  swapStore(term_loc(Rslt_20),
-            pair_make(LAZ, 0, Rslt_20Args, new_ref(glblProto25_561)));
-#endif
-  // call and at core: 715
-  Term Rslt_21Args = pair_make(APP, 0, Rslt_20, SUB);
-  Term Rslt_21 = term_new(VAR, 0, port(2, term_loc(Rslt_21Args)));
-  Rslt_21Args = pair_make(APP, 0, Rslt_13, Rslt_21Args);
-#ifdef STRICT
-  store_redex(Rslt_21Args, new_ref(glblProto25_563));
-#else
-  swapStore(term_loc(Rslt_21),
-            pair_make(LAZ, 0, Rslt_21Args, new_ref(glblProto25_563)));
+  swap(termLoc(Rslt_21),
+       makePair(LAZ, 0, Rslt_21Args, newRef(glblProto25_563)));
 #endif
   dupLabels[103] = "=";
   // link args to body
-  swapStore(r_seq_9, Rslt_21);
+  swap(r_seq_9, Rslt_21);
 
-  Term Rslt_21V = get(term_loc(Rslt_21));
-  apps = take(port(1, term_loc(Rslt_21V)));
-  lams = take(port(2, term_loc(Rslt_21V)));
+  Term Rslt_21V = get(termLoc(Rslt_21));
+  apps = take(portLoc(1, Rslt_21V));
+  lams = take(portLoc(2, Rslt_21V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_21), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_9);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_21), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_9);
   return;
 }
-Term glbl_EQ_539 = new_ref(glbl_EQ_538);
+Term glbl_EQ_539 = newRef(glbl_EQ_538);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -4334,31 +4325,31 @@ struct {
   int64_t len;
   char buffer[7];
 } str8 = {StringBufferType, REFS_STATIC, 0, 0, 6, "Vector"};
-Term glblStr540 = term_new_(VAL, (Term)&str8);
+Term glblStr540 = newTerm_(VAL, (Term)&str8);
 Term glbltype_name537;
 void glbltype_name536(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_24 = pair_make(LAM, 102, SUB, NUL);
-  Location r_seq_24 = port(2, term_loc(seq_24));
-  Term arg_23 = term_new(VAR, 0, port(1, term_loc(seq_24)));
-  // allocate args at core: 719
-  swapStore(term_loc(arg_23), ERA);
+  Term seq_24 = makePair(LAM, 102, SUB, NUL);
+  Location r_seq_24 = portLoc(2, seq_24);
+  Term arg_23 = newTerm(VAR, 0, portLoc(1, seq_24));
+  // allocate args at core: 720
+  swap(termLoc(arg_23), ERA);
   dupLabels[102] = "type-name";
   // link args to body
-  swapStore(r_seq_24, glblStr540);
+  swap(r_seq_24, glblStr540);
 
   V = get(r_seq_24);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 102, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_24, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_24);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 102, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_24, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_24);
   return;
 }
-Term glbltype_name537 = new_ref(glbltype_name536);
+Term glbltype_name537 = newRef(glbltype_name536);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -4367,14 +4358,14 @@ struct {
   int64_t len;
   char buffer[2];
 } str9 = {StringBufferType, REFS_STATIC, 0, 0, 1, "["};
-Term glblStr542 = term_new_(VAL, (Term)&str9);
+Term glblStr542 = newTerm_(VAL, (Term)&str9);
 void glblProto57_567(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(723), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(724), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto57);
   }
 }
@@ -4386,197 +4377,197 @@ struct {
   int64_t len;
   char buffer[2];
 } str10 = {StringBufferType, REFS_STATIC, 0, 0, 1, "]"};
-Term glblStr541 = term_new_(VAL, (Term)&str10);
+Term glblStr541 = newTerm_(VAL, (Term)&str10);
 Term glblstr_vect535;
 void glblstr_vect534(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_28 = pair_make(LAM, 101, SUB, NUL);
-  Location r_seq_28 = port(2, term_loc(seq_28));
-  Term v_27 = term_new(VAR, 0, port(1, term_loc(seq_28)));
-  // allocate args at core: 722
+  Term seq_28 = makePair(LAM, 101, SUB, NUL);
+  Location r_seq_28 = portLoc(2, seq_28);
+  Term v_27 = newTerm(VAR, 0, portLoc(1, seq_28));
+  // allocate args at core: 723
   Term glblVal131_11;
   glblVal131 = dupeArg(glblVal131, &glblVal131_11, 0);
 
-  // call vect-conj at core: 723
-  Term Rslt_30Args = pair_make(APP, 0, glblStr542, SUB);
-  Term Rslt_30 = term_new(VAR, 0, port(2, term_loc(Rslt_30Args)));
-  Rslt_30Args = pair_make(APP, 0, glblVal131_11, Rslt_30Args);
+  // call vect-conj at core: 724
+  Term Rslt_30Args = makePair(APP, 0, glblStr542, SUB);
+  Term Rslt_30 = newTerm(VAR, 0, portLoc(2, Rslt_30Args));
+  Rslt_30Args = makePair(APP, 0, glblVal131_11, Rslt_30Args);
 #ifdef STRICT
-  store_redex(Rslt_30Args, glblFn134);
+  pushRedex(Rslt_30Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_30), pair_make(LAZ, 0, Rslt_30Args, glblFn134));
+  swap(termLoc(Rslt_30), makePair(LAZ, 0, Rslt_30Args, glblFn134));
 #endif
 
-  // call interpose at core: 723
-  Term Rslt_31Args = pair_make(APP, 0, glblStr162, SUB);
-  Term Rslt_31 = term_new(VAR, 0, port(2, term_loc(Rslt_31Args)));
-  Rslt_31Args = pair_make(APP, 0, v_27, Rslt_31Args);
+  // call interpose at core: 724
+  Term Rslt_31Args = makePair(APP, 0, glblStr162, SUB);
+  Term Rslt_31 = newTerm(VAR, 0, portLoc(2, Rslt_31Args));
+  Rslt_31Args = makePair(APP, 0, v_27, Rslt_31Args);
 #ifdef STRICT
-  store_redex(Rslt_31Args, new_ref(glblProto57_567));
+  pushRedex(Rslt_31Args, newRef(glblProto57_567));
 #else
-  swapStore(term_loc(Rslt_31),
-            pair_make(LAZ, 0, Rslt_31Args, new_ref(glblProto57_567)));
+  swap(termLoc(Rslt_31),
+       makePair(LAZ, 0, Rslt_31Args, newRef(glblProto57_567)));
 #endif
-  // call to-str at core: 723
-  Term Rslt_32Args = pair_make(APP, 0, Rslt_31, SUB);
-  Term Rslt_32 = term_new(VAR, 0, port(2, term_loc(Rslt_32Args)));
+  // call to-str at core: 724
+  Term Rslt_32Args = makePair(APP, 0, Rslt_31, SUB);
+  Term Rslt_32 = newTerm(VAR, 0, portLoc(2, Rslt_32Args));
 #ifdef STRICT
-  store_redex(Rslt_32Args, glblFn455);
+  pushRedex(Rslt_32Args, glblFn455);
 #else
-  swapStore(term_loc(Rslt_32), pair_make(LAZ, 0, Rslt_32Args, glblFn455));
-#endif
-
-  // call vect-conj at core: 723
-  Term Rslt_33Args = pair_make(APP, 0, Rslt_32, SUB);
-  Term Rslt_33 = term_new(VAR, 0, port(2, term_loc(Rslt_33Args)));
-  Rslt_33Args = pair_make(APP, 0, Rslt_30, Rslt_33Args);
-#ifdef STRICT
-  store_redex(Rslt_33Args, glblFn134);
-#else
-  swapStore(term_loc(Rslt_33), pair_make(LAZ, 0, Rslt_33Args, glblFn134));
+  swap(termLoc(Rslt_32), makePair(LAZ, 0, Rslt_32Args, glblFn455));
 #endif
 
-  // call vect-conj at core: 723
-  Term Rslt_34Args = pair_make(APP, 0, glblStr541, SUB);
-  Term Rslt_34 = term_new(VAR, 0, port(2, term_loc(Rslt_34Args)));
-  Rslt_34Args = pair_make(APP, 0, Rslt_33, Rslt_34Args);
+  // call vect-conj at core: 724
+  Term Rslt_33Args = makePair(APP, 0, Rslt_32, SUB);
+  Term Rslt_33 = newTerm(VAR, 0, portLoc(2, Rslt_33Args));
+  Rslt_33Args = makePair(APP, 0, Rslt_30, Rslt_33Args);
 #ifdef STRICT
-  store_redex(Rslt_34Args, glblFn134);
+  pushRedex(Rslt_33Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_34), pair_make(LAZ, 0, Rslt_34Args, glblFn134));
+  swap(termLoc(Rslt_33), makePair(LAZ, 0, Rslt_33Args, glblFn134));
+#endif
+
+  // call vect-conj at core: 724
+  Term Rslt_34Args = makePair(APP, 0, glblStr541, SUB);
+  Term Rslt_34 = newTerm(VAR, 0, portLoc(2, Rslt_34Args));
+  Rslt_34Args = makePair(APP, 0, Rslt_33, Rslt_34Args);
+#ifdef STRICT
+  pushRedex(Rslt_34Args, glblFn134);
+#else
+  swap(termLoc(Rslt_34), makePair(LAZ, 0, Rslt_34Args, glblFn134));
 #endif
 
   dupLabels[101] = "str-vect";
   // link args to body
-  swapStore(r_seq_28, Rslt_34);
+  swap(r_seq_28, Rslt_34);
 
-  Term Rslt_34V = get(term_loc(Rslt_34));
-  apps = take(port(1, term_loc(Rslt_34V)));
-  lams = take(port(2, term_loc(Rslt_34V)));
+  Term Rslt_34V = get(termLoc(Rslt_34));
+  apps = take(portLoc(1, Rslt_34V));
+  lams = take(portLoc(2, Rslt_34V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_34), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_28);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_34), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_28);
   return;
 }
-Term glblstr_vect535 = new_ref(glblstr_vect534);
+Term glblstr_vect535 = newRef(glblstr_vect534);
 Term glblcount533;
 void glblcount532(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_37 = pair_make(LAM, 100, SUB, NUL);
-  Location r_seq_37 = port(2, term_loc(seq_37));
-  Term l_36 = term_new(VAR, 0, port(1, term_loc(seq_37)));
-  // allocate args at core: 725
-  // call vect-count at core: 726
-  Term Rslt_39Args = pair_make(APP, 0, l_36, SUB);
-  Term Rslt_39 = term_new(VAR, 0, port(2, term_loc(Rslt_39Args)));
+  Term seq_37 = makePair(LAM, 100, SUB, NUL);
+  Location r_seq_37 = portLoc(2, seq_37);
+  Term l_36 = newTerm(VAR, 0, portLoc(1, seq_37));
+  // allocate args at core: 726
+  // call vect-count at core: 727
+  Term Rslt_39Args = makePair(APP, 0, l_36, SUB);
+  Term Rslt_39 = newTerm(VAR, 0, portLoc(2, Rslt_39Args));
 #ifdef STRICT
-  store_redex(Rslt_39Args, glblFn272);
+  pushRedex(Rslt_39Args, glblFn271);
 #else
-  swapStore(term_loc(Rslt_39), pair_make(LAZ, 0, Rslt_39Args, glblFn272));
+  swap(termLoc(Rslt_39), makePair(LAZ, 0, Rslt_39Args, glblFn271));
 #endif
 
   dupLabels[100] = "count";
   // link args to body
-  swapStore(r_seq_37, Rslt_39);
+  swap(r_seq_37, Rslt_39);
 
-  Term Rslt_39V = get(term_loc(Rslt_39));
-  apps = take(port(1, term_loc(Rslt_39V)));
-  lams = take(port(2, term_loc(Rslt_39V)));
+  Term Rslt_39V = get(termLoc(Rslt_39));
+  apps = take(portLoc(1, Rslt_39V));
+  lams = take(portLoc(2, Rslt_39V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_39), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_37);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_39), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_37);
   return;
 }
-Term glblcount533 = new_ref(glblcount532);
+Term glblcount533 = newRef(glblcount532);
 Term glblget531;
 void glblget530(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_43 = pair_make(LAM, 99, SUB, NUL);
-  Location r_seq_43 = port(2, term_loc(seq_43));
-  Term n_42 = term_new(VAR, 0, port(1, term_loc(seq_43)));
-  seq_43 = pair_make(LAM, 99, SUB, seq_43);
-  Term v_41 = term_new(VAR, 0, port(1, term_loc(seq_43)));
-  // allocate args at core: 728
-  // call vect-get at core: 729
-  Term Rslt_45Args = pair_make(APP, 0, n_42, SUB);
-  Term Rslt_45 = term_new(VAR, 0, port(2, term_loc(Rslt_45Args)));
-  Rslt_45Args = pair_make(APP, 0, v_41, Rslt_45Args);
+  Term seq_43 = makePair(LAM, 99, SUB, NUL);
+  Location r_seq_43 = portLoc(2, seq_43);
+  Term n_42 = newTerm(VAR, 0, portLoc(1, seq_43));
+  seq_43 = makePair(LAM, 99, SUB, seq_43);
+  Term v_41 = newTerm(VAR, 0, portLoc(1, seq_43));
+  // allocate args at core: 729
+  // call vect-get at core: 730
+  Term Rslt_45Args = makePair(APP, 0, n_42, SUB);
+  Term Rslt_45 = newTerm(VAR, 0, portLoc(2, Rslt_45Args));
+  Rslt_45Args = makePair(APP, 0, v_41, Rslt_45Args);
 #ifdef STRICT
-  store_redex(Rslt_45Args, glblFn376);
+  pushRedex(Rslt_45Args, glblFn376);
 #else
-  swapStore(term_loc(Rslt_45), pair_make(LAZ, 0, Rslt_45Args, glblFn376));
+  swap(termLoc(Rslt_45), makePair(LAZ, 0, Rslt_45Args, glblFn376));
 #endif
 
   dupLabels[99] = "get";
   // link args to body
-  swapStore(r_seq_43, Rslt_45);
+  swap(r_seq_43, Rslt_45);
 
-  Term Rslt_45V = get(term_loc(Rslt_45));
-  apps = take(port(1, term_loc(Rslt_45V)));
-  lams = take(port(2, term_loc(Rslt_45V)));
+  Term Rslt_45V = get(termLoc(Rslt_45));
+  apps = take(portLoc(1, Rslt_45V));
+  lams = take(portLoc(2, Rslt_45V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_45), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_43);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_45), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_43);
   return;
 }
-Term glblget531 = new_ref(glblget530);
+Term glblget531 = newRef(glblget530);
 Term glblnth529;
 void glblnth528(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_49 = pair_make(LAM, 98, SUB, NUL);
-  Location r_seq_49 = port(2, term_loc(seq_49));
-  Term n_48 = term_new(VAR, 0, port(1, term_loc(seq_49)));
-  seq_49 = pair_make(LAM, 98, SUB, seq_49);
-  Term v_47 = term_new(VAR, 0, port(1, term_loc(seq_49)));
-  // allocate args at core: 731
-  // call vect-get at core: 732
-  Term Rslt_51Args = pair_make(APP, 0, n_48, SUB);
-  Term Rslt_51 = term_new(VAR, 0, port(2, term_loc(Rslt_51Args)));
-  Rslt_51Args = pair_make(APP, 0, v_47, Rslt_51Args);
+  Term seq_49 = makePair(LAM, 98, SUB, NUL);
+  Location r_seq_49 = portLoc(2, seq_49);
+  Term n_48 = newTerm(VAR, 0, portLoc(1, seq_49));
+  seq_49 = makePair(LAM, 98, SUB, seq_49);
+  Term v_47 = newTerm(VAR, 0, portLoc(1, seq_49));
+  // allocate args at core: 732
+  // call vect-get at core: 733
+  Term Rslt_51Args = makePair(APP, 0, n_48, SUB);
+  Term Rslt_51 = newTerm(VAR, 0, portLoc(2, Rslt_51Args));
+  Rslt_51Args = makePair(APP, 0, v_47, Rslt_51Args);
 #ifdef STRICT
-  store_redex(Rslt_51Args, glblFn376);
+  pushRedex(Rslt_51Args, glblFn376);
 #else
-  swapStore(term_loc(Rslt_51), pair_make(LAZ, 0, Rslt_51Args, glblFn376));
+  swap(termLoc(Rslt_51), makePair(LAZ, 0, Rslt_51Args, glblFn376));
 #endif
 
   dupLabels[98] = "nth";
   // link args to body
-  swapStore(r_seq_49, Rslt_51);
+  swap(r_seq_49, Rslt_51);
 
-  Term Rslt_51V = get(term_loc(Rslt_51));
-  apps = take(port(1, term_loc(Rslt_51V)));
-  lams = take(port(2, term_loc(Rslt_51V)));
+  Term Rslt_51V = get(termLoc(Rslt_51));
+  apps = take(portLoc(1, Rslt_51V));
+  lams = take(portLoc(2, Rslt_51V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_51), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_49);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_51), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_49);
   return;
 }
-Term glblnth529 = new_ref(glblnth528);
+Term glblnth529 = newRef(glblnth528);
 void glblProto61_573(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(735), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(736), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
-void glblProto25_575(Term ref, Term args) {
+void glblProto25_576(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(735), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(736), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto25);
   }
 }
@@ -4584,102 +4575,102 @@ Term glblempty_QM_527;
 void glblempty_QM_526(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_54 = pair_make(LAM, 97, SUB, NUL);
-  Location r_seq_54 = port(2, term_loc(seq_54));
-  Term v_53 = term_new(VAR, 0, port(1, term_loc(seq_54)));
-  // allocate args at core: 734
+  Term seq_54 = makePair(LAM, 97, SUB, NUL);
+  Location r_seq_54 = portLoc(2, seq_54);
+  Term v_53 = newTerm(VAR, 0, portLoc(1, seq_54));
+  // allocate args at core: 735
   Term glblVal131_12;
   glblVal131 = dupeArg(glblVal131, &glblVal131_12, 0);
 
-  Term glblVal20_4;
-  glblVal20 = dupeArg(glblVal20, &glblVal20_4, 0);
+  Term glblVal22_4;
+  glblVal22 = dupeArg(glblVal22, &glblVal22_4, 0);
 
-  // call count at core: 735
-  Term Rslt_56Args = pair_make(APP, 0, v_53, SUB);
-  Term Rslt_56 = term_new(VAR, 0, port(2, term_loc(Rslt_56Args)));
+  // call count at core: 736
+  Term Rslt_56Args = makePair(APP, 0, v_53, SUB);
+  Term Rslt_56 = newTerm(VAR, 0, portLoc(2, Rslt_56Args));
 #ifdef STRICT
-  store_redex(Rslt_56Args, new_ref(glblProto61_573));
+  pushRedex(Rslt_56Args, newRef(glblProto61_573));
 #else
-  swapStore(term_loc(Rslt_56),
-            pair_make(LAZ, 0, Rslt_56Args, new_ref(glblProto61_573)));
+  swap(termLoc(Rslt_56),
+       makePair(LAZ, 0, Rslt_56Args, newRef(glblProto61_573)));
 #endif
-  // call int-= at core: 735
-  Term Rslt_57Args = pair_make(APP, 0, Rslt_56, SUB);
-  Term Rslt_57 = term_new(VAR, 0, port(2, term_loc(Rslt_57Args)));
-  Rslt_57Args = pair_make(APP, 0, new_i60(0), Rslt_57Args);
+  // call int-= at core: 736
+  Term Rslt_57Args = makePair(APP, 0, Rslt_56, SUB);
+  Term Rslt_57 = newTerm(VAR, 0, portLoc(2, Rslt_57Args));
+  Rslt_57Args = makePair(APP, 0, newI60(0), Rslt_57Args);
 #ifdef STRICT
-  store_redex(Rslt_57Args, glblFn205);
+  pushRedex(Rslt_57Args, glblFn205);
 #else
-  swapStore(term_loc(Rslt_57), pair_make(LAZ, 0, Rslt_57Args, glblFn205));
-#endif
-
-  // call Some at core: 736
-  Term Rslt_58Args = pair_make(APP, 0, glblVal131_12, SUB);
-  Term Rslt_58 = term_new(VAR, 0, port(2, term_loc(Rslt_58Args)));
-#ifdef STRICT
-  store_redex(Rslt_58Args, glblVal20_4);
-#else
-  swapStore(term_loc(Rslt_58), pair_make(LAZ, 0, Rslt_58Args, glblVal20_4));
+  swap(termLoc(Rslt_57), makePair(LAZ, 0, Rslt_57Args, glblFn205));
 #endif
 
-  // call and at core: 735
-  Term Rslt_59Args = pair_make(APP, 0, Rslt_58, SUB);
-  Term Rslt_59 = term_new(VAR, 0, port(2, term_loc(Rslt_59Args)));
-  Rslt_59Args = pair_make(APP, 0, Rslt_57, Rslt_59Args);
+  // call Some at core: 737
+  Term Rslt_58Args = makePair(APP, 0, glblVal131_12, SUB);
+  Term Rslt_58 = newTerm(VAR, 0, portLoc(2, Rslt_58Args));
 #ifdef STRICT
-  store_redex(Rslt_59Args, new_ref(glblProto25_575));
+  pushRedex(Rslt_58Args, glblVal22_4);
 #else
-  swapStore(term_loc(Rslt_59),
-            pair_make(LAZ, 0, Rslt_59Args, new_ref(glblProto25_575)));
+  swap(termLoc(Rslt_58), makePair(LAZ, 0, Rslt_58Args, glblVal22_4));
+#endif
+
+  // call and at core: 736
+  Term Rslt_59Args = makePair(APP, 0, Rslt_58, SUB);
+  Term Rslt_59 = newTerm(VAR, 0, portLoc(2, Rslt_59Args));
+  Rslt_59Args = makePair(APP, 0, Rslt_57, Rslt_59Args);
+#ifdef STRICT
+  pushRedex(Rslt_59Args, newRef(glblProto25_576));
+#else
+  swap(termLoc(Rslt_59),
+       makePair(LAZ, 0, Rslt_59Args, newRef(glblProto25_576)));
 #endif
   dupLabels[97] = "empty?";
   // link args to body
-  swapStore(r_seq_54, Rslt_59);
+  swap(r_seq_54, Rslt_59);
 
-  Term Rslt_59V = get(term_loc(Rslt_59));
-  apps = take(port(1, term_loc(Rslt_59V)));
-  lams = take(port(2, term_loc(Rslt_59V)));
+  Term Rslt_59V = get(termLoc(Rslt_59));
+  apps = take(portLoc(1, Rslt_59V));
+  lams = take(portLoc(2, Rslt_59V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_59), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_54);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_59), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_54);
   return;
 }
-Term glblempty_QM_527 = new_ref(glblempty_QM_526);
+Term glblempty_QM_527 = newRef(glblempty_QM_526);
 Term glblempty525;
 void glblempty524(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_62 = pair_make(LAM, 96, SUB, NUL);
-  Location r_seq_62 = port(2, term_loc(seq_62));
-  Term coll_61 = term_new(VAR, 0, port(1, term_loc(seq_62)));
-  // allocate args at core: 738
-  swapStore(term_loc(coll_61), ERA);
+  Term seq_62 = makePair(LAM, 96, SUB, NUL);
+  Location r_seq_62 = portLoc(2, seq_62);
+  Term coll_61 = newTerm(VAR, 0, portLoc(1, seq_62));
+  // allocate args at core: 739
+  swap(termLoc(coll_61), ERA);
   Term glblVal131_13;
   glblVal131 = dupeArg(glblVal131, &glblVal131_13, 0);
 
   dupLabels[96] = "empty";
   // link args to body
-  swapStore(r_seq_62, glblVal131_13);
+  swap(r_seq_62, glblVal131_13);
 
   V = get(r_seq_62);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 96, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_62, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_62);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 96, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_62, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_62);
   return;
 }
-Term glblempty525 = new_ref(glblempty524);
-void glblProto69_580(Term ref, Term args) {
+Term glblempty525 = newRef(glblempty524);
+void glblProto69_583(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(742), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(743), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto69);
   }
 }
@@ -4687,44 +4678,44 @@ Term glblcomp523;
 void glblcomp522(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_67 = pair_make(LAM, 95, SUB, NUL);
-  Location r_seq_67 = port(2, term_loc(seq_67));
-  Term v2_66 = term_new(VAR, 0, port(1, term_loc(seq_67)));
-  seq_67 = pair_make(LAM, 95, SUB, seq_67);
-  Term v1_65 = term_new(VAR, 0, port(1, term_loc(seq_67)));
-  // allocate args at core: 741
-  // call reduce at core: 742
-  Term Rslt_69Args = pair_make(APP, 0, glblFn134, SUB);
-  Term Rslt_69 = term_new(VAR, 0, port(2, term_loc(Rslt_69Args)));
-  Rslt_69Args = pair_make(APP, 0, v1_65, Rslt_69Args);
-  Rslt_69Args = pair_make(APP, 0, v2_66, Rslt_69Args);
+  Term seq_67 = makePair(LAM, 95, SUB, NUL);
+  Location r_seq_67 = portLoc(2, seq_67);
+  Term v2_66 = newTerm(VAR, 0, portLoc(1, seq_67));
+  seq_67 = makePair(LAM, 95, SUB, seq_67);
+  Term v1_65 = newTerm(VAR, 0, portLoc(1, seq_67));
+  // allocate args at core: 742
+  // call reduce at core: 743
+  Term Rslt_69Args = makePair(APP, 0, glblFn134, SUB);
+  Term Rslt_69 = newTerm(VAR, 0, portLoc(2, Rslt_69Args));
+  Rslt_69Args = makePair(APP, 0, v1_65, Rslt_69Args);
+  Rslt_69Args = makePair(APP, 0, v2_66, Rslt_69Args);
 #ifdef STRICT
-  store_redex(Rslt_69Args, new_ref(glblProto69_580));
+  pushRedex(Rslt_69Args, newRef(glblProto69_583));
 #else
-  swapStore(term_loc(Rslt_69),
-            pair_make(LAZ, 0, Rslt_69Args, new_ref(glblProto69_580)));
+  swap(termLoc(Rslt_69),
+       makePair(LAZ, 0, Rslt_69Args, newRef(glblProto69_583)));
 #endif
   dupLabels[95] = "comp";
   // link args to body
-  swapStore(r_seq_67, Rslt_69);
+  swap(r_seq_67, Rslt_69);
 
-  Term Rslt_69V = get(term_loc(Rslt_69));
-  apps = take(port(1, term_loc(Rslt_69V)));
-  lams = take(port(2, term_loc(Rslt_69V)));
+  Term Rslt_69V = get(termLoc(Rslt_69));
+  apps = take(portLoc(1, Rslt_69V));
+  lams = take(portLoc(2, Rslt_69V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_69), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_67);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_69), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_67);
   return;
 }
-Term glblcomp523 = new_ref(glblcomp522);
-void glblProto101_586(Term ref, Term args) {
+Term glblcomp523 = newRef(glblcomp522);
+void glblProto101_589(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(745), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(746), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto101);
   }
 }
@@ -4732,51 +4723,51 @@ Term glblfirst521;
 void glblfirst520(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_72 = pair_make(LAM, 94, SUB, NUL);
-  Location r_seq_72 = port(2, term_loc(seq_72));
-  Term v_71 = term_new(VAR, 0, port(1, term_loc(seq_72)));
-  // allocate args at core: 744
-  // call get at core: 745
-  Term Rslt_74Args = pair_make(APP, 0, new_i60(0), SUB);
-  Term Rslt_74 = term_new(VAR, 0, port(2, term_loc(Rslt_74Args)));
-  Rslt_74Args = pair_make(APP, 0, v_71, Rslt_74Args);
+  Term seq_72 = makePair(LAM, 94, SUB, NUL);
+  Location r_seq_72 = portLoc(2, seq_72);
+  Term v_71 = newTerm(VAR, 0, portLoc(1, seq_72));
+  // allocate args at core: 745
+  // call get at core: 746
+  Term Rslt_74Args = makePair(APP, 0, newI60(0), SUB);
+  Term Rslt_74 = newTerm(VAR, 0, portLoc(2, Rslt_74Args));
+  Rslt_74Args = makePair(APP, 0, v_71, Rslt_74Args);
 #ifdef STRICT
-  store_redex(Rslt_74Args, new_ref(glblProto101_586));
+  pushRedex(Rslt_74Args, newRef(glblProto101_589));
 #else
-  swapStore(term_loc(Rslt_74),
-            pair_make(LAZ, 0, Rslt_74Args, new_ref(glblProto101_586)));
+  swap(termLoc(Rslt_74),
+       makePair(LAZ, 0, Rslt_74Args, newRef(glblProto101_589)));
 #endif
   dupLabels[94] = "first";
   // link args to body
-  swapStore(r_seq_72, Rslt_74);
+  swap(r_seq_72, Rslt_74);
 
-  Term Rslt_74V = get(term_loc(Rslt_74));
-  apps = take(port(1, term_loc(Rslt_74V)));
-  lams = take(port(2, term_loc(Rslt_74V)));
+  Term Rslt_74V = get(termLoc(Rslt_74));
+  apps = take(portLoc(1, Rslt_74V));
+  lams = take(portLoc(2, Rslt_74V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_74), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_72);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_74), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_72);
   return;
 }
-Term glblfirst521 = new_ref(glblfirst520);
-void glblProto61_592(Term ref, Term args) {
+Term glblfirst521 = newRef(glblfirst520);
+void glblProto61_596(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(748), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(749), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
-void glblProto101_596(Term ref, Term args) {
+void glblProto101_601(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(748), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(749), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto101);
   }
 }
@@ -4784,62 +4775,62 @@ Term glbllast519;
 void glbllast518(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_77 = pair_make(LAM, 93, SUB, NUL);
-  Location r_seq_77 = port(2, term_loc(seq_77));
-  Term v_76 = term_new(VAR, 0, port(1, term_loc(seq_77)));
-  // allocate args at core: 747
+  Term seq_77 = makePair(LAM, 93, SUB, NUL);
+  Location r_seq_77 = portLoc(2, seq_77);
+  Term v_76 = newTerm(VAR, 0, portLoc(1, seq_77));
+  // allocate args at core: 748
 
   Term v_76_1;
   v_76 = dupeArg(v_76, &v_76_1, 93);
-  // call count at core: 748
-  Term Rslt_79Args = pair_make(APP, 0, v_76_1, SUB);
-  Term Rslt_79 = term_new(VAR, 0, port(2, term_loc(Rslt_79Args)));
+  // call count at core: 749
+  Term Rslt_79Args = makePair(APP, 0, v_76_1, SUB);
+  Term Rslt_79 = newTerm(VAR, 0, portLoc(2, Rslt_79Args));
 #ifdef STRICT
-  store_redex(Rslt_79Args, new_ref(glblProto61_592));
+  pushRedex(Rslt_79Args, newRef(glblProto61_596));
 #else
-  swapStore(term_loc(Rslt_79),
-            pair_make(LAZ, 0, Rslt_79Args, new_ref(glblProto61_592)));
+  swap(termLoc(Rslt_79),
+       makePair(LAZ, 0, Rslt_79Args, newRef(glblProto61_596)));
 #endif
-  // call dec at core: 748
-  Term Rslt_80Args = pair_make(APP, 0, Rslt_79, SUB);
-  Term Rslt_80 = term_new(VAR, 0, port(2, term_loc(Rslt_80Args)));
+  // call dec at core: 749
+  Term Rslt_80Args = makePair(APP, 0, Rslt_79, SUB);
+  Term Rslt_80 = newTerm(VAR, 0, portLoc(2, Rslt_80Args));
 #ifdef STRICT
-  store_redex(Rslt_80Args, glblFn127);
+  pushRedex(Rslt_80Args, glblFn127);
 #else
-  swapStore(term_loc(Rslt_80), pair_make(LAZ, 0, Rslt_80Args, glblFn127));
+  swap(termLoc(Rslt_80), makePair(LAZ, 0, Rslt_80Args, glblFn127));
 #endif
 
-  // call get at core: 748
-  Term Rslt_81Args = pair_make(APP, 0, Rslt_80, SUB);
-  Term Rslt_81 = term_new(VAR, 0, port(2, term_loc(Rslt_81Args)));
-  Rslt_81Args = pair_make(APP, 0, v_76, Rslt_81Args);
+  // call get at core: 749
+  Term Rslt_81Args = makePair(APP, 0, Rslt_80, SUB);
+  Term Rslt_81 = newTerm(VAR, 0, portLoc(2, Rslt_81Args));
+  Rslt_81Args = makePair(APP, 0, v_76, Rslt_81Args);
 #ifdef STRICT
-  store_redex(Rslt_81Args, new_ref(glblProto101_596));
+  pushRedex(Rslt_81Args, newRef(glblProto101_601));
 #else
-  swapStore(term_loc(Rslt_81),
-            pair_make(LAZ, 0, Rslt_81Args, new_ref(glblProto101_596)));
+  swap(termLoc(Rslt_81),
+       makePair(LAZ, 0, Rslt_81Args, newRef(glblProto101_601)));
 #endif
   dupLabels[93] = "last";
   // link args to body
-  swapStore(r_seq_77, Rslt_81);
+  swap(r_seq_77, Rslt_81);
 
-  Term Rslt_81V = get(term_loc(Rslt_81));
-  apps = take(port(1, term_loc(Rslt_81V)));
-  lams = take(port(2, term_loc(Rslt_81V)));
+  Term Rslt_81V = get(termLoc(Rslt_81));
+  apps = take(portLoc(1, Rslt_81V));
+  lams = take(portLoc(2, Rslt_81V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_81), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_77);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_81), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_77);
   return;
 }
-Term glbllast519 = new_ref(glbllast518);
-void glblProto61_605(Term ref, Term args) {
+Term glbllast519 = newRef(glbllast518);
+void glblProto61_606(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(751), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(752), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
@@ -4847,134 +4838,134 @@ Term glblrest517;
 void glblrest516(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_84 = pair_make(LAM, 92, SUB, NUL);
-  Location r_seq_84 = port(2, term_loc(seq_84));
-  Term v_83 = term_new(VAR, 0, port(1, term_loc(seq_84)));
-  // allocate args at core: 750
+  Term seq_84 = makePair(LAM, 92, SUB, NUL);
+  Location r_seq_84 = portLoc(2, seq_84);
+  Term v_83 = newTerm(VAR, 0, portLoc(1, seq_84));
+  // allocate args at core: 751
 
   Term v_83_1;
   v_83 = dupeArg(v_83, &v_83_1, 92);
-  // call count at core: 751
-  Term Rslt_86Args = pair_make(APP, 0, v_83_1, SUB);
-  Term Rslt_86 = term_new(VAR, 0, port(2, term_loc(Rslt_86Args)));
+  // call count at core: 752
+  Term Rslt_86Args = makePair(APP, 0, v_83_1, SUB);
+  Term Rslt_86 = newTerm(VAR, 0, portLoc(2, Rslt_86Args));
 #ifdef STRICT
-  store_redex(Rslt_86Args, new_ref(glblProto61_605));
+  pushRedex(Rslt_86Args, newRef(glblProto61_606));
 #else
-  swapStore(term_loc(Rslt_86),
-            pair_make(LAZ, 0, Rslt_86Args, new_ref(glblProto61_605)));
+  swap(termLoc(Rslt_86),
+       makePair(LAZ, 0, Rslt_86Args, newRef(glblProto61_606)));
 #endif
-  // call dec at core: 751
-  Term Rslt_87Args = pair_make(APP, 0, Rslt_86, SUB);
-  Term Rslt_87 = term_new(VAR, 0, port(2, term_loc(Rslt_87Args)));
+  // call dec at core: 752
+  Term Rslt_87Args = makePair(APP, 0, Rslt_86, SUB);
+  Term Rslt_87 = newTerm(VAR, 0, portLoc(2, Rslt_87Args));
 #ifdef STRICT
-  store_redex(Rslt_87Args, glblFn127);
+  pushRedex(Rslt_87Args, glblFn127);
 #else
-  swapStore(term_loc(Rslt_87), pair_make(LAZ, 0, Rslt_87Args, glblFn127));
+  swap(termLoc(Rslt_87), makePair(LAZ, 0, Rslt_87Args, glblFn127));
 #endif
 
-  // call subvec at core: 751
-  Term Rslt_88Args = pair_make(APP, 0, Rslt_87, SUB);
-  Term Rslt_88 = term_new(VAR, 0, port(2, term_loc(Rslt_88Args)));
-  Rslt_88Args = pair_make(APP, 0, new_i60(1), Rslt_88Args);
-  Rslt_88Args = pair_make(APP, 0, v_83, Rslt_88Args);
+  // call subvec at core: 752
+  Term Rslt_88Args = makePair(APP, 0, Rslt_87, SUB);
+  Term Rslt_88 = newTerm(VAR, 0, portLoc(2, Rslt_88Args));
+  Rslt_88Args = makePair(APP, 0, newI60(1), Rslt_88Args);
+  Rslt_88Args = makePair(APP, 0, v_83, Rslt_88Args);
 #ifdef STRICT
-  store_redex(Rslt_88Args, glblFn449);
+  pushRedex(Rslt_88Args, glblFn449);
 #else
-  swapStore(term_loc(Rslt_88), pair_make(LAZ, 0, Rslt_88Args, glblFn449));
+  swap(termLoc(Rslt_88), makePair(LAZ, 0, Rslt_88Args, glblFn449));
 #endif
 
   dupLabels[92] = "rest";
   // link args to body
-  swapStore(r_seq_84, Rslt_88);
+  swap(r_seq_84, Rslt_88);
 
-  Term Rslt_88V = get(term_loc(Rslt_88));
-  apps = take(port(1, term_loc(Rslt_88V)));
-  lams = take(port(2, term_loc(Rslt_88V)));
+  Term Rslt_88V = get(termLoc(Rslt_88));
+  apps = take(portLoc(1, Rslt_88V));
+  lams = take(portLoc(2, Rslt_88V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_88), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_84);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_88), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_84);
   return;
 }
-Term glblrest517 = new_ref(glblrest516);
+Term glblrest517 = newRef(glblrest516);
 Term glblconj515;
 void glblconj514(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_92 = pair_make(LAM, 91, SUB, NUL);
-  Location r_seq_92 = port(2, term_loc(seq_92));
-  Term v_91 = term_new(VAR, 0, port(1, term_loc(seq_92)));
-  seq_92 = pair_make(LAM, 91, SUB, seq_92);
-  Term vect_90 = term_new(VAR, 0, port(1, term_loc(seq_92)));
-  // allocate args at core: 753
-  // call vect-conj at core: 754
-  Term Rslt_94Args = pair_make(APP, 0, v_91, SUB);
-  Term Rslt_94 = term_new(VAR, 0, port(2, term_loc(Rslt_94Args)));
-  Rslt_94Args = pair_make(APP, 0, vect_90, Rslt_94Args);
+  Term seq_92 = makePair(LAM, 91, SUB, NUL);
+  Location r_seq_92 = portLoc(2, seq_92);
+  Term v_91 = newTerm(VAR, 0, portLoc(1, seq_92));
+  seq_92 = makePair(LAM, 91, SUB, seq_92);
+  Term vect_90 = newTerm(VAR, 0, portLoc(1, seq_92));
+  // allocate args at core: 754
+  // call vect-conj at core: 755
+  Term Rslt_94Args = makePair(APP, 0, v_91, SUB);
+  Term Rslt_94 = newTerm(VAR, 0, portLoc(2, Rslt_94Args));
+  Rslt_94Args = makePair(APP, 0, vect_90, Rslt_94Args);
 #ifdef STRICT
-  store_redex(Rslt_94Args, glblFn134);
+  pushRedex(Rslt_94Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_94), pair_make(LAZ, 0, Rslt_94Args, glblFn134));
+  swap(termLoc(Rslt_94), makePair(LAZ, 0, Rslt_94Args, glblFn134));
 #endif
 
   dupLabels[91] = "conj";
   // link args to body
-  swapStore(r_seq_92, Rslt_94);
+  swap(r_seq_92, Rslt_94);
 
-  Term Rslt_94V = get(term_loc(Rslt_94));
-  apps = take(port(1, term_loc(Rslt_94V)));
-  lams = take(port(2, term_loc(Rslt_94V)));
+  Term Rslt_94V = get(termLoc(Rslt_94));
+  apps = take(portLoc(1, Rslt_94V));
+  lams = take(portLoc(2, Rslt_94V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_94), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_92);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_94), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_92);
   return;
 }
-Term glblconj515 = new_ref(glblconj514);
+Term glblconj515 = newRef(glblconj514);
 Term glblstore513;
 void glblstore512(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_99 = pair_make(LAM, 90, SUB, NUL);
-  Location r_seq_99 = port(2, term_loc(seq_99));
-  Term v_98 = term_new(VAR, 0, port(1, term_loc(seq_99)));
-  seq_99 = pair_make(LAM, 90, SUB, seq_99);
-  Term n_97 = term_new(VAR, 0, port(1, term_loc(seq_99)));
-  seq_99 = pair_make(LAM, 90, SUB, seq_99);
-  Term vect_96 = term_new(VAR, 0, port(1, term_loc(seq_99)));
-  // allocate args at core: 756
-  // call vect-store at core: 757
-  Term Rslt_101Args = pair_make(APP, 0, v_98, SUB);
-  Term Rslt_101 = term_new(VAR, 0, port(2, term_loc(Rslt_101Args)));
-  Rslt_101Args = pair_make(APP, 0, n_97, Rslt_101Args);
-  Rslt_101Args = pair_make(APP, 0, vect_96, Rslt_101Args);
+  Term seq_99 = makePair(LAM, 90, SUB, NUL);
+  Location r_seq_99 = portLoc(2, seq_99);
+  Term v_98 = newTerm(VAR, 0, portLoc(1, seq_99));
+  seq_99 = makePair(LAM, 90, SUB, seq_99);
+  Term n_97 = newTerm(VAR, 0, portLoc(1, seq_99));
+  seq_99 = makePair(LAM, 90, SUB, seq_99);
+  Term vect_96 = newTerm(VAR, 0, portLoc(1, seq_99));
+  // allocate args at core: 757
+  // call vect-store at core: 758
+  Term Rslt_101Args = makePair(APP, 0, v_98, SUB);
+  Term Rslt_101 = newTerm(VAR, 0, portLoc(2, Rslt_101Args));
+  Rslt_101Args = makePair(APP, 0, n_97, Rslt_101Args);
+  Rslt_101Args = makePair(APP, 0, vect_96, Rslt_101Args);
 #ifdef STRICT
-  store_redex(Rslt_101Args, glblFn477);
+  pushRedex(Rslt_101Args, glblFn477);
 #else
-  swapStore(term_loc(Rslt_101), pair_make(LAZ, 0, Rslt_101Args, glblFn477));
+  swap(termLoc(Rslt_101), makePair(LAZ, 0, Rslt_101Args, glblFn477));
 #endif
 
   dupLabels[90] = "store";
   // link args to body
-  swapStore(r_seq_99, Rslt_101);
+  swap(r_seq_99, Rslt_101);
 
-  Term Rslt_101V = get(term_loc(Rslt_101));
-  apps = take(port(1, term_loc(Rslt_101V)));
-  lams = take(port(2, term_loc(Rslt_101V)));
+  Term Rslt_101V = get(termLoc(Rslt_101));
+  apps = take(portLoc(1, Rslt_101V));
+  lams = take(portLoc(2, Rslt_101V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_101), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_99);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_101), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_99);
   return;
 }
-Term glblstore513 = new_ref(glblstore512);
+Term glblstore513 = newRef(glblstore512);
 void glblProto73_611(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(760), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(761), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto73);
   }
 }
@@ -4982,9 +4973,9 @@ void glblProto396_613(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(760), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(761), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto396);
   }
 }
@@ -4992,60 +4983,60 @@ Term glblreduce511;
 void glblreduce510(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_106 = pair_make(LAM, 89, SUB, NUL);
-  Location r_seq_106 = port(2, term_loc(seq_106));
-  Term f_105 = term_new(VAR, 0, port(1, term_loc(seq_106)));
-  seq_106 = pair_make(LAM, 89, SUB, seq_106);
-  Term result_104 = term_new(VAR, 0, port(1, term_loc(seq_106)));
-  seq_106 = pair_make(LAM, 89, SUB, seq_106);
-  Term v_103 = term_new(VAR, 0, port(1, term_loc(seq_106)));
-  // allocate args at core: 759
+  Term seq_106 = makePair(LAM, 89, SUB, NUL);
+  Location r_seq_106 = portLoc(2, seq_106);
+  Term f_105 = newTerm(VAR, 0, portLoc(1, seq_106));
+  seq_106 = makePair(LAM, 89, SUB, seq_106);
+  Term result_104 = newTerm(VAR, 0, portLoc(1, seq_106));
+  seq_106 = makePair(LAM, 89, SUB, seq_106);
+  Term v_103 = newTerm(VAR, 0, portLoc(1, seq_106));
+  // allocate args at core: 760
 
   Term v_103_1;
   v_103 = dupeArg(v_103, &v_103_1, 89);
-  // call first at core: 760
-  Term Rslt_108Args = pair_make(APP, 0, v_103, SUB);
-  Term Rslt_108 = term_new(VAR, 0, port(2, term_loc(Rslt_108Args)));
+  // call first at core: 761
+  Term Rslt_108Args = makePair(APP, 0, v_103, SUB);
+  Term Rslt_108 = newTerm(VAR, 0, portLoc(2, Rslt_108Args));
 #ifdef STRICT
-  store_redex(Rslt_108Args, new_ref(glblProto73_611));
+  pushRedex(Rslt_108Args, newRef(glblProto73_611));
 #else
-  swapStore(term_loc(Rslt_108),
-            pair_make(LAZ, 0, Rslt_108Args, new_ref(glblProto73_611)));
+  swap(termLoc(Rslt_108),
+       makePair(LAZ, 0, Rslt_108Args, newRef(glblProto73_611)));
 #endif
-  // call vect-reduce at core: 760
-  Term Rslt_109Args = pair_make(APP, 0, f_105, SUB);
-  Term Rslt_109 = term_new(VAR, 0, port(2, term_loc(Rslt_109Args)));
-  Rslt_109Args = pair_make(APP, 0, result_104, Rslt_109Args);
-  Rslt_109Args = pair_make(APP, 0, new_i60(1), Rslt_109Args);
-  Rslt_109Args = pair_make(APP, 0, v_103_1, Rslt_109Args);
-  Rslt_109Args = pair_make(APP, 0, Rslt_108, Rslt_109Args);
+  // call vect-reduce at core: 761
+  Term Rslt_109Args = makePair(APP, 0, f_105, SUB);
+  Term Rslt_109 = newTerm(VAR, 0, portLoc(2, Rslt_109Args));
+  Rslt_109Args = makePair(APP, 0, result_104, Rslt_109Args);
+  Rslt_109Args = makePair(APP, 0, newI60(1), Rslt_109Args);
+  Rslt_109Args = makePair(APP, 0, v_103_1, Rslt_109Args);
+  Rslt_109Args = makePair(APP, 0, Rslt_108, Rslt_109Args);
 #ifdef STRICT
-  store_redex(Rslt_109Args, new_ref(glblProto396_613));
+  pushRedex(Rslt_109Args, newRef(glblProto396_613));
 #else
-  swapStore(term_loc(Rslt_109),
-            pair_make(LAZ, 0, Rslt_109Args, new_ref(glblProto396_613)));
+  swap(termLoc(Rslt_109),
+       makePair(LAZ, 0, Rslt_109Args, newRef(glblProto396_613)));
 #endif
   dupLabels[89] = "reduce";
   // link args to body
-  swapStore(r_seq_106, Rslt_109);
+  swap(r_seq_106, Rslt_109);
 
-  Term Rslt_109V = get(term_loc(Rslt_109));
-  apps = take(port(1, term_loc(Rslt_109V)));
-  lams = take(port(2, term_loc(Rslt_109V)));
+  Term Rslt_109V = get(termLoc(Rslt_109));
+  apps = take(portLoc(1, Rslt_109V));
+  lams = take(portLoc(2, Rslt_109V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_109), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_106);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_109), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_106);
   return;
 }
-Term glblreduce511 = new_ref(glblreduce510);
+Term glblreduce511 = newRef(glblreduce510);
 void glblProto77_616(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(763), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(764), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto77);
   }
 }
@@ -5053,9 +5044,9 @@ void glblProto61_618(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(763), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(764), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
@@ -5063,9 +5054,9 @@ void glblProto403_620(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(763), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(764), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto403);
   }
 }
@@ -5073,10 +5064,10 @@ Term glblreverse509;
 void glblreverse508(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_112 = pair_make(LAM, 88, SUB, NUL);
-  Location r_seq_112 = port(2, term_loc(seq_112));
-  Term v_111 = term_new(VAR, 0, port(1, term_loc(seq_112)));
-  // allocate args at core: 762
+  Term seq_112 = makePair(LAM, 88, SUB, NUL);
+  Location r_seq_112 = portLoc(2, seq_112);
+  Term v_111 = newTerm(VAR, 0, portLoc(1, seq_112));
+  // allocate args at core: 763
 
   Term v_111_2;
   v_111 = dupeArg(v_111, &v_111_2, 88);
@@ -5086,133 +5077,133 @@ void glblreverse508(Term ref, Term args) {
   Term glblVal131_14;
   glblVal131 = dupeArg(glblVal131, &glblVal131_14, 0);
 
-  // call last at core: 763
-  Term Rslt_114Args = pair_make(APP, 0, v_111, SUB);
-  Term Rslt_114 = term_new(VAR, 0, port(2, term_loc(Rslt_114Args)));
+  // call last at core: 764
+  Term Rslt_114Args = makePair(APP, 0, v_111, SUB);
+  Term Rslt_114 = newTerm(VAR, 0, portLoc(2, Rslt_114Args));
 #ifdef STRICT
-  store_redex(Rslt_114Args, new_ref(glblProto77_616));
+  pushRedex(Rslt_114Args, newRef(glblProto77_616));
 #else
-  swapStore(term_loc(Rslt_114),
-            pair_make(LAZ, 0, Rslt_114Args, new_ref(glblProto77_616)));
+  swap(termLoc(Rslt_114),
+       makePair(LAZ, 0, Rslt_114Args, newRef(glblProto77_616)));
 #endif
-  // call count at core: 763
-  Term Rslt_115Args = pair_make(APP, 0, v_111_2, SUB);
-  Term Rslt_115 = term_new(VAR, 0, port(2, term_loc(Rslt_115Args)));
+  // call count at core: 764
+  Term Rslt_115Args = makePair(APP, 0, v_111_2, SUB);
+  Term Rslt_115 = newTerm(VAR, 0, portLoc(2, Rslt_115Args));
 #ifdef STRICT
-  store_redex(Rslt_115Args, new_ref(glblProto61_618));
+  pushRedex(Rslt_115Args, newRef(glblProto61_618));
 #else
-  swapStore(term_loc(Rslt_115),
-            pair_make(LAZ, 0, Rslt_115Args, new_ref(glblProto61_618)));
+  swap(termLoc(Rslt_115),
+       makePair(LAZ, 0, Rslt_115Args, newRef(glblProto61_618)));
 #endif
-  Term Rslt_116 = make_op(OP_SUB, Rslt_115, new_i60(2));
-  // call vect-reverse at core: 763
-  Term Rslt_117Args = pair_make(APP, 0, glblVal131_14, SUB);
-  Term Rslt_117 = term_new(VAR, 0, port(2, term_loc(Rslt_117Args)));
-  Rslt_117Args = pair_make(APP, 0, Rslt_116, Rslt_117Args);
-  Rslt_117Args = pair_make(APP, 0, v_111_1, Rslt_117Args);
-  Rslt_117Args = pair_make(APP, 0, Rslt_114, Rslt_117Args);
+  Term Rslt_116 = makeOp(OP_SUB, Rslt_115, newI60(2));
+  // call vect-reverse at core: 764
+  Term Rslt_117Args = makePair(APP, 0, glblVal131_14, SUB);
+  Term Rslt_117 = newTerm(VAR, 0, portLoc(2, Rslt_117Args));
+  Rslt_117Args = makePair(APP, 0, Rslt_116, Rslt_117Args);
+  Rslt_117Args = makePair(APP, 0, v_111_1, Rslt_117Args);
+  Rslt_117Args = makePair(APP, 0, Rslt_114, Rslt_117Args);
 #ifdef STRICT
-  store_redex(Rslt_117Args, new_ref(glblProto403_620));
+  pushRedex(Rslt_117Args, newRef(glblProto403_620));
 #else
-  swapStore(term_loc(Rslt_117),
-            pair_make(LAZ, 0, Rslt_117Args, new_ref(glblProto403_620)));
+  swap(termLoc(Rslt_117),
+       makePair(LAZ, 0, Rslt_117Args, newRef(glblProto403_620)));
 #endif
   dupLabels[88] = "reverse";
   // link args to body
-  swapStore(r_seq_112, Rslt_117);
+  swap(r_seq_112, Rslt_117);
 
-  Term Rslt_117V = get(term_loc(Rslt_117));
-  apps = take(port(1, term_loc(Rslt_117V)));
-  lams = take(port(2, term_loc(Rslt_117V)));
+  Term Rslt_117V = get(termLoc(Rslt_117));
+  apps = take(portLoc(1, Rslt_117V));
+  lams = take(portLoc(2, Rslt_117V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_117), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_112);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_117), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_112);
   return;
 }
-Term glblreverse509 = new_ref(glblreverse508);
+Term glblreverse509 = newRef(glblreverse508);
 Term glblmap507;
 void glblmap506(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_121 = pair_make(LAM, 87, SUB, NUL);
-  Location r_seq_121 = port(2, term_loc(seq_121));
-  Term f_120 = term_new(VAR, 0, port(1, term_loc(seq_121)));
-  seq_121 = pair_make(LAM, 87, SUB, seq_121);
-  Term v_119 = term_new(VAR, 0, port(1, term_loc(seq_121)));
-  // allocate args at core: 765
+  Term seq_121 = makePair(LAM, 87, SUB, NUL);
+  Location r_seq_121 = portLoc(2, seq_121);
+  Term f_120 = newTerm(VAR, 0, portLoc(1, seq_121));
+  seq_121 = makePair(LAM, 87, SUB, seq_121);
+  Term v_119 = newTerm(VAR, 0, portLoc(1, seq_121));
+  // allocate args at core: 766
   Term glblVal450_1;
   glblVal450 = dupeArg(glblVal450, &glblVal450_1, 0);
 
-  // call vect-map at core: 767
-  Term Rslt_123Args = pair_make(APP, 0, f_120, SUB);
-  Term Rslt_123 = term_new(VAR, 0, port(2, term_loc(Rslt_123Args)));
-  Rslt_123Args = pair_make(APP, 0, v_119, Rslt_123Args);
+  // call vect-map at core: 768
+  Term Rslt_123Args = makePair(APP, 0, f_120, SUB);
+  Term Rslt_123 = newTerm(VAR, 0, portLoc(2, Rslt_123Args));
+  Rslt_123Args = makePair(APP, 0, v_119, Rslt_123Args);
 #ifdef STRICT
-  store_redex(Rslt_123Args, glblVal450_1);
+  pushRedex(Rslt_123Args, glblVal450_1);
 #else
-  swapStore(term_loc(Rslt_123), pair_make(LAZ, 0, Rslt_123Args, glblVal450_1));
+  swap(termLoc(Rslt_123), makePair(LAZ, 0, Rslt_123Args, glblVal450_1));
 #endif
 
   dupLabels[87] = "map";
   // link args to body
-  swapStore(r_seq_121, Rslt_123);
+  swap(r_seq_121, Rslt_123);
 
-  Term Rslt_123V = get(term_loc(Rslt_123));
-  apps = take(port(1, term_loc(Rslt_123V)));
-  lams = take(port(2, term_loc(Rslt_123V)));
+  Term Rslt_123V = get(termLoc(Rslt_123));
+  apps = take(portLoc(1, Rslt_123V));
+  lams = take(portLoc(2, Rslt_123V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_123), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_121);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_123), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_121);
   return;
 }
-Term glblmap507 = new_ref(glblmap506);
+Term glblmap507 = newRef(glblmap506);
 Term glblwrap505;
 void glblwrap504(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_127 = pair_make(LAM, 86, SUB, NUL);
-  Location r_seq_127 = port(2, term_loc(seq_127));
-  Term v_126 = term_new(VAR, 0, port(1, term_loc(seq_127)));
-  seq_127 = pair_make(LAM, 86, SUB, seq_127);
-  Term arg_125 = term_new(VAR, 0, port(1, term_loc(seq_127)));
-  // allocate args at core: 769
-  swapStore(term_loc(arg_125), ERA);
+  Term seq_127 = makePair(LAM, 86, SUB, NUL);
+  Location r_seq_127 = portLoc(2, seq_127);
+  Term v_126 = newTerm(VAR, 0, portLoc(1, seq_127));
+  seq_127 = makePair(LAM, 86, SUB, seq_127);
+  Term arg_125 = newTerm(VAR, 0, portLoc(1, seq_127));
+  // allocate args at core: 770
+  swap(termLoc(arg_125), ERA);
   Term glblVal131_15;
   glblVal131 = dupeArg(glblVal131, &glblVal131_15, 0);
 
-  // call vect-conj at core: 770
-  Term Rslt_129Args = pair_make(APP, 0, v_126, SUB);
-  Term Rslt_129 = term_new(VAR, 0, port(2, term_loc(Rslt_129Args)));
-  Rslt_129Args = pair_make(APP, 0, glblVal131_15, Rslt_129Args);
+  // call vect-conj at core: 771
+  Term Rslt_129Args = makePair(APP, 0, v_126, SUB);
+  Term Rslt_129 = newTerm(VAR, 0, portLoc(2, Rslt_129Args));
+  Rslt_129Args = makePair(APP, 0, glblVal131_15, Rslt_129Args);
 #ifdef STRICT
-  store_redex(Rslt_129Args, glblFn134);
+  pushRedex(Rslt_129Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_129), pair_make(LAZ, 0, Rslt_129Args, glblFn134));
+  swap(termLoc(Rslt_129), makePair(LAZ, 0, Rslt_129Args, glblFn134));
 #endif
 
   dupLabels[86] = "wrap";
   // link args to body
-  swapStore(r_seq_127, Rslt_129);
+  swap(r_seq_127, Rslt_129);
 
-  Term Rslt_129V = get(term_loc(Rslt_129));
-  apps = take(port(1, term_loc(Rslt_129V)));
-  lams = take(port(2, term_loc(Rslt_129V)));
+  Term Rslt_129V = get(termLoc(Rslt_129));
+  apps = take(portLoc(1, Rslt_129V));
+  lams = take(portLoc(2, Rslt_129V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_129), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_127);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_129), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_127);
   return;
 }
-Term glblwrap505 = new_ref(glblwrap504);
+Term glblwrap505 = newRef(glblwrap504);
 void glblProto45_625(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(773), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(774), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto45);
   }
 }
@@ -5220,55 +5211,55 @@ Term glblflat_map503;
 void glblflat_map502(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_133 = pair_make(LAM, 85, SUB, NUL);
-  Location r_seq_133 = port(2, term_loc(seq_133));
-  Term f_132 = term_new(VAR, 0, port(1, term_loc(seq_133)));
-  seq_133 = pair_make(LAM, 85, SUB, seq_133);
-  Term v_131 = term_new(VAR, 0, port(1, term_loc(seq_133)));
-  // allocate args at core: 772
+  Term seq_133 = makePair(LAM, 85, SUB, NUL);
+  Location r_seq_133 = portLoc(2, seq_133);
+  Term f_132 = newTerm(VAR, 0, portLoc(1, seq_133));
+  seq_133 = makePair(LAM, 85, SUB, seq_133);
+  Term v_131 = newTerm(VAR, 0, portLoc(1, seq_133));
+  // allocate args at core: 773
   Term glblVal450_2;
   glblVal450 = dupeArg(glblVal450, &glblVal450_2, 0);
 
-  // call vect-map at core: 773
-  Term Rslt_135Args = pair_make(APP, 0, f_132, SUB);
-  Term Rslt_135 = term_new(VAR, 0, port(2, term_loc(Rslt_135Args)));
-  Rslt_135Args = pair_make(APP, 0, v_131, Rslt_135Args);
+  // call vect-map at core: 774
+  Term Rslt_135Args = makePair(APP, 0, f_132, SUB);
+  Term Rslt_135 = newTerm(VAR, 0, portLoc(2, Rslt_135Args));
+  Rslt_135Args = makePair(APP, 0, v_131, Rslt_135Args);
 #ifdef STRICT
-  store_redex(Rslt_135Args, glblVal450_2);
+  pushRedex(Rslt_135Args, glblVal450_2);
 #else
-  swapStore(term_loc(Rslt_135), pair_make(LAZ, 0, Rslt_135Args, glblVal450_2));
+  swap(termLoc(Rslt_135), makePair(LAZ, 0, Rslt_135Args, glblVal450_2));
 #endif
 
-  // call flatten at core: 773
-  Term Rslt_136Args = pair_make(APP, 0, Rslt_135, SUB);
-  Term Rslt_136 = term_new(VAR, 0, port(2, term_loc(Rslt_136Args)));
+  // call flatten at core: 774
+  Term Rslt_136Args = makePair(APP, 0, Rslt_135, SUB);
+  Term Rslt_136 = newTerm(VAR, 0, portLoc(2, Rslt_136Args));
 #ifdef STRICT
-  store_redex(Rslt_136Args, new_ref(glblProto45_625));
+  pushRedex(Rslt_136Args, newRef(glblProto45_625));
 #else
-  swapStore(term_loc(Rslt_136),
-            pair_make(LAZ, 0, Rslt_136Args, new_ref(glblProto45_625)));
+  swap(termLoc(Rslt_136),
+       makePair(LAZ, 0, Rslt_136Args, newRef(glblProto45_625)));
 #endif
   dupLabels[85] = "flat-map";
   // link args to body
-  swapStore(r_seq_133, Rslt_136);
+  swap(r_seq_133, Rslt_136);
 
-  Term Rslt_136V = get(term_loc(Rslt_136));
-  apps = take(port(1, term_loc(Rslt_136V)));
-  lams = take(port(2, term_loc(Rslt_136V)));
+  Term Rslt_136V = get(termLoc(Rslt_136));
+  apps = take(portLoc(1, Rslt_136V));
+  lams = take(portLoc(2, Rslt_136V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_136), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_133);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_136), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_133);
   return;
 }
-Term glblflat_map503 = new_ref(glblflat_map502);
+Term glblflat_map503 = newRef(glblflat_map502);
 void glblProto73_628(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(776), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(777), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto73);
   }
 }
@@ -5276,9 +5267,9 @@ void glblProto396_630(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(776), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(777), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto396);
   }
 }
@@ -5286,9 +5277,9 @@ void glblProto35_632(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(776), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(777), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto35);
   }
 }
@@ -5296,64 +5287,64 @@ Term glblflatten501;
 void glblflatten500(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_139 = pair_make(LAM, 84, SUB, NUL);
-  Location r_seq_139 = port(2, term_loc(seq_139));
-  Term v_138 = term_new(VAR, 0, port(1, term_loc(seq_139)));
-  // allocate args at core: 775
+  Term seq_139 = makePair(LAM, 84, SUB, NUL);
+  Location r_seq_139 = portLoc(2, seq_139);
+  Term v_138 = newTerm(VAR, 0, portLoc(1, seq_139));
+  // allocate args at core: 776
 
   Term v_138_1;
   v_138 = dupeArg(v_138, &v_138_1, 84);
   Term glblVal131_16;
   glblVal131 = dupeArg(glblVal131, &glblVal131_16, 0);
 
-  // call first at core: 776
-  Term Rslt_141Args = pair_make(APP, 0, v_138, SUB);
-  Term Rslt_141 = term_new(VAR, 0, port(2, term_loc(Rslt_141Args)));
+  // call first at core: 777
+  Term Rslt_141Args = makePair(APP, 0, v_138, SUB);
+  Term Rslt_141 = newTerm(VAR, 0, portLoc(2, Rslt_141Args));
 #ifdef STRICT
-  store_redex(Rslt_141Args, new_ref(glblProto73_628));
+  pushRedex(Rslt_141Args, newRef(glblProto73_628));
 #else
-  swapStore(term_loc(Rslt_141),
-            pair_make(LAZ, 0, Rslt_141Args, new_ref(glblProto73_628)));
+  swap(termLoc(Rslt_141),
+       makePair(LAZ, 0, Rslt_141Args, newRef(glblProto73_628)));
 #endif
-  // call vect-reduce at core: 776
-  Term Rslt_142Args = pair_make(APP, 0, new_ref(glblProto35_632), SUB);
-  Term Rslt_142 = term_new(VAR, 0, port(2, term_loc(Rslt_142Args)));
-  Rslt_142Args = pair_make(APP, 0, glblVal131_16, Rslt_142Args);
-  Rslt_142Args = pair_make(APP, 0, new_i60(1), Rslt_142Args);
-  Rslt_142Args = pair_make(APP, 0, v_138_1, Rslt_142Args);
-  Rslt_142Args = pair_make(APP, 0, Rslt_141, Rslt_142Args);
+  // call vect-reduce at core: 777
+  Term Rslt_142Args = makePair(APP, 0, newRef(glblProto35_632), SUB);
+  Term Rslt_142 = newTerm(VAR, 0, portLoc(2, Rslt_142Args));
+  Rslt_142Args = makePair(APP, 0, glblVal131_16, Rslt_142Args);
+  Rslt_142Args = makePair(APP, 0, newI60(1), Rslt_142Args);
+  Rslt_142Args = makePair(APP, 0, v_138_1, Rslt_142Args);
+  Rslt_142Args = makePair(APP, 0, Rslt_141, Rslt_142Args);
 #ifdef STRICT
-  store_redex(Rslt_142Args, new_ref(glblProto396_630));
+  pushRedex(Rslt_142Args, newRef(glblProto396_630));
 #else
-  swapStore(term_loc(Rslt_142),
-            pair_make(LAZ, 0, Rslt_142Args, new_ref(glblProto396_630)));
+  swap(termLoc(Rslt_142),
+       makePair(LAZ, 0, Rslt_142Args, newRef(glblProto396_630)));
 #endif
   dupLabels[84] = "flatten";
   // link args to body
-  swapStore(r_seq_139, Rslt_142);
+  swap(r_seq_139, Rslt_142);
 
-  Term Rslt_142V = get(term_loc(Rslt_142));
-  apps = take(port(1, term_loc(Rslt_142V)));
-  lams = take(port(2, term_loc(Rslt_142V)));
+  Term Rslt_142V = get(termLoc(Rslt_142));
+  apps = take(portLoc(1, Rslt_142V));
+  lams = take(portLoc(2, Rslt_142V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_142), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_139);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_142), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_139);
   return;
 }
-Term glblflatten501 = new_ref(glblflatten500);
+Term glblflatten501 = newRef(glblflatten500);
 Term glblProto317;
-Term glblProto583;
 Term glblProto579;
-void glblCons595(Term ref, Term args) {
-  Term callArgs = pair_make(APP, 0, new_i60(3), args);
-  callArgs = pair_make(APP, 0, new_i60(45), callArgs);
+Term glblProto575;
+void glblCons592(Term ref, Term args) {
+  Term callArgs = makePair(APP, 0, newI60(3), args);
+  callArgs = makePair(APP, 0, newI60(45), callArgs);
   interact(callArgs, construct);
   return;
 }
-void glblEndOfList556(Term ref, Term args) {
-  Term callArgs = pair_make(APP, 0, new_i60(0), args);
-  callArgs = pair_make(APP, 0, new_i60(46), callArgs);
+void glblEndOfList553(Term ref, Term args) {
+  Term callArgs = makePair(APP, 0, newI60(0), args);
+  callArgs = makePair(APP, 0, newI60(46), callArgs);
   interact(callArgs, construct);
   return;
 }
@@ -5361,9 +5352,9 @@ void glblProto73_635(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(779), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(780), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto73);
   }
 }
@@ -5371,9 +5362,9 @@ void glblProto65_637(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(781), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(782), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto65);
   }
 }
@@ -5381,9 +5372,9 @@ void glblProto31_639(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(780), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(781), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto31);
   }
 }
@@ -5391,9 +5382,9 @@ void glblProto396_641(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(779), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(780), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto396);
   }
 }
@@ -5401,21 +5392,21 @@ Term glblfilter499;
 void glblfilter498(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_146 = pair_make(LAM, 83, SUB, NUL);
-  Location r_seq_146 = port(2, term_loc(seq_146));
-  Term pred_145 = term_new(VAR, 0, port(1, term_loc(seq_146)));
-  seq_146 = pair_make(LAM, 83, SUB, seq_146);
-  Term v_144 = term_new(VAR, 0, port(1, term_loc(seq_146)));
-  // allocate args at core: 778
+  Term seq_146 = makePair(LAM, 83, SUB, NUL);
+  Location r_seq_146 = portLoc(2, seq_146);
+  Term pred_145 = newTerm(VAR, 0, portLoc(1, seq_146));
+  seq_146 = makePair(LAM, 83, SUB, seq_146);
+  Term v_144 = newTerm(VAR, 0, portLoc(1, seq_146));
+  // allocate args at core: 779
 
   Term v_144_1;
   v_144 = dupeArg(v_144, &v_144_1, 83);
-  Term seq_152 = pair_make(LAM, 106, SUB, NUL);
-  Location r_seq_152 = port(2, term_loc(seq_152));
-  Term x_151 = term_new(VAR, 0, port(1, term_loc(seq_152)));
-  seq_152 = pair_make(LAM, 106, SUB, seq_152);
-  Term result_150 = term_new(VAR, 0, port(1, term_loc(seq_152)));
-  // allocate args at core: 779
+  Term seq_152 = makePair(LAM, 106, SUB, NUL);
+  Location r_seq_152 = portLoc(2, seq_152);
+  Term x_151 = newTerm(VAR, 0, portLoc(1, seq_152));
+  seq_152 = makePair(LAM, 106, SUB, seq_152);
+  Term result_150 = newTerm(VAR, 0, portLoc(1, seq_152));
+  // allocate args at core: 780
 
   Term result_150_1;
   result_150 = dupeArg(result_150, &result_150_1, 106);
@@ -5425,89 +5416,89 @@ void glblfilter498(Term ref, Term args) {
   Term glblVal131_17;
   glblVal131 = dupeArg(glblVal131, &glblVal131_17, 0);
 
-  // call first at core: 779
-  Term Rslt_148Args = pair_make(APP, 0, v_144, SUB);
-  Term Rslt_148 = term_new(VAR, 0, port(2, term_loc(Rslt_148Args)));
+  // call first at core: 780
+  Term Rslt_148Args = makePair(APP, 0, v_144, SUB);
+  Term Rslt_148 = newTerm(VAR, 0, portLoc(2, Rslt_148Args));
 #ifdef STRICT
-  store_redex(Rslt_148Args, new_ref(glblProto73_635));
+  pushRedex(Rslt_148Args, newRef(glblProto73_635));
 #else
-  swapStore(term_loc(Rslt_148),
-            pair_make(LAZ, 0, Rslt_148Args, new_ref(glblProto73_635)));
+  swap(termLoc(Rslt_148),
+       makePair(LAZ, 0, Rslt_148Args, newRef(glblProto73_635)));
 #endif
-  // call pred at core: 778
-  Term Rslt_154Args = pair_make(APP, 0, x_151, SUB);
-  Term Rslt_154 = term_new(VAR, 0, port(2, term_loc(Rslt_154Args)));
+  // call pred at core: 779
+  Term Rslt_154Args = makePair(APP, 0, x_151, SUB);
+  Term Rslt_154 = newTerm(VAR, 0, portLoc(2, Rslt_154Args));
 #ifdef STRICT
-  store_redex(Rslt_154Args, pred_145);
+  pushRedex(Rslt_154Args, pred_145);
 #else
-  swapStore(term_loc(Rslt_154), pair_make(LAZ, 0, Rslt_154Args, pred_145));
+  swap(termLoc(Rslt_154), makePair(LAZ, 0, Rslt_154Args, pred_145));
 #endif
 
-  // call conj at core: 781
-  Term Rslt_155Args = pair_make(APP, 0, x_151_1, SUB);
-  Term Rslt_155 = term_new(VAR, 0, port(2, term_loc(Rslt_155Args)));
-  Rslt_155Args = pair_make(APP, 0, result_150, Rslt_155Args);
+  // call conj at core: 782
+  Term Rslt_155Args = makePair(APP, 0, x_151_1, SUB);
+  Term Rslt_155 = newTerm(VAR, 0, portLoc(2, Rslt_155Args));
+  Rslt_155Args = makePair(APP, 0, result_150, Rslt_155Args);
 #ifdef STRICT
-  store_redex(Rslt_155Args, new_ref(glblProto65_637));
+  pushRedex(Rslt_155Args, newRef(glblProto65_637));
 #else
-  swapStore(term_loc(Rslt_155),
-            pair_make(LAZ, 0, Rslt_155Args, new_ref(glblProto65_637)));
+  swap(termLoc(Rslt_155),
+       makePair(LAZ, 0, Rslt_155Args, newRef(glblProto65_637)));
 #endif
-  // call cond at core: 780
-  Term Rslt_156Args = pair_make(APP, 0, result_150_1, SUB);
-  Term Rslt_156 = term_new(VAR, 0, port(2, term_loc(Rslt_156Args)));
-  Rslt_156Args = pair_make(APP, 0, Rslt_155, Rslt_156Args);
-  Rslt_156Args = pair_make(APP, 0, Rslt_154, Rslt_156Args);
+  // call cond at core: 781
+  Term Rslt_156Args = makePair(APP, 0, result_150_1, SUB);
+  Term Rslt_156 = newTerm(VAR, 0, portLoc(2, Rslt_156Args));
+  Rslt_156Args = makePair(APP, 0, Rslt_155, Rslt_156Args);
+  Rslt_156Args = makePair(APP, 0, Rslt_154, Rslt_156Args);
 #ifdef STRICT
-  store_redex(Rslt_156Args, new_ref(glblProto31_639));
+  pushRedex(Rslt_156Args, newRef(glblProto31_639));
 #else
-  swapStore(term_loc(Rslt_156),
-            pair_make(LAZ, 0, Rslt_156Args, new_ref(glblProto31_639)));
+  swap(termLoc(Rslt_156),
+       makePair(LAZ, 0, Rslt_156Args, newRef(glblProto31_639)));
 #endif
   dupLabels[106] = "";
   // link args to body
-  swapStore(r_seq_152, Rslt_156);
+  swap(r_seq_152, Rslt_156);
 
-  Term Rslt_156V = get(term_loc(Rslt_156));
-  apps = take(port(1, term_loc(Rslt_156V)));
-  lams = take(port(2, term_loc(Rslt_156V)));
+  Term Rslt_156V = get(termLoc(Rslt_156));
+  apps = take(portLoc(1, Rslt_156V));
+  lams = take(portLoc(2, Rslt_156V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_156), pair_make(LAZ, 0, apps, lams));
-  // call vect-reduce at core: 779
-  Term Rslt_157Args = pair_make(APP, 0, seq_152, SUB);
-  Term Rslt_157 = term_new(VAR, 0, port(2, term_loc(Rslt_157Args)));
-  Rslt_157Args = pair_make(APP, 0, glblVal131_17, Rslt_157Args);
-  Rslt_157Args = pair_make(APP, 0, new_i60(1), Rslt_157Args);
-  Rslt_157Args = pair_make(APP, 0, v_144_1, Rslt_157Args);
-  Rslt_157Args = pair_make(APP, 0, Rslt_148, Rslt_157Args);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_156), makePair(LAZ, 0, apps, lams));
+  // call vect-reduce at core: 780
+  Term Rslt_157Args = makePair(APP, 0, seq_152, SUB);
+  Term Rslt_157 = newTerm(VAR, 0, portLoc(2, Rslt_157Args));
+  Rslt_157Args = makePair(APP, 0, glblVal131_17, Rslt_157Args);
+  Rslt_157Args = makePair(APP, 0, newI60(1), Rslt_157Args);
+  Rslt_157Args = makePair(APP, 0, v_144_1, Rslt_157Args);
+  Rslt_157Args = makePair(APP, 0, Rslt_148, Rslt_157Args);
 #ifdef STRICT
-  store_redex(Rslt_157Args, new_ref(glblProto396_641));
+  pushRedex(Rslt_157Args, newRef(glblProto396_641));
 #else
-  swapStore(term_loc(Rslt_157),
-            pair_make(LAZ, 0, Rslt_157Args, new_ref(glblProto396_641)));
+  swap(termLoc(Rslt_157),
+       makePair(LAZ, 0, Rslt_157Args, newRef(glblProto396_641)));
 #endif
   dupLabels[83] = "filter";
   // link args to body
-  swapStore(r_seq_146, Rslt_157);
+  swap(r_seq_146, Rslt_157);
 
-  Term Rslt_157V = get(term_loc(Rslt_157));
-  apps = take(port(1, term_loc(Rslt_157V)));
-  lams = take(port(2, term_loc(Rslt_157V)));
+  Term Rslt_157V = get(termLoc(Rslt_157));
+  apps = take(portLoc(1, Rslt_157V));
+  lams = take(portLoc(2, Rslt_157V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_157), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_146);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_157), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_146);
   return;
 }
-Term glblfilter499 = new_ref(glblfilter498);
+Term glblfilter499 = newRef(glblfilter498);
 void glblProto43_644(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(787), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(788), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto43);
   }
 }
@@ -5515,9 +5506,9 @@ void glblProto75_646(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(788), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(789), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto75);
   }
 }
@@ -5525,271 +5516,271 @@ Term glblinterpose497;
 void glblinterpose496(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_162 = pair_make(LAM, 82, SUB, NUL);
-  Location r_seq_162 = port(2, term_loc(seq_162));
-  Term sep_161 = term_new(VAR, 0, port(1, term_loc(seq_162)));
-  seq_162 = pair_make(LAM, 82, SUB, seq_162);
-  Term coll_160 = term_new(VAR, 0, port(1, term_loc(seq_162)));
-  // allocate args at core: 784
-  Term seq_166 = pair_make(LAM, 107, SUB, NUL);
-  Location r_seq_166 = port(2, term_loc(seq_166));
-  Term x_165 = term_new(VAR, 0, port(1, term_loc(seq_166)));
-  // allocate args at core: 787
+  Term seq_162 = makePair(LAM, 82, SUB, NUL);
+  Location r_seq_162 = portLoc(2, seq_162);
+  Term sep_161 = newTerm(VAR, 0, portLoc(1, seq_162));
+  seq_162 = makePair(LAM, 82, SUB, seq_162);
+  Term coll_160 = newTerm(VAR, 0, portLoc(1, seq_162));
+  // allocate args at core: 785
+  Term seq_166 = makePair(LAM, 107, SUB, NUL);
+  Location r_seq_166 = portLoc(2, seq_166);
+  Term x_165 = newTerm(VAR, 0, portLoc(1, seq_166));
+  // allocate args at core: 788
   Term glblVal131_18;
   glblVal131 = dupeArg(glblVal131, &glblVal131_18, 0);
 
-  // call vect-conj at core: 787
-  Term Rslt_168Args = pair_make(APP, 0, sep_161, SUB);
-  Term Rslt_168 = term_new(VAR, 0, port(2, term_loc(Rslt_168Args)));
-  Rslt_168Args = pair_make(APP, 0, glblVal131_18, Rslt_168Args);
+  // call vect-conj at core: 788
+  Term Rslt_168Args = makePair(APP, 0, sep_161, SUB);
+  Term Rslt_168 = newTerm(VAR, 0, portLoc(2, Rslt_168Args));
+  Rslt_168Args = makePair(APP, 0, glblVal131_18, Rslt_168Args);
 #ifdef STRICT
-  store_redex(Rslt_168Args, glblFn134);
+  pushRedex(Rslt_168Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_168), pair_make(LAZ, 0, Rslt_168Args, glblFn134));
+  swap(termLoc(Rslt_168), makePair(LAZ, 0, Rslt_168Args, glblFn134));
 #endif
 
-  // call vect-conj at core: 787
-  Term Rslt_169Args = pair_make(APP, 0, x_165, SUB);
-  Term Rslt_169 = term_new(VAR, 0, port(2, term_loc(Rslt_169Args)));
-  Rslt_169Args = pair_make(APP, 0, Rslt_168, Rslt_169Args);
+  // call vect-conj at core: 788
+  Term Rslt_169Args = makePair(APP, 0, x_165, SUB);
+  Term Rslt_169 = newTerm(VAR, 0, portLoc(2, Rslt_169Args));
+  Rslt_169Args = makePair(APP, 0, Rslt_168, Rslt_169Args);
 #ifdef STRICT
-  store_redex(Rslt_169Args, glblFn134);
+  pushRedex(Rslt_169Args, glblFn134);
 #else
-  swapStore(term_loc(Rslt_169), pair_make(LAZ, 0, Rslt_169Args, glblFn134));
+  swap(termLoc(Rslt_169), makePair(LAZ, 0, Rslt_169Args, glblFn134));
 #endif
 
   dupLabels[107] = "";
   // link args to body
-  swapStore(r_seq_166, Rslt_169);
+  swap(r_seq_166, Rslt_169);
 
-  Term Rslt_169V = get(term_loc(Rslt_169));
-  apps = take(port(1, term_loc(Rslt_169V)));
-  lams = take(port(2, term_loc(Rslt_169V)));
+  Term Rslt_169V = get(termLoc(Rslt_169));
+  apps = take(portLoc(1, Rslt_169V));
+  lams = take(portLoc(2, Rslt_169V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_169), pair_make(LAZ, 0, apps, lams));
-  // call flat-map at core: 787
-  Term Rslt_170Args = pair_make(APP, 0, seq_166, SUB);
-  Term Rslt_170 = term_new(VAR, 0, port(2, term_loc(Rslt_170Args)));
-  Rslt_170Args = pair_make(APP, 0, coll_160, Rslt_170Args);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_169), makePair(LAZ, 0, apps, lams));
+  // call flat-map at core: 788
+  Term Rslt_170Args = makePair(APP, 0, seq_166, SUB);
+  Term Rslt_170 = newTerm(VAR, 0, portLoc(2, Rslt_170Args));
+  Rslt_170Args = makePair(APP, 0, coll_160, Rslt_170Args);
 #ifdef STRICT
-  store_redex(Rslt_170Args, new_ref(glblProto43_644));
+  pushRedex(Rslt_170Args, newRef(glblProto43_644));
 #else
-  swapStore(term_loc(Rslt_170),
-            pair_make(LAZ, 0, Rslt_170Args, new_ref(glblProto43_644)));
+  swap(termLoc(Rslt_170),
+       makePair(LAZ, 0, Rslt_170Args, newRef(glblProto43_644)));
 #endif
-  // call rest at core: 788
-  Term Rslt_172Args = pair_make(APP, 0, Rslt_170, SUB);
-  Term Rslt_172 = term_new(VAR, 0, port(2, term_loc(Rslt_172Args)));
+  // call rest at core: 789
+  Term Rslt_172Args = makePair(APP, 0, Rslt_170, SUB);
+  Term Rslt_172 = newTerm(VAR, 0, portLoc(2, Rslt_172Args));
 #ifdef STRICT
-  store_redex(Rslt_172Args, new_ref(glblProto75_646));
+  pushRedex(Rslt_172Args, newRef(glblProto75_646));
 #else
-  swapStore(term_loc(Rslt_172),
-            pair_make(LAZ, 0, Rslt_172Args, new_ref(glblProto75_646)));
+  swap(termLoc(Rslt_172),
+       makePair(LAZ, 0, Rslt_172Args, newRef(glblProto75_646)));
 #endif
   dupLabels[82] = "interpose";
   // link args to body
-  swapStore(r_seq_162, Rslt_172);
+  swap(r_seq_162, Rslt_172);
 
-  Term Rslt_172V = get(term_loc(Rslt_172));
-  apps = take(port(1, term_loc(Rslt_172V)));
-  lams = take(port(2, term_loc(Rslt_172V)));
+  Term Rslt_172V = get(termLoc(Rslt_172));
+  apps = take(portLoc(1, Rslt_172V));
+  lams = take(portLoc(2, Rslt_172V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_172), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_162);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_172), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_162);
   return;
 }
-Term glblinterpose497 = new_ref(glblinterpose496);
-Term glblVal560 = new_ref(glblEndOfList556);
-Term glblVal560;
-Term glblRslt559;
-Term glblrecurse551;
-void glblrecurse550(Term ref, Term args) {
+Term glblinterpose497 = newRef(glblinterpose496);
+Term glblVal556 = newRef(glblEndOfList553);
+Term glblVal556;
+Term glblRslt555;
+Term glblrecurse549;
+void glblrecurse548(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 108, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term f_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 108, SUB, seq_3);
-  Term l_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  // allocate args at core: 798
-  swapStore(term_loc(f_2), ERA);
+  Term seq_3 = makePair(LAM, 108, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term f_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 108, SUB, seq_3);
+  Term l_1 = newTerm(VAR, 0, portLoc(1, seq_3));
+  // allocate args at core: 799
+  swap(termLoc(f_2), ERA);
   dupLabels[108] = "recurse";
   // link args to body
-  swapStore(r_seq_3, l_1);
+  swap(r_seq_3, l_1);
 
   V = get(r_seq_3);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 108, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_3, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_3);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 108, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_3, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblrecurse551 = new_ref(glblrecurse550);
-Term glblcount554;
-void glblcount552(Term ref, Term args) {
+Term glblrecurse549 = newRef(glblrecurse548);
+Term glblcount551;
+void glblcount550(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_7 = pair_make(LAM, 109, SUB, NUL);
-  Location r_seq_7 = port(2, term_loc(seq_7));
-  Term l_6 = term_new(VAR, 0, port(1, term_loc(seq_7)));
-  // allocate args at core: 804
-  swapStore(term_loc(l_6), ERA);
+  Term seq_7 = makePair(LAM, 109, SUB, NUL);
+  Location r_seq_7 = portLoc(2, seq_7);
+  Term l_6 = newTerm(VAR, 0, portLoc(1, seq_7));
+  // allocate args at core: 805
+  swap(termLoc(l_6), ERA);
   dupLabels[109] = "count";
   // link args to body
-  swapStore(r_seq_7, new_i60(0));
+  swap(r_seq_7, newI60(0));
 
   V = get(r_seq_7);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 109, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_7, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_7);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 109, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_7, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_7);
   return;
 }
-Term glblcount554 = new_ref(glblcount552);
-Term glblVal607 = new_ref(glblCons595);
-Term glblVal607;
-Term glblrecurse589;
-void glblrecurse588(Term ref, Term args) {
+Term glblcount551 = newRef(glblcount550);
+Term glblVal605 = newRef(glblCons592);
+Term glblVal605;
+Term glblrecurse586;
+void glblrecurse585(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 110, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term f_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 110, SUB, seq_3);
-  Term arg_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  // allocate args at core: 811
+  Term seq_3 = makePair(LAM, 110, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term f_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 110, SUB, seq_3);
+  Term arg_1 = newTerm(VAR, 0, portLoc(1, seq_3));
+  // allocate args at core: 812
 
   Term arg_1_2;
   arg_1 = dupeArg(arg_1, &arg_1_2, 110);
 
   Term arg_1_1;
   arg_1 = dupeArg(arg_1, &arg_1_1, 110);
-  Term arg_1_2Args = pair_make(APP, 0, arg_1_2, SUB);
-  Term Rslt_8 = term_new(VAR, 0, port(2, term_loc(arg_1_2Args)));
-  arg_1_2Args = pair_make(APP, 0, new_i60(2), arg_1_2Args);
-  store_redex(arg_1_2Args, accessField);
-  Term arg_1_1Args = pair_make(APP, 0, arg_1_1, SUB);
-  Term Rslt_6 = term_new(VAR, 0, port(2, term_loc(arg_1_1Args)));
-  arg_1_1Args = pair_make(APP, 0, new_i60(1), arg_1_1Args);
-  store_redex(arg_1_1Args, accessField);
-  Term arg_1Args = pair_make(APP, 0, arg_1, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(arg_1Args)));
-  arg_1Args = pair_make(APP, 0, new_i60(0), arg_1Args);
-  store_redex(arg_1Args, accessField);
-  Term glblVal607_1;
-  glblVal607 = dupeArg(glblVal607, &glblVal607_1, 0);
+  Term arg_1_2Args = makePair(APP, 0, arg_1_2, SUB);
+  Term Rslt_8 = newTerm(VAR, 0, portLoc(2, arg_1_2Args));
+  arg_1_2Args = makePair(APP, 0, newI60(2), arg_1_2Args);
+  pushRedex(arg_1_2Args, accessField);
+  Term arg_1_1Args = makePair(APP, 0, arg_1_1, SUB);
+  Term Rslt_6 = newTerm(VAR, 0, portLoc(2, arg_1_1Args));
+  arg_1_1Args = makePair(APP, 0, newI60(1), arg_1_1Args);
+  pushRedex(arg_1_1Args, accessField);
+  Term arg_1Args = makePair(APP, 0, arg_1, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, arg_1Args));
+  arg_1Args = makePair(APP, 0, newI60(0), arg_1Args);
+  pushRedex(arg_1Args, accessField);
+  Term glblVal605_1;
+  glblVal605 = dupeArg(glblVal605, &glblVal605_1, 0);
 
-  // call f at core: 811
-  Term Rslt_7Args = pair_make(APP, 0, Rslt_6, SUB);
-  Term Rslt_7 = term_new(VAR, 0, port(2, term_loc(Rslt_7Args)));
+  // call f at core: 812
+  Term Rslt_7Args = makePair(APP, 0, Rslt_6, SUB);
+  Term Rslt_7 = newTerm(VAR, 0, portLoc(2, Rslt_7Args));
 #ifdef STRICT
-  store_redex(Rslt_7Args, f_2);
+  pushRedex(Rslt_7Args, f_2);
 #else
-  swapStore(term_loc(Rslt_7), pair_make(LAZ, 0, Rslt_7Args, f_2));
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, Rslt_7Args, f_2));
 #endif
 
-  // call Cons at core: 812
-  Term Rslt_9Args = pair_make(APP, 0, Rslt_8, SUB);
-  Term Rslt_9 = term_new(VAR, 0, port(2, term_loc(Rslt_9Args)));
-  Rslt_9Args = pair_make(APP, 0, Rslt_7, Rslt_9Args);
-  Rslt_9Args = pair_make(APP, 0, Rslt_5, Rslt_9Args);
+  // call Cons at core: 813
+  Term Rslt_9Args = makePair(APP, 0, Rslt_8, SUB);
+  Term Rslt_9 = newTerm(VAR, 0, portLoc(2, Rslt_9Args));
+  Rslt_9Args = makePair(APP, 0, Rslt_7, Rslt_9Args);
+  Rslt_9Args = makePair(APP, 0, Rslt_5, Rslt_9Args);
 #ifdef STRICT
-  store_redex(Rslt_9Args, glblVal607_1);
+  pushRedex(Rslt_9Args, glblVal605_1);
 #else
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, Rslt_9Args, glblVal607_1));
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, Rslt_9Args, glblVal605_1));
 #endif
 
   dupLabels[110] = "recurse";
   // link args to body
-  swapStore(r_seq_3, Rslt_9);
+  swap(r_seq_3, Rslt_9);
 
-  Term Rslt_9V = get(term_loc(Rslt_9));
-  apps = take(port(1, term_loc(Rslt_9V)));
-  lams = take(port(2, term_loc(Rslt_9V)));
+  Term Rslt_9V = get(termLoc(Rslt_9));
+  apps = take(portLoc(1, Rslt_9V));
+  lams = take(portLoc(2, Rslt_9V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_3);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblrecurse589 = new_ref(glblrecurse588);
+Term glblrecurse586 = newRef(glblrecurse585);
 void glblProto317_652(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(818), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(819), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto317);
   }
 }
-Term glblcount593;
-void glblcount591(Term ref, Term args) {
+Term glblcount590;
+void glblcount588(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_12 = pair_make(LAM, 111, SUB, NUL);
-  Location r_seq_12 = port(2, term_loc(seq_12));
-  Term l_11 = term_new(VAR, 0, port(1, term_loc(seq_12)));
-  // allocate args at core: 817
-  // call .len at core: 818
-  Term Rslt_14Args = pair_make(APP, 0, l_11, SUB);
-  Term Rslt_14 = term_new(VAR, 0, port(2, term_loc(Rslt_14Args)));
+  Term seq_12 = makePair(LAM, 111, SUB, NUL);
+  Location r_seq_12 = portLoc(2, seq_12);
+  Term l_11 = newTerm(VAR, 0, portLoc(1, seq_12));
+  // allocate args at core: 818
+  // call .len at core: 819
+  Term Rslt_14Args = makePair(APP, 0, l_11, SUB);
+  Term Rslt_14 = newTerm(VAR, 0, portLoc(2, Rslt_14Args));
 #ifdef STRICT
-  store_redex(Rslt_14Args, new_ref(glblProto317_652));
+  pushRedex(Rslt_14Args, newRef(glblProto317_652));
 #else
-  swapStore(term_loc(Rslt_14),
-            pair_make(LAZ, 0, Rslt_14Args, new_ref(glblProto317_652)));
+  swap(termLoc(Rslt_14),
+       makePair(LAZ, 0, Rslt_14Args, newRef(glblProto317_652)));
 #endif
   dupLabels[111] = "count";
   // link args to body
-  swapStore(r_seq_12, Rslt_14);
+  swap(r_seq_12, Rslt_14);
 
-  Term Rslt_14V = get(term_loc(Rslt_14));
-  apps = take(port(1, term_loc(Rslt_14V)));
-  lams = take(port(2, term_loc(Rslt_14V)));
+  Term Rslt_14V = get(termLoc(Rslt_14));
+  apps = take(portLoc(1, Rslt_14V));
+  lams = take(portLoc(2, Rslt_14V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_14), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_12);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_14), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_12);
   return;
 }
-Term glblcount593 = new_ref(glblcount591);
+Term glblcount590 = newRef(glblcount588);
+Term glblFld595;
+void glblFldFn593(Term ref, Term args) {
+  args = makePair(APP, 0, newI60(0), args);
+  pushRedex(args, accessField);
+  return;
+}
+Term glblFld595 = newRef(glblFldFn593);
 Term glblFld599;
 void glblFldFn597(Term ref, Term args) {
-  args = pair_make(APP, 0, new_i60(0), args);
-  store_redex(args, accessField);
+  args = makePair(APP, 0, newI60(1), args);
+  pushRedex(args, accessField);
   return;
 }
-Term glblFld599 = new_ref(glblFldFn597);
-Term glblFld601;
+Term glblFld599 = newRef(glblFldFn597);
+Term glblFld602;
 void glblFldFn600(Term ref, Term args) {
-  args = pair_make(APP, 0, new_i60(1), args);
-  store_redex(args, accessField);
+  args = makePair(APP, 0, newI60(2), args);
+  pushRedex(args, accessField);
   return;
 }
-Term glblFld601 = new_ref(glblFldFn600);
-Term glblFld604;
-void glblFldFn603(Term ref, Term args) {
-  args = pair_make(APP, 0, new_i60(2), args);
-  store_redex(args, accessField);
-  return;
-}
-Term glblFld604 = new_ref(glblFldFn603);
+Term glblFld602 = newRef(glblFldFn600);
 void glblProto61_655(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(822), args);
-    args = pair_make(APP, 0, glblStr151, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(823), args);
+    args = makePair(APP, 0, glblStr151, args);
     interact(args, glblProto61);
   }
 }
@@ -5797,92 +5788,91 @@ Term glblFn545;
 void glblCFn544(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 104, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term l_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 104, SUB, seq_3);
-  Term v_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  // allocate args at core: 820
+  Term seq_3 = makePair(LAM, 104, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term l_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 104, SUB, seq_3);
+  Term v_1 = newTerm(VAR, 0, portLoc(1, seq_3));
+  // allocate args at core: 821
 
   Term l_2_1;
   l_2 = dupeArg(l_2, &l_2_1, 104);
-  Term glblVal607_2;
-  glblVal607 = dupeArg(glblVal607, &glblVal607_2, 0);
+  Term glblVal605_2;
+  glblVal605 = dupeArg(glblVal605, &glblVal605_2, 0);
 
-  // call count at core: 822
-  Term Rslt_5Args = pair_make(APP, 0, l_2_1, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
+  // call count at core: 823
+  Term Rslt_5Args = makePair(APP, 0, l_2_1, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
 #ifdef STRICT
-  store_redex(Rslt_5Args, new_ref(glblProto61_655));
+  pushRedex(Rslt_5Args, newRef(glblProto61_655));
 #else
-  swapStore(term_loc(Rslt_5),
-            pair_make(LAZ, 0, Rslt_5Args, new_ref(glblProto61_655)));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, newRef(glblProto61_655)));
 #endif
-  // call inc at core: 822
-  Term Rslt_6Args = pair_make(APP, 0, Rslt_5, SUB);
-  Term Rslt_6 = term_new(VAR, 0, port(2, term_loc(Rslt_6Args)));
+  // call inc at core: 823
+  Term Rslt_6Args = makePair(APP, 0, Rslt_5, SUB);
+  Term Rslt_6 = newTerm(VAR, 0, portLoc(2, Rslt_6Args));
 #ifdef STRICT
-  store_redex(Rslt_6Args, glblFn121);
+  pushRedex(Rslt_6Args, glblFn120);
 #else
-  swapStore(term_loc(Rslt_6), pair_make(LAZ, 0, Rslt_6Args, glblFn121));
+  swap(termLoc(Rslt_6), makePair(LAZ, 0, Rslt_6Args, glblFn120));
 #endif
 
-  // call Cons at core: 822
-  Term Rslt_7Args = pair_make(APP, 0, Rslt_6, SUB);
-  Term Rslt_7 = term_new(VAR, 0, port(2, term_loc(Rslt_7Args)));
-  Rslt_7Args = pair_make(APP, 0, l_2, Rslt_7Args);
-  Rslt_7Args = pair_make(APP, 0, v_1, Rslt_7Args);
+  // call Cons at core: 823
+  Term Rslt_7Args = makePair(APP, 0, Rslt_6, SUB);
+  Term Rslt_7 = newTerm(VAR, 0, portLoc(2, Rslt_7Args));
+  Rslt_7Args = makePair(APP, 0, l_2, Rslt_7Args);
+  Rslt_7Args = makePair(APP, 0, v_1, Rslt_7Args);
 #ifdef STRICT
-  store_redex(Rslt_7Args, glblVal607_2);
+  pushRedex(Rslt_7Args, glblVal605_2);
 #else
-  swapStore(term_loc(Rslt_7), pair_make(LAZ, 0, Rslt_7Args, glblVal607_2));
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, Rslt_7Args, glblVal605_2));
 #endif
 
   dupLabels[104] = "";
   // link args to body
-  swapStore(r_seq_3, Rslt_7);
+  swap(r_seq_3, Rslt_7);
 
-  Term Rslt_7V = get(term_loc(Rslt_7));
-  apps = take(port(1, term_loc(Rslt_7V)));
-  lams = take(port(2, term_loc(Rslt_7V)));
+  Term Rslt_7V = get(termLoc(Rslt_7));
+  apps = take(portLoc(1, Rslt_7V));
+  lams = take(portLoc(2, Rslt_7V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_7), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_3);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_7), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblFn545 = new_ref(glblCFn544);
+Term glblFn545 = newRef(glblCFn544);
 Term glblFn547;
 void glblCFn546(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 105, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term vs_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
-  // allocate args at core: 824
-  // call to-str at core: 828
-  Term Rslt_4Args = pair_make(APP, 0, vs_1, SUB);
-  Term Rslt_4 = term_new(VAR, 0, port(2, term_loc(Rslt_4Args)));
+  Term seq_2 = makePair(LAM, 105, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term vs_1 = newTerm(VAR, 0, portLoc(1, seq_2));
+  // allocate args at core: 825
+  // call to-str at core: 829
+  Term Rslt_4Args = makePair(APP, 0, vs_1, SUB);
+  Term Rslt_4 = newTerm(VAR, 0, portLoc(2, Rslt_4Args));
 #ifdef STRICT
-  store_redex(Rslt_4Args, glblFn455);
+  pushRedex(Rslt_4Args, glblFn455);
 #else
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, Rslt_4Args, glblFn455));
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, Rslt_4Args, glblFn455));
 #endif
 
   dupLabels[105] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_4);
+  swap(r_seq_2, Rslt_4);
 
-  Term Rslt_4V = get(term_loc(Rslt_4));
-  apps = take(port(1, term_loc(Rslt_4V)));
-  lams = take(port(2, term_loc(Rslt_4V)));
+  Term Rslt_4V = get(termLoc(Rslt_4));
+  apps = take(portLoc(1, Rslt_4V));
+  lams = take(portLoc(2, Rslt_4V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn547 = new_ref(glblCFn546);
+Term glblFn547 = newRef(glblCFn546);
 Value *(*type_name)(FnArity *, Value *) = noImpl1;
 Value *(*zero)(FnArity *, Value *) = noImpl1;
 Value *(*invoke0Args)(FnArity *, Value *) = noImpl1;
@@ -5909,7 +5899,7 @@ void glblCFn659(Term ref, Term args) {
   if (arityArgs.count == 1) {
     Term str_1 = arityArgs.args[0];
 
-    if (term_tag(str_1) != VAL) {
+    if (termTag(str_1) != VAL) {
       fprintf(stderr, "\ninvalid type for 'pr*': Integer or Float\n");
       abort();
     }
@@ -5924,8 +5914,8 @@ void glblCFn659(Term ref, Term args) {
     } else if (s->type == SubStringType) {
       ReifiedVal *ss = (ReifiedVal *)str_1;
       String *parent = (String *)ss->impls[0];
-      long start = get_i60(ss->impls[1]);
-      len = (int)get_i60(ss->impls[2]);
+      long start = getI60(ss->impls[1]);
+      len = (int)getI60(ss->impls[2]);
       src = &parent->buffer[start];
     } else {
       fprintf(stdout, "\ninvalid type for 'pr*': %ld\n", s->type);
@@ -5935,14 +5925,14 @@ void glblCFn659(Term ref, Term args) {
     dest[len] = 0;
     sscanf(dest, "%d", &num);
     dec_and_free(str_1, 1);
-    result = new_i60(num);
-    moveStore(port(2, term_loc(args)), result);
+    result = newI60(num);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn660 = new_ref(glblCFn659);
-Term glblFn662;
-void glblCFn661(Term ref, Term args) {
+Term glblFn660 = newRef(glblCFn659);
+Term glblFn663;
+void glblCFn662(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 2, &arityArgs);
   Term result = NUL;
@@ -5950,16 +5940,16 @@ void glblCFn661(Term ref, Term args) {
     Term x_1 = arityArgs.args[0];
     Term y_2 = arityArgs.args[1];
 
-    unsigned x = (unsigned)get_i60(x_1);
-    unsigned y = (unsigned)get_i60(y_2);
-    result = new_i60(x & y);
+    unsigned x = (unsigned)getI60(x_1);
+    unsigned y = (unsigned)getI60(y_2);
+    result = newI60(x & y);
 
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn662 = new_ref(glblCFn661);
-Term glblFn665;
+Term glblFn663 = newRef(glblCFn662);
+Term glblFn666;
 void glblCFn664(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
@@ -5967,14 +5957,14 @@ void glblCFn664(Term ref, Term args) {
   if (arityArgs.count == 1) {
     Term x_1 = arityArgs.args[0];
 
-    unsigned x = (unsigned)get_i60(x_1);
-    result = new_i60(x >> 1);
+    unsigned x = (unsigned)getI60(x_1);
+    result = newI60(x >> 1);
 
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn665 = new_ref(glblCFn664);
+Term glblFn666 = newRef(glblCFn664);
 Term glblFn668;
 void glblCFn667(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -5984,49 +5974,49 @@ void glblCFn667(Term ref, Term args) {
     Term x_1 = arityArgs.args[0];
     Term n_2 = arityArgs.args[1];
 
-    unsigned x = (unsigned)get_i60(x_1);
-    unsigned n = (unsigned)get_i60(n_2);
-    result = new_i60(x >> n);
+    unsigned x = (unsigned)getI60(x_1);
+    unsigned n = (unsigned)getI60(n_2);
+    result = newI60(x >> n);
 
-    moveStore(port(2, term_loc(args)), result);
+    move(portLoc(2, args), result);
   }
   return;
 }
-Term glblFn668 = new_ref(glblCFn667);
+Term glblFn668 = newRef(glblCFn667);
 Term glblVal670;
 Term glblVal672;
 Term glblFn674;
 void glblCFn673(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 116, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term p_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 116, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term p_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 56
-  swapStore(term_loc(p_1), ERA);
+  swap(termLoc(p_1), ERA);
   // call pr* at sidequest.toc: 57
-  Term Rslt_4Args = pair_make(APP, 0, glblStr161, SUB);
-  Term Rslt_4 = term_new(VAR, 0, port(2, term_loc(Rslt_4Args)));
+  Term Rslt_4Args = makePair(APP, 0, glblStr161, SUB);
+  Term Rslt_4 = newTerm(VAR, 0, portLoc(2, Rslt_4Args));
 #ifdef STRICT
-  store_redex(Rslt_4Args, glblFn115);
+  pushRedex(Rslt_4Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, Rslt_4Args, glblFn115));
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, Rslt_4Args, glblFn115));
 #endif
 
   dupLabels[116] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_4);
+  swap(r_seq_2, Rslt_4);
 
-  Term Rslt_4V = get(term_loc(Rslt_4));
-  apps = take(port(1, term_loc(Rslt_4V)));
-  lams = take(port(2, term_loc(Rslt_4V)));
+  Term Rslt_4V = get(termLoc(Rslt_4));
+  apps = take(portLoc(1, Rslt_4V));
+  lams = take(portLoc(2, Rslt_4V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn674 = new_ref(glblCFn673);
+Term glblFn674 = newRef(glblCFn673);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -6035,55 +6025,55 @@ struct {
   int64_t len;
   char buffer[2];
 } str11 = {StringBufferType, REFS_STATIC, 0, 0, 1, "0"};
-Term glblStr679 = term_new_(VAL, (Term)&str11);
+Term glblStr679 = newTerm_(VAL, (Term)&str11);
 Term glblVal670;
 void glblCFn677(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 117, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term p_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 117, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term p_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 59
   Term glblVal672_1;
   glblVal672 = dupeArg(glblVal672, &glblVal672_1, 0);
 
   // call pr* at sidequest.toc: 60
-  Term Rslt_4Args = pair_make(APP, 0, glblStr679, SUB);
-  Term Rslt_4 = term_new(VAR, 0, port(2, term_loc(Rslt_4Args)));
+  Term Rslt_4Args = makePair(APP, 0, glblStr679, SUB);
+  Term Rslt_4 = newTerm(VAR, 0, portLoc(2, Rslt_4Args));
 #ifdef STRICT
-  store_redex(Rslt_4Args, glblFn115);
+  pushRedex(Rslt_4Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, Rslt_4Args, glblFn115));
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, Rslt_4Args, glblFn115));
 #endif
 
   // call p at sidequest.toc: 59
-  Term Rslt_5Args = pair_make(APP, 0, glblFn674, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
-  Rslt_5Args = pair_make(APP, 0, glblVal672_1, Rslt_5Args);
-  Rslt_5Args = pair_make(APP, 0, glblVal670, Rslt_5Args);
+  Term Rslt_5Args = makePair(APP, 0, glblFn674, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
+  Rslt_5Args = makePair(APP, 0, glblVal672_1, Rslt_5Args);
+  Rslt_5Args = makePair(APP, 0, glblVal670, Rslt_5Args);
 #ifdef STRICT
-  store_redex(Rslt_5Args, p_1);
+  pushRedex(Rslt_5Args, p_1);
 #else
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, Rslt_5Args, p_1));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, p_1));
 #endif
 
   dupLabels[117] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_5);
+  swap(r_seq_2, Rslt_5);
 
-  Term Rslt_5V = get(term_loc(Rslt_5));
-  apps = take(port(1, term_loc(Rslt_5V)));
-  lams = take(port(2, term_loc(Rslt_5V)));
+  Term Rslt_5V = get(termLoc(Rslt_5));
+  apps = take(portLoc(1, Rslt_5V));
+  lams = take(portLoc(2, Rslt_5V));
 
-  vLoc = port(2, term_loc(apps));
-  apps = pair_make(APP, 0, Rslt_4, apps);
-  lams = pair_make(LAM, 117, sideEffects, lams);
+  vLoc = portLoc(2, apps);
+  apps = makePair(APP, 0, Rslt_4, apps);
+  lams = makePair(LAM, 117, ERA, lams);
 
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblVal670 = new_ref(glblCFn677);
+Term glblVal670 = newRef(glblCFn677);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -6092,160 +6082,160 @@ struct {
   int64_t len;
   char buffer[2];
 } str12 = {StringBufferType, REFS_STATIC, 0, 0, 1, "1"};
-Term glblStr683 = term_new_(VAL, (Term)&str12);
+Term glblStr683 = newTerm_(VAL, (Term)&str12);
 Term glblVal672;
 void glblCFn681(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 118, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term p_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 118, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term p_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 63
   // call pr* at sidequest.toc: 64
-  Term Rslt_4Args = pair_make(APP, 0, glblStr683, SUB);
-  Term Rslt_4 = term_new(VAR, 0, port(2, term_loc(Rslt_4Args)));
+  Term Rslt_4Args = makePair(APP, 0, glblStr683, SUB);
+  Term Rslt_4 = newTerm(VAR, 0, portLoc(2, Rslt_4Args));
 #ifdef STRICT
-  store_redex(Rslt_4Args, glblFn115);
+  pushRedex(Rslt_4Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, Rslt_4Args, glblFn115));
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, Rslt_4Args, glblFn115));
 #endif
 
   // call p at sidequest.toc: 63
-  Term Rslt_5Args = pair_make(APP, 0, glblFn674, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
-  Rslt_5Args = pair_make(APP, 0, glblVal672, Rslt_5Args);
-  Rslt_5Args = pair_make(APP, 0, glblVal670, Rslt_5Args);
+  Term Rslt_5Args = makePair(APP, 0, glblFn674, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
+  Rslt_5Args = makePair(APP, 0, glblVal672, Rslt_5Args);
+  Rslt_5Args = makePair(APP, 0, glblVal670, Rslt_5Args);
 #ifdef STRICT
-  store_redex(Rslt_5Args, p_1);
+  pushRedex(Rslt_5Args, p_1);
 #else
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, Rslt_5Args, p_1));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, p_1));
 #endif
 
   dupLabels[118] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_5);
+  swap(r_seq_2, Rslt_5);
 
-  Term Rslt_5V = get(term_loc(Rslt_5));
-  apps = take(port(1, term_loc(Rslt_5V)));
-  lams = take(port(2, term_loc(Rslt_5V)));
+  Term Rslt_5V = get(termLoc(Rslt_5));
+  apps = take(portLoc(1, Rslt_5V));
+  lams = take(portLoc(2, Rslt_5V));
 
-  vLoc = port(2, term_loc(apps));
-  apps = pair_make(APP, 0, Rslt_4, apps);
-  lams = pair_make(LAM, 118, sideEffects, lams);
+  vLoc = portLoc(2, apps);
+  apps = makePair(APP, 0, Rslt_4, apps);
+  lams = makePair(LAM, 118, ERA, lams);
 
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblVal672 = new_ref(glblCFn681);
-Term glblFn685;
-void glblCFn684(Term ref, Term args) {
+Term glblVal672 = newRef(glblCFn681);
+Term glblFn686;
+void glblCFn685(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 119, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term bits_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 119, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term bits_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 67
   // call bits at sidequest.toc: 67
-  Term Rslt_4Args = pair_make(APP, 0, glblFn674, SUB);
-  Term Rslt_4 = term_new(VAR, 0, port(2, term_loc(Rslt_4Args)));
-  Rslt_4Args = pair_make(APP, 0, glblVal672, Rslt_4Args);
-  Rslt_4Args = pair_make(APP, 0, glblVal670, Rslt_4Args);
+  Term Rslt_4Args = makePair(APP, 0, glblFn674, SUB);
+  Term Rslt_4 = newTerm(VAR, 0, portLoc(2, Rslt_4Args));
+  Rslt_4Args = makePair(APP, 0, glblVal672, Rslt_4Args);
+  Rslt_4Args = makePair(APP, 0, glblVal670, Rslt_4Args);
 #ifdef STRICT
-  store_redex(Rslt_4Args, bits_1);
+  pushRedex(Rslt_4Args, bits_1);
 #else
-  swapStore(term_loc(Rslt_4), pair_make(LAZ, 0, Rslt_4Args, bits_1));
+  swap(termLoc(Rslt_4), makePair(LAZ, 0, Rslt_4Args, bits_1));
 #endif
 
   // call  at sidequest.toc: 67
-  Term Rslt_5Args = pair_make(APP, 0, NUL, SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
+  Term Rslt_5Args = makePair(APP, 0, NUL, SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
 #ifdef STRICT
-  store_redex(Rslt_5Args, Rslt_4);
+  pushRedex(Rslt_5Args, Rslt_4);
 #else
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, Rslt_5Args, Rslt_4));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, Rslt_4));
 #endif
 
   dupLabels[119] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_5);
+  swap(r_seq_2, Rslt_5);
 
-  Term Rslt_5V = get(term_loc(Rslt_5));
-  apps = take(port(1, term_loc(Rslt_5V)));
-  lams = take(port(2, term_loc(Rslt_5V)));
+  Term Rslt_5V = get(termLoc(Rslt_5));
+  apps = take(portLoc(1, Rslt_5V));
+  lams = take(portLoc(2, Rslt_5V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn685 = new_ref(glblCFn684);
+Term glblFn686 = newRef(glblCFn685);
 Term glblhbin_done691;
 void glblhbin_done690(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_46 = pair_make(LAM, 123, SUB, NUL);
-  Location r_seq_46 = port(2, term_loc(seq_46));
-  Term n_45 = term_new(VAR, 0, port(1, term_loc(seq_46)));
+  Term seq_46 = makePair(LAM, 123, SUB, NUL);
+  Location r_seq_46 = portLoc(2, seq_46);
+  Term n_45 = newTerm(VAR, 0, portLoc(1, seq_46));
   // allocate args at sidequest.toc: 83
-  swapStore(term_loc(n_45), ERA);
-  Term seq_52 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_52 = port(2, term_loc(seq_52));
-  Term e_51 = term_new(VAR, 0, port(1, term_loc(seq_52)));
-  seq_52 = pair_make(LAM, 0, SUB, seq_52);
-  Term i_50 = term_new(VAR, 0, port(1, term_loc(seq_52)));
-  seq_52 = pair_make(LAM, 0, SUB, seq_52);
-  Term o_49 = term_new(VAR, 0, port(1, term_loc(seq_52)));
+  swap(termLoc(n_45), ERA);
+  Term seq_52 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_52 = portLoc(2, seq_52);
+  Term e_51 = newTerm(VAR, 0, portLoc(1, seq_52));
+  seq_52 = makePair(LAM, 0, SUB, seq_52);
+  Term i_50 = newTerm(VAR, 0, portLoc(1, seq_52));
+  seq_52 = makePair(LAM, 0, SUB, seq_52);
+  Term o_49 = newTerm(VAR, 0, portLoc(1, seq_52));
   // allocate args at sidequest.toc: 84
-  swapStore(term_loc(o_49), ERA);
-  swapStore(term_loc(i_50), ERA);
+  swap(termLoc(o_49), ERA);
+  swap(termLoc(i_50), ERA);
   dupLabels[0] = "hbin-e";
   // link args to body
-  swapStore(r_seq_52, e_51);
+  swap(r_seq_52, e_51);
 
   V = get(r_seq_52);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 0, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_52, term_new(VAR, 0, vLoc));
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 0, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_52, newTerm(VAR, 0, vLoc));
   dupLabels[123] = "hbin-done";
   // link args to body
-  swapStore(r_seq_46, seq_52);
+  swap(r_seq_46, seq_52);
 
   V = get(r_seq_46);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 123, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_46, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_46);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 123, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_46, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_46);
   return;
 }
-Term glblhbin_done691 = new_ref(glblhbin_done690);
+Term glblhbin_done691 = newRef(glblhbin_done690);
 Term glblFn689;
 void glblCFn688(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 120, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term N_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 120, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term N_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 70
 
   Term N_1_1;
   N_1 = dupeArg(N_1, &N_1_1, 120);
-  Term seq_6 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_6 = port(2, term_loc(seq_6));
-  Term l_5 = term_new(VAR, 0, port(1, term_loc(seq_6)));
+  Term seq_6 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_6 = portLoc(2, seq_6);
+  Term l_5 = newTerm(VAR, 0, portLoc(1, seq_6));
   // allocate args at sidequest.toc: 72
 
   Term l_5_1;
   l_5 = dupeArg(l_5, &l_5_1, 0);
-  Term seq_10 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_10 = port(2, term_loc(seq_10));
-  Term n_9 = term_new(VAR, 0, port(1, term_loc(seq_10)));
+  Term seq_10 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_10 = portLoc(2, seq_10);
+  Term n_9 = newTerm(VAR, 0, portLoc(1, seq_10));
   // allocate args at sidequest.toc: 73
 
   Term n_9_2;
@@ -6253,263 +6243,263 @@ void glblCFn688(Term ref, Term args) {
 
   Term n_9_1;
   n_9 = dupeArg(n_9, &n_9_1, 0);
-  Term seq_14 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_14 = port(2, term_loc(seq_14));
-  Term x_13 = term_new(VAR, 0, port(1, term_loc(seq_14)));
+  Term seq_14 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_14 = portLoc(2, seq_14);
+  Term x_13 = newTerm(VAR, 0, portLoc(1, seq_14));
   // allocate args at sidequest.toc: 74
-  Term seq_31 = pair_make(LAM, 122, SUB, NUL);
-  Location r_seq_31 = port(2, term_loc(seq_31));
-  Term e_30 = term_new(VAR, 0, port(1, term_loc(seq_31)));
-  seq_31 = pair_make(LAM, 122, SUB, seq_31);
-  Term i_29 = term_new(VAR, 0, port(1, term_loc(seq_31)));
-  seq_31 = pair_make(LAM, 122, SUB, seq_31);
-  Term o_28 = term_new(VAR, 0, port(1, term_loc(seq_31)));
+  Term seq_31 = makePair(LAM, 122, SUB, NUL);
+  Location r_seq_31 = portLoc(2, seq_31);
+  Term e_30 = newTerm(VAR, 0, portLoc(1, seq_31));
+  seq_31 = makePair(LAM, 122, SUB, seq_31);
+  Term i_29 = newTerm(VAR, 0, portLoc(1, seq_31));
+  seq_31 = makePair(LAM, 122, SUB, seq_31);
+  Term o_28 = newTerm(VAR, 0, portLoc(1, seq_31));
   // allocate args at sidequest.toc: 78
-  swapStore(term_loc(i_29), ERA);
-  swapStore(term_loc(e_30), ERA);
-  Term seq_20 = pair_make(LAM, 121, SUB, NUL);
-  Location r_seq_20 = port(2, term_loc(seq_20));
-  Term e_19 = term_new(VAR, 0, port(1, term_loc(seq_20)));
-  seq_20 = pair_make(LAM, 121, SUB, seq_20);
-  Term i_18 = term_new(VAR, 0, port(1, term_loc(seq_20)));
-  seq_20 = pair_make(LAM, 121, SUB, seq_20);
-  Term o_17 = term_new(VAR, 0, port(1, term_loc(seq_20)));
+  swap(termLoc(i_29), ERA);
+  swap(termLoc(e_30), ERA);
+  Term seq_20 = makePair(LAM, 121, SUB, NUL);
+  Location r_seq_20 = portLoc(2, seq_20);
+  Term e_19 = newTerm(VAR, 0, portLoc(1, seq_20));
+  seq_20 = makePair(LAM, 121, SUB, seq_20);
+  Term i_18 = newTerm(VAR, 0, portLoc(1, seq_20));
+  seq_20 = makePair(LAM, 121, SUB, seq_20);
+  Term o_17 = newTerm(VAR, 0, portLoc(1, seq_20));
   // allocate args at sidequest.toc: 76
-  swapStore(term_loc(o_17), ERA);
-  swapStore(term_loc(e_19), ERA);
+  swap(termLoc(o_17), ERA);
+  swap(termLoc(e_19), ERA);
   Term glblVal214_3;
   glblVal214 = dupeArg(glblVal214, &glblVal214_3, 0);
 
   Term glblVal214_2;
   glblVal214 = dupeArg(glblVal214, &glblVal214_2, 0);
 
-  Term Rslt_22 = make_op(OP_SUB, l_5, new_i60(1));
+  Term Rslt_22 = makeOp(OP_SUB, l_5, newI60(1));
   // call hbin at sidequest.toc: 70
-  Term Rslt_23Args = pair_make(APP, 0, Rslt_22, SUB);
-  Term Rslt_23 = term_new(VAR, 0, port(2, term_loc(Rslt_23Args)));
+  Term Rslt_23Args = makePair(APP, 0, Rslt_22, SUB);
+  Term Rslt_23 = newTerm(VAR, 0, portLoc(2, Rslt_23Args));
 #ifdef STRICT
-  store_redex(Rslt_23Args, glblFn689);
+  pushRedex(Rslt_23Args, glblFn689);
 #else
-  swapStore(term_loc(Rslt_23), pair_make(LAZ, 0, Rslt_23Args, glblFn689));
+  swap(termLoc(Rslt_23), makePair(LAZ, 0, Rslt_23Args, glblFn689));
 #endif
 
   // call /2 at sidequest.toc: 77
-  Term Rslt_24Args = pair_make(APP, 0, n_9, SUB);
-  Term Rslt_24 = term_new(VAR, 0, port(2, term_loc(Rslt_24Args)));
+  Term Rslt_24Args = makePair(APP, 0, n_9, SUB);
+  Term Rslt_24 = newTerm(VAR, 0, portLoc(2, Rslt_24Args));
 #ifdef STRICT
-  store_redex(Rslt_24Args, glblFn665);
+  pushRedex(Rslt_24Args, glblFn666);
 #else
-  swapStore(term_loc(Rslt_24), pair_make(LAZ, 0, Rslt_24Args, glblFn665));
+  swap(termLoc(Rslt_24), makePair(LAZ, 0, Rslt_24Args, glblFn666));
 #endif
 
   // call  at sidequest.toc: 77
-  Term Rslt_25Args = pair_make(APP, 0, Rslt_24, SUB);
-  Term Rslt_25 = term_new(VAR, 0, port(2, term_loc(Rslt_25Args)));
+  Term Rslt_25Args = makePair(APP, 0, Rslt_24, SUB);
+  Term Rslt_25 = newTerm(VAR, 0, portLoc(2, Rslt_25Args));
 #ifdef STRICT
-  store_redex(Rslt_25Args, Rslt_23);
+  pushRedex(Rslt_25Args, Rslt_23);
 #else
-  swapStore(term_loc(Rslt_25), pair_make(LAZ, 0, Rslt_25Args, Rslt_23));
+  swap(termLoc(Rslt_25), makePair(LAZ, 0, Rslt_25Args, Rslt_23));
 #endif
 
   // call i at sidequest.toc: 76
-  Term Rslt_26Args = pair_make(APP, 0, Rslt_25, SUB);
-  Term Rslt_26 = term_new(VAR, 0, port(2, term_loc(Rslt_26Args)));
+  Term Rslt_26Args = makePair(APP, 0, Rslt_25, SUB);
+  Term Rslt_26 = newTerm(VAR, 0, portLoc(2, Rslt_26Args));
 #ifdef STRICT
-  store_redex(Rslt_26Args, i_18);
+  pushRedex(Rslt_26Args, i_18);
 #else
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, Rslt_26Args, i_18));
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, Rslt_26Args, i_18));
 #endif
 
   dupLabels[121] = "hbin-1";
   // link args to body
-  swapStore(r_seq_20, Rslt_26);
+  swap(r_seq_20, Rslt_26);
 
-  Term Rslt_26V = get(term_loc(Rslt_26));
-  apps = take(port(1, term_loc(Rslt_26V)));
-  lams = take(port(2, term_loc(Rslt_26V)));
+  Term Rslt_26V = get(termLoc(Rslt_26));
+  apps = take(portLoc(1, Rslt_26V));
+  lams = take(portLoc(2, Rslt_26V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, apps, lams));
-  Term Rslt_33 = make_op(OP_SUB, l_5_1, new_i60(1));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, apps, lams));
+  Term Rslt_33 = makeOp(OP_SUB, l_5_1, newI60(1));
   // call hbin at sidequest.toc: 70
-  Term Rslt_34Args = pair_make(APP, 0, Rslt_33, SUB);
-  Term Rslt_34 = term_new(VAR, 0, port(2, term_loc(Rslt_34Args)));
+  Term Rslt_34Args = makePair(APP, 0, Rslt_33, SUB);
+  Term Rslt_34 = newTerm(VAR, 0, portLoc(2, Rslt_34Args));
 #ifdef STRICT
-  store_redex(Rslt_34Args, glblFn689);
+  pushRedex(Rslt_34Args, glblFn689);
 #else
-  swapStore(term_loc(Rslt_34), pair_make(LAZ, 0, Rslt_34Args, glblFn689));
+  swap(termLoc(Rslt_34), makePair(LAZ, 0, Rslt_34Args, glblFn689));
 #endif
 
   // call /2 at sidequest.toc: 79
-  Term Rslt_35Args = pair_make(APP, 0, n_9_1, SUB);
-  Term Rslt_35 = term_new(VAR, 0, port(2, term_loc(Rslt_35Args)));
+  Term Rslt_35Args = makePair(APP, 0, n_9_1, SUB);
+  Term Rslt_35 = newTerm(VAR, 0, portLoc(2, Rslt_35Args));
 #ifdef STRICT
-  store_redex(Rslt_35Args, glblFn665);
+  pushRedex(Rslt_35Args, glblFn666);
 #else
-  swapStore(term_loc(Rslt_35), pair_make(LAZ, 0, Rslt_35Args, glblFn665));
+  swap(termLoc(Rslt_35), makePair(LAZ, 0, Rslt_35Args, glblFn666));
 #endif
 
   // call  at sidequest.toc: 79
-  Term Rslt_36Args = pair_make(APP, 0, Rslt_35, SUB);
-  Term Rslt_36 = term_new(VAR, 0, port(2, term_loc(Rslt_36Args)));
+  Term Rslt_36Args = makePair(APP, 0, Rslt_35, SUB);
+  Term Rslt_36 = newTerm(VAR, 0, portLoc(2, Rslt_36Args));
 #ifdef STRICT
-  store_redex(Rslt_36Args, Rslt_34);
+  pushRedex(Rslt_36Args, Rslt_34);
 #else
-  swapStore(term_loc(Rslt_36), pair_make(LAZ, 0, Rslt_36Args, Rslt_34));
+  swap(termLoc(Rslt_36), makePair(LAZ, 0, Rslt_36Args, Rslt_34));
 #endif
 
   // call o at sidequest.toc: 78
-  Term Rslt_37Args = pair_make(APP, 0, Rslt_36, SUB);
-  Term Rslt_37 = term_new(VAR, 0, port(2, term_loc(Rslt_37Args)));
+  Term Rslt_37Args = makePair(APP, 0, Rslt_36, SUB);
+  Term Rslt_37 = newTerm(VAR, 0, portLoc(2, Rslt_37Args));
 #ifdef STRICT
-  store_redex(Rslt_37Args, o_28);
+  pushRedex(Rslt_37Args, o_28);
 #else
-  swapStore(term_loc(Rslt_37), pair_make(LAZ, 0, Rslt_37Args, o_28));
+  swap(termLoc(Rslt_37), makePair(LAZ, 0, Rslt_37Args, o_28));
 #endif
 
   dupLabels[122] = "hbin-0";
   // link args to body
-  swapStore(r_seq_31, Rslt_37);
+  swap(r_seq_31, Rslt_37);
 
-  Term Rslt_37V = get(term_loc(Rslt_37));
-  apps = take(port(1, term_loc(Rslt_37V)));
-  lams = take(port(2, term_loc(Rslt_37V)));
+  Term Rslt_37V = get(termLoc(Rslt_37));
+  apps = take(portLoc(1, Rslt_37V));
+  lams = take(portLoc(2, Rslt_37V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_37), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_37), makePair(LAZ, 0, apps, lams));
   // call int-cond at sidequest.toc: 75
-  Term Rslt_38Args = pair_make(APP, 0, seq_31, SUB);
-  Term Rslt_38 = term_new(VAR, 0, port(2, term_loc(Rslt_38Args)));
-  Rslt_38Args = pair_make(APP, 0, seq_20, Rslt_38Args);
-  Rslt_38Args = pair_make(APP, 0, x_13, Rslt_38Args);
+  Term Rslt_38Args = makePair(APP, 0, seq_31, SUB);
+  Term Rslt_38 = newTerm(VAR, 0, portLoc(2, Rslt_38Args));
+  Rslt_38Args = makePair(APP, 0, seq_20, Rslt_38Args);
+  Rslt_38Args = makePair(APP, 0, x_13, Rslt_38Args);
 #ifdef STRICT
-  store_redex(Rslt_38Args, glblVal214_3);
+  pushRedex(Rslt_38Args, glblVal214_3);
 #else
-  swapStore(term_loc(Rslt_38), pair_make(LAZ, 0, Rslt_38Args, glblVal214_3));
+  swap(termLoc(Rslt_38), makePair(LAZ, 0, Rslt_38Args, glblVal214_3));
 #endif
 
   dupLabels[0] = "hbin-cond";
   // link args to body
-  swapStore(r_seq_14, Rslt_38);
+  swap(r_seq_14, Rslt_38);
 
-  Term Rslt_38V = get(term_loc(Rslt_38));
-  apps = take(port(1, term_loc(Rslt_38V)));
-  lams = take(port(2, term_loc(Rslt_38V)));
+  Term Rslt_38V = get(termLoc(Rslt_38));
+  apps = take(portLoc(1, Rslt_38V));
+  lams = take(portLoc(2, Rslt_38V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_38), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_38), makePair(LAZ, 0, apps, lams));
   // call bit-and at sidequest.toc: 80
-  Term Rslt_41Args = pair_make(APP, 0, new_i60(1), SUB);
-  Term Rslt_41 = term_new(VAR, 0, port(2, term_loc(Rslt_41Args)));
-  Rslt_41Args = pair_make(APP, 0, n_9_2, Rslt_41Args);
+  Term Rslt_41Args = makePair(APP, 0, newI60(1), SUB);
+  Term Rslt_41 = newTerm(VAR, 0, portLoc(2, Rslt_41Args));
+  Rslt_41Args = makePair(APP, 0, n_9_2, Rslt_41Args);
 #ifdef STRICT
-  store_redex(Rslt_41Args, glblFn662);
+  pushRedex(Rslt_41Args, glblFn663);
 #else
-  swapStore(term_loc(Rslt_41), pair_make(LAZ, 0, Rslt_41Args, glblFn662));
+  swap(termLoc(Rslt_41), makePair(LAZ, 0, Rslt_41Args, glblFn663));
 #endif
 
   // call hbin-cond at sidequest.toc: 80
-  Term Rslt_42Args = pair_make(APP, 0, Rslt_41, SUB);
-  Term Rslt_42 = term_new(VAR, 0, port(2, term_loc(Rslt_42Args)));
+  Term Rslt_42Args = makePair(APP, 0, Rslt_41, SUB);
+  Term Rslt_42 = newTerm(VAR, 0, portLoc(2, Rslt_42Args));
 #ifdef STRICT
-  store_redex(Rslt_42Args, seq_14);
+  pushRedex(Rslt_42Args, seq_14);
 #else
-  swapStore(term_loc(Rslt_42), pair_make(LAZ, 0, Rslt_42Args, seq_14));
+  swap(termLoc(Rslt_42), makePair(LAZ, 0, Rslt_42Args, seq_14));
 #endif
 
   dupLabels[0] = "hbin-n";
   // link args to body
-  swapStore(r_seq_10, Rslt_42);
+  swap(r_seq_10, Rslt_42);
 
-  Term Rslt_42V = get(term_loc(Rslt_42));
-  apps = take(port(1, term_loc(Rslt_42V)));
-  lams = take(port(2, term_loc(Rslt_42V)));
+  Term Rslt_42V = get(termLoc(Rslt_42));
+  apps = take(portLoc(1, Rslt_42V));
+  lams = take(portLoc(2, Rslt_42V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_42), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_42), makePair(LAZ, 0, apps, lams));
   dupLabels[0] = "hbin-step";
   // link args to body
-  swapStore(r_seq_6, seq_10);
+  swap(r_seq_6, seq_10);
 
   V = get(r_seq_6);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 0, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_6, term_new(VAR, 0, vLoc));
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 0, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_6, newTerm(VAR, 0, vLoc));
   // call hbin-step at sidequest.toc: 70
-  Term Rslt_43Args = pair_make(APP, 0, N_1_1, SUB);
-  Term Rslt_43 = term_new(VAR, 0, port(2, term_loc(Rslt_43Args)));
+  Term Rslt_43Args = makePair(APP, 0, N_1_1, SUB);
+  Term Rslt_43 = newTerm(VAR, 0, portLoc(2, Rslt_43Args));
 #ifdef STRICT
-  store_redex(Rslt_43Args, seq_6);
+  pushRedex(Rslt_43Args, seq_6);
 #else
-  swapStore(term_loc(Rslt_43), pair_make(LAZ, 0, Rslt_43Args, seq_6));
+  swap(termLoc(Rslt_43), makePair(LAZ, 0, Rslt_43Args, seq_6));
 #endif
 
   // call int-cond at sidequest.toc: 71
-  Term Rslt_54Args = pair_make(APP, 0, glblhbin_done691, SUB);
-  Term Rslt_54 = term_new(VAR, 0, port(2, term_loc(Rslt_54Args)));
-  Rslt_54Args = pair_make(APP, 0, Rslt_43, Rslt_54Args);
-  Rslt_54Args = pair_make(APP, 0, N_1, Rslt_54Args);
+  Term Rslt_54Args = makePair(APP, 0, glblhbin_done691, SUB);
+  Term Rslt_54 = newTerm(VAR, 0, portLoc(2, Rslt_54Args));
+  Rslt_54Args = makePair(APP, 0, Rslt_43, Rslt_54Args);
+  Rslt_54Args = makePair(APP, 0, N_1, Rslt_54Args);
 #ifdef STRICT
-  store_redex(Rslt_54Args, glblVal214_2);
+  pushRedex(Rslt_54Args, glblVal214_2);
 #else
-  swapStore(term_loc(Rslt_54), pair_make(LAZ, 0, Rslt_54Args, glblVal214_2));
+  swap(termLoc(Rslt_54), makePair(LAZ, 0, Rslt_54Args, glblVal214_2));
 #endif
 
   dupLabels[120] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_54);
+  swap(r_seq_2, Rslt_54);
 
-  Term Rslt_54V = get(term_loc(Rslt_54));
-  apps = take(port(1, term_loc(Rslt_54V)));
-  lams = take(port(2, term_loc(Rslt_54V)));
+  Term Rslt_54V = get(termLoc(Rslt_54));
+  apps = take(portLoc(1, Rslt_54V));
+  lams = take(portLoc(2, Rslt_54V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_54), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_54), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn689 = new_ref(glblCFn688);
+Term glblFn689 = newRef(glblCFn688);
 Term glblbin_0698;
 void glblbin_0697(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_33 = pair_make(LAM, 127, SUB, NUL);
-  Location r_seq_33 = port(2, term_loc(seq_33));
-  Term e_32 = term_new(VAR, 0, port(1, term_loc(seq_33)));
-  seq_33 = pair_make(LAM, 127, SUB, seq_33);
-  Term i_31 = term_new(VAR, 0, port(1, term_loc(seq_33)));
-  seq_33 = pair_make(LAM, 127, SUB, seq_33);
-  Term o_30 = term_new(VAR, 0, port(1, term_loc(seq_33)));
+  Term seq_33 = makePair(LAM, 127, SUB, NUL);
+  Location r_seq_33 = portLoc(2, seq_33);
+  Term e_32 = newTerm(VAR, 0, portLoc(1, seq_33));
+  seq_33 = makePair(LAM, 127, SUB, seq_33);
+  Term i_31 = newTerm(VAR, 0, portLoc(1, seq_33));
+  seq_33 = makePair(LAM, 127, SUB, seq_33);
+  Term o_30 = newTerm(VAR, 0, portLoc(1, seq_33));
   // allocate args at sidequest.toc: 100
-  swapStore(term_loc(o_30), ERA);
-  swapStore(term_loc(i_31), ERA);
+  swap(termLoc(o_30), ERA);
+  swap(termLoc(i_31), ERA);
   dupLabels[127] = "bin-0";
   // link args to body
-  swapStore(r_seq_33, e_32);
+  swap(r_seq_33, e_32);
 
   V = get(r_seq_33);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 127, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_33, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_33);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 127, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_33, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_33);
   return;
 }
-Term glblbin_0698 = new_ref(glblbin_0697);
+Term glblbin_0698 = newRef(glblbin_0697);
 Term glblFn695;
 void glblCFn694(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 124, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term v_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 124, SUB, seq_3);
-  Term bits_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
+  Term seq_3 = makePair(LAM, 124, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term v_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 124, SUB, seq_3);
+  Term bits_1 = newTerm(VAR, 0, portLoc(1, seq_3));
   // allocate args at sidequest.toc: 87
 
   Term bits_1_2;
@@ -6523,26 +6513,26 @@ void glblCFn694(Term ref, Term args) {
 
   Term v_2_1;
   v_2 = dupeArg(v_2, &v_2_1, 124);
-  Term seq_20 = pair_make(LAM, 126, SUB, NUL);
-  Location r_seq_20 = port(2, term_loc(seq_20));
-  Term e_19 = term_new(VAR, 0, port(1, term_loc(seq_20)));
-  seq_20 = pair_make(LAM, 126, SUB, seq_20);
-  Term i_18 = term_new(VAR, 0, port(1, term_loc(seq_20)));
-  seq_20 = pair_make(LAM, 126, SUB, seq_20);
-  Term o_17 = term_new(VAR, 0, port(1, term_loc(seq_20)));
+  Term seq_20 = makePair(LAM, 126, SUB, NUL);
+  Location r_seq_20 = portLoc(2, seq_20);
+  Term e_19 = newTerm(VAR, 0, portLoc(1, seq_20));
+  seq_20 = makePair(LAM, 126, SUB, seq_20);
+  Term i_18 = newTerm(VAR, 0, portLoc(1, seq_20));
+  seq_20 = makePair(LAM, 126, SUB, seq_20);
+  Term o_17 = newTerm(VAR, 0, portLoc(1, seq_20));
   // allocate args at sidequest.toc: 96
-  swapStore(term_loc(i_18), ERA);
-  swapStore(term_loc(e_19), ERA);
-  Term seq_10 = pair_make(LAM, 125, SUB, NUL);
-  Location r_seq_10 = port(2, term_loc(seq_10));
-  Term e_9 = term_new(VAR, 0, port(1, term_loc(seq_10)));
-  seq_10 = pair_make(LAM, 125, SUB, seq_10);
-  Term i_8 = term_new(VAR, 0, port(1, term_loc(seq_10)));
-  seq_10 = pair_make(LAM, 125, SUB, seq_10);
-  Term o_7 = term_new(VAR, 0, port(1, term_loc(seq_10)));
+  swap(termLoc(i_18), ERA);
+  swap(termLoc(e_19), ERA);
+  Term seq_10 = makePair(LAM, 125, SUB, NUL);
+  Location r_seq_10 = portLoc(2, seq_10);
+  Term e_9 = newTerm(VAR, 0, portLoc(1, seq_10));
+  seq_10 = makePair(LAM, 125, SUB, seq_10);
+  Term i_8 = newTerm(VAR, 0, portLoc(1, seq_10));
+  seq_10 = makePair(LAM, 125, SUB, seq_10);
+  Term o_7 = newTerm(VAR, 0, portLoc(1, seq_10));
   // allocate args at sidequest.toc: 91
-  swapStore(term_loc(o_7), ERA);
-  swapStore(term_loc(e_9), ERA);
+  swap(termLoc(o_7), ERA);
+  swap(termLoc(e_9), ERA);
   Term glblVal214_5;
   glblVal214 = dupeArg(glblVal214, &glblVal214_5, 0);
 
@@ -6550,145 +6540,145 @@ void glblCFn694(Term ref, Term args) {
   glblVal214 = dupeArg(glblVal214, &glblVal214_4, 0);
 
   // call bit-and at sidequest.toc: 89
-  Term Rslt_5Args = pair_make(APP, 0, new_i60(1), SUB);
-  Term Rslt_5 = term_new(VAR, 0, port(2, term_loc(Rslt_5Args)));
-  Rslt_5Args = pair_make(APP, 0, v_2, Rslt_5Args);
+  Term Rslt_5Args = makePair(APP, 0, newI60(1), SUB);
+  Term Rslt_5 = newTerm(VAR, 0, portLoc(2, Rslt_5Args));
+  Rslt_5Args = makePair(APP, 0, v_2, Rslt_5Args);
 #ifdef STRICT
-  store_redex(Rslt_5Args, glblFn662);
+  pushRedex(Rslt_5Args, glblFn663);
 #else
-  swapStore(term_loc(Rslt_5), pair_make(LAZ, 0, Rslt_5Args, glblFn662));
+  swap(termLoc(Rslt_5), makePair(LAZ, 0, Rslt_5Args, glblFn663));
 #endif
 
   // call dec at sidequest.toc: 93
-  Term Rslt_12Args = pair_make(APP, 0, bits_1_1, SUB);
-  Term Rslt_12 = term_new(VAR, 0, port(2, term_loc(Rslt_12Args)));
+  Term Rslt_12Args = makePair(APP, 0, bits_1_1, SUB);
+  Term Rslt_12 = newTerm(VAR, 0, portLoc(2, Rslt_12Args));
 #ifdef STRICT
-  store_redex(Rslt_12Args, glblFn127);
+  pushRedex(Rslt_12Args, glblFn127);
 #else
-  swapStore(term_loc(Rslt_12), pair_make(LAZ, 0, Rslt_12Args, glblFn127));
+  swap(termLoc(Rslt_12), makePair(LAZ, 0, Rslt_12Args, glblFn127));
 #endif
 
   // call /2 at sidequest.toc: 93
-  Term Rslt_13Args = pair_make(APP, 0, v_2_1, SUB);
-  Term Rslt_13 = term_new(VAR, 0, port(2, term_loc(Rslt_13Args)));
+  Term Rslt_13Args = makePair(APP, 0, v_2_1, SUB);
+  Term Rslt_13 = newTerm(VAR, 0, portLoc(2, Rslt_13Args));
 #ifdef STRICT
-  store_redex(Rslt_13Args, glblFn665);
+  pushRedex(Rslt_13Args, glblFn666);
 #else
-  swapStore(term_loc(Rslt_13), pair_make(LAZ, 0, Rslt_13Args, glblFn665));
+  swap(termLoc(Rslt_13), makePair(LAZ, 0, Rslt_13Args, glblFn666));
 #endif
 
   // call bin at sidequest.toc: 87
-  Term Rslt_14Args = pair_make(APP, 0, Rslt_13, SUB);
-  Term Rslt_14 = term_new(VAR, 0, port(2, term_loc(Rslt_14Args)));
-  Rslt_14Args = pair_make(APP, 0, Rslt_12, Rslt_14Args);
+  Term Rslt_14Args = makePair(APP, 0, Rslt_13, SUB);
+  Term Rslt_14 = newTerm(VAR, 0, portLoc(2, Rslt_14Args));
+  Rslt_14Args = makePair(APP, 0, Rslt_12, Rslt_14Args);
 #ifdef STRICT
-  store_redex(Rslt_14Args, glblFn695);
+  pushRedex(Rslt_14Args, glblFn695);
 #else
-  swapStore(term_loc(Rslt_14), pair_make(LAZ, 0, Rslt_14Args, glblFn695));
+  swap(termLoc(Rslt_14), makePair(LAZ, 0, Rslt_14Args, glblFn695));
 #endif
 
   // call i at sidequest.toc: 91
-  Term Rslt_15Args = pair_make(APP, 0, Rslt_14, SUB);
-  Term Rslt_15 = term_new(VAR, 0, port(2, term_loc(Rslt_15Args)));
+  Term Rslt_15Args = makePair(APP, 0, Rslt_14, SUB);
+  Term Rslt_15 = newTerm(VAR, 0, portLoc(2, Rslt_15Args));
 #ifdef STRICT
-  store_redex(Rslt_15Args, i_8);
+  pushRedex(Rslt_15Args, i_8);
 #else
-  swapStore(term_loc(Rslt_15), pair_make(LAZ, 0, Rslt_15Args, i_8));
+  swap(termLoc(Rslt_15), makePair(LAZ, 0, Rslt_15Args, i_8));
 #endif
 
   dupLabels[125] = "bin-1-1";
   // link args to body
-  swapStore(r_seq_10, Rslt_15);
+  swap(r_seq_10, Rslt_15);
 
-  Term Rslt_15V = get(term_loc(Rslt_15));
-  apps = take(port(1, term_loc(Rslt_15V)));
-  lams = take(port(2, term_loc(Rslt_15V)));
+  Term Rslt_15V = get(termLoc(Rslt_15));
+  apps = take(portLoc(1, Rslt_15V));
+  lams = take(portLoc(2, Rslt_15V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_15), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_15), makePair(LAZ, 0, apps, lams));
   // call dec at sidequest.toc: 98
-  Term Rslt_22Args = pair_make(APP, 0, bits_1_2, SUB);
-  Term Rslt_22 = term_new(VAR, 0, port(2, term_loc(Rslt_22Args)));
+  Term Rslt_22Args = makePair(APP, 0, bits_1_2, SUB);
+  Term Rslt_22 = newTerm(VAR, 0, portLoc(2, Rslt_22Args));
 #ifdef STRICT
-  store_redex(Rslt_22Args, glblFn127);
+  pushRedex(Rslt_22Args, glblFn127);
 #else
-  swapStore(term_loc(Rslt_22), pair_make(LAZ, 0, Rslt_22Args, glblFn127));
+  swap(termLoc(Rslt_22), makePair(LAZ, 0, Rslt_22Args, glblFn127));
 #endif
 
   // call /2 at sidequest.toc: 98
-  Term Rslt_23Args = pair_make(APP, 0, v_2_2, SUB);
-  Term Rslt_23 = term_new(VAR, 0, port(2, term_loc(Rslt_23Args)));
+  Term Rslt_23Args = makePair(APP, 0, v_2_2, SUB);
+  Term Rslt_23 = newTerm(VAR, 0, portLoc(2, Rslt_23Args));
 #ifdef STRICT
-  store_redex(Rslt_23Args, glblFn665);
+  pushRedex(Rslt_23Args, glblFn666);
 #else
-  swapStore(term_loc(Rslt_23), pair_make(LAZ, 0, Rslt_23Args, glblFn665));
+  swap(termLoc(Rslt_23), makePair(LAZ, 0, Rslt_23Args, glblFn666));
 #endif
 
   // call bin at sidequest.toc: 87
-  Term Rslt_24Args = pair_make(APP, 0, Rslt_23, SUB);
-  Term Rslt_24 = term_new(VAR, 0, port(2, term_loc(Rslt_24Args)));
-  Rslt_24Args = pair_make(APP, 0, Rslt_22, Rslt_24Args);
+  Term Rslt_24Args = makePair(APP, 0, Rslt_23, SUB);
+  Term Rslt_24 = newTerm(VAR, 0, portLoc(2, Rslt_24Args));
+  Rslt_24Args = makePair(APP, 0, Rslt_22, Rslt_24Args);
 #ifdef STRICT
-  store_redex(Rslt_24Args, glblFn695);
+  pushRedex(Rslt_24Args, glblFn695);
 #else
-  swapStore(term_loc(Rslt_24), pair_make(LAZ, 0, Rslt_24Args, glblFn695));
+  swap(termLoc(Rslt_24), makePair(LAZ, 0, Rslt_24Args, glblFn695));
 #endif
 
   // call o at sidequest.toc: 96
-  Term Rslt_25Args = pair_make(APP, 0, Rslt_24, SUB);
-  Term Rslt_25 = term_new(VAR, 0, port(2, term_loc(Rslt_25Args)));
+  Term Rslt_25Args = makePair(APP, 0, Rslt_24, SUB);
+  Term Rslt_25 = newTerm(VAR, 0, portLoc(2, Rslt_25Args));
 #ifdef STRICT
-  store_redex(Rslt_25Args, o_17);
+  pushRedex(Rslt_25Args, o_17);
 #else
-  swapStore(term_loc(Rslt_25), pair_make(LAZ, 0, Rslt_25Args, o_17));
+  swap(termLoc(Rslt_25), makePair(LAZ, 0, Rslt_25Args, o_17));
 #endif
 
   dupLabels[126] = "bin-1-1";
   // link args to body
-  swapStore(r_seq_20, Rslt_25);
+  swap(r_seq_20, Rslt_25);
 
-  Term Rslt_25V = get(term_loc(Rslt_25));
-  apps = take(port(1, term_loc(Rslt_25V)));
-  lams = take(port(2, term_loc(Rslt_25V)));
+  Term Rslt_25V = get(termLoc(Rslt_25));
+  apps = take(portLoc(1, Rslt_25V));
+  lams = take(portLoc(2, Rslt_25V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_25), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_25), makePair(LAZ, 0, apps, lams));
   // call int-cond at sidequest.toc: 89
-  Term Rslt_26Args = pair_make(APP, 0, seq_20, SUB);
-  Term Rslt_26 = term_new(VAR, 0, port(2, term_loc(Rslt_26Args)));
-  Rslt_26Args = pair_make(APP, 0, seq_10, Rslt_26Args);
-  Rslt_26Args = pair_make(APP, 0, Rslt_5, Rslt_26Args);
+  Term Rslt_26Args = makePair(APP, 0, seq_20, SUB);
+  Term Rslt_26 = newTerm(VAR, 0, portLoc(2, Rslt_26Args));
+  Rslt_26Args = makePair(APP, 0, seq_10, Rslt_26Args);
+  Rslt_26Args = makePair(APP, 0, Rslt_5, Rslt_26Args);
 #ifdef STRICT
-  store_redex(Rslt_26Args, glblVal214_5);
+  pushRedex(Rslt_26Args, glblVal214_5);
 #else
-  swapStore(term_loc(Rslt_26), pair_make(LAZ, 0, Rslt_26Args, glblVal214_5));
+  swap(termLoc(Rslt_26), makePair(LAZ, 0, Rslt_26Args, glblVal214_5));
 #endif
 
   // call int-cond at sidequest.toc: 88
-  Term Rslt_35Args = pair_make(APP, 0, glblbin_0698, SUB);
-  Term Rslt_35 = term_new(VAR, 0, port(2, term_loc(Rslt_35Args)));
-  Rslt_35Args = pair_make(APP, 0, Rslt_26, Rslt_35Args);
-  Rslt_35Args = pair_make(APP, 0, bits_1, Rslt_35Args);
+  Term Rslt_35Args = makePair(APP, 0, glblbin_0698, SUB);
+  Term Rslt_35 = newTerm(VAR, 0, portLoc(2, Rslt_35Args));
+  Rslt_35Args = makePair(APP, 0, Rslt_26, Rslt_35Args);
+  Rslt_35Args = makePair(APP, 0, bits_1, Rslt_35Args);
 #ifdef STRICT
-  store_redex(Rslt_35Args, glblVal214_4);
+  pushRedex(Rslt_35Args, glblVal214_4);
 #else
-  swapStore(term_loc(Rslt_35), pair_make(LAZ, 0, Rslt_35Args, glblVal214_4));
+  swap(termLoc(Rslt_35), makePair(LAZ, 0, Rslt_35Args, glblVal214_4));
 #endif
 
   dupLabels[124] = "";
   // link args to body
-  swapStore(r_seq_3, Rslt_35);
+  swap(r_seq_3, Rslt_35);
 
-  Term Rslt_35V = get(term_loc(Rslt_35));
-  apps = take(port(1, term_loc(Rslt_35V)));
-  lams = take(port(2, term_loc(Rslt_35V)));
+  Term Rslt_35V = get(termLoc(Rslt_35));
+  apps = take(portLoc(1, Rslt_35V));
+  lams = take(portLoc(2, Rslt_35V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_35), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_3);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_35), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblFn695 = new_ref(glblCFn694);
+Term glblFn695 = newRef(glblCFn694);
 Term glblVal696;
 struct {
   TYPE_SIZE type;
@@ -6698,7 +6688,7 @@ struct {
   int64_t len;
   char buffer[12];
 } str13 = {StringBufferType, REFS_STATIC, 0, 0, 11, "clr1 0 bit\n"};
-Term glblStr704 = term_new_(VAL, (Term)&str13);
+Term glblStr704 = newTerm_(VAL, (Term)&str13);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -6707,151 +6697,151 @@ struct {
   int64_t len;
   char buffer[12];
 } str14 = {StringBufferType, REFS_STATIC, 0, 0, 11, "clr1 1 bit\n"};
-Term glblStr705 = term_new_(VAL, (Term)&str14);
+Term glblStr705 = newTerm_(VAL, (Term)&str14);
 Term glblVal696;
 void glblCFn701(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 128, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 128, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 105
-  Term seq_8 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_8 = port(2, term_loc(seq_8));
-  Term e_7 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  seq_8 = pair_make(LAM, 0, SUB, seq_8);
-  Term i_6 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  seq_8 = pair_make(LAM, 0, SUB, seq_8);
-  Term o_5 = term_new(VAR, 0, port(1, term_loc(seq_8)));
+  Term seq_8 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_8 = portLoc(2, seq_8);
+  Term e_7 = newTerm(VAR, 0, portLoc(1, seq_8));
+  seq_8 = makePair(LAM, 0, SUB, seq_8);
+  Term i_6 = newTerm(VAR, 0, portLoc(1, seq_8));
+  seq_8 = makePair(LAM, 0, SUB, seq_8);
+  Term o_5 = newTerm(VAR, 0, portLoc(1, seq_8));
   // allocate args at sidequest.toc: 106
 
   Term o_5_1;
   o_5 = dupeArg(o_5, &o_5_1, 0);
-  swapStore(term_loc(i_6), ERA);
-  Term seq_19 = pair_make(LAM, 130, SUB, NUL);
-  Location r_seq_19 = port(2, term_loc(seq_19));
-  Term p_18 = term_new(VAR, 0, port(1, term_loc(seq_19)));
+  swap(termLoc(i_6), ERA);
+  Term seq_19 = makePair(LAM, 130, SUB, NUL);
+  Location r_seq_19 = portLoc(2, seq_19);
+  Term p_18 = newTerm(VAR, 0, portLoc(1, seq_19));
   // allocate args at sidequest.toc: 110
-  Term seq_12 = pair_make(LAM, 129, SUB, NUL);
-  Location r_seq_12 = port(2, term_loc(seq_12));
-  Term p_11 = term_new(VAR, 0, port(1, term_loc(seq_12)));
+  Term seq_12 = makePair(LAM, 129, SUB, NUL);
+  Location r_seq_12 = portLoc(2, seq_12);
+  Term p_11 = newTerm(VAR, 0, portLoc(1, seq_12));
   // allocate args at sidequest.toc: 107
   // call pr* at sidequest.toc: 108
-  Term Rslt_14Args = pair_make(APP, 0, glblStr704, SUB);
-  Term Rslt_14 = term_new(VAR, 0, port(2, term_loc(Rslt_14Args)));
+  Term Rslt_14Args = makePair(APP, 0, glblStr704, SUB);
+  Term Rslt_14 = newTerm(VAR, 0, portLoc(2, Rslt_14Args));
 #ifdef STRICT
-  store_redex(Rslt_14Args, glblFn115);
+  pushRedex(Rslt_14Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_14), pair_make(LAZ, 0, Rslt_14Args, glblFn115));
+  swap(termLoc(Rslt_14), makePair(LAZ, 0, Rslt_14Args, glblFn115));
 #endif
 
   // call clr1 at sidequest.toc: 105
-  Term Rslt_15Args = pair_make(APP, 0, p_11, SUB);
-  Term Rslt_15 = term_new(VAR, 0, port(2, term_loc(Rslt_15Args)));
+  Term Rslt_15Args = makePair(APP, 0, p_11, SUB);
+  Term Rslt_15 = newTerm(VAR, 0, portLoc(2, Rslt_15Args));
 #ifdef STRICT
-  store_redex(Rslt_15Args, glblVal696);
+  pushRedex(Rslt_15Args, glblVal696);
 #else
-  swapStore(term_loc(Rslt_15), pair_make(LAZ, 0, Rslt_15Args, glblVal696));
+  swap(termLoc(Rslt_15), makePair(LAZ, 0, Rslt_15Args, glblVal696));
 #endif
 
   // call o at sidequest.toc: 106
-  Term Rslt_16Args = pair_make(APP, 0, Rslt_15, SUB);
-  Term Rslt_16 = term_new(VAR, 0, port(2, term_loc(Rslt_16Args)));
+  Term Rslt_16Args = makePair(APP, 0, Rslt_15, SUB);
+  Term Rslt_16 = newTerm(VAR, 0, portLoc(2, Rslt_16Args));
 #ifdef STRICT
-  store_redex(Rslt_16Args, o_5);
+  pushRedex(Rslt_16Args, o_5);
 #else
-  swapStore(term_loc(Rslt_16), pair_make(LAZ, 0, Rslt_16Args, o_5));
+  swap(termLoc(Rslt_16), makePair(LAZ, 0, Rslt_16Args, o_5));
 #endif
 
   dupLabels[129] = "clr1-0";
   // link args to body
-  swapStore(r_seq_12, Rslt_16);
+  swap(r_seq_12, Rslt_16);
 
-  Term Rslt_16V = get(term_loc(Rslt_16));
-  apps = take(port(1, term_loc(Rslt_16V)));
-  lams = take(port(2, term_loc(Rslt_16V)));
+  Term Rslt_16V = get(termLoc(Rslt_16));
+  apps = take(portLoc(1, Rslt_16V));
+  lams = take(portLoc(2, Rslt_16V));
 
-  vLoc = port(2, term_loc(apps));
-  apps = pair_make(APP, 0, Rslt_14, apps);
-  lams = pair_make(LAM, 129, sideEffects, lams);
+  vLoc = portLoc(2, apps);
+  apps = makePair(APP, 0, Rslt_14, apps);
+  lams = makePair(LAM, 129, ERA, lams);
 
-  swapStore(term_loc(Rslt_16), pair_make(LAZ, 0, apps, lams));
+  swap(termLoc(Rslt_16), makePair(LAZ, 0, apps, lams));
   // call pr* at sidequest.toc: 111
-  Term Rslt_21Args = pair_make(APP, 0, glblStr705, SUB);
-  Term Rslt_21 = term_new(VAR, 0, port(2, term_loc(Rslt_21Args)));
+  Term Rslt_21Args = makePair(APP, 0, glblStr705, SUB);
+  Term Rslt_21 = newTerm(VAR, 0, portLoc(2, Rslt_21Args));
 #ifdef STRICT
-  store_redex(Rslt_21Args, glblFn115);
+  pushRedex(Rslt_21Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_21), pair_make(LAZ, 0, Rslt_21Args, glblFn115));
+  swap(termLoc(Rslt_21), makePair(LAZ, 0, Rslt_21Args, glblFn115));
 #endif
 
   // call clr1 at sidequest.toc: 105
-  Term Rslt_22Args = pair_make(APP, 0, p_18, SUB);
-  Term Rslt_22 = term_new(VAR, 0, port(2, term_loc(Rslt_22Args)));
+  Term Rslt_22Args = makePair(APP, 0, p_18, SUB);
+  Term Rslt_22 = newTerm(VAR, 0, portLoc(2, Rslt_22Args));
 #ifdef STRICT
-  store_redex(Rslt_22Args, glblVal696);
+  pushRedex(Rslt_22Args, glblVal696);
 #else
-  swapStore(term_loc(Rslt_22), pair_make(LAZ, 0, Rslt_22Args, glblVal696));
+  swap(termLoc(Rslt_22), makePair(LAZ, 0, Rslt_22Args, glblVal696));
 #endif
 
   // call o at sidequest.toc: 106
-  Term Rslt_23Args = pair_make(APP, 0, Rslt_22, SUB);
-  Term Rslt_23 = term_new(VAR, 0, port(2, term_loc(Rslt_23Args)));
+  Term Rslt_23Args = makePair(APP, 0, Rslt_22, SUB);
+  Term Rslt_23 = newTerm(VAR, 0, portLoc(2, Rslt_23Args));
 #ifdef STRICT
-  store_redex(Rslt_23Args, o_5_1);
+  pushRedex(Rslt_23Args, o_5_1);
 #else
-  swapStore(term_loc(Rslt_23), pair_make(LAZ, 0, Rslt_23Args, o_5_1));
+  swap(termLoc(Rslt_23), makePair(LAZ, 0, Rslt_23Args, o_5_1));
 #endif
 
   dupLabels[130] = "clr1-1";
   // link args to body
-  swapStore(r_seq_19, Rslt_23);
+  swap(r_seq_19, Rslt_23);
 
-  Term Rslt_23V = get(term_loc(Rslt_23));
-  apps = take(port(1, term_loc(Rslt_23V)));
-  lams = take(port(2, term_loc(Rslt_23V)));
+  Term Rslt_23V = get(termLoc(Rslt_23));
+  apps = take(portLoc(1, Rslt_23V));
+  lams = take(portLoc(2, Rslt_23V));
 
-  vLoc = port(2, term_loc(apps));
-  apps = pair_make(APP, 0, Rslt_21, apps);
-  lams = pair_make(LAM, 130, sideEffects, lams);
+  vLoc = portLoc(2, apps);
+  apps = makePair(APP, 0, Rslt_21, apps);
+  lams = makePair(LAM, 130, ERA, lams);
 
-  swapStore(term_loc(Rslt_23), pair_make(LAZ, 0, apps, lams));
+  swap(termLoc(Rslt_23), makePair(LAZ, 0, apps, lams));
   // call x at sidequest.toc: 105
-  Term Rslt_24Args = pair_make(APP, 0, e_7, SUB);
-  Term Rslt_24 = term_new(VAR, 0, port(2, term_loc(Rslt_24Args)));
-  Rslt_24Args = pair_make(APP, 0, seq_19, Rslt_24Args);
-  Rslt_24Args = pair_make(APP, 0, seq_12, Rslt_24Args);
+  Term Rslt_24Args = makePair(APP, 0, e_7, SUB);
+  Term Rslt_24 = newTerm(VAR, 0, portLoc(2, Rslt_24Args));
+  Rslt_24Args = makePair(APP, 0, seq_19, Rslt_24Args);
+  Rslt_24Args = makePair(APP, 0, seq_12, Rslt_24Args);
 #ifdef STRICT
-  store_redex(Rslt_24Args, x_1);
+  pushRedex(Rslt_24Args, x_1);
 #else
-  swapStore(term_loc(Rslt_24), pair_make(LAZ, 0, Rslt_24Args, x_1));
+  swap(termLoc(Rslt_24), makePair(LAZ, 0, Rslt_24Args, x_1));
 #endif
 
   dupLabels[0] = "clr1-f";
   // link args to body
-  swapStore(r_seq_8, Rslt_24);
+  swap(r_seq_8, Rslt_24);
 
-  Term Rslt_24V = get(term_loc(Rslt_24));
-  apps = take(port(1, term_loc(Rslt_24V)));
-  lams = take(port(2, term_loc(Rslt_24V)));
+  Term Rslt_24V = get(termLoc(Rslt_24));
+  apps = take(portLoc(1, Rslt_24V));
+  lams = take(portLoc(2, Rslt_24V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_24), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_24), makePair(LAZ, 0, apps, lams));
   dupLabels[128] = "";
   // link args to body
-  swapStore(r_seq_2, seq_8);
+  swap(r_seq_2, seq_8);
 
   V = get(r_seq_2);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 128, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_2, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_2);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 128, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_2, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblVal696 = new_ref(glblCFn701);
+Term glblVal696 = newRef(glblCFn701);
 Term glblVal703;
 struct {
   TYPE_SIZE type;
@@ -6861,74 +6851,74 @@ struct {
   int64_t len;
   char buffer[12];
 } str15 = {StringBufferType, REFS_STATIC, 0, 0, 11, "clr2 0 bit\n"};
-Term glblStr710 = term_new_(VAL, (Term)&str15);
+Term glblStr710 = newTerm_(VAL, (Term)&str15);
 Term glblclr2_0713;
 void glblclr2_0712(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_12 = pair_make(LAM, 132, SUB, NUL);
-  Location r_seq_12 = port(2, term_loc(seq_12));
-  Term p_11 = term_new(VAR, 0, port(1, term_loc(seq_12)));
+  Term seq_12 = makePair(LAM, 132, SUB, NUL);
+  Location r_seq_12 = portLoc(2, seq_12);
+  Term p_11 = newTerm(VAR, 0, portLoc(1, seq_12));
   // allocate args at sidequest.toc: 119
-  Term seq_16 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_16 = port(2, term_loc(seq_16));
-  Term o_15 = term_new(VAR, 0, port(1, term_loc(seq_16)));
+  Term seq_16 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_16 = portLoc(2, seq_16);
+  Term o_15 = newTerm(VAR, 0, portLoc(1, seq_16));
   // allocate args at sidequest.toc: 120
   // call pr* at sidequest.toc: 121
-  Term Rslt_18Args = pair_make(APP, 0, glblStr710, SUB);
-  Term Rslt_18 = term_new(VAR, 0, port(2, term_loc(Rslt_18Args)));
+  Term Rslt_18Args = makePair(APP, 0, glblStr710, SUB);
+  Term Rslt_18 = newTerm(VAR, 0, portLoc(2, Rslt_18Args));
 #ifdef STRICT
-  store_redex(Rslt_18Args, glblFn115);
+  pushRedex(Rslt_18Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_18), pair_make(LAZ, 0, Rslt_18Args, glblFn115));
+  swap(termLoc(Rslt_18), makePair(LAZ, 0, Rslt_18Args, glblFn115));
 #endif
 
   // call clr2 at sidequest.toc: 117
-  Term Rslt_19Args = pair_make(APP, 0, p_11, SUB);
-  Term Rslt_19 = term_new(VAR, 0, port(2, term_loc(Rslt_19Args)));
+  Term Rslt_19Args = makePair(APP, 0, p_11, SUB);
+  Term Rslt_19 = newTerm(VAR, 0, portLoc(2, Rslt_19Args));
 #ifdef STRICT
-  store_redex(Rslt_19Args, glblVal703);
+  pushRedex(Rslt_19Args, glblVal703);
 #else
-  swapStore(term_loc(Rslt_19), pair_make(LAZ, 0, Rslt_19Args, glblVal703));
+  swap(termLoc(Rslt_19), makePair(LAZ, 0, Rslt_19Args, glblVal703));
 #endif
 
   // call o at sidequest.toc: 120
-  Term Rslt_20Args = pair_make(APP, 0, Rslt_19, SUB);
-  Term Rslt_20 = term_new(VAR, 0, port(2, term_loc(Rslt_20Args)));
+  Term Rslt_20Args = makePair(APP, 0, Rslt_19, SUB);
+  Term Rslt_20 = newTerm(VAR, 0, portLoc(2, Rslt_20Args));
 #ifdef STRICT
-  store_redex(Rslt_20Args, o_15);
+  pushRedex(Rslt_20Args, o_15);
 #else
-  swapStore(term_loc(Rslt_20), pair_make(LAZ, 0, Rslt_20Args, o_15));
+  swap(termLoc(Rslt_20), makePair(LAZ, 0, Rslt_20Args, o_15));
 #endif
 
   dupLabels[0] = "clr2-0-c";
   // link args to body
-  swapStore(r_seq_16, Rslt_20);
+  swap(r_seq_16, Rslt_20);
 
-  Term Rslt_20V = get(term_loc(Rslt_20));
-  apps = take(port(1, term_loc(Rslt_20V)));
-  lams = take(port(2, term_loc(Rslt_20V)));
+  Term Rslt_20V = get(termLoc(Rslt_20));
+  apps = take(portLoc(1, Rslt_20V));
+  lams = take(portLoc(2, Rslt_20V));
 
-  vLoc = port(2, term_loc(apps));
-  apps = pair_make(APP, 0, Rslt_18, apps);
-  lams = pair_make(LAM, 0, sideEffects, lams);
+  vLoc = portLoc(2, apps);
+  apps = makePair(APP, 0, Rslt_18, apps);
+  lams = makePair(LAM, 0, ERA, lams);
 
-  swapStore(term_loc(Rslt_20), pair_make(LAZ, 0, apps, lams));
+  swap(termLoc(Rslt_20), makePair(LAZ, 0, apps, lams));
   dupLabels[132] = "clr2-0";
   // link args to body
-  swapStore(r_seq_12, seq_16);
+  swap(r_seq_12, seq_16);
 
   V = get(r_seq_12);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 132, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_12, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_12);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 132, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_12, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_12);
   return;
 }
-Term glblclr2_0713 = new_ref(glblclr2_0712);
+Term glblclr2_0713 = newRef(glblclr2_0712);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -6937,244 +6927,244 @@ struct {
   int64_t len;
   char buffer[12];
 } str16 = {StringBufferType, REFS_STATIC, 0, 0, 11, "clr2 1 bit\n"};
-Term glblStr711 = term_new_(VAL, (Term)&str16);
+Term glblStr711 = newTerm_(VAL, (Term)&str16);
 Term glblclr2_1715;
 void glblclr2_1714(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_23 = pair_make(LAM, 133, SUB, NUL);
-  Location r_seq_23 = port(2, term_loc(seq_23));
-  Term p_22 = term_new(VAR, 0, port(1, term_loc(seq_23)));
+  Term seq_23 = makePair(LAM, 133, SUB, NUL);
+  Location r_seq_23 = portLoc(2, seq_23);
+  Term p_22 = newTerm(VAR, 0, portLoc(1, seq_23));
   // allocate args at sidequest.toc: 123
-  Term seq_27 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_27 = port(2, term_loc(seq_27));
-  Term o_26 = term_new(VAR, 0, port(1, term_loc(seq_27)));
+  Term seq_27 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_27 = portLoc(2, seq_27);
+  Term o_26 = newTerm(VAR, 0, portLoc(1, seq_27));
   // allocate args at sidequest.toc: 124
   // call pr* at sidequest.toc: 125
-  Term Rslt_29Args = pair_make(APP, 0, glblStr711, SUB);
-  Term Rslt_29 = term_new(VAR, 0, port(2, term_loc(Rslt_29Args)));
+  Term Rslt_29Args = makePair(APP, 0, glblStr711, SUB);
+  Term Rslt_29 = newTerm(VAR, 0, portLoc(2, Rslt_29Args));
 #ifdef STRICT
-  store_redex(Rslt_29Args, glblFn115);
+  pushRedex(Rslt_29Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_29), pair_make(LAZ, 0, Rslt_29Args, glblFn115));
+  swap(termLoc(Rslt_29), makePair(LAZ, 0, Rslt_29Args, glblFn115));
 #endif
 
   // call clr2 at sidequest.toc: 117
-  Term Rslt_30Args = pair_make(APP, 0, p_22, SUB);
-  Term Rslt_30 = term_new(VAR, 0, port(2, term_loc(Rslt_30Args)));
+  Term Rslt_30Args = makePair(APP, 0, p_22, SUB);
+  Term Rslt_30 = newTerm(VAR, 0, portLoc(2, Rslt_30Args));
 #ifdef STRICT
-  store_redex(Rslt_30Args, glblVal703);
+  pushRedex(Rslt_30Args, glblVal703);
 #else
-  swapStore(term_loc(Rslt_30), pair_make(LAZ, 0, Rslt_30Args, glblVal703));
+  swap(termLoc(Rslt_30), makePair(LAZ, 0, Rslt_30Args, glblVal703));
 #endif
 
   // call o at sidequest.toc: 124
-  Term Rslt_31Args = pair_make(APP, 0, Rslt_30, SUB);
-  Term Rslt_31 = term_new(VAR, 0, port(2, term_loc(Rslt_31Args)));
+  Term Rslt_31Args = makePair(APP, 0, Rslt_30, SUB);
+  Term Rslt_31 = newTerm(VAR, 0, portLoc(2, Rslt_31Args));
 #ifdef STRICT
-  store_redex(Rslt_31Args, o_26);
+  pushRedex(Rslt_31Args, o_26);
 #else
-  swapStore(term_loc(Rslt_31), pair_make(LAZ, 0, Rslt_31Args, o_26));
+  swap(termLoc(Rslt_31), makePair(LAZ, 0, Rslt_31Args, o_26));
 #endif
 
   dupLabels[0] = "clr2-1-c";
   // link args to body
-  swapStore(r_seq_27, Rslt_31);
+  swap(r_seq_27, Rslt_31);
 
-  Term Rslt_31V = get(term_loc(Rslt_31));
-  apps = take(port(1, term_loc(Rslt_31V)));
-  lams = take(port(2, term_loc(Rslt_31V)));
+  Term Rslt_31V = get(termLoc(Rslt_31));
+  apps = take(portLoc(1, Rslt_31V));
+  lams = take(portLoc(2, Rslt_31V));
 
-  vLoc = port(2, term_loc(apps));
-  apps = pair_make(APP, 0, Rslt_29, apps);
-  lams = pair_make(LAM, 0, sideEffects, lams);
+  vLoc = portLoc(2, apps);
+  apps = makePair(APP, 0, Rslt_29, apps);
+  lams = makePair(LAM, 0, ERA, lams);
 
-  swapStore(term_loc(Rslt_31), pair_make(LAZ, 0, apps, lams));
+  swap(termLoc(Rslt_31), makePair(LAZ, 0, apps, lams));
   dupLabels[133] = "clr2-1";
   // link args to body
-  swapStore(r_seq_23, seq_27);
+  swap(r_seq_23, seq_27);
 
   V = get(r_seq_23);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 133, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_23, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_23);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 133, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_23, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_23);
   return;
 }
-Term glblclr2_1715 = new_ref(glblclr2_1714);
+Term glblclr2_1715 = newRef(glblclr2_1714);
 Term glblVal703;
 void glblCFn707(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 131, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 131, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 117
-  Term seq_8 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_8 = port(2, term_loc(seq_8));
-  Term e_7 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  seq_8 = pair_make(LAM, 0, SUB, seq_8);
-  Term i_6 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  seq_8 = pair_make(LAM, 0, SUB, seq_8);
-  Term o_5 = term_new(VAR, 0, port(1, term_loc(seq_8)));
+  Term seq_8 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_8 = portLoc(2, seq_8);
+  Term e_7 = newTerm(VAR, 0, portLoc(1, seq_8));
+  seq_8 = makePair(LAM, 0, SUB, seq_8);
+  Term i_6 = newTerm(VAR, 0, portLoc(1, seq_8));
+  seq_8 = makePair(LAM, 0, SUB, seq_8);
+  Term o_5 = newTerm(VAR, 0, portLoc(1, seq_8));
   // allocate args at sidequest.toc: 118
-  swapStore(term_loc(i_6), ERA);
-  Term seq_34 = pair_make(LAM, 134, SUB, NUL);
-  Location r_seq_34 = port(2, term_loc(seq_34));
-  Term o_33 = term_new(VAR, 0, port(1, term_loc(seq_34)));
+  swap(termLoc(i_6), ERA);
+  Term seq_34 = makePair(LAM, 134, SUB, NUL);
+  Location r_seq_34 = portLoc(2, seq_34);
+  Term o_33 = newTerm(VAR, 0, portLoc(1, seq_34));
   // allocate args at sidequest.toc: 127
-  swapStore(term_loc(o_33), ERA);
+  swap(termLoc(o_33), ERA);
   dupLabels[134] = "clr-2-done";
   // link args to body
-  swapStore(r_seq_34, e_7);
+  swap(r_seq_34, e_7);
 
   V = get(r_seq_34);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 134, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_34, term_new(VAR, 0, vLoc));
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 134, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_34, newTerm(VAR, 0, vLoc));
   // call x at sidequest.toc: 117
-  Term Rslt_36Args = pair_make(APP, 0, seq_34, SUB);
-  Term Rslt_36 = term_new(VAR, 0, port(2, term_loc(Rslt_36Args)));
-  Rslt_36Args = pair_make(APP, 0, glblclr2_1715, Rslt_36Args);
-  Rslt_36Args = pair_make(APP, 0, glblclr2_0713, Rslt_36Args);
+  Term Rslt_36Args = makePair(APP, 0, seq_34, SUB);
+  Term Rslt_36 = newTerm(VAR, 0, portLoc(2, Rslt_36Args));
+  Rslt_36Args = makePair(APP, 0, glblclr2_1715, Rslt_36Args);
+  Rslt_36Args = makePair(APP, 0, glblclr2_0713, Rslt_36Args);
 #ifdef STRICT
-  store_redex(Rslt_36Args, x_1);
+  pushRedex(Rslt_36Args, x_1);
 #else
-  swapStore(term_loc(Rslt_36), pair_make(LAZ, 0, Rslt_36Args, x_1));
+  swap(termLoc(Rslt_36), makePair(LAZ, 0, Rslt_36Args, x_1));
 #endif
 
   // call  at sidequest.toc: 118
-  Term Rslt_38Args = pair_make(APP, 0, o_5, SUB);
-  Term Rslt_38 = term_new(VAR, 0, port(2, term_loc(Rslt_38Args)));
+  Term Rslt_38Args = makePair(APP, 0, o_5, SUB);
+  Term Rslt_38 = newTerm(VAR, 0, portLoc(2, Rslt_38Args));
 #ifdef STRICT
-  store_redex(Rslt_38Args, Rslt_36);
+  pushRedex(Rslt_38Args, Rslt_36);
 #else
-  swapStore(term_loc(Rslt_38), pair_make(LAZ, 0, Rslt_38Args, Rslt_36));
+  swap(termLoc(Rslt_38), makePair(LAZ, 0, Rslt_38Args, Rslt_36));
 #endif
 
   dupLabels[0] = "clr2-f";
   // link args to body
-  swapStore(r_seq_8, Rslt_38);
+  swap(r_seq_8, Rslt_38);
 
-  Term Rslt_38V = get(term_loc(Rslt_38));
-  apps = take(port(1, term_loc(Rslt_38V)));
-  lams = take(port(2, term_loc(Rslt_38V)));
+  Term Rslt_38V = get(termLoc(Rslt_38));
+  apps = take(portLoc(1, Rslt_38V));
+  lams = take(portLoc(2, Rslt_38V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_38), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_38), makePair(LAZ, 0, apps, lams));
   dupLabels[131] = "";
   // link args to body
-  swapStore(r_seq_2, seq_8);
+  swap(r_seq_2, seq_8);
 
   V = get(r_seq_2);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 131, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_2, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_2);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 131, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_2, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblVal703 = new_ref(glblCFn707);
+Term glblVal703 = newRef(glblCFn707);
 Term glblVal709;
 Term glblrep_O724;
 void glblrep_O723(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_8 = pair_make(LAM, 139, SUB, NUL);
-  Location r_seq_8 = port(2, term_loc(seq_8));
-  Term x_7 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  seq_8 = pair_make(LAM, 139, SUB, seq_8);
-  Term f_6 = term_new(VAR, 0, port(1, term_loc(seq_8)));
-  seq_8 = pair_make(LAM, 139, SUB, seq_8);
-  Term p_5 = term_new(VAR, 0, port(1, term_loc(seq_8)));
+  Term seq_8 = makePair(LAM, 139, SUB, NUL);
+  Location r_seq_8 = portLoc(2, seq_8);
+  Term x_7 = newTerm(VAR, 0, portLoc(1, seq_8));
+  seq_8 = makePair(LAM, 139, SUB, seq_8);
+  Term f_6 = newTerm(VAR, 0, portLoc(1, seq_8));
+  seq_8 = makePair(LAM, 139, SUB, seq_8);
+  Term p_5 = newTerm(VAR, 0, portLoc(1, seq_8));
   // allocate args at sidequest.toc: 155
 
   Term f_6_1;
   f_6 = dupeArg(f_6, &f_6_1, 139);
-  Term seq_13 = pair_make(LAM, 136, SUB, NUL);
-  Location r_seq_13 = port(2, term_loc(seq_13));
-  Term k_12 = term_new(VAR, 0, port(1, term_loc(seq_13)));
+  Term seq_13 = makePair(LAM, 136, SUB, NUL);
+  Location r_seq_13 = portLoc(2, seq_13);
+  Term k_12 = newTerm(VAR, 0, portLoc(1, seq_13));
   // allocate args at sidequest.toc: 158
   // call rep at sidequest.toc: 154
-  Term Rslt_10Args = pair_make(APP, 0, p_5, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
+  Term Rslt_10Args = makePair(APP, 0, p_5, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
 #ifdef STRICT
-  store_redex(Rslt_10Args, glblVal709);
+  pushRedex(Rslt_10Args, glblVal709);
 #else
-  swapStore(term_loc(Rslt_10), pair_make(LAZ, 0, Rslt_10Args, glblVal709));
+  swap(termLoc(Rslt_10), makePair(LAZ, 0, Rslt_10Args, glblVal709));
 #endif
 
   // call f at sidequest.toc: 155
-  Term Rslt_15Args = pair_make(APP, 0, k_12, SUB);
-  Term Rslt_15 = term_new(VAR, 0, port(2, term_loc(Rslt_15Args)));
+  Term Rslt_15Args = makePair(APP, 0, k_12, SUB);
+  Term Rslt_15 = newTerm(VAR, 0, portLoc(2, Rslt_15Args));
 #ifdef STRICT
-  store_redex(Rslt_15Args, f_6_1);
+  pushRedex(Rslt_15Args, f_6_1);
 #else
-  swapStore(term_loc(Rslt_15), pair_make(LAZ, 0, Rslt_15Args, f_6_1));
+  swap(termLoc(Rslt_15), makePair(LAZ, 0, Rslt_15Args, f_6_1));
 #endif
 
   // call f at sidequest.toc: 155
-  Term Rslt_16Args = pair_make(APP, 0, Rslt_15, SUB);
-  Term Rslt_16 = term_new(VAR, 0, port(2, term_loc(Rslt_16Args)));
+  Term Rslt_16Args = makePair(APP, 0, Rslt_15, SUB);
+  Term Rslt_16 = newTerm(VAR, 0, portLoc(2, Rslt_16Args));
 #ifdef STRICT
-  store_redex(Rslt_16Args, f_6);
+  pushRedex(Rslt_16Args, f_6);
 #else
-  swapStore(term_loc(Rslt_16), pair_make(LAZ, 0, Rslt_16Args, f_6));
+  swap(termLoc(Rslt_16), makePair(LAZ, 0, Rslt_16Args, f_6));
 #endif
 
   dupLabels[136] = "rep-0-c";
   // link args to body
-  swapStore(r_seq_13, Rslt_16);
+  swap(r_seq_13, Rslt_16);
 
-  Term Rslt_16V = get(term_loc(Rslt_16));
-  apps = take(port(1, term_loc(Rslt_16V)));
-  lams = take(port(2, term_loc(Rslt_16V)));
+  Term Rslt_16V = get(termLoc(Rslt_16));
+  apps = take(portLoc(1, Rslt_16V));
+  lams = take(portLoc(2, Rslt_16V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_16), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_16), makePair(LAZ, 0, apps, lams));
   // call  at sidequest.toc: 158
-  Term Rslt_17Args = pair_make(APP, 0, x_7, SUB);
-  Term Rslt_17 = term_new(VAR, 0, port(2, term_loc(Rslt_17Args)));
-  Rslt_17Args = pair_make(APP, 0, seq_13, Rslt_17Args);
+  Term Rslt_17Args = makePair(APP, 0, x_7, SUB);
+  Term Rslt_17 = newTerm(VAR, 0, portLoc(2, Rslt_17Args));
+  Rslt_17Args = makePair(APP, 0, seq_13, Rslt_17Args);
 #ifdef STRICT
-  store_redex(Rslt_17Args, Rslt_10);
+  pushRedex(Rslt_17Args, Rslt_10);
 #else
-  swapStore(term_loc(Rslt_17), pair_make(LAZ, 0, Rslt_17Args, Rslt_10));
+  swap(termLoc(Rslt_17), makePair(LAZ, 0, Rslt_17Args, Rslt_10));
 #endif
 
   dupLabels[139] = "rep-O";
   // link args to body
-  swapStore(r_seq_8, Rslt_17);
+  swap(r_seq_8, Rslt_17);
 
-  Term Rslt_17V = get(term_loc(Rslt_17));
-  apps = take(port(1, term_loc(Rslt_17V)));
-  lams = take(port(2, term_loc(Rslt_17V)));
+  Term Rslt_17V = get(termLoc(Rslt_17));
+  apps = take(portLoc(1, Rslt_17V));
+  lams = take(portLoc(2, Rslt_17V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_17), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_8);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_17), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_8);
   return;
 }
-Term glblrep_O724 = new_ref(glblrep_O723);
+Term glblrep_O724 = newRef(glblrep_O723);
 Term glblrep_I726;
 void glblrep_I725(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_23 = pair_make(LAM, 140, SUB, NUL);
-  Location r_seq_23 = port(2, term_loc(seq_23));
-  Term x_22 = term_new(VAR, 0, port(1, term_loc(seq_23)));
-  seq_23 = pair_make(LAM, 140, SUB, seq_23);
-  Term f_21 = term_new(VAR, 0, port(1, term_loc(seq_23)));
-  seq_23 = pair_make(LAM, 140, SUB, seq_23);
-  Term p_20 = term_new(VAR, 0, port(1, term_loc(seq_23)));
+  Term seq_23 = makePair(LAM, 140, SUB, NUL);
+  Location r_seq_23 = portLoc(2, seq_23);
+  Term x_22 = newTerm(VAR, 0, portLoc(1, seq_23));
+  seq_23 = makePair(LAM, 140, SUB, seq_23);
+  Term f_21 = newTerm(VAR, 0, portLoc(1, seq_23));
+  seq_23 = makePair(LAM, 140, SUB, seq_23);
+  Term p_20 = newTerm(VAR, 0, portLoc(1, seq_23));
   // allocate args at sidequest.toc: 162
 
   Term f_21_2;
@@ -7182,221 +7172,221 @@ void glblrep_I725(Term ref, Term args) {
 
   Term f_21_1;
   f_21 = dupeArg(f_21, &f_21_1, 140);
-  Term seq_28 = pair_make(LAM, 138, SUB, NUL);
-  Location r_seq_28 = port(2, term_loc(seq_28));
-  Term k_27 = term_new(VAR, 0, port(1, term_loc(seq_28)));
+  Term seq_28 = makePair(LAM, 138, SUB, NUL);
+  Location r_seq_28 = portLoc(2, seq_28);
+  Term k_27 = newTerm(VAR, 0, portLoc(1, seq_28));
   // allocate args at sidequest.toc: 165
   // call rep at sidequest.toc: 154
-  Term Rslt_25Args = pair_make(APP, 0, p_20, SUB);
-  Term Rslt_25 = term_new(VAR, 0, port(2, term_loc(Rslt_25Args)));
+  Term Rslt_25Args = makePair(APP, 0, p_20, SUB);
+  Term Rslt_25 = newTerm(VAR, 0, portLoc(2, Rslt_25Args));
 #ifdef STRICT
-  store_redex(Rslt_25Args, glblVal709);
+  pushRedex(Rslt_25Args, glblVal709);
 #else
-  swapStore(term_loc(Rslt_25), pair_make(LAZ, 0, Rslt_25Args, glblVal709));
+  swap(termLoc(Rslt_25), makePair(LAZ, 0, Rslt_25Args, glblVal709));
 #endif
 
   // call f at sidequest.toc: 162
-  Term Rslt_30Args = pair_make(APP, 0, k_27, SUB);
-  Term Rslt_30 = term_new(VAR, 0, port(2, term_loc(Rslt_30Args)));
+  Term Rslt_30Args = makePair(APP, 0, k_27, SUB);
+  Term Rslt_30 = newTerm(VAR, 0, portLoc(2, Rslt_30Args));
 #ifdef STRICT
-  store_redex(Rslt_30Args, f_21_1);
+  pushRedex(Rslt_30Args, f_21_1);
 #else
-  swapStore(term_loc(Rslt_30), pair_make(LAZ, 0, Rslt_30Args, f_21_1));
+  swap(termLoc(Rslt_30), makePair(LAZ, 0, Rslt_30Args, f_21_1));
 #endif
 
   // call f at sidequest.toc: 162
-  Term Rslt_31Args = pair_make(APP, 0, Rslt_30, SUB);
-  Term Rslt_31 = term_new(VAR, 0, port(2, term_loc(Rslt_31Args)));
+  Term Rslt_31Args = makePair(APP, 0, Rslt_30, SUB);
+  Term Rslt_31 = newTerm(VAR, 0, portLoc(2, Rslt_31Args));
 #ifdef STRICT
-  store_redex(Rslt_31Args, f_21);
+  pushRedex(Rslt_31Args, f_21);
 #else
-  swapStore(term_loc(Rslt_31), pair_make(LAZ, 0, Rslt_31Args, f_21));
+  swap(termLoc(Rslt_31), makePair(LAZ, 0, Rslt_31Args, f_21));
 #endif
 
   dupLabels[138] = "rep-1-c";
   // link args to body
-  swapStore(r_seq_28, Rslt_31);
+  swap(r_seq_28, Rslt_31);
 
-  Term Rslt_31V = get(term_loc(Rslt_31));
-  apps = take(port(1, term_loc(Rslt_31V)));
-  lams = take(port(2, term_loc(Rslt_31V)));
+  Term Rslt_31V = get(termLoc(Rslt_31));
+  apps = take(portLoc(1, Rslt_31V));
+  lams = take(portLoc(2, Rslt_31V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_31), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_31), makePair(LAZ, 0, apps, lams));
   // call f at sidequest.toc: 162
-  Term Rslt_32Args = pair_make(APP, 0, x_22, SUB);
-  Term Rslt_32 = term_new(VAR, 0, port(2, term_loc(Rslt_32Args)));
+  Term Rslt_32Args = makePair(APP, 0, x_22, SUB);
+  Term Rslt_32 = newTerm(VAR, 0, portLoc(2, Rslt_32Args));
 #ifdef STRICT
-  store_redex(Rslt_32Args, f_21_2);
+  pushRedex(Rslt_32Args, f_21_2);
 #else
-  swapStore(term_loc(Rslt_32), pair_make(LAZ, 0, Rslt_32Args, f_21_2));
+  swap(termLoc(Rslt_32), makePair(LAZ, 0, Rslt_32Args, f_21_2));
 #endif
 
   // call  at sidequest.toc: 165
-  Term Rslt_33Args = pair_make(APP, 0, Rslt_32, SUB);
-  Term Rslt_33 = term_new(VAR, 0, port(2, term_loc(Rslt_33Args)));
-  Rslt_33Args = pair_make(APP, 0, seq_28, Rslt_33Args);
+  Term Rslt_33Args = makePair(APP, 0, Rslt_32, SUB);
+  Term Rslt_33 = newTerm(VAR, 0, portLoc(2, Rslt_33Args));
+  Rslt_33Args = makePair(APP, 0, seq_28, Rslt_33Args);
 #ifdef STRICT
-  store_redex(Rslt_33Args, Rslt_25);
+  pushRedex(Rslt_33Args, Rslt_25);
 #else
-  swapStore(term_loc(Rslt_33), pair_make(LAZ, 0, Rslt_33Args, Rslt_25));
+  swap(termLoc(Rslt_33), makePair(LAZ, 0, Rslt_33Args, Rslt_25));
 #endif
 
   dupLabels[140] = "rep-I";
   // link args to body
-  swapStore(r_seq_23, Rslt_33);
+  swap(r_seq_23, Rslt_33);
 
-  Term Rslt_33V = get(term_loc(Rslt_33));
-  apps = take(port(1, term_loc(Rslt_33V)));
-  lams = take(port(2, term_loc(Rslt_33V)));
+  Term Rslt_33V = get(termLoc(Rslt_33));
+  apps = take(portLoc(1, Rslt_33V));
+  lams = take(portLoc(2, Rslt_33V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_33), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_23);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_33), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_23);
   return;
 }
-Term glblrep_I726 = new_ref(glblrep_I725);
+Term glblrep_I726 = newRef(glblrep_I725);
 Term glblrep_E728;
 void glblrep_E727(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_38 = pair_make(LAM, 141, SUB, NUL);
-  Location r_seq_38 = port(2, term_loc(seq_38));
-  Term x_37 = term_new(VAR, 0, port(1, term_loc(seq_38)));
-  seq_38 = pair_make(LAM, 141, SUB, seq_38);
-  Term f_36 = term_new(VAR, 0, port(1, term_loc(seq_38)));
+  Term seq_38 = makePair(LAM, 141, SUB, NUL);
+  Location r_seq_38 = portLoc(2, seq_38);
+  Term x_37 = newTerm(VAR, 0, portLoc(1, seq_38));
+  seq_38 = makePair(LAM, 141, SUB, seq_38);
+  Term f_36 = newTerm(VAR, 0, portLoc(1, seq_38));
   // allocate args at sidequest.toc: 169
-  swapStore(term_loc(f_36), ERA);
+  swap(termLoc(f_36), ERA);
   dupLabels[141] = "rep-E";
   // link args to body
-  swapStore(r_seq_38, x_37);
+  swap(r_seq_38, x_37);
 
   V = get(r_seq_38);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 141, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_38, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_38);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 141, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_38, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_38);
   return;
 }
-Term glblrep_E728 = new_ref(glblrep_E727);
+Term glblrep_E728 = newRef(glblrep_E727);
 Term glblVal709;
 void glblCFn719(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 135, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term xs_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 135, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term xs_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 154
   // call xs at sidequest.toc: 154
-  Term Rslt_40Args = pair_make(APP, 0, glblrep_E728, SUB);
-  Term Rslt_40 = term_new(VAR, 0, port(2, term_loc(Rslt_40Args)));
-  Rslt_40Args = pair_make(APP, 0, glblrep_I726, Rslt_40Args);
-  Rslt_40Args = pair_make(APP, 0, glblrep_O724, Rslt_40Args);
+  Term Rslt_40Args = makePair(APP, 0, glblrep_E728, SUB);
+  Term Rslt_40 = newTerm(VAR, 0, portLoc(2, Rslt_40Args));
+  Rslt_40Args = makePair(APP, 0, glblrep_I726, Rslt_40Args);
+  Rslt_40Args = makePair(APP, 0, glblrep_O724, Rslt_40Args);
 #ifdef STRICT
-  store_redex(Rslt_40Args, xs_1);
+  pushRedex(Rslt_40Args, xs_1);
 #else
-  swapStore(term_loc(Rslt_40), pair_make(LAZ, 0, Rslt_40Args, xs_1));
+  swap(termLoc(Rslt_40), makePair(LAZ, 0, Rslt_40Args, xs_1));
 #endif
 
   dupLabels[135] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_40);
+  swap(r_seq_2, Rslt_40);
 
-  Term Rslt_40V = get(term_loc(Rslt_40));
-  apps = take(port(1, term_loc(Rslt_40V)));
-  lams = take(port(2, term_loc(Rslt_40V)));
+  Term Rslt_40V = get(termLoc(Rslt_40));
+  apps = take(portLoc(1, Rslt_40V));
+  lams = take(portLoc(2, Rslt_40V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_40), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_40), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblVal709 = new_ref(glblCFn719);
+Term glblVal709 = newRef(glblCFn719);
 Term glblFn722;
 void glblCFn721(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 137, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term b_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 137, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term b_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 172
-  Term seq_6 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_6 = port(2, term_loc(seq_6));
-  Term t_5 = term_new(VAR, 0, port(1, term_loc(seq_6)));
+  Term seq_6 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_6 = portLoc(2, seq_6);
+  Term t_5 = newTerm(VAR, 0, portLoc(1, seq_6));
   // allocate args at sidequest.toc: 173
-  swapStore(term_loc(t_5), ERA);
-  Term seq_10 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_10 = port(2, term_loc(seq_10));
-  Term f_9 = term_new(VAR, 0, port(1, term_loc(seq_10)));
+  swap(termLoc(t_5), ERA);
+  Term seq_10 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_10 = portLoc(2, seq_10);
+  Term f_9 = newTerm(VAR, 0, portLoc(1, seq_10));
   // allocate args at sidequest.toc: 174
 
   Term f_9_1;
   f_9 = dupeArg(f_9, &f_9_1, 0);
   // call b at sidequest.toc: 172
-  Term Rslt_12Args = pair_make(APP, 0, f_9_1, SUB);
-  Term Rslt_12 = term_new(VAR, 0, port(2, term_loc(Rslt_12Args)));
-  Rslt_12Args = pair_make(APP, 0, f_9, Rslt_12Args);
+  Term Rslt_12Args = makePair(APP, 0, f_9_1, SUB);
+  Term Rslt_12 = newTerm(VAR, 0, portLoc(2, Rslt_12Args));
+  Rslt_12Args = makePair(APP, 0, f_9, Rslt_12Args);
 #ifdef STRICT
-  store_redex(Rslt_12Args, b_1);
+  pushRedex(Rslt_12Args, b_1);
 #else
-  swapStore(term_loc(Rslt_12), pair_make(LAZ, 0, Rslt_12Args, b_1));
+  swap(termLoc(Rslt_12), makePair(LAZ, 0, Rslt_12Args, b_1));
 #endif
 
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_10, Rslt_12);
+  swap(r_seq_10, Rslt_12);
 
-  Term Rslt_12V = get(term_loc(Rslt_12));
-  apps = take(port(1, term_loc(Rslt_12V)));
-  lams = take(port(2, term_loc(Rslt_12V)));
+  Term Rslt_12V = get(termLoc(Rslt_12));
+  apps = take(portLoc(1, Rslt_12V));
+  lams = take(portLoc(2, Rslt_12V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_12), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_12), makePair(LAZ, 0, apps, lams));
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_6, seq_10);
+  swap(r_seq_6, seq_10);
 
   V = get(r_seq_6);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 0, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_6, term_new(VAR, 0, vLoc));
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 0, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_6, newTerm(VAR, 0, vLoc));
   dupLabels[137] = "";
   // link args to body
-  swapStore(r_seq_2, seq_6);
+  swap(r_seq_2, seq_6);
 
   V = get(r_seq_2);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 137, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_2, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_2);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 137, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_2, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn722 = new_ref(glblCFn721);
+Term glblFn722 = newRef(glblCFn721);
 Term glblFn734;
 void glblCFn733(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 142, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term b_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 142, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term b_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 177
-  Term seq_6 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_6 = port(2, term_loc(seq_6));
-  Term t_5 = term_new(VAR, 0, port(1, term_loc(seq_6)));
+  Term seq_6 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_6 = portLoc(2, seq_6);
+  Term t_5 = newTerm(VAR, 0, portLoc(1, seq_6));
   // allocate args at sidequest.toc: 178
-  swapStore(term_loc(t_5), ERA);
-  Term seq_10 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_10 = port(2, term_loc(seq_10));
-  Term f_9 = term_new(VAR, 0, port(1, term_loc(seq_10)));
+  swap(termLoc(t_5), ERA);
+  Term seq_10 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_10 = portLoc(2, seq_10);
+  Term f_9 = newTerm(VAR, 0, portLoc(1, seq_10));
   // allocate args at sidequest.toc: 179
 
   Term f_9_2;
@@ -7405,60 +7395,60 @@ void glblCFn733(Term ref, Term args) {
   Term f_9_1;
   f_9 = dupeArg(f_9, &f_9_1, 0);
   // call f at sidequest.toc: 179
-  Term Rslt_12Args = pair_make(APP, 0, f_9_1, SUB);
-  Term Rslt_12 = term_new(VAR, 0, port(2, term_loc(Rslt_12Args)));
+  Term Rslt_12Args = makePair(APP, 0, f_9_1, SUB);
+  Term Rslt_12 = newTerm(VAR, 0, portLoc(2, Rslt_12Args));
 #ifdef STRICT
-  store_redex(Rslt_12Args, f_9);
+  pushRedex(Rslt_12Args, f_9);
 #else
-  swapStore(term_loc(Rslt_12), pair_make(LAZ, 0, Rslt_12Args, f_9));
+  swap(termLoc(Rslt_12), makePair(LAZ, 0, Rslt_12Args, f_9));
 #endif
 
   // call b at sidequest.toc: 177
-  Term Rslt_13Args = pair_make(APP, 0, f_9_2, SUB);
-  Term Rslt_13 = term_new(VAR, 0, port(2, term_loc(Rslt_13Args)));
-  Rslt_13Args = pair_make(APP, 0, Rslt_12, Rslt_13Args);
+  Term Rslt_13Args = makePair(APP, 0, f_9_2, SUB);
+  Term Rslt_13 = newTerm(VAR, 0, portLoc(2, Rslt_13Args));
+  Rslt_13Args = makePair(APP, 0, Rslt_12, Rslt_13Args);
 #ifdef STRICT
-  store_redex(Rslt_13Args, b_1);
+  pushRedex(Rslt_13Args, b_1);
 #else
-  swapStore(term_loc(Rslt_13), pair_make(LAZ, 0, Rslt_13Args, b_1));
+  swap(termLoc(Rslt_13), makePair(LAZ, 0, Rslt_13Args, b_1));
 #endif
 
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_10, Rslt_13);
+  swap(r_seq_10, Rslt_13);
 
-  Term Rslt_13V = get(term_loc(Rslt_13));
-  apps = take(port(1, term_loc(Rslt_13V)));
-  lams = take(port(2, term_loc(Rslt_13V)));
+  Term Rslt_13V = get(termLoc(Rslt_13));
+  apps = take(portLoc(1, Rslt_13V));
+  lams = take(portLoc(2, Rslt_13V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_13), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_13), makePair(LAZ, 0, apps, lams));
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_6, seq_10);
+  swap(r_seq_6, seq_10);
 
   V = get(r_seq_6);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 0, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_6, term_new(VAR, 0, vLoc));
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 0, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_6, newTerm(VAR, 0, vLoc));
   dupLabels[142] = "";
   // link args to body
-  swapStore(r_seq_2, seq_6);
+  swap(r_seq_2, seq_6);
 
   V = get(r_seq_2);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 142, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_2, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_2);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 142, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_2, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn734 = new_ref(glblCFn733);
+Term glblFn734 = newRef(glblCFn733);
 Term glblVal735;
 struct {
   TYPE_SIZE type;
@@ -7468,148 +7458,148 @@ struct {
   int64_t len;
   char buffer[7];
 } str17 = {StringBufferType, REFS_STATIC, 0, 0, 6, "bad-f\n"};
-Term glblStr740 = term_new_(VAL, (Term)&str17);
+Term glblStr740 = newTerm_(VAL, (Term)&str17);
 Term glblVal735;
 void glblCFn738(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_3 = pair_make(LAM, 143, SUB, NUL);
-  Location r_seq_3 = port(2, term_loc(seq_3));
-  Term o_2 = term_new(VAR, 0, port(1, term_loc(seq_3)));
-  seq_3 = pair_make(LAM, 143, SUB, seq_3);
-  Term x_1 = term_new(VAR, 0, port(1, term_loc(seq_3)));
+  Term seq_3 = makePair(LAM, 143, SUB, NUL);
+  Location r_seq_3 = portLoc(2, seq_3);
+  Term o_2 = newTerm(VAR, 0, portLoc(1, seq_3));
+  seq_3 = makePair(LAM, 143, SUB, seq_3);
+  Term x_1 = newTerm(VAR, 0, portLoc(1, seq_3));
   // allocate args at sidequest.toc: 183
-  Term seq_7 = pair_make(LAM, 144, SUB, NUL);
-  Location r_seq_7 = port(2, term_loc(seq_7));
-  Term p_6 = term_new(VAR, 0, port(1, term_loc(seq_7)));
+  Term seq_7 = makePair(LAM, 144, SUB, NUL);
+  Location r_seq_7 = portLoc(2, seq_7);
+  Term p_6 = newTerm(VAR, 0, portLoc(1, seq_7));
   // allocate args at sidequest.toc: 184
-  swapStore(term_loc(p_6), ERA);
+  swap(termLoc(p_6), ERA);
   // call pr* at sidequest.toc: 185
-  Term Rslt_9Args = pair_make(APP, 0, glblStr740, SUB);
-  Term Rslt_9 = term_new(VAR, 0, port(2, term_loc(Rslt_9Args)));
+  Term Rslt_9Args = makePair(APP, 0, glblStr740, SUB);
+  Term Rslt_9 = newTerm(VAR, 0, portLoc(2, Rslt_9Args));
 #ifdef STRICT
-  store_redex(Rslt_9Args, glblFn115);
+  pushRedex(Rslt_9Args, glblFn115);
 #else
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, Rslt_9Args, glblFn115));
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, Rslt_9Args, glblFn115));
 #endif
 
   // call o at sidequest.toc: 183
-  Term Rslt_10Args = pair_make(APP, 0, NUL, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
+  Term Rslt_10Args = makePair(APP, 0, NUL, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
 #ifdef STRICT
-  store_redex(Rslt_10Args, o_2);
+  pushRedex(Rslt_10Args, o_2);
 #else
-  swapStore(term_loc(Rslt_10), pair_make(LAZ, 0, Rslt_10Args, o_2));
+  swap(termLoc(Rslt_10), makePair(LAZ, 0, Rslt_10Args, o_2));
 #endif
 
   dupLabels[144] = "bad-f";
   // link args to body
-  swapStore(r_seq_7, Rslt_10);
+  swap(r_seq_7, Rslt_10);
 
-  Term Rslt_10V = get(term_loc(Rslt_10));
-  apps = take(port(1, term_loc(Rslt_10V)));
-  lams = take(port(2, term_loc(Rslt_10V)));
+  Term Rslt_10V = get(termLoc(Rslt_10));
+  apps = take(portLoc(1, Rslt_10V));
+  lams = take(portLoc(2, Rslt_10V));
 
-  vLoc = port(2, term_loc(apps));
-  apps = pair_make(APP, 0, Rslt_9, apps);
-  lams = pair_make(LAM, 144, sideEffects, lams);
+  vLoc = portLoc(2, apps);
+  apps = makePair(APP, 0, Rslt_9, apps);
+  lams = makePair(LAM, 144, ERA, lams);
 
-  swapStore(term_loc(Rslt_10), pair_make(LAZ, 0, apps, lams));
+  swap(termLoc(Rslt_10), makePair(LAZ, 0, apps, lams));
   // call x at sidequest.toc: 183
-  Term Rslt_11Args = pair_make(APP, 0, seq_7, SUB);
-  Term Rslt_11 = term_new(VAR, 0, port(2, term_loc(Rslt_11Args)));
+  Term Rslt_11Args = makePair(APP, 0, seq_7, SUB);
+  Term Rslt_11 = newTerm(VAR, 0, portLoc(2, Rslt_11Args));
 #ifdef STRICT
-  store_redex(Rslt_11Args, x_1);
+  pushRedex(Rslt_11Args, x_1);
 #else
-  swapStore(term_loc(Rslt_11), pair_make(LAZ, 0, Rslt_11Args, x_1));
+  swap(termLoc(Rslt_11), makePair(LAZ, 0, Rslt_11Args, x_1));
 #endif
 
   dupLabels[143] = "";
   // link args to body
-  swapStore(r_seq_3, Rslt_11);
+  swap(r_seq_3, Rslt_11);
 
-  Term Rslt_11V = get(term_loc(Rslt_11));
-  apps = take(port(1, term_loc(Rslt_11V)));
-  lams = take(port(2, term_loc(Rslt_11V)));
+  Term Rslt_11V = get(termLoc(Rslt_11));
+  apps = take(portLoc(1, Rslt_11V));
+  lams = take(portLoc(2, Rslt_11V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_11), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_3);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_11), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_3);
   return;
 }
-Term glblVal735 = new_ref(glblCFn738);
+Term glblVal735 = newRef(glblCFn738);
 Term glblFn743;
 void glblCFn742(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 145, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term b_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 145, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term b_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 188
-  Term seq_6 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_6 = port(2, term_loc(seq_6));
-  Term f_5 = term_new(VAR, 0, port(1, term_loc(seq_6)));
+  Term seq_6 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_6 = portLoc(2, seq_6);
+  Term f_5 = newTerm(VAR, 0, portLoc(1, seq_6));
   // allocate args at sidequest.toc: 189
   // call b at sidequest.toc: 188
-  Term Rslt_8Args = pair_make(APP, 0, f_5, SUB);
-  Term Rslt_8 = term_new(VAR, 0, port(2, term_loc(Rslt_8Args)));
+  Term Rslt_8Args = makePair(APP, 0, f_5, SUB);
+  Term Rslt_8 = newTerm(VAR, 0, portLoc(2, Rslt_8Args));
 #ifdef STRICT
-  store_redex(Rslt_8Args, b_1);
+  pushRedex(Rslt_8Args, b_1);
 #else
-  swapStore(term_loc(Rslt_8), pair_make(LAZ, 0, Rslt_8Args, b_1));
+  swap(termLoc(Rslt_8), makePair(LAZ, 0, Rslt_8Args, b_1));
 #endif
 
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_6, Rslt_8);
+  swap(r_seq_6, Rslt_8);
 
-  Term Rslt_8V = get(term_loc(Rslt_8));
-  apps = take(port(1, term_loc(Rslt_8V)));
-  lams = take(port(2, term_loc(Rslt_8V)));
+  Term Rslt_8V = get(termLoc(Rslt_8));
+  apps = take(portLoc(1, Rslt_8V));
+  lams = take(portLoc(2, Rslt_8V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_8), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_8), makePair(LAZ, 0, apps, lams));
   dupLabels[145] = "";
   // link args to body
-  swapStore(r_seq_2, seq_6);
+  swap(r_seq_2, seq_6);
 
   V = get(r_seq_2);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 145, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_2, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_2);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 145, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_2, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn743 = new_ref(glblCFn742);
+Term glblFn743 = newRef(glblCFn742);
 Term glblinput748;
 void glblinput747(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_14 = pair_make(LAM, 147, SUB, NUL);
-  Location r_seq_14 = port(2, term_loc(seq_14));
-  Term f_13 = term_new(VAR, 0, port(1, term_loc(seq_14)));
-  seq_14 = pair_make(LAM, 147, SUB, seq_14);
-  Term t_12 = term_new(VAR, 0, port(1, term_loc(seq_14)));
+  Term seq_14 = makePair(LAM, 147, SUB, NUL);
+  Location r_seq_14 = portLoc(2, seq_14);
+  Term f_13 = newTerm(VAR, 0, portLoc(1, seq_14));
+  seq_14 = makePair(LAM, 147, SUB, seq_14);
+  Term t_12 = newTerm(VAR, 0, portLoc(1, seq_14));
   // allocate args at sidequest.toc: 197
-  swapStore(term_loc(f_13), ERA);
+  swap(termLoc(f_13), ERA);
   dupLabels[147] = "input";
   // link args to body
-  swapStore(r_seq_14, t_12);
+  swap(r_seq_14, t_12);
 
   V = get(r_seq_14);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 147, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_14, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_14);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 147, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_14, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_14);
   return;
 }
-Term glblinput748 = new_ref(glblinput747);
+Term glblinput748 = newRef(glblinput747);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -7618,30 +7608,30 @@ struct {
   int64_t len;
   char buffer[8];
 } str18 = {StringBufferType, REFS_STATIC, 0, 0, 7, "boogity"};
-Term glblStr749 = term_new_(VAL, (Term)&str18);
+Term glblStr749 = newTerm_(VAL, (Term)&str18);
 Term glblfalse751;
 void glblfalse750(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_19 = pair_make(LAM, 148, SUB, NUL);
-  Location r_seq_19 = port(2, term_loc(seq_19));
-  Term f_18 = term_new(VAR, 0, port(1, term_loc(seq_19)));
+  Term seq_19 = makePair(LAM, 148, SUB, NUL);
+  Location r_seq_19 = portLoc(2, seq_19);
+  Term f_18 = newTerm(VAR, 0, portLoc(1, seq_19));
   // allocate args at sidequest.toc: 200
   dupLabels[148] = "false";
   // link args to body
-  swapStore(r_seq_19, f_18);
+  swap(r_seq_19, f_18);
 
   V = get(r_seq_19);
-  apps = pair_make(APP, 0, V, SUB);
-  lams = pair_make(LAM, 148, SUB, NUL);
-  swapStore(port(2, term_loc(lams)), term_new(VAR, 0, port(1, term_loc(lams))));
-  vLoc = port(2, term_loc(apps));
-  swapStore(vLoc, pair_make(LAZ, 0, apps, lams));
-  swapStore(r_seq_19, term_new(VAR, 0, vLoc));
-  store_redex(args, seq_19);
+  apps = makePair(APP, 0, V, SUB);
+  lams = makePair(LAM, 148, SUB, NUL);
+  swap(portLoc(2, lams), newTerm(VAR, 0, portLoc(1, lams)));
+  vLoc = portLoc(2, apps);
+  swap(vLoc, makePair(LAZ, 0, apps, lams));
+  swap(r_seq_19, newTerm(VAR, 0, vLoc));
+  pushRedex(args, seq_19);
   return;
 }
-Term glblfalse751 = new_ref(glblfalse750);
+Term glblfalse751 = newRef(glblfalse750);
 struct {
   TYPE_SIZE type;
   REFS_SIZE refs;
@@ -7650,14 +7640,14 @@ struct {
   int64_t len;
   char buffer[14];
 } str19 = {StringBufferType, REFS_STATIC, 0, 0, 13, "sidequest.toc"};
-Term glblStr755 = term_new_(VAL, (Term)&str19);
+Term glblStr755 = newTerm_(VAL, (Term)&str19);
 void glblProto95_754(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(193), args);
-    args = pair_make(APP, 0, glblStr755, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(193), args);
+    args = makePair(APP, 0, glblStr755, args);
     interact(args, glblProto95);
   }
 }
@@ -7665,9 +7655,9 @@ void glblProto39_756(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(193), args);
-    args = pair_make(APP, 0, glblStr755, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(193), args);
+    args = makePair(APP, 0, glblStr755, args);
     interact(args, glblProto39);
   }
 }
@@ -7675,9 +7665,9 @@ void glblProto29_758(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 1, &arityArgs);
   if (arityArgs.count == 1) {
-    swapStore(port(1, term_loc(args)), arityArgs.args[0]);
-    args = pair_make(APP, 0, new_i60(193), args);
-    args = pair_make(APP, 0, glblStr755, args);
+    swap(portLoc(1, args), arityArgs.args[0]);
+    args = makePair(APP, 0, newI60(193), args);
+    args = makePair(APP, 0, glblStr755, args);
     interact(args, glblProto29);
   }
 }
@@ -7685,125 +7675,125 @@ Term glblFn746;
 void glblCFn745(Term ref, Term args) {
   Term apps, lams, V;
   Location vLoc;
-  Term seq_2 = pair_make(LAM, 146, SUB, NUL);
-  Location r_seq_2 = port(2, term_loc(seq_2));
-  Term args_1 = term_new(VAR, 0, port(1, term_loc(seq_2)));
+  Term seq_2 = makePair(LAM, 146, SUB, NUL);
+  Location r_seq_2 = portLoc(2, seq_2);
+  Term args_1 = newTerm(VAR, 0, portLoc(1, seq_2));
   // allocate args at sidequest.toc: 192
-  Term seq_6 = pair_make(LAM, 0, SUB, NUL);
-  Location r_seq_6 = port(2, term_loc(seq_6));
-  Term reps_5 = term_new(VAR, 0, port(1, term_loc(seq_6)));
+  Term seq_6 = makePair(LAM, 0, SUB, NUL);
+  Location r_seq_6 = portLoc(2, seq_6);
+  Term reps_5 = newTerm(VAR, 0, portLoc(1, seq_6));
   // allocate args at sidequest.toc: 193
   // call hbin at sidequest.toc: 195
-  Term Rslt_8Args = pair_make(APP, 0, new_i60(8), SUB);
-  Term Rslt_8 = term_new(VAR, 0, port(2, term_loc(Rslt_8Args)));
+  Term Rslt_8Args = makePair(APP, 0, newI60(8), SUB);
+  Term Rslt_8 = newTerm(VAR, 0, portLoc(2, Rslt_8Args));
 #ifdef STRICT
-  store_redex(Rslt_8Args, glblFn689);
+  pushRedex(Rslt_8Args, glblFn689);
 #else
-  swapStore(term_loc(Rslt_8), pair_make(LAZ, 0, Rslt_8Args, glblFn689));
+  swap(termLoc(Rslt_8), makePair(LAZ, 0, Rslt_8Args, glblFn689));
 #endif
 
   // call  at sidequest.toc: 193
-  Term Rslt_9Args = pair_make(APP, 0, reps_5, SUB);
-  Term Rslt_9 = term_new(VAR, 0, port(2, term_loc(Rslt_9Args)));
+  Term Rslt_9Args = makePair(APP, 0, reps_5, SUB);
+  Term Rslt_9 = newTerm(VAR, 0, portLoc(2, Rslt_9Args));
 #ifdef STRICT
-  store_redex(Rslt_9Args, Rslt_8);
+  pushRedex(Rslt_9Args, Rslt_8);
 #else
-  swapStore(term_loc(Rslt_9), pair_make(LAZ, 0, Rslt_9Args, Rslt_8));
+  swap(termLoc(Rslt_9), makePair(LAZ, 0, Rslt_9Args, Rslt_8));
 #endif
 
   // call rep at sidequest.toc: 195
-  Term Rslt_10Args = pair_make(APP, 0, Rslt_9, SUB);
-  Term Rslt_10 = term_new(VAR, 0, port(2, term_loc(Rslt_10Args)));
+  Term Rslt_10Args = makePair(APP, 0, Rslt_9, SUB);
+  Term Rslt_10 = newTerm(VAR, 0, portLoc(2, Rslt_10Args));
 #ifdef STRICT
-  store_redex(Rslt_10Args, glblVal709);
+  pushRedex(Rslt_10Args, glblVal709);
 #else
-  swapStore(term_loc(Rslt_10), pair_make(LAZ, 0, Rslt_10Args, glblVal709));
+  swap(termLoc(Rslt_10), makePair(LAZ, 0, Rslt_10Args, glblVal709));
 #endif
 
   // call  at sidequest.toc: 196
-  Term Rslt_16Args = pair_make(APP, 0, glblinput748, SUB);
-  Term Rslt_16 = term_new(VAR, 0, port(2, term_loc(Rslt_16Args)));
-  Rslt_16Args = pair_make(APP, 0, glblFn722, Rslt_16Args);
+  Term Rslt_16Args = makePair(APP, 0, glblinput748, SUB);
+  Term Rslt_16 = newTerm(VAR, 0, portLoc(2, Rslt_16Args));
+  Rslt_16Args = makePair(APP, 0, glblFn722, Rslt_16Args);
 #ifdef STRICT
-  store_redex(Rslt_16Args, Rslt_10);
+  pushRedex(Rslt_16Args, Rslt_10);
 #else
-  swapStore(term_loc(Rslt_16), pair_make(LAZ, 0, Rslt_16Args, Rslt_10));
+  swap(termLoc(Rslt_16), makePair(LAZ, 0, Rslt_16Args, Rslt_10));
 #endif
 
   // call  at sidequest.toc: 199
-  Term Rslt_21Args = pair_make(APP, 0, new_i60(95), SUB);
-  Term Rslt_21 = term_new(VAR, 0, port(2, term_loc(Rslt_21Args)));
-  Rslt_21Args = pair_make(APP, 0, glblfalse751, Rslt_21Args);
-  Rslt_21Args = pair_make(APP, 0, glblStr749, Rslt_21Args);
+  Term Rslt_21Args = makePair(APP, 0, newI60(95), SUB);
+  Term Rslt_21 = newTerm(VAR, 0, portLoc(2, Rslt_21Args));
+  Rslt_21Args = makePair(APP, 0, glblfalse751, Rslt_21Args);
+  Rslt_21Args = makePair(APP, 0, glblStr749, Rslt_21Args);
 #ifdef STRICT
-  store_redex(Rslt_21Args, Rslt_16);
+  pushRedex(Rslt_21Args, Rslt_16);
 #else
-  swapStore(term_loc(Rslt_21), pair_make(LAZ, 0, Rslt_21Args, Rslt_16));
+  swap(termLoc(Rslt_21), makePair(LAZ, 0, Rslt_21Args, Rslt_16));
 #endif
 
   dupLabels[0] = "";
   // link args to body
-  swapStore(r_seq_6, Rslt_21);
+  swap(r_seq_6, Rslt_21);
 
-  Term Rslt_21V = get(term_loc(Rslt_21));
-  apps = take(port(1, term_loc(Rslt_21V)));
-  lams = take(port(2, term_loc(Rslt_21V)));
+  Term Rslt_21V = get(termLoc(Rslt_21));
+  apps = take(portLoc(1, Rslt_21V));
+  lams = take(portLoc(2, Rslt_21V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_21), pair_make(LAZ, 0, apps, lams));
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_21), makePair(LAZ, 0, apps, lams));
   // call nth at sidequest.toc: 193
-  Term Rslt_22Args = pair_make(APP, 0, new_i60(1), SUB);
-  Term Rslt_22 = term_new(VAR, 0, port(2, term_loc(Rslt_22Args)));
-  Rslt_22Args = pair_make(APP, 0, args_1, Rslt_22Args);
+  Term Rslt_22Args = makePair(APP, 0, newI60(1), SUB);
+  Term Rslt_22 = newTerm(VAR, 0, portLoc(2, Rslt_22Args));
+  Rslt_22Args = makePair(APP, 0, args_1, Rslt_22Args);
 #ifdef STRICT
-  store_redex(Rslt_22Args, new_ref(glblProto95_754));
+  pushRedex(Rslt_22Args, newRef(glblProto95_754));
 #else
-  swapStore(term_loc(Rslt_22),
-            pair_make(LAZ, 0, Rslt_22Args, new_ref(glblProto95_754)));
+  swap(termLoc(Rslt_22),
+       makePair(LAZ, 0, Rslt_22Args, newRef(glblProto95_754)));
 #endif
   // call map at sidequest.toc: 193
-  Term Rslt_23Args = pair_make(APP, 0, glblFn660, SUB);
-  Term Rslt_23 = term_new(VAR, 0, port(2, term_loc(Rslt_23Args)));
-  Rslt_23Args = pair_make(APP, 0, Rslt_22, Rslt_23Args);
+  Term Rslt_23Args = makePair(APP, 0, glblFn660, SUB);
+  Term Rslt_23 = newTerm(VAR, 0, portLoc(2, Rslt_23Args));
+  Rslt_23Args = makePair(APP, 0, Rslt_22, Rslt_23Args);
 #ifdef STRICT
-  store_redex(Rslt_23Args, new_ref(glblProto39_756));
+  pushRedex(Rslt_23Args, newRef(glblProto39_756));
 #else
-  swapStore(term_loc(Rslt_23),
-            pair_make(LAZ, 0, Rslt_23Args, new_ref(glblProto39_756)));
+  swap(termLoc(Rslt_23),
+       makePair(LAZ, 0, Rslt_23Args, newRef(glblProto39_756)));
 #endif
   // call either at sidequest.toc: 193
-  Term Rslt_24Args = pair_make(APP, 0, new_i60(4), SUB);
-  Term Rslt_24 = term_new(VAR, 0, port(2, term_loc(Rslt_24Args)));
-  Rslt_24Args = pair_make(APP, 0, Rslt_23, Rslt_24Args);
+  Term Rslt_24Args = makePair(APP, 0, newI60(4), SUB);
+  Term Rslt_24 = newTerm(VAR, 0, portLoc(2, Rslt_24Args));
+  Rslt_24Args = makePair(APP, 0, Rslt_23, Rslt_24Args);
 #ifdef STRICT
-  store_redex(Rslt_24Args, new_ref(glblProto29_758));
+  pushRedex(Rslt_24Args, newRef(glblProto29_758));
 #else
-  swapStore(term_loc(Rslt_24),
-            pair_make(LAZ, 0, Rslt_24Args, new_ref(glblProto29_758)));
+  swap(termLoc(Rslt_24),
+       makePair(LAZ, 0, Rslt_24Args, newRef(glblProto29_758)));
 #endif
   // call  at sidequest.toc: 193
-  Term Rslt_25Args = pair_make(APP, 0, Rslt_24, SUB);
-  Term Rslt_25 = term_new(VAR, 0, port(2, term_loc(Rslt_25Args)));
+  Term Rslt_25Args = makePair(APP, 0, Rslt_24, SUB);
+  Term Rslt_25 = newTerm(VAR, 0, portLoc(2, Rslt_25Args));
 #ifdef STRICT
-  store_redex(Rslt_25Args, seq_6);
+  pushRedex(Rslt_25Args, seq_6);
 #else
-  swapStore(term_loc(Rslt_25), pair_make(LAZ, 0, Rslt_25Args, seq_6));
+  swap(termLoc(Rslt_25), makePair(LAZ, 0, Rslt_25Args, seq_6));
 #endif
 
   dupLabels[146] = "";
   // link args to body
-  swapStore(r_seq_2, Rslt_25);
+  swap(r_seq_2, Rslt_25);
 
-  Term Rslt_25V = get(term_loc(Rslt_25));
-  apps = take(port(1, term_loc(Rslt_25V)));
-  lams = take(port(2, term_loc(Rslt_25V)));
+  Term Rslt_25V = get(termLoc(Rslt_25));
+  apps = take(portLoc(1, Rslt_25V));
+  lams = take(portLoc(2, Rslt_25V));
 
-  vLoc = port(2, term_loc(apps));
-  swapStore(term_loc(Rslt_25), pair_make(LAZ, 0, apps, lams));
-  store_redex(args, seq_2);
+  vLoc = portLoc(2, apps);
+  swap(termLoc(Rslt_25), makePair(LAZ, 0, apps, lams));
+  pushRedex(args, seq_2);
   return;
 }
-Term glblFn746 = new_ref(glblCFn745);
+Term glblFn746 = newRef(glblCFn745);
 Term glblProto51;
 void glblCFn52(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -7811,24 +7801,24 @@ void glblCFn52(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'wrap' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblwrap505);
+        pushRedex(args, glblwrap505);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'wrap' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -7836,7 +7826,7 @@ void glblCFn52(Term ref, Term args) {
   }
   return;
 }
-Term glblProto51 = new_ref(glblCFn52);
+Term glblProto51 = newRef(glblCFn52);
 Term glblProto69;
 void glblCFn70(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -7844,24 +7834,24 @@ void glblCFn70(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'reduce' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblreduce511);
+        pushRedex(args, glblreduce511);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'reduce' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -7869,7 +7859,7 @@ void glblCFn70(Term ref, Term args) {
   }
   return;
 }
-Term glblProto69 = new_ref(glblCFn70);
+Term glblProto69 = newRef(glblCFn70);
 Term glblProto105;
 void glblCFn106(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -7877,12 +7867,12 @@ void glblCFn106(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'vals' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -7891,7 +7881,7 @@ void glblCFn106(Term ref, Term args) {
                 "No implementation of 'vals' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -7899,7 +7889,7 @@ void glblCFn106(Term ref, Term args) {
   }
   return;
 }
-Term glblProto105 = new_ref(glblCFn106);
+Term glblProto105 = newRef(glblCFn106);
 Term glblProto63;
 void glblCFn64(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -7907,24 +7897,24 @@ void glblCFn64(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'empty' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblempty525);
+        pushRedex(args, glblempty525);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'empty' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -7932,7 +7922,7 @@ void glblCFn64(Term ref, Term args) {
   }
   return;
 }
-Term glblProto63 = new_ref(glblCFn64);
+Term glblProto63 = newRef(glblCFn64);
 Term glblProto81;
 void glblCFn82(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -7940,12 +7930,12 @@ void glblCFn82(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'split' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -7954,7 +7944,7 @@ void glblCFn82(Term ref, Term args) {
                 "No implementation of 'split' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -7962,7 +7952,7 @@ void glblCFn82(Term ref, Term args) {
   }
   return;
 }
-Term glblProto81 = new_ref(glblCFn82);
+Term glblProto81 = newRef(glblCFn82);
 Term glblProto89;
 void glblCFn90(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -7970,12 +7960,12 @@ void glblCFn90(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'drop-while' found for integers called "
               "from %.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -7984,7 +7974,7 @@ void glblCFn90(Term ref, Term args) {
                 "No implementation of 'drop-while' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -7992,7 +7982,7 @@ void glblCFn90(Term ref, Term args) {
   }
   return;
 }
-Term glblProto89 = new_ref(glblCFn90);
+Term glblProto89 = newRef(glblCFn90);
 Term glblProto37;
 void glblCFn38(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8000,39 +7990,39 @@ void glblCFn38(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'recurse' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 2:
-        store_redex(args, glblrecurse364);
+        pushRedex(args, glblrecurse364);
         break;
       case 5:
-        store_redex(args, glblrecurse362);
+        pushRedex(args, glblrecurse362);
         break;
       case 46:
-        store_redex(args, glblrecurse551);
+        pushRedex(args, glblrecurse549);
         break;
       case 43:
-        store_redex(args, glblrecurse197);
+        pushRedex(args, glblrecurse197);
         break;
       case 45:
-        store_redex(args, glblrecurse589);
+        pushRedex(args, glblrecurse586);
         break;
       case 42:
-        store_redex(args, glblrecurse147);
+        pushRedex(args, glblrecurse147);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'recurse' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8040,7 +8030,7 @@ void glblCFn38(Term ref, Term args) {
   }
   return;
 }
-Term glblProto37 = new_ref(glblCFn38);
+Term glblProto37 = newRef(glblCFn38);
 Term glblProto313;
 void glblFldFn314(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8048,24 +8038,24 @@ void glblFldFn314(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of '.s' found for integers called from %.*s: "
               "%ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 5:
-        store_redex(args, glblFld329);
+        pushRedex(args, glblFld329);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of '.s' found for type %s (%ld) called from "
                 "%.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8073,32 +8063,32 @@ void glblFldFn314(Term ref, Term args) {
   }
   return;
 }
-Term glblProto313 = new_ref(glblFldFn314);
-Term glblProto579;
-void glblFldFn581(Term ref, Term args) {
+Term glblProto313 = newRef(glblFldFn314);
+Term glblProto575;
+void glblFldFn577(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 3, &arityArgs);
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of '.head' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 45:
-        store_redex(args, glblFld599);
+        pushRedex(args, glblFld595);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of '.head' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8106,7 +8096,7 @@ void glblFldFn581(Term ref, Term args) {
   }
   return;
 }
-Term glblProto579 = new_ref(glblFldFn581);
+Term glblProto575 = newRef(glblFldFn577);
 Term glblProto29;
 void glblCFn30(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8114,27 +8104,27 @@ void glblCFn30(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'either' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glbleither195);
+        pushRedex(args, glbleither195);
         break;
       case 42:
-        store_redex(args, glbleither145);
+        pushRedex(args, glbleither145);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'either' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8142,7 +8132,7 @@ void glblCFn30(Term ref, Term args) {
   }
   return;
 }
-Term glblProto29 = new_ref(glblCFn30);
+Term glblProto29 = newRef(glblCFn30);
 Term glblProto93;
 void glblCFn94(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8150,24 +8140,24 @@ void glblCFn94(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'reverse' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblreverse509);
+        pushRedex(args, glblreverse509);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'reverse' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8175,40 +8165,40 @@ void glblCFn94(Term ref, Term args) {
   }
   return;
 }
-Term glblProto93 = new_ref(glblCFn94);
-Term glblProto21;
-void glblCFn22(Term ref, Term args) {
+Term glblProto93 = newRef(glblCFn94);
+Term glblProto15;
+void glblCFn17(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 3, &arityArgs);
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
-      store_redex(args, glbl_EQ_262);
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
+      pushRedex(args, glbl_EQ_262);
     } else {
       switch (dispVal->type) {
       case 2:
-        store_redex(args, glbl_EQ_347);
+        pushRedex(args, glbl_EQ_347);
         break;
       case 5:
-        store_redex(args, glbl_EQ_324);
+        pushRedex(args, glbl_EQ_324);
         break;
       case 43:
-        store_redex(args, glbl_EQ_201);
+        pushRedex(args, glbl_EQ_201);
         break;
       case 8:
-        store_redex(args, glbl_EQ_539);
+        pushRedex(args, glbl_EQ_539);
         break;
       case 42:
-        store_redex(args, glbl_EQ_149);
+        pushRedex(args, glbl_EQ_149);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of '=' found for type %s (%ld) called from "
                 "%.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8216,7 +8206,7 @@ void glblCFn22(Term ref, Term args) {
   }
   return;
 }
-Term glblProto21 = new_ref(glblCFn22);
+Term glblProto15 = newRef(glblCFn17);
 Term glblProto95;
 void glblCFn96(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8224,24 +8214,24 @@ void glblCFn96(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'nth' found for integers called from %.*s: "
               "%ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblnth529);
+        pushRedex(args, glblnth529);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'nth' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8249,7 +8239,7 @@ void glblCFn96(Term ref, Term args) {
   }
   return;
 }
-Term glblProto95 = new_ref(glblCFn96);
+Term glblProto95 = newRef(glblCFn96);
 Term glblProto3;
 void glblCFn4(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8257,29 +8247,29 @@ void glblCFn4(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
-      store_redex(args, glbltype_name266);
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
+      pushRedex(args, glbltype_name266);
     } else {
       switch (dispVal->type) {
       case 2:
-        store_redex(args, glbltype_name372);
+        pushRedex(args, glbltype_name372);
         break;
       case 5:
-        store_redex(args, glbltype_name370);
+        pushRedex(args, glbltype_name370);
         break;
       case 8:
-        store_redex(args, glbltype_name537);
+        pushRedex(args, glbltype_name537);
         break;
       default: {
-        store_redex(args, glbltype_name6);
+        pushRedex(args, glbltype_name6);
       }
       }
     }
   }
   return;
 }
-Term glblProto3 = new_ref(glblCFn4);
+Term glblProto3 = newRef(glblCFn4);
 Term glblProto25;
 void glblCFn26(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8287,27 +8277,27 @@ void glblCFn26(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'and' found for integers called from %.*s: "
               "%ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glbland191);
+        pushRedex(args, glbland191);
         break;
       case 42:
-        store_redex(args, glbland141);
+        pushRedex(args, glbland141);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'and' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8315,7 +8305,7 @@ void glblCFn26(Term ref, Term args) {
   }
   return;
 }
-Term glblProto25 = new_ref(glblCFn26);
+Term glblProto25 = newRef(glblCFn26);
 Term glblProto307;
 void glblCFn308(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8323,27 +8313,27 @@ void glblCFn308(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'subs' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 2:
-        store_redex(args, glblsubs345);
+        pushRedex(args, glblsubs345);
         break;
       case 5:
-        store_redex(args, glblsubs326);
+        pushRedex(args, glblsubs326);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'subs' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8351,32 +8341,32 @@ void glblCFn308(Term ref, Term args) {
   }
   return;
 }
-Term glblProto307 = new_ref(glblCFn308);
-Term glblProto583;
-void glblFldFn584(Term ref, Term args) {
+Term glblProto307 = newRef(glblCFn308);
+Term glblProto579;
+void glblFldFn581(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 3, &arityArgs);
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of '.tail' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 45:
-        store_redex(args, glblFld601);
+        pushRedex(args, glblFld599);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of '.tail' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8384,7 +8374,7 @@ void glblFldFn584(Term ref, Term args) {
   }
   return;
 }
-Term glblProto583 = new_ref(glblFldFn584);
+Term glblProto579 = newRef(glblFldFn581);
 Term glblProto91;
 void glblCFn92(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8392,12 +8382,12 @@ void glblCFn92(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'take-while' found for integers called "
               "from %.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -8406,7 +8396,7 @@ void glblCFn92(Term ref, Term args) {
                 "No implementation of 'take-while' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8414,7 +8404,7 @@ void glblCFn92(Term ref, Term args) {
   }
   return;
 }
-Term glblProto91 = new_ref(glblCFn92);
+Term glblProto91 = newRef(glblCFn92);
 Term glblProto403;
 void glblCFn404(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8422,27 +8412,27 @@ void glblCFn404(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'vect-reverse' found for integers called "
               "from %.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblvect_reverse416);
+        pushRedex(args, glblvect_reverse416);
         break;
       case 42:
-        store_redex(args, glblvect_reverse413);
+        pushRedex(args, glblvect_reverse413);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'vect-reverse' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8450,7 +8440,7 @@ void glblCFn404(Term ref, Term args) {
   }
   return;
 }
-Term glblProto403 = new_ref(glblCFn404);
+Term glblProto403 = newRef(glblCFn404);
 Term glblProto45;
 void glblCFn46(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8458,24 +8448,24 @@ void glblCFn46(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'flatten' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblflatten501);
+        pushRedex(args, glblflatten501);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'flatten' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8483,7 +8473,7 @@ void glblCFn46(Term ref, Term args) {
   }
   return;
 }
-Term glblProto45 = new_ref(glblCFn46);
+Term glblProto45 = newRef(glblCFn46);
 Term glblProto23;
 void glblCFn24(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8491,9 +8481,9 @@ void glblCFn24(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
-      store_redex(args, glbl_LT_260);
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
+      pushRedex(args, glbl_LT_260);
     } else {
       switch (dispVal->type) {
       default: {
@@ -8501,7 +8491,7 @@ void glblCFn24(Term ref, Term args) {
                 "No implementation of '<' found for type %s (%ld) called from "
                 "%.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8509,7 +8499,7 @@ void glblCFn24(Term ref, Term args) {
   }
   return;
 }
-Term glblProto23 = new_ref(glblCFn24);
+Term glblProto23 = newRef(glblCFn24);
 Term glblProto87;
 void glblCFn88(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8517,12 +8507,12 @@ void glblCFn88(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'drop' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -8531,7 +8521,7 @@ void glblCFn88(Term ref, Term args) {
                 "No implementation of 'drop' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8539,7 +8529,7 @@ void glblCFn88(Term ref, Term args) {
   }
   return;
 }
-Term glblProto87 = new_ref(glblCFn88);
+Term glblProto87 = newRef(glblCFn88);
 Term glblProto39;
 void glblCFn40(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8547,30 +8537,30 @@ void glblCFn40(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'map' found for integers called from %.*s: "
               "%ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblmap187);
+        pushRedex(args, glblmap187);
         break;
       case 8:
-        store_redex(args, glblmap507);
+        pushRedex(args, glblmap507);
         break;
       case 42:
-        store_redex(args, glblmap137);
+        pushRedex(args, glblmap137);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'map' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8578,7 +8568,7 @@ void glblCFn40(Term ref, Term args) {
   }
   return;
 }
-Term glblProto39 = new_ref(glblCFn40);
+Term glblProto39 = newRef(glblCFn40);
 Term glblProto41;
 void glblCFn42(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8586,12 +8576,12 @@ void glblCFn42(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'map!' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -8600,7 +8590,7 @@ void glblCFn42(Term ref, Term args) {
                 "No implementation of 'map!' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8608,7 +8598,7 @@ void glblCFn42(Term ref, Term args) {
   }
   return;
 }
-Term glblProto41 = new_ref(glblCFn42);
+Term glblProto41 = newRef(glblCFn42);
 Term glblProto65;
 void glblCFn66(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8616,24 +8606,24 @@ void glblCFn66(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'conj' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblconj515);
+        pushRedex(args, glblconj515);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'conj' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8641,7 +8631,7 @@ void glblCFn66(Term ref, Term args) {
   }
   return;
 }
-Term glblProto65 = new_ref(glblCFn66);
+Term glblProto65 = newRef(glblCFn66);
 Term glblProto73;
 void glblCFn74(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8649,24 +8639,24 @@ void glblCFn74(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'first' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblfirst521);
+        pushRedex(args, glblfirst521);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'first' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8674,7 +8664,7 @@ void glblCFn74(Term ref, Term args) {
   }
   return;
 }
-Term glblProto73 = new_ref(glblCFn74);
+Term glblProto73 = newRef(glblCFn74);
 Term glblProto79;
 void glblCFn80(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8682,12 +8672,12 @@ void glblCFn80(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'butlast' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -8696,7 +8686,7 @@ void glblCFn80(Term ref, Term args) {
                 "No implementation of 'butlast' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8704,7 +8694,7 @@ void glblCFn80(Term ref, Term args) {
   }
   return;
 }
-Term glblProto79 = new_ref(glblCFn80);
+Term glblProto79 = newRef(glblCFn80);
 Term glblProto396;
 void glblCFn397(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8712,27 +8702,27 @@ void glblCFn397(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'vect-reduce' found for integers called "
               "from %.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblvect_reduce402);
+        pushRedex(args, glblvect_reduce402);
         break;
       case 42:
-        store_redex(args, glblvect_reduce399);
+        pushRedex(args, glblvect_reduce399);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'vect-reduce' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8740,7 +8730,7 @@ void glblCFn397(Term ref, Term args) {
   }
   return;
 }
-Term glblProto396 = new_ref(glblCFn397);
+Term glblProto396 = newRef(glblCFn397);
 Term glblProto33;
 void glblCFn34(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8748,12 +8738,12 @@ void glblCFn34(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'zero' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -8762,7 +8752,7 @@ void glblCFn34(Term ref, Term args) {
                 "No implementation of 'zero' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8770,7 +8760,7 @@ void glblCFn34(Term ref, Term args) {
   }
   return;
 }
-Term glblProto33 = new_ref(glblCFn34);
+Term glblProto33 = newRef(glblCFn34);
 Term glblProto43;
 void glblCFn44(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8778,27 +8768,27 @@ void glblCFn44(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'flat-map' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblflat_map185);
+        pushRedex(args, glblflat_map185);
         break;
       case 8:
-        store_redex(args, glblflat_map503);
+        pushRedex(args, glblflat_map503);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'flat-map' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8806,7 +8796,7 @@ void glblCFn44(Term ref, Term args) {
   }
   return;
 }
-Term glblProto43 = new_ref(glblCFn44);
+Term glblProto43 = newRef(glblCFn44);
 Term glblProto71;
 void glblCFn72(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8814,12 +8804,12 @@ void glblCFn72(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'vec' found for integers called from %.*s: "
               "%ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -8828,7 +8818,7 @@ void glblCFn72(Term ref, Term args) {
                 "No implementation of 'vec' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8836,7 +8826,7 @@ void glblCFn72(Term ref, Term args) {
   }
   return;
 }
-Term glblProto71 = new_ref(glblCFn72);
+Term glblProto71 = newRef(glblCFn72);
 Term glblProto315;
 void glblFldFn316(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8844,24 +8834,24 @@ void glblFldFn316(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of '.start' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 5:
-        store_redex(args, glblFld331);
+        pushRedex(args, glblFld331);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of '.start' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8869,7 +8859,7 @@ void glblFldFn316(Term ref, Term args) {
   }
   return;
 }
-Term glblProto315 = new_ref(glblFldFn316);
+Term glblProto315 = newRef(glblFldFn316);
 Term glblProto417;
 void glblCFn418(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8877,27 +8867,27 @@ void glblCFn418(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'vect-sub' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblvect_sub434);
+        pushRedex(args, glblvect_sub434);
         break;
       case 42:
-        store_redex(args, glblvect_sub431);
+        pushRedex(args, glblvect_sub431);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'vect-sub' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8905,7 +8895,7 @@ void glblCFn418(Term ref, Term args) {
   }
   return;
 }
-Term glblProto417 = new_ref(glblCFn418);
+Term glblProto417 = newRef(glblCFn418);
 Term glblProto75;
 void glblCFn76(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8913,24 +8903,24 @@ void glblCFn76(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'rest' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblrest517);
+        pushRedex(args, glblrest517);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'rest' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8938,7 +8928,7 @@ void glblCFn76(Term ref, Term args) {
   }
   return;
 }
-Term glblProto75 = new_ref(glblCFn76);
+Term glblProto75 = newRef(glblCFn76);
 Term glblProto47;
 void glblCFn48(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8946,12 +8936,12 @@ void glblCFn48(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'extend' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -8960,7 +8950,7 @@ void glblCFn48(Term ref, Term args) {
                 "No implementation of 'extend' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8968,7 +8958,7 @@ void glblCFn48(Term ref, Term args) {
   }
   return;
 }
-Term glblProto47 = new_ref(glblCFn48);
+Term glblProto47 = newRef(glblCFn48);
 Term glblProto83;
 void glblCFn84(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -8976,12 +8966,12 @@ void glblCFn84(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'split-with' found for integers called "
               "from %.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -8990,7 +8980,7 @@ void glblCFn84(Term ref, Term args) {
                 "No implementation of 'split-with' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -8998,7 +8988,7 @@ void glblCFn84(Term ref, Term args) {
   }
   return;
 }
-Term glblProto83 = new_ref(glblCFn84);
+Term glblProto83 = newRef(glblCFn84);
 Term glblProto59;
 void glblCFn60(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9006,24 +8996,24 @@ void glblCFn60(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'empty?' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblempty_QM_527);
+        pushRedex(args, glblempty_QM_527);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'empty?' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9031,7 +9021,7 @@ void glblCFn60(Term ref, Term args) {
   }
   return;
 }
-Term glblProto59 = new_ref(glblCFn60);
+Term glblProto59 = newRef(glblCFn60);
 Term glblProto67;
 void glblCFn68(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9039,24 +9029,24 @@ void glblCFn68(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'filter' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblfilter499);
+        pushRedex(args, glblfilter499);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'filter' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9064,7 +9054,7 @@ void glblCFn68(Term ref, Term args) {
   }
   return;
 }
-Term glblProto67 = new_ref(glblCFn68);
+Term glblProto67 = newRef(glblCFn68);
 Term glblProto97;
 void glblCFn98(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9072,24 +9062,24 @@ void glblCFn98(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'store' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblstore513);
+        pushRedex(args, glblstore513);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'store' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9097,7 +9087,7 @@ void glblCFn98(Term ref, Term args) {
   }
   return;
 }
-Term glblProto97 = new_ref(glblCFn98);
+Term glblProto97 = newRef(glblCFn98);
 Term glblProto85;
 void glblCFn86(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9105,12 +9095,12 @@ void glblCFn86(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'take' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -9119,7 +9109,7 @@ void glblCFn86(Term ref, Term args) {
                 "No implementation of 'take' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9127,7 +9117,7 @@ void glblCFn86(Term ref, Term args) {
   }
   return;
 }
-Term glblProto85 = new_ref(glblCFn86);
+Term glblProto85 = newRef(glblCFn86);
 Term glblProto61;
 void glblCFn62(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9135,36 +9125,36 @@ void glblCFn62(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'count' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 2:
-        store_redex(args, glblcount349);
+        pushRedex(args, glblcount349);
         break;
       case 5:
-        store_redex(args, glblcount322);
+        pushRedex(args, glblcount322);
         break;
       case 46:
-        store_redex(args, glblcount554);
+        pushRedex(args, glblcount551);
         break;
       case 8:
-        store_redex(args, glblcount533);
+        pushRedex(args, glblcount533);
         break;
       case 45:
-        store_redex(args, glblcount593);
+        pushRedex(args, glblcount590);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'count' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9172,32 +9162,32 @@ void glblCFn62(Term ref, Term args) {
   }
   return;
 }
-Term glblProto61 = new_ref(glblCFn62);
-Term glblProto15;
-void glblFldFn16(Term ref, Term args) {
+Term glblProto61 = newRef(glblCFn62);
+Term glblProto16;
+void glblFldFn18(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
   args = strictArgs(ref, args, 3, &arityArgs);
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of '.x' found for integers called from %.*s: "
               "%ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblFld19);
+        pushRedex(args, glblFld21);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of '.x' found for type %s (%ld) called from "
                 "%.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9205,7 +9195,7 @@ void glblFldFn16(Term ref, Term args) {
   }
   return;
 }
-Term glblProto15 = new_ref(glblFldFn16);
+Term glblProto16 = newRef(glblFldFn18);
 Term glblProto107;
 void glblCFn108(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9213,29 +9203,29 @@ void glblCFn108(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
-      store_redex(args, glblstr_vect264);
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
+      pushRedex(args, glblstr_vect264);
     } else {
       switch (dispVal->type) {
       case 2:
-        store_redex(args, glblstr_vect368);
+        pushRedex(args, glblstr_vect368);
         break;
       case 5:
-        store_redex(args, glblstr_vect366);
+        pushRedex(args, glblstr_vect366);
         break;
       case 43:
-        store_redex(args, glblstr_vect203);
+        pushRedex(args, glblstr_vect203);
         break;
       case 8:
-        store_redex(args, glblstr_vect535);
+        pushRedex(args, glblstr_vect535);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'str-vect' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9243,7 +9233,7 @@ void glblCFn108(Term ref, Term args) {
   }
   return;
 }
-Term glblProto107 = new_ref(glblCFn108);
+Term glblProto107 = newRef(glblCFn108);
 Term glblProto57;
 void glblCFn58(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9251,24 +9241,24 @@ void glblCFn58(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'interpose' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblinterpose497);
+        pushRedex(args, glblinterpose497);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'interpose' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9276,7 +9266,7 @@ void glblCFn58(Term ref, Term args) {
   }
   return;
 }
-Term glblProto57 = new_ref(glblCFn58);
+Term glblProto57 = newRef(glblCFn58);
 Term glblProto35;
 void glblCFn36(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9284,24 +9274,24 @@ void glblCFn36(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'comp' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblcomp523);
+        pushRedex(args, glblcomp523);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'comp' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9309,7 +9299,7 @@ void glblCFn36(Term ref, Term args) {
   }
   return;
 }
-Term glblProto35 = new_ref(glblCFn36);
+Term glblProto35 = newRef(glblCFn36);
 Term glblProto103;
 void glblCFn104(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9317,12 +9307,12 @@ void glblCFn104(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'keys' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -9331,7 +9321,7 @@ void glblCFn104(Term ref, Term args) {
                 "No implementation of 'keys' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9339,7 +9329,7 @@ void glblCFn104(Term ref, Term args) {
   }
   return;
 }
-Term glblProto103 = new_ref(glblCFn104);
+Term glblProto103 = newRef(glblCFn104);
 Term glblProto55;
 void glblCFn56(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9347,12 +9337,12 @@ void glblCFn56(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'apply' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -9361,7 +9351,7 @@ void glblCFn56(Term ref, Term args) {
                 "No implementation of 'apply' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9369,7 +9359,7 @@ void glblCFn56(Term ref, Term args) {
   }
   return;
 }
-Term glblProto55 = new_ref(glblCFn56);
+Term glblProto55 = newRef(glblCFn56);
 Term glblProto27;
 void glblCFn28(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9377,27 +9367,27 @@ void glblCFn28(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'or' found for integers called from %.*s: "
               "%ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblor189);
+        pushRedex(args, glblor189);
         break;
       case 42:
-        store_redex(args, glblor139);
+        pushRedex(args, glblor139);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'or' found for type %s (%ld) called from "
                 "%.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9405,7 +9395,7 @@ void glblCFn28(Term ref, Term args) {
   }
   return;
 }
-Term glblProto27 = new_ref(glblCFn28);
+Term glblProto27 = newRef(glblCFn28);
 Term glblProto31;
 void glblCFn32(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9413,23 +9403,23 @@ void glblCFn32(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
-      store_redex(args, glblcond258);
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
+      pushRedex(args, glblcond258);
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblcond193);
+        pushRedex(args, glblcond193);
         break;
       case 42:
-        store_redex(args, glblcond143);
+        pushRedex(args, glblcond143);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'cond' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9437,7 +9427,7 @@ void glblCFn32(Term ref, Term args) {
   }
   return;
 }
-Term glblProto31 = new_ref(glblCFn32);
+Term glblProto31 = newRef(glblCFn32);
 Term glblProto77;
 void glblCFn78(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9445,24 +9435,24 @@ void glblCFn78(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'last' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glbllast519);
+        pushRedex(args, glbllast519);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'last' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9470,7 +9460,7 @@ void glblCFn78(Term ref, Term args) {
   }
   return;
 }
-Term glblProto77 = new_ref(glblCFn78);
+Term glblProto77 = newRef(glblCFn78);
 Term glblProto317;
 void glblFldFn318(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9478,27 +9468,27 @@ void glblFldFn318(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of '.len' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 5:
-        store_redex(args, glblFld333);
+        pushRedex(args, glblFld333);
         break;
       case 45:
-        store_redex(args, glblFld604);
+        pushRedex(args, glblFld602);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of '.len' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9506,7 +9496,7 @@ void glblFldFn318(Term ref, Term args) {
   }
   return;
 }
-Term glblProto317 = new_ref(glblFldFn318);
+Term glblProto317 = newRef(glblFldFn318);
 Term glblProto99;
 void glblCFn100(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9514,12 +9504,12 @@ void glblCFn100(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'assoc' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -9528,7 +9518,7 @@ void glblCFn100(Term ref, Term args) {
                 "No implementation of 'assoc' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9536,7 +9526,7 @@ void glblCFn100(Term ref, Term args) {
   }
   return;
 }
-Term glblProto99 = new_ref(glblCFn100);
+Term glblProto99 = newRef(glblCFn100);
 Term glblProto53;
 void glblCFn54(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9544,24 +9534,24 @@ void glblCFn54(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'extract' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 43:
-        store_redex(args, glblextract199);
+        pushRedex(args, glblextract199);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'extract' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9569,7 +9559,7 @@ void glblCFn54(Term ref, Term args) {
   }
   return;
 }
-Term glblProto53 = new_ref(glblCFn54);
+Term glblProto53 = newRef(glblCFn54);
 Term glblProto49;
 void glblCFn50(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9577,12 +9567,12 @@ void glblCFn50(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'duplicate' found for integers called from "
               "%.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -9591,7 +9581,7 @@ void glblCFn50(Term ref, Term args) {
                 "No implementation of 'duplicate' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9599,7 +9589,7 @@ void glblCFn50(Term ref, Term args) {
   }
   return;
 }
-Term glblProto49 = new_ref(glblCFn50);
+Term glblProto49 = newRef(glblCFn50);
 Term glblProto109;
 void glblCFn110(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9607,12 +9597,12 @@ void glblCFn110(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'free-resource' found for integers called "
               "from %.*s: %ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
@@ -9621,7 +9611,7 @@ void glblCFn110(Term ref, Term args) {
                 "No implementation of 'free-resource' found for type %s (%ld) "
                 "called from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9629,7 +9619,7 @@ void glblCFn110(Term ref, Term args) {
   }
   return;
 }
-Term glblProto109 = new_ref(glblCFn110);
+Term glblProto109 = newRef(glblCFn110);
 Term glblProto101;
 void glblCFn102(Term ref, Term args) {
   NativeArgs arityArgs = {0, {}};
@@ -9637,24 +9627,24 @@ void glblCFn102(Term ref, Term args) {
   if (arityArgs.count == 3) {
     String *fileStr = (String *)arityArgs.args[0];
     Value *dispVal = (Value *)arityArgs.args[2];
-    swapStore(term_loc(args), (Term)dispVal);
-    if (term_tag((Term)dispVal) == I60) {
+    swap(termLoc(args), (Term)dispVal);
+    if (termTag((Term)dispVal) == I60) {
       fprintf(stderr,
               "No implementation of 'get' found for integers called from %.*s: "
               "%ld\n",
-              (int)fileStr->len, fileStr->buffer, get_i60(arityArgs.args[1]));
+              (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));
       BOOM("Dispatch failed");
     } else {
       switch (dispVal->type) {
       case 8:
-        store_redex(args, glblget531);
+        pushRedex(args, glblget531);
         break;
       default: {
         fprintf(stderr,
                 "No implementation of 'get' found for type %s (%ld) called "
                 "from %.*s: %ld\n",
                 typeName(dispVal->type), dispVal->type, (int)fileStr->len,
-                fileStr->buffer, get_i60(arityArgs.args[1]));
+                fileStr->buffer, getI60(arityArgs.args[1]));
         BOOM("Dispatch failed");
       }
       }
@@ -9662,7 +9652,7 @@ void glblCFn102(Term ref, Term args) {
   }
   return;
 }
-Term glblProto101 = new_ref(glblCFn102);
+Term glblProto101 = newRef(glblCFn102);
 char *dupLabels[154];
 unsigned refsCount = 205;
 unsigned refNameCount = 205;
@@ -9672,7 +9662,6 @@ refMap refNames[205] = {{intCond, "intCond"},
                         {graphFn, "graph"},
                         {accessFieldFn, "accessField"},
                         {hvmVectFn, "hvmVect"},
-                        {exitProg, "exitProg"},
                         {constructFn, "construct"},
                         {glblCFn114, "pr*"},
                         {glblCFn52, "wrap"},
@@ -9689,30 +9678,30 @@ refMap refNames[205] = {{intCond, "intCond"},
                         {glblCFn38, "recurse"},
                         {glblrecurse363, "recurse 2"},
                         {glblrecurse361, "recurse 5"},
-                        {glblrecurse550, "recurse 46"},
+                        {glblrecurse548, "recurse 46"},
                         {glblrecurse196, "recurse 43"},
-                        {glblrecurse588, "recurse 45"},
+                        {glblrecurse585, "recurse 45"},
                         {glblrecurse146, "recurse 42"},
                         {glblFldFn314, ".s"},
                         {glblFldFn328, ".s 5"},
                         {glblCFn129, "*"},
-                        {glblFldFn581, ".head"},
-                        {glblFldFn597, ".head 45"},
+                        {glblFldFn577, ".head"},
+                        {glblFldFn593, ".head 45"},
                         {glblCFn30, "either"},
                         {glbleither194, "either 43"},
                         {glbleither144, "either 42"},
                         {glblCFn212, "<="},
                         {glblCFn94, "reverse"},
                         {glblreverse508, "reverse 8"},
-                        {glblCFn22, "="},
+                        {glblCFn17, "="},
                         {glbl_EQ_346, "= 2"},
                         {glbl_EQ_323, "= 5"},
                         {glbl_EQ_200, "= 43"},
                         {glbl_EQ_538, "= 8"},
                         {glbl_EQ_148, "= 42"},
                         {glbl_EQ_261, "= 1"},
-                        {glblCFn271, "vect-count"},
-                        {glblCons595, "Cons"},
+                        {glblCFn270, "vect-count"},
+                        {glblCons592, "Cons"},
                         {glblCFn96, "nth"},
                         {glblnth528, "nth 8"},
                         {glblCFn117, "+"},
@@ -9728,13 +9717,13 @@ refMap refNames[205] = {{intCond, "intCond"},
                         {glblCFn26, "and"},
                         {glbland190, "and 43"},
                         {glbland140, "and 42"},
-                        {glblc456, "core: 680"},
+                        {glblc165, "core: 313"},
                         {glblCFn544, "cons"},
                         {glblCFn308, "subs"},
                         {glblsubs344, "subs 2"},
                         {glblsubs325, "subs 5"},
-                        {glblFldFn584, ".tail"},
-                        {glblFldFn600, ".tail 45"},
+                        {glblFldFn581, ".tail"},
+                        {glblFldFn597, ".tail 45"},
                         {glblCFn384, "range*"},
                         {glblCFn92, "take-while"},
                         {glblCFn393, "range"},
@@ -9760,7 +9749,7 @@ refMap refNames[205] = {{intCond, "intCond"},
                         {glblCFn74, "first"},
                         {glblfirst520, "first 8"},
                         {glblCFn80, "butlast"},
-                        {glblCFn302, "str-malloc"},
+                        {glblCFn301, "str-malloc"},
                         {glblCFn397, "vect-reduce"},
                         {glblvect_reduce401, "vect-reduce 43"},
                         {glblvect_reduce398, "vect-reduce 42"},
@@ -9780,7 +9769,6 @@ refMap refNames[205] = {{intCond, "intCond"},
                         {glblCFn76, "rest"},
                         {glblrest516, "rest 8"},
                         {glblCFn48, "extend"},
-                        {glblc163, "core: 314"},
                         {glblCFn159, "println*"},
                         {glblCFn474, "vect-="},
                         {glblCFn84, "split-with"},
@@ -9795,19 +9783,19 @@ refMap refNames[205] = {{intCond, "intCond"},
                         {glblCFn62, "count"},
                         {glblcount348, "count 2"},
                         {glblcount321, "count 5"},
-                        {glblcount552, "count 46"},
+                        {glblcount550, "count 46"},
                         {glblcount532, "count 8"},
-                        {glblcount591, "count 45"},
-                        {glblFldFn16, ".x"},
-                        {glblFldFn18, ".x 43"},
-                        {glblSome17, "Some"},
+                        {glblcount588, "count 45"},
+                        {glblFldFn18, ".x"},
+                        {glblFldFn20, ".x 43"},
+                        {glblSome19, "Some"},
                         {glblCFn108, "str-vect"},
                         {glblstr_vect367, "str-vect 2"},
                         {glblstr_vect365, "str-vect 5"},
                         {glblstr_vect202, "str-vect 43"},
                         {glblstr_vect534, "str-vect 8"},
                         {glblstr_vect263, "str-vect 1"},
-                        {glblCFn120, "inc"},
+                        {glblCFn119, "inc"},
                         {glblCFn58, "interpose"},
                         {glblinterpose496, "interpose 8"},
                         {glblCFn123, "-"},
@@ -9822,29 +9810,30 @@ refMap refNames[205] = {{intCond, "intCond"},
                         {glblCFn28, "or"},
                         {glblor188, "or 43"},
                         {glblor138, "or 42"},
+                        {glblc456, "core: 681"},
                         {glblCFn32, "cond"},
                         {glblcond192, "cond 43"},
                         {glblcond142, "cond 42"},
                         {glblcond257, "cond 1"},
                         {glblCFn78, "last"},
                         {glbllast518, "last 8"},
-                        {glblc165, "core: 312"},
                         {glblFldFn318, ".len"},
                         {glblFldFn332, ".len 5"},
-                        {glblFldFn603, ".len 45"},
+                        {glblFldFn600, ".len 45"},
                         {glblCFn100, "assoc"},
+                        {glblc163, "core: 315"},
                         {glblCFn293, "str-count"},
                         {glblCFn54, "extract"},
                         {glblextract198, "extract 43"},
                         {glblCFn50, "duplicate"},
-                        {glblCFn279, "identity"},
+                        {glblCFn274, "identity"},
                         {glblSubString327, "SubString"},
                         {glblCFn110, "free-resource"},
                         {glblCFn102, "get"},
                         {glblget530, "get 8"},
                         {glblCFn208, "int-<"},
                         {glblCFn677, "pr0"},
-                        {glblCFn684, "output"},
+                        {glblCFn685, "output"},
                         {glblrep_E727, "rep-E"},
                         {glblCFn667, ">>"},
                         {glblhbin_done690, "hbin-done"},
@@ -9852,7 +9841,7 @@ refMap refNames[205] = {{intCond, "intCond"},
                         {glblCFn701, "clr1"},
                         {glblCFn664, "/2"},
                         {glblbin_0697, "bin-0"},
-                        {glblCFn661, "bit-and"},
+                        {glblCFn662, "bit-and"},
                         {glblCFn721, "simplest"},
                         {glblrep_I725, "rep-I"},
                         {glblCFn659, "str-to-int"},
@@ -9885,69 +9874,69 @@ void normGlobals() {
     Term glblVal14_1;
     glblVal14 = dupeArg(glblVal14, &glblVal14_1, 0);
 
-    // call None at core: 65
-    Term glblRslt13Args = pair_make(APP, 0, NUL, SUB);
-    glblRslt13 = term_new(VAR, 0, port(2, term_loc(glblRslt13Args)));
-    store_redex(glblRslt13Args, glblVal14_1);
+    // call None at core: 66
+    Term glblRslt13Args = makePair(APP, 0, NUL, SUB);
+    glblRslt13 = newTerm(VAR, 0, portLoc(2, glblRslt13Args));
+    pushRedex(glblRslt13Args, glblVal14_1);
   }
   {
     Term glblVal297_1;
     glblVal297 = dupeArg(glblVal297, &glblVal297_1, 0);
 
-    // call Leaf at core: 430
-    Term glblRslt296Args = pair_make(APP, 0, NUL, SUB);
-    glblRslt296 = term_new(VAR, 0, port(2, term_loc(glblRslt296Args)));
-    store_redex(glblRslt296Args, glblVal297_1);
+    // call Leaf at core: 431
+    Term glblRslt296Args = makePair(APP, 0, NUL, SUB);
+    glblRslt296 = newTerm(VAR, 0, portLoc(2, glblRslt296Args));
+    pushRedex(glblRslt296Args, glblVal297_1);
   }
   {
-    Term glblVal560_1;
-    glblVal560 = dupeArg(glblVal560, &glblVal560_1, 0);
+    Term glblVal556_1;
+    glblVal556 = dupeArg(glblVal556, &glblVal556_1, 0);
 
-    // call EndOfList at core: 797
-    Term glblRslt559Args = pair_make(APP, 0, NUL, SUB);
-    glblRslt559 = term_new(VAR, 0, port(2, term_loc(glblRslt559Args)));
-    store_redex(glblRslt559Args, glblVal560_1);
+    // call EndOfList at core: 798
+    Term glblRslt555Args = makePair(APP, 0, NUL, SUB);
+    glblRslt555 = newTerm(VAR, 0, portLoc(2, glblRslt555Args));
+    pushRedex(glblRslt555Args, glblVal556_1);
   }
   normalize(NULL);
-  if (term_tag(glblVal607) == VAR)
-    glblVal607 = take(term_loc(glblVal607));
-  if (term_tag(glblRslt559) == VAR)
-    glblRslt559 = take(term_loc(glblRslt559));
-  if (term_tag(glblVal560) == VAR)
-    glblVal560 = take(term_loc(glblVal560));
-  if (term_tag(glblVal450) == VAR)
-    glblVal450 = take(term_loc(glblVal450));
-  if (term_tag(glblVal334) == VAR)
-    glblVal334 = take(term_loc(glblVal334));
-  if (term_tag(glblRslt296) == VAR)
-    glblRslt296 = take(term_loc(glblRslt296));
-  if (term_tag(glblVal297) == VAR)
-    glblVal297 = take(term_loc(glblVal297));
-  if (term_tag(glblVal214) == VAR)
-    glblVal214 = take(term_loc(glblVal214));
-  if (term_tag(glblVal20) == VAR)
-    glblVal20 = take(term_loc(glblVal20));
-  if (term_tag(glblRslt13) == VAR)
-    glblRslt13 = take(term_loc(glblRslt13));
-  if (term_tag(glblVal14) == VAR)
-    glblVal14 = take(term_loc(glblVal14));
-  if (term_tag(glblVal9) == VAR)
-    glblVal9 = take(term_loc(glblVal9));
+  if (termTag(glblVal605) == VAR)
+    glblVal605 = take(termLoc(glblVal605));
+  if (termTag(glblRslt555) == VAR)
+    glblRslt555 = take(termLoc(glblRslt555));
+  if (termTag(glblVal556) == VAR)
+    glblVal556 = take(termLoc(glblVal556));
+  if (termTag(glblVal450) == VAR)
+    glblVal450 = take(termLoc(glblVal450));
+  if (termTag(glblVal334) == VAR)
+    glblVal334 = take(termLoc(glblVal334));
+  if (termTag(glblRslt296) == VAR)
+    glblRslt296 = take(termLoc(glblRslt296));
+  if (termTag(glblVal297) == VAR)
+    glblVal297 = take(termLoc(glblVal297));
+  if (termTag(glblVal214) == VAR)
+    glblVal214 = take(termLoc(glblVal214));
+  if (termTag(glblVal22) == VAR)
+    glblVal22 = take(termLoc(glblVal22));
+  if (termTag(glblRslt13) == VAR)
+    glblRslt13 = take(termLoc(glblRslt13));
+  if (termTag(glblVal14) == VAR)
+    glblVal14 = take(termLoc(glblVal14));
+  if (termTag(glblVal10) == VAR)
+    glblVal10 = take(termLoc(glblVal10));
 }
 void freeGlobals() {
-  freeGlobal(glblVal607);
-  freeGlobal(glblRslt559);
-  freeGlobal(glblVal560);
+  freeGlobal(glblVal605);
+  freeGlobal(glblRslt555);
+  freeGlobal(glblVal556);
   freeGlobal(glblVal450);
   freeGlobal(glblVal334);
   freeGlobal(glblRslt296);
   freeGlobal(glblVal297);
   freeGlobal(glblVal214);
-  freeGlobal(glblVal20);
+  freeGlobal(glblVal22);
   freeGlobal(glblRslt13);
   freeGlobal(glblVal14);
-  freeGlobal(glblVal9);
+  freeGlobal(glblVal10);
   normalize(NULL);
 }
-Term mainFn = new_ref(glblCFn745);
+Term mainFn = newRef(glblCFn745);
 int typeCount = 47;

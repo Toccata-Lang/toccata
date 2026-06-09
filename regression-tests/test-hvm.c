@@ -4,7 +4,7 @@
 
 unsigned refsCount = 0;
 refMap refNames[0];
-
+char *dupLabels[] = {};
 
 void testAppLam(void) {
   char msg[100];
