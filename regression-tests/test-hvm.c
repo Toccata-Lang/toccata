@@ -2277,6 +2277,20 @@ void testDupSupAnnihilation(void) {
   // Trigger DUP/SUP interaction — should annihilate
   interact(dup, sup);
 
+  // DUP aux ports should now contain SUP's values
+  Term p1 = take(portLoc(1, dup));
+  if (termTag(p1) != I60 || getI60(p1) != 7) {
+    sprintf(msg, "dup port1 should be I60(7), got tag %s val %ld",
+            tagStr(termTag(p1)), (long)getI60(p1));
+    BOOM(msg);
+  }
+  Term p2 = take(portLoc(2, dup));
+  if (termTag(p2) != I60 || getI60(p2) != 8) {
+    sprintf(msg, "dup port2 should be I60(8), got tag %s val %ld",
+            tagStr(termTag(p2)), (long)getI60(p2));
+    BOOM(msg);
+  }
+
   // Both DUP and SUP pairs consumed
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0 after annihilation, got %lld", (long long)glblAlloced);

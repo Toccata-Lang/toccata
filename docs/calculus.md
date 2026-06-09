@@ -99,7 +99,7 @@ DUP/SUP has two variants depending on whether the DUP and SUP labels match.
 
 #### DUP/SUP — same labels (annihilation)
 - **Before:** `D_n` principal connects to `S_n` principal. DUP aux ports carry `a`, `b`. SUP aux ports carry `x`, `y`.
-- **After:** Direct wiring: `a → x`, `b → y`. Both DUP and SUP nodes are consumed.
+- **After:** SUP aux port values wired into DUP aux ports: `x → a`, `y → b`. SUP node consumed, DUP node survives with rewired aux ports.
 
 #### DUP/SUP — different labels (commutation/expansion)
 - **Before:** `D_m` principal connects to `S_n` principal (m ≠ n). DUP aux ports carry `a`, `b`. SUP aux ports carry `x`, `y`.
