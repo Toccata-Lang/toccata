@@ -148,7 +148,7 @@ bool isNegative(Term term);
 
 // this abuses the compile time functionality
 // to create a Port value
-#define termNew_(tag, x) (((u64)x + tag))
+#define newTerm_(tag, x) (((u64)x + tag))
 
 // Get term at location
 Term get(Location loc);

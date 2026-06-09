@@ -350,7 +350,6 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
   }
 }
 
-/*
 // graphFn - native graphing function
 // Needs: sideEffects, argsNet, strictArgs, makePair
 void graphFn(Term ref, Term args) {
@@ -409,7 +408,6 @@ void graphFn(Term ref, Term args) {
     move(portLoc(2, termLoc(args)), arg);
   }
 }
-*/
 
 void subGraph(char *cap, Term pos, unsigned nc) {
   graphDown(cap, pos, nc, subGraphs++);

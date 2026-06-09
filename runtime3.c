@@ -3113,7 +3113,7 @@ int main (int argc, char **argv) {
     do {
       normalize(NULL);
       result = take(resultLocation);
-      graphDown("result", result, 0, subGraphs++);
+      subGraph("result", result, 0);
       resultTag = termTag(result);
       if (resultTag == VAR) {
 	resultLocation = termLoc(result);
@@ -3152,7 +3152,7 @@ int main (int argc, char **argv) {
 	  resultTag = termTag(result);
 	  swap(resultLocation, result);
 	} else {
-	  // graphDown("BOOM", result);
+	  // subGraph("BOOM", result);
 	  printTerm("result", result);
 	  BOOM("Compiler screwed up. Incomplete result.");
 	}
@@ -3173,12 +3173,12 @@ int main (int argc, char **argv) {
 	Lab l = termLab(result);
 	Location loc = termLoc(result);
 	fprintf(stderr, "bad result %s (%d) pair\n", tagStr(resultTag), resultTag);
-	graphDown("SUP result", result, 0, subGraphs++);
+	subGraph("SUP result", result, 0);
 	Term newResult = take(loc + 1) ;
 	alts[altsCount++] = newResult;
-	graphDown("newResult", newResult, 0, subGraphs++);
+	subGraph("newResult", newResult, 0);
 	newResult = take(loc) ;
-	graphDown("newResult", newResult, 0, subGraphs++);
+	subGraph("newResult", newResult, 0);
 	result = newResult;
 	resultTag = termTag(result);
 	swap(resultLocation, result);
@@ -3187,7 +3187,7 @@ int main (int argc, char **argv) {
 
       default: {
 	fprintf(stderr, "bad result %s (%d) pair\n", tagStr(resultTag), resultTag);
-	graphDown("result", result, 0, subGraphs++);
+	subGraph("result", result, 0);
 	interact(ERA, result);
 	result = newI60(1);
 	resultTag = termTag(result);
@@ -3198,7 +3198,7 @@ int main (int argc, char **argv) {
   }
   for (int i = 0; i < altsCount; i++) {
     Term alt = alts[i];
-    graphDown("alt", alt, 0, subGraphs++);
+    subGraph("alt", alt, 0);
     printTerm("alt", alt);
     if (hasLocation(alt))
       eraseCycle(alt, termLoc(alt));
