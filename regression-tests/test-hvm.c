@@ -2312,7 +2312,7 @@ void testDupSupCommutation(void) {
   subGraph("dup", dup, 0);
   subGraph("sup", sup, nodeCount);
   interact(dup, sup);
-  subGraph("after", dup, nodeCount);
+  subGraph("after", dup, 0);
 
   // DUP aux ports should contain new SUP nodes
   Term s1 = take(portLoc(1, dup));
@@ -2326,35 +2326,33 @@ void testDupSupCommutation(void) {
     BOOM(msg);
   }
 
-  // s1: port1=VAR→dup1 port1, port2=VAR→dup2 port1
+  // s1: port1=I60(7), port2=I60(8) (makeLazyDup with I60 puts values directly)
   Term s1p1 = take(portLoc(1, s1));
-  if (termTag(s1p1) != VAR) {
-    sprintf(msg, "sup1 port1 should be VAR, got %s", tagStr(termTag(s1p1)));
+  if (termTag(s1p1) != I60 || getI60(s1p1) != 7) {
+    sprintf(msg, "sup1 port1 should be I60(7), got tag %s val %ld",
+            tagStr(termTag(s1p1)), (long)getI60(s1p1));
     BOOM(msg);
   }
   Term s1p2 = take(portLoc(2, s1));
-  if (termTag(s1p2) != VAR) {
-    sprintf(msg, "sup1 port2 should be VAR, got %s", tagStr(termTag(s1p2)));
+  if (termTag(s1p2) != I60 || getI60(s1p2) != 8) {
+    sprintf(msg, "sup1 port2 should be I60(8), got tag %s val %ld",
+            tagStr(termTag(s1p2)), (long)getI60(s1p2));
     BOOM(msg);
   }
 
-  // s2: port1=VAR→dup1 port2, port2=VAR→dup2 port2
+  // s2: port1=I60(7), port2=I60(8)
   Term s2p1 = take(portLoc(1, s2));
-  if (termTag(s2p1) != VAR) {
-    sprintf(msg, "sup2 port1 should be VAR, got %s", tagStr(termTag(s2p1)));
+  if (termTag(s2p1) != I60 || getI60(s2p1) != 7) {
+    sprintf(msg, "sup2 port1 should be I60(7), got tag %s val %ld",
+            tagStr(termTag(s2p1)), (long)getI60(s2p1));
     BOOM(msg);
   }
   Term s2p2 = take(portLoc(2, s2));
-  if (termTag(s2p2) != VAR) {
-    sprintf(msg, "sup2 port2 should be VAR, got %s", tagStr(termTag(s2p2)));
+  if (termTag(s2p2) != I60 || getI60(s2p2) != 8) {
+    sprintf(msg, "sup2 port2 should be I60(8), got tag %s val %ld",
+            tagStr(termTag(s2p2)), (long)getI60(s2p2));
     BOOM(msg);
   }
-
-  // Follow VAR chains to DUP nodes and erase them
-  interact(ERA, newTerm(VAR, 0, termLoc(s1p1)));
-  interact(ERA, newTerm(VAR, 0, termLoc(s1p2)));
-  interact(ERA, newTerm(VAR, 0, termLoc(s2p1)));
-  interact(ERA, newTerm(VAR, 0, termLoc(s2p2)));
 
   // All pairs consumed
   if (glblAlloced != 0) {

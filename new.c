@@ -1245,9 +1245,9 @@ void dupSup(Term dup, Term sup) {
       Term y = take(portLoc(2, sup));
       if (termTag(y) == VAR) y = NUL;
 
-      // a,b → new DUP nodes (lazy DUP chains)
-      Term dup1 = makeLazyDup(dupLab, a);
-      Term dup2 = makeLazyDup(dupLab, b);
+      // x,y → new DUP nodes (lazy DUP chains)
+      Term dup1 = makeLazyDup(dupLab, x);
+      Term dup2 = makeLazyDup(dupLab, y);
 
       // Two new SUP nodes: each connects to both DUP chains
       Term sup1 = makePair(SUP, supLab,
