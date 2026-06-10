@@ -70,7 +70,10 @@ unsigned downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum)
 	fprintf(dotFile, "x%d_%x:%s -- x%d_%x:n\n",
 		graphNum, nodeNum, branchPort, graphNum, branchNode);
       } else if (t == DUP && (bt != LAZ || get(portLoc(1, branch)) == tree)) {
-	return branchNode;
+	if (hasLocation(branch))
+	  return branchNode;
+	else
+	  return 65536;    
       } else {
 	if (bt == VAR) {
 	  Location branchLoc = termLoc(branch);
@@ -94,7 +97,10 @@ unsigned downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum)
       }
     }
   }
-  return branchNode;
+  if (hasLocation(branch))
+    return branchNode;
+  else
+    return 65536;    
 }
 
 // graph the node and the tree under it, if needed. Return the node number
