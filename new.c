@@ -1076,9 +1076,7 @@ void eraseLazy(Term laz) {
       // another thread beat us here. Let them handle it.
       break;
     }
-    take(portLoc(1, negLaz));
-    take(portLoc(1, laz));
-    Term posLaz = take(portLoc(2, laz));
+    Term posLaz = get(portLoc(2, laz));
     Term origDup2 = swap(portLoc(2, negLaz), SUB);
     Tag t1 = termTag(origDup1);
     Tag t2 = termTag(origDup2);
@@ -1095,6 +1093,12 @@ void eraseLazy(Term laz) {
       swap(portLoc(1, negLaz), NUL);
       swap(portLoc(2, negLaz), NUL);
       interact(ERA, posLaz);
+      if (contextCycle) {
+	if (t1 == ERA)
+	  freeLoc(portLoc(1, negLaz));
+	if (t2 == ERA)
+	  freeLoc(portLoc(2, negLaz));
+      }
     } else if (termTag(origDup1) == LAZ) {
       freeLoc(portLoc(2, negLaz));
       move(portLoc(1, negLaz), posLaz);
@@ -1102,6 +1106,7 @@ void eraseLazy(Term laz) {
       freeLoc(portLoc(1, negLaz));
       move(portLoc(2, negLaz), posLaz);
     }
+    freePair(portLoc(1, laz));
   }
     break;
 
@@ -1346,8 +1351,8 @@ void interact(Term neg, Term pos) {
 	sprintf(dotName, "graphs/%04ld-%ld-%ld.dot", graphCount, neg, pos);
 	dotFile = fopen(dotName, "w");
 	fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
-	subGraph("NEG", neg, 0);
-	subGraph("POS", pos, nodeCount);
+	graph("NEG", neg, 0);
+	graph("POS", pos, nodeCount);
 	fprintf(dotFile, "}\n");
 	fclose(dotFile);
 	dotFile = currDOT;

@@ -45,21 +45,6 @@ unsigned downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum)
   }
 
   if (branch == SUB) {
-    /*
-      // Seems to not be needed
-    for (unsigned i = 0; i < nodeCount; i++) {
-      graphNode *gn = &nodeStack[i];
-      Term left = get(gn->node);
-      Term right = get(gn->node + 1);
-      if (termTag(left) == VAR && termLoc(left) == treeLoc) {
-	// While loop already drew this edge when it followed the VAR chain
-	break;
-      } else if (termTag(right) == VAR && termLoc(right) == treeLoc) {
-	// While loop already drew this edge when it followed the VAR chain
-	break;
-      }
-    }
-    // */
     return 65536;
   }
 
