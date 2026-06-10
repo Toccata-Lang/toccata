@@ -3142,7 +3142,7 @@ int main (int argc, char **argv) {
   dotFile = fopen("graphs.dot", "w");
   fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
 
-  hvmInit(1024 * 1024 * 1024);
+  hvmInit(1024 * 1024);
   hvmReset();
 
   start = time64();
