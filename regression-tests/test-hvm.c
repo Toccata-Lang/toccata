@@ -1823,6 +1823,12 @@ void testEraseLazyCycle1(void) {
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
+  Term trm = take(portLoc(1, dup));
+  if (termTag(trm) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -1847,6 +1853,12 @@ void testEraseLazyCycle2(void) {
   swap(portLoc(2, dup), laz);
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  Term trm = take(portLoc(1, dup));
+  if (termTag(trm) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
 
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
@@ -1932,6 +1944,12 @@ void testEraVarThruSupI60(void) {
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
+  Term trm = take(portLoc(1, dup));
+  if (termTag(trm) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -1958,6 +1976,12 @@ void testEraVarThruLamI60(void) {
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
+  Term trm = take(portLoc(1, dup));
+  if (termTag(trm) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -1981,6 +2005,12 @@ void testEraVarThruSupNul(void) {
 
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  Term trm = take(portLoc(1, dup));
+  if (termTag(trm) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
 
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
@@ -2008,6 +2038,12 @@ void testEraVarThruLamNulPort2(void) {
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
 
+  Term trm = take(portLoc(1, dup));
+  if (termTag(trm) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
+
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
     BOOM(msg);
@@ -2030,6 +2066,12 @@ void testEraVarThruSupVarToDupPort1(void) {
   swap(portLoc(2, dup), laz);
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  Term trm = take(portLoc(1, dup));
+  if (termTag(trm) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
 
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
@@ -2057,6 +2099,12 @@ void testEraVarThruSupDupPort2(void) {
 
 
   interact(ERA, newTerm(VAR, 0, dupLoc));
+
+  Term trm = take(portLoc(1, dup));
+  if (termTag(trm) != NUL) {
+    sprintf(msg, "DUP port 1 should be NUL, got tag %s", tagStr(termTag(trm)));
+    BOOM(msg);
+  }
 
   if (glblAlloced != 0) {
     sprintf(msg, "glblAlloced should be 0, got %lld", (long long)glblAlloced);
@@ -2383,6 +2431,7 @@ void testDupSupCommutationLam(void) {
     sprintf(msg, "dup port1 should be SUP, got %s", tagStr(termTag(s1)));
     BOOM(msg);
   }
+
   Term s2 = take(portLoc(2, dup));
   if (termTag(s2) != SUP) {
     sprintf(msg, "dup port2 should be SUP, got %s", tagStr(termTag(s2)));
