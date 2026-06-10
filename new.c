@@ -672,13 +672,8 @@ Term makePair(Tag tag, Lab lab, Term fst, Term snd) {
   atomic_store_explicit(&nodeBuff[loc + 1], snd, memory_order_relaxed);
 #endif
 
-  Term new_pair = newTerm(tag, lab, loc);
-  /*
-  printf("new pair at line %u: %s %.3x %p %p\n", line, tagStr(tag), loc,
-	 (void *)get(port(1, loc)),
-	 (void *)get(port(2, loc)));
-  // */
-  return new_pair;
+  Term newPair = newTerm(tag, lab, loc);
+  return newPair;
 }
 
 // Create a REF term with a specific interaction function
@@ -1100,7 +1095,6 @@ void eraseLazy(Term laz) {
       swap(portLoc(1, negLaz), NUL);
       swap(portLoc(2, negLaz), NUL);
       interact(ERA, posLaz);
-      freePair(termLoc(negLaz));
     } else if (termTag(origDup1) == LAZ) {
       freeLoc(portLoc(2, negLaz));
       move(portLoc(1, negLaz), posLaz);
@@ -1467,9 +1461,12 @@ void printTerm(const char* prefix, Term term) {
   Lab lab = termLab(term);
   switch(termTag(term)) {
   case VAL:
-  case NUL:
   case ERA:
   case F60:
+    break;
+
+  case NUL:
+    fprintf(stderr, "  Label: %.3x\n", termLab(term));
     break;
 
   case REF:
@@ -1495,12 +1492,12 @@ void printTerm(const char* prefix, Term term) {
     if (lab == 1 || lab == 2) {
       fprintf(stderr, "  Location: %.3x\n", termLoc(term));
       fprintf(stderr, "  Label: %.3x\n", lab);
-	Term first = get(portLoc(1, term));
-	Term second = get(portLoc(2, term));
-	fprintf(stderr, "  Refs: %d\n", (int)first);
-	fprintf(stderr, "  Second term: ");
-	printRawTerm(second);
-	fprintf(stderr, "\n");
+      Term first = get(portLoc(1, term));
+      Term second = get(portLoc(2, term));
+      fprintf(stderr, "  Refs: %d\n", (int)first);
+      fprintf(stderr, "  Second term: ");
+      printRawTerm(second);
+      fprintf(stderr, "\n");
     } else {
       fprintf(stderr, "  Location: %.3x\n", termLoc(term));
       fprintf(stderr, "  Label: %.3x\n", lab);

@@ -14,7 +14,8 @@ Read these files for context before starting any new interaction:
 6. `new.c` — Core implementation: `take`, `swap`, `move`, `interact`, existing rules
 7. `regression-tests/test-hvm.c` — Test suite: patterns for building terms and verifying results
 8. `graph.c` — DOT graph generation for debugging
-9. `Makefile` — Build command for `test-hvm`
+9. `sidequest.c` — Test program (Toccata compiler output)
+10. `Makefile` — Build command for `test-hvm`
 
 Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
 
