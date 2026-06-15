@@ -257,9 +257,11 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
       leftNode = downBranch(tree, 1, graphNum, nodeNum);
       rightNode = downBranch(tree, 2, graphNum, nodeNum);
     }
+/*
     if (leftNode != 65536 && rightNode != 65536)
       fprintf(dotFile, "rank=same {x%d_%x, x%d_%x}\n",
 	      graphNum, leftNode, graphNum, rightNode);
+// */
   }
     break;
     

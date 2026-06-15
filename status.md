@@ -1,6 +1,4 @@
-# HVM Interaction Rules — Implementation Status
-
-**All 20 interaction rules are implemented.** Three leaf redirections (ERA/VAL, DUP/VAL, APP/VAL) are implemented but not tested.
+# HVM Implementation Status
 
 ## Before Implementing a New Rule
 

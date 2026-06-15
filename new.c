@@ -1377,7 +1377,9 @@ void interact(Term neg, Term pos) {
   // }
 
 #ifdef STATS
-  atomic_fetch_add_explicit(&rdxCount, 1, memory_order_relaxed);
+  if (termTag(neg) != ERA && termTag(pos) != NUL) {
+    atomic_fetch_add_explicit(&rdxCount, 1, memory_order_relaxed);
+  }
 #endif
   // Gets the rule type.
   interactionFn rule = interactions[termTag(neg)][termTag(pos)];
