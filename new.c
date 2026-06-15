@@ -1614,7 +1614,7 @@ void hvmInit(u64 size) {
   interactions[DUP][LAM] = &dupLam;
   interactions[DUP][SUP] = &dupSup;
   interactions[DUP][VAL] = &dupLeaf;
-  interactions[ERA][VAL] = &eraLeaf;
+  interactions[ERA][VAL] = &eraVal;
   interactions[APP][VAL] = &appVal;
   interactions[DUP][VL1] = &dupLeaf;
   interactions[ERA][VL1] = &eraLeaf;
@@ -1651,6 +1651,7 @@ void hvmFree(void) {
 
   fprintf(dotFile, "}\n");
   fclose(dotFile);
+  dotFile = NULL;
 }
 
 void hvmReset(void) {

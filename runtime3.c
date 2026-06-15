@@ -3060,15 +3060,20 @@ void graphFn(Term ref, Term args) {
     return;
   }
 
-  args = take(portLoc(2, termLoc(args))); 
-  Term arg = take(portLoc(1, termLoc(args))); 
+  args = take(portLoc(2, args)); 
+  Term arg = take(portLoc(1, args)); 
+  String *s = (String *)argsStruct.args[0];
 
   if (termTag(arg) == VAR) {
     Term val = get(termLoc(arg));
     switch(termTag(val)) {
-    case LAZ:
-      swap(termLoc(arg), SUB);
-      forceLazy(val);
+    case LAZ: {
+      char cap[200];
+      sprintf(cap, "%-.*s", (int)((String *)s)->len, ((String *)s)->buffer);
+      subGraph(cap, arg, 0);
+      move(portLoc(2, args), arg);
+    }
+      break;
 
     case SUB:
       // add the remaining args to argsStruct
@@ -3078,7 +3083,7 @@ void graphFn(Term ref, Term args) {
       Term newArgs = argsNet(&argsStruct);
 
       // put 'arg' back in it's place
-      swap(portLoc(1, termLoc(args)), arg);
+      swap(portLoc(1, args), arg);
 
       // make a deferred redex to retry the APP/REF pair when the value becomes available
       Term retry = makePair(SUB, 5, newArgs, ref);
@@ -3086,12 +3091,12 @@ void graphFn(Term ref, Term args) {
       // and put it in the location 'arg' points to
       Term newArg = swap(termLoc(arg), retry);
       if (newArg != SUB) {
-        // someone slipped the needed arg in since we last looked
-        swap(termLoc(arg), newArg);
-        freePair(termLoc(retry));
+	// someone slipped the needed arg in since we last looked
+	swap(termLoc(arg), newArg);
+	freePair(termLoc(retry));
 
-        // so retry the original APP/REF redex
-        pushRedex(newArgs, ref);
+	// so retry the original APP/REF redex
+	pushRedex(newArgs, ref);
       }
       break;
 
@@ -3102,11 +3107,10 @@ void graphFn(Term ref, Term args) {
       break;
     }
   } else {
-    String *s = (String *)argsStruct.args[0];
     char cap[200];
     sprintf(cap, "%-.*s", (int)((String *)s)->len, ((String *)s)->buffer);
     subGraph(cap, arg, 0);
-    move(portLoc(2, termLoc(args)), arg);
+    move(portLoc(2, args), arg);
   }
 }
 
@@ -3280,8 +3284,6 @@ int main (int argc, char **argv) {
     fclose(dotFile);
     exit(1);
   }
-  fprintf(dotFile, "}\n");
-  fclose(dotFile);
 
   Tag t = termTag(result);
   if (t == I60) {
