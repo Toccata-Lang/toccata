@@ -3130,6 +3130,18 @@ void freeGlobal(Term p) {
   interact(ERA, p);
 }
 
+void discardFn(Term ref, Term args) {
+  NativeArgs arityArgs = {0, {}};
+  args = strictArgs(ref, args, 1, &arityArgs);
+  Term result = NUL;
+  if (arityArgs.count == 1) {
+    dec_and_free(arityArgs.args[0], 1);
+    take(portLoc(2, args));
+  }
+  return;
+}
+Term discard = newRef(discardFn);
+
 int main (int argc, char **argv) {
   Term alts[200];
   unsigned altsCount = 0;

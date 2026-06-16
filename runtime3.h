@@ -366,6 +366,7 @@ extern Term construct;
 Term nothing();
 extern Term accessField;
 extern Term hvmVect;
+extern Term discard;
 
 void accessFieldFn(Term ref, Term args);
 void constructFn(Term ref, Term args);
