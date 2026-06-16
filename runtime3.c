@@ -3248,12 +3248,9 @@ int main (int argc, char **argv) {
 	Lab l = termLab(result);
 	Location loc = termLoc(result);
 	fprintf(stderr, "bad result %s (%d) pair\n", tagStr(resultTag), resultTag);
-	subGraph("SUP result", result, 0);
 	Term newResult = take(loc + 1) ;
 	alts[altsCount++] = newResult;
-	subGraph("newResult", newResult, 0);
 	newResult = take(loc) ;
-	subGraph("newResult", newResult, 0);
 	result = newResult;
 	resultTag = termTag(result);
 	swap(resultLocation, result);
@@ -3273,8 +3270,8 @@ int main (int argc, char **argv) {
   }
   for (int i = 0; i < altsCount; i++) {
     Term alt = alts[i];
-    subGraph("alt", alt, 0);
-    printTerm("alt", alt);
+    // subGraph("alt", alt, 0);
+    // printTerm("alt", alt);
     interact(ERA, alts[i]);
   }
 #ifdef CHECK_MEM_LEAK

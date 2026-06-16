@@ -368,6 +368,7 @@ extern Term accessField;
 extern Term hvmVect;
 extern Term discard;
 
+void discardFn(Term ref, Term args);
 void accessFieldFn(Term ref, Term args);
 void constructFn(Term ref, Term args);
 void hvmVectFn(Term ref, Term args);

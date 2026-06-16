@@ -37,6 +37,7 @@ regression-tests/%.c: new-toc regression-tests/%.toc hvm-core.toc
 $(REG_TESTS): %: regression-tests/%.c $(TEST_SOURCES)
 	$(CC) $(CFLAGS) -o regression-tests/$@ $(TOC_FLAGS) $(LDFLAGS) $(TEST_SOURCES) regression-tests/$*.c
 	regression-tests/$@ party-pooper | sort > regression-tests/$*.rslt
+	dot -Tsvg graphs.dot > graphs.svg
 
 # Run all tests
 .PHONY: tests
