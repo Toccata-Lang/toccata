@@ -863,7 +863,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
     case SUP:
       for(int i = 0; i < argsStruct->count; i++)
 	incRef(argsStruct->args[i], 1);
-      Term s1 = take(argLoc);
+      Term s1 = take(portLoc(1, arg));
       Term s2 = take(portLoc(2, arg));
       Lab supLabel = termLab(arg);
       int argsCount = argsStruct->count;
