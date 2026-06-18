@@ -793,7 +793,7 @@ Term termVal(Term val) {
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
   /*
   char *refName = NULL;
-  for (unsigned i = 0; i <= refsCount; i++) {
+  for (unsigned i = 0; i < refsCount; i++) {
     if (refNames[i].fn == (interactionFn)(ref & ~TAG_MASK)) {
       refName = refNames[i].name;
       break;
@@ -1442,7 +1442,7 @@ void printRawTerm(Term t) {
 
     case REF: {
       char *refName = "";
-      for (unsigned i = 0; i <= refsCount; i++) {
+      for (unsigned i = 0; i < refsCount; i++) {
 	if (refNames[i].fn == (interactionFn)(t & ~TAG_MASK)) {
 	  refName = refNames[i].name;
 	  break;

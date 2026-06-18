@@ -187,7 +187,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
 
   case REF: {
     char *refName = "REF2";
-    for (unsigned i = 0; i <= refsCount; i++) {
+    for (unsigned i = 0; i < refsCount; i++) {
       if (refNames[i].fn == (interactionFn)(tree & ~7)) {
 	refName = refNames[i].name;
 	break;

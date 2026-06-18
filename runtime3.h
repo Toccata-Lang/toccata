@@ -157,8 +157,10 @@ extern REFS_SIZE refsStatic;
 #define FunctionType 4
 #define SubStringType 5
 #define TermType 6
+// #define Wut 7
 #define VectorType 8
 #define VectorNodeType 9
+// #define Wut 10
 #define BitmapIndexedType 11
 #define ArrayNodeType 12
 #define HashCollisionNodeType 13
