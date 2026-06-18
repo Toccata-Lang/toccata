@@ -54,9 +54,9 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] string-regressions
 - [x] vector-regressions
 
-## string-regressions investigation
+## vector-regressions investigation
 
-**Status:** All tests were commented out — not testing anything. Now the focus.
+**Status:** Passed. The stale ASAN binary was a red herring — normal build runs clean.
 
 ## Lessons Learned
 

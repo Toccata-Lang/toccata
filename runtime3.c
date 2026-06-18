@@ -3210,7 +3210,7 @@ int main (int argc, char **argv) {
     do {
       normalize(NULL);
       result = take(resultLocation);
-      subGraph("result", result, 0);
+      // subGraph("result", result, 0);
       resultTag = termTag(result);
       if (resultTag == VAR) {
 	resultLocation = termLoc(result);
@@ -3281,7 +3281,7 @@ int main (int argc, char **argv) {
 
       default: {
 	fprintf(stderr, "bad result %s (%d) pair\n", tagStr(resultTag), resultTag);
-	subGraph("result", result, 0);
+	// subGraph("result", result, 0);
 	interact(ERA, result);
 	result = newI60(1);
 	resultTag = termTag(result);
