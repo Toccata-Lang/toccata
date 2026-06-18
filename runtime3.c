@@ -3131,12 +3131,34 @@ void freeGlobal(Term p) {
 }
 
 void discardFn(Term ref, Term args) {
-  NativeArgs arityArgs = {0, {}};
-  args = strictArgs(ref, args, 1, &arityArgs);
-  Term result = NUL;
-  if (arityArgs.count == 1) {
-    dec_and_free(arityArgs.args[0], 1);
-    take(portLoc(2, args));
+  Term arg = take(portLoc(1, args));
+  switch(termTag(arg)) {
+  case NUL:
+    freePair(portLoc(1, args));
+    return;
+    break;
+
+  case SUP: {
+    Term s1 = take(portLoc(1, arg));
+    Term s2 = take(portLoc(2, arg));
+    freePair(portLoc(1, args));
+    pushRedex(makePair(APP, 0, s1, ERA), ref);
+    pushRedex(makePair(APP, 0, s2, ERA), ref);
+    return;
+  }
+    break;
+    
+  default: {
+    swap(portLoc(1, args), arg);
+    NativeArgs arityArgs = {0, {}};
+    args = strictArgs(ref, args, 1, &arityArgs);
+    Term result = NUL;
+    if (arityArgs.count == 1) {
+      dec_and_free(arityArgs.args[0], 1);
+      freePair(portLoc(1, args));
+    }
+  }
+  break;
   }
   return;
 }
