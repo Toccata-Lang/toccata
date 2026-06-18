@@ -10,7 +10,7 @@ Read these files for context before starting any new interaction:
 5. `new.h` — Type definitions, tag constants, function declarations
 6. `new.c` — Core implementation: `take`, `swap`, `move`, `interact`, existing rules
 8. `graph.c` — DOT graph generation for debugging
-10. `Makefile` — Build command for `test-hvm`
+10. `Makefile`
 
 Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
 
@@ -18,7 +18,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 **Memory leaks are a failure condition.** Every test must leave `malloc_count == free_count` (all Value allocations freed). Any non-zero diff at the end of a test is a failure.
 
-**Node leaks are a failure condition.** Every test must leave `glblAlloced == 0` (all HVM node buffer pairs freed). Any non-zero value at the end of a test is a failure.
+**Node leaks are a failure condition.** Every test in test-hvm.c must leave `glblAlloced == 0` (all HVM node buffer pairs freed). Any non-zero value at the end of a test is a failure.
 
 **Side effect.** An expression that is not the last expression in a function body. It exists only to execute a side effect such as printing a string.
 
@@ -52,5 +52,13 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] tail-cond-1
 - [x] test-inline-namespaced-sym
 - [x] string-regressions
-- [ ] vector-regressions
+- [x] vector-regressions
+
+## string-regressions investigation
+
+**Status:** All tests were commented out — not testing anything. Now the focus.
+
+## Lessons Learned
+
+**Cycle detection at encoding time is required.** Simply keeping a list of visited nodes during traversal (e.g. in `isCycle`/`findCycle`) is insufficient — by the time you detect a cycle during traversal, the damage may already be done. Cycles must be detected and handled at encoding time, before the graph is constructed.
 

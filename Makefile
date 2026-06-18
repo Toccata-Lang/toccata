@@ -25,7 +25,7 @@ new-toc: compiler.toc base.toc typer.toc codegen.toc toccata
 	$(CC) $(TOC_FLAGS) -DWAIT_FOR_LINGERING=1 -o new-toc -std=c99 core.c new-toc.c $(LDFLAGS)
 
 # Generate C files from .toc files using pattern rules
-regression-tests/%.c: new-toc regression-tests/%.toc hvm-core.toc
+regression-tests/%.c: new-toc regression-tests/%.toc regression-tests/regression-tester.toc hvm-core.toc
 	./new-toc regression-tests/$*.toc > regression-tests/$*.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' \
           regression-tests/$*.tmp > regression-tests/$*.c

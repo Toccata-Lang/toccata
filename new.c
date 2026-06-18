@@ -337,7 +337,6 @@ Term take(Location loc) {
   }
 }
 
-#define NODE_STACK_SIZE 1000
 typedef struct cycleNode {
   Location loc;
   Term trm;
@@ -394,7 +393,7 @@ int findCycle(Term tree, Location tgtLoc) {
       return 1;
 
     cycleNode *cn = &cycleNodes[cycleNodeCount++];
-    if (cycleNodeCount > 999)
+    if (cycleNodeCount >= NODE_STACK_SIZE)
       BOOM("cycleNodeCount!");
     cn->loc = termLoc(tree);
     cn->trm = tree;
@@ -1083,12 +1082,14 @@ void eraseLazy(Term laz) {
     Tag t1 = termTag(origDup1);
     Tag t2 = termTag(origDup2);
 
-    int contextCycle;
+    int contextCycle = 0;
+    /*
     if (t1 == LAZ) {
       contextCycle = isCycle(posLaz, portLoc(1, negLaz));
     } else if (t2 == LAZ) {
       contextCycle = isCycle(posLaz, portLoc(2, negLaz));
     }
+    // */
 
     if (contextCycle || (t1 == ERA && t2 == ERA)) {
       // Put NUL back in both DUP ports, to break the cycle so it can be freed
