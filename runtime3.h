@@ -106,6 +106,7 @@ typedef struct {
   REFS_SIZE refs;
   int64_t hashVal;
   int64_t implCount;
+  int64_t padding;
   Term impls[];
 } ReifiedVal;
 typedef struct {

@@ -751,7 +751,6 @@ void decValRef(Term pv, int deltaRefs) {
       freeJmpTbl[v->type](v);
     } else {
       ReifiedVal *rv = (ReifiedVal *)v;
-      // fprintf(stderr, "freeing reified %d: %ld %p\n", __LINE__, rv->implCount, rv);
       for (int i = 0; i < rv->implCount; i++) {
 	dec_and_free(rv->impls[i], 1);
       }
@@ -759,6 +758,7 @@ void decValRef(Term pv, int deltaRefs) {
       // incTypeFree(0, 1);
       if (rv->implCount < 20) {
 	int64_t implCount = rv->implCount;
+	// fprintf(stderr, "freeing reified %d: %ld %p\n", __LINE__, rv->implCount, rv);
 	v->next = freeReified[implCount].head;
 	freeReified[implCount].head = v;
       } else {
@@ -867,13 +867,13 @@ void emptyFreeList(FreeValList *freeLinkedList) {
 #else
   __atomic_load((FreeValList *)freeLinkedList, (FreeValList *)&listHead, __ATOMIC_RELAXED);
 #endif
+#ifdef CHECK_MEM_LEAK
   for(Value *item = (Value *)listHead.head;
       item != (Value *)0;
-      item =  item->next) {
-#ifdef CHECK_MEM_LEAK
+      item = item->next) {
     __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
-#endif
   }
+#endif
 }
 
 void freeAll() {
