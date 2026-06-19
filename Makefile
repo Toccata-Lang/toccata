@@ -85,6 +85,11 @@ test-hvm:
 	./regression-tests/test-hvm
 	dot -Tsvg graphs.dot > graphs.svg
 
+.PHONY: test-runtime
+test-runtime:
+	$(CC) $(CFLAGS) -o regression-tests/test-runtime $(TOC_FLAGS) $(LDFLAGS) new.c regression-tests/test-runtime.c graph.c runtime3.c
+	./regression-tests/test-runtime
+
 # Default help if no target specified
 .DEFAULT_GOAL := help
 

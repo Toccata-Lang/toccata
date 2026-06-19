@@ -51,12 +51,12 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] free-static-value
 - [x] tail-cond-1
 - [x] test-inline-namespaced-sym
-- [x] string-regressions
+- [ ] string-regressions
 - [x] vector-regressions
 
-## vector-regressions investigation
+## string-regressions investigation
 
-**Status:** Passed. The stale ASAN binary was a red herring — normal build runs clean.
+**Status:** Crashes with `interact(ERA, APP)` (no handler) and `pushRedex(ERA, APP)` (invalid polarity). Root cause: `centralFreeReified` list is corrupted somehow.
 
 ## Lessons Learned
 
