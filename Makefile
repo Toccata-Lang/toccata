@@ -87,7 +87,7 @@ test-hvm:
 
 .PHONY: test-runtime
 test-runtime:
-	$(CC) $(CFLAGS) -o regression-tests/test-runtime $(TOC_FLAGS) $(LDFLAGS) new.c regression-tests/test-runtime.c graph.c runtime3.c
+	$(CC) $(CFLAGS) -o regression-tests/test-runtime $(TOC_FLAGS) $(LDFLAGS) -DTESTING_HVM=1 new.c regression-tests/test-runtime.c graph.c runtime3.c
 	./regression-tests/test-runtime
 
 # Default help if no target specified
