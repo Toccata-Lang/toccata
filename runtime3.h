@@ -279,7 +279,10 @@ Vector *vectorReverse(Vector *v);
 void destructValue(char *fileName, char *lineNum, Value *val, int numArgs,
                    Value **args[]);
 Term strCount(Term s);
-Term strEQ(Term sT, Term startT, Term lenT, Term tgtT);
+#define STR_EQ 1
+#define STR_LT 2
+#define STR_GT 4
+Term strCmp(Term sT, Term tgtT, int success);
 Value *strVect(Value *arg0);
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);
@@ -301,7 +304,6 @@ Value *subs3(Value *arg0, Value *arg1, Value *arg2);
 Value *strSeq(Value *arg0);
 Value *strReduce(Value *s0, Value *x1, Value *f2);
 Value *strVec(Value *arg0);
-Value *strLT(Value *arg0, Value *arg1);
 Term vectorGet(Term v, Term n);
 Value *stringValue(char *s);
 Value *opaqueValue(void *ptr, Destructor *destruct);

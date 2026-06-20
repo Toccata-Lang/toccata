@@ -1575,38 +1575,73 @@ Value *strVec(Value *arg0) {
   return((Value *)result);
 }
 
-Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
-  String *str0 = (String *)sT; 
+Term strCmp(Term sT, Term tgtT, int success) {
+  String *str0;
   char *s1, *s2;
-  long start = getI60(startT);
-  long len = getI60(lenT);
+  long start;
+  long len0;
+  long len1;
+  if (((Value *)sT)->type == StringBufferType) {
+    str0 = (String *)sT; 
+    start = 0;
+    len0 = str0->len;
+  } else if (((Value *)sT)->type == SubStringType) {
+    ReifiedVal *str1 = (ReifiedVal *)sT;
+    str0 = (String *)str1->impls[0]; 
+    start = getI60(str1->impls[1]);
+    len0 = getI60(str1->impls[2]);
+  } else {
+    BOOM("Invalid string comparicon arguments");
+  }
 
   s1 = &str0->buffer[start];
+  s2 = NULL;
 
   if (((Value *)tgtT)->type == StringBufferType) {
     String *str1 = (String *)tgtT; 
-    if (len != str1->len) {
-      dec_and_free(sT, 1);
-      dec_and_free(tgtT, 1);
-      return(nothing());
-    }
-
+    len1 = str1->len;
     s2 = str1->buffer;
   } else if (((Value *)tgtT)->type == SubStringType) {
     ReifiedVal *str1 = (ReifiedVal *)tgtT;
     String *parent = (String *)str1->impls[0];
     start = getI60(str1->impls[1]);
-
-    if ((int)getI60(str1->impls[2]) != len) {
-      dec_and_free(sT, 1);
-      dec_and_free(tgtT, 1);
-      return(nothing());
-    }
-
+    len1 = getI60(str1->impls[2]);
     s2 = &parent->buffer[start];
+  } else {
+    BOOM("Invalid string comparicon arguments");
   }
 
-  if (strncmp(s1, s2, len) == 0) {
+  long len = len0 < len1 ? len0 : len1;
+  int cmpResult = strncmp(s1, s2, len); 
+
+  unsigned matched = 0;
+  switch(success) {
+  case STR_EQ:
+    matched = (cmpResult == 0) && (len0 == len1);
+    break;
+
+  case STR_GT:
+    matched = (cmpResult > 0) || ((cmpResult == 0) && (len0 > len1));
+    break;
+
+  case STR_GT | STR_EQ:
+    matched = (cmpResult > 0) || ((cmpResult == 0) && (len0 >= len1));
+    break;
+
+  case STR_LT:
+    matched = (cmpResult < 0) || ((cmpResult == 0) && (len0 < len1));
+    break;
+
+  case STR_LT | STR_EQ:
+    matched = (cmpResult < 0) || ((cmpResult == 0) && (len0 <= len1));
+    break;
+  
+  default:
+    BOOM("Invalid success criteria for strCmp");
+    break;
+  }
+
+  if (matched) {
     if (start == 0) {
       dec_and_free(tgtT, 1);
       return(some(sT));
@@ -1619,73 +1654,6 @@ Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
     dec_and_free(tgtT, 1);
     return(nothing());
   }
-}
-
-Value *strLT(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
-  char *s1, *s2;
-  long int len, s1Len, s2Len;
-
-  if (arg0->type == StringBufferType &&
-      arg1->type == StringBufferType) {
-    s1 = ((String *)arg0)->buffer;
-    s1Len = ((String *)arg0)->len;
-    s2 = ((String *)arg1)->buffer;
-    s2Len = ((String *)arg1)->len;
-    if (s1Len < s2Len)
-      len = s1Len;
-    else
-      len = s2Len;
-  } else if (arg0->type == SubStringType &&
-             arg1->type == SubStringType) {
-    s1 = ((SubString *)arg0)->buffer;
-    s1Len = ((SubString *)arg0)->len;
-    s2 = ((SubString *)arg1)->buffer;
-    s2Len = ((SubString *)arg1)->len;
-    if (s1Len < s2Len)
-      len = s1Len;
-    else
-      len = s2Len;
-  } else if (arg0->type == StringBufferType &&
-             arg1->type == SubStringType) {
-    s1 = ((String *)arg0)->buffer;
-    s1Len = ((String *)arg0)->len;
-    s2 = ((SubString *)arg1)->buffer;
-    s2Len = ((SubString *)arg1)->len;
-    if (s1Len < s2Len)
-      len = s1Len;
-    else
-      len = s2Len;
-  } else if (arg0->type == SubStringType &&
-             arg1->type == StringBufferType) {
-    s1 = ((SubString *)arg0)->buffer;
-    s1Len = ((SubString *)arg0)->len;
-    s2 = ((String *)arg1)->buffer;
-    s2Len = ((String *)arg1)->len;
-    if (s1Len < s2Len)
-      len = s1Len;
-    else
-      len = s2Len;
-  } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  }
-
-  int cmp = strncmp(s1, s2, len);
-  if (cmp < 0 || (cmp == 0 && s1Len < s2Len)) {
-    dec_and_free(arg1, 1);
-    return(maybe((FnArity *)0, (Value *)0, arg0));
-  } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
-    return(nothing);
-  }
-  // */
 }
 
 Term strCount(Term s) {
