@@ -156,7 +156,6 @@ extern REFS_SIZE refsStatic;
 #define StringBufferType 2
 #define FnArityType 3
 #define FunctionType 4
-#define SubStringType 5
 #define TermType 6
 // #define Wut 7
 #define VectorType 8
@@ -192,7 +191,8 @@ extern REFS_SIZE refsStatic;
 #define DebugConstraintType 41
 #define NoneType 42
 #define SomeType 43
-#define TypeCount 44
+#define SubStringType 44
+#define TypeCount 45
 
 typedef struct {
   unsigned typeNum;
@@ -254,7 +254,7 @@ extern Value *(*prValue)(FnArity *, Value *v);
 
 Value *my_malloc(int64_t sz);
 FnArity *malloc_fnArity();
-String *malloc_string(int len);
+String *malloc_string(long len);
 Vector *malloc_vector();
 ReifiedVal *malloc_reified(int64_t implCount);
 TermVal *malloc_term();

@@ -777,6 +777,7 @@ void varArg(Term trm, Term ref, Term args, NativeArgs *argsStruct) {
   }
 }
 
+#ifdef SAFETY
 Term termVal(Term val) {
   // ensure a Term is a valid native value
   unsigned type = ((Value *)val)->type;
@@ -787,6 +788,7 @@ Term termVal(Term val) {
   }
   return val;
 }
+#endif
 
 // extract the requested number of native args. I60, F60, REF or VAL terms
 Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {

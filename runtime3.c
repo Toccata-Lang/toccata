@@ -234,7 +234,7 @@ void decValuePtrRef(Value **ptr) {
 FreeValList centralFreeStrings = (FreeValList){(Value *)0, 0};
 __thread FreeValList freeStrings = {(Value *)0, 0};
 #define STRING_RECYCLE_LEN 100
-String *malloc_string(int len) {
+String *malloc_string(long len) {
   String *str;
   if (len > STRING_RECYCLE_LEN) {
     str = (String *)my_malloc(sizeof(String) + len + 4);
@@ -968,7 +968,7 @@ Value *escapeChars(Term arg0) {
     ReifiedVal *ss = (ReifiedVal *)arg0;
     String *parent = (String *)ss->impls[0];
     long start = getI60(ss->impls[1]);
-    int len = (int)getI60(ss->impls[2]);
+    long len = getI60(ss->impls[2]);
     long end = start + len;
     String *result = malloc_string(len * 2);
     char *resultBuffer = result->buffer;
@@ -1310,6 +1310,8 @@ void vectMap(Term ref, Term args) {
 	swap(portLoc(2, mArgs), makePair(LAZ, 0, mArgs, f));
 	Term cArgs1 = makePair(APP, 0, newTerm(VAR, 0, portLoc(2, mArgs)), SUB);
 	Term cArgs2 = makePair(APP, 0, newV, cArgs1);
+	// TODO: go ahead and submit this redex to make all the calls execute in parallel
+	// I think
 	Term conjNode = makePair(LAZ, 0, cArgs2, vectConjRef);
 	swap(portLoc(2, cArgs1), conjNode);
 	newV = newTerm(VAR, 0, portLoc(2, cArgs1));
@@ -1543,18 +1545,51 @@ Term vectGet(Vector *vect, unsigned index) {
   return(dupeVal(&array[index & 0x1f]));
 }
 
+Value *strVec(Value *arg0) {
+  Vector *result = empty_vect;
+  String *s;
+  long start;
+  long len;
+  if (arg0->type == StringBufferType) {
+    s = (String *)arg0;
+    start = 0;
+    len = s->len;
+  } else if (((Value *)arg0)->type == SubStringType) {
+    ReifiedVal *str1 = (ReifiedVal *)arg0;
+    s = (String *)str1->impls[0];
+    start = getI60(str1->impls[1]);
+    len = getI60(str1->impls[2]);
+  }
+
+  incRef((Term)s, len);
+  for (int64_t i = 0; i < len; i++) {
+    ReifiedVal *rv = malloc_reified(3);
+    rv->type = SubStringType;
+    rv->impls[0] = (Term)s;
+    rv->impls[1] = newI60(i);
+    rv->impls[2] = newI60(1);
+    __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
+    result = mutateVectConj(result, termVal((Term)rv));
+  }
+  dec_and_free((Term)arg0, 1);
+  return((Value *)result);
+}
+
 Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
   String *str0 = (String *)sT; 
   char *s1, *s2;
   long start = getI60(startT);
-  int len = (int)getI60(lenT);
+  long len = getI60(lenT);
 
   s1 = &str0->buffer[start];
 
   if (((Value *)tgtT)->type == StringBufferType) {
     String *str1 = (String *)tgtT; 
-    if (len != str1->len)
+    if (len != str1->len) {
+      dec_and_free(sT, 1);
+      dec_and_free(tgtT, 1);
       return(nothing());
+    }
 
     s2 = str1->buffer;
   } else if (((Value *)tgtT)->type == SubStringType) {
@@ -1562,8 +1597,11 @@ Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
     String *parent = (String *)str1->impls[0];
     start = getI60(str1->impls[1]);
 
-    if ((int)getI60(str1->impls[2]) != len)
+    if ((int)getI60(str1->impls[2]) != len) {
+      dec_and_free(sT, 1);
+      dec_and_free(tgtT, 1);
       return(nothing());
+    }
 
     s2 = &parent->buffer[start];
   }

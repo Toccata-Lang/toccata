@@ -137,7 +137,11 @@ Term makePair(Tag tag, Lab lab, Term fst, Term snd);
 const char* tagStr(Tag tag);
 Term termNew(Tag tag, Lab lab, Location loc);
 Term newTerm(Tag tag, Lab lab, Location loc);
+#ifdef SAFETY
 Term termVal(Term val);
+#else
+#define termVal(x) (x)
+#endif
 Tag termTag(Term term);
 Lab termLab(Term term);
 Location termLoc(Term term);
