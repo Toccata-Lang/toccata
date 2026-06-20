@@ -121,8 +121,8 @@ typedef struct {
 extern __thread Pairs pairs;
 
 // creating number terms
-#define newI60(x) (((i64)(x) << TAG_SIZE) | I60)
-#define getI60(x) (i64)((i64)(x) >> TAG_SIZE)
+#define newI60(x) (((uint64_t)(x) << TAG_SIZE) | I60)
+#define getI60(x) ((i64)(x) >> TAG_SIZE)
 #define getU64(x) (i64)((u64)(x) >> TAG_SIZE)
 #define newNum(type, x) (((u64)(x) << TAG_SIZE) | type)
 

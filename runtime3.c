@@ -1886,21 +1886,17 @@ long finalize_sha1(Value *ctxt) {
 }
 #endif
 
-int64_t integerSha1(Value *arg0) {
-  int64_t shaVal;
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  /*
+Term integerSha1(Term arg0) {
   Sha1Context context;
-  Integer *numVal = (Integer *)arg0;
+  unsigned type = IntegerType;
+  int64_t val = getI60(arg0);
+  int64_t shaVal;
 
   Sha1Initialise(&context);
-  Sha1Update(&context, (void *)&numVal->type, 8);
-  Sha1Update(&context, (void *)&numVal->numVal, 8);
+  Sha1Update(&context, (void *)&type, 8);
+  Sha1Update(&context, (void *)&val, 8);
   Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
-  dec_and_free(arg0, 1);
-  // */
-  return(shaVal);
+  return(newI60(shaVal));
 }
 
 Term integer_EQ(Term arg0, Term arg1) {

@@ -103,6 +103,9 @@ unsigned downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum)
     return 65536;    
 }
 
+char *opLabels[] = {"+", "-", "*", "/", "%", "=", "!=", "<",
+		    ">", "<=", ">=", "&", "|", "^", "<<", ">>"};
+
 // graph the node and the tree under it, if needed. Return the node number
 unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   char xLbl[100];
@@ -229,7 +232,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
       snprintf(xLbl, 95, "%x:", nodeNum);
 
     if (t == OPX || t == OPY) {
-      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "-", 0, xLbl);
+      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, opLabels[lab], 0, xLbl);
     } else {
       fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 0, xLbl);
     }
