@@ -1822,6 +1822,44 @@ Sha1Update( Context, finalcount, 8 );  // Should cause a Sha1TransformFunction()
    }
 }
 
+int64_t strSha1(Value *arg0) {
+  int64_t hash;
+  char *buffer;
+  int64_t len;
+
+  if (arg0->type == StringBufferType) {
+    String *strVal = (String *)arg0;
+    hash = strVal->hashVal;
+    buffer = strVal->buffer;
+    len = strVal->len;
+  } else if (arg0->type == SubStringType) {
+    ReifiedVal *ss = (ReifiedVal *)arg0;
+    String *parent = (String *)ss->impls[0];
+    long start = getI60(ss->impls[1]);
+    buffer = &parent->buffer[start];
+    len = getI60(ss->impls[2]);
+    hash = ss->hashVal;
+  }
+
+  if (hash != 0) {
+    dec_and_free((Term)arg0, 1);
+    return(hash);
+  } else {
+    int64_t shaVal;
+    Sha1Context context;
+
+    Sha1Initialise(&context);
+    Sha1Update(&context, (void *)&arg0->type, 8);
+    Sha1Update(&context, buffer, len);
+    Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
+
+    ((String *)arg0)->hashVal = shaVal;
+    dec_and_free((Term)arg0, 1);
+    return(shaVal);
+  }
+}
+
+#if 0
 void free_sha1(void *ptr) {
 #ifdef CHECK_MEM_LEAK
       __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
@@ -1846,6 +1884,7 @@ long finalize_sha1(Value *ctxt) {
   dec_and_free((Term)ctxt, 1);
   return(shaVal);
 }
+#endif
 
 int64_t integerSha1(Value *arg0) {
   int64_t shaVal;
