@@ -51,12 +51,12 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] free-static-value
 - [x] tail-cond-1
 - [x] test-inline-namespaced-sym
-- [ ] string-regressions
+- [x] string-regressions
 - [x] vector-regressions
 
 ## string-regressions investigation
 
-**Status:** Crashes with `interact(ERA, APP)` (no handler) and `pushRedex(ERA, APP)` (invalid polarity). Root cause: `centralFreeReified` list is corrupted somehow.
+**Status:** FIXED. Segfault was caused by `ReifiedVal` struct lacking a `next` field — the free list code cast `ReifiedVal*` to `Value*` to access `next`, which overlapped with `hashVal`. When memory was reused for a different implCount, the stale `next` value persisted and linked to the wrong free list. Fix: added `next` field to `ReifiedVal`, initialized in `malloc_reified` and reset in `decValRef`.
 
 ## Lessons Learned
 

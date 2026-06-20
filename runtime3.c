@@ -929,6 +929,83 @@ void freeAll() {
 // */
 }
 
+Value *escapeChars(Term arg0) {
+  if (((Value *)arg0)->type == StringBufferType) {
+    String *s = (String *)arg0;
+    String *result = malloc_string(s->len * 2);
+    char *resultBuffer = result->buffer;
+    int resultIndex = 0;
+    for(int i = 0; i < s->len; i++) {
+      if (s->buffer[i] == 10) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 110;
+      } else if (s->buffer[i] == 34) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 34;
+      } else if (s->buffer[i] == 13) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 114;
+      } else if (s->buffer[i] == 12) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 102;
+      } else if (s->buffer[i] == 8) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 98;
+      } else if (s->buffer[i] == 9) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 116;
+      } else if (s->buffer[i] == 92) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 92;
+      } else
+        resultBuffer[resultIndex++] = s->buffer[i];
+    }
+    resultBuffer[resultIndex] = 0;
+    result->len = resultIndex;
+    dec_and_free((Term)arg0, 1);
+    return((Value *)result);
+  } else if (((Value *)arg0)->type == SubStringType) {
+    ReifiedVal *ss = (ReifiedVal *)arg0;
+    String *parent = (String *)ss->impls[0];
+    long start = getI60(ss->impls[1]);
+    int len = (int)getI60(ss->impls[2]);
+    long end = start + len;
+    String *result = malloc_string(len * 2);
+    char *resultBuffer = result->buffer;
+    int resultIndex = 0;
+    for(int i = start; i < end; i++) {
+      if (parent->buffer[i] == 10) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 110;
+      } else if (parent->buffer[i] == 34) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 34;
+      } else if (parent->buffer[i] == 13) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 114;
+      } else if (parent->buffer[i] == 12) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 102;
+      } else if (parent->buffer[i] == 8) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 98;
+      } else if (parent->buffer[i] == 9) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 116;
+      } else if (parent->buffer[i] == 92) {
+        resultBuffer[resultIndex++] = 92;
+        resultBuffer[resultIndex++] = 92;
+      } else
+        resultBuffer[resultIndex++] = parent->buffer[i];
+    }
+    resultBuffer[resultIndex] = 0;
+    result->len = resultIndex;
+    dec_and_free((Term)arg0, 1);
+    return((Value *)result);
+  }
+  return stringValue("");
+}
+
 int64_t nakedSha1(Value *v1) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();

@@ -295,7 +295,7 @@ Value *addIntegers(Value *arg0, Value *arg1);
 Value *listEQ(Value *arg0, Value *arg1);
 int8_t equal(Value *v1, Value *v2);
 int64_t strSha1(Value *arg0);
-Value *escapeChars(Value *arg0);
+Value *escapeChars(Term arg0);
 Value *subs2(Value *arg0, Value *arg1);
 Value *subs3(Value *arg0, Value *arg1, Value *arg2);
 Value *strSeq(Value *arg0);
