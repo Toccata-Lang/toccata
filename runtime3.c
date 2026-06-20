@@ -1030,6 +1030,7 @@ Value *defaultPrErrSTAR(Value *str) {
 Term number_str(Term arg0) {
   String *numStr = malloc_string(50);
   sprintf(numStr->buffer, "%ld", getI60(arg0));
+  numStr->len = strlen(numStr->buffer);
   return(termVal((Term)numStr));
 }
 
@@ -1482,7 +1483,7 @@ Term strEQ(Term sT, Term startT, Term lenT, Term tgtT) {
   } else if (((Value *)tgtT)->type == SubStringType) {
     ReifiedVal *str1 = (ReifiedVal *)tgtT;
     String *parent = (String *)str1->impls[0];
-    long start = getI60(str1->impls[1]);
+    start = getI60(str1->impls[1]);
 
     if ((int)getI60(str1->impls[2]) != len)
       return(nothing());
