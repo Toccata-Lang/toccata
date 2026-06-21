@@ -62,6 +62,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] test-uni
 - [x] test-inlined-result-constraint
 - [x] function-regressions
+- [x] test-closures
 
 ## Tests to be processed
 
@@ -100,7 +101,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 
 
-- [ ] test-closures — closures
+
 - [ ] types-regressions — type system (blocked: type system)
 
 - [ ] test-for — `for` comprehension (needs more compiler work)
