@@ -58,6 +58,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] test-tail-recur-1
 - [x] test-tail-recur-3
 - [x] test-trailing-comment
+- [x] test-underscore-inline
 - [x] test-inlined-result-constraint
 - [x] function-regressions
 
@@ -95,8 +96,8 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [ ] test-tail-recur-2 — tail recursion (blocked: str-vect dispatch on None)
 
 
-- [ ] test-type-of-tail — tail expression types
-- [ ] test-underscore-inline — underscore binding
+
+
 - [ ] test-uni — universal protocol dispatch
 - [ ] test-closures — closures
 - [ ] types-regressions — type system
@@ -123,6 +124,7 @@ These features won't be in the new version (lists might be added eventually):
 - [ ] symbol-regressions — symbols
 - [ ] test-hlist-cons — hlist + cons
 - [ ] use-before-defined — definition ordering
+- [ ] test-type-of-tail — tail expression types (obsolete)
 
 ## string-regressions investigation
 
