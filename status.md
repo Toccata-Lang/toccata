@@ -67,6 +67,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [ ] state-error1-2 — state-error monad
 
 - [ ] test-gensym — gensym
+- [ ] test-apply-constructor — apply + constructor
 
 ### Compiler tests (verify existing compiler features)
 
@@ -74,10 +75,10 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [ ] check-bad-incRef — reference counting (needs hash-map: reduce on collections)
 
 
-- [ ] or-and-constraints — type constraints in or/and
+- [ ] or-and-constraints — type constraints in or/and (needs type system completion)
 
-- [ ] test-apply-constructor — apply + constructor
-- [ ] test-cond — cond syntax
+
+- [ ] test-cond — cond syntax (waiting on: `any?`, `ever?`, `instance?`)
 
 - [ ] test-inlined-result-constraint — result constraints
 - [ ] test-inline-invoke — inline invoke
@@ -96,7 +97,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [ ] test-closures — closures
 - [ ] types-regressions — type system
 
-- [ ] test-for — `for` comprehension
+- [ ] test-for — `for` comprehension (needs more compiler work)
 - [ ] test-threading — `->` threading macro (depends on hash-map functionality: assoc, vals, reduce)
 
 ### Uncertain (need your call)
