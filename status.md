@@ -54,54 +54,69 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] test-inline-namespaced-sym
 - [x] string-regressions
 - [x] vector-regressions
+- [x] function-regressions
 
 ## Tests to be processed
 
-- [ ] agent-regressions
-- [ ] and-prop
-- [ ] Boomer
-- [ ] boom
-- [ ] check-bad-incRef
+### New functionality to implement
 
-- [ ] destruct-test
-- [ ] function-regressions
-- [ ] future-regressions
-- [ ] hash-map-regressions
-- [ ] interpreter-test
-- [ ] lazy-list-regressions
-- [ ] list-regressions
-- [ ] maybe-regressions
-- [ ] minimal-variadic-params
-- [ ] or-and-constraints
-- [ ] promise-regressions
-- [ ] state-error1-1
-- [ ] state-error1-2
-- [ ] symbol-regressions
-- [ ] test-apply-constructor
-- [ ] test-closures
-- [ ] test-cond
-- [ ] test-for
-- [ ] test-gensym
-- [ ] test-hlist-cons
-- [ ] test-inlined-result-constraint
-- [ ] test-inline-invoke
-- [ ] test-inline-sym-literal
-- [ ] test-or-comment
-- [ ] test-parser-efficience
-- [ ] test-proto-def-constraints
-- [ ] test-proto-impl-destruct
-- [ ] test-recursive-map-fn
-- [ ] test-regressions
-- [ ] test-tail-recur-1
-- [ ] test-tail-recur-2
-- [ ] test-tail-recur-3
-- [ ] test-threading
-- [ ] test-trailing-comment
-- [ ] test-type-of-tail
-- [ ] test-underscore-inline
-- [ ] test-uni
-- [ ] types-regressions
-- [ ] use-before-defined
+- [ ] agent-regressions — agent system
+- [ ] hash-map-regressions — hash-map data structure
+- [ ] maybe-regressions — Maybe type
+- [ ] state-error1-1 — state-error monad
+- [ ] state-error1-2 — state-error monad
+
+- [ ] test-gensym — gensym
+
+### Compiler tests (verify existing compiler features)
+
+- [ ] and-prop — type property inference (blocked: `instance?` not implemented)
+- [ ] check-bad-incRef — reference counting (needs hash-map: reduce on collections)
+
+
+- [ ] or-and-constraints — type constraints in or/and
+
+- [ ] test-apply-constructor — apply + constructor
+- [ ] test-cond — cond syntax
+
+- [ ] test-inlined-result-constraint — result constraints
+- [ ] test-inline-invoke — inline invoke
+- [ ] test-inline-sym-literal — symbol literals
+- [ ] test-or-comment — comments in or/and
+- [ ] test-proto-def-constraints — protocol constraints
+- [ ] test-proto-impl-destruct — protocol destructuring
+- [ ] test-recursive-map-fn — recursive functions
+- [ ] test-tail-recur-1 — tail recursion
+- [ ] test-tail-recur-2 — tail recursion
+- [ ] test-tail-recur-3 — tail recursion
+- [ ] test-trailing-comment — trailing comments
+- [ ] test-type-of-tail — tail expression types
+- [ ] test-underscore-inline — underscore binding
+- [ ] test-uni — universal protocol dispatch
+- [ ] test-closures — closures
+- [ ] types-regressions — type system
+
+- [ ] test-for — `for` comprehension
+- [ ] test-threading — `->` threading macro (depends on hash-map functionality: assoc, vals, reduce)
+
+### Uncertain (need your call)
+
+- [ ] test-parser-efficience — parser performance/debug test
+- [ ] test-regressions — meta-test runner that imports all other modules
+
+## Ignored for now
+
+These features won't be in the new version (lists might be added eventually):
+
+- [ ] future-regressions — futures
+- [ ] lazy-list-regressions — lazy lists
+- [ ] list-regressions — lists (might be added eventually)
+- [ ] minimal-variadic-params — variadic params
+- [ ] promise-regressions — promises
+- [ ] destruct-test — destructuring
+- [ ] symbol-regressions — symbols
+- [ ] test-hlist-cons — hlist + cons
+- [ ] use-before-defined — definition ordering
 
 ## string-regressions investigation
 
