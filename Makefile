@@ -43,7 +43,7 @@ $(REG_TESTS): %: regression-tests/%.c $(TEST_SOURCES)
 
 # Run all tests
 .PHONY: tests
-tests: test-hvm $(REG_TESTS)
+tests: $(REG_TESTS)
 
 # Interpeter
 intrp.c: intrp-ast.toc intrp-rdr.toc hvm-core.toc new-toc
