@@ -110,6 +110,8 @@ The `.toc` language uses S-expression-like syntax:
 
 **⚠️ API note:** `some` is being renamed to `any?` (not yet implemented). `every` is being renamed to `ever?` (not yet implemented).
 
+**⚠️ API note:** `abort` requires a string message argument: `(abort "error")`.
+
 **⚠️ API note:** Replace `nothing` with `None`.
 
 **⚠️ API note:** Assert syntax changed: `(assert (instance? Type x))` → `! x Type`. Return annotations: `(assert-result r (instance? Type r))` → `!returns Type`. **⛔ NEVER wrap `!` or `!returns` in parentheses** — they are not value-level expressions, they are special forms at the statement level. Type expressions: simple names like `Some`, `None`; vectors like `[Integer]`.

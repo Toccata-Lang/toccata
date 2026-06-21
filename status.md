@@ -59,6 +59,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] test-tail-recur-3
 - [x] test-trailing-comment
 - [x] test-underscore-inline
+- [x] test-uni
 - [x] test-inlined-result-constraint
 - [x] function-regressions
 
@@ -98,17 +99,17 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 
 
-- [ ] test-uni — universal protocol dispatch
+
 - [ ] test-closures — closures
-- [ ] types-regressions — type system
+- [ ] types-regressions — type system (blocked: type system)
 
 - [ ] test-for — `for` comprehension (needs more compiler work)
 - [ ] test-threading — `->` threading macro (depends on hash-map functionality: assoc, vals, reduce)
 
 ### Uncertain (need your call)
 
-- [ ] test-parser-efficience — parser performance/debug test
-- [ ] test-regressions — meta-test runner that imports all other modules
+
+ that imports all other modules
 
 ## Ignored for now
 
@@ -125,6 +126,8 @@ These features won't be in the new version (lists might be added eventually):
 - [ ] test-hlist-cons — hlist + cons
 - [ ] use-before-defined — definition ordering
 - [ ] test-type-of-tail — tail expression types (obsolete)
+- [ ] test-regressions — meta-test runner (obsolete)
+- [ ] test-parser-efficience — parser performance/debug test (obsolete, git deps)
 
 ## string-regressions investigation
 
