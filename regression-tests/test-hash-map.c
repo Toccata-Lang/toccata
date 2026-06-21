@@ -44,8 +44,7 @@ void testEmptyBmiNode(void) {
     BOOM("bitmap should be 0");
   }
 
-  // Free — TODO: uncomment freeBitmapNode in runtime3.c
-  // dec_and_free(termVal((Term)(Value *)node), 1);
+  dec_and_free(termVal((Term)(Value *)node), 1);
 
   check_no_leaks("testEmptyBmiNode");
 }
@@ -59,7 +58,7 @@ void testBmiNodeOneItem(void) {
     BOOM("bitmap should be 0 after malloc");
   }
 
-  // TODO: dec_and_free(termVal((Term)(Value *)node), 1);
+  dec_and_free(termVal((Term)(Value *)node), 1);
 
   check_no_leaks("testBmiNodeOneItem");
 }
@@ -73,7 +72,7 @@ void testArrayNode(void) {
     BOOM("type should be ArrayNodeType");
   }
 
-  // TODO: dec_and_free(termVal((Term)(Value *)node), 1);
+  dec_and_free(termVal((Term)(Value *)node), 1);
 
   check_no_leaks("testArrayNode");
 }
@@ -90,7 +89,7 @@ void testCollisionNode(void) {
     BOOM("count should be 4");
   }
 
-  // TODO: dec_and_free(termVal((Term)(Value *)node), 1);
+  dec_and_free(termVal((Term)(Value *)node), 1);
 
   check_no_leaks("testCollisionNode");
 }

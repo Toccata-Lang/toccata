@@ -278,20 +278,25 @@ Similar to `test-hvm.c` which tests the HVM interaction rules, we build `test-ha
 
 ## Implementation Order
 
+> **Strategy:** Uncomment stubs incrementally as needed for each test, rather than all at once. This keeps the diff small and makes debugging easier.
+
 1. **Phase 1: Add test-hash-map.c tests** — memory management, basic node creation
-2. **Uncomment all 27 stubs** in runtime3.c — copy implementations from core.c
-3. **Port `bmiHashSeq`** from core.c — flatten hash-map to sequence
-4. **Port `equal`** from core.c — value equality for key comparison
-5. **Uncomment `freeBitmapNode` / `freeHashCollisionNode`** — fix memory leaks
-6. **Uncomment `nakedSha1`** in runtime3.c — enables custom key hashing
-7. **Uncomment `collisionAssoc` case** in `mutateAssoc` — fix core.c
-8. **Wire protocol bindings** — assign function pointers so Toccata functions dispatch to C implementations
-9. **Add `{}` constructor** — enable empty HashMap creation
-10. **Add `empty?` protocol** for HashMap
-11. **Add `=` protocol** for HashMap
-12. **Add `get*` / `dissoc*` variants** — explicit hash/shift parameters
-13. **Add `assoc-all`** — batch insertion
-14. **Fix `hash-seq` return type** if needed
+2. **Uncomment `freeBitmapNode` / `freeHashCollisionNode`** — fix memory leaks in existing tests
+3. **Uncomment stubs needed for BMI operations** — `bmiCopyAssoc`, `bmiGet`, `bmiDissoc`, `bmiCount`, `clone_BitmapIndexedNode`, `createNode`
+4. **Uncomment stubs needed for ArrayNode operations** — `arrayNodeCopyAssoc`, `arrayNodeGet`, `arrayNodeDissoc`, `arrayNodeCount`
+5. **Uncomment stubs needed for CollisionNode operations** — `collisionAssoc`, `collisionGet`, `collisionDissoc`, `collisionCount`
+6. **Uncomment `get` / `baseDissoc` / `hashVec` / `copyAssoc` / `mutateAssoc`** — polymorphic dispatch functions
+7. **Uncomment `hashMapGet` / `hashMapAssoc`** — public API
+8. **Port `bmiHashSeq`** from core.c — flatten hash-map to sequence
+9. **Port `equal`** from core.c — value equality for key comparison
+10. **Uncomment `collisionAssoc` case** in `mutateAssoc` — fix core.c
+11. **Wire protocol bindings** — assign function pointers so Toccata functions dispatch to C implementations
+12. **Add `{}` constructor** — enable empty HashMap creation
+13. **Add `empty?` protocol** for HashMap
+14. **Add `=` protocol** for HashMap
+15. **Add `get*` / `dissoc*` variants** — explicit hash/shift parameters
+16. **Add `assoc-all`** — batch insertion
+17. **Fix `hash-seq` return type** if needed
 
 ## Test File
 

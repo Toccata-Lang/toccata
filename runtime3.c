@@ -591,15 +591,11 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
 }
 
 void freeBitmapNode(Value *v) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return;
-  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)v;
   int cnt = __builtin_popcount(node->bitmap);
   for (int i = 0; i < (2 * cnt); i++) {
     if (node->array[i] != (Value *)0) {
-      dec_and_free(node->array[i], 1);
+      dec_and_free(termVal((Term)(Value *)node->array[i]), 1);
     }
   }
   if (cnt >= BMI_RECYCLE_COUNT) {
@@ -612,7 +608,6 @@ void freeBitmapNode(Value *v) {
     v->next = freeBMINodes[cnt].head;
     freeBMINodes[cnt].head = v;
   }
-  // */
 }
 
 HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
@@ -633,22 +628,17 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
 }
 
 void freeHashCollisionNode(Value *v) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return;
-  /*
   HashCollisionNode *node = (HashCollisionNode *)v;
   for (int i = 0; i < node->count; i++) {
     if (node->array[i] != 0) {
-      dec_and_free(node->array[i], 1);
+      dec_and_free(termVal((Term)(Value *)node->array[i]), 1);
     }
   }
 #ifdef CHECK_MEM_LEAK
-      __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
+  __atomic_fetch_add(&free_count, 1, __ATOMIC_ACQ_REL);
 #endif
   if (!cleaningUp)
     free(v);
-  // */
 }
 
 FreeValList centralFreeArrayNodes = (FreeValList){(Value *)0, 0};
