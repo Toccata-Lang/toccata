@@ -57,6 +57,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] test-recursive-map-fn
 - [x] test-tail-recur-1
 - [x] test-tail-recur-3
+- [x] test-trailing-comment
 - [x] test-inlined-result-constraint
 - [x] function-regressions
 
@@ -93,7 +94,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 - [ ] test-tail-recur-2 — tail recursion (blocked: str-vect dispatch on None)
 
-- [ ] test-trailing-comment — trailing comments
+
 - [ ] test-type-of-tail — tail expression types
 - [ ] test-underscore-inline — underscore binding
 - [ ] test-uni — universal protocol dispatch
