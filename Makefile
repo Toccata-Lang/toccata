@@ -15,7 +15,7 @@ REG_TESTS = test1 test2 test3 test4 test5 test6 test7 test8 test9 test10 test11 
 	test14 test15 test16 test17 test18 comment-in-deftype test-global-empty-list function-regressions \
 	test-ignore-inferred cond-expr-1 cond-expr-2 cond-expr-3 cond-expr-4 cond-expr-5 \
 	free-static-value tail-cond-1 test-inline-namespaced-sym integer-regressions string-regressions test-inlined-result-constraint \
-	vector-regressions test-either test-comment-in-let # test-closures
+	vector-regressions test-either test-comment-in-let test-recursive-map-fn # test-closures
 TEST_SOURCES = new.c runtime3.c graph.c
 
 new-toc: compiler.toc base.toc typer.toc codegen.toc toccata

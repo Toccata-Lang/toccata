@@ -54,6 +54,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] test-inline-namespaced-sym
 - [x] string-regressions
 - [x] vector-regressions
+- [x] test-recursive-map-fn
 - [x] test-inlined-result-constraint
 - [x] function-regressions
 
@@ -82,12 +83,12 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [ ] test-cond — cond syntax (waiting on: `any?`, `ever?`, `instance?`)
 
 
-- [ ] test-inline-invoke — inline invoke
-- [ ] test-inline-sym-literal — symbol literals
-- [ ] test-or-comment — comments in or/and
-- [ ] test-proto-def-constraints — protocol constraints
-- [ ] test-proto-impl-destruct — protocol destructuring
-- [ ] test-recursive-map-fn — recursive functions
+- [ ] test-inline-invoke — inline invoke (needs hash-map)
+- [ ] test-inline-sym-literal — symbol literals (blocked: `instance?`)
+- [ ] test-or-comment — comments in or/and (needs hash-map: get, map)
+- [ ] test-proto-def-constraints — protocol constraints (needs type system)
+
+
 - [ ] test-tail-recur-1 — tail recursion
 - [ ] test-tail-recur-2 — tail recursion
 - [ ] test-tail-recur-3 — tail recursion
@@ -116,6 +117,7 @@ These features won't be in the new version (lists might be added eventually):
 - [ ] minimal-variadic-params — variadic params
 - [ ] promise-regressions — promises
 - [ ] destruct-test — destructuring
+- [ ] test-proto-impl-destruct — protocol destructuring (obsolete)
 - [ ] symbol-regressions — symbols
 - [ ] test-hlist-cons — hlist + cons
 - [ ] use-before-defined — definition ordering
