@@ -48,11 +48,60 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] cond-expr-2
 - [x] cond-expr-3
 - [x] cond-expr-4
+- [x] cond-expr-5
 - [x] free-static-value
 - [x] tail-cond-1
 - [x] test-inline-namespaced-sym
 - [x] string-regressions
 - [x] vector-regressions
+
+## Tests to be processed
+
+- [ ] agent-regressions
+- [ ] and-prop
+- [ ] Boomer
+- [ ] boom
+- [ ] check-bad-incRef
+
+- [ ] destruct-test
+- [ ] function-regressions
+- [ ] future-regressions
+- [ ] hash-map-regressions
+- [ ] interpreter-test
+- [ ] lazy-list-regressions
+- [ ] list-regressions
+- [ ] maybe-regressions
+- [ ] minimal-variadic-params
+- [ ] or-and-constraints
+- [ ] promise-regressions
+- [ ] state-error1-1
+- [ ] state-error1-2
+- [ ] symbol-regressions
+- [ ] test-apply-constructor
+- [ ] test-closures
+- [ ] test-cond
+- [ ] test-for
+- [ ] test-gensym
+- [ ] test-hlist-cons
+- [ ] test-inlined-result-constraint
+- [ ] test-inline-invoke
+- [ ] test-inline-sym-literal
+- [ ] test-or-comment
+- [ ] test-parser-efficience
+- [ ] test-proto-def-constraints
+- [ ] test-proto-impl-destruct
+- [ ] test-recursive-map-fn
+- [ ] test-regressions
+- [ ] test-tail-recur-1
+- [ ] test-tail-recur-2
+- [ ] test-tail-recur-3
+- [ ] test-threading
+- [ ] test-trailing-comment
+- [ ] test-type-of-tail
+- [ ] test-underscore-inline
+- [ ] test-uni
+- [ ] types-regressions
+- [ ] use-before-defined
 
 ## string-regressions investigation
 
