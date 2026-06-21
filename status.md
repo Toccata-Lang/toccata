@@ -55,6 +55,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] string-regressions
 - [x] vector-regressions
 - [x] test-recursive-map-fn
+- [x] test-tail-recur-1
 - [x] test-inlined-result-constraint
 - [x] function-regressions
 
@@ -89,7 +90,6 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [ ] test-proto-def-constraints — protocol constraints (needs type system)
 
 
-- [ ] test-tail-recur-1 — tail recursion
 - [ ] test-tail-recur-2 — tail recursion
 - [ ] test-tail-recur-3 — tail recursion
 - [ ] test-trailing-comment — trailing comments
