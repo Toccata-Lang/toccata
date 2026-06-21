@@ -69,7 +69,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 ### New functionality to implement
 
 - [ ] agent-regressions — agent system
-- [ ] hash-map-regressions — hash-map data structure ([plan](docs/hash-map-plan.md))
+- [ ] hash-map-regressions — hash-map data structure ([plan](docs/hash-map-plan.md), [tests](regression-tests/test-hash-map.c))
 - [ ] maybe-regressions — Maybe type
 - [ ] state-error1-1 — state-error monad
 - [ ] state-error1-2 — state-error monad
