@@ -54,6 +54,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [x] test-inline-namespaced-sym
 - [x] string-regressions
 - [x] vector-regressions
+- [x] test-inlined-result-constraint
 - [x] function-regressions
 
 ## Tests to be processed
@@ -80,7 +81,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 - [ ] test-cond — cond syntax (waiting on: `any?`, `ever?`, `instance?`)
 
-- [ ] test-inlined-result-constraint — result constraints
+
 - [ ] test-inline-invoke — inline invoke
 - [ ] test-inline-sym-literal — symbol literals
 - [ ] test-or-comment — comments in or/and
