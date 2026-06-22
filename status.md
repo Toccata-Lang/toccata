@@ -1,8 +1,6 @@
 # HVM Implementation Status
 
-## Before fixing a new test
-
-Read these files for context before starting any new interaction:
+Read these files for context before starting any:
 
 2. `docs/calculus.md` — Formal calculus: node types, polarities, all 15 interaction rules with before/after descriptions
 3. `docs/interactions.dot` — Visual diagrams for each rule
@@ -125,11 +123,6 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [ ] test-for — `for` comprehension (needs more compiler work)
 - [ ] test-threading — `->` threading macro (depends on hash-map functionality: assoc, vals, reduce)
 
-### Uncertain (need your call)
-
-
- that imports all other modules
-
 ## Ignored for now
 
 These features won't be in the new version (lists might be added eventually):
@@ -147,10 +140,6 @@ These features won't be in the new version (lists might be added eventually):
 - [ ] test-type-of-tail — tail expression types (obsolete)
 - [ ] test-regressions — meta-test runner (obsolete)
 - [ ] test-parser-efficience — parser performance/debug test (obsolete, git deps)
-
-## string-regressions investigation
-
-**Status:** FIXED. Segfault was caused by `ReifiedVal` struct lacking a `next` field — the free list code cast `ReifiedVal*` to `Value*` to access `next`, which overlapped with `hashVal`. When memory was reused for a different implCount, the stale `next` value persisted and linked to the wrong free list. Fix: added `next` field to `ReifiedVal`, initialized in `malloc_reified` and reset in `decValRef`.
 
 ## Lessons Learned
 
