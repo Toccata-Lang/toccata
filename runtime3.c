@@ -1944,7 +1944,7 @@ Term vectorGet(Term v, Term n) {
   }
 }
 
-BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
+BitmapIndexedNode *cloneBitmapIndexedNode(BitmapIndexedNode *node, int idx,
                                            Value *key, Value* val)
 {
   
@@ -2068,10 +2068,6 @@ Value *bmiCount(Value *arg0) {
 }
 
 Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
@@ -2079,114 +2075,78 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
   int bit = bitpos(hash, shift);
   int idx = __builtin_popcount(node->bitmap & (bit - 1));
   if (node->bitmap & bit) {
-    // if the hash position is already filled
     Value *keyOrNull = node->array[2 * idx];
     Value *valOrNode = node->array[2 * idx + 1];
     if (keyOrNull == (Value *)0) {
-      // There is no key in the position, so valOrNode is
-      // pointer to a node.
       int newShift = shift + 5;
-      Value *n = copyAssoc(incRef(valOrNode, 1), key, val, hash, newShift);
+      Value *n = copyAssoc(incRefVal(valOrNode, 1), key, val, hash, newShift);
       if (n == valOrNode) {
-        // the key was already associated with the value
-        // so do nothing
-        dec_and_free(n, 1);
+        dec_and_free((Term)n, 1);
         return(arg0);
       } else {
-        // clone node and add n to it
-        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, n);
-	dec_and_free(arg0, 1);
+        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, (Value *)0, n);
+        dec_and_free((Term)arg0, 1);
         return((Value *)newNode);
       }
-    } else if (equal(incRef(key, 1), incRef(keyOrNull, 1))) {
-      if (equal(incRef(val, 1), incRef(valOrNode, 1))) {
-        dec_and_free(arg1, 1);
-        dec_and_free(arg2, 1);
+    } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
+      if (equal(incRefVal(val, 1), incRefVal(valOrNode, 1))) {
+        dec_and_free((Term)arg1, 1);
+        dec_and_free((Term)arg2, 1);
         return(arg0);
       } else {
-        // if the keyOrNull points to a value that is equal to key
-        // create new hash-map with valOrNode replaced by val
-        // clone node and add val to it
-        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, key, val);
-        dec_and_free((Value *)node, 1);
+        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, key, val);
+        dec_and_free((Term)arg0, 1);
         return((Value *)newNode);
       }
     } else {
-      // there is already a key/val pair at the position where key
-      // would be placed. Extend tree a level
-      int64_t existingKeyHash = nakedSha1(incRef(keyOrNull, 1));
+      int64_t existingKeyHash = nakedSha1(incRef((Term)keyOrNull, 1));
       if (existingKeyHash == hash) {
-        // make & return HashCollisionNode
         HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
         newLeaf->array[0] = keyOrNull;
         newLeaf->array[1] = valOrNode;
         newLeaf->array[2] = key;
         newLeaf->array[3] = val;
-        incRef((Value *)keyOrNull, 1);
-        incRef((Value *)valOrNode, 1);
+        incRef((Term)keyOrNull, 1);
+        incRef((Term)valOrNode, 1);
 
-        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0,
+        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, (Value *)0,
                                                              (Value *)newLeaf);
-        dec_and_free((Value *)node, 1);
+        dec_and_free((Term)arg0, 1);
         return((Value *)newNode);
       } else {
         Value *newLeaf = createNode(shift + 5,
-                                    existingKeyHash, incRef(keyOrNull, 1), incRef(valOrNode, 1),
+                                    existingKeyHash, incRefVal(keyOrNull, 1), incRefVal(valOrNode, 1),
                                     hash, key, val);
-        BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, newLeaf);
-        dec_and_free((Value *)node, 1);
+        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, (Value *)0, newLeaf);
+        dec_and_free((Term)arg0, 1);
         return((Value *)newNode);
       }
     }
   } else {
-    // the position in the node is empty
-    int n = __builtin_popcount(node->bitmap);
-    if (n >= 16) {
-      ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
-      int jdx = mask(hash, shift);
-      int newShift = shift + 5;
-      newNode->array[jdx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, hash, newShift);
-      for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
-        if ((node->bitmap >> i) & 1) {
-          if (node->array[j] == (Value *)0) {
-            newNode->array[i] = node->array[j + 1];
-            incRef(newNode->array[i], 1);
-          } else {
-            incRef(node->array[j], 2);
-	    newNode->array[i] = copyAssoc((Value *)&emptyBMI,
-					  node->array[j],
-					  incRef(node->array[j + 1], 1),
-					  nakedSha1(node->array[j]),
-					  newShift);
-	  }
-	  j += 2;
-	}
-      }
-      dec_and_free((Value *)node, 1);
-      return((Value *)newNode);
-    } else {
-      int itemCount = n + 1;
-      BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
-      newNode->bitmap = node->bitmap | bit;
-      for (int i = 0; i < idx * 2; i++) {
-        if (node->array[i] != (Value *)0) {
-          incRef(node->array[i], 1);
+    // bit not set, add new entry
+    int idx = __builtin_popcount(node->bitmap & ((1 << (bit - 1)) - 1));
+    int itemCount = __builtin_popcount(node->bitmap);
+    BitmapIndexedNode *newNode = malloc_bmiNode(itemCount + 1);
+    newNode->bitmap = node->bitmap | bit;
+    for (int i = 0; i <= itemCount; i++) {
+      if (i == idx) {
+        newNode->array[i * 2] = key;
+        newNode->array[i * 2 + 1] = val;
+      } else {
+        int srcIdx = i > idx ? i - 1 : i;
+        newNode->array[i * 2] = node->array[srcIdx * 2];
+        newNode->array[i * 2 + 1] = node->array[srcIdx * 2 + 1];
+        if (node->array[srcIdx * 2] != (Value *)0) {
+          incRef((Term)node->array[srcIdx * 2], 1);
         }
-        newNode->array[i] = node->array[i];
-      }
-      newNode->array[2 * idx] = key;
-      newNode->array[2 * idx + 1] = val;
-      for (int i = idx * 2; i < n * 2; i++) {
-        if (node->array[i] != (Value *)0) {
-          incRef(node->array[i], 1);
+        if (node->array[srcIdx * 2 + 1] != (Value *)0) {
+          incRef((Term)node->array[srcIdx * 2 + 1], 1);
         }
-        newNode->array[i + 2] = node->array[i];
       }
-      dec_and_free((Value *)node, 1);
-      return((Value *)newNode);
     }
+    dec_and_free((Term)arg0, 1);
+    return((Value *)newNode);
   }
-  // */
 }
 
 Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
@@ -2409,7 +2369,7 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
 	return(n);
       } else {
 	// clone node and add n to it
-	BitmapIndexedNode *newNode = clone_BitmapIndexedNode(node, idx, (Value *)0, n);
+	BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, (Value *)0, n);
 	dec_and_free(arg0, 1);
 	return((Value *)newNode);
       }
