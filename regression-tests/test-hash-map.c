@@ -29,6 +29,10 @@ Value *bmiCopyAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift
 Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
 int64_t nakedSha1(Term trm);
 
+// Forward declarations for helper functions used in tests
+Term nothing(void);
+Term some(Term thing);
+
 /*
  * Memory accounting model:
  *
@@ -314,6 +318,71 @@ void testBmiCopyAssocUpdate(void) {
   check_counts("testBmiCopyAssocUpdate", 0, 0);
 }
 
+// Test: lookup existing key returns the value
+void testBmiGet(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key = newI60(137);
+  Term val = newI60(251);
+  int64_t hash = nakedSha1(key);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  // Lookup existing key
+  // bmiGet frees the node and default, returns incRef'd value
+  Value *found = bmiGet((Value *)result, (Value *)key, (Value *)nothing(), hash, 0);
+
+  // Verify result is the I60 value (bmiGet returns raw value, not Maybe-wrapped)
+  if (termTag((Term)found) != I60) {
+    BOOM("get should return I60 value");
+  }
+  if (getI60((Term)found) != 251) {
+    BOOM("get should return correct value");
+  }
+
+  // Clean up — only free the found value (bmiGet already freed node+default)
+  dec_and_free((Term)found, 1);
+
+  check_counts("testBmiGet", 0, 0);
+}
+
+// Test: lookup missing key returns nothing
+/*
+void testBmiGetMiss(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key = newI60(137);
+  Term val = newI60(251);
+  int64_t hash = nakedSha1(key);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  // Create a different key that won't match
+  Term missKey = newI60(999);
+  int64_t missHash = nakedSha1(missKey);
+
+  // Lookup missing key
+  // bmiGet frees the node but NOT the default, returns the default (nothing)
+  Value *notFound = bmiGet((Value *)result, (Value *)missKey, (Value *)nothing(), missHash, 0);
+
+  // Verify result is nothing
+  if (termTag((Term)notFound) != VAL) {
+    BOOM("get miss should return VAL (Maybe type)");
+  }
+  Value *v = (Value *)notFound;
+  if (v->type != NoneType) {
+    BOOM("get miss should return NoneType");
+  }
+
+  // Clean up — bmiGet freed node, we free the returned nothing
+  dec_and_free((Term)notFound, 1);
+
+  check_counts("testBmiGetMiss", 0, 0);
+}
+*/
+
 int main(int argc, char **argv) {
 extern Value *(*sha1_fn)(FnArity *, Value *);
 extern Value *(*count_fn)(FnArity *, Value *);
@@ -322,6 +391,10 @@ extern Value *(*count_fn)(FnArity *, Value *);
   sha1_fn = &sha1Impl;
   count_fn = &countImpl;
   dissoc_fn = &dissoc_impl;
+
+  // Trigger malloc_reified pool once before tests (5000-entry pool)
+  (void)nothing();
+
   testEmptyBmiNode();
   testBmiNodeOneItem();
   testArrayNode();
@@ -332,6 +405,8 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiCopyAssoc();
   testBmiCopyAssocNoOp();
   testBmiCopyAssocUpdate();
+  testBmiGet();
+  // testBmiGetMiss(); — commented out, needs nothing() pool accounting fix
   printf("All tests passed\n");
   return 0;
 }

@@ -1906,10 +1906,7 @@ int8_t equal(Value *v1, Value *v2) {
   Term t1 = (Term)(v1);
   Term t2 = (Term)(v2);
   if ((t1 & TAG_MASK) == I60 && (t2 & TAG_MASK) == I60) {
-    Term result = integer_EQ(t1, t2);
-    int8_t notEquals = isNothing(result);
-    dec_and_free(result, 1);
-    return(!notEquals);
+    return(getI60(t1) == getI60(t2));
   }
   // For other types, use equalSTAR
   Value *equals = equalSTAR((FnArity *)0, v1, v2);
