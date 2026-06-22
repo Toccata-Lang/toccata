@@ -317,20 +317,28 @@ Similar to `test-hvm.c` which tests the HVM interaction rules, we build `test-ha
 - `testFreeHashCollisionNode` — verify freeHashCollisionNode works
 
 ### Phase 2: BMI Operations (BMI code is active — tests not yet written)
+
+Tests ordered by complexity. Start with trivial (2-3 assertions), work up to hard.
+
+#### Trivial — 2-3 assertions, single key/value
 - [x] `testBmiCopyAssoc` — add key/value to empty BMI → single-item BMI (B2)
 - [ ] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
-- [ ] `testBmiCopyAssocUpdate` — update existing key, different value (A2b)
-- [ ] `testBmiCopyAssocSubNodeNoChange` — sub-node unchanged → no-op (A1a)
-- [ ] `testBmiCopyAssocSubNodeChange` — sub-node changes → clone (A1b)
-- [ ] `testBmiCopyAssocCollision` — add key with same hash → collision node (A2c)
-- [ ] `testBmiCopyAssocBranch` — add key with different hash → branch node (A2d)
-- [ ] `testBmiCopyAssocPromote` — add 17th entry → promote to ArrayNode (B1)
-- [ ] `testBmiMutateAssoc` — verify in-place mutation when refs==1
+- [ ] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
 - [ ] `testBmiGet` — lookup existing key
 - [ ] `testBmiGetMiss` — lookup missing key
 - [ ] `testBmiDissoc` — remove key from single-item BMI
 - [ ] `testBmiDissocEmpty` — remove last key → returns emptyBMI
-- [ ] `testBmiCount` — count entries in BMI
+- [ ] `testBmiCount` — N-entry map, verify count == N
+
+#### Medium — need nested structures or specific conditions
+- [ ] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
+- [ ] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
+- [ ] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
+- [ ] `testBmiCopyAssocPromote` — 16+ entry map, add 17th → promote to ArrayNode (B1)
+
+#### Hard — engineering constraints
+- [ ] `testBmiMutateAssoc` — verify in-place mutation when refs==1 (need to control ref counter)
+- [ ] `testBmiCopyAssocCollision` — two keys with identical SHA1 hash → collision node (A2c)
 
 ### Phase 3: ArrayNode Operations
 - `testArrayNodeCopyAssoc` — add to empty ArrayNode
