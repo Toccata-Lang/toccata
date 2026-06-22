@@ -1999,7 +1999,7 @@ Value *bmiHashVec(Value *arg0, Value *arg1) {
   Vector *vec = (Vector *)arg1;
   for (int i = 0; i < cnt; i++) {
     if (node->array[2 * i] == (Value *)0) {
-      vec = (Vector *)hashVec((Value *)incRef((Term)node->array[2 * i + 1], 1), (Value *)vec);
+      vec = (Vector *)hashVec(incRefVal(node->array[2 * i + 1], 1), (Value *)vec);
     } else {
       incRef((Term)node->array[2 * i], 1);
       incRef((Term)node->array[2 * i + 1], 1);
@@ -2180,8 +2180,8 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	node->array[idx * 2] = (Value *)0;;
 	node->array[idx * 2 + 1] = n;
 	return(arg0);
-      } else if (equal((Value *)incRef((Term)key, 1), (Value *)incRef((Term)keyOrNull, 1))) {
-	if (equal((Value *)incRef((Term)val, 1), (Value *)incRef((Term)valOrNode, 1))) {
+      } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
+	if (equal(incRefVal(val, 1), incRefVal(valOrNode, 1))) {
 	  dec_and_free(termVal((Term)arg1), 1);
 	  dec_and_free(termVal((Term)arg2), 1);
 	  return(arg0);
@@ -2212,8 +2212,8 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	  return(arg0);
 	} else {
 	  Value *newLeaf = createNode(shift + 5,
-				      existingKeyHash, (Value *)incRef((Term)keyOrNull, 1), (Value *)incRef((Term)valOrNode, 1),
-				      hash, (Value *)incRef((Term)key, 1), (Value *)incRef((Term)val, 1));
+				      existingKeyHash, incRefVal(keyOrNull, 1), incRefVal(valOrNode, 1),
+				      hash, incRefVal(key, 1), incRefVal(val, 1));
 	  // replace key/val at 'idx' with new stuff
 	  node->array[idx * 2] = (Value *)0;
 	  node->array[idx * 2 + 1] = (Value *)newLeaf;

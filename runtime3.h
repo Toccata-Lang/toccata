@@ -221,6 +221,7 @@ void freeAll();
 
 #ifndef FAST_INCS
 Term incRef(Term v, int deltaRefs);
+#define incRefVal(v, n) ((Value *)incRef((Term)(v), (n)))
 #else
 Value *simpleIncRef(Value *v, int n);
 #define incRef(V, N) ((V)->refs >= 0 ? simpleIncRef(V, N) : V)
