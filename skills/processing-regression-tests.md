@@ -1,5 +1,9 @@
 # Process Regression Tests
 
+## ⛔ CRITICAL: Commit after every change
+
+**Commit after every meaningful change.** Do not batch changes. Each commit should be a single, focused change that builds and passes tests. This keeps history clean and makes rollback easy.
+
 ## ⛔ CRITICAL: Never use 42 as test data
 
 **Never use 42 as a test integer value** — it's cliche and irritating. Pick something else.
