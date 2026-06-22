@@ -73,7 +73,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [x] clone_BitmapIndexedNode
   - [x] createNode
   - [x] bmiHashVec
-  - [ ] nakedSha1
+  - [x] nakedSha1
   - [ ] bmiCount
   - [ ] bmiCopyAssoc
   - [ ] bmiMutateAssoc
