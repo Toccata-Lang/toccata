@@ -182,9 +182,18 @@ void testFreeHashCollisionNode(void) {
   check_counts("testFreeHashCollisionNode", 1, 1);
 }
 
+extern Value *(*sha1_fn)(FnArity *, Value *);
+Value *(*sha1_fn)(FnArity *, Value *);
+
+Value *sha1_impl(FnArity *arity, Value *arg) {
+  int64_t hash = nakedSha1((Term)arg);
+  return((Value *)newI60(hash));
+}
+
 int main(int argc, char **argv) {
   mapGet_fn = &mapGet;
   dissoc_fn = &dissoc_impl;
+  sha1_fn = &sha1_impl;
   testEmptyBmiNode();
   testBmiNodeOneItem();
   testArrayNode();

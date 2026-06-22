@@ -1025,7 +1025,6 @@ int64_t nakedSha1(Term trm) {
   }
   return(hash);
 }
-
 char *extractStr(Value *v) {
   // Should only be used to print an error meessage when calling 'abort'
   // Leaks a String value
