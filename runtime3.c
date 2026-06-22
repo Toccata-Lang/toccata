@@ -1968,10 +1968,7 @@ Term vectorGet(Term v, Term n) {
 BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
                                            Value *key, Value* val)
 {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((BitmapIndexedNode *)NULL);
-  /*
+  
   int itemCount = __builtin_popcount(node->bitmap);
   BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
   newNode->bitmap = node->bitmap;
@@ -1981,17 +1978,16 @@ BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
       newNode->array[i * 2 + 1] = val;
     } else {
       if (node->array[i * 2] != (Value *)0) {
-        incRef(node->array[i * 2], 1);
+        incRef((Term)(Value *)node->array[i * 2], 1);
       }
       if (node->array[i * 2 + 1] != (Value *)0) {
-        incRef(node->array[i * 2 + 1], 1);
+        incRef((Term)(Value *)node->array[i * 2 + 1], 1);
       }
       newNode->array[i * 2] = node->array[i * 2];
       newNode->array[i * 2 + 1] = node->array[i * 2 + 1];
     }
   }
   return(newNode);
-  // */
 }
 
 Value *createNode(int shift,
