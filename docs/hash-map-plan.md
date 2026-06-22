@@ -34,6 +34,11 @@ The hash-map is an immutable key-value store based on Clojure's bitmap trie data
 - [x] `createNode` — no incRef calls (caller handles ref counting)
 - [x] `bmiHashVec` — type casts for incRef/hashVec/mutateVectConj/dec_and_free
 - [x] `nakedSha1` — reworked to take Term, use termTag() dispatch
+- [x] BMI operations active — `bmiMutateAssoc`, `bmiGet`, `bmiDissoc`
+- [x] `freeBitmapNode` / `freeHashCollisionNode` — fixed to not call `termVal()` on I60/F60/REF terms
+- [x] `equal()` — handles I60 terms via `integer_EQ`, uses `equalSTAR` for other types
+- [x] `isNothing()` — helper to check if a Term is the nothing singleton
+- [x] `testBmiCopyAssoc` — first BMI operation test
 
 ## Architecture Reference
 
@@ -276,7 +281,8 @@ Similar to `test-hvm.c` which tests the HVM interaction rules, we build `test-ha
 - `testFreeHashCollisionNode` — verify freeHashCollisionNode works
 
 ### Phase 2: BMI Operations (BMI code is active — tests not yet written)
-- [ ] `testBmiCopyAssoc` — add key/value to empty BMI → single-item BMI
+- [x] `testBmiCopyAssoc` — add key/value to empty BMI → single-item BMI (also exercises `bmiMutateAssoc`)
+- [ ] `testBmiMutateAssoc` — verify in-place mutation when refs==1
 - [ ] `testBmiCopyAssocUpdate` — update existing key in BMI
 - [ ] `testBmiCopyAssocCollision` — add key with same hash → creates collision node
 - [ ] `testBmiCopyAssocBranch` — add key with different hash → creates branch node
@@ -319,14 +325,14 @@ Similar to `test-hvm.c` which tests the HVM interaction rules, we build `test-ha
 > **Strategy:** Uncomment stubs incrementally as needed for each test, rather than all at once. This keeps the diff small and makes debugging easier.
 
 1. **Phase 1: Add test-hash-map.c tests** — memory management, basic node creation ✅ (DONE)
-2. **Phase 2: Add and run BMI operation tests** — `bmiGet`, `bmiMutateAssoc`, `bmiDissoc` are already active
-3. **Uncomment `freeBitmapNode` / `freeHashCollisionNode`** — fix memory leaks in existing tests
-4. **Uncomment stubs needed for ArrayNode operations** — `arrayNodeCopyAssoc`, `arrayNodeGet`, `arrayNodeDissoc`, `arrayNodeCount`
-5. **Uncomment stubs needed for CollisionNode operations** — `collisionAssoc`, `collisionGet`, `collisionDissoc`, `collisionCount`
-6. **Uncomment `get` / `baseDissoc` / `hashVec` / `copyAssoc` / `mutateAssoc`** — polymorphic dispatch functions
-7. **Uncomment `hashMapGet` / `hashMapAssoc`** — public API
-8. **Port `bmiHashSeq`** from core.c — flatten hash-map to sequence
-9. **Port `equal`** from core.c — value equality for key comparison
+2. **Phase 2: Add and run BMI operation tests** — BMI code active, `testBmiCopyAssoc` written ✅
+3. **Fix `freeBitmapNode` / `freeHashCollisionNode`** — remove `termVal()` call before `dec_and_free` ✅
+4. **Implement `equal()`** — I60 via `integer_EQ`, other types via `equalSTAR` ✅
+5. **Uncomment stubs needed for ArrayNode operations** — `arrayNodeCopyAssoc`, `arrayNodeGet`, `arrayNodeDissoc`, `arrayNodeCount`
+6. **Uncomment stubs needed for CollisionNode operations** — `collisionAssoc`, `collisionGet`, `collisionDissoc`, `collisionCount`
+7. **Uncomment `get` / `baseDissoc` / `hashVec` / `copyAssoc` / `mutateAssoc`** — polymorphic dispatch functions
+8. **Uncomment `hashMapGet` / `hashMapAssoc`** — public API
+9. **Port `bmiHashSeq`** from core.c — flatten hash-map to sequence
 10. **Uncomment `collisionAssoc` case** in `mutateAssoc` — fix core.c
 11. **Wire protocol bindings** — assign function pointers so Toccata functions dispatch to C implementations
 12. **Add `{}` constructor** — enable empty HashMap creation

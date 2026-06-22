@@ -73,8 +73,8 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [x] bmiHashVec
   - [x] nakedSha1
   - [x] bmiCount (full recursion via count_fn)
-  - [x] bmiCopyAssoc
-  - [x] bmiMutateAssoc
+  - [x] bmiCopyAssoc — BMI operations active, tests in progress
+  - [x] bmiMutateAssoc — tested via testBmiCopyAssoc
   - [x] bmiGet
   - [x] bmiDissoc
   - [ ] arrayNodeCopyAssoc
