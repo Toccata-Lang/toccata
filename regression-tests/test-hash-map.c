@@ -347,6 +347,29 @@ void testBmiGet(void) {
   check_counts("testBmiGet", 0, 0);
 }
 
+// Test: remove key from single-item BMI → returns emptyBMI
+void testBmiDissoc(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key = newI60(137);
+  Term val = newI60(251);
+  int64_t hash = nakedSha1(key);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  // Remove the only key — should return emptyBMI
+  Value *afterDissoc = bmiDissoc((Value *)result, (Value *)key, hash, 0);
+
+  // Verify result is emptyBMI
+  if (afterDissoc != (Value *)&emptyBMI) {
+    BOOM("dissoc from single-item should return emptyBMI");
+  }
+
+  // Clean up — emptyBMI is a singleton, no need to free
+  check_counts("testBmiDissoc", 0, 0);
+}
+
 // Test: lookup missing key returns nothing
 void testBmiGetMiss(void) {
   reset_counters();
@@ -405,6 +428,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiCopyAssocUpdate();
   testBmiGet();
   testBmiGetMiss();
+  testBmiDissoc();
   printf("All tests passed\n");
   return 0;
 }

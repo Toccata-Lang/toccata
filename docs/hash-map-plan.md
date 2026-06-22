@@ -322,11 +322,11 @@ Tests ordered by complexity. Start with trivial (2-3 assertions), work up to har
 
 #### Trivial — 2-3 assertions, single key/value
 - [x] `testBmiCopyAssoc` — add key/value to empty BMI → single-item BMI (B2)
-- [ ] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
-- [ ] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
+- [x] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
+- [x] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
 - [x] `testBmiGet` — lookup existing key
 - [x] `testBmiGetMiss` — lookup missing key
-- [ ] `testBmiDissoc` — remove key from single-item BMI
+- [x] `testBmiDissoc` — remove key from single-item BMI
 - [ ] `testBmiDissocEmpty` — remove last key → returns emptyBMI
 - [ ] `testBmiCount` — N-entry map, verify count == N
 
