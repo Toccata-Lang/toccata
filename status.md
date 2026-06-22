@@ -5,10 +5,12 @@ Read these files for context before starting any:
 2. `docs/calculus.md` — Formal calculus: node types, polarities, all 15 interaction rules with before/after descriptions
 3. `docs/interactions.dot` — Visual diagrams for each rule
 4. `docs/implementation.md` — Architecture reference: term layout, memory, reduction engine
-5. `new.h` — Type definitions, tag constants, function declarations
-6. `new.c` — Core implementation: `take`, `swap`, `move`, `interact`, existing rules
-8. `graph.c` — DOT graph generation for debugging
-10. `Makefile`
+5. `docs/hash-map-plan.md` — Hash-map implementation plan and test strategy
+6. `skills/editing-runtime3.md` — Pitfalls and learnings from uncommenting runtime3.c stubs
+7. `new.h` — Type definitions, tag constants, function declarations
+8. `new.c` — Core implementation: `take`, `swap`, `move`, `interact`, existing rules
+10. `graph.c` — DOT graph generation for debugging
+12. `Makefile`
 
 Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
 
