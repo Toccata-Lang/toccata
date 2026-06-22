@@ -996,59 +996,34 @@ Value *escapeChars(Term arg0) {
   return stringValue("");
 }
 
-int64_t nakedSha1(Value *v1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return (0);
-  /*
-  Integer *hashVal;
+int64_t nakedSha1(Term trm) {
   int64_t hash;
-  switch (v1->type) {
-  case IntegerType:
-    hash = integerSha1(v1);
-    break;
+  Tag tg = termTag(trm);
+  if (tg == I60) {
+    hash = integerSha1(trm);
+  } else if (tg == VAL) {
+    Value *v1 = (Value *)trm;
+    switch (v1->type) {
+    case StringBufferType:
+    case SubStringType:
+      hash = strSha1(v1);
+      break;
 
-  case StringBufferType:
-  case SubStringType:
-    hash = strSha1(v1);
-    break;
-
-  case ListType:
-  case VectorType:
-  case BitmapIndexedType:
-  case ArrayNodeType:
-  case HashCollisionNodeType:
-    if (((HashedValue *)v1)->hashVal != 0) {
-      hash = ((HashedValue *)v1)->hashVal;
-      dec_and_free(v1, 1);
-    } else {
-      hashVal = (Integer *)sha1((FnArity *)0, v1);
-      hash = hashVal->numVal;
-      ((HashedValue *)v1)->hashVal = hash;
-      dec_and_free((Value *)hashVal, 1);
+    case VectorType:
+      BOOM("Fix when vectorSha1 is implemented");
+      break;
+      
+    default:
+      // No HashedValue type available for caching
+      hash = 0;
+      break;
     }
-    break;
-    
-  default:
-    if (v1->type > CoreTypeCount) {
-      if (((HashedValue *)v1)->hashVal != 0) {
-	hash = ((HashedValue *)v1)->hashVal;
-	dec_and_free(v1, 1);
-      } else {
-	hashVal = (Integer *)sha1((FnArity *)0, v1);
-	hash = hashVal->numVal;
-	((HashedValue *)v1)->hashVal = hash;
-	dec_and_free((Value *)hashVal, 1);
-      }
-    } else {
-      hashVal = (Integer *)sha1((FnArity *)0, v1);
-      hash = hashVal->numVal;
-      dec_and_free((Value *)hashVal, 1);
-    }
-    break;
+  } else {
+    char msg[100];
+    sprintf(msg, "Can't SHA1 term: %s", tagStr(tg));
+    BOOM(msg);
   }
   return(hash);
-  // */
 }
 
 char *extractStr(Value *v) {
