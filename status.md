@@ -70,6 +70,24 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 - [ ] agent-regressions — agent system
 - [ ] hash-map-regressions — hash-map data structure ([plan](docs/hash-map-plan.md), [tests](regression-tests/test-hash-map.c))
+  - [x] clone_BitmapIndexedNode
+  - [x] createNode
+  - [x] bmiHashVec
+  - [ ] nakedSha1
+  - [ ] bmiCount
+  - [ ] bmiCopyAssoc
+  - [ ] bmiMutateAssoc
+  - [ ] bmiGet
+  - [ ] bmiDissoc
+  - [ ] arrayNodeCopyAssoc
+  - [ ] arrayNodeMutateAssoc
+  - [ ] arrayNodeGet
+  - [ ] arrayNodeCount
+  - [ ] collisionAssoc
+  - [ ] collisionCount
+  - [ ] collisionVec
+  - [ ] collisionDissoc
+  - [ ] collisionGet
 - [ ] maybe-regressions — Maybe type
 - [ ] state-error1-1 — state-error monad
 - [ ] state-error1-2 — state-error monad
