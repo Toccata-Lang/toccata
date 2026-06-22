@@ -51,6 +51,42 @@ The hash-map is an immutable key-value store based on Clojure's bitmap trie data
 | `HashCollisionNode` | 13 | Stores entries that hash-collide |
 | `HashMapType` | 14 | Abstract type number for `instance?` checks |
 
+### `bmiCopyAssoc` Code Paths (9 total)
+
+```
+bmiCopyAssoc(node, key, val, hash, shift)
+│
+├─ bit = bitpos(hash, shift)
+├─ idx = popcount(bitmap & (bit-1))
+│
+├─ IF bit IS set (entry exists at idx)
+│  │
+│  ├─ A1: keyOrNull == NULL (sub-node, not a KV pair)
+│  │  ├─ A1a: copyAssoc returns SAME → no-op (return original)
+│  │  └─ A1b: copyAssoc returns DIFF → clone with new sub-node
+│  │
+│  ├─ A2: keyOrNull != NULL (KV pair exists)
+│  │  ├─ A2a: key==key AND val==val → no-op (return original)
+│  │  ├─ A2b: key==key AND val≠val → clone, update value
+│  │  ├─ A2c: key≠key AND hash==hash → collision node
+│  │  └─ A2d: key≠key AND hash≠hash → branch node (createNode)
+│  │
+│  └─ IF bit NOT set (no entry here)
+│     ├─ B1: n >= 16 → promote to ArrayNode
+│     └─ B2: n < 16 → insert into BMI node
+```
+
+| Path | What happens | Test idea |
+|------|-------------|-----------|
+| A1a | Sub-node unchanged → no-op | Update nested map where value doesn't change |
+| A1b | Sub-node changes → clone | Update nested map, value changes |
+| A2a | Same key, same value → no-op | `assoc` identical key/value |
+| A2b | Same key, different value → clone | Update existing key |
+| A2c | Collision → new HashCollisionNode | Two keys with same SHA1 hash |
+| A2d | Branch → new sub-node | Two keys at different bit positions |
+| B1 | **Promote to ArrayNode** | Add 17th entry to BMI (≥16 entries) |
+| B2 | Insert into BMI node | Add first key to empty, or key at free bit |
+
 ## Runtime3.c vs Core.c — Side-by-Side
 
 ### Memory Management
@@ -281,12 +317,15 @@ Similar to `test-hvm.c` which tests the HVM interaction rules, we build `test-ha
 - `testFreeHashCollisionNode` — verify freeHashCollisionNode works
 
 ### Phase 2: BMI Operations (BMI code is active — tests not yet written)
-- [x] `testBmiCopyAssoc` — add key/value to empty BMI → single-item BMI (also exercises `bmiMutateAssoc`)
+- [x] `testBmiCopyAssoc` — add key/value to empty BMI → single-item BMI (B2)
+- [ ] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
+- [ ] `testBmiCopyAssocUpdate` — update existing key, different value (A2b)
+- [ ] `testBmiCopyAssocSubNodeNoChange` — sub-node unchanged → no-op (A1a)
+- [ ] `testBmiCopyAssocSubNodeChange` — sub-node changes → clone (A1b)
+- [ ] `testBmiCopyAssocCollision` — add key with same hash → collision node (A2c)
+- [ ] `testBmiCopyAssocBranch` — add key with different hash → branch node (A2d)
+- [ ] `testBmiCopyAssocPromote` — add 17th entry → promote to ArrayNode (B1)
 - [ ] `testBmiMutateAssoc` — verify in-place mutation when refs==1
-- [ ] `testBmiCopyAssocUpdate` — update existing key in BMI
-- [ ] `testBmiCopyAssocCollision` — add key with same hash → creates collision node
-- [ ] `testBmiCopyAssocBranch` — add key with different hash → creates branch node
-- [ ] `testBmiCopyAssocWide` — add >16 entries → promotes to ArrayNode
 - [ ] `testBmiGet` — lookup existing key
 - [ ] `testBmiGetMiss` — lookup missing key
 - [ ] `testBmiDissoc` — remove key from single-item BMI

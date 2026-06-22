@@ -2121,29 +2121,53 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
       }
     }
   } else {
-    // bit not set, add new entry
-    int idx = __builtin_popcount(node->bitmap & ((1 << (bit - 1)) - 1));
-    int itemCount = __builtin_popcount(node->bitmap);
-    BitmapIndexedNode *newNode = malloc_bmiNode(itemCount + 1);
-    newNode->bitmap = node->bitmap | bit;
-    for (int i = 0; i <= itemCount; i++) {
-      if (i == idx) {
-        newNode->array[i * 2] = key;
-        newNode->array[i * 2 + 1] = val;
-      } else {
-        int srcIdx = i > idx ? i - 1 : i;
-        newNode->array[i * 2] = node->array[srcIdx * 2];
-        newNode->array[i * 2 + 1] = node->array[srcIdx * 2 + 1];
-        if (node->array[srcIdx * 2] != (Value *)0) {
-          incRef((Term)node->array[srcIdx * 2], 1);
-        }
-        if (node->array[srcIdx * 2 + 1] != (Value *)0) {
-          incRef((Term)node->array[srcIdx * 2 + 1], 1);
+    // the position in the node is empty
+    int n = __builtin_popcount(node->bitmap);
+    if (n >= 16) {
+      ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
+      int jdx = mask(hash, shift);
+      int newShift = shift + 5;
+      newNode->array[jdx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, hash, newShift);
+      for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
+        if ((node->bitmap >> i) & 1) {
+          if (node->array[j] == (Value *)0) {
+            newNode->array[i] = (Term)node->array[j + 1];
+            incRef((Term)newNode->array[i], 1);
+          } else {
+            incRef((Term)node->array[j], 2);
+            newNode->array[i] = (Term)copyAssoc((Value *)&emptyBMI,
+                                                (Value *)node->array[j],
+                                                (Value *)incRef((Term)node->array[j + 1], 1),
+                                                nakedSha1((Term)node->array[j]),
+                                                newShift);
+          }
+          j += 2;
         }
       }
+      dec_and_free((Term)node, 1);
+      return((Value *)newNode);
+    } else {
+      int idx = __builtin_popcount(node->bitmap & ((1 << (bit - 1)) - 1));
+      int itemCount = n + 1;
+      BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
+      newNode->bitmap = node->bitmap | bit;
+      for (int i = 0; i < idx * 2; i++) {
+        if (node->array[i] != (Value *)0) {
+          incRef((Term)node->array[i], 1);
+        }
+        newNode->array[i] = (Value *)node->array[i];
+      }
+      newNode->array[2 * idx] = (Value *)key;
+      newNode->array[2 * idx + 1] = (Value *)val;
+      for (int i = idx * 2; i < n * 2; i++) {
+        if (node->array[i] != (Value *)0) {
+          incRef((Term)node->array[i], 1);
+        }
+        newNode->array[i + 2] = (Value *)node->array[i];
+      }
+      dec_and_free((Term)node, 1);
+      return((Value *)newNode);
     }
-    dec_and_free((Term)arg0, 1);
-    return((Value *)newNode);
   }
 }
 
