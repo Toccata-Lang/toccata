@@ -27,6 +27,7 @@ Term integer_EQ(Term arg0, Term arg1);
 Value *bmiMutateAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
 Value *bmiCopyAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
 Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
+Value *bmiCount(Value *node);
 int64_t nakedSha1(Term trm);
 
 // Forward declarations for helper functions used in tests
@@ -421,6 +422,40 @@ void testBmiDissocEmpty(void) {
   check_counts("testBmiDissocEmpty", 10, 0);
 }
 
+// Test: count returns N for N-entry map
+void testBmiCount(void) {
+  reset_counters();
+
+  // Create two-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(2);
+  Term key1 = newI60(0);
+  Term val1 = newI60(251);
+  int64_t hash1 = nakedSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  Term key2 = newI60(1);
+  Term val2 = newI60(888);
+  int64_t hash2 = nakedSha1(key2);
+  result = bmiMutateAssoc(result, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Count entries
+  Value *countResult = bmiCount(result);
+
+  // Verify count is 2
+  if (termTag((Term)countResult) != I60) {
+    BOOM("count should return I60");
+  }
+  if (getI60((Term)countResult) != 2) {
+    BOOM("count should be 2");
+  }
+
+  // Clean up
+  dec_and_free((Term)countResult, 1);
+
+  // Pool for itemCount=2 already created by testBmiDissocEmpty, pulled from pool
+  check_counts("testBmiCount", 0, 0);
+}
+
 // Test: lookup missing key returns nothing
 void testBmiGetMiss(void) {
   reset_counters();
@@ -481,6 +516,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiGetMiss();
   testBmiDissoc();
   testBmiDissocEmpty();
+  testBmiCount();
   printf("All tests passed\n");
   return 0;
 }

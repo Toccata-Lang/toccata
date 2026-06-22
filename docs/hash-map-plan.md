@@ -328,7 +328,7 @@ Tests ordered by complexity. Start with trivial (2-3 assertions), work up to har
 - [x] `testBmiGetMiss` — lookup missing key
 - [x] `testBmiDissoc` — remove key from single-item BMI
 - [x] `testBmiDissocEmpty` — remove last key → returns emptyBMI
-- [ ] `testBmiCount` — N-entry map, verify count == N
+- [x] `testBmiCount` — N-entry map, verify count == N
 
 #### Medium — need nested structures or specific conditions
 - [ ] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
