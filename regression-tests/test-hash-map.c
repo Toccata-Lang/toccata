@@ -25,6 +25,7 @@ Term integer_EQ(Term arg0, Term arg1);
 
 // BMI operations
 Value *bmiMutateAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
+Value *bmiCopyAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
 Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
 int64_t nakedSha1(Term trm);
 
@@ -240,6 +241,79 @@ void testBmiCopyAssoc(void) {
   check_counts("testBmiCopyAssoc", 0, 0);
 }
 
+// Test: same key, same value → no-op, return original node (A2a)
+void testBmiCopyAssocNoOp(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key = newI60(42);
+  Term val = newI60(99);
+  int64_t hash = nakedSha1(key);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  // Store original pointer
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+
+  // Call bmiCopyAssoc with same key/value — should return original (no clone)
+  Value *noOpResult = bmiCopyAssoc((Value *)original, (Value *)key, (Value *)val, hash, 0);
+
+  // Verify same pointer returned (no-op path)
+  if (noOpResult != (Value *)original) {
+    BOOM("same key+value should return original node (A2a)");
+  }
+
+  // Verify structure unchanged
+  if (((BitmapIndexedNode *)noOpResult)->bitmap != original->bitmap) {
+    BOOM("bitmap should be unchanged");
+  }
+
+  // Clean up
+  dec_and_free((Term)noOpResult, 1);
+
+  check_counts("testBmiCopyAssocNoOp", 0, 0);
+}
+
+// Test: same key, different value → clone with updated value (A2b)
+void testBmiCopyAssocUpdate(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key = newI60(42);
+  Term val = newI60(99);
+  int64_t hash = nakedSha1(key);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  Term newVal = newI60(77);
+
+  // Call bmiCopyAssoc with same key, different value — should clone
+  Value *updateResult = bmiCopyAssoc((Value *)original, (Value *)key, (Value *)newVal, hash, 0);
+
+  // Verify different pointer returned (clone created)
+  if (updateResult == (Value *)original) {
+    BOOM("different value should return cloned node (A2b)");
+  }
+
+  // Verify bitmap unchanged
+  if (((BitmapIndexedNode *)updateResult)->bitmap != original->bitmap) {
+    BOOM("bitmap should be unchanged");
+  }
+
+  // Verify value was updated
+  int bit = bitpos(hash, 0);
+  int idx = __builtin_popcount(((BitmapIndexedNode *)updateResult)->bitmap & (bit - 1));
+  if (((BitmapIndexedNode *)updateResult)->array[2 * idx + 1] != (Value *)newVal) {
+    BOOM("value should be updated");
+  }
+
+  // Clean up
+  dec_and_free((Term)updateResult, 1);
+
+  check_counts("testBmiCopyAssocUpdate", 0, 0);
+}
+
 int main(int argc, char **argv) {
 extern Value *(*sha1_fn)(FnArity *, Value *);
 extern Value *(*count_fn)(FnArity *, Value *);
@@ -256,6 +330,8 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testFreeArrayNode();
   testFreeHashCollisionNode();
   testBmiCopyAssoc();
+  testBmiCopyAssocNoOp();
+  testBmiCopyAssocUpdate();
   printf("All tests passed\n");
   return 0;
 }
