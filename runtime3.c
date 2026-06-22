@@ -1025,6 +1025,11 @@ int64_t nakedSha1(Term trm) {
   }
   return(hash);
 }
+
+Value *sha1Impl(FnArity *arity, Value *arg) {
+  int64_t hash = nakedSha1((Term)arg);
+  return((Value *)newI60(hash));
+}
 char *extractStr(Value *v) {
   // Should only be used to print an error meessage when calling 'abort'
   // Leaks a String value
@@ -2009,6 +2014,34 @@ Value *bmiHashVec(Value *arg0, Value *arg1) {
   }
   dec_and_free(termVal((Term)arg0), 1);
   return((Value *)vec);
+}
+
+
+Value *(*sha1_fn)(FnArity *, Value *) = &sha1Impl;
+Value *(*count_fn)(FnArity *, Value *) = &countImpl;
+
+Value *countImpl(FnArity *arity, Value *arg) {
+  if (arg->type == BitmapIndexedType) {
+    BitmapIndexedNode *node = (BitmapIndexedNode *)arg;
+    int cnt = __builtin_popcount(node->bitmap);
+    dec_and_free((Term)arg, 1);
+    return((Value *)newI60(cnt));
+  } else if (arg->type == ArrayNodeType) {
+    ArrayNode *node = (ArrayNode *)arg;
+    int cnt = 0;
+    for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+      if (node->array[i] != (Term)0) cnt++;
+    }
+    dec_and_free((Term)arg, 1);
+    return((Value *)newI60(cnt));
+  } else if (arg->type == HashCollisionNodeType) {
+    HashCollisionNode *node = (HashCollisionNode *)arg;
+    int cnt = node->count / 2;
+    dec_and_free((Term)arg, 1);
+    return((Value *)newI60(cnt));
+  } else {
+    return((Value *)newI60(0));
+  }
 }
 
 Value *bmiCount(Value *arg0) {

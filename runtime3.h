@@ -351,6 +351,8 @@ extern Value *(*mapGet_fn)(FnArity *, Value *, Value *, Value *, int64_t hash, i
 extern Value *baseDissoc(Value *node, Value *key, int64_t hash, int shift);
 extern Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *shift);
 extern Value *(*dissoc_fn)(FnArity *, Value *, Value *, Value *, Value *);
+extern Value *sha1Impl(FnArity *arity, Value *arg);
+extern Value *countImpl(FnArity *arity, Value *arg);
 extern Value *mapGet(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
 Value *baseDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 int64_t nakedSha1(Term trm);
@@ -380,6 +382,8 @@ extern Term discard;
 extern Value *baseDissoc(Value *node, Value *key, int64_t hash, int shift);
 extern Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *shift);
 extern Value *(*dissoc_fn)(FnArity *, Value *, Value *, Value *, Value *);
+extern Value *sha1Impl(FnArity *arity, Value *arg);
+extern Value *countImpl(FnArity *arity, Value *arg);
 
 void discardFn(Term ref, Term args);
 void accessFieldFn(Term ref, Term args);
