@@ -2330,6 +2330,24 @@ Value *mapGet(FnArity *arity, Value *node, Value *key, Value *def, int64_t hash,
   }
 }
 
+Value *baseDissoc(Value *node, Value *key, int64_t hash, int shift) {
+  if (node->type == BitmapIndexedType) {
+    return(bmiDissoc(node, key, hash, shift));
+  } else if (node->type == ArrayNodeType) {
+    return(arrayNodeDissoc(node, key, hash, shift));
+  } else if (node->type == HashCollisionNodeType) {
+    return(collisionDissoc(node, key, hash, shift));
+  } else {
+    return(node);
+  }
+}
+
+Value *(*dissoc_fn)(FnArity *, Value *, Value *, Value *, Value *) = &dissoc_impl;
+
+Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *shift) {
+  return(baseDissoc(node, key, getI60(hash), getI60(shift)));
+}
+
 Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();
@@ -2736,20 +2754,6 @@ Value *get(FnArity *arity, Value *node, Value *k, Value *v, int64_t hash, int sh
   }
 }
 // */
-
-Value *baseDissoc(Value *node, Value *k, int64_t hash, int shift) {
-  switch(node->type) {
-  case BitmapIndexedType:
-    return(bmiDissoc(node, k, hash, shift));
-  case ArrayNodeType:
-    return(arrayNodeDissoc(node, k, hash, shift));
-  case HashCollisionNodeType:
-    return(collisionDissoc(node, k, hash, shift));
-  default:
-    fprintf(stderr, "Can't dissoc from that kind of node\n");
-    abort();
-  }
-}
 
 Value *hashVec(Value *node, Value *vec) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);

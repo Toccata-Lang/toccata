@@ -86,6 +86,12 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [ ] collisionVec
   - [ ] collisionDissoc
   - [ ] collisionGet
+  - [ ] **Wire protocol functions** — dispatch functions for:
+    - `dissoc` → `baseDissoc` (polymorphic dissoc dispatch)
+    - `sha1` → uses `nakedSha1` (SHA1 hash)
+    - `hashSeq` → uses `bmiHashVec` (flatten to sequence)
+    - `count` → uses `bmiCount` (count elements)
+    - `vals` → uses `bmiHashVec` (get all values)
 - [ ] maybe-regressions — Maybe type
 - [ ] state-error1-1 — state-error monad
 - [ ] state-error1-2 — state-error monad

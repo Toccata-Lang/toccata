@@ -348,6 +348,9 @@ Value *reifiedTypeArgs(Term x);
 Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym,
                      Value *dispValue, Value *args);
 extern Value *(*mapGet_fn)(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
+extern Value *baseDissoc(Value *node, Value *key, int64_t hash, int shift);
+extern Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *shift);
+extern Value *(*dissoc_fn)(FnArity *, Value *, Value *, Value *, Value *);
 extern Value *mapGet(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
 Value *baseDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 int64_t nakedSha1(Term trm);
@@ -374,6 +377,9 @@ Term nothing();
 extern Term accessField;
 extern Term hvmVect;
 extern Term discard;
+extern Value *baseDissoc(Value *node, Value *key, int64_t hash, int shift);
+extern Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *shift);
+extern Value *(*dissoc_fn)(FnArity *, Value *, Value *, Value *, Value *);
 
 void discardFn(Term ref, Term args);
 void accessFieldFn(Term ref, Term args);

@@ -184,6 +184,7 @@ void testFreeHashCollisionNode(void) {
 
 int main(int argc, char **argv) {
   mapGet_fn = &mapGet;
+  dissoc_fn = &dissoc_impl;
   testEmptyBmiNode();
   testBmiNodeOneItem();
   testArrayNode();
