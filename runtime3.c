@@ -2328,57 +2328,43 @@ Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *
 }
 
 Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
 
   int bit = bitpos(hash, shift);
   int idx = __builtin_popcount(node->bitmap & (bit - 1));
   if (node->bitmap & bit) {
-    // if the hash position is already filled
     Value *keyOrNull = node->array[2 * idx];
     Value *valOrNode = node->array[2 * idx + 1];
     if (keyOrNull == (Value *)0) {
-      // There is no key in the position, so valOrNode is
-      // pointer to a node.
-      Value *n = baseDissoc(incRef(valOrNode, 1), key, hash, shift + 5);
+      Value *n = baseDissoc(incRefVal(valOrNode, 1), key, hash, shift + 5);
       if (n == valOrNode) {
-	// the key was not in the hash-map
-	// so do nothing
-	dec_and_free(n, 1);
-	return(arg0);
+        dec_and_free((Term)n, 1);
+        return(arg0);
       } else if (n == (Value *)&emptyBMI && __builtin_popcount(node->bitmap) == 1) {
-	// the subtree is now empty, and this node only points to it, so propagate
-	dec_and_free(arg0, 1);
-	return(n);
+        dec_and_free((Term)arg0, 1);
+        return(n);
       } else {
-	// clone node and add n to it
-	BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, (Value *)0, n);
-	dec_and_free(arg0, 1);
-	return((Value *)newNode);
+        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, (Value *)0, n);
+        dec_and_free((Term)arg0, 1);
+        return((Value *)newNode);
       }
-    } else if (equal(key, incRef(keyOrNull, 1))) {
-      // if the keyOrNull points to a value that is equal to key
+    } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
       if (__builtin_popcount(node->bitmap) == 1) {
-	// and that is the only entry in this node
-	dec_and_free(arg0, 1);
-	return((Value *)&emptyBMI);
+        dec_and_free((Term)arg0, 1);
+        return((Value *)&emptyBMI);
       } else {
-	// create new hash-map with keyOrNull and valOrNode replaced by (Value *)0
-	int itemCount = __builtin_popcount(node->bitmap);
-	BitmapIndexedNode *newNode = malloc_bmiNode(itemCount - 1);
-	newNode->bitmap = node->bitmap;
+        int itemCount = __builtin_popcount(node->bitmap);
+        BitmapIndexedNode *newNode = malloc_bmiNode(itemCount - 1);
+        newNode->bitmap = node->bitmap;
         int i, j;
         for (i = 0, j = 0; i < itemCount; i++) {
           if (i != idx) {
             if (node->array[i * 2] != (Value *)0) {
-              incRef(node->array[i * 2], 1);
+              incRef((Term)node->array[i * 2], 1);
             }
             if (node->array[i * 2 + 1] != (Value *)0) {
-              incRef(node->array[i * 2 + 1], 1);
+              incRef((Term)node->array[i * 2 + 1], 1);
             }
             newNode->array[j * 2] = node->array[i * 2];
             newNode->array[j * 2 + 1] = node->array[i * 2 + 1];
@@ -2386,20 +2372,16 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
           }
         }
         newNode->bitmap &= ~bit;
-        dec_and_free(arg0, 1);
+        dec_and_free((Term)arg0, 1);
         return((Value *)newNode);
       }
     } else {
-      // there is already a key/val pair at the position where key
-      // would be. Do nothing
       return(arg0);
     }
   } else {
-    // the position in the node is empty, do nothing
-    dec_and_free(arg1, 1);
+    dec_and_free((Term)arg1, 1);
     return(arg0);
   }
-  // */
 }
 
 Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
