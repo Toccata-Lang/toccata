@@ -595,7 +595,7 @@ void freeBitmapNode(Value *v) {
   int cnt = __builtin_popcount(node->bitmap);
   for (int i = 0; i < (2 * cnt); i++) {
     if (node->array[i] != (Value *)0) {
-      dec_and_free(termVal((Term)(Value *)node->array[i]), 1);
+      dec_and_free(termVal((Term)node->array[i]), 1);
     }
   }
   if (cnt >= BMI_RECYCLE_COUNT) {
@@ -631,7 +631,7 @@ void freeHashCollisionNode(Value *v) {
   HashCollisionNode *node = (HashCollisionNode *)v;
   for (int i = 0; i < node->count; i++) {
     if (node->array[i] != 0) {
-      dec_and_free(termVal((Term)(Value *)node->array[i]), 1);
+      dec_and_free(termVal((Term)node->array[i]), 1);
     }
   }
 #ifdef CHECK_MEM_LEAK
@@ -1953,10 +1953,10 @@ BitmapIndexedNode *clone_BitmapIndexedNode(BitmapIndexedNode *node, int idx,
       newNode->array[i * 2 + 1] = val;
     } else {
       if (node->array[i * 2] != (Value *)0) {
-        incRef((Term)(Value *)node->array[i * 2], 1);
+        incRef((Term)node->array[i * 2], 1);
       }
       if (node->array[i * 2 + 1] != (Value *)0) {
-        incRef((Term)(Value *)node->array[i * 2 + 1], 1);
+        incRef((Term)node->array[i * 2 + 1], 1);
       }
       newNode->array[i * 2] = node->array[i * 2];
       newNode->array[i * 2 + 1] = node->array[i * 2 + 1];
@@ -1999,16 +1999,16 @@ Value *bmiHashVec(Value *arg0, Value *arg1) {
   Vector *vec = (Vector *)arg1;
   for (int i = 0; i < cnt; i++) {
     if (node->array[2 * i] == (Value *)0) {
-      vec = (Vector *)hashVec((Value *)incRef((Term)(Value *)node->array[2 * i + 1], 1), (Value *)vec);
+      vec = (Vector *)hashVec((Value *)incRef((Term)node->array[2 * i + 1], 1), (Value *)vec);
     } else {
-      incRef((Term)(Value *)node->array[2 * i], 1);
-      incRef((Term)(Value *)node->array[2 * i + 1], 1);
-      Vector *pair = mutateVectConj(empty_vect, termVal((Term)(Value *)node->array[2 * i]));
-      pair = mutateVectConj(pair, termVal((Term)(Value *)node->array[2 * i + 1]));
-      vec = mutateVectConj(vec, termVal((Term)(Value *)pair));
+      incRef((Term)node->array[2 * i], 1);
+      incRef((Term)node->array[2 * i + 1], 1);
+      Vector *pair = mutateVectConj(empty_vect, termVal((Term)node->array[2 * i]));
+      pair = mutateVectConj(pair, termVal((Term)node->array[2 * i + 1]));
+      vec = mutateVectConj(vec, termVal((Term)pair));
     }
   }
-  dec_and_free(termVal((Term)(Value *)arg0), 1);
+  dec_and_free(termVal((Term)arg0), 1);
   return((Value *)vec);
 }
 
@@ -2113,7 +2113,7 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
       ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
       int jdx = mask(hash, shift);
       int newShift = shift + 5;
-      newNode->array[jdx] = copyAssoc((Value *)&emptyBMI, key, val, hash, newShift);
+      newNode->array[jdx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, hash, newShift);
       for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
         if ((node->bitmap >> i) & 1) {
           if (node->array[j] == (Value *)0) {
@@ -2158,10 +2158,6 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
 }
 
 Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   if (arg0->refs != 1) {
     return(bmiCopyAssoc(arg0, arg1, arg2, hash, shift));
   } else {
@@ -2184,24 +2180,24 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	node->array[idx * 2] = (Value *)0;;
 	node->array[idx * 2 + 1] = n;
 	return(arg0);
-      } else if (equal(incRef(key, 1), incRef(keyOrNull, 1))) {
-	if (equal(incRef(val, 1), incRef(valOrNode, 1))) {
-	  dec_and_free(arg1, 1);
-	  dec_and_free(arg2, 1);
+      } else if (equal((Value *)incRef((Term)key, 1), (Value *)incRef((Term)keyOrNull, 1))) {
+	if (equal((Value *)incRef((Term)val, 1), (Value *)incRef((Term)valOrNode, 1))) {
+	  dec_and_free(termVal((Term)arg1), 1);
+	  dec_and_free(termVal((Term)arg2), 1);
 	  return(arg0);
 	} else {
 	  // if the keyOrNull points to a value that is equal to key
 	  // replace key/val at 'idx' with new stuff
 	  node->array[idx * 2] = key;
 	  node->array[idx * 2 + 1] = val;
-	  dec_and_free(valOrNode, 1);
-	  dec_and_free(keyOrNull, 1);
+	  dec_and_free(termVal((Term)valOrNode), 1);
+	  dec_and_free(termVal((Term)keyOrNull), 1);
 	  return(arg0);
 	}
       } else {
 	// there is already a key/val pair at the position where key
 	// would be placed. Extend tree a level
-	int64_t existingKeyHash = nakedSha1(incRef(keyOrNull, 1));
+	int64_t existingKeyHash = nakedSha1(incRef((Term)keyOrNull, 1));
 	if (existingKeyHash == hash) {
 	  // make & return HashCollisionNode
 	  HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
@@ -2216,8 +2212,8 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	  return(arg0);
 	} else {
 	  Value *newLeaf = createNode(shift + 5,
-				      existingKeyHash, keyOrNull, valOrNode,
-				      hash, key, val);
+				      existingKeyHash, (Value *)incRef((Term)keyOrNull, 1), (Value *)incRef((Term)valOrNode, 1),
+				      hash, (Value *)incRef((Term)key, 1), (Value *)incRef((Term)val, 1));
 	  // replace key/val at 'idx' with new stuff
 	  node->array[idx * 2] = (Value *)0;
 	  node->array[idx * 2 + 1] = (Value *)newLeaf;
@@ -2231,18 +2227,18 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
 	int jdx = mask(hash, shift);
 	int newShift = shift + 5;
-	newNode->array[jdx] = copyAssoc((Value *)&emptyBMI, key, val, hash, newShift);
+	newNode->array[jdx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, hash, newShift);
 	for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
 	  if ((node->bitmap >> i) & 1) {
 	    if (node->array[j] == (Value *)0) {
-	      newNode->array[i] = node->array[j + 1];
+	      newNode->array[i] = (Term)node->array[j + 1];
 	      node->array[j + 1] = (Value *)0;
 	    } else {
-	      incRef(node->array[j], 1);
-	      newNode->array[i] = copyAssoc((Value *)&emptyBMI,
+	      incRef((Term)node->array[j], 1);
+	      newNode->array[i] = (Term)copyAssoc((Value *)&emptyBMI,
 					    node->array[j],
 					    node->array[j + 1],
-					    nakedSha1(node->array[j]),
+					    nakedSha1((Term)node->array[j]),
 					    newShift);
 	      node->array[j] = (Value *)0;
 	      node->array[j + 1] = (Value *)0;
@@ -2251,7 +2247,7 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	  }
 	}
 	node->bitmap = 0;
-	dec_and_free((Value *)node, 1);
+	dec_and_free(termVal((Term)node), 1);
 	return((Value *)newNode);
       } else {
 	int itemCount = n + 1;
@@ -2259,7 +2255,7 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	newNode->bitmap = node->bitmap | bit;
 	for (int i = 0; i < idx * 2; i++) {
 	  if (node->array[i] != (Value *)0) {
-	    incRef(node->array[i], 1);
+	    incRef((Term)node->array[i], 1);
 	  }
 	  newNode->array[i] = node->array[i];
 	}
@@ -2267,16 +2263,15 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	newNode->array[2 * idx + 1] = val;
 	for (int i = idx * 2; i < n * 2; i++) {
 	  if (node->array[i] != (Value *)0) {
-	    incRef(node->array[i], 1);
+	    incRef((Term)node->array[i], 1);
 	  }
 	  newNode->array[i + 2] = node->array[i];
 	}
-	dec_and_free((Value *)node, 1);
+	dec_and_free(termVal((Term)node), 1);
 	return((Value *)newNode);
       }
     }
   }
-  // */
 }
 
 Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,  int shift) {
