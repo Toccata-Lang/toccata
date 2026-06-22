@@ -4,6 +4,37 @@
 
 The hash-map is an immutable key-value store based on Clojure's bitmap trie data structure. The C-level data structure and operations exist in both `runtime3.c` (all stubs that abort). The main task is to activate the implementations in `runtime3.c` by uncommenting the commented-out code, then wire the Toccata protocol layer.
 
+## Important Notes
+
+**runtime3.c uses `Term` (unsigned long) for most operations, not `Value *`.**
+- `incRef(Term)` takes Term, not Value *
+- `dec_and_free(Term)` takes Term, not Value *
+- `integerSha1(Term)` takes Term, not Value *
+- `BitmapIndexedNode->array` is `Value **`
+- `ArrayNode->array` is `Term *`
+
+**Types that DON'T exist in runtime3.c:**
+- `Integer` struct — integers are I60 terms
+- `ListType` — not defined
+- `HashedValue` struct — no hash caching
+- `new_num`/`new_i24` — use `newI60(x)` instead
+
+**Protocol functions NOT wired up yet:**
+- `count` — returns count of sequence
+- `sha1` — computes SHA1 hash
+- `get` — polymorphic get dispatch
+- `baseDissoc` — polymorphic dissoc dispatch
+- `hashSeq` — flatten to sequence
+- `vals` — get all values
+
+## Progress
+
+### Done
+- [x] `clone_BitmapIndexedNode` — type casts for incRef
+- [x] `createNode` — no incRef calls (caller handles ref counting)
+- [x] `bmiHashVec` — type casts for incRef/hashVec/mutateVectConj/dec_and_free
+- [x] `nakedSha1` — reworked to take Term, use termTag() dispatch
+
 ## Architecture Reference
 
 ### Node Types (defined in `runtime3.h` / `core.h`)
@@ -95,36 +126,43 @@ Value *bmiGet(...) {
 }
 ```
 
-**Action:** For each of the 27 functions, uncomment the implementation and remove the stub. The implementations in core.c are nearly identical — just copy them over.
+**Action:** For each function, uncomment the implementation and adapt it for runtime3.c's type system:
+- `incRef(Value*, n)` → `incRef((Term)(Value *)Value*, n)`
+- `dec_and_free(Value*, n)` → `dec_and_free(termVal((Term)(Value *)Value*), n)`
+- `integerSha1(Value*)` → `integerSha1(termVal((Term)(Value *)Value*))`
+- `new_num(new_i24(x))` → `(Value *)newI60(x)`
+- Remove `HashedValue` caching logic (type doesn't exist)
+- Remove `Integer` struct usage (integers are I60 terms)
+- Remove `ListType` case (doesn't exist)
 
 **Functions to uncomment (27 total):**
-1. `clone_BitmapIndexedNode`
-2. `createNode`
-3. `bmiHashVec`
-4. `bmiCount`
-5. `bmiCopyAssoc`
-6. `bmiMutateAssoc`
-7. `bmiGet`
-8. `bmiDissoc`
-9. `arrayNodeCopyAssoc`
-10. `arrayNodeMutateAssoc`
-11. `collisionAssoc`
+1. `clone_BitmapIndexedNode` ✅
+2. `createNode` ✅
+3. `bmiHashVec` ✅
+4. `nakedSha1` ✅
+5. `bmiCount` — pending (uses count protocol, Integer type)
+6. `bmiCopyAssoc`
+7. `bmiMutateAssoc`
+8. `bmiGet`
+9. `bmiDissoc`
+10. `arrayNodeCopyAssoc`
+11. `arrayNodeMutateAssoc`
 12. `arrayNodeGet`
 13. `arrayNodeCount`
-14. `collisionCount`
-15. `collisionVec`
-16. `collisionDissoc`
-17. `collisionGet`
-18. `arrayNodeVec`
-19. `arrayNodeDissoc`
-20. `get` (polymorphic dispatch)
-21. `baseDissoc` (polymorphic dispatch)
-22. `hashVec` (polymorphic dispatch)
-23. `copyAssoc` (polymorphic dispatch)
-24. `mutateAssoc` (polymorphic dispatch)
-25. `hashMapGet`
-26. `hashMapAssoc`
-27. `nakedSha1`
+14. `collisionAssoc`
+15. `collisionCount`
+16. `collisionVec`
+17. `collisionDissoc`
+18. `collisionGet`
+19. `arrayNodeVec`
+20. `arrayNodeDissoc`
+21. `get` (polymorphic dispatch) — needs wiring
+22. `baseDissoc` (polymorphic dispatch) — needs wiring
+23. `hashVec` (polymorphic dispatch)
+24. `copyAssoc` (polymorphic dispatch)
+25. `mutateAssoc` (polymorphic dispatch)
+26. `hashMapGet`
+27. `hashMapAssoc`
 
 ### Phase 2: Port Unique Functions from core.c
 

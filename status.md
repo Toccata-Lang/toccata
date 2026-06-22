@@ -74,7 +74,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [x] createNode
   - [x] bmiHashVec
   - [x] nakedSha1
-  - [ ] bmiCount
+  - [ ] bmiCount (pending review)
   - [ ] bmiCopyAssoc
   - [ ] bmiMutateAssoc
   - [ ] bmiGet
