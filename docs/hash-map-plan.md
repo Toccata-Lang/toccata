@@ -347,8 +347,8 @@ Tests ordered by complexity. Start with trivial (2-3 assertions), work up to har
 
 #### Medium — need nested structures or specific conditions
 - [x] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
-- [ ] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
-- [ ] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
+- [x] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
+- [x] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
 - [ ] `testBmiCopyAssocPromote` — 16+ entry map, add 17th → promote to ArrayNode (B1)
 
 #### Hard — engineering constraints

@@ -34,6 +34,11 @@ int64_t nakedSha1(Term trm);
 Term nothing(void);
 Term some(Term thing);
 
+// Helper: check if a term is an I60 with the same value as key
+static int subNodeEqualsKey(Term t, Term key) {
+  return termTag(t) == I60 && getI60(t) == getI60(key);
+}
+
 /*
  * Memory accounting model:
  *
@@ -564,6 +569,124 @@ void testBmiCopyAssocBranch(void) {
   check_counts("testBmiCopyAssocBranch", 0, 0);
 }
 
+// Test: nested sub-node update with same value → no-op, return original (A1a)
+void testBmiCopyAssocSubNodeNoChange(void) {
+  reset_counters();
+
+  // First, build a nested structure: two keys with same bit position at shift=0
+  // This creates a sub-node at shift=5
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = newI60(137);
+  Term val1 = newI60(251);
+  int64_t hash1 = nakedSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  int bit1 = bitpos(hash1, 0);
+
+  // Find key2 with same bit position
+  Term key2 = newI60(1000);
+  int64_t hash2 = nakedSha1(key2);
+  int bit2 = bitpos(hash2, 0);
+  while (bit2 != bit1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+    bit2 = bitpos(hash2, 0);
+  }
+
+  // Add key2 — this creates a sub-node (branch)
+  Term val2 = newI60(888);
+  result = bmiCopyAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Verify we have a nested structure
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
+  int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
+  Value *entryKey = bm->array[2 * idx];
+  if (entryKey != (Value *)0) {
+    BOOM("A1a: should have sub-node at shared bit");
+  }
+  BitmapIndexedNode *subNode = (BitmapIndexedNode *)bm->array[2 * idx + 1];
+  if (__builtin_popcount(subNode->bitmap) != 2) {
+    BOOM("A1a: sub-node should have 2 entries");
+  }
+
+  // Now update key1 in the sub-node with the SAME value — should trigger A1a (no-op)
+  Value *noChangeResult = bmiCopyAssoc((Value *)bm, (Value *)key1, (Value *)val1, hash1, 0);
+
+  // Verify same pointer returned (no-op path)
+  if (noChangeResult != (Value *)bm) {
+    BOOM("A1a: same value should return original node");
+  }
+
+  // Clean up
+  dec_and_free((Term)noChangeResult, 1);
+
+  check_counts("testBmiCopyAssocSubNodeNoChange", 0, 0);
+}
+
+// Test: nested sub-node update with different value → clone (A1b)
+void testBmiCopyAssocSubNodeChange(void) {
+  reset_counters();
+
+  // Build nested structure (same as above)
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = newI60(137);
+  Term val1 = newI60(251);
+  int64_t hash1 = nakedSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  int bit1 = bitpos(hash1, 0);
+
+  Term key2 = newI60(1000);
+  int64_t hash2 = nakedSha1(key2);
+  int bit2 = bitpos(hash2, 0);
+  while (bit2 != bit1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+    bit2 = bitpos(hash2, 0);
+  }
+
+  Term val2 = newI60(888);
+  result = bmiCopyAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
+
+  // Update key1 with a DIFFERENT value — should clone (A1b)
+  Term newVal = newI60(999);
+  Value *cloneResult = bmiCopyAssoc((Value *)bm, (Value *)key1, (Value *)newVal, hash1, 0);
+
+  // Verify different pointer returned (clone created)
+  if (cloneResult == (Value *)bm) {
+    BOOM("A1b: different value should return cloned node");
+  }
+
+  // Verify the clone has the updated value
+  BitmapIndexedNode *cloneBm = (BitmapIndexedNode *)cloneResult;
+  int idx = __builtin_popcount(cloneBm->bitmap & (bit1 - 1));
+  BitmapIndexedNode *cloneSub = (BitmapIndexedNode *)cloneBm->array[2 * idx + 1];
+
+  // Find key1's value in the sub-node
+  Value *foundVal = NULL;
+  if (subNodeEqualsKey((Term)(Value *)cloneSub->array[0], key1)) {
+    foundVal = cloneSub->array[1];
+  } else if (subNodeEqualsKey((Term)(Value *)cloneSub->array[2], key1)) {
+    foundVal = cloneSub->array[3];
+  }
+  if (foundVal == NULL) {
+    BOOM("A1b: cloned sub-node should contain key1");
+  }
+  if (getI60((Term)foundVal) != 999) {
+    BOOM("A1b: value should be updated to 999");
+  }
+
+  // Clean up
+  dec_and_free((Term)cloneResult, 1);
+
+  // New pool for itemCount=2 (clone of sub-node): malloc_count=10.
+  check_counts("testBmiCopyAssocSubNodeChange", 10, 0);
+}
+
 int main(int argc, char **argv) {
 extern Value *(*sha1_fn)(FnArity *, Value *);
 extern Value *(*count_fn)(FnArity *, Value *);
@@ -591,6 +714,8 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiDissoc();
   testBmiDissocEmpty();
   testBmiCopyAssocBranch();
+  testBmiCopyAssocSubNodeNoChange();
+  testBmiCopyAssocSubNodeChange();
   testBmiCount();
   printf("All tests passed\n");
   return 0;
