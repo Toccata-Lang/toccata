@@ -275,17 +275,17 @@ Similar to `test-hvm.c` which tests the HVM interaction rules, we build `test-ha
 - `testFreeBitmapNode` — verify freeBitmapNode works
 - `testFreeHashCollisionNode` — verify freeHashCollisionNode works
 
-### Phase 2: BMI Operations
-- `testBmiCopyAssoc` — add key/value to empty BMI → single-item BMI
-- `testBmiCopyAssocUpdate` — update existing key in BMI
-- `testBmiCopyAssocCollision` — add key with same hash → creates collision node
-- `testBmiCopyAssocBranch` — add key with different hash → creates branch node
-- `testBmiCopyAssocWide` — add >16 entries → promotes to ArrayNode
-- `testBmiGet` — lookup existing key
-- `testBmiGetMiss` — lookup missing key
-- `testBmiDissoc` — remove key from single-item BMI
-- `testBmiDissocEmpty` — remove last key → returns emptyBMI
-- `testBmiCount` — count entries in BMI
+### Phase 2: BMI Operations (BMI code is active — tests not yet written)
+- [ ] `testBmiCopyAssoc` — add key/value to empty BMI → single-item BMI
+- [ ] `testBmiCopyAssocUpdate` — update existing key in BMI
+- [ ] `testBmiCopyAssocCollision` — add key with same hash → creates collision node
+- [ ] `testBmiCopyAssocBranch` — add key with different hash → creates branch node
+- [ ] `testBmiCopyAssocWide` — add >16 entries → promotes to ArrayNode
+- [ ] `testBmiGet` — lookup existing key
+- [ ] `testBmiGetMiss` — lookup missing key
+- [ ] `testBmiDissoc` — remove key from single-item BMI
+- [ ] `testBmiDissocEmpty` — remove last key → returns emptyBMI
+- [ ] `testBmiCount` — count entries in BMI
 
 ### Phase 3: ArrayNode Operations
 - `testArrayNodeCopyAssoc` — add to empty ArrayNode
@@ -318,9 +318,9 @@ Similar to `test-hvm.c` which tests the HVM interaction rules, we build `test-ha
 
 > **Strategy:** Uncomment stubs incrementally as needed for each test, rather than all at once. This keeps the diff small and makes debugging easier.
 
-1. **Phase 1: Add test-hash-map.c tests** — memory management, basic node creation
-2. **Uncomment `freeBitmapNode` / `freeHashCollisionNode`** — fix memory leaks in existing tests
-3. **Uncomment stubs needed for BMI operations** — `bmiCopyAssoc`, `bmiGet`, `bmiDissoc`, `bmiCount`, `clone_BitmapIndexedNode`, `createNode`
+1. **Phase 1: Add test-hash-map.c tests** — memory management, basic node creation ✅ (DONE)
+2. **Phase 2: Add and run BMI operation tests** — `bmiGet`, `bmiMutateAssoc`, `bmiDissoc` are already active
+3. **Uncomment `freeBitmapNode` / `freeHashCollisionNode`** — fix memory leaks in existing tests
 4. **Uncomment stubs needed for ArrayNode operations** — `arrayNodeCopyAssoc`, `arrayNodeGet`, `arrayNodeDissoc`, `arrayNodeCount`
 5. **Uncomment stubs needed for CollisionNode operations** — `collisionAssoc`, `collisionGet`, `collisionDissoc`, `collisionCount`
 6. **Uncomment `get` / `baseDissoc` / `hashVec` / `copyAssoc` / `mutateAssoc`** — polymorphic dispatch functions

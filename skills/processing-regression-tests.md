@@ -1,5 +1,9 @@
 # Process Regression Tests
 
+## ⛔ CRITICAL: Never use 42 as test data
+
+**Never use 42 as a test integer value** — it's cliche and irritating. Pick something else.
+
 ## Overview
 
 This project uses a custom compiler (toccata) that transforms `.toc` source files into C code, which is then compiled and executed. Each regression test consists of:

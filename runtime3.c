@@ -595,7 +595,7 @@ void freeBitmapNode(Value *v) {
   int cnt = __builtin_popcount(node->bitmap);
   for (int i = 0; i < (2 * cnt); i++) {
     if (node->array[i] != (Value *)0) {
-      dec_and_free(termVal((Term)node->array[i]), 1);
+      dec_and_free((Term)node->array[i], 1);
     }
   }
   if (cnt >= BMI_RECYCLE_COUNT) {
@@ -630,8 +630,8 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount) {
 void freeHashCollisionNode(Value *v) {
   HashCollisionNode *node = (HashCollisionNode *)v;
   for (int i = 0; i < node->count; i++) {
-    if (node->array[i] != 0) {
-      dec_and_free(termVal((Term)node->array[i]), 1);
+    if (node->array[i] != (Value *)0) {
+      dec_and_free((Term)node->array[i], 1);
     }
   }
 #ifdef CHECK_MEM_LEAK
@@ -1894,24 +1894,28 @@ Term integer_LT(Term arg0, Term arg1) {
   return result;
 }
 
+int8_t isNothing(Term t) {
+  // Check if t is the nothing singleton (ReifiedVal with type=NoneType)
+  if (termTag(t) != VAL) return 0;
+  Value *v = (Value *)t;
+  return v->type == NoneType;
+}
+
 int8_t equal(Value *v1, Value *v2) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return (0);
-  /*
-  Value *equals;
-  switch (v1->type) {
-  case IntegerType:
-    equals = integer_EQ(v1, v2);
-    break;
-  default:
-    equals = equalSTAR((FnArity *)0, v1, v2);
-    break;
+  // Handle I60 terms (encoded as Term values, not actual Value pointers)
+  Term t1 = (Term)(v1);
+  Term t2 = (Term)(v2);
+  if ((t1 & TAG_MASK) == I60 && (t2 & TAG_MASK) == I60) {
+    Term result = integer_EQ(t1, t2);
+    int8_t notEquals = isNothing(result);
+    dec_and_free(result, 1);
+    return(!notEquals);
   }
-  int8_t notEquals = isNothing(equals);
-  dec_and_free(equals, 1);
+  // For other types, use equalSTAR
+  Value *equals = equalSTAR((FnArity *)0, v1, v2);
+  int8_t notEquals = isNothing((Term)equals);
+  dec_and_free((Term)equals, 1);
   return(!notEquals);
-  // */
 }
 
 Value *stringValue(char *s) {

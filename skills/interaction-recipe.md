@@ -2,6 +2,10 @@
 
 This recipe documents the process for implementing and testing HVM interaction rules.
 
+## ⛔ CRITICAL: Never use 42 as test data
+
+**Never use 42 as a test integer value** — it's cliche and irritating. Pick something else.
+
 **⛔ CRITICAL: When committing, ONLY stage and commit the files that were actually changed.**
 Never run `git add -A` or `git add .` — it will pick up untracked files (backup files, generated files, dependencies, build artifacts) that are not part of your changes. Instead, explicitly list only the files you modified:
 

@@ -9,6 +9,10 @@ refMap refNames[0];
 unsigned subGraphs = 0;
 void subGraph(const char *name, Term t, int depth, int id) {}
 
+// Stub: equalSTAR aborts (only I60 terms are tested, handled separately in equal())
+Value *noImpl2(FnArity *arity, Value *v1, Value *v2) { abort(); }
+Value *(*equalSTAR)(FnArity *, Value *, Value *) = noImpl2;
+
 // Forward declarations for functions defined in runtime3.c
 BitmapIndexedNode *malloc_bmiNode(int itemCount);
 ArrayNode *malloc_arrayNode(void);
@@ -16,6 +20,13 @@ HashCollisionNode *malloc_hashCollisionNode(int itemCount);
 void freeBitmapNode(Value *v);
 void freeArrayNode(Value *v);
 void freeHashCollisionNode(Value *v);
+int bitpos(int64_t hash, int shift);
+Term integer_EQ(Term arg0, Term arg1);
+
+// BMI operations
+Value *bmiMutateAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
+Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
+int64_t nakedSha1(Term trm);
 
 /*
  * Memory accounting model:
@@ -182,6 +193,53 @@ void testFreeHashCollisionNode(void) {
   check_counts("testFreeHashCollisionNode", 1, 1);
 }
 
+// Test: add key/value to empty BMI → single-item BMI
+// Then verify structure is correct
+void testBmiCopyAssoc(void) {
+  reset_counters();
+
+  // Create empty BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(0);
+
+  // Create key = I60(137), value = I60(251)
+  Term key = newI60(137);
+  Term val = newI60(251);
+
+  // Compute hash of key
+  int64_t hash = nakedSha1(key);
+
+  // Add key/value to empty BMI at shift=0
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  // Verify result is a BMI node
+  if (((BitmapIndexedNode *)result)->type != BitmapIndexedType) {
+    BOOM("result should be BitmapIndexedType");
+  }
+
+  // Verify bitmap has exactly 1 bit set
+  int bitmap = ((BitmapIndexedNode *)result)->bitmap;
+  if (bitmap == 0 || __builtin_popcount(bitmap) != 1) {
+    BOOM("bitmap should have exactly 1 bit set");
+  }
+
+  // Verify the key/value are stored at the correct index
+  int bit = bitpos(hash, 0);
+  int idx = __builtin_popcount(bitmap & (bit - 1));
+  if (((BitmapIndexedNode *)result)->array[2 * idx] != (Value *)key) {
+    BOOM("key not at correct index");
+  }
+  if (((BitmapIndexedNode *)result)->array[2 * idx + 1] != (Value *)val) {
+    BOOM("val not at correct index");
+  }
+
+  // Clean up
+  dec_and_free((Term)result, 1);
+
+  // Both pools (itemCount=0 and itemCount=1) were created by earlier tests
+  // and recycled, so both malloc calls pull from existing pools. No malloc/free.
+  check_counts("testBmiCopyAssoc", 0, 0);
+}
+
 int main(int argc, char **argv) {
 extern Value *(*sha1_fn)(FnArity *, Value *);
 extern Value *(*count_fn)(FnArity *, Value *);
@@ -197,6 +255,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testFreeBitmapNodeHighCount();
   testFreeArrayNode();
   testFreeHashCollisionNode();
+  testBmiCopyAssoc();
   printf("All tests passed\n");
   return 0;
 }

@@ -2,6 +2,10 @@
 
 This skill documents the process and pitfalls of uncommenting and adapting stub functions in `runtime3.c` for the hash-map implementation.
 
+## ⛔ CRITICAL: Never use 42 as test data
+
+**Never use 42 as a test integer value** — it's cliche and irritating. Pick something else.
+
 ## ⛔ CRITICAL: Git Workflow
 
 **When committing, ONLY stage and commit the files that were actually changed.**
