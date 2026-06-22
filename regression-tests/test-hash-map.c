@@ -183,6 +183,7 @@ void testFreeHashCollisionNode(void) {
 }
 
 int main(int argc, char **argv) {
+  mapGet_fn = &mapGet;
   testEmptyBmiNode();
   testBmiNodeOneItem();
   testArrayNode();

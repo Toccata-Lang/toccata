@@ -2316,6 +2316,20 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,  int shift) {
   // */
 }
 
+Value *(*mapGet_fn)(FnArity *, Value *, Value *, Value *, int64_t hash, int shift) = &mapGet;
+
+Value *mapGet(FnArity *arity, Value *node, Value *key, Value *def, int64_t hash, int shift) {
+  if (node->type == BitmapIndexedType) {
+    return(bmiGet(node, key, def, hash, shift));
+  } else if (node->type == ArrayNodeType) {
+    return(arrayNodeGet(node, key, def, hash, shift));
+  } else if (node->type == HashCollisionNodeType) {
+    return(collisionGet(node, key, def, hash, shift));
+  } else {
+    return(def);
+  }
+}
+
 Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
   fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
   abort();

@@ -347,7 +347,8 @@ void strSha1Update(Sha1Context *ctxt, Value *arg0);
 Value *reifiedTypeArgs(Term x);
 Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym,
                      Value *dispValue, Value *args);
-// Value *get(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
+extern Value *(*mapGet_fn)(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
+extern Value *mapGet(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
 Value *baseDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 int64_t nakedSha1(Term trm);
 Value *copyAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift);
