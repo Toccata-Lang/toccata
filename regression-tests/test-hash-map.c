@@ -370,6 +370,57 @@ void testBmiDissoc(void) {
   check_counts("testBmiDissoc", 0, 0);
 }
 
+// Test: remove key from multi-item BMI → returns smaller map (not emptyBMI)
+void testBmiDissocEmpty(void) {
+  reset_counters();
+
+  // Create two-item BMI node using keys with different bit positions
+  BitmapIndexedNode *node = malloc_bmiNode(2);
+  Term key1 = newI60(0);   // hash bit 13
+  Term val1 = newI60(251);
+  int64_t hash1 = nakedSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  Term key2 = newI60(1);   // hash bit 29
+  Term val2 = newI60(888);
+  int64_t hash2 = nakedSha1(key2);
+  result = bmiMutateAssoc(result, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Verify we have 2 entries
+  BitmapIndexedNode *bm2 = (BitmapIndexedNode *)result;
+  if (__builtin_popcount(bm2->bitmap) != 2) {
+    BOOM("should have 2 entries");
+  }
+
+  // Remove key1 — should return a single-item map (not emptyBMI)
+  Value *afterDissoc = bmiDissoc(result, (Value *)key1, hash1, 0);
+
+  // Verify result is NOT emptyBMI
+  if (afterDissoc == (Value *)&emptyBMI) {
+    BOOM("dissoc from multi-item should not return emptyBMI");
+  }
+
+  // Verify result is a BMI node with 1 entry
+  BitmapIndexedNode *newNode = (BitmapIndexedNode *)afterDissoc;
+  if (newNode->type != BitmapIndexedType) {
+    BOOM("dissoc result should be BitmapIndexedType");
+  }
+  if (__builtin_popcount(newNode->bitmap) != 1) {
+    BOOM("dissoc result should have exactly 1 bit set");
+  }
+
+  // Verify the remaining key is key2
+  if (newNode->array[0] != (Value *)key2) {
+    BOOM("remaining key should be key2");
+  }
+
+  // Clean up
+  dec_and_free((Term)afterDissoc, 1);
+
+  // Pool for itemCount=2 created by malloc_bmiNode: +10 mallocs, recycled on free
+  check_counts("testBmiDissocEmpty", 10, 0);
+}
+
 // Test: lookup missing key returns nothing
 void testBmiGetMiss(void) {
   reset_counters();
@@ -429,6 +480,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiGet();
   testBmiGetMiss();
   testBmiDissoc();
+  testBmiDissocEmpty();
   printf("All tests passed\n");
   return 0;
 }
