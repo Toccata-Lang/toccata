@@ -490,6 +490,80 @@ void testBmiGetMiss(void) {
   check_counts("testBmiGetMiss", 0, 0);
 }
 
+// Test: add key with same bit position but different hash → branch node (A2d)
+void testBmiCopyAssocBranch(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = newI60(137);
+  Term val1 = newI60(251);
+  int64_t hash1 = nakedSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  int bit1 = bitpos(hash1, 0);
+
+  // Find key2 whose hash has the same bit position at shift=0
+  // but a different full hash — this triggers A2d (branch node)
+  Term key2 = newI60(1000);
+  int64_t hash2 = nakedSha1(key2);
+  int bit2 = bitpos(hash2, 0);
+
+  // Keep trying until we find a key with the same bit position
+  while (bit2 != bit1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+    bit2 = bitpos(hash2, 0);
+  }
+
+  // Call bmiCopyAssoc — should create a branch node (A2d)
+  Term newVal = newI60(888);
+  Value *branchResult = bmiCopyAssoc((Value *)original, (Value *)key2, (Value *)newVal, hash2, 0);
+
+  // Verify result is a BMI node
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)branchResult;
+  if (bm->type != BitmapIndexedType) {
+    BOOM("branch result should be BitmapIndexedType");
+  }
+
+  // Verify the bitmap still has 1 bit set (sub-node occupies one slot)
+  if (__builtin_popcount(bm->bitmap) != 1) {
+    BOOM("branch result bitmap should have 1 bit set");
+  }
+
+  // The entry at the shared bit position should be a sub-node (keyOrNull == NULL)
+  int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
+  Value *entryKey = bm->array[2 * idx];
+  if (entryKey != (Value *)0) {
+    BOOM("A2d: entry at shared bit should be sub-node (NULL key)");
+  }
+
+  // Verify the sub-node contains both keys
+  BitmapIndexedNode *subNode = (BitmapIndexedNode *)bm->array[2 * idx + 1];
+  if (subNode->type != BitmapIndexedType) {
+    BOOM("A2d: sub-node should be BitmapIndexedType");
+  }
+  if (__builtin_popcount(subNode->bitmap) != 2) {
+    BOOM("A2d: sub-node should have 2 bits set");
+  }
+
+  // Verify both keys are in the sub-node
+  if (subNode->array[0] != (Value *)key1 && subNode->array[0] != (Value *)key2) {
+    BOOM("A2d: sub-node should contain key1");
+  }
+  if (subNode->array[2] != (Value *)key1 && subNode->array[2] != (Value *)key2) {
+    BOOM("A2d: sub-node should contain key2");
+  }
+
+  // Clean up
+  dec_and_free((Term)branchResult, 1);
+
+  // Both pools (itemCount=1 and itemCount=2) already created by earlier tests,
+  // both pulled from existing pools. No malloc/free.
+  check_counts("testBmiCopyAssocBranch", 0, 0);
+}
+
 int main(int argc, char **argv) {
 extern Value *(*sha1_fn)(FnArity *, Value *);
 extern Value *(*count_fn)(FnArity *, Value *);
@@ -516,6 +590,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiGetMiss();
   testBmiDissoc();
   testBmiDissocEmpty();
+  testBmiCopyAssocBranch();
   testBmiCount();
   printf("All tests passed\n");
   return 0;

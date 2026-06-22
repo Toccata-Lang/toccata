@@ -27,6 +27,18 @@ The hash-map is an immutable key-value store based on Clojure's bitmap trie data
 - `hashSeq` — flatten to sequence
 - `vals` — get all values
 
+## Execution Order — DO NOT SKIP AHEAD
+
+**All BMI tests must be written and passing before uncommenting any ArrayNode or CollisionNode stubs.**
+
+The BMI stubs are already active. The remaining work is to write the missing BMI tests:
+- `testBmiCopyAssocBranch` (A2d — branch node)
+- `testBmiCopyAssocSubNodeNoChange` (A1a — nested no-change)
+- `testBmiCopyAssocSubNodeChange` (A1b — nested clone)
+- `testBmiMutateAssoc` (refs==1 in-place mutation)
+
+Only after all four are passing should you uncomment the ArrayNode stubs. Never jump ahead to uncommenting stubs for node types you haven't fully tested yet.
+
 ## Progress
 
 ### Done
@@ -318,6 +330,9 @@ Similar to `test-hvm.c` which tests the HVM interaction rules, we build `test-ha
 
 ### Phase 2: BMI Operations (BMI code is active — tests not yet written)
 
+> **All BMI tests must be completed before moving on to Phase 3 (ArrayNode) or Phase 4 (CollisionNode).**
+> The only exceptions are tests that inherently require ArrayNode or HashCollisionNode functionality — e.g. `testBmiCopyAssocPromote` (promotes to ArrayNode) and `testBmiCopyAssocCollision` (creates collision node). Those can be done in Phase 2 since they test BMI behavior that *produces* other node types.
+
 Tests ordered by complexity. Start with trivial (2-3 assertions), work up to hard.
 
 #### Trivial — 2-3 assertions, single key/value
@@ -331,7 +346,7 @@ Tests ordered by complexity. Start with trivial (2-3 assertions), work up to har
 - [x] `testBmiCount` — N-entry map, verify count == N
 
 #### Medium — need nested structures or specific conditions
-- [ ] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
+- [x] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
 - [ ] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
 - [ ] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
 - [ ] `testBmiCopyAssocPromote` — 16+ entry map, add 17th → promote to ArrayNode (B1)
