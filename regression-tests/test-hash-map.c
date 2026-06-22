@@ -348,7 +348,6 @@ void testBmiGet(void) {
 }
 
 // Test: lookup missing key returns nothing
-/*
 void testBmiGetMiss(void) {
   reset_counters();
 
@@ -381,7 +380,6 @@ void testBmiGetMiss(void) {
 
   check_counts("testBmiGetMiss", 0, 0);
 }
-*/
 
 int main(int argc, char **argv) {
 extern Value *(*sha1_fn)(FnArity *, Value *);
@@ -406,7 +404,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiCopyAssocNoOp();
   testBmiCopyAssocUpdate();
   testBmiGet();
-  // testBmiGetMiss(); — commented out, needs nothing() pool accounting fix
+  testBmiGetMiss();
   printf("All tests passed\n");
   return 0;
 }
