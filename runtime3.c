@@ -2266,46 +2266,33 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
   }
 }
 
-Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,  int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
+Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   Value *key = arg1;
 
   int bit = bitpos(hash, shift);
   int idx = __builtin_popcount(node->bitmap & (bit - 1));
   if (node->bitmap & bit) {
-    // if the hash position is filled
     Value *keyOrNull = node->array[2 * idx];
     Value *valOrNode = node->array[2 * idx + 1];
     if (keyOrNull == (Value *)0) {
-      // There is no key in the position, so valOrNode is
-      // pointer to a node.
-      Value *v = get((FnArity *)0, incRef(valOrNode, 1), key, arg2, hash, shift + 5);
-      dec_and_free(arg0, 1);
+      Value *v = mapGet((FnArity *)0, incRefVal(valOrNode, 1), key, arg2, hash, shift + 5);
+      dec_and_free((Term)arg0, 1);
       return(v);
+    } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
+      incRefVal(valOrNode, 1);
+      dec_and_free((Term)arg0, 1);
+      dec_and_free((Term)arg2, 1);
+      return(valOrNode);
     } else {
-      incRef(keyOrNull, 1);
-      if (equal(key, keyOrNull)) {
-	// found 'key' at this position
-	incRef(valOrNode, 1);
-	dec_and_free(arg0, 1);
-	dec_and_free(arg2, 1);
-	return(valOrNode);
-      } else {
-	// there's a key in this position, but doesn't equal 'key'
-	dec_and_free(arg0, 1);
-	return(arg2);
-      }
+      dec_and_free((Term)arg0, 1);
+      return(arg2);
     }
   } else {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+    dec_and_free((Term)arg0, 1);
+    dec_and_free((Term)arg1, 1);
     return(arg2);
   }
-  // */
 }
 
 Value *(*mapGet_fn)(FnArity *, Value *, Value *, Value *, int64_t hash, int shift) = &mapGet;
