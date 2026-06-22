@@ -1994,10 +1994,6 @@ Value *createNode(int shift,
 		  int64_t key1hash, Value *key1, Value *val1,
 		  int64_t key2hash, Value *key2, Value *val2)
 {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   if (shift > 60) {
     fprintf(stderr, "Ran out of shift!!!!!!");
     abort();
@@ -2019,31 +2015,26 @@ Value *createNode(int shift,
     newNode->array[key2idx * 2 + 1] = val2;
   }
   return((Value *)newNode);
-  // */
 }
 
 Value *bmiHashVec(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
+  
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int cnt = __builtin_popcount(node->bitmap);
   Vector *vec = (Vector *)arg1;
   for (int i = 0; i < cnt; i++) {
     if (node->array[2 * i] == (Value *)0) {
-      vec = (Vector *)hashVec(incRef(node->array[2 * i + 1], 1), (Value *)vec);
+      vec = (Vector *)hashVec((Value *)incRef((Term)(Value *)node->array[2 * i + 1], 1), (Value *)vec);
     } else {
-      incRef(node->array[2 * i], 1);
-      incRef(node->array[2 * i + 1], 1);
-      Vector *pair = mutateVectConj(empty_vect, node->array[2 * i]);
-      pair = mutateVectConj(pair, node->array[2 * i + 1]);
-      vec = mutateVectConj(vec, (Value *)pair);
+      incRef((Term)(Value *)node->array[2 * i], 1);
+      incRef((Term)(Value *)node->array[2 * i + 1], 1);
+      Vector *pair = mutateVectConj(empty_vect, termVal((Term)(Value *)node->array[2 * i]));
+      pair = mutateVectConj(pair, termVal((Term)(Value *)node->array[2 * i + 1]));
+      vec = mutateVectConj(vec, termVal((Term)(Value *)pair));
     }
   }
-  dec_and_free(arg0, 1);
+  dec_and_free(termVal((Term)(Value *)arg0), 1);
   return((Value *)vec);
-  // */
 }
 
 Value *bmiCount(Value *arg0) {
