@@ -2045,26 +2045,20 @@ Value *countImpl(FnArity *arity, Value *arg) {
 }
 
 Value *bmiCount(Value *arg0) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
-  int cnt = __builtin_popcount(((BitmapIndexedNode *)arg0)->bitmap);
+  int cnt = __builtin_popcount(node->bitmap);
   int accum = 0;
-  for(int i = 0; i < cnt; i++) {
+  for (int i = 0; i < cnt; i++) {
     if (node->array[i * 2] == (Value *)0 && node->array[i * 2 + 1] != (Value *)0) {
-      Integer *subCnt = (Integer *)count((FnArity *)0,
-					 incRef(((BitmapIndexedNode *)arg0)->array[i * 2 + 1], 1));
-      accum += subCnt->numVal;
-      dec_and_free((Value *)subCnt, 1);
+      Value *subCnt = count_fn((FnArity *)0, incRefVal(node->array[i * 2 + 1], 1));
+      accum += getI60((Term)subCnt);
+      dec_and_free((Term)subCnt, 1);
     } else {
       accum++;
     }
   }
-  dec_and_free(arg0, 1);
-  return(new_num(new_i24(accum));
-  // */
+  dec_and_free((Term)arg0, 1);
+  return((Value *)newI60(accum));
 }
 
 Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
