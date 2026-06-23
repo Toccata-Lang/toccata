@@ -2674,10 +2674,6 @@ Value *arrayNodeVec(Value *arg0, Value *arg1) {
 }
 
 Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   int idx = mask(hash, shift);
@@ -2686,23 +2682,22 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   Term subNode = node->array[idx];
   if (subNode == 0) {
     // do nothing
-    dec_and_free(arg1, 1);
+    dec_and_free((Term)(Value *)arg1, 1);
     return(arg0);
   } else {
-      int64_t hash = nakedSha1(incRef(key, 1));
-      Value *n = baseDissoc(incRef(subNode, 1), key, hash, shift + 5);
-      newNode = (ArrayNode *)malloc_arrayNode();
-      for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-        if (i != idx && node->array[i] != (Value *)0) {
-          newNode->array[i] = node->array[i];
-          incRef(newNode->array[i], 1);
-        }
+    int64_t keyHash = nakedSha1(incRef((Term)(Value *)key, 1));
+    Value *n = baseDissoc((Value *)incRef((Term)(Value *)subNode, 1), key, keyHash, shift + 5);
+    newNode = (ArrayNode *)malloc_arrayNode();
+    for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+      if (i != idx && node->array[i] != 0) {
+        newNode->array[i] = node->array[i];
+        incRef(newNode->array[i], 1);
       }
-      newNode->array[idx] = n;
-      dec_and_free((Term)arg0, 1);
+    }
+    newNode->array[idx] = (Term)(Value *)n;
+    dec_and_free((Term)(Value *)arg0, 1);
   }
   return((Value *)newNode);
-  // */
 }
 
 /*

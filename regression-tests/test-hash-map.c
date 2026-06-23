@@ -1462,6 +1462,38 @@ void testArrayNodeCountSingle(void) {
   check_counts("testArrayNodeCountSingle", 0, 0);
 }
 
+// Test: dissoc key not found — empty slot (Path A)
+void testArrayNodeDissocEmptySlot(void) {
+  reset_counters();
+
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) == mask(hash1, 0)) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+
+  Value *result = arrayNodeDissoc((Value *)node, (Value *)key2, hash2, 0);
+
+  if (result != (Value *)node) {
+    BOOM("arrayNodeDissocEmptySlot: should return original node");
+  }
+
+  BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[mask(hash1, 0)];
+  if (bmi->array[0] != (Value *)key1) {
+    BOOM("arrayNodeDissocEmptySlot: original entry should still exist");
+  }
+
+  dec_and_free((Term)result, 1);
+  check_counts("testArrayNodeDissocEmptySlot", 0, 0);
+}
+
 void testArrayNodeDissoc(void) {
   reset_counters();
   ArrayNode *node = malloc_arrayNode();
@@ -1559,6 +1591,7 @@ int main(int argc, char **argv) {
   testArrayNodeCount();
   testArrayNodeCountEmpty();
   testArrayNodeCountSingle();
+  testArrayNodeDissocEmptySlot();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;

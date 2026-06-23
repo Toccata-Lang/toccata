@@ -528,14 +528,23 @@ Tests:
   - Verify each sub-node was counted via count_fn
 
 #### `testArrayNodeDissoc` — remove from ArrayNode
-- [x] `testArrayNodeDissoc` — Remove one entry from 2-entry ArrayNode
+- [x] `testArrayNodeDissocEmptySlot` — Key not found (empty slot, Path A)
+  - Create ArrayNode with one entry at slot X
+  - Dissoc key that hashes to empty slot Y
+  - Verify original node pointer returned (no new allocation)
+  - Verify original entry still exists
+- [ ] `testArrayNodeDissoc` — Key found in sub-node (Path B1)
+  - Create ArrayNode with one entry at slot X
+  - Dissoc key that hashes to empty slot Y
+  - Verify original node pointer returned (no new allocation)
+  - Verify original entry still exists
+- [ ] `testArrayNodeDissoc` — Key found in sub-node (Path B1)
   - Create ArrayNode with 2 entries
   - Dissoc one key
   - Verify result is a new ArrayNode with 1 entry
   - Verify the removed key is gone
   - Verify the remaining key is still accessible
   - Verify the original ArrayNode was freed
-  - Create ArrayNode with 2 entries
   - Dissoc one key
   - Verify result is a new ArrayNode with 1 entry
   - Verify the removed key is gone
