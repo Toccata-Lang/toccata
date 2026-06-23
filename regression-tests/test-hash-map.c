@@ -2150,6 +2150,70 @@ void testCollisionVec(void) {
   check_counts("testCollisionVec", 1, 1);
 }
 
+// Test: collisionDissoc removes a key from collision node
+void testCollisionDissoc(void) {
+  reset_counters();
+
+  // Save original equal
+  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
+  equalSTAR = testingEqualAdd;
+
+  // Create collision node with 2 entries
+  Term keyA = COLLIDE_KEY_A;
+  Term valA = newI60(11);
+  Term keyB = COLLIDE_KEY_B;
+  Term valB = newI60(22);
+  HashCollisionNode *node = malloc_hashCollisionNode(2);
+  node->array[0] = (Value *)keyA;
+  node->array[1] = (Value *)valA;
+  node->array[2] = (Value *)keyB;
+  node->array[3] = (Value *)valB;
+  node->count = 4;
+
+  // Dissoc keyA — should return node with only keyB
+  Value *result = collisionDissoc((Value *)node, (Value *)keyA, COLLIDE_HASH_ADD, 0);
+
+  HashCollisionNode *resultNode = (HashCollisionNode *)result;
+  if (resultNode->type != HashCollisionNodeType) {
+    BOOM("collisionDissoc: result should be HashCollisionNodeType");
+  }
+
+  // Should have 1 entry now (count = 2)
+  if (resultNode->count != 2) {
+    char msg[100];
+    snprintf(msg, 99, "collisionDissoc: expected count 2, got %d", resultNode->count);
+    BOOM(msg);
+  }
+
+  // Verify keyB is present
+  int foundB = 0;
+  for (int i = 0; i < resultNode->count / 2; i++) {
+    Term k = (Term)resultNode->array[2 * i];
+    if (k == keyB) foundB = 1;
+  }
+  if (!foundB) {
+    BOOM("collisionDissoc: keyB should be present");
+  }
+
+  // Verify keyA is gone
+  int foundA = 0;
+  for (int i = 0; i < resultNode->count / 2; i++) {
+    Term k = (Term)resultNode->array[2 * i];
+    if (k == keyA) foundA = 1;
+  }
+  if (foundA) {
+    BOOM("collisionDissoc: keyA should be removed");
+  }
+
+  // Clean up
+  dec_and_free((Term)result, 1);
+
+  // Original node + new node from malloc_hashCollisionNode: malloc_count=2.
+  check_counts("testCollisionDissoc", 2, 2);
+
+  equalSTAR = savedEqual;
+}
+
 int main(int argc, char **argv) {
   sha1 = testingSha1;
   
@@ -2212,6 +2276,7 @@ int main(int argc, char **argv) {
   testCollisionAssocPromote();
   testCollisionCount();
   testCollisionVec();
+  testCollisionDissoc();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;

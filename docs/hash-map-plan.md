@@ -566,7 +566,7 @@ Tests:
 - [x] `testCollisionAssocPromote` — add key with different hash → promotes to BMI
 - [ ] `testCollisionAssoc` — add to collision node
 - [ ] `testCollisionGet` — lookup in collision node
-- [ ] `testCollisionDissoc` — remove from collision node
+- [x] `testCollisionDissoc` — remove from collision node
 - [x] `testCollisionCount` — count entries
 - [x] `testCollisionVec` — flatten to vector
 

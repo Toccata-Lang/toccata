@@ -2512,29 +2512,26 @@ Value *collisionVec(Value *arg0, Value *arg1) {
 }
 
 Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Value *key = arg1;
   HashCollisionNode *newNode;
   int itemCount = node->count / 2;
 
   if(itemCount == 1) {
-    if(equal(key, incRef(node->array[0], 1))) {
-      dec_and_free(arg0, 1);
+    if(equal(key, (Value *)incRef((Term)(Value *)node->array[0], 1))) {
+      dec_and_free((Term)arg0, 1);
       return((Value *)&emptyBMI);
     } else {
       return(arg0);
     }
   } else {
     int keyIdx = -1;
-    int i = 0;
-    do {
-      keyIdx = i;
-      i++;
-    } while (i < itemCount && !equal(incRef(key, 1), incRef(node->array[2 * i], 1)));
+    for (int i = 0; i < itemCount; i++) {
+      if (equal((Value *)incRef((Term)key, 1), (Value *)incRef((Term)node->array[2 * i], 1))) {
+        keyIdx = i;
+        break;
+      }
+    }
 
     if(keyIdx >= 0) {
       newNode = malloc_hashCollisionNode(itemCount - 1);
@@ -2542,18 +2539,17 @@ Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
         if (i != keyIdx) {
           newNode->array[j * 2] = node->array[i * 2];
           newNode->array[j * 2 + 1] = node->array[i * 2 + 1];
-          incRef(newNode->array[j * 2], 1);
-          incRef(newNode->array[j * 2 + 1], 1);
+          incRef((Term)newNode->array[j * 2], 1);
+          incRef((Term)newNode->array[j * 2 + 1], 1);
           j++;
         }
       }
-      dec_and_free(arg0, 1);
-      dec_and_free(arg1, 1);
+      dec_and_free((Term)arg0, 1);
+      dec_and_free((Term)arg1, 1);
       return((Value *)newNode);
     }
   }
   return(arg0);
-  // */
 }
 
 Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
