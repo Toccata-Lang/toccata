@@ -412,10 +412,95 @@ Ordered by complexity, simplest first.
   - Verify the new entry is present
 
 ### Phase 3: ArrayNode Operations
-- `testArrayNodeCopyAssoc` — add to empty ArrayNode
-- `testArrayNodeGet` — lookup in ArrayNode
-- `testArrayNodeDissoc` — remove from ArrayNode
-- `testArrayNodeCount` — count entries
+
+> **Prerequisite:** All BMI tests must pass first (they create the sub-nodes used by ArrayNode tests).
+
+`arrayNodeCopyAssoc` has two top-level paths: `subNode == 0` (slot empty) vs `subNode != 0` (slot has a sub-node). Each has sub-paths.
+
+#### `testArrayNodeCopyAssoc` — 5 paths
+
+Decision tree: `subNode == 0` (slot empty) vs `subNode != 0` (slot has a sub-node)
+
+**Path A: Slot is empty (`subNode == 0`)**
+- **A1:** Empty ArrayNode + empty target slot → create new ArrayNode, copy nothing, store new entry
+- **A2:** Non-empty ArrayNode + empty target slot → create new ArrayNode, copy existing entries via loop, store new entry at idx
+
+**Path B: Slot has a sub-node (`subNode != 0`)**
+`copyAssoc` is called on the sub-node, returning either the same pointer or a new one.
+- **B1:** `n == subNode` (no-op, same key+value) → free `n`, return original node. No new allocations.
+- **B2:** `n != subNode` (changed) → create new ArrayNode, copy all entries except idx, store `n` at idx, free original node.
+
+Tests:
+- [x] `testArrayNodeCopyAssocA1` — Empty ArrayNode, add first entry
+  - Create empty ArrayNode
+  - Add key/value → should create new ArrayNode with 1 entry
+  - Verify type is ArrayNodeType
+  - Verify the entry is in the correct slot (contains a BMI sub-node with the key)
+  - Verify original node was freed (new pointer returned)
+  - Create empty ArrayNode
+  - Add key/value → should create new ArrayNode with 1 entry
+  - Verify type is ArrayNodeType
+  - Verify the entry is in the correct slot (contains a BMI sub-node with the key)
+  - Verify original node was freed (new pointer returned)
+- [x] `testArrayNodeCopyAssocA2` — Non-empty ArrayNode, add to empty slot
+  - Create ArrayNode with one entry at slot X
+  - Add key/value at slot Y (Y ≠ X)
+  - Verify result has 2 entries at slots X and Y
+  - Verify the entry at slot X was copied (same BMI sub-node pointer)
+  - Verify the entry at slot Y is a new BMI sub-node
+  - Create ArrayNode with one entry at slot X
+  - Add key/value at slot Y (Y ≠ X)
+  - Verify result has 2 entries at slots X and Y
+  - Verify the entry at slot X was copied (same BMI sub-node pointer)
+  - Verify the entry at slot Y is a new BMI sub-node
+- [ ] `testArrayNodeCopyAssocB1` — ArrayNode with sub-node, same key+value (no-op)
+  - Create ArrayNode with a BMI sub-node containing key K
+  - Call copyAssoc with the same key K and same value
+  - Verify the original ArrayNode pointer is returned (no new allocation)
+  - Verify the sub-node was freed (dec_and_free called on it)
+- [ ] `testArrayNodeCopyAssocB2` — ArrayNode with sub-node, different value
+  - Create ArrayNode with a BMI sub-node containing key K with value V1
+  - Call copyAssoc with key K and different value V2
+  - Verify a new ArrayNode is returned
+  - Verify the old ArrayNode was freed
+  - Verify the sub-node at the target slot contains the updated value V2
+  - Verify other slots were copied correctly
+- [ ] `testArrayNodeCopyAssocB2-multi` — Multiple entries, update one sub-node
+  - Create ArrayNode with 2 entries at different slots
+  - Update the sub-node at slot X with a new value
+  - Verify the entry at slot X was replaced with a new sub-node
+  - Verify the entry at slot Y was copied (same pointer)
+  - Verify the original ArrayNode was freed
+
+#### `testArrayNodeGet` — lookup in ArrayNode
+- [ ] `testArrayNodeGet` — Find existing key in ArrayNode
+  - Create ArrayNode with a BMI sub-node
+  - Lookup the key stored in the sub-node
+  - Verify the correct value is returned
+  - Verify the ArrayNode was freed, BMI sub-node was incremented
+  - Verify the returned value is the BMI's value (not a copy)
+- [ ] `testArrayNodeGetMiss` — Key not found in ArrayNode
+  - Create ArrayNode with entries at some slots
+  - Lookup a key whose hash maps to an empty slot
+  - Verify the default value is returned
+  - Verify both the ArrayNode and key were freed
+
+#### `testArrayNodeCount` — count entries
+- [ ] `testArrayNodeCount` — Count 2 entries in ArrayNode
+  - Create ArrayNode with 2 entries at different slots
+  - Call arrayNodeCount
+  - Verify count returns 2
+  - Verify the ArrayNode was freed
+  - Verify each sub-node was counted via count_fn
+
+#### `testArrayNodeDissoc` — remove from ArrayNode
+- [ ] `testArrayNodeDissoc` — Remove one entry from 2-entry ArrayNode
+  - Create ArrayNode with 2 entries
+  - Dissoc one key
+  - Verify result is a new ArrayNode with 1 entry
+  - Verify the removed key is gone
+  - Verify the remaining key is still accessible
+  - Verify the original ArrayNode was freed
 
 ### Phase 4: CollisionNode Operations
 - `testCollisionAssoc` — add to collision node

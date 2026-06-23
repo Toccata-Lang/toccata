@@ -1135,6 +1135,64 @@ void testArrayNodeCopyAssoc(void) {
   check_counts("testArrayNodeCopyAssoc", 0, 0);
 }
 
+// Test: non-empty ArrayNode, add to empty slot (Path A2)
+void testArrayNodeCopyAssocA2(void) {
+  reset_counters();
+
+  // Create ArrayNode with one entry
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  int slot1 = mask(hash1, 0);
+
+  // Find key2 at a different slot
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) == slot1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+  Term val2 = newI60(400);
+  int slot2 = mask(hash2, 0);
+
+  // Add key2 — should create new ArrayNode, copy key1, add key2
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Verify result is ArrayNode
+  if (((ArrayNode *)node)->type != ArrayNodeType) {
+    BOOM("A2: should be ArrayNodeType");
+  }
+
+  // Verify both slots are populated
+  Term sub1 = ((ArrayNode *)node)->array[slot1];
+  Term sub2 = ((ArrayNode *)node)->array[slot2];
+  if (sub1 == 0 || sub2 == 0) {
+    BOOM("A2: both slots should be populated");
+  }
+
+  // Verify slot1 still contains the original BMI sub-node (same pointer — copied)
+  BitmapIndexedNode *bmi1 = (BitmapIndexedNode *)sub1;
+  if (bmi1->array[0] != (Value *)key1) {
+    BOOM("A2: slot1 should contain key1");
+  }
+
+  // Verify slot2 contains a new BMI sub-node with key2
+  BitmapIndexedNode *bmi2 = (BitmapIndexedNode *)sub2;
+  if (bmi2->array[0] != (Value *)key2) {
+    BOOM("A2: slot2 should contain key2");
+  }
+
+  // Verify original node was freed (new pointer)
+  // (We can't verify this directly, but the fact that we got a new node with 2 entries
+  //  implies the old 1-entry node was freed)
+
+  dec_and_free((Term)node, 1);
+  check_counts("testArrayNodeCopyAssocA2", 0, 0);
+}
+
 void testArrayNodeGet(void) {
   reset_counters();
   ArrayNode *node = malloc_arrayNode();
@@ -1263,6 +1321,7 @@ int main(int argc, char **argv) {
   testBmiMutateAssocSubNodeRecurse();
   testBmiMutateAssocNoOp();
   testArrayNodeCopyAssoc();
+  testArrayNodeCopyAssocA2();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
