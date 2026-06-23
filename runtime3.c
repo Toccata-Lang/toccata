@@ -2553,33 +2553,28 @@ Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
 }
 
 Value *collisionGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   for (int i = 0; i < node->count / 2; i++) {
-    if (node->array[2 * i] != (Value *)0 && equal(incRef(arg1, 1),
-						  incRef(node->array[2 * i], 1))) {
+    if (node->array[2 * i] != (Value *)0 && equal((Value *)incRef((Term)arg1, 1),
+						  (Value *)incRef((Term)node->array[2 * i], 1))) {
       if (node->array[2 * i + 1] != (Value *)0) {
-	incRef(node->array[2 * i + 1], 1);
-	dec_and_free(arg0, 1);
-	dec_and_free(arg1, 1);
-	dec_and_free(arg2, 1);
+	incRef((Term)node->array[2 * i + 1], 1);
+	dec_and_free((Term)arg0, 1);
+	dec_and_free((Term)arg1, 1);
+	dec_and_free((Term)arg2, 1);
 	return(node->array[2 * i + 1]);
       } else {
-fprintf(stderr, "Trying to get an invalid value from a CollisionNode of a hash-map. This should never happen!!!");
-abort();
-	dec_and_free(arg0, 1);
-	dec_and_free(arg1, 1);
+	fprintf(stderr, "Trying to get an invalid value from a CollisionNode of a hash-map. This should never happen!!!");
+	abort();
+	dec_and_free((Term)arg0, 1);
+	dec_and_free((Term)arg1, 1);
 	return(arg2);
       }
     }
   }
-  dec_and_free(arg0, 1);
-  dec_and_free(arg1, 1);
+  dec_and_free((Term)arg0, 1);
+  dec_and_free((Term)arg1, 1);
   return(arg2);
-  // */
 }
 
 Value *arrayNodeVec(Value *arg0, Value *arg1) {

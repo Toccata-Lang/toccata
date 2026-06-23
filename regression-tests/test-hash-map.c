@@ -2214,6 +2214,61 @@ void testCollisionDissoc(void) {
   equalSTAR = savedEqual;
 }
 
+// Test: collisionGet looks up a key in collision node
+void testCollisionGet(void) {
+  reset_counters();
+
+  // Create collision node with 2 entries
+  Term keyA = COLLIDE_KEY_A;
+  Term valA = newI60(11);
+  Term keyB = COLLIDE_KEY_B;
+  Term valB = newI60(22);
+  HashCollisionNode *node = malloc_hashCollisionNode(2);
+  node->array[0] = (Value *)keyA;
+  node->array[1] = (Value *)valA;
+  node->array[2] = (Value *)keyB;
+  node->array[3] = (Value *)valB;
+  node->count = 4;
+
+  // Get keyA — should return valA
+  Value *resultA = collisionGet((Value *)node, (Value *)keyA, (Value *)newI60(-1), COLLIDE_HASH_ADD, 0);
+  if (getI60((Term)resultA) != 11) {
+    BOOM("collisionGet: keyA should return valA (11)");
+  }
+
+  // collisionGet frees the node, so create a new one for keyB
+  node = malloc_hashCollisionNode(2);
+  node->array[0] = (Value *)keyA;
+  node->array[1] = (Value *)valA;
+  node->array[2] = (Value *)keyB;
+  node->array[3] = (Value *)valB;
+  node->count = 4;
+
+  // Get keyB — should return valB
+  Value *resultB = collisionGet((Value *)node, (Value *)keyB, (Value *)newI60(-1), COLLIDE_HASH_ADD, 0);
+  if (getI60((Term)resultB) != 22) {
+    BOOM("collisionGet: keyB should return valB (22)");
+  }
+
+  // collisionGet frees the node, so create a new one for missing key
+  node = malloc_hashCollisionNode(2);
+  node->array[0] = (Value *)keyA;
+  node->array[1] = (Value *)valA;
+  node->array[2] = (Value *)keyB;
+  node->array[3] = (Value *)valB;
+  node->count = 4;
+
+  // Get non-existent key — should return default
+  Term keyC = newI60(999);
+  Term defaultVal = newI60(-999);
+  Value *resultC = collisionGet((Value *)node, (Value *)keyC, (Value *)defaultVal, COLLIDE_HASH_ADD, 0);
+  if (getI60((Term)resultC) != -999) {
+    BOOM("collisionGet: missing key should return default");
+  }
+
+  check_counts("testCollisionGet", 3, 3);
+}
+
 int main(int argc, char **argv) {
   sha1 = testingSha1;
   
@@ -2277,6 +2332,7 @@ int main(int argc, char **argv) {
   testCollisionCount();
   testCollisionVec();
   testCollisionDissoc();
+  testCollisionGet();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
