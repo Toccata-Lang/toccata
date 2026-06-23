@@ -2535,21 +2535,17 @@ Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
 }
 
 Value *arrayNodeCount(Value *arg0) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
+  ArrayNode *node = (ArrayNode *)arg0;
   int accum = 0;
   for(int i = 0; i < ARRAY_NODE_LEN; i++){
-    if (((ArrayNode *)arg0)->array[i] != (Value *)0) {
-      Integer *subCnt = (Integer *)count((FnArity *)0, incRef(((ArrayNode *)arg0)->array[i], 1));
-      accum += subCnt->numVal;
-      dec_and_free((Value *)subCnt, 1);
+    if (node->array[i] != 0) {
+      Value *subCnt = (Value *)count_fn((FnArity *)0, (Value *)incRef(node->array[i], 1));
+      accum += getI60((Term)subCnt);
+      dec_and_free((Term)(Value *)subCnt, 1);
     }
   }
-  dec_and_free(arg0, 1);
-  return(new_num(new_i24(accum));
-  // */
+  dec_and_free((Term)(Value *)arg0, 1);
+  return((Value *)newI60(accum));
 }
 
 Value *collisionCount(Value *arg0) {

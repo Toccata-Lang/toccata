@@ -489,20 +489,38 @@ Tests:
   - Verify the original ArrayNode was freed
 
 #### `testArrayNodeGet` — lookup in ArrayNode
-- [ ] `testArrayNodeGet` — Find existing key in ArrayNode
+- [x] `testArrayNodeGet` — Key found in BMI sub-node (Path B1)
   - Create ArrayNode with a BMI sub-node
   - Lookup the key stored in the sub-node
   - Verify the correct value is returned
   - Verify the ArrayNode was freed, BMI sub-node was incremented
   - Verify the returned value is the BMI's value (not a copy)
-- [ ] `testArrayNodeGetMiss` — Key not found in ArrayNode
+- [x] `testArrayNodeGetMiss` — Empty slot (Path A)
   - Create ArrayNode with entries at some slots
   - Lookup a key whose hash maps to an empty slot
   - Verify the default value is returned
   - Verify both the ArrayNode and key were freed
+- [x] `testArrayNodeGetB2Miss` — Key not in BMI sub-node (Path B2)
+  - Create ArrayNode with a BMI sub-node containing key K1
+  - Lookup key K2 that hashes to the same slot but isn't in the BMI
+  - Verify the default value is returned
+  - Verify the ArrayNode was freed, BMI sub-node was freed by bmiGet
 
 #### `testArrayNodeCount` — count entries
-- [ ] `testArrayNodeCount` — Count 2 entries in ArrayNode
+- [x] `testArrayNodeCount` — Count 2 entries in ArrayNode
+  - Create ArrayNode with 2 entries at different slots
+  - Call arrayNodeCount
+  - Verify count returns 2
+  - Verify the ArrayNode was freed
+  - Verify each sub-node was counted via count_fn
+- [x] `testArrayNodeCountEmpty` — Empty ArrayNode (Path A)
+  - Create empty ArrayNode
+  - Call arrayNodeCount
+  - Verify count returns 0
+- [x] `testArrayNodeCountSingle` — Single entry (Path B)
+  - Create ArrayNode with one entry
+  - Call arrayNodeCount
+  - Verify count returns 1
   - Create ArrayNode with 2 entries at different slots
   - Call arrayNodeCount
   - Verify count returns 2
@@ -510,7 +528,13 @@ Tests:
   - Verify each sub-node was counted via count_fn
 
 #### `testArrayNodeDissoc` — remove from ArrayNode
-- [ ] `testArrayNodeDissoc` — Remove one entry from 2-entry ArrayNode
+- [x] `testArrayNodeDissoc` — Remove one entry from 2-entry ArrayNode
+  - Create ArrayNode with 2 entries
+  - Dissoc one key
+  - Verify result is a new ArrayNode with 1 entry
+  - Verify the removed key is gone
+  - Verify the remaining key is still accessible
+  - Verify the original ArrayNode was freed
   - Create ArrayNode with 2 entries
   - Dissoc one key
   - Verify result is a new ArrayNode with 1 entry

@@ -1369,6 +1369,38 @@ void testArrayNodeGetMiss(void) {
   check_counts("testArrayNodeGetMiss", 0, 0);
 }
 
+// Test: key not found in BMI sub-node (Path B2)
+void testArrayNodeGetB2Miss(void) {
+  reset_counters();
+
+  // Create ArrayNode with a BMI sub-node
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  // Find key2 at the same slot as key1
+  int slot = mask(hash1, 0);
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) != slot) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+
+  // Lookup key2 — same slot as key1, but key2 not in BMI
+  Value *miss = arrayNodeGet((Value *)node, (Value *)key2, (Value *)nothing(), hash2, 0);
+
+  // Verify default returned
+  if (termTag((Term)miss) != VAL || ((Value *)miss)->type != NoneType) {
+    BOOM("arrayNodeGetB2Miss: should return NoneType");
+  }
+
+  dec_and_free((Term)miss, 1);
+  check_counts("testArrayNodeGetB2Miss", 0, 0);
+}
+
 void testArrayNodeCount(void) {
   reset_counters();
   ArrayNode *node = malloc_arrayNode();
@@ -1393,6 +1425,41 @@ void testArrayNodeCount(void) {
   }
   dec_and_free((Term)countResult, 1);
   check_counts("testArrayNodeCount", 0, 0);
+}
+
+// Test: count empty ArrayNode
+void testArrayNodeCountEmpty(void) {
+  reset_counters();
+
+  ArrayNode *node = malloc_arrayNode();
+  Value *countResult = arrayNodeCount((Value *)node);
+
+  if (termTag((Term)countResult) != I60 || getI60((Term)countResult) != 0) {
+    BOOM("arrayNodeCountEmpty: should return 0");
+  }
+
+  dec_and_free((Term)countResult, 1);
+  check_counts("testArrayNodeCountEmpty", 0, 0);
+}
+
+// Test: count single-entry ArrayNode
+void testArrayNodeCountSingle(void) {
+  reset_counters();
+
+  ArrayNode *node = malloc_arrayNode();
+  Term key = newI60(100);
+  Term val = newI60(200);
+  int64_t hash = nakedSha1(key);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  Value *countResult = arrayNodeCount((Value *)node);
+
+  if (termTag((Term)countResult) != I60 || getI60((Term)countResult) != 1) {
+    BOOM("arrayNodeCountSingle: should return 1");
+  }
+
+  dec_and_free((Term)countResult, 1);
+  check_counts("testArrayNodeCountSingle", 0, 0);
 }
 
 void testArrayNodeDissoc(void) {
@@ -1488,6 +1555,10 @@ int main(int argc, char **argv) {
   testArrayNodeCopyAssocB2Multi();
   testArrayNodeGet();
   testArrayNodeGetMiss();
+  testArrayNodeGetB2Miss();
+  testArrayNodeCount();
+  testArrayNodeCountEmpty();
+  testArrayNodeCountSingle();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
