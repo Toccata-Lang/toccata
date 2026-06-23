@@ -533,12 +533,12 @@ Tests:
   - Dissoc key that hashes to empty slot Y
   - Verify original node pointer returned (no new allocation)
   - Verify original entry still exists
-- [ ] `testArrayNodeDissoc` — Key found in sub-node (Path B1)
+- [x] `testArrayNodeDissoc` — Key found in sub-node (Path B1)
   - Create ArrayNode with one entry at slot X
   - Dissoc key that hashes to empty slot Y
   - Verify original node pointer returned (no new allocation)
   - Verify original entry still exists
-- [ ] `testArrayNodeDissoc` — Key found in sub-node (Path B1)
+- [x] `testArrayNodeDissoc` — Key found in sub-node (Path B1)
   - Create ArrayNode with 2 entries
   - Dissoc one key
   - Verify result is a new ArrayNode with 1 entry

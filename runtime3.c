@@ -2652,7 +2652,6 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   int idx = mask(hash, shift);
-  ArrayNode *newNode;
 
   Term subNode = node->array[idx];
   if (subNode == 0) {
@@ -2662,17 +2661,22 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
   } else {
     int64_t keyHash = nakedSha1(incRef((Term)(Value *)key, 1));
     Value *n = baseDissoc((Value *)incRef((Term)(Value *)subNode, 1), key, keyHash, shift + 5);
-    newNode = (ArrayNode *)malloc_arrayNode();
-    for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-      if (i != idx && node->array[i] != 0) {
-        newNode->array[i] = node->array[i];
-        incRef(newNode->array[i], 1);
+    if (n == (Value *)subNode) {
+      // sub-node unchanged, no new node needed
+      return(arg0);
+    } else {
+      ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
+      for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+        if (i != idx && node->array[i] != 0) {
+          newNode->array[i] = node->array[i];
+          incRef(newNode->array[i], 1);
+        }
       }
+      newNode->array[idx] = (Term)n;
+      dec_and_free((Term)(Value *)arg0, 1);
+      return((Value *)newNode);
     }
-    newNode->array[idx] = (Term)(Value *)n;
-    dec_and_free((Term)(Value *)arg0, 1);
   }
-  return((Value *)newNode);
 }
 
 /*

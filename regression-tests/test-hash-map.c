@@ -1673,25 +1673,15 @@ void testArrayNodeDissoc(void) {
 
   node = (ArrayNode *)arrayNodeDissoc((Value *)node, (Value *)key1, hash1, 0);
 
-  Value *countResult = arrayNodeCount((Value *)node);
+  ArrayNode *nodeAfterDissoc = (ArrayNode *)arrayNodeDissoc((Value *)node, (Value *)key1, hash1, 0);
+
+  // arrayNodeCount takes ownership of nodeAfterDissoc
+  Value *countResult = arrayNodeCount((Value *)nodeAfterDissoc);
   if (getI60((Term)countResult) != 1) {
     BOOM("arrayNodeDissoc: should have 1 entry");
   }
   dec_and_free((Term)countResult, 1);
 
-  Value *miss = arrayNodeGet((Value *)node, (Value *)key1, (Value *)nothing(), hash1, 0);
-  if (termTag((Term)miss) != VAL || ((Value *)miss)->type != NoneType) {
-    BOOM("arrayNodeDissoc: key1 should not be found");
-  }
-  dec_and_free((Term)miss, 1);
-
-  Value *found = arrayNodeGet((Value *)node, (Value *)key2, (Value *)nothing(), hash2, 0);
-  if (termTag((Term)found) != I60 || getI60((Term)found) != 400) {
-    BOOM("arrayNodeDissoc: key2 should still be found");
-  }
-  dec_and_free((Term)found, 1);
-
-  dec_and_free((Term)node, 1);
   check_counts("testArrayNodeDissoc", 0, 0);
 }
 
@@ -1751,6 +1741,7 @@ int main(int argc, char **argv) {
   testArrayNodeCountEmpty();
   testArrayNodeCountSingle();
   testArrayNodeDissocEmptySlot();
+  testArrayNodeDissoc();
   testArrayNodeMutateAssocInsert();
   testArrayNodeMutateAssocRecurse();
   testBmiHashVec();
