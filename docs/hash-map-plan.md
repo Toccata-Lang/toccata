@@ -463,7 +463,13 @@ Tests:
   - Call copyAssoc with the same key K and same value
   - Verify the original ArrayNode pointer is returned (no new allocation)
   - Verify the sub-node was freed (dec_and_free called on it)
-- [ ] `testArrayNodeCopyAssocB2` — ArrayNode with sub-node, different value
+- [x] `testArrayNodeCopyAssocB2` — ArrayNode with sub-node, different value
+  - Create ArrayNode with a BMI sub-node containing key K with value V1
+  - Call copyAssoc with key K and different value V2
+  - Verify a new ArrayNode is returned
+  - Verify the old ArrayNode was freed
+  - Verify the sub-node at the target slot contains the updated value V2
+  - Verify other slots were copied correctly
   - Create ArrayNode with a BMI sub-node containing key K with value V1
   - Call copyAssoc with key K and different value V2
   - Verify a new ArrayNode is returned

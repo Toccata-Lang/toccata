@@ -1229,6 +1229,42 @@ void testArrayNodeCopyAssocB1(void) {
   check_counts("testArrayNodeCopyAssocB1", 0, 0);
 }
 
+// Test: ArrayNode with sub-node, different value (Path B2)
+void testArrayNodeCopyAssocB2(void) {
+  reset_counters();
+
+  // Create ArrayNode with a BMI sub-node
+  ArrayNode *node = malloc_arrayNode();
+  Term key = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash = nakedSha1(key);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val1, hash, 0);
+
+  int slot = mask(hash, 0);
+  void *original = (void *)node;
+
+  // Call copyAssoc with different value — should create new ArrayNode
+  Term val2 = newI60(999);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val2, hash, 0);
+
+  // Verify new pointer returned
+  if ((void *)node == original) {
+    BOOM("B2: should return new node pointer");
+  }
+
+  // Verify the slot contains the updated value
+  BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[slot];
+  if (bmi->array[0] != (Value *)key) {
+    BOOM("B2: slot should contain key");
+  }
+  if (bmi->array[1] != (Value *)val2) {
+    BOOM("B2: slot should contain updated value 999");
+  }
+
+  dec_and_free((Term)node, 1);
+  check_counts("testArrayNodeCopyAssocB2", 0, 0);
+}
+
 void testArrayNodeGet(void) {
   reset_counters();
   ArrayNode *node = malloc_arrayNode();
@@ -1359,6 +1395,7 @@ int main(int argc, char **argv) {
   testArrayNodeCopyAssoc();
   testArrayNodeCopyAssocA2();
   testArrayNodeCopyAssocB1();
+  testArrayNodeCopyAssocB2();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
