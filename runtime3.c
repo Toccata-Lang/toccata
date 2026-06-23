@@ -20,6 +20,7 @@ REFS_SIZE refsStatic = REFS_STATIC;
 
 unsigned hght = HEIGHT;
 
+Term (*sha1)(FnArity *, Term);
 Value *universalProtoFn = (Value *)0;
 int cleaningUp = 0;
 
@@ -994,36 +995,6 @@ Value *escapeChars(Term arg0) {
     return((Value *)result);
   }
   return stringValue("");
-}
-
-int64_t nakedSha1(Term trm) {
-  int64_t hash;
-  Tag tg = termTag(trm);
-  if (tg == I60) {
-    hash = integerSha1(trm);
-  } else if (tg == VAL) {
-    Value *v1 = (Value *)trm;
-    switch (v1->type) {
-    case StringBufferType:
-    case SubStringType:
-      hash = strSha1(v1);
-      break;
-
-    case VectorType:
-      BOOM("Fix when vectorSha1 is implemented");
-      break;
-      
-    default:
-      // No HashedValue type available for caching
-      hash = 0;
-      break;
-    }
-  } else {
-    char msg[100];
-    sprintf(msg, "Can't SHA1 term: %s", tagStr(tg));
-    BOOM(msg);
-  }
-  return(hash);
 }
 
 char *extractStr(Value *v) {
@@ -2074,7 +2045,7 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
         return((Value *)newNode);
       }
     } else {
-      int64_t existingKeyHash = nakedSha1(incRef((Term)keyOrNull, 1));
+      int64_t existingKeyHash = sha1((FnArity *)0, incRef((Term)keyOrNull, 1));
       if (existingKeyHash == hash) {
         HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
         newLeaf->array[0] = keyOrNull;
@@ -2115,7 +2086,7 @@ Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
             newNode->array[i] = (Term)copyAssoc((Value *)&emptyBMI,
                                                 (Value *)node->array[j],
                                                 (Value *)incRef((Term)node->array[j + 1], 1),
-                                                nakedSha1((Term)node->array[j]),
+                                                sha1((FnArity *)0, (Term)node->array[j]),
                                                 newShift);
           }
           j += 2;
@@ -2188,7 +2159,7 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
       } else {
 	// there is already a key/val pair at the position where key
 	// would be placed. Extend tree a level
-	int64_t existingKeyHash = nakedSha1(incRef((Term)keyOrNull, 1));
+	int64_t existingKeyHash = sha1((FnArity *)0, incRef((Term)keyOrNull, 1));
 	if (existingKeyHash == hash) {
 	  // make & return HashCollisionNode
 	  HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
@@ -2229,7 +2200,7 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	      newNode->array[i] = (Term)copyAssoc((Value *)&emptyBMI,
 					    (Value *)node->array[j],
 					    (Value *)incRef((Term)node->array[j + 1], 1),
-					    nakedSha1((Term)node->array[j]),
+						  sha1((FnArity *)0, (Term)node->array[j]),
 					    newShift);
 	      node->array[j] = (Value *)0;
 	      node->array[j + 1] = (Value *)0;
@@ -2392,7 +2363,7 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, i
   ArrayNode *newNode;
 
   Term subNode = node->array[idx];
-  int64_t keyHash = nakedSha1(incRef((Term)(Value *)key, 1));
+  int64_t keyHash = sha1((FnArity *)0, incRef((Term)(Value *)key, 1));
   if (subNode == 0) {
     newNode = (ArrayNode *)malloc_arrayNode();
     for (int i = 0; i < ARRAY_NODE_LEN; i++) {
@@ -2432,7 +2403,7 @@ Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
     int idx = mask(hash, shift);
 
     Term subNode = node->array[idx];
-    int64_t keyHash = nakedSha1(incRef((Term)(Value *)key, 1));
+    int64_t keyHash = sha1((FnArity *)0, incRef((Term)(Value *)key, 1));
     if (subNode == 0) {
       node->array[idx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, keyHash, shift + 5);
     } else {
@@ -2449,7 +2420,7 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
   Value *val = arg2;
   int itemCount = node->count / 2;
 
-  if(nakedSha1(incRef((Term)node->array[0], 1)) == hash) {
+  if(sha1((FnArity *)0, incRef((Term)node->array[0], 1)) == hash) {
     HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
     for (int i = 0; i < itemCount; i++) {
       if (equal((Value *)incRef((Term)key, 1), (Value *)incRef((Term)node->array[2 * i], 1))) {
@@ -2476,7 +2447,7 @@ Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
       bmi = (BitmapIndexedNode *)mutateAssoc((Value *)bmi,
 					     (Value *)incRef((Term)node->array[2 * i], 1),
 					     (Value *)incRef((Term)node->array[2 * i + 1], 1),
-					     nakedSha1(incRef((Term)node->array[2 * i], 1)), 0);
+					     sha1((FnArity *)0, incRef((Term)node->array[2 * i], 1)), 0);
     }
     dec_and_free((Term)(Value *)arg0, 1);
     return((Value *)bmi);
@@ -2649,7 +2620,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {
     dec_and_free((Term)(Value *)arg1, 1);
     return(arg0);
   } else {
-    int64_t keyHash = nakedSha1(incRef((Term)(Value *)key, 1));
+    int64_t keyHash = sha1((FnArity *)0, incRef((Term)(Value *)key, 1));
     Value *n = baseDissoc((Value *)incRef((Term)(Value *)subNode, 1), key, keyHash, shift + 5);
     if (n == (Value *)subNode) {
       // sub-node unchanged, no new node needed
@@ -2739,7 +2710,7 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
   return ((Value *)NULL);
   /*
   TYPE_SIZE typeNum = ((Integer *)arg0)->numVal;
-  int64_t hash = nakedSha1(incRef(arg1, 1));
+  int64_t hash = sha1((FnArity *)0, incRef(arg1, 1));
   Value *found = get((FnArity *)0, arg0, arg1, notFoundPtr, hash, 0);
   if (found == notFoundPtr) {
     return(nothing);
@@ -2752,7 +2723,7 @@ Value *hashMapGet(Value *arg0, Value *arg1) {
 /*
 // used for static encoding hash maps and other things
 Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2) {
-  int64_t hash = nakedSha1(incRef(arg1, 1));
+  int64_t hash = sha1((FnArity *)0, incRef(arg1, 1));
   return(mutateAssoc(arg0, arg1, arg2, hash, 0));
 }
 
@@ -3356,4 +3327,3 @@ int main (int argc, char **argv) {
   return(bashResult);
 }
 #endif
-

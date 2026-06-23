@@ -38,7 +38,6 @@ Value *bmiCopyAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift
 Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
 Value *bmiCount(Value *node);
 Value *bmiHashVec(Value *node, Value *vec);
-int64_t nakedSha1(Term trm);
 
 // Forward declarations for helper functions used in tests
 Term nothing(void);
@@ -47,6 +46,36 @@ Term some(Term thing);
 // Helper: check if a term is an I60 with the same value as key
 static int subNodeEqualsKey(Term t, Term key) {
   return termTag(t) == I60 && getI60(t) == getI60(key);
+}
+
+Term testingSha1(FnArity *f, Term trm) {
+  int64_t hash;
+  Tag tg = termTag(trm);
+  if (tg == I60) {
+    hash = integerSha1(trm);
+  } else if (tg == VAL) {
+    Value *v1 = (Value *)trm;
+    switch (v1->type) {
+    case StringBufferType:
+    case SubStringType:
+      hash = strSha1(v1);
+      break;
+
+    case VectorType:
+      BOOM("Fix when vectorSha1 is implemented");
+      break;
+      
+    default:
+      // No HashedValue type available for caching
+      hash = 0;
+      break;
+    }
+  } else {
+    char msg[100];
+    sprintf(msg, "Can't SHA1 term: %s", tagStr(tg));
+    BOOM(msg);
+  }
+  return(hash);
 }
 
 /*
@@ -227,7 +256,7 @@ void testBmiCopyAssoc(void) {
   Term val = newI60(251);
 
   // Compute hash of key
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
 
   // Add key/value to empty BMI at shift=0
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
@@ -270,7 +299,7 @@ void testBmiMutateAssocUpdateValue(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = newI60(137);
   Term val = newI60(251);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
@@ -320,7 +349,7 @@ void testBmiMutateAssocInsert(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key1 = newI60(137);
   Term val1 = newI60(251);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
@@ -330,7 +359,7 @@ void testBmiMutateAssocInsert(void) {
 
   // Use a key at a DIFFERENT bit position (bit not set in original bitmap)
   Term key2 = newI60(256);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   Term val2 = newI60(888);
   int bit2 = bitpos(hash2, 0);
 
@@ -339,7 +368,7 @@ void testBmiMutateAssocInsert(void) {
     // Try another key if it happens to share the same bit
     for (i64 extra = 0; extra < 10000; extra++) {
       key2 = newI60(extra);
-      hash2 = nakedSha1(key2);
+      hash2 = sha1((FnArity *)0, key2);
       bit2 = bitpos(hash2, 0);
       if (!(original->bitmap & bit2)) {
         val2 = newI60(extra + 100);
@@ -403,7 +432,7 @@ void testBmiMutateAssocBranch(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key1 = newI60(137);
   Term val1 = newI60(251);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
@@ -416,7 +445,7 @@ void testBmiMutateAssocBranch(void) {
   int64_t hash2;
   for (i64 candidate = 100; candidate < 10000; candidate++) {
     key2 = newI60(candidate);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
     if (hash2 != hash1 && mask(hash2, 0) == mask(hash1, 0)) break;
   }
   Term val2 = newI60(888);
@@ -473,7 +502,7 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key1 = newI60(137);
   Term val1 = newI60(251);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
@@ -481,11 +510,11 @@ void testBmiMutateAssocSubNodeRecurse(void) {
 
   // Find key2 with same bit position
   Term key2 = newI60(1000);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   int bit2 = bitpos(hash2, 0);
   while (bit2 != bit1) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
     bit2 = bitpos(hash2, 0);
   }
 
@@ -549,7 +578,7 @@ void testBmiMutateAssocPromote(void) {
   int count = 0;
   for (i64 c = 0; count < 16 && c < 100000; c++) {
     Term key = newI60(c);
-    int64_t hash = nakedSha1(key);
+    int64_t hash = sha1((FnArity *)0, key);
     int bit = bitpos(hash, 0);
     int used = 0;
     for (int j = 0; j < count; j++) { if (bitpos(hashes[j], 0) == bit) { used = 1; break; } }
@@ -561,7 +590,7 @@ void testBmiMutateAssocPromote(void) {
   ((Value *)node)->refs = 1;
   Term newKey; int64_t newHash;
   for (i64 c = 0; c < 100000; c++) {
-    newKey = newI60(c); newHash = nakedSha1(newKey);
+    newKey = newI60(c); newHash = sha1((FnArity *)0, newKey);
     int newBit = bitpos(newHash, 0);
     int used = 0;
     for (int j = 0; j < 16; j++) { if (bitpos(hashes[j], 0) == newBit) { used = 1; break; } }
@@ -586,7 +615,7 @@ void testBmiMutateAssocNoOp(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = newI60(137);
   Term val = newI60(251);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
 
   // Add key/value — first mutateAssoc call
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
@@ -636,7 +665,7 @@ void testBmiCopyAssocNoOp(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = newI60(99);
   Term val = newI60(13);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   // Store original pointer
@@ -669,7 +698,7 @@ void testBmiCopyAssocUpdate(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = newI60(7);
   Term val = newI60(13);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
@@ -709,7 +738,7 @@ void testBmiGet(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = newI60(137);
   Term val = newI60(251);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   // Lookup existing key
@@ -738,7 +767,7 @@ void testBmiDissoc(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = newI60(137);
   Term val = newI60(251);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   // Remove the only key — should return emptyBMI
@@ -761,12 +790,12 @@ void testBmiDissocEmpty(void) {
   BitmapIndexedNode *node = malloc_bmiNode(2);
   Term key1 = newI60(0);   // hash bit 13
   Term val1 = newI60(251);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   Term key2 = newI60(1);   // hash bit 29
   Term val2 = newI60(888);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   result = bmiMutateAssoc(result, (Value *)key2, (Value *)val2, hash2, 0);
 
   // Verify we have 2 entries
@@ -812,12 +841,12 @@ void testBmiCount(void) {
   BitmapIndexedNode *node = malloc_bmiNode(2);
   Term key1 = newI60(0);
   Term val1 = newI60(251);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   Term key2 = newI60(1);
   Term val2 = newI60(888);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   result = bmiMutateAssoc(result, (Value *)key2, (Value *)val2, hash2, 0);
 
   // Count entries
@@ -846,12 +875,12 @@ void testBmiGetMiss(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = newI60(137);
   Term val = newI60(251);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   // Create a different key that won't match
   Term missKey = newI60(999);
-  int64_t missHash = nakedSha1(missKey);
+  int64_t missHash = sha1((FnArity *)0, missKey);
 
   // Lookup missing key
   // bmiGet frees the node but NOT the default, returns the default (nothing)
@@ -880,7 +909,7 @@ void testBmiCopyAssocBranch(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key1 = newI60(137);
   Term val1 = newI60(251);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
@@ -889,13 +918,13 @@ void testBmiCopyAssocBranch(void) {
   // Find key2 whose hash has the same bit position at shift=0
   // but a different full hash — this triggers A2d (branch node)
   Term key2 = newI60(1000);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   int bit2 = bitpos(hash2, 0);
 
   // Keep trying until we find a key with the same bit position
   while (bit2 != bit1) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
     bit2 = bitpos(hash2, 0);
   }
 
@@ -955,7 +984,7 @@ void testBmiCopyAssocSubNodeNoChange(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key1 = newI60(137);
   Term val1 = newI60(251);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
@@ -963,11 +992,11 @@ void testBmiCopyAssocSubNodeNoChange(void) {
 
   // Find key2 with same bit position
   Term key2 = newI60(1000);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   int bit2 = bitpos(hash2, 0);
   while (bit2 != bit1) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
     bit2 = bitpos(hash2, 0);
   }
 
@@ -1009,18 +1038,18 @@ void testBmiCopyAssocSubNodeChange(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key1 = newI60(137);
   Term val1 = newI60(251);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
   int bit1 = bitpos(hash1, 0);
 
   Term key2 = newI60(1000);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   int bit2 = bitpos(hash2, 0);
   while (bit2 != bit1) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
     bit2 = bitpos(hash2, 0);
   }
 
@@ -1165,7 +1194,7 @@ void testArrayNodeCopyAssoc(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key = newI60(100);
   Term val = newI60(200);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   Value *result = arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
   if (((ArrayNode *)result)->type != ArrayNodeType) {
     BOOM("arrayNodeCopyAssoc should return ArrayNodeType");
@@ -1182,17 +1211,17 @@ void testArrayNodeCopyAssocA2(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   int slot1 = mask(hash1, 0);
 
   // Find key2 at a different slot
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) == slot1) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
   Term val2 = newI60(400);
   int slot2 = mask(hash2, 0);
@@ -1240,7 +1269,7 @@ void testArrayNodeCopyAssocB1(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key = newI60(100);
   Term val = newI60(200);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   int slot = mask(hash, 0);
@@ -1276,7 +1305,7 @@ void testArrayNodeCopyAssocB2(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val1, hash, 0);
 
   int slot = mask(hash, 0);
@@ -1312,17 +1341,17 @@ void testArrayNodeCopyAssocB2Multi(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   int slot1 = mask(hash1, 0);
 
   // Find key2 at a different slot
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) == slot1) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
   Term val2 = newI60(400);
   int slot2 = mask(hash2, 0);
@@ -1362,7 +1391,7 @@ void testArrayNodeGet(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key = newI60(100);
   Term val = newI60(200);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   // Lookup the key
@@ -1385,15 +1414,15 @@ void testArrayNodeGetMiss(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   // Find key2 at a different slot
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) == mask(hash1, 0)) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
 
   // Lookup key2 — slot is empty, should return default
@@ -1416,16 +1445,16 @@ void testArrayNodeGetB2Miss(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   // Find key2 at the same slot as key1
   int slot = mask(hash1, 0);
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) != slot) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
 
   // Lookup key2 — same slot as key1, but key2 not in BMI
@@ -1445,15 +1474,15 @@ void testArrayNodeCount(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   // Find key at different slot
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) == mask(hash1, 0)) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
   Term val2 = newI60(400);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
@@ -1488,7 +1517,7 @@ void testArrayNodeCountSingle(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key = newI60(100);
   Term val = newI60(200);
-  int64_t hash = nakedSha1(key);
+  int64_t hash = sha1((FnArity *)0, key);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   Value *countResult = arrayNodeCount((Value *)node);
@@ -1510,17 +1539,17 @@ void testArrayNodeMutateAssocRecurse(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   int slot1 = mask(hash1, 0);
 
   // Find key2 at the SAME slot as key1 (triggers recurse into BMI)
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) != slot1) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
   Term val2 = newI60(999);
 
@@ -1574,14 +1603,14 @@ void testArrayNodeDissocEmptySlot(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) == mask(hash1, 0)) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
 
   Value *result = arrayNodeDissoc((Value *)node, (Value *)key2, hash2, 0);
@@ -1607,17 +1636,17 @@ void testArrayNodeMutateAssocInsert(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   int slot1 = mask(hash1, 0);
 
   // Find key2 at a DIFFERENT slot
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) == slot1) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
   Term val2 = newI60(400);
   int slot2 = mask(hash2, 0);
@@ -1659,14 +1688,14 @@ void testArrayNodeDissoc(void) {
   ArrayNode *node = malloc_arrayNode();
   Term key1 = newI60(100);
   Term val1 = newI60(200);
-  int64_t hash1 = nakedSha1(key1);
+  int64_t hash1 = sha1((FnArity *)0, key1);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   Term key2 = newI60(300);
-  int64_t hash2 = nakedSha1(key2);
+  int64_t hash2 = sha1((FnArity *)0, key2);
   while (mask(hash2, 0) == mask(hash1, 0)) {
     key2 = newI60(getI60(key2) + 1);
-    hash2 = nakedSha1(key2);
+    hash2 = sha1((FnArity *)0, key2);
   }
   Term val2 = newI60(400);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
@@ -1686,6 +1715,8 @@ void testArrayNodeDissoc(void) {
 }
 
 int main(int argc, char **argv) {
+  sha1 = testingSha1;
+  
   // just to make BOOM happ
   dotFile = fopen("graphs.dot", "w");
   if (!dotFile) {

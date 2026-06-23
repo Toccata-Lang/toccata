@@ -351,7 +351,6 @@ extern Value *baseDissoc(Value *node, Value *key, int64_t hash, int shift);
 extern Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *shift);
 extern Value *mapGet(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
 Value *baseDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
-int64_t nakedSha1(Term trm);
 Value *copyAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift);
 Value *mutateAssoc(Value *node, Value *k, Value *v, int64_t hash, int shift);
 Value *newTypeValue(int typeNum, Vector *fields);
