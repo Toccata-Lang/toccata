@@ -396,7 +396,7 @@ Ordered by complexity, simplest first.
   - Verify the same node pointer is returned
   - Verify a HashCollisionNode was created at the collision slot
   - Verify both entries are present
-- [ ] `testBmiMutateAssocInsert` — bit not set, n < 16, insert into new BMI (2b)
+- [x] `testBmiMutateAssocInsert` — bit not set, n < 16, insert into new BMI (2b)
   - Create BMI with one key/value pair
   - Set refs==1
   - Mutate with a new key at a free bit position

@@ -301,6 +301,89 @@ void testBmiMutateAssocUpdateValue(void) {
   check_counts("testBmiMutateAssocUpdateValue", 0, 0);
 }
 
+// Test: bit not set, n < 16, insert new entry (2b)
+// bmiMutateAssoc with refs==1, bit not set → creates new BMI node
+void testBmiMutateAssocInsert(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = newI60(137);
+  Term val1 = newI60(251);
+  int64_t hash1 = nakedSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  // Set refs==1 so bmiMutateAssoc takes the in-place path
+  ((Value *)result)->refs = 1;
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+
+  // Use a key at a DIFFERENT bit position (bit not set in original bitmap)
+  Term key2 = newI60(42);
+  int64_t hash2 = nakedSha1(key2);
+  Term val2 = newI60(888);
+  int bit2 = bitpos(hash2, 0);
+
+  // Verify key2 is NOT already in the bitmap
+  if (original->bitmap & bit2) {
+    // Try another key if it happens to share the same bit
+    for (i64 extra = 0; extra < 10000; extra++) {
+      key2 = newI60(extra);
+      hash2 = nakedSha1(key2);
+      bit2 = bitpos(hash2, 0);
+      if (!(original->bitmap & bit2)) {
+        val2 = newI60(extra + 100);
+        break;
+      }
+    }
+    if (original->bitmap & bit2) {
+      BOOM("could not find key at free bit position");
+    }
+  }
+
+  // Call bmiMutateAssoc — should create a new BMI with 2 entries
+  Value *insertResult = bmiMutateAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Verify a NEW node was returned (different pointer — new node created)
+  if (insertResult == (Value *)original) {
+    BOOM("2b: should return a new node (not original)");
+  }
+
+  // Verify the new node has 2 entries
+  BitmapIndexedNode *newBm = (BitmapIndexedNode *)insertResult;
+  if (newBm->type != BitmapIndexedType) {
+    BOOM("2b: result should be BitmapIndexedType");
+  }
+  if (__builtin_popcount(newBm->bitmap) != 2) {
+    BOOM("2b: new node should have 2 bits set");
+  }
+
+  // Verify both keys and values are present
+  int found1 = 0, found2 = 0;
+  for (int i = 0; i < 4; i += 2) {
+    if (subNodeEqualsKey((Term)newBm->array[i], key1)) found1 = 1;
+    if (subNodeEqualsKey((Term)newBm->array[i], key2)) found2 = 1;
+  }
+  if (!found1 || !found2) {
+    BOOM("2b: new node should contain both keys");
+  }
+
+  // Verify both values are present
+  int valFound1 = 0, valFound2 = 0;
+  for (int i = 0; i < 4; i += 2) {
+    if (subNodeEqualsKey((Term)newBm->array[i + 1], val1)) valFound1 = 1;
+    if (subNodeEqualsKey((Term)newBm->array[i + 1], val2)) valFound2 = 1;
+  }
+  if (!valFound1 || !valFound2) {
+    BOOM("2b: new node should contain both values");
+  }
+
+  // Clean up
+  dec_and_free((Term)insertResult, 1);
+
+  check_counts("testBmiMutateAssocInsert", 0, 0);
+}
+
 // Test: different key, different hash → new sub-node (1e)
 // bmiMutateAssoc with refs==1, bit set, different key, different hash
 void testBmiMutateAssocBranch(void) {
@@ -958,6 +1041,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiCopyAssocSubNodeChange();
   testBmiCount();
   testBmiMutateAssocUpdateValue();
+  testBmiMutateAssocInsert();
   testBmiMutateAssocBranch();
   testBmiMutateAssocSubNodeRecurse();
   testBmiMutateAssocNoOp();
