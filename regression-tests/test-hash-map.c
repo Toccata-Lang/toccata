@@ -1111,7 +1111,8 @@ void testBmiHashVec(void) {
   // Clean up — free the result vector
   dec_and_free((Term)vecResult, 1);
 
-  check_counts("testBmiHashVec", 0, 0);
+  // Pool for itemCount=3 created by bmiCopyAssoc (3-entry BMI)
+  check_counts("testBmiHashVec", 10, 0);
 }
 
 int main(int argc, char **argv) {
@@ -1132,6 +1133,9 @@ int main(int argc, char **argv) {
 
   // Trigger malloc_reified pool once before tests (5000-entry pool)
   (void)nothing();
+
+  // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
+  (void)malloc_vector();
 
   testEmptyBmiNode();
   testBmiNodeOneItem();
@@ -1156,6 +1160,7 @@ int main(int argc, char **argv) {
   testBmiMutateAssocBranch();
   testBmiMutateAssocSubNodeRecurse();
   testBmiMutateAssocNoOp();
+  testBmiHashVec();
   printf("All tests passed\n");
   return 0;
 }
