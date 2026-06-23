@@ -352,8 +352,64 @@ Tests ordered by complexity. Start with trivial (2-3 assertions), work up to har
 - [ ] `testBmiCopyAssocPromote` — 16+ entry map, add 17th → promote to ArrayNode (B1)
 
 #### Hard — engineering constraints
-- [ ] `testBmiMutateAssoc` — verify in-place mutation when refs==1 (need to control ref counter)
 - [ ] `testBmiCopyAssocCollision` — two keys with identical SHA1 hash → collision node (A2c)
+
+#### bmiMutateAssoc tests (7 paths) — **must complete before any other work**
+
+These 7 tests cover every code path in `bmiMutateAssoc` (path 0 — refs!=1 delegation to copyAssoc — is already covered by copyAssoc tests).
+
+> **Priority: These must be completed before moving on to any other work.**
+
+Ordered by complexity, simplest first.
+
+- [x] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
+  - Create BMI with one key/value pair
+  - Set refs==1
+  - Mutate with the same key and same value
+  - Verify the same node pointer is returned
+  - Verify no new allocations (glblAlloced unchanged)
+- [ ] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
+  - Create BMI with one key/value pair
+  - Set refs==1
+  - Mutate with same key, different value
+  - Verify the same node pointer is returned (in-place)
+  - Verify the value changed
+  - Verify old value was freed (no leak)
+- [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
+  - Create BMI with a sub-node (two keys at different bit positions)
+  - Set refs==1 on the node
+  - Mutate the inner key/value
+  - Verify the same node pointer is returned (in-place mutation)
+  - Verify the inner value changed
+- [ ] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
+  - Create BMI with one key/value
+  - Set refs==1
+  - Mutate with a key at a different bit position
+  - Verify the same node pointer is returned
+  - Verify a new sub-node (via createNode) was created
+  - Verify both entries are accessible
+- [ ] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
+  - Find two keys with identical SHA1 hash
+  - Create BMI with one of them
+  - Set refs==1
+  - Mutate with the second key
+  - Verify the same node pointer is returned
+  - Verify a HashCollisionNode was created at the collision slot
+  - Verify both entries are present
+- [ ] `testBmiMutateAssocInsert` — bit not set, n < 16, insert into new BMI (2b)
+  - Create BMI with one key/value pair
+  - Set refs==1
+  - Mutate with a new key at a free bit position
+  - Verify a new BMI node is returned (n+1 items)
+  - Verify both entries are present
+  - Verify old node was freed (no leak)
+- [ ] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
+  - Create BMI with 16 entries (full)
+  - Set refs==1
+  - Mutate with a new key (bit not set)
+  - Verify an ArrayNode is returned (not the original node)
+  - Verify all 16 original entries are present
+  - Verify the new entry is present
 
 ### Phase 3: ArrayNode Operations
 - `testArrayNodeCopyAssoc` — add to empty ArrayNode

@@ -2193,16 +2193,16 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	return(arg0);
       } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
 	if (equal(incRefVal(val, 1), incRefVal(valOrNode, 1))) {
-	  dec_and_free(termVal((Term)arg1), 1);
-	  dec_and_free(termVal((Term)arg2), 1);
+	  dec_and_free((Term)arg1, 1);
+	  dec_and_free((Term)arg2, 1);
 	  return(arg0);
 	} else {
 	  // if the keyOrNull points to a value that is equal to key
 	  // replace key/val at 'idx' with new stuff
 	  node->array[idx * 2] = key;
 	  node->array[idx * 2 + 1] = val;
-	  dec_and_free(termVal((Term)valOrNode), 1);
-	  dec_and_free(termVal((Term)keyOrNull), 1);
+	  dec_and_free((Term)valOrNode, 1);
+	  dec_and_free((Term)keyOrNull, 1);
 	  return(arg0);
 	}
       } else {
