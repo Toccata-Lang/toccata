@@ -1915,6 +1915,48 @@ void testCollisionAssocPromote(void) {
   equalSTAR = savedEqual;
 }
 
+// Test: collisionCount returns correct entry count
+void testCollisionCount(void) {
+  reset_counters();
+
+  // Create collision node with 1 entry (count = 2)
+  Term keyA = COLLIDE_KEY_A;
+  Term valA = newI60(11);
+  HashCollisionNode *node1 = makeCollisionNode(keyA, valA);
+
+  Value *result1 = collisionCount((Value *)node1);
+  if (termTag((Term)result1) != I60) {
+    BOOM("collisionCount 1: result should be I60");
+  }
+  if (getI60((Term)result1) != 1) {
+    char msg[100];
+    snprintf(msg, 99, "collisionCount 1: expected 1, got %ld", getI60((Term)result1));
+    BOOM(msg);
+  }
+
+  // Create collision node with 2 entries (count = 4)
+  Term keyB = COLLIDE_KEY_B;
+  Term valB = newI60(22);
+  HashCollisionNode *node2 = malloc_hashCollisionNode(2);
+  node2->array[0] = (Value *)keyA;
+  node2->array[1] = (Value *)valA;
+  node2->array[2] = (Value *)keyB;
+  node2->array[3] = (Value *)valB;
+  node2->count = 4;
+
+  Value *result2 = collisionCount((Value *)node2);
+  if (termTag((Term)result2) != I60) {
+    BOOM("collisionCount 2: result should be I60");
+  }
+  if (getI60((Term)result2) != 2) {
+    char msg[100];
+    snprintf(msg, 99, "collisionCount 2: expected 2, got %ld", getI60((Term)result2));
+    BOOM(msg);
+  }
+
+  check_counts("testCollisionCount", 2, 2);
+}
+
 int main(int argc, char **argv) {
   sha1 = testingSha1;
   
@@ -1973,6 +2015,7 @@ int main(int argc, char **argv) {
   testCollisionAssocAdd();
   testCollisionAssocUpdate();
   testCollisionAssocPromote();
+  testCollisionCount();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
