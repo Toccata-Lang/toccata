@@ -375,7 +375,7 @@ Ordered by complexity, simplest first.
   - Verify the same node pointer is returned (in-place)
   - Verify the value changed
   - Verify old value was freed (no leak)
-- [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
+- [x] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
   - Create BMI with a sub-node (two keys at different bit positions)
   - Set refs==1 on the node
   - Mutate the inner key/value

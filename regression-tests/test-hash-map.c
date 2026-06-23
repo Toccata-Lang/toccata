@@ -301,6 +301,81 @@ void testBmiMutateAssocUpdateValue(void) {
   check_counts("testBmiMutateAssocUpdateValue", 0, 0);
 }
 
+// Test: sub-node case — mutate inner key/value (1a)
+// bmiMutateAssoc with refs==1, bit set, sub-node, recursive update
+void testBmiMutateAssocSubNodeRecurse(void) {
+  reset_counters();
+
+  // Build a nested structure: two keys with same bit position at shift=0
+  // This creates a sub-node at shift=5
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = newI60(137);
+  Term val1 = newI60(251);
+  int64_t hash1 = nakedSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  int bit1 = bitpos(hash1, 0);
+
+  // Find key2 with same bit position
+  Term key2 = newI60(1000);
+  int64_t hash2 = nakedSha1(key2);
+  int bit2 = bitpos(hash2, 0);
+  while (bit2 != bit1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+    bit2 = bitpos(hash2, 0);
+  }
+
+  Term val2 = newI60(888);
+  result = bmiCopyAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Verify we have a nested structure
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
+  int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
+  BitmapIndexedNode *subNode = (BitmapIndexedNode *)bm->array[2 * idx + 1];
+  if (__builtin_popcount(subNode->bitmap) != 2) {
+    BOOM("should have nested sub-node");
+  }
+
+  // Set refs==1 so bmiMutateAssoc takes the in-place path
+  ((Value *)bm)->refs = 1;
+
+  // Update key1 in the sub-node with a different value
+  Term newVal = newI60(999);
+  Value *updateResult = bmiMutateAssoc((Value *)bm, (Value *)key1, (Value *)newVal, hash1, 0);
+
+  // Verify same pointer returned (in-place mutation)
+  if (updateResult != (Value *)bm) {
+    BOOM("bmiMutateAssoc sub-node: same key should return original node pointer");
+  }
+
+  // Verify the sub-node was updated in-place
+  BitmapIndexedNode *updatedSub = (BitmapIndexedNode *)bm->array[2 * idx + 1];
+  if (__builtin_popcount(updatedSub->bitmap) != 2) {
+    BOOM("sub-node should still have 2 entries");
+  }
+
+  // Find key1's value in the updated sub-node
+  Value *foundVal = NULL;
+  if (subNodeEqualsKey((Term)(Value *)updatedSub->array[0], key1)) {
+    foundVal = updatedSub->array[1];
+  } else if (subNodeEqualsKey((Term)(Value *)updatedSub->array[2], key1)) {
+    foundVal = updatedSub->array[3];
+  }
+  if (foundVal == NULL) {
+    BOOM("sub-node should contain key1");
+  }
+  if (getI60((Term)foundVal) != 999) {
+    BOOM("sub-node value should be updated to 999");
+  }
+
+  // Clean up
+  dec_and_free((Term)updateResult, 1);
+
+  check_counts("testBmiMutateAssocSubNodeRecurse", 0, 0);
+}
+
 // Test: same key + same value → no-op, return original node (1b)
 // bmiMutateAssoc with refs==1, bit set, keys equal, values equal
 void testBmiMutateAssocNoOp(void) {
@@ -819,6 +894,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiCopyAssocSubNodeChange();
   testBmiCount();
   testBmiMutateAssocUpdateValue();
+  testBmiMutateAssocSubNodeRecurse();
   testBmiMutateAssocNoOp();
   printf("All tests passed\n");
   return 0;
