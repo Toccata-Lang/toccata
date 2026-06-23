@@ -542,6 +542,24 @@ Tests:
   - Verify the remaining key is still accessible
   - Verify the original ArrayNode was freed
 
+#### `testArrayNodeMutateAssoc` — mutate in-place when refs==1
+`arrayNodeMutateAssoc` has two top-level paths: `subNode == 0` (slot empty) vs `subNode != 0` (slot has a sub-node).
+
+- [x] `testArrayNodeMutateAssocRecurse` — Slot has BMI sub-node → recurse into BMI
+  - Create ArrayNode with one entry at slot X (BMI sub-node)
+  - Set refs==1 on the node
+  - Mutate with a key that hashes to slot X
+  - Verify the same ArrayNode pointer is returned (in-place mutation)
+  - Verify the inner BMI entry was updated
+  - Verify no new allocations (glblAlloced unchanged)
+- [x] `testArrayNodeMutateAssocInsert` — Slot is empty → insert new entry
+  - Create ArrayNode with one entry at slot X
+  - Set refs==1 on the node
+  - Mutate with a key that hashes to empty slot Y
+  - Verify a new ArrayNode is returned (n+1 entries)
+  - Verify both entries are present
+  - Verify old node was freed (no leak)
+
 ### Phase 4: CollisionNode Operations
 - [x] `testCollisionAssocAdd` — add new key to collision node (same hash, different key)
 - [x] `testCollisionAssocUpdate` — update existing key value in collision node

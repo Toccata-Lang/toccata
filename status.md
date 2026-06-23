@@ -80,7 +80,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [x] bmiGet
   - [x] bmiDissoc
   - [x] arrayNodeCopyAssoc
-  - [ ] arrayNodeMutateAssoc
+  - [x] arrayNodeMutateAssoc
   - [x] arrayNodeGet
   - [x] arrayNodeCount
   - [x] arrayNodeDissoc
