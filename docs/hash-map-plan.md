@@ -24,7 +24,6 @@ The hash-map is an immutable key-value store based on Clojure's bitmap trie data
 - `sha1` — computes SHA1 hash
 - `get` — polymorphic get dispatch
 - `baseDissoc` — polymorphic dissoc dispatch
-- `hashSeq` — flatten to sequence
 - `vals` — get all values
 
 ## Execution Order — DO NOT SKIP AHEAD
@@ -157,7 +156,6 @@ bmiCopyAssoc(node, key, val, hash, shift)
 
 | Function | Notes |
 |---|---|
-| `bmiHashSeq()` | Flatten BMI to `List` of pairs (and recursively sequence sub-nodes) |
 | `collisionSeq()` | Flatten collision node to `List` of pairs |
 | `arrayNodeSeq()` | Flatten array node to `List` of pairs |
 | `equal()` | Value equality — dispatches to `integer_EQ` or `equalSTAR` |
@@ -223,7 +221,6 @@ Two functions exist in core.c but are **missing entirely** from runtime3.c:
 
 | Function | What it does | Depends on |
 |---|---|---|
-| `bmiHashSeq` | Flattens BMI node (and sub-nodes) into `List` of key/value pairs | `hashSeq` (recursive), `listCons` |
 | `equal` | Compares two values for equality — `integer_EQ` for Integers, `equalSTAR` for others | `integer_EQ`, `equalSTAR`, `maybe`, `nothing` |
 
 These need to be added to runtime3.c.
@@ -245,7 +242,6 @@ The C functions exist but are **never wired to Toccata protocol symbols**.
 **Current state:** Extern declarations in `core.h` / `runtime3.h`:
 ```c
 extern Value *(*dissoc)(FnArity *, Value *, Value *, Value *, Value *);
-extern Value *(*hashSeq)(FnArity *, Value*, Value *s);
 extern Value *(*count)(FnArity *, Value *);
 extern Value *(*vals)(FnArity *, Value *);
 ```
@@ -253,7 +249,6 @@ extern Value *(*vals)(FnArity *, Value *);
 **What's needed:** Assign these function pointers during initialization so that:
 - `(assoc m k v)` dispatches to `hashMapAssoc` / `mutateAssoc` based on `m`'s type
 - `(dissoc m k)` dispatches to `baseDissoc` based on `m`'s type
-- `(hash-seq m s)` dispatches to `bmiHashSeq` / `arrayNodeSeq` / `collisionSeq` based on `m`'s type
 - `(count m)` dispatches to `bmiCount` / `arrayNodeCount` / `collisionCount` based on `m`'s type
 - `(vals m)` dispatches to `hashVec` based on `m`'s type
 
@@ -305,16 +300,6 @@ The test calls `(= {} {})` and `(= bmi (dissoc bmi ...))`.
 **What's needed:** The `=` protocol implementation for HashMap types.
 
 **Implementation:** Compare structure — same node type, same bitmap (for BMI), same key/value pairs recursively. For collision nodes, compare all pairs.
-
-### Phase 10: `hash-seq` Return Type
-
-The test expects `(hash-seq m [""])` to return something with `count` that works with Vector operations.
-
-**Current state:** `bmiHashSeq` returns a `List`, but the test uses `count` and `Vector`-style operations on the result.
-
-**What's needed:** Either:
-- Make `hash-seq` return a Vector, or
-- Ensure the `count` protocol works on the returned type
 
 ## Test Strategy: Build `test-hash-map.c` Step-by-Step
 
@@ -598,22 +583,20 @@ Tests:
 8. **Add collisionAssoc tests** — add, update, promote ✅
 9. **Uncomment `get` / `baseDissoc` / `hashVec` / `copyAssoc` / `mutateAssoc`** — polymorphic dispatch functions
 10. **Uncomment `hashMapGet` / `hashMapAssoc`** — public API
-11. **Port `bmiHashSeq`** from core.c — flatten hash-map to sequence
-12. **Uncomment `collisionAssoc` case** in `mutateAssoc` — fix core.c
-13. **Wire protocol bindings** — assign function pointers so Toccata functions dispatch to C implementations
-14. **Add `{}` constructor** — enable empty HashMap creation
-15. **Add `empty?` protocol** for HashMap
-16. **Add `=` protocol** for HashMap
-17. **Add `get*` / `dissoc*` variants** — explicit hash/shift parameters
-18. **Add `assoc-all`** — batch insertion
-19. **Fix `hash-seq` return type** if needed
+11. **Uncomment `collisionAssoc` case** in `mutateAssoc` — fix core.c
+12. **Wire protocol bindings** — assign function pointers so Toccata functions dispatch to C implementations
+13. **Add `{}` constructor** — enable empty HashMap creation
+14. **Add `empty?` protocol** for HashMap
+15. **Add `=` protocol** for HashMap
+16. **Add `get*` / `dissoc*` variants** — explicit hash/shift parameters
+17. **Add `assoc-all`** — batch insertion
 
 ## Test File
 
 - **`regression-tests/hash-map-regressions.toc`** — 40+ assertions covering:
   - Empty map, singleton, multi-entry maps
   - `assoc`, `assoc-all`, `get`, `get*`, `dissoc`, `dissoc*`
-  - `count`, `hash-seq`, `empty?`, `=`
+  - `count`, `empty?`, `=`
   - Collision handling
   - Large maps (2000+ entries)
   - Array node promotion (>16 entries)

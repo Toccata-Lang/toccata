@@ -2,15 +2,17 @@
 
 Read these files for context before starting any:
 
-2. `docs/calculus.md` — Formal calculus: node types, polarities, all 15 interaction rules with before/after descriptions
-3. `docs/interactions.dot` — Visual diagrams for each rule
-4. `docs/implementation.md` — Architecture reference: term layout, memory, reduction engine
-5. `docs/hash-map-plan.md` — Hash-map implementation plan and test strategy
-6. `skills/editing-runtime3.md` — Pitfalls and learnings from uncommenting runtime3.c stubs
+1. `docs/calculus.md` — Formal calculus: node types, polarities, all 15 interaction rules with before/after descriptions
+2. `docs/interactions.dot` — Visual diagrams for each rule
+3. `docs/implementation.md` — Architecture reference: term layout, memory, reduction engine
+4. `skills/editing-runtime3.md` — Pitfalls and learnings from uncommenting runtime3.c stubs
+5. `runtime3.h` — Value type system, struct definitions, type constants, function declarations
+6. `runtime3.c` — Runtime: memory management, free lists, vector/hash-map operations, native HVM functions, main()
 7. `new.h` — Type definitions, tag constants, function declarations
 8. `new.c` — Core implementation: `take`, `swap`, `move`, `interact`, existing rules
+9. `hvm-core.toc` — Core type definitions and structure
 10. `graph.c` — DOT graph generation for debugging
-12. `Makefile`
+11. `Makefile`
 
 Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
 
@@ -93,7 +95,6 @@ Read in order: the calculus defines the rules, the implementation shows how they
 - [ ] maybe-regressions — Maybe type
 - [ ] state-error1-1 — state-error monad
 - [ ] state-error1-2 — state-error monad
-
 - [ ] test-gensym — gensym
 - [ ] test-apply-constructor — apply + constructor
 
@@ -101,29 +102,14 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 - [ ] and-prop — type property inference (blocked: `instance?` not implemented)
 - [ ] check-bad-incRef — reference counting (needs hash-map: reduce on collections)
-
-
 - [ ] or-and-constraints — type constraints in or/and (needs type system completion)
-
-
 - [ ] test-cond — cond syntax (waiting on: `any?`, `ever?`, `instance?`)
-
-
 - [ ] test-inline-invoke — inline invoke (needs hash-map)
 - [ ] test-inline-sym-literal — symbol literals (blocked: `instance?`)
 - [ ] test-or-comment — comments in or/and (needs hash-map: get, map)
 - [ ] test-proto-def-constraints — protocol constraints (needs type system)
-
-
 - [ ] test-tail-recur-2 — tail recursion (blocked: str-vect dispatch on None)
-
-
-
-
-
-
 - [ ] types-regressions — type system (blocked: type system)
-
 - [ ] test-for — `for` comprehension (needs more compiler work)
 - [ ] test-threading — `->` threading macro (depends on hash-map functionality: assoc, vals, reduce)
 
