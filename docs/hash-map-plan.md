@@ -368,7 +368,7 @@ Ordered by complexity, simplest first.
   - Mutate with the same key and same value
   - Verify the same node pointer is returned
   - Verify no new allocations (glblAlloced unchanged)
-- [ ] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
+- [x] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
   - Create BMI with one key/value pair
   - Set refs==1
   - Mutate with same key, different value

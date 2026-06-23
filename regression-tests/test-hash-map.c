@@ -251,6 +251,56 @@ void testBmiCopyAssoc(void) {
   check_counts("testBmiCopyAssoc", 0, 0);
 }
 
+// Test: same key, different value → in-place update (1c)
+// bmiMutateAssoc with refs==1, bit set, keys equal, values different
+void testBmiMutateAssocUpdateValue(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key = newI60(137);
+  Term val = newI60(251);
+  int64_t hash = nakedSha1(key);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  // Set refs==1 so bmiMutateAssoc takes the in-place path
+  ((Value *)result)->refs = 1;
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  Term newVal = newI60(999);
+
+  // Call bmiMutateAssoc with same key, different value
+  // This should trigger path 1c: keys equal, values different → in-place update
+  Value *updateResult = bmiMutateAssoc((Value *)original, (Value *)key, (Value *)newVal, hash, 0);
+
+  // Verify same pointer returned (in-place mutation, no clone)
+  if (updateResult != (Value *)original) {
+    BOOM("bmiMutateAssoc update: same key+diff value should return original node pointer");
+  }
+
+  // Verify structure unchanged (same bitmap, same key)
+  if (((BitmapIndexedNode *)updateResult)->bitmap != original->bitmap) {
+    BOOM("bmiMutateAssoc update: bitmap should be unchanged");
+  }
+
+  // Verify the key is still at the correct index
+  int bit = bitpos(hash, 0);
+  int idx = __builtin_popcount(((BitmapIndexedNode *)updateResult)->bitmap & (bit - 1));
+  if (((BitmapIndexedNode *)updateResult)->array[2 * idx] != (Value *)key) {
+    BOOM("bmiMutateAssoc update: key should be unchanged");
+  }
+
+  // Verify the value was updated
+  if (((BitmapIndexedNode *)updateResult)->array[2 * idx + 1] != (Value *)newVal) {
+    BOOM("bmiMutateAssoc update: value should be updated");
+  }
+
+  // Clean up
+  dec_and_free((Term)updateResult, 1);
+
+  check_counts("testBmiMutateAssocUpdateValue", 0, 0);
+}
+
 // Test: same key + same value → no-op, return original node (1b)
 // bmiMutateAssoc with refs==1, bit set, keys equal, values equal
 void testBmiMutateAssocNoOp(void) {
@@ -768,6 +818,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiCopyAssocSubNodeNoChange();
   testBmiCopyAssocSubNodeChange();
   testBmiCount();
+  testBmiMutateAssocUpdateValue();
   testBmiMutateAssocNoOp();
   printf("All tests passed\n");
   return 0;
