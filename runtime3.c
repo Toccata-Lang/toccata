@@ -2404,10 +2404,6 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
 }
 
 Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
@@ -2415,36 +2411,35 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, i
   int newShift = shift + 5;
   ArrayNode *newNode;
 
-  Value *subNode = node->array[idx];
-  int64_t keyHash = nakedSha1(incRef(key, 1));
-  if (subNode == (Value *)0) {
+  Term subNode = node->array[idx];
+  int64_t keyHash = nakedSha1(incRef((Term)(Value *)key, 1));
+  if (subNode == 0) {
     newNode = (ArrayNode *)malloc_arrayNode();
     for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-      if (node->array[i] != (Value *)0) {
+      if (node->array[i] != 0) {
 	newNode->array[i] = node->array[i];
 	incRef(newNode->array[i], 1);
       }
     }
-    newNode->array[idx] = copyAssoc((Value *)&emptyBMI, key, val, keyHash, newShift);
+    newNode->array[idx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, keyHash, newShift);
   } else {
-    Value *n = copyAssoc(incRef(subNode, 1), key, val, keyHash, newShift);
-    if (n == subNode) {
-      dec_and_free(n, 1);
+    Value *n = copyAssoc((Value *)incRef((Term)(Value *)subNode, 1), key, val, keyHash, newShift);
+    if (n == (Value *)subNode) {
+      dec_and_free((Term)(Value *)n, 1);
       return((Value *)node);
     } else {
       newNode = (ArrayNode *)malloc_arrayNode();
       for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-	if (i != idx && node->array[i] != (Value *)0) {
+	if (i != idx && node->array[i] != 0) {
 	  newNode->array[i] = node->array[i];
 	  incRef(newNode->array[i], 1);
 	}
       }
-      newNode->array[idx] = n;
+      newNode->array[idx] = (Term)(Value *)n;
     }
   }
-  dec_and_free((Value *)node, 1);
+  dec_and_free((Term)(Value *)node, 1);
   return((Value *)newNode);
-  // */
 }
 
 Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
