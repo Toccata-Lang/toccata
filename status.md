@@ -84,7 +84,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [x] arrayNodeGet
   - [x] arrayNodeCount
   - [x] arrayNodeDissoc
-  - [ ] collisionAssoc
+  - [x] collisionAssoc
   - [ ] collisionCount
   - [ ] collisionVec
   - [ ] collisionDissoc

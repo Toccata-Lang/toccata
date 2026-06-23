@@ -42,6 +42,51 @@ Value *bmiHashVec(Value *node, Value *vec);
 // Forward declarations for helper functions used in tests
 Term nothing(void);
 Term some(Term thing);
+Term testingSha1(FnArity *f, Term trm);
+
+// Collision test helpers
+// Update collision: KEY_A and KEY_B have same hash and compare equal
+#define COLLIDE_KEY_A newI60(100)
+#define COLLIDE_KEY_B newI60(200)
+#define COLLIDE_HASH 0x12345678
+
+// Add collision: KEY_C and KEY_D have same hash but DON'T compare equal
+#define COLLIDE_KEY_C newI60(300)
+#define COLLIDE_KEY_D newI60(400)
+#define COLLIDE_HASH_ADD 0xABCDEF00
+
+// Custom sha1: returns same hash for KEY_A and KEY_B (update test)
+Term testingSha1Collision(FnArity *f, Term trm) {
+  if (trm == COLLIDE_KEY_A || trm == COLLIDE_KEY_B) {
+    return COLLIDE_HASH;
+  }
+  return testingSha1(f, trm);
+}
+
+// Custom sha1: returns same hash for KEY_C and KEY_D (add test)
+Term testingSha1CollisionAdd(FnArity *f, Term trm) {
+  if (trm == COLLIDE_KEY_C || trm == COLLIDE_KEY_D) {
+    return COLLIDE_HASH_ADD;
+  }
+  return testingSha1(f, trm);
+}
+
+// Custom equal: KEY_A and KEY_B compare equal (update test)
+Value *testingEqual(FnArity *arity, Value *v1, Value *v2) {
+  Term t1 = (Term)(v1);
+  Term t2 = (Term)(v2);
+  if ((t1 == COLLIDE_KEY_A && t2 == COLLIDE_KEY_B) ||
+      (t1 == COLLIDE_KEY_B && t2 == COLLIDE_KEY_A)) {
+    return (Value *)v1;  // return non-nothing
+  }
+  return noImpl2(arity, v1, v2);
+}
+
+// Custom equal: KEY_C and KEY_D do NOT compare equal (add test)
+Value *testingEqualAdd(FnArity *arity, Value *v1, Value *v2) {
+  // Never match — all collisions are different keys
+  return noImpl2(arity, v1, v2);
+}
 
 // Helper: check if a term is an I60 with the same value as key
 static int subNodeEqualsKey(Term t, Term key) {
@@ -1714,6 +1759,162 @@ void testArrayNodeDissoc(void) {
   check_counts("testArrayNodeDissoc", 0, 0);
 }
 
+// Helper: create a HashCollisionNode with one (key, val) entry
+static HashCollisionNode *makeCollisionNode(Term key, Term val) {
+  HashCollisionNode *node = malloc_hashCollisionNode(1);
+  node->array[0] = (Value *)key;
+  node->array[1] = (Value *)val;
+  node->count = 2;
+  return node;
+}
+
+// Test: add a new (colliding) key to a collision node
+// collisionAssoc should add the new entry
+void testCollisionAssocAdd(void) {
+  reset_counters();
+
+  // Save original sha1 and equal
+  Term (*savedSha1)(FnArity *, Term) = sha1;
+  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
+
+  // Install collision-aware sha1 and equal (keys DON'T compare equal)
+  sha1 = testingSha1CollisionAdd;
+  equalSTAR = testingEqualAdd;
+
+  // Create collision node with KEY_C -> VAL_C
+  Term keyC = COLLIDE_KEY_C;
+  Term valC = newI60(10);
+  HashCollisionNode *node = makeCollisionNode(keyC, valC);
+
+  // collisionAssoc with KEY_D (same hash, different key)
+  // Should add KEY_D -> VAL_D as a new entry
+  Term keyD = COLLIDE_KEY_D;
+  Term valD = newI60(20);
+  Value *result = collisionAssoc((Value *)node, (Value *)keyD, (Value *)valD, COLLIDE_HASH_ADD, 0);
+
+  HashCollisionNode *resultNode = (HashCollisionNode *)result;
+  if (resultNode->type != HashCollisionNodeType) {
+    BOOM("collisionAssoc add: result should be HashCollisionNodeType");
+  }
+
+  // Should have 2 entries now
+  if (resultNode->count != 4) {
+    BOOM("collisionAssoc add: count should be 4 (2 entries)");
+  }
+
+  // Verify both keys are present
+  int foundC = 0, foundD = 0;
+  for (int i = 0; i < 2; i++) {
+    Term k = (Term)resultNode->array[2 * i];
+    if (k == keyC) foundC = 1;
+    if (k == keyD) foundD = 1;
+  }
+  if (!foundC || !foundD) {
+    BOOM("collisionAssoc add: both keys should be present");
+  }
+
+  // Verify KEY_D's value is VAL_D
+  for (int i = 0; i < 2; i++) {
+    if ((Term)resultNode->array[2 * i] == keyD) {
+      if ((Term)resultNode->array[2 * i + 1] != valD) {
+        BOOM("collisionAssoc add: KEY_D should have VAL_D");
+      }
+    }
+  }
+
+  // Verify original node was freed
+  dec_and_free((Term)result, 1);
+  check_counts("testCollisionAssocAdd", 2, 2);
+
+  // Restore
+  sha1 = savedSha1;
+  equalSTAR = savedEqual;
+}
+
+// Test: update an existing key in a collision node
+// collisionAssoc with same key should replace its value
+void testCollisionAssocUpdate(void) {
+  reset_counters();
+
+  // Save original sha1 and equal
+  Term (*savedSha1)(FnArity *, Term) = sha1;
+  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
+
+  // Install collision-aware sha1
+  sha1 = testingSha1Collision;
+  // equalSTAR not needed — equal() does direct I60 comparison
+
+  // Create collision node with KEY_A -> VAL_A
+  Term keyA = COLLIDE_KEY_A;
+  Term valA = newI60(10);
+  HashCollisionNode *node = makeCollisionNode(keyA, valA);
+
+  // collisionAssoc with same key (KEY_A) but different value
+  // Should update KEY_A's value to VAL_NEW
+  Term keySame = COLLIDE_KEY_A;
+  Term valNew = newI60(99);
+  Value *result = collisionAssoc((Value *)node, (Value *)keySame, (Value *)valNew, COLLIDE_HASH, 0);
+
+  HashCollisionNode *resultNode = (HashCollisionNode *)result;
+  if (resultNode->count != 2) {
+    BOOM("collisionAssoc update: count should still be 2 (1 entry, value replaced)");
+  }
+
+  // Verify KEY_A's value was updated to VAL_NEW
+  for (int i = 0; i < resultNode->count / 2; i++) {
+    if ((Term)resultNode->array[2 * i] == keyA) {
+      if ((Term)resultNode->array[2 * i + 1] != valNew) {
+        BOOM("collisionAssoc update: KEY_A should have VAL_NEW");
+      }
+    }
+  }
+
+  dec_and_free((Term)result, 1);
+  check_counts("testCollisionAssocUpdate", 2, 2);
+
+  sha1 = savedSha1;
+  equalSTAR = savedEqual;
+}
+
+// Test: add a key with different hash to collision node
+// collisionAssoc should promote to BMI node
+void testCollisionAssocPromote(void) {
+  reset_counters();
+
+  Term (*savedSha1)(FnArity *, Term) = sha1;
+  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
+
+  sha1 = testingSha1Collision;
+  equalSTAR = testingEqual;
+
+  // Create collision node with KEY_A -> VAL_A
+  Term keyA = COLLIDE_KEY_A;
+  Term valA = newI60(10);
+  HashCollisionNode *node = makeCollisionNode(keyA, valA);
+
+  // collisionAssoc with a key that has a DIFFERENT hash
+  Term keyDiff = newI60(999);
+  int64_t hashDiff = sha1((FnArity *)0, keyDiff);
+  Term valDiff = newI60(888);
+  Value *result = collisionAssoc((Value *)node, (Value *)keyDiff, (Value *)valDiff, hashDiff, 0);
+
+  // Should promote to BMI node
+  if (((BitmapIndexedNode *)result)->type != BitmapIndexedType) {
+    BOOM("collisionAssoc promote: result should be BitmapIndexedType");
+  }
+
+  BitmapIndexedNode *bmi = (BitmapIndexedNode *)result;
+  if (__builtin_popcount(bmi->bitmap) != 2) {
+    BOOM("collisionAssoc promote: BMI should have 2 entries");
+  }
+
+  dec_and_free((Term)result, 1);
+  check_counts("testCollisionAssocPromote", 1, 1);
+
+  sha1 = savedSha1;
+  equalSTAR = savedEqual;
+}
+
 int main(int argc, char **argv) {
   sha1 = testingSha1;
   
@@ -1769,6 +1970,9 @@ int main(int argc, char **argv) {
   testArrayNodeDissoc();
   testArrayNodeMutateAssocInsert();
   testArrayNodeMutateAssocRecurse();
+  testCollisionAssocAdd();
+  testCollisionAssocUpdate();
+  testCollisionAssocPromote();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
