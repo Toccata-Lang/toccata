@@ -1026,10 +1026,6 @@ int64_t nakedSha1(Term trm) {
   return(hash);
 }
 
-Value *sha1Impl(FnArity *arity, Value *arg) {
-  int64_t hash = nakedSha1((Term)arg);
-  return((Value *)newI60(hash));
-}
 char *extractStr(Value *v) {
   // Should only be used to print an error meessage when calling 'abort'
   // Leaks a String value
@@ -2018,7 +2014,6 @@ Value *bmiHashVec(Value *arg0, Value *arg1) {
 }
 
 
-Value *(*sha1_fn)(FnArity *, Value *) = &sha1Impl;
 Term mapCount(FnArity *arity, Value *arg) {
   if (arg->type == BitmapIndexedType) {
     return((Term)bmiCount(arg));

@@ -234,7 +234,7 @@ void prefs(char *tag, Value *v);
 
 extern Value *(*equalSTAR)(FnArity *, Value *, Value *);
 extern Value *(*dissoc)(FnArity *, Value *, Value *, Value *, Value *);
-extern Value *(*sha1)(FnArity *, Value *);
+extern Term (*sha1)(FnArity *, Term);
 extern Value *(*hashSeq)(FnArity *, Value *, Value *s);
 extern Value *(*count)(FnArity *, Value *);
 extern Value *(*vals)(FnArity *, Value *);
@@ -347,12 +347,8 @@ void strSha1Update(Sha1Context *ctxt, Value *arg0);
 Value *reifiedTypeArgs(Term x);
 Value *dispatchProto(Value *protocols, Value *protoSym, Value *fnSym,
                      Value *dispValue, Value *args);
-extern Value *(*mapGet_fn)(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
 extern Value *baseDissoc(Value *node, Value *key, int64_t hash, int shift);
 extern Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *shift);
-extern Value *(*dissoc_fn)(FnArity *, Value *, Value *, Value *, Value *);
-extern Value *sha1Impl(FnArity *arity, Value *arg);
-extern Value *countImpl(FnArity *arity, Value *arg);
 extern Value *mapGet(FnArity *, Value *, Value *, Value *, int64_t hash, int shift);
 Value *baseDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 int64_t nakedSha1(Term trm);
@@ -382,7 +378,6 @@ extern Term discard;
 extern Value *baseDissoc(Value *node, Value *key, int64_t hash, int shift);
 extern Value *dissoc_impl(FnArity *arity, Value *node, Value *key, Value *hash, Value *shift);
 extern Value *(*dissoc_fn)(FnArity *, Value *, Value *, Value *, Value *);
-extern Value *sha1Impl(FnArity *arity, Value *arg);
 extern Value *countImpl(FnArity *arity, Value *arg);
 
 void discardFn(Term ref, Term args);

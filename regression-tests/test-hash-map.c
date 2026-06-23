@@ -1686,18 +1686,12 @@ void testArrayNodeDissoc(void) {
 }
 
 int main(int argc, char **argv) {
-  extern Value *(*sha1_fn)(FnArity *, Value *);
-
   // just to make BOOM happ
   dotFile = fopen("graphs.dot", "w");
   if (!dotFile) {
     BOOM( "Failed to open graphs.dot\n");
   }
   fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
-
-  mapGet_fn = &mapGet;
-  sha1_fn = &sha1Impl;
-  dissoc_fn = &dissoc_impl;
 
   // Trigger malloc_reified pool once before tests (5000-entry pool)
   (void)nothing();
