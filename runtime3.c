@@ -2230,10 +2230,10 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	      newNode->array[i] = (Term)node->array[j + 1];
 	      node->array[j + 1] = (Value *)0;
 	    } else {
-	      incRef((Term)node->array[j], 1);
+	      incRef((Term)node->array[j], 2);
 	      newNode->array[i] = (Term)copyAssoc((Value *)&emptyBMI,
-					    node->array[j],
-					    node->array[j + 1],
+					    (Value *)node->array[j],
+					    (Value *)incRef((Term)node->array[j + 1], 1),
 					    nakedSha1((Term)node->array[j]),
 					    newShift);
 	      node->array[j] = (Value *)0;

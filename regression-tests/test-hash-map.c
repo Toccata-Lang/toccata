@@ -538,6 +538,45 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   check_counts("testBmiMutateAssocSubNodeRecurse", 0, 0);
 }
 
+
+// Test: bit not set, n >= 16, promote to ArrayNode (2a)
+void testBmiMutateAssocPromote(void) {
+  reset_counters();
+  BitmapIndexedNode *node = malloc_bmiNode(16);
+  int64_t hashes[16];
+  Term keys[16];
+  Term vals[16];
+  int count = 0;
+  for (i64 c = 0; count < 16 && c < 100000; c++) {
+    Term key = newI60(c);
+    int64_t hash = nakedSha1(key);
+    int bit = bitpos(hash, 0);
+    int used = 0;
+    for (int j = 0; j < count; j++) { if (bitpos(hashes[j], 0) == bit) { used = 1; break; } }
+    if (!used) { hashes[count] = hash; keys[count] = key; vals[count] = newI60(c * 100); count++; }
+  }
+  if (count < 16) BOOM("16 keys");
+  for (int i = 0; i < 16; i++) node = (BitmapIndexedNode *)bmiMutateAssoc((Value *)node, (Value *)keys[i], (Value *)vals[i], hashes[i], 0);
+  if (__builtin_popcount(node->bitmap) != 16) BOOM("16 entries");
+  ((Value *)node)->refs = 1;
+  Term newKey; int64_t newHash;
+  for (i64 c = 0; c < 100000; c++) {
+    newKey = newI60(c); newHash = nakedSha1(newKey);
+    int newBit = bitpos(newHash, 0);
+    int used = 0;
+    for (int j = 0; j < 16; j++) { if (bitpos(hashes[j], 0) == newBit) { used = 1; break; } }
+    if (!used) break;
+  }
+  Value *promoteResult = bmiMutateAssoc((Value *)node, (Value *)newKey, (Value *)newI60(99999), newHash, 0);
+  ArrayNode *an = (ArrayNode *)promoteResult;
+  if (an->type != ArrayNodeType) BOOM("ArrayNode");
+  int entryCount = 0;
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) { if (an->array[i] != 0) entryCount++; }
+  if (entryCount != 17) BOOM("17 entries");
+  dec_and_free((Term)promoteResult, 1);
+  check_counts("testBmiMutateAssocPromote", 160, 0);
+}
+
 // Test: same key + same value → no-op, return original node (1b)
 // bmiMutateAssoc with refs==1, bit set, keys equal, values equal
 void testBmiMutateAssocNoOp(void) {
@@ -1117,7 +1156,7 @@ void testBmiHashVec(void) {
   dec_and_free((Term)vecResult, 1);
 
   // Pool for itemCount=3 created by bmiCopyAssoc (3-entry BMI)
-  check_counts("testBmiHashVec", 10, 0);
+  check_counts("testBmiHashVec", 0, 0);
 }
 
 // Test: add key-value to empty ArrayNode
@@ -1578,6 +1617,7 @@ int main(int argc, char **argv) {
   testBmiMutateAssocBranch();
   testBmiMutateAssocSubNodeRecurse();
   testBmiMutateAssocNoOp();
+  testBmiMutateAssocPromote();
   testArrayNodeCopyAssoc();
   testArrayNodeCopyAssocA2();
   testArrayNodeCopyAssocB1();

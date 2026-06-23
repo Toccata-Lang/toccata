@@ -403,7 +403,7 @@ Ordered by complexity, simplest first.
   - Verify a new BMI node is returned (n+1 items)
   - Verify both entries are present
   - Verify old node was freed (no leak)
-- [ ] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
+- [x] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
   - Create BMI with 16 entries (full)
   - Set refs==1
   - Mutate with a new key (bit not set)
