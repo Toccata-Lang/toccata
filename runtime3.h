@@ -288,7 +288,7 @@ Value *strVect(Value *arg0);
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1);
 Value *listMap(Value *arg0, Value *arg1);
 Value *integerLT(Value *arg0, Value *arg1);
-Term integerSha1(Term arg0);
+int64_t integerSha1(Term arg0);
 Value *bitAnd(Value *arg0, Value *arg1);
 Value *bitOr(Value *arg0, Value *arg1);
 Value *bitXor(Value *arg0, Value *arg1);

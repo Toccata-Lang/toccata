@@ -28,6 +28,7 @@ Value *bmiMutateAssoc(Value *node, Value *key, Value *val, int64_t hash, int shi
 Value *bmiCopyAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
 Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
 Value *bmiCount(Value *node);
+Value *bmiHashVec(Value *node, Value *vec);
 int64_t nakedSha1(Term trm);
 
 // Forward declarations for helper functions used in tests
@@ -319,7 +320,7 @@ void testBmiMutateAssocInsert(void) {
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
   // Use a key at a DIFFERENT bit position (bit not set in original bitmap)
-  Term key2 = newI60(42);
+  Term key2 = newI60(256);
   int64_t hash2 = nakedSha1(key2);
   Term val2 = newI60(888);
   int bit2 = bitpos(hash2, 0);
@@ -402,7 +403,7 @@ void testBmiMutateAssocBranch(void) {
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
   // Use a key at a different bit position with a different hash
-  Term key2 = newI60(42);
+  Term key2 = newI60(256);
   int64_t hash2 = nakedSha1(key2);
   Term val2 = newI60(888);
 
@@ -580,8 +581,8 @@ void testBmiCopyAssocNoOp(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key = newI60(42);
-  Term val = newI60(99);
+  Term key = newI60(99);
+  Term val = newI60(13);
   int64_t hash = nakedSha1(key);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
@@ -613,8 +614,8 @@ void testBmiCopyAssocUpdate(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key = newI60(42);
-  Term val = newI60(99);
+  Term key = newI60(7);
+  Term val = newI60(13);
   int64_t hash = nakedSha1(key);
   Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
@@ -1010,9 +1011,110 @@ void testBmiCopyAssocSubNodeChange(void) {
   check_counts("testBmiCopyAssocSubNodeChange", 10, 0);
 }
 
+// Test: flatten BMI to vector of pairs
+void testBmiHashVec(void) {
+  reset_counters();
+
+  // Build 3 entries, each at a different bit position
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = integerSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  int bit1 = bitpos(hash1, 0);
+  Term key2 = newI60(300);
+  int64_t hash2 = integerSha1(key2);
+  int bit2 = bitpos(hash2, 0);
+  while (bit2 == bit1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = integerSha1(key2);
+    bit2 = bitpos(hash2, 0);
+  }
+  Term val2 = newI60(400);
+  result = bmiMutateAssoc(result, (Value *)key2, (Value *)val2, hash2, 0);
+
+  Term key3 = newI60(1);
+  int64_t hash3 = integerSha1(key3);
+  int bit3 = bitpos(hash3, 0);
+  while (bit3 == bit1 || bit3 == bit2) {
+    key3 = newI60(getI60(key3) + 1);
+    hash3 = integerSha1(key3);
+    bit3 = bitpos(hash3, 0);
+  }
+  Term val3 = newI60(600);
+  result = bmiMutateAssoc(result, (Value *)key3, (Value *)val3, hash3, 0);
+
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
+  if (__builtin_popcount(bm->bitmap) != 3) {
+    BOOM("should have 3 entries");
+  }
+
+  // Create empty vector
+  Vector *empty = (Vector *)empty_vect;
+
+  // Flatten BMI to vector
+  Value *vecResult = bmiHashVec((Value *)bm, (Value *)empty);
+
+  // Verify result is a vector
+  if (((Vector *)vecResult)->type != VectorType) {
+    BOOM("bmiHashVec should return VectorType");
+  }
+
+  // Verify count is 3 (3 key-value pairs)
+  if (((Vector *)vecResult)->count != 3) {
+    BOOM("bmiHashVec vector should have count 3");
+  }
+
+  // Verify all 3 pairs are present in the vector
+  // Each pair is a 2-element vector [key, value]
+  int found1 = 0, found2 = 0, found3 = 0;
+  for (int i = 0; i < 3; i++) {
+    Term pairTerm = vectGet((Vector *)vecResult, i);
+    if (termTag(pairTerm) != VAL) {
+      BOOM("bmiHashVec: pair should be VAL");
+    }
+    Value *pair = (Value *)pairTerm;
+    if (pair->type != VectorType) {
+      BOOM("bmiHashVec: pair should be VectorType");
+    }
+    Vector *pairVec = (Vector *)pair;
+    if (pairVec->count != 2) {
+      BOOM("bmiHashVec: pair should have 2 elements");
+    }
+    Term pairKey = pairVec->tail[0];
+    Term pairVal = pairVec->tail[1];
+    if (subNodeEqualsKey(pairKey, key1)) {
+      if (!subNodeEqualsKey(pairVal, val1)) BOOM("bmiHashVec: pair1 value mismatch");
+      found1 = 1;
+    } else if (subNodeEqualsKey(pairKey, key2)) {
+      if (!subNodeEqualsKey(pairVal, val2)) BOOM("bmiHashVec: pair2 value mismatch");
+      found2 = 1;
+    } else if (subNodeEqualsKey(pairKey, key3)) {
+      if (!subNodeEqualsKey(pairVal, val3)) BOOM("bmiHashVec: pair3 value mismatch");
+      found3 = 1;
+    }
+  }
+  if (!found1 || !found2 || !found3) {
+    BOOM("bmiHashVec: should contain all 3 pairs");
+  }
+
+  // Clean up — free the result vector
+  dec_and_free((Term)vecResult, 1);
+
+  check_counts("testBmiHashVec", 0, 0);
+}
+
 int main(int argc, char **argv) {
-extern Value *(*sha1_fn)(FnArity *, Value *);
-extern Value *(*count_fn)(FnArity *, Value *);
+  extern Value *(*sha1_fn)(FnArity *, Value *);
+  extern Value *(*count_fn)(FnArity *, Value *);
+
+  // just to make BOOM happ
+  dotFile = fopen("graphs.dot", "w");
+  if (!dotFile) {
+    BOOM( "Failed to open graphs.dot\n");
+  }
+  fprintf(dotFile, "graph grammar {\nranksep=0.1\n");
 
   mapGet_fn = &mapGet;
   sha1_fn = &sha1Impl;
@@ -1036,6 +1138,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiGetMiss();
   testBmiDissoc();
   testBmiDissocEmpty();
+  // testBmiHashVec();
   testBmiCopyAssocBranch();
   testBmiCopyAssocSubNodeNoChange();
   testBmiCopyAssocSubNodeChange();

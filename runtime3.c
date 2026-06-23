@@ -1855,7 +1855,7 @@ long finalize_sha1(Value *ctxt) {
 }
 #endif
 
-Term integerSha1(Term arg0) {
+int64_t integerSha1(Term arg0) {
   Sha1Context context;
   unsigned type = IntegerType;
   int64_t val = getI60(arg0);
@@ -1865,7 +1865,7 @@ Term integerSha1(Term arg0) {
   Sha1Update(&context, (void *)&type, 8);
   Sha1Update(&context, (void *)&val, 8);
   Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
-  return(newI60(shaVal));
+  return(shaVal);
 }
 
 Term integer_EQ(Term arg0, Term arg1) {
@@ -2008,9 +2008,9 @@ Value *bmiHashVec(Value *arg0, Value *arg1) {
     } else {
       incRef((Term)node->array[2 * i], 1);
       incRef((Term)node->array[2 * i + 1], 1);
-      Vector *pair = mutateVectConj(empty_vect, termVal((Term)node->array[2 * i]));
-      pair = mutateVectConj(pair, termVal((Term)node->array[2 * i + 1]));
-      vec = mutateVectConj(vec, termVal((Term)pair));
+      Vector *pair = mutateVectConj(empty_vect, (Term)node->array[2 * i]);
+      pair = mutateVectConj(pair, (Term)node->array[2 * i + 1]);
+      vec = mutateVectConj(vec, (Term)pair);
     }
   }
   dec_and_free(termVal((Term)arg0), 1);
