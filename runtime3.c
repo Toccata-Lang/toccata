@@ -2449,48 +2449,43 @@ Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
 }
 
 Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Value *key = arg1;
   Value *val = arg2;
   int itemCount = node->count / 2;
 
-  if(nakedSha1(incRef(node->array[0], 1)) == hash) {
+  if(nakedSha1(incRef((Term)node->array[0], 1)) == hash) {
     HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
     for (int i = 0; i < itemCount; i++) {
-      if (equal(incRef(key, 1), incRef(node->array[2 * i], 1))) {
+      if (equal((Value *)incRef((Term)key, 1), (Value *)incRef((Term)node->array[2 * i], 1))) {
 	newNode->array[2 * i] = key;
 	newNode->array[2 * i + 1] = val;
 	newNode->count -= 2;
       } else {
 	newNode->array[2 * i] = node->array[2 * i];
 	newNode->array[2 * i + 1] = node->array[2 * i + 1];
-	incRef(node->array[2 * i], 1);
-	incRef(node->array[2 * i + 1], 1);
+	incRef((Term)node->array[2 * i], 1);
+	incRef((Term)node->array[2 * i + 1], 1);
       }
     }
     if (newNode->count / 2 != itemCount) {
       newNode->array[2 * itemCount] = key;
       newNode->array[2 * itemCount + 1] = val;
     }
-    dec_and_free(arg0, 1);
+    dec_and_free((Term)arg0, 1);
     return((Value *)newNode);
   } else {
     BitmapIndexedNode * bmi = (BitmapIndexedNode *)copyAssoc((Value *)&emptyBMI,
 							     key, val, hash, 0);
     for (int i = 0; i < itemCount; i++) {
       bmi = (BitmapIndexedNode *)mutateAssoc((Value *)bmi,
-					     incRef(node->array[2 * i], 1),
-					     incRef(node->array[2 * i + 1], 1),
-					     nakedSha1(incRef(node->array[2 * i], 1)), 0);
+					     (Value *)incRef((Term)node->array[2 * i], 1),
+					     (Value *)incRef((Term)node->array[2 * i + 1], 1),
+					     nakedSha1(incRef((Term)node->array[2 * i], 1)), 0);
     }
-    dec_and_free(arg0, 1);
+    dec_and_free((Term)(Value *)arg0, 1);
     return((Value *)bmi);
   }
-  // */
 }
 
 Value notFound = {0, -2};
