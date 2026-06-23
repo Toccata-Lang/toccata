@@ -352,7 +352,7 @@ Tests ordered by complexity. Start with trivial (2-3 assertions), work up to har
 - [x] `testBmiCopyAssocPromote` — 16+ entry map, add 17th → promote to ArrayNode (B1)
 
 #### Hard — engineering constraints
-- [ ] `testBmiCopyAssocCollision` — two keys with identical SHA1 hash → collision node (A2c)
+- [x] `testBmiCopyAssocCollision` — two keys with identical SHA1 hash → collision node (A2c)
 
 #### bmiMutateAssoc tests (7 paths) — **must complete before any other work**
 

@@ -1138,6 +1138,78 @@ void testBmiCopyAssocSubNodeChange(void) {
   check_counts("testBmiCopyAssocSubNodeChange", 10, 0);
 }
 
+// Test: two keys with identical SHA1 hash → creates HashCollisionNode (A2c)
+void testBmiCopyAssocCollision(void) {
+  reset_counters();
+
+  // Save original sha1 and equal
+  Term (*savedSha1)(FnArity *, Term) = sha1;
+  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
+
+  // Install collision-aware sha1 and non-equal equal
+  sha1 = testingSha1CollisionAdd;
+  equalSTAR = testingEqualAdd;
+
+  // Create single-item BMI node with KEY_A
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term keyA = COLLIDE_KEY_A;
+  Term valA = newI60(10);
+  int64_t hashA = sha1((FnArity *)0, keyA);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)keyA, (Value *)valA, hashA, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+
+  // Add KEY_B — same hash, different key → should create collision node (A2c)
+  Term keyB = COLLIDE_KEY_B;
+  Term valB = newI60(20);
+  Value *collResult = bmiCopyAssoc((Value *)original, (Value *)keyB, (Value *)valB, hashA, 0);
+
+  // Verify result is still a BMI node
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)collResult;
+  if (bm->type != BitmapIndexedType) {
+    BOOM("collision result should be BitmapIndexedType");
+  }
+
+  // Verify bitmap has 1 bit set (collision node occupies one slot)
+  if (__builtin_popcount(bm->bitmap) != 1) {
+    BOOM("collision result bitmap should have 1 bit set");
+  }
+
+  // Verify the slot contains a HashCollisionNode
+  int idx = __builtin_popcount(bm->bitmap & ((uint32_t)1 - 1));
+  Value *slotVal = bm->array[2 * idx + 1];
+  if (slotVal->type != HashCollisionNodeType) {
+    BOOM("collision slot should contain HashCollisionNodeType");
+  }
+
+  HashCollisionNode *coll = (HashCollisionNode *)slotVal;
+  if (coll->count != 4) {
+    char msg[100];
+    snprintf(msg, 99, "collision: expected count 4, got %d", coll->count);
+    BOOM(msg);
+  }
+
+  // Verify both keys are present
+  int foundA = 0, foundB = 0;
+  for (int i = 0; i < 2; i++) {
+    Term k = (Term)coll->array[2 * i];
+    if (k == keyA) foundA = 1;
+    if (k == keyB) foundB = 1;
+  }
+  if (!foundA || !foundB) {
+    BOOM("collision node should contain both keys");
+  }
+
+  // Clean up
+  dec_and_free((Term)collResult, 1);
+
+  // Collision node created via malloc_hashCollisionNode(2): malloc_count=1.
+  check_counts("testBmiCopyAssocCollision", 1, 1);
+
+  sha1 = savedSha1;
+  equalSTAR = savedEqual;
+}
+
 // Test: flatten BMI to vector of pairs
 void testBmiHashVec(void) {
   reset_counters();
@@ -2037,6 +2109,7 @@ int main(int argc, char **argv) {
   testBmiCopyAssocBranch();
   testBmiCopyAssocSubNodeNoChange();
   testBmiCopyAssocSubNodeChange();
+  testBmiCopyAssocCollision();
   testBmiCount();
   testBmiMutateAssocUpdateValue();
   testBmiMutateAssocInsert();
