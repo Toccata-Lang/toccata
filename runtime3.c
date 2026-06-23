@@ -2441,7 +2441,7 @@ Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
     if (subNode == 0) {
       node->array[idx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, keyHash, shift + 5);
     } else {
-      Value *n = mutateAssoc((Value *)incRef((Term)(Value *)subNode, 1), key, val, keyHash, shift + 5);
+      Value *n = mutateAssoc((Value *)subNode, key, val, keyHash, shift + 5);
       node->array[idx] = (Term)n;
     }
     return((Value *)node);

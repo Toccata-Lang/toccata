@@ -1502,6 +1502,72 @@ void testArrayNodeCountSingle(void) {
 }
 
 // Test: dissoc key not found — empty slot (Path A)
+// Test: refs==1, slot has BMI sub-node → recurse updates entry (Path 2)
+void testArrayNodeMutateAssocRecurse(void) {
+  reset_counters();
+
+  // Create ArrayNode with one entry
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  int slot1 = mask(hash1, 0);
+
+  // Find key2 at the SAME slot as key1 (triggers recurse into BMI)
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) != slot1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+  Term val2 = newI60(999);
+
+  // Set refs==1 so mutateAssoc takes the in-place path
+  ((Value *)node)->refs = 1;
+  void *original = (void *)node;
+
+  // Call arrayNodeMutateAssoc with key at same slot → recurses into BMI
+  Value *result = arrayNodeMutateAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Verify same pointer returned (in-place mutation)
+  if (result != (Value *)original) {
+    BOOM("mutateAssoc recurse: should return original node pointer");
+  }
+
+  // Verify the slot still has a BMI sub-node
+  if (node->array[slot1] == 0) {
+    BOOM("mutateAssoc recurse: slot should still be populated");
+  }
+
+  // Verify the BMI sub-node now contains both keys
+  BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[slot1];
+  if (__builtin_popcount(bmi->bitmap) != 2) {
+    BOOM("mutateAssoc recurse: BMI should have 2 entries");
+  }
+
+  // Verify both keys are present
+  int found1 = 0, found2 = 0;
+  for (int i = 0; i < 4; i += 2) {
+    if (subNodeEqualsKey((Term)bmi->array[i], key1)) found1 = 1;
+    if (subNodeEqualsKey((Term)bmi->array[i], key2)) found2 = 1;
+  }
+  if (!found1 || !found2) {
+    BOOM("mutateAssoc recurse: both keys should be present");
+  }
+
+  // Verify key2's value is correct
+  int bit2 = bitpos(hash2, 0);
+  int idx2 = __builtin_popcount(bmi->bitmap & (bit2 - 1));
+  if (bmi->array[2 * idx2 + 1] != (Value *)val2) {
+    BOOM("mutateAssoc recurse: key2 value should be updated");
+  }
+
+  dec_and_free((Term)result, 1);
+  check_counts("testArrayNodeMutateAssocRecurse", 0, 0);
+}
+
 void testArrayNodeDissocEmptySlot(void) {
   reset_counters();
 
@@ -1686,6 +1752,7 @@ int main(int argc, char **argv) {
   testArrayNodeCountSingle();
   testArrayNodeDissocEmptySlot();
   testArrayNodeMutateAssocInsert();
+  testArrayNodeMutateAssocRecurse();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
