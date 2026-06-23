@@ -2517,26 +2517,21 @@ Value notFound = {0, -2};
 Value *notFoundPtr = &notFound;
 
 Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   ArrayNode *node = (ArrayNode *)arg0;
   Value *key = arg1;
   Value *notFound = arg2;
   int idx = mask(hash, shift);
 
-  Value *subNode = node->array[idx];
-  if (subNode == (Value *)0) {
-    dec_and_free(arg0, 1);
-    dec_and_free(arg1, 1);
+  Term subNode = node->array[idx];
+  if (subNode == 0) {
+    dec_and_free((Term)(Value *)arg0, 1);
+    dec_and_free((Term)(Value *)arg1, 1);
     return(notFound);
   } else {
-    incRef(subNode, 1);
-    dec_and_free(arg0, 1);
-    return(get((FnArity *)0, subNode, key, notFound, hash, shift + 5));
+    incRef((Term)(Value *)subNode, 1);
+    dec_and_free((Term)(Value *)arg0, 1);
+    return(bmiGet((Value *)subNode, key, notFound, hash, shift + 5));
   }
-  // */
 }
 
 Value *arrayNodeCount(Value *arg0) {

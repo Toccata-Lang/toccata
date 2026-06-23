@@ -1315,19 +1315,58 @@ void testArrayNodeCopyAssocB2Multi(void) {
   check_counts("testArrayNodeCopyAssocB2Multi", 0, 0);
 }
 
+// Test: lookup existing key in ArrayNode
 void testArrayNodeGet(void) {
   reset_counters();
+
+  // Create ArrayNode with a BMI sub-node
   ArrayNode *node = malloc_arrayNode();
   Term key = newI60(100);
   Term val = newI60(200);
   int64_t hash = nakedSha1(key);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+
+  // Lookup the key
   Value *found = arrayNodeGet((Value *)node, (Value *)key, (Value *)nothing(), hash, 0);
+
+  // Verify correct value returned
   if (termTag((Term)found) != I60 || getI60((Term)found) != 200) {
     BOOM("arrayNodeGet: should find correct value");
   }
+
   dec_and_free((Term)found, 1);
   check_counts("testArrayNodeGet", 0, 0);
+}
+
+// Test: lookup missing key in ArrayNode (empty slot)
+void testArrayNodeGetMiss(void) {
+  reset_counters();
+
+  // Create ArrayNode with one entry at slot X
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  // Find key2 at a different slot
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) == mask(hash1, 0)) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+
+  // Lookup key2 — slot is empty, should return default
+  Value *miss = arrayNodeGet((Value *)node, (Value *)key2, (Value *)nothing(), hash2, 0);
+
+  // Verify default returned
+  if (termTag((Term)miss) != VAL || ((Value *)miss)->type != NoneType) {
+    BOOM("arrayNodeGetMiss: should return NoneType");
+  }
+
+  dec_and_free((Term)miss, 1);
+  check_counts("testArrayNodeGetMiss", 0, 0);
 }
 
 void testArrayNodeCount(void) {
@@ -1447,6 +1486,8 @@ int main(int argc, char **argv) {
   testArrayNodeCopyAssocB1();
   testArrayNodeCopyAssocB2();
   testArrayNodeCopyAssocB2Multi();
+  testArrayNodeGet();
+  testArrayNodeGetMiss();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
