@@ -87,8 +87,8 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [x] collisionAssoc
   - [x] collisionCount
   - [x] collisionVec
-  - [ ] collisionDissoc
-  - [ ] collisionGet
+  - [x] collisionDissoc
+  - [x] collisionGet
   - [x] testBmiMutateAssocBranch
 - [ ] maybe-regressions — Maybe type
 - [ ] state-error1-1 — state-error monad

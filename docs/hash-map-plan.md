@@ -564,7 +564,6 @@ Tests:
 - [x] `testCollisionAssocAdd` — add new key to collision node (same hash, different key)
 - [x] `testCollisionAssocUpdate` — update existing key value in collision node
 - [x] `testCollisionAssocPromote` — add key with different hash → promotes to BMI
-- [ ] `testCollisionAssoc` — add to collision node
 - [x] `testCollisionGet` — lookup in collision node
 - [x] `testCollisionDissoc` — remove from collision node
 - [x] `testCollisionCount` — count entries
