@@ -388,7 +388,7 @@ Ordered by complexity, simplest first.
   - Verify the same node pointer is returned
   - Verify a new sub-node (via createNode) was created
   - Verify both entries are accessible
-- [ ] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
+- [x] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
   - Find two keys with identical SHA1 hash
   - Create BMI with one of them
   - Set refs==1

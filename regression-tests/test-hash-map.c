@@ -537,6 +537,80 @@ void testBmiMutateAssocBranch(void) {
   check_counts("testBmiMutateAssocBranch", 0, 0);
 }
 
+// Test: bit set, different key + same hash → creates HashCollisionNode (1d)
+void testBmiMutateAssocCollision(void) {
+  reset_counters();
+
+  // Save original sha1 and equal
+  Term (*savedSha1)(FnArity *, Term) = sha1;
+  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
+
+  // Install collision-aware sha1 and non-equal equal
+  sha1 = testingSha1CollisionAdd;
+  equalSTAR = testingEqualAdd;
+
+  // Create single-item BMI node with KEY_A
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term keyA = COLLIDE_KEY_A;
+  Term valA = newI60(10);
+  int64_t hashA = sha1((FnArity *)0, keyA);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)keyA, (Value *)valA, hashA, 0);
+
+  // Set refs==1 so bmiMutateAssoc takes the in-place path
+  ((Value *)result)->refs = 1;
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+
+  // Add KEY_B — same hash, different key → should create collision node (1d)
+  Term keyB = COLLIDE_KEY_B;
+  Term valB = newI60(20);
+  Value *collResult = bmiMutateAssoc((Value *)original, (Value *)keyB, (Value *)valB, hashA, 0);
+
+  // Verify same pointer returned (in-place mutation)
+  if (collResult != (Value *)original) {
+    BOOM("1d: should return original node pointer");
+  }
+
+  // Verify the original entry was replaced with a collision node
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)collResult;
+  int bitA = bitpos(hashA, 0);
+  int idx = __builtin_popcount(bm->bitmap & (bitA - 1));
+  Value *entryKey = bm->array[2 * idx];
+  if (entryKey != (Value *)0) {
+    BOOM("1d: entry should be collision node (NULL key)");
+  }
+
+  HashCollisionNode *coll = (HashCollisionNode *)bm->array[2 * idx + 1];
+  if (coll->type != HashCollisionNodeType) {
+    BOOM("1d: sub-node should be HashCollisionNodeType");
+  }
+  if (coll->count != 4) {
+    char msg[100];
+    snprintf(msg, 99, "1d: collision count should be 4, got %d", coll->count);
+    BOOM(msg);
+  }
+
+  // Verify both keys are in the collision node
+  int foundA = 0, foundB = 0;
+  for (int i = 0; i < 2; i++) {
+    Term k = (Term)coll->array[2 * i];
+    if (k == keyA) foundA = 1;
+    if (k == keyB) foundB = 1;
+  }
+  if (!foundA || !foundB) {
+    BOOM("1d: collision node should contain both keys");
+  }
+
+  // Clean up
+  dec_and_free((Term)collResult, 1);
+
+  // Collision node created via malloc_hashCollisionNode(2): malloc_count=1.
+  check_counts("testBmiMutateAssocCollision", 1, 1);
+
+  sha1 = savedSha1;
+  equalSTAR = savedEqual;
+}
+
 // Test: sub-node case — mutate inner key/value (1a)
 // bmiMutateAssoc with refs==1, bit set, sub-node, recursive update
 void testBmiMutateAssocSubNodeRecurse(void) {
@@ -2114,6 +2188,7 @@ int main(int argc, char **argv) {
   testBmiMutateAssocUpdateValue();
   testBmiMutateAssocInsert();
   testBmiMutateAssocBranch();
+  testBmiMutateAssocCollision();
   testBmiMutateAssocSubNodeRecurse();
   testBmiMutateAssocNoOp();
   testBmiMutateAssocPromote();
