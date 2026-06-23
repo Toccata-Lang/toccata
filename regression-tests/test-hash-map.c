@@ -1265,6 +1265,56 @@ void testArrayNodeCopyAssocB2(void) {
   check_counts("testArrayNodeCopyAssocB2", 0, 0);
 }
 
+// Test: Multiple entries, update one sub-node (Path B2-multi)
+void testArrayNodeCopyAssocB2Multi(void) {
+  reset_counters();
+
+  // Create ArrayNode with 2 entries at different slots
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  int slot1 = mask(hash1, 0);
+
+  // Find key2 at a different slot
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) == slot1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+  Term val2 = newI60(400);
+  int slot2 = mask(hash2, 0);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Save the original sub-node pointer for key2 (should be copied unchanged)
+  BitmapIndexedNode *bmi2Original = (BitmapIndexedNode *)node->array[slot2];
+
+  // Update key1 with a new value
+  Term val1New = newI60(777);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1New, hash1, 0);
+
+  // Verify slot1 has the new value
+  BitmapIndexedNode *bmi1 = (BitmapIndexedNode *)node->array[slot1];
+  if (bmi1->array[1] != (Value *)val1New) {
+    BOOM("B2-multi: slot1 should have updated value 777");
+  }
+
+  // Verify slot2 was copied (same pointer — no change needed)
+  BitmapIndexedNode *bmi2 = (BitmapIndexedNode *)node->array[slot2];
+  if (bmi2 != bmi2Original) {
+    BOOM("B2-multi: slot2 should be same pointer as original (copied)");
+  }
+  if (bmi2->array[0] != (Value *)key2) {
+    BOOM("B2-multi: slot2 should still contain key2");
+  }
+
+  dec_and_free((Term)node, 1);
+  check_counts("testArrayNodeCopyAssocB2Multi", 0, 0);
+}
+
 void testArrayNodeGet(void) {
   reset_counters();
   ArrayNode *node = malloc_arrayNode();
@@ -1396,6 +1446,7 @@ int main(int argc, char **argv) {
   testArrayNodeCopyAssocA2();
   testArrayNodeCopyAssocB1();
   testArrayNodeCopyAssocB2();
+  testArrayNodeCopyAssocB2Multi();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;

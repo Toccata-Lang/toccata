@@ -476,7 +476,12 @@ Tests:
   - Verify the old ArrayNode was freed
   - Verify the sub-node at the target slot contains the updated value V2
   - Verify other slots were copied correctly
-- [ ] `testArrayNodeCopyAssocB2-multi` — Multiple entries, update one sub-node
+- [x] `testArrayNodeCopyAssocB2-multi` — Multiple entries, update one sub-node
+  - Create ArrayNode with 2 entries at different slots
+  - Update the sub-node at slot X with a new value
+  - Verify the entry at slot X was replaced with a new sub-node
+  - Verify the entry at slot Y was copied (same pointer)
+  - Verify the original ArrayNode was freed
   - Create ArrayNode with 2 entries at different slots
   - Update the sub-node at slot X with a new value
   - Verify the entry at slot X was replaced with a new sub-node
