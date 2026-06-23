@@ -74,21 +74,22 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [x] createNode
   - [x] bmiHashVec
   - [x] nakedSha1
-  - [x] bmiCount (full recursion via count_fn)
-  - [x] bmiCopyAssoc — BMI operations active, tests in progress
-  - [x] bmiMutateAssoc — tested via testBmiCopyAssoc
+  - [x] bmiCount
+  - [x] bmiCopyAssoc
+  - [x] bmiMutateAssoc
   - [x] bmiGet
   - [x] bmiDissoc
-  - [ ] arrayNodeCopyAssoc
+  - [x] arrayNodeCopyAssoc
   - [ ] arrayNodeMutateAssoc
-  - [ ] arrayNodeGet
-  - [ ] arrayNodeCount
+  - [x] arrayNodeGet
+  - [x] arrayNodeCount
+  - [x] arrayNodeDissoc
   - [ ] collisionAssoc
   - [ ] collisionCount
   - [ ] collisionVec
   - [ ] collisionDissoc
   - [ ] collisionGet
-  - [x] testBmiMutateAssocBranch — fixed: search for key hashing to same bit position (path 1e)
+  - [x] testBmiMutateAssocBranch
 - [ ] maybe-regressions — Maybe type
 - [ ] state-error1-1 — state-error monad
 - [ ] state-error1-2 — state-error monad

@@ -349,7 +349,7 @@ Tests ordered by complexity. Start with trivial (2-3 assertions), work up to har
 - [x] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
 - [x] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
 - [x] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
-- [ ] `testBmiCopyAssocPromote` — 16+ entry map, add 17th → promote to ArrayNode (B1)
+- [x] `testBmiCopyAssocPromote` — 16+ entry map, add 17th → promote to ArrayNode (B1)
 
 #### Hard — engineering constraints
 - [ ] `testBmiCopyAssocCollision` — two keys with identical SHA1 hash → collision node (A2c)
