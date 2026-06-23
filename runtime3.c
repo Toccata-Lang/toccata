@@ -2428,10 +2428,6 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, i
 }
 
 Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   if (arg0->refs != 1) {
     return(arrayNodeCopyAssoc(arg0, arg1, arg2, hash, shift));
   } else {
@@ -2440,17 +2436,16 @@ Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
     Value *val = arg2;
     int idx = mask(hash, shift);
 
-    Value *subNode = node->array[idx];
-    int64_t keyHash = nakedSha1(incRef(key, 1));
-    if (subNode == (Value *)0) {
-      node->array[idx] = copyAssoc((Value *)&emptyBMI, key, val, keyHash, shift + 5);
+    Term subNode = node->array[idx];
+    int64_t keyHash = nakedSha1(incRef((Term)(Value *)key, 1));
+    if (subNode == 0) {
+      node->array[idx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, keyHash, shift + 5);
     } else {
-      Value *n = mutateAssoc(subNode, key, val, keyHash, shift + 5);
-      node->array[idx] = n;
+      Value *n = mutateAssoc((Value *)incRef((Term)(Value *)subNode, 1), key, val, keyHash, shift + 5);
+      node->array[idx] = (Term)n;
     }
     return((Value *)node);
   }
-  // */
 }
 
 Value *collisionAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {

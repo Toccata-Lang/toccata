@@ -1533,6 +1533,61 @@ void testArrayNodeDissocEmptySlot(void) {
   check_counts("testArrayNodeDissocEmptySlot", 0, 0);
 }
 
+// Test: refs==1, slot empty → new entry created (Path 1)
+void testArrayNodeMutateAssocInsert(void) {
+  reset_counters();
+
+  // Create ArrayNode with one entry
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  int slot1 = mask(hash1, 0);
+
+  // Find key2 at a DIFFERENT slot
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) == slot1) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+  Term val2 = newI60(400);
+  int slot2 = mask(hash2, 0);
+
+  // Set refs==1 so mutateAssoc takes the in-place path
+  ((Value *)node)->refs = 1;
+  void *original = (void *)node;
+
+  // Call arrayNodeMutateAssoc with key at empty slot
+  Value *result = arrayNodeMutateAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Verify same pointer returned (in-place mutation)
+  if (result != (Value *)node) {
+    BOOM("mutateAssoc insert: should return original node pointer");
+  }
+
+  // Verify the new entry is present
+  if (node->array[slot2] == 0) {
+    BOOM("mutateAssoc insert: new slot should be populated");
+  }
+
+  // Verify the new entry contains key2
+  BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[slot2];
+  if (bmi->array[0] != (Value *)key2) {
+    BOOM("mutateAssoc insert: slot should contain key2");
+  }
+
+  // Verify the original entry is still there
+  if (node->array[slot1] == 0) {
+    BOOM("mutateAssoc insert: original slot should still be populated");
+  }
+
+  dec_and_free((Term)result, 1);
+  check_counts("testArrayNodeMutateAssocInsert", 0, 0);
+}
+
 void testArrayNodeDissoc(void) {
   reset_counters();
   ArrayNode *node = malloc_arrayNode();
@@ -1630,6 +1685,7 @@ int main(int argc, char **argv) {
   testArrayNodeCountEmpty();
   testArrayNodeCountSingle();
   testArrayNodeDissocEmptySlot();
+  testArrayNodeMutateAssocInsert();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
