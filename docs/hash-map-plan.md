@@ -381,7 +381,7 @@ Ordered by complexity, simplest first.
   - Mutate the inner key/value
   - Verify the same node pointer is returned (in-place mutation)
   - Verify the inner value changed
-- [ ] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
+- [x] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
   - Create BMI with one key/value
   - Set refs==1
   - Mutate with a key at a different bit position

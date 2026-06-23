@@ -301,6 +301,70 @@ void testBmiMutateAssocUpdateValue(void) {
   check_counts("testBmiMutateAssocUpdateValue", 0, 0);
 }
 
+// Test: different key, different hash → new sub-node (1e)
+// bmiMutateAssoc with refs==1, bit set, different key, different hash
+void testBmiMutateAssocBranch(void) {
+  reset_counters();
+
+  // Create single-item BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = newI60(137);
+  Term val1 = newI60(251);
+  int64_t hash1 = nakedSha1(key1);
+  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  // Set refs==1 so bmiMutateAssoc takes the in-place path
+  ((Value *)result)->refs = 1;
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+
+  // Use a key at a different bit position with a different hash
+  Term key2 = newI60(42);
+  int64_t hash2 = nakedSha1(key2);
+  Term val2 = newI60(888);
+
+  // Call bmiMutateAssoc — should create a sub-node via createNode
+  Value *branchResult = bmiMutateAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+
+  // Verify same pointer returned (in-place mutation)
+  if (branchResult != (Value *)original) {
+    BOOM("bmiMutateAssoc branch: should return original node pointer");
+  }
+
+  // Verify the original entry was replaced with a sub-node
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)branchResult;
+  int bit1 = bitpos(hash1, 0);
+  int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
+  Value *entryKey = bm->array[2 * idx];
+  if (entryKey != (Value *)0) {
+    BOOM("1e: entry should be sub-node (NULL key)");
+  }
+
+  // Verify the sub-node contains both entries
+  BitmapIndexedNode *subNode = (BitmapIndexedNode *)bm->array[2 * idx + 1];
+  if (subNode->type != BitmapIndexedType) {
+    BOOM("1e: sub-node should be BitmapIndexedType");
+  }
+  if (__builtin_popcount(subNode->bitmap) != 2) {
+    BOOM("1e: sub-node should have 2 entries");
+  }
+
+  // Verify both keys are in the sub-node
+  int found1 = 0, found2 = 0;
+  if (subNodeEqualsKey((Term)(Value *)subNode->array[0], key1)) found1 = 1;
+  if (subNodeEqualsKey((Term)(Value *)subNode->array[2], key1)) found1 = 1;
+  if (subNodeEqualsKey((Term)(Value *)subNode->array[0], key2)) found2 = 1;
+  if (subNodeEqualsKey((Term)(Value *)subNode->array[2], key2)) found2 = 1;
+  if (!found1 || !found2) {
+    BOOM("1e: sub-node should contain both keys");
+  }
+
+  // Clean up
+  dec_and_free((Term)branchResult, 1);
+
+  check_counts("testBmiMutateAssocBranch", 0, 0);
+}
+
 // Test: sub-node case — mutate inner key/value (1a)
 // bmiMutateAssoc with refs==1, bit set, sub-node, recursive update
 void testBmiMutateAssocSubNodeRecurse(void) {
@@ -894,6 +958,7 @@ extern Value *(*count_fn)(FnArity *, Value *);
   testBmiCopyAssocSubNodeChange();
   testBmiCount();
   testBmiMutateAssocUpdateValue();
+  testBmiMutateAssocBranch();
   testBmiMutateAssocSubNodeRecurse();
   testBmiMutateAssocNoOp();
   printf("All tests passed\n");
