@@ -2496,24 +2496,19 @@ Value *collisionCount(Value *arg0) {
 }
 
 Value *collisionVec(Value *arg0, Value *arg1) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   Vector *vec = (Vector *)arg1;
   for (int i = 0; i < node->count / 2; i++) {
     if (node->array[2 * i] != (Value *)0 && node->array[2 * i + 1] != (Value *)0) {
-      incRef(node->array[2 * i], 1);
-      incRef(node->array[2 * i + 1], 1);
-      Vector *pair = mutateVectConj(empty_vect, node->array[2 * i]);
-      pair = mutateVectConj(pair, node->array[2 * i + 1]);
-      vec = mutateVectConj(vec, (Value *)pair);
+      incRef((Term)(Value *)node->array[2 * i], 1);
+      incRef((Term)(Value *)node->array[2 * i + 1], 1);
+      Vector *pair = mutateVectConj(empty_vect, (Term)(Value *)node->array[2 * i]);
+      pair = mutateVectConj(pair, (Term)(Value *)node->array[2 * i + 1]);
+      vec = mutateVectConj(vec, (Term)(Value *)pair);
     }
   }
-  dec_and_free(arg0, 1);
+  dec_and_free((Term)arg0, 1);
   return((Value *)vec);
-  // */
 }
 
 Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift) {

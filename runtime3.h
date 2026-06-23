@@ -328,6 +328,7 @@ Value *hashMapAssoc(Value *arg0, Value *arg1, Value *arg2);
 Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
                     int shift);
 Value *collisionCount(Value *arg0);
+Value *collisionVec(Value *arg0, Value *arg1);
 Value *arrayNodeCount(Value *arg0);
 Value *collisionSeq(Value *arg0, Value *arg1);
 Value *collisionDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);

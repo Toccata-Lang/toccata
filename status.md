@@ -85,8 +85,8 @@ Read in order: the calculus defines the rules, the implementation shows how they
   - [x] arrayNodeCount
   - [x] arrayNodeDissoc
   - [x] collisionAssoc
-  - [ ] collisionCount
-  - [ ] collisionVec
+  - [x] collisionCount
+  - [x] collisionVec
   - [ ] collisionDissoc
   - [ ] collisionGet
   - [x] testBmiMutateAssocBranch

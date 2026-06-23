@@ -1957,6 +1957,53 @@ void testCollisionCount(void) {
   check_counts("testCollisionCount", 2, 2);
 }
 
+// Test: collisionVec returns key-value pairs as a vector
+void testCollisionVec(void) {
+  reset_counters();
+
+  // Create collision node with 2 entries
+  Term keyA = COLLIDE_KEY_A;
+  Term valA = newI60(11);
+  Term keyB = COLLIDE_KEY_B;
+  Term valB = newI60(22);
+  HashCollisionNode *node = malloc_hashCollisionNode(2);
+  node->array[0] = (Value *)keyA;
+  node->array[1] = (Value *)valA;
+  node->array[2] = (Value *)keyB;
+  node->array[3] = (Value *)valB;
+  node->count = 4;
+
+  // Flatten to vector
+  Vector *empty = (Vector *)empty_vect;
+  Value *vecResult = collisionVec((Value *)node, (Value *)empty);
+
+  // Verify result is a vector
+  if (((Vector *)vecResult)->type != VectorType) {
+    BOOM("collisionVec should return VectorType");
+  }
+
+  // Verify count is 2 (2 key-value pairs)
+  if (((Vector *)vecResult)->count != 2) {
+    char msg[100];
+    snprintf(msg, 99, "collisionVec: expected count 2, got %d", ((Vector *)vecResult)->count);
+    BOOM(msg);
+  }
+
+  // Verify each entry is a 2-element vector [key, value]
+  for (int i = 0; i < 2; i++) {
+    Term pairTerm = vectGet((Vector *)vecResult, i);
+    Vector *pairVec = (Vector *)pairTerm;
+    if (pairVec->type != VectorType) {
+      BOOM("collisionVec: pair should be VectorType");
+    }
+    if (pairVec->count != 2) {
+      BOOM("collisionVec: pair should have 2 elements");
+    }
+  }
+
+  check_counts("testCollisionVec", 1, 1);
+}
+
 int main(int argc, char **argv) {
   sha1 = testingSha1;
   
@@ -2016,6 +2063,7 @@ int main(int argc, char **argv) {
   testCollisionAssocUpdate();
   testCollisionAssocPromote();
   testCollisionCount();
+  testCollisionVec();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;

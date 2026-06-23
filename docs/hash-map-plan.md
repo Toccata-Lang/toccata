@@ -204,7 +204,7 @@ Value *bmiGet(...) {
 13. `arrayNodeCount`
 14. `collisionAssoc`
 15. `collisionCount`
-16. `collisionVec`
+16. `collisionVec` ✅
 17. `collisionDissoc`
 18. `collisionGet`
 19. `arrayNodeVec`
@@ -567,7 +567,8 @@ Tests:
 - [ ] `testCollisionAssoc` — add to collision node
 - [ ] `testCollisionGet` — lookup in collision node
 - [ ] `testCollisionDissoc` — remove from collision node
-- [ ] `testCollisionCount` — count entries
+- [x] `testCollisionCount` — count entries
+- [x] `testCollisionVec` — flatten to vector
 
 
 ### Phase 5: Public API
