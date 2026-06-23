@@ -3,6 +3,10 @@
 #include "new.h"
 #include "runtime3.h"
 
+// Inline helpers (copied from runtime3.c)
+static int mask(int64_t hash, int shift) { return (hash >> shift) & 0x1f; }
+static int bitpos(int64_t hash, int shift) { return 1 << mask(hash, shift); }
+
 // Stubs required by new.c and runtime3.c (graphing symbols, not used by hash-map tests)
 unsigned refsCount = 0;
 refMap refNames[0];
@@ -402,9 +406,14 @@ void testBmiMutateAssocBranch(void) {
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
-  // Use a key at a different bit position with a different hash
-  Term key2 = newI60(256);
-  int64_t hash2 = nakedSha1(key2);
+  // Find a key that hashes to the same bit position as key1 (path 1e)
+  Term key2;
+  int64_t hash2;
+  for (i64 candidate = 100; candidate < 10000; candidate++) {
+    key2 = newI60(candidate);
+    hash2 = nakedSha1(key2);
+    if (hash2 != hash1 && mask(hash2, 0) == mask(hash1, 0)) break;
+  }
   Term val2 = newI60(888);
 
   // Call bmiMutateAssoc — should create a sub-node via createNode
@@ -1138,7 +1147,6 @@ int main(int argc, char **argv) {
   testBmiGetMiss();
   testBmiDissoc();
   testBmiDissocEmpty();
-  // testBmiHashVec();
   testBmiCopyAssocBranch();
   testBmiCopyAssocSubNodeNoChange();
   testBmiCopyAssocSubNodeChange();
