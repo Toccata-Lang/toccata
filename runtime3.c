@@ -2019,29 +2019,15 @@ Value *bmiHashVec(Value *arg0, Value *arg1) {
 
 
 Value *(*sha1_fn)(FnArity *, Value *) = &sha1Impl;
-Value *(*count_fn)(FnArity *, Value *) = &countImpl;
-
-Value *countImpl(FnArity *arity, Value *arg) {
+Term mapCount(FnArity *arity, Value *arg) {
   if (arg->type == BitmapIndexedType) {
-    BitmapIndexedNode *node = (BitmapIndexedNode *)arg;
-    int cnt = __builtin_popcount(node->bitmap);
-    dec_and_free((Term)arg, 1);
-    return((Value *)newI60(cnt));
+    return((Term)bmiCount(arg));
   } else if (arg->type == ArrayNodeType) {
-    ArrayNode *node = (ArrayNode *)arg;
-    int cnt = 0;
-    for (int i = 0; i < ARRAY_NODE_LEN; i++) {
-      if (node->array[i] != (Term)0) cnt++;
-    }
-    dec_and_free((Term)arg, 1);
-    return((Value *)newI60(cnt));
+    return((Term)arrayNodeCount(arg));
   } else if (arg->type == HashCollisionNodeType) {
-    HashCollisionNode *node = (HashCollisionNode *)arg;
-    int cnt = node->count / 2;
-    dec_and_free((Term)arg, 1);
-    return((Value *)newI60(cnt));
+    return((Term)collisionCount(arg));
   } else {
-    return((Value *)newI60(0));
+    return(newI60(0));
   }
 }
 
@@ -2051,9 +2037,8 @@ Value *bmiCount(Value *arg0) {
   int accum = 0;
   for (int i = 0; i < cnt; i++) {
     if (node->array[i * 2] == (Value *)0 && node->array[i * 2 + 1] != (Value *)0) {
-      Value *subCnt = count_fn((FnArity *)0, incRefVal(node->array[i * 2 + 1], 1));
-      accum += getI60((Term)subCnt);
-      dec_and_free((Term)subCnt, 1);
+      Term subCnt = mapCount((FnArity *)0, incRefVal(node->array[i * 2 + 1], 1));
+      accum += getI60(subCnt);
     } else {
       accum++;
     }
@@ -2539,9 +2524,8 @@ Value *arrayNodeCount(Value *arg0) {
   int accum = 0;
   for(int i = 0; i < ARRAY_NODE_LEN; i++){
     if (node->array[i] != 0) {
-      Value *subCnt = (Value *)count_fn((FnArity *)0, (Value *)incRef(node->array[i], 1));
-      accum += getI60((Term)subCnt);
-      dec_and_free((Term)(Value *)subCnt, 1);
+      Term subCnt = mapCount((FnArity *)0, (Value *)incRef(node->array[i], 1));
+      accum += getI60(subCnt);
     }
   }
   dec_and_free((Term)(Value *)arg0, 1);
@@ -2549,14 +2533,10 @@ Value *arrayNodeCount(Value *arg0) {
 }
 
 Value *collisionCount(Value *arg0) {
-  fprintf(stderr, "Boom %s:%d\n", __FILE__, __LINE__);
-  abort();
-  return ((Value *)NULL);
-  /*
-  Value *result = new_num(new_i24(((HashCollisionNode *) arg0)->count / 2);
-  dec_and_free(arg0, 1);
-  return(result);
-  // */
+  HashCollisionNode *node = (HashCollisionNode *)arg0;
+  int cnt = node->count / 2;
+  dec_and_free((Term)arg0, 1);
+  return((Value *)newI60(cnt));
 }
 
 Value *collisionVec(Value *arg0, Value *arg1) {
@@ -3387,3 +3367,4 @@ int main (int argc, char **argv) {
   return(bashResult);
 }
 #endif
+
