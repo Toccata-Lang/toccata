@@ -27,6 +27,11 @@ void freeHashCollisionNode(Value *v);
 int bitpos(int64_t hash, int shift);
 Term integer_EQ(Term arg0, Term arg1);
 
+Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
+Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
+Value *arrayNodeCount(Value *arg0);
+Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
+
 // BMI operations
 Value *bmiMutateAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
 Value *bmiCopyAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
@@ -1115,6 +1120,103 @@ void testBmiHashVec(void) {
   check_counts("testBmiHashVec", 10, 0);
 }
 
+// Test: add key-value to empty ArrayNode
+void testArrayNodeCopyAssoc(void) {
+  reset_counters();
+  ArrayNode *node = malloc_arrayNode();
+  Term key = newI60(100);
+  Term val = newI60(200);
+  int64_t hash = nakedSha1(key);
+  Value *result = arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  if (((ArrayNode *)result)->type != ArrayNodeType) {
+    BOOM("arrayNodeCopyAssoc should return ArrayNodeType");
+  }
+  dec_and_free((Term)result, 1);
+  check_counts("testArrayNodeCopyAssoc", 0, 0);
+}
+
+void testArrayNodeGet(void) {
+  reset_counters();
+  ArrayNode *node = malloc_arrayNode();
+  Term key = newI60(100);
+  Term val = newI60(200);
+  int64_t hash = nakedSha1(key);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *found = arrayNodeGet((Value *)node, (Value *)key, (Value *)nothing(), hash, 0);
+  if (termTag((Term)found) != I60 || getI60((Term)found) != 200) {
+    BOOM("arrayNodeGet: should find correct value");
+  }
+  dec_and_free((Term)found, 1);
+  check_counts("testArrayNodeGet", 0, 0);
+}
+
+void testArrayNodeCount(void) {
+  reset_counters();
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  // Find key at different slot
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) == mask(hash1, 0)) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+  Term val2 = newI60(400);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
+
+  Value *countResult = arrayNodeCount((Value *)node);
+  if (termTag((Term)countResult) != I60 || getI60((Term)countResult) != 2) {
+    BOOM("arrayNodeCount: should return 2");
+  }
+  dec_and_free((Term)countResult, 1);
+  check_counts("testArrayNodeCount", 0, 0);
+}
+
+void testArrayNodeDissoc(void) {
+  reset_counters();
+  ArrayNode *node = malloc_arrayNode();
+  Term key1 = newI60(100);
+  Term val1 = newI60(200);
+  int64_t hash1 = nakedSha1(key1);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+
+  Term key2 = newI60(300);
+  int64_t hash2 = nakedSha1(key2);
+  while (mask(hash2, 0) == mask(hash1, 0)) {
+    key2 = newI60(getI60(key2) + 1);
+    hash2 = nakedSha1(key2);
+  }
+  Term val2 = newI60(400);
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
+
+  node = (ArrayNode *)arrayNodeDissoc((Value *)node, (Value *)key1, hash1, 0);
+
+  Value *countResult = arrayNodeCount((Value *)node);
+  if (getI60((Term)countResult) != 1) {
+    BOOM("arrayNodeDissoc: should have 1 entry");
+  }
+  dec_and_free((Term)countResult, 1);
+
+  Value *miss = arrayNodeGet((Value *)node, (Value *)key1, (Value *)nothing(), hash1, 0);
+  if (termTag((Term)miss) != VAL || ((Value *)miss)->type != NoneType) {
+    BOOM("arrayNodeDissoc: key1 should not be found");
+  }
+  dec_and_free((Term)miss, 1);
+
+  Value *found = arrayNodeGet((Value *)node, (Value *)key2, (Value *)nothing(), hash2, 0);
+  if (termTag((Term)found) != I60 || getI60((Term)found) != 400) {
+    BOOM("arrayNodeDissoc: key2 should still be found");
+  }
+  dec_and_free((Term)found, 1);
+
+  dec_and_free((Term)node, 1);
+  check_counts("testArrayNodeDissoc", 0, 0);
+}
+
 int main(int argc, char **argv) {
   extern Value *(*sha1_fn)(FnArity *, Value *);
   extern Value *(*count_fn)(FnArity *, Value *);
@@ -1160,6 +1262,7 @@ int main(int argc, char **argv) {
   testBmiMutateAssocBranch();
   testBmiMutateAssocSubNodeRecurse();
   testBmiMutateAssocNoOp();
+  testArrayNodeCopyAssoc();
   testBmiHashVec();
   printf("All tests passed\n");
   return 0;
