@@ -1964,7 +1964,6 @@ Value *createNode(int shift,
 }
 
 Value *bmiHashVec(Value *arg0, Value *arg1) {
-  
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int cnt = __builtin_popcount(node->bitmap);
   Vector *vec = (Vector *)arg1;

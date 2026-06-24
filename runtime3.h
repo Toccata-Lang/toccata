@@ -310,6 +310,7 @@ Value *stringValue(char *s);
 Value *opaqueValue(void *ptr, Destructor *destruct);
 Value *listFilter(Value *arg0, Value *arg1);
 Value *bmiHashSeq(Value *arg0, Value *arg1);
+Value *bmiHashVec(Value *arg0, Value *arg1);
 Value *bmiCount(Value *arg0);
 Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
                     int shift);
