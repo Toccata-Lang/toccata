@@ -20,7 +20,6 @@ REFS_SIZE refsStatic = REFS_STATIC;
 
 unsigned hght = HEIGHT;
 
-Term (*sha1)(FnArity *, Term);
 Value *universalProtoFn = (Value *)0;
 int cleaningUp = 0;
 

@@ -4,6 +4,7 @@
 #include "runtime3.h"
 
 // Inline helpers (copied from runtime3.c)
+Term (*sha1)(FnArity *, Term);
 static int mask(int64_t hash, int shift) { return (hash >> shift) & 0x1f; }
 static int bitpos(int64_t hash, int shift) { return 1 << mask(hash, shift); }
 
