@@ -103,8 +103,11 @@ Term testingSha1(FnArity *f, Term trm) {
     Value *v1 = (Value *)trm;
     switch (v1->type) {
     case StringBufferType:
+      hash = ((String *)v1)->hashVal;
+      break;
+
     case SubStringType:
-      hash = strSha1(v1);
+      hash = ((ReifiedVal *)v1)->hashVal;
       break;
 
     case VectorType:

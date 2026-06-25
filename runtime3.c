@@ -1875,6 +1875,7 @@ int8_t equal(Value *v1, Value *v2) {
     return(getI60(t1) == getI60(t2));
   }
   // For other types, use equalSTAR
+  BOOM("can't use equalSTAR");
   Value *equals = equalSTAR((FnArity *)0, v1, v2);
   int8_t notEquals = isNothing((Term)equals);
   dec_and_free((Term)equals, 1);
@@ -2141,19 +2142,11 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
 	node->array[idx * 2 + 1] = n;
 	return(arg0);
       } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
-	if (equal(incRefVal(val, 1), incRefVal(valOrNode, 1))) {
-	  dec_and_free((Term)arg1, 1);
-	  dec_and_free((Term)arg2, 1);
-	  return(arg0);
-	} else {
-	  // if the keyOrNull points to a value that is equal to key
-	  // replace key/val at 'idx' with new stuff
-	  node->array[idx * 2] = key;
-	  node->array[idx * 2 + 1] = val;
-	  dec_and_free((Term)valOrNode, 1);
-	  dec_and_free((Term)keyOrNull, 1);
-	  return(arg0);
-	}
+	node->array[idx * 2] = key;
+	node->array[idx * 2 + 1] = val;
+	dec_and_free((Term)valOrNode, 1);
+	dec_and_free((Term)keyOrNull, 1);
+	return(arg0);
       } else {
 	// there is already a key/val pair at the position where key
 	// would be placed. Extend tree a level
@@ -2361,7 +2354,6 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, i
   ArrayNode *newNode;
 
   Term subNode = node->array[idx];
-  int64_t keyHash = sha1((FnArity *)0, incRef((Term)(Value *)key, 1));
   if (subNode == 0) {
     newNode = (ArrayNode *)malloc_arrayNode();
     for (int i = 0; i < ARRAY_NODE_LEN; i++) {
@@ -2370,9 +2362,9 @@ Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, i
 	incRef(newNode->array[i], 1);
       }
     }
-    newNode->array[idx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, keyHash, newShift);
+    newNode->array[idx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, hash, newShift);
   } else {
-    Value *n = copyAssoc((Value *)incRef((Term)(Value *)subNode, 1), key, val, keyHash, newShift);
+    Value *n = copyAssoc((Value *)incRef((Term)(Value *)subNode, 1), key, val, hash, newShift);
     if (n == (Value *)subNode) {
       dec_and_free((Term)(Value *)n, 1);
       return((Value *)node);
@@ -2401,11 +2393,10 @@ Value *arrayNodeMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
     int idx = mask(hash, shift);
 
     Term subNode = node->array[idx];
-    int64_t keyHash = sha1((FnArity *)0, incRef((Term)(Value *)key, 1));
     if (subNode == 0) {
-      node->array[idx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, keyHash, shift + 5);
+      node->array[idx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, hash, shift + 5);
     } else {
-      Value *n = mutateAssoc((Value *)subNode, key, val, keyHash, shift + 5);
+      Value *n = mutateAssoc((Value *)subNode, key, val, hash, shift + 5);
       node->array[idx] = (Term)n;
     }
     return((Value *)node);
@@ -3133,10 +3124,45 @@ void discardFn(Term ref, Term args) {
 }
 Term discard = newRef(discardFn);
 
+Term (*sha1)(FnArity *, Term);
+Term testingSha1(FnArity *f, Term trm) {
+  int64_t hash;
+  Tag tg = termTag(trm);
+  if (tg == I60) {
+    hash = integerSha1(trm);
+  } else if (tg == VAL) {
+    Value *v1 = (Value *)trm;
+    switch (v1->type) {
+    case StringBufferType:
+      hash = ((String *)v1)->hashVal;
+      break;
+
+    case SubStringType:
+      hash = ((ReifiedVal *)v1)->hashVal;
+      break;
+
+    case VectorType:
+      BOOM("Fix when vectorSha1 is implemented");
+      break;
+      
+    default:
+      // No HashedValue type available for caching
+      hash = 0;
+      break;
+    }
+  } else {
+    char msg[100];
+    sprintf(msg, "Can't SHA1 term: %s", tagStr(tg));
+    BOOM(msg);
+  }
+  return(hash);
+}
+
 int main (int argc, char **argv) {
   Term alts[200];
   unsigned altsCount = 0;
   
+  sha1 = testingSha1;
   prErrSTAR = &defaultPrErrSTAR;
 #ifdef SINGLE_THREADED
 #ifdef CHECK_MEM_LEAK
