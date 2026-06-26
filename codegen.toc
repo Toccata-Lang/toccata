@@ -375,10 +375,10 @@
   (dest-params [ast]
     (assert-result r (instance? ParamInit r))))
 
-(deftype PlainParams [dup-label fixed var]
+(deftype PlainParams [fixed var]
   Container
   (map [x f]
-    (PlainParams dup-label (map fixed f) var))
+    (PlainParams (map fixed f) var))
 
   DestParams
   (dest-params [ast]
@@ -387,7 +387,7 @@
       (either (map (first args)
                    (fn [last-arg]
                      (reduce (rest args)
-                             (ParamInit var (str "Term " var " = makePair(LAM, " dup-label ", SUB, NUL);\n"
+                             (ParamInit var (str "Term " var " = makePair(LAM, 0, SUB, NUL);\n"
                                                  "Location r_" var " = portLoc(2, " var ");\n"
                                                  "Term " (.var last-arg)
                                                  " = newTerm(VAR, 0, portLoc(1, " var "));\n"))
@@ -397,11 +397,11 @@
 
                                (.init args [(.init args)
                                             (.init arg)
-                                            (str var " = makePair(LAM, " dup-label ", SUB, " var ");\n"
+                                            (str var " = makePair(LAM, 0, SUB, " var ");\n"
                                                  "Term " (.var arg)
                                                  " = newTerm(VAR, 0, portLoc(1, " var
                                                  "));\n")])))))
-              (ParamInit var (str "Term " var " = makePair(LAM, " dup-label ", ERA, NUL);\n"
+              (ParamInit var (str "Term " var " = makePair(LAM, 0, ERA, NUL);\n"
                                   "Location r_" var " = portLoc(2, " var ");\n"))))))
 
 (extend-type c/TaggedSymbol
@@ -414,10 +414,10 @@
   (dest-params [s]
     (ParamInit "" [])))
 
-(defn destruct-params [params dup-label]
+(defn destruct-params [params]
   (let [args-init (hylo (fn [ast]
                           (cond (instance? ast/params-ast ast)
-                                (PlainParams dup-label (.fixed ast) (.var ast))
+                                (PlainParams (.fixed ast) (.var ast))
 
                                 ast))
                         dest-params params)]
@@ -440,7 +440,8 @@
                                                                  ["\nTerm " dupe-var ";\n"
                                                                   var " = dupeArg(" var,
                                                                   ", &" dupe-var ", "
-                                                                  dup-label ");\n"]))))))
+                                                                  (new-int b/dup-labels)
+                                                                  ");\n"]))))))
 
                                         ["swap(termLoc(" var "), ERA);\n"])
 
@@ -527,7 +528,6 @@
   CodeGen
   (gen-code [ast]
     (let [params (.params ast)
-          dup-label (.dup-label ast)
           body (remove (.body ast) (fn [expr]
                                      (instance? ast/block-comment-ast expr)))]
       (either (map (last body)
@@ -536,19 +536,12 @@
                        (cond (instance? ast/inline-ast last-ast)
                              (se/state-error ast)
 
-                             (for [_ (destruct-params params dup-label)
+                             (for [_ (destruct-params params)
                                    _ (se/update-val
                                       .init
                                       (fn [init]
                                         (let [var-loc (str "r_" (.var params))]
                                           [init
-                                           "#ifdef SAFETY\n"
-                                           "dupLabels[" (str dup-label) "] = \""
-                                           (cond (= c/no-symbol (.fn-sym ast))
-                                                 ""
-                                                 (.fn-sym ast))
-                                           "\";\n"
-                                           "#endif\n"
                                            "// link args to body\n"
                                            "swap(" var-loc ", " last-v ");\n"
                                            (cond (instance? ast/call-ast last-ast)
@@ -557,7 +550,7 @@
                                                   "lams = take(portLoc(2, " last-v "V));\n\n"]
                                                  ["\nV = get(" var-loc ");\n"
                                                   "apps = makePair(APP, 0, V, SUB);\n"
-                                                  "lams = makePair(LAM, " dup-label ", SUB, NUL);\n"
+                                                  "lams = makePair(LAM, 0, SUB, NUL);\n"
                                                   "swap(portLoc(2, lams),"
                                                   "newTerm(VAR, 0, portLoc(1, lams)));\n"])
                                            "vLoc = portLoc(2, apps);\n"
@@ -995,8 +988,7 @@
                              (and (instance? ast/inline-ast val)
                                   (instance? c/fn-arity (.constraint val))))]
                [sym val])
-        emitter (for [_ (se/set-val .decl ["char *dupLabels[" (+ 5 (new-int b/dup-labels)) "];\n"
-                                           "unsigned refsCount = " (+ 10 (count refs)) ";\n"
+        emitter (for [_ (se/set-val .decl ["unsigned refsCount = " (+ 10 (count refs)) ";\n"
                                            "unsigned refNameCount = " (+ 10 (count refs)) ";\n"
                                            "refMap refNames[" (+ 10 (count refs))
                                            "] = {"

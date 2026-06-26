@@ -224,10 +224,7 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
   case APP: {
     Lab lab = termLab(tree);
     if (t == DUP || t == SUP || t == LAM) {
-      if (lab == 0 || lab >= labelsCount || strlen(dupLabels[lab]) == 0)
-	snprintf(xLbl, 95, "%x:\n%d", nodeNum, lab);
-      else
-	snprintf(xLbl, 95, "%x:\n%s", nodeNum, dupLabels[lab]);
+      snprintf(xLbl, 95, "%x:\n%d", nodeNum, lab);
     } else
       snprintf(xLbl, 95, "%x:", nodeNum);
 
@@ -291,10 +288,7 @@ unsigned graphDown(char *title, Term root, unsigned currNodeCount, unsigned grap
     unsigned nodeNum = otherNodes++;
     Location rootNode = termLoc(root);
     Lab rootLab = termLab(root);
-    if (rootLab == 0 || strlen(dupLabels[rootLab]) == 0)
-      snprintf(xLbl, 95, "%x:\n%d", rootNode, rootLab);
-    else
-      snprintf(xLbl, 95, "%x:\n%s", rootNode, dupLabels[rootLab]);
+    snprintf(xLbl, 95, "%x:\n%d", rootNode, rootLab);
     fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, "L", 0, xLbl);
     fprintf(dotFile, "{rank=min; x%d_%x;}\n", graphNum, nodeNum);
 

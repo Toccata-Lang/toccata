@@ -3264,7 +3264,7 @@ int main (int argc, char **argv) {
       case SUP: {
 	Lab l = termLab(result);
 	Location loc = termLoc(result);
-	fprintf(stderr, "bad result %s (%d) pair\n", tagStr(resultTag), resultTag);
+	fprintf(stderr, "bad result SUP pair\n");
 	Term newResult = take(loc + 1) ;
 	alts[altsCount++] = newResult;
 	newResult = take(loc) ;
