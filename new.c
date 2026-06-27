@@ -337,91 +337,6 @@ Term take(Location loc) {
   }
 }
 
-typedef struct cycleNode {
-  Location loc;
-  Term trm;
-  struct cycleNode *left;
-  struct cycleNode *right;
-} cycleNode;
-cycleNode cycleNodes[NODE_STACK_SIZE];
-unsigned cycleNodeCount = 0;
-
-char findCycleNode(Location nodeLoc) {
-  for (unsigned i = 0; i < cycleNodeCount; i++) {
-    cycleNode *nd = &cycleNodes[i];
-    if (nd->loc == nodeLoc)
-      return 1;
-  }
-  return 0;
-}
-
-int findCycle(Term tree, Location tgtLoc) {
-#ifndef CHECK_MEM_LEAK
-  BOOM("Not thread safe");
-#endif
-
-  if (!hasLocation(tree) || findCycleNode(termLoc(tree) & 0xFFFFFFFE)) {
-    return 0;
-  }
-
-  Tag t = termTag(tree);
-  switch(t) {
-  case VAR: {
-    Location loc = termLoc(tree);
-    if (loc == tgtLoc) {
-      return 1;
-    } else {
-      return findCycle(get(loc), tgtLoc);
-    }
-    // */
-  }
-    break;
-
-  case SUB:
-    if (termLab(tree) == 0)
-      break;
-    // else fall through
-
-  case SUP:
-  case DUP: 
-  case OPX:
-  case OPY:
-  case LAZ:
-  case LAM:
-  case APP: {
-    if (t == LAZ && termLoc(tree) == tgtLoc)
-      return 1;
-
-    cycleNode *cn = &cycleNodes[cycleNodeCount++];
-    if (cycleNodeCount >= NODE_STACK_SIZE)
-      BOOM("cycleNodeCount!");
-    cn->loc = termLoc(tree);
-    cn->trm = tree;
-
-    Location loc = portLoc(1, tree);
-    Term branch = get(loc);
-    if (findCycle(branch, tgtLoc))
-      return 1;
-
-    loc = portLoc(2, tree);
-    branch = get(loc);
-    if (findCycle(branch, tgtLoc))
-      return 1;
-  }
-    break;
-  }
-  return 0;
-}
-
-int isCycle(Term tree, Location tgtLoc) {
-  // TODO: perf optimization — replace linear findCycleNode scan with
-  // a hash set for O(1) visited lookups. Each isCycle call traverses
-  // a completely different subtree, so old entries are dead weight.
-  // A hash set would eliminate the O(n²) worst case.
-  cycleNodeCount = 0;
-  return findCycle(tree, tgtLoc);
-}
-
 // Atomic swap operation
 // If a deferred redex is found, queue it up and return SUB
 // Otherwise, return a positive value.
@@ -1084,27 +999,7 @@ void eraseLazy(Term laz) {
     Tag t1 = termTag(origDup1);
     Tag t2 = termTag(origDup2);
 
-    int contextCycle = 0;
-    /*
-    if (t1 == LAZ) {
-      contextCycle = isCycle(posLaz, portLoc(1, negLaz));
-    } else if (t2 == LAZ) {
-      contextCycle = isCycle(posLaz, portLoc(2, negLaz));
-    }
-    // */
-
-    if (contextCycle || (t1 == ERA && t2 == ERA)) {
-      // Put NUL back in both DUP ports, to break the cycle so it can be freed
-      swap(portLoc(1, negLaz), NUL);
-      swap(portLoc(2, negLaz), NUL);
-      interact(ERA, posLaz);
-      if (contextCycle) {
-	if (t1 == ERA)
-	  freeLoc(portLoc(1, negLaz));
-	if (t2 == ERA)
-	  freeLoc(portLoc(2, negLaz));
-      }
-    } else if (termTag(origDup1) == LAZ) {
+    if (termTag(origDup1) == LAZ) {
       freeLoc(portLoc(2, negLaz));
       move(portLoc(1, negLaz), posLaz);
     } else if (termTag(origDup2) == LAZ) {
