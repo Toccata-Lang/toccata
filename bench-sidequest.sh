@@ -5,7 +5,7 @@
 echo "count,itrs"
 
 for i in $(seq 0 200); do
-    param=$((1 + i * 1))
+    param=$((1 + i * 100))
     output=$(./sidequest "$param" 2>&1)
     itrs=$(echo "$output" | grep -oP 'ITRS: \K[0-9]+')
     echo "${param},${itrs}"

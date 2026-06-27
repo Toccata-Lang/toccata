@@ -1592,11 +1592,11 @@ void checkBuff() {
   }
   //graphDown("leaked", get(0xaf), 0, subGraphs++);
   if (leaks) {
-    fprintf(stderr, "\nLeaked pairs!!\n");
+    fprintf(stderr, "\nLeaked pairs!! %u\n", leaks);
     // printTerm("leaked", get(0x9c));
-    pb();
-    pr();
-      // BOOM("Leak pairs");
+    // pb();
+    // pr();
+    // BOOM("Leak pairs");
   }
 }
 
