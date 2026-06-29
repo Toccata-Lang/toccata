@@ -57,7 +57,7 @@ intrp: intrp.c
 	./intrp
 
 # Sidequest
-sidequest.c: new-toc sidequest.toc hvm-core.toc
+sidequest.c: new-toc sidequest.toc hvm-core.toc new.h
 	./new-toc sidequest.toc > sidequest.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' \
           sidequest.tmp > sidequest.c
