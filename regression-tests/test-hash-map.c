@@ -35,7 +35,7 @@ Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 
 // BMI operations
 Value *bmiMutateAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
-Value *bmiCopyAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
+Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, int shift);
 Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
 Value *bmiCount(Value *node);
 Value *bmiHashVec(Value *node, Value *vec);
@@ -324,10 +324,10 @@ void testBmiCopyAssoc(void) {
   // Verify the key/value are stored at the correct index
   int bit = bitpos(hash, 0);
   int idx = __builtin_popcount(bitmap & (bit - 1));
-  if (((BitmapIndexedNode *)result)->array[2 * idx] != (Value *)key) {
+  if (((BitmapIndexedNode *)result)->array[2 * idx] != key) {
     BOOM("key not at correct index");
   }
-  if (((BitmapIndexedNode *)result)->array[2 * idx + 1] != (Value *)val) {
+  if (((BitmapIndexedNode *)result)->array[2 * idx + 1] != val) {
     BOOM("val not at correct index");
   }
 
@@ -374,12 +374,12 @@ void testBmiMutateAssocUpdateValue(void) {
   // Verify the key is still at the correct index
   int bit = bitpos(hash, 0);
   int idx = __builtin_popcount(((BitmapIndexedNode *)updateResult)->bitmap & (bit - 1));
-  if (((BitmapIndexedNode *)updateResult)->array[2 * idx] != (Value *)key) {
+  if (((BitmapIndexedNode *)updateResult)->array[2 * idx] != key) {
     BOOM("bmiMutateAssoc update: key should be unchanged");
   }
 
   // Verify the value was updated
-  if (((BitmapIndexedNode *)updateResult)->array[2 * idx + 1] != (Value *)newVal) {
+  if (((BitmapIndexedNode *)updateResult)->array[2 * idx + 1] != newVal) {
     BOOM("bmiMutateAssoc update: value should be updated");
   }
 
@@ -511,8 +511,8 @@ void testBmiMutateAssocBranch(void) {
   BitmapIndexedNode *bm = (BitmapIndexedNode *)branchResult;
   int bit1 = bitpos(hash1, 0);
   int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
-  Value *entryKey = bm->array[2 * idx];
-  if (entryKey != (Value *)0) {
+  Term entryKey = bm->array[2 * idx];
+  if (entryKey != 0) {
     BOOM("1e: entry should be sub-node (NULL key)");
   }
 
@@ -579,8 +579,8 @@ void testBmiMutateAssocCollision(void) {
   BitmapIndexedNode *bm = (BitmapIndexedNode *)collResult;
   int bitA = bitpos(hashA, 0);
   int idx = __builtin_popcount(bm->bitmap & (bitA - 1));
-  Value *entryKey = bm->array[2 * idx];
-  if (entryKey != (Value *)0) {
+  Term entryKey = bm->array[2 * idx];
+  if (entryKey != 0) {
     BOOM("1d: entry should be collision node (NULL key)");
   }
 
@@ -642,7 +642,7 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   }
 
   Term val2 = newI60(888);
-  result = bmiCopyAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+  result = bmiCopyAssoc(original, key2, val2, hash2, 0);
 
   // Verify we have a nested structure
   BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
@@ -671,16 +671,16 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   }
 
   // Find key1's value in the updated sub-node
-  Value *foundVal = NULL;
+  Term foundVal = 0;
   if (subNodeEqualsKey((Term)(Value *)updatedSub->array[0], key1)) {
     foundVal = updatedSub->array[1];
   } else if (subNodeEqualsKey((Term)(Value *)updatedSub->array[2], key1)) {
     foundVal = updatedSub->array[3];
   }
-  if (foundVal == NULL) {
+  if (foundVal == 0) {
     BOOM("sub-node should contain key1");
   }
-  if (getI60((Term)foundVal) != 999) {
+  if (getI60(foundVal) != 999) {
     BOOM("sub-node value should be updated to 999");
   }
 
@@ -765,10 +765,10 @@ void testBmiMutateAssocNoOp(void) {
   // Verify the key/value are still at the correct index
   int bit = bitpos(hash, 0);
   int idx = __builtin_popcount(((BitmapIndexedNode *)noOpResult)->bitmap & (bit - 1));
-  if (((BitmapIndexedNode *)noOpResult)->array[2 * idx] != (Value *)key) {
+  if (((BitmapIndexedNode *)noOpResult)->array[2 * idx] != key) {
     BOOM("bmiMutateAssoc no-op: key should be unchanged");
   }
-  if (((BitmapIndexedNode *)noOpResult)->array[2 * idx + 1] != (Value *)val) {
+  if (((BitmapIndexedNode *)noOpResult)->array[2 * idx + 1] != val) {
     BOOM("bmiMutateAssoc no-op: value should be unchanged");
   }
 
@@ -795,7 +795,7 @@ void testBmiCopyAssocNoOp(void) {
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
   // Call bmiCopyAssoc with same key/value — should return original (no clone)
-  Value *noOpResult = bmiCopyAssoc((Value *)original, (Value *)key, (Value *)val, hash, 0);
+  Value *noOpResult = bmiCopyAssoc(original, key, val, hash, 0);
 
   // Verify same pointer returned (no-op path)
   if (noOpResult != (Value *)original) {
@@ -828,7 +828,7 @@ void testBmiCopyAssocUpdate(void) {
   Term newVal = newI60(77);
 
   // Call bmiCopyAssoc with same key, different value — should clone
-  Value *updateResult = bmiCopyAssoc((Value *)original, (Value *)key, (Value *)newVal, hash, 0);
+  Value *updateResult = bmiCopyAssoc(original, key, newVal, hash, 0);
 
   // Verify different pointer returned (clone created)
   if (updateResult == (Value *)original) {
@@ -843,7 +843,7 @@ void testBmiCopyAssocUpdate(void) {
   // Verify value was updated
   int bit = bitpos(hash, 0);
   int idx = __builtin_popcount(((BitmapIndexedNode *)updateResult)->bitmap & (bit - 1));
-  if (((BitmapIndexedNode *)updateResult)->array[2 * idx + 1] != (Value *)newVal) {
+  if (((BitmapIndexedNode *)updateResult)->array[2 * idx + 1] != newVal) {
     BOOM("value should be updated");
   }
 
@@ -945,7 +945,7 @@ void testBmiDissocEmpty(void) {
   }
 
   // Verify the remaining key is key2
-  if (newNode->array[0] != (Value *)key2) {
+  if (newNode->array[0] != key2) {
     BOOM("remaining key should be key2");
   }
 
@@ -1053,7 +1053,7 @@ void testBmiCopyAssocBranch(void) {
 
   // Call bmiCopyAssoc — should create a branch node (A2d)
   Term newVal = newI60(888);
-  Value *branchResult = bmiCopyAssoc((Value *)original, (Value *)key2, (Value *)newVal, hash2, 0);
+  Value *branchResult = bmiCopyAssoc(original, key2, newVal, hash2, 0);
 
   // Verify result is a BMI node
   BitmapIndexedNode *bm = (BitmapIndexedNode *)branchResult;
@@ -1068,8 +1068,8 @@ void testBmiCopyAssocBranch(void) {
 
   // The entry at the shared bit position should be a sub-node (keyOrNull == NULL)
   int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
-  Value *entryKey = bm->array[2 * idx];
-  if (entryKey != (Value *)0) {
+  Term entryKey = bm->array[2 * idx];
+  if (entryKey != 0) {
     BOOM("A2d: entry at shared bit should be sub-node (NULL key)");
   }
 
@@ -1083,10 +1083,10 @@ void testBmiCopyAssocBranch(void) {
   }
 
   // Verify both keys are in the sub-node
-  if (subNode->array[0] != (Value *)key1 && subNode->array[0] != (Value *)key2) {
+  if (subNode->array[0] != key1 && subNode->array[0] != key2) {
     BOOM("A2d: sub-node should contain key1");
   }
-  if (subNode->array[2] != (Value *)key1 && subNode->array[2] != (Value *)key2) {
+  if (subNode->array[2] != key1 && subNode->array[2] != key2) {
     BOOM("A2d: sub-node should contain key2");
   }
 
@@ -1125,13 +1125,13 @@ void testBmiCopyAssocSubNodeNoChange(void) {
 
   // Add key2 — this creates a sub-node (branch)
   Term val2 = newI60(888);
-  result = bmiCopyAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+  result = bmiCopyAssoc(original, key2, val2, hash2, 0);
 
   // Verify we have a nested structure
   BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
   int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
-  Value *entryKey = bm->array[2 * idx];
-  if (entryKey != (Value *)0) {
+  Term entryKey = bm->array[2 * idx];
+  if (entryKey != 0) {
     BOOM("A1a: should have sub-node at shared bit");
   }
   BitmapIndexedNode *subNode = (BitmapIndexedNode *)bm->array[2 * idx + 1];
@@ -1140,7 +1140,7 @@ void testBmiCopyAssocSubNodeNoChange(void) {
   }
 
   // Now update key1 in the sub-node with the SAME value — should trigger A1a (no-op)
-  Value *noChangeResult = bmiCopyAssoc((Value *)bm, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *noChangeResult = bmiCopyAssoc(bm, key1, val1, hash1, 0);
 
   // Verify same pointer returned (no-op path)
   if (noChangeResult != (Value *)bm) {
@@ -1177,13 +1177,13 @@ void testBmiCopyAssocSubNodeChange(void) {
   }
 
   Term val2 = newI60(888);
-  result = bmiCopyAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+  result = bmiCopyAssoc(original, key2, val2, hash2, 0);
 
   BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
 
   // Update key1 with a DIFFERENT value — should clone (A1b)
   Term newVal = newI60(999);
-  Value *cloneResult = bmiCopyAssoc((Value *)bm, (Value *)key1, (Value *)newVal, hash1, 0);
+  Value *cloneResult = bmiCopyAssoc(bm, key1, newVal, hash1, 0);
 
   // Verify different pointer returned (clone created)
   if (cloneResult == (Value *)bm) {
@@ -1196,13 +1196,13 @@ void testBmiCopyAssocSubNodeChange(void) {
   BitmapIndexedNode *cloneSub = (BitmapIndexedNode *)cloneBm->array[2 * idx + 1];
 
   // Find key1's value in the sub-node
-  Value *foundVal = NULL;
-  if (subNodeEqualsKey((Term)(Value *)cloneSub->array[0], key1)) {
+  Term foundVal = 0;
+  if (subNodeEqualsKey((Term)cloneSub->array[0], key1)) {
     foundVal = cloneSub->array[1];
-  } else if (subNodeEqualsKey((Term)(Value *)cloneSub->array[2], key1)) {
+  } else if (subNodeEqualsKey((Term)cloneSub->array[2], key1)) {
     foundVal = cloneSub->array[3];
   }
-  if (foundVal == NULL) {
+  if (foundVal == 0) {
     BOOM("A1b: cloned sub-node should contain key1");
   }
   if (getI60((Term)foundVal) != 999) {
@@ -1240,7 +1240,7 @@ void testBmiCopyAssocCollision(void) {
   // Add KEY_B — same hash, different key → should create collision node (A2c)
   Term keyB = COLLIDE_KEY_B;
   Term valB = newI60(20);
-  Value *collResult = bmiCopyAssoc((Value *)original, (Value *)keyB, (Value *)valB, hashA, 0);
+  Value *collResult = bmiCopyAssoc(original, keyB, valB, hashA, 0);
 
   // Verify result is still a BMI node
   BitmapIndexedNode *bm = (BitmapIndexedNode *)collResult;
@@ -1255,7 +1255,7 @@ void testBmiCopyAssocCollision(void) {
 
   // Verify the slot contains a HashCollisionNode
   int idx = __builtin_popcount(bm->bitmap & ((uint32_t)1 - 1));
-  Value *slotVal = bm->array[2 * idx + 1];
+  Value *slotVal = (Value *)bm->array[2 * idx + 1];
   if (slotVal->type != HashCollisionNodeType) {
     BOOM("collision slot should contain HashCollisionNodeType");
   }
@@ -1438,13 +1438,13 @@ void testArrayNodeCopyAssocA2(void) {
 
   // Verify slot1 still contains the original BMI sub-node (same pointer — copied)
   BitmapIndexedNode *bmi1 = (BitmapIndexedNode *)sub1;
-  if (bmi1->array[0] != (Value *)key1) {
+  if (bmi1->array[0] != key1) {
     BOOM("A2: slot1 should contain key1");
   }
 
   // Verify slot2 contains a new BMI sub-node with key2
   BitmapIndexedNode *bmi2 = (BitmapIndexedNode *)sub2;
-  if (bmi2->array[0] != (Value *)key2) {
+  if (bmi2->array[0] != key2) {
     BOOM("A2: slot2 should contain key2");
   }
 
@@ -1479,12 +1479,12 @@ void testArrayNodeCopyAssocB1(void) {
 
   // Verify the slot still has the key
   BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[slot];
-  if (bmi->array[0] != (Value *)key) {
+  if (bmi->array[0] != key) {
     BOOM("B1: slot should still contain key");
   }
 
   // Verify the value is correct
-  if (bmi->array[1] != (Value *)val) {
+  if (bmi->array[1] != val) {
     BOOM("B1: slot should contain correct value");
   }
 
@@ -1517,10 +1517,10 @@ void testArrayNodeCopyAssocB2(void) {
 
   // Verify the slot contains the updated value
   BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[slot];
-  if (bmi->array[0] != (Value *)key) {
+  if (bmi->array[0] != key) {
     BOOM("B2: slot should contain key");
   }
-  if (bmi->array[1] != (Value *)val2) {
+  if (bmi->array[1] != val2) {
     BOOM("B2: slot should contain updated value 999");
   }
 
@@ -1561,7 +1561,7 @@ void testArrayNodeCopyAssocB2Multi(void) {
 
   // Verify slot1 has the new value
   BitmapIndexedNode *bmi1 = (BitmapIndexedNode *)node->array[slot1];
-  if (bmi1->array[1] != (Value *)val1New) {
+  if (bmi1->array[1] != val1New) {
     BOOM("B2-multi: slot1 should have updated value 777");
   }
 
@@ -1570,7 +1570,7 @@ void testArrayNodeCopyAssocB2Multi(void) {
   if (bmi2 != bmi2Original) {
     BOOM("B2-multi: slot2 should be same pointer as original (copied)");
   }
-  if (bmi2->array[0] != (Value *)key2) {
+  if (bmi2->array[0] != key2) {
     BOOM("B2-multi: slot2 should still contain key2");
   }
 
@@ -1784,7 +1784,7 @@ void testArrayNodeMutateAssocRecurse(void) {
   // Verify key2's value is correct
   int bit2 = bitpos(hash2, 0);
   int idx2 = __builtin_popcount(bmi->bitmap & (bit2 - 1));
-  if (bmi->array[2 * idx2 + 1] != (Value *)val2) {
+  if (bmi->array[2 * idx2 + 1] != val2) {
     BOOM("mutateAssoc recurse: key2 value should be updated");
   }
 
@@ -1815,7 +1815,7 @@ void testArrayNodeDissocEmptySlot(void) {
   }
 
   BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[mask(hash1, 0)];
-  if (bmi->array[0] != (Value *)key1) {
+  if (bmi->array[0] != key1) {
     BOOM("arrayNodeDissocEmptySlot: original entry should still exist");
   }
 
@@ -1865,7 +1865,7 @@ void testArrayNodeMutateAssocInsert(void) {
 
   // Verify the new entry contains key2
   BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[slot2];
-  if (bmi->array[0] != (Value *)key2) {
+  if (bmi->array[0] != key2) {
     BOOM("mutateAssoc insert: slot should contain key2");
   }
 

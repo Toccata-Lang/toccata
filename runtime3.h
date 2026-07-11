@@ -86,7 +86,7 @@ typedef struct {
   REFS_SIZE refs;
   int64_t hashVal;
   int32_t bitmap;
-  Value *array[];
+  Term array[];
 } BitmapIndexedNode;
 typedef struct {
   TYPE_SIZE type;
@@ -312,8 +312,7 @@ Value *listFilter(Value *arg0, Value *arg1);
 Value *bmiHashSeq(Value *arg0, Value *arg1);
 Value *bmiHashVec(Value *arg0, Value *arg1);
 Value *bmiCount(Value *arg0);
-Value *bmiCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
-                    int shift);
+Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, int shift);
 Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
                       int shift);
 Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
