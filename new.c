@@ -154,7 +154,7 @@ Location portLoc(u64 n, Term trm) {
 #ifdef SAFETY
   if (n != 1 && n != 2) {
     fprintf(stderr, "Error: Invalid port number %lu. Port must be 1 or 2.\n", n);
-    abort();
+    BOOM("");
   }
 #endif
   return n + termLoc(trm) - 1;
@@ -261,7 +261,7 @@ Location allocPair(void) {
       if (loc >= buffSize) {
 	fprintf(stderr, "Error: Not enough space to allocate pair. buffEnd=%u, buffSize=%lu\n",
 		loc, buffSize);
-	abort();
+	BOOM("");
       }
       break;
 
@@ -507,13 +507,13 @@ Term makePair(Tag tag, Lab lab, Term fst, Term snd) {
     if (!isNegative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tagStr(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tagStr(termTag(snd)));
-      abort();
+      BOOM("");
     }
     // Port 2 must be positive
     if (!isPositive(snd)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tagStr(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tagStr(termTag(snd)));
-      abort();
+      BOOM("");
     }
     break;
 
@@ -524,13 +524,13 @@ Term makePair(Tag tag, Lab lab, Term fst, Term snd) {
     if (!isPositive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tagStr(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tagStr(termTag(snd)));
-      abort();
+      BOOM("");
     }
     // Port 2 must be negative
     if (!isNegative(snd)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tagStr(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tagStr(termTag(snd)));
-      abort();
+      BOOM("");
     }
     break;
 
@@ -539,13 +539,13 @@ Term makePair(Tag tag, Lab lab, Term fst, Term snd) {
     if (!isNegative(fst)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 1\n", tagStr(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tagStr(termTag(snd)));
-      abort();
+      BOOM("");
     }
     // Port 2 must be negative
     if (!isNegative(snd)) {
       fprintf(stderr, "Error: %s pair requires negative term in port 2\n", tagStr(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tagStr(termTag(snd)));
-      abort();
+      BOOM("");
     }
     break;
 
@@ -554,20 +554,20 @@ Term makePair(Tag tag, Lab lab, Term fst, Term snd) {
     if (!isPositive(fst)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 1\n", tagStr(tag));
       fprintf(stderr, "  Port 1 term tag: %s\n", tagStr(termTag(snd)));
-      abort();
+      BOOM("");
     }
     // Port 2 must be positive
     if (!isPositive(snd)) {
       fprintf(stderr, "Error: %s pair requires positive term in port 2\n", tagStr(tag));
       fprintf(stderr, "  Port 2 term tag: %s\n", tagStr(termTag(snd)));
-      abort();
+      BOOM("");
     }
     break;
 
   default:
     fprintf(stderr, "Error: makePair called with invalid tag: %s (%d)\n",
 	    tagStr(tag), tag);
-    abort();
+    BOOM("");
   }
 #endif
 
@@ -699,7 +699,7 @@ Term termVal(Term val) {
   if (val & VAL_MASK) {
     fprintf(stderr, "HVM error in %s at line: %d\n", __FILE__, __LINE__);
     fprintf(stderr, "val: %p\n", (void *)val);
-    abort();
+    BOOM("");
   }
   return val;
 }
@@ -824,7 +824,7 @@ Term strictArgs(Term ref, Term args, int expected, NativeArgs *argsStruct) {
 	   tagStr(argsTag), argsTag, (void *)args, __LINE__);
     fprintf(dotFile, "}\n");
     fclose(dotFile);
-    abort();
+    BOOM("");
     return 0;
   }
 }
@@ -1487,7 +1487,7 @@ void hvmInit(u64 size) {
 #endif
   if (!nodeBuff) {
     fprintf(stderr, "Failed to allocate memory\n");
-    abort();
+    BOOM("");
   }
   buffSize = size;
 
@@ -1528,13 +1528,13 @@ void hvmInit(u64 size) {
   // Initialize mutex for thread-safe redex operations
   if (pthread_mutex_init(&redexMutex, NULL) != 0) {
     fprintf(stderr, "Failed to initialize mutex\n");
-    abort();
+    BOOM("");
   }
 
   // Initialize condition variable for redex signaling
   if (pthread_cond_init(&redexCond, NULL) != 0) {
     fprintf(stderr, "Failed to initialize condition variable\n");
-    abort();
+    BOOM("");
   }
 }
 
@@ -1555,7 +1555,7 @@ void hvmFree(void) {
 void hvmReset(void) {
   if (nodeBuff == NULL || nodeBuff == NULL) {
     fprintf(stderr, "Error: Cannot reset uninitialized VM. Call hvmInit first.\n");
-    abort();
+    BOOM("");
   }
 
   // Clear memory to prevent stale data

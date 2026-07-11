@@ -313,6 +313,8 @@ Value *bmiHashSeq(Value *arg0, Value *arg1);
 Value *bmiHashVec(Value *arg0, Value *arg1);
 Value *bmiCount(Value *arg0);
 Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, int shift);
+int bitpos(int64_t hash, int shift);
+Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift);
 Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
                       int shift);
 Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);

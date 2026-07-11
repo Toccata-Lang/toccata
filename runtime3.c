@@ -2012,16 +2012,104 @@ Value *bmiCount(Value *arg0) {
   return((Value *)newI60(accum));
 }
 
+Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift) {
+  int bit = bitpos(hash, shift);
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+
+  // the position in the node is empty
+  int n = __builtin_popcount(node->bitmap);
+  if (n >= 16) {
+    // too many entries, so convert to ArrayNode
+    ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
+
+    // create BitmapIndexedNode for next level down
+    int jdx = mask(hash, shift);
+    int newShift = shift + 5;
+    newNode->array[jdx] = (Term)cloneBitmapIndexedNode(&emptyBMI, idx, key, val);
+
+    // copy the elements of the original 'node' to the new ArrayNode
+    for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
+      if ((node->bitmap >> i) & 1) {
+	// theres something in this bit mapped position
+	if (node->array[j] == 0) {
+	  // it's sub node
+	  newNode->array[i] = node->array[j + 1];
+	  incRef(newNode->array[i], 1);
+	} else {
+	  // it's a k/v pair, create a new BitmapIndexedNode for that level
+	  newNode->array[i] = (Term)cloneBitmapIndexedNode(&emptyBMI, 0,
+							   incRef(node->array[j], 2),
+							   incRef((Term)node->array[j + 1], 1));
+	}
+	j += 2;
+      }
+    }
+    dec_and_free((Term)node, 1);
+    return((Value *)newNode);
+  } else {
+    int idx = __builtin_popcount(node->bitmap & ((1 << (bit - 1)) - 1));
+    int itemCount = n + 1;
+    BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
+    newNode->bitmap = node->bitmap | bit;
+    for (int i = 0; i < idx * 2; i++) {
+      if (node->array[i] != 0) {
+	incRef((Term)node->array[i], 1);
+      }
+      newNode->array[i] = node->array[i];
+    }
+    newNode->array[2 * idx] = key;
+    newNode->array[2 * idx + 1] = val;
+    for (int i = idx * 2; i < n * 2; i++) {
+      if (node->array[i] != 0) {
+	incRef((Term)node->array[i], 1);
+      }
+      newNode->array[i + 2] = node->array[i];
+    }
+    dec_and_free((Term)node, 1);
+    return((Value *)newNode);
+  }
+}
+
+Value *replaceKeyCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift, Term currKey, Term currVal) {
+  int bit = bitpos(hash, shift);
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+
+  // keys are not equal, how about the hashes
+  int64_t existingKeyHash = sha1((FnArity *)0, incRef(currKey, 1));
+  if (existingKeyHash == hash) {
+    // hashes are equal at this level, so we need a hash collision node
+    HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
+    newLeaf->array[0] = (Value *)currKey;
+    newLeaf->array[1] = (Value *)currVal;
+    newLeaf->array[2] = (Value *)key;
+    newLeaf->array[3] = (Value *)val;
+    incRef(currKey, 1);
+    incRef(currVal, 1);
+
+    BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, (Term)newLeaf);
+    dec_and_free((Term)node, 1);
+    return((Value *)newNode);
+  } else {
+    // hashes are different, so create a BMI node for the next level
+    Value *newLeaf = createNode(shift + 5,
+				existingKeyHash, incRefVal(currKey, 1), incRefVal(currVal, 1),
+				hash, (Value *)key, (Value *)val);
+    BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, (Term)newLeaf);
+    dec_and_free((Term)node, 1);
+    return((Value *)newNode);
+  }
+}
+  
+
 Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, int shift) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int bit = bitpos(hash, shift);
-  int idx = __builtin_popcount(node->bitmap & (bit - 1));
   if (node->bitmap & bit) {
+    int idx = __builtin_popcount(node->bitmap & (bit - 1));
     Term keyOrNull = node->array[2 * idx];
     Term valOrNode = node->array[2 * idx + 1];
     if (keyOrNull == 0) {
-      int newShift = shift + 5;
-      Term n = (Term)copyAssoc(incRefVal(valOrNode, 1), (Value *)key, (Value *)val, hash, newShift);
+      Term n = (Term)copyAssoc(incRefVal(valOrNode, 1), (Value *)key, (Value *)val, hash, shift + 5);
       if (n == valOrNode) {
         dec_and_free((Term)n, 1);
         return((Value *)arg0);
@@ -2041,76 +2129,10 @@ Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, i
         return((Value *)newNode);
       }
     } else {
-      int64_t existingKeyHash = sha1((FnArity *)0, incRef((Term)keyOrNull, 1));
-      if (existingKeyHash == hash) {
-        HashCollisionNode *newLeaf = malloc_hashCollisionNode(2);
-        newLeaf->array[0] = (Value *)keyOrNull;
-        newLeaf->array[1] = (Value *)valOrNode;
-        newLeaf->array[2] = (Value *)key;
-        newLeaf->array[3] = (Value *)val;
-        incRef(keyOrNull, 1);
-        incRef(valOrNode, 1);
-
-        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, (Term)newLeaf);
-        dec_and_free((Term)arg0, 1);
-        return((Value *)newNode);
-      } else {
-        Value *newLeaf = createNode(shift + 5,
-                                    existingKeyHash, incRefVal(keyOrNull, 1), incRefVal(valOrNode, 1),
-                                    hash, (Value *)key, (Value *)val);
-        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, (Term)newLeaf);
-        dec_and_free((Term)arg0, 1);
-        return((Value *)newNode);
-      }
+      return replaceKeyCopiedBMI(node, key, val, hash, shift, keyOrNull, valOrNode);
     }
   } else {
-    // the position in the node is empty
-    int n = __builtin_popcount(node->bitmap);
-    if (n >= 16) {
-      ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
-      int jdx = mask(hash, shift);
-      int newShift = shift + 5;
-      newNode->array[jdx] = (Term)copyAssoc((Value *)&emptyBMI, (Value *)key, (Value *)val, hash, newShift);
-      for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
-        if ((node->bitmap >> i) & 1) {
-          if (node->array[j] == 0) {
-            newNode->array[i] = node->array[j + 1];
-            incRef(newNode->array[i], 1);
-          } else {
-            incRef(node->array[j], 2);
-            newNode->array[i] = (Term)copyAssoc((Value *)&emptyBMI,
-                                                (Value *)node->array[j],
-                                                (Value *)incRef((Term)node->array[j + 1], 1),
-                                                sha1((FnArity *)0, (Term)node->array[j]),
-                                                newShift);
-          }
-          j += 2;
-        }
-      }
-      dec_and_free((Term)node, 1);
-      return((Value *)newNode);
-    } else {
-      int idx = __builtin_popcount(node->bitmap & ((1 << (bit - 1)) - 1));
-      int itemCount = n + 1;
-      BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
-      newNode->bitmap = node->bitmap | bit;
-      for (int i = 0; i < idx * 2; i++) {
-        if (node->array[i] != 0) {
-          incRef((Term)node->array[i], 1);
-        }
-        newNode->array[i] = node->array[i];
-      }
-      newNode->array[2 * idx] = key;
-      newNode->array[2 * idx + 1] = val;
-      for (int i = idx * 2; i < n * 2; i++) {
-        if (node->array[i] != 0) {
-          incRef((Term)node->array[i], 1);
-        }
-        newNode->array[i + 2] = node->array[i];
-      }
-      dec_and_free((Term)node, 1);
-      return((Value *)newNode);
-    }
+    return addCopiedBMI(node, key, val, hash, shift);
   }
 }
 
@@ -2173,22 +2195,29 @@ Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int s
       // the position in the node is empty
       int n = __builtin_popcount(node->bitmap);
       if (n >= 16) {
+	// too many entries, so convert to ArrayNode
 	ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
+
+	// create BitmapIndexedNode for next level down
 	int jdx = mask(hash, shift);
 	int newShift = shift + 5;
 	newNode->array[jdx] = (Term)copyAssoc((Value *)&emptyBMI, key, val, hash, newShift);
+
+	// copy the elements of the original 'node' to the new ArrayNode
 	for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
 	  if ((node->bitmap >> i) & 1) {
+	    // theres something in this bit mapped position
 	    if (node->array[j] == 0) {
+	      // it's sub node
 	      newNode->array[i] = (Term)node->array[j + 1];
 	      node->array[j + 1] = 0;
 	    } else {
 	      incRef((Term)node->array[j], 2);
 	      newNode->array[i] = (Term)copyAssoc((Value *)&emptyBMI,
-					    (Value *)node->array[j],
-					    (Value *)incRef((Term)node->array[j + 1], 1),
+						  (Value *)node->array[j],
+						  (Value *)incRef((Term)node->array[j + 1], 1),
 						  sha1((FnArity *)0, (Term)node->array[j]),
-					    newShift);
+						  newShift);
 	      node->array[j] = 0;
 	      node->array[j + 1] = 0;
 	    }
@@ -2993,6 +3022,7 @@ void intCond(Term ref, Term args) {
   Term falseBranch = take(portLoc(1, args)); 
 
   if (termTag(falseBranch) == VAR) {
+    argsStruct.args[argsStruct.count++] = trueBranch;
     varArg(falseBranch, ref, args, &argsStruct);
     return;
   }
@@ -3121,44 +3151,11 @@ void discardFn(Term ref, Term args) {
 Term discard = newRef(discardFn);
 
 Term (*sha1)(FnArity *, Term);
-Term testingSha1(FnArity *f, Term trm) {
-  int64_t hash;
-  Tag tg = termTag(trm);
-  if (tg == I60) {
-    hash = integerSha1(trm);
-  } else if (tg == VAL) {
-    Value *v1 = (Value *)trm;
-    switch (v1->type) {
-    case StringBufferType:
-      hash = ((String *)v1)->hashVal;
-      break;
-
-    case SubStringType:
-      hash = ((ReifiedVal *)v1)->hashVal;
-      break;
-
-    case VectorType:
-      BOOM("Fix when vectorSha1 is implemented");
-      break;
-      
-    default:
-      // No HashedValue type available for caching
-      hash = 0;
-      break;
-    }
-  } else {
-    char msg[100];
-    sprintf(msg, "Can't SHA1 term: %s", tagStr(tg));
-    BOOM(msg);
-  }
-  return(hash);
-}
 
 int main (int argc, char **argv) {
   Term alts[200];
   unsigned altsCount = 0;
   
-  sha1 = testingSha1;
   prErrSTAR = &defaultPrErrSTAR;
 #ifdef SINGLE_THREADED
 #ifdef CHECK_MEM_LEAK
