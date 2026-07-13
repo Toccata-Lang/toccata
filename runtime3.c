@@ -2100,33 +2100,53 @@ Value *replaceKeyCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t 
   }
 }
   
+Term bmiChild(BitmapIndexedNode *node, int bit) {
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+  if (node->array[2 * idx] == 0)
+    return node->array[2 * idx + 1];
+  else
+    return 0;
+}
+
+Value *bmiUpdate(BitmapIndexedNode *node, int bit, Term child) {
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+  if (node->array[2 * idx + 1] == child) {
+    dec_and_free((Term)child, 1);
+    return((Value *)node);
+  } else {
+    BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, child);
+    dec_and_free((Term)node, 1);
+    return((Value *)newNode);
+  }
+}
+
+Value *bmiClone(BitmapIndexedNode *node, int bit, Term key, Term val) {
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+  BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, key, val);
+  dec_and_free((Term)node, 1);
+  return((Value *)newNode);
+}
 
 Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, int shift) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int bit = bitpos(hash, shift);
   if (node->bitmap & bit) {
+    Term child = bmiChild(node, bit);
+    if (child != 0) {
+      Term n = (Term)copyAssoc(incRefVal(child, 1), (Value *)key, (Value *)val, hash, shift + 5);
+      return bmiUpdate(node, bit, n);
+    }
+
     int idx = __builtin_popcount(node->bitmap & (bit - 1));
     Term keyOrNull = node->array[2 * idx];
     Term valOrNode = node->array[2 * idx + 1];
-    if (keyOrNull == 0) {
-      Term n = (Term)copyAssoc(incRefVal(valOrNode, 1), (Value *)key, (Value *)val, hash, shift + 5);
-      if (n == valOrNode) {
-        dec_and_free((Term)n, 1);
-        return((Value *)arg0);
-      } else {
-        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, n);
-        dec_and_free((Term)arg0, 1);
-        return((Value *)newNode);
-      }
-    } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
+    if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
       if (equal(incRefVal(val, 1), incRefVal(valOrNode, 1))) {
         dec_and_free(key, 1);
         dec_and_free(val, 1);
         return((Value *)arg0);
       } else {
-        BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, key, val);
-        dec_and_free((Term)arg0, 1);
-        return((Value *)newNode);
+	return bmiClone(node, bit, key, val);
       }
     } else {
       return replaceKeyCopiedBMI(node, key, val, hash, shift, keyOrNull, valOrNode);

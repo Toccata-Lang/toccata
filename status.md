@@ -16,6 +16,10 @@ Read these files for context before starting any:
 
 Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
 
+## Current Work
+
+Currently implementing hash-map functionality. This involves translating C code from `runtime3.c` into higher-level Toccata code, with the low-level pieces extracted into inline C functions.
+
 ## Working tests
 
 **Memory leaks are a failure condition.** Every test must leave `malloc_count == free_count` (all Value allocations freed). Any non-zero diff at the end of a test is a failure.
@@ -112,6 +116,8 @@ These features won't be in the new version (lists might be added eventually):
 - [ ] test-parser-efficience — parser performance/debug test (obsolete, git deps)
 
 ## Lessons Learned
+
+**Inline C constraint:** Inline C expressions may only appear at the top level of a Toccata file, or as the only code expression in a `defn` body. Comments and type annotations may appear in the `defn` body alongside them, but no other code expressions.
 
 **Cycle detection at encoding time is required.** Simply keeping a list of visited nodes during traversal (e.g. in `isCycle`/`findCycle`) is insufficient — by the time you detect a cycle during traversal, the damage may already be done. Cycles must be detected and handled at encoding time, before the graph is constructed.
 

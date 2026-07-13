@@ -6,7 +6,6 @@
 // Inline helpers (copied from runtime3.c)
 Term (*sha1)(FnArity *, Term);
 static int mask(int64_t hash, int shift) { return (hash >> shift) & 0x1f; }
-static int bitpos(int64_t hash, int shift) { return 1 << mask(hash, shift); }
 
 // Stubs required by new.c and runtime3.c (graphing symbols, not used by hash-map tests)
 unsigned refsCount = 0;
