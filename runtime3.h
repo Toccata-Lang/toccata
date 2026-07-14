@@ -319,10 +319,9 @@ Value *bmiReplaceCopied(BitmapIndexedNode *node, Term key, Term val, int64_t has
 Value *bmiUpdate(BitmapIndexedNode *node, int bit, Term child);
 Term bmiChild(BitmapIndexedNode *node, int bit);
 Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, int shift);
+Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift);
 int bitpos(int64_t hash, int shift);
 Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift);
-Value *bmiMutateAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,
-                      int shift);
 Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift);
 Value *bmiDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 Value *arrayNodeCopyAssoc(Value *arg0, Value *arg1, Value *arg2, int64_t hash,

@@ -33,7 +33,7 @@ Value *arrayNodeCount(Value *arg0);
 Value *arrayNodeDissoc(Value *arg0, Value *arg1, int64_t hash, int shift);
 
 // BMI operations
-Value *bmiMutateAssoc(Value *node, Value *key, Value *val, int64_t hash, int shift);
+Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift);
 Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, int shift);
 Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
 Value *bmiCount(Value *node);
@@ -307,7 +307,7 @@ void testBmiCopyAssoc(void) {
   int64_t hash = sha1((FnArity *)0, key);
 
   // Add key/value to empty BMI at shift=0
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Verify result is a BMI node
   if (((BitmapIndexedNode *)result)->type != BitmapIndexedType) {
@@ -348,7 +348,7 @@ void testBmiMutateAssocUpdateValue(void) {
   Term key = newI60(137);
   Term val = newI60(251);
   int64_t hash = sha1((FnArity *)0, key);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
   ((Value *)result)->refs = 1;
@@ -358,7 +358,7 @@ void testBmiMutateAssocUpdateValue(void) {
 
   // Call bmiMutateAssoc with same key, different value
   // This should trigger path 1c: keys equal, values different → in-place update
-  Value *updateResult = bmiMutateAssoc((Value *)original, (Value *)key, (Value *)newVal, hash, 0);
+  Value *updateResult = bmiMutateAssoc(original, key, newVal, hash, 0);
 
   // Verify same pointer returned (in-place mutation, no clone)
   if (updateResult != (Value *)original) {
@@ -398,7 +398,7 @@ void testBmiMutateAssocInsert(void) {
   Term key1 = newI60(137);
   Term val1 = newI60(251);
   int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
   ((Value *)result)->refs = 1;
@@ -429,7 +429,7 @@ void testBmiMutateAssocInsert(void) {
   }
 
   // Call bmiMutateAssoc — should create a new BMI with 2 entries
-  Value *insertResult = bmiMutateAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+  Value *insertResult = bmiMutateAssoc(original, key2, val2, hash2, 0);
 
   // Verify a NEW node was returned (different pointer — new node created)
   if (insertResult == (Value *)original) {
@@ -481,7 +481,7 @@ void testBmiMutateAssocBranch(void) {
   Term key1 = newI60(137);
   Term val1 = newI60(251);
   int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
   ((Value *)result)->refs = 1;
@@ -499,7 +499,7 @@ void testBmiMutateAssocBranch(void) {
   Term val2 = newI60(888);
 
   // Call bmiMutateAssoc — should create a sub-node via createNode
-  Value *branchResult = bmiMutateAssoc((Value *)original, (Value *)key2, (Value *)val2, hash2, 0);
+  Value *branchResult = bmiMutateAssoc(original, key2, val2, hash2, 0);
 
   // Verify same pointer returned (in-place mutation)
   if (branchResult != (Value *)original) {
@@ -557,7 +557,7 @@ void testBmiMutateAssocCollision(void) {
   Term keyA = COLLIDE_KEY_A;
   Term valA = newI60(10);
   int64_t hashA = sha1((FnArity *)0, keyA);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)keyA, (Value *)valA, hashA, 0);
+  Value *result = bmiMutateAssoc(node, keyA, valA, hashA, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
   ((Value *)result)->refs = 1;
@@ -567,7 +567,7 @@ void testBmiMutateAssocCollision(void) {
   // Add KEY_B — same hash, different key → should create collision node (1d)
   Term keyB = COLLIDE_KEY_B;
   Term valB = newI60(20);
-  Value *collResult = bmiMutateAssoc((Value *)original, (Value *)keyB, (Value *)valB, hashA, 0);
+  Value *collResult = bmiMutateAssoc(original, keyB, valB, hashA, 0);
 
   // Verify same pointer returned (in-place mutation)
   if (collResult != (Value *)original) {
@@ -625,7 +625,7 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   Term key1 = newI60(137);
   Term val1 = newI60(251);
   int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
   int bit1 = bitpos(hash1, 0);
@@ -656,7 +656,7 @@ void testBmiMutateAssocSubNodeRecurse(void) {
 
   // Update key1 in the sub-node with a different value
   Term newVal = newI60(999);
-  Value *updateResult = bmiMutateAssoc((Value *)bm, (Value *)key1, (Value *)newVal, hash1, 0);
+  Value *updateResult = bmiMutateAssoc(bm, key1, newVal, hash1, 0);
 
   // Verify same pointer returned (in-place mutation)
   if (updateResult != (Value *)bm) {
@@ -707,7 +707,7 @@ void testBmiMutateAssocPromote(void) {
     if (!used) { hashes[count] = hash; keys[count] = key; vals[count] = newI60(c * 100); count++; }
   }
   if (count < 16) BOOM("16 keys");
-  for (int i = 0; i < 16; i++) node = (BitmapIndexedNode *)bmiMutateAssoc((Value *)node, (Value *)keys[i], (Value *)vals[i], hashes[i], 0);
+  for (int i = 0; i < 16; i++) node = (BitmapIndexedNode *)bmiMutateAssoc(node, keys[i], vals[i], hashes[i], 0);
   if (__builtin_popcount(node->bitmap) != 16) BOOM("16 entries");
   ((Value *)node)->refs = 1;
   Term newKey; int64_t newHash;
@@ -718,14 +718,14 @@ void testBmiMutateAssocPromote(void) {
     for (int j = 0; j < 16; j++) { if (bitpos(hashes[j], 0) == newBit) { used = 1; break; } }
     if (!used) break;
   }
-  Value *promoteResult = bmiMutateAssoc((Value *)node, (Value *)newKey, (Value *)newI60(99999), newHash, 0);
+  Value *promoteResult = bmiMutateAssoc(node, newKey, newI60(99999), newHash, 0);
   ArrayNode *an = (ArrayNode *)promoteResult;
   if (an->type != ArrayNodeType) BOOM("ArrayNode");
   int entryCount = 0;
   for (int i = 0; i < ARRAY_NODE_LEN; i++) { if (an->array[i] != 0) entryCount++; }
   if (entryCount != 17) BOOM("17 entries");
   dec_and_free((Term)promoteResult, 1);
-  check_counts("testBmiMutateAssocPromote", 160, 0);
+  check_counts("testBmiMutateAssocPromote", 140, 0);
 }
 
 // Test: same key + same value → no-op, return original node (1b)
@@ -740,7 +740,7 @@ void testBmiMutateAssocNoOp(void) {
   int64_t hash = sha1((FnArity *)0, key);
 
   // Add key/value — first mutateAssoc call
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
   ((Value *)result)->refs = 1;
@@ -749,7 +749,7 @@ void testBmiMutateAssocNoOp(void) {
 
   // Call bmiMutateAssoc with same key and same value
   // This should trigger path 1b: keys equal, values equal → no-op
-  Value *noOpResult = bmiMutateAssoc((Value *)original, (Value *)key, (Value *)val, hash, 0);
+  Value *noOpResult = bmiMutateAssoc(original, key, val, hash, 0);
 
   // Verify same pointer returned (no-op path)
   if (noOpResult != (Value *)original) {
@@ -788,7 +788,7 @@ void testBmiCopyAssocNoOp(void) {
   Term key = newI60(99);
   Term val = newI60(13);
   int64_t hash = sha1((FnArity *)0, key);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Store original pointer
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
@@ -821,7 +821,7 @@ void testBmiCopyAssocUpdate(void) {
   Term key = newI60(7);
   Term val = newI60(13);
   int64_t hash = sha1((FnArity *)0, key);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
   Term newVal = newI60(77);
@@ -861,7 +861,7 @@ void testBmiGet(void) {
   Term key = newI60(137);
   Term val = newI60(251);
   int64_t hash = sha1((FnArity *)0, key);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Lookup existing key
   // bmiGet frees the node and default, returns incRef'd value
@@ -890,7 +890,7 @@ void testBmiDissoc(void) {
   Term key = newI60(137);
   Term val = newI60(251);
   int64_t hash = sha1((FnArity *)0, key);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Remove the only key — should return emptyBMI
   Value *afterDissoc = bmiDissoc((Value *)result, (Value *)key, hash, 0);
@@ -913,12 +913,12 @@ void testBmiDissocEmpty(void) {
   Term key1 = newI60(0);   // hash bit 13
   Term val1 = newI60(251);
   int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   Term key2 = newI60(1);   // hash bit 29
   Term val2 = newI60(888);
   int64_t hash2 = sha1((FnArity *)0, key2);
-  result = bmiMutateAssoc(result, (Value *)key2, (Value *)val2, hash2, 0);
+  result = bmiMutateAssoc((BitmapIndexedNode *)result, key2, val2, hash2, 0);
 
   // Verify we have 2 entries
   BitmapIndexedNode *bm2 = (BitmapIndexedNode *)result;
@@ -964,12 +964,12 @@ void testBmiCount(void) {
   Term key1 = newI60(0);
   Term val1 = newI60(251);
   int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   Term key2 = newI60(1);
   Term val2 = newI60(888);
   int64_t hash2 = sha1((FnArity *)0, key2);
-  result = bmiMutateAssoc(result, (Value *)key2, (Value *)val2, hash2, 0);
+  result = bmiMutateAssoc((BitmapIndexedNode *)result, key2, val2, hash2, 0);
 
   // Count entries
   Value *countResult = bmiCount(result);
@@ -998,7 +998,7 @@ void testBmiGetMiss(void) {
   Term key = newI60(137);
   Term val = newI60(251);
   int64_t hash = sha1((FnArity *)0, key);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Create a different key that won't match
   Term missKey = newI60(999);
@@ -1032,7 +1032,7 @@ void testBmiCopyAssocBranch(void) {
   Term key1 = newI60(137);
   Term val1 = newI60(251);
   int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
   int bit1 = bitpos(hash1, 0);
@@ -1107,7 +1107,7 @@ void testBmiCopyAssocSubNodeNoChange(void) {
   Term key1 = newI60(137);
   Term val1 = newI60(251);
   int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
   int bit1 = bitpos(hash1, 0);
@@ -1161,7 +1161,7 @@ void testBmiCopyAssocSubNodeChange(void) {
   Term key1 = newI60(137);
   Term val1 = newI60(251);
   int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
   int bit1 = bitpos(hash1, 0);
@@ -1232,7 +1232,7 @@ void testBmiCopyAssocCollision(void) {
   Term keyA = COLLIDE_KEY_A;
   Term valA = newI60(10);
   int64_t hashA = sha1((FnArity *)0, keyA);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)keyA, (Value *)valA, hashA, 0);
+  Value *result = bmiMutateAssoc(node, keyA, valA, hashA, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
@@ -1296,7 +1296,7 @@ void testBmiHashVec(void) {
   Term key1 = newI60(100);
   Term val1 = newI60(200);
   int64_t hash1 = integerSha1(key1);
-  Value *result = bmiMutateAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   int bit1 = bitpos(hash1, 0);
   Term key2 = newI60(300);
@@ -1308,7 +1308,7 @@ void testBmiHashVec(void) {
     bit2 = bitpos(hash2, 0);
   }
   Term val2 = newI60(400);
-  result = bmiMutateAssoc(result, (Value *)key2, (Value *)val2, hash2, 0);
+  result = bmiMutateAssoc((BitmapIndexedNode *)result, key2, val2, hash2, 0);
 
   Term key3 = newI60(1);
   int64_t hash3 = integerSha1(key3);
@@ -1319,7 +1319,7 @@ void testBmiHashVec(void) {
     bit3 = bitpos(hash3, 0);
   }
   Term val3 = newI60(600);
-  result = bmiMutateAssoc(result, (Value *)key3, (Value *)val3, hash3, 0);
+  result = bmiMutateAssoc((BitmapIndexedNode *)result, key3, val3, hash3, 0);
 
   BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
   if (__builtin_popcount(bm->bitmap) != 3) {
