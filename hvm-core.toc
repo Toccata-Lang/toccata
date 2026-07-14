@@ -179,6 +179,7 @@ abort();
 
 ;; For types that emulate a key/value store
 (defp assoc [m k v])
+(defp copyAssoc [m k v])
 (defp dissoc [m k])
 (defp get [m k]
   ;; Retrieve the value associated with `k` in `m`, wrapped in a `Maybe` if it exists.
@@ -980,13 +981,65 @@ abort();
   (inline Integer "
    result = newI60(bitpos(getI60(hash_1), getI60(shift_2)));\n"))
 
+(defn bmiClone [bmi bit key val]
+  ! bmi BitmapIndexedNode
+  ! bit Integer
+  (inline BitmapIndexedNode "
+   result = (Term)bmiClone((BitmapIndexedNode *)bmi_1, getI60(bit_2), key_3, val_4);"))
+
+(defn bmiUpdate [bmi bit child]
+  ! bmi BitmapIndexedNode
+  ! bit Integer
+  ! child HashMap
+  (inline BitmapIndexedNode "
+   result = (Term)bmiUpdate((BitmapIndexedNode *)bmi_1, getI60(bit_2), child_3);"))
+
+(defn bmiChild [bmi bit]
+  ! bmi BitmapIndexedNode
+  ! bit Integer
+  ;; !returns (any-of (Some HashMap) None)
+  (inline "
+   Term child = (Term)bmiChild((BitmapIndexedNode *)bmi_1, getI60(bit_2));
+   if (child != 0)
+     result = some(child);
+   else
+     result = nothing();"))
+
+(defn bmiKey [bmi bit]
+  ! bmi BitmapIndexedNode
+  ! bit Integer
+  (inline "
+   result = (Term)bmiKey((BitmapIndexedNode *)bmi_1, getI60(bit_2));"))
+
+(defn bmiVal [bmi bit]
+  ! bmi BitmapIndexedNode
+  ! bit Integer
+  (inline "
+   result = (Term)bmiVal((BitmapIndexedNode *)bmi_1, getI60(bit_2));"))
+
+(defn bmiReplaceCopied [bmi key val hash shift currKey currVal]
+  ! bmi BitmapIndexedNode
+  ! hash Integer
+  ! shift Integer
+  (inline BitmapIndexedNode "
+   result = (Term)bmiReplaceCopied((BitmapIndexedNode *)bmi_1, key_2, val_3, getI60(hash_4), getI60(shift_5), currKey_6, currVal_7);")
+  )
+
 (defn bmiCopyAssoc [m k v hash shift]
   ! m BitmapIndexedNode
   (let [bit (bitpos hash shift)]
-    ;; TODO: use int-cond here. It's broken for some reason
     (int-cond (bit-and bit (bmiBitMap m))
-          m
-          (addCopiedBMI m k v hash shift))))
+              (either (map (bmiChild m bit)
+                           (fn [childNode]
+                             (bmiUpdate m bit (copyAssoc childNode k v hash (+ 5 shift)))))
+                      (let [currKey (bmiKey m bit)
+                            currVal (bmiVal m bit)]
+                        (cond (= currKey k)
+                              (cond (= currVal v)
+                                    m
+                                    (bmiReplaceCopied m bit v))
+                              (bmiReplaceCopied m k v hash shift currKey currVal))))
+              (addCopiedBMI m k v hash shift))))
 
 (extend-type BitmapIndexedNode
   (count [m]
@@ -994,6 +1047,9 @@ abort();
 
   (vec [m]
     (bmiHashVec m))
+
+  (copyAssoc [m k v]
+    (bmiCopyAssoc m k v (sha1 k) 0))
 
   (assoc [m k v]
     (bmiCopyAssoc m k v (sha1 k) 0))

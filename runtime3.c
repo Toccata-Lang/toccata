@@ -2070,7 +2070,7 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
   }
 }
 
-Value *replaceKeyCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift, Term currKey, Term currVal) {
+Value *bmiReplaceCopied(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift, Term currKey, Term currVal) {
   int bit = bitpos(hash, shift);
   int idx = __builtin_popcount(node->bitmap & (bit - 1));
 
@@ -2127,6 +2127,16 @@ Value *bmiClone(BitmapIndexedNode *node, int bit, Term key, Term val) {
   return((Value *)newNode);
 }
 
+Term bmiKey(BitmapIndexedNode *node, int bit) {
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+  return node->array[2 * idx];
+}
+
+Term bmiVal(BitmapIndexedNode *node, int bit) {
+  int idx = __builtin_popcount(node->bitmap & (bit - 1));
+  return node->array[2 * idx + 1];
+}
+
 Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, int shift) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int bit = bitpos(hash, shift);
@@ -2149,7 +2159,7 @@ Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, i
 	return bmiClone(node, bit, key, val);
       }
     } else {
-      return replaceKeyCopiedBMI(node, key, val, hash, shift, keyOrNull, valOrNode);
+      return bmiReplaceCopied(node, key, val, hash, shift, keyOrNull, valOrNode);
     }
   } else {
     return addCopiedBMI(node, key, val, hash, shift);
@@ -3031,21 +3041,10 @@ void intCond(Term ref, Term args) {
   }
 
   args = take(portLoc(2, args)); 
-  Term trueBranch = take(portLoc(1, args)); 
-
-  if (termTag(trueBranch) == VAR) {
-    varArg(trueBranch, ref, args, &argsStruct);
-    return;
-  }
+  Term trueBranch = newTerm(VAR, 0, (portLoc(1, args))); 
 
   args = take(portLoc(2, args)); 
-  Term falseBranch = take(portLoc(1, args)); 
-
-  if (termTag(falseBranch) == VAR) {
-    argsStruct.args[argsStruct.count++] = trueBranch;
-    varArg(falseBranch, ref, args, &argsStruct);
-    return;
-  }
+  Term falseBranch = newTerm(VAR, 0, (portLoc(1, args))); 
 
   long x = getI60(argsStruct.args[0]);
   if (x == 0) {
