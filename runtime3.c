@@ -1891,7 +1891,7 @@ int8_t equal(Value *v1, Value *v2) {
   if ((termTag(t1) == VAL) && (termTag(t2) == VAL)) {
   // For other types, use equalSTAR
     // assuming they're both Strings
-    Term equals = strCmp(t1, t2, 0);
+    Term equals = strCmp(t1, t2, STR_EQ);
     int8_t notEquals = isNothing(equals);
     dec_and_free((Term)equals, 1);
     return(!notEquals);

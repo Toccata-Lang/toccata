@@ -862,8 +862,11 @@ void testBmiCopyAssocUpdate(void) {
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
-  // Call bmiCopyAssoc with same key, I60 value — should clone
-  Term newVal = newI60(77);
+  // Call bmiCopyAssoc with same key, allocated String value — should clone
+  String *strValNew = malloc_string(5);
+  memcpy(strValNew->buffer, "world", 5);
+  strValNew->len = 5;
+  Term newVal = termVal((Term)strValNew);
   Value *updateResult = bmiCopyAssoc(original, key, newVal, hash, 0);
 
   // Verify different pointer returned (clone created)
