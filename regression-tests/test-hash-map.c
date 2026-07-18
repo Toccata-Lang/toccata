@@ -351,15 +351,18 @@ void testBmiCopyAssoc(void) {
   // Create empty BMI node
   BitmapIndexedNode *node = malloc_bmiNode(0);
 
-  // Key = I60(137), value = I60(251)
+  // Key = I60(137), value = heap-allocated String("hello")
   Term key = newI60(137);
-  Term val = newI60(251);
+  String *strVal = malloc_string(5);
+  memcpy(strVal->buffer, "hello", 5);
+  strVal->len = 5;
+  Term val = termVal((Term)strVal);
 
   // Compute hash of key
   int64_t hash = sha1((FnArity *)0, key);
 
   // Add key/value to empty BMI at shift=0
-  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
+  Value *result = bmiCopyAssoc(node, key, val, hash, 0);
 
   // Verify result is a BMI node
   if (((BitmapIndexedNode *)result)->type != BitmapIndexedType) {
@@ -385,8 +388,8 @@ void testBmiCopyAssoc(void) {
   // Clean up
   dec_and_free((Term)result, 1);
 
-  // Pools already created by allocator tests. No new allocations.
-  check_counts("testBmiCopyAssoc", 0, 0);
+  // malloc_string(+1), all freed/recycled.
+  check_counts("testBmiCopyAssoc", 1, 0);
 }
 
 // Test: same key, different value → in-place update (1c)
