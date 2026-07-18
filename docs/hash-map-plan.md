@@ -628,7 +628,7 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 - [ ] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
 
 ### Phase 3: BMI copyAssoc Tests
-- [ ] `testBmiCopyAssoc` — add key/value to empty BMI (B2)
+- [x] `testBmiCopyAssoc` — add key/value to empty BMI (B2)
 - [ ] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
 - [ ] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
 - [ ] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)

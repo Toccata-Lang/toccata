@@ -351,8 +351,11 @@ void testBmiCopyAssoc(void) {
   // Create empty BMI node
   BitmapIndexedNode *node = malloc_bmiNode(0);
 
-  // Key = I60(137), value = heap-allocated String("hello")
-  Term key = newI60(137);
+  // Key = heap-allocated String("key137"), value = heap-allocated String("hello")
+  String *strKey = malloc_string(6);
+  memcpy(strKey->buffer, "key137", 6);
+  strKey->len = 6;
+  Term key = termVal((Term)strKey);
   String *strVal = malloc_string(5);
   memcpy(strVal->buffer, "hello", 5);
   strVal->len = 5;
@@ -388,8 +391,8 @@ void testBmiCopyAssoc(void) {
   // Clean up
   dec_and_free((Term)result, 1);
 
-  // malloc_string(+1), all freed/recycled.
-  check_counts("testBmiCopyAssoc", 1, 0);
+  // malloc_string(+2), all freed/recycled.
+  check_counts("testBmiCopyAssoc", 2, 0);
 }
 
 // Test: same key, different value → in-place update (1c)
