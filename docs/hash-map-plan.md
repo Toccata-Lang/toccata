@@ -619,6 +619,7 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 - [x] `testFreeHashCollisionNode` — freeHashCollisionNode actual free
 
 ### Phase 2: BMI mutateAssoc Tests (7 paths)
+- [x] `testBmiMutateAssoc` — refs==1, empty BMI → insert single entry (2b)
 - [ ] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
 - [ ] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
 - [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
@@ -629,7 +630,7 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 
 ### Phase 3: BMI copyAssoc Tests
 - [x] `testBmiCopyAssoc` — add key/value to empty BMI (B2)
-- [ ] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
+- [x] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
 - [ ] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
 - [ ] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
 - [ ] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)

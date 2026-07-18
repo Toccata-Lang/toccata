@@ -866,7 +866,7 @@ void testBmiCopyAssocNoOp(void) {
   // Clean up
   dec_and_free((Term)noOpResult, 1);
 
-  check_counts("testBmiCopyAssocNoOp", 10, 0);
+  check_counts("testBmiCopyAssocNoOp", 0, 0);
 }
 
 // Test: same key, different value → clone with updated value (A2b)
@@ -2373,7 +2373,7 @@ void testBmiMutateAssoc(void) {
   // Clean up
   dec_and_free((Term)result, 1);
 
-  check_counts("testBmiMutateAssoc", 22, 0);
+  check_counts("testBmiMutateAssoc", 0, 0);
 }
 
 int main(int argc, char **argv) {
@@ -2392,15 +2392,15 @@ int main(int argc, char **argv) {
   // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
   (void)malloc_vector();
 
-  // testEmptyBmiNode();
-  // testBmiNodeOneItem();
-  // testArrayNode();
-  // testCollisionNode();
-  // testFreeBitmapNodeHighCount();
-  // testFreeArrayNode();
-  // testFreeHashCollisionNode();
-  // testBmiCopyAssoc();
-  // testBmiMutateAssoc();
+  testEmptyBmiNode();
+  testBmiNodeOneItem();
+  testArrayNode();
+  testCollisionNode();
+  testFreeBitmapNodeHighCount();
+  testFreeArrayNode();
+  testFreeHashCollisionNode();
+  testBmiCopyAssoc();
+  testBmiMutateAssoc();
   testBmiCopyAssocNoOp();
   // testBmiCopyAssocUpdate();
   // testBmiGet();
