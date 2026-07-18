@@ -2043,6 +2043,7 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
     int jdx = mask(hash, shift);
     int newShift = shift + 5;
     // TODO: why cloning emptyBMI?
+    BOOM("wtf");
     newNode->array[jdx] = (Term)cloneBitmapIndexedNode(&emptyBMI, idx, key, val);
 
     // copy the elements of the original 'node' to the new ArrayNode
@@ -2056,6 +2057,7 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	} else {
 	  // it's a k/v pair, create a new BitmapIndexedNode for that level
 	  // TODO: why cloning emptyBMI?
+	  BOOM("wtf");
 	  newNode->array[i] = (Term)cloneBitmapIndexedNode(&emptyBMI, 0,
 							   incRef(node->array[j], 2),
 							   incRef(node->array[j + 1], 1));
@@ -2103,6 +2105,7 @@ Value *addMutateBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
     int jdx = mask(hash, shift);
     int newShift = shift + 5;
     // TODO: why cloning emptyBMI?
+    BOOM("wtf");
     newNode->array[jdx] = (Term)cloneBitmapIndexedNode(&emptyBMI, idx, key, val);
 
     // copy the elements of the original 'node' to the new ArrayNode
@@ -2115,6 +2118,7 @@ Value *addMutateBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	  node->array[j + 1] = 0;
 	} else {
 	  // TODO: why cloning emptyBMI?
+	  BOOM("wtf");
 	  newNode->array[i] = (Term)cloneBitmapIndexedNode(&emptyBMI, 0,
 							   incRef(node->array[j], 2),
 							   incRef(node->array[j + 1], 1));
@@ -2264,6 +2268,7 @@ Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
   if (node->bitmap & bit) {
     Term child = bmiChild(node, bit);
     if (child != 0) {
+      BOOM("test");
       Term n = (Term)copyAssoc(incRefVal(child, 1), (Value *)key, (Value *)val, hash, shift + 5);
       return bmiUpdate(node, bit, n);
     }
@@ -2279,6 +2284,7 @@ Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	return bmiClone(node, bit, key, val);
       }
     } else {
+      BOOM("test");
       return bmiReplaceCopied(node, key, val, hash, shift, currKey, currVal);
     }
   } else {
@@ -2288,13 +2294,16 @@ Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 
 Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift) {
   if (node->refs != 1) {
+      BOOM("test");
     return(bmiCopyAssoc(node, key, val, hash, shift));
   } else {
     int bit = bitpos(hash, shift);
     if (node->bitmap & bit) {
+      BOOM("test");
       // if the hash position is already filled
       Term child = bmiChild(node, bit);
       if (child != 0) {
+      BOOM("test");
 	// There is no key in the position, so currVal is
 	// pointer to a node.
 	Term n = (Term)mutateAssoc((Value *)child, (Value *)key, (Value *)val, hash, shift + 5);
@@ -2308,12 +2317,14 @@ Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash,
       Term currVal = bmiVal(node, bit);
       int idx = __builtin_popcount(node->bitmap & (bit - 1));
       if (equal(incRefVal(key, 1), incRefVal(currKey, 1))) {
+      BOOM("test");
 	bmiSetKey(node, bit, key);
 	bmiSetVal(node, bit, val);
 	dec_and_free((Term)currVal, 1);
 	dec_and_free((Term)currKey, 1);
 	return((Value *)node);
       } else {
+      BOOM("test");
 	return bmiReplaceMutate(node, key, val, hash, shift, currKey, currVal);
       }
     } else {
