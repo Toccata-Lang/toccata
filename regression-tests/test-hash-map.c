@@ -13,9 +13,7 @@ refMap refNames[0];
 unsigned subGraphs = 0;
 void subGraph(const char *name, Term t, int depth, int id) {}
 
-// Stub: equalSTAR aborts (only I60 terms are tested, handled separately in equal())
 Value *noImpl2(FnArity *arity, Value *v1, Value *v2) { abort(); }
-Value *(*equalSTAR)(FnArity *, Value *, Value *) = noImpl2;
 
 // Forward declarations for functions defined in runtime3.c
 BitmapIndexedNode *malloc_bmiNode(int itemCount);
@@ -87,23 +85,6 @@ Term testingSha1CollisionAdd(FnArity *f, Term trm) {
     return COLLIDE_HASH_ADD;
   }
   return testingSha1(f, trm);
-}
-
-// Custom equal: KEY_A and KEY_B compare equal (update test)
-Value *testingEqual(FnArity *arity, Value *v1, Value *v2) {
-  Term t1 = (Term)(v1);
-  Term t2 = (Term)(v2);
-  if ((t1 == COLLIDE_KEY_A && t2 == COLLIDE_KEY_B) ||
-      (t1 == COLLIDE_KEY_B && t2 == COLLIDE_KEY_A)) {
-    return (Value *)v1;  // return non-nothing
-  }
-  return noImpl2(arity, v1, v2);
-}
-
-// Custom equal: KEY_C and KEY_D do NOT compare equal (add test)
-Value *testingEqualAdd(FnArity *arity, Value *v1, Value *v2) {
-  // Never match — all collisions are different keys
-  return noImpl2(arity, v1, v2);
 }
 
 // Helper: check if a term is an I60 with the same value as key
@@ -604,11 +585,9 @@ void testBmiMutateAssocCollision(void) {
 
   // Save original sha1 and equal
   Term (*savedSha1)(FnArity *, Term) = sha1;
-  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
 
   // Install collision-aware sha1 and non-equal equal
   sha1 = testingSha1CollisionAdd;
-  equalSTAR = testingEqualAdd;
 
   // Create single-item BMI node with KEY_A
   BitmapIndexedNode *node = malloc_bmiNode(1);
@@ -669,7 +648,6 @@ void testBmiMutateAssocCollision(void) {
   check_counts("testBmiMutateAssocCollision", 1, 1, __LINE__);
 
   sha1 = savedSha1;
-  equalSTAR = savedEqual;
 }
 
 // Test: sub-node case — mutate inner key/value (1a)
@@ -1280,11 +1258,9 @@ void testBmiCopyAssocCollision(void) {
 
   // Save original sha1 and equal
   Term (*savedSha1)(FnArity *, Term) = sha1;
-  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
 
   // Install collision-aware sha1 and non-equal equal
   sha1 = testingSha1CollisionAdd;
-  equalSTAR = testingEqualAdd;
 
   // Create single-item BMI node with KEY_A
   BitmapIndexedNode *node = malloc_bmiNode(1);
@@ -1343,7 +1319,6 @@ void testBmiCopyAssocCollision(void) {
   check_counts("testBmiCopyAssocCollision", 1, 1, __LINE__);
 
   sha1 = savedSha1;
-  equalSTAR = savedEqual;
 }
 
 // Test: flatten BMI to vector of pairs
@@ -1983,11 +1958,9 @@ void testCollisionAssocAdd(void) {
 
   // Save original sha1 and equal
   Term (*savedSha1)(FnArity *, Term) = sha1;
-  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
 
   // Install collision-aware sha1 and equal (keys DON'T compare equal)
   sha1 = testingSha1CollisionAdd;
-  equalSTAR = testingEqualAdd;
 
   // Create collision node with KEY_C -> VAL_C
   Term keyC = COLLIDE_KEY_C;
@@ -2036,7 +2009,6 @@ void testCollisionAssocAdd(void) {
 
   // Restore
   sha1 = savedSha1;
-  equalSTAR = savedEqual;
 }
 
 // Test: update an existing key in a collision node
@@ -2046,11 +2018,9 @@ void testCollisionAssocUpdate(void) {
 
   // Save original sha1 and equal
   Term (*savedSha1)(FnArity *, Term) = sha1;
-  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
 
   // Install collision-aware sha1
   sha1 = testingSha1Collision;
-  // equalSTAR not needed — equal() does direct I60 comparison
 
   // Create collision node with KEY_A -> VAL_A
   Term keyA = COLLIDE_KEY_A;
@@ -2081,7 +2051,6 @@ void testCollisionAssocUpdate(void) {
   check_counts("testCollisionAssocUpdate", 2, 2, __LINE__);
 
   sha1 = savedSha1;
-  equalSTAR = savedEqual;
 }
 
 // Test: add a key with different hash to collision node
@@ -2090,10 +2059,8 @@ void testCollisionAssocPromote(void) {
   reset_counters();
 
   Term (*savedSha1)(FnArity *, Term) = sha1;
-  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
 
   sha1 = testingSha1Collision;
-  equalSTAR = testingEqual;
 
   // Create collision node with KEY_A -> VAL_A
   Term keyA = COLLIDE_KEY_A;
@@ -2120,7 +2087,6 @@ void testCollisionAssocPromote(void) {
   check_counts("testCollisionAssocPromote", 1, 1, __LINE__);
 
   sha1 = savedSha1;
-  equalSTAR = savedEqual;
 }
 
 // Test: collisionCount returns correct entry count
@@ -2216,10 +2182,6 @@ void testCollisionVec(void) {
 void testCollisionDissoc(void) {
   reset_counters();
 
-  // Save original equal
-  Value *(*savedEqual)(FnArity *, Value *, Value *) = equalSTAR;
-  equalSTAR = testingEqualAdd;
-
   // Create collision node with 2 entries
   Term keyA = COLLIDE_KEY_A;
   Term valA = newI60(11);
@@ -2272,8 +2234,6 @@ void testCollisionDissoc(void) {
 
   // Original node + new node from malloc_hashCollisionNode: malloc_count=2.
   check_counts("testCollisionDissoc", 2, 2, __LINE__);
-
-  equalSTAR = savedEqual;
 }
 
 // Test: collisionGet looks up a key in collision node

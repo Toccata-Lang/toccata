@@ -30,7 +30,9 @@ FILE *outstream;
 Value *(*prErrSTAR)(Value *str);
 
 void prefs(char *tag, Value *v) {
-  if (v != (Value *)0)
+  if (termTag((Term)v) == I60) {
+    fprintf(stderr, "%s: I60\n", tag);
+  } else if (v != (Value *)0)
     fprintf(stderr, "%s: %p %d\n", tag, v, v->refs);
   else
     fprintf(stderr, "%s: %p\n", tag, v);
@@ -1528,7 +1530,7 @@ Term strCmp(Term sT, Term tgtT, int success) {
     start = getI60(str1->impls[1]);
     len0 = getI60(str1->impls[2]);
   } else {
-    BOOM("Invalid string comparicon arguments");
+    BOOM("Invalid string comparison arguments");
   }
 
   s1 = &str0->buffer[start];
@@ -1545,7 +1547,7 @@ Term strCmp(Term sT, Term tgtT, int success) {
     len1 = getI60(str1->impls[2]);
     s2 = &parent->buffer[start];
   } else {
-    BOOM("Invalid string comparicon arguments");
+    BOOM("Invalid string comparison arguments");
   }
 
   long len = len0 < len1 ? len0 : len1;
@@ -1873,19 +1875,29 @@ int8_t equal(Value *v1, Value *v2) {
   // Handle I60 terms (encoded as Term values, not actual Value pointers)
   Term t1 = (Term)(v1);
   Term t2 = (Term)(v2);
-  if ((t1 & TAG_MASK) == I60 && (t2 & TAG_MASK) == I60) {
+  if ((termTag(t1) == I60) && (termTag(t2) == I60)) {
     return(getI60(t1) == getI60(t2));
   }
-  // Different types are never equal
-  if (((t1 & TAG_MASK) == I60) != ((t2 & TAG_MASK) == I60)) {
+  // I60's can only be equal to other I60's
+  if ((termTag(t1) == I60) && (termTag(t2) == VAL)) {
+    dec_and_free((Term)t2, 1);
     return 0;
   }
+  if ((termTag(t1) == VAL) && (termTag(t2) == I60)) {
+    dec_and_free((Term)t1, 1);
+    return 0;
+  }
+
+  if ((termTag(t1) == VAL) && (termTag(t2) == VAL)) {
   // For other types, use equalSTAR
-  BOOM("can't use equalSTAR");
-  Value *equals = equalSTAR((FnArity *)0, v1, v2);
-  int8_t notEquals = isNothing((Term)equals);
-  dec_and_free((Term)equals, 1);
-  return(!notEquals);
+    // assuming they're both Strings
+    Term equals = strCmp(t1, t2, 0);
+    int8_t notEquals = isNothing(equals);
+    dec_and_free((Term)equals, 1);
+    return(!notEquals);
+  }
+  BOOM("equals not implemented");
+  return 0;
 }
 
 Value *stringValue(char *s) {
@@ -1921,7 +1933,6 @@ Term vectorGet(Term v, Term n) {
 BitmapIndexedNode *cloneBitmapIndexedNode(BitmapIndexedNode *node, int idx,
                                            Term key, Term val)
 {
-  
   int itemCount = __builtin_popcount(node->bitmap);
   BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
   newNode->bitmap = node->bitmap;
@@ -2031,6 +2042,7 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
     // create BitmapIndexedNode for next level down
     int jdx = mask(hash, shift);
     int newShift = shift + 5;
+    // TODO: why cloning emptyBMI?
     newNode->array[jdx] = (Term)cloneBitmapIndexedNode(&emptyBMI, idx, key, val);
 
     // copy the elements of the original 'node' to the new ArrayNode
@@ -2043,6 +2055,7 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	  incRef(newNode->array[i], 1);
 	} else {
 	  // it's a k/v pair, create a new BitmapIndexedNode for that level
+	  // TODO: why cloning emptyBMI?
 	  newNode->array[i] = (Term)cloneBitmapIndexedNode(&emptyBMI, 0,
 							   incRef(node->array[j], 2),
 							   incRef(node->array[j + 1], 1));
@@ -2089,6 +2102,7 @@ Value *addMutateBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
     // create BitmapIndexedNode for next level down
     int jdx = mask(hash, shift);
     int newShift = shift + 5;
+    // TODO: why cloning emptyBMI?
     newNode->array[jdx] = (Term)cloneBitmapIndexedNode(&emptyBMI, idx, key, val);
 
     // copy the elements of the original 'node' to the new ArrayNode
@@ -2100,6 +2114,7 @@ Value *addMutateBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	  newNode->array[i] = node->array[j + 1];
 	  node->array[j + 1] = 0;
 	} else {
+	  // TODO: why cloning emptyBMI?
 	  newNode->array[i] = (Term)cloneBitmapIndexedNode(&emptyBMI, 0,
 							   incRef(node->array[j], 2),
 							   incRef(node->array[j + 1], 1));
