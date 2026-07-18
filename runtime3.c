@@ -605,6 +605,7 @@ void freeBitmapNode(Value *v) {
     if (!cleaningUp)
       free(v);
   } else {
+    v->refs = refsError;
     v->next = freeBMINodes[cnt].head;
     freeBMINodes[cnt].head = v;
   }
@@ -681,6 +682,7 @@ void freeArrayNode(Value *v) {
       dec_and_free(node->array[i], 1);
     }
   }
+  v->refs = refsError;
   v->next = freeArrayNodes.head;
   freeArrayNodes.head = v;
 }
@@ -2211,10 +2213,13 @@ Value *bmiReplaceMutate(BitmapIndexedNode *node, Term key, Term val, int64_t has
 
 Term bmiChild(BitmapIndexedNode *node, int bit) {
   int idx = __builtin_popcount(node->bitmap & (bit - 1));
-  if (node->array[2 * idx] == 0)
-    return node->array[2 * idx + 1];
-  else
-    return 0;
+  Term result = 0;
+  if (node->array[2 * idx] == 0) {
+    result = node->array[2 * idx + 1];
+    incRef(result, 1);
+  }
+  dec_and_free((Term)node, 1);
+  return result;
 }
 
 Value *bmiUpdate(BitmapIndexedNode *node, int bit, Term child) {
