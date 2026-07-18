@@ -2339,9 +2339,15 @@ void testBmiMutateAssoc(void) {
   // Set refs==1 so bmiMutateAssoc takes the in-place path
   ((Value *)node)->refs = 1;
 
-  // Add a single key/value
-  Term key = newI60(137);
-  Term val = newI60(251);
+  // Add a single key/value using String terms
+  String *strKey = malloc_string(6);
+  memcpy(strKey->buffer, "key137", 6);
+  strKey->len = 6;
+  Term key = termVal((Term)strKey);
+  String *strVal = malloc_string(5);
+  memcpy(strVal->buffer, "hello", 5);
+  strVal->len = 5;
+  Term val = termVal((Term)strVal);
   int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
@@ -2367,7 +2373,7 @@ void testBmiMutateAssoc(void) {
   // Clean up
   dec_and_free((Term)result, 1);
 
-  check_counts("testBmiMutateAssoc", 20, 0);
+  check_counts("testBmiMutateAssoc", 22, 0);
 }
 
 int main(int argc, char **argv) {
