@@ -2244,7 +2244,7 @@ Value *bmiClone(BitmapIndexedNode *node, int bit, Term key, Term val) {
 Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift) {
   int bit = bitpos(hash, shift);
   if (node->bitmap & bit) {
-    Term child = bmiChild(node, bit);
+    Term child = bmiChild((BitmapIndexedNode *)incRef((Term)node, 1), bit);
     if (child != 0) {
       Term n = (Term)copyAssoc(incRefVal(child, 1), (Value *)key, (Value *)val, hash, shift + 5);
       return bmiUpdate(node, bit, n);
@@ -2275,7 +2275,7 @@ Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash,
     int bit = bitpos(hash, shift);
     if (node->bitmap & bit) {
       // if the hash position is already filled
-      Term child = bmiChild(node, bit);
+      Term child = bmiChild((BitmapIndexedNode *)incRef((Term)node, 1), bit);
       if (child != 0) {
 	// There is no key in the position, so currVal is
 	// pointer to a node.

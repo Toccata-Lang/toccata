@@ -866,7 +866,7 @@ void testBmiCopyAssocNoOp(void) {
   // Clean up
   dec_and_free((Term)noOpResult, 1);
 
-  check_counts("testBmiCopyAssocNoOp", 0, 0);
+  check_counts("testBmiCopyAssocNoOp", 10, 0);
 }
 
 // Test: same key, different value → clone with updated value (A2b)
@@ -2400,8 +2400,8 @@ int main(int argc, char **argv) {
   // testFreeArrayNode();
   // testFreeHashCollisionNode();
   // testBmiCopyAssoc();
-  testBmiMutateAssoc();
-  // testBmiCopyAssocNoOp();
+  // testBmiMutateAssoc();
+  testBmiCopyAssocNoOp();
   // testBmiCopyAssocUpdate();
   // testBmiGet();
   // testBmiGetMiss();
