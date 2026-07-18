@@ -230,7 +230,7 @@ Value *simpleIncRef(Value *v, int n);
 void dec_and_free(Term v, int deltaRefs);
 void decValRef(Term pv, int deltaRefs);
 
-void prefs(char *tag, Value *v);
+void prefs(char *tag, Term v);
 
 extern Value *(*equalSTAR)(FnArity *, Value *, Value *);
 extern Value *(*dissoc)(FnArity *, Value *, Value *, Value *, Value *);

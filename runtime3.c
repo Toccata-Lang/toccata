@@ -29,13 +29,13 @@ BitmapIndexedNode emptyBMI = {BitmapIndexedType, -2, 0, 0};
 FILE *outstream;
 Value *(*prErrSTAR)(Value *str);
 
-void prefs(char *tag, Value *v) {
-  if (termTag((Term)v) == I60) {
+void prefs(char *tag, Term v) {
+  if (termTag(v) == I60) {
     fprintf(stderr, "%s: I60\n", tag);
-  } else if (v != (Value *)0)
-    fprintf(stderr, "%s: %p %d\n", tag, v, v->refs);
+  } else if (v != 0)
+    fprintf(stderr, "%s: %p %d\n", tag, (void *)v, ((Value *)v)->refs);
   else
-    fprintf(stderr, "%s: %p\n", tag, v);
+    fprintf(stderr, "%s: %p\n", tag, (void *)v);
 }
 
 int64_t malloc_count = 0;

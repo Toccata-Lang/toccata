@@ -166,7 +166,8 @@ static int64_t countFreeList(FreeValList *fl) {
 static int64_t countPoolObjects(void) {
   int64_t total = 0;
   moveFreeToCentral();
-  for (int i = 0; i < BMI_RECYCLE_COUNT; i++) total += countFreeList((FreeValList *)&centralFreeBMINodes[i]);
+  for (int i = 0; i < BMI_RECYCLE_COUNT; i++)
+    total += countFreeList((FreeValList *)&centralFreeBMINodes[i]);
   total += countFreeList((FreeValList *)&centralFreeArrayNodes);
   total += countFreeList((FreeValList *)&centralFreeStrings);
   total += countFreeList((FreeValList *)&centralFreeVectors);
@@ -854,20 +855,18 @@ void testBmiCopyAssocUpdate(void) {
 
   // Create single-item BMI node with I60 key and String value
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key = newI60(7);
-  Value *valStr = stringValue("hello");
-  Term val = (Term)valStr;
-  int64_t hash = sha1((FnArity *)0, key);
-  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
+  Term key1 = (Term)stringValue("keyst");
+  Term val1 = (Term)stringValue("hello");
+  int64_t hash = sha1((FnArity *)0, key1);
+  Value *result = bmiMutateAssoc(node, key1, val1, hash, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  int64_t orig_bitmap = original->bitmap;
 
-  // Call bmiCopyAssoc with same key, allocated String value — should clone
-  String *strValNew = malloc_string(5);
-  memcpy(strValNew->buffer, "world", 5);
-  strValNew->len = 5;
-  Term newVal = termVal((Term)strValNew);
-  Value *updateResult = bmiCopyAssoc(original, key, newVal, hash, 0);
+  // Call bmiCopyAssoc with same key, different String value — should clone (A2b)
+  Term newVal = (Term)stringValue("world");
+  Term key2 = (Term)stringValue("keyst");
+  Value *updateResult = bmiCopyAssoc(original, key2, newVal, hash, 0);
 
   // Verify different pointer returned (clone created)
   if (updateResult == (Value *)original) {
@@ -875,7 +874,7 @@ void testBmiCopyAssocUpdate(void) {
   }
 
   // Verify bitmap unchanged
-  if (((BitmapIndexedNode *)updateResult)->bitmap != original->bitmap) {
+  if (((BitmapIndexedNode *)updateResult)->bitmap != orig_bitmap) {
     BOOM("bitmap should be unchanged");
   }
 
@@ -889,7 +888,7 @@ void testBmiCopyAssocUpdate(void) {
   // Clean up
   dec_and_free((Term)updateResult, 1);
 
-  check_counts("testBmiCopyAssocUpdate", 0, 0, __LINE__);
+  check_counts("testBmiCopyAssocUpdate", 2, 0, __LINE__);
 }
 
 // Test: lookup existing key returns the value
@@ -2353,6 +2352,7 @@ int main(int argc, char **argv) {
 
   // Trigger malloc_reified pool once before tests (5000-entry pool)
   (void)nothing();
+  (void)some(newI60(55));
 
   // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
   (void)malloc_vector();
