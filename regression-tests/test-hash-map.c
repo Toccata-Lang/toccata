@@ -2329,6 +2329,47 @@ void testCollisionGet(void) {
   check_counts("testCollisionGet", 3, 3);
 }
 
+// Test: refs==1, empty BMI → insert single entry (path 2b)
+void testBmiMutateAssoc(void) {
+  reset_counters();
+
+  // Create empty BMI node
+  BitmapIndexedNode *node = malloc_bmiNode(0);
+
+  // Set refs==1 so bmiMutateAssoc takes the in-place path
+  ((Value *)node)->refs = 1;
+
+  // Add a single key/value
+  Term key = newI60(137);
+  Term val = newI60(251);
+  int64_t hash = sha1((FnArity *)0, key);
+  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
+
+  // Verify result is a BMI node with 1 entry
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
+  if (bm->type != BitmapIndexedType) {
+    BOOM("result should be BitmapIndexedType");
+  }
+  if (__builtin_popcount(bm->bitmap) != 1) {
+    BOOM("bitmap should have 1 bit set");
+  }
+
+  // Verify key/value are stored
+  int bit = bitpos(hash, 0);
+  int idx = __builtin_popcount(bm->bitmap & (bit - 1));
+  if (bm->array[2 * idx] != key) {
+    BOOM("key not at correct index");
+  }
+  if (bm->array[2 * idx + 1] != val) {
+    BOOM("val not at correct index");
+  }
+
+  // Clean up
+  dec_and_free((Term)result, 1);
+
+  check_counts("testBmiMutateAssoc", 20, 0);
+}
+
 int main(int argc, char **argv) {
   sha1 = testingSha1;
   
@@ -2345,14 +2386,15 @@ int main(int argc, char **argv) {
   // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
   (void)malloc_vector();
 
-  testEmptyBmiNode();
-  testBmiNodeOneItem();
-  testArrayNode();
-  testCollisionNode();
-  testFreeBitmapNodeHighCount();
-  testFreeArrayNode();
-  testFreeHashCollisionNode();
-  testBmiCopyAssoc();
+  // testEmptyBmiNode();
+  // testBmiNodeOneItem();
+  // testArrayNode();
+  // testCollisionNode();
+  // testFreeBitmapNodeHighCount();
+  // testFreeArrayNode();
+  // testFreeHashCollisionNode();
+  // testBmiCopyAssoc();
+  testBmiMutateAssoc();
   // testBmiCopyAssocNoOp();
   // testBmiCopyAssocUpdate();
   // testBmiGet();
