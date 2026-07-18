@@ -1876,6 +1876,10 @@ int8_t equal(Value *v1, Value *v2) {
   if ((t1 & TAG_MASK) == I60 && (t2 & TAG_MASK) == I60) {
     return(getI60(t1) == getI60(t2));
   }
+  // Different types are never equal
+  if (((t1 & TAG_MASK) == I60) != ((t2 & TAG_MASK) == I60)) {
+    return 0;
+  }
   // For other types, use equalSTAR
   BOOM("can't use equalSTAR");
   Value *equals = equalSTAR((FnArity *)0, v1, v2);
@@ -2218,7 +2222,6 @@ Term bmiChild(BitmapIndexedNode *node, int bit) {
     result = node->array[2 * idx + 1];
     incRef(result, 1);
   }
-  dec_and_free((Term)node, 1);
   return result;
 }
 
@@ -2244,7 +2247,7 @@ Value *bmiClone(BitmapIndexedNode *node, int bit, Term key, Term val) {
 Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift) {
   int bit = bitpos(hash, shift);
   if (node->bitmap & bit) {
-    Term child = bmiChild((BitmapIndexedNode *)incRef((Term)node, 1), bit);
+    Term child = bmiChild(node, bit);
     if (child != 0) {
       Term n = (Term)copyAssoc(incRefVal(child, 1), (Value *)key, (Value *)val, hash, shift + 5);
       return bmiUpdate(node, bit, n);
@@ -2275,7 +2278,7 @@ Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash,
     int bit = bitpos(hash, shift);
     if (node->bitmap & bit) {
       // if the hash position is already filled
-      Term child = bmiChild((BitmapIndexedNode *)incRef((Term)node, 1), bit);
+      Term child = bmiChild(node, bit);
       if (child != 0) {
 	// There is no key in the position, so currVal is
 	// pointer to a node.

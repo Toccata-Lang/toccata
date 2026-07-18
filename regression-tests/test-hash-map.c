@@ -38,6 +38,7 @@ Value *bmiCopyAssoc(BitmapIndexedNode *arg0, Term key, Term val, int64_t hash, i
 Value *bmiGet(Value *node, Value *key, Value *def, int64_t hash, int shift);
 Value *bmiCount(Value *node);
 Value *bmiHashVec(Value *node, Value *vec);
+int64_t strSha1(Value *arg0);
 
 // Forward declarations for helper functions used in tests
 Term nothing(void);
@@ -196,15 +197,15 @@ static int64_t countPoolObjects(void) {
 // and that all unfreed allocations are accounted for in pools.
 // malloc_count - free_count == pool_count means no leaks.
 static void check_counts(const char *test_name, unsigned expected_malloc,
-                         unsigned expected_free) {
+                         unsigned expected_free, int line) {
   if (malloc_count != (int64_t)expected_malloc) {
-    fprintf(stderr, "FAIL %s: expected malloc_count=%u, got %lld\n",
-            test_name, expected_malloc, (long long)malloc_count);
+    fprintf(stderr, "FAIL %s at line %d: expected malloc_count=%u, got %lld\n",
+            test_name, line, expected_malloc, (long long)malloc_count);
     BOOM("malloc_count mismatch");
   }
   if (free_count != (int64_t)expected_free) {
-    fprintf(stderr, "FAIL %s: expected free_count=%u, got %lld\n",
-            test_name, expected_free, (long long)free_count);
+    fprintf(stderr, "FAIL %s at line %d: expected free_count=%u, got %lld\n",
+            test_name, line, expected_free, (long long)free_count);
     BOOM("free_count mismatch");
   }
   // Every allocation is either freed or sitting in a pool.
@@ -213,8 +214,8 @@ static void check_counts(const char *test_name, unsigned expected_malloc,
   int64_t pool_delta = pool_count - pool_baseline;
   int64_t unfreed = malloc_count - free_count;
   if (unfreed != pool_delta) {
-    fprintf(stderr, "FAIL %s: malloc=%ld free=%ld unfreed=%ld pool_delta=%ld\n",
-            test_name, (long)malloc_count, (long)free_count,
+    fprintf(stderr, "FAIL %s at line %d: malloc=%ld free=%ld unfreed=%ld pool_delta=%ld\n",
+            test_name, line, (long)malloc_count, (long)free_count,
             unfreed, pool_delta);
     BOOM("leak detected: unfreed allocations don't match pool objects");
   }
@@ -238,7 +239,7 @@ void testEmptyBmiNode(void) {
 
   // Pool allocated 10 nodes: my_malloc(+1) + explicit +9 = 10.
   // Node freed back to pool (cnt=0 < 20), no free_count increment.
-  check_counts("testEmptyBmiNode", 10, 0);
+  check_counts("testEmptyBmiNode", 10, 0, __LINE__);
 }
 
 // Test: create BMI node with 1 item
@@ -256,7 +257,7 @@ void testBmiNodeOneItem(void) {
 
   // Different itemCount = different pool index, so new pool created.
   // malloc_count=10, node recycled, free_count=0.
-  check_counts("testBmiNodeOneItem", 10, 0);
+  check_counts("testBmiNodeOneItem", 10, 0, __LINE__);
 }
 
 // Test: create ArrayNode
@@ -274,7 +275,7 @@ void testArrayNode(void) {
 
   // ArrayNode pool allocated 10 nodes: my_malloc(+1) + explicit +9 = 10.
   // Node recycled, not freed.
-  check_counts("testArrayNode", 10, 0);
+  check_counts("testArrayNode", 10, 0, __LINE__);
 }
 
 // Test: create HashCollisionNode
@@ -293,7 +294,7 @@ void testCollisionNode(void) {
   dec_and_free(termVal((Term)(Value *)node), 1);
 
   // Direct my_malloc + direct free, no pool.
-  check_counts("testCollisionNode", 1, 1);
+  check_counts("testCollisionNode", 1, 1, __LINE__);
 }
 
 // Test: freeBitmapNode actually frees when cnt >= BMI_RECYCLE_COUNT
@@ -315,7 +316,7 @@ void testFreeBitmapNodeHighCount(void) {
 
   // itemCount=20 >= BMI_RECYCLE_COUNT(20) → bypasses pool, direct my_malloc.
   // malloc_count=1. Node actually freed (free_count=1).
-  check_counts("testFreeBitmapNodeHighCount", 1, 1);
+  check_counts("testFreeBitmapNodeHighCount", 1, 1, __LINE__);
 }
 
 // Test: freeArrayNode works (even though it recycles into pool)
@@ -328,7 +329,7 @@ void testFreeArrayNode(void) {
 
   freeArrayNode((Value *)node);
 
-  check_counts("testFreeArrayNode", 0, 0);
+  check_counts("testFreeArrayNode", 0, 0, __LINE__);
 }
 
 // Test: freeHashCollisionNode works correctly
@@ -340,7 +341,7 @@ void testFreeHashCollisionNode(void) {
 
   freeHashCollisionNode((Value *)node);
 
-  check_counts("testFreeHashCollisionNode", 1, 1);
+  check_counts("testFreeHashCollisionNode", 1, 1, __LINE__);
 }
 
 // Test: add key/value to empty BMI → single-item BMI
@@ -392,7 +393,7 @@ void testBmiCopyAssoc(void) {
   dec_and_free((Term)result, 1);
 
   // malloc_string(+2), all freed/recycled.
-  check_counts("testBmiCopyAssoc", 2, 0);
+  check_counts("testBmiCopyAssoc", 2, 0, __LINE__);
 }
 
 // Test: same key, different value → in-place update (1c)
@@ -442,7 +443,7 @@ void testBmiMutateAssocUpdateValue(void) {
   // Clean up
   dec_and_free((Term)updateResult, 1);
 
-  check_counts("testBmiMutateAssocUpdateValue", 0, 0);
+  check_counts("testBmiMutateAssocUpdateValue", 0, 0, __LINE__);
 }
 
 // Test: bit not set, n < 16, insert new entry (2b)
@@ -525,7 +526,7 @@ void testBmiMutateAssocInsert(void) {
   // Clean up
   dec_and_free((Term)insertResult, 1);
 
-  check_counts("testBmiMutateAssocInsert", 0, 0);
+  check_counts("testBmiMutateAssocInsert", 0, 0, __LINE__);
 }
 
 // Test: different key, different hash → new sub-node (1e)
@@ -594,7 +595,7 @@ void testBmiMutateAssocBranch(void) {
   // Clean up
   dec_and_free((Term)branchResult, 1);
 
-  check_counts("testBmiMutateAssocBranch", 0, 0);
+  check_counts("testBmiMutateAssocBranch", 0, 0, __LINE__);
 }
 
 // Test: bit set, different key + same hash → creates HashCollisionNode (1d)
@@ -665,7 +666,7 @@ void testBmiMutateAssocCollision(void) {
   dec_and_free((Term)collResult, 1);
 
   // Collision node created via malloc_hashCollisionNode(2): malloc_count=1.
-  check_counts("testBmiMutateAssocCollision", 1, 1);
+  check_counts("testBmiMutateAssocCollision", 1, 1, __LINE__);
 
   sha1 = savedSha1;
   equalSTAR = savedEqual;
@@ -743,7 +744,7 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   // Clean up
   dec_and_free((Term)updateResult, 1);
 
-  check_counts("testBmiMutateAssocSubNodeRecurse", 0, 0);
+  check_counts("testBmiMutateAssocSubNodeRecurse", 0, 0, __LINE__);
 }
 
 
@@ -782,7 +783,7 @@ void testBmiMutateAssocPromote(void) {
   for (int i = 0; i < ARRAY_NODE_LEN; i++) { if (an->array[i] != 0) entryCount++; }
   if (entryCount != 17) BOOM("17 entries");
   dec_and_free((Term)promoteResult, 1);
-  check_counts("testBmiMutateAssocPromote", 140, 0);
+  check_counts("testBmiMutateAssocPromote", 140, 0, __LINE__);
 }
 
 // Test: same key + same value → no-op, return original node (1b)
@@ -833,7 +834,7 @@ void testBmiMutateAssocNoOp(void) {
 
   // The key and val passed to the no-op call are freed by the function.
   // No new allocations.
-  check_counts("testBmiMutateAssocNoOp", 0, 0);
+  check_counts("testBmiMutateAssocNoOp", 0, 0, __LINE__);
 }
 
 // Test: same key, same value → no-op, return original node (A2a)
@@ -866,24 +867,25 @@ void testBmiCopyAssocNoOp(void) {
   // Clean up
   dec_and_free((Term)noOpResult, 1);
 
-  check_counts("testBmiCopyAssocNoOp", 0, 0);
+  check_counts("testBmiCopyAssocNoOp", 0, 0, __LINE__);
 }
 
 // Test: same key, different value → clone with updated value (A2b)
 void testBmiCopyAssocUpdate(void) {
   reset_counters();
 
-  // Create single-item BMI node
+  // Create single-item BMI node with I60 key and String value
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = newI60(7);
-  Term val = newI60(13);
+  Value *valStr = stringValue("hello");
+  Term val = (Term)valStr;
   int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
-  Term newVal = newI60(77);
 
-  // Call bmiCopyAssoc with same key, different value — should clone
+  // Call bmiCopyAssoc with same key, I60 value — should clone
+  Term newVal = newI60(77);
   Value *updateResult = bmiCopyAssoc(original, key, newVal, hash, 0);
 
   // Verify different pointer returned (clone created)
@@ -906,7 +908,7 @@ void testBmiCopyAssocUpdate(void) {
   // Clean up
   dec_and_free((Term)updateResult, 1);
 
-  check_counts("testBmiCopyAssocUpdate", 0, 0);
+  check_counts("testBmiCopyAssocUpdate", 0, 0, __LINE__);
 }
 
 // Test: lookup existing key returns the value
@@ -935,7 +937,7 @@ void testBmiGet(void) {
   // Clean up — only free the found value (bmiGet already freed node+default)
   dec_and_free((Term)found, 1);
 
-  check_counts("testBmiGet", 0, 0);
+  check_counts("testBmiGet", 0, 0, __LINE__);
 }
 
 // Test: remove key from single-item BMI → returns emptyBMI
@@ -958,7 +960,7 @@ void testBmiDissoc(void) {
   }
 
   // Clean up — emptyBMI is a singleton, no need to free
-  check_counts("testBmiDissoc", 0, 0);
+  check_counts("testBmiDissoc", 0, 0, __LINE__);
 }
 
 // Test: remove key from multi-item BMI → returns smaller map (not emptyBMI)
@@ -1009,7 +1011,7 @@ void testBmiDissocEmpty(void) {
   dec_and_free((Term)afterDissoc, 1);
 
   // Pool for itemCount=2 created by malloc_bmiNode: +10 mallocs, recycled on free
-  check_counts("testBmiDissocEmpty", 10, 0);
+  check_counts("testBmiDissocEmpty", 10, 0, __LINE__);
 }
 
 // Test: count returns N for N-entry map
@@ -1043,7 +1045,7 @@ void testBmiCount(void) {
   dec_and_free((Term)countResult, 1);
 
   // Pool for itemCount=2 already created by testBmiDissocEmpty, pulled from pool
-  check_counts("testBmiCount", 0, 0);
+  check_counts("testBmiCount", 0, 0, __LINE__);
 }
 
 // Test: lookup missing key returns nothing
@@ -1077,7 +1079,7 @@ void testBmiGetMiss(void) {
   // Clean up — bmiGet freed node, we free the returned nothing
   dec_and_free((Term)notFound, 1);
 
-  check_counts("testBmiGetMiss", 0, 0);
+  check_counts("testBmiGetMiss", 0, 0, __LINE__);
 }
 
 // Test: add key with same bit position but different hash → branch node (A2d)
@@ -1151,7 +1153,7 @@ void testBmiCopyAssocBranch(void) {
 
   // Both pools (itemCount=1 and itemCount=2) already created by earlier tests,
   // both pulled from existing pools. No malloc/free.
-  check_counts("testBmiCopyAssocBranch", 0, 0);
+  check_counts("testBmiCopyAssocBranch", 0, 0, __LINE__);
 }
 
 // Test: nested sub-node update with same value → no-op, return original (A1a)
@@ -1206,7 +1208,7 @@ void testBmiCopyAssocSubNodeNoChange(void) {
   // Clean up
   dec_and_free((Term)noChangeResult, 1);
 
-  check_counts("testBmiCopyAssocSubNodeNoChange", 0, 0);
+  check_counts("testBmiCopyAssocSubNodeNoChange", 0, 0, __LINE__);
 }
 
 // Test: nested sub-node update with different value → clone (A1b)
@@ -1269,7 +1271,7 @@ void testBmiCopyAssocSubNodeChange(void) {
   dec_and_free((Term)cloneResult, 1);
 
   // New pool for itemCount=2 (clone of sub-node): malloc_count=10.
-  check_counts("testBmiCopyAssocSubNodeChange", 10, 0);
+  check_counts("testBmiCopyAssocSubNodeChange", 10, 0, __LINE__);
 }
 
 // Test: two keys with identical SHA1 hash → creates HashCollisionNode (A2c)
@@ -1338,7 +1340,7 @@ void testBmiCopyAssocCollision(void) {
   dec_and_free((Term)collResult, 1);
 
   // Collision node created via malloc_hashCollisionNode(2): malloc_count=1.
-  check_counts("testBmiCopyAssocCollision", 1, 1);
+  check_counts("testBmiCopyAssocCollision", 1, 1, __LINE__);
 
   sha1 = savedSha1;
   equalSTAR = savedEqual;
@@ -1436,7 +1438,7 @@ void testBmiHashVec(void) {
   dec_and_free((Term)vecResult, 1);
 
   // Pool for itemCount=3 created by bmiCopyAssoc (3-entry BMI)
-  check_counts("testBmiHashVec", 0, 0);
+  check_counts("testBmiHashVec", 0, 0, __LINE__);
 }
 
 // Test: add key-value to empty ArrayNode
@@ -1451,7 +1453,7 @@ void testArrayNodeCopyAssoc(void) {
     BOOM("arrayNodeCopyAssoc should return ArrayNodeType");
   }
   dec_and_free((Term)result, 1);
-  check_counts("testArrayNodeCopyAssoc", 0, 0);
+  check_counts("testArrayNodeCopyAssoc", 0, 0, __LINE__);
 }
 
 // Test: non-empty ArrayNode, add to empty slot (Path A2)
@@ -1509,7 +1511,7 @@ void testArrayNodeCopyAssocA2(void) {
   //  implies the old 1-entry node was freed)
 
   dec_and_free((Term)node, 1);
-  check_counts("testArrayNodeCopyAssocA2", 0, 0);
+  check_counts("testArrayNodeCopyAssocA2", 0, 0, __LINE__);
 }
 
 // Test: ArrayNode with sub-node, same key+value (Path B1: no-op)
@@ -1545,7 +1547,7 @@ void testArrayNodeCopyAssocB1(void) {
   }
 
   dec_and_free((Term)result, 1);
-  check_counts("testArrayNodeCopyAssocB1", 0, 0);
+  check_counts("testArrayNodeCopyAssocB1", 0, 0, __LINE__);
 }
 
 // Test: ArrayNode with sub-node, different value (Path B2)
@@ -1581,7 +1583,7 @@ void testArrayNodeCopyAssocB2(void) {
   }
 
   dec_and_free((Term)node, 1);
-  check_counts("testArrayNodeCopyAssocB2", 0, 0);
+  check_counts("testArrayNodeCopyAssocB2", 0, 0, __LINE__);
 }
 
 // Test: Multiple entries, update one sub-node (Path B2-multi)
@@ -1631,7 +1633,7 @@ void testArrayNodeCopyAssocB2Multi(void) {
   }
 
   dec_and_free((Term)node, 1);
-  check_counts("testArrayNodeCopyAssocB2Multi", 0, 0);
+  check_counts("testArrayNodeCopyAssocB2Multi", 0, 0, __LINE__);
 }
 
 // Test: lookup existing key in ArrayNode
@@ -1654,7 +1656,7 @@ void testArrayNodeGet(void) {
   }
 
   dec_and_free((Term)found, 1);
-  check_counts("testArrayNodeGet", 0, 0);
+  check_counts("testArrayNodeGet", 0, 0, __LINE__);
 }
 
 // Test: lookup missing key in ArrayNode (empty slot)
@@ -1685,7 +1687,7 @@ void testArrayNodeGetMiss(void) {
   }
 
   dec_and_free((Term)miss, 1);
-  check_counts("testArrayNodeGetMiss", 0, 0);
+  check_counts("testArrayNodeGetMiss", 0, 0, __LINE__);
 }
 
 // Test: key not found in BMI sub-node (Path B2)
@@ -1717,7 +1719,7 @@ void testArrayNodeGetB2Miss(void) {
   }
 
   dec_and_free((Term)miss, 1);
-  check_counts("testArrayNodeGetB2Miss", 0, 0);
+  check_counts("testArrayNodeGetB2Miss", 0, 0, __LINE__);
 }
 
 void testArrayNodeCount(void) {
@@ -1743,7 +1745,7 @@ void testArrayNodeCount(void) {
     BOOM("arrayNodeCount: should return 2");
   }
   dec_and_free((Term)countResult, 1);
-  check_counts("testArrayNodeCount", 0, 0);
+  check_counts("testArrayNodeCount", 0, 0, __LINE__);
 }
 
 // Test: count empty ArrayNode
@@ -1758,7 +1760,7 @@ void testArrayNodeCountEmpty(void) {
   }
 
   dec_and_free((Term)countResult, 1);
-  check_counts("testArrayNodeCountEmpty", 0, 0);
+  check_counts("testArrayNodeCountEmpty", 0, 0, __LINE__);
 }
 
 // Test: count single-entry ArrayNode
@@ -1778,7 +1780,7 @@ void testArrayNodeCountSingle(void) {
   }
 
   dec_and_free((Term)countResult, 1);
-  check_counts("testArrayNodeCountSingle", 0, 0);
+  check_counts("testArrayNodeCountSingle", 0, 0, __LINE__);
 }
 
 // Test: dissoc key not found — empty slot (Path A)
@@ -1845,7 +1847,7 @@ void testArrayNodeMutateAssocRecurse(void) {
   }
 
   dec_and_free((Term)result, 1);
-  check_counts("testArrayNodeMutateAssocRecurse", 0, 0);
+  check_counts("testArrayNodeMutateAssocRecurse", 0, 0, __LINE__);
 }
 
 void testArrayNodeDissocEmptySlot(void) {
@@ -1876,7 +1878,7 @@ void testArrayNodeDissocEmptySlot(void) {
   }
 
   dec_and_free((Term)result, 1);
-  check_counts("testArrayNodeDissocEmptySlot", 0, 0);
+  check_counts("testArrayNodeDissocEmptySlot", 0, 0, __LINE__);
 }
 
 // Test: refs==1, slot empty → new entry created (Path 1)
@@ -1931,7 +1933,7 @@ void testArrayNodeMutateAssocInsert(void) {
   }
 
   dec_and_free((Term)result, 1);
-  check_counts("testArrayNodeMutateAssocInsert", 0, 0);
+  check_counts("testArrayNodeMutateAssocInsert", 0, 0, __LINE__);
 }
 
 void testArrayNodeDissoc(void) {
@@ -1962,7 +1964,7 @@ void testArrayNodeDissoc(void) {
   }
   dec_and_free((Term)countResult, 1);
 
-  check_counts("testArrayNodeDissoc", 0, 0);
+  check_counts("testArrayNodeDissoc", 0, 0, __LINE__);
 }
 
 // Helper: create a HashCollisionNode with one (key, val) entry
@@ -2030,7 +2032,7 @@ void testCollisionAssocAdd(void) {
 
   // Verify original node was freed
   dec_and_free((Term)result, 1);
-  check_counts("testCollisionAssocAdd", 2, 2);
+  check_counts("testCollisionAssocAdd", 2, 2, __LINE__);
 
   // Restore
   sha1 = savedSha1;
@@ -2076,7 +2078,7 @@ void testCollisionAssocUpdate(void) {
   }
 
   dec_and_free((Term)result, 1);
-  check_counts("testCollisionAssocUpdate", 2, 2);
+  check_counts("testCollisionAssocUpdate", 2, 2, __LINE__);
 
   sha1 = savedSha1;
   equalSTAR = savedEqual;
@@ -2115,7 +2117,7 @@ void testCollisionAssocPromote(void) {
   }
 
   dec_and_free((Term)result, 1);
-  check_counts("testCollisionAssocPromote", 1, 1);
+  check_counts("testCollisionAssocPromote", 1, 1, __LINE__);
 
   sha1 = savedSha1;
   equalSTAR = savedEqual;
@@ -2160,7 +2162,7 @@ void testCollisionCount(void) {
     BOOM(msg);
   }
 
-  check_counts("testCollisionCount", 2, 2);
+  check_counts("testCollisionCount", 2, 2, __LINE__);
 }
 
 // Test: collisionVec returns key-value pairs as a vector
@@ -2207,7 +2209,7 @@ void testCollisionVec(void) {
     }
   }
 
-  check_counts("testCollisionVec", 1, 1);
+  check_counts("testCollisionVec", 1, 1, __LINE__);
 }
 
 // Test: collisionDissoc removes a key from collision node
@@ -2269,7 +2271,7 @@ void testCollisionDissoc(void) {
   dec_and_free((Term)result, 1);
 
   // Original node + new node from malloc_hashCollisionNode: malloc_count=2.
-  check_counts("testCollisionDissoc", 2, 2);
+  check_counts("testCollisionDissoc", 2, 2, __LINE__);
 
   equalSTAR = savedEqual;
 }
@@ -2326,7 +2328,7 @@ void testCollisionGet(void) {
     BOOM("collisionGet: missing key should return default");
   }
 
-  check_counts("testCollisionGet", 3, 3);
+  check_counts("testCollisionGet", 3, 3, __LINE__);
 }
 
 // Test: refs==1, empty BMI → insert single entry (path 2b)
@@ -2373,7 +2375,7 @@ void testBmiMutateAssoc(void) {
   // Clean up
   dec_and_free((Term)result, 1);
 
-  check_counts("testBmiMutateAssoc", 0, 0);
+  check_counts("testBmiMutateAssoc", 0, 0, __LINE__);
 }
 
 int main(int argc, char **argv) {
@@ -2402,7 +2404,7 @@ int main(int argc, char **argv) {
   testBmiCopyAssoc();
   testBmiMutateAssoc();
   testBmiCopyAssocNoOp();
-  // testBmiCopyAssocUpdate();
+  testBmiCopyAssocUpdate();
   // testBmiGet();
   // testBmiGetMiss();
   // testBmiDissoc();
