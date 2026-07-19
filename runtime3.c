@@ -2268,7 +2268,6 @@ Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
   if (node->bitmap & bit) {
     Term child = bmiChild(node, bit);
     if (child != 0) {
-      BOOM("test");
       Term n = (Term)copyAssoc(incRefVal(child, 1), (Value *)key, (Value *)val, hash, shift + 5);
       return bmiUpdate(node, bit, n);
     }
@@ -2284,7 +2283,6 @@ Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	return bmiClone(node, bit, key, val);
       }
     } else {
-      BOOM("test");
       return bmiReplaceCopied(node, key, val, hash, shift, currKey, currVal);
     }
   } else {
@@ -2354,12 +2352,11 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
       dec_and_free((Term)arg2, 1);
       return(valOrNode);
     } else {
-      BOOM("test");
       dec_and_free((Term)arg0, 1);
+      dec_and_free((Term)arg1, 1);
       return(arg2);
     }
   } else {
-    BOOM("test");
     dec_and_free((Term)arg0, 1);
     dec_and_free((Term)arg1, 1);
     return(arg2);

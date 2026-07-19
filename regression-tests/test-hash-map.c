@@ -910,7 +910,7 @@ void testBmiGet(void) {
   // Lookup existing key
   // bmiGet frees the node and default, returns incRef'd value
   Term key2 = (Term)stringValue("key137");
-  Value *found = bmiGet((Value *)result, (Value *)key2, (Value *)newI60(83), hash, 0);
+  Value *found = bmiGet((Value *)result, (Value *)key2, stringValue("not found"), hash, 0);
 
   // Verify result is the String value
   if (found->type != StringBufferType) {
@@ -1040,26 +1040,26 @@ void testBmiGetMiss(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key = newI60(137);
-  Term val = newI60(251);
+  Term key = (Term)stringValue("key");
+  Term val = (Term)stringValue("hello");
   int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Create a different key that won't match
-  Term missKey = newI60(999);
+  Term missKey = (Term)stringValue("miss");
   int64_t missHash = sha1((FnArity *)0, missKey);
 
   // Lookup missing key
   // bmiGet frees the node but NOT the default, returns the default (nothing)
-  Value *notFound = bmiGet((Value *)result, (Value *)missKey, (Value *)nothing(), missHash, 0);
+  Value *notFound = bmiGet((Value *)result, (Value *)missKey, stringValue("not found"), missHash, 0);
 
   // Verify result is nothing
   if (termTag((Term)notFound) != VAL) {
-    BOOM("get miss should return VAL (Maybe type)");
+    BOOM("get miss should return VAL");
   }
   Value *v = (Value *)notFound;
-  if (v->type != NoneType) {
-    BOOM("get miss should return NoneType");
+  if (v->type != StringBufferType) {
+    BOOM("get miss should return StringBufferType");
   }
 
   // Clean up — bmiGet freed node, we free the returned nothing
@@ -2376,7 +2376,7 @@ int main(int argc, char **argv) {
   testBmiCopyAssocNoOp();
   testBmiCopyAssocUpdate();
   testBmiGet();
-  // testBmiGetMiss();
+  testBmiGetMiss();
   // testBmiDissoc();
   // testBmiDissocEmpty();
   // testBmiCopyAssocBranch();
