@@ -932,13 +932,14 @@ void testBmiDissoc(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key = newI60(137);
-  Term val = newI60(251);
+  Term key = (Term)stringValue("key137");
+  Term val = (Term)stringValue("hello");
   int64_t hash = sha1((FnArity *)0, key);
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Remove the only key — should return emptyBMI
-  Value *afterDissoc = bmiDissoc((Value *)result, (Value *)key, hash, 0);
+  Term key2 = (Term)stringValue("key137");
+  Value *afterDissoc = bmiDissoc((Value *)result, (Value *)key2, hash, 0);
 
   // Verify result is emptyBMI
   if (afterDissoc != (Value *)&emptyBMI) {
@@ -2377,7 +2378,7 @@ int main(int argc, char **argv) {
   testBmiCopyAssocUpdate();
   testBmiGet();
   testBmiGetMiss();
-  // testBmiDissoc();
+  testBmiDissoc();
   // testBmiDissocEmpty();
   // testBmiCopyAssocBranch();
   // testBmiCopyAssocSubNodeNoChange();

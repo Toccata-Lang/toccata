@@ -2407,17 +2407,20 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
     if (keyOrNull == (Value *)0) {
       Value *n = baseDissoc(incRefVal(valOrNode, 1), key, hash, shift + 5);
       if (n == valOrNode) {
+	BOOM("test");
         dec_and_free((Term)n, 1);
         return(arg0);
       } else if (n == (Value *)&emptyBMI && __builtin_popcount(node->bitmap) == 1) {
+	BOOM("test");
         dec_and_free((Term)arg0, 1);
         return(n);
       } else {
+	BOOM("test");
         BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, (Term)n);
         dec_and_free((Term)arg0, 1);
         return((Value *)newNode);
       }
-    } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
+    } else if (equal(key, incRefVal(keyOrNull, 1))) {
       if (__builtin_popcount(node->bitmap) == 1) {
         dec_and_free((Term)arg0, 1);
         return((Value *)&emptyBMI);
@@ -2441,12 +2444,15 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
         }
         newNode->bitmap &= ~bit;
         dec_and_free((Term)arg0, 1);
+	BOOM("test");
         return((Value *)newNode);
       }
     } else {
+      BOOM("test");
       return(arg0);
     }
   } else {
+    BOOM("test");
     dec_and_free((Term)arg1, 1);
     return(arg0);
   }

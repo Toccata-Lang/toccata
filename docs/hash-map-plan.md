@@ -90,7 +90,7 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 ### Phase 4: BMI get/dissoc/count Tests
 - [x] `testBmiGet` — lookup existing key
 - [x] `testBmiGetMiss` — lookup missing key
-- [ ] `testBmiDissoc` — remove key from single-item BMI
+- [x] `testBmiDissoc` — remove key from single-item BMI (uses String KV)
 - [ ] `testBmiDissocEmpty` — remove last key → returns emptyBMI
 - [ ] `testBmiCount` — N-entry map, verify count == N
 - [ ] `testBmiHashVec` — flatten BMI to vector of pairs
