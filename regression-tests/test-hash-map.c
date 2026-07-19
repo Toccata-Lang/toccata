@@ -164,15 +164,20 @@ static int64_t countFreeList(FreeValList *fl) {
 
 // Count all objects sitting in central free-list pools relevant to hash-map tests.
 static int64_t countPoolObjects(void) {
-  int64_t total = 0;
   moveFreeToCentral();
+  int64_t bmiObjs = 0;
   for (int i = 0; i < BMI_RECYCLE_COUNT; i++)
-    total += countFreeList((FreeValList *)&centralFreeBMINodes[i]);
-  total += countFreeList((FreeValList *)&centralFreeArrayNodes);
-  total += countFreeList((FreeValList *)&centralFreeStrings);
-  total += countFreeList((FreeValList *)&centralFreeVectors);
-  total += countFreeList((FreeValList *)&centralFreeVectorNodes);
-  return total;
+    bmiObjs += countFreeList((FreeValList *)&centralFreeBMINodes[i]);
+  // fprintf(stderr, "bmi pool: %ld\n", bmiObjs);
+  int64_t arrayObjs = countFreeList((FreeValList *)&centralFreeArrayNodes);
+  // fprintf(stderr, "array pool: %ld\n", arrayObjs);
+  int64_t strObjs = countFreeList((FreeValList *)&centralFreeStrings);
+  // fprintf(stderr, "string pool: %ld\n", strObjs);
+  int64_t vectObjs = countFreeList((FreeValList *)&centralFreeVectors);
+  // fprintf(stderr, "vect pool: %ld\n", vectObjs);
+  int64_t nodeObjs = countFreeList((FreeValList *)&centralFreeVectorNodes);
+  // fprintf(stderr, "vect node pool: %ld\n", nodeObjs);
+  return bmiObjs + arrayObjs + strObjs + vectObjs + nodeObjs;
 }
 
 // Verify malloc_count and free_count match expected values,
@@ -221,7 +226,7 @@ void testEmptyBmiNode(void) {
 
   // Pool allocated 10 nodes: my_malloc(+1) + explicit +9 = 10.
   // Node freed back to pool (cnt=0 < 20), no free_count increment.
-  check_counts("testEmptyBmiNode", 10, 0, __LINE__);
+  check_counts("testEmptyBmiNode", 0, 0, __LINE__);
 }
 
 // Test: create BMI node with 1 item
@@ -239,7 +244,7 @@ void testBmiNodeOneItem(void) {
 
   // Different itemCount = different pool index, so new pool created.
   // malloc_count=10, node recycled, free_count=0.
-  check_counts("testBmiNodeOneItem", 10, 0, __LINE__);
+  check_counts("testBmiNodeOneItem", 0, 0, __LINE__);
 }
 
 // Test: create ArrayNode
@@ -895,23 +900,24 @@ void testBmiCopyAssocUpdate(void) {
 void testBmiGet(void) {
   reset_counters();
 
-  // Create single-item BMI node
+  // Create single-item BMI node with String key and String value
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key = newI60(137);
-  Term val = newI60(251);
-  int64_t hash = sha1((FnArity *)0, key);
-  Value *result = bmiMutateAssoc(node, key, val, hash, 0);
+  Term strKey = (Term)stringValue("key137");
+  Term strVal = (Term)stringValue("hello");
+  int64_t hash = sha1((FnArity *)0, strKey);
+  Value *result = bmiMutateAssoc(node, strKey, strVal, hash, 0);
 
   // Lookup existing key
   // bmiGet frees the node and default, returns incRef'd value
-  Value *found = bmiGet((Value *)result, (Value *)key, (Value *)nothing(), hash, 0);
+  Term key2 = (Term)stringValue("key137");
+  Value *found = bmiGet((Value *)result, (Value *)key2, (Value *)newI60(83), hash, 0);
 
-  // Verify result is the I60 value (bmiGet returns raw value, not Maybe-wrapped)
-  if (termTag((Term)found) != I60) {
-    BOOM("get should return I60 value");
+  // Verify result is the String value
+  if (found->type != StringBufferType) {
+    BOOM("get should return String value");
   }
-  if (getI60((Term)found) != 251) {
-    BOOM("get should return correct value");
+  if (strcmp(((String *)found)->buffer, "hello") != 0) {
+    BOOM("get should return correct string value");
   }
 
   // Clean up — only free the found value (bmiGet already freed node+default)
@@ -2353,6 +2359,7 @@ int main(int argc, char **argv) {
   // Trigger malloc_reified pool once before tests (5000-entry pool)
   (void)nothing();
   (void)some(newI60(55));
+  dec_and_free((Term)malloc_bmiNode(1), 1);
 
   // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
   (void)malloc_vector();
@@ -2368,7 +2375,7 @@ int main(int argc, char **argv) {
   testBmiMutateAssoc();
   testBmiCopyAssocNoOp();
   testBmiCopyAssocUpdate();
-  // testBmiGet();
+  testBmiGet();
   // testBmiGetMiss();
   // testBmiDissoc();
   // testBmiDissocEmpty();

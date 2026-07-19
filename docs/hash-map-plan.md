@@ -79,7 +79,7 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 ### Phase 3: BMI copyAssoc Tests
 - [x] `testBmiCopyAssoc` — add key/value to empty BMI (B2)
 - [x] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
-- [ ] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
+- [x] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
 - [ ] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
 - [ ] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
 - [ ] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)

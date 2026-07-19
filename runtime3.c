@@ -2343,19 +2343,23 @@ Value *bmiGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shift) {
     Value *keyOrNull = (Value *)node->array[2 * idx];
     Value *valOrNode = (Value *)node->array[2 * idx + 1];
     if (keyOrNull == (Value *)0) {
+      BOOM("test");
       Value *v = mapGet((FnArity *)0, incRefVal(valOrNode, 1), key, arg2, hash, shift + 5);
       dec_and_free((Term)arg0, 1);
       return(v);
     } else if (equal(incRefVal(key, 1), incRefVal(keyOrNull, 1))) {
       incRefVal(valOrNode, 1);
       dec_and_free((Term)arg0, 1);
+      dec_and_free((Term)arg1, 1);
       dec_and_free((Term)arg2, 1);
       return(valOrNode);
     } else {
+      BOOM("test");
       dec_and_free((Term)arg0, 1);
       return(arg2);
     }
   } else {
+    BOOM("test");
     dec_and_free((Term)arg0, 1);
     dec_and_free((Term)arg1, 1);
     return(arg2);
