@@ -41,17 +41,19 @@ The hash-map is an immutable key-value store based on Clojure's bitmap trie data
 
 ## Known Test Issue: No GC Exercise
 
-**`regression-tests/test-hash-map.c` uses I60 integers for all keys and values.**
+**Most tests use I60 integers for keys and values.**
 
 I60 terms are leaf terms — they have no heap allocations, no ref counting, no `incRef`/`dec_and_free` calls. The tests verify structural correctness and memory accounting (malloc_count/free_count), but they **do not exercise garbage collection**.
 
-Specifically, the tests never:
+**Exception:** `testBmiGetMiss` uses `stringValue("key")`, `stringValue("hello")`, and `stringValue("miss")` as heap-allocated VAL terms.
+
+Specifically, most tests never:
 - Create a VAL term that points to a heap-allocated struct (String, ReifiedVal, etc.)
 - Exercise `incRef`/`dec_and_free` on heap-allocated values
 - Test what happens when a key or value is a complex type (String, nested map, etc.)
 - Test ref counting edge cases (shared references, partial updates that leave old values dangling)
 
-**What's needed:** A separate test file (or extended tests) that use heap-allocated values as keys and values — e.g., String keys, nested HashMap values, ReifiedVal structs — to verify that `incRef`/`dec_and_free` paths work correctly through the hash-map operations.
+**What's needed:** Extend tests to use heap-allocated values as keys and values — e.g., String keys, nested HashMap values, ReifiedVal structs — to verify that `incRef`/`dec_and_free` paths work correctly through the hash-map operations.
 
 ## Test Function Checklist (I60 → GC Exercise)
 
@@ -68,8 +70,8 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 
 ### Phase 2: BMI mutateAssoc Tests (7 paths)
 - [x] `testBmiMutateAssoc` — refs==1, empty BMI → insert single entry (2b)
-- [x] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
-- [x] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
+- [ ] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
+- [ ] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
 - [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
 - [ ] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
 - [ ] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
@@ -86,8 +88,8 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 - [ ] `testBmiCopyAssocCollision` — identical SHA1 hash → collision node (A2c)
 
 ### Phase 4: BMI get/dissoc/count Tests
-- [ ] `testBmiGet` — lookup existing key
-- [ ] `testBmiGetMiss` — lookup missing key
+- [x] `testBmiGet` — lookup existing key
+- [x] `testBmiGetMiss` — lookup missing key
 - [ ] `testBmiDissoc` — remove key from single-item BMI
 - [ ] `testBmiDissocEmpty` — remove last key → returns emptyBMI
 - [ ] `testBmiCount` — N-entry map, verify count == N
