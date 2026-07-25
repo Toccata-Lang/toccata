@@ -2362,8 +2362,8 @@ int main(int argc, char **argv) {
   // testBmiGetMiss();
   // testBmiDissoc();
   // testBmiDissocEmpty();
-  testBmiCopyAssocBranch();
-  // testBmiCopyAssocSubNodeNoChange();
+  // testBmiCopyAssocBranch();
+  testBmiCopyAssocSubNodeNoChange();
   // testBmiCopyAssocSubNodeChange();
   // testBmiCopyAssocCollision();
   // testBmiCount();
