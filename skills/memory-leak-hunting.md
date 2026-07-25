@@ -194,6 +194,17 @@ The pool model in `test-hash-map.c` comments:
 
 `check_counts()` is a regression guard — it asserts exact expected numbers. If you fix a real leak (e.g., added a `dec_and_free`), the expected `free_count` will go up. **Just update the expected values in `check_counts()` and move on.** Don't second-guess it — if the code is correct and the numbers change, the numbers are right.
 
+### Using `prefs` to debug ref counts
+
+When a test fails with `pool_delta != unfreed`, use `prefs("name", (Term)value)` to print a value's current ref count. Call it on terms at key points (after creation, after storage in nodes, before free) to trace where refs are going wrong. `prefs` only prints — it doesn't modify refs. It's a read-only diagnostic tool.
+
+Example:
+```c
+prefs("key1 after creation", key1);       // should show refs=1
+prefs("key1 after bmiMutateAssoc", key1); // should show refs=1 (stored but not incRef'd)
+prefs("key1 before freeing result", key1); // check refs haven't gone to 0 prematurely
+```
+
 ## Checklist
 
 ### During diagnosis

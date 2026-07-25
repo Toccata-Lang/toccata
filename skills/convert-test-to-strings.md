@@ -31,7 +31,7 @@ Tests in `regression-tests/test-hash-map.c` use I60 integers for keys and values
 
 **Any pools can be filled at the top of `main()`.** If a test needs a pool to already exist (so it pulls from the pool instead of creating a new one), allocate and free a value of the right type at the top of `main()` before any test runs.
 
-**Strings under 100 chars are recycled from the same pool.** If a test uses N distinct strings, pre-allocate and free all N strings at the top of `main()` so they're in the pool. Otherwise the first `stringValue()` call will allocate a new one (incrementing `malloc_count`).
+**Strings under 100 chars are recycled from the same pool.** It's sufficient to pre-allocate the maximum number of strings any test uses at the same time — you don't need to pre-allocate the exact strings a test might use. Just allocate enough string slots at the top of `main()` so that `stringValue()` calls don't trigger new mallocs. Otherwise the first `stringValue()` call will allocate a new one (incrementing `malloc_count`).
 
 One pattern for creating strings:
 
@@ -39,9 +39,22 @@ One pattern for creating strings:
 |---|---|
 | `stringValue("literal")` | Always — the only way to create strings |
 
+**Hash control:** If a test requires a specific hash value (e.g., two keys must share the same bit position), you can set the string's `hashVal` field directly after creation:
+
+```c
+Term key = (Term)stringValue("mykey");
+((String *)key)->hashVal = desired_hash;
+```
+
+This bypasses the SHA1 computation and lets you control the hash for testing structural paths.
+
 ## Conversion Process
 
-**Do one key or value at a time. Fix any memory errors between each conversion.** Do not convert all I60 keys/values in a single pass.
+**⛔ CRITICAL: After converting ONE key or value, you MUST compile and run `make test-hash-map` and verify it passes before converting the next one.** Do not batch conversions. Do not convert multiple keys/values before running the test. Do not skip the verification step. Every conversion must be verified individually — this is how you catch memory errors early.
+
+If the test fails after a conversion, fix the error before moving to the next key/value. If `check_counts` shows wrong expected numbers, update them and continue. If there's a real leak, fix it first.
+
+**Never convert all I60 keys/values in a single pass.**
 
 ### Step 1: Isolate the test
 

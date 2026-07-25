@@ -37,6 +37,10 @@ The hash-map is an immutable key-value store based on Clojure's bitmap trie data
 | `HashCollisionNode` | 13 | Stores entries that hash-collide |
 | `HashMapType` | 14 | Abstract type number for `instance?` checks |
 
+**IMPORTANT: Tests are converted in their order of appearance in `main()`** (lines 2368–2417 of `test-hash-map.c`). When checking progress, scan `main()` top-to-bottom and find the first unchecked test.
+
+**Use skill `skills/convert-test-to-strings.md` for the conversion process.** It contains the step-by-step workflow, pool accounting reference, commit rules, and common pitfalls.
+
 ## Current Task: Convert Tests to Use Allocated Strings
 
 **The hash-map tests originally used I60 integers for keys and values.** This works fine for testing the structural logic at the upper levels of the hash-map implementation — bit manipulation, node promotion, collision detection, sub-node branching — but it is insufficient because it completely ignores garbage collection.
@@ -51,7 +55,8 @@ When converting a test:
 3. Watch for leaks: `incRef` on a String value that is never `dec_and_free`'d, old values not freed during mutation, etc.
 4. Document any leak patterns found in `skills/memory-leak-hunting.md`
 
-### Phase 1: Allocator Tests (no keys/values — already GC-relevant)
+## Test Checklist (order of appearance in `main()`)
+
 - [x] `testEmptyBmiNode` — BMI node allocation/free (no KV pairs, already GC-relevant)
 - [x] `testBmiNodeOneItem` — BMI node allocation/free (no KV pairs, already GC-relevant)
 - [x] `testArrayNode` — ArrayNode allocation/free (no KV pairs, already GC-relevant)
@@ -59,35 +64,26 @@ When converting a test:
 - [x] `testFreeBitmapNodeHighCount` — freeBitmapNode actual free path
 - [x] `testFreeArrayNode` — freeArrayNode pool recycle
 - [x] `testFreeHashCollisionNode` — freeHashCollisionNode actual free
-
-### Phase 2: BMI mutateAssoc Tests (7 paths — convert to String KV)
-- [x] `testBmiMutateAssoc` — refs==1, empty BMI → insert single entry (2b)
-- [ ] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
-- [ ] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
-- [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
-- [ ] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
-- [ ] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
-- [ ] `testBmiMutateAssocInsert` — bit not set, n < 16, insert (2b)
-- [ ] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
-
-### Phase 3: BMI copyAssoc Tests (convert to String KV)
 - [x] `testBmiCopyAssoc` — add key/value to empty BMI (B2)
+- [x] `testBmiMutateAssoc` — refs==1, empty BMI → insert single entry (2b)
 - [x] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
 - [x] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
-- [ ] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
-- [ ] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
-- [ ] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
-- [ ] `testBmiCopyAssocCollision` — identical SHA1 hash → collision node (A2c)
-
-### Phase 4: BMI get/dissoc/count Tests (convert to String KV)
 - [x] `testBmiGet` — lookup existing key
 - [x] `testBmiGetMiss` — lookup missing key
 - [x] `testBmiDissoc` — remove key from single-item BMI (uses String KV)
 - [x] `testBmiDissocEmpty` — remove last key → returns emptyBMI
+- [ ] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
+- [ ] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
+- [ ] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
+- [ ] `testBmiCopyAssocCollision` — identical SHA1 hash → collision node (A2c)
 - [ ] `testBmiCount` — N-entry map, verify count == N
-- [ ] `testBmiHashVec` — flatten BMI to vector of pairs
-
-### Phase 5: ArrayNode Tests (convert to String KV)
+- [ ] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
+- [ ] `testBmiMutateAssocInsert` — bit not set, n < 16, insert (2b)
+- [ ] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
+- [ ] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
+- [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
+- [ ] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
+- [ ] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
 - [ ] `testArrayNodeCopyAssoc` — add key/value to empty ArrayNode
 - [ ] `testArrayNodeCopyAssocA2` — non-empty ArrayNode, add to empty slot
 - [ ] `testArrayNodeCopyAssocB1` — ArrayNode with sub-node, same key+value (no-op)
@@ -101,10 +97,8 @@ When converting a test:
 - [ ] `testArrayNodeCountSingle` — count single-entry ArrayNode
 - [ ] `testArrayNodeDissocEmptySlot` — key not found (empty slot)
 - [ ] `testArrayNodeDissoc` — remove key from ArrayNode
-- [ ] `testArrayNodeMutateAssocRecurse` — slot has BMI sub-node → recurse
 - [ ] `testArrayNodeMutateAssocInsert` — slot is empty → insert new entry
-
-### Phase 6: CollisionNode Tests (convert to String KV)
+- [ ] `testArrayNodeMutateAssocRecurse` — slot has BMI sub-node → recurse
 - [ ] `testCollisionAssocAdd` — add new key to collision node
 - [ ] `testCollisionAssocUpdate` — update existing key value
 - [ ] `testCollisionAssocPromote` — add key with different hash → promotes to BMI
@@ -112,6 +106,7 @@ When converting a test:
 - [ ] `testCollisionVec` — flatten to vector
 - [ ] `testCollisionDissoc` — remove from collision node
 - [ ] `testCollisionGet` — lookup in collision node
+- [ ] `testBmiHashVec` — flatten BMI to vector of pairs
 
 ## Files to Read
 
