@@ -2444,7 +2444,6 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
         }
         newNode->bitmap &= ~bit;
         dec_and_free((Term)arg0, 1);
-	BOOM("test");
         return((Value *)newNode);
       }
     } else {

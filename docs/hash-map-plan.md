@@ -37,27 +37,19 @@ The hash-map is an immutable key-value store based on Clojure's bitmap trie data
 | `HashCollisionNode` | 13 | Stores entries that hash-collide |
 | `HashMapType` | 14 | Abstract type number for `instance?` checks |
 
-## What Needs to Be Done
+## Current Task: Convert Tests to Use Allocated Strings
 
-## Known Test Issue: No GC Exercise
+**The hash-map tests originally used I60 integers for keys and values.** This works fine for testing the structural logic at the upper levels of the hash-map implementation — bit manipulation, node promotion, collision detection, sub-node branching — but it is insufficient because it completely ignores garbage collection.
 
-**Most tests use I60 integers for keys and values.**
+I60 terms are leaf terms: no heap allocation, no ref counting, no `incRef`/`dec_and_free` calls. The tests verify structural correctness and memory accounting (malloc_count/free_count of nodes), but they **do not exercise garbage collection of keys and values**.
 
-I60 terms are leaf terms — they have no heap allocations, no ref counting, no `incRef`/`dec_and_free` calls. The tests verify structural correctness and memory accounting (malloc_count/free_count), but they **do not exercise garbage collection**.
+**The current task is to convert all tests to use heap-allocated String keys and String values**, and fix any memory leaks that surface during the conversion.
 
-**Exception:** `testBmiGetMiss` uses `stringValue("key")`, `stringValue("hello")`, and `stringValue("miss")` as heap-allocated VAL terms.
-
-Specifically, most tests never:
-- Create a VAL term that points to a heap-allocated struct (String, ReifiedVal, etc.)
-- Exercise `incRef`/`dec_and_free` on heap-allocated values
-- Test what happens when a key or value is a complex type (String, nested map, etc.)
-- Test ref counting edge cases (shared references, partial updates that leave old values dangling)
-
-**What's needed:** Extend tests to use heap-allocated values as keys and values — e.g., String keys, nested HashMap values, ReifiedVal structs — to verify that `incRef`/`dec_and_free` paths work correctly through the hash-map operations.
-
-## Test Function Checklist (I60 → GC Exercise)
-
-Each test below currently uses only I60 integers for keys and values. The goal is to convert them to use heap-allocated VAL terms (String keys, ReifiedVal values) so that `incRef`/`dec_and_free` paths are exercised.
+When converting a test:
+1. Replace `newI60(x)` keys/values with `stringValue("key")` / `stringValue("value")`
+2. Track the expected `malloc_count` and `free_count` for the String allocations
+3. Watch for leaks: `incRef` on a String value that is never `dec_and_free`'d, old values not freed during mutation, etc.
+4. Document any leak patterns found in `skills/memory-leak-hunting.md`
 
 ### Phase 1: Allocator Tests (no keys/values — already GC-relevant)
 - [x] `testEmptyBmiNode` — BMI node allocation/free (no KV pairs, already GC-relevant)
@@ -68,7 +60,7 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 - [x] `testFreeArrayNode` — freeArrayNode pool recycle
 - [x] `testFreeHashCollisionNode` — freeHashCollisionNode actual free
 
-### Phase 2: BMI mutateAssoc Tests (7 paths)
+### Phase 2: BMI mutateAssoc Tests (7 paths — convert to String KV)
 - [x] `testBmiMutateAssoc` — refs==1, empty BMI → insert single entry (2b)
 - [ ] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
 - [ ] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
@@ -78,7 +70,7 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 - [ ] `testBmiMutateAssocInsert` — bit not set, n < 16, insert (2b)
 - [ ] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
 
-### Phase 3: BMI copyAssoc Tests
+### Phase 3: BMI copyAssoc Tests (convert to String KV)
 - [x] `testBmiCopyAssoc` — add key/value to empty BMI (B2)
 - [x] `testBmiCopyAssocNoOp` — same key, same value → no-op (A2a)
 - [x] `testBmiCopyAssocUpdate` — same key, different value → clone (A2b)
@@ -87,15 +79,15 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 - [ ] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
 - [ ] `testBmiCopyAssocCollision` — identical SHA1 hash → collision node (A2c)
 
-### Phase 4: BMI get/dissoc/count Tests
+### Phase 4: BMI get/dissoc/count Tests (convert to String KV)
 - [x] `testBmiGet` — lookup existing key
 - [x] `testBmiGetMiss` — lookup missing key
 - [x] `testBmiDissoc` — remove key from single-item BMI (uses String KV)
-- [ ] `testBmiDissocEmpty` — remove last key → returns emptyBMI
+- [x] `testBmiDissocEmpty` — remove last key → returns emptyBMI
 - [ ] `testBmiCount` — N-entry map, verify count == N
 - [ ] `testBmiHashVec` — flatten BMI to vector of pairs
 
-### Phase 5: ArrayNode Tests
+### Phase 5: ArrayNode Tests (convert to String KV)
 - [ ] `testArrayNodeCopyAssoc` — add key/value to empty ArrayNode
 - [ ] `testArrayNodeCopyAssocA2` — non-empty ArrayNode, add to empty slot
 - [ ] `testArrayNodeCopyAssocB1` — ArrayNode with sub-node, same key+value (no-op)
@@ -112,7 +104,7 @@ Each test below currently uses only I60 integers for keys and values. The goal i
 - [ ] `testArrayNodeMutateAssocRecurse` — slot has BMI sub-node → recurse
 - [ ] `testArrayNodeMutateAssocInsert` — slot is empty → insert new entry
 
-### Phase 6: CollisionNode Tests
+### Phase 6: CollisionNode Tests (convert to String KV)
 - [ ] `testCollisionAssocAdd` — add new key to collision node
 - [ ] `testCollisionAssocUpdate` — update existing key value
 - [ ] `testCollisionAssocPromote` — add key with different hash → promotes to BMI
