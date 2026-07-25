@@ -988,7 +988,7 @@ void testBmiDissocEmpty(void) {
   dec_and_free((Term)afterDissoc, 1);
 
   // Pool for itemCount=2 created by malloc_bmiNode: +10 mallocs, +2 for String values
-  check_counts("testBmiDissocEmpty", 1, 0, __LINE__);
+  check_counts("testBmiDissocEmpty", 0, 0, __LINE__);
 }
 
 // Test: count returns N for N-entry map
@@ -1150,10 +1150,9 @@ void testBmiCopyAssocSubNodeNoChange(void) {
 
   // Add key2 — this creates a sub-node (branch)
   Term val2 = newI60(888);
-  result = bmiCopyAssoc(original, key2, val2, hash2, 0);
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)bmiCopyAssoc(original, key2, val2, hash2, 0);
 
   // Verify we have a nested structure
-  BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
   int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
   Term entryKey = bm->array[2 * idx];
   if (entryKey != 0) {
@@ -2337,7 +2336,7 @@ int main(int argc, char **argv) {
   dec_and_free((Term)malloc_bmiNode(1), 1);
   dec_and_free((Term)malloc_bmiNode(2), 1);
   dec_and_free((Term)malloc_arrayNode(), 1);
-#define STRINGS_NEEDED 4
+#define STRINGS_NEEDED 5
   Term strs[STRINGS_NEEDED];
   for (int i = 0; i < STRINGS_NEEDED; i++)
     strs[i] = (Term)stringValue("key137");

@@ -2268,7 +2268,7 @@ Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
   if (node->bitmap & bit) {
     Term child = bmiChild(node, bit);
     if (child != 0) {
-      Term n = (Term)copyAssoc(incRefVal(child, 1), (Value *)key, (Value *)val, hash, shift + 5);
+      Term n = (Term)copyAssoc((Value *)child, (Value *)key, (Value *)val, hash, shift + 5);
       return bmiUpdate(node, bit, n);
     }
 

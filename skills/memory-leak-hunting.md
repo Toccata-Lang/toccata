@@ -127,15 +127,15 @@ Format:
 ---
 -->
 
-### Pattern 1: [Title]
+### Pattern 1: Double incRef on bmiChild
 
-**Location:** `runtime3.c:LINE`
+**Location:** `runtime3.c:2271`
 
-**Test:** `test<Name>`
+**Test:** `testBmiCopyAssocSubNodeNoChange`
 
-**Cause:** [What happened]
+**Cause:** `bmiChild()` already `incRef`s the child before returning it. But `bmiCopyAssoc` was calling `incRefVal(child, 1)` again, causing a double incRef. The extra ref was never decremented, leaking the sub-node.
 
-**Fix:** [What changed]
+**Fix:** Removed `incRefVal(child, 1)` wrapper — `bmiChild` already handles the incRef. Changed from `copyAssoc(incRefVal(child, 1), ...)` to `copyAssoc((Value *)child, ...)`.
 
 ---
 
