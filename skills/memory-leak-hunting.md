@@ -205,6 +205,26 @@ prefs("key1 after bmiMutateAssoc", key1); // should show refs=1 (stored but not 
 prefs("key1 before freeing result", key1); // check refs haven't gone to 0 prematurely
 ```
 
+### Verifying strings are properly freed
+
+After converting a test to use `stringValue()`, add a `prefs` call **right before `check_counts`** to verify the test's own strings are properly freed:
+
+```c
+// Clean up
+dec_and_free((Term)branchResult, 1);
+
+prefs("key1", key1);
+
+check_counts("testBmiCopyAssocBranch", 0, 0, __LINE__);
+```
+
+Expected ref counts at this point:
+- **`refs=1`** — string was created with refs=1, and all node references have been cleaned up. The string is still alive (not freed) because refs hasn't reached 0, but it's properly accounted for.
+- **`refs > 1`** — the string is still referenced by something that hasn't been freed. The original node may not have been freed, or a node clone still holds a reference.
+- **`refs=0`** — the string was over-freed. A `dec_and_free` was called too many times.
+
+If `pool_delta != unfreed` and `prefs` shows `refs > 1` for a string the test owns, the string's reference chain is the leak source. Trace back to find which node still holds the reference and needs to be freed.
+
 ## Checklist
 
 ### During diagnosis
@@ -220,6 +240,116 @@ prefs("key1 before freeing result", key1); // check refs haven't gone to 0 prema
 - [ ] Final regression check: all [x] tests from plan uncommented, rest commented out, `make test-hash-map` passes
 - [ ] Pattern documented in "Known Leak Patterns" section
 - [ ] `git diff` shows only the fix (and possibly `test-hash-map.c` expected value updates)
+
+## Argument Passing Semantics
+
+**When a value is passed as an argument to a function, its refs are automatically decremented.** If the refs become 0, the value is freed and refs is set to **-10** (the freed marker). You can verify this by calling `prefs` right after the function call.
+
+```c
+prefs("key1 before bmiMutateAssoc", key1);   // refs=1
+Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
+prefs("key1 after bmiMutateAssoc", key1);    // refs=-10 (freed)
+```
+
+**Exception:** If the function returns that same arg value back as the result, the ref is NOT decremented. The value survives the call with its original ref count.
+
+This is the most common source of pool_delta mismatches: a string passed to a function is freed automatically, but the test still holds a variable pointing to it. The string is gone, but the pool slot is lost.
+
+## Value Lifetime Rules
+
+### A value passed as an argument may be freed by the function
+
+A function receiving a value as an argument may free it — either directly, or through a called subroutine. The function is not required to return the value for it to be freed.
+
+```c
+// bmiReplaceCopied frees its 'node' argument internally
+Value *bmiReplaceCopied(BitmapIndexedNode *node, ...) {
+    dec_and_free((Term)node, 1);  // node is freed here
+    return newNode;               // node is NOT returned
+}
+```
+
+After the call returns, the original value is dead (refs=-10). Any further use is a use-after-free.
+
+### incRef(N-1) when passing an argument to N functions
+
+If a function needs to pass one of its arguments to multiple functions, it must incRef (N-1) times before the calls. Each function call decrements refs by 1, so without extra incRef's the value would be freed after the first call.
+
+```c
+// BEFORE — arg freed after func1, crashes or corrupts in func2
+func1(arg);  // arg freed here
+func2(arg);  // use-after-free!
+
+// AFTER — arg survives both calls
+incRef(arg, 1);  // refs 1→2
+func1(arg);      // refs 2→1
+func2(arg);      // refs 1→0 → freed
+```
+
+### Each execution path must cause exactly 1 total decrement
+
+If an argument is used in different execution paths (if/else, switch cases), each path must cause the total decrements of the argument to be exactly 1. If one path decrements 0 times and another decrements 2+, the value will either leak (refs never hits 0) or double-free (refs goes negative).
+
+```c
+// BEFORE — path A leaks, path B double-frees
+if (condition) {
+    func1(arg);  // 1 decrement — correct
+} else {
+    func2(arg);  // 1 decrement
+    func3(arg);  // 2nd decrement — double-free!
+}
+
+// AFTER — both paths cause exactly 1 decrement
+if (condition) {
+    func1(arg);  // 1 decrement
+} else {
+    incRef(arg, 1);  // refs 1→2
+    func2(arg);  // refs 2→1
+    func3(arg);  // refs 1→0 → freed
+}
+```
+
+### createNode doesn't incRef
+
+`createNode` stores pointers directly into the node's array without calling `incRef`. **The caller is responsible for ensuring keys/values have been incRef'd before passing them in.**
+
+```c
+// createNode signature
+Value *createNode(int shift, int64_t key1hash, Value *key1, Value *val1,
+                  int64_t key2hash, Value *key2, Value *val2);
+
+// Caller must incRef before passing
+Value *newLeaf = createNode(shift, hash1, incRefVal(key1, 1), val1,
+                            hash2, incRefVal(key2, 1), val2);
+```
+
+## Debugging Techniques
+
+### Use prefs at strategic points
+
+Call `prefs("tag", term)` after creation, after function calls, and before freeing. Without it, you can't tell whether a value was freed prematurely, over-freed, or is still alive when it should be dead.
+
+### Trace through every call site
+
+A function may receive an argument, pass it to another function, and that nested function may free it. You need to follow the chain — don't stop at the first function boundary.
+
+### Verify freeBitmapNode actually iterates the array
+
+`freeBitmapNode` does call `dec_and_free` on each array entry, but you need to verify the node's bitmap is non-zero and entries are non-null at the time of free. Add debug prints to confirm the loop runs.
+
+### Watch for incRef's that are never undone
+
+An `incRef` in a function argument (e.g., `sha1((FnArity *)0, incRef(key, 1))`) may never be decremented if the function pointer call doesn't trigger argument passing semantics. Every incRef must have a matching decrement somewhere.
+
+## Common Leak Patterns
+
+### Strings allocated by tests
+
+When converting from I60 to `stringValue()`, the test's strings may not be properly freed. Add `prefs` right before `check_counts` to verify string ref counts are sane.
+
+### Node contents aren't auto-freed by the caller
+
+When a node is freed via `dec_and_free`, `freeBitmapNode` iterates the array and calls `dec_and_free` on each entry. But if the caller already incRef'd values before passing to `createNode`, those incRef's must be accounted for — otherwise refs won't reach 0 and the strings leak.
 
 ## Lessons Learned
 

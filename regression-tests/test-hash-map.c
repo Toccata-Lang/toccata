@@ -81,6 +81,7 @@ Term testingSha1Collision(FnArity *f, Term trm) {
 
 // Custom sha1: returns same hash for KEY_C and KEY_D (add test)
 Term testingSha1CollisionAdd(FnArity *f, Term trm) {
+  BOOM("needs to be updated to handle strings");
   if (trm == COLLIDE_KEY_C || trm == COLLIDE_KEY_D) {
     return COLLIDE_HASH_ADD;
   }
@@ -100,18 +101,9 @@ Term testingSha1(FnArity *f, Term trm) {
   } else if (tg == VAL) {
     Value *v1 = (Value *)trm;
     switch (v1->type) {
-    case StringBufferType: {
-      String *s = (String *)v1;
-      hash = s->hashVal;
-      if (hash == 0) {
-        incRefVal(v1, 1);
-        hash = strSha1(v1);
-      }
-      break;
-    }
-
+    case StringBufferType:
     case SubStringType:
-      hash = ((ReifiedVal *)v1)->hashVal;
+      hash = strSha1(v1);
       break;
 
     case VectorType:
@@ -349,7 +341,7 @@ void testBmiCopyAssoc(void) {
   Term val = (Term)stringValue("hello");
 
   // Compute hash of key
-  int64_t hash = sha1((FnArity *)0, key);
+  int64_t hash = strSha1(incRefVal(key, 1));
 
   // Add key/value to empty BMI at shift=0
   Value *result = bmiCopyAssoc(node, key, val, hash, 0);
@@ -860,7 +852,7 @@ void testBmiCopyAssocUpdate(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key1 = (Term)stringValue("keyst");
   Term val1 = (Term)stringValue("hello");
-  int64_t hash = sha1((FnArity *)0, key1);
+  int64_t hash = strSha1(incRefVal(key1, 1));
   Value *result = bmiMutateAssoc(node, key1, val1, hash, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
@@ -902,7 +894,7 @@ void testBmiGet(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term strKey = (Term)stringValue("key137");
   Term strVal = (Term)stringValue("hello");
-  int64_t hash = sha1((FnArity *)0, strKey);
+  int64_t hash = strSha1(incRefVal(strKey, 1));
   Value *result = bmiMutateAssoc(node, strKey, strVal, hash, 0);
 
   // Lookup existing key
@@ -932,7 +924,7 @@ void testBmiDissoc(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = (Term)stringValue("key137");
   Term val = (Term)stringValue("hello");
-  int64_t hash = sha1((FnArity *)0, key);
+  int64_t hash = strSha1(incRefVal(key, 1));
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Remove the only key — should return emptyBMI
@@ -956,12 +948,12 @@ void testBmiDissocEmpty(void) {
   BitmapIndexedNode *node = malloc_bmiNode(2);
   Term key1 = (Term)stringValue("key1");
   Term val1 = (Term)stringValue("val251");
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   Term key2 = (Term)stringValue("key2");
   Term val2 = (Term)stringValue("val888");
-  int64_t hash2 = sha1((FnArity *)0, key2);
+  int64_t hash2 = strSha1(incRefVal(key2, 1));
   result = bmiMutateAssoc((BitmapIndexedNode *)result, key2, val2, hash2, 0);
 
   // Verify we have 2 entries
@@ -1041,12 +1033,12 @@ void testBmiGetMiss(void) {
   BitmapIndexedNode *node = malloc_bmiNode(1);
   Term key = (Term)stringValue("key");
   Term val = (Term)stringValue("hello");
-  int64_t hash = sha1((FnArity *)0, key);
+  int64_t hash = strSha1(incRefVal(key, 1));
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Create a different key that won't match
   Term missKey = (Term)stringValue("miss");
-  int64_t missHash = sha1((FnArity *)0, missKey);
+  int64_t missHash = strSha1(incRefVal(missKey, 1));
 
   // Lookup missing key
   // bmiGet frees the node but NOT the default, returns the default (nothing)
@@ -1073,29 +1065,19 @@ void testBmiCopyAssocBranch(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key1 = newI60(137);
-  Term val1 = newI60(251);
-  int64_t hash1 = sha1((FnArity *)0, key1);
-  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
-
-  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  Term key1 = (Term)stringValue("key137");
+  Term val1 = (Term)stringValue("value251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
+  BitmapIndexedNode *original = (BitmapIndexedNode *)bmiMutateAssoc(node, key1, val1, hash1, 0);
   int bit1 = bitpos(hash1, 0);
 
-  // Find key2 whose hash has the same bit position at shift=0
-  // but a different full hash — this triggers A2d (branch node)
-  Term key2 = newI60(1000);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  int bit2 = bitpos(hash2, 0);
-
-  // Keep trying until we find a key with the same bit position
-  while (bit2 != bit1) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = sha1((FnArity *)0, key2);
-    bit2 = bitpos(hash2, 0);
-  }
+  // key2 with same lowest-bit position as key1 but different hash — triggers A2d (branch node)
+  Term key2 = (Term)stringValue("keyX");
+  int64_t hash2 = (hash1 & 0x1f) | 0x1000;
+  ((String *)key2)->hashVal = hash2;
 
   // Call bmiCopyAssoc — should create a branch node (A2d)
-  Term newVal = newI60(888);
+  Term newVal = (Term)stringValue("value888");
   Value *branchResult = bmiCopyAssoc(original, key2, newVal, hash2, 0);
 
   // Verify result is a BMI node
@@ -2310,7 +2292,7 @@ void testBmiMutateAssoc(void) {
 
   Term key = (Term)stringValue("key137");
   Term val = (Term)stringValue("hello");
-  int64_t hash = sha1((FnArity *)0, key);
+  int64_t hash = strSha1(incRefVal(key, 1));
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Verify result is a BMI node with 1 entry
@@ -2380,7 +2362,7 @@ int main(int argc, char **argv) {
   // testBmiGetMiss();
   // testBmiDissoc();
   // testBmiDissocEmpty();
-  // testBmiCopyAssocBranch();
+  testBmiCopyAssocBranch();
   // testBmiCopyAssocSubNodeNoChange();
   // testBmiCopyAssocSubNodeChange();
   // testBmiCopyAssocCollision();
