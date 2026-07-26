@@ -157,9 +157,49 @@ Wait for explicit instruction before committing.
 - [ ] Subsequent key/value conversions amend that commit
 - [ ] Wait for explicit instruction before committing
 
+## String Ref Counting Contract
+
+**⛔ CRITICAL: When you pass a String to a function that stores it in a node, you are giving up ownership of that String.** The function does NOT increment the String's ref count. When the function frees the node, it decrements refs on all entries. If refs reaches 0, the String is freed.
+
+This means:
+- **Never use a String in a function call after it's been stored in a node that gets freed.** The String may already be at `refsError` (-10), and any `incRef`/`dec_and_free` will fail.
+- **If you need to look up a key after it's been stored, create a fresh `stringValue()` for the lookup.** The new String has its own ref count and won't be affected by the node's lifecycle.
+- **`strSha1(incRefVal(key, 1))` leaves the ref unchanged** — it increments then decrements (strSha1 decrements when the hash is already cached). So after this call, the String has its original refs.
+- **`equal()` calls `strCmp()` which decrements one or both input Strings** (both if they don't match, one if they do). Never use a String in an `equal()` comparison after it's been stored in a freed node.
+- **Never clean up a String that was stored in a node the test frees.** The node's free handles it. Cleaning it up again causes a double-decrement.
+
+### Example: Correct pattern for lookup after storage
+
+```c
+// WRONG: key1's refs is exhausted after bmiMutateAssoc stores it
+// and the old node is freed. Using key1 again will fail.
+Term key1 = (Term)stringValue("key137");
+Value *result = bmiMutateAssoc(node, key1, val, hash, 0);
+Value *clone = bmiCopyAssoc(bm, key1, newVal, hash, 0);  // FAILS!
+
+// CORRECT: create a fresh String for the lookup
+Term key1 = (Term)stringValue("key137");
+Value *result = bmiMutateAssoc(node, key1, val, hash, 0);
+Term lookupKey = (Term)stringValue("key137");
+int64_t lookupHash = strSha1(incRefVal(lookupKey, 1));
+Value *clone = bmiCopyAssoc(bm, lookupKey, newVal, lookupHash, 0);  // OK!
+```
+
+### Example: Correct pattern for verification
+
+```c
+// WRONG: newVal was stored in the clone, freed when cloneResult is freed.
+// Comparing with newVal in an equal() call will fail.
+if (equal((Value *)cloneSub->array[1], (Value *)newVal)) { ... }
+
+// CORRECT: compare values within the node, not with external Strings
+if (!equal((Value *)cloneSub->array[1], (Value *)cloneSub->array[3])) { ... }
+```
+
 ## Common Pitfalls
 
 1. **Forgetting to free String keys/values at cleanup** — a string only needs explicit `dec_and_free` if it's returned from a function and not used again as an argument in another call. If it's passed as an argument to another function, that function's cleanup handles it.
 2. **Double-freeing** — if `bmiGet` or `bmiDissoc` frees the node internally, don't also `dec_and_free` the node. Only free what the test owns.
 3. **Using `stringValue()` for the same string twice** — `stringValue("key")` may return different heap allocations each call. If you need the same pointer, store it in a variable.
 4. **Using `newI60` for temporary values that are NOT stored** — temps like `newI60(999)` passed to a function that frees them internally don't need test-level cleanup. Only count what the test allocates.
+5. **Using a String after its node was freed** — once a String is stored in a node and that node is freed, the String's refs is decremented (possibly to `refsError`). Any further use (including `equal()` comparisons) will fail. Create a fresh `stringValue()` for any subsequent use.
