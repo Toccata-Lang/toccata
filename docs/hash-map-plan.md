@@ -73,7 +73,7 @@ When converting a test:
 - [x] `testBmiDissoc` — remove key from single-item BMI (uses String KV)
 - [x] `testBmiDissocEmpty` — remove last key → returns emptyBMI
 - [x] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
-- [ ] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
+- [x] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
 - [ ] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
 - [ ] `testBmiCopyAssocCollision` — identical SHA1 hash → collision node (A2c)
 - [ ] `testBmiCount` — N-entry map, verify count == N

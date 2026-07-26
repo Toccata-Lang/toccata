@@ -139,6 +139,18 @@ Format:
 
 ---
 
+### Pattern 2: BMI pool exhaustion from bitmap-count-based recycling
+
+**Location:** Pool system in `runtime3.c:malloc_bmiNode` / `freeBitmapNode`
+
+**Test:** `testBmiCopyAssocSubNodeNoChange` (when run with other [x] tests)
+
+**Cause:** `freeBitmapNode` returned nodes to pools indexed by the node's **actual bitmap count** at free time (`freeBMINodes[cnt]`), not the requested `itemCount`. Tests like `testEmptyBmiNode`, `testBmiDissoc`, `testBmiDissocEmpty` create nodes with `malloc_bmiNode(1)` that end up with bitmap count 0 when freed (empty nodes). These went to `freeBMINodes[0]` instead of `freeBMINodes[1]`. Over 16 tests, 8 nodes from itemCount=1 and 2 from itemCount=2 leaked into itemCount=0, leaving only 2 nodes in the itemCount=1 pool — not enough for `testBmiCopyAssocSubNodeNoChange` which needs 4 allocations.
+
+**Fix:** Added `int32_t itemCount` field to `BitmapIndexedNode` struct (in `core.h` and `runtime3.h`). `malloc_bmiNode` stores the requested `itemCount` in the node. `freeBitmapNode` uses `node->itemCount` for the pool index instead of `__builtin_popcount(node->bitmap)`. The iteration loop still uses `__builtin_popcount(node->bitmap)` to only free actual entries.
+
+---
+
 ## Common Fix Patterns
 
 ### Missing `dec_and_free` after `incRef`

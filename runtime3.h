@@ -86,6 +86,7 @@ typedef struct {
   REFS_SIZE refs;
   int64_t hashVal;
   int32_t bitmap;
+  int32_t itemCount;
   Term array[];
 } BitmapIndexedNode;
 typedef struct {

@@ -588,13 +588,14 @@ BitmapIndexedNode *malloc_bmiNode(int itemCount) {
   bmiNode->refs = refsInit;
   bmiNode->hashVal = 0;
   bmiNode->bitmap = 0;
+  bmiNode->itemCount = itemCount;
   memset(&bmiNode->array, 0, sizeof(Value *) * (itemCount * 2));
   return(bmiNode);
 }
 
 void freeBitmapNode(Value *v) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)v;
-  int cnt = __builtin_popcount(node->bitmap);
+  int cnt = node->itemCount;
   for (int i = 0; i < (2 * cnt); i++) {
     if (node->array[i] != 0) {
       dec_and_free((Term)node->array[i], 1);
