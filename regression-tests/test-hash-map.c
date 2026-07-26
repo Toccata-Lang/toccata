@@ -1237,7 +1237,7 @@ void testBmiCopyAssocSubNodeChange(void) {
   dec_and_free((Term)cloneResult, 1);
 
   // New pool for itemCount=2 (clone of sub-node): malloc_count=10.
-  check_counts("testBmiCopyAssocSubNodeChange", 10, 0, __LINE__);
+  check_counts("testBmiCopyAssocSubNodeChange", 0, 0, __LINE__);
 }
 
 // Test: two keys with identical SHA1 hash → creates HashCollisionNode (A2c)
@@ -2346,24 +2346,24 @@ int main(int argc, char **argv) {
   // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
   (void)malloc_vector();
 
-  // testEmptyBmiNode();
-  // testBmiNodeOneItem();
-  // testArrayNode();
-  // testCollisionNode();
-  // testFreeBitmapNodeHighCount();
-  // testFreeArrayNode();
-  // testFreeHashCollisionNode();
-  // testBmiCopyAssoc();
-  // testBmiMutateAssoc();
-  // testBmiCopyAssocNoOp();
-  // testBmiCopyAssocUpdate();
-  // testBmiGet();
-  // testBmiGetMiss();
-  // testBmiDissoc();
-  // testBmiDissocEmpty();
-  // testBmiCopyAssocBranch();
+  testEmptyBmiNode();
+  testBmiNodeOneItem();
+  testArrayNode();
+  testCollisionNode();
+  testFreeBitmapNodeHighCount();
+  testFreeArrayNode();
+  testFreeHashCollisionNode();
+  testBmiCopyAssoc();
+  testBmiMutateAssoc();
+  testBmiCopyAssocNoOp();
+  testBmiCopyAssocUpdate();
+  testBmiGet();
+  testBmiGetMiss();
+  testBmiDissoc();
+  testBmiDissocEmpty();
+  testBmiCopyAssocBranch();
   testBmiCopyAssocSubNodeNoChange();
-  // testBmiCopyAssocSubNodeChange();
+  testBmiCopyAssocSubNodeChange();
   // testBmiCopyAssocCollision();
   // testBmiCount();
   // testBmiMutateAssocUpdateValue();

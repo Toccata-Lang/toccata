@@ -60,7 +60,7 @@ If the test fails after a conversion, fix the error before moving to the next ke
 
 Comment out all tests in `main()` except the one being converted.
 
-**⛔ CRITICAL: Before doing any conversion work, compile and run `make test-hash-map`.** If the test fails at this point (with I60 values, before any changes), **stop and report it to the user immediately**. Do **not** try to fix it or investigate further — just report the failure and wait for instructions. A pre-existing failure means there's a bug or leak in the test itself or in the implementation that needs to be addressed before conversion.
+**⛔⛔⛔ CRITICAL: Before doing any conversion work, compile and run `make test-hash-map`.** If the test fails at this point (with I60 values, before any changes), **under no circumstances are you to do anything else other than report it immediately**. No investigations. No checking. No debugging. No analysis. Just report the failure and stop. A pre-existing failure is a critical failure that must be handled by the user alone. Full stop.
 
 ### Step 2: Pick the first I60 key or value
 
