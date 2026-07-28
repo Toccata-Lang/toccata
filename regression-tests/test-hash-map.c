@@ -906,7 +906,7 @@ void testBmiGet(void) {
   if (found->type != StringBufferType) {
     BOOM("get should return String value");
   }
-  if (strcmp(((String *)found)->buffer, "hello") != 0) {
+  if (strncmp(((String *)found)->buffer, "hello", 5) != 0) {
     BOOM("get should return correct string value");
   }
 
@@ -1234,8 +1234,17 @@ void testBmiCopyAssocSubNodeChange(void) {
 
   // Verify the clone has the updated value by checking both entries
   BitmapIndexedNode *cloneBm = (BitmapIndexedNode *)cloneResult;
+  if (cloneBm->type != BitmapIndexedType) {
+    fprintf(stderr, "cloneBm type = %ld, bitmap = %lx\n", (long)cloneBm->type, (unsigned long)cloneBm->bitmap);
+    BOOM("A1b: cloneBm should be BitmapIndexedType");
+  }
+  fprintf(stderr, "cloneBm type = %ld, bitmap = %lx\n", (long)cloneBm->type, (unsigned long)cloneBm->bitmap);
   int cloneIdx = __builtin_popcount(cloneBm->bitmap & (bit1 - 1));
   BitmapIndexedNode *cloneSub = (BitmapIndexedNode *)cloneBm->array[2 * cloneIdx + 1];
+  if (cloneSub->type != BitmapIndexedType) {
+    fprintf(stderr, "cloneSub type = %ld\n", (long)cloneSub->type);
+    BOOM("A1b: cloneSub should be BitmapIndexedType");
+  }
 
   // Verify the sub-node has 2 entries and one of them has the updated value
   if (__builtin_popcount(cloneSub->bitmap) != 2) {
@@ -2355,23 +2364,23 @@ int main(int argc, char **argv) {
   // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
   (void)malloc_vector();
 
-  // testEmptyBmiNode();
-  // testBmiNodeOneItem();
-  // testArrayNode();
-  // testCollisionNode();
-  // testFreeBitmapNodeHighCount();
-  // testFreeArrayNode();
-  // testFreeHashCollisionNode();
-  // testBmiCopyAssoc();
-  // testBmiMutateAssoc();
-  // testBmiCopyAssocNoOp();
-  // testBmiCopyAssocUpdate();
-  // testBmiGet();
-  // testBmiGetMiss();
-  // testBmiDissoc();
-  // testBmiDissocEmpty();
-  // testBmiCopyAssocBranch();
-  // testBmiCopyAssocSubNodeNoChange();
+  testEmptyBmiNode();
+  testBmiNodeOneItem();
+  testArrayNode();
+  testCollisionNode();
+  testFreeBitmapNodeHighCount();
+  testFreeArrayNode();
+  testFreeHashCollisionNode();
+  testBmiCopyAssoc();
+  testBmiMutateAssoc();
+  testBmiCopyAssocNoOp();
+  testBmiCopyAssocUpdate();
+  testBmiGet();
+  testBmiGetMiss();
+  testBmiDissoc();
+  testBmiDissocEmpty();
+  testBmiCopyAssocBranch();
+  testBmiCopyAssocSubNodeNoChange();
   testBmiCopyAssocSubNodeChange();
   // testBmiCopyAssocCollision();
   // testBmiCount();

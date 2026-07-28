@@ -1903,9 +1903,8 @@ int8_t equal(Value *v1, Value *v2) {
 
 Value *stringValue(char *s) {
   int64_t len = strlen(s);
-  String *strVal = malloc_string(len + 5);
+  String *strVal = malloc_string(len);
   strncpy(strVal->buffer, s, len);
-  strVal->buffer[len] = 0;
   return((Value *)strVal);
 };
 
