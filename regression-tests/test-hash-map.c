@@ -1,5 +1,8 @@
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include "new.h"
 #include "runtime3.h"
 
@@ -209,6 +212,7 @@ static void check_counts(const char *test_name, unsigned expected_malloc,
 // Test: create empty BMI node, verify bitmap=0
 // Pool created: malloc_count += 9 (spare nodes). Node freed → pool recycle.
 void testEmptyBmiNode(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   BitmapIndexedNode *node = malloc_bmiNode(0);
@@ -231,6 +235,7 @@ void testEmptyBmiNode(void) {
 // Different itemCount (1 vs 0) → different pool index → new pool created.
 // Node freed → pool recycle.
 void testBmiNodeOneItem(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   BitmapIndexedNode *node = malloc_bmiNode(1);
@@ -249,6 +254,7 @@ void testBmiNodeOneItem(void) {
 // New pool created (separate from BMI pool): malloc_count += 9.
 // Node freed → pool recycle.
 void testArrayNode(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   ArrayNode *node = malloc_arrayNode();
@@ -266,6 +272,7 @@ void testArrayNode(void) {
 // Test: create HashCollisionNode
 // No pool. malloc_count += 1, free_count += 1 via dec_and_free.
 void testCollisionNode(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   HashCollisionNode *node = malloc_hashCollisionNode(2);
@@ -286,6 +293,7 @@ void testCollisionNode(void) {
 // Pool created for itemCount=20: malloc_count += 9.
 // Node freed with cnt=20 >= 20: actually freed, free_count += 1.
 void testFreeBitmapNodeHighCount(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   BitmapIndexedNode *node = malloc_bmiNode(20);
@@ -308,6 +316,7 @@ void testFreeBitmapNodeHighCount(void) {
 // Pool already exists (created by testArrayNode), no new malloc_count change.
 // Node recycled, free_count += 0.
 void testFreeArrayNode(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   ArrayNode *node = malloc_arrayNode();
@@ -320,6 +329,7 @@ void testFreeArrayNode(void) {
 // Test: freeHashCollisionNode works correctly
 // No pool. malloc_count += 1, free_count += 1.
 void testFreeHashCollisionNode(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   HashCollisionNode *node = malloc_hashCollisionNode(2);
@@ -332,6 +342,7 @@ void testFreeHashCollisionNode(void) {
 // Test: add key/value to empty BMI → single-item BMI
 // Then verify structure is correct
 void testBmiCopyAssoc(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create empty BMI node
@@ -813,6 +824,7 @@ void testBmiMutateAssocNoOp(void) {
 
 // Test: same key, same value → no-op, return original node (A2a)
 void testBmiCopyAssocNoOp(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node
@@ -846,6 +858,7 @@ void testBmiCopyAssocNoOp(void) {
 
 // Test: same key, different value → clone with updated value (A2b)
 void testBmiCopyAssocUpdate(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node with I60 key and String value
@@ -888,6 +901,7 @@ void testBmiCopyAssocUpdate(void) {
 
 // Test: lookup existing key returns the value
 void testBmiGet(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node with String key and String value
@@ -918,6 +932,7 @@ void testBmiGet(void) {
 
 // Test: remove key from single-item BMI → returns emptyBMI
 void testBmiDissoc(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node
@@ -942,6 +957,7 @@ void testBmiDissoc(void) {
 
 // Test: remove key from multi-item BMI → returns smaller map (not emptyBMI)
 void testBmiDissocEmpty(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create two-item BMI node using keys with different bit positions
@@ -1027,6 +1043,7 @@ void testBmiCount(void) {
 
 // Test: lookup missing key returns nothing
 void testBmiGetMiss(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node
@@ -1061,6 +1078,7 @@ void testBmiGetMiss(void) {
 
 // Test: add key with same bit position but different hash → branch node (A2d)
 void testBmiCopyAssocBranch(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node
@@ -1125,6 +1143,7 @@ void testBmiCopyAssocBranch(void) {
 
 // Test: nested sub-node update with same value → no-op, return original (A1a)
 void testBmiCopyAssocSubNodeNoChange(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // First, build a nested structure: two keys with same bit position at shift=0
@@ -1179,6 +1198,7 @@ void testBmiCopyAssocSubNodeNoChange(void) {
 
 // Test: nested sub-node update with different value → clone (A1b)
 void testBmiCopyAssocSubNodeChange(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Build nested structure: two keys with same bit position at shift=0
@@ -1238,7 +1258,6 @@ void testBmiCopyAssocSubNodeChange(void) {
     fprintf(stderr, "cloneBm type = %ld, bitmap = %lx\n", (long)cloneBm->type, (unsigned long)cloneBm->bitmap);
     BOOM("A1b: cloneBm should be BitmapIndexedType");
   }
-  fprintf(stderr, "cloneBm type = %ld, bitmap = %lx\n", (long)cloneBm->type, (unsigned long)cloneBm->bitmap);
   int cloneIdx = __builtin_popcount(cloneBm->bitmap & (bit1 - 1));
   BitmapIndexedNode *cloneSub = (BitmapIndexedNode *)cloneBm->array[2 * cloneIdx + 1];
   if (cloneSub->type != BitmapIndexedType) {
@@ -2299,6 +2318,7 @@ void testCollisionGet(void) {
 
 // Test: refs==1, empty BMI → insert single entry (path 2b)
 void testBmiMutateAssoc(void) {
+  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create empty BMI node
@@ -2337,9 +2357,18 @@ void testBmiMutateAssoc(void) {
   check_counts("testBmiMutateAssoc", 0, 0, __LINE__);
 }
 
+// Test runner function type
+typedef void (*TestFn)(void);
+
 int main(int argc, char **argv) {
+  int shuffled_count;
+  {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    srand((unsigned int)(tv.tv_sec ^ tv.tv_usec ^ getpid()));
+  }
   sha1 = testingSha1;
-  
+
   // just to make BOOM happ
   dotFile = fopen("graphs.dot", "w");
   if (!dotFile) {
@@ -2364,56 +2393,72 @@ int main(int argc, char **argv) {
   // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
   (void)malloc_vector();
 
-  testEmptyBmiNode();
-  testBmiNodeOneItem();
-  testArrayNode();
-  testCollisionNode();
-  testFreeBitmapNodeHighCount();
-  testFreeArrayNode();
-  testFreeHashCollisionNode();
-  testBmiCopyAssoc();
-  testBmiMutateAssoc();
-  testBmiCopyAssocNoOp();
-  testBmiCopyAssocUpdate();
-  testBmiGet();
-  testBmiGetMiss();
-  testBmiDissoc();
-  testBmiDissocEmpty();
-  testBmiCopyAssocBranch();
-  testBmiCopyAssocSubNodeNoChange();
-  testBmiCopyAssocSubNodeChange();
-  // testBmiCopyAssocCollision();
-  // testBmiCount();
-  // testBmiMutateAssocUpdateValue();
-  // testBmiMutateAssocInsert();
-  // testBmiMutateAssocBranch();
-  // testBmiMutateAssocCollision();
-  // testBmiMutateAssocSubNodeRecurse();
-  // testBmiMutateAssocNoOp();
-  // testBmiMutateAssocPromote();
-  // testArrayNodeCopyAssoc();
-  // testArrayNodeCopyAssocA2();
-  // testArrayNodeCopyAssocB1();
-  // testArrayNodeCopyAssocB2();
-  // testArrayNodeCopyAssocB2Multi();
-  // testArrayNodeGet();
-  // testArrayNodeGetMiss();
-  // testArrayNodeGetB2Miss();
-  // testArrayNodeCount();
-  // testArrayNodeCountEmpty();
-  // testArrayNodeCountSingle();
-  // testArrayNodeDissocEmptySlot();
-  // testArrayNodeDissoc();
-  // testArrayNodeMutateAssocInsert();
-  // testArrayNodeMutateAssocRecurse();
-  // testCollisionAssocAdd();
-  // testCollisionAssocUpdate();
-  // testCollisionAssocPromote();
-  // testCollisionCount();
-  // testCollisionVec();
-  // testCollisionDissoc();
-  // testCollisionGet();
-  // testBmiHashVec();
+  static TestFn tests[] = {
+    testEmptyBmiNode,
+    testBmiNodeOneItem,
+    testArrayNode,
+    testCollisionNode,
+    testFreeBitmapNodeHighCount,
+    testFreeArrayNode,
+    testFreeHashCollisionNode,
+    testBmiCopyAssoc,
+    testBmiMutateAssoc,
+    testBmiCopyAssocNoOp,
+    testBmiCopyAssocUpdate,
+    testBmiGet,
+    testBmiGetMiss,
+    testBmiDissoc,
+    testBmiCopyAssocSubNodeChange,
+    testBmiDissocEmpty,
+    testBmiCopyAssocBranch,
+    testBmiCopyAssocSubNodeNoChange,
+    // testBmiCopyAssocCollision,
+    // testBmiCount,
+    // testBmiMutateAssocUpdateValue,
+    // testBmiMutateAssocInsert,
+    // testBmiMutateAssocBranch,
+    // testBmiMutateAssocCollision,
+    // testBmiMutateAssocSubNodeRecurse,
+    // testBmiMutateAssocNoOp,
+    // testBmiMutateAssocPromote,
+    // testArrayNodeCopyAssoc,
+    // testArrayNodeCopyAssocA2,
+    // testArrayNodeCopyAssocB1,
+    // testArrayNodeCopyAssocB2,
+    // testArrayNodeCopyAssocB2Multi,
+    // testArrayNodeGet,
+    // testArrayNodeGetMiss,
+    // testArrayNodeGetB2Miss,
+    // testArrayNodeCount,
+    // testArrayNodeCountEmpty,
+    // testArrayNodeCountSingle,
+    // testArrayNodeDissocEmptySlot,
+    // testArrayNodeDissoc,
+    // testArrayNodeMutateAssocInsert,
+    // testArrayNodeMutateAssocRecurse,
+    // testCollisionAssocAdd,
+    // testCollisionAssocUpdate,
+    // testCollisionAssocPromote,
+    // testCollisionCount,
+    // testCollisionVec,
+    // testCollisionDissoc,
+    // testCollisionGet,
+    // testBmiHashVec,
+  };
+  shuffled_count = sizeof(tests) / sizeof(tests[0]);
+
+  // Fisher-Yates shuffle
+  for (int i = shuffled_count - 1; i > 0; i--) {
+    int j = rand() % (i + 1);
+    TestFn tmp = tests[i];
+    tests[i] = tests[j];
+    tests[j] = tmp;
+  }
+
+  fprintf(stderr, "=== Running %d tests in random order ===\n", shuffled_count);
+  for (int i = 0; i < shuffled_count; i++) {
+    tests[i]();
+  }
   printf("All tests passed\n");
   return 0;
 }
