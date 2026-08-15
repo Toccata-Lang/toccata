@@ -1954,9 +1954,9 @@ BitmapIndexedNode *cloneBitmapIndexedNode(BitmapIndexedNode *node, int idx,
   return(newNode);
 }
 
-Value *createNode(int shift,
-		  int64_t key1hash, Value *key1, Value *val1,
-		  int64_t key2hash, Value *key2, Value *val2)
+Term createNode(int shift,
+		int64_t key1hash, Term key1, Term val1,
+		int64_t key2hash, Term key2, Term val2)
 {
   if (shift > 60) {
     fprintf(stderr, "Ran out of shift!!!!!!");
@@ -1970,15 +1970,15 @@ Value *createNode(int shift,
   int key2idx = __builtin_popcount(newNode->bitmap & (key2bit - 1));
   if (key1bit == key2bit) {
     newNode->array[0] = 0;
-    newNode->array [1] = (Term)createNode(shift + 5, key1hash, key1, val1,
-					  key2hash, key2, val2);
+    newNode->array [1] = createNode(shift + 5, key1hash, key1, val1,
+				    key2hash, key2, val2);
   } else {
-    newNode->array[key1idx * 2] = (Term)key1;
-    newNode->array[key1idx * 2 + 1] = (Term)val1;
-    newNode->array[key2idx * 2] = (Term)key2;
-    newNode->array[key2idx * 2 + 1] = (Term)val2;
+    newNode->array[key1idx * 2] = key1;
+    newNode->array[key1idx * 2 + 1] = val1;
+    newNode->array[key2idx * 2] = key2;
+    newNode->array[key2idx * 2 + 1] = val2;
   }
-  return((Value *)newNode);
+  return((Term)newNode);
 }
 
 Value *bmiHashVec(Value *arg0, Value *arg1) {
@@ -2195,10 +2195,10 @@ Value *bmiReplaceCopied(BitmapIndexedNode *node, Term key, Term val, int64_t has
     return((Value *)newNode);
   } else {
     // hashes are different, so create a BMI node for the next level
-    Value *newLeaf = createNode(shift + 5,
-				existingKeyHash, incRefVal(currKey, 1), incRefVal(currVal, 1),
-				hash, (Value *)key, (Value *)val);
-    BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, (Term)newLeaf);
+    Term newLeaf = createNode(shift + 5,
+				existingKeyHash, incRef((Term)currKey, 1), incRef((Term)currVal, 1),
+				hash, key, val);
+    BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, newLeaf);
     dec_and_free((Term)node, 1);
     return((Value *)newNode);
   }
@@ -2224,12 +2224,12 @@ Value *bmiReplaceMutate(BitmapIndexedNode *node, Term key, Term val, int64_t has
     bmiSetVal(node, bit, (Term)newLeaf);
     return((Value *)node);
   } else {
-    Value *newLeaf = createNode(shift + 5,
-				existingKeyHash, (Value *)currKey, (Value *)currVal,
-				hash, (Value *)key, (Value *)val);
+    Term newLeaf = createNode(shift + 5,
+				existingKeyHash, currKey, currVal,
+				hash, key, val);
     // replace key/val at 'idx' with new stuff
     bmiSetKey(node, bit, 0);
-    bmiSetVal(node, bit, (Term)newLeaf);
+    bmiSetVal(node, bit, newLeaf);
     return((Value *)node);
   }
 }
