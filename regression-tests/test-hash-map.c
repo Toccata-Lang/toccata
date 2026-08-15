@@ -84,7 +84,6 @@ Term testingSha1Collision(FnArity *f, Term trm) {
 
 // Custom sha1: returns same hash for KEY_C and KEY_D (add test)
 Term testingSha1CollisionAdd(FnArity *f, Term trm) {
-  BOOM("needs to be updated to handle strings");
   if (trm == COLLIDE_KEY_C || trm == COLLIDE_KEY_D) {
     return COLLIDE_HASH_ADD;
   }
@@ -1972,19 +1971,19 @@ static HashCollisionNode *makeCollisionNode(Term key, Term val) {
 void testCollisionAssocAdd(void) {
   reset_counters();
 
-  // Save original sha1 and equal
-  Term (*savedSha1)(FnArity *, Term) = sha1;
-
   // Create collision node with KEY_C -> VAL_C
-  Term keyC = COLLIDE_KEY_C;
-  Term valC = newI60(10);
+  Term keyC = (Term)stringValue("keyC300");
+  // collisionAssoc re-hashes the stored key and compares it to this hash,
+  // so passing keyC's own hash triggers the same-hash (add) branch
+  int64_t hashC = strSha1(incRefVal(keyC, 1));
+  Term valC = (Term)stringValue("val10");
   HashCollisionNode *node = makeCollisionNode(keyC, valC);
 
   // collisionAssoc with KEY_D (same hash, different key)
   // Should add KEY_D -> VAL_D as a new entry
-  Term keyD = COLLIDE_KEY_D;
-  Term valD = newI60(20);
-  Value *result = collisionAssoc((Value *)node, (Value *)keyD, (Value *)valD, COLLIDE_HASH_ADD, 0);
+  Term keyD = (Term)stringValue("keyD400");
+  Term valD = (Term)stringValue("val20");
+  Value *result = collisionAssoc((Value *)node, (Value *)keyD, (Value *)valD, hashC, 0);
 
   HashCollisionNode *resultNode = (HashCollisionNode *)result;
   if (resultNode->type != HashCollisionNodeType) {
@@ -2018,6 +2017,7 @@ void testCollisionAssocAdd(void) {
 
   // Verify original node was freed
   dec_and_free((Term)result, 1);
+
   check_counts("testCollisionAssocAdd", 2, 2, __LINE__);
 }
 
@@ -2411,7 +2411,7 @@ int main(int argc, char **argv) {
     testArrayNodeDissoc,
     testArrayNodeMutateAssocInsert,
     testArrayNodeMutateAssocRecurse,
-    // testCollisionAssocAdd,
+    testCollisionAssocAdd,
     // testCollisionAssocUpdate,
     // testCollisionAssocPromote,
     // testCollisionCount,
