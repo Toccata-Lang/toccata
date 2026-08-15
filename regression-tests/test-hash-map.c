@@ -2142,10 +2142,10 @@ void testCollisionVec(void) {
   reset_counters();
 
   // Create collision node with 2 entries
-  Term keyA = COLLIDE_KEY_A;
-  Term valA = newI60(11);
-  Term keyB = COLLIDE_KEY_B;
-  Term valB = newI60(22);
+  Term keyA = (Term)stringValue("keyA100");
+  Term valA = (Term)stringValue("val11");
+  Term keyB = (Term)stringValue("keyB200");
+  Term valB = (Term)stringValue("val22");
   HashCollisionNode *node = malloc_hashCollisionNode(2);
   node->array[0] = (Value *)keyA;
   node->array[1] = (Value *)valA;
@@ -2170,6 +2170,7 @@ void testCollisionVec(void) {
   }
 
   // Verify each entry is a 2-element vector [key, value]
+  // (vectGet returns an incRef'd copy — free it after each use)
   for (int i = 0; i < 2; i++) {
     Term pairTerm = vectGet((Vector *)vecResult, i);
     Vector *pairVec = (Vector *)pairTerm;
@@ -2179,7 +2180,11 @@ void testCollisionVec(void) {
     if (pairVec->count != 2) {
       BOOM("collisionVec: pair should have 2 elements");
     }
+    dec_and_free(pairTerm, 1);
   }
+
+  // Clean up — free the result vector (and the pair vectors it holds)
+  dec_and_free((Term)vecResult, 1);
 
   check_counts("testCollisionVec", 1, 1, __LINE__);
 }
@@ -2420,7 +2425,7 @@ int main(int argc, char **argv) {
     testCollisionAssocUpdate,
     testCollisionAssocPromote,
     testCollisionCount,
-    // testCollisionVec,
+    testCollisionVec,
     // testCollisionDissoc,
     // testCollisionGet,
     // testBmiHashVec,

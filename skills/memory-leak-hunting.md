@@ -187,6 +187,18 @@ Format:
 
 ---
 
+### Pattern 6: vectGet returns an incRef'd copy the caller must free
+
+**Location:** `regression-tests/test-hash-map.c:testCollisionVec` (test cleanup); API contract in `runtime3.c:vectGet`
+
+**Test:** `testCollisionVec` in `regression-tests/test-hash-map.c`
+
+**Cause:** `vectGet(vect, i)` returns `dupeVal(&array[i])` — an incRef'd copy of the element. The caller owns that ref and must `dec_and_free` it. The test's verification loop called `vectGet` once per pair but never freed the results, so each pair vector was left at refs=2. Freeing the result vector then dropped the pairs to refs=1 — never returned to the Vector pool (`unfreed=0 pool_delta=-2`). The test also initially never freed the result vector itself (`pool_delta=-3`). Both are test-cleanup gaps, not runtime bugs.
+
+**Fix:** Added `dec_and_free(pairTerm, 1)` after each `vectGet` use, and `dec_and_free((Term)vecResult, 1)` before `check_counts`. Both return the vectors to the pool, restoring the baseline.
+
+---
+
 ## Common Fix Patterns
 
 ### Missing `dec_and_free` after `incRef`
