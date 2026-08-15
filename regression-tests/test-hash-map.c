@@ -91,9 +91,12 @@ Term testingSha1CollisionAdd(FnArity *f, Term trm) {
   return testingSha1(f, trm);
 }
 
-// Helper: check if a term is an I60 with the same value as key
+// Helper: check if a term is an I60 with the same value as key,
+// or the same String pointer
 static int subNodeEqualsKey(Term t, Term key) {
-  return termTag(t) == I60 && getI60(t) == getI60(key);
+  if (termTag(t) == I60)
+    return termTag(key) == I60 && getI60(t) == getI60(key);
+  return t == key;
 }
 
 Term testingSha1(FnArity *f, Term trm) {
@@ -443,9 +446,9 @@ void testBmiMutateAssocInsert(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key1 = newI60(137);
-  Term val1 = newI60(251);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key137");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
@@ -453,27 +456,16 @@ void testBmiMutateAssocInsert(void) {
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
-  // Use a key at a DIFFERENT bit position (bit not set in original bitmap)
-  Term key2 = newI60(256);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  Term val2 = newI60(888);
+  // key2 at a DIFFERENT bit position than key1 (bit not set in original bitmap)
+  Term key2 = (Term)stringValue("key256");
+  int64_t hash2 = ((hash1 & 0x1f) + 1) | 0x1000;
+  ((String *)key2)->hashVal = hash2;
+  Term val2 = (Term)stringValue("val888");
   int bit2 = bitpos(hash2, 0);
 
   // Verify key2 is NOT already in the bitmap
   if (original->bitmap & bit2) {
-    // Try another key if it happens to share the same bit
-    for (i64 extra = 0; extra < 10000; extra++) {
-      key2 = newI60(extra);
-      hash2 = sha1((FnArity *)0, key2);
-      bit2 = bitpos(hash2, 0);
-      if (!(original->bitmap & bit2)) {
-        val2 = newI60(extra + 100);
-        break;
-      }
-    }
-    if (original->bitmap & bit2) {
-      BOOM("could not find key at free bit position");
-    }
+    BOOM("could not find key at free bit position");
   }
 
   // Call bmiMutateAssoc — should create a new BMI with 2 entries
@@ -2414,7 +2406,7 @@ int main(int argc, char **argv) {
     testBmiCopyAssocCollision,
     testBmiCount,
     testBmiMutateAssocUpdateValue,
-    // testBmiMutateAssocInsert,
+    testBmiMutateAssocInsert,
     // testBmiMutateAssocBranch,
     // testBmiMutateAssocCollision,
     // testBmiMutateAssocSubNodeRecurse,

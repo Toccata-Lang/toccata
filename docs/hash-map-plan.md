@@ -78,7 +78,7 @@ When converting a test:
 - [x] `testBmiCopyAssocCollision` — identical SHA1 hash → collision node (A2c)
 - [x] `testBmiCount` — N-entry map, verify count == N
 - [x] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
-- [ ] `testBmiMutateAssocInsert` — bit not set, n < 16, insert (2b)
+- [x] `testBmiMutateAssocInsert` — bit not set, n < 16, insert (2b)
 - [ ] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
 - [ ] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
 - [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
