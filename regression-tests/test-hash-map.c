@@ -1874,21 +1874,18 @@ void testArrayNodeMutateAssocInsert(void) {
 
   // Create ArrayNode with one entry
   ArrayNode *node = malloc_arrayNode();
-  Term key1 = newI60(100);
-  Term val1 = newI60(200);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key100");
+  Term val1 = (Term)stringValue("val200");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   int slot1 = mask(hash1, 0);
 
-  // Find key2 at a DIFFERENT slot
-  Term key2 = newI60(300);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  while (mask(hash2, 0) == slot1) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = sha1((FnArity *)0, key2);
-  }
-  Term val2 = newI60(400);
+  // Find key2 at a DIFFERENT slot (pin hashVal to a slot other than key1's)
+  Term key2 = (Term)stringValue("key300");
+  int64_t hash2 = (hash1 & ~0x1f) | ((mask(hash1, 0) + 1) & 0x1f);
+  ((String *)key2)->hashVal = hash2;
+  Term val2 = (Term)stringValue("val400");
   int slot2 = mask(hash2, 0);
 
   // Set refs==1 so mutateAssoc takes the in-place path
@@ -2406,7 +2403,7 @@ int main(int argc, char **argv) {
     testArrayNodeCountSingle,
     testArrayNodeDissocEmptySlot,
     testArrayNodeDissoc,
-    // testArrayNodeMutateAssocInsert,
+    testArrayNodeMutateAssocInsert,
     // testArrayNodeMutateAssocRecurse,
     // testCollisionAssocAdd,
     // testCollisionAssocUpdate,

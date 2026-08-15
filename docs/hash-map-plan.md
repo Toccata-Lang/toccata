@@ -97,7 +97,7 @@ When converting a test:
 - [x] `testArrayNodeCountSingle` — count single-entry ArrayNode
 - [x] `testArrayNodeDissocEmptySlot` — key not found (empty slot)
 - [x] `testArrayNodeDissoc` — remove key from ArrayNode
-- [ ] `testArrayNodeMutateAssocInsert` — slot is empty → insert new entry
+- [x] `testArrayNodeMutateAssocInsert` — slot is empty → insert new entry
 - [ ] `testArrayNodeMutateAssocRecurse` — slot has BMI sub-node → recurse
 - [ ] `testCollisionAssocAdd` — add new key to collision node
 - [ ] `testCollisionAssocUpdate` — update existing key value
