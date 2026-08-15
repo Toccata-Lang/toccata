@@ -2026,19 +2026,20 @@ void testCollisionAssocAdd(void) {
 void testCollisionAssocUpdate(void) {
   reset_counters();
 
-  // Save original sha1 and equal
-  Term (*savedSha1)(FnArity *, Term) = sha1;
-
   // Create collision node with KEY_A -> VAL_A
-  Term keyA = COLLIDE_KEY_A;
-  Term valA = newI60(10);
+  Term keyA = (Term)stringValue("keyA100");
+  // collisionAssoc re-hashes the stored key and compares it to this hash,
+  // so passing keyA's own hash triggers the same-hash (update) branch
+  int64_t hashA = strSha1(incRefVal(keyA, 1));
+  Term valA = (Term)stringValue("val10");
   HashCollisionNode *node = makeCollisionNode(keyA, valA);
 
   // collisionAssoc with same key (KEY_A) but different value
   // Should update KEY_A's value to VAL_NEW
-  Term keySame = COLLIDE_KEY_A;
-  Term valNew = newI60(99);
-  Value *result = collisionAssoc((Value *)node, (Value *)keySame, (Value *)valNew, COLLIDE_HASH, 0);
+  // (fresh key: the update path stores the passed key and frees the old node's key)
+  Term keySame = (Term)stringValue("keyA100");
+  Term valNew = (Term)stringValue("val99");
+  Value *result = collisionAssoc((Value *)node, (Value *)keySame, (Value *)valNew, hashA, 0);
 
   HashCollisionNode *resultNode = (HashCollisionNode *)result;
   if (resultNode->count != 2) {
@@ -2046,8 +2047,9 @@ void testCollisionAssocUpdate(void) {
   }
 
   // Verify KEY_A's value was updated to VAL_NEW
+  // (the node holds the fresh keySame pointer, not the original keyA)
   for (int i = 0; i < resultNode->count / 2; i++) {
-    if ((Term)resultNode->array[2 * i] == keyA) {
+    if ((Term)resultNode->array[2 * i] == keySame) {
       if ((Term)resultNode->array[2 * i + 1] != valNew) {
         BOOM("collisionAssoc update: KEY_A should have VAL_NEW");
       }
@@ -2412,7 +2414,7 @@ int main(int argc, char **argv) {
     testArrayNodeMutateAssocInsert,
     testArrayNodeMutateAssocRecurse,
     testCollisionAssocAdd,
-    // testCollisionAssocUpdate,
+    testCollisionAssocUpdate,
     // testCollisionAssocPromote,
     // testCollisionCount,
     // testCollisionVec,
