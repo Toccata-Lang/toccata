@@ -89,7 +89,7 @@ When converting a test:
 - [x] `testArrayNodeCopyAssocB1` — ArrayNode with sub-node, same key+value (no-op)
 - [x] `testArrayNodeCopyAssocB2` — ArrayNode with sub-node, different value
 - [x] `testArrayNodeCopyAssocB2Multi` — multiple entries, update one sub-node
-- [ ] `testArrayNodeGet` — lookup existing key in ArrayNode
+- [x] `testArrayNodeGet` — lookup existing key in ArrayNode
 - [ ] `testArrayNodeGetMiss` — lookup missing key (empty slot)
 - [ ] `testArrayNodeGetB2Miss` — key not in BMI sub-node
 - [ ] `testArrayNodeCount` — count entries in ArrayNode

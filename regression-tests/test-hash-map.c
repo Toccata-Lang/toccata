@@ -1637,16 +1637,19 @@ void testArrayNodeGet(void) {
 
   // Create ArrayNode with a BMI sub-node
   ArrayNode *node = malloc_arrayNode();
-  Term key = newI60(100);
-  Term val = newI60(200);
-  int64_t hash = sha1((FnArity *)0, key);
+  Term key = (Term)stringValue("key100");
+  Term val = (Term)stringValue("value200");
+  int64_t hash = strSha1(incRefVal(key, 1));
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   // Lookup the key
-  Value *found = arrayNodeGet((Value *)node, (Value *)key, (Value *)nothing(), hash, 0);
+  // (fresh key: the original key is owned by the node, which is freed
+  //  during this call)
+  Term lookupKey = (Term)stringValue("key100");
+  Value *found = arrayNodeGet((Value *)node, (Value *)lookupKey, (Value *)nothing(), hash, 0);
 
   // Verify correct value returned
-  if (termTag((Term)found) != I60 || getI60((Term)found) != 200) {
+  if (found->type != StringBufferType || strncmp(((String *)found)->buffer, "value200", 8) != 0) {
     BOOM("arrayNodeGet: should find correct value");
   }
 
@@ -2405,7 +2408,7 @@ int main(int argc, char **argv) {
     testArrayNodeCopyAssocB1,
     testArrayNodeCopyAssocB2,
     testArrayNodeCopyAssocB2Multi,
-    // testArrayNodeGet,
+    testArrayNodeGet,
     // testArrayNodeGetMiss,
     // testArrayNodeGetB2Miss,
     // testArrayNodeCount,
