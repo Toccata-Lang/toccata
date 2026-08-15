@@ -104,13 +104,19 @@ Go back to Step 2 and pick the next I60 key or value. Convert it. Verify. Repeat
 
 ### Step 9: Final regression check
 
-Uncomment ALL tests marked as [x] in the plan. Comment out the rest. Re-run:
+Uncomment ALL tests marked as [x] in the plan. Comment out the rest. Build, then loop the test binary 1000 times — tests run in randomized order each run, so repeated runs catch order-dependent pool issues:
 
 ```bash
 make test-hash-map
+fails=0
+for i in $(seq 1 1000); do
+  ./regression-tests/test-hash-map >/dev/null 2>&1 || fails=$((fails+1))
+  [ "$fails" -gt 0 ] && echo "RUN $i FAILED"
+done
+echo "$fails failures out of 1000"
 ```
 
-Verify nothing regressed.
+Verify nothing regressed: 0 failures out of 1000.
 
 ### Step 10: Update the plan
 
@@ -153,7 +159,7 @@ Wait for explicit instruction before committing.
 - [ ] One key or value converted at a time
 - [ ] `make test-hash-map` passes after each conversion
 - [ ] All keys or values in the test converted
-- [ ] Final regression check: all [x] tests uncommented, passes
+- [ ] Final regression check: all [x] tests uncommented, 1000 runs pass
 
 ### After conversion
 - [ ] Test marked [x] in `docs/hash-map-plan.md`
