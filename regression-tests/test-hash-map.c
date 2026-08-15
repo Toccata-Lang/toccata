@@ -761,9 +761,9 @@ void testBmiMutateAssocNoOp(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key = newI60(137);
-  Term val = newI60(251);
-  int64_t hash = sha1((FnArity *)0, key);
+  Term key = (Term)stringValue("key137");
+  Term val = (Term)stringValue("val251");
+  int64_t hash = strSha1(incRefVal(key, 1));
 
   // Add key/value — first mutateAssoc call
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
@@ -773,9 +773,14 @@ void testBmiMutateAssocNoOp(void) {
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
+  // Fresh key/value strings for the no-op call — the stored key's and
+  // value's refs belong to the node
+  Term noOpKey = (Term)stringValue("key137");
+  Term noOpVal = (Term)stringValue("val251");
+
   // Call bmiMutateAssoc with same key and same value
   // This should trigger path 1b: keys equal, values equal → no-op
-  Value *noOpResult = bmiMutateAssoc(original, key, val, hash, 0);
+  Value *noOpResult = bmiMutateAssoc(original, noOpKey, noOpVal, hash, 0);
 
   // Verify same pointer returned (no-op path)
   if (noOpResult != (Value *)original) {
@@ -790,18 +795,19 @@ void testBmiMutateAssocNoOp(void) {
   // Verify the key/value are still at the correct index
   int bit = bitpos(hash, 0);
   int idx = __builtin_popcount(((BitmapIndexedNode *)noOpResult)->bitmap & (bit - 1));
-  if (((BitmapIndexedNode *)noOpResult)->array[2 * idx] != key) {
+  if (((BitmapIndexedNode *)noOpResult)->array[2 * idx] != noOpKey) {
     BOOM("bmiMutateAssoc no-op: key should be unchanged");
   }
-  if (((BitmapIndexedNode *)noOpResult)->array[2 * idx + 1] != val) {
+  if (((BitmapIndexedNode *)noOpResult)->array[2 * idx + 1] != noOpVal) {
     BOOM("bmiMutateAssoc no-op: value should be unchanged");
   }
 
   // Clean up
   dec_and_free((Term)noOpResult, 1);
 
-  // The key and val passed to the no-op call are freed by the function.
-  // No new allocations.
+  // The no-op call stored the fresh key/value and freed the originals;
+  // freeing the node frees the fresh key/value. All recycled, no net pool
+  // change, no actual frees.
   check_counts("testBmiMutateAssocNoOp", 0, 0, __LINE__);
 }
 
@@ -2371,7 +2377,7 @@ int main(int argc, char **argv) {
     testBmiMutateAssocBranch,
     testBmiMutateAssocCollision,
     testBmiMutateAssocSubNodeRecurse,
-    // testBmiMutateAssocNoOp,
+    testBmiMutateAssocNoOp,
     // testBmiMutateAssocPromote,
     // testArrayNodeCopyAssoc,
     // testArrayNodeCopyAssocA2,
