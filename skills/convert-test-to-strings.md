@@ -12,6 +12,8 @@
 
 **Never remove `BOOM()` calls in `runtime3.c` unless they actually get hit during testing.** They mark untested code paths. After conversion, check which BOOMs are still unused — those are the paths that still need test coverage.
 
+`BOOM("test")` calls are **tripwires** on untested execution paths. When a conversion first exercises such a path, the Step 1 baseline run hits the tripwire — report and stop per the ⛔⛔⛔ rule. The user removes the tripwire, and the conversion proceeds. Tripwire removals belong in that test's commit (alongside the test file and plan update).
+
 ## ⛔ CRITICAL: Git Workflow
 
 **When committing, ONLY stage and commit the files that were actually changed.**
@@ -47,6 +49,8 @@ Term key = (Term)stringValue("mykey");
 ```
 
 This bypasses the SHA1 computation and lets you control the hash for testing structural paths.
+
+**Automatic hash matching:** If a test computes a key's hash through the same `sha1` function pointer the runtime calls internally (e.g., `bmiReplaceCopied` re-hashes the existing key when deciding collision vs. branch), then passing that hash for a *different* key makes the collision/branch decision fall out automatically — no `hashVal` pinning needed. `hashVal` pinning is only required when you must force a specific bit position (branch tests) or a specific hash value the test does not compute from the key.
 
 ## Conversion Process
 
@@ -165,7 +169,7 @@ This means:
 - **Never use a String in a function call after it's been stored in a node that gets freed.** The String may already be at `refsError` (-10), and any `incRef`/`dec_and_free` will fail.
 - **If you need to look up a key after it's been stored, create a fresh `stringValue()` for the lookup.** The new String has its own ref count and won't be affected by the node's lifecycle.
 - **`strSha1(incRefVal(key, 1))` leaves the ref unchanged** — it increments then decrements (strSha1 decrements when the hash is already cached). So after this call, the String has its original refs.
-- **`equal()` calls `strCmp()` which decrements one or both input Strings** (both if they don't match, one if they do). Never use a String in an `equal()` comparison after it's been stored in a freed node.
+- **`equal(a, b)` on two Strings consumes exactly one ref of *each* argument, in all cases.** On a match, `strCmp` decrements only the second argument and returns `some(first)`; `equal` then frees that Some wrapper, and `decValRef` (runtime3.c:741) decrements all impls of a ReifiedVal — including the first argument. On a mismatch, `strCmp` decrements both directly (the `nothing()` wrapper has no impls). Either way: one of each. Never use a String in an `equal()` comparison after it's been stored in a freed node.
 - **Never clean up a String that was stored in a node the test frees.** The node's free handles it. Cleaning it up again causes a double-decrement.
 
 ### Example: Correct pattern for lookup after storage
@@ -203,3 +207,5 @@ if (!equal((Value *)cloneSub->array[1], (Value *)cloneSub->array[3])) { ... }
 3. **Using `stringValue()` for the same string twice** — `stringValue("key")` may return different heap allocations each call. If you need the same pointer, store it in a variable.
 4. **Using `newI60` for temporary values that are NOT stored** — temps like `newI60(999)` passed to a function that frees them internally don't need test-level cleanup. Only count what the test allocates.
 5. **Using a String after its node was freed** — once a String is stored in a node and that node is freed, the String's refs is decremented (possibly to `refsError`). Any further use (including `equal()` comparisons) will fail. Create a fresh `stringValue()` for any subsequent use.
+
+6. **In-place mutate paths may replace the stored pointer** — `bmiMutateAssoc`'s 1c path (same key, different value) stores the *passed* key pointer and frees the old key. After the call, the node holds the fresh key; the original key variable points at freed memory. Pointer-identity checks must compare against the fresh key (e.g., `array[2*idx] != updateKey`), not the original.
