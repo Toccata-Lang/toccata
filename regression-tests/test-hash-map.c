@@ -1716,19 +1716,17 @@ void testArrayNodeGetB2Miss(void) {
 void testArrayNodeCount(void) {
   reset_counters();
   ArrayNode *node = malloc_arrayNode();
-  Term key1 = newI60(100);
-  Term val1 = newI60(200);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key100");
+  Term val1 = (Term)stringValue("val200");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
-  // Find key at different slot
-  Term key2 = newI60(300);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  while (mask(hash2, 0) == mask(hash1, 0)) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = sha1((FnArity *)0, key2);
-  }
-  Term val2 = newI60(400);
+  // Find key at different slot (pin hashVal to a slot other than slot1)
+  int slot1 = mask(hash1, 0);
+  Term key2 = (Term)stringValue("key300");
+  int64_t hash2 = (hash1 & ~0x1f) | ((slot1 + 1) & 0x1f);
+  ((String *)key2)->hashVal = hash2;
+  Term val2 = (Term)stringValue("val400");
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
 
   Value *countResult = arrayNodeCount((Value *)node);
@@ -2404,7 +2402,7 @@ int main(int argc, char **argv) {
     testArrayNodeGet,
     testArrayNodeGetMiss,
     testArrayNodeGetB2Miss,
-    // testArrayNodeCount,
+    testArrayNodeCount,
     // testArrayNodeCountEmpty,
     // testArrayNodeCountSingle,
     // testArrayNodeDissocEmptySlot,

@@ -92,7 +92,7 @@ When converting a test:
 - [x] `testArrayNodeGet` — lookup existing key in ArrayNode
 - [x] `testArrayNodeGetMiss` — lookup missing key (empty slot)
 - [x] `testArrayNodeGetB2Miss` — key not in BMI sub-node
-- [ ] `testArrayNodeCount` — count entries in ArrayNode
+- [x] `testArrayNodeCount` — count entries in ArrayNode
 - [ ] `testArrayNodeCountEmpty` — count empty ArrayNode
 - [ ] `testArrayNodeCountSingle` — count single-entry ArrayNode
 - [ ] `testArrayNodeDissocEmptySlot` — key not found (empty slot)
