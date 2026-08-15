@@ -2225,8 +2225,8 @@ Value *bmiReplaceMutate(BitmapIndexedNode *node, Term key, Term val, int64_t has
     return((Value *)node);
   } else {
     Value *newLeaf = createNode(shift + 5,
-				existingKeyHash, incRefVal(currKey, 1), incRefVal(currVal, 1),
-				hash, incRefVal(key, 1), incRefVal(val, 1));
+				existingKeyHash, (Value *)currKey, (Value *)currVal,
+				hash, (Value *)key, (Value *)val);
     // replace key/val at 'idx' with new stuff
     bmiSetKey(node, bit, 0);
     bmiSetVal(node, bit, (Term)newLeaf);
@@ -2320,7 +2320,6 @@ Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash,
 	dec_and_free((Term)currKey, 1);
 	return((Value *)node);
       } else {
-      BOOM("test");
 	return bmiReplaceMutate(node, key, val, hash, shift, currKey, currVal);
       }
     } else {

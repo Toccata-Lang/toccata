@@ -215,7 +215,6 @@ static void check_counts(const char *test_name, unsigned expected_malloc,
 // Test: create empty BMI node, verify bitmap=0
 // Pool created: malloc_count += 9 (spare nodes). Node freed → pool recycle.
 void testEmptyBmiNode(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   BitmapIndexedNode *node = malloc_bmiNode(0);
@@ -238,7 +237,6 @@ void testEmptyBmiNode(void) {
 // Different itemCount (1 vs 0) → different pool index → new pool created.
 // Node freed → pool recycle.
 void testBmiNodeOneItem(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   BitmapIndexedNode *node = malloc_bmiNode(1);
@@ -257,7 +255,6 @@ void testBmiNodeOneItem(void) {
 // New pool created (separate from BMI pool): malloc_count += 9.
 // Node freed → pool recycle.
 void testArrayNode(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   ArrayNode *node = malloc_arrayNode();
@@ -275,7 +272,6 @@ void testArrayNode(void) {
 // Test: create HashCollisionNode
 // No pool. malloc_count += 1, free_count += 1 via dec_and_free.
 void testCollisionNode(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   HashCollisionNode *node = malloc_hashCollisionNode(2);
@@ -296,7 +292,6 @@ void testCollisionNode(void) {
 // Pool created for itemCount=20: malloc_count += 9.
 // Node freed with cnt=20 >= 20: actually freed, free_count += 1.
 void testFreeBitmapNodeHighCount(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   BitmapIndexedNode *node = malloc_bmiNode(20);
@@ -319,7 +314,6 @@ void testFreeBitmapNodeHighCount(void) {
 // Pool already exists (created by testArrayNode), no new malloc_count change.
 // Node recycled, free_count += 0.
 void testFreeArrayNode(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   ArrayNode *node = malloc_arrayNode();
@@ -332,7 +326,6 @@ void testFreeArrayNode(void) {
 // Test: freeHashCollisionNode works correctly
 // No pool. malloc_count += 1, free_count += 1.
 void testFreeHashCollisionNode(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   HashCollisionNode *node = malloc_hashCollisionNode(2);
@@ -345,7 +338,6 @@ void testFreeHashCollisionNode(void) {
 // Test: add key/value to empty BMI → single-item BMI
 // Then verify structure is correct
 void testBmiCopyAssoc(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create empty BMI node
@@ -518,9 +510,9 @@ void testBmiMutateAssocBranch(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key1 = newI60(137);
-  Term val1 = newI60(251);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key137");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
@@ -528,15 +520,14 @@ void testBmiMutateAssocBranch(void) {
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
-  // Find a key that hashes to the same bit position as key1 (path 1e)
-  Term key2;
-  int64_t hash2;
-  for (i64 candidate = 100; candidate < 10000; candidate++) {
-    key2 = newI60(candidate);
-    hash2 = sha1((FnArity *)0, key2);
-    if (hash2 != hash1 && mask(hash2, 0) == mask(hash1, 0)) break;
+  // key2 hashes to the same bit position as key1 but with a different hash (path 1e)
+  Term key2 = (Term)stringValue("key256");
+  int64_t hash2 = (hash1 & 0x1f) | 0x1000;
+  if (hash2 == hash1) {
+    BOOM("test setup: hash2 must differ from hash1");
   }
-  Term val2 = newI60(888);
+  ((String *)key2)->hashVal = hash2;
+  Term val2 = (Term)stringValue("val888");
 
   // Call bmiMutateAssoc — should create a sub-node via createNode
   Value *branchResult = bmiMutateAssoc(original, key2, val2, hash2, 0);
@@ -818,7 +809,6 @@ void testBmiMutateAssocNoOp(void) {
 
 // Test: same key, same value → no-op, return original node (A2a)
 void testBmiCopyAssocNoOp(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node
@@ -852,7 +842,6 @@ void testBmiCopyAssocNoOp(void) {
 
 // Test: same key, different value → clone with updated value (A2b)
 void testBmiCopyAssocUpdate(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node with I60 key and String value
@@ -895,7 +884,6 @@ void testBmiCopyAssocUpdate(void) {
 
 // Test: lookup existing key returns the value
 void testBmiGet(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node with String key and String value
@@ -926,7 +914,6 @@ void testBmiGet(void) {
 
 // Test: remove key from single-item BMI → returns emptyBMI
 void testBmiDissoc(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node
@@ -951,7 +938,6 @@ void testBmiDissoc(void) {
 
 // Test: remove key from multi-item BMI → returns smaller map (not emptyBMI)
 void testBmiDissocEmpty(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create two-item BMI node using keys with different bit positions
@@ -1037,7 +1023,6 @@ void testBmiCount(void) {
 
 // Test: lookup missing key returns nothing
 void testBmiGetMiss(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node
@@ -1072,7 +1057,6 @@ void testBmiGetMiss(void) {
 
 // Test: add key with same bit position but different hash → branch node (A2d)
 void testBmiCopyAssocBranch(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create single-item BMI node
@@ -1137,7 +1121,6 @@ void testBmiCopyAssocBranch(void) {
 
 // Test: nested sub-node update with same value → no-op, return original (A1a)
 void testBmiCopyAssocSubNodeNoChange(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // First, build a nested structure: two keys with same bit position at shift=0
@@ -1192,7 +1175,6 @@ void testBmiCopyAssocSubNodeNoChange(void) {
 
 // Test: nested sub-node update with different value → clone (A1b)
 void testBmiCopyAssocSubNodeChange(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Build nested structure: two keys with same bit position at shift=0
@@ -2309,7 +2291,6 @@ void testCollisionGet(void) {
 
 // Test: refs==1, empty BMI → insert single entry (path 2b)
 void testBmiMutateAssoc(void) {
-  fprintf(stderr, "running: %s\n", __func__);
   reset_counters();
 
   // Create empty BMI node
@@ -2407,7 +2388,7 @@ int main(int argc, char **argv) {
     testBmiCount,
     testBmiMutateAssocUpdateValue,
     testBmiMutateAssocInsert,
-    // testBmiMutateAssocBranch,
+    testBmiMutateAssocBranch,
     // testBmiMutateAssocCollision,
     // testBmiMutateAssocSubNodeRecurse,
     // testBmiMutateAssocNoOp,

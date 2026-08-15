@@ -151,6 +151,18 @@ Format:
 
 ---
 
+### Pattern 3: bmiReplaceMutate orphans the outer node's refs on the moved entry
+
+**Location:** `runtime3.c:bmiReplaceMutate` (createNode branch, 1e path of `bmiMutateAssoc`)
+
+**Test:** `testBmiMutateAssocBranch` in `regression-tests/test-hash-map.c`
+
+**Cause:** The 1e branch moves the existing entry (currKey/currVal) into a new sub-node via `createNode`, which stored `incRefVal(currKey, 1)` / `incRefVal(currVal, 1)` — extra refs on top of the outer node's original refs. It then zeroed the outer node's key slot (`bmiSetKey(node, bit, 0)`) without releasing the outer node's original refs. Unlike the copy path (`bmiReplaceCopied`), the node is mutated in place and never freed, so the original refs were orphaned — the strings never returned to the pool. The branch also passed `incRefVal(key, 1)` / `incRefVal(val, 1)` for the incoming key/val, unlike `bmiReplaceCopied` which transfers the caller's refs directly.
+
+**Fix:** Pass all four values to `createNode` without incRef — the sub-node takes over the outer node's refs on currKey/currVal and the caller's refs on key/val (pure transfer, same pattern as the collision branch directly above it). No incRefs, no decs needed.
+
+---
+
 ## Common Fix Patterns
 
 ### Missing `dec_and_free` after `incRef`

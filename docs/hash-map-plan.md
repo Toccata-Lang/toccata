@@ -79,7 +79,7 @@ When converting a test:
 - [x] `testBmiCount` — N-entry map, verify count == N
 - [x] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
 - [x] `testBmiMutateAssocInsert` — bit not set, n < 16, insert (2b)
-- [ ] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
+- [x] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
 - [ ] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
 - [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
 - [ ] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
