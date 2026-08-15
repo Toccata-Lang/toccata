@@ -1691,19 +1691,15 @@ void testArrayNodeGetB2Miss(void) {
 
   // Create ArrayNode with a BMI sub-node
   ArrayNode *node = malloc_arrayNode();
-  Term key1 = newI60(100);
-  Term val1 = newI60(200);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key100");
+  Term val1 = (Term)stringValue("value200");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
-  // Find key2 at the same slot as key1
-  int slot = mask(hash1, 0);
-  Term key2 = newI60(300);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  while (mask(hash2, 0) != slot) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = sha1((FnArity *)0, key2);
-  }
+  // key2 in the same slot as key1 with the same full hash — BMI bit set, but key strings differ
+  Term key2 = (Term)stringValue("key300");
+  int64_t hash2 = hash1;
+  ((String *)key2)->hashVal = hash2;
 
   // Lookup key2 — same slot as key1, but key2 not in BMI
   Value *miss = arrayNodeGet((Value *)node, (Value *)key2, (Value *)nothing(), hash2, 0);
@@ -2407,7 +2403,7 @@ int main(int argc, char **argv) {
     testArrayNodeCopyAssocB2Multi,
     testArrayNodeGet,
     testArrayNodeGetMiss,
-    // testArrayNodeGetB2Miss,
+    testArrayNodeGetB2Miss,
     // testArrayNodeCount,
     // testArrayNodeCountEmpty,
     // testArrayNodeCountSingle,

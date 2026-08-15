@@ -91,7 +91,7 @@ When converting a test:
 - [x] `testArrayNodeCopyAssocB2Multi` — multiple entries, update one sub-node
 - [x] `testArrayNodeGet` — lookup existing key in ArrayNode
 - [x] `testArrayNodeGetMiss` — lookup missing key (empty slot)
-- [ ] `testArrayNodeGetB2Miss` — key not in BMI sub-node
+- [x] `testArrayNodeGetB2Miss` — key not in BMI sub-node
 - [ ] `testArrayNodeCount` — count entries in ArrayNode
 - [ ] `testArrayNodeCountEmpty` — count empty ArrayNode
 - [ ] `testArrayNodeCountSingle` — count single-entry ArrayNode
