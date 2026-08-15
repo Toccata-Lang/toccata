@@ -391,20 +391,22 @@ void testBmiMutateAssocUpdateValue(void) {
 
   // Create single-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key = newI60(137);
-  Term val = newI60(251);
-  int64_t hash = sha1((FnArity *)0, key);
+  Term key = (Term)stringValue("key137");
+  Term val = (Term)stringValue("val251");
+  int64_t hash = strSha1(incRefVal(key, 1));
   Value *result = bmiMutateAssoc(node, key, val, hash, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
   ((Value *)result)->refs = 1;
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
-  Term newVal = newI60(999);
+  // Fresh key string for the update call — the stored key's ref belongs to the node
+  Term updateKey = (Term)stringValue("key137");
+  Term newVal = (Term)stringValue("val999");
 
   // Call bmiMutateAssoc with same key, different value
   // This should trigger path 1c: keys equal, values different → in-place update
-  Value *updateResult = bmiMutateAssoc(original, key, newVal, hash, 0);
+  Value *updateResult = bmiMutateAssoc(original, updateKey, newVal, hash, 0);
 
   // Verify same pointer returned (in-place mutation, no clone)
   if (updateResult != (Value *)original) {
@@ -419,7 +421,7 @@ void testBmiMutateAssocUpdateValue(void) {
   // Verify the key is still at the correct index
   int bit = bitpos(hash, 0);
   int idx = __builtin_popcount(((BitmapIndexedNode *)updateResult)->bitmap & (bit - 1));
-  if (((BitmapIndexedNode *)updateResult)->array[2 * idx] != key) {
+  if (((BitmapIndexedNode *)updateResult)->array[2 * idx] != updateKey) {
     BOOM("bmiMutateAssoc update: key should be unchanged");
   }
 
@@ -2411,7 +2413,7 @@ int main(int argc, char **argv) {
     testBmiCopyAssocSubNodeNoChange,
     testBmiCopyAssocCollision,
     testBmiCount,
-    // testBmiMutateAssocUpdateValue,
+    testBmiMutateAssocUpdateValue,
     // testBmiMutateAssocInsert,
     // testBmiMutateAssocBranch,
     // testBmiMutateAssocCollision,

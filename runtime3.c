@@ -2297,7 +2297,6 @@ Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash,
   } else {
     int bit = bitpos(hash, shift);
     if (node->bitmap & bit) {
-      BOOM("test");
       // if the hash position is already filled
       Term child = bmiChild(node, bit);
       if (child != 0) {
@@ -2315,7 +2314,6 @@ Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash,
       Term currVal = bmiVal(node, bit);
       int idx = __builtin_popcount(node->bitmap & (bit - 1));
       if (equal(incRefVal(key, 1), incRefVal(currKey, 1))) {
-      BOOM("test");
 	bmiSetKey(node, bit, key);
 	bmiSetVal(node, bit, val);
 	dec_and_free((Term)currVal, 1);
