@@ -1544,17 +1544,20 @@ void testArrayNodeCopyAssocB2(void) {
 
   // Create ArrayNode with a BMI sub-node
   ArrayNode *node = malloc_arrayNode();
-  Term key = newI60(100);
-  Term val1 = newI60(200);
-  int64_t hash = sha1((FnArity *)0, key);
+  Term key = (Term)stringValue("key100");
+  Term val1 = (Term)stringValue("val200");
+  int64_t hash = strSha1(incRefVal(key, 1));
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val1, hash, 0);
 
   int slot = mask(hash, 0);
   void *original = (void *)node;
 
   // Call copyAssoc with different value — should create new ArrayNode
-  Term val2 = newI60(999);
-  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val2, hash, 0);
+  // (fresh key: the original key is owned by the node, which is freed
+  //  during this call)
+  Term val2 = (Term)stringValue("val999");
+  Term key2 = (Term)stringValue("key100");
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash, 0);
 
   // Verify new pointer returned
   if ((void *)node == original) {
@@ -1563,11 +1566,11 @@ void testArrayNodeCopyAssocB2(void) {
 
   // Verify the slot contains the updated value
   BitmapIndexedNode *bmi = (BitmapIndexedNode *)node->array[slot];
-  if (bmi->array[0] != key) {
+  if (bmi->array[0] != key2) {
     BOOM("B2: slot should contain key");
   }
   if (bmi->array[1] != val2) {
-    BOOM("B2: slot should contain updated value 999");
+    BOOM("B2: slot should contain updated value");
   }
 
   dec_and_free((Term)node, 1);
@@ -2396,7 +2399,7 @@ int main(int argc, char **argv) {
     testArrayNodeCopyAssoc,
     testArrayNodeCopyAssocA2,
     testArrayNodeCopyAssocB1,
-    // testArrayNodeCopyAssocB2,
+    testArrayNodeCopyAssocB2,
     // testArrayNodeCopyAssocB2Multi,
     // testArrayNodeGet,
     // testArrayNodeGetMiss,

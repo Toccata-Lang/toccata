@@ -87,7 +87,7 @@ When converting a test:
 - [x] `testArrayNodeCopyAssoc` — add key/value to empty ArrayNode
 - [x] `testArrayNodeCopyAssocA2` — non-empty ArrayNode, add to empty slot
 - [x] `testArrayNodeCopyAssocB1` — ArrayNode with sub-node, same key+value (no-op)
-- [ ] `testArrayNodeCopyAssocB2` — ArrayNode with sub-node, different value
+- [x] `testArrayNodeCopyAssocB2` — ArrayNode with sub-node, different value
 - [ ] `testArrayNodeCopyAssocB2Multi` — multiple entries, update one sub-node
 - [ ] `testArrayNodeGet` — lookup existing key in ArrayNode
 - [ ] `testArrayNodeGetMiss` — lookup missing key (empty slot)
