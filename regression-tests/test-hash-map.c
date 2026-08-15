@@ -725,12 +725,21 @@ void testBmiMutateAssocPromote(void) {
   Term vals[16];
   int count = 0;
   for (i64 c = 0; count < 16 && c < 100000; c++) {
-    Term key = newI60(c);
-    int64_t hash = sha1((FnArity *)0, key);
+    char keyBuf[32];
+    sprintf(keyBuf, "key%lld", (long long)c);
+    Term key = (Term)stringValue(keyBuf);
+    int64_t hash = strSha1(incRefVal(key, 1));
     int bit = bitpos(hash, 0);
     int used = 0;
     for (int j = 0; j < count; j++) { if (bitpos(hashes[j], 0) == bit) { used = 1; break; } }
-    if (!used) { hashes[count] = hash; keys[count] = key; vals[count] = newI60(c * 100); count++; }
+    if (!used) {
+      char valBuf[32];
+      sprintf(valBuf, "val%lld", (long long)(c * 100));
+      hashes[count] = hash; keys[count] = key;
+      vals[count] = (Term)stringValue(valBuf);
+      count++;
+    }
+    else dec_and_free(key, 1);
   }
   if (count < 16) BOOM("16 keys");
   for (int i = 0; i < 16; i++) node = (BitmapIndexedNode *)bmiMutateAssoc(node, keys[i], vals[i], hashes[i], 0);
@@ -738,20 +747,25 @@ void testBmiMutateAssocPromote(void) {
   ((Value *)node)->refs = 1;
   Term newKey; int64_t newHash;
   for (i64 c = 0; c < 100000; c++) {
-    newKey = newI60(c); newHash = sha1((FnArity *)0, newKey);
+    char keyBuf[32];
+    sprintf(keyBuf, "key%lld", (long long)c);
+    newKey = (Term)stringValue(keyBuf);
+    newHash = strSha1(incRefVal(newKey, 1));
     int newBit = bitpos(newHash, 0);
     int used = 0;
     for (int j = 0; j < 16; j++) { if (bitpos(hashes[j], 0) == newBit) { used = 1; break; } }
-    if (!used) break;
+    if (used) dec_and_free(newKey, 1);
+    else break;
   }
-  Value *promoteResult = bmiMutateAssoc(node, newKey, newI60(99999), newHash, 0);
+  Term newVal = (Term)stringValue("val99999");
+  Value *promoteResult = bmiMutateAssoc(node, newKey, newVal, newHash, 0);
   ArrayNode *an = (ArrayNode *)promoteResult;
   if (an->type != ArrayNodeType) BOOM("ArrayNode");
   int entryCount = 0;
   for (int i = 0; i < ARRAY_NODE_LEN; i++) { if (an->array[i] != 0) entryCount++; }
   if (entryCount != 17) BOOM("17 entries");
   dec_and_free((Term)promoteResult, 1);
-  check_counts("testBmiMutateAssocPromote", 140, 0, __LINE__);
+  check_counts("testBmiMutateAssocPromote", 150, 0, __LINE__);
 }
 
 // Test: same key + same value → no-op, return original node (1b)
@@ -2341,7 +2355,7 @@ int main(int argc, char **argv) {
   dec_and_free((Term)malloc_bmiNode(1), 1);
   dec_and_free((Term)malloc_bmiNode(2), 1);
   dec_and_free((Term)malloc_arrayNode(), 1);
-#define STRINGS_NEEDED 6
+#define STRINGS_NEEDED 34
   Term strs[STRINGS_NEEDED];
   for (int i = 0; i < STRINGS_NEEDED; i++)
     strs[i] = (Term)stringValue("key137");
@@ -2378,7 +2392,7 @@ int main(int argc, char **argv) {
     testBmiMutateAssocCollision,
     testBmiMutateAssocSubNodeRecurse,
     testBmiMutateAssocNoOp,
-    // testBmiMutateAssocPromote,
+    testBmiMutateAssocPromote,
     // testArrayNodeCopyAssoc,
     // testArrayNodeCopyAssocA2,
     // testArrayNodeCopyAssocB1,

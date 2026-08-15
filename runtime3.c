@@ -2101,12 +2101,14 @@ Value *addMutateBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
     // too many entries, so convert to ArrayNode
     ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
 
-    // create BitmapIndexedNode for next level down
+    // create BitmapIndexedNode for next level down, holding the new key/val
     int jdx = mask(hash, shift);
     int newShift = shift + 5;
-    // TODO: why cloning emptyBMI?
-    BOOM("wtf");
-    newNode->array[jdx] = (Term)cloneBitmapIndexedNode(&emptyBMI, idx, key, val);
+    BitmapIndexedNode *subNode = malloc_bmiNode(1);
+    subNode->bitmap = bitpos(hash, newShift);
+    subNode->array[0] = key;
+    subNode->array[1] = val;
+    newNode->array[jdx] = (Term)subNode;
 
     // copy the elements of the original 'node' to the new ArrayNode
     for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
@@ -2117,11 +2119,13 @@ Value *addMutateBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	  newNode->array[i] = node->array[j + 1];
 	  node->array[j + 1] = 0;
 	} else {
-	  // TODO: why cloning emptyBMI?
-	  BOOM("wtf");
-	  newNode->array[i] = (Term)cloneBitmapIndexedNode(&emptyBMI, 0,
-							   incRef(node->array[j], 2),
-							   incRef(node->array[j + 1], 1));
+	  // it's a k/v pair, create a new BitmapIndexedNode for that level
+	  int64_t existingHash = sha1((FnArity *)0, incRef((Term)node->array[j], 1));
+	  BitmapIndexedNode *kvNode = malloc_bmiNode(1);
+	  kvNode->bitmap = bitpos(existingHash, newShift);
+	  kvNode->array[0] = node->array[j];
+	  kvNode->array[1] = node->array[j + 1];
+	  newNode->array[i] = (Term)kvNode;
 	  node->array[j] = 0;
 	  node->array[j + 1] = 0;
 	}

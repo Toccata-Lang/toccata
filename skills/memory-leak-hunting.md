@@ -175,6 +175,18 @@ Format:
 
 ---
 
+### Pattern 5: addMutateBMI promote path drops keys/values into empty sub-nodes
+
+**Location:** `runtime3.c:addMutateBMI` (2a path — bit not set, n >= 16, promote to ArrayNode)
+
+**Test:** `testBmiMutateAssocPromote` in `regression-tests/test-hash-map.c`
+
+**Cause:** The promote path built the 17 one-entry sub-nodes with `cloneBitmapIndexedNode(&emptyBMI, idx, key, val)`. `emptyBMI` has bitmap 0, so the clone's copy loop never runs — the sub-node comes back empty (bitmap 0, no entries) and the key/val are silently dropped. The dropped strings' refs never reach 0, so they never return to the string pool (`unfreed=150 pool_delta=134` — 16 leaked key strings). The k/v branch also passed `incRef(key, 2)` / `incRef(val, 1)` into the drop, compounding the leak. The I60-only version of the test never caught this: I60s have no refs, and the test only counted non-zero ArrayNode slots (17 empty sub-nodes still count as 17).
+
+**Fix:** Build each one-entry sub-node directly: `malloc_bmiNode(1)`, set `bitmap = bitpos(hash, newShift)`, store the key/val in slots 0/1 (pure ref transfer — the sub-node takes over the caller's refs on the new key/val and the old node's refs on each moved pair, with the old slots zeroed before the old node is freed). Existing pairs are re-hashed with `sha1((FnArity *)0, incRef(key, 1))` to find their bit position at `shift + 5`.
+
+---
+
 ## Common Fix Patterns
 
 ### Missing `dec_and_free` after `incRef`

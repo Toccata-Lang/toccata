@@ -83,7 +83,7 @@ When converting a test:
 - [x] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
 - [x] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
 - [x] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
-- [ ] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
+- [x] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
 - [ ] `testArrayNodeCopyAssoc` — add key/value to empty ArrayNode
 - [ ] `testArrayNodeCopyAssocA2` — non-empty ArrayNode, add to empty slot
 - [ ] `testArrayNodeCopyAssocB1` — ArrayNode with sub-node, same key+value (no-op)
