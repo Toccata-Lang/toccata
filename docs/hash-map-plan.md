@@ -101,7 +101,7 @@ When converting a test:
 - [x] `testArrayNodeMutateAssocRecurse` — slot has BMI sub-node → recurse
 - [x] `testCollisionAssocAdd` — add new key to collision node
 - [x] `testCollisionAssocUpdate` — update existing key value
-- [ ] `testCollisionAssocPromote` — add key with different hash → promotes to BMI
+- [x] `testCollisionAssocPromote` — add key with different hash → promotes to BMI
 - [ ] `testCollisionCount` — count entries
 - [ ] `testCollisionVec` — flatten to vector
 - [ ] `testCollisionDissoc` — remove from collision node

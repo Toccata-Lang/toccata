@@ -2068,14 +2068,14 @@ void testCollisionAssocPromote(void) {
   Term (*savedSha1)(FnArity *, Term) = sha1;
 
   // Create collision node with KEY_A -> VAL_A
-  Term keyA = COLLIDE_KEY_A;
-  Term valA = newI60(10);
+  Term keyA = (Term)stringValue("keyA100");
+  Term valA = (Term)stringValue("val10");
   HashCollisionNode *node = makeCollisionNode(keyA, valA);
 
   // collisionAssoc with a key that has a DIFFERENT hash
-  Term keyDiff = newI60(999);
-  int64_t hashDiff = sha1((FnArity *)0, keyDiff);
-  Term valDiff = newI60(888);
+  Term keyDiff = (Term)stringValue("key999");
+  int64_t hashDiff = strSha1(incRefVal(keyDiff, 1));
+  Term valDiff = (Term)stringValue("val888");
   Value *result = collisionAssoc((Value *)node, (Value *)keyDiff, (Value *)valDiff, hashDiff, 0);
 
   // Should promote to BMI node
@@ -2415,7 +2415,7 @@ int main(int argc, char **argv) {
     testArrayNodeMutateAssocRecurse,
     testCollisionAssocAdd,
     testCollisionAssocUpdate,
-    // testCollisionAssocPromote,
+    testCollisionAssocPromote,
     // testCollisionCount,
     // testCollisionVec,
     // testCollisionDissoc,
