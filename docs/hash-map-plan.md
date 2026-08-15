@@ -102,7 +102,7 @@ When converting a test:
 - [x] `testCollisionAssocAdd` — add new key to collision node
 - [x] `testCollisionAssocUpdate` — update existing key value
 - [x] `testCollisionAssocPromote` — add key with different hash → promotes to BMI
-- [ ] `testCollisionCount` — count entries
+- [x] `testCollisionCount` — count entries
 - [ ] `testCollisionVec` — flatten to vector
 - [ ] `testCollisionDissoc` — remove from collision node
 - [ ] `testCollisionGet` — lookup in collision node

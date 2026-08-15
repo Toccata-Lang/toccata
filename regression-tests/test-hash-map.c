@@ -2097,8 +2097,8 @@ void testCollisionCount(void) {
   reset_counters();
 
   // Create collision node with 1 entry (count = 2)
-  Term keyA = COLLIDE_KEY_A;
-  Term valA = newI60(11);
+  Term keyA = (Term)stringValue("keyA100");
+  Term valA = (Term)stringValue("val11");
   HashCollisionNode *node1 = makeCollisionNode(keyA, valA);
 
   Value *result1 = collisionCount((Value *)node1);
@@ -2112,11 +2112,14 @@ void testCollisionCount(void) {
   }
 
   // Create collision node with 2 entries (count = 4)
-  Term keyB = COLLIDE_KEY_B;
-  Term valB = newI60(22);
+  // (fresh key/val: node1's keyA/valA were freed by collisionCount above)
+  Term keyA2 = (Term)stringValue("keyA100");
+  Term valA2 = (Term)stringValue("val11");
+  Term keyB = (Term)stringValue("keyB200");
+  Term valB = (Term)stringValue("val22");
   HashCollisionNode *node2 = malloc_hashCollisionNode(2);
-  node2->array[0] = (Value *)keyA;
-  node2->array[1] = (Value *)valA;
+  node2->array[0] = (Value *)keyA2;
+  node2->array[1] = (Value *)valA2;
   node2->array[2] = (Value *)keyB;
   node2->array[3] = (Value *)valB;
   node2->count = 4;
@@ -2416,7 +2419,7 @@ int main(int argc, char **argv) {
     testCollisionAssocAdd,
     testCollisionAssocUpdate,
     testCollisionAssocPromote,
-    // testCollisionCount,
+    testCollisionCount,
     // testCollisionVec,
     // testCollisionDissoc,
     // testCollisionGet,
