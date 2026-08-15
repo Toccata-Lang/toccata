@@ -1583,21 +1583,22 @@ void testArrayNodeCopyAssocB2Multi(void) {
 
   // Create ArrayNode with 2 entries at different slots
   ArrayNode *node = malloc_arrayNode();
-  Term key1 = newI60(100);
-  Term val1 = newI60(200);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key100");
+  ((String *)key1)->hashVal = 0x12345678;
+  Term val1 = (Term)stringValue("val200");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   int slot1 = mask(hash1, 0);
 
-  // Find key2 at a different slot
-  Term key2 = newI60(300);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  while (mask(hash2, 0) == slot1) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = sha1((FnArity *)0, key2);
+  // key2 at a different slot (hashes pinned so the slots differ)
+  Term key2 = (Term)stringValue("key300");
+  ((String *)key2)->hashVal = 0xABCDEF00;
+  int64_t hash2 = strSha1(incRefVal(key2, 1));
+  if (mask(hash2, 0) == slot1) {
+    BOOM("B2-multi: test setup requires different slots");
   }
-  Term val2 = newI60(400);
+  Term val2 = (Term)stringValue("val400");
   int slot2 = mask(hash2, 0);
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash2, 0);
 
@@ -1605,13 +1606,16 @@ void testArrayNodeCopyAssocB2Multi(void) {
   BitmapIndexedNode *bmi2Original = (BitmapIndexedNode *)node->array[slot2];
 
   // Update key1 with a new value
-  Term val1New = newI60(777);
-  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1New, hash1, 0);
+  // (fresh key: the original key is owned by the node, which is freed
+  //  during this call)
+  Term val1New = (Term)stringValue("val777");
+  Term key1b = (Term)stringValue("key100");
+  node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1b, (Value *)val1New, hash1, 0);
 
   // Verify slot1 has the new value
   BitmapIndexedNode *bmi1 = (BitmapIndexedNode *)node->array[slot1];
   if (bmi1->array[1] != val1New) {
-    BOOM("B2-multi: slot1 should have updated value 777");
+    BOOM("B2-multi: slot1 should have updated value");
   }
 
   // Verify slot2 was copied (same pointer — no change needed)
@@ -2400,7 +2404,7 @@ int main(int argc, char **argv) {
     testArrayNodeCopyAssocA2,
     testArrayNodeCopyAssocB1,
     testArrayNodeCopyAssocB2,
-    // testArrayNodeCopyAssocB2Multi,
+    testArrayNodeCopyAssocB2Multi,
     // testArrayNodeGet,
     // testArrayNodeGetMiss,
     // testArrayNodeGetB2Miss,
