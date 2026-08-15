@@ -96,7 +96,7 @@ When converting a test:
 - [x] `testArrayNodeCountEmpty` — count empty ArrayNode (no KV pairs, already GC-relevant)
 - [x] `testArrayNodeCountSingle` — count single-entry ArrayNode
 - [x] `testArrayNodeDissocEmptySlot` — key not found (empty slot)
-- [ ] `testArrayNodeDissoc` — remove key from ArrayNode
+- [x] `testArrayNodeDissoc` — remove key from ArrayNode
 - [ ] `testArrayNodeMutateAssocInsert` — slot is empty → insert new entry
 - [ ] `testArrayNodeMutateAssocRecurse` — slot has BMI sub-node → recurse
 - [ ] `testCollisionAssocAdd` — add new key to collision node
