@@ -578,14 +578,11 @@ void testBmiMutateAssocCollision(void) {
   // Save original sha1 and equal
   Term (*savedSha1)(FnArity *, Term) = sha1;
 
-  // Install collision-aware sha1 and non-equal equal
-  sha1 = testingSha1CollisionAdd;
-
   // Create single-item BMI node with KEY_A
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term keyA = COLLIDE_KEY_A;
-  Term valA = newI60(10);
-  int64_t hashA = sha1((FnArity *)0, keyA);
+  Term keyA = (Term)stringValue("keyA100");
+  Term valA = (Term)stringValue("valA10");
+  int64_t hashA = strSha1(incRefVal(keyA, 1));
   Value *result = bmiMutateAssoc(node, keyA, valA, hashA, 0);
 
   // Set refs==1 so bmiMutateAssoc takes the in-place path
@@ -594,8 +591,8 @@ void testBmiMutateAssocCollision(void) {
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
   // Add KEY_B — same hash, different key → should create collision node (1d)
-  Term keyB = COLLIDE_KEY_B;
-  Term valB = newI60(20);
+  Term keyB = (Term)stringValue("keyB200");
+  Term valB = (Term)stringValue("valB20");
   Value *collResult = bmiMutateAssoc(original, keyB, valB, hashA, 0);
 
   // Verify same pointer returned (in-place mutation)
@@ -638,8 +635,6 @@ void testBmiMutateAssocCollision(void) {
 
   // Collision node created via malloc_hashCollisionNode(2): malloc_count=1.
   check_counts("testBmiMutateAssocCollision", 1, 1, __LINE__);
-
-  sha1 = savedSha1;
 }
 
 // Test: sub-node case — mutate inner key/value (1a)
@@ -1315,8 +1310,6 @@ void testBmiCopyAssocCollision(void) {
 
   // Collision node created via malloc_hashCollisionNode(2): malloc_count=1.
   check_counts("testBmiCopyAssocCollision", 1, 1, __LINE__);
-
-  sha1 = savedSha1;
 }
 
 // Test: flatten BMI to vector of pairs
@@ -1957,9 +1950,6 @@ void testCollisionAssocAdd(void) {
   // Save original sha1 and equal
   Term (*savedSha1)(FnArity *, Term) = sha1;
 
-  // Install collision-aware sha1 and equal (keys DON'T compare equal)
-  sha1 = testingSha1CollisionAdd;
-
   // Create collision node with KEY_C -> VAL_C
   Term keyC = COLLIDE_KEY_C;
   Term valC = newI60(10);
@@ -2004,9 +1994,6 @@ void testCollisionAssocAdd(void) {
   // Verify original node was freed
   dec_and_free((Term)result, 1);
   check_counts("testCollisionAssocAdd", 2, 2, __LINE__);
-
-  // Restore
-  sha1 = savedSha1;
 }
 
 // Test: update an existing key in a collision node
@@ -2016,9 +2003,6 @@ void testCollisionAssocUpdate(void) {
 
   // Save original sha1 and equal
   Term (*savedSha1)(FnArity *, Term) = sha1;
-
-  // Install collision-aware sha1
-  sha1 = testingSha1Collision;
 
   // Create collision node with KEY_A -> VAL_A
   Term keyA = COLLIDE_KEY_A;
@@ -2047,8 +2031,6 @@ void testCollisionAssocUpdate(void) {
 
   dec_and_free((Term)result, 1);
   check_counts("testCollisionAssocUpdate", 2, 2, __LINE__);
-
-  sha1 = savedSha1;
 }
 
 // Test: add a key with different hash to collision node
@@ -2057,8 +2039,6 @@ void testCollisionAssocPromote(void) {
   reset_counters();
 
   Term (*savedSha1)(FnArity *, Term) = sha1;
-
-  sha1 = testingSha1Collision;
 
   // Create collision node with KEY_A -> VAL_A
   Term keyA = COLLIDE_KEY_A;
@@ -2083,8 +2063,6 @@ void testCollisionAssocPromote(void) {
 
   dec_and_free((Term)result, 1);
   check_counts("testCollisionAssocPromote", 1, 1, __LINE__);
-
-  sha1 = savedSha1;
 }
 
 // Test: collisionCount returns correct entry count
@@ -2389,7 +2367,7 @@ int main(int argc, char **argv) {
     testBmiMutateAssocUpdateValue,
     testBmiMutateAssocInsert,
     testBmiMutateAssocBranch,
-    // testBmiMutateAssocCollision,
+    testBmiMutateAssocCollision,
     // testBmiMutateAssocSubNodeRecurse,
     // testBmiMutateAssocNoOp,
     // testBmiMutateAssocPromote,

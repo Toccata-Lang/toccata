@@ -80,7 +80,7 @@ When converting a test:
 - [x] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
 - [x] `testBmiMutateAssocInsert` — bit not set, n < 16, insert (2b)
 - [x] `testBmiMutateAssocBranch` — bit set, different key + different hash (1e)
-- [ ] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
+- [x] `testBmiMutateAssocCollision` — bit set, different key + same hash (1d)
 - [ ] `testBmiMutateAssocSubNodeRecurse` — bit set, sub-node case (1a)
 - [ ] `testBmiMutateAssocNoOp` — bit set, same key + same value (1b)
 - [ ] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
