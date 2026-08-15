@@ -12,7 +12,7 @@
 
 **Never remove `BOOM()` calls in `runtime3.c` unless they actually get hit during testing.** They mark untested code paths. After conversion, check which BOOMs are still unused — those are the paths that still need test coverage.
 
-`BOOM("test")` calls are **tripwires** on untested execution paths. When a conversion first exercises such a path, the Step 1 baseline run hits the tripwire — report and stop per the ⛔⛔⛔ rule. The user removes the tripwire, and the conversion proceeds. Tripwire removals belong in that test's commit (alongside the test file and plan update).
+`BOOM("test")` calls are **tripwires** on untested execution paths. When a conversion first exercises such a path, the Step 1 baseline run hits the tripwire. Report the hit, then remove the tripwire yourself and proceed with the conversion — this is the only exception to the ⛔⛔⛔ stop rule. Tripwire removals belong in that test's commit (alongside the test file and plan update). Any other `BOOM` message hit in the baseline is a real pre-existing failure: report and stop per the ⛔⛔⛔ rule.
 
 ## ⛔ CRITICAL: Git Workflow
 

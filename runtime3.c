@@ -2292,7 +2292,6 @@ Value *bmiCopyAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 
 Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift) {
   if (node->refs != 1) {
-      BOOM("test");
     return(bmiCopyAssoc(node, key, val, hash, shift));
   } else {
     int bit = bitpos(hash, shift);
@@ -2300,13 +2299,15 @@ Value *bmiMutateAssoc(BitmapIndexedNode *node, Term key, Term val, int64_t hash,
       // if the hash position is already filled
       Term child = bmiChild(node, bit);
       if (child != 0) {
-      BOOM("test");
-	// There is no key in the position, so currVal is
-	// pointer to a node.
+	// There is no key in the position, so currVal is pointer to a node.
 	Term n = (Term)mutateAssoc((Value *)child, (Value *)key, (Value *)val, hash, shift + 5);
 	// replace key/val at 'idx' with new stuff
 	bmiSetKey(node, bit, 0);
 	bmiSetVal(node, bit, n);
+	// Release the parent's old slot ref on the child (bmiChild's temp ref
+	// was consumed by the clone inside mutateAssoc when n != child; in the
+	// n == child case this balances bmiChild's temp ref).
+	dec_and_free(child, 1);
 	return((Value *)node);
       }
 

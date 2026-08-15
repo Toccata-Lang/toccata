@@ -645,25 +645,23 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   // Build a nested structure: two keys with same bit position at shift=0
   // This creates a sub-node at shift=5
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key1 = newI60(137);
-  Term val1 = newI60(251);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key137");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
   int bit1 = bitpos(hash1, 0);
 
-  // Find key2 with same bit position
-  Term key2 = newI60(1000);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  int bit2 = bitpos(hash2, 0);
-  while (bit2 != bit1) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = sha1((FnArity *)0, key2);
-    bit2 = bitpos(hash2, 0);
-  }
+  // key2 with same lowest-bit position as key1 but different higher bits — triggers branch
+  // We need hash2 & 0x1f == hash1 & 0x1f (same bit pos at shift 0)
+  // and hash2 != hash1 (different hash so sub-node is created)
+  Term key2 = (Term)stringValue("keyX");
+  int64_t lowBits = hash1 & 0x1f;
+  int64_t hash2 = lowBits | 0x1000;  // same low bits, different higher bit
+  ((String *)key2)->hashVal = hash2;
 
-  Term val2 = newI60(888);
+  Term val2 = (Term)stringValue("val888");
   result = bmiCopyAssoc(original, key2, val2, hash2, 0);
 
   // Verify we have a nested structure
@@ -678,8 +676,12 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   ((Value *)bm)->refs = 1;
 
   // Update key1 in the sub-node with a different value
-  Term newVal = newI60(999);
-  Value *updateResult = bmiMutateAssoc(bm, key1, newVal, hash1, 0);
+  // (key1's ref is owned by the sub-node; use a fresh string for the update)
+  Term lookupKey = (Term)stringValue("key137");
+  ((String *)lookupKey)->hashVal = 0;  // clear cached hash so strSha1 recomputes
+  int64_t lookupHash = strSha1(incRefVal(lookupKey, 1));
+  Term newVal = (Term)stringValue("val999");
+  Value *updateResult = bmiMutateAssoc(bm, lookupKey, newVal, lookupHash, 0);
 
   // Verify same pointer returned (in-place mutation)
   if (updateResult != (Value *)bm) {
@@ -693,17 +695,18 @@ void testBmiMutateAssocSubNodeRecurse(void) {
   }
 
   // Find key1's value in the updated sub-node
+  // (the sub-node now holds the fresh lookupKey pointer, not the original key1)
   Term foundVal = 0;
-  if (subNodeEqualsKey((Term)(Value *)updatedSub->array[0], key1)) {
+  if (subNodeEqualsKey((Term)(Value *)updatedSub->array[0], lookupKey)) {
     foundVal = updatedSub->array[1];
-  } else if (subNodeEqualsKey((Term)(Value *)updatedSub->array[2], key1)) {
+  } else if (subNodeEqualsKey((Term)(Value *)updatedSub->array[2], lookupKey)) {
     foundVal = updatedSub->array[3];
   }
   if (foundVal == 0) {
     BOOM("sub-node should contain key1");
   }
-  if (getI60(foundVal) != 999) {
-    BOOM("sub-node value should be updated to 999");
+  if (foundVal != newVal) {
+    BOOM("sub-node value should be updated to val999");
   }
 
   // Clean up
@@ -1244,8 +1247,7 @@ void testBmiCopyAssocSubNodeChange(void) {
   // Clean up
   dec_and_free((Term)cloneResult, 1);
 
-  // New pool for itemCount=2 (clone of sub-node): malloc_count=10.
-  check_counts("testBmiCopyAssocSubNodeChange", 1, 0, __LINE__);
+  check_counts("testBmiCopyAssocSubNodeChange", 0, 0, __LINE__);
 }
 
 // Test: two keys with identical SHA1 hash → creates HashCollisionNode (A2c)
@@ -2333,7 +2335,7 @@ int main(int argc, char **argv) {
   dec_and_free((Term)malloc_bmiNode(1), 1);
   dec_and_free((Term)malloc_bmiNode(2), 1);
   dec_and_free((Term)malloc_arrayNode(), 1);
-#define STRINGS_NEEDED 5
+#define STRINGS_NEEDED 6
   Term strs[STRINGS_NEEDED];
   for (int i = 0; i < STRINGS_NEEDED; i++)
     strs[i] = (Term)stringValue("key137");
@@ -2368,7 +2370,7 @@ int main(int argc, char **argv) {
     testBmiMutateAssocInsert,
     testBmiMutateAssocBranch,
     testBmiMutateAssocCollision,
-    // testBmiMutateAssocSubNodeRecurse,
+    testBmiMutateAssocSubNodeRecurse,
     // testBmiMutateAssocNoOp,
     // testBmiMutateAssocPromote,
     // testArrayNodeCopyAssoc,

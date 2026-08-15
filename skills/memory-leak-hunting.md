@@ -163,6 +163,18 @@ Format:
 
 ---
 
+### Pattern 4: bmiMutateAssoc 1a path orphans parent's slot ref on replaced sub-node
+
+**Location:** `runtime3.c:bmiMutateAssoc` (1a path — bit set, `child != 0`)
+
+**Test:** `testBmiMutateAssocSubNodeRecurse` in `regression-tests/test-hash-map.c`
+
+**Cause:** `bmiChild()` incRefs the child before returning it, so the old sub-node holds 2 refs (parent's slot ref + `bmiChild`'s temp ref). `mutateAssoc` on a sub-node with refs=2 takes the copy path, and `bmiClone` internally `dec_and_free`s the old sub-node once — consuming one ref. The 1a path then overwrote the parent's slot with the clone via `bmiSetVal`, orphaning the parent's remaining slot ref on the old sub-node. The old sub-node was left at refs=1, unreachable — never returned to the pool (`unfreed=0 pool_delta=-1`).
+
+**Fix:** Added `dec_and_free(child, 1)` after `bmiSetVal(node, bit, n)` in the 1a path. When `n != child` (clone), this releases the orphaned parent slot ref (old sub-node: 2 → 1 via bmiClone → 0 via this dec → freed). When `n == child` (no-op/in-place), the callee consumed no refs, so this dec balances `bmiChild`'s temp ref (child: 2 → 1, still held by the parent's slot).
+
+---
+
 ## Common Fix Patterns
 
 ### Missing `dec_and_free` after `incRef`
