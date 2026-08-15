@@ -1013,14 +1013,14 @@ void testBmiCount(void) {
 
   // Create two-item BMI node
   BitmapIndexedNode *node = malloc_bmiNode(2);
-  Term key1 = newI60(0);
-  Term val1 = newI60(251);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key1");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
-  Term key2 = newI60(1);
-  Term val2 = newI60(888);
-  int64_t hash2 = sha1((FnArity *)0, key2);
+  Term key2 = (Term)stringValue("key2");
+  Term val2 = (Term)stringValue("val888");
+  int64_t hash2 = strSha1(incRefVal(key2, 1));
   result = bmiMutateAssoc((BitmapIndexedNode *)result, key2, val2, hash2, 0);
 
   // Count entries
@@ -2410,7 +2410,7 @@ int main(int argc, char **argv) {
     testBmiCopyAssocBranch,
     testBmiCopyAssocSubNodeNoChange,
     testBmiCopyAssocCollision,
-    // testBmiCount,
+    testBmiCount,
     // testBmiMutateAssocUpdateValue,
     // testBmiMutateAssocInsert,
     // testBmiMutateAssocBranch,
