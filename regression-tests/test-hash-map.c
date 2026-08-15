@@ -2403,7 +2403,7 @@ int main(int argc, char **argv) {
     testArrayNodeGetMiss,
     testArrayNodeGetB2Miss,
     testArrayNodeCount,
-    // testArrayNodeCountEmpty,
+    testArrayNodeCountEmpty,
     // testArrayNodeCountSingle,
     // testArrayNodeDissocEmptySlot,
     // testArrayNodeDissoc,
