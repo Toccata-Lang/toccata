@@ -1284,21 +1284,18 @@ void testBmiCopyAssocCollision(void) {
   // Save original sha1 and equal
   Term (*savedSha1)(FnArity *, Term) = sha1;
 
-  // Install collision-aware sha1 and non-equal equal
-  sha1 = testingSha1CollisionAdd;
-
   // Create single-item BMI node with KEY_A
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term keyA = COLLIDE_KEY_A;
-  Term valA = newI60(10);
-  int64_t hashA = sha1((FnArity *)0, keyA);
+  Term keyA = (Term)stringValue("keyA");
+  Term valA = (Term)stringValue("val10");
+  int64_t hashA = strSha1(incRefVal(keyA, 1));
   Value *result = bmiMutateAssoc(node, keyA, valA, hashA, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
 
   // Add KEY_B — same hash, different key → should create collision node (A2c)
-  Term keyB = COLLIDE_KEY_B;
-  Term valB = newI60(20);
+  Term keyB = (Term)stringValue("keyB");
+  Term valB = (Term)stringValue("val20");
   Value *collResult = bmiCopyAssoc(original, keyB, valB, hashA, 0);
 
   // Verify result is still a BMI node
@@ -2412,7 +2409,7 @@ int main(int argc, char **argv) {
     testBmiDissocEmpty,
     testBmiCopyAssocBranch,
     testBmiCopyAssocSubNodeNoChange,
-    // testBmiCopyAssocCollision,
+    testBmiCopyAssocCollision,
     // testBmiCount,
     // testBmiMutateAssocUpdateValue,
     // testBmiMutateAssocInsert,

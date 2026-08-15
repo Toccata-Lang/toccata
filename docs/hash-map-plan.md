@@ -75,7 +75,7 @@ When converting a test:
 - [x] `testBmiCopyAssocBranch` — two keys at different bit positions → branch node (A2d)
 - [x] `testBmiCopyAssocSubNodeNoChange` — nested tree, inner update no-change → no-op (A1a)
 - [x] `testBmiCopyAssocSubNodeChange` — nested tree, inner update changes → clone (A1b)
-- [ ] `testBmiCopyAssocCollision` — identical SHA1 hash → collision node (A2c)
+- [x] `testBmiCopyAssocCollision` — identical SHA1 hash → collision node (A2c)
 - [ ] `testBmiCount` — N-entry map, verify count == N
 - [ ] `testBmiMutateAssocUpdateValue` — bit set, same key + different value (1c)
 - [ ] `testBmiMutateAssocInsert` — bit not set, n < 16, insert (2b)
