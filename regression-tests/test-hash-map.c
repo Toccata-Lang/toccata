@@ -1779,21 +1779,23 @@ void testArrayNodeMutateAssocRecurse(void) {
 
   // Create ArrayNode with one entry
   ArrayNode *node = malloc_arrayNode();
-  Term key1 = newI60(100);
-  Term val1 = newI60(200);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key100");
+  Term val1 = (Term)stringValue("val200");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key1, (Value *)val1, hash1, 0);
 
   int slot1 = mask(hash1, 0);
 
-  // Find key2 at the SAME slot as key1 (triggers recurse into BMI)
-  Term key2 = newI60(300);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  while (mask(hash2, 0) != slot1) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = sha1((FnArity *)0, key2);
-  }
-  Term val2 = newI60(999);
+  // Find key2 at the SAME slot as key1 (triggers recurse into BMI).
+  // Pin key2's hashVal: same slot-0 as key1 (so arrayNodeMutateAssoc
+  // recurses into the BMI sub-node), a different shift-5 bit (so the BMI
+  // inserts a new entry rather than colliding), and a LOWER shift-5 bit
+  // than key1 (so the final index check, computed from bitpos(hash2, 0)
+  // which sits below both entries, lands on key2's slot).
+  Term key2 = (Term)stringValue("key300");
+  int64_t hash2 = (hash1 & ~0x3ff) | slot1 | ((mask(hash1, 5) / 2) << 5);
+  ((String *)key2)->hashVal = hash2;
+  Term val2 = (Term)stringValue("val999");
 
   // Set refs==1 so mutateAssoc takes the in-place path
   ((Value *)node)->refs = 1;
@@ -2404,7 +2406,7 @@ int main(int argc, char **argv) {
     testArrayNodeDissocEmptySlot,
     testArrayNodeDissoc,
     testArrayNodeMutateAssocInsert,
-    // testArrayNodeMutateAssocRecurse,
+    testArrayNodeMutateAssocRecurse,
     // testCollisionAssocAdd,
     // testCollisionAssocUpdate,
     // testCollisionAssocPromote,

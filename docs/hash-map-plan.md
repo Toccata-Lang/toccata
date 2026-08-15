@@ -98,7 +98,7 @@ When converting a test:
 - [x] `testArrayNodeDissocEmptySlot` — key not found (empty slot)
 - [x] `testArrayNodeDissoc` — remove key from ArrayNode
 - [x] `testArrayNodeMutateAssocInsert` — slot is empty → insert new entry
-- [ ] `testArrayNodeMutateAssocRecurse` — slot has BMI sub-node → recurse
+- [x] `testArrayNodeMutateAssocRecurse` — slot has BMI sub-node → recurse
 - [ ] `testCollisionAssocAdd` — add new key to collision node
 - [ ] `testCollisionAssocUpdate` — update existing key value
 - [ ] `testCollisionAssocPromote` — add key with different hash → promotes to BMI
