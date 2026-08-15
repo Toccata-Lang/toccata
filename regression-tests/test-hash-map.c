@@ -1505,15 +1505,18 @@ void testArrayNodeCopyAssocB1(void) {
 
   // Create ArrayNode with a BMI sub-node
   ArrayNode *node = malloc_arrayNode();
-  Term key = newI60(100);
-  Term val = newI60(200);
-  int64_t hash = sha1((FnArity *)0, key);
+  Term key = (Term)stringValue("key100");
+  Term val = (Term)stringValue("val200");
+  int64_t hash = strSha1(incRefVal(key, 1));
   node = (ArrayNode *)arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
 
   int slot = mask(hash, 0);
 
   // Call copyAssoc with the same key and same value — should be no-op
-  Value *result = arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
+  // (fresh key/val: the no-op path frees the passed key and val)
+  Term key2 = (Term)stringValue("key100");
+  Term val2 = (Term)stringValue("val200");
+  Value *result = arrayNodeCopyAssoc((Value *)node, (Value *)key2, (Value *)val2, hash, 0);
 
   // Verify same pointer returned (no new allocation)
   if (result != (Value *)node) {
@@ -2392,7 +2395,7 @@ int main(int argc, char **argv) {
     testBmiMutateAssocPromote,
     testArrayNodeCopyAssoc,
     testArrayNodeCopyAssocA2,
-    // testArrayNodeCopyAssocB1,
+    testArrayNodeCopyAssocB1,
     // testArrayNodeCopyAssocB2,
     // testArrayNodeCopyAssocB2Multi,
     // testArrayNodeGet,

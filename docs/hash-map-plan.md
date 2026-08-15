@@ -86,7 +86,7 @@ When converting a test:
 - [x] `testBmiMutateAssocPromote` — bit not set, n >= 16, promote to ArrayNode (2a)
 - [x] `testArrayNodeCopyAssoc` — add key/value to empty ArrayNode
 - [x] `testArrayNodeCopyAssocA2` — non-empty ArrayNode, add to empty slot
-- [ ] `testArrayNodeCopyAssocB1` — ArrayNode with sub-node, same key+value (no-op)
+- [x] `testArrayNodeCopyAssocB1` — ArrayNode with sub-node, same key+value (no-op)
 - [ ] `testArrayNodeCopyAssocB2` — ArrayNode with sub-node, different value
 - [ ] `testArrayNodeCopyAssocB2Multi` — multiple entries, update one sub-node
 - [ ] `testArrayNodeGet` — lookup existing key in ArrayNode
