@@ -1148,26 +1148,22 @@ void testBmiCopyAssocSubNodeNoChange(void) {
   // First, build a nested structure: two keys with same bit position at shift=0
   // This creates a sub-node at shift=5
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key1 = newI60(137);
-  Term val1 = newI60(251);
-  int64_t hash1 = sha1((FnArity *)0, key1);
+  Term key1 = (Term)stringValue("key137");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
   BitmapIndexedNode *original = (BitmapIndexedNode *)result;
   int bit1 = bitpos(hash1, 0);
 
-  // Find key2 with same bit position
-  Term key2 = newI60(1000);
-  int64_t hash2 = sha1((FnArity *)0, key2);
-  int bit2 = bitpos(hash2, 0);
-  while (bit2 != bit1) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = sha1((FnArity *)0, key2);
-    bit2 = bitpos(hash2, 0);
-  }
+  // key2 with same lowest-bit position as key1 but different higher bits — triggers branch
+  Term key2 = (Term)stringValue("keyX");
+  int64_t lowBits = hash1 & 0x1f;
+  int64_t hash2 = lowBits | 0x1000;  // same low bits, different higher bit
+  ((String *)key2)->hashVal = hash2;
 
   // Add key2 — this creates a sub-node (branch)
-  Term val2 = newI60(888);
+  Term val2 = (Term)stringValue("val888");
   BitmapIndexedNode *bm = (BitmapIndexedNode *)bmiCopyAssoc(original, key2, val2, hash2, 0);
 
   // Verify we have a nested structure
@@ -1182,7 +1178,11 @@ void testBmiCopyAssocSubNodeNoChange(void) {
   }
 
   // Now update key1 in the sub-node with the SAME value — should trigger A1a (no-op)
-  Value *noChangeResult = bmiCopyAssoc(bm, key1, val1, hash1, 0);
+  // (fresh key/value: the stored key's and value's refs belong to the
+  //  sub-node, and the no-op path frees the passed key and val)
+  Term lookupKey = (Term)stringValue("key137");
+  Term lookupVal = (Term)stringValue("val251");
+  Value *noChangeResult = bmiCopyAssoc(bm, lookupKey, lookupVal, hash1, 0);
 
   // Verify same pointer returned (no-op path)
   if (noChangeResult != (Value *)bm) {
@@ -2386,7 +2386,7 @@ int main(int argc, char **argv) {
     testBmiCopyAssocSubNodeChange,
     testBmiDissocEmpty,
     testBmiCopyAssocBranch,
-    // testBmiCopyAssocSubNodeNoChange,
+    testBmiCopyAssocSubNodeNoChange,
     testBmiCopyAssocCollision,
     testBmiCount,
     testBmiMutateAssocUpdateValue,
