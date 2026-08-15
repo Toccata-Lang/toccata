@@ -1433,9 +1433,9 @@ void testBmiHashVec(void) {
 void testArrayNodeCopyAssoc(void) {
   reset_counters();
   ArrayNode *node = malloc_arrayNode();
-  Term key = newI60(100);
-  Term val = newI60(200);
-  int64_t hash = sha1((FnArity *)0, key);
+  Term key = (Term)stringValue("key100");
+  Term val = (Term)stringValue("val200");
+  int64_t hash = strSha1(incRefVal(key, 1));
   Value *result = arrayNodeCopyAssoc((Value *)node, (Value *)key, (Value *)val, hash, 0);
   if (((ArrayNode *)result)->type != ArrayNodeType) {
     BOOM("arrayNodeCopyAssoc should return ArrayNodeType");
@@ -2393,7 +2393,7 @@ int main(int argc, char **argv) {
     testBmiMutateAssocSubNodeRecurse,
     testBmiMutateAssocNoOp,
     testBmiMutateAssocPromote,
-    // testArrayNodeCopyAssoc,
+    testArrayNodeCopyAssoc,
     // testArrayNodeCopyAssocA2,
     // testArrayNodeCopyAssocB1,
     // testArrayNodeCopyAssocB2,
