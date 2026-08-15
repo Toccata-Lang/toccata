@@ -2194,10 +2194,10 @@ void testCollisionDissoc(void) {
   reset_counters();
 
   // Create collision node with 2 entries
-  Term keyA = COLLIDE_KEY_A;
-  Term valA = newI60(11);
-  Term keyB = COLLIDE_KEY_B;
-  Term valB = newI60(22);
+  Term keyA = (Term)stringValue("keyA100");
+  Term valA = (Term)stringValue("val11");
+  Term keyB = (Term)stringValue("keyB200");
+  Term valB = (Term)stringValue("val22");
   HashCollisionNode *node = malloc_hashCollisionNode(2);
   node->array[0] = (Value *)keyA;
   node->array[1] = (Value *)valA;
@@ -2206,7 +2206,9 @@ void testCollisionDissoc(void) {
   node->count = 4;
 
   // Dissoc keyA — should return node with only keyB
-  Value *result = collisionDissoc((Value *)node, (Value *)keyA, COLLIDE_HASH_ADD, 0);
+  // (fresh key: the stored keyA's ref belongs to the node)
+  Term keyA2 = (Term)stringValue("keyA100");
+  Value *result = collisionDissoc((Value *)node, (Value *)keyA2, COLLIDE_HASH_ADD, 0);
 
   HashCollisionNode *resultNode = (HashCollisionNode *)result;
   if (resultNode->type != HashCollisionNodeType) {
@@ -2426,7 +2428,7 @@ int main(int argc, char **argv) {
     testCollisionAssocPromote,
     testCollisionCount,
     testCollisionVec,
-    // testCollisionDissoc,
+    testCollisionDissoc,
     // testCollisionGet,
     // testBmiHashVec,
   };
