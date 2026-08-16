@@ -38,46 +38,9 @@ Useful hashes: `3` (bit 3), `35` (bit 3 at shift 0, bit 1 at shift 5), `4` (bit 
 
 ### Test cases
 
-**A. `bitpos` (pure, untested)**
-- [ ] `(bitpos 3 0) == 8` — mask = `1 << (hash & 31)`
-- [ ] `(bitpos 35 0) == 8` — same bit at shift 0
-- [ ] `(bitpos 35 5) == 2`, `(bitpos 3 5) == 1` — shift behavior
-- [ ] `(bitpos 64 0) == 1` — wraps to bit 0
+Low-level functions (`bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiChild`, `bmiClone`, `bmiUpdate`, `addCopiedBMI`, `bmiReplaceCopied`) are not tested standalone right now — they are covered via the higher-level tests below.
 
-**B. `bmiBitMap`**
-- [x] *(existing)* emptyBMI → 0
-- [ ] one key, hash 3 → bitmap `8`
-- [ ] keys hash 3 + 4 → bitmap `24`
-- [ ] keys hash 3 + 35 (sub-node created) → bitmap still `8` (sub-nodes don't add bits at this level)
-
-**C. `bmiKey` / `bmiVal` (untested; exercise the owned-ref `incRef` wrappers)**
-- [ ] after assoc `(CHash 3 (Some 3))`/`(Val 1)`: `(bmiKey m 8)` equals the key, `(bmiVal m 8)` equals `(Val 1)`
-- [ ] two-entry node: key/val correct at both bits 8 and 16 (index ordering)
-- ⚠️ **Landmine, do not test yet:** `bmiKey`/`bmiVal` on a sub-node slot aborts — the slot's key is `0` and the wrapper unconditionally `incRef`s it (`incRef` aborts on NULL, `runtime3.c:808`). Either the wrapper needs a `None` return for sub-node slots, or this stays untested.
-
-**D. `bmiChild` (untested)**
-- [ ] k/v slot → `None`
-- [ ] sub-node slot (keys hash 3 + 35) → `Some(child)`; extracted child has `count == 2` and correct `vec`
-
-**E. `bmiClone` (untested — covers the `9f5c40c` fix)**
-- [ ] one-entry node, clone with same key, **different** value → count 1, `vec == [[k v2]]`
-- [ ] two-entry node, clone value at bit 8 → count 2, other entry (bit 16) preserved, replaced value present
-
-**F. `bmiUpdate` (untested)**
-- [ ] node with sub-node at bit 8 + flat entry at bit 16: replace child with a fresh single-pair sub-node → count 2, `vec` shows new child's pair + preserved flat entry
-- [ ] same-child no-op: extract child via `bmiChild`, `bmiUpdate` it back → count unchanged, no crash (pointer-equality path)
-
-**G. `addCopiedBMI` direct (untested)**
-- [ ] add to emptyBMI, hash 3 → bitmap 8, count 1, key/val at bit 8
-- [ ] node with bit-16 entry, add key at bit 8 → **insert-before**: bitmap 24, old entry still at bit 16
-- [ ] node with bit-8 entry, add key at bit 16 → **insert-after**: bitmap 24, old entry still at bit 8
-- ⚠️ **Blocked:** 16-entry → ArrayNode conversion hits `BOOM("wtf")` in copied `addCopiedBMI` (`runtime3.c:2046,2060`). Untestable until implemented.
-
-**H. `bmiReplaceCopied` direct (untested — both branches)**
-- [ ] different hashes at this level (stored hash 3, new hash 35) → sub-node: count 2, `bmiChild` at bit 8 → `Some`, `vec` has both pairs
-- [ ] identical hashes, unequal keys (both hash 7; new key `eq=None` added second so `=` fails) → **collision node**: count 2, `vec` has both pairs
-
-**I. `bmiCopyAssoc` integration (5 branches; 2 of 5 covered)**
+**A. `bmiCopyAssoc` integration (5 branches; 2 of 5 covered)**
 - [x] *(existing)* add to empty
 - [x] *(existing)* same key + same value → no-op, count 1
 - [ ] same key, **different** value → count 1, `vec == [[k v2]]` (bmiClone branch)
@@ -88,24 +51,25 @@ Useful hashes: `3` (bit 3), `35` (bit 3 at shift 0, bit 1 at shift 5), `4` (bit 
 - [ ] **deep createNode:** keys 3, 35, 67, then 195 (bit 3 → bit 6 at shift 5) → count 4 (exercises `createNode`'s same-bit-at-next-level recursion)
 - [ ] same key, different value, **key located inside a sub-node** (depth 2) → count unchanged, `vec` shows updated value (child-recurse + clone at depth)
 
-**J. `count` / `vec` recursion (untested beyond count-1)**
+**B. `count` / `vec` recursion (untested beyond count-1)**
 - [ ] flat 3-entry node → count 3
 - [ ] mixed node (2 flat + sub-node of 2) → count 4
 - [ ] `vec` of flat node → `[[k1 v1] [k2 v2] ...]` in bit order
 - [ ] `vec` of node with sub-node → sub-node's pairs **flattened in** (not nested)
 
-**K. `empty?` (untested)**
+**C. `empty?` (untested)**
 - [ ] `(empty? emptyBMI) == (Some emptyBMI)`
 - [ ] `(empty? one-entry-node) == None`
 
-**L. Memory hygiene (implicit, per status.md failure conditions)**
+**D. Memory hygiene (implicit, per status.md failure conditions)**
 Every case above must end with `malloc_count == free_count` and `glblAlloced == 0`. Highest-risk paths, all now exercised: owned refs from `bmiKey`/`bmiVal`/`bmiChild` (the `test-bmi` double-free area), the no-op branch's `dec_and_free` dance, `bmiUpdate` same-child path, collision-node `incRef`s.
 
 ### Out of scope until more is exposed
 
 - `get` / `dissoc` tests — belong in `hash-map-regressions.toc` once `bmiGet`/`bmiDissoc` are wrapped
 - mutate family — not exposed
-- 16+ entry ArrayNode conversion — `BOOM` until implemented
+- 16+ entry ArrayNode conversion — `BOOM("wtf")` in copied `addCopiedBMI` (`runtime3.c:2046,2060`) until implemented
+- `bmiKey`/`bmiVal` on a sub-node slot — aborts: the slot's key is `0` and the wrapper unconditionally `incRef`s it (`incRef` aborts on NULL, `runtime3.c:808`). Needs a `None` return for sub-node slots before it can be tested
 - shift-exhaustion (`shift > 60` abort) — deliberate crash, don't test
 
 ## Files to Read
