@@ -44,7 +44,7 @@ Low-level functions (`bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiChild`, `bmi
 - [x] *(existing)* add to empty
 - [x] *(existing)* same key + same value → no-op, count 1
 - [x] same key, **different** value → count 1, `vec == [[k v2]]` (bmiClone branch)
-- [ ] different key, different bit → count 2 (add branch)
+- [x] different key, different bit → count 2 (add branch)
 - [ ] different key, same bit, different hash at shift 5 (3 vs 35) → count 2, sub-node (replace→createNode branch)
 - [ ] different key, identical hash (7/7 collision) → count 2, collision node (replace→collision branch)
 - [ ] **recurse-into-child branch:** node with keys 3+35, then assoc key 67 (bit 3 again) → count 3
