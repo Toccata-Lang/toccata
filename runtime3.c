@@ -2445,7 +2445,6 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
         return((Value *)newNode);
       }
     } else {
-      BOOM("test");
       return(arg0);
     }
   } else {

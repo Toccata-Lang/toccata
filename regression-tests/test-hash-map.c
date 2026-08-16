@@ -1653,6 +1653,59 @@ void testBmiDissocSubNodeShrinkEmpty(void) {
   check_counts("testBmiDissocSubNodeShrinkEmpty", 0, 0, __LINE__);
 }
 
+// Test: dissoc a different key at an occupied bit → no-op
+// bmiDissoc finds the bit set with a direct key, keys differ → returns original node
+void testBmiDissocDifferentKey(void) {
+  reset_counters();
+
+  // Build a flat 2-entry BMI: keys at different bit positions
+  BitmapIndexedNode *node = malloc_bmiNode(2);
+  Term key1 = (Term)stringValue("key1");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
+
+  Term key2 = (Term)stringValue("key2");
+  Term val2 = (Term)stringValue("val888");
+  int64_t hash2 = strSha1(incRefVal(key2, 1));
+  result = bmiMutateAssoc((BitmapIndexedNode *)result, key2, val2, hash2, 0);
+
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
+  if (__builtin_popcount(bm->bitmap) != 2) {
+    BOOM("different key: should have 2 entries");
+  }
+
+  // key3 with key1's hash — routes to key1's occupied bit, but the key differs
+  // (bmiDissoc never re-hashes the key; the hash argument drives routing)
+  Term key3 = (Term)stringValue("keyOther");
+  Value *afterDissoc = bmiDissoc((Value *)bm, (Value *)key3, hash1, 0);
+
+  // Verify the same node pointer was returned (no-op)
+  if (afterDissoc != (Value *)bm) {
+    BOOM("different key: should return original node pointer");
+  }
+
+  // Verify both entries are intact
+  BitmapIndexedNode *bmAfter = (BitmapIndexedNode *)afterDissoc;
+  if (bmAfter->bitmap != bm->bitmap) {
+    BOOM("different key: bitmap should be unchanged");
+  }
+  int found1 = 0, found2 = 0;
+  for (int i = 0; i < 4; i += 2) {
+    if (subNodeEqualsKey((Term)bmAfter->array[i], key1)) found1 = 1;
+    if (subNodeEqualsKey((Term)bmAfter->array[i], key2)) found2 = 1;
+  }
+  if (!found1 || !found2) {
+    BOOM("different key: both entries should be intact");
+  }
+
+  // Clean up — the no-op path returns the node with its ref intact;
+  // key3 was freed by the failed equal() comparison
+  dec_and_free((Term)afterDissoc, 1);
+
+  check_counts("testBmiDissocDifferentKey", 0, 0, __LINE__);
+}
+
 // Test: add key-value to empty ArrayNode
 void testArrayNodeCopyAssoc(void) {
   reset_counters();
@@ -2682,6 +2735,7 @@ int main(int argc, char **argv) {
     testBmiGetNested,
     testBmiDissocSubNodeUnchanged,
     testBmiDissocSubNodeShrinkEmpty,
+    testBmiDissocDifferentKey,
   };
   shuffled_count = sizeof(tests) / sizeof(tests[0]);
 
