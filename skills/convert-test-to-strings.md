@@ -120,14 +120,14 @@ Verify nothing regressed: 0 failures out of 1000.
 
 ### Step 10: Update the plan
 
-Mark the test as [x] in `docs/hash-map-plan.md`.
+Mark the test as [x] in `docs/hash-map-plan-c.md`.
 
 ### Step 11: Commit
 
 **One commit per test.** The first key or value conversion creates the commit. Every subsequent key or value conversion amends it.
 
 ```bash
-git add regression-tests/test-hash-map.c docs/hash-map-plan.md
+git add regression-tests/test-hash-map.c docs/hash-map-plan-c.md
 git commit -m "test: convert test<Name> to use String keys/values"
 git add regression-tests/test-hash-map.c
 git commit --amend --no-edit
@@ -162,7 +162,7 @@ Wait for explicit instruction before committing.
 - [ ] Final regression check: all [x] tests uncommented, 1000 runs pass
 
 ### After conversion
-- [ ] Test marked [x] in `docs/hash-map-plan.md`
+- [ ] Test marked [x] in `docs/hash-map-plan-c.md`
 - [ ] One commit created by first key/value conversion
 - [ ] Subsequent key/value conversions amend that commit
 - [ ] Wait for explicit instruction before committing

@@ -1,8 +1,8 @@
-# Hash-Map Implementation Plan
+# Hash-Map Plan — C-Level Implementation and Testing
 
 ## Overview
 
-The hash-map is an immutable key-value store based on Clojure's bitmap trie data structure. The C-level data structure and operations exist in both `runtime3.c` (all stubs that abort). The main task is to activate the implementations in `runtime3.c` by uncommenting the commented-out code, then wire the Toccata protocol layer.
+The hash-map is an immutable key-value store based on Clojure's bitmap trie data structure. The C-level data structure and operations exist in `runtime3.c` (all stubs that abort). The main task is to activate the implementations in `runtime3.c` by uncommenting the commented-out code. The Toccata protocol layer built on top of these functions is tracked in `hash-map-plan-toccata.md`.
 
 ## Important Notes
 
@@ -18,13 +18,6 @@ The hash-map is an immutable key-value store based on Clojure's bitmap trie data
 - `ListType` — not defined
 - `HashedValue` struct — no hash caching
 - `new_num`/`new_i24` — use `newI60(x)` instead
-
-**Protocol functions NOT wired up yet:**
-- `count` — returns count of sequence
-- `sha1` — computes SHA1 hash
-- `get` — polymorphic get dispatch
-- `baseDissoc` — polymorphic dissoc dispatch
-- `vals` — get all values
 
 ## Architecture Reference
 
@@ -138,4 +131,3 @@ Five `BOOM("test")` tripwires remain in `runtime3.c`: four on **nested (multi-le
 | `runtime3.h` | Type definitions, extern declarations |
 | `regression-tests/test-hash-map.c` | Tests for the C-level functions of the hash-map implementation |
 | `regression-tests/test-hvm.c` | Reference test pattern |
-| `new.c` | Compiler — may need modifications for `{}` literal |
