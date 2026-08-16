@@ -199,6 +199,20 @@ Format:
 
 ---
 
+### Pattern 7: bmiKey/bmiVal return borrowed refs, Toccata bmiCopyAssoc consumes them as owned (double-free)
+
+**Location:** `hvm-core.toc` (bmiKey/bmiVal inline-C wrappers); root cause split between `runtime3.c:bmiKey`/`bmiVal` (borrowed) and the Toccata `bmiCopyAssoc` (consumes as owned)
+
+**Test:** `test-bmi` (regression test, `make test-bmi`)
+
+**Cause:** `bmiChild()` returns an **owned** ref (`incRef` before returning), but `bmiKey()`/`bmiVal()` return a **borrowed** pointer into the node's array (no `incRef`). The Toccata `bmiCopyAssoc` treats `currKey`/`currVal` as owned — it consumes them via `(= currKey k)` / `(= currVal v)` (whose `type-num` does `dec_and_free`). Because `bmiKey`/`bmiVal` never incremented the refcount, that consumption was an **extra decrement** that drove the BMI node's own reference to the value to 0 prematurely. The value was freed (refs → -10), its memory reused, and when the BMI node was later freed, `freeBitmapNode` decremented the stale slot → **double-free** (`decRefs: refs too small: 1 -11`).
+
+**Fix:** Made the Toccata inline-C wrappers for `bmiKey`/`bmiVal` `incRef` the result, so callers get an owned reference (consistent with `bmiChild`). Fixed the wrappers rather than the C functions because the C callers (`bmiCopyAssoc`/`bmiMutateAssoc` in runtime3.c) depend on the borrowed-ref behavior and `incRefVal` before use — fixing the C functions would have double-incRef'd there.
+
+**Key insight:** This is a **double-free**, not a leak. The value was over-decremented (refs went negative), not under-decremented (refs stuck above 0). See the "Double-Free / Use-After-Free Diagnosis" section below.
+
+---
+
 ## Common Fix Patterns
 
 ### Missing `dec_and_free` after `incRef`
@@ -383,6 +397,144 @@ Value *newLeaf = createNode(shift, hash1, incRefVal(key1, 1), val1,
                             hash2, incRefVal(key2, 1), val2);
 ```
 
+## Double-Free / Use-After-Free Diagnosis
+
+A **double-free** is the opposite of a leak: instead of refs never reaching 0 (leak), refs go **below** the freed marker. This is a use-after-free / over-decrement.
+
+### Failure signature
+
+A leak shows up as `malloc_count != free_count` or `pool_delta != unfreed` at the end of a test. A **double-free** aborts mid-test with:
+
+```
+failure in decRefs, refs too small: <delta> <refs> <ptr>
+Aborted (core dumped)
+```
+
+The freed marker is `refsError = -10`. When a value is freed, its refs is set to -10. A double-free is detected when `decRefs` is called on a value whose refs is **already -10** — the `fetch_sub` drives it to -11 (or lower), and `decRefs` aborts because the old value (`newRefs`) is `< deltaRefs`. So `refs too small: 1 -11` means "this value was already freed, and something decremented it again."
+
+### The crash point is NOT the bug location
+
+The abort happens when a **container** is freed and iterates its array, decrementing a stale slot. In Pattern 7 the crash was in `freeBitmapNode` (freeing a BMI node) — but the actual extra decrement happened **earlier**, when the value was first over-decremented. The backtrace at the crash tells you **which container** is being freed, not **why** the slot is stale. You must trace **backwards** from the crash to find the first over-decrement.
+
+### Memory reuse confuses the diagnosis
+
+A freed value's memory is **reused** for a new value (same pointer, new contents). So the `type` you see at the crash point may be the **new** value's type, not the original's. In Pattern 7 the double-freed value showed `type=43` (SomeType) at the crash, but it was originally a `Val` (type 49) — the Val was freed, its memory reused for a Some, and the stale BMI slot pointed at the reused memory. Don't trust the type at the crash; trust the refcount trajectory.
+
+### Technique: refcount trajectory logging
+
+The most effective tool is to log **every** `incRef`/`decRefs` with `(pointer, type, delta, before, after)` to a file, then find the value whose refcount hits 0 (freed) **while a container still holds a reference**, and trace who did the extra decrement.
+
+Add to `incRef` and `decRefs` in `runtime3.c` (tag all debug code with a unique prefix so cleanup is a single grep):
+
+```c
+static FILE *dbg_log = (FILE *)0;
+static long dbg_seq = 0;
+static void dbg_logref(const char *op, Value *v, int delta, REFS_SIZE before, REFS_SIZE after) {
+  if (!dbg_log) dbg_log = fopen("/tmp/refs.log", "w");
+  fprintf(dbg_log, "%ld %s %p type=%ld delta=%d before=%ld after=%ld\n",
+          ++dbg_seq, op, (void *)v, (long)v->type, delta, (long)before, (long)after);
+}
+// in decRefs, after the fetch_sub:  dbg_logref("dec", v, deltaRefs, newRefs, newRefs - deltaRefs);
+// in incRef,  after the CAS loop:   dbg_logref("inc", v, deltaRefs, refs, newRefs);
+// in the decRefs failure path, before abort: fflush(dbg_log);
+```
+
+**Flush before the abort** — the log is buffered and lost on `abort()` otherwise.
+
+Then read the log and find the double-freed value's trajectory. Look for the value that goes `before=1 after=0` (freed) and then reappears later as `before=-10 after=-11` (the double-free). The decrements **between** those two points are the over-decrements — trace each one back to its source.
+
+### Technique: backtrace at the failure point
+
+Add a backtrace to the `decRefs` failure path to see **which container** is being freed:
+
+```c
+#include <execinfo.h>
+// in the decRefs failure path, before abort:
+void *bt[64]; int n = backtrace(bt, 64); backtrace_symbols_fd(bt, n, 2);
+```
+
+Resolve the offsets with `addr2line -e <binary> -f -C <offset>`. In Pattern 7 this showed `freeBitmapNode → dec_and_free → decValRef → decRefs` — identifying the BMI node as the container being freed, which pointed me at the BMI's array slots.
+
+### Root-cause class: borrowed vs owned reference convention
+
+A common root cause is an **inconsistent ownership convention** across sibling functions. In Pattern 7, `bmiChild` returned an owned ref (`incRef`) but `bmiKey`/`bmiVal` returned borrowed refs (no `incRef`). Callers written to the "owned" convention over-decremented the borrowed results. When you find an over-decrement, check whether the function that produced the value `incRef`s its result — and compare it against its siblings.
+
+**Fix location matters.** When fixing, understand **all** callers before deciding where to fix. In Pattern 7 I fixed the Toccata inline-C wrappers (not the C `bmiKey`/`bmiVal`) because the C callers (`bmiCopyAssoc`/`bmiMutateAssoc`) rely on the borrowed-ref behavior and `incRefVal` before use. Fixing the C functions would have double-incRef'd in the C callers.
+
+### The `dupeArg` under-count
+
+When a Toccata variable is used multiple times, the compiler emits `dupeArg` calls that `incRef` for each duplicate. But `dupeArg` only counts the **duplicates** — the original reference is only counted if it was owned when it arrived. If the original was a **borrowed** ref (not counted), the total refcount is short by one, and consuming all the uses over-decrements. This is how Pattern 7's borrowed `currVal` became a double-free: the BMI's ref (1) + `dupeArg` (1) = 2, but the code held 3 logical refs (BMI + original + dupe), so the final consumes drove it to 0 while the BMI still held it.
+
+## lldb Workflow
+
+**lldb is available** (`/usr/bin/lldb`, v18.1.3). It's the best tool for *live* debugging of the C runtime — especially double-frees, where you want to stop at the exact over-decrement instead of reconstructing it from logs. It complements the trajectory-logging technique above: logging is better for "trace the whole history", lldb is better for "stop me right here and show me why".
+
+### Core loop
+
+```bash
+lldb ./regression-tests/test-bmi
+(bmi) b decRefs                 # breakpoint by function name
+(bmi) b runtime3.c:173          # ...or by file:line
+(bmi) r                         # run (add args if needed: command import -a party-pooper)
+(bmi) n / s / c                 # step over / step into / continue
+(bmi) p v->refs                 # print an expression
+(bmi) frame var                 # locals in the current frame
+(bmi) bt                        # backtrace
+```
+
+### Catch a double-free at the first over-decrement
+
+The freed marker is `refsError = -10`. Break the moment `decRefs` is about to decrement an already-freed value — this stops you at the *root cause*, not the later container-free crash:
+
+```
+(bmi) b decRefs -c 'v->refs == -10'
+(bmi) r
+...stops on the first over-decrement...
+(bmi) bt                        # who is decrementing the stale ref
+(bmi) p v                      # inspect the (reused) value
+```
+
+This directly resolves the "crash point ≠ bug location" problem: the backtrace here shows the owner of the stale reference.
+
+### Conditional breakpoints (avoid flooding)
+
+```
+(bmi) b decRefs -c 'v == (Value *)0xADDR'      # one specific value
+(bmi) b decRefs -c 'newRefs < deltaRefs'       # any over-decrement
+(bmi) b incRef  -c 'v->type == 43'             # only Some values
+```
+
+### Watchpoints on a refcount field
+
+```
+(bmi) p &v->refs
+(bmi) watchpoint set variable v->refs          # stop on any read/write
+```
+
+**Caveat:** this runtime uses atomics and a free-list/pool, so `refs` gets many *legal* writes. Watchpoints are noisy here — prefer a conditional breakpoint on the failure predicate (`v->refs == -10`) over a raw watchpoint.
+
+### Memory inspection
+
+```
+(bmi) memory read <addr>                     # raw bytes
+(bmi) memory histogram -a <addr>             # identify what owns/points at a value
+(bmi) p *(Value *)0xADDR                     # interpret memory as a Value
+```
+
+### Batch / scripted runs (no TTY)
+
+Useful for non-interactive debugging:
+
+```bash
+lldb -b -o 'b decRefs' -o 'r' -o 'bt' ./regression-tests/test-bmi
+```
+
+### Core dumps
+
+```bash
+lldb ./regression-tests/test-bmi -c core     # inspect the abort state
+```
+
 ## Debugging Techniques
 
 ### Use prefs at strategic points
@@ -423,3 +575,8 @@ When a node is freed via `dec_and_free`, `freeBitmapNode` iterates the array and
 8. **`check_counts()` is a regression guard, not a leak detector** — it asserts exact expected numbers to catch future regressions. If you fix a real bug (e.g., add a missing `dec_and_free`), the expected numbers will change. Just update them and move on. Don't waste time trying to make the numbers "work" when the code is already correct.
 9. **Different `itemCount` = different pool index** — `malloc_bmiNode(1)` and `malloc_bmiNode(2)` use different pool slots. Each first-call creates a new pool.
 10. **Always verify compilation after each change** — don't wait until all functions are done. Compile frequently to catch type errors early.
+11. **Double-free vs leak are different failure modes** — a leak is refs stuck above 0 (`malloc_count != free_count` at the end); a double-free is refs below the freed marker (-10), which aborts mid-test with `decRefs: refs too small`. Don't apply leak-hunting techniques (pool accounting) to a double-free — the value was over-freed, not under-freed.
+12. **Crash point ≠ bug location for double-frees** — a double-free aborts when a container is freed and touches a stale slot. The extra decrement happened earlier. Trace backwards with refcount trajectory logging to find the first over-decrement.
+13. **Memory reuse lies about types** — a freed value's memory is reused, so the `type` at the crash may be the new value's type, not the original's. Trust the refcount trajectory, not the crash-time type.
+14. **Check ownership-convention consistency** — when a value is over-decremented, check whether the producing function `incRef`s its result and compare against its siblings (e.g., `bmiChild` incRefs but `bmiKey`/`bmiVal` did not). An inconsistent convention across sibling accessors is a common root cause.
+15. **Fix where the convention is broken, considering all callers** — understand all callers before choosing the fix location. Fixing the wrong layer (e.g., the C function instead of the Toccata wrapper) double-incRef's in callers that already manage the ref manually.

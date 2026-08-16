@@ -16,6 +16,10 @@ Read these files for context before starting any:
 
 Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
 
+## Debugging Tools
+
+**lldb is available** (`/usr/bin/lldb`, v18.1.3). Use it for live debugging of the C runtime — breakpoints, conditional breakpoints on refcount failure predicates, watchpoints, and catching double-frees at the first over-decrement. See `skills/memory-leak-hunting.md` ("lldb Workflow") for the concrete commands.
+
 ## Current Work
 
 Currently implementing hash-map functionality. This involves translating C code from `runtime3.c` into higher-level Toccata code, with the low-level pieces extracted into inline C functions.
@@ -69,6 +73,7 @@ Currently implementing hash-map functionality. This involves translating C code 
 - [x] test-inlined-result-constraint
 - [x] function-regressions
 - [x] test-closures
+- [x] test-bmi
 
 ## Tests to be processed
 
@@ -124,4 +129,10 @@ These features won't be in the new version (lists might be added eventually):
 ## Known Issues
 
 **`test-hvm` node leak.** `glblAlloced should be 0, got 1` at `regression-tests/test-hvm.c:1828`. Pre-existing — not caused by any recent changes. Leaving as-is until I want to tackle it. All 49 REG_TESTS pass.
+
+**Latent bugs in Toccata `bmiCopyAssoc` (`hvm-core.toc`).** Found while diagnosing the `test-bmi` double-free (fixed: `bmiKey`/`bmiVal` wrappers now `incRef`). Both are in branches `test-bmi` does not take, so they don't surface there yet. Will hit them when the test is extended to sub-node / different-key paths:
+
+1. **`copyAssoc` thunk drops args (compiler codegen).** The generated C for `(copyAssoc childNode k v hash (+ 5 shift))` (the sub-node recurse branch) only passes `childNode` and `k` — `v`, `hash`, and `shift` are missing. This looks like a compiler codegen bug, not a `hvm-core.toc` bug. Needs a separate investigation.
+
+2. **Wrong arity: `(bmiReplaceCopied m bit v)` is 3 args but `bmiReplaceCopied` takes 7.** In the "same key, different value" branch, the Toccata code calls `(bmiReplaceCopied m bit v)`. The C reference (`bmiCopyAssoc`) uses `bmiClone(node, bit, key, val)` for this case, so this is almost certainly meant to be `(bmiClone m bit k v)`.
 
