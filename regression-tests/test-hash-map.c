@@ -1495,6 +1495,84 @@ void testBmiGetNested(void) {
   check_counts("testBmiGetNested", 0, 0, __LINE__);
 }
 
+// Test: dissoc a key not in the sub-node → sub-node unchanged
+// bmiDissoc recurses into the sub-node; key not found → returns original node
+void testBmiDissocSubNodeUnchanged(void) {
+  reset_counters();
+
+  // Build a nested structure: two keys with the same bit position at shift=0
+  // This creates a sub-node at shift=5
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = (Term)stringValue("key137");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  int bit1 = bitpos(hash1, 0);
+
+  // key2 with the same lowest-bit position as key1 but different higher bits
+  // — triggers the branch, creating a sub-node
+  Term key2 = (Term)stringValue("keyX");
+  int64_t lowBits = hash1 & 0x1f;
+  int64_t hash2 = lowBits | 0x1000;  // same low bits, different higher bit
+  ((String *)key2)->hashVal = hash2;
+
+  Term val2 = (Term)stringValue("val888");
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)bmiCopyAssoc(original, key2, val2, hash2, 0);
+
+  // Verify we have a nested structure
+  int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
+  if (bm->array[2 * idx] != 0) {
+    BOOM("dissoc unchanged: should have sub-node at shared bit");
+  }
+  BitmapIndexedNode *subNode = (BitmapIndexedNode *)bm->array[2 * idx + 1];
+  if (__builtin_popcount(subNode->bitmap) != 2) {
+    BOOM("dissoc unchanged: sub-node should have 2 entries");
+  }
+
+  // key3 routes to the same parent bit as key1/key2 (so the dissoc recurses
+  // into the sub-node), but its shift-5 bit is free in the sub-node (so the
+  // key is not found and the sub-node is returned unchanged)
+  // (bitpos returns a bit mask, e.g. 1 << position)
+  int subBit1 = bitpos(hash1, 5);
+  int subBit2 = bitpos(hash2, 5);
+  int missPos;
+  for (missPos = 0; missPos < 32; missPos++) {
+    if ((1 << missPos) != subBit1 && (1 << missPos) != subBit2) break;
+  }
+  int64_t hash3 = lowBits | ((int64_t)missPos << 5);
+  Term key3 = (Term)stringValue("keyMiss");
+  ((String *)key3)->hashVal = hash3;
+
+  // Dissoc key3 — should return the original node unchanged
+  Value *afterDissoc = bmiDissoc((Value *)bm, (Value *)key3, hash3, 0);
+
+  // Verify the same node pointer was returned (no clone)
+  if (afterDissoc != (Value *)bm) {
+    BOOM("dissoc unchanged: should return original node pointer");
+  }
+
+  // Verify the sub-node is unchanged (same pointer, still 2 entries)
+  BitmapIndexedNode *bmAfter = (BitmapIndexedNode *)afterDissoc;
+  if (bmAfter->bitmap != bm->bitmap) {
+    BOOM("dissoc unchanged: bitmap should be unchanged");
+  }
+  BitmapIndexedNode *subAfter = (BitmapIndexedNode *)bmAfter->array[2 * idx + 1];
+  if (subAfter != subNode) {
+    BOOM("dissoc unchanged: sub-node should be the same pointer");
+  }
+  if (__builtin_popcount(subAfter->bitmap) != 2) {
+    BOOM("dissoc unchanged: sub-node should still have 2 entries");
+  }
+
+  // Clean up — the no-change path returns the node with its ref intact;
+  // key3 was freed inside bmiDissoc
+  dec_and_free((Term)afterDissoc, 1);
+
+  check_counts("testBmiDissocSubNodeUnchanged", 0, 0, __LINE__);
+}
+
 // Test: add key-value to empty ArrayNode
 void testArrayNodeCopyAssoc(void) {
   reset_counters();
@@ -2522,6 +2600,7 @@ int main(int argc, char **argv) {
     testCollisionGet,
     testBmiHashVec,
     testBmiGetNested,
+    testBmiDissocSubNodeUnchanged,
   };
   shuffled_count = sizeof(tests) / sizeof(tests[0]);
 

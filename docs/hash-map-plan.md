@@ -124,7 +124,7 @@ Five `BOOM("test")` tripwires remain in `runtime3.c`: four on **nested (multi-le
 - [x] `testCollisionGet` — lookup in collision node
 - [x] `testBmiHashVec` — flatten BMI to vector of pairs
 - [x] `testBmiGetNested` — get a key stored in a nested sub-node (removes BOOM runtime3.c:2346)
-- [ ] `testBmiDissocSubNodeUnchanged` — dissoc a key not in the sub-node → sub-node unchanged (removes BOOM runtime3.c:2412)
+- [x] `testBmiDissocSubNodeUnchanged` — dissoc a key not in the sub-node → sub-node unchanged (removes BOOM runtime3.c:2412)
 - [ ] `testBmiDissocSubNodeShrinkEmpty` — shrink the sub-node, then empty it as the parent's only entry (removes BOOMs runtime3.c:2420/2416)
 - [ ] `testBmiDissocDifferentKey` — dissoc a different key at an occupied bit → no-op (removes BOOM runtime3.c:2452)
 
