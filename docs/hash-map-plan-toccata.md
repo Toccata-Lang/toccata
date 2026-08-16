@@ -40,10 +40,10 @@ Useful hashes: `3` (bit 3), `35` (bit 3 at shift 0, bit 1 at shift 5), `4` (bit 
 
 Low-level functions (`bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiChild`, `bmiClone`, `bmiUpdate`, `addCopiedBMI`, `bmiReplaceCopied`) are not tested standalone right now — they are covered via the higher-level tests below.
 
-**A. `bmiCopyAssoc` integration (5 branches; 2 of 5 covered)**
+**A. `bmiCopyAssoc` integration (5 branches; 3 of 5 covered)**
 - [x] *(existing)* add to empty
 - [x] *(existing)* same key + same value → no-op, count 1
-- [ ] same key, **different** value → count 1, `vec == [[k v2]]` (bmiClone branch)
+- [x] same key, **different** value → count 1, `vec == [[k v2]]` (bmiClone branch)
 - [ ] different key, different bit → count 2 (add branch)
 - [ ] different key, same bit, different hash at shift 5 (3 vs 35) → count 2, sub-node (replace→createNode branch)
 - [ ] different key, identical hash (7/7 collision) → count 2, collision node (replace→collision branch)
