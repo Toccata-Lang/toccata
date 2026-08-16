@@ -1423,6 +1423,78 @@ void testBmiHashVec(void) {
   check_counts("testBmiHashVec", 0, 0, __LINE__);
 }
 
+// Test: get a key stored in a nested sub-node
+// bmiGet recurses into the sub-node when keyOrNull == 0
+void testBmiGetNested(void) {
+  reset_counters();
+
+  // Build a nested structure: two keys with the same bit position at shift=0
+  // This creates a sub-node at shift=5
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = (Term)stringValue("key137");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  int bit1 = bitpos(hash1, 0);
+
+  // key2 with the same lowest-bit position as key1 but different higher bits
+  // — triggers the branch, creating a sub-node
+  Term key2 = (Term)stringValue("keyX");
+  int64_t lowBits = hash1 & 0x1f;
+  int64_t hash2 = lowBits | 0x1000;  // same low bits, different higher bit
+  ((String *)key2)->hashVal = hash2;
+
+  Term val2 = (Term)stringValue("val888");
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)bmiCopyAssoc(original, key2, val2, hash2, 0);
+
+  // Verify we have a nested structure
+  int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
+  if (bm->array[2 * idx] != 0) {
+    BOOM("nested get: should have sub-node at shared bit");
+  }
+  BitmapIndexedNode *subNode = (BitmapIndexedNode *)bm->array[2 * idx + 1];
+  if (__builtin_popcount(subNode->bitmap) != 2) {
+    BOOM("nested get: sub-node should have 2 entries");
+  }
+
+  // bmiGet frees the node on every path; hold an extra ref so the
+  // structure survives both lookups
+  incRefVal((Term)bm, 1);
+
+  // Lookup key1 — stored inside the nested sub-node
+  // (fresh key: the stored key1's ref belongs to the sub-node)
+  Term lookupKey = (Term)stringValue("key137");
+  Value *found = bmiGet((Value *)bm, (Value *)lookupKey, (Value *)stringValue("not found"), hash1, 0);
+
+  // Verify the correct value was returned
+  if (found->type != StringBufferType || strncmp(((String *)found)->buffer, "val251", 6) != 0) {
+    BOOM("nested get: should find the correct value");
+  }
+
+  // Clean up — only free the found value; the extra ref keeps the
+  // structure alive for the second lookup
+  dec_and_free((Term)found, 1);
+
+  // Lookup key2 — the other entry in the nested sub-node
+  // (fresh key: the stored key2's ref belongs to the sub-node)
+  Term lookupKey2 = (Term)stringValue("keyX");
+  Value *found2 = bmiGet((Value *)bm, (Value *)lookupKey2, (Value *)stringValue("not found"), hash2, 0);
+
+  // Verify the correct value was returned
+  if (found2->type != StringBufferType || strncmp(((String *)found2)->buffer, "val888", 6) != 0) {
+    BOOM("nested get: should find the correct value for key2");
+  }
+
+  // The second bmiGet dropped the last ref on the structure (parent freed,
+  // sub-node freed, keys and values freed with it); only the found value
+  // is left to free
+  dec_and_free((Term)found2, 1);
+
+  check_counts("testBmiGetNested", 0, 0, __LINE__);
+}
+
 // Test: add key-value to empty ArrayNode
 void testArrayNodeCopyAssoc(void) {
   reset_counters();
@@ -2449,6 +2521,7 @@ int main(int argc, char **argv) {
     testCollisionDissoc,
     testCollisionGet,
     testBmiHashVec,
+    testBmiGetNested,
   };
   shuffled_count = sizeof(tests) / sizeof(tests[0]);
 
