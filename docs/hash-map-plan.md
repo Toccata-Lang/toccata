@@ -61,6 +61,8 @@ When converting a test:
 
 Five `BOOM("test")` tripwires remain in `runtime3.c`: four on **nested (multi-level) BMI sub-node** paths in `bmiGet`/`bmiDissoc`, and one in `bmiDissoc` for a different-key no-op. The tests below exercise those paths. Per the conversion skill, each tripwire is removed in the commit of the test that first hits it.
 
+**Status: complete.** All five tripwires are removed and all four tests pass (see checklist below).
+
 | BOOM | Function | Untested path |
 |---|---|---|
 | runtime3.c:2346 | `bmiGet` | get recurses into a nested sub-node (`keyOrNull == 0`) |
