@@ -105,7 +105,7 @@ When converting a test:
 - [x] `testCollisionCount` — count entries
 - [x] `testCollisionVec` — flatten to vector
 - [x] `testCollisionDissoc` — remove from collision node
-- [ ] `testCollisionGet` — lookup in collision node
+- [x] `testCollisionGet` — lookup in collision node
 - [ ] `testBmiHashVec` — flatten BMI to vector of pairs
 
 ## Files to Read
