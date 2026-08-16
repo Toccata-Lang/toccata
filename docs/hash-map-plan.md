@@ -55,6 +55,22 @@ When converting a test:
 3. Watch for leaks: `incRef` on a String value that is never `dec_and_free`'d, old values not freed during mutation, etc.
 4. Document any leak patterns found in `skills/memory-leak-hunting.md`
 
+**Status: complete.** All 50 tests are converted to String keys/values (see checklist below).
+
+## Next Task: Cover Remaining BOOM("test") Tripwires
+
+Five `BOOM("test")` tripwires remain in `runtime3.c`: four on **nested (multi-level) BMI sub-node** paths in `bmiGet`/`bmiDissoc`, and one in `bmiDissoc` for a different-key no-op. The tests below exercise those paths. Per the conversion skill, each tripwire is removed in the commit of the test that first hits it.
+
+| BOOM | Function | Untested path |
+|---|---|---|
+| runtime3.c:2346 | `bmiGet` | get recurses into a nested sub-node (`keyOrNull == 0`) |
+| runtime3.c:2412 | `bmiDissoc` | sub-node unchanged after recurse (`n == valOrNode`) |
+| runtime3.c:2416 | `bmiDissoc` | sub-node becomes `emptyBMI` and is the parent's only entry |
+| runtime3.c:2420 | `bmiDissoc` | sub-node shrinks (changed) → clone parent |
+| runtime3.c:2452 | `bmiDissoc` | bit set with a direct key, but a different key → no-op |
+
+**Grouping:** a sub-node is created with 2 entries, so the "empty as only entry" case (2416) is only reachable after shrinking it to 1 entry (2420). Those two are one coupled test. The "unchanged" case (2412) and the different-key no-op (2452, a flat BMI) are each independent.
+
 ## Test Checklist (order of appearance in `main()`)
 
 - [x] `testEmptyBmiNode` — BMI node allocation/free (no KV pairs, already GC-relevant)
@@ -107,6 +123,10 @@ When converting a test:
 - [x] `testCollisionDissoc` — remove from collision node
 - [x] `testCollisionGet` — lookup in collision node
 - [x] `testBmiHashVec` — flatten BMI to vector of pairs
+- [ ] `testBmiGetNested` — get a key stored in a nested sub-node (removes BOOM runtime3.c:2346)
+- [ ] `testBmiDissocSubNodeUnchanged` — dissoc a key not in the sub-node → sub-node unchanged (removes BOOM runtime3.c:2412)
+- [ ] `testBmiDissocSubNodeShrinkEmpty` — shrink the sub-node, then empty it as the parent's only entry (removes BOOMs runtime3.c:2420/2416)
+- [ ] `testBmiDissocDifferentKey` — dissoc a different key at an occupied bit → no-op (removes BOOM runtime3.c:2452)
 
 ## Files to Read
 
