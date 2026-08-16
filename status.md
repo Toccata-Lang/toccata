@@ -131,11 +131,5 @@ These features won't be in the new version (lists might be added eventually):
 
 **`test-hvm` node leak.** `glblAlloced should be 0, got 1` at `regression-tests/test-hvm.c:1828`. Pre-existing — not caused by any recent changes. Leaving as-is until I want to tackle it. All 49 REG_TESTS pass.
 
-**Latent bugs in Toccata `bmiCopyAssoc` (`hvm-core.toc`) — both fixed.** Found while diagnosing the `test-bmi` double-free (fixed: `bmiKey`/`bmiVal` wrappers now `incRef`). Both were in branches `test-bmi` does not take, so they never surfaced there:
-
-1. **`copyAssoc` dropped args (protocol arity mismatch, not a codegen bug).** The sub-node recurse call `(copyAssoc childNode k v hash (+ 5 shift))` passed 5 args to a 3-param protocol `[m k v]`, so the generated C only passed `childNode` and `k`. Fixed in `9f5c40c`: the `copyAssoc` defp and BMI impl now take 5 params `[m k v hash shift]`, threading the accumulated hash/shift through the recursion instead of recomputing `(sha1 k)` / `0` at each level. Generated C now passes all 5 args.
-
-2. **Wrong arity: `(bmiReplaceCopied m bit v)`** in the "same key, different value" branch (`bmiReplaceCopied` takes 7). Fixed in `9f5c40c`: now `(bmiClone m bit k v)`, matching the C reference (`bmiCopyAssoc` in `runtime3.c`); the different-key branch passes all 7 args to `bmiReplaceCopied`.
-
 **`integerSha1` over-reads the type field (to investigate).** `runtime3.c:1829` declares `unsigned type` (4 bytes) but calls `Sha1Update(&context, (void *)&type, 8)` — hashing 8 bytes, i.e. the 4 bytes of `type` plus 4 bytes of adjacent stack memory. The extra bytes are compiler stack-layout dependent, so the hash may not be reproducible outside the exact runtime binary (matters if we ever want to compute/compare hashes in standalone tools). Not yet confirmed to misbehave in practice — the adjacent bytes may be deterministic padding or locals. Check whether the other per-type sha1 functions share the pattern, and whether hashes are stable across runs/builds.
 
