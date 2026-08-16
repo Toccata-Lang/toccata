@@ -764,7 +764,7 @@ void testBmiMutateAssocPromote(void) {
   for (int i = 0; i < ARRAY_NODE_LEN; i++) { if (an->array[i] != 0) entryCount++; }
   if (entryCount != 17) BOOM("17 entries");
   dec_and_free((Term)promoteResult, 1);
-  check_counts("testBmiMutateAssocPromote", 150, 0, __LINE__);
+  check_counts("testBmiMutateAssocPromote", 140, 0, __LINE__);
 }
 
 // Test: same key + same value → no-op, return original node (1b)
@@ -1343,32 +1343,22 @@ void testBmiHashVec(void) {
 
   // Build 3 entries, each at a different bit position
   BitmapIndexedNode *node = malloc_bmiNode(1);
-  Term key1 = newI60(100);
-  Term val1 = newI60(200);
-  int64_t hash1 = integerSha1(key1);
+  Term key1 = (Term)stringValue("key100");
+  ((String *)key1)->hashVal = 0x1234567801;  // pin bit position (lowest 5 bits = 1)
+  Term val1 = (Term)stringValue("val200");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
   Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
 
-  int bit1 = bitpos(hash1, 0);
-  Term key2 = newI60(300);
-  int64_t hash2 = integerSha1(key2);
-  int bit2 = bitpos(hash2, 0);
-  while (bit2 == bit1) {
-    key2 = newI60(getI60(key2) + 1);
-    hash2 = integerSha1(key2);
-    bit2 = bitpos(hash2, 0);
-  }
-  Term val2 = newI60(400);
+  Term key2 = (Term)stringValue("key300");
+  ((String *)key2)->hashVal = 0x1234567802;  // pin bit position (lowest 5 bits = 2)
+  int64_t hash2 = strSha1(incRefVal(key2, 1));
+  Term val2 = (Term)stringValue("val400");
   result = bmiMutateAssoc((BitmapIndexedNode *)result, key2, val2, hash2, 0);
 
-  Term key3 = newI60(1);
-  int64_t hash3 = integerSha1(key3);
-  int bit3 = bitpos(hash3, 0);
-  while (bit3 == bit1 || bit3 == bit2) {
-    key3 = newI60(getI60(key3) + 1);
-    hash3 = integerSha1(key3);
-    bit3 = bitpos(hash3, 0);
-  }
-  Term val3 = newI60(600);
+  Term key3 = (Term)stringValue("key1");
+  ((String *)key3)->hashVal = 0x1234567804;  // pin bit position (lowest 5 bits = 4)
+  int64_t hash3 = strSha1(incRefVal(key3, 1));
+  Term val3 = (Term)stringValue("val600");
   result = bmiMutateAssoc((BitmapIndexedNode *)result, key3, val3, hash3, 0);
 
   BitmapIndexedNode *bm = (BitmapIndexedNode *)result;
@@ -1420,6 +1410,7 @@ void testBmiHashVec(void) {
       if (!subNodeEqualsKey(pairVal, val3)) BOOM("bmiHashVec: pair3 value mismatch");
       found3 = 1;
     }
+    dec_and_free(pairTerm, 1);
   }
   if (!found1 || !found2 || !found3) {
     BOOM("bmiHashVec: should contain all 3 pairs");
@@ -2395,6 +2386,7 @@ int main(int argc, char **argv) {
   dec_and_free((Term)malloc_bmiNode(0), 1);
   dec_and_free((Term)malloc_bmiNode(1), 1);
   dec_and_free((Term)malloc_bmiNode(2), 1);
+  dec_and_free((Term)malloc_bmiNode(3), 1);
   dec_and_free((Term)malloc_arrayNode(), 1);
 #define STRINGS_NEEDED 34
   Term strs[STRINGS_NEEDED];
@@ -2456,7 +2448,7 @@ int main(int argc, char **argv) {
     testCollisionVec,
     testCollisionDissoc,
     testCollisionGet,
-    // testBmiHashVec,
+    testBmiHashVec,
   };
   shuffled_count = sizeof(tests) / sizeof(tests[0]);
 
