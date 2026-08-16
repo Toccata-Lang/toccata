@@ -2411,11 +2411,9 @@ Value *bmiDissoc(Value *arg0, Value* arg1, int64_t hash, int shift) {
         dec_and_free((Term)n, 1);
         return(arg0);
       } else if (n == (Value *)&emptyBMI && __builtin_popcount(node->bitmap) == 1) {
-	BOOM("test");
         dec_and_free((Term)arg0, 1);
         return(n);
       } else {
-	BOOM("test");
         BitmapIndexedNode *newNode = cloneBitmapIndexedNode(node, idx, 0, (Term)n);
         dec_and_free((Term)arg0, 1);
         return((Value *)newNode);

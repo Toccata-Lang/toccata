@@ -1573,6 +1573,86 @@ void testBmiDissocSubNodeUnchanged(void) {
   check_counts("testBmiDissocSubNodeUnchanged", 0, 0, __LINE__);
 }
 
+// Test: shrink the sub-node, then empty it as the parent's only entry
+// First dissoc: sub-node shrinks 2→1 entries, parent is cloned
+// Second dissoc: sub-node becomes emptyBMI as the parent's only entry → emptyBMI
+void testBmiDissocSubNodeShrinkEmpty(void) {
+  reset_counters();
+
+  // Build a nested structure: two keys with the same bit position at shift=0
+  // This creates a sub-node at shift=5
+  BitmapIndexedNode *node = malloc_bmiNode(1);
+  Term key1 = (Term)stringValue("key137");
+  Term val1 = (Term)stringValue("val251");
+  int64_t hash1 = strSha1(incRefVal(key1, 1));
+  Value *result = bmiMutateAssoc(node, key1, val1, hash1, 0);
+
+  BitmapIndexedNode *original = (BitmapIndexedNode *)result;
+  int bit1 = bitpos(hash1, 0);
+
+  // key2 with the same lowest-bit position as key1 but different higher bits
+  // — triggers the branch, creating a sub-node
+  Term key2 = (Term)stringValue("keyX");
+  int64_t lowBits = hash1 & 0x1f;
+  int64_t hash2 = lowBits | 0x1000;  // same low bits, different higher bit
+  ((String *)key2)->hashVal = hash2;
+
+  Term val2 = (Term)stringValue("val888");
+  BitmapIndexedNode *bm = (BitmapIndexedNode *)bmiCopyAssoc(original, key2, val2, hash2, 0);
+
+  // Verify we have a nested structure
+  int idx = __builtin_popcount(bm->bitmap & (bit1 - 1));
+  if (bm->array[2 * idx] != 0) {
+    BOOM("shrink empty: should have sub-node at shared bit");
+  }
+  if (__builtin_popcount(((BitmapIndexedNode *)bm->array[2 * idx + 1])->bitmap) != 2) {
+    BOOM("shrink empty: sub-node should have 2 entries");
+  }
+  // Save before the first dissoc — it frees the original parent and sub-node
+  int origBitmap = bm->bitmap;
+
+  // Dissoc key1 — the sub-node shrinks to 1 entry, the parent is cloned
+  // (fresh key: the stored key1's ref belongs to the sub-node)
+  Term key1d = (Term)stringValue("key137");
+  Value *after1 = bmiDissoc((Value *)bm, (Value *)key1d, hash1, 0);
+
+  // Verify a new parent node was returned (clone, not the original)
+  if (after1 == (Value *)bm) {
+    BOOM("shrink empty: shrinking sub-node should clone the parent");
+  }
+
+  // Verify the clone holds the shrunken sub-node (1 entry: key2)
+  BitmapIndexedNode *bmAfter = (BitmapIndexedNode *)after1;
+  if (bmAfter->bitmap != origBitmap) {
+    BOOM("shrink empty: parent bitmap should be unchanged");
+  }
+  BitmapIndexedNode *subAfter = (BitmapIndexedNode *)bmAfter->array[2 * idx + 1];
+  if (__builtin_popcount(subAfter->bitmap) != 1) {
+    BOOM("shrink empty: sub-node should have 1 entry after shrink");
+  }
+  if (subAfter->array[0] != key2) {
+    BOOM("shrink empty: remaining entry should be key2");
+  }
+  if (subAfter->array[1] != val2) {
+    BOOM("shrink empty: remaining value should be val2");
+  }
+
+  // Dissoc key2 — the sub-node becomes emptyBMI as the parent's only entry
+  // (fresh key: the stored key2's ref belongs to the sub-node)
+  Term key2d = (Term)stringValue("keyX");
+  Value *after2 = bmiDissoc((Value *)after1, (Value *)key2d, hash2, 0);
+
+  // Verify emptyBMI is returned
+  if (after2 != (Value *)&emptyBMI) {
+    BOOM("shrink empty: emptying the only sub-node should return emptyBMI");
+  }
+
+  // No cleanup needed — the second bmiDissoc freed the cloned parent, the
+  // sub-node, and all keys/values; both lookup keys were freed inside
+  // bmiDissoc; emptyBMI is a singleton
+  check_counts("testBmiDissocSubNodeShrinkEmpty", 0, 0, __LINE__);
+}
+
 // Test: add key-value to empty ArrayNode
 void testArrayNodeCopyAssoc(void) {
   reset_counters();
@@ -2601,6 +2681,7 @@ int main(int argc, char **argv) {
     testBmiHashVec,
     testBmiGetNested,
     testBmiDissocSubNodeUnchanged,
+    testBmiDissocSubNodeShrinkEmpty,
   };
   shuffled_count = sizeof(tests) / sizeof(tests[0]);
 
