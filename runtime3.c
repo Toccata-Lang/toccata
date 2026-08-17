@@ -1839,6 +1839,38 @@ int64_t integerSha1(Term arg0) {
   return(shaVal);
 }
 
+// Hash a term that can be a hash-map key. Consumes the reference in `trm`
+// (same convention as the `sha1` pointer call sites: pass incRef(key, 1)).
+// Core types with a concrete C hasher are recomputed, pulling the cached
+// `hashVal` if it is valid: I60 via integerSha1, String/SubString via
+// strSha1 (a cache reader/writer). User deftypes (ReifiedVal) just read the
+// cached field, which the Toccata-level setter maintains.
+Term getHashVal(FnArity *f, Term trm) {
+  Tag tg = termTag(trm);
+  if (tg == I60) {
+    return integerSha1(trm);
+  }
+  if (tg == VAL) {
+    Value *v = (Value *)trm;
+    if (v->type == StringBufferType || v->type == SubStringType) {
+      // strSha1 consumes the ref, pulling/writing the cache
+      return strSha1(v);
+    }
+    if (v->type == VectorType) {
+      BOOM("getHashVal: vectorSha1 not implemented");
+    }
+    if (v->type >= CoreTypeCount) {
+      // user deftypes: the Toccata-level sha1 protocol is the source of
+      // truth; the setter maintains the cache
+      int64_t hash = ((ReifiedVal *)v)->hashVal;
+      dec_and_free(trm, 1);
+      return hash;
+    }
+  }
+  BOOM("getHashVal: term can't be a hash-map key");
+  return 0;
+}
+
 Term integer_EQ(Term arg0, Term arg1) {
   i64 x = getI60(arg0);
   i64 y = getI60(arg1);
@@ -3229,6 +3261,7 @@ int main (int argc, char **argv) {
   unsigned altsCount = 0;
   
   prErrSTAR = &defaultPrErrSTAR;
+  sha1 = getHashVal;
 #ifdef SINGLE_THREADED
 #ifdef CHECK_MEM_LEAK
   fprintf(stderr, "Cannot use SINGLE_THREADED (or TOCCATA_WASM) and CHECK_MEM_LEAK   at same time.");
