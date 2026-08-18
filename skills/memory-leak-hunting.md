@@ -67,6 +67,11 @@ values until removing anything more makes the failure disappear. The minimal
 expression pins the exact code path that leaks and rules out interference
 from unrelated allocations.
 
+**Also comment out every other test in `(main ...)`** so only the test you
+are hunting runs. The other tests' allocations and pool traffic add noise to
+the counts and to any refcount trajectory log, and can mask or compound the
+leak you are chasing.
+
 **Drop the `rt/test` wrapper while shrinking.** `rt/test` aborts on a failed
 assertion, and the abort kills the process before the malloc/free counts are
 printed — the `.rslt` comes back empty and you lose the leak signal. Replace
@@ -329,7 +334,7 @@ If `pool_delta != unfreed` and `prefs` shows `refs > 1` for a string the test ow
 - [ ] `make test-hash-map 2>&1 | grep -A2 "FAIL\|BOOM"` identifies the failing test
 - [ ] Test function identified in `test-hash-map.c`
 - [ ] All other tests commented out in `main()` (only fix target active)
-- [ ] Toccata expression shrunk to the smallest leak/double-free-producing form (original restored after the fix)
+- [ ] Toccata expression shrunk to the smallest leak/double-free-producing form, other tests in `main` commented out (originals restored after the fix)
 - [ ] Pool accounting model reviewed (comments at top of test-hash-map.c)
 - [ ] Relevant runtime3.c code traced
 - [ ] Leak pattern identified and documented above
