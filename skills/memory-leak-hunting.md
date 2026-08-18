@@ -58,7 +58,20 @@ Look for:
 - `free_count` mismatch
 - `unfreed != pool_delta` — unfreed allocations don't match pool objects
 
-### Step 2: Find the leak source
+### Step 2: Shrink the Toccata-level expression
+
+For leaks and double-frees in Toccata-level tests (e.g. `make test-bmi`),
+shrink the failing Toccata code to the **smallest possible expression that
+still produces the memory leak or double free**. Strip away assocs, keys, and
+values until removing anything more makes the failure disappear. The minimal
+expression pins the exact code path that leaks and rules out interference
+from unrelated allocations.
+
+Once that leak is found and fixed, **put the original expression back** and
+re-run: the full expression may expose the next leak. Iterate — shrink, find,
+fix, restore, re-run — until the original expression passes with `diff: 0`.
+
+### Step 3: Find the leak source
 
 Common patterns in this codebase:
 
@@ -69,7 +82,7 @@ Common patterns in this codebase:
 5. **Sub-node clone doesn't free old reference** — `copyAssoc` clones a sub-node but leaves the original reference dangling
 6. **Collision node not freed** — `HashCollisionNode` created via `malloc_hashCollisionNode()` needs `dec_and_free` (no pool)
 
-### Step 3: Locate the code
+### Step 4: Locate the code
 
 Relevant files:
 
@@ -80,7 +93,7 @@ Relevant files:
 | `regression-tests/test-hash-map.c` | All unit tests + `check_counts()` helper |
 | `regression-tests/test-hash-map.c` | Pool accounting model comments at top of file
 
-### Step 4: Trace the allocation
+### Step 5: Trace the allocation
 
 Look at the failing test in `regression-tests/test-hash-map.c`:
 
@@ -97,7 +110,7 @@ The test file has a pool accounting model comment block at the top explaining:
 - `malloc_hashCollisionNode`: direct `my_malloc`, malloc_count += 1.
 - `freeHashCollisionNode`: direct free, free_count += 1.
 
-### Step 5: Fix and verify
+### Step 6: Fix and verify
 
 1. Comment out all tests in `main()` except the one you're fixing
 2. Apply the fix (e.g., add `dec_and_free` for leaked value)
@@ -305,6 +318,7 @@ If `pool_delta != unfreed` and `prefs` shows `refs > 1` for a string the test ow
 - [ ] `make test-hash-map 2>&1 | grep -A2 "FAIL\|BOOM"` identifies the failing test
 - [ ] Test function identified in `test-hash-map.c`
 - [ ] All other tests commented out in `main()` (only fix target active)
+- [ ] Toccata expression shrunk to the smallest leak/double-free-producing form (original restored after the fix)
 - [ ] Pool accounting model reviewed (comments at top of test-hash-map.c)
 - [ ] Relevant runtime3.c code traced
 - [ ] Leak pattern identified and documented above
