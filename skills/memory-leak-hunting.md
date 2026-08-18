@@ -67,9 +67,20 @@ values until removing anything more makes the failure disappear. The minimal
 expression pins the exact code path that leaks and rules out interference
 from unrelated allocations.
 
-Once that leak is found and fixed, **put the original expression back** and
-re-run: the full expression may expose the next leak. Iterate — shrink, find,
-fix, restore, re-run — until the original expression passes with `diff: 0`.
+**Drop the `rt/test` wrapper while shrinking.** `rt/test` aborts on a failed
+assertion, and the abort kills the process before the malloc/free counts are
+printed — the `.rslt` comes back empty and you lose the leak signal. Replace
+the assertion with the bare expression it was checking (e.g. just
+`(count ...)`): the run then completes, prints its success line, and the
+`diff:` line tells you whether this form leaks. Comment out sub-expressions
+(one assoc at a time) and re-run: whatever you can comment out without
+changing `diff:` is not the leak. The smallest form that still shows a
+non-zero `diff:` is your repro.
+
+Once that leak is found and fixed, **put the original expression back** (and
+restore the `rt/test` assertion) and re-run: the full expression may expose
+the next leak. Iterate — shrink, find, fix, restore, re-run — until the
+original expression passes with `diff: 0`.
 
 ### Step 3: Find the leak source
 
