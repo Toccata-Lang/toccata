@@ -199,6 +199,9 @@ C-API hazards (both caused real bugs, see status.md):
   (all with `-DTESTING_HVM=1`).
 - Flags: `-g -DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1`; ASan available via a
   commented-out CFLAGS flag.
+- `hvm-core.toc` is loaded at runtime by the `new-toc` binary ("*** Loaded
+  core") — editing it needs no compiler rebuild; the test rules list it as a
+  prerequisite, so `make test-X` regenerates the `.c` automatically.
 
 ## 10. Toccata language notes (as observed) [observed]
 
@@ -214,6 +217,9 @@ C-API hazards (both caused real bugs, see status.md):
   (test-tail-recur-1/3).
 - Inline-C constraint: top level of a file, or the only code expression in a
   `defn` body (see status.md Lessons Learned).
+- A `let` binding cannot reference an earlier binding in the same `let`
+  (`(let [m2 ... c (count m2)] ...)` is "Invalid expression") — nest the
+  lets.
 
 ## 11. Debugging [observed]
 
@@ -224,3 +230,42 @@ C-API hazards (both caused real bugs, see status.md):
   `checkBuff`, `printBuff`.
 - SAFETY mode gives: bad-redex BOOMs, strictArgs arity BOOMs (with
   `printTerm` dump), `glblAlloced` tracking, `swap(VOID)` BOOM.
+- `(prefs "tag" x)` (hvm-core.toc) prints `tag: <ptr> <refs>` to stderr and
+  consumes x's ref — balanced, since the appearance of `x` in the call
+  incurred that ref (see §12). The tag is a Toccata string; the wrapper
+  copies ≤63 chars to a stack buffer because pooled String buffers are not
+  reliably NUL-terminated past `len`.
+- `rt/test` aborts on failure — the process dies before the malloc/free
+  counts print, leaving an empty `.rslt`. For leak hunting, evaluate the
+  bare expression instead of asserting.
+
+## 12. Evaluation and refcounting: what the prefs probes showed [observed]
+
+From leak-hunting the BMI createNode branch (Aug 2026), with `(prefs "tag" x)`
+probes at each stage of a two-assoc expression:
+
+- **Every appearance of a value in the code is a use, and each use has its
+  own ref.** The compiler arranges (dupeArg / redex construction) that each
+  appearance can consume exactly one ref. Consequence: a diagnostic that
+  consumes its argument (like `prefs`) is perfectly balanced — the printed
+  count *includes* the probe's own ref, so background count = printed − 1.
+- **Refs for future uses exist before those uses run.** Right after the let
+  bindings (before any assoc executed), the probed values already carried
+  refs for uses still ahead: k1 (5 appearances total) showed background 3,
+  k2 (5) showed 2, v1 (4) showed 3, v2 (4) showed 2. The compiler
+  pre-creates refs for upcoming uses; the exact schedule depends on code
+  position, not just appearance count — k1 and k2 had the same number of
+  appearances, but k1 (a first-assoc arg) carried one more eager ref than
+  k2 (a second-assoc arg).
+- **Unforced lazy redexes are freed with their held refs.** A `cond` branch
+  that never runs (e.g. the `bmiClone` redex when the `bmiReplaceCopied`
+  branch is taken) holds refs to its args in its APP/LAZ pairs, but those
+  refs are released when the unforced redex is discarded. Evidence: the
+  same-key-different-value test (bmiClone branch) ends diff 0 even though
+  the unforced bmiReplaceCopied redex holds m/k/v/currKey/currVal refs.
+- **Dataflow, not source order.** The generated code builds redex pairs
+  (`makePair` APP/LAZ) and forces them as interaction demands; a value's
+  refcount at any point reflects which redexes have been built and forced,
+  not which source lines have "executed". Let bindings whose value is a VAR
+  indirection (e.g. `m1` passed to a later call) carry no heap ref of their
+  own.
