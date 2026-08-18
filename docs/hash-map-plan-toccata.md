@@ -166,6 +166,8 @@ Each stage drops every value by exactly 1 (refs are consumed in dataflow order, 
 
 **Next.** 1) Add stage-1.5 probes (after `m2`, before `c`). 2) Confirm which CHash/Val leaks (probe the `.eq` Some fields, or match addresses). 3) Fix (expect a missing/extra ref in the createNode path or its wrapper). 4) Restore the original test (`rt/test` + the other five tests) and verify diff 0. 5) Document the pattern in `skills/memory-leak-hunting.md` "Known Leak Patterns". 6) Commit: the `prefs` change, the fix, the restored test.
 
+**Delete this section** once the leak is found and the test passes with `diff: 0`.
+
 ## Files to Read
 
 | File | Purpose |
