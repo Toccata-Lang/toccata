@@ -233,11 +233,18 @@ C-API hazards (both caused real bugs, see status.md):
   `checkBuff`, `printBuff`.
 - SAFETY mode gives: bad-redex BOOMs, strictArgs arity BOOMs (with
   `printTerm` dump), `glblAlloced` tracking, `swap(VOID)` BOOM.
-- `(prefs "tag" x)` (hvm-core.toc) prints `tag: <ptr> <refs>` to stderr and
-  consumes x's ref — balanced, since the appearance of `x` in the call
-  incurred that ref (see §12). The tag is a Toccata string; the wrapper
-  copies ≤63 chars to a stack buffer because pooled String buffers are not
-  reliably NUL-terminated past `len`.
+- `prefs(char *tag, Term v)` (runtime3.c:32) is the C-level probe: prints
+  `tag: I60`, `tag: <ptr> <refs>`, or `tag: <ptr>` (for null) to stderr.
+  Read-only — it never touches refs. As a C statement it runs exactly where
+  written, so it can be dropped at any point in a C function.
+- `(prefs "tag" x)` (hvm-core.toc:36, `! tag String`) is the Toccata-level
+  wrapper: copies the tag (≤63 chars) to a stack buffer — pooled String
+  buffers are not reliably NUL-terminated past `len` — calls the C `prefs`,
+  consumes the tag, and **returns `x` unchanged** (pass-through; the
+  return-exception means `x`'s ref is NOT decremented). Because Toccata
+  execution order is not lexical order (see §12), use it as a wrap —
+  `(prefs "tag" <expr>)` — so the print is tied to the moment `<expr>`'s
+  value is produced.
 - `rt/test` aborts on failure — the process dies before the malloc/free
   counts print, leaving an empty `.rslt`. For leak hunting, evaluate the
   bare expression instead of asserting.
@@ -249,9 +256,11 @@ probes at each stage of a two-assoc expression:
 
 - **Every appearance of a value in the code is a use, and each use has its
   own ref.** The compiler arranges (dupeArg / redex construction) that each
-  appearance can consume exactly one ref. Consequence: a diagnostic that
-  consumes its argument (like `prefs`) is perfectly balanced — the printed
-  count *includes* the probe's own ref, so background count = printed − 1.
+  appearance can consume exactly one ref. Consequence: a `(prefs "tag" x)`
+  probe's printed count *includes* the ref for `x`'s appearance in the call
+  (the current wrapper passes `x` through rather than consuming it, but the
+  appearance still carries its ref at print time), so background count =
+  printed − 1.
 - **Refs for future uses exist before those uses run.** Right after the let
   bindings (before any assoc executed), the probed values already carried
   refs for uses still ahead: k1 (5 appearances total) showed background 3,

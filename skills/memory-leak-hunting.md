@@ -314,14 +314,23 @@ The pool model in `test-hash-map.c` comments:
 
 ### Using `prefs` to debug ref counts
 
-When a test fails with `pool_delta != unfreed`, use `prefs("name", (Term)value)` to print a value's current ref count. Call it on terms at key points (after creation, after storage in nodes, before free) to trace where refs are going wrong. `prefs` only prints — it doesn't modify refs. It's a read-only diagnostic tool.
+When a test fails with `pool_delta != unfreed`, use `prefs` to print a value's current ref count and trace where refs are going wrong. There are two levels — C-level (a statement you place anywhere in C code) and Toccata-level (a wrapper you must use as a wrap; see below).
 
-Example:
+**C-level** `prefs(char *tag, Term v)` (runtime3.c:32): prints `tag: I60`, `tag: <ptr> <refs>`, or `tag: <ptr>` (null) to stderr. Read-only — never touches refs. As a C statement it runs exactly where written, so in C tests (`test-hash-map.c`) drop `prefs("name", (Term)value)` at key points (after creation, after storage in nodes, before free):
+
 ```c
 prefs("key1 after creation", key1);       // should show refs=1
 prefs("key1 after bmiMutateAssoc", key1); // should show refs=1 (stored but not incRef'd)
 prefs("key1 before freeing result", key1); // check refs haven't gone to 0 prematurely
 ```
+
+**Toccata-level `prefs`: wrap, don't place.** In Toccata, sub-expressions execute in an order the compiler decides, not the lexical order they appear in. A standalone `(prefs "tag" x)` written "before" some expression may actually run after it, so the printed refcount says nothing about the moment you intended. Instead, wrap the expression you want to observe:
+
+```
+(prefs "tag" (<expr>))
+```
+
+The Toccata-level `prefs` (hvm-core.toc:36) is a pass-through: it prints the refcount of its argument and returns it unchanged — the tag is consumed (`dec_and_free`), and `x` is returned as the result, so its ref is NOT decremented (the return-exception). The observation is tied to the moment `<expr>`'s value is produced in the dataflow, immune to evaluation reordering. The tag must be a `String` (type constraint `! tag String`).
 
 ### Verifying strings are properly freed
 
@@ -585,6 +594,8 @@ lldb ./regression-tests/test-bmi -c core     # inspect the abort state
 ### Use prefs at strategic points
 
 Call `prefs("tag", term)` after creation, after function calls, and before freeing. Without it, you can't tell whether a value was freed prematurely, over-freed, or is still alive when it should be dead.
+
+In Toccata tests, "strategic points" are not source positions — execution order is not lexical order. Wrap the expression instead: `(prefs "tag" <expr>)` (see "Using `prefs` to debug ref counts").
 
 ### Trace through every call site
 
