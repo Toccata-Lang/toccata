@@ -34,7 +34,7 @@ The C-level dispatchers are `copyAssoc` (runtime3.c:2761) and `mutateAssoc` (277
 
 ## BMI Surface (what's testable from Toccata today)
 
-**Exposed in `hvm-core.toc`:** `emptyBMI`, `bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiChild`, `bmiClone`, `bmiUpdate`, `addCopiedBMI`, `bmiReplaceCopied`, `bmiCopyAssoc`, `bmiCount`/`count`, `bmiHashVec`/`vec`, `empty?`
+**Exposed in `hvm-core.toc`:** `emptyBMI`, `bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiChild`, `bmiClone`, `bmiUpdate`, `addCopiedBMI`, `bmiReplaceCopied`, `bmiCopyAssoc`, `bmiCount`/`count`, `bmiHashVec`, `bmiVec`/`vec` (Toccata-level recursion — the C `bmiHashVec` aborts on sub-node slots via the dead `hashVec` dispatcher), `empty?`
 
 **Not exposed** (in `runtime3.c` only — can't test until wrapped): `bmiGet`/`mapGet`, `bmiDissoc`, the mutate family (`bmiMutateAssoc`, `bmiReplaceMutate`, `addMutateBMI`), `bmiSetKey`/`bmiSetVal`
 
@@ -69,7 +69,7 @@ Low-level functions (`bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiChild`, `bmi
 - [x] different key, identical hash (7/7 collision) → count 2, collision node (replace→collision branch)
 - [x] **recurse-into-child branch:** node with keys 3+35, then assoc key 67 (bit 3 again) → count 3
 - [x] **deep createNode:** keys 3, 35, 67, then 195 (bit 3 → bit 6 at shift 5) → count 4 (exercises `createNode`'s same-bit-at-next-level recursion)
-- [ ] same key, different value, **key located inside a sub-node** (depth 2) → count unchanged, `vec` shows updated value (child-recurse + clone at depth)
+- [x] same key, different value, **key located inside a sub-node** (depth 2) → count unchanged, `vec` shows updated value (child-recurse + clone at depth)
 
 **B. `count` / `vec` recursion (untested beyond count-1)**
 - [ ] flat 3-entry node → count 3
