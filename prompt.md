@@ -29,7 +29,9 @@ Then, for the next unchecked case:
    - `remaining nodes: 0` — any non-zero value is a node leak and a failure
    - `git diff regression-tests/test-bmi.rslt` shows only execution-stat
      changes (ITRS, node/malloc counts) — no changed or missing result lines
-4. If the test fails, debug and fix it. A failure exposing a real bug in
+4. If the test fails, debug and fix it. If a memory leak is detected
+   (non-zero malloc/free diff or non-zero remaining nodes), use
+   skills/memory-leak-hunting.md to hunt it down. A failure exposing a real bug in
    hvm-core.toc is in scope to fix — and if you modify hvm-core.toc, run
    `make tests` first to confirm no other regression test regressed. A failure
    that requires changing runtime3.c (the C reference) is out of scope: STUCK.
