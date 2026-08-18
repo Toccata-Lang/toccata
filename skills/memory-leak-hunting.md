@@ -107,7 +107,8 @@ Relevant files:
 | `runtime3.c` | Runtime support — `incRef`, `dec_and_free`, `freePair`, node allocators |
 | `runtime3.h` | Type definitions, extern declarations |
 | `regression-tests/test-hash-map.c` | All unit tests + `check_counts()` helper |
-| `regression-tests/test-hash-map.c` | Pool accounting model comments at top of file
+| `regression-tests/test-hash-map.c` | Pool accounting model comments at top of file |
+| `docs/implementation-notes.md` | Toccata/HVM internals — term layout, argument passing, protocol dispatch, BMI C-API hazards, and the `prefs` probe / refcounting observations (§11–12) |
 
 ### Step 5: Trace the allocation
 
@@ -239,6 +240,20 @@ Format:
 **Fix:** Made the Toccata inline-C wrappers for `bmiKey`/`bmiVal` `incRef` the result, so callers get an owned reference (consistent with `bmiChild`). Fixed the wrappers rather than the C functions because the C callers (`bmiCopyAssoc`/`bmiMutateAssoc` in runtime3.c) depend on the borrowed-ref behavior and `incRefVal` before use — fixing the C functions would have double-incRef'd there.
 
 **Key insight:** This is a **double-free**, not a leak. The value was over-decremented (refs went negative), not under-decremented (refs stuck above 0). See the "Double-Free / Use-After-Free Diagnosis" section below.
+
+---
+
+### Pattern 8: Toccata bmiReplaceCopied wrapper leaks owned currKey/currVal refs (borrowed vs owned convention)
+
+**Location:** `hvm-core.toc` (bmiReplaceCopied inline-C wrapper); C-side convention in `runtime3.c:bmiReplaceCopied`
+
+**Test:** `test-bmi` (regression test, `make test-bmi`) — createNode case (hashes 3 vs 35)
+
+**Cause:** The C `bmiReplaceCopied` is written for the **borrowed** convention: its C-level caller (`bmiCopyAssoc`, runtime3.c:2297) passes the raw `bmiKey`/`bmiVal` results (borrowed pointers into the node's array), and the C function consumes only `node`, `key`, `val` — it never decrements `currKey`/`currVal`. (The collision branch's `incRef(currKey, 1); incRef(currVal, 1)` and the createNode branch's `incRef`'d args exist precisely to give the new node its own refs to the borrowed pointers.) The Toccata wrapper, however, receives **owned** refs for every argument (the `bmiKey`/`bmiVal` wrappers `incRef`, and each source appearance of a value carries its own ref — see `docs/implementation-notes.md` §12), and passed all seven args through without consuming the two for currKey/currVal. The createNode case leaked exactly those 2 refs (k1, v1) plus k1's `Some` field transitively — `malloc/free diff: 3`. The single-assoc form was diff 0 because the leak requires the second `copyAssoc` (the replace→createNode path).
+
+**Fix:** The wrapper now `dec_and_free`s `currKey_6`/`currVal_7` after the C call.
+
+**Key insight:** Mirror image of Pattern 7 — same root-cause class (borrowed vs owned convention across the C/Toccata boundary), opposite symptom. Pattern 7: Toccata consumed borrowed refs → double-free. Pattern 8: Toccata passed owned refs to a borrowed-convention C function → leak. When a wrapper crosses the C boundary, verify which side owns each argument ref — and check the C function's *other* callers to learn its convention.
 
 ---
 

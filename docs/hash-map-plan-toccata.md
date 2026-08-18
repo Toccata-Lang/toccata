@@ -65,7 +65,7 @@ Low-level functions (`bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiChild`, `bmi
 - [x] *(existing)* same key + same value → no-op, count 1
 - [x] same key, **different** value → count 1, `vec == [[k v2]]` (bmiClone branch)
 - [x] different key, different bit → count 2 (add branch)
-- [ ] different key, same bit, different hash at shift 5 (3 vs 35) → count 2, sub-node (replace→createNode branch)
+- [x] different key, same bit, different hash at shift 5 (3 vs 35) → count 2, sub-node (replace→createNode branch)
 - [ ] different key, identical hash (7/7 collision) → count 2, collision node (replace→collision branch)
 - [ ] **recurse-into-child branch:** node with keys 3+35, then assoc key 67 (bit 3 again) → count 3
 - [ ] **deep createNode:** keys 3, 35, 67, then 195 (bit 3 → bit 6 at shift 5) → count 4 (exercises `createNode`'s same-bit-at-next-level recursion)
@@ -143,30 +143,6 @@ Call sites that hash *lookup/new* keys are a different category — the invarian
 - `strSha1`'s `((String *)arg0)->hashVal` write for `SubStringType` (runtime3.c:1796) is unaffected — it relies on the `String`/`ReifiedVal` offset match, both of which keep the field.
 
 **Next.** Do (a) + (b) together, rebuild, then re-run the remaining Group A cases (createNode first), then B/C. The C-level tests in `hash-map-plan-c.md` remain runnable via their `testingSha1` workaround.
-
-## Leak hunt: createNode test leaks 3 allocations (in progress, 2026-08-17)
-
-**The leak.** The new Group A createNode case (different key, same bit, 3 vs 35) in `regression-tests/test-bmi.toc` passes functionally (count 2) but ends `malloc count: 15322 free count: 15319 diff: 3`. The single-assoc form is diff 0 — the leak requires the second `copyAssoc` (the `bmiReplaceCopied` → `createNode` branch).
-
-**Repro state (working tree, uncommitted).** `test-bmi.toc`: tests 1–5 commented out; the createNode test is the bare expression (no `rt/test`) with `(prefs "tag" x)` probes at 3 stages, keys/values bound in lets (`k1`, `k2`, `v1`, `v2`). `hvm-core.toc`: `prefs` now takes a string tag — `(defn prefs [tag x])`, copies ≤63 chars to a stack buffer (pooled String buffers are not reliably NUL-terminated past `len`), consumes both args. `prompt.md`: step 4 points at `skills/memory-leak-hunting.md`. `docs/hash-map-plan-toccata.md`: blocker section updated (segfault fixed in `f6a65e0`).
-
-**What leaked (refcount trajectory log; instrumentation since removed).** Exactly one CHash (type 50) + its Some field (type 43) + one Val (type 49) end at refs=1; their counterparts end at 0. By allocation order the leaked trio is inferred to be `k1` / `Some 3` / `v1` — the *existing* pair (currKey/currVal) moved into the sub-node. That is an inference from pool address order; verify before fixing.
-
-**Probe data** (printed count; background = printed − 1 for the probe's own ref — every appearance of a value incurs a ref; see `implementation-notes.md` §12):
-
-| stage | k1 | k2 | v1 | v2 |
-|---|---|---|---|---|
-| 0: after lets | 4 | 3 | 4 | 3 |
-| 1: after 1st assoc (add branch) | 3 | 2 | 3 | 2 |
-| 2: after `(count m2)` | 2 | 1 | 2 | 1 |
-
-Each stage drops every value by exactly 1 (refs are consumed in dataflow order, not source order). At stage 2, k1/v1 keep their let ref (background 1); k2/v2 are at background 0 (let ref already consumed by the 2nd assoc call). **Missing data point: probe right after the 2nd `copyAssoc`, before `count`** — that shows whether k1/v1 carry an extra ref through the createNode branch.
-
-**Suspect.** `bmiReplaceCopied` createNode branch (runtime3.c:2235): `createNode(shift+5, existingKeyHash, incRef(currKey, 1), incRef(currVal, 1), hash, key, val)` — check how the function's own argument refs on currKey/currVal are (or aren't) consumed, compared against the collision branch and the clean `bmiClone` path. The Toccata `bmiReplaceCopied` wrapper (hvm-core.toc) does not `dec_and_free` its args — determine which layer owns that.
-
-**Next.** 1) Add stage-1.5 probes (after `m2`, before `c`). 2) Confirm which CHash/Val leaks (probe the `.eq` Some fields, or match addresses). 3) Fix (expect a missing/extra ref in the createNode path or its wrapper). 4) Restore the original test (`rt/test` + the other five tests) and verify diff 0. 5) Document the pattern in `skills/memory-leak-hunting.md` "Known Leak Patterns". 6) Commit: the `prefs` change, the fix, the restored test.
-
-**Delete this section** once the leak is found and the test passes with `diff: 0`.
 
 ## Files to Read
 
