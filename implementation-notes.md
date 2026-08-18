@@ -217,6 +217,9 @@ C-API hazards (both caused real bugs, see status.md):
   (test-tail-recur-1/3).
 - Inline-C constraint: top level of a file, or the only code expression in a
   `defn` body (see status.md Lessons Learned).
+- `let` is syntax sugar for an immediate application to an anonymous
+  function: `(let [x (some expression)] ...)` is
+  `((fn [x] ...) (some expression))`.
 - A `let` binding cannot reference an earlier binding in the same `let`
   (`(let [m2 ... c (count m2)] ...)` is "Invalid expression") — nest the
   lets.
