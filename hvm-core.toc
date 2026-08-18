@@ -1063,6 +1063,50 @@ abort();
    dec_and_free(currVal_7, 1);")
   )
 
+(defn bmiReplaceMutate [bmi key val hash shift currKey currVal]
+  ! bmi BitmapIndexedNode
+  ! hash Integer
+  ! shift Integer
+  ;; Mutate-in-place counterpart of bmiReplaceCopied: extends `bmi` a level at
+  ;; the occupied bit (collision node or sub-node) instead of cloning it, and
+  ;; returns `bmi` itself. The C function transfers bmi's slot refs on
+  ;; currKey/currVal into the new leaf and consumes key/val; it does NOT free
+  ;; bmi. The bmiKey/bmiVal wrappers hand us owned refs for currKey/currVal,
+  ;; so we consume them here (one per).
+  (inline BitmapIndexedNode "
+   result = (Term)bmiReplaceMutate((BitmapIndexedNode *)bmi_1, key_2, val_3, getI60(hash_4), getI60(shift_5), currKey_6, currVal_7);
+   dec_and_free(currKey_6, 1);
+   dec_and_free(currVal_7, 1);")
+  )
+
+(defn bmiSetKV [bmi bit k v currKey currVal]
+  ! bmi BitmapIndexedNode
+  ! bit Integer
+  ;; Mutate-in-place: replace the slot at `bit` with (k v) and free the old
+  ;; key/val. k/v are moved into the node's slot (bmiSetKey/bmiSetVal do not
+  ;; touch the old slot's refs). currKey/currVal each carry TWO refs here --
+  ;; the node's slot ref plus the owned ref the bmiKey/bmiVal wrappers added --
+  ;; and the node is not freed (mutated in place), so we release both.
+  (inline BitmapIndexedNode "
+    bmiSetKey((BitmapIndexedNode *)bmi_1, getI60(bit_2), k_3);
+    bmiSetVal((BitmapIndexedNode *)bmi_1, getI60(bit_2), v_4);
+    dec_and_free(currKey_5, 2);
+    dec_and_free(currVal_6, 2);
+    result = (Term)bmi_1;"))
+
+(defn bmiSetChild [bmi bit child n]
+  ! bmi BitmapIndexedNode
+  ! bit Integer
+  ;; Mutate-in-place: point the slot at `bit` at the (re)built sub-node `n`
+  ;; (key slot cleared to 0 marks a sub-node) and release the old child's slot
+  ;; ref. The temp ref bmiChild added was already consumed by the copy inside
+  ;; the recursion, so only the slot ref remains to release here.
+  (inline BitmapIndexedNode "
+    bmiSetKey((BitmapIndexedNode *)bmi_1, getI60(bit_2), 0);
+    bmiSetVal((BitmapIndexedNode *)bmi_1, getI60(bit_2), n_4);
+    dec_and_free(child_3, 1);
+    result = (Term)bmi_1;"))
+
 (defn set-hash-val [k hash]
   ;; Write `hash` into the key's `hashVal` cache field, if the key's type has
   ;; one: String, Vector, BitmapIndexedNode, ArrayNode, HashCollisionNode, and
@@ -1141,7 +1185,27 @@ abort();
               (addCopiedBMI m k v hash shift))))
 
 (defn bmiMutateAssoc [m k v hash shift]
-  (abort "Mutating BMI"))
+  ;; Toccata-level mutate-in-place assoc for a BitmapIndexedNode, mirroring the
+  ;; C bmiMutateAssoc (runtime3.c:2329). Only called via assoc* when the node is
+  ;; safe to mutate (refs-count == 3), so the C-level `refs != 1` fallback is
+  ;; handled by the assoc* dispatch instead. The mechanical slot ops reuse the
+  ;; wrapped C functions; the semantic key/val equality uses the `=` protocol.
+  ;; The sub-node recurse always copies the child (a child is never shared-safe:
+  ;; bmiChild's incRef leaves it with >= 2 refs), matching the C dispatcher.
+  ! m BitmapIndexedNode
+  (let [k (set-hash-val k hash)
+        bit (bitpos hash shift)]
+    (int-cond (bit-and bit (bmiBitMap m))
+              (either (map (bmiChild m bit)
+                           (fn [childNode]
+                             (let [n (copyAssoc childNode k v hash (+ 5 shift))]
+                               (bmiSetChild m bit childNode n))))
+                      (let [currKey (bmiKey m bit)
+                            currVal (bmiVal m bit)]
+                        (cond (= currKey k)
+                              (bmiSetKV m bit k v currKey currVal)
+                              (bmiReplaceMutate m k v hash shift currKey currVal))))
+              (addCopiedBMI m k v hash shift))))
 
 (defn refs-count [v]
   !returns Integer

@@ -44,6 +44,8 @@ The C-level dispatchers are `copyAssoc` (runtime3.c:2761) and `mutateAssoc` (277
 
 The C-level tests in `hash-map-plan-c.md` verify the raw functions. The cases below cover the Toccata protocol layer — the inline-C wrappers and the Toccata `bmiCopyAssoc` implementation.
 
+**Running the tests:** `make test-bmi` is the correct way to run this suite. `make` can be used for any Makefile target without thinking further — no need to run the underlying `./new-toc` + `clang` steps by hand.
+
 ### Prerequisite: controlled-hash key type
 
 Add a `ControlledHash`-style deftype (same pattern as `hash-map-regressions.toc`) so tests can pin exact bit positions:
@@ -84,6 +86,8 @@ Low-level functions (`bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiChild`, `bmi
 **D. Memory hygiene (implicit, per status.md failure conditions)**
 Every case above must end with `malloc_count == free_count` and `glblAlloced == 0`. Highest-risk paths, all now exercised: owned refs from `bmiKey`/`bmiVal`/`bmiChild` (the `test-bmi` double-free area), the no-op branch's `dec_and_free` dance, `bmiUpdate` same-child path, collision-node `incRef`s.
 
+**When a memory leak or double-free is found** (non-zero `diff:`, `refs too small` abort, or end-of-test leak), follow the `skills/memory-leak-hunting.md` skill — it covers the shrink-to-minimal-expression workflow, refcount trajectory logging, the lldb workflow, and the known leak/double-free patterns.
+
 ### Out of scope until more is exposed
 
 - `get` / `dissoc` tests — belong in `hash-map-regressions.toc` once `bmiGet`/`bmiDissoc` are wrapped
@@ -101,3 +105,5 @@ Every case above must end with `malloc_count == free_count` and `glblAlloced == 
 | `regression-tests/hash-map-regressions.toc` | Full hash-map regression tests (ControlledHash pattern reference) |
 | `regression-tests/regression-tester.toc` | `rt/test` assertion macro |
 | `new.c` | Compiler — may need modifications for `{}` literal |
+| `docs/implementation-notes.md` | Working notes on Toccata/HVM internals — term layout, arg passing, protocol dispatch codegen, BMI C API hazards, build/test pipeline |
+| `skills/memory-leak-hunting.md` | Skill to follow when a memory leak or double-free is found |
