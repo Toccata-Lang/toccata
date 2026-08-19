@@ -223,6 +223,11 @@ C-API hazards (both caused real bugs, see status.md):
 - A `let` binding cannot reference an earlier binding in the same `let`
   (`(let [m2 ... c (count m2)] ...)` is "Invalid expression") — nest the
   lets.
+- **Segfault on large function bodies [observed]:** when a function gets too
+  many expressions, the current compiler segfaults. Workaround: factor out
+  some of the side-effecting expressions to their own functions and call them
+  (see status.md Lessons Learned). `regression-tests/test-bmi.toc` did this in
+  `a93b2f2` — `main` was split into `test-copy-assoc` and `test-mutate-assoc`.
 
 ## 11. Debugging [observed]
 

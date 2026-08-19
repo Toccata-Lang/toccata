@@ -127,6 +127,8 @@ These features won't be in the new version (lists might be added eventually):
 
 **Cycle detection at encoding time is required.** Simply keeping a list of visited nodes during traversal (e.g. in `isCycle`/`findCycle`) is insufficient — by the time you detect a cycle during traversal, the damage may already be done. Cycles must be detected and handled at encoding time, before the graph is constructed.
 
+**Segfault on large function bodies.** When a function gets too many expressions, the current compiler segfaults. If that happens, factor out some of the side-effecting expressions to their own functions. Done in `regression-tests/test-bmi.toc` (`a93b2f2`): `main` was split into `test-copy-assoc` and `test-mutate-assoc`.
+
 ## Known Issues
 
 **`test-hvm` node leak.** `glblAlloced should be 0, got 1` at `regression-tests/test-hvm.c:1828`. Pre-existing — not caused by any recent changes. Leaving as-is until I want to tackle it. All 49 REG_TESTS pass.
