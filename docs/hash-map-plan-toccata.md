@@ -105,9 +105,98 @@ Every case above must end with `diff: 0` and `remaining nodes: 0` (see Lessons f
 ### Out of scope until more is exposed
 
 - `get` / `dissoc` tests — belong in `hash-map-regressions.toc` once `bmiGet`/`bmiDissoc` are wrapped
-- 16+ entry ArrayNode conversion — `BOOM("wtf")` in copied `addCopiedBMI` (`runtime3.c:2046,2060`) until implemented
+- 16+ entry ArrayNode conversion — the `BOOM("wtf")` guard in copied `addCopiedBMI` has been removed; the branch is live but unexercised until Roadmap 3.8
 - `bmiKey`/`bmiVal` on a sub-node slot — aborts: the slot's key is `0` and the wrapper unconditionally `incRef`s it (`incRef` aborts on NULL, `runtime3.c:808`). Needs a `None` return for sub-node slots before it can be tested
 - shift-exhaustion (`shift > 60` abort) — deliberate crash, don't test
+
+## Roadmap: Remaining Toccata-Level Work (Ralph loop tasks)
+
+The BMI assoc side is done (Groups A/B, fully branch-tested). What remains is the rest of the Toccata-level hash-map functionality. This section is the task list for the Ralph loop: **each iteration implements exactly one unchecked task, in list order, and nothing else.** Tasks are dependency-ordered — do not skip ahead. The commented-out tests in `regression-tests/hash-map-regressions.toc` are a reference for what the full-map functionality should do — but do not run or modify that suite: it is the final integration test, run by the owner after this roadmap is done. This roadmap supersedes the "Out of scope until more is exposed" list as those items get unblocked.
+
+### Conventions (apply to every task)
+
+1. First check `git status`: if a previously interrupted iteration left uncommitted changes, either finish that task properly or revert them before starting.
+2. Before wrapping anything, read the C reference function in `runtime3.c` and the existing wrappers in `hvm-core.toc`. The pattern to mirror is the `bmiCopyAssoc`/`bmiMutateAssoc` pair: C for the mechanical parts, protocol `=`/`sha1` for the semantic parts, owned refs from wrappers (see Lessons).
+3. Verify after each change — every Toccata suite you touched or added (`make test-bmi`, `make test-array-node`, `make test-collision-node`, as applicable):
+   - the suite's success line is printed (every `rt/test` passed)
+   - `diff: 0` and `remaining nodes: 0`
+   - the suite's `.rslt` diff shows only execution-stat changes
+   - touched `hvm-core.toc` → `make tests` (no other suite may regress)
+   - touched `runtime3.c` → additionally `make test-hash-map` (the 54 C tests)
+4. Memory error → follow `skills/memory-leak-hunting.md`. "Memory leak" includes double frees: a leak shows as non-zero `diff:` or `remaining nodes`; a double free shows as an abort from `dec_and_free` ("failure in decRefs, refs too small").
+5. Compiler changes (`new.c`, codegen, rebuilding `toccata`/`new-toc`) are out of scope — respond STUCK. `runtime3.c` changes are allowed only when a task explicitly says so (or for a leak fix).
+6. Mark the task `[x]`, update the BMI Surface / State lines if the exposed surface changed, and commit staging only the files you changed. Message: `task N: <short name> — <what/why>`.
+
+### Phase 1 — `get`
+
+- [ ] **1.1** Wrap `bmiGet` (C ref `runtime3.c:2368` — `(node, key, def, hash, shift)`, returns `def` on miss) in `hvm-core.toc`. C's `mapGet` (2401) is the type dispatcher; at the Toccata level protocol dispatch replaces it, so wrap only the BMI variant for now.
+- [ ] **1.2** Add a `get*` protocol and a `get` method for `BitmapIndexedNode`, mirroring the `assoc*`/`copyAssoc` pattern: `get* [m k hash def shift]` → the wrapper; `get [m k]` → computes `(sha1 k)`, calls `get*` with a sentinel default, and maps the result to `Some`/`None` per the commented tests' usage (`(= (Some "a") (get ...))`).
+- [ ] **1.3** `test-bmi.toc`: get test — hit (flat).
+- [ ] **1.4** `test-bmi.toc`: get test — miss (returns `def`).
+- [ ] **1.5** `test-bmi.toc`: get test — hit inside a sub-node (depth 2).
+- [ ] **1.6** `test-bmi.toc`: get test — miss inside a sub-node.
+- [ ] **1.7** `test-bmi.toc`: get test — hit inside a collision node.
+
+### Phase 2 — `dissoc`
+
+- [ ] **2.1** Wrap `bmiDissoc` (C ref `runtime3.c:2431` — `(node, key, hash, shift)`; returns `emptyBMI` when the last entry is removed; watch the sub-node shrink/clone paths).
+- [ ] **2.2** Add a `dissoc*` protocol and a `dissoc` method for `BitmapIndexedNode` (same pattern as 1.2; no default value — a miss returns the map unchanged).
+- [ ] **2.3** `test-bmi.toc`: dissoc test — remove from a flat node.
+- [ ] **2.4** `test-bmi.toc`: dissoc test — remove the last entry (→ `emptyBMI`).
+- [ ] **2.5** `test-bmi.toc`: dissoc test — remove a missing key (no-op).
+- [ ] **2.6** `test-bmi.toc`: dissoc test — remove a key inside a sub-node (shrink).
+- [ ] **2.7** `test-bmi.toc`: dissoc test — remove so a sub-node becomes empty and is the parent's only entry.
+
+### Phase 3 — ArrayNode (16+ entries)
+
+ArrayNode tests live in their own suite — `test-bmi.toc` is for BitmapIndexedNodes only. The suite covers both directly-built (3.4) and promoted (3.8) ArrayNodes.
+
+- [ ] **3.1** Create the ArrayNode test suite: `regression-tests/test-array-node.toc` (copy the scaffolding from `test-bmi.toc` — `rt` import, `CHash`/`Key1`/`Val` deftypes, main + success-println shape) and add `test-array-node` to `REG_TESTS` in the Makefile (the existing pattern rules build and run it exactly like `test-bmi`). Seed it with one trivially-green test and commit the baseline `.rslt`.
+- [ ] **3.2** C: 16+ promotion branch of `addCopiedBMI` — the `BOOM("wtf")` calls have been removed by the owner; the conversion code is now live and `make test-hash-map` passes, but the branch has never been exercised (the removed TODO flagged doubt about the `cloneBitmapIndexedNode(&emptyBMI, ...)` calls, and the C suite only tests mutate-side promotion via `addMutateBMI`). The first real exercise is 3.8 — if it exposes a bug in this branch, fixing it is in scope for that task.
+- [ ] **3.3** Make the Toccata mutate path promotable: wrap `addMutateBMI`, or reuse the fixed `addCopiedBMI` in `bmiMutateAssoc`'s empty-slot case — decide after reading the C.
+- [ ] **3.4** Wrap a constructor for an empty `ArrayNode` (see how C's `testArrayNode` in `test-hash-map.c` allocates one) so tests can build ArrayNodes directly, not only via promotion.
+- [ ] **3.5** Toccata `arrayNodeCopyAssoc` mirroring C `runtime3.c:2488` (protocol `=`/`sha1` for the semantic parts).
+- [ ] **3.6** Toccata `arrayNodeMutateAssoc` mirroring C `runtime3.c:2526`.
+- [ ] **3.7** Wire the `ArrayNode` protocol methods: `copyAssoc`/`assoc*` (→ 3.5/3.6), plus wrappers + methods for `arrayNodeGet` (2589), `arrayNodeCount` (2607), `arrayNodeVec` (2709), `arrayNodeDissoc` (2727).
+- [ ] **3.8** `test-bmi.toc`: the promotion test — assoc a 17th entry into a BMI map (BMI→ArrayNode), count 17.
+- [ ] **3.9** `test-array-node.toc`: count test.
+- [ ] **3.10** `test-array-node.toc`: get test — hit.
+- [ ] **3.11** `test-array-node.toc`: get test — miss.
+- [ ] **3.12** `test-array-node.toc`: vec test.
+- [ ] **3.13** `test-array-node.toc`: assoc test — into an empty slot.
+- [ ] **3.14** `test-array-node.toc`: assoc test — into a sub-node slot.
+- [ ] **3.15** `test-array-node.toc`: dissoc test.
+
+### Phase 4 — `collisionAssoc` + collision children
+
+CollisionNode tests live in their own suite — `test-bmi.toc` is for BitmapIndexedNodes only.
+
+- [ ] **4.1** Create the CollisionNode test suite: `regression-tests/test-collision-node.toc` (same scaffolding as 3.1) and add `test-collision-node` to `REG_TESTS` in the Makefile. Seed with one trivially-green test and commit the baseline `.rslt`.
+- [ ] **4.2** Wrap a constructor for an empty `HashCollisionNode` (see how C's `testCollisionNode` in `test-hash-map.c` allocates one) so tests can build collision nodes directly.
+- [ ] **4.3** Toccata `collisionAssoc` mirroring C `runtime3.c:2546` (add, update, promote to BMI on hash mismatch).
+- [ ] **4.4** Wire `copyAssoc`/`assoc*` for `HashCollisionNode` — this also fixes the known BOOM when `assoc*` recurses into a collision-node child.
+- [ ] **4.5** `test-collision-node.toc`: add test — add a key to a collision node.
+- [ ] **4.6** `test-collision-node.toc`: update test — update an existing key.
+- [ ] **4.7** `test-collision-node.toc`: promote test — promote to BMI on hash mismatch.
+- [ ] **4.8** `test-collision-node.toc`: count test.
+- [ ] **4.9** `test-collision-node.toc`: vec test.
+- [ ] **4.10** `test-collision-node.toc`: get test.
+- [ ] **4.11** `test-collision-node.toc`: dissoc test.
+- [ ] **4.12** `test-bmi.toc`: the BMI-side integration test — `assoc*` into a map whose child is a collision node.
+
+### Phase 5 — `hash-seq`/`vals` + stress
+
+- [ ] **5.1** Wire `vals`/`hash-seq` per the commented tests' usage in `hash-map-regressions.toc` (`(hash-seq full-bmi [""])` — read them to pin the exact protocol shape; the Toccata `bmiVec-bm` recursion is the working pattern for descending into sub-nodes; the C `hashVec` dispatcher is dead). No tests in this step — those are 5.2–5.4.
+- [ ] **5.2** `test-bmi.toc`: `hash-seq`/`vals` test — a 3-entry BMI.
+- [ ] **5.3** `test-array-node.toc`: `hash-seq`/`vals` test — an ArrayNode.
+- [ ] **5.4** `test-collision-node.toc`: `hash-seq`/`vals` test — a collision node.
+- [ ] **5.5** `test-array-node.toc`: stress test — 27-entry map built by `reduce` over a range (per the commented tests' shape), assert count (promotes to ArrayNode).
+- [ ] **5.6** `test-array-node.toc`: stress test — 2001-entry map built by `reduce` over a range (per the commented tests' shape), assert count (promotes to ArrayNode).
+
+### Phase 6 — map-level `assoc` (last)
+
+- [ ] **6.1** Add an `assoc` protocol for `HashMap`: `(assoc m k v)` → `(assoc* m k v (sha1 k) 0)` (the `refs-count` dispatch inside `assoc*` handles mutate-vs-copy). Do not add tests for this — the owner will handle them later.
+- [ ] **6.2** Final: `make tests` fully green (including `test-bmi`, `test-array-node`, `test-collision-node`); update the State line; mark this roadmap complete. `hash-map-regressions.toc` (the integration suite) is intentionally left untouched for the owner.
 
 ## Lessons (from the mutate-assoc work, Aug 2026)
 
