@@ -1038,6 +1038,39 @@ abort();
      result = (Term)newNode;
    }"))
 
+(defn arrayNodeMutateChild [m idx]
+  ! m ArrayNode
+  ! idx Integer
+  ;; !returns (any-of (Some HashMap) None)
+  ;; Read slot `idx` of an ArrayNode, borrowed (no incRef — the
+  ;; bmiMutateChild pattern): Some(child) when the slot is occupied, None
+  ;; when it is empty. The ref the caller receives IS the slot's ref; the
+  ;; sub-node recurse goes through assoc* on it, which mutates an
+  ;; exclusively-owned child in place and copies a shared one (the copy
+  ;; consumes a ref that the arrayNodeSetSlot swap then replaces). Consumes
+  ;; `m`.
+  (inline "
+  ArrayNode *node = (ArrayNode *)m_1;
+  Term child = node->array[getI60(idx_2)];
+  if (child != 0)
+    result = some(child);
+  else
+    result = nothing();
+  dec_and_free((Term)m_1, 1);"))
+
+(defn arrayNodeSetSlot [m idx child]
+  ! m ArrayNode
+  ! idx Integer
+  ! child HashMap
+  ;; Mutate-in-place: point slot `idx` at `child` — the C
+  ;; arrayNodeMutateAssoc `node->array[idx] = ...` (no release of the old
+  ;; slot ref: in the in-place-child case the slot already holds `child`,
+  ;; and in the copy-fallback case the copy path consumed the old child's
+  ;; slot ref). Transfers `m`'s ref and takes `child`'s.
+  (inline ArrayNode "
+   ((ArrayNode *)m_1)->array[getI60(idx_2)] = child_3;
+   result = (Term)m_1;"))
+
 (defn bmiCount [m]
   ! m BitmapIndexedNode
   (inline Integer "result = (Term)bmiCount((Value *)m_1);"))
@@ -1375,6 +1408,31 @@ abort();
                  (fn [child]
                    (arrayNodeUpdate m idx (copyAssoc child k v hash (+ 5 shift)))))
             (arrayNodeUpdate m idx (copyAssoc emptyBMI k v hash (+ 5 shift))))))
+
+(defn arrayNodeMutateAssoc [m k v hash shift]
+  ! m ArrayNode
+  ;; Toccata-level mutate-in-place assoc for an ArrayNode, mirroring the C
+  ;; arrayNodeMutateAssoc (runtime3.c:2532). Only called via assoc* when the
+  ;; node is safe to mutate (refs-count == 3), so the C-level `refs != 1`
+  ;; fallback is handled by the assoc* dispatch instead. The slot index is
+  ;; mask(hash, shift) = (hash >> shift) & 31. The mechanical slot ops reuse
+  ;; the wrapped C functions; the semantic part is the sub-node recurse,
+  ;; which goes through the assoc* protocol — type dispatch, the Toccata
+  ;; counterpart of C's mutateAssoc dispatcher (C's internal `equal` can't
+  ;; reach the `=` protocol, so the key/val equality happens in the child's
+  ;; own assoc*). The sub-node recurse borrows the child
+  ;; (arrayNodeMutateChild, no incRef) and calls assoc* on it, which mutates
+  ;; the child in place when it is exclusively owned (refs-count == 3) and
+  ;; copies it otherwise; either way arrayNodeSetSlot points the slot at the
+  ;; (re)built child — in the copy case the swap balances, since the copy
+  ;; path consumed the old child's slot ref. An empty slot gets a fresh BMI
+  ;; child (copyAssoc on emptyBMI at shift+5), mirroring C.
+  (let [k (set-hash-val k hash)
+        idx (bit-and (bit-shift-right hash shift) 31)]
+    (either (map (arrayNodeMutateChild m idx)
+                 (fn [child]
+                   (arrayNodeSetSlot m idx (assoc* child k v hash (+ 5 shift)))))
+            (arrayNodeSetSlot m idx (copyAssoc emptyBMI k v hash (+ 5 shift))))))
 
 (defn bmiGet [m k def hash shift]
   ! m BitmapIndexedNode
