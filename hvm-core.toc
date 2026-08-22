@@ -1075,6 +1075,13 @@ abort();
   ! m BitmapIndexedNode
   (inline Integer "result = (Term)bmiCount((Value *)m_1);"))
 
+(defn arrayNodeCount [m]
+  ! m ArrayNode
+  ;; The C arrayNodeCount (runtime3.c:2613) sums mapCount over the non-empty
+  ;; slots — all mechanical I60 arithmetic (no key equality), so it is wrapped
+  ;; directly (the bmiCount pattern). Consumes `m`.
+  (inline Integer "result = (Term)arrayNodeCount((Value *)m_1);"))
+
 (defn bmiHashVec [m]
   ! m BitmapIndexedNode
   (inline Vector "result = (Term)bmiHashVec((Value *)m_1, (Value *)empty_vect);"))
@@ -1344,6 +1351,27 @@ abort();
   ! m BitmapIndexedNode
   (bmiVec-bm m (bmiBitMap m)))
 
+;; Toccata-level vec for an ArrayNode: the C arrayNodeVec (runtime3.c:2715)
+;; aborts (its body is commented out, routing through the dead hashVec
+;; dispatcher), so the recursion happens here instead. Slots are walked in
+;; index order 0..31; an occupied slot's child vec is flattened in (the `vec`
+;; protocol — type dispatch, the Toccata counterpart of the dead hashVec
+;; dispatcher), an empty slot contributes nothing. Pairs come out in slot
+;; order (same shape as the C flat-node path).
+(defn arrayNodeVec-i [m i]
+  ! m ArrayNode
+  ! i Integer
+  (cond (= i 32)
+        []
+        (either (map (arrayNodeCopyChild m i)
+                     (fn [child]
+                       (comp (vec child) (arrayNodeVec-i m (inc i)))))
+                (arrayNodeVec-i m (inc i)))))
+
+(defn arrayNodeVec [m]
+  ! m ArrayNode
+  (arrayNodeVec-i m 0))
+
 (defn bmiCopyAssoc [m k v hash shift]
   ! m BitmapIndexedNode
   (let [k (set-hash-val k hash)
@@ -1453,6 +1481,22 @@ abort();
                               def)))
               def)))
 
+(defn arrayNodeGet [m k def hash shift]
+  ! m ArrayNode
+  ;; Toccata-level get for an ArrayNode, mirroring the C arrayNodeGet
+  ;; (runtime3.c:2595): the value stored under `k`, or `def` on miss.
+  ;; ArrayNode slots hold only sub-nodes (never flat key/val pairs), so the
+  ;; slot index is mask(hash, shift) = (hash >> shift) & 31; an empty slot is
+  ;; a miss (`def`), an occupied slot recurses into the child at shift+5
+  ;; through the get* protocol — type dispatch, the Toccata counterpart of
+  ;; C's mapGet dispatcher (C calls bmiGet directly, which can't reach the `=`
+  ;; protocol and can't handle a collision-node child).
+  (let [idx (bit-and (bit-shift-right hash shift) 31)]
+    (either (map (arrayNodeCopyChild m idx)
+                 (fn [child]
+                   (get* child k def hash (+ 5 shift))))
+            def)))
+
 (defn bmiDissoc [m k hash shift]
   ! m BitmapIndexedNode
   ;; Toccata-level dissoc for a BitmapIndexedNode, mirroring the C bmiDissoc
@@ -1480,6 +1524,25 @@ abort();
                     (bmiShrink m bit))
               m)))
       m)))
+
+(defn arrayNodeDissoc [m k hash shift]
+  ! m ArrayNode
+  ;; Toccata-level dissoc for an ArrayNode, mirroring the C arrayNodeDissoc
+  ;; (runtime3.c:2733): the node with `k` removed, or `m` unchanged on miss.
+  ;; The slot index is mask(hash, shift) = (hash >> shift) & 31; an empty slot
+  ;; is a miss (`m` unchanged). An occupied slot recurses into the child at
+  ;; shift+5 through the dissoc* protocol — type dispatch, the Toccata
+  ;; counterpart of C's baseDissoc dispatcher; arrayNodeUpdate's same-child
+  ;; path covers the no-change case (returns `m` unchanged), otherwise the
+  ;; parent is cloned with the slot replaced. Unlike a BMI, an ArrayNode never
+  ;; collapses to emptyBMI — an emptied child simply leaves the slot pointing
+  ;; at emptyBMI.
+  (let [idx (bit-and (bit-shift-right hash shift) 31)]
+    (either (map (arrayNodeCopyChild m idx)
+                 (fn [child]
+                   (let [n (dissoc* child k hash (+ 5 shift))]
+                     (arrayNodeUpdate m idx n))))
+            m)))
 
 (defn collisionGet-i [m k def n i]
   (cond (= i n)
@@ -1551,6 +1614,29 @@ abort();
   (dissoc [m k]
     (let [h (sha1 k)]
       (dissoc* m k h 0)))
+  )
+
+(extend-type ArrayNode
+  (count [m]
+    (arrayNodeCount m))
+
+  (vec [m]
+    (arrayNodeVec m))
+
+  (copyAssoc [m k v hash shift]
+    (arrayNodeCopyAssoc m k v hash shift))
+
+  (assoc* [m k v hash shift]
+    ;; 3 is a magic number. It's the number of times 'm' appears in this function
+    (cond (= 3 (refs-count m))
+          (arrayNodeMutateAssoc m k v hash shift)
+          (arrayNodeCopyAssoc m k v hash shift)))
+
+  (get* [m k def hash shift]
+    (arrayNodeGet m k def hash shift))
+
+  (dissoc* [m k hash shift]
+    (arrayNodeDissoc m k hash shift))
   )
 
 (extend-type HashCollisionNode
