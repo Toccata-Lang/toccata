@@ -206,6 +206,7 @@ abort();
 (defp assoc [m k v])
 (defp copyAssoc [m k v hash shift])
 (defp assoc* [m k v hash shift])
+(defp get* [m k def hash shift])
 (defp dissoc [m k])
 (defp get [m k]
   ;; Retrieve the value associated with `k` in `m`, wrapped in a `Maybe` if it exists.
@@ -1230,13 +1231,13 @@ abort();
   ;; (runtime3.c:2368): the value stored under `k`, or `def` on miss.
   ;; The mechanical slot ops reuse the wrapped C functions; the semantic key
   ;; equality uses the `=` protocol (C's `equal` only handles I60/String).
-  ;; Sub-node slots recurse into bmiGet for now; the get* protocol (task 1.2)
-  ;; will replace the direct call with type dispatch (C's mapGet dispatcher).
+  ;; Sub-node slots recurse through the get* protocol — type dispatch, the
+  ;; Toccata counterpart of C's mapGet dispatcher.
   (let [bit (bitpos hash shift)]
     (int-cond (bit-and bit (bmiBitMap m))
               (either (map (bmiCopyChild m bit)
                            (fn [childNode]
-                             (bmiGet childNode k def hash (+ 5 shift))))
+                             (get* childNode k def hash (+ 5 shift))))
                       (let [currKey (bmiKey m bit)]
                         (cond (= k currKey)
                               (bmiVal m bit)
@@ -1254,6 +1255,15 @@ abort();
     dec_and_free(v_1, 1);
   "))
 
+;; Sentinel for the get method: a private type a stored value can never be,
+;; so it distinguishes a hit from a miss. It goes first in the `=` comparison:
+;; its `=` only compares type-num, so it never BOOMs on a non-sentinel second
+;; arg (String's `=` would, via strCmp). GetSentinelVal is the zero-arg
+;; constructor (a global singleton, like List's EndOfList).
+(deftype GetSentinel
+  (GetSentinelVal
+    (= [x y] (= (type-num x) (type-num y)))))
+
 (extend-type BitmapIndexedNode
   (count [m]
     (bmiCount m))
@@ -1269,6 +1279,17 @@ abort();
     (cond (= 3 (refs-count m))
           (bmiMutateAssoc m k v hash shift)
           (bmiCopyAssoc m k v hash shift)))
+
+  (get* [m k def hash shift]
+    (bmiGet m k def hash shift))
+
+  (get [m k]
+    (let [h (sha1 k)
+          sentinel GetSentinelVal
+          r (get* m k sentinel h 0)]
+      (cond (= sentinel r)
+            None
+            (Some r))))
   )
 
 (extend-type HashMap
