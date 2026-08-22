@@ -1070,6 +1070,34 @@ abort();
    result = incRef((Term)bmiVal((BitmapIndexedNode *)bmi_1, getI60(bit_2)), 1);
    dec_and_free(bmi_1, 1);"))
 
+(defn collisionCount [m]
+  ! m HashCollisionNode
+  ;; !returns Integer
+  ;; Read-only item count (node->count / 2). The C collisionCount
+  ;; (runtime3.c:2616) consumes its argument, so this reads the field
+  ;; directly (bmiBitMap pattern) — the node is still needed for the scan.
+  (inline Integer "
+   result = newI60(((HashCollisionNode *)m_1)->count / 2);
+   dec_and_free((Term)m_1, 1);"))
+
+(defn collisionKey [m i]
+  ! m HashCollisionNode
+  ! i Integer
+  ;; incRef so the caller gets an owned reference (bmiKey pattern).
+  ;; Collision-node entries are always non-NULL key/val pairs (unlike BMI
+  ;; slots, whose key is 0 for sub-nodes), so no None case.
+  (inline "
+   result = incRef((Term)((HashCollisionNode *)m_1)->array[2 * getI60(i_2)], 1);
+   dec_and_free((Term)m_1, 1);"))
+
+(defn collisionVal [m i]
+  ! m HashCollisionNode
+  ! i Integer
+  ;; incRef so the caller gets an owned reference (bmiVal pattern).
+  (inline "
+   result = incRef((Term)((HashCollisionNode *)m_1)->array[2 * getI60(i_2) + 1], 1);
+   dec_and_free((Term)m_1, 1);"))
+
 (defn bmiReplaceCopied [bmi key val hash shift currKey currVal]
   ! bmi BitmapIndexedNode
   ! hash Integer
@@ -1244,6 +1272,24 @@ abort();
                               def)))
               def)))
 
+(defn collisionGet-i [m k def n i]
+  (cond (= i n)
+        def
+        (let [ek (collisionKey m i)]
+          (cond (= ek k)
+                (collisionVal m i)
+                (collisionGet-i m k def n (inc i))))))
+
+(defn collisionGet [m k def hash shift]
+  ! m HashCollisionNode
+  ;; Toccata-level get for a HashCollisionNode, mirroring the C collisionGet
+  ;; (runtime3.c:2680): the value stored under `k`, or `def` on miss.
+  ;; Linear scan over the entries (collisionGet-i); the semantic key equality
+  ;; uses the `=` protocol with the entry key first (the bmiCopyAssoc/
+  ;; bmiMutateAssoc convention — C's `equal` only handles I60/String).
+  ;; hash/shift are unused: a collision node holds only keys with one hash.
+  (collisionGet-i m k def (collisionCount m) 0))
+
 (defn refs-count [v]
   !returns Integer
   (inline "
@@ -1291,6 +1337,10 @@ abort();
             None
             (Some r))))
   )
+
+(extend-type HashCollisionNode
+  (get* [m k def hash shift]
+    (collisionGet m k def hash shift)))
 
 (extend-type HashMap
   (empty? [m]
