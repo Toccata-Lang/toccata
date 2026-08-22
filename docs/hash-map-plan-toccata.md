@@ -44,7 +44,7 @@ The C-level dispatchers are `copyAssoc` (runtime3.c:2761) and `mutateAssoc` (277
 
 The C-level tests in `hash-map-plan-c.md` verify the raw functions. The cases below cover the Toccata protocol layer — the inline-C wrappers and the Toccata `bmiCopyAssoc`/`bmiMutateAssoc` implementations.
 
-**Running the tests:** `make test-bmi` is the correct way to run this suite. `make` can be used for any Makefile target without thinking further — no need to run the underlying `./new-toc` + `clang` steps by hand.
+**Running the tests:** `make test-bmi` is the correct way to run this suite. `make` can be used for any Makefile target without thinking further — no need to run the underlying `./new-toc` + `clang` steps by hand. The full suite can be run in parallel with `make -j tests` — much faster than serial `make tests`.
 
 ### Prerequisite: controlled-hash key type
 
@@ -121,7 +121,7 @@ The BMI assoc side is done (Groups A/B, fully branch-tested). What remains is th
    - the suite's success line is printed (every `rt/test` passed)
    - `diff: 0` and `remaining nodes: 0`
    - the suite's `.rslt` diff shows only execution-stat changes
-   - touched `hvm-core.toc` → `make tests` (no other suite may regress)
+   - touched `hvm-core.toc` → `make -j tests` (the full suite, in parallel — much faster; no other suite may regress)
    - touched `runtime3.c` → additionally `make test-hash-map` (the 54 C tests)
 4. Memory error → follow `skills/memory-leak-hunting.md`. "Memory leak" includes double frees: a leak shows as non-zero `diff:` or `remaining nodes`; a double free shows as an abort from `dec_and_free` ("failure in decRefs, refs too small").
 5. Compiler changes (`new.c`, codegen, rebuilding `toccata`/`new-toc`) are out of scope — respond STUCK. `runtime3.c` changes are allowed only when a task explicitly says so (or for a leak fix).
