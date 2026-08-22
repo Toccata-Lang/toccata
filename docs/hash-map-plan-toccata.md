@@ -4,7 +4,7 @@
 
 The Toccata layer wraps the C-level bitmap-trie functions (see `hash-map-plan-c.md`) with inline-C wrappers in `hvm-core.toc` and implements the hash-map protocol methods in Toccata. Testing is exercised through `regression-tests/test-bmi.toc` (BMI node level) and, eventually, `regression-tests/hash-map-regressions.toc` (full map level).
 
-**State (2026-08-22):** `bmiCopyAssoc` and `bmiMutateAssoc` are implemented at the Toccata level and fully tested; both suites pass — `test-bmi` (19 cases: Group A copy-assoc + Group B mutate-assoc, `diff: 0`, `remaining nodes: 0`, `SAFETY=1`) and `test-hash-map` (54 tests, all green).
+**State (2026-08-22):** `bmiCopyAssoc` and `bmiMutateAssoc` are implemented at the Toccata level and fully branch-tested; both suites pass — `test-bmi` (20 cases: Group A copy-assoc + Group B mutate-assoc, `diff: 0`, `remaining nodes: 0`, `SAFETY=1`) and `test-hash-map` (54 tests, all green).
 
 ## Big Picture: Node Types and the Toccata-Level Assoc Requirement
 
@@ -38,7 +38,7 @@ The C-level dispatchers are `copyAssoc` (runtime3.c:2761) and `mutateAssoc` (277
 
 **Not exposed** (in `runtime3.c` only — can't test until wrapped): `bmiGet`/`mapGet`, `bmiDissoc`, `addMutateBMI` (the Toccata `bmiMutateAssoc` reuses `addCopiedBMI` for the empty-slot case), raw `bmiSetKey`/`bmiSetVal`
 
-**Currently covered in test-bmi.toc:** 19 cases — Group A (`bmiCopyAssoc` integration, 9), Group B (`bmiMutateAssoc` integration, 9), plus bitmap-of-empty. See the checklists below.
+**Currently covered in test-bmi.toc:** 20 cases — Group A (`bmiCopyAssoc` integration, 10), Group B (`bmiMutateAssoc` integration, 9), plus bitmap-of-empty. See the checklists below.
 
 ## BMI Tests (`regression-tests/test-bmi.toc`)
 
@@ -70,8 +70,11 @@ Low-level functions (`bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiCopyChild`, 
 - [x] different key, same bit, different hash at shift 5 (3 vs 35) → count 2, sub-node (replace→createNode branch)
 - [x] different key, identical hash (7/7 collision) → count 2, collision node (replace→collision branch)
 - [x] **recurse-into-child branch:** node with keys 3+35, then assoc key 67 (bit 3 again) → count 3
-- [x] **deep createNode:** keys 3, 35, 67, then 195 (bit 3 → bit 6 at shift 5) → count 4 (exercises `createNode`'s same-bit-at-next-level recursion)
+- [x] **child-recurse + add at depth 1:** keys 3, 35, 67, then 195 (bit 3 again → bit 6 at shift 5, empty slot in the child) → count 4
 - [x] same key, different value, **key located inside a sub-node** (depth 2) → count unchanged, `vec` shows updated value (child-recurse + clone at depth)
+- [x] same key, same value, **key located inside a sub-node** (depth 2) → count and `vec` unchanged (child-recurse no-op → `bmiUpdate` same-child path)
+
+Note: `createNode`'s same-bit-at-next-level recursion is covered only via the mutate path (Group B, 3 vs 1027) — it is shared C code, but the copy path (`bmiReplaceCopied`) never drives it.
 
 **B. `bmiMutateAssoc` integration** (reached via `assoc*`, which routes here when `refs-count m == 3`)
 - [x] same key, different value → `bmiSetKV` in place, count 1, `vec` updated
