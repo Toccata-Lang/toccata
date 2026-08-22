@@ -764,7 +764,109 @@ void testBmiMutateAssocPromote(void) {
   for (int i = 0; i < ARRAY_NODE_LEN; i++) { if (an->array[i] != 0) entryCount++; }
   if (entryCount != 17) BOOM("17 entries");
   dec_and_free((Term)promoteResult, 1);
-  check_counts("testBmiMutateAssocPromote", 140, 0, __LINE__);
+  check_counts("testBmiMutateAssocPromote", 120, 0, __LINE__);
+}
+
+// Test: bit not set, n >= 16, copy-side promotion to ArrayNode (addCopiedBMI)
+// Drives bmiCopyAssoc's empty-slot path on a full 16-slot node — the
+// conversion that wraps the new key and every flat pair in a 1-entry BMI
+// sub-node. The 16-slot node is built directly (manual bitmap + slots, as
+// the collision tests do) so this test touches no BMI pools other than
+// size 16 and size 1 (both prewarmed in main), keeping check_counts
+// order-independent under the shuffle.
+void testBmiCopyAssocPromote(void) {
+  reset_counters();
+  int64_t hashes[16];
+  Term keys[16];
+  Term vals[16];
+  int count = 0;
+  for (i64 c = 0; count < 16 && c < 100000; c++) {
+    char keyBuf[32];
+    sprintf(keyBuf, "key%lld", (long long)c);
+    Term key = (Term)stringValue(keyBuf);
+    int64_t hash = strSha1(incRefVal(key, 1));
+    int bit = bitpos(hash, 0);
+    int used = 0;
+    for (int j = 0; j < count; j++) { if (bitpos(hashes[j], 0) == bit) { used = 1; break; } }
+    if (!used) {
+      char valBuf[32];
+      sprintf(valBuf, "val%lld", (long long)(c * 100));
+      hashes[count] = hash; keys[count] = key;
+      vals[count] = (Term)stringValue(valBuf);
+      count++;
+    }
+    else dec_and_free(key, 1);
+  }
+  if (count < 16) BOOM("16 keys");
+
+  // Sort by bit position — the packed slots are ordered ascending by bit
+  for (int a = 0; a < 15; a++)
+    for (int b = a + 1; b < 16; b++)
+      if ((hashes[b] & 0x1f) < (hashes[a] & 0x1f)) {
+	int64_t th = hashes[a]; hashes[a] = hashes[b]; hashes[b] = th;
+	Term tk = keys[a]; keys[a] = keys[b]; keys[b] = tk;
+	Term tv = vals[a]; vals[a] = vals[b]; vals[b] = tv;
+      }
+
+  // Fill the 16-slot node directly (manual bitmap + slots, as the
+  // collision tests do)
+  BitmapIndexedNode *node = malloc_bmiNode(16);
+  for (int k = 0; k < 16; k++) {
+    node->bitmap |= bitpos(hashes[k], 0);
+    node->array[2 * k] = keys[k];
+    node->array[2 * k + 1] = vals[k];
+  }
+  if (__builtin_popcount(node->bitmap) != 16) BOOM("16 entries");
+
+  // 17th key with a fresh bit: bmiCopyAssoc's empty-slot path → addCopiedBMI promotion
+  Term newKey; int64_t newHash;
+  for (i64 c = 0; c < 100000; c++) {
+    char keyBuf[32];
+    sprintf(keyBuf, "key%lld", (long long)c);
+    newKey = (Term)stringValue(keyBuf);
+    newHash = strSha1(incRefVal(newKey, 1));
+    int newBit = bitpos(newHash, 0);
+    int used = 0;
+    for (int j = 0; j < 16; j++) { if (bitpos(hashes[j], 0) == newBit) { used = 1; break; } }
+    if (used) dec_and_free(newKey, 1);
+    else break;
+  }
+  Term newVal = (Term)stringValue("val99999");
+  Value *promoteResult = bmiCopyAssoc(node, newKey, newVal, newHash, 0);
+  ArrayNode *an = (ArrayNode *)promoteResult;
+  if (an->type != ArrayNodeType) BOOM("ArrayNode");
+  int entryCount = 0;
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) { if (an->array[i] != 0) entryCount++; }
+  if (entryCount != 17) BOOM("17 entries");
+
+  // The conversion wraps the new key and every flat pair in a 1-entry
+  // BitmapIndexedNode at shift 5 — no slot may be empty or keyless.
+  for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+    if (an->array[i] != 0) {
+      BitmapIndexedNode *sub = (BitmapIndexedNode *)an->array[i];
+      if (sub->type != BitmapIndexedType) BOOM("slot should be a BMI sub-node");
+      if (__builtin_popcount(sub->bitmap) != 1) BOOM("sub-node should hold 1 entry");
+      if (sub->array[0] == 0) BOOM("sub-node should hold a key");
+    }
+  }
+
+  // count must survive the conversion
+  Value *cnt = arrayNodeCount(incRefVal(promoteResult, 1));
+  if (getI60((Term)cnt) != 17) BOOM("count should be 17");
+  dec_and_free((Term)cnt, 1);
+
+  // get must find the new key and an existing key
+  // (fresh lookup keys: arrayNodeGet consumes the key ref)
+  Value *gotNew = arrayNodeGet(incRefVal(promoteResult, 1), incRefVal(newKey, 1), (Value *)nothing(), newHash, 0);
+  if (gotNew != (Value *)newVal) BOOM("get should find the new value");
+  dec_and_free((Term)gotNew, 1);
+
+  Value *gotOld = arrayNodeGet(incRefVal(promoteResult, 1), incRefVal(keys[0], 1), (Value *)nothing(), hashes[0], 0);
+  if (gotOld != (Value *)vals[0]) BOOM("get should find an existing value");
+  dec_and_free((Term)gotOld, 1);
+
+  dec_and_free((Term)promoteResult, 1);
+  check_counts("testBmiCopyAssocPromote", 0, 0, __LINE__);
 }
 
 // Test: same key + same value → no-op, return original node (1b)
@@ -2681,6 +2783,18 @@ int main(int argc, char **argv) {
   // Pre-allocate Vector pool so bmiHashVec test doesn't trigger pool allocation
   (void)malloc_vector();
 
+  // Prewarm the size-16 BMI pool (the promotion tests' initial 16-slot
+  // node) and grow the size-1 pool to 20 (promotion builds 17 sub-nodes
+  // at once) so the ArrayNode promotion tests never trigger a pool refill
+  // — their check_counts expectations stay order-independent under the
+  // shuffle.
+  dec_and_free((Term)malloc_bmiNode(16), 1);
+  {
+    Term promoSubs[17];
+    for (int i = 0; i < 17; i++) promoSubs[i] = (Term)malloc_bmiNode(1);
+    for (int i = 0; i < 17; i++) dec_and_free(promoSubs[i], 1);
+  }
+
   static TestFn tests[] = {
     testEmptyBmiNode,
     testBmiNodeOneItem,
@@ -2709,6 +2823,7 @@ int main(int argc, char **argv) {
     testBmiMutateAssocSubNodeRecurse,
     testBmiMutateAssocNoOp,
     testBmiMutateAssocPromote,
+    testBmiCopyAssocPromote,
     testArrayNodeCopyAssoc,
     testArrayNodeCopyAssocA2,
     testArrayNodeCopyAssocB1,

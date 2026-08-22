@@ -2063,7 +2063,6 @@ Value *bmiCount(Value *arg0) {
 
 Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, int shift) {
   int bit = bitpos(hash, shift);
-  int idx = __builtin_popcount(node->bitmap & (bit - 1));
 
   // the position in the node is empty
   int n = __builtin_popcount(node->bitmap);
@@ -2071,10 +2070,14 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
     // too many entries, so convert to ArrayNode
     ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
 
-    // create BitmapIndexedNode for next level down
+    // create BitmapIndexedNode for next level down, holding the new key/val
     int jdx = mask(hash, shift);
     int newShift = shift + 5;
-    newNode->array[jdx] = (Term)cloneBitmapIndexedNode(&emptyBMI, idx, key, val);
+    BitmapIndexedNode *subNode = malloc_bmiNode(1);
+    subNode->bitmap = bitpos(hash, newShift);
+    subNode->array[0] = key;
+    subNode->array[1] = val;
+    newNode->array[jdx] = (Term)subNode;
 
     // copy the elements of the original 'node' to the new ArrayNode
     for (int i = 0, j = 0; i < ARRAY_NODE_LEN; i++) {
@@ -2085,10 +2088,17 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	  newNode->array[i] = node->array[j + 1];
 	  incRef(newNode->array[i], 1);
 	} else {
-	  // it's a k/v pair, create a new BitmapIndexedNode for that level
-	  newNode->array[i] = (Term)cloneBitmapIndexedNode(&emptyBMI, 0,
-							   incRef(node->array[j], 2),
-							   incRef(node->array[j + 1], 1));
+	  // it's a k/v pair, create a new BitmapIndexedNode for that level.
+	  // The old node is freed below without clearing its slots (unlike
+	  // the mutate path), so the new sub-node's slots take fresh refs:
+	  // the key's +2 survives sha1's consumed temp ref, the val gets +1.
+	  int64_t existingHash = sha1((FnArity *)0, incRef((Term)node->array[j], 2));
+	  BitmapIndexedNode *kvNode = malloc_bmiNode(1);
+	  kvNode->bitmap = bitpos(existingHash, newShift);
+	  kvNode->array[0] = node->array[j];
+	  kvNode->array[1] = node->array[j + 1];
+	  incRef((Term)node->array[j + 1], 1);
+	  newNode->array[i] = (Term)kvNode;
 	}
 	j += 2;
       }
