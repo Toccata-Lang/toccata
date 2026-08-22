@@ -1,48 +1,54 @@
-Read the hash-map Toccata plan (docs/hash-map-plan-toccata.md) and the files it references:
-hvm-core.toc, regression-tests/test-bmi.toc, regression-tests/hash-map-regressions.toc,
-regression-tests/regression-tester.toc, new.c. Read the BMI section of runtime3.c
-(~lines 1920–2460) as the C reference for expected behavior.
+Read the hash-map Toccata plan (docs/hash-map-plan-toccata.md) — especially
+the "Roadmap: Remaining Toccata-Level Work (Ralph loop tasks)" section and
+its Conventions, plus the Lessons section — and the files it references:
+hvm-core.toc, regression-tests/test-bmi.toc (and test-array-node.toc /
+test-collision-node.toc once they exist), regression-tests/regression-tester.toc,
+the Makefile (REG_TESTS). Before wrapping anything, read the C reference
+function the task cites (line numbers are in the task) in runtime3.c.
 
-You are one iteration of a Ralph loop. Do exactly one thing: implement the next
-unchecked test case in the plan's "A. bmiCopyAssoc integration" checklist, in
-checklist order. Do not work on the other checklist groups, do not wrap new C
-functions in hvm-core.toc, and do not start any other work.
+You are one iteration of a Ralph loop. Do exactly one thing: implement the
+next unchecked task in the plan's "Roadmap: Remaining Toccata-Level Work"
+section, in list order. Do not skip ahead, do not work on other tasks, and do
+not start any other work. Do not run or modify regression-tests/
+hash-map-regressions.toc — it is the owner's final integration suite (reading
+it as a spec is fine where a task says so).
 
-First check `git status`: if a previously interrupted iteration left uncommitted
-changes, either finish that test case properly or revert them before starting.
+First check `git status`: if a previously interrupted iteration left
+uncommitted changes, either finish that task properly or revert them before
+starting.
 
-If `CHash` is not yet defined in regression-tests/test-bmi.toc, add the
-controlled-hash deftype from the plan's "Prerequisite" section first — include
-it in the same commit as the first test case.
-
-Then, for the next unchecked case:
-1. Add the test to main() in regression-tests/test-bmi.toc, per the case spec
-   in the plan. Use CHash keys with the plan's hash values so bit positions are
-   pinned. Follow the existing test style (rt/test with _FILE_ _LINE_).
-2. Build and run with `make test-bmi` (regenerates test-bmi.c, builds, runs,
-   rewrites test-bmi.rslt). Do not rebuild the compiler (toccata/new-toc); if
-   a compiler binary is missing, respond STUCK.
-3. Verify, in the test output:
-   - "BMI tests are good" is printed (every rt/test passed)
+Then, for the next unchecked task:
+1. Do what the task says. Mirror the bmiCopyAssoc/bmiMutateAssoc pair: C for
+   the mechanical parts, protocol =/sha1 for the semantic parts, owned refs
+   from wrappers (see Lessons).
+2. Build and run every suite you touched or added — `make test-bmi`,
+   `make test-array-node`, `make test-collision-node` (as applicable; each
+   regenerates its .c, builds, runs, rewrites its .rslt). Do not rebuild the
+   compiler (toccata/new-toc); if a compiler binary is missing, respond STUCK.
+3. Verify, in each suite's output:
+   - the suite's success line is printed (every rt/test passed)
    - `malloc count: N  free count: N  diff: 0` — any non-zero diff is a memory
      leak and a failure
    - `remaining nodes: 0` — any non-zero value is a node leak and a failure
-   - `git diff regression-tests/test-bmi.rslt` shows only execution-stat
+   - `git diff regression-tests/<suite>.rslt` shows only execution-stat
      changes (ITRS, node/malloc counts) — no changed or missing result lines
-4. If the test fails, debug and fix it. If a memory leak is detected
-   (non-zero malloc/free diff or non-zero remaining nodes), use
-   skills/memory-leak-hunting.md to hunt it down. A failure exposing a real bug in
-   hvm-core.toc is in scope to fix — and if you modify hvm-core.toc, run
-   `make tests` first to confirm no other regression test regressed. A failure
-   that requires changing runtime3.c (the C reference) is out of scope: STUCK.
-5. Mark the case [x] in docs/hash-map-plan-toccata.md.
-6. Commit with a message naming the case (e.g. "test: test-bmi bmiCopyAssoc
-   same-key-different-value (bmiClone branch)"). Stage only the files you
-   changed (test-bmi.toc, test-bmi.rslt, docs/hash-map-plan-toccata.md, and
-   hvm-core.toc if you fixed a bug there).
+   - you modified hvm-core.toc → run `make tests` to confirm no other
+     regression test regressed
+   - you modified runtime3.c → additionally run `make test-hash-map` (the C
+     suite)
+4. If a test fails, debug and fix it. A memory error — a leak (non-zero diff
+   or remaining nodes) or a double free (abort "failure in decRefs, refs too
+   small" from dec_and_free) — use skills/memory-leak-hunting.md to hunt it
+   down. A failure exposing a real bug in hvm-core.toc is in scope to fix. A
+   failure that requires changing runtime3.c is out of scope unless the task
+   explicitly says so (or it is a leak fix): STUCK.
+5. Mark the task [x] in docs/hash-map-plan-toccata.md; update the BMI Surface
+   / State lines if the exposed surface changed.
+6. Commit with a message of the form `task N: <short name> — <what/why>`.
+   Stage only the files you changed.
 
 If you hit a failure you cannot fix within the above rules, respond with
 "STUCK: <one-line reason>" and stop.
 
-Only when every case in group A is [x], `make test-bmi` passes all checks, and
-everything is committed, respond with "All bmiCopyAssoc cases done".
+Only when every task in the roadmap is [x], `make tests` passes all checks,
+and everything is committed, respond with "Roadmap complete".
