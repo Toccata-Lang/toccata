@@ -988,6 +988,56 @@ abort();
   (inline ArrayNode "
    result = (Term)malloc_arrayNode();"))
 
+(defn arrayNodeCopyChild [m idx]
+  ! m ArrayNode
+  ! idx Integer
+  ;; !returns (any-of (Some HashMap) None)
+  ;; Read slot `idx` of an ArrayNode. ArrayNode slots hold either 0 (empty) or
+  ;; a sub-node — never a flat key/val pair (unlike BMI slots, whose key slot
+  ;; is 0 for sub-nodes) — so this returns Some(child) with an owned ref
+  ;; (incRef) when the slot is occupied and None when it is empty. Consumes
+  ;; `m` (the bmiCopyChild pattern).
+  (inline "
+  ArrayNode *node = (ArrayNode *)m_1;
+  Term child = node->array[getI60(idx_2)];
+  if (child != 0) {
+    incRef(child, 1);
+    result = some(child);
+  } else
+    result = nothing();
+  dec_and_free((Term)m_1, 1);"))
+
+(defn arrayNodeUpdate [m idx child]
+  ! m ArrayNode
+  ! idx Integer
+  ! child HashMap
+  ;; Point slot `idx` at `child`, mirroring the C bmiUpdate (runtime3.c:2289):
+  ;; if the slot already holds `child` (pointer identity — the sub-node
+  ;; recurse was a no-op), release the extra ref and return `m` unchanged;
+  ;; otherwise clone `m` with slot `idx` replaced (the other non-zero slots
+  ;; are incRef'd into the clone), free `m`, and return the clone. In the
+  ;; empty-slot case the old slot is 0, so the clone simply copies the other
+  ;; non-zero slots and installs `child` — the C arrayNodeCopyAssoc
+  ;; empty-slot branch.
+  (inline ArrayNode "
+   ArrayNode *node = (ArrayNode *)m_1;
+   int idx = getI60(idx_2);
+   if (node->array[idx] == child_3) {
+     dec_and_free(child_3, 1);
+     result = (Term)node;
+   } else {
+     ArrayNode *newNode = (ArrayNode *)malloc_arrayNode();
+     for (int i = 0; i < ARRAY_NODE_LEN; i++) {
+       if (i != idx && node->array[i] != 0) {
+         newNode->array[i] = node->array[i];
+         incRef(node->array[i], 1);
+       }
+     }
+     newNode->array[idx] = child_3;
+     dec_and_free((Term)node, 1);
+     result = (Term)newNode;
+   }"))
+
 (defn bmiCount [m]
   ! m BitmapIndexedNode
   (inline Integer "result = (Term)bmiCount((Value *)m_1);"))
@@ -1305,6 +1355,26 @@ abort();
                               (bmiSetKV m bit k v currKey currVal)
                               (bmiReplaceMutate m k v hash shift currKey currVal))))
               (addCopiedBMI m k v hash shift))))
+
+(defn arrayNodeCopyAssoc [m k v hash shift]
+  ! m ArrayNode
+  ;; Toccata-level copy assoc for an ArrayNode, mirroring the C
+  ;; arrayNodeCopyAssoc (runtime3.c:2494): the node with `k`→`v` associated,
+  ;; cloned (the caller's ref to `m` is consumed, a fresh node returned).
+  ;; The slot index is mask(hash, shift) = (hash >> shift) & 31. The
+  ;; mechanical slot ops reuse the wrapped C functions; the semantic part is
+  ;; the sub-node recurse, which goes through the copyAssoc protocol — type
+  ;; dispatch, the Toccata counterpart of C's copyAssoc dispatcher (C's
+  ;; internal `equal` can't reach the `=` protocol, so the key/val equality
+  ;; happens in the child's own copyAssoc). An empty slot gets a fresh BMI
+  ;; child (copyAssoc on emptyBMI at shift+5), mirroring C; arrayNodeUpdate's
+  ;; same-child path covers the no-op case (returns `m` unchanged).
+  (let [k (set-hash-val k hash)
+        idx (bit-and (bit-shift-right hash shift) 31)]
+    (either (map (arrayNodeCopyChild m idx)
+                 (fn [child]
+                   (arrayNodeUpdate m idx (copyAssoc child k v hash (+ 5 shift)))))
+            (arrayNodeUpdate m idx (copyAssoc emptyBMI k v hash (+ 5 shift))))))
 
 (defn bmiGet [m k def hash shift]
   ! m BitmapIndexedNode
