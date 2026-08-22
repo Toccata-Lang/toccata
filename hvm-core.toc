@@ -1070,6 +1070,60 @@ abort();
    result = incRef((Term)bmiVal((BitmapIndexedNode *)bmi_1, getI60(bit_2)), 1);
    dec_and_free(bmi_1, 1);"))
 
+(defn bmiSlotCount [bmi]
+  ! bmi BitmapIndexedNode
+  ;; Number of occupied slots (popcount of the bitmap), as an Integer — the
+  ;; C bmiDissoc's `__builtin_popcount(node->bitmap) == 1` "only entry"
+  ;; check, exposed for the Toccata level. Read-only field access (the
+  ;; bmiBitMap pattern) — the node is still needed.
+  (inline Integer "
+   result = newI60(__builtin_popcount(((BitmapIndexedNode *)bmi_1)->bitmap));
+   dec_and_free((Term)bmi_1, 1);"))
+
+(defn bmi-empty? [m]
+  ! m BitmapIndexedNode
+  ;; Pointer identity with the emptyBMI singleton (the C bmiDissoc compares
+  ;; its sub-node result against &emptyBMI). Consumes m.
+  (inline "
+   if ((Value *)m_1 == (Value *)&emptyBMI) {
+     result = some(newI60(1));
+   } else {
+     result = nothing();
+   }
+   dec_and_free((Term)m_1, 1);"))
+
+(defn bmiShrink [bmi bit]
+  ! bmi BitmapIndexedNode
+  ! bit Integer
+  ;; Copy `bmi` with the slot at `bit` removed: the remaining entries are
+  ;; compacted and the bit is cleared from the bitmap. Mirrors the
+  ;; flat-entry-removed path of the C bmiDissoc (runtime3.c:2455).
+  ;; Consumes `bmi`, returns the new node.
+  (inline BitmapIndexedNode "
+   extern BitmapIndexedNode *malloc_bmiNode(int itemCount);
+   BitmapIndexedNode *node = (BitmapIndexedNode *)bmi_1;
+   int bit = getI60(bit_2);
+   int idx = __builtin_popcount(node->bitmap & (bit - 1));
+   int itemCount = __builtin_popcount(node->bitmap);
+   BitmapIndexedNode *newNode = malloc_bmiNode(itemCount - 1);
+   newNode->bitmap = node->bitmap;
+   for (int i = 0, j = 0; i < itemCount; i++) {
+     if (i != idx) {
+       if (node->array[i * 2] != 0) {
+         incRef((Term)node->array[i * 2], 1);
+       }
+       if (node->array[i * 2 + 1] != 0) {
+         incRef((Term)node->array[i * 2 + 1], 1);
+       }
+       newNode->array[j * 2] = node->array[i * 2];
+       newNode->array[j * 2 + 1] = node->array[i * 2 + 1];
+       j++;
+     }
+   }
+   newNode->bitmap &= ~bit;
+   dec_and_free((Term)bmi_1, 1);
+   result = (Term)newNode;"))
+
 (defn collisionCount [m]
   ! m HashCollisionNode
   ;; !returns Integer
@@ -1271,6 +1325,33 @@ abort();
                               (bmiVal m bit)
                               def)))
               def)))
+
+(defn bmiDissoc [m k hash shift]
+  ! m BitmapIndexedNode
+  ;; Toccata-level dissoc for a BitmapIndexedNode, mirroring the C bmiDissoc
+  ;; (runtime3.c:2427): the node with `k` removed, or `m` unchanged on miss.
+  ;; Returns emptyBMI when the last entry is removed. The mechanical slot
+  ;; ops reuse the wrapped C functions; the semantic key equality uses the
+  ;; `=` protocol with the lookup key first (the C bmiDissoc convention —
+  ;; an eq-gated lookup key that gates off removes nothing). Sub-node slots
+  ;; recurse into bmiDissoc until the dissoc* protocol lands in 2.2; the
+  ;; bmiUpdate same-child path covers the no-change case, and a sub-node
+  ;; that empties as the parent's only entry collapses to emptyBMI.
+  (let [bit (bitpos hash shift)]
+    (int-cond (bit-and bit (bmiBitMap m))
+      (either (map (bmiCopyChild m bit)
+                   (fn [childNode]
+                     (let [n (bmiDissoc childNode k hash (+ 5 shift))]
+                       (cond (and (bmi-empty? n) (= 1 (bmiSlotCount m)))
+                             n
+                             (bmiUpdate m bit n)))))
+      (let [currKey (bmiKey m bit)]
+        (cond (= k currKey)
+              (cond (= 1 (bmiSlotCount m))
+                    emptyBMI
+                    (bmiShrink m bit))
+              m)))
+      m)))
 
 (defn collisionGet-i [m k def n i]
   (cond (= i n)
