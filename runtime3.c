@@ -2074,8 +2074,6 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
     // create BitmapIndexedNode for next level down
     int jdx = mask(hash, shift);
     int newShift = shift + 5;
-    // TODO: why cloning emptyBMI?
-    BOOM("wtf");
     newNode->array[jdx] = (Term)cloneBitmapIndexedNode(&emptyBMI, idx, key, val);
 
     // copy the elements of the original 'node' to the new ArrayNode
@@ -2088,8 +2086,6 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
 	  incRef(newNode->array[i], 1);
 	} else {
 	  // it's a k/v pair, create a new BitmapIndexedNode for that level
-	  // TODO: why cloning emptyBMI?
-	  BOOM("wtf");
 	  newNode->array[i] = (Term)cloneBitmapIndexedNode(&emptyBMI, 0,
 							   incRef(node->array[j], 2),
 							   incRef(node->array[j + 1], 1));
