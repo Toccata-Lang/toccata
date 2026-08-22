@@ -38,7 +38,7 @@ The C-level dispatchers are `copyAssoc` (runtime3.c:2761) and `mutateAssoc` (277
 
 **Not exposed** (in `runtime3.c` only — can't test until wrapped): `mapGet` (the type dispatcher — protocol dispatch replaces it), `bmiDissoc`, `addMutateBMI` (the Toccata `bmiMutateAssoc` reuses `addCopiedBMI` for the empty-slot case), raw `bmiSetKey`/`bmiSetVal`
 
-**Currently covered in test-bmi.toc:** 21 cases — Group A (`bmiCopyAssoc` integration, 10), Group B (`bmiMutateAssoc` integration, 9), `get` (1: flat hit), plus bitmap-of-empty. See the checklists below.
+**Currently covered in test-bmi.toc:** 23 cases — Group A (`bmiCopyAssoc` integration, 10), Group B (`bmiMutateAssoc` integration, 9), `get` (3: flat hit, flat miss bit-not-set, flat miss key-mismatch), plus bitmap-of-empty. See the checklists below.
 
 ## BMI Tests (`regression-tests/test-bmi.toc`)
 
@@ -132,7 +132,7 @@ The BMI assoc side is done (Groups A/B, fully branch-tested). What remains is th
 - [x] **1.1** Wrap `bmiGet` (C ref `runtime3.c:2368` — `(node, key, def, hash, shift)`, returns `def` on miss) in `hvm-core.toc`. C's `mapGet` (2401) is the type dispatcher; at the Toccata level protocol dispatch replaces it, so wrap only the BMI variant for now.
 - [x] **1.2** Add a `get*` protocol and a `get` method for `BitmapIndexedNode`, mirroring the `assoc*`/`copyAssoc` pattern: `get* [m k def hash shift]` → the wrapper; `get [m k]` → computes `(sha1 k)`, calls `get*` with a sentinel default, and maps the result to `Some`/`None` per the commented tests' usage (`(= (Some "a") (get ...))`).
 - [x] **1.3** `test-bmi.toc`: get test — hit (flat).
-- [ ] **1.4** `test-bmi.toc`: get test — miss (returns `def`).
+- [x] **1.4** `test-bmi.toc`: get test — miss (returns `def`).
 - [ ] **1.5** `test-bmi.toc`: get test — hit inside a sub-node (depth 2).
 - [ ] **1.6** `test-bmi.toc`: get test — miss inside a sub-node.
 - [ ] **1.7** `test-bmi.toc`: get test — hit inside a collision node.
