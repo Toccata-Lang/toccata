@@ -4,7 +4,7 @@
 
 The Toccata layer wraps the C-level bitmap-trie functions (see `hash-map-plan-c.md`) with inline-C wrappers in `hvm-core.toc` and implements the hash-map protocol methods in Toccata. Testing is exercised through `regression-tests/test-bmi.toc` (BMI node level) and, eventually, `regression-tests/hash-map-regressions.toc` (full map level).
 
-**State (2026-08-22):** `bmiCopyAssoc` and `bmiMutateAssoc` are implemented at the Toccata level and fully branch-tested; both suites pass — `test-bmi` (20 cases: Group A copy-assoc + Group B mutate-assoc, `diff: 0`, `remaining nodes: 0`, `SAFETY=1`) and `test-hash-map` (54 tests, all green).
+**State (2026-08-22):** `bmiCopyAssoc` and `bmiMutateAssoc` are implemented at the Toccata level and fully branch-tested; both suites pass — `test-bmi` (20 cases: Group A copy-assoc + Group B mutate-assoc, `diff: 0`, `remaining nodes: 0`, `SAFETY=1`) and `test-hash-map` (54 tests, all green). Phase 1 (`get`) underway: `bmiGet` is wrapped in `hvm-core.toc` (task 1.1) but not yet exercised by tests (1.3–1.7).
 
 ## Big Picture: Node Types and the Toccata-Level Assoc Requirement
 
@@ -34,9 +34,9 @@ The C-level dispatchers are `copyAssoc` (runtime3.c:2761) and `mutateAssoc` (277
 
 ## BMI Surface (what's testable from Toccata today)
 
-**Exposed in `hvm-core.toc`:** `emptyBMI`, `bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiCopyChild` (owned — `incRef`s the child), `bmiMutateChild` (borrowed — no `incRef`), `bmiClone`, `bmiUpdate`, `addCopiedBMI`, `bmiReplaceCopied`, `bmiCopyAssoc`, the mutate family (`bmiMutateAssoc`, `bmiReplaceMutate`, `bmiSetKV`, `bmiSetChild`), `refs-count`, `set-hash-val`, `bmiCount`/`count`, `bmiHashVec`, `bmiVec`/`vec` (Toccata-level recursion — the C `bmiHashVec` aborts on sub-node slots via the dead `hashVec` dispatcher), `empty?`, the `copyAssoc`/`assoc*` protocols
+**Exposed in `hvm-core.toc`:** `emptyBMI`, `bitpos`, `bmiBitMap`, `bmiKey`, `bmiVal`, `bmiCopyChild` (owned — `incRef`s the child), `bmiMutateChild` (borrowed — no `incRef`), `bmiClone`, `bmiUpdate`, `addCopiedBMI`, `bmiReplaceCopied`, `bmiCopyAssoc`, the mutate family (`bmiMutateAssoc`, `bmiReplaceMutate`, `bmiSetKV`, `bmiSetChild`), `bmiGet` (Toccata-level — sub-node slots recurse into `bmiGet` directly until the `get*` protocol lands in task 1.2), `refs-count`, `set-hash-val`, `bmiCount`/`count`, `bmiHashVec`, `bmiVec`/`vec` (Toccata-level recursion — the C `bmiHashVec` aborts on sub-node slots via the dead `hashVec` dispatcher), `empty?`, the `copyAssoc`/`assoc*` protocols
 
-**Not exposed** (in `runtime3.c` only — can't test until wrapped): `bmiGet`/`mapGet`, `bmiDissoc`, `addMutateBMI` (the Toccata `bmiMutateAssoc` reuses `addCopiedBMI` for the empty-slot case), raw `bmiSetKey`/`bmiSetVal`
+**Not exposed** (in `runtime3.c` only — can't test until wrapped): `mapGet` (the type dispatcher — protocol dispatch replaces it), `bmiDissoc`, `addMutateBMI` (the Toccata `bmiMutateAssoc` reuses `addCopiedBMI` for the empty-slot case), raw `bmiSetKey`/`bmiSetVal`
 
 **Currently covered in test-bmi.toc:** 20 cases — Group A (`bmiCopyAssoc` integration, 10), Group B (`bmiMutateAssoc` integration, 9), plus bitmap-of-empty. See the checklists below.
 
@@ -129,7 +129,7 @@ The BMI assoc side is done (Groups A/B, fully branch-tested). What remains is th
 
 ### Phase 1 — `get`
 
-- [ ] **1.1** Wrap `bmiGet` (C ref `runtime3.c:2368` — `(node, key, def, hash, shift)`, returns `def` on miss) in `hvm-core.toc`. C's `mapGet` (2401) is the type dispatcher; at the Toccata level protocol dispatch replaces it, so wrap only the BMI variant for now.
+- [x] **1.1** Wrap `bmiGet` (C ref `runtime3.c:2368` — `(node, key, def, hash, shift)`, returns `def` on miss) in `hvm-core.toc`. C's `mapGet` (2401) is the type dispatcher; at the Toccata level protocol dispatch replaces it, so wrap only the BMI variant for now.
 - [ ] **1.2** Add a `get*` protocol and a `get` method for `BitmapIndexedNode`, mirroring the `assoc*`/`copyAssoc` pattern: `get* [m k hash def shift]` → the wrapper; `get [m k]` → computes `(sha1 k)`, calls `get*` with a sentinel default, and maps the result to `Some`/`None` per the commented tests' usage (`(= (Some "a") (get ...))`).
 - [ ] **1.3** `test-bmi.toc`: get test — hit (flat).
 - [ ] **1.4** `test-bmi.toc`: get test — miss (returns `def`).
