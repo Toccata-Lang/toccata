@@ -141,6 +141,15 @@
                   (= [[55 (Val 98)]] (vec m2)))
              _FILE_ _LINE_))
 
+  ;; Same key, same value → bmiSetKV still runs (the mutate path has no
+  ;; no-op branch): the slot is reset to the equal key/val and the old
+  ;; contents freed. count 1, vec unchanged.
+  (let [m (copyAssoc emptyBMI 55 (Val 99) (sha1 55) 0)
+        m2 (assoc* m 55 (Val 99) (sha1 55) 0)]
+    (rt/test (and (= 1 (count m2))
+                  (= [[55 (Val 99)]] (vec m2)))
+             _FILE_ _LINE_))
+
   ;; Different key, different bit → addCopiedBMI: a new 2-entry node.
   (let [k1 (CHash 3 (Some 3))
         k2 (CHash 4 (Some 4))
@@ -154,6 +163,18 @@
   ;; (createNode): a sub-node under bit 3. count 2, vec flattened in.
   (let [k1 (CHash 3 (Some 3))
         k2 (CHash 35 (Some 35))
+        m (copyAssoc emptyBMI k1 (Val 99) (sha1 k1) 0)
+        m2 (assoc* m k2 (Val 98) (sha1 k2) 0)]
+    (rt/test (and (= 2 (count m2))
+                  (= [[k1 (Val 99)] [k2 (Val 98)]] (vec m2)))
+             _FILE_ _LINE_))
+
+  ;; Different key, same bit at shift 0 and shift 5, different at shift 10
+  ;; (3 vs 1027) → bmiReplaceMutate (createNode recursion): the sub-node
+  ;; under bit 3 holds another sub-node with the two keys. count 2, vec
+  ;; flattened.
+  (let [k1 (CHash 3 (Some 3))
+        k2 (CHash 1027 (Some 1027))
         m (copyAssoc emptyBMI k1 (Val 99) (sha1 k1) 0)
         m2 (assoc* m k2 (Val 98) (sha1 k2) 0)]
     (rt/test (and (= 2 (count m2))
@@ -185,6 +206,41 @@
               (copyAssoc k2 (Val 98) (sha1 k2) 0))
         m2 (assoc* m k3 (Val 97) (sha1 k3) 0)]
     (rt/test (and (= 3 (count m2))
+                  (= [[k1 (Val 99)] [k2 (Val 98)] [k3 (Val 97)]] (vec m2)))
+             _FILE_ _LINE_))
+
+  ;; Same key, different value, key located inside a sub-node (depth 2) →
+  ;; child recurse where the child's assoc* hits the same-key branch
+  ;; (bmiSetKV in the child, in place): count unchanged, vec shows the
+  ;; updated value.
+  (let [k1 (CHash 3 (Some 3))
+        k2 (CHash 35 (Some 35))
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        m2 (assoc* m k1 (Val 97) (sha1 k1) 0)]
+    (rt/test (and (= 2 (count m2))
+                  (= [[k1 (Val 97)] [k2 (Val 98)]] (vec m2)))
+             _FILE_ _LINE_))
+
+  ;; Shared child → copy fallback: m1's sub-node under bit 3 (keys 3+35) is
+  ;; shared with m2 (addCopiedBMI shares child slots when it clones).
+  ;; assoc* on m1 with key 67 (bit 3 again) → the child carries a second
+  ;; slot ref, so its refs-count is not 3 and assoc* copies the child
+  ;; instead of mutating it; bmiSetChild points m1's slot at the new child.
+  ;; m1 gains k4, m2 is untouched.
+  (let [k1 (CHash 3 (Some 3))
+        k2 (CHash 35 (Some 35))
+        k3 (CHash 4 (Some 4))
+        k4 (CHash 67 (Some 67))
+        m1 (-> emptyBMI
+               (copyAssoc k1 (Val 99) (sha1 k1) 0)
+               (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        m2 (copyAssoc m1 k3 (Val 97) (sha1 k3) 0)
+        m3 (assoc* m1 k4 (Val 96) (sha1 k4) 0)]
+    (rt/test (and (= 3 (count m3))
+                  (= [[k1 (Val 99)] [k2 (Val 98)] [k4 (Val 96)]] (vec m3))
+                  (= 3 (count m2))
                   (= [[k1 (Val 99)] [k2 (Val 98)] [k3 (Val 97)]] (vec m2)))
              _FILE_ _LINE_)))
 
