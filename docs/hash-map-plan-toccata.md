@@ -4,7 +4,7 @@
 
 The Toccata layer wraps the C-level bitmap-trie functions (see `hash-map-plan-c.md`) with inline-C wrappers in `hvm-core.toc` and implements the hash-map protocol methods in Toccata. Testing is exercised through `regression-tests/test-bmi.toc` (BMI node level) and, eventually, `regression-tests/hash-map-regressions.toc` (full map level).
 
-**State (2026-08-22):** `bmiCopyAssoc` and `bmiMutateAssoc` are implemented at the Toccata level and fully branch-tested; both suites pass — `test-bmi` (24 cases: Group A copy-assoc + Group B mutate-assoc + `get`, `diff: 0`, `remaining nodes: 0`, `SAFETY=1`) and `test-hash-map` (54 tests, all green). Phase 1 (`get`) underway: `bmiGet` is wrapped (task 1.1) and the `get*` protocol + `get` method for `BitmapIndexedNode` are in place (task 1.2); `get` is exercised by tests 1.3–1.5 (flat hit, flat miss, sub-node hit); 1.6–1.7 remain.
+**State (2026-08-22):** `bmiCopyAssoc` and `bmiMutateAssoc` are implemented at the Toccata level and fully branch-tested; both suites pass — `test-bmi` (26 cases: Group A copy-assoc + Group B mutate-assoc + `get`, `diff: 0`, `remaining nodes: 0`, `SAFETY=1`) and `test-hash-map` (54 tests, all green). Phase 1 (`get`) underway: `bmiGet` is wrapped (task 1.1) and the `get*` protocol + `get` method for `BitmapIndexedNode` are in place (task 1.2); `get` is exercised by tests 1.3–1.6 (flat hit, flat miss, sub-node hit, sub-node miss); 1.7 remains.
 
 ## Big Picture: Node Types and the Toccata-Level Assoc Requirement
 
@@ -38,7 +38,7 @@ The C-level dispatchers are `copyAssoc` (runtime3.c:2761) and `mutateAssoc` (277
 
 **Not exposed** (in `runtime3.c` only — can't test until wrapped): `mapGet` (the type dispatcher — protocol dispatch replaces it), `bmiDissoc`, `addMutateBMI` (the Toccata `bmiMutateAssoc` reuses `addCopiedBMI` for the empty-slot case), raw `bmiSetKey`/`bmiSetVal`
 
-**Currently covered in test-bmi.toc:** 24 cases — Group A (`bmiCopyAssoc` integration, 10), Group B (`bmiMutateAssoc` integration, 9), `get` (4: flat hit, flat miss bit-not-set, flat miss key-mismatch, sub-node hit), plus bitmap-of-empty. See the checklists below.
+**Currently covered in test-bmi.toc:** 26 cases — Group A (`bmiCopyAssoc` integration, 10), Group B (`bmiMutateAssoc` integration, 9), `get` (6: flat hit, flat miss bit-not-set, flat miss key-mismatch, sub-node hit, sub-node miss bit-not-set, sub-node miss key-mismatch), plus bitmap-of-empty. See the checklists below.
 
 ## BMI Tests (`regression-tests/test-bmi.toc`)
 
@@ -134,7 +134,7 @@ The BMI assoc side is done (Groups A/B, fully branch-tested). What remains is th
 - [x] **1.3** `test-bmi.toc`: get test — hit (flat).
 - [x] **1.4** `test-bmi.toc`: get test — miss (returns `def`).
 - [x] **1.5** `test-bmi.toc`: get test — hit inside a sub-node (depth 2).
-- [ ] **1.6** `test-bmi.toc`: get test — miss inside a sub-node.
+- [x] **1.6** `test-bmi.toc`: get test — miss inside a sub-node.
 - [ ] **1.7** `test-bmi.toc`: get test — hit inside a collision node.
 
 ### Phase 2 — `dissoc`
