@@ -318,6 +318,108 @@
     (rt/test (= def (get* cn k3 def (sha1 k3) 0))
              _FILE_ _LINE_)))
 
+(defn test-dissoc []
+  ;; --- dissoc* (HashCollisionNode) ---
+  ;; HashCollisionNode has no `dissoc` method (only the `dissoc*` protocol —
+  ;; the `dissoc` method is a BitmapIndexedNode-level convenience that computes
+  ;; the sha1), so dissoc* is called directly with an explicit hash/shift, the
+  ;; get* convention (the ArrayNode dissoc pattern, 3.15). dissoc* routes to the
+  ;; Toccata collisionDissoc (hvm-core.toc), mirroring the C collisionDissoc
+  ;; (runtime3.c:2649): the `=` protocol with the lookup key first (the C
+  ;; collisionDissoc / bmiDissoc convention — an eq-gated lookup key that gates
+  ;; off removes nothing), the mechanical shrink in collisionShrink. hash/shift
+  ;; are unused: a collision node holds only keys with one hash. dissoc copies —
+  ;; the source node is never mutated.
+
+  ;; Remove an entry from a multi-entry node (n=2, hit) → a 1-entry node:
+  ;; build a 2-entry collision node the way a map builds one (two 7/7 eq=None
+  ;; keys into emptyBMI → bmiCopyAssoc's collision branch → a BMI with a single
+  ;; slot (bit 7) holding [k1 v1, k2 v2]), extracted with bmiCopyChild (owned
+  ;; ref, mask 128 = 1<<7). dissoc* a lookup key k3 (hash 7, eq=Some): the
+  ;; scan's lookup-key-first `=` is true for entry 0 (k3's eq=Some gate, same
+  ;; hash) → collisionShrink removes entry 0, compaction moves entry 1 (k2 v2)
+  ;; to index 0 → a 1-entry node. count 1, the survivor is Val 98; the source
+  ;; node is untouched (count 2).
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        k3 (CHash 7 (Some 7))
+        m2 (dissoc* cn k3 (sha1 k3) 0)]
+    (rt/test (and (= 1 (collisionCount m2))
+                  (= (Val 98) (collisionVal m2 0))
+                  (= 2 (collisionCount cn)))
+             _FILE_ _LINE_))
+
+  ;; Remove the last entry (n=1, hit) → emptyBMI: the 1-entry node from the
+  ;; previous case ([k2 v2]). dissoc* a lookup key k4 (hash 7, eq=Some): the
+  ;; n==1 path checks entry 0 — (= k4 k2) is true (k4's eq=Some gate, same
+  ;; hash) → the C collisionDissoc last-entry path frees the node and returns
+  ;; the global emptyBMI: count 0, bitmap 0, vec []. Both intermediate nodes
+  ;; are untouched (dissoc copies, it never mutates).
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        k3 (CHash 7 (Some 7))
+        m2 (dissoc* cn k3 (sha1 k3) 0)
+        k4 (CHash 7 (Some 7))
+        m3 (dissoc* m2 k4 (sha1 k4) 0)]
+    (rt/test (and (= 1 (collisionCount m2))
+                  (= 0 (count m3))
+                  (= 0 (bmiBitMap m3))
+                  (= [] (vec m3))
+                  (= 2 (collisionCount cn)))
+             _FILE_ _LINE_))
+
+  ;; Remove a missing key (no-op, key mismatch — eq=None gate): a 2-entry node
+  ;; (two 7/7 eq=None keys). dissoc* a lookup key k3 (hash 7, eq=None): the
+  ;; lookup-key-first `=` is gated off by k3's own eq=None (the first arg), so
+  ;; (= k3 ek) is false for both entries → the scan reaches its base case →
+  ;; the node is returned unchanged: count 2, vec the two original pairs in
+  ;; entry order; the source node is untouched.
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        k3 (CHash 7 None)
+        m2 (dissoc* cn k3 (sha1 k3) 0)]
+    (rt/test (and (= 2 (collisionCount m2))
+                  (= [[(CHash 7 (Some 7)) (Val 99)]
+                      [(CHash 7 (Some 7)) (Val 98)]]
+                     (vec m2))
+                  (= 2 (collisionCount cn)))
+             _FILE_ _LINE_))
+
+  ;; Remove a missing key from a 1-entry node (no-op, different hash): the
+  ;; 1-entry node from the last-entry case ([k2 v2], entry hash 7). dissoc* a
+  ;; lookup key k4 with a different hash (3, eq=Some): the n==1 path checks
+  ;; entry 0 — (= k4 k2) is false (CHash's `=` compares the first arg's h
+  ;; against the second arg's h, 3 ≠ 7) → the node is returned unchanged:
+  ;; count 1, the entry Val 98 intact; both the 1-entry node and the original
+  ;; 2-entry node are untouched.
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        k3 (CHash 7 (Some 7))
+        m2 (dissoc* cn k3 (sha1 k3) 0)
+        k4 (CHash 3 (Some 3))
+        m3 (dissoc* m2 k4 (sha1 k4) 0)]
+    (rt/test (and (= 1 (collisionCount m3))
+                  (= (Val 98) (collisionVal m3 0))
+                  (= 1 (collisionCount m2))
+                  (= 2 (collisionCount cn)))
+             _FILE_ _LINE_)))
+
 (defn main [_]
   (println "Checking CollisionNode regressions")
 
@@ -336,6 +438,8 @@
   (test-assoc-promote)
 
   (test-get)
+
+  (test-dissoc)
 
   (println "CollisionNode tests are good")
   )

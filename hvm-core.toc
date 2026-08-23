@@ -1304,6 +1304,33 @@ abort();
    dec_and_free((Term)m_1, 1);
    result = (Term)newNode;"))
 
+(defn collisionShrink [m i]
+  ! m HashCollisionNode
+  ! i Integer
+  ;; Clone `m` with the entry at `i` removed: the remaining entries are
+  ;; compacted. Mirrors the multi-entry hit path of the C collisionDissoc
+  ;; (runtime3.c:2649): the new node has capacity itemCount-1 and count
+  ;; 2*(itemCount-1) (malloc_hashCollisionNode sets count = 2 * itemCount,
+  ;; so no count overwrite is needed). The surviving entries are copied with
+  ;; fresh refs. Consumes `m`, returns the new node. Only called for a node
+  ;; with >= 2 entries (the 1-entry case returns emptyBMI, not a shrunk node).
+  (inline HashCollisionNode "
+   HashCollisionNode *node = (HashCollisionNode *)m_1;
+   int64_t i = getI60(i_2);
+   int itemCount = node->count / 2;
+   HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount - 1);
+   for (int j = 0, k = 0; j < itemCount; j++) {
+     if (j != i) {
+       newNode->array[2 * k] = node->array[2 * j];
+       newNode->array[2 * k + 1] = node->array[2 * j + 1];
+       incRef((Term)newNode->array[2 * k], 1);
+       incRef((Term)newNode->array[2 * k + 1], 1);
+       k++;
+     }
+   }
+   dec_and_free((Term)m_1, 1);
+   result = (Term)newNode;"))
+
 (defn collisionVec [m v]
   ! m HashCollisionNode
   ! v Vector
@@ -1702,6 +1729,41 @@ abort();
           (let [bmi (copyAssoc emptyBMI k v hash 0)]
             (collisionAssoc-promote-i bmi m n 0)))))
 
+(defn collisionDissoc-find [m k n i]
+  ;; First index in 0..n-1 whose entry key is `=`-equal to `k` (lookup key
+  ;; first, the C collisionDissoc / bmiDissoc convention — an eq-gated lookup
+  ;; key that gates off removes nothing), as (Some i); None if no entry
+  ;; matches. Read-only scan — collisionKey hands out an owned ref that `=`
+  ;; consumes (the collisionAssoc-find pattern).
+  (cond (= i n)
+        None
+        (let [ek (collisionKey m i)]
+          (cond (= k ek)
+                (Some i)
+                (collisionDissoc-find m k n (inc i))))))
+
+(defn collisionDissoc [m k hash shift]
+  ! m HashCollisionNode
+  ;; Toccata-level dissoc for a HashCollisionNode, mirroring the C
+  ;; collisionDissoc (runtime3.c:2649): the node with `k` removed, or `m`
+  ;; unchanged on miss. Returns emptyBMI when the last entry is removed (the
+  ;; C itemCount == 1 path). The mechanical node building reuses the wrapped
+  ;; C allocation (collisionShrink); the semantic key equality uses the `=`
+  ;; protocol with the lookup key first (the C collisionDissoc / bmiDissoc
+  ;; convention — C's `equal` only handles I60/String). hash/shift are
+  ;; unused: a collision node holds only keys with one hash. Like C, this
+  ;; assumes the node has at least one entry (a fresh emptyCollisionNode is
+  ;; not a valid input, per 4.2).
+  (let [n (collisionCount m)]
+    (cond (= n 1)
+          (let [ek (collisionKey m 0)]
+            (cond (= k ek)
+                  emptyBMI
+                  m))
+          (let [idx (collisionDissoc-find m k n 0)]
+            (either (map idx (fn [i] (collisionShrink m i)))
+                    m)))))
+
 (defn refs-count [v]
   !returns Integer
   (inline "
@@ -1797,7 +1859,10 @@ abort();
     (collisionAssoc m k v hash shift))
 
   (get* [m k def hash shift]
-    (collisionGet m k def hash shift)))
+    (collisionGet m k def hash shift))
+
+  (dissoc* [m k hash shift]
+    (collisionDissoc m k hash shift)))
 
 (extend-type HashMap
   (empty? [m]
