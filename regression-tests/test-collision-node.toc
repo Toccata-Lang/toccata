@@ -23,6 +23,64 @@
   (= [x y] (and (= (type-num x) (type-num y)) eq (= h (.h y))))
   (sha1 [_] h))
 
+(defn test-count []
+  ;; --- count (HashCollisionNode) ---
+  ;; HashCollisionNode has no `count` method (only the collisionCount
+  ;; wrapper — a read-only defn, since the C collisionCount consumes its
+  ;; arg), so the count is asserted via collisionCount directly.
+  ;;
+  ;; A fresh emptyCollisionNode reports 2, not 0: C's count field is
+  ;; dual-use — malloc_hashCollisionNode sets count = 2 * capacity (4 for
+  ;; the capacity-2 allocation) and collisionCount returns count / 2 (the
+  ;; 4.2 note). This pins that documented quirk.
+  (rt/test (= 2 (collisionCount (emptyCollisionNode)))
+           _FILE_ _LINE_)
+
+  ;; 2-entry collision node built the way a map builds one: assoc two keys
+  ;; with identical hash (7/7) into emptyBMI, the first with eq=None so
+  ;; bmiCopyAssoc's (= currKey k) is false → the collision branch → a BMI
+  ;; with a single slot (bit 7) holding [k1 v1, k2 v2]. Extract it with
+  ;; bmiCopyChild (owned ref; bit mask 128 = 1 << 7) → count 2.
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)]
+    (rt/test (= 2 (collisionCount cn))
+             _FILE_ _LINE_))
+
+  ;; 3-entry node: append a third same-hash key k3 (eq=None, so
+  ;; collisionAssoc-find's entry-key-first `=` is false for both eq=None
+  ;; entries — the eq gate is on the first arg, the entry key) →
+  ;; collisionAppend → count 3.
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        k3 (CHash 7 None)
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        m3 (copyAssoc cn k3 (Val 97) (sha1 k3) 0)]
+    (rt/test (= 3 (collisionCount m3))
+             _FILE_ _LINE_))
+
+  ;; 4-entry node: append a fourth same-hash key k4 (eq=Some; still not
+  ;; =-equal to any entry — all three carry eq=None, and the eq gate is on
+  ;; the first arg, the entry key) → collisionAppend again → count 4.
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        k3 (CHash 7 None)
+        k4 (CHash 7 (Some 7))
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        m3 (copyAssoc cn k3 (Val 97) (sha1 k3) 0)
+        m4 (copyAssoc m3 k4 (Val 96) (sha1 k4) 0)]
+    (rt/test (= 4 (collisionCount m4))
+             _FILE_ _LINE_)))
+
 (defn test-assoc-add []
   ;; --- assoc: add a key to a collision node (collisionAssoc hash-match/append) ---
   ;; Build a 2-entry collision node the way a map builds one: assoc two keys
@@ -150,6 +208,8 @@
   ;; Seed test (trivially green): emptyBMI's bitmap is 0.
   (rt/test (= 0 (bmiBitMap emptyBMI))
            _FILE_ _LINE_)
+
+  (test-count)
 
   (test-assoc-add)
 
