@@ -250,6 +250,74 @@
                   (= (Val 98) (collisionVal child 1)))
              _FILE_ _LINE_)))
 
+(defn test-get []
+  ;; --- get* (HashCollisionNode) ---
+  ;; HashCollisionNode has no `get` method (only the `get*` protocol — the
+  ;; `get` method is a BitmapIndexedNode-level convenience that computes the
+  ;; sha1 and maps a sentinel to Some/None), so get* is called directly with
+  ;; an explicit def/hash/shift, the get* convention. get* routes to the
+  ;; Toccata collisionGet (hvm-core.toc): a linear scan over the entries
+  ;; (collisionGet-i), the `=` protocol with the entry key first (the
+  ;; bmiCopyAssoc convention — C's collisionGet, runtime3.c:2690, uses C's
+  ;; `equal`, which can't reach the `=` protocol). hash/shift are unused: a
+  ;; collision node holds only keys with one hash.
+
+  ;; Hit: a 2-entry collision node built the way a map builds one (two 7/7
+  ;; keys into emptyBMI, the first with eq=None so bmiCopyAssoc's
+  ;; (= currKey k) is false → the collision branch → a BMI with a single
+  ;; slot (bit 7) holding [k1 v1, k2 v2]), the second key carrying eq=Some
+  ;; so a same-hash lookup key can =-equal it (the eq gate is on the first
+  ;; arg, and the scan compares entry-key-first). Extract it with
+  ;; bmiCopyChild (owned ref; bit mask 128 = 1 << 7). Lookup k2 (hash 7,
+  ;; eq=Some): the scan compares entry 0 first — (= k1 k2) is false (k1's
+  ;; eq=None gate) — then entry 1: (= k2 k2) is true → the value Val 98.
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 (Some 7))
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        def (Val 123)]
+    (rt/test (= (Val 98) (get* cn k2 def (sha1 k2) 0))
+             _FILE_ _LINE_))
+
+  ;; Miss (same hash, key mismatch): a 2-entry node with BOTH entries
+  ;; eq=None (two 7/7 eq=None keys into emptyBMI → the collision branch →
+  ;; [k1 v1, k2 v2]). The eq gate is on the first arg (the entry key), so no
+  ;; lookup key — whatever its own eq — can =-equal an eq=None entry: lookup
+  ;; k3 (hash 7, eq=Some) scans both entries, (= ek k3) is false for both →
+  ;; the scan reaches its base case → def.
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        k3 (CHash 7 (Some 7))
+        def (Val 123)]
+    (rt/test (= def (get* cn k3 def (sha1 k3) 0))
+             _FILE_ _LINE_))
+
+  ;; Miss (different hash): the same 2-entry node as the hit case (entries
+  ;; k1 eq=None, k2 eq=Some, both hash 7). Lookup k3 with a different hash
+  ;; (3, eq=Some): (= ek k3) is false for both entries — CHash's `=` compares
+  ;; the first arg's h against the second arg's h, and 7 ≠ 3 (the eq=None
+  ;; entry is already gated off) → def. (A real map would never route a
+  ;; hash-3 lookup to a hash-7 collision node — the parent's bitmap check
+  ;; fails first — but the scan itself is hash-agnostic, mirroring the C
+  ;; collisionGet, which never checks the hash; this pins that the `=`
+  ;; protocol, not the hash, drives the comparison.)
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 (Some 7))
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        k3 (CHash 3 (Some 3))
+        def (Val 123)]
+    (rt/test (= def (get* cn k3 def (sha1 k3) 0))
+             _FILE_ _LINE_)))
+
 (defn main [_]
   (println "Checking CollisionNode regressions")
 
@@ -266,6 +334,8 @@
   (test-assoc-update)
 
   (test-assoc-promote)
+
+  (test-get)
 
   (println "CollisionNode tests are good")
   )
