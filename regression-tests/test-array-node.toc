@@ -126,6 +126,78 @@
     (rt/test (= expected (vec m))
              _FILE_ _LINE_)))
 
+(defn test-assoc []
+  ;; --- assoc into an empty slot (ArrayNode) ---
+  ;; ArrayNode slots hold only sub-nodes (never flat key/val pairs), so an
+  ;; empty slot (slot index mask(hash, shift) == 0) means the slot is 0. assoc
+  ;; into an empty slot installs a fresh 1-entry BMI child at that slot
+  ;; (copyAssoc on emptyBMI at shift+5), mirroring the C arrayNodeCopyAssoc /
+  ;; arrayNodeMutateAssoc empty-slot branches:
+  ;;  - copyAssoc → arrayNodeCopyAssoc: arrayNodeCopyChild returns None →
+  ;;    arrayNodeUpdate clones the node with the slot set to the fresh child
+  ;;    (the other non-zero slots are incRef'd into the clone).
+  ;;  - assoc* (refs-count == 3, mutate path) → arrayNodeMutateAssoc:
+  ;;    arrayNodeMutateChild returns None → arrayNodeSetSlot points the slot
+  ;;    in place at the fresh child (the other slots are untouched).
+
+  ;; Copy path, empty ArrayNode (all 32 slots 0): assoc a key into an empty
+  ;; slot → count 1, vec is the single pair.
+  (let [m (emptyArrayNode)
+        k (CHash 3 (Some 3))]
+    (rt/test (let [m2 (copyAssoc m k (Val 99) (sha1 k) 0)]
+               (and (= 1 (count m2))
+                    (= [[k (Val 99)]] (vec m2))))
+             _FILE_ _LINE_))
+
+  ;; Mutate path, empty ArrayNode: assoc* a key into an empty slot (in place)
+  ;; → count 1, vec is the single pair.
+  (let [m (emptyArrayNode)
+        k (CHash 3 (Some 3))]
+    (rt/test (let [m2 (assoc* m k (Val 99) (sha1 k) 0)]
+               (and (= 1 (count m2))
+                    (= [[k (Val 99)]] (vec m2))))
+             _FILE_ _LINE_))
+
+  ;; Copy path, promoted ArrayNode (other slots occupied): the 17-entry
+  ;; promoted ArrayNode (slots 0..15 and 20 occupied). assoc a key whose slot
+  ;; is empty (hash 21 → slot 21) → arrayNodeCopyAssoc's empty-slot branch
+  ;; clones the node with slot 21 set to a fresh 1-entry BMI child, the other
+  ;; 17 slots preserved (incRef'd into the clone). count 18; get* hits both the
+  ;; new key (slot 21) and an old key (slot 5).
+  (let [full-bmi (reduce (range 16) emptyBMI
+                         (fn [m n]
+                           (let [k (CHash n (Some n))]
+                             (copyAssoc m k (Val (inc n)) (sha1 k) 0))))
+        k17 (CHash 20 (Some 20))
+        m (copyAssoc full-bmi k17 (Val 21) (sha1 k17) 0)
+        k21 (CHash 21 (Some 21))
+        k5 (CHash 5 (Some 5))
+        def (Val 123)]
+    (rt/test (let [m2 (copyAssoc m k21 (Val 22) (sha1 k21) 0)]
+               (and (= 18 (count m2))
+                    (= (Val 22) (get* m2 k21 def (sha1 k21) 0))
+                    (= (Val 6) (get* m2 k5 def (sha1 k5) 0))))
+             _FILE_ _LINE_))
+
+  ;; Mutate path, promoted ArrayNode: assoc* a key into an empty slot (in
+  ;; place) → arrayNodeMutateAssoc's empty-slot branch sets slot 21 to a fresh
+  ;; 1-entry BMI child, the other 17 slots untouched. count 18; get* hits both
+  ;; the new key and an old key.
+  (let [full-bmi (reduce (range 16) emptyBMI
+                         (fn [m n]
+                           (let [k (CHash n (Some n))]
+                             (copyAssoc m k (Val (inc n)) (sha1 k) 0))))
+        k17 (CHash 20 (Some 20))
+        m (copyAssoc full-bmi k17 (Val 21) (sha1 k17) 0)
+        k21 (CHash 21 (Some 21))
+        k5 (CHash 5 (Some 5))
+        def (Val 123)]
+    (rt/test (let [m2 (assoc* m k21 (Val 22) (sha1 k21) 0)]
+               (and (= 18 (count m2))
+                    (= (Val 22) (get* m2 k21 def (sha1 k21) 0))
+                    (= (Val 6) (get* m2 k5 def (sha1 k5) 0))))
+             _FILE_ _LINE_)))
+
 (defn main [_]
   (println "Checking ArrayNode regressions")
 
@@ -137,6 +209,7 @@
   (test-get)
   (test-get-miss)
   (test-vec)
+  (test-assoc)
 
   (println "ArrayNode tests are good")
   )
