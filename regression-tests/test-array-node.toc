@@ -297,6 +297,126 @@
                     (= (Val 21) (get* m2 k17 def (sha1 k17) 0))))
              _FILE_ _LINE_)))
 
+(defn test-dissoc []
+  ;; --- dissoc (ArrayNode) ---
+  ;; ArrayNode has no `dissoc` method (only the `dissoc*` protocol), so the
+  ;; cases call `dissoc*` with an explicit hash/shift (the get* convention).
+  ;; arrayNodeDissoc (mirroring the C arrayNodeDissoc, runtime3.c:2733) routes
+  ;; by slot index mask(hash, shift):
+  ;;  - empty slot → arrayNodeCopyChild returns None → `m` unchanged;
+  ;;  - occupied slot → recurse into the child at shift+5 through the dissoc*
+  ;;    protocol (type dispatch); arrayNodeUpdate's same-child path returns
+  ;;    `m` unchanged when the child is unchanged, otherwise the parent is
+  ;;    cloned with the slot replaced.
+  ;; Unlike a BMI, an ArrayNode never collapses to emptyBMI — an emptied
+  ;; child leaves its slot pointing at emptyBMI. dissoc copies, it never
+  ;; mutates: the source map is untouched in every case.
+
+  ;; Miss (empty slot): the 17-entry promoted ArrayNode (slots 0..15 and 20
+  ;; occupied). dissoc* key 21 (slot 21 = (21 >> 0) & 31, empty) →
+  ;; arrayNodeCopyChild returns None → the node is unchanged: count 17,
+  ;; get* still hits key 5 (Val 6) and key 20 (Val 21), the source untouched.
+  (let [full-bmi (reduce (range 16) emptyBMI
+                         (fn [m n]
+                           (let [k (CHash n (Some n))]
+                             (copyAssoc m k (Val (inc n)) (sha1 k) 0))))
+        k17 (CHash 20 (Some 20))
+        m (copyAssoc full-bmi k17 (Val 21) (sha1 k17) 0)
+        k21 (CHash 21 (Some 21))
+        k5 (CHash 5 (Some 5))
+        def (Val 123)]
+    (rt/test (let [m2 (dissoc* m k21 (sha1 k21) 0)]
+               (and (= 17 (count m2))
+                    (= (Val 6) (get* m2 k5 def (sha1 k5) 0))
+                    (= (Val 21) (get* m2 k17 def (sha1 k17) 0))
+                    (= 17 (count m))))
+             _FILE_ _LINE_))
+
+  ;; Miss (occupied slot, key mismatch in child): key 1029's slot is 5 =
+  ;; (1029 >> 0) & 31 (occupied by key 5's 1-entry BMI); at shift 5 its
+  ;; window bit is 0 = ((1029 >> 5) & 31), the same bit the child holds
+  ;; (key 5: (5 >> 5) & 31 = 0), but the hashes differ (1029 ≠ 5) → the
+  ;; child's bmiDissoc key-compare branch returns the child unchanged →
+  ;; arrayNodeUpdate's same-child path → the node is unchanged: count 17,
+  ;; get* still hits key 5 (Val 6), the source untouched.
+  (let [full-bmi (reduce (range 16) emptyBMI
+                         (fn [m n]
+                           (let [k (CHash n (Some n))]
+                             (copyAssoc m k (Val (inc n)) (sha1 k) 0))))
+        k17 (CHash 20 (Some 20))
+        m (copyAssoc full-bmi k17 (Val 21) (sha1 k17) 0)
+        k1029 (CHash 1029 (Some 1029))
+        k5 (CHash 5 (Some 5))
+        def (Val 123)]
+    (rt/test (let [m2 (dissoc* m k1029 (sha1 k1029) 0)]
+               (and (= 17 (count m2))
+                    (= (Val 6) (get* m2 k5 def (sha1 k5) 0))
+                    (= 17 (count m))))
+             _FILE_ _LINE_))
+
+  ;; Hit (child shrinks): the 17-entry promoted ArrayNode, then copyAssoc
+  ;; key 37 (slot 5; bit 1 at shift 5, empty in the child) → the child's
+  ;; addCopiedBMI branch → a 2-entry child (keys 5 and 37) → 18 entries.
+  ;; dissoc* key 5 → the child's bmiDissoc: bit 0 at shift 5 set, flat slot,
+  ;; key match, popcount 2 → bmiShrink → a 1-entry child (key 37 survives);
+  ;; arrayNodeUpdate clones the parent with slot 5 replaced. count 17; get*
+  ;; hits key 37 (Val 38) and key 20 (Val 21), misses key 5; vec shows the
+  ;; surviving pairs in slot order (slot 5 now holds key 37's pair); the
+  ;; 18-entry source is untouched.
+  (let [full-bmi (reduce (range 16) emptyBMI
+                         (fn [m n]
+                           (let [k (CHash n (Some n))]
+                             (copyAssoc m k (Val (inc n)) (sha1 k) 0))))
+        k17 (CHash 20 (Some 20))
+        m (copyAssoc full-bmi k17 (Val 21) (sha1 k17) 0)
+        k37 (CHash 37 (Some 37))
+        m18 (copyAssoc m k37 (Val 38) (sha1 k37) 0)
+        k5 (CHash 5 (Some 5))
+        def (Val 123)
+        expected (conj (reduce (range 16) []
+                               (fn [vs n]
+                                 (cond (= 5 n)
+                                       (conj vs [(CHash 37 (Some 37)) (Val 38)])
+                                       (conj vs [(CHash n (Some n)) (Val (inc n))]))))
+                       [(CHash 20 (Some 20)) (Val 21)])]
+    (rt/test (let [m2 (dissoc* m18 k5 (sha1 k5) 0)]
+               (and (= 17 (count m2))
+                    (= (Val 38) (get* m2 k37 def (sha1 k37) 0))
+                    (= (Val 21) (get* m2 k17 def (sha1 k17) 0))
+                    (= def (get* m2 k5 def (sha1 k5) 0))
+                    (= expected (vec m2))
+                    (= 18 (count m18))))
+             _FILE_ _LINE_))
+
+  ;; Hit (child becomes empty): the 17-entry promoted ArrayNode. dissoc*
+  ;; key 5 (slot 5, a 1-entry child) → the child's bmiDissoc: key match,
+  ;; popcount 1 → emptyBMI; arrayNodeUpdate clones the parent with slot 5
+  ;; pointed at emptyBMI — an ArrayNode never collapses to emptyBMI itself.
+  ;; count 16; get* misses key 5 and hits key 20 (Val 21); vec is the 16
+  ;; flat pairs plus key 20's pair (slot 5's emptyBMI contributes nothing);
+  ;; the source is untouched.
+  (let [full-bmi (reduce (range 16) emptyBMI
+                         (fn [m n]
+                           (let [k (CHash n (Some n))]
+                             (copyAssoc m k (Val (inc n)) (sha1 k) 0))))
+        k17 (CHash 20 (Some 20))
+        m (copyAssoc full-bmi k17 (Val 21) (sha1 k17) 0)
+        k5 (CHash 5 (Some 5))
+        def (Val 123)
+        expected (conj (reduce (range 16) []
+                               (fn [vs n]
+                                 (cond (= 5 n)
+                                       vs
+                                       (conj vs [(CHash n (Some n)) (Val (inc n))]))))
+                       [(CHash 20 (Some 20)) (Val 21)])]
+    (rt/test (let [m2 (dissoc* m k5 (sha1 k5) 0)]
+               (and (= 16 (count m2))
+                    (= def (get* m2 k5 def (sha1 k5) 0))
+                    (= (Val 21) (get* m2 k17 def (sha1 k17) 0))
+                    (= expected (vec m2))
+                    (= 17 (count m))))
+             _FILE_ _LINE_)))
+
 (defn main [_]
   (println "Checking ArrayNode regressions")
 
@@ -310,6 +430,7 @@
   (test-vec)
   (test-assoc)
   (test-assoc-subnode)
+  (test-dissoc)
 
   (println "ArrayNode tests are good")
   )
