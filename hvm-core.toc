@@ -1252,6 +1252,58 @@ abort();
    result = incRef((Term)((HashCollisionNode *)m_1)->array[2 * getI60(i_2) + 1], 1);
    dec_and_free((Term)m_1, 1);"))
 
+(defn collisionUpdate [m i k v]
+  ! m HashCollisionNode
+  ! i Integer
+  ;; Clone `m` with the entry at `i` replaced by (k v) — a copy, not in-place.
+  ;; Mirrors the hash-match/update outcome of the C collisionAssoc
+  ;; (runtime3.c:2552): the new node has capacity itemCount+1 but count drops
+  ;; to 2*itemCount (C's `newNode->count -= 2`), leaving the trailing slot
+  ;; NULL. The other entries are copied with fresh refs; (k v) is moved in (no
+  ;; incRef). Consumes `m` and (k v), returns the new node.
+  (inline HashCollisionNode "
+   HashCollisionNode *node = (HashCollisionNode *)m_1;
+   int64_t i = getI60(i_2);
+   int itemCount = node->count / 2;
+   HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
+   for (int j = 0; j < itemCount; j++) {
+     if (j == i) {
+       newNode->array[2 * j] = (Value *)k_3;
+       newNode->array[2 * j + 1] = (Value *)v_4;
+     } else {
+       newNode->array[2 * j] = node->array[2 * j];
+       newNode->array[2 * j + 1] = node->array[2 * j + 1];
+       incRef((Term)node->array[2 * j], 1);
+       incRef((Term)node->array[2 * j + 1], 1);
+     }
+   }
+   newNode->count = 2 * itemCount;
+   dec_and_free((Term)m_1, 1);
+   result = (Term)newNode;"))
+
+(defn collisionAppend [m k v]
+  ! m HashCollisionNode
+  ;; Clone `m` with (k v) appended as a new last entry — a copy, not
+  ;; in-place. Mirrors the hash-match/append outcome of the C collisionAssoc
+  ;; (runtime3.c:2552): the new node has capacity itemCount+1 and count stays
+  ;; 2*(itemCount+1) (C's `newNode->array[2*itemCount] = key` with count
+  ;; unchanged). The old entries are copied with fresh refs; (k v) is moved in
+  ;; (no incRef). Consumes `m` and (k v), returns the new node.
+  (inline HashCollisionNode "
+   HashCollisionNode *node = (HashCollisionNode *)m_1;
+   int itemCount = node->count / 2;
+   HashCollisionNode *newNode = malloc_hashCollisionNode(itemCount + 1);
+   for (int j = 0; j < itemCount; j++) {
+     newNode->array[2 * j] = node->array[2 * j];
+     newNode->array[2 * j + 1] = node->array[2 * j + 1];
+     incRef((Term)node->array[2 * j], 1);
+     incRef((Term)node->array[2 * j + 1], 1);
+   }
+   newNode->array[2 * itemCount] = (Value *)k_2;
+   newNode->array[2 * itemCount + 1] = (Value *)v_3;
+   dec_and_free((Term)m_1, 1);
+   result = (Term)newNode;"))
+
 (defn bmiReplaceCopied [bmi key val hash shift currKey currVal]
   ! bmi BitmapIndexedNode
   ! hash Integer
@@ -1576,6 +1628,65 @@ abort();
   ;; bmiMutateAssoc convention — C's `equal` only handles I60/String).
   ;; hash/shift are unused: a collision node holds only keys with one hash.
   (collisionGet-i m k def (collisionCount m) 0))
+
+(defn collisionAssoc-find [m k n i]
+  ;; First index in 0..n-1 whose entry key `=`-equals `k` (entry key first,
+  ;; the bmiCopyAssoc convention), as (Some i); None if no entry matches.
+  ;; Read-only scan — collisionKey hands out an owned ref that `=` consumes.
+  (cond (= i n)
+        None
+        (let [ek (collisionKey m i)]
+          (cond (= ek k)
+                (Some i)
+                (collisionAssoc-find m k n (inc i))))))
+
+(defn collisionAssoc-promote-i [bmi m n i]
+  ;; Fold the collision node's entries 0..n-1 into the fresh BMI `bmi` — the
+  ;; promote-to-BMI loop of the C collisionAssoc: each entry is assoc*'d at
+  ;; shift 0 with its own sha1 (the Toccata counterpart of C's mutateAssoc
+  ;; loop; the fresh BMI is exclusively owned, so assoc* mutates it in place).
+  ;; `m` is threaded for the entry reads and released by the base case (the
+  ;; collisionGet-i pattern).
+  (cond (= i n)
+        bmi
+        (let [ek (collisionKey m i)
+              ev (collisionVal m i)
+              eh (sha1 ek)]
+          (collisionAssoc-promote-i (assoc* bmi ek ev eh 0) m n (inc i)))))
+
+(defn collisionAssoc [m k v hash shift]
+  ! m HashCollisionNode
+  ;; Toccata-level copy assoc for a HashCollisionNode, mirroring the C
+  ;; collisionAssoc (runtime3.c:2552): the node with `k`→`v` associated,
+  ;; cloned (the caller's ref to `m` is consumed, a fresh node returned).
+  ;; The mechanical node building reuses the wrapped C allocation
+  ;; (collisionUpdate/collisionAppend); the semantic parts use the `=`/`sha1`
+  ;; protocols (C's `equal`/`sha1` only handle I60/String).
+  ;;
+  ;; Hash match (the new key's hash equals the node's hash — C checks
+  ;; sha1(array[0]) == hash; a collision node holds only one hash): the result
+  ;; is a collision node. The first entry whose key `=`-equals `k` (entry key
+  ;; first, the bmiCopyAssoc convention) is updated to (k v) (collisionUpdate,
+  ;; count unchanged); if no entry matches, (k v) is appended (collisionAppend,
+  ;; count +1).
+  ;;
+  ;; Hash mismatch: the node is promoted to a BMI — the new (k v) goes into a
+  ;; fresh BMI (copyAssoc on emptyBMI at shift 0), then each existing entry is
+  ;; assoc*'d in (collisionAssoc-promote-i). The result is a
+  ;; BitmapIndexedNode, not a collision node.
+  ;;
+  ;; Like C, this assumes the node has at least one entry (array[0] is read
+  ;; for the hash check); a fresh emptyCollisionNode (0 entries) is not a valid
+  ;; input. hash/shift: shift is unused (a collision node holds one hash; the
+  ;; promotion rebuilds from shift 0), mirroring C.
+  (let [k (set-hash-val k hash)
+        n (collisionCount m)]
+    (cond (= (sha1 (collisionKey m 0)) hash)
+          (either (map (collisionAssoc-find m k n 0)
+                       (fn [i] (collisionUpdate m i k v)))
+                  (collisionAppend m k v))
+          (let [bmi (copyAssoc emptyBMI k v hash 0)]
+            (collisionAssoc-promote-i bmi m n 0)))))
 
 (defn refs-count [v]
   !returns Integer
