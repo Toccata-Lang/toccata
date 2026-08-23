@@ -417,6 +417,98 @@
                     (= 17 (count m))))
              _FILE_ _LINE_)))
 
+(defn test-hash-seq []
+  ;; --- hash-seq / vals (ArrayNode) ---
+  ;; hash-seq conjs the [k v] pairs of m onto the seed vector in slot order
+  ;; (slots 0..31 in index order — the C arrayNodeSeq pattern — each
+  ;; occupied slot's child pairs conjs'd in through the hash-seq protocol,
+  ;; type dispatch, since a child may be a BMI, ArrayNode, or
+  ;; HashCollisionNode; an empty slot contributes nothing). vals maps
+  ;; pair-val over (hash-seq m []).
+
+  ;; Empty ArrayNode (directly built, all 32 slots 0): arrayNodeHashSeq-i
+  ;; walks every slot, each arrayNodeCopyChild returns None, and the seed
+  ;; passes through untouched: (hash-seq m []) → []; (hash-seq m [""]) →
+  ;; the seed alone (count 1); (vals m) → [].
+  (let [m (emptyArrayNode)]
+    (rt/test (and (= [] (hash-seq m []))
+                  (= 1 (count (hash-seq m [""])))
+                  (= [""] (hash-seq m [""]))
+                  (= [] (vals m)))
+             _FILE_ _LINE_))
+
+  ;; Promoted 17-entry ArrayNode: a 16-entry flat BMI (keys 0..15, values
+  ;; 1..16) plus a 17th key (hash 20 → empty bit) whose bmiCopyAssoc
+  ;; empty-bit branch calls addCopiedBMI's n >= 16 promotion branch → an
+  ;; ArrayNode of 17 one-entry BMI sub-nodes (slots 0..15 and 20 occupied).
+  ;; arrayNodeHashSeq walks slots 0..31 in index order, dispatching each
+  ;; occupied slot's child through the hash-seq protocol (each child is a
+  ;; one-entry BMI here): (hash-seq m []) → the 17 pairs in slot order
+  ;; (keys 0..15 → values 1..16, then key 20 → Val 21); (hash-seq m [""])
+  ;; → the seed element first, then the 17 pairs (count 18 — the commented
+  ;; integration tests' (hash-seq full-bmi [""]) shape); (vals m) → the 17
+  ;; values in the same slot order. The source map is untouched.
+  (let [full-bmi (reduce (range 16) emptyBMI
+                         (fn [m n]
+                           (let [k (CHash n (Some n))]
+                             (copyAssoc m k (Val (inc n)) (sha1 k) 0))))
+        k17 (CHash 20 (Some 20))
+        m (copyAssoc full-bmi k17 (Val 21) (sha1 k17) 0)
+        expected16 (reduce (range 16) []
+                           (fn [vs n]
+                             (conj vs [(CHash n (Some n)) (Val (inc n))])))
+        expected (conj expected16 [(CHash 20 (Some 20)) (Val 21)])
+        expected-seeded16 (reduce (range 16) [""]
+                                  (fn [vs n]
+                                    (conj vs [(CHash n (Some n)) (Val (inc n))])))
+        expected-seeded (conj expected-seeded16 [(CHash 20 (Some 20)) (Val 21)])
+        vals16 (reduce (range 16) []
+                       (fn [vs n]
+                         (conj vs (Val (inc n)))))
+        expected-vals (conj vals16 (Val 21))]
+    (rt/test (and (= 17 (count m))
+                  (= expected (hash-seq m []))
+                  (= 18 (count (hash-seq m [""])))
+                  (= expected-seeded (hash-seq m [""]))
+                  (= expected-vals (vals m))
+                  (= 17 (count m)))
+             _FILE_ _LINE_))
+
+  ;; Promoted ArrayNode with a 2-entry child: the 17-entry promoted
+  ;; ArrayNode, then copyAssoc key 37 (slot 5; bit 1 at shift 5, empty in
+  ;; the child) → the child's addCopiedBMI branch → a 2-entry child (key 5
+  ;; at bit 0, key 37 at bit 1) → 18 entries. arrayNodeHashSeq flattens
+  ;; the child's pairs into the slot's position in the child's bit order
+  ;; (key 5 first, then key 37); the other slots each contribute their
+  ;; single pair, slot 20 last: (hash-seq m []) → 18 pairs; (vals m) → 18
+  ;; values. The 17-entry source is untouched.
+  (let [full-bmi (reduce (range 16) emptyBMI
+                         (fn [m n]
+                           (let [k (CHash n (Some n))]
+                             (copyAssoc m k (Val (inc n)) (sha1 k) 0))))
+        k17 (CHash 20 (Some 20))
+        m (copyAssoc full-bmi k17 (Val 21) (sha1 k17) 0)
+        k37 (CHash 37 (Some 37))
+        m18 (copyAssoc m k37 (Val 38) (sha1 k37) 0)
+        expected16 (reduce (range 16) []
+                           (fn [vs n]
+                             (cond (= 5 n)
+                                   (conj (conj vs [(CHash 5 (Some 5)) (Val 6)])
+                                         [(CHash 37 (Some 37)) (Val 38)])
+                                   (conj vs [(CHash n (Some n)) (Val (inc n))]))))
+        expected (conj expected16 [(CHash 20 (Some 20)) (Val 21)])
+        vals16 (reduce (range 16) []
+                       (fn [vs n]
+                         (cond (= 5 n)
+                               (conj (conj vs (Val 6)) (Val 38))
+                               (conj vs (Val (inc n))))))
+        expected-vals (conj vals16 (Val 21))]
+    (rt/test (and (= 18 (count m18))
+                  (= expected (hash-seq m18 []))
+                  (= expected-vals (vals m18))
+                  (= 17 (count m)))
+             _FILE_ _LINE_)))
+
 (defn main [_]
   (println "Checking ArrayNode regressions")
 
@@ -431,6 +523,7 @@
   (test-assoc)
   (test-assoc-subnode)
   (test-dissoc)
+  (test-hash-seq)
 
   (println "ArrayNode tests are good")
   )
