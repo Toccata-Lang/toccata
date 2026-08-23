@@ -99,6 +99,51 @@
                   (= (Val 97) (get* m2 k3 def (sha1 k3) 0)))
              _FILE_ _LINE_)))
 
+(defn test-assoc-promote []
+  ;; --- assoc: promote to a BMI on hash mismatch (collisionAssoc hash-mismatch) ---
+  ;; Build a 2-entry collision node the way a map builds one: assoc two keys
+  ;; with identical hash (7/7) into emptyBMI. The first key carries eq=None,
+  ;; so bmiCopyAssoc's (= currKey k) is false → the collision branch → a BMI
+  ;; with a single slot (bit 7) holding a collision node [k1 v1, k2 v2].
+  ;; Extract it with bmiCopyChild (owned ref; bit mask 128 = 1 << 7).
+  ;;
+  ;; Then copyAssoc a third key k3 with a DIFFERENT hash (3) → the
+  ;; hash-mismatch branch: the node is promoted to a BMI. k3 goes into a
+  ;; fresh BMI at shift 0 (bit 3, flat), then the existing entries are
+  ;; assoc*'d in with their own sha1: k1 (hash 7 → bit 7, a new empty bit →
+  ;; flat) and k2 (hash 7 → bit 7 again; (= currKey k) is false — k1's
+  ;; eq=None gate — so bmiReplaceMutate's collision case) → the slot at bit 7
+  ;; becomes a collision node [k1 v1, k2 v2] (existing entry first, new entry
+  ;; appended). The result is a BitmapIndexedNode (type 11), NOT a collision
+  ;; node: bitmap 136 (8 | 128), count 3 (1 flat + 2 in the collision child),
+  ;; get* hits k3 (flat, Val 97) and k2 (inside the collision child, Val 98 —
+  ;; k1's entry is unreachable under get* because its eq=None gate sits on the
+  ;; first arg and collisionGet scans entry-key-first), the flat slot at bit 3
+  ;; holds k3/Val 97, and the child at bit 7 is a 2-entry collision node
+  ;; (type 13) with the original entries preserved in order (Val 99, Val 98).
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 (Some 7))
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        cn (either (map (bmiCopyChild m 128) (fn [c] c)) emptyBMI)
+        k3 (CHash 3 (Some 3))
+        m2 (copyAssoc cn k3 (Val 97) (sha1 k3) 0)
+        def (Val 123)
+        child (either (map (bmiCopyChild m2 128) (fn [c] c)) emptyBMI)]
+    (rt/test (and (= 11 (type-num m2))
+                  (= 136 (bmiBitMap m2))
+                  (= 3 (count m2))
+                  (= (Val 97) (get* m2 k3 def (sha1 k3) 0))
+                  (= (Val 98) (get* m2 k2 def (sha1 k2) 0))
+                  (= k3 (bmiKey m2 8))
+                  (= (Val 97) (bmiVal m2 8))
+                  (= 13 (type-num child))
+                  (= 2 (collisionCount child))
+                  (= (Val 99) (collisionVal child 0))
+                  (= (Val 98) (collisionVal child 1)))
+             _FILE_ _LINE_)))
+
 (defn main [_]
   (println "Checking CollisionNode regressions")
 
@@ -109,6 +154,8 @@
   (test-assoc-add)
 
   (test-assoc-update)
+
+  (test-assoc-promote)
 
   (println "CollisionNode tests are good")
   )
