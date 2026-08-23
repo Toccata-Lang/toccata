@@ -17,7 +17,8 @@ REG_TESTS = test1 test2 test3 test4 test5 test6 test7 test8 test9 test10 test11 
 	free-static-value tail-cond-1 test-inline-namespaced-sym integer-regressions string-regressions \
 	test-inlined-result-constraint vector-regressions test-either test-comment-in-let \
 	test-recursive-map-fn test-tail-recur-1 test-tail-recur-3 test-trailing-comment \
-	test-underscore-inline test-uni test-closures test-fusing test-bmi test-array-node test-collision-node # hash-map-regressions
+	test-underscore-inline test-uni test-closures test-fusing test-bmi test-array-node test-collision-node \
+	hash-map-regressions
 TEST_SOURCES = new.c runtime3.c graph.c
 
 new-toc: compiler.toc base.toc typer.toc codegen.toc toccata
