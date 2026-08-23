@@ -214,6 +214,16 @@ abort();
   ;; Otherwise, return `nothing`
   !returns Maybe
   )
+(defp hash-seq [m s]
+  ;; Conjs the [k v] pairs of `m` onto the seed vector `s`, in slot order
+  ;; (sub-node pairs flattened in). The Toccata counterpart of the C
+  ;; bmiHashSeq/arrayNodeSeq/collisionSeq (core.c) — the C hashSeq/hashVec
+  ;; dispatchers are dead, so the sub-node recurse goes through this
+  ;; protocol (type dispatch: a child may be a BMI, ArrayNode, or
+  ;; HashCollisionNode).
+  ! s Vector
+  !returns Vector
+  )
 (defp keys [m]
   ;; Get a list of the keys from `m`
   !returns Vector
@@ -1480,6 +1490,62 @@ abort();
   ! m ArrayNode
   (arrayNodeVec-i m 0))
 
+;; Toccata-level hash-seq for a BitmapIndexedNode: the C bmiHashSeq (core.c)
+;; routes sub-node slots through the C-level hashSeq dispatcher, which is
+;; dead, so the sub-node recurse goes through the hash-seq protocol here
+;; (type dispatch — the child may be a BMI, ArrayNode, or HashCollisionNode).
+;; Pairs come out in bit order, sub-node pairs flattened in (the bmiVec-bm
+;; pattern). The seed vector `s` is threaded through the recursion and each
+;; slot's pair(s) are conjs'd onto it in order.
+(defn bmiHashSeq-bm [m s bm]
+  ! m BitmapIndexedNode
+  ! s Vector
+  ! bm Integer
+  (cond (= 0 bm)
+        s
+        (let [bit (bit-and bm (bit-not (dec bm)))
+              rest-bm (bit-and bm (bit-not bit))]
+          (either (map (bmiCopyChild m bit)
+                       (fn [child]
+                         (bmiHashSeq-bm m (hash-seq child s) rest-bm)))
+                  (let [k (bmiKey m bit)
+                        v (bmiVal m bit)]
+                    (bmiHashSeq-bm m (conj s [k v]) rest-bm))))))
+
+(defn bmiHashSeq [m s]
+  ! m BitmapIndexedNode
+  ! s Vector
+  (bmiHashSeq-bm m s (bmiBitMap m)))
+
+;; Toccata-level hash-seq for an ArrayNode: the C arrayNodeSeq (core.c)
+;; routes occupied slots through the dead hashSeq dispatcher, so the recurse
+;; goes through the hash-seq protocol here (type dispatch). Slots are walked
+;; in index order 0..31; an occupied slot's child pairs are conjs'd in (the
+;; hash-seq protocol), an empty slot contributes nothing. The seed vector `s`
+;; is threaded through the recursion.
+(defn arrayNodeHashSeq-i [m s i]
+  ! m ArrayNode
+  ! s Vector
+  ! i Integer
+  (cond (= i 32)
+        s
+        (either (map (arrayNodeCopyChild m i)
+                     (fn [child]
+                       (arrayNodeHashSeq-i m (hash-seq child s) (inc i))))
+                (arrayNodeHashSeq-i m s (inc i)))))
+
+(defn arrayNodeHashSeq [m s]
+  ! m ArrayNode
+  ! s Vector
+  (arrayNodeHashSeq-i m s 0))
+
+(defn pair-val [pair]
+  ;; The value (second element) of a [k v] pair. Vector element access
+  ;; (`get`) returns a Maybe, so extract it. (A destructuring lambda
+  ;; `(fn [[k v]] v)` does not codegen — the compiler emits undeclared
+  ;; destructured vars — so the extraction goes through this helper.)
+  (extract (get pair 1)))
+
 (defn bmiCopyAssoc [m k v hash shift]
   ! m BitmapIndexedNode
   (let [k (set-hash-val k hash)
@@ -1790,6 +1856,12 @@ abort();
   (vec [m]
     (bmiVec m))
 
+  (hash-seq [m s]
+    (bmiHashSeq m s))
+
+  (vals [m]
+    (map (hash-seq m []) pair-val))
+
   (copyAssoc [m k v hash shift]
     (bmiCopyAssoc m k v hash shift))
 
@@ -1825,6 +1897,12 @@ abort();
   (vec [m]
     (arrayNodeVec m))
 
+  (hash-seq [m s]
+    (arrayNodeHashSeq m s))
+
+  (vals [m]
+    (map (hash-seq m []) pair-val))
+
   (copyAssoc [m k v hash shift]
     (arrayNodeCopyAssoc m k v hash shift))
 
@@ -1844,6 +1922,16 @@ abort();
 (extend-type HashCollisionNode
   (vec [m]
     (collisionVec m []))
+
+  (hash-seq [m s]
+    ;; The C collisionVec (runtime3.c:2633) already conjs a (k v) pair for
+    ;; each non-NULL entry onto the seed vec in entry order (NULL-guarded),
+    ;; so it is the hash-seq for a collision node directly (the
+    ;; arrayNodeCount pattern — alive and purely mechanical).
+    (collisionVec m s))
+
+  (vals [m]
+    (map (hash-seq m []) pair-val))
 
   (copyAssoc [m k v hash shift]
     (collisionAssoc m k v hash shift))
