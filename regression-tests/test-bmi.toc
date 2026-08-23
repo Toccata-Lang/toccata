@@ -261,6 +261,72 @@
                   (= [[k1 (Val 99)] [k2 (Val 98)] [k3 (Val 97)]] (vec m2)))
              _FILE_ _LINE_)))
 
+(defn test-assoc-collision-child []
+  ;; --- assoc* into a map whose child is a collision node (the 4.4 BOOM fix) ---
+  ;; A BMI map whose slot at bit 7 (mask 128) holds a HashCollisionNode child:
+  ;; assoc two keys with identical hash (7/7) into emptyBMI, the first with
+  ;; eq=None so bmiCopyAssoc's (= currKey k) is false → the collision branch →
+  ;; a BMI with a single slot (bit 7) holding [k1 v1, k2 v2].
+  ;;
+  ;; assoc* on the map (m is let-bound and used exactly once, so refs-count
+  ;; m == 3 → the bmiMutateAssoc mutate path) with a key at bit 7 →
+  ;; bmiMutateChild borrows the collision child (no incRef) → assoc* on it —
+  ;; the dispatch that BOOMed before 4.4 (no method for the type) — routes to
+  ;; HashCollisionNode's assoc*, which always copies (C has no
+  ;; collisionMutateAssoc): collisionAssoc consumes the borrowed slot ref and
+  ;; returns a fresh node, and bmiSetChild points the slot at it (the swap
+  ;; balances — the copy consumed the old slot ref).
+
+  ;; Append (hash match, no =-equal entry): the child holds two eq=None
+  ;; entries, so collisionAssoc-find's entry-key-first `=` is false for both;
+  ;; a third same-hash key (eq=Some) is appended (collisionAppend) → a
+  ;; 3-entry collision child [k1 v1, k2 v2, k3 v3]. A flat sibling at bit 3
+  ;; (k0) survives the in-place slot swap. count 4 (1 flat + 3 in the child),
+  ;; bitmap 136; get hits the new key and the sibling.
+  (let [k0 (CHash 3 (Some 3))
+        k1 (CHash 7 None)
+        k2 (CHash 7 None)
+        k3 (CHash 7 (Some 7))
+        m (-> emptyBMI
+              (copyAssoc k0 (Val 96) (sha1 k0) 0)
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        m2 (assoc* m k3 (Val 97) (sha1 k3) 0)
+        child (either (map (bmiCopyChild m2 128) (fn [c] c)) emptyBMI)]
+    (rt/test (and (= 4 (count m2))
+                  (= 136 (bmiBitMap m2))
+                  (= 13 (type-num child))
+                  (= 3 (collisionCount child))
+                  (= (Val 99) (collisionVal child 0))
+                  (= (Val 98) (collisionVal child 1))
+                  (= (Val 97) (collisionVal child 2))
+                  (= (Some (Val 97)) (get m2 k3))
+                  (= (Some (Val 96)) (get m2 k0)))
+             _FILE_ _LINE_))
+
+  ;; Update (hash match, entry =-equal): the child holds k1 (eq=None) and
+  ;; k2 (eq=Some); a third same-hash key (eq=Some) =-equals entry 1
+  ;; (collisionAssoc-find's entry-key-first `=` is false for entry 0 — k1's
+  ;; eq=None gate — and true for entry 1) → collisionUpdate replaces entry 1
+  ;; with (k3 v3), count unchanged → a 2-entry collision child [k1 v1, k3 v3].
+  ;; count 2, bitmap 128; get hits the updated value.
+  (let [k1 (CHash 7 None)
+        k2 (CHash 7 (Some 7))
+        k3 (CHash 7 (Some 7))
+        m (-> emptyBMI
+              (copyAssoc k1 (Val 99) (sha1 k1) 0)
+              (copyAssoc k2 (Val 98) (sha1 k2) 0))
+        m2 (assoc* m k3 (Val 97) (sha1 k3) 0)
+        child (either (map (bmiCopyChild m2 128) (fn [c] c)) emptyBMI)]
+    (rt/test (and (= 2 (count m2))
+                  (= 128 (bmiBitMap m2))
+                  (= 13 (type-num child))
+                  (= 2 (collisionCount child))
+                  (= (Val 99) (collisionVal child 0))
+                  (= (Val 97) (collisionVal child 1))
+                  (= (Some (Val 97)) (get m2 k3)))
+             _FILE_ _LINE_)))
+
 (defn test-get []
   ;; --- get (BitmapIndexedNode) ---
 
@@ -493,6 +559,7 @@
 
   (test-copy-assoc)
   (test-mutate-assoc)
+  (test-assoc-collision-child)
   (test-get)
   (test-dissoc)
   (test-promotion)
