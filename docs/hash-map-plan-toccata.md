@@ -24,13 +24,27 @@ The C-level dispatchers are `copyAssoc` (runtime3.c:2761) and `mutateAssoc` (277
 
 **Status of the 5 functions at the Toccata level:** `bmiCopyAssoc`, `bmiMutateAssoc`, `arrayNodeCopyAssoc`, and `arrayNodeMutateAssoc` are implemented (the BMI pair fully tested; the ArrayNode pair scratch-verified, with the `ArrayNode` protocol methods wired in task 3.7). `collisionAssoc` (copy) is not yet implemented in Toccata. Collision nodes need no mutate variant (copy path only, matching the C dispatcher).
 
-## Protocol Functions NOT wired up yet
+## ControlledHash — the integration suite's controlled key type
 
-- `count` — returns count of sequence
-- `sha1` — computes SHA1 hash
-- `get` — polymorphic get dispatch
-- `baseDissoc` — polymorphic dissoc dispatch
-- `vals` — get all values
+`hash-map-regressions.toc` (the owner's integration suite) defines its own controlled key type, distinct from the `CHash` used by the node-level suites (`test-bmi`/`test-array-node`/`test-collision-node`):
+
+```
+(deftype ControlledHash [y eq]
+  (str-vect [_] (str-vect y))
+  (= [_ v] (and (= eq (.eq v)) (Some _)))
+  (sha1 [_] y))
+```
+
+**Purpose — two independent knobs for collision testing.** `y` is the hash: `sha1` returns it, so a test pins exactly which slot/bit a key lands in. `eq` is the equality discriminator: two keys may share a `y` (same hash → same slot) yet carry different `eq` values, so they fail `=` and form a genuine collision node instead of being treated as one key. This is what lets the suite force N keys into one hash bucket and decide, per key, "same key" vs "distinct colliding key."
+
+**`=` semantics (revised 2026-08-24).** Equality is decided *solely* by the `eq` slot — structural equality via the `=` protocol, which dispatches on the eq value's own type (the suite uses strings `"a"`/`"b"` and integers `1`/`2`/`3` as discriminators) — independent of `y`:
+- same `y`, different `eq` → not equal → collision
+- same `y`, same `eq` → equal → same key
+- **Invariant when writing tests:** `=` ignores `y` entirely, so two keys with the *same `eq` but different `y`* compare equal. Treat `eq` as the key's true identity (same `eq` ⇒ same key ⇒ same hash).
+
+**Why the earlier `=` was wrong.** It was `(and eq (= y (.y v)) (Some _))` — an on/off *gate*, not a discriminator. A key with `eq=Some` passed the gate and then matched *any* same-`y` key (the other key's `eq` was never inspected), so two same-hash keys could not be made unequal unless one carried `eq=None`; and an `eq=None` key matched *nothing* — not even a structurally identical key. The `eq` slot did not discriminate; it only gated. The revision makes `eq` the actual equality value.
+
+**Also (2026-08-24):** the suite's obsolete GC-probe expressions `(inc <literal>)` were replaced with the computed literal integers; only `(inc n)` over the `reduce` variable remains.
 
 ## BMI Surface (what's testable from Toccata today)
 
@@ -87,11 +101,11 @@ Note: `createNode`'s same-bit-at-next-level recursion is covered only via the mu
 - [x] **recurse-into-child, same key inside sub-node** → `bmiSetKV` at depth, count unchanged, `vec` updated
 - [x] **shared child** (sub-node also held by a second map) → child's refs-count ≠ 3, so `assoc*` copies instead of mutating; the mutated map gains the key, the other map is untouched (copy fallback — see Lessons)
 
-**C. `count` / `vec` recursion (untested beyond count-1)**
-- [ ] flat 3-entry node → count 3
-- [ ] mixed node (2 flat + sub-node of 2) → count 4
-- [ ] `vec` of flat node → `[[k1 v1] [k2 v2] ...]` in bit order
-- [ ] `vec` of node with sub-node → sub-node's pairs **flattened in** (not nested)
+**C. `count` / `vec` recursion** (covered by the Group A/B and `test-hash-seq` cases)
+- [x] flat 3-entry node → count 3 — `test-hash-seq` case 1 (flat 3-entry BMI, `(= 3 (count m))`)
+- [x] mixed node (2 flat + sub-node of 2) → count 4 — the flat+sub-node sum is exercised by Group B shared-child (`m2`: 1 flat at bit 4 + sub-node of 2 under bit 3 → count 3) and Group A deep createNode (sub-node of 4 → count 4); the exact 2+2 shape is not built
+- [x] `vec` of flat node → `[[k1 v1] [k2 v2] ...]` in bit order — Group B different-key-different-bit (`[[k1 v1] [k2 v2]]`, bits 3 then 4)
+- [x] `vec` of node with sub-node → sub-node's pairs **flattened in** (not nested) — Group A same-key-in-sub-node (`[[k1 v1] [k2 v2]]` from a 2-entry child under bit 3) and Group B createNode (incl. the 2-level 3 vs 1027 case)
 
 **D. `empty?` (untested)**
 - [ ] `(empty? emptyBMI) == (Some emptyBMI)`
