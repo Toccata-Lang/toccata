@@ -25,7 +25,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 Hash-map functionality is complete: `hash-map-regressions` passes clean (the 25-key dissoc regression is enabled), and the `integerSha1` over-read is fixed (hashes the 8-byte `TYPE_SIZE` type tag; commit `e6b6c91`).
 
-Next candidates (verified 2026-08-25): `test-threading` and `test-or-comment` pass as-is now that hash-map is done — added to REG_TESTS. `defprotocol` is not yet supported by the compiler, which blocks check-bad-incRef, test-inline-invoke, and both state-error tests. `test-apply-constructor` is deferred until the end (unclear if it's really needed).
+`defprotocol` has been eliminated from the language — protocol functions are declared as individual `defp`s (see `hvm-core.toc`). `check-bad-incRef` was rewritten that way (destructuring code commented out) and passes clean — added to REG_TESTS. The remaining defprotocol-era tests (test-inline-invoke, state-error1-1/2) still need the same treatment. `test-apply-constructor` is deferred until the end (unclear if it's really needed).
 
 ## Working tests (50)
 
@@ -94,8 +94,8 @@ Next candidates (verified 2026-08-25): `test-threading` and `test-or-comment` pa
 
 - [ ] agent-regressions — agent system (needs agents/promises — ignored features)
 - [ ] maybe-regressions — Maybe type (blocked: `type-args` not implemented; also uses `list`)
-- [ ] state-error1-1 — state-error monad (needs `defprotocol`, lists, `instance?`, destructuring)
-- [ ] state-error1-2 — state-error monad (needs `defprotocol`, lists, `instance?`, destructuring)
+- [ ] state-error1-1 — state-error monad (needs defp rewrite like check-bad-incRef; plus lists, `instance?`, destructuring)
+- [ ] state-error1-2 — state-error monad (needs defp rewrite like check-bad-incRef; plus lists, `instance?`, destructuring)
 - [ ] test-gensym — gensym (needs `future` — ignored; gensym not wired up)
 - [ ] test-apply-constructor — apply + constructor (deferred until the end — unclear if it's really needed; compiles, runtime: "No implementation of 'apply' found for type")
 
@@ -143,6 +143,8 @@ These features won't be in the new version (lists might be added eventually):
 **`test-hvm` node leak.** `glblAlloced should be 0, got 1` at `regression-tests/test-hvm.c:1828`. Pre-existing — not caused by any recent changes. Leaving as-is until I want to tackle it. All REG_TESTS pass except the deferred `test-fusing` leak below.
 
 **`test-fusing` node leak (deferred).** Leaves 239 node pairs allocated ("Leaked pairs!! 239"); the committed `.rslt` baseline includes the leak. Known since `e6b6c91`; left in REG_TESTS with the baseline as-is until the leak is hunted (lldb workflow in `skills/memory-leak-hunting.md`).
+
+**`new-toc` typer crash: fn literal as a direct deftype constructor argument.** `(MyType (fn [x] x))` crashes the compiler ("Value 'arN' of type 'AllValues' does not have field '.param-consts' at typer.toc: 223"). Binding the fn first — `(let [f (fn [x] x)] (MyType f))` or a top-level `def` — compiles fine. Worked around in `check-bad-incRef` (`se-nop-fn` def). Will also affect state-error1-1/2 and test-inline-invoke when they get rewritten.
 
 **`new-toc` codegen is nondeterministic in global numbering.** Repeated runs of `./new-toc` on the same `.toc` produce different `glbl*` numbering (and occasionally a different number of globals), so regenerated `.c` files differ even with no source change. Behavior has been identical across variants so far (same ITRS/results), but a transient `.toc` state on 2026-08-25 did produce a hash-map variant that leaked 242 pairs — so a leak can be variant-dependent. Treat `.c` files as non-diffable across builds, and be suspicious of leak reports that don't reproduce on a fresh regeneration.
 
