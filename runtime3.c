@@ -81,7 +81,10 @@ int mask(int64_t hash, int shift) {
 }
 
 int bitpos(int64_t hash, int shift) {
-  return 1 << mask(hash, shift);
+  // 1u keeps the shift well-defined when the mask is 31 (1 << 31 is UB);
+  // the conversion to int is two's-complement — 0x80000000 (bit 31) is a
+  // legitimate bitmap bit.
+  return (int)(1u << mask(hash, shift));
 }
 
 Value *my_malloc(int64_t sz) {
@@ -2065,7 +2068,9 @@ Term mapCount(FnArity *arity, Value *arg) {
 Value *bmiCount(Value *arg0) {
   BitmapIndexedNode *node = (BitmapIndexedNode *)arg0;
   int cnt = __builtin_popcount(node->bitmap);
-  int accum = 0;
+  // 64 bits: an int accumulator would wrap negative past 2^31 entries and
+  // newI60 would sign-extend it, setting bits 32..63 of the count.
+  int64_t accum = 0;
   for (int i = 0; i < cnt; i++) {
     if (node->array[i * 2] == 0 && node->array[i * 2 + 1] != 0) {
       Term subCnt = mapCount((FnArity *)0, incRefVal(node->array[i * 2 + 1], 1));
@@ -2629,7 +2634,9 @@ Value *arrayNodeGet(Value *arg0, Value *arg1, Value *arg2, int64_t hash, int shi
 
 Value *arrayNodeCount(Value *arg0) {
   ArrayNode *node = (ArrayNode *)arg0;
-  int accum = 0;
+  // 64 bits: an int accumulator would wrap negative past 2^31 entries and
+  // newI60 would sign-extend it, setting bits 32..63 of the count.
+  int64_t accum = 0;
   for(int i = 0; i < ARRAY_NODE_LEN; i++){
     if (node->array[i] != 0) {
       Term subCnt = mapCount((FnArity *)0, (Value *)incRef(node->array[i], 1));
@@ -2644,7 +2651,9 @@ Value *collisionCount(Value *arg0) {
   HashCollisionNode *node = (HashCollisionNode *)arg0;
   int cnt = node->count / 2;
   dec_and_free((Term)arg0, 1);
-  return((Value *)newI60(cnt));
+  // Zero-extend the count to 64 bits (a plain newI60 would sign-extend a
+  // negative count, setting bits 32..63).
+  return((Value *)newI60((int64_t)((uint32_t)cnt)));
 }
 
 Value *collisionVec(Value *arg0, Value *arg1) {
