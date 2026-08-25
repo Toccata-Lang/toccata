@@ -1521,7 +1521,9 @@ Term strCmp(Term sT, Term tgtT, int success) {
   long start;
   long len0;
   long len1;
-  if (((Value *)sT)->type == StringBufferType) {
+  if (termTag(tgtT) != VAL)
+    return nothing();
+  else if (((Value *)sT)->type == StringBufferType) {
     str0 = (String *)sT; 
     start = 0;
     len0 = str0->len;
