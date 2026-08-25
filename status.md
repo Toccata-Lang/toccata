@@ -23,9 +23,11 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 ## Current Work
 
-Currently implementing hash-map functionality. This involves translating C code from `runtime3.c` into higher-level Toccata code, with the low-level pieces extracted into inline C functions.
+Hash-map functionality is complete: `hash-map-regressions` passes clean (the 25-key dissoc regression is enabled), and the `integerSha1` over-read is fixed (hashes the 8-byte `TYPE_SIZE` type tag; commit `e6b6c91`).
 
-## Working tests
+Next candidates (verified 2026-08-25): `test-threading` and `test-or-comment` pass as-is now that hash-map is done — added to REG_TESTS. `test-apply-constructor` compiles but needs an `apply` implementation for deftypes. `defprotocol` is not yet supported by the compiler, which blocks check-bad-incRef, test-inline-invoke, and both state-error tests.
+
+## Working tests (50)
 
 **Memory leaks are a failure condition.** Every test must leave `malloc_count == free_count` (all Value allocations freed). Any non-zero diff at the end of a test is a failure.
 
@@ -52,8 +54,10 @@ Currently implementing hash-map functionality. This involves translating C code 
 - [x] test15
 - [x] test16
 - [x] test17
+- [x] test18
 - [x] comment-in-deftype
 - [x] test-global-empty-list
+- [x] function-regressions
 - [x] test-ignore-inferred
 - [x] cond-expr-1
 - [x] cond-expr-2
@@ -63,45 +67,50 @@ Currently implementing hash-map functionality. This involves translating C code 
 - [x] free-static-value
 - [x] tail-cond-1
 - [x] test-inline-namespaced-sym
+- [x] integer-regressions
 - [x] string-regressions
+- [x] test-inlined-result-constraint
 - [x] vector-regressions
+- [x] test-either
+- [x] test-comment-in-let
 - [x] test-recursive-map-fn
 - [x] test-tail-recur-1
 - [x] test-tail-recur-3
 - [x] test-trailing-comment
 - [x] test-underscore-inline
 - [x] test-uni
-- [x] test-inlined-result-constraint
-- [x] function-regressions
 - [x] test-closures
+- [x] test-fusing — known deferred 239-pair node leak (baseline committed with the leak)
 - [x] test-bmi
+- [x] test-array-node
+- [x] test-collision-node
+- [x] test-threading
+- [x] test-or-comment
+- [x] hash-map-regressions
 
 ## Tests to be processed
 
 ### New functionality to implement
 
-- [ ] agent-regressions — agent system
-- [ ] hash-map-regressions — hash-map data structure
-- [ ] maybe-regressions — Maybe type
-- [ ] state-error1-1 — state-error monad
-- [ ] state-error1-2 — state-error monad
-- [ ] test-gensym — gensym
-- [ ] test-apply-constructor — apply + constructor
+- [ ] agent-regressions — agent system (needs agents/promises — ignored features)
+- [ ] maybe-regressions — Maybe type (blocked: `type-args` not implemented; also uses `list`)
+- [ ] state-error1-1 — state-error monad (needs `defprotocol`, lists, `instance?`, destructuring)
+- [ ] state-error1-2 — state-error monad (needs `defprotocol`, lists, `instance?`, destructuring)
+- [ ] test-gensym — gensym (needs `future` — ignored; gensym not wired up)
+- [ ] test-apply-constructor — apply + constructor (compiles; runtime: "No implementation of 'apply' found for type" — needs `apply` for deftypes)
 
 ### Compiler tests (verify existing compiler features)
 
 - [ ] and-prop — type property inference (blocked: `instance?` not implemented)
-- [ ] check-bad-incRef — reference counting (needs hash-map: reduce on collections)
+- [ ] check-bad-incRef — reference counting (blocked: `defprotocol` — "Invalid expression" at the defprotocol line)
 - [ ] or-and-constraints — type constraints in or/and (needs type system completion)
 - [ ] test-cond — cond syntax (waiting on: `any?`, `ever?`, `instance?`)
-- [ ] test-inline-invoke — inline invoke (needs hash-map)
+- [ ] test-inline-invoke — inline invoke (blocked: field access — "Undefined symbol: 'invoke'" for the `invoke-fn` deftype field)
 - [ ] test-inline-sym-literal — symbol literals (blocked: `instance?`)
-- [ ] test-or-comment — comments in or/and (needs hash-map: get, map)
 - [ ] test-proto-def-constraints — protocol constraints (needs type system)
 - [ ] test-tail-recur-2 — tail recursion (blocked: str-vect dispatch on None)
 - [ ] types-regressions — type system (blocked: type system)
 - [ ] test-for — `for` comprehension (needs more compiler work)
-- [ ] test-threading — `->` threading macro (depends on hash-map functionality: assoc, vals, reduce)
 
 ## Ignored for now
 
@@ -131,7 +140,9 @@ These features won't be in the new version (lists might be added eventually):
 
 ## Known Issues
 
-**`test-hvm` node leak.** `glblAlloced should be 0, got 1` at `regression-tests/test-hvm.c:1828`. Pre-existing — not caused by any recent changes. Leaving as-is until I want to tackle it. All 49 REG_TESTS pass.
+**`test-hvm` node leak.** `glblAlloced should be 0, got 1` at `regression-tests/test-hvm.c:1828`. Pre-existing — not caused by any recent changes. Leaving as-is until I want to tackle it. All REG_TESTS pass except the deferred `test-fusing` leak below.
 
-**`integerSha1` over-reads the type field (to investigate).** `runtime3.c:1829` declares `unsigned type` (4 bytes) but calls `Sha1Update(&context, (void *)&type, 8)` — hashing 8 bytes, i.e. the 4 bytes of `type` plus 4 bytes of adjacent stack memory. The extra bytes are compiler stack-layout dependent, so the hash may not be reproducible outside the exact runtime binary (matters if we ever want to compute/compare hashes in standalone tools). Not yet confirmed to misbehave in practice — the adjacent bytes may be deterministic padding or locals. Check whether the other per-type sha1 functions share the pattern, and whether hashes are stable across runs/builds.
+**`test-fusing` node leak (deferred).** Leaves 239 node pairs allocated ("Leaked pairs!! 239"); the committed `.rslt` baseline includes the leak. Known since `e6b6c91`; left in REG_TESTS with the baseline as-is until the leak is hunted (lldb workflow in `skills/memory-leak-hunting.md`).
+
+**`new-toc` codegen is nondeterministic in global numbering.** Repeated runs of `./new-toc` on the same `.toc` produce different `glbl*` numbering (and occasionally a different number of globals), so regenerated `.c` files differ even with no source change. Behavior has been identical across variants so far (same ITRS/results), but a transient `.toc` state on 2026-08-25 did produce a hash-map variant that leaked 242 pairs — so a leak can be variant-dependent. Treat `.c` files as non-diffable across builds, and be suspicious of leak reports that don't reproduce on a fresh regeneration.
 
