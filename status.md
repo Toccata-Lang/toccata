@@ -25,7 +25,7 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 Hash-map functionality is complete: `hash-map-regressions` passes clean (the 25-key dissoc regression is enabled), and the `integerSha1` over-read is fixed (hashes the 8-byte `TYPE_SIZE` type tag; commit `e6b6c91`).
 
-Next candidates (verified 2026-08-25): `test-threading` and `test-or-comment` pass as-is now that hash-map is done — added to REG_TESTS. `test-apply-constructor` compiles but needs an `apply` implementation for deftypes. `defprotocol` is not yet supported by the compiler, which blocks check-bad-incRef, test-inline-invoke, and both state-error tests.
+Next candidates (verified 2026-08-25): `test-threading` and `test-or-comment` pass as-is now that hash-map is done — added to REG_TESTS. `defprotocol` is not yet supported by the compiler, which blocks check-bad-incRef, test-inline-invoke, and both state-error tests. `test-apply-constructor` is deferred until the end (unclear if it's really needed).
 
 ## Working tests (50)
 
@@ -97,7 +97,7 @@ Next candidates (verified 2026-08-25): `test-threading` and `test-or-comment` pa
 - [ ] state-error1-1 — state-error monad (needs `defprotocol`, lists, `instance?`, destructuring)
 - [ ] state-error1-2 — state-error monad (needs `defprotocol`, lists, `instance?`, destructuring)
 - [ ] test-gensym — gensym (needs `future` — ignored; gensym not wired up)
-- [ ] test-apply-constructor — apply + constructor (compiles; runtime: "No implementation of 'apply' found for type" — needs `apply` for deftypes)
+- [ ] test-apply-constructor — apply + constructor (deferred until the end — unclear if it's really needed; compiles, runtime: "No implementation of 'apply' found for type")
 
 ### Compiler tests (verify existing compiler features)
 
