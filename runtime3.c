@@ -1521,9 +1521,13 @@ Term strCmp(Term sT, Term tgtT, int success) {
   long start;
   long len0;
   long len1;
-  if (termTag(tgtT) != VAL)
+  // All paths consume both argument refs (the Toccata str=/str</str<=
+  // wrappers and C's equal() pass owned refs and rely on this).
+  if (termTag(tgtT) != VAL) {
+    dec_and_free(sT, 1);
+    dec_and_free(tgtT, 1);
     return nothing();
-  else if (((Value *)sT)->type == StringBufferType) {
+  } else if (((Value *)sT)->type == StringBufferType) {
     str0 = (String *)sT; 
     start = 0;
     len0 = str0->len;
@@ -1533,7 +1537,9 @@ Term strCmp(Term sT, Term tgtT, int success) {
     start = getI60(str1->impls[1]);
     len0 = getI60(str1->impls[2]);
   } else {
-    BOOM("Invalid string comparison arguments");
+    dec_and_free(sT, 1);
+    dec_and_free(tgtT, 1);
+    return nothing();
   }
 
   s1 = &str0->buffer[start];
@@ -1550,7 +1556,9 @@ Term strCmp(Term sT, Term tgtT, int success) {
     len1 = getI60(str1->impls[2]);
     s2 = &parent->buffer[start];
   } else {
-    BOOM("Invalid string comparison arguments");
+    dec_and_free(sT, 1);
+    dec_and_free(tgtT, 1);
+    return nothing();
   }
 
   long len = len0 < len1 ? len0 : len1;
