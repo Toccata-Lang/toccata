@@ -1838,7 +1838,14 @@ long finalize_sha1(Value *ctxt) {
 
 int64_t integerSha1(Term arg0) {
   Sha1Context context;
-  unsigned type = IntegerType;
+  // TYPE_SIZE (int64_t), not unsigned: the 8-byte Sha1Update below must
+  // read exactly the type tag. A 4-byte local leaked 4 bytes of
+  // uninitialized stack padding into the hash, making it vary by call
+  // context (I60 get* missed in promoted ArrayNodes — the promotion path
+  // recomputes hashes in a different C context than insertion/lookup).
+  // Matches the historical core.c byte sequence: SHA1 over the 8-byte
+  // Integer type field followed by the 8-byte value.
+  TYPE_SIZE type = IntegerType;
   int64_t val = getI60(arg0);
   int64_t shaVal;
 
