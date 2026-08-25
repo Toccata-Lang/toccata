@@ -2128,7 +2128,7 @@ Value *addCopiedBMI(BitmapIndexedNode *node, Term key, Term val, int64_t hash, i
     dec_and_free((Term)node, 1);
     return((Value *)newNode);
   } else {
-    int idx = __builtin_popcount(node->bitmap & ((1 << (bit - 1)) - 1));
+    int idx = __builtin_popcount(node->bitmap & (bit - 1));
     int itemCount = n + 1;
     BitmapIndexedNode *newNode = malloc_bmiNode(itemCount);
     newNode->bitmap = node->bitmap | bit;
