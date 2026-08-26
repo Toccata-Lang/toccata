@@ -1,11 +1,19 @@
-# HVM Implementation Status
+# Toccata Implementation Status
 
-Read these files for context before starting any:
+## Current Phase
 
-1. `docs/calculus.md` — Formal calculus: node types, polarities, all 15 interaction rules with before/after descriptions
+Implement the next version of the compiler using `new-toc`.
+
+`new-toc` — the HVM-based compiler built from `compiler.toc` — is good enough to
+drive the next version of the compiler, and enough of the regression tests pass
+to proceed. The hash-map phase is complete (see below).
+
+## Read these files for context before starting any work
+
+1. `docs/calculus.md` — Formal calculus: node types, polarities, all interaction rules with before/after descriptions
 2. `docs/interactions.dot` — Visual diagrams for each rule
 3. `docs/implementation.md` — Architecture reference: term layout, memory, reduction engine
-4. `skills/editing-runtime3.md` — Pitfalls and learnings from uncommenting runtime3.c stubs
+4. `docs/implementation-notes.md` — Working notes on internal mechanics: term/bit layout, strictArgs, protocol dispatch codegen, BMI C-API hazards, sha1, build/test pipeline
 5. `runtime3.h` — Value type system, struct definitions, type constants, function declarations
 6. `runtime3.c` — Runtime: memory management, free lists, vector/hash-map operations, native HVM functions, main()
 7. `new.h` — Type definitions, tag constants, function declarations
@@ -13,7 +21,6 @@ Read these files for context before starting any:
 9. `hvm-core.toc` — Core type definitions and structure
 10. `graph.c` — DOT graph generation for debugging
 11. `Makefile`
-12. `implementation-notes.md` — working notes on internal mechanics: term/bit layout, strictArgs, protocol dispatch codegen, BMI C-API hazards, sha1, build/test pipeline
 
 Read in order: the calculus defines the rules, the implementation shows how they work, the tests show how to exercise them, and the graph/debug files help diagnose issues.
 
@@ -21,11 +28,9 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 **lldb is available** (`/usr/bin/lldb`, v18.1.3). Use it for live debugging of the C runtime — breakpoints, conditional breakpoints on refcount failure predicates, watchpoints, and catching double-frees at the first over-decrement. See `skills/memory-leak-hunting.md` ("lldb Workflow") for the concrete commands.
 
-## Current Work
+## Hash-map phase (complete)
 
-Hash-map functionality is complete: `hash-map-regressions` passes clean (the 25-key dissoc regression is enabled), and the `integerSha1` over-read is fixed (hashes the 8-byte `TYPE_SIZE` type tag; commit `e6b6c91`).
-
-`defprotocol` has been eliminated from the language — protocol functions are declared as individual `defp`s (see `hvm-core.toc`). `check-bad-incRef` is deferred until the very end. The remaining defprotocol-era tests (test-inline-invoke, state-error1-1/2) still need the same treatment. `test-apply-constructor` is deferred until the end (unclear if it's really needed).
+The hash-map work is done: `hash-map-regressions` passes clean (the 25-key dissoc regression is enabled), and the `integerSha1` over-read is fixed (commit `e6b6c91`). `defprotocol` has been eliminated from the language — protocol functions are declared as individual `defp`s (see `hvm-core.toc`). The phase plans (`docs/hash-map-plan-c.md`, `docs/hash-map-plan-toccata.md`) and the Ralph-loop driver (`prompt.md`) have been removed; see the git history for the details.
 
 ## Working tests (51)
 
@@ -147,4 +152,3 @@ These features won't be in the new version (lists might be added eventually):
 **`new-toc` typer crash: fn literal as a direct deftype constructor argument.** `(MyType (fn [x] x))` crashes the compiler ("Value 'arN' of type 'AllValues' does not have field '.param-consts' at typer.toc: 223"). Binding the fn first — `(let [f (fn [x] x)] (MyType f))` or a top-level `def` — compiles fine. Worked around in `check-bad-incRef` (`se-nop-fn` def). Will also affect state-error1-1/2 and test-inline-invoke when they get rewritten.
 
 **`new-toc` codegen is nondeterministic in global numbering.** Repeated runs of `./new-toc` on the same `.toc` produce different `glbl*` numbering (and occasionally a different number of globals), so regenerated `.c` files differ even with no source change. Behavior has been identical across variants so far (same ITRS/results), but a transient `.toc` state on 2026-08-25 did produce a hash-map variant that leaked 242 pairs — so a leak can be variant-dependent. Treat `.c` files as non-diffable across builds, and be suspicious of leak reports that don't reproduce on a fresh regeneration.
-

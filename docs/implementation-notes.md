@@ -286,3 +286,84 @@ probes at each stage of a two-assoc expression:
   not which source lines have "executed". Let bindings whose value is a VAR
   indirection (e.g. `m1` passed to a later call) carry no heap ref of their
   own.
+
+## 13. Hash-map phase lessons [read]
+
+Rescued from `docs/hash-map-plan-toccata.md` when it was removed (2026-08-26,
+phase complete). The borrowed/owned ref-convention lessons live in
+`skills/memory-leak-hunting.md` (Patterns 7–8); the appearance/refcount
+mechanics are in §12.
+
+- **`assoc*`'s magic number 3.** `refs-count == 3` means the caller holds
+  exactly one ref to the node (1 external + 2 dupe-refs for the node's other
+  two appearances in `assoc*`'s body) — i.e. safe to mutate in place. This is
+  the mutate-vs-copy decision criterion in `hvm-core.toc`.
+- **What the counters measure.** `malloc_count` counts `my_malloc` pool
+  refills (50/300-struct batches with free lists) and saturates at the
+  high-water mark — it stays ~constant across workloads and is not a workload
+  signal. The leak signals are `diff` (checked-out values never returned) and
+  `remaining nodes: 0 (N)`.
+- **The mutate path has no no-op branch.** Unlike `bmiCopyAssoc`,
+  `bmiMutateAssoc` runs `bmiSetKV` even for same-key-same-value (slot reset,
+  old contents freed).
+
+## 14. The runtime3.c C API: Term vs Value* [read]
+
+Rescued from `skills/editing-runtime3.md` (removed 2026-08-26) — the parts
+still useful when writing inline C against the runtime, re-verified against
+the current source (the original doc predates some struct/signature changes).
+
+**runtime3.c uses `Term` (unsigned long) for most operations, not `Value *`.**
+This is the fundamental difference from core.c and the source of most type
+adaptation work at the C/Toccata boundary.
+
+### Key signatures
+
+| Function | Takes | Returns |
+|---|---|---|
+| `incRef` | `Term v, int deltaRefs` | `Term` |
+| `incRefVal` | macro: `((Value *)incRef((Term)(v), (n)))` | `Value *` |
+| `dec_and_free` | `Term v, int deltaRefs` | void |
+| `integerSha1` | `Term arg0` | `int64_t` |
+| `strSha1` | `Value *arg0` | `int64_t` |
+| `termTag` | `Term val` | `Tag` |
+
+`newI60` / `getI60` are macros in `new.h` (the HVM term layer), not
+runtime3.c functions. `termVal` is a no-op macro in `new.h`
+(`#define termVal(x) (x)`) — the cast `(Term)(Value *)` is what actually
+converts. Note: under `FAST_INCS` (not used by the Makefile builds), `incRef`
+becomes a macro over `Value *` instead of the `Term`-taking function.
+
+### Casts at the boundary
+
+```c
+// Value * -> Term
+incRef((Term)(Value *)ptr, 1);
+dec_and_free((Term)(Value *)ptr, 1);
+
+// Term -> Value * (when a function takes Value *)
+someFn((Value *)incRef((Term)(Value *)ptr, 1));
+```
+
+### Node array element types (runtime3.h)
+
+| Node | Array |
+|---|---|
+| `BitmapIndexedNode` | `Term array[]` |
+| `ArrayNode` | `Term array[ARRAY_NODE_LEN]` |
+| `HashCollisionNode` | `Value *array[]` |
+
+BMI/ArrayNode slots hold `Term`s (cast as needed); collision-node entries are
+`Value *`s. The `Value *array[]` BMI in `core.h` belongs to the old core.c
+runtime — don't confuse the two headers.
+
+### Types that DON'T exist in runtime3.c
+
+These exist in core.c but NOT in runtime3.c:
+
+| Type | Replacement |
+|---|---|
+| `Integer` struct | Integers are I60 terms — `newI60(x)` / `getI60(x)` |
+| `ListType` | Not defined — no switch cases for it |
+| `HashedValue` struct | No hash caching — compute hashes fresh |
+| `new_num` / `new_i24` | Use `newI60(x)` instead |

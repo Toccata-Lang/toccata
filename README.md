@@ -1,147 +1,57 @@
-Toccata
-=======
+# Toccata
 
-Native fns have to have their inputs/outputs fully specified
-Top level C exprs have no result type
-There are no C defs
-If a native fn specifies a return type that has not been defined, that fn is it's constructor
-A native fn returns an Opaque type with the type num set, or an integer
-Remove SubString type
+Toccata is a Clojure-inspired Lisp dialect that compiles to a native executable.
+This repository holds the current HVM (interaction-net) based implementation: the
+`new-toc` compiler (written in Toccata, built from `compiler.toc`), the runtime
+(`new.c`, `runtime3.c`), the core library (`hvm-core.toc`), and a regression-test
+suite.
 
-Maybe/Nothing are just special cases of types, can be eliminated
-cond/either/and/or can be implemented using deferred redex
-superposition makes miniKanren trivial
-also make parsing trivial. Eliminate grammar and recursive descent
-deferred redex makes esb's obsolete. May not even need that
-Because of optimality, deforestation might be trivial as would multi modules
-To improve single-thread perf., reverse order links are written so the use of a
-result is put on the stack before the result is computed
+## Layout
 
+- `compiler.toc`, `base.toc`, `typer.toc`, `codegen.toc` — the `new-toc` compiler
+- `hvm-core.toc` — core type definitions and structure
+- `new.c` / `new.h` — interaction-net runtime core
+- `runtime3.c` / `runtime3.h` — runtime support: memory, native functions
+- `regression-tests/` — the regression-test suite
+- `docs/` — the calculus, implementation reference, and working notes
+- `skills/` — agent skills for common workflows
 
-Say HVM is running on 8 threads. Thread 0 has exactly 1 low-priority redex, while the other 7 threads have 0 low-priority redexes. No threads have any high-priority redexes. Naturally, net->idle will have a value of 7, as 7 of the 8 threads have no redexes of any priority. Consider the following order of events:
-Thread 1 successfully steals thread 0's low-priority redex here.
-Thread 1 is preempted by the operating system.
-Thread 0 calls rbag_len here and determines that it may still have a redex, as its tm->rput index is currently still 1.
-Since thread 1 still thinks it has a redex, it calls interact here. interact calls pop_redex, which decrements thread 1's tm->rput and returns 0, as the redex was stolen. Since interact didn't receive a redex, it immediately returns.
-Thread 0 once again checks if it has any active redexes by calling rbag_len. This time, however, its tm->rput index is 0, indicating that both redex bags are empty.
-Thread 0 increments net->idle here. net->idle now has a value of 8.
-Thread 1 calls rbag_len and determines that it may have a redex, as its tm->rput index was incremented to 1 when it successfully stole a redex from thread 0.
-Thread 1 decrements net->idle here. net->idle now has a value of 7.
- 
-At any point after event 6 but before event 8, thread 0 as well as threads 1 through 8 may exit, as net->idle is equal to TPC as is required to exit here.
+## Building
 
-Roadmap
-=======
+Requires `git`, `clang`, and `dot` (Graphviz).
 
-regression tests pass
-  protocol-ast
-  prototype-ast
-  extend-ast
-  type-ast
-  rec-type-ast
-  quoted-ast
-  declaration-ast
-  reify-ast
-  module-ast
-  git-dep-ast
-  main-ast
-  superposition & logic vars
-assertion tests pass
-build out hvm-core.toc
-  Strings
-  Lists
-  Vectors
-  HashMaps
-  HashSet
-  Resources
-  Sorting
-  Agent
-  IntGenerator
-  LazyList
-runtime failure tests pass
-  add runtime checking
-get compiler to compile itself
-  Parser
-make allocator O(1)
-automatic currying
-tree shaking
+    make new-toc     # build the compiler
+    make tests       # build and run the full regression suite
 
+`make test-hvm` and `make test-hash-map` run the C-level unit tests. `make help`
+lists the available targets.
 
-> "Pithy quote."
-> - Unknown
+## Documentation
 
-An incomplete, buggy, undocumented,  Clojure-inspired Lisp dialect that compiles to native executable using the Clang compiler
+- `status.md` — current phase, working tests, backlog, known issues
+- `docs/calculus.md` — the formal interaction calculus
+- `docs/implementation.md` — runtime architecture reference
+- `docs/implementation-notes.md` — working notes on the internal mechanics
+- `HISTORY.md` — history of the first (C-based) compiler
+- `spec.md` — language specification (in progress)
+- `ebnf.md` — grammar reference
 
-# Quick start (for macOS, Linux should be similar)
+## How Toccata differs from Clojure
 
-Make sure you have `git` and `clang` installed. `clang` is part of the LLVM project and also installed as part of Xcode. Make sure that `/usr/bin/git` exists and points to the correct `git` executable.
+Toccata is not a copy or a port of Clojure. A few key differences:
 
-* Clone this repo and switch to the cloned directory
-* Compile `core.c`
+- `for` works on any data type that implements the `flat-map` protocol function,
+  not just sequences.
+- `map` is a protocol function: it can be implemented for any data type, and the
+  value being mapped over comes first (the opposite of Clojure's order).
+- There is no Boolean type, no `true`/`false`, and no `if`/`when` forms.
+- Comments are nodes in the AST.
+- Every C file tracks memory allocations and frees; the stats are printed at the
+  end of each run, and a discrepancy (or an `incRef`/`dec_and_free` error) is a
+  failure.
 
-      clang -O3 -g -fno-objc-arc -std=c99 -c core.c
+## License
 
-* Compile the Toccata compiler itself
-
-      clang -O3 -g -fno-objc-arc -o toccata -std=c99 core.o toccata.c -lpthread
-    
-* Set the TOCCATA_DIR environment variable to the directory that contains `core.toc`
-
-      export TOCCATA_DIR=/Users/jduey/toccata
-    
-* Add that same directory to the C_INCLUDE_PATH environment variable
-
-      export C_INCLUDE_PATH=$C_INCLUDE_PATH:$TOCCATA_DIR
-
-* For convenience, make sure the `toccata` executable is on the $PATH.
-
-      export PATH=$PATH:$TOCCATA_DIR
-    
-# Compile your first program
-
-* Paste this text to a file named `hw.toc`
-
-      (main [_]
-        (println "Howdy, folks"))
-        
-* Compile it to C code
-
-      toccata hw.toc > hw.c
-
-* Compile the C code using `clang` and link with `core.o`
-
-      clang -g -fno-objc-arc -o hw -std=c99 $TOCCATA_DIR/core.o hw.c -lpthread
-     
-* Run it
-
-      ./hw
-      
-# But wait!
-
-## READ THIS SECTION! It will save you hours of frustration.
-
-See that phrase at the very top? I'll put it here just to make sure
-
-      "inspired by Clojure"
-
-Toccata is not a copy or a port of Clojure. There are some very key differences. I'm going to list a few here, but there are others as well.
-
-* `for` is not just for sequences. It works on any data type that implements the `flat-map` protocol function
-
-* `map` is a protocol function. That means it can be implemented for any data type. Not just sequences. It also means the value that is being mapped over comes first and the mapping function comes second. This is the opposite order that Clojure uses.
-
-* There is no Boolean data type, no `true` or `false` values, no `if`, `cond` or `when` forms. This was a very speculative idea and I'm really happy how it worked. There will be a series of blog posts very soon explaining this in detail.
-
-* Comments are nodes in the AST. If you have an S expression that won't compile and it contains comments, try deleting the comments. I've got some rough edges to polish there.
-
-* Right now, documentation consists of this README, the comments and source code in `core.toc` and the programs in the `regression-tests`. Yes, that's pitiful. I'm working on getting blog posts out as quickly as possible.
-
-* Code is added to all C files that track the memory allocations and frees. The stats are printed at the end of each run. If there's a discrepancy, the return code will indicate failure. If you write a Toccata program that consistently fails, I'd be very interested in it. Also, any program that fails with an `incRef` error or a `dec_and_free` error. Those should definitely not happen.
-
-# And now ...
-
-This is just the beginning of a long road to make Toccata into a useful programming language. I deeply appreciate your patience and assistance in making that happen.
-
-Check the HISTORY.md file for a detailed description.
+See `LICENSE`.
 
 You can learn more about Toccata by following the [blog here](http://toccata.io)
