@@ -25,9 +25,9 @@ Read in order: the calculus defines the rules, the implementation shows how they
 
 Hash-map functionality is complete: `hash-map-regressions` passes clean (the 25-key dissoc regression is enabled), and the `integerSha1` over-read is fixed (hashes the 8-byte `TYPE_SIZE` type tag; commit `e6b6c91`).
 
-`defprotocol` has been eliminated from the language — protocol functions are declared as individual `defp`s (see `hvm-core.toc`). `check-bad-incRef` was rewritten that way (destructuring code commented out) and passes clean — added to REG_TESTS. The remaining defprotocol-era tests (test-inline-invoke, state-error1-1/2) still need the same treatment. `test-apply-constructor` is deferred until the end (unclear if it's really needed).
+`defprotocol` has been eliminated from the language — protocol functions are declared as individual `defp`s (see `hvm-core.toc`). `check-bad-incRef` is deferred until the very end. The remaining defprotocol-era tests (test-inline-invoke, state-error1-1/2) still need the same treatment. `test-apply-constructor` is deferred until the end (unclear if it's really needed).
 
-## Working tests (50)
+## Working tests (51)
 
 **Memory leaks are a failure condition.** Every test must leave `malloc_count == free_count` (all Value allocations freed). Any non-zero diff at the end of a test is a failure.
 
@@ -75,6 +75,7 @@ Hash-map functionality is complete: `hash-map-regressions` passes clean (the 25-
 - [x] test-comment-in-let
 - [x] test-recursive-map-fn
 - [x] test-tail-recur-1
+- [x] test-tail-recur-2
 - [x] test-tail-recur-3
 - [x] test-trailing-comment
 - [x] test-underscore-inline
@@ -101,14 +102,13 @@ Hash-map functionality is complete: `hash-map-regressions` passes clean (the 25-
 
 ### Compiler tests (verify existing compiler features)
 
-- [ ] and-prop — type property inference (blocked: `instance?` not implemented)
-- [ ] check-bad-incRef — reference counting (blocked: `defprotocol` — "Invalid expression" at the defprotocol line)
+- [ ] and-prop — type property inference (deferred until the very end)
+- [ ] check-bad-incRef — reference counting (deferred until the very end)
 - [ ] or-and-constraints — type constraints in or/and (needs type system completion)
-- [ ] test-cond — cond syntax (waiting on: `any?`, `ever?`, `instance?`)
+- [ ] test-cond — cond syntax (deferred until the very end)
 - [ ] test-inline-invoke — inline invoke (blocked: field access — "Undefined symbol: 'invoke'" for the `invoke-fn` deftype field)
-- [ ] test-inline-sym-literal — symbol literals (blocked: `instance?`)
+- [ ] test-inline-sym-literal — symbol literals (deferred until the very end)
 - [ ] test-proto-def-constraints — protocol constraints (needs type system)
-- [ ] test-tail-recur-2 — tail recursion (blocked: str-vect dispatch on None)
 - [ ] types-regressions — type system (blocked: type system)
 - [ ] test-for — `for` comprehension (needs more compiler work)
 
