@@ -1588,7 +1588,13 @@ Term strCmp(Term sT, Term tgtT, int success) {
   case STR_LT | STR_EQ:
     matched = (cmpResult < 0) || ((cmpResult == 0) && (len0 <= len1));
     break;
-  
+
+  case STR_PREFIX:
+    // Succeeds iff one string is a prefix of the other: cmpResult is the
+    // strncmp over the shorter length, so 0 means the shorter matches.
+    matched = (cmpResult == 0);
+    break;
+
   default:
     BOOM("Invalid success criteria for strCmp");
     break;

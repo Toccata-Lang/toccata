@@ -204,6 +204,16 @@ each form's rule arrives with its phase.
   shapes: `read-vector`, `read-hash-map`, `read-threading` /
   `nest-thread-exprs`, `read-defn` / `read-def`, `read-single-arity`
   (params + doc + body), `read-fn` (optional name).
+- `STR_PREFIX` is **8** in runtime3.h (item 1's draft said 4, but
+  `STR_GT` already occupies 4).
+- The current runtime is **lazy**: a `let` initializer (or any
+  sub-redex) runs only when the result chain demands it — a
+  continuation that ignores its param drops the remaining side
+  effects. Scratch programs that print must thread side-effect
+  results through a strict combination (e.g. `+`) into the result
+  chain (see `scratch/str-prefix.toc`). Also: `fn` literals with
+  underscore params miscompile (duplicate C variable) — use named
+  params.
 
 ## Settled (continued)
 
@@ -318,7 +328,7 @@ primitive representation is a joint decision (owner + agent); when the
 loop reaches it, stop and report the state. Do not choose a design
 unilaterally.
 
-- [ ] **1. Core: `strCmp` prefix mode**
+- [x] **1. Core: `strCmp` prefix mode**
   - `runtime3.h`: add `#define STR_PREFIX 4` alongside `STR_EQ`/`STR_LT`
     (~line 284). `runtime3.c` `strCmp` (~line 1521): add the prefix
     code path — success iff one string is a prefix of the other

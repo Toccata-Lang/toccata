@@ -284,6 +284,7 @@ Term strCount(Term s);
 #define STR_EQ 1
 #define STR_LT 2
 #define STR_GT 4
+#define STR_PREFIX 8
 Term strCmp(Term sT, Term tgtT, int success);
 Value *strVect(Value *arg0);
 Value *checkInstance(TYPE_SIZE typeNum, Value *arg1);
