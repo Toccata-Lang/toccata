@@ -214,6 +214,29 @@ each form's rule arrives with its phase.
   chain (see `scratch/str-prefix.toc`). Also: `fn` literals with
   underscore params miscompile (duplicate C variable) — use named
   params.
+- **new-toc deftype constructor names are globally unique** (per
+  namespace; the core's names are global too). Two verified
+  consequences (2026-08-26, item 2):
+  - A constructor named `String` is **unbuildable in any namespace**
+    ("A type named 'String' was already defined" — the core `String`
+    type). The eval-dispatch bullet's "the constructor is named
+    `String`" is therefore not buildable; the symbol-ref constructor
+    is `Symbol` per the AST table (the pre-rename file compiled
+    clean with it). The 46d6e29 "String constructor" adjustment
+    broke the clean-compile property and was reverted in item 2.
+  - `Expression.Inline` and a same-named `TopLevel.Inline` **cannot
+    coexist** in one namespace. Splitting the AST across namespaces
+    compiles and runs (verified: cross-ns constructor call works),
+    but that is a structural change the plan doesn't settle. The
+    `TopLevel.Inline` constructor is therefore **pending owner
+    decision** (rename, or namespace split); it is omitted from
+    `intrp-ast.toc` until then (marked with a comment).
+- `(deftype returns [])` (zero constructors) compiles clean under
+  new-toc (verified 2026-08-26, item 2).
+- `!` annotations are parsed/validated by new-toc even though they
+  don't affect codegen: `(maybe-of Expression)` is rejected ("Missing
+  type assertion in type constraint expression"); bare `Maybe` is
+  accepted (cf. new-core.toc's `! mv Maybe`).
 
 ## Settled (continued)
 
