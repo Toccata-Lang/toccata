@@ -67,7 +67,11 @@ Acceptance:
   test-fusing); 6 more blocked only by `add-ns` (integer-regressions,
   string-regressions, vector-regressions, test-threading, test-closures,
   test-inline-namespaced-sym). The rest use inline C, user deftypes, or
-  match/superposition.
+  match/superposition. **Item-3 audit (2026-08-27): 19 verified clean;
+  test10 flagged — `do` is not in the settled AST/desugarings; test-fusing
+  flagged — bare `(def)` declare + arity-flexible (left-associative)
+  calls; both pending owner decision. Full audit + 25-symbol initial-env
+  list: `intrp-tests/README.md`.**
 - `interpreter-tests/` (20 negative type-error tests) belongs to phase 2.
 
 ## AST (settled — 8 points)
@@ -389,7 +393,7 @@ unilaterally.
     (annotations over `String`/`Location`-kind types break the bare
     reference — see verified facts).
 
-- [ ] **3. Test audit**
+- [x] **3. Test audit**
   - Line-by-line audit of the 51 regression tests against the phase-1
     scope; record the suitable list (expect the ~20 clean candidates
     from the rough audit above) and the union of core symbols they
