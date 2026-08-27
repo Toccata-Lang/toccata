@@ -258,6 +258,47 @@ each form's rule arrives with its phase.
   later value definition of the same name resolves). The new parser
   should **ignore** it: it produces no AST node / map entry (verified
   2026-08-27).
+- **`+` is exactly 2-arg** in the new core (`(defn + [x y])`,
+  hvm-core.toc:303); `(+ a b c)` is a parse error ("Wrong number of
+  args for '+'"). Nest to combine more: `(+ a (+ b c))` (verified
+  2026-08-27, item 4).
+- **`first`/`rest` on a Vector**: `(first v)` returns `Some element`
+  (a Maybe), not the bare element — extract with `(extract (first v))`;
+  `(rest v)` returns a Vector (hvm-core.toc:945, 951). `intrp-rdr.toc`'
+  s `elt0`/`elt1` use `(extract (first ...))` (verified 2026-08-27,
+  item 4).
+- **`add-ns` module paths resolve relative to the importing file's
+  directory**, not the CWD. A scratch file in `scratch/` imports a
+  root-level module as `(module "../intrp-rdr.toc")`; the regression
+  tests work only because their modules sit beside them (verified
+  2026-08-27, item 4).
+- **`char-code`** (hvm-core.toc:645) → first char's integer code
+  (0-255); `char` (634) is the inverse. `intrp-rdr.toc`'s predicates
+  classify via `char-code` + `<=` (verified 2026-08-27, item 4).
+- **`subs` is 3-arg** (`(defp subs [s start len])`, hvm-core.toc:661);
+  the rest of a string is `(subs s 1 (count s))` (len clamps to the
+  tail). `count` is O(1) for both `SubString` and `StringBuffer`
+  (verified 2026-08-27, item 4).
+- **Named / namespace-qualified functions are first-class values**:
+  `rdr/read-symbol` can be passed as an argument and called as
+  `(reader s)` (verified 2026-08-27, item 4).
+- **Lazy-machine side-effect threading (extended)**: a continuation that
+  drops its threaded count lets the machine skip the *earlier* `pr*`
+  side effects (only the last print appeared). Thread an accumulator
+  through every continuation so the final result depends on all of them
+  (verified 2026-08-27, item 4; see `scratch/rdr-tokens.toc`
+  `read-and-show`).
+- **`intrp-rdr.toc` is now a library (no main)** holding the item-4
+  state + token helpers: `make-state`, `state-line`, predicates
+  `is-digit`/`is-alpha`/`symbol-start?`/`symbol-continue?`/
+  `float-char?`, helpers `peek-char`/`take-char`/`skip-comment`/
+  `skip-whitespace`/`run-length`/`read-run`, accessors `elt0`/`elt1`,
+  readers `read-string-content`/`read-string`/`read-symbol`/`read-int`/
+  `read-float`. Self-recursion needs no forward declaration; the old
+  `ParserCombinator` machinery and grammar `(def ...)` rules are
+  removed. `read-run` = length-scan (`run-length`) + one `subs`; token
+  readers return `[token-text new-state]` pairs (verified 2026-08-27,
+  item 4).
 
 ## Settled (continued)
 
@@ -409,7 +450,7 @@ unilaterally.
     `intrp-tests/README.md`, with a one-line exclusion reason for every
     other test.
 
-- [ ] **4. `intrp-rdr.toc`: parser — state + tokens**
+- [x] **4. `intrp-rdr.toc`: parser — state + tokens**
   - Replace the combinator machinery with direct recursive-descent
     functions. `ParserState [input values]` (remaining-string model;
     `values` = `{"file" ..., "line" 1}`, line bumped on `"\n"`). Result

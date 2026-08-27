@@ -1,9 +1,27 @@
+;; intrp-rdr.toc — phase-1 parser: state + tokens (checklist item 4).
+;;
+;; Direct recursive-descent token helpers over a remaining-string
+;; ParserState. The old combinator machinery (ParserCombinator and the
+;; (def ...) grammar rules) is gone; items 5-6 will add the expression
+;; and top-level parse functions on top of these helpers.
+;;
+;; This file is a LIBRARY (no main). The item-4 verification driver is
+;; scratch/rdr-tokens.toc.
+;;
+;; Model (settled):
+;;   * ParserState [input values] — `input` is the unconsumed suffix of
+;;     the source; `values` is a bookkeeping map {"file" String, "line"
+;;     Integer}. `subs` returns O(1) SubString views, so per-character
+;;     cost is a small pooled allocation.
+;;   * Maximal-run reads scan for a length, then extract with ONE subs —
+;;     never repeated `str` concatenation (O(n^2)).
+;;   * The line counter is bumped by take-char when it consumes "\n".
+
 (add-ns ast (module "intrp-ast.toc"))
 
 (deftype ParserState [input values]
   ! input String
-  ;; ! values {String _}
-)
+  )
 
 (deftype ParserResults
   (ParserFail [])
@@ -11,185 +29,203 @@
   (ParserIgnore [state])
   (ParserError [msg state]))
 
-(deftype ParserCombinator
-  (Ignore [parser]
-    ! parser ParserCombinator
-    (recurse [v f]
-             (Ignore (f parser)))
-    (str-vect [x]
-              ["(Ignore " (str (.parser x)) ")"]))
-  (CharRange [lower upper]
-    ! lower String
-    ! upper String
-    (recurse [v f]
-             v)
-    (str-vect [x]
-              ["(CharRange " (.lower x) " " (.upper x) ")"]))
-  (AlwaysSucceed [value]
-                  (recurse [v f]
-                           v)
-                  (str-vect [x]
-                            ["(AlwaysSucceed" (.value x) ")"]))
-  (NotChar [char]
-    ! char String
-    (recurse [v f]
-             v)
-    (str-vect [x]
-              ["(NotChar " (.char x) ")"]))
-  (Error [msg]
-    ! msg String
-    (recurse [v f]
-             v)
-    (str-vect [x]
-              ["(Error " (.msg x) ")"]))
-  (All [parsers]
-    ! parsers [ParserCombinator]
-    (recurse [v f]
-             (All (map parsers f)))
-    (str-vect [x]
-              ["(All " (to-str (flat-map (.parsers x) str-vect)) ")"]))
-  (Any [parsers]
-    ! parsers [ParserCombinator]
-    (recurse [v f]
-             (Any (map parsers f)))
-    (str-vect [x]
-              ["(Any " (to-str (flat-map (.parsers x) str-vect)) ")"]))
-  (Many [parser]
-    ! parser ParserCombinator
-    (recurse [v f]
-             (Many (f parser)))
-    (str-vect [x]
-              ["(Many " (first (str-vect (.parser x))) ")"]))
-  (Rule [name parser]
-    ! name String
-    ;; ! parser ParserCombinator
-    (recurse [v f]
-             (Rule name (f parser)))
-    (str-vect [x]
-              ["(Rule " name " " (first (str-vect parser)) ")"]))
-  (Recur [f]
-    ;; ! f (-> [] Rule)
-    (recurse [v rec-f]
-             ;; (Recur (fn []
-             ;;          (rec-f (f))))
-             v)
-    (str-vect [x]
-              ["(Recur " (.name (f)) ")"])))
+;; --- State helpers ---------------------------------------------------
 
-(def digits (Rule "digits" (CharRange "0" "9")))
+;; make-state: build a ParserState with the given input, file name, and
+;; starting line number.
+(defn make-state [input file line]
+  (ParserState input (assoc (assoc emptyBMI "file" file) "line" line)))
 
-(def upper-case (CharRange "A" "Z"))
+;; state-line: the current line number from the state's values map.
+(defn state-line [state]
+  (extract (get (.values state) "line")))
 
-(def lower-case (CharRange "a" "z"))
+;; --- Character predicates --------------------------------------------
+;; Each returns Some (truthy) if the one-char string matches, None
+;; otherwise. char-code maps the first char to its integer code (0-255).
 
-; Comments
-(def comment-start ";")
-(def comment (Rule "comment" (All [comment-start (Many (NotChar "\n"))])))
+(defn is-digit [c]
+  (let [n (char-code c)]
+    (and (<= 48 n) (<= n 57))))
 
- ; Whitespace
-(def linear-whitespace (Any ["," " " "\t"]))
-(def whitespace (Rule "whitespace" (Many (Any [linear-whitespace "\n" "\r" comment]))))
-(def skip-ws (Ignore whitespace))
+(defn is-alpha [c]
+  (let [n (char-code c)]
+    (or (and (<= 65 n) (<= n 90))
+        (and (<= 97 n) (<= n 122)))))
 
-; Keywords and Special Forms
-(def def-keyword (All [skip-ws "def"]))
-(def defmacro-keyword (All [skip-ws "defmacro"]))
-(def defn-keyword (All [skip-ws "defn"]))
-(def deftype-keyword (All [skip-ws "deftype"]))
-(def defp-keyword (All [skip-ws "defp"]))
-(def extend-type-keyword (All [skip-ws "extend-type"]))
-(def add-ns-keyword (All [skip-ws "add-ns"]))
-(def inline-keyword (All [skip-ws "inline"]))
-(def main-keyword (All [skip-ws "main"]))
+;; A symbol starts with an alpha or one of . _ < > = + - * /
+(defn symbol-start? [c]
+  (or (is-alpha c)
+      (str= c ".")
+      (str= c "_")
+      (str= c "<")
+      (str= c ">")
+      (str= c "=")
+      (str= c "+")
+      (str= c "-")
+      (str= c "*")
+      (str= c "/")))
 
-; Sub-Expression Special Forms
-(def fn-keyword (All [skip-ws "fn"]))
-(def let-keyword (All [skip-ws "let"]))
-(def do-keyword (All [skip-ws "do"]))
-(def superposition-keyword (All [skip-ws "|"]))
-(def threading-keyword (All [skip-ws "->"]))
-(def match-keyword (All [skip-ws "match"]))
+;; A symbol continues with an alpha, a digit, or one of . _ < > = + - * ? !
+(defn symbol-continue? [c]
+  (or (is-alpha c)
+      (is-digit c)
+      (str= c ".")
+      (str= c "_")
+      (str= c "<")
+      (str= c ">")
+      (str= c "=")
+      (str= c "+")
+      (str= c "-")
+      (str= c "*")
+      (str= c "?")
+      (str= c "!")))
 
-; Type Constraints
-(def type-constraint-prefix (All [skip-ws "!"]))
+;; A number token is a run of digits and dots (token-level; full numeric
+;; validation is deferred to the AST-building pass in item 5).
+(defn float-char? [c]
+  (or (is-digit c)
+      (str= c ".")))
 
-; Special Symbols
-(def file-symbol (All [skip-ws "_FILE_"]))
-(def line-symbol (All [skip-ws "_LINE_"]))
+;; --- Token helpers ---------------------------------------------------
 
-; Delimiters
-(def open-paren (All [skip-ws "("]))
-(def close-paren (All [skip-ws ")"]))
-(def open-bracket (All [skip-ws "["]))
-(def close-bracket (All [skip-ws "]"]))
-(def open-brace (All [skip-ws "{"]))
-(def close-brace (All [skip-ws "}"]))
+;; peek-char: the first character of the input as a one-char string, or
+;; "" if the input is exhausted. Does not consume.
+(defn peek-char [state]
+  (let [input (.input state)]
+    (cond (str= input "")
+          ""
+          (subs input 0 1))))
 
-; Comments
-(def comment-start (All [skip-ws ";"]))
+;; take-char: consume one character, returning the new state. Bumps the
+;; line counter when the consumed char is a newline. A no-op on empty
+;; input.
+(defn take-char [state]
+  (let [input (.input state)]
+    (let [c (subs input 0 1)]
+      (let [rest-input (subs input 1 (count input))]
+        (let [line (state-line state)]
+          (let [new-line (cond (str= c "\n")
+                               (+ line 1)
+                               line)]
+            (ParserState rest-input
+                         (assoc (.values state) "line" new-line))))))))
 
-; Literals
-(def single-quote (All [skip-ws "'"]))
-(def double-quote "\"")
+;; skip-comment: state is positioned just after a ';'. Consume through
+;; the end of the line, stopping at (but not consuming) the newline or
+;; end of input. Self-recursive.
+(defn skip-comment [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          state
+          (str= c "\n")
+          state
+          (skip-comment (take-char state)))))
 
-; Parser Rules for Toccata Constructs
-(def int-literal (Rule "integer" (All [skip-ws (Many digits)])))
-(def alpha (Rule "alpha" (Any [lower-case upper-case])))
-(def symbol-start
-  (Rule "symbol-start"
-        (All [skip-ws (Any [alpha "." "_" "<" ">" "=" "+" "-" "*" "/"])])))
-(def rest-of-symbol
-  (Rule "rest-of-symbol"
-        (Any [alpha digits "." "_" "<" ">" "=" "+" "-" "*" "?" "!"])))
+;; skip-whitespace: consume runs of whitespace (space, tab, newline, CR)
+;; and ';' comments, returning the new state. Self-recursive.
+(defn skip-whitespace [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          state
+          (str= c ";")
+          (skip-whitespace (skip-comment (take-char state)))
+          (str= c " ")
+          (skip-whitespace (take-char state))
+          (str= c "\t")
+          (skip-whitespace (take-char state))
+          (str= c "\n")
+          (skip-whitespace (take-char state))
+          (str= c "\r")
+          (skip-whitespace (take-char state))
+          state)))
 
-(def symbol (Rule "symbol" (All [symbol-start (Many rest-of-symbol)])))
+;; run-length: the number of leading characters of s that satisfy pred.
+;; Each step is an O(1) subs view, so the scan is O(n). Self-recursive.
+(defn run-length [s pred]
+  (let [c (subs s 0 1)]
+    (cond (str= c "")
+          0
+          (pred c)
+          (+ 1 (run-length (subs s 1 (count s)) pred))
+          0)))
 
-; Number Literals
-(def float-literal (Rule "float" (All [(All [skip-ws (Many digits)]) "." (Many digits)])))
+;; read-run: read the maximal run of characters (from the state's input)
+;; that satisfy pred. Returns [run-text new-state]. The run never spans a
+;; newline for the token types used here, so the line is unchanged.
+(defn read-run [state pred]
+  (let [input (.input state)]
+    (let [len (run-length input pred)]
+      (let [run (subs input 0 len)]
+        (let [rest-input (subs input len (count input))]
+          [run (ParserState rest-input (.values state))])))))
 
-; String Literals
-(def escaped-char (Rule "escaped-char" (All ["\\" (Any ["\\" "\"" "n" "r" "t"])])))
-(def double-quoted-string (Rule "double-quoted-string" (All [skip-ws
-                                                             double-quote
-                                                             (Many (Any [(NotChar "\"") escaped-char]))
-                                                             double-quote])))
+;; --- Element accessors for [value state] pairs -----------------------
 
-(def sub-expression)
-(def vector-expression)
-(def hash-map-expression)
+(defn elt0 [v]
+  (extract (first v)))
 
-; Vector and Hash Map Expressions
-(def vector-expression
-  (Rule "vector-expression"
-        (All [open-bracket (Many (Recur sub-expression)) close-bracket])))
+(defn elt1 [v]
+  (extract (first (rest v))))
 
-(def hash-map-expression
-  (Rule "hash-map-expression"
-        (All [open-brace (Many (All [(Recur sub-expression) (Recur sub-expression)])) close-brace])))
+;; --- Token readers (return [token-text new-state]) -------------------
 
-; Expressions
-(def expression
-  (Rule "expression"
-        (Any [int-literal
-              float-literal
-              double-quoted-string
-              symbol
-              (All [open-paren
-                    (Recur sub-expression)
-                    (Many (Recur sub-expression))
-                    close-paren])
-              vector-expression
-              hash-map-expression])))
-(defn sub-expression []
-  expression)
+;; read-string-content: state is just after the opening quote. Consume
+;; until an unescaped closing quote, stopping AT the quote (not
+;; consuming it) or at end of input. A backslash skips the next char so
+;; an escaped quote does not end the string. Self-recursive.
+(defn read-string-content [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          state
+          (str= c "\\")
+          (read-string-content (take-char (take-char state)))
+          (str= c "\"")
+          state
+          (read-string-content (take-char state)))))
 
-; Type Constraints
-(def min-constraint (Rule "min-constraint" (All [open-paren skip-ws "min" int-literal close-paren])))
-(def max-constraint (Rule "max-constraint" (All [open-paren skip-ws "max" int-literal close-paren])))
-(def min-length-constraint (Rule "min-length-constraint" (All [open-paren skip-ws "min-length" int-literal close-paren])))
-(def max-length-constraint (Rule "max-length-constraint" (All [open-paren skip-ws "max-length" int-literal close-paren])))
-(def length-constraint (Rule "length-constraint" (All [open-paren skip-ws "length" int-literal close-paren])))
+;; read-string: a double-quoted string. Returns [content new-state] where
+;; content is the raw text between the quotes (escape *processing* is
+;; deferred to the AST-building pass). new-state is positioned just after
+;; the closing quote.
+(defn read-string [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          [""]
+          (str= c "\"")
+          (let [after-open (take-char state)]
+            (let [at-close (read-string-content after-open)]
+              (let [content-len
+                    (- (count (.input after-open))
+                       (count (.input at-close)))]
+                (let [content (subs (.input after-open) 0 content-len)]
+                  (let [end-state (take-char at-close)]
+                    [content end-state])))))
+          [""])))
 
-(main [_]
-  (println expression)
-  0)
+;; read-symbol: a symbol whose first char satisfies symbol-start?.
+(defn read-symbol [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          [""]
+          (symbol-start? c)
+          (read-run state symbol-continue?)
+          [""])))
+
+;; read-int: a run of digits.
+(defn read-int [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          [""]
+          (is-digit c)
+          (read-run state is-digit)
+          [""])))
+
+;; read-float: a run of digits and dots (token-level; see float-char?).
+(defn read-float [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          [""]
+          (is-digit c)
+          (read-run state float-char?)
+          [""])))
