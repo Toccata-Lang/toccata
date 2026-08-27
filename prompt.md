@@ -31,6 +31,11 @@ previous runs — the plan file and the git history are your memory.
    - Verify the item's "done when" criterion for real — run the
      builds, compile and run the scratch programs, run the tests. A
      checked box you have not verified is a lie.
+   - Record any durable fact you verified this run — code structure,
+     file/function existence, a `new-toc` coding technique or hazard,
+     a build/test quirk — in the plan's **"Verified facts"** section,
+     date-stamped, so a future run does not re-derive it (see Standing
+     constraints).
    - Check the box in `docs/new-compiler-plan.md`.
    - Commit your work (code + checkbox + any plan notes) with a
      message starting `phase1 item N: <what changed>`.
@@ -47,6 +52,14 @@ previous runs — the plan file and the git history are your memory.
 - Builds must be clean: zero malloc/free diff, zero remaining nodes.
 - Put scratch verification programs in `scratch/` and commit them —
   later items build on them. Keep the repo root clean.
+- **Persist verified facts.** The plan's **"Verified facts"** section
+  (in `docs/new-compiler-plan.md`) is the durable memory for
+  discoveries: code structure, file/function existence, `new-toc`
+  coding techniques and hazards, build/test quirks. Append anything
+  you verify this run, date-stamped, before you commit. Save only
+  reusable facts — not transient state (current test status,
+  work-in-progress). A fact already recorded there is settled: trust
+  it rather than re-checking, unless you have reason to doubt it.
 - If you get stuck in a way you cannot resolve within this item: leave
   the box unchecked, commit only verified progress (or nothing), then
   decide:

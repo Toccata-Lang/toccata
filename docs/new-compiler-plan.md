@@ -253,6 +253,11 @@ each form's rule arrives with its phase.
   don't affect codegen: `(maybe-of Expression)` is rejected ("Missing
   type assertion in type constraint expression"); bare `Maybe` is
   accepted (cf. new-core.toc's `! mv Maybe`).
+- A **bare `(def name)`** — a `def` with **no value expression** — is a
+  **forward reference**, a crutch used only to make new-toc happy (so a
+  later value definition of the same name resolves). The new parser
+  should **ignore** it: it produces no AST node / map entry (verified
+  2026-08-27).
 
 ## Settled (continued)
 
@@ -485,7 +490,23 @@ unilaterally.
     threading, string/int/float ops, quoted symbols.
   - Done when: the suite passes through the item-10 runner.
 
-- [ ] **12. Final verification**
+- [ ] **12. Move the `strCmp` prefix scratch test into `regression-tests/`**
+  - `scratch/str-prefix.toc` (item 1's verification program) is a proper
+    regression test — it has a `main` and exercises `strCmp` STR_PREFIX for
+    the equal / prefix / superstring / different / empty cases. Move it to
+    `regression-tests/str-prefix.toc`, add `str-prefix` to `REG_TESTS` in the
+    Makefile, and let the standard rule generate
+    `regression-tests/str-prefix.rslt` (`regression-tests/str-prefix
+    party-pooper | sort`). Remove `scratch/str-prefix.toc`.
+  - The `.rslt` golden is gitignored (`regression-tests/*.rslt`); the
+    existing 51 are tracked only via force-add, so the new one must be
+    staged with `git add -f regression-tests/str-prefix.rslt` or it will be
+    missing from the commit.
+  - Done when: `make str-prefix` builds and runs with the expected
+    Some/None result per case, `str-prefix` is in `REG_TESTS`, the
+    `str-prefix.rslt` is force-staged, and the scratch file is gone.
+
+- [ ] **13. Final verification**
   - Zero leaks (malloc/free diff 0, remaining nodes 0) for the
     interpreter binary across the full test set; every item above
     checked.
