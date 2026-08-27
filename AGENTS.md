@@ -10,3 +10,10 @@ If you are told to create a file, then only create it. Do not try to execute it 
 * Never use "sudo" to run any command. That is explicitly forbiddin. You do not have "sudo" access.
 
 * Never make the toccata target! That is for me to do when needed.
+
+* No local symbol may shadow a symbol from the core namespace — new-toc codegen emits colliding C identifiers (see docs/new-compiler-plan.md, Verified facts).
+
+* new-toc diagnostics rules:
+  * Always capture and read new-toc's stderr — it often points directly at the problem (e.g. `Undefined symbol: 'x' at file: N`, `Error at file: N; msg`). Never discard it (`2>/dev/null`) when a build fails.
+  * If new-toc segfaults/aborts WITHOUT printing an error message, the crash is transient — retry up to 5 times total.
+  * If a retry prints an error message and then aborts, stop retrying and fix the error.

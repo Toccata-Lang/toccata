@@ -1,0 +1,843 @@
+;; intrp-rdr.toc — phase-1 parser: state + tokens (checklist item 4).
+;;
+;; Direct recursive-descent token helpers over a remaining-string
+;; ParserState. The old combinator machinery (ParserCombinator and the
+;; (def ...) grammar rules) is gone; items 5-6 will add the expression
+;; and top-level parse functions on top of these helpers.
+;;
+;; This file is a LIBRARY (no main). The item-4 verification driver is
+;; scratch/rdr-tokens.toc.
+;;
+;; Model (settled):
+;;   * ParserState [input values] — `input` is the unconsumed suffix of
+;;     the source; `values` is a bookkeeping map {"file" String, "line"
+;;     Integer}. `subs` returns O(1) SubString views, so per-character
+;;     cost is a small pooled allocation.
+;;   * Maximal-run reads scan for a length, then extract with ONE subs —
+;;     never repeated `str` concatenation (O(n^2)).
+;;   * The line counter is bumped by take-char when it consumes "\n".
+;;   * NO local symbol may shadow a symbol from the core namespace (a
+;;     local `first` made new-toc emit colliding C identifiers — see
+;;     docs/new-compiler-plan.md, Verified facts).
+
+(add-ns ast (module "intrp-ast.toc"))
+
+(deftype ParserState [input values]
+  ! input String
+  )
+
+(deftype ParserResults
+  (ParserFail [])
+  (ParserMatch [value state])
+  (ParserIgnore [state])
+  (ParserError [msg state]))
+
+;; --- State helpers ---------------------------------------------------
+
+;; make-state: build a ParserState with the given input, file name, and
+;; starting line number.
+(defn make-state [input file line]
+  (ParserState input (assoc (assoc emptyBMI "file" file) "line" line)))
+
+;; state-line: the current line number from the state's values map.
+(defn state-line [state]
+  (extract (get (.values state) "line")))
+
+;; --- Character predicates --------------------------------------------
+;; Each returns Some (truthy) if the one-char string matches, None
+;; otherwise. char-code maps the first char to its integer code (0-255).
+
+(defn is-digit [c]
+  (let [n (char-code c)]
+    (and (<= 48 n) (<= n 57))))
+
+(defn is-alpha [c]
+  (let [n (char-code c)]
+    (or (and (<= 65 n) (<= n 90))
+        (and (<= 97 n) (<= n 122)))))
+
+;; A symbol starts with an alpha or one of . _ < > = + - * /
+(defn symbol-start? [c]
+  (or (is-alpha c)
+      (str= c ".")
+      (str= c "_")
+      (str= c "<")
+      (str= c ">")
+      (str= c "=")
+      (str= c "+")
+      (str= c "-")
+      (str= c "*")
+      (str= c "/")))
+
+;; A symbol continues with an alpha, a digit, or one of . _ < > = + - * ? !
+(defn symbol-continue? [c]
+  (or (is-alpha c)
+      (is-digit c)
+      (str= c ".")
+      (str= c "_")
+      (str= c "<")
+      (str= c ">")
+      (str= c "=")
+      (str= c "+")
+      (str= c "-")
+      (str= c "*")
+      (str= c "?")
+      (str= c "!")))
+
+;; A number token is a run of digits and dots (token-level; full numeric
+;; validation is deferred to the AST-building pass in item 5).
+(defn float-char? [c]
+  (or (is-digit c)
+      (str= c ".")))
+
+;; --- Token helpers ---------------------------------------------------
+
+;; peek-char: the first character of the input as a one-char string, or
+;; "" if the input is exhausted. Does not consume.
+(defn peek-char [state]
+  (let [input (.input state)]
+    (cond (str= input "")
+          ""
+          (subs input 0 1))))
+
+;; take-char: consume one character, returning the new state. Bumps the
+;; line counter when the consumed char is a newline. A no-op on empty
+;; input.
+(defn take-char [state]
+  (let [input (.input state)]
+    (let [c (subs input 0 1)]
+      (let [rest-input (subs input 1 (count input))]
+        (let [line (state-line state)]
+          (let [new-line (cond (str= c "\n")
+                               (+ line 1)
+                               line)]
+            (ParserState rest-input
+                         (assoc (.values state) "line" new-line))))))))
+
+;; skip-comment: state is positioned just after a ';'. Consume through
+;; the end of the line, stopping at (but not consuming) the newline or
+;; end of input. Self-recursive.
+(defn skip-comment [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          state
+          (str= c "\n")
+          state
+          (skip-comment (take-char state)))))
+
+;; skip-whitespace: consume runs of whitespace (space, tab, newline, CR)
+;; and ';' comments, returning the new state. Self-recursive.
+(defn skip-whitespace [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          state
+          (str= c ";")
+          (skip-whitespace (skip-comment (take-char state)))
+          (str= c " ")
+          (skip-whitespace (take-char state))
+          (str= c "\t")
+          (skip-whitespace (take-char state))
+          (str= c "\n")
+          (skip-whitespace (take-char state))
+          (str= c "\r")
+          (skip-whitespace (take-char state))
+          state)))
+
+;; run-length: the number of leading characters of s that satisfy pred.
+;; Each step is an O(1) subs view, so the scan is O(n). Self-recursive.
+(defn run-length [s pred]
+  (let [c (subs s 0 1)]
+    (cond (str= c "")
+          0
+          (pred c)
+          (+ 1 (run-length (subs s 1 (count s)) pred))
+          0)))
+
+;; read-run: read the maximal run of characters (from the state's input)
+;; that satisfy pred. Returns [run-text new-state]. The run never spans a
+;; newline for the token types used here, so the line is unchanged.
+(defn read-run [state pred]
+  (let [input (.input state)]
+    (let [len (run-length input pred)]
+      (let [run (subs input 0 len)]
+        (let [rest-input (subs input len (count input))]
+          [run (ParserState rest-input (.values state))])))))
+
+;; --- Element accessors for [value state] pairs -----------------------
+
+(defn elt0 [v]
+  (extract (first v)))
+
+(defn elt1 [v]
+  (extract (first (rest v))))
+
+;; --- Token readers (return [token-text new-state]) -------------------
+
+;; read-string-content: state is just after the opening quote. Consume
+;; until an unescaped closing quote, stopping AT the quote (not
+;; consuming it) or at end of input. A backslash skips the next char so
+;; an escaped quote does not end the string. Self-recursive.
+(defn read-string-content [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          state
+          (str= c "\\")
+          (read-string-content (take-char (take-char state)))
+          (str= c "\"")
+          state
+          (read-string-content (take-char state)))))
+
+;; read-string: a double-quoted string. Returns [content new-state] where
+;; content is the raw text between the quotes (escape *processing* is
+;; deferred to the AST-building pass). new-state is positioned just after
+;; the closing quote.
+(defn read-string [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          [""]
+          (str= c "\"")
+          (let [after-open (take-char state)]
+            (let [at-close (read-string-content after-open)]
+              (let [content-len
+                    (- (count (.input after-open))
+                       (count (.input at-close)))]
+                (let [content (subs (.input after-open) 0 content-len)]
+                  (let [end-state (take-char at-close)]
+                    [content end-state])))))
+          [""])))
+
+;; read-symbol: a symbol whose first char satisfies symbol-start?.
+;;
+;; Build crutch (new-toc codegen bug, verified scratch/e1.toc / e2.toc /
+;; q18.toc): a cond branch that is a BARE CALL to a vector-returning fn
+;; (read-run) makes new-toc emit a dangling VAR when the caller extracts
+;; both elements of the result and rebuilds them into a deftype-wrapped
+;; vector (crash: strictArgs / unhandled tag VAR / double free). Wrapping
+;; the call in a let inside the branch avoids it. The new compiler is not
+;; bound by this.
+(defn read-symbol [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          [""]
+          (symbol-start? c)
+          (let [r (read-run state symbol-continue?)] r)
+          [""])))
+
+;; read-int: a run of digits. (cond-branch let-wrap crutch: see read-symbol)
+(defn read-int [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          [""]
+          (is-digit c)
+          (let [r (read-run state is-digit)] r)
+          [""])))
+
+;; read-float: a run of digits and dots (token-level; see float-char?).
+;; (cond-branch let-wrap crutch: see read-symbol)
+(defn read-float [state]
+  (let [c (peek-char state)]
+    (cond (str= c "")
+          [""]
+          (is-digit c)
+          (let [r (read-run state float-char?)] r)
+          [""])))
+
+;; --- Item 5: expressions + desugarings --------------------------------
+;;
+;; Direct recursive-descent expression parsers that build the settled AST
+;; (intrp-ast.toc) and apply the settled desugarings. The item-4 token
+;; helpers above are reused.
+;;
+;; Result convention: ParserResults. The expression parsers return
+;; ParserMatch [ast-value state] on success and ParserError [msg state] on
+;; malformed input. The inner readers (param lists, bindings, hash pairs,
+;; type exprs) assume well-formed input and return [value state] pairs
+;; (the item-4 token-reader convention); the item-5 scratch driver feeds
+;; them valid samples.
+;;
+;; new-toc crutches used here (build crutch, not design constraints):
+;;   * ONE forward declaration, used only for genuine mutual recursion:
+;;     the expression parsers form one mutually recursive group (parse-expr
+;;     <-> parse-call <-> dispatch-special <-> the special forms <-> the
+;;     body/arg readers, which all call parse-expr). parse-expr is
+;;     forward-declared ((def parse-expr) before its defn); every other
+;;     group member is ordered to reference only parse-expr (declared) or
+;;     earlier definitions. Self-recursion and one-way call chains need no
+;;     declaration — recursive workers are defined before their wrappers.
+;;   * the AST ctors carry no `!` annotations (removed in item 5) because
+;;     new-toc mis-applies them during value construction.
+;;   * IntegerLit.value is a real Integer (text-to-int digit fold at parse
+;;     time); FloatLit.value is source text (the runtime cannot yet
+;;     materialize a Float — see parse-number).
+
+;; --- Helpers ----------------------------------------------------------
+
+;; elt2: third element of a [a b c] vector.
+(defn elt2 [v]
+  (extract (first (rest (rest v)))))
+
+;; result-kind: tag a ParserResults (instance? is unsupported under new-toc,
+;; so dispatch on a protocol tag instead).
+(defp result-kind [r])
+(extend-type ParserMatch (result-kind [_] 0))
+(extend-type ParserIgnore (result-kind [_] 1))
+(extend-type ParserError (result-kind [_] 2))
+(extend-type ParserFail (result-kind [_] 3))
+
+;; expr-kind: tag an Expression ctor (threading step dispatch).
+(defp expr-kind [e])
+(extend-type ast/Call (expr-kind [_] 0))
+(extend-type ast/Symbol (expr-kind [_] 1))
+(extend-type ast/FieldGetter (expr-kind [_] 2))
+
+;; make-loc: a Location from the state's file/line bookkeeping.
+(defn make-loc [state]
+  (let [file (extract (get (.values state) "file"))]
+    (ast/Location file (state-line state))))
+
+;; vect-concat: a ++ b (append every element of b to a).
+(defn vect-concat [a b]
+  (reduce b a vect-conj))
+
+;; read-full-symbol: a symbol with an optional `ns/` prefix.
+;; Returns [ns name new-state].
+(defn read-full-symbol [state]
+  (let [first-pair (read-symbol state)]
+    (let [fst (elt0 first-pair)]
+      (let [s2 (elt1 first-pair)]
+        (let [c (peek-char s2)]
+          (cond
+            (str= c "/")
+            (let [after-slash (take-char s2)]
+              (let [name-pair (read-symbol after-slash)]
+                [fst (elt0 name-pair) (elt1 name-pair)]))
+            ["" fst s2]))))))
+
+;; read-type-expr: a type expression (a symbol, or a `[symbol]` vector type)
+;; as raw text. Returns [type-text new-state]. Phase 1: eval skips
+;; TypeConstraints, so the exact text is not significant; a `[T]` yields `T`
+;; (no string concatenation).
+(defn read-type-expr [state]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c "[")
+        (let [s2 (skip-whitespace (take-char s))]
+          (let [inner (read-symbol s2)]
+            (let [s3 (skip-whitespace (elt1 inner))]
+              (let [s4 (take-char s3)]
+                [(elt0 inner) s4]))))
+        (let [nm (read-symbol s)]
+          [(elt0 nm) (elt1 nm)])))))
+
+;; contains-dot: Some 1 iff s contains a '.' (decides IntegerLit vs
+;; FloatLit for a number token); None otherwise.
+(defn contains-dot [s]
+  (cond
+    (str= s "")
+    None
+    (str= (subs s 0 1) ".")
+    (Some 1)
+    (contains-dot (subs s 1 (count s)))))
+
+;; text-to-int: a run of digits -> Integer. The new core has no str-to-int,
+;; so fold the digits with core arithmetic: acc = acc*10 + digit. (I60 is a
+;; 60-bit int; phase-1 literals are small, so overflow is not a concern.)
+;; text-to-int-acc is self-recursive (defined first so text-to-int can call
+;; it without a forward declaration).
+(defn text-to-int-acc [s acc]
+  (cond
+    (str= s "")
+    acc
+    (let [d (- (char-code (subs s 0 1)) 48)]
+      (text-to-int-acc (subs s 1 (count s))
+                       (+ (* 10 acc) d)))))
+
+(defn text-to-int [s]
+  (text-to-int-acc s 0))
+
+;; --- Desugarings (workers before wrappers; one-way chains + self-recursion need no declaration) ---
+
+(defn fold-vec-acc [exprs acc loc]
+  (cond
+    (= (count exprs) 0)
+    acc
+    (let [e (extract (first exprs))]
+      (fold-vec-acc (rest exprs)
+                       (ast/Call (ast/Symbol "" "vect-conj" loc) [acc e])
+                       loc))))
+
+;; fold-vec: [e1 e2 ...] ->
+;;   (vect-conj (vect-conj (vect-conj empty-vector e1) e2) ...)
+(defn fold-vec [exprs loc]
+  (fold-vec-acc exprs (ast/Symbol "" "empty-vector" loc) loc))
+
+(defn hash-fold-acc [pairs acc loc]
+  (cond
+    (= (count pairs) 0)
+    acc
+    (let [kv (extract (first pairs))]
+      (hash-fold-acc (rest pairs)
+                     (ast/Call (ast/Symbol "" "assoc" loc)
+                               [acc (elt0 kv) (elt1 kv)])
+                     loc))))
+
+;; hash-fold: [[k1 v1] ...] -> (assoc (assoc emptyBMI k1 v1) ...)
+(defn hash-fold [pairs loc]
+  (hash-fold-acc pairs (ast/Symbol "" "emptyBMI" loc) loc))
+
+;; cond-inner: [e] -> e (the trailing else); [t v ...] -> (cond t v (inner ...))
+(defn cond-inner [r loc]
+  (cond
+    (= (count r) 1)
+    (extract (first r))
+    (let [t (extract (first r))]
+      (let [r1 (rest r)]
+        (let [v (extract (first r1))]
+          (ast/Call (ast/Symbol "" "cond" loc)
+                    [t v (cond-inner (rest r1) loc)]))))))
+
+(defn cond-desugar-rec [exprs loc]
+  (let [t (extract (first exprs))]
+    (let [r1 (rest exprs)]
+      (let [v (extract (first r1))]
+        (let [r2 (rest r1)]
+          (ast/Call (ast/Symbol "" "cond" loc) [t v (cond-inner r2 loc)]))))))
+
+;; cond-desugar: [t1 v1 ... tN vN e] ->
+;;   (cond t1 v1 (cond t2 v2 (... (cond tN vN e))))
+(defn cond-desugar [exprs loc]
+  (cond-desugar-rec exprs loc))
+
+(defn and-or-desugar-rec [exprs loc op-name]
+  (cond
+    (= (count exprs) 1)
+    (extract (first exprs))
+    (let [a (extract (first exprs))]
+      (ast/Call (ast/Symbol "" op-name loc)
+                [a (and-or-desugar-rec (rest exprs) loc op-name)]))))
+
+;; and-or-desugar: [a1 ... aN] -> (and a1 (and a2 ... aN)); single -> the arg.
+(defn and-or-desugar [exprs loc op-name]
+  (and-or-desugar-rec exprs loc op-name))
+
+;; str-println-desugar: [e1 ...] -> (str* (vect-conj ... e1 ...))
+(defn str-println-desugar [exprs loc fn-name]
+  (ast/Call (ast/Symbol "" fn-name loc) [(fold-vec exprs loc)]))
+
+;; thread-step: apply one threading step to the threaded value.
+;;   Call (f a b)  -> (f <threaded> a b)
+;;   Symbol g      -> (g <threaded>)
+;;   Symbol .f     -> (.f <threaded>)  (FieldGetter operator)
+;;   other         -> (<step> <threaded>)
+(defn thread-step [step threaded loc]
+  (let [k (expr-kind step)]
+    (cond
+      (= k 0)
+      (let [op (.operator step)]
+        (ast/Call op (vect-concat [threaded] (.operands step)) loc))
+      (cond
+        (= k 1)
+        (let [nm (.name step)]
+          (cond
+            (str= (subs nm 0 1) ".")
+            (ast/Call (ast/FieldGetter (subs nm 1 (count nm)) loc) [threaded])
+            (ast/Call step [threaded])))
+        (ast/Call step [threaded])))))
+
+(defn threading-rec [steps threaded loc]
+  (cond
+    (= (count steps) 0)
+    threaded
+    (let [step (extract (first steps))]
+      (threading-rec (rest steps) (thread-step step threaded loc) loc))))
+
+;; threading: (-> x s1 ... sN) -> (sN (... (s1 x)))
+(defn threading [initial steps loc]
+  (threading-rec steps initial loc))
+
+(defn let-desugar-rec [pairs body-vec loc]
+  (cond
+    (= (count pairs) 1)
+    (let [pair (extract (first pairs))]
+      (ast/Call (ast/Fn "" [(elt0 pair)] body-vec loc) [(elt1 pair)]))
+    (let [pair (extract (first pairs))]
+      (let [inner (let-desugar-rec (rest pairs) body-vec loc)]
+        (ast/Call (ast/Fn "" [(elt0 pair)] [inner] loc) [(elt1 pair)])))))
+
+;; let-desugar: [[b1 e1] ... [bn en]] + body-vec ->
+;;   (Call (Fn "" [b1] [rest1]) e1) where the innermost Fn body is body-vec.
+(defn let-desugar [pairs body-vec loc]
+  (let-desugar-rec pairs body-vec loc))
+
+;; --- Inner readers (no mutual recursion) ------------------------------
+
+;; read-param-list: a `[ p1 p2 ... ]` parameter list. state is just after
+;; the `[`. Returns [params new-state] where new-state is after the `]`.
+;; read-param-list-acc is self-recursive (defined first so read-param-list
+;; can call it without a forward declaration).
+(defn read-param-list-acc [state acc]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c "]")
+        [acc (take-char s)]
+        (let [nm (read-symbol s)]
+          (read-param-list-acc (elt1 nm) (vect-conj acc (elt0 nm))))))))
+
+(defn read-param-list [state]
+  (read-param-list-acc state empty-vector))
+
+;; parse-type-constraint: state at `!`. Returns [TypeConstraint new-state].
+(defn parse-type-constraint [state]
+  (let [s (skip-whitespace (take-char state))]
+    (let [nm (read-symbol s)]
+      (let [sym (elt0 nm)]
+        (let [te (read-type-expr (skip-whitespace (elt1 nm)))]
+          [(ast/TypeConstraint sym (elt0 te)) (elt1 te)])))))
+
+;; --- Leaf expression parsers (no return edge to parse-expr) -----------
+
+;; parse-number: a run of digits/dots -> IntegerLit (no dot) or FloatLit.
+;;   * IntegerLit.value is a REAL Integer, folded from the digits at parse
+;;     time (text-to-int) — matches the settled AST (`! value Integer`).
+;;   * FloatLit.value is the SOURCE TEXT (String) for now: the new runtime
+;;     cannot yet materialize a Float (F60 is a 60-bit payload — no full
+;;     double; the core has no Float str-vect / arithmetic / str-to-float).
+;;     Converting text -> Float is deferred until the runtime's float
+;;     representation is settled (see plan, Verified facts). Lossless: the
+;;     full literal text is preserved.
+(defn parse-number [state]
+  (let [r (read-float state)]
+    (let [text (elt0 r)]
+      (let [s2 (elt1 r)]
+        (let [loc (make-loc s2)]
+          (cond
+            (contains-dot text)
+            (ParserMatch (ast/FloatLit text loc) s2)
+            (let [n (text-to-int text)]
+              (ParserMatch (ast/IntegerLit n loc) s2))))))))
+
+;; parse-string-lit: state at the opening `"`.
+(defn parse-string-lit [state]
+  (let [r (read-string state)]
+    (let [content (elt0 r)]
+      (let [s2 (elt1 r)]
+        (ParserMatch (ast/StringLit content (make-loc s2)) s2)))))
+
+;; parse-quoted-sym: state just after the `'`. `'sym` -> StringLit "sym".
+(defn parse-quoted-sym [state]
+  (let [r (read-symbol state)]
+    (let [text (elt0 r)]
+      (let [s2 (elt1 r)]
+        (ParserMatch (ast/StringLit text (make-loc s2)) s2)))))
+
+;; parse-symbol: state at the symbol start. -> Symbol [ns name loc].
+(defn parse-symbol [state]
+  (let [r (read-full-symbol state)]
+    (ParserMatch (ast/Symbol (elt0 r) (elt1 r) (make-loc (elt2 r)))
+                 (elt2 r))))
+
+;; --- Mutually recursive group (the ONE forward declaration) ----
+
+;; parse-expr is the group hub: parse-call, the dispatchers, the
+;; special forms, and the body/arg readers all call it, and it
+;; calls back into them. It is forward-declared here; every other
+;; member below references only parse-expr (declared) or earlier
+;; definitions. Self-recursion needs no declaration.
+(def parse-expr)
+
+(defn parse-expr-list-acc [state delim acc]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c delim)
+        (ParserMatch acc (take-char s))
+        (str= c "")
+        (ParserError "unexpected end of input" s)
+        (let [r (parse-expr s)]
+          (let [k (result-kind r)]
+            (cond
+              (= k 2)
+              r
+              (parse-expr-list-acc (.state r) delim (vect-conj acc (.value r))))))))))
+
+;; parse-expr-list: expressions until `delim` (consumed).
+;; Returns ParserMatch [[exprs] state-after-delim] or ParserError.
+(defn parse-expr-list [state delim]
+  (parse-expr-list-acc state delim empty-vector))
+
+(defn parse-body-acc [state tcs acc]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c ")")
+        [tcs acc (take-char s)]
+        (str= c "!")
+        (let [tc (parse-type-constraint s)]
+          (parse-body-acc (elt1 tc) (vect-conj tcs (elt0 tc)) acc))
+        (let [r (parse-expr s)]
+          (parse-body-acc (.state r) tcs (vect-conj acc (.value r))))))))
+
+;; parse-body: leading `!` markers + expressions until `)` (consumed).
+;; Returns [constraints body-exprs state-after-')'].
+(defn parse-body [state]
+  (parse-body-acc state empty-vector empty-vector))
+
+(defn read-let-bindings-acc [state acc]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c "]")
+        [acc (take-char s)]
+        (let [nm (read-symbol s)]
+          (let [name (elt0 nm)]
+            (let [er (parse-expr (skip-whitespace (elt1 nm)))]
+              (read-let-bindings-acc (.state er)
+                                     (vect-conj acc [name (.value er)])))))))))
+
+;; read-let-bindings: the let bindings `[ b1 e1 ... bn en ]`. state is just
+;; after the `[`. Returns [pairs new-state] where pairs is a vector of
+;; [name expr] pairs and new-state is after the `]`.
+(defn read-let-bindings [state]
+  (read-let-bindings-acc state empty-vector))
+
+(defn read-hash-pairs-acc [state acc]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c "}")
+        [acc (take-char s)]
+        (let [kr (parse-expr s)]
+          (let [k (.value kr)]
+            (let [vr (parse-expr (.state kr))]
+              (read-hash-pairs-acc (.state vr)
+                                   (vect-conj acc [k (.value vr)])))))))))
+
+;; read-hash-pairs: the hash-map body `{ k1 v1 ... }`. state is just after
+;; the `{`. Returns [pairs new-state] where pairs is a vector of [k v] pairs
+;; and new-state is after the `}`.
+(defn read-hash-pairs [state]
+  (read-hash-pairs-acc state empty-vector))
+
+(defn parse-threading-steps-acc [state acc]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c ")")
+        (ParserMatch acc (take-char s))
+        (str= c "")
+        (ParserError "unexpected end of input in threading" s)
+        (let [r (parse-expr s)]
+          (let [k (result-kind r)]
+            (cond
+              (= k 2)
+              r
+              (parse-threading-steps-acc (.state r)
+                                         (vect-conj acc (.value r))))))))))
+
+;; parse-threading-steps: the threading steps until `)` (consumed).
+;; Returns ParserMatch [steps state-after-')'] or ParserError.
+(defn parse-threading-steps [state]
+  (parse-threading-steps-acc state empty-vector))
+
+;; parse-call-args: state after the operator. Parses the operands until `)`
+;; and builds a Call.
+(defn parse-call-args [state op]
+  (let [args (parse-expr-list state ")")]
+    (let [k (result-kind args)]
+      (cond
+        (= k 2)
+        args
+        (ParserMatch (ast/Call op (.value args)) (.state args))))))
+
+;; parse-vector: state at `[`. `[a b c]` -> vect-conj fold over empty-vector.
+(defn parse-vector [state]
+  (let [s (skip-whitespace (take-char state))]
+    (let [exprs (parse-expr-list s "]")]
+      (let [k (result-kind exprs)]
+        (cond
+          (= k 2)
+          exprs
+          (ParserMatch (fold-vec (.value exprs) (make-loc (.state exprs)))
+                       (.state exprs)))))))
+
+;; parse-hash: state at `{`. `{k v ...}` -> assoc fold over emptyBMI.
+(defn parse-hash [state]
+  (let [s (skip-whitespace (take-char state))]
+    (let [pairs (read-hash-pairs s)]
+      (ParserMatch (hash-fold (elt0 pairs) (make-loc (elt1 pairs)))
+                   (elt1 pairs)))))
+
+;; parse-cond: state after `cond`. `(cond t1 v1 ... tN vN e)` -> right-nested
+;; core `cond` calls.
+(defn parse-cond [state]
+  (let [exprs (parse-expr-list state ")")]
+    (let [k (result-kind exprs)]
+      (cond
+        (= k 2)
+        exprs
+        (ParserMatch (cond-desugar (.value exprs) (make-loc (.state exprs)))
+                     (.state exprs))))))
+
+(defn parse-and-or [state op-name]
+  (let [exprs (parse-expr-list state ")")]
+    (let [k (result-kind exprs)]
+      (cond
+        (= k 2)
+        exprs
+        (ParserMatch (and-or-desugar (.value exprs)
+                                     (make-loc (.state exprs)) op-name)
+                     (.state exprs))))))
+
+;; parse-and / parse-or: right-nested binary core `and`/`or` calls.
+(defn parse-and [state]
+  (parse-and-or state "and"))
+
+(defn parse-or [state]
+  (parse-and-or state "or"))
+
+(defn parse-str-println [state fn-name]
+  (let [exprs (parse-expr-list state ")")]
+    (let [k (result-kind exprs)]
+      (cond
+        (= k 2)
+        exprs
+        (ParserMatch (str-println-desugar (.value exprs)
+                                          (make-loc (.state exprs))
+                                          fn-name)
+                     (.state exprs))))))
+
+;; parse-str / parse-println: `str*`/`println*` over a vect-conj fold.
+(defn parse-str [state]
+  (parse-str-println state "str*"))
+
+(defn parse-println [state]
+  (parse-str-println state "println*"))
+
+;; parse-threading: state after `->`. `(-> x s1 ... sN)` -> nested Calls.
+;; `(-> x)` (zero steps) is a parse error.
+(defn parse-threading [state]
+  (let [initial-res (parse-expr state)]
+    (let [k (result-kind initial-res)]
+      (cond
+        (= k 2)
+        initial-res
+        (let [initial (.value initial-res)]
+          (let [s2 (.state initial-res)]
+            (let [steps (parse-threading-steps s2)]
+              (let [sk (result-kind steps)]
+                (cond
+                  (= sk 2)
+                  (cond
+                    (= (count (.value steps)) 0)
+                    (ParserError "threading with zero steps" (.state steps))
+                    (ParserMatch (threading initial (.value steps)
+                                            (make-loc (.state steps)))
+                                 (.state steps)))
+                  steps)))))))))
+
+;; dispatch-special / dispatch-special-2: special-form keyword dispatch for
+;; parse-call. Split into two 4-level chains because new-toc rejects 8+ levels
+;; of NESTED `cond` (7 is the limit; flat multi-pair conds are fine).
+(defn dispatch-special-2 [ns name s2]
+  (cond
+    (str= name "or") (parse-or s2)
+    (cond
+      (str= name "str") (parse-str s2)
+      (cond
+        (str= name "println") (parse-println s2)
+        (cond
+          (str= name "->") (parse-threading s2)
+          (let [op (ast/Symbol ns name (make-loc s2))]
+            (parse-call-args s2 op)))))))
+
+;; parse-fn-body: state at the param-list `[`. Reads the params and the body
+;; (leading `!` markers + expressions), building a Fn.
+(defn parse-fn-body [state name]
+  (let [s (skip-whitespace (take-char state))]
+    (let [params (read-param-list s)]
+      (let [body (parse-body (elt1 params))]
+        (let [body-vec (vect-concat (elt0 body) (elt1 body))]
+          (let [s3 (elt2 body)]
+            (ParserMatch (ast/Fn name (elt0 params) body-vec (make-loc s3))
+                         s3)))))))
+
+;; parse-fn: state after `fn`. Named (`fn name [...] ...`) or anonymous
+;; (`fn [...] ...`).
+(defn parse-fn [state]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c "[")
+        (parse-fn-body s "")
+        (let [nm (read-symbol s)]
+          (parse-fn-body (skip-whitespace (elt1 nm)) (elt0 nm)))))))
+
+;; parse-let: state after `let`. `(let [b1 e1 ...] body...)` -> nested
+;; immediate anonymous-fn applications.
+(defn parse-let [state]
+  (let [s (skip-whitespace state)]
+    (let [s2 (skip-whitespace (take-char s))]
+      (let [bindings (read-let-bindings s2)]
+        (let [body (parse-body (elt1 bindings))]
+          (let [inner-body (vect-concat (elt0 body) (elt1 body))]
+            (let [s4 (elt2 body)]
+              (ParserMatch (let-desugar (elt0 bindings) inner-body
+                                        (make-loc s4))
+                           s4))))))))
+
+(defn dispatch-special [ns name s2]
+  (cond
+    (str= name "fn") (parse-fn s2)
+    (cond
+      (str= name "let") (parse-let s2)
+      (cond
+        (str= name "cond") (parse-cond s2)
+        (cond
+          (str= name "and") (parse-and s2)
+          (dispatch-special-2 ns name s2))))))
+
+;; parse-call: state at `(`. Reads the operator; if it is a special-form
+;; symbol, dispatches to that form's parser; otherwise parses the operands
+;; and builds a Call.
+(defn parse-call [state]
+  (let [s (skip-whitespace (take-char state))]
+    (let [c (peek-char s)]
+      (cond
+        (str= c "")
+        (ParserError "unexpected end of input in call" s)
+        (str= c ")")
+        (ParserError "empty call" s)
+        (symbol-start? c)
+        (let [sym (read-full-symbol s)]
+          (dispatch-special (elt0 sym) (elt1 sym) (elt2 sym)))
+        (let [op-res (parse-expr s)]
+          (let [k (result-kind op-res)]
+            (cond
+              (= k 2)
+              op-res
+              (parse-call-args (.state op-res) (.value op-res)))))))))
+
+;; parse-expr: dispatch on the first non-whitespace character.
+(defn parse-expr [state]
+  (let [s (skip-whitespace state)]
+    (let [c (peek-char s)]
+      (cond
+        (str= c "")
+        (ParserError "unexpected end of input" s)
+        (str= c "(")
+        (parse-call (take-char s))
+        (str= c "[")
+        (parse-vector (take-char s))
+        (str= c "{")
+        (parse-hash (take-char s))
+        (str= c "\"")
+        (parse-string-lit s)
+        (str= c "'")
+        (parse-quoted-sym (take-char s))
+        (is-digit c)
+        (parse-number s)
+        (symbol-start? c)
+        (parse-symbol s)
+        (ParserError "unexpected character" s)))))

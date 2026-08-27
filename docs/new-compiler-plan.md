@@ -17,8 +17,10 @@ there.
 ## Phase plan
 
 1. **Concrete interpreter** — runs pure-Toccata programs (scope below).
-   AST from `intrp-ast.toc`; parser is new direct recursive-descent
-   functions (`intrp-rdr.toc` is the grammar reference only).
+   AST from `interpreter/intrp-ast.toc`; parser = direct
+   recursive-descent functions in `interpreter/intrp-rdr.toc` (the
+   file's original combinator grammar was the reference; it has been
+   replaced).
 2. **Abstract interpreter** — the same evaluator over abstract values
    (types/properties) = the type checker. Operations are designed as
    dispatch points (protocols) from day 1 so this is an extension, not a
@@ -76,7 +78,8 @@ Acceptance:
 
 ## AST (settled — 8 points)
 
-Base: `intrp-ast.toc` (parses/typechecks clean under new-toc; `!`
+Base: `interpreter/intrp-ast.toc` (parses/typechecks clean under
+new-toc; `!`
 annotations are ignored by the compiler).
 
 | Node | Shape | Notes |
@@ -150,10 +153,11 @@ each form's rule arrives with its phase.
   structure. The combinator approach required building the whole grammar
   structure at every compiler startup — too slow. Compiled parse functions
   are ready at startup with no structure-building.
-- `intrp-rdr.toc` is the grammar reference (token rules, keywords,
-  symbol/number/string syntax). `ParserState [input values]` (values =
-  bookkeeping map: file, line, ...) and `ParserResults` survive as the
-  threaded state / return convention (shapes may be refined).
+- The original `intrp-rdr.toc` was the grammar reference (token rules,
+  keywords, symbol/number/string syntax). `ParserState [input values]`
+  (values = bookkeeping map: file, line, ...) and `ParserResults`
+  survive as the threaded state / return convention (shapes may be
+  refined); the new parser lives in `interpreter/intrp-rdr.toc`.
 - AST construction + all desugarings happen inside the parse functions.
 - Threaded state: **remaining-string** — `ParserState [input values]` with
   `input` = unconsumed suffix. `subs` returns O(1) `SubString` views, so
@@ -188,19 +192,20 @@ each form's rule arrives with its phase.
 
 ## Verified facts (2026-08-26)
 
-- `intrp-ast.toc` parses/typechecks clean under `new-toc` (aborts only on
-  missing `main`, as a library file would). `intrp-rdr.toc` compiles clean
-  with zero leak.
+- `interpreter/intrp-ast.toc` parses/typechecks clean under `new-toc`
+  (aborts only on missing `main`, as a library file would).
+  `interpreter/intrp-rdr.toc` compiles clean with zero leak.
 - **Compile check for library files**: `./new-toc <file> > /dev/null` —
   the exit code is always 134 (abort), so it is useless; pass = `***
   Loaded <file>` in stderr with no other error lines. `'main' function is
   missing or malformed` + `Could not find implementation of
   'Container/map' for type 'Agent' ... at core: 1453` are baseline noise
   in the abort path for *any* file (verified with trivial inputs).
-- `intrp-rdr.toc` has grammar rules but **no evaluator** and **no AST
-  construction**; its `main` just prints the parser via `str-vect`.
-- `intrp-ebnf.toc` is broken (Conflicting assertions at line 17, multi-arg
-  `str`).
+- The original `intrp-rdr.toc` had grammar rules but **no evaluator**
+  and **no AST construction**; its `main` just printed the parser via
+  `str-vect` (the file has since been rewritten as the
+  recursive-descent parser). `interpreter/intrp-ebnf.toc` is broken
+  (Conflicting assertions at line 17, multi-arg `str`).
 - `instance?` is unsupported in new-toc (all uses in passing tests are
   commented out) — dispatch is via protocols.
 - `file-io.toc` doesn't load under new-toc (its own git-dependency line);
@@ -264,17 +269,20 @@ each form's rule arrives with its phase.
   2026-08-27, item 4).
 - **`first`/`rest` on a Vector**: `(first v)` returns `Some element`
   (a Maybe), not the bare element — extract with `(extract (first v))`;
-  `(rest v)` returns a Vector (hvm-core.toc:945, 951). `intrp-rdr.toc`'
-  s `elt0`/`elt1` use `(extract (first ...))` (verified 2026-08-27,
+  `(rest v)` returns a Vector (hvm-core.toc:945, 951).
+  `interpreter/intrp-rdr.toc`'s `elt0`/`elt1` use `(extract (first ...))`
+  (verified 2026-08-27,
   item 4).
 - **`add-ns` module paths resolve relative to the importing file's
-  directory**, not the CWD. A scratch file in `scratch/` imports a
-  root-level module as `(module "../intrp-rdr.toc")`; the regression
-  tests work only because their modules sit beside them (verified
-  2026-08-27, item 4).
+  directory**, not the CWD; the regression tests work only because
+  their modules sit beside them (verified 2026-08-27, item 4).
+  Combined with the raw-path-string module-cache key (the `../` bullet
+  below): keep a module's references in one directory, spelled
+  identically.
 - **`char-code`** (hvm-core.toc:645) → first char's integer code
-  (0-255); `char` (634) is the inverse. `intrp-rdr.toc`'s predicates
-  classify via `char-code` + `<=` (verified 2026-08-27, item 4).
+  (0-255); `char` (634) is the inverse.
+  `interpreter/intrp-rdr.toc`'s predicates classify via `char-code` +
+  `<=` (verified 2026-08-27, item 4).
 - **`subs` is 3-arg** (`(defp subs [s start len])`, hvm-core.toc:661);
   the rest of a string is `(subs s 1 (count s))` (len clamps to the
   tail). `count` is O(1) for both `SubString` and `StringBuffer`
@@ -288,8 +296,8 @@ each form's rule arrives with its phase.
   through every continuation so the final result depends on all of them
   (verified 2026-08-27, item 4; see `scratch/rdr-tokens.toc`
   `read-and-show`).
-- **`intrp-rdr.toc` is now a library (no main)** holding the item-4
-  state + token helpers: `make-state`, `state-line`, predicates
+- **`interpreter/intrp-rdr.toc` is a library (no main)** holding the
+  item-4 state + token helpers and the item-5 expression parsers: `make-state`, `state-line`, predicates
   `is-digit`/`is-alpha`/`symbol-start?`/`symbol-continue?`/
   `float-char?`, helpers `peek-char`/`take-char`/`skip-comment`/
   `skip-whitespace`/`run-length`/`read-run`, accessors `elt0`/`elt1`,
@@ -299,9 +307,77 @@ each form's rule arrives with its phase.
   removed. `read-run` = length-scan (`run-length`) + one `subs`; token
   readers return `[token-text new-state]` pairs (verified 2026-08-27,
   item 4).
+- **No local symbol may shadow a core-namespace symbol** (constraint,
+  2026-08-27): a local `let` binding named `first` (in
+  `read-full-symbol`) makes new-toc emit colliding C identifiers — the
+  mangled local name (`first_9`) is also used for an unrelated core
+  entity (a parameter port of the `Integer/str-vect` lambda), so the
+  generated C fails clang with `use of undeclared identifier 'first_9'`.
+  The Toccata-level load check (`*** Loaded`) does not catch it; only a
+  clang build of the generated C does. Rename the local while building
+  with new-toc (build crutch).
+- **A deftype has two forms** (owner, 2026-08-27):
+  1. **Single-ctor form**: `(deftype CtorName [field1 field2 ...] <protocol
+     impls>)` — one constructor, named the same as the type.
+  2. **Multi-ctor form**: `(deftype TypeName (CtorName1 [field1 field2 ...]
+     <impls>) (CtorName2 [field1 ...] <impls>) ...)` — in this form the
+     `TypeName` **and each `CtorName`** are all types that can be used in
+     type expressions.
+- **Zero-arg constructors are singleton values, not calls** (rule,
+  2026-08-27): when a constructor is specified with no arguments — e.g.
+  `(ParserFail [])` in the deftype — it is **not called like a normal
+  constructor**. Writing `(ParserFail [])` attempts to pass the empty
+  vector as an argument; under new-toc a cross-namespace ctor call of
+  this shape generates crashing C (`Invalid APP VAL pair` — minimal
+  repro: `scratch/i5-lib.toc` + `scratch/i5-probe.toc`). Instead, as a
+  special case, a **singleton value** bearing the constructor's name is
+  created, accessed directly without a function call: `ParserFail` (or
+  `lib/ParserFail` cross-namespace) *is* the value. Consequence for the
+  parser: the `ParserFail` result is the bare symbol, never
+  `(ParserFail [])`; the `returns` singleton works the same way.
+- **new-toc transient segfaults** (2026-08-27): new-toc sometimes
+  segfaults/aborts with NO error message; the crash is transient and a
+  retry (up to 5 times total) compiles the same input fine. If a run
+  prints an error message before aborting, it is a real error, not a
+  transient crash — stop retrying and fix it. Always capture and read
+  new-toc's stderr on a failed build (`2>/dev/null` is forbidden): the
+  message (`Undefined symbol: 'x' at file: N`, `Error at file: N;
+  msg`) usually points directly at the problem.
+- **Flat `cond` pairs; multi-binding `let`** (2026-08-27): `cond`
+  takes any number of flat (test value) pairs — `(cond t1 v1 t2 v2 ...)`.
+  What new-toc limits is *nesting*: 8+ levels of nested `cond` are
+  rejected (7 is the limit — cf. the `dispatch-special` /
+  `dispatch-special-2` split in `interpreter/intrp-rdr.toc`). `let`
+  takes multiple
+  bindings in one form — `(let [b1 e1 b2 e2 ...] body)` with sequential
+  binding semantics (later initializers see earlier bindings). Prefer a
+  single multi-binding `let` over nested `let`s (verified under new-toc
+  in `scratch/rdr-exprs.toc`).
+- **Never use `../` in `add-ns` module paths** (2026-08-28): new-toc's
+  module cache keys on the **raw path string** in `(module "...")`, not
+  the resolved file. The same `.toc` file referenced under two different
+  relative paths (e.g. `../intrp-ast.toc` from `scratch/` and
+  `intrp-ast.toc` from the root) is compiled **twice**, and each compile
+  assigns fresh type numbers — the same deftype gets two runtime
+  identities. Cross-module protocol dispatch then fails at runtime with
+  `No implementation of 'X' found for type Y (N)` even though the value
+  prints the correct type name (the impl registered under one compile's
+  type id; the value carries the other's). Rule: keep every reference
+  to a module spelled identically across the whole module graph — no
+  `../`, no redundant `./scratch/`-style prefixes. Verified via
+  `interpreter/xns-probe.toc` (passes with same-directory bare paths;
+  the earlier `scratch/` copy with `../` paths failed).
 
 ## Settled (continued)
 
+- **Interpreter work lives in `interpreter/`** (2026-08-28): all
+  interpreter sources — `intrp-ast.toc`, `intrp-rdr.toc` (moved),
+  future `intrp-eval.toc` / `intrp.toc`, plus the new-toc debug probe
+  `xns-probe.toc` — live in the `interpreter/` subdirectory. `add-ns`
+  module references use bare filenames (resolved relative to the
+  importing file's directory); co-location also keeps the module
+  cache's raw-path-string keys identical across the graph (see the
+  `../` verified fact).
 - **Phase 1 is strictly single-file.** `add-ns` of local modules is the
   **first step of phase 2**; the 6 blocked differential tests
   (integer-regressions, string-regressions, vector-regressions,
@@ -319,7 +395,7 @@ each form's rule arrives with its phase.
   (`pushRedex(args, <local-fn-value>)`), so source-level calls of function
   values work; the open problem is dynamic arity + safe
   closure-vs-REF discrimination.
-- **Closure deftype** (`intrp-eval.toc`):
+- **Closure deftype** (`interpreter/intrp-eval.toc`):
   `(deftype Closure [name params body env])` — `name` String (`""` if
   anonymous; call-time self-binding), `params` `[String]`, `body`
   `[Expression]` (leading `TypeConstraint`s skipped by eval), `env` =
@@ -368,18 +444,21 @@ each form's rule arrives with its phase.
 - **The interpreter is the semantics reference.** new-toc's behavior is
   not a design constraint — it is only the build crutch. (Differential
   tests still validate core behavior on the 20 clean candidates.)
-- **Whole-file read: inline-C function named `slurp`** (in `intrp.toc`).
+- **Whole-file read: inline-C function named `slurp`** (in
+  `interpreter/intrp.toc`).
 - **Error reporting (phase 1)**: `file:line: message` to stderr + abort
   (non-zero exit), uniform across parse/structural/runtime errors; no
   Maybe-threading through eval; no backtraces. (Phase 2's typechecker
   gets its own collected-error mechanism.)
-- **Makefile**: repurpose the `intrp` target — `intrp.c: intrp.toc
-  intrp-ast.toc intrp-rdr.toc intrp-eval.toc` via `./new-toc intrp.toc >
-  intrp.c`; compile `new.c runtime3.c graph.c intrp.c` with the
-  regression-test flags (`-g -march=native -I. -DCHECK_MEM_LEAK=1
-  -DSAFETY=1 -DSTATS=1 -lm -lpthread`).
+- **Makefile**: repurpose the `intrp` target — `intrp.c:
+  interpreter/intrp.toc interpreter/intrp-ast.toc
+  interpreter/intrp-rdr.toc interpreter/intrp-eval.toc` via
+  `./new-toc interpreter/intrp.toc > intrp.c`; compile `new.c
+  runtime3.c graph.c intrp.c` with the regression-test flags (`-g
+  -march=native -I. -DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1 -lm
+  -lpthread`).
 - **Parser organization**: one function per syntactic form in
-  `intrp-rdr.toc`, named after the form (`parse-top-level` keyword-
+  `interpreter/intrp-rdr.toc`, named after the form (`parse-top-level` keyword-
   dispatches on the first token; `parse-expr` dispatches on the first
   char; `parse-call`, `parse-vector`, `parse-hash`, `parse-fn`,
   `parse-let`, `parse-cond`, `parse-threading`, `parse-number`,
@@ -425,7 +504,7 @@ unilaterally.
     correctly for equal / prefix / superstring / different cases; zero
     leaks.
 
-- [x] **2. `intrp-ast.toc`: settled AST delta**
+- [x] **2. `interpreter/intrp-ast.toc`: settled AST delta**
   - `TopLevel.Main [parameter-list body loc]` (separate constructor);
     `TopLevel.Definition [name value loc]`; `Fn` gains `loc` and its
     `body` becomes `[Expression]` (drop `BodyExpressions`);
@@ -450,7 +529,7 @@ unilaterally.
     `intrp-tests/README.md`, with a one-line exclusion reason for every
     other test.
 
-- [x] **4. `intrp-rdr.toc`: parser — state + tokens**
+- [x] **4. `interpreter/intrp-rdr.toc`: parser — state + tokens**
   - Replace the combinator machinery with direct recursive-descent
     functions. `ParserState [input values]` (remaining-string model;
     `values` = `{"file" ..., "line" 1}`, line bumped on `"\n"`). Result
@@ -462,7 +541,7 @@ unilaterally.
     string (whitespace, symbols, ints, floats, strings) and the
     results print correctly.
 
-- [ ] **5. `intrp-rdr.toc`: parser — expressions + desugarings**
+- [ ] **5. `interpreter/intrp-rdr.toc`: parser — expressions + desugarings**
   - Literals (int/float/string; quoted sym → `StringLit`), calls,
     special forms (`fn`, `let`, `cond`, `and`, `or`, `str`, `println`,
     `->`, `!` markers), vector/hash folds — all the settled
@@ -473,7 +552,7 @@ unilaterally.
     `vect-conj` fold; `{...}` → `assoc` fold; `->` → nested Calls;
     `'sym` → `StringLit`).
 
-- [ ] **6. `intrp-rdr.toc`: parser — top-level + map output**
+- [ ] **6. `interpreter/intrp-rdr.toc`: parser — top-level + map output**
   - Top-level rule: `def`/`defn` → map entry under the name; `main` →
     `"main"` entry; top-level `inline` → parse error; comments
     skipped. Output: name → AST map. Out-of-scope forms (`deftype`,
@@ -483,7 +562,7 @@ unilaterally.
     the expected entries; a program with top-level `inline` fails with
     a clear `file:line` error.
 
-- [ ] **7. `intrp-eval.toc`: interpreter — data + environment — STOP
+- [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment — STOP
     POINT**
   - `(deftype Closure [name params body env])`,
     `(deftype Env [current-ns namespaces])`, initial env built from
@@ -495,7 +574,7 @@ unilaterally.
     the file compiles, and a scratch harness builds the initial env,
     extends it, and looks up values correctly.
 
-- [ ] **8. `intrp-eval.toc`: interpreter — eval**
+- [ ] **8. `interpreter/intrp-eval.toc`: interpreter — eval**
   - `(defp eval [expr env])` over `String`, `IntegerLit`, `FloatLit`,
     `StringLit`, `Call`, `Fn`, `FieldGetter`, `TypeConstraint` (skip).
     `eval-call`: closure → interpret (param bindings + self-binding);
@@ -505,12 +584,13 @@ unilaterally.
     let, cond/and/or/either, vectors, hash maps, threading, string/int
     ops interprets with hand-verified output.
 
-- [ ] **9. `intrp.toc`: driver + Makefile**
+- [ ] **9. `interpreter/intrp.toc`: driver + Makefile**
   - `main`: argv element 1 = file (missing → usage + abort); `slurp`
     (inline-C whole-file read); parse; exactly-one-`main` structural
     check; evaluate top-levels (lazy bindings); call `main` with the
     argv vector. Makefile: repurpose the `intrp` target — `intrp.c`
-    from `intrp.toc` (same awk `#line` step as the regression rule),
+    from `interpreter/intrp.toc` (same awk `#line` step as the
+    regression rule),
     compile `$(TEST_SOURCES) intrp.c` to `./intrp`.
   - Done when: `make intrp` builds; `./intrp regression-tests/test8.toc
     party-pooper | sort` matches `test8.rslt` after stripping the

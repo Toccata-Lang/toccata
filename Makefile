@@ -26,7 +26,7 @@ new-toc: compiler.toc base.toc typer.toc codegen.toc toccata
 	sed -i 's/maybe((FnArity/maybe((Vector/' new-toc.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "new-toc.c"; next; } { print; }' new-toc.tmp > new-toc.c
 	clang-format -i new-toc.c
-	$(CC) $(TOC_FLAGS) -DWAIT_FOR_LINGERING=1 -o new-toc -std=c99 core.c new-toc.c $(LDFLAGS)
+	$(CC) -march=native -I. -lm  -DWAIT_FOR_LINGERING=1 -o new-toc -std=c99 core.c new-toc.c $(LDFLAGS)
 
 # Generate C files from .toc files using pattern rules
 regression-tests/%.c: new-toc regression-tests/%.toc regression-tests/regression-tester.toc hvm-core.toc
@@ -47,8 +47,8 @@ $(REG_TESTS): %: regression-tests/%.c $(TEST_SOURCES)
 tests: $(REG_TESTS)
 
 # Interpeter
-intrp.c: intrp-ast.toc intrp-rdr.toc hvm-core.toc new-toc
-	./new-toc intrp-rdr.toc > $*.tmp
+intrp.c: interpreter/intrp-ast.toc interpreter/intrp-rdr.toc hvm-core.toc new-toc
+	./new-toc interpreter/intrp-rdr.toc > $*.tmp
 	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' $*.tmp > $*.c
 	rm $*.tmp
 
@@ -69,6 +69,12 @@ sidequest: sidequest.c $(TEST_SOURCES)
 	$(CC) $(CFLAGS) -o sidequest $(TOC_FLAGS) $(LDFLAGS) $(TEST_SOURCES) sidequest.c
 	./sidequest || dot -Tsvg graphs.dot > graphs.svg
 
+# Cross-namespace extend-type probe (interpreter/xns-probe.toc)
+interpreter/xns-probe.c: new-toc interpreter/xns-probe.toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc hvm-core.toc
+	./new-toc interpreter/xns-probe.toc > interpreter/xns-probe.tmp
+	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "m.c"; next; } { print; }' \
+          interpreter/xns-probe.tmp > interpreter/xns-probe.c
+	rm interpreter/xns-probe.tmp
 # Help target
 .PHONY: help
 help:
