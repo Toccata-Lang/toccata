@@ -85,12 +85,12 @@ annotations are ignored by the compiler).
 | `Expression.Call` | `[operator operands]` | |
 | `Expression.Fn` | `[name parameter-list body loc]` | name = self-recursion binding; `loc` added |
 | `Expression.FieldGetter` | `[field-name loc]` | used as `Call` operator; name sans dot |
-| `Expression.Inline` | `[type-expr c-code loc]` | type-expr = `Maybe` of `Expression` (uninterpreted tree) |
+| `Expression.Inline` | `[type-expr c-code loc]` | type-expr = `Maybe` of `Expression` (uninterpreted tree); `!` annotations commented out — annotations over `String`/`Location`-kind types break the bare reference from `TopLevel` (see verified facts) |
 | `Expression.TypeConstraint` | `[symbol type-expr]` | symbol = String \| `returns` singleton |
 | `Expression.Superposition` / `Match` / `BlockComment` | kept | unused in phase 1 |
 | `TopLevel.Main` | `[parameter-list body loc]` | separate constructor (special form) |
 | `TopLevel.Definition` | `[name value loc]` | `def` = fundamental top-level binding |
-| `TopLevel.Inline` | `[type-expr c-code loc]` | same shape as expression Inline |
+| `TopLevel.Inline` | bare name → `Expression/Inline` | ctor names are globally unique, so `TopLevel` reuses the `Expression` ctor via a bare reference (verified working); `TopLevel`'s `BlockComment` is likewise a bare reference to `Expression/BlockComment` |
 | `TopLevel.DefType` / `Defp` / `ExtendType` / `AddNs` / `BlockComment` | kept | unused in phase 1 |
 | `Constructor` / `Module` | kept | auxiliaries for later phases |
 
@@ -187,6 +187,12 @@ each form's rule arrives with its phase.
 - `intrp-ast.toc` parses/typechecks clean under `new-toc` (aborts only on
   missing `main`, as a library file would). `intrp-rdr.toc` compiles clean
   with zero leak.
+- **Compile check for library files**: `./new-toc <file> > /dev/null` —
+  the exit code is always 134 (abort), so it is useless; pass = `***
+  Loaded <file>` in stderr with no other error lines. `'main' function is
+  missing or malformed` + `Could not find implementation of
+  'Container/map' for type 'Agent' ... at core: 1453` are baseline noise
+  in the abort path for *any* file (verified with trivial inputs).
 - `intrp-rdr.toc` has grammar rules but **no evaluator** and **no AST
   construction**; its `main` just prints the parser via `str-vect`.
 - `intrp-ebnf.toc` is broken (Conflicting assertions at line 17, multi-arg
@@ -219,18 +225,24 @@ each form's rule arrives with its phase.
   consequences (2026-08-26, item 2):
   - A constructor named `String` is **unbuildable in any namespace**
     ("A type named 'String' was already defined" — the core `String`
-    type). The eval-dispatch bullet's "the constructor is named
-    `String`" is therefore not buildable; the symbol-ref constructor
-    is `Symbol` per the AST table (the pre-rename file compiled
-    clean with it). The 46d6e29 "String constructor" adjustment
-    broke the clean-compile property and was reverted in item 2.
+    type). The symbol-ref constructor is `Symbol` per the AST table
+    (the pre-rename file compiled clean with it). The 46d6e29 "String
+    constructor" adjustment broke the clean-compile property and was
+    reverted in item 2.
   - `Expression.Inline` and a same-named `TopLevel.Inline` **cannot
-    coexist** in one namespace. Splitting the AST across namespaces
-    compiles and runs (verified: cross-ns constructor call works),
-    but that is a structural change the plan doesn't settle. The
-    `TopLevel.Inline` constructor is therefore **pending owner
-    decision** (rename, or namespace split); it is omitted from
-    `intrp-ast.toc` until then (marked with a comment).
+    coexist** as separate ctors in one namespace. **Resolved
+    (2026-08-26, owner)**: a bare name in a deftype's ctor list is a
+    **reference to an existing ctor** (type-info lookup; works for core
+    ctors too — `Some`, `Leaf`, `GetSentinelVal` all verified).
+    `TopLevel` therefore reuses `Expression/Inline` (and
+    `Expression/BlockComment`) via bare references. Restriction found by
+    bisection: a bare reference to a *user-file* ctor fails when that
+    ctor carries `!` annotations over scalar `String` / `StringLiteral` /
+    `Location` / user types; `Integer`, vector types (`[T]`), or no
+    annotations work — so `Expression.Inline`'s annotations are
+    commented out. The failure is a misleading `Undefined symbol: 'x' at
+    core: 98` / `'start' at core: 665` (location points at a core ctor
+    param — `Some`'s `x`, `SubString`'s `start` — not the cause).
 - `(deftype returns [])` (zero constructors) compiles clean under
   new-toc (verified 2026-08-26, item 2).
 - `!` annotations are parsed/validated by new-toc even though they
@@ -278,9 +290,9 @@ each form's rule arrives with its phase.
   `extend-type` impl per constructor. Phase 2's abstract interpreter
   mirrors this with its own protocol over the same constructors.
   Constructor set eval must handle (the actual `Expression` constructors
-  the phase-1 parser produces): `String [ns name loc]` (the symbol ref —
-  the constructor is named `String`), `IntegerLit`, `FloatLit`,
-  `StringLit`, `Call`, `Fn`, `FieldGetter`, `TypeConstraint` (skip).
+  the phase-1 parser produces): `Symbol [ns name loc]` (the symbol ref),
+  `IntegerLit`, `FloatLit`, `StringLit`, `Call`, `Fn`, `FieldGetter`,
+  `TypeConstraint` (skip).
   **Never produced**: `Superposition`, `Match`, `BlockComment`
   (out-of-scope forms — parse errors). There are no And/Or/Cond/IntCond/
   VectorLit/HashLit/Threading constructors in the AST — those forms are
@@ -363,7 +375,7 @@ unilaterally.
     correctly for equal / prefix / superstring / different cases; zero
     leaks.
 
-- [ ] **2. `intrp-ast.toc`: settled AST delta**
+- [x] **2. `intrp-ast.toc`: settled AST delta**
   - `TopLevel.Main [parameter-list body loc]` (separate constructor);
     `TopLevel.Definition [name value loc]`; `Fn` gains `loc` and its
     `body` becomes `[Expression]` (drop `BodyExpressions`);
@@ -371,6 +383,11 @@ unilaterally.
     add the `(deftype returns [])` singleton.
   - Done when: it compiles clean under new-toc (the same check that
     passed before the edits).
+  - As-built (2026-08-26): top-level `Inline` is a bare reference to
+    `Expression/Inline` (not a separate ctor — names are globally
+    unique); `Expression.Inline`'s `!` annotations are commented out
+    (annotations over `String`/`Location`-kind types break the bare
+    reference — see verified facts).
 
 - [ ] **3. Test audit**
   - Line-by-line audit of the 51 regression tests against the phase-1
