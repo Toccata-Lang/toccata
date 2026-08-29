@@ -178,6 +178,12 @@ each form's rule arrives with its phase.
   "first `Match`/`Ignore` wins" rule above is superseded. For now, ignore
   the possibility that a string is ambiguous: assume at most one AST is
   possible from any string — the surviving branch is the parse result.
+  **PAUSED (2026-08-29, owner)**: dropped for the item-6b rewrite — the
+  rewrite uses sequential `or`-style alternatives (the superseded rule
+  above is in force again for now). The superposition approach is under
+  further owner consideration; the NUL-eraser probes (`scratch/sup-nul*.toc`)
+  show total failure erases the workflow with no error value to carry
+  `msg`/`state`.
 - Error format: parse functions produce messages only; the driver formats
   `file:line: message` from the failing state's `values` bookkeeping
   (matching the current compiler's `Error at file: N; 'msg'` style).
@@ -483,6 +489,52 @@ each form's rule arrives with its phase.
   the recursive fields to `f` — passing a leaf field (e.g. an Integer
   label) re-unfolds it forever and exhausts the term buffer
   (`Error: Not enough space to allocate pair`).
+- **new-toc "malformed 'cond' expression" crutch #2: a field getter inside
+  a vector arg to a deftype ctor, inside a let, inside a cond clause**
+  (2026-08-29, item 6b): `(cond t (let [x ...] (ast/Call (ast/Fn ""
+  [(name x)] ...)) ...))` — i.e. a `.field` getter as an element of a
+  vector literal passed to a ctor, in a let that is a cond clause — is
+  rejected with `malformed 'cond' expression`. Bisected: the getter is the
+  trigger (a fn call like `(elt0 x)` in the same position compiles; a
+  getter in a plain `str` call compiles; the getter only fails inside a
+  vector arg to a ctor in a cond clause). Workaround: bind the getter to a
+  `let` var and use the plain symbol in the vector arg (`(let [nm (name x)]
+  ... [nm] ...)`). Applied in `let-desugar-rec` and `hash-fold-acc` in
+  `interpreter/intrp-rdr.toc`. (Distinct from the item-6 "let containing a
+  nested cond" malformed-cond quirk.)
+- **Item 6b as-built (2026-08-29): the concrete style rewrite is DONE and
+  verified; the `unfold` sub-part is an OPEN design gap (owner decision).**
+  `interpreter/intrp-rdr.toc` now has 11 grouping deftypes with named
+  fields + `.field` access (no positional vectors, no `elt0`/`elt1`/`elt2`):
+  `Token [text state]`, `FullSymbol [ns name state]`, `TypeExpr [text
+  state]`, `ParamList [params state]`, `TypeConstraintPair [tc state]`,
+  `LetBinding [name expr]`, `HashPair [key value]`, `LetBindings [bindings
+  state]`, `HashPairs [pairs state]`, `Body [constraints exprs state]`,
+  `TopLevelEntry [name value]`. Each implements `map`/`flat-map`; the
+  structurally-recursive ones (`LetBindings`/`HashPairs`/`Body`) also
+  implement `recurse` (over the vector-of-children field only). No `!`
+  annotations on the grouping ctors (avoids the multi-field-ctor
+  "Conflicting assertions" hazard). `vect-concat` is defined BEFORE the
+  grouping deftypes (their `flat-map` impls call it). `rdr-top.toc`'s
+  `check-oos` `[source msg]` pairs became an `OosCase [source msg]` deftype
+  (its `flat-map` calls `rdr/vect-concat`). `rdr-exprs.toc` is unchanged
+  (uses only the stable public API). Both drivers pass with IDENTICAL output
+  to the pre-rewrite baseline, zero leaks, 0 remaining nodes. The ONE
+  forward declaration (`(def parse-expr)`) and all error messages are
+  unchanged.
+- **The `unfold`-based reader is NOT expressible over the settled AST —
+  OPEN design gap (2026-08-29, item 6b).** `unfold x f` = `recurse (f x)
+  (fn [v] (unfold v f))` threads the node's CHILD VALUES through `f`. A
+  parser must thread STATES (string positions): each recursive parse step
+  needs the state at the sub-expression's start, not the already-parsed
+  sub-expression. The settled AST's recursive fields are sub-`Expression`s
+  (e.g. `Call [operator operands]`), not sub-states, so `recurse` over an
+  AST node hands `f` sub-Expressions that a parse function cannot consume.
+  Making `unfold` drive the parse would require a new state-carrying
+  parse-node type (a redesign of the settled AST / a second materialize
+  pass), which the loop must not guess. Owner decision: drop the unfold
+  approach (as was done for superposition-alternatives) or specify the
+  state-carrying node design.
 
 ## Settled (continued)
 
@@ -702,11 +754,12 @@ unilaterally.
     `map`/`flat-map` (and `recurse` where structurally recursive) on the
     grouping types per the style doc's Data section.
   - The rewrite attempts the reader built on the core's `unfold` recursion
-    scheme (an AST value generated from a string), with parser alternatives
-    as superpositions — `(| ...)` with `( | )` as the failing branch (Parser
-    section, 2026-08-29). **If the unfold/superposition approach becomes too
-    complicated, STOP and report to the owner** (the owner will help sort it
-    out) — do not silently fall back to the old mechanism.
+    scheme (an AST value generated from a string — Parser section note,
+    2026-08-29). Parser alternatives are sequential `or`-style tries (first
+    `Match`/`Ignore` wins, else aggregate the best `Error`) — the
+    superposition-alternatives approach is **dropped for this rewrite**
+    (owner, 2026-08-29), paused pending further owner thought (see the
+    Parser section bullet).
   - All settled behavior (parse results, desugarings, error messages, the
     name -> TopLevel map) stays identical. Update the drivers
     (`rdr-exprs.toc`, `rdr-top.toc`) where they touch the changed shapes —
