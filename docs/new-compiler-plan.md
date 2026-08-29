@@ -541,7 +541,8 @@ unilaterally.
     string (whitespace, symbols, ints, floats, strings) and the
     results print correctly.
 
-- [ ] **5. `interpreter/intrp-rdr.toc`: parser — expressions + desugarings**
+- [x] **5. `interpreter/intrp-rdr.toc`: parser — expressions +
+    desugarings**
   - Literals (int/float/string; quoted sym → `StringLit`), calls,
     special forms (`fn`, `let`, `cond`, `and`, `or`, `str`, `println`,
     `->`, `!` markers), vector/hash folds — all the settled
@@ -551,6 +552,15 @@ unilaterally.
     immediate Fn apps; cond → right-nested `cond` calls; `[...]` →
     `vect-conj` fold; `{...}` → `assoc` fold; `->` → nested Calls;
     `'sym` → `StringLit`).
+  - As-built (2026-08-28): driver `interpreter/rdr-exprs.toc` (14
+    samples; all expected fingerprints printed; zero leaks). Found and
+    fixed two parser bugs: (1) the `parse-expr` dispatch
+    double-consumed the opening `(`/`[`/`{` — it `take-char`'d and the
+    sub-parsers (`parse-call`/`parse-vector`/`parse-hash`, documented
+    "state at the bracket") did it again; the dispatch now passes the
+    state at the bracket. (2) `parse-threading`'s steps branch tested
+    `(= sk 2)` (ParserError) instead of `(= sk 0)` (ParserMatch) — on
+    success it returned the raw steps vector as the parse value.
 
 - [ ] **6. `interpreter/intrp-rdr.toc`: parser — top-level + map output**
   - Top-level rule: `def`/`defn` → map entry under the name; `main` →

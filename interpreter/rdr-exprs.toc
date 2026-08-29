@@ -1,0 +1,97 @@
+;; interpreter/rdr-exprs.toc — item-5 verification driver.
+;;
+;; Parses sample expressions through intrp-rdr.toc and prints, per sample:
+;; the result kind (0 = ParserMatch) and the Call operator's name (the
+;; desugaring fingerprint).
+;;
+;; Expected:
+;;   kind 0 op=lit :: 42
+;;   kind 0 op=lit :: "hi"
+;;   kind 0 op=lit :: 'sym
+;;   kind 0 op=lit :: foo
+;;   kind 0 op=vect-conj :: [1 2]
+;;   kind 0 op=assoc :: {k 1}
+;;   kind 0 op=? :: (let [x 1] x)
+;;   kind 0 op=cond :: (cond a b c)
+;;   kind 0 op=and :: (and a b c)
+;;   kind 0 op=str* :: (str a b)
+;;   kind 0 op=println* :: (println a)
+;;   kind 0 op=g :: (-> x .f g)
+;;   kind 0 op=lit :: (fn [a] a)
+;;   kind 0 op=f :: (f a b)
+;; ("lit" = a non-Call value; "?" = a Call whose operator is neither a
+;; Symbol nor a FieldGetter — e.g. the let desugar's anonymous Fn.)
+
+(add-ns ast (module "intrp-ast.toc"))
+(add-ns rdr (module "intrp-rdr.toc"))
+
+;; val-kind: tag the top-level parsed value (local protocol — instance? is
+;; unsupported under new-toc).
+(defp val-kind [v])
+(extend-type ast/Call (val-kind [_] 0))
+(extend-type ast/IntegerLit (val-kind [_] 1))
+(extend-type ast/StringLit (val-kind [_] 2))
+(extend-type ast/Symbol (val-kind [_] 3))
+(extend-type ast/Fn (val-kind [_] 4))
+
+;; op-kind: tag a Call's operator.
+(defp op-kind [o])
+(extend-type ast/Symbol (op-kind [_] 1))
+(extend-type ast/FieldGetter (op-kind [_] 2))
+(extend-type ast/Fn (op-kind [_] 3))
+
+;; op-name: the operator's name for a parsed Call: a Symbol's name, the
+;; FieldGetter's field name, or "?" otherwise.
+(defn op-name [v]
+  (let [op (.operator v)]
+    (let [k (op-kind op)]
+      (cond
+        (= k 1) (.name op)
+        (= k 2) (.field-name op)
+        "?"))))
+
+;; kind-str: result kind as a string (pr* only accepts strings).
+(defn kind-str [k]
+  (cond
+    (= k 0) "0"
+    (= k 1) "1"
+    (= k 2) "2"
+    "3"))
+
+;; show: parse one sample; print "kind <n> op=<name> :: <sample>". Threads
+;; the print counts into the result (lazy machine — a continuation that
+;; drops its count lets the machine skip earlier prints).
+(defn show [acc s]
+  (let [r (rdr/parse-expr (rdr/make-state s "sample.toc" 1))
+        k (rdr/result-kind r)
+        op (cond (= k 0)
+                 (let [v (.value r)]
+                   (cond (= (val-kind v) 0)
+                         (op-name v)
+                         "lit"))
+                 "err")
+        a (pr* "kind ")
+        b (pr* (kind-str k))
+        c (pr* " op=")
+        d (pr* op)
+        e (pr* " :: ")
+        f (pr* s)
+        g (pr* "\n")]
+    (+ acc (+ a (+ b (+ c (+ d (+ e (+ f g)))))))))
+
+(main [_]
+      (let [r1 (show 0 "42")
+            r2 (show r1 "\"hi\"")
+            r3 (show r2 "'sym")
+            r4 (show r3 "foo")
+            r5 (show r4 "[1 2]")
+            r6 (show r5 "{k 1}")
+            r7 (show r6 "(let [x 1] x)")
+            r8 (show r7 "(cond a b c)")
+            r9 (show r8 "(and a b c)")
+            r10 (show r9 "(str a b)")
+            r11 (show r10 "(println a)")
+            r12 (show r11 "(-> x .f g)")
+            r13 (show r12 "(fn [a] a)")
+            r14 (show r13 "(f a b)")]
+        r14))
