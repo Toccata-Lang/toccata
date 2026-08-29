@@ -78,12 +78,22 @@ builds the code.
   implemented at present, and using them may cause node leaks; short-term
   issues are worked around as they come up.
 
+* A hand-rolled accumulator recursion that walks a vector left-to-right is
+  `reduce` — write the fold, not the `-acc` function. Building right-nested
+  structure (e.g. the `cond`/`and` desugarings) is a `reduce` over
+  `(reverse ...)` with the innermost element as the init.
+
 ## Core API
 
 * `+` is exactly 2-arg — nest to combine more: `(+ a (+ b c))`.
 
 * `first` on a Vector returns `Some element`, not the bare element — extract
   with `(extract (first v))`. `rest` returns a Vector.
+
+* `reduce` is a left fold: `(reduce coll init f)` applies `(f acc elem)` per
+  element and returns `init` for an empty collection. `reverse`, `last`, and
+  `butlast` are implemented for Vector; `last` returns `Some element` like
+  `first`, `butlast` returns a Vector (empty for a single-element vector).
 
 * `subs` is 3-arg: `(subs s start len)`. The rest of a string is
   `(subs s 1 (count s))`. `count` is O(1) for SubString and StringBuffer.
