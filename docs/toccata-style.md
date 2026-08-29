@@ -105,6 +105,11 @@ builds the code.
   it aborts if called on a type it isn't extended for, so only use it on
   values known to be one of your own ctors.
 
+* A protocol implementation may not contain an inline C body. When the
+  implementation needs C, the protocol impl makes an immediate call to a
+  plain `defn` whose body is the `(inline ...)` expression (cf. `type-name`
+  calling `default-type-name` in `hvm-core.toc`).
+
 ## Evaluation
 
 Evaluation is data-dependent workflows, not sequential execution. A function

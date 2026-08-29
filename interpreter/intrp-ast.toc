@@ -1,12 +1,32 @@
+;; intrp-ast.toc — AST shapes + desugar pass.
+;;
+;; The Expression deftype holds the 8 shared ctors (Symbol, IntegerLit,
+;; FloatLit, StringLit, Call, Fn, FieldGetter, TypeConstraint) plus the
+;; eval-only ctors (Superposition, Match, BlockComment, Inline). The
+;; Syntax deftype reuses the 8 shared ctors via bare references and adds
+;; 9 syntactic ctors (Let, Cond, And, Or, Str, Println, Threading,
+;; VectorLit, HashLit).
+;;
+;; Three-pass nanopass structure:
+;;   1. Parse (ana/unfold): unfold state parse-node -> Syntax tree.
+;;   2. Desugar (transCata/fold): fold tree desugar-node -> Expression tree.
+;;   3. Eval: settled protocol over the 8 Expression ctors.
+;;
+;; The 8 shared ctors are identity under desugar-node (they are already
+;; Expression ctors). The 9 syntactic ctors are desugared (Let -> nested
+;; Fn-apps, Cond -> nested cond calls, etc.).
+;;
+;; This file is a LIBRARY (no main).
+
+;; --- Locations + module types ----------------------------------------
+
+(deftype Dummy [key value])
+
 (deftype Location [file line]
-  ;; ! file String
-  ;; ! line WholeNumber
-  ;; annotations removed (item 5, 2026-08-27): new-toc mis-applies `!`
-  ;; annotations on multi-field ctors during value construction
-  ;; ("Conflicting assertions") whenever any arg is a literal. They have no
-  ;; codegen or field-access effect, so they are dropped for the ctors the
-  ;; parser constructs.
-  )
+  ;; annotations removed (item 5): new-toc mis-applies `!` annotations on
+  ;; multi-field ctors during value construction.
+  (str-vect [l]
+    [file ": " (str line)]))
 
 (deftype Module [path]
   ! path String
@@ -18,83 +38,376 @@
   ! implementations [Fn]
   )
 
+;; --- Shared helpers ---------------------------------------------------
+
+;; vect-concat: a ++ b (append every element of b to a).
+(defn vect-concat [a b]
+  (reduce b a vect-conj))
+
+;; --- desugar-node protocol -------------------------------------------
+;;
+;; Transforms a Syntax node into an Expression. The default is identity
+;; (for the 8 shared ctors). The 9 syntactic ctors have inline impls.
+
+(defp desugar-node [v] v)
+
+;; --- body-elem protocol (mixed body vectors) -------------------------
+;;
+;; Fn/Let/Main body vectors hold a mix of TypeConstraint nodes (parsed
+;; directly, not states) and expression states (to be unfolded). The
+;; recurse impls use body-elem to apply g to states but leave TC nodes
+;; unchanged. The defp must precede the Expression deftype (the Fn ctor's
+;; recurse impl references it); the extend-type follows the deftype.
+
+(defp body-elem [e g] (g e))
+
+;; --- Expression deftype ----------------------------------------------
+;;
+;; The 8 shared ctors get recurse impls (for the ana/unfold and the
+;; fold/desugar). The desugar-node impl is the identity default.
+;; No `!` annotations (item 5).
+
 (deftype Expression
     (Symbol [ns name loc]
-      ;; ! ns String
-      ;; ! name (all-of String (min-count 1))
-      ;; ! loc Location
-      )
+      (str-vect [v]
+                (flat-map ["(Symbol " ns " " name " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (Symbol (.ns v) (.name v) (.loc v))))
     (IntegerLit [value loc]
-      ;; ! value Integer
-      ;; ! loc Location
-      )
+      (str-vect [v]
+                (flat-map ["(IntegerLit " value " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (IntegerLit (.value v) (.loc v))))
     (FloatLit [value loc]
-      ;; ! value Float
-      ;; ! loc Location
-      )
+      (str-vect [v]
+                (flat-map ["(FloatLit " value " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (FloatLit (.value v) (.loc v))))
     (StringLit [value loc]
-      ;; ! value String
-      ;; ! loc Location
-      )
+      (str-vect [v]
+                (flat-map ["(StringLit \"" value "\" " loc ")" ]
+                          str-vect))
+      (recurse [v g]
+        (StringLit (.value v) (.loc v))))
     (Call [operator operands]
-      ;; ! operator Expression
-      ;; ! operands [Expression]
-      ) ; Function/macro calls, vectors, hash maps
+      (str-vect [v]
+                (flat-map ["(Call " operator " " operands ")"]
+                          str-vect))
+      (recurse [v g]
+        (Call (g (.operator v))
+              (vect-map (.operands v) g))))
     (Fn [name parameter-list body loc]
-      ;; ! name String
-      ;; ! parameter-list [String]
-      ;; ! body [Expression]
-      ;; ! loc Location
-      ) ; Anonymous functions
+      (str-vect [v]
+                (flat-map ["(Fn " name " " parameter-list " " body " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (Fn (.name v)
+            (.parameter-list v)
+            (vect-map (.body v) (fn [e] (body-elem e g)))
+            (.loc v))))
     (Superposition [alternatives]
-      ! alternatives [Expression]
-      ) ; Superposition operator
-    (TypeConstraint [symbol type-expr]) ; Type constraints
+      (str-vect [v]
+                (flat-map ["(Superposition " alternatives ")"]
+                          str-vect)))
+    (TypeConstraint [symbol type-expr]
+      (str-vect [v]
+                (flat-map ["(TypeConstraint " symbol " " type-expr ")"]
+                          str-vect))
+      (recurse [v g]
+        (TypeConstraint (.symbol v) (.type-expr v)))
+      (body-elem [e g]
+        e))
     (FieldGetter [field-name loc]
-      ;; ! field-name (all-of String (min-count 1))
-      ;; ! loc Location
-      ) ; Field access
-
-    (Match [expr cases default-case])
+      (str-vect [v]
+                (flat-map ["(FieldGetter " field-name " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (FieldGetter (.field-name v) (.loc v))))
+    (Match [expr cases default-case]
+      (str-vect [v]
+                (flat-map ["(Match " expr " " cases " " default-case ")"]
+                          str-vect)))
     (BlockComment [lines]
-      ! lines [String]
-      )
+      (str-vect [v]
+                (flat-map ["(BlockComment " lines ")"]
+                          str-vect)))
     (Inline [type-expr c-code loc]
-      ;; ! type-expr (any-of None
-      ;;                     Some)
-      ;; ! c-code String
-      ;; ! loc Location
-      )) ; Inline C
+      (str-vect [v]
+                (flat-map ["(Inline " type-expr " " c-code " " loc ")"]
+                          str-vect))))
+
+;; --- expr-kind protocol (threading step dispatch) ---------------------
+
+(defp expr-kind [e])
+(extend-type Call (expr-kind [_] 0))
+(extend-type Symbol (expr-kind [_] 1))
+(extend-type FieldGetter (expr-kind [_] 2))
+
+;; --- Desugar helpers --------------------------------------------------
+;;
+;; Transform Syntax nodes (with desugared children) into Expression nodes.
+;; Workers before wrappers; one-way chains + self-recursion need no
+;; forward declaration.
+
+(defn fold-vec-acc [exprs acc loc]
+  (cond
+    (= (count exprs) 0)
+    acc
+    (let [e (extract (first exprs))]
+      (fold-vec-acc (rest exprs)
+                    (Call (Symbol "" "vect-conj" loc) [acc e])
+                    loc))))
+
+;; fold-vec: [e1 e2 ...] ->
+;;   (vect-conj (vect-conj (vect-conj empty-vector e1) e2) ...)
+(defn fold-vec [exprs loc]
+  (fold-vec-acc exprs (Symbol "" "empty-vector" loc) loc))
+
+(defn hash-fold-acc [pairs acc loc]
+  (cond
+    (= (count pairs) 0)
+    acc
+    (let [kv (extract (first pairs))
+          k (.key kv)
+          hv (.value kv)]
+      (hash-fold-acc (rest pairs)
+                     (Call (Symbol "" "assoc" loc) [acc k hv])
+                     loc))))
+
+;; hash-fold: [HashPair ...] -> (assoc (assoc emptyBMI k1 v1) ...)
+(defn hash-fold [pairs loc]
+  (hash-fold-acc pairs (Symbol "" "emptyBMI" loc) loc))
+
+;; cond-inner: [e] -> e (the trailing else); [t v ...] -> (cond t v (inner ...))
+(defn cond-inner [r loc]
+  (cond (= (count r) 1)
+    (extract (first r))
+    (let [t (extract (first r))
+          r1 (rest r)
+          v (extract (first r1))]
+      (Call (Symbol "" "cond" loc) [t v (cond-inner (rest r1) loc)]))))
+
+(defn cond-desugar-rec [exprs loc]
+  (let [t (extract (first exprs))
+        r1 (rest exprs)
+        v (extract (first r1))
+        r2 (rest r1)]
+    (Call (Symbol "" "cond" loc) [t v (cond-inner r2 loc)])))
+
+;; cond-desugar: [t1 v1 ... tN vN e] ->
+;;   (cond t1 v1 (cond t2 v2 (... (cond tN vN e))))
+(defn cond-desugar [exprs loc]
+  (cond-desugar-rec exprs loc))
+
+(defn and-or-desugar-rec [exprs loc op-name]
+  (cond (= (count exprs) 1)
+    (extract (first exprs))
+    (let [a (extract (first exprs))]
+      (Call (Symbol "" op-name loc)
+            [a (and-or-desugar-rec (rest exprs) loc op-name)]))))
+
+;; and-or-desugar: [a1 ... aN] -> (and a1 (and a2 ... aN)); single -> the arg.
+(defn and-or-desugar [exprs loc op-name]
+  (and-or-desugar-rec exprs loc op-name))
+
+;; str-println-desugar: [e1 ...] -> (str* (vect-conj ... e1 ...))
+(defn str-println-desugar [exprs loc fn-name]
+  (Call (Symbol "" fn-name loc) [(fold-vec exprs loc)]))
+
+;; thread-step: apply one threading step to the threaded value.
+;;   Call (f a b)  -> (f <threaded> a b)
+;;   Symbol g      -> (g <threaded>)
+;;   Symbol .f     -> (.f <threaded>)  (FieldGetter operator)
+;;   other         -> (<step> <threaded>)
+(defn thread-step [step threaded loc]
+  (let [k (expr-kind step)]
+    (cond
+      (= k 0)
+      (let [op (.operator step)]
+        (Call op (vect-concat [threaded] (.operands step)) loc))
+
+      (= k 1)
+      (let [nm (.name step)]
+        (cond (str= (subs nm 0 1) ".")
+              (Call (FieldGetter (subs nm 1 (count nm)) loc) [threaded])
+              (Call step [threaded])))
+      (Call step [threaded]))))
+
+(defn threading-rec [steps threaded loc]
+  (cond
+    (= (count steps) 0)
+    threaded
+    (let [step (extract (first steps))]
+      (threading-rec (rest steps) (thread-step step threaded loc) loc))))
+
+;; threading: (-> x s1 ... sN) -> (sN (... (s1 x)))
+(defn threading [initial steps loc]
+  (threading-rec steps initial loc))
+
+(defn let-desugar-rec [pairs body-vec loc]
+  (cond (= (count pairs) 1)
+    (let [pair (extract (first pairs))
+          nm (.name pair)
+          ex (.expr pair)]
+      (Call (Fn "" [nm] body-vec loc) [ex]))
+
+    (let [pair (extract (first pairs))
+          nm (.name pair)
+          ex (.expr pair)
+          inner (let-desugar-rec (rest pairs) body-vec loc)]
+      (Call (Fn "" [nm] [inner] loc) [ex]))))
+
+;; let-desugar: [LetBinding ...] + body-vec ->
+;;   (Call (Fn "" [b1] [rest1]) e1) where the innermost Fn body is body-vec.
+(defn let-desugar [pairs body-vec loc]
+  (let-desugar-rec pairs body-vec loc))
+
+;; --- Grouping ctors ---------------------------------------------------
+;;
+;; LetBinding and HashPair are used by the Let and HashLit Syntax ctors.
+;; Each gets a recurse impl so the ana/unfold can thread through them.
+;; No `!` annotations (item 5).
+
+(deftype LetBinding [name expr]
+  (str-vect [v]
+            (flat-map ["(LetBinding " name " " expr ")"]
+                      str-vect))
+  (recurse [v g]
+    (LetBinding (.name v) (g (.expr v)))))
+
+(deftype HashPair [key value]
+  (str-vect [v]
+            (flat-map ["(HashPair " key " " value ")"]
+                      str-vect))
+  (recurse [v g]
+    (HashPair (g (.key v)) (g (.value v)))))
+
+;; --- Syntax deftype ---------------------------------------------------
+;;
+;; 8 bare references to the shared Expression ctors + 9 syntactic ctors.
+;; The syntactic ctors carry inline recurse + desugar-node impls.
+;; No `!` annotations (item 5).
+
+(deftype Syntax
+    Symbol
+    IntegerLit
+    FloatLit
+    StringLit
+    Call
+    Fn
+    FieldGetter
+    TypeConstraint
+    (Let [bindings body loc]
+      (str-vect [v]
+                (flat-map ["(Let " bindings " " body " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (Let (vect-map (.bindings v)
+                       (fn [b] (LetBinding (.name b) (g (.expr b)))))
+             (vect-map (.body v) (fn [e] (body-elem e g)))
+             (.loc v)))
+      (desugar-node [v]
+        (let-desugar (.bindings v) (.body v) (.loc v))))
+    (Cond [exprs loc]
+      (str-vect [v]
+                (flat-map ["(Cond " exprs " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (Cond (vect-map (.exprs v) g) (.loc v)))
+      (desugar-node [v]
+        (cond-desugar (.exprs v) (.loc v))))
+    (And [exprs loc]
+      (str-vect [v]
+                (flat-map ["(And " exprs " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (And (vect-map (.exprs v) g) (.loc v)))
+      (desugar-node [v]
+        (and-or-desugar (.exprs v) (.loc v) "and")))
+    (Or [exprs loc]
+      (str-vect [v]
+                (flat-map ["(Or " exprs " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (Or (vect-map (.exprs v) g) (.loc v)))
+      (desugar-node [v]
+        (and-or-desugar (.exprs v) (.loc v) "or")))
+    (Str [exprs loc]
+      (str-vect [v]
+                (flat-map ["(Str " exprs " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (Str (vect-map (.exprs v) g) (.loc v)))
+      (desugar-node [v]
+        (str-println-desugar (.exprs v) (.loc v) "str*")))
+    (Println [exprs loc]
+      (str-vect [v]
+                (flat-map ["(Println " exprs " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (Println (vect-map (.exprs v) g) (.loc v)))
+      (desugar-node [v]
+        (str-println-desugar (.exprs v) (.loc v) "println*")))
+    (Threading [initial steps loc]
+      (str-vect [v]
+                (flat-map ["(Threading " initial " " steps " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (Threading (g (.initial v))
+                   (vect-map (.steps v) g)
+                   (.loc v)))
+      (desugar-node [v]
+        (threading (.initial v) (.steps v) (.loc v))))
+    (VectorLit [exprs loc]
+      (str-vect [v]
+                (flat-map ["(VectorLit " exprs " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (VectorLit (vect-map (.exprs v) g) (.loc v)))
+      (desugar-node [v]
+        (fold-vec (.exprs v) (.loc v))))
+    (HashLit [pairs loc]
+      (str-vect [v]
+                (flat-map ["(HashLit " pairs " " loc ")"]
+                          str-vect))
+      (recurse [v g]
+        (HashLit (vect-map (.pairs v)
+                           (fn [p] (HashPair (g (.key p)) (g (.value p)))))
+                 (.loc v)))
+      (desugar-node [v]
+        (hash-fold (.pairs v) (.loc v)))))
+
+;; --- desugar function -------------------------------------------------
+;;
+;; The desugar pass: fold the Syntax tree with desugar-node, producing an
+;; Expression tree.
+
+(defn desugar [tree]
+  (fold tree desugar-node))
+
+;; --- TopLevel deftype -------------------------------------------------
+;;
+;; Definition and Main get recurse impls (their value/body fields hold
+;; Syntax nodes pre-desugar, Expression nodes post-desugar).
 
 (deftype TopLevel
     (Definition [name value loc]
-      ! name String
-      ! value Expression
-      ! loc Location
-      ) ; All definitions
-    (DefType [type-name constructors]
-      ! type-name String
-      ! constructors [Constructors]
-      ) ; Type definitions
-    (Defp [name parameter-list body]
-      ! name String
-      ! parameter-list [String]
-      ! body [Expression]
-      ) ; Prototype functions
-    (ExtendType [type-name methods]
-      ! type-name String
-      ! methods [Fn]
-      ) ; Type extensions
-    (AddNs [namespace module-path]
-      ! namespace String
-      ! module-path Module
-      ) ; Namespace additions with embedded Module
+      (recurse [v g]
+        (Definition (.name v) (g (.value v)) (.loc v))))
+    (DefType [type-name constructors])
+    (Defp [name parameter-list body])
+    (ExtendType [type-name methods])
+    (AddNs [namespace module-path])
     Inline
     BlockComment
     (Main [parameter-list body loc]
-      ! parameter-list [String]
-      ! body [Expression]
-      ! loc Location
-      )) ; Main (special form)
+      (recurse [v g]
+        (Main (.parameter-list v)
+              (vect-map (.body v) (fn [e] (body-elem e g)))
+              (.loc v))))
+    )
 
 (deftype returns [])

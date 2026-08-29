@@ -522,6 +522,14 @@ each form's rule arrives with its phase.
   to the pre-rewrite baseline, zero leaks, 0 remaining nodes. The ONE
   forward declaration (`(def parse-expr)`) and all error messages are
   unchanged.
+- **Field getters require a prior type with that field name** (2026-08-29,
+  item 6b): new-toc resolves `.field` getters by looking up an already-
+  defined type that has a field with that name. If no such type exists yet,
+  the getter is an `Undefined symbol`. Workaround: define a dummy type with
+  the needed field names before the first use (e.g. `(deftype Dummy [key
+  value])` in `intrp-ast.toc` so that `.key` / `.value` resolve in the
+  desugar helpers that run before `HashPair` is defined). Build crutch only;
+  the new compiler should resolve getters structurally.
 - **The `unfold`-based reader is NOT expressible over the settled AST —
   OPEN design gap (2026-08-29, item 6b).** `unfold x f` = `recurse (f x)
   (fn [v] (unfold v f))` threads the node's CHILD VALUES through `f`. A

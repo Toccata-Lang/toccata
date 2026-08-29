@@ -1,12 +1,13 @@
-;; intrp-rdr.toc — phase-1 parser: state + tokens + expressions + top-level.
+;; intrp-rdr.toc — phase-1 parser: state + tokens + ana/unfold + top-level.
 ;;
-;; Direct recursive-descent parser over a remaining-string ParserState.
-;; Items 4-6 built the token helpers, expression parsers, and top-level
-;; forms; item 6b rewrites every positionally-meaningful grouping to a
-;; deftype ctor with named fields (docs/toccata-style.md) — no positional
-;; vectors, no elt0/elt1/elt2. Each grouping type implements map / flat-map
-;; (and recurse where structurally recursive) so it can be sequenced and
-;; traversed per the style doc's Data section.
+;; Three-pass nanopass structure:
+;;   1. Parse (ana/unfold): unfold state parse-node -> Syntax tree.
+;;      parse-node reads ONE level of an expression, emitting a Syntax node
+;;      with child states. The unfold machinery recurses into the child
+;;      states via the recurse protocol.
+;;   2. Desugar (transCata/fold): fold tree desugar-node -> Expression tree.
+;;      (In intrp-ast.toc.)
+;;   3. Eval: settled protocol over the 8 Expression ctors.
 ;;
 ;; This file is a LIBRARY (no main). The verification drivers are
 ;; interpreter/rdr-exprs.toc (expressions) and interpreter/rdr-top.toc
@@ -15,34 +16,28 @@
 ;; Model (settled):
 ;;   * ParserState [input values] — `input` is the unconsumed suffix of
 ;;     the source; `values` is a bookkeeping map {"file" String, "line"
-;;     Integer}. `subs` returns O(1) SubString views, so per-character
-;;     cost is a small pooled allocation.
-;;   * Maximal-run reads scan for a length, then extract with ONE subs —
-;;     never repeated `str` concatenation (O(n^2)).
+;;     Integer}. `subs` returns O(1) SubString views.
+;;   * Maximal-run reads scan for a length, then extract with ONE subs.
 ;;   * The line counter is bumped by take-char when it consumes "\n".
-;;   * NO local symbol may shadow a symbol from the core namespace (a
-;;     local `first` made new-toc emit colliding C identifiers — see
-;;     docs/new-compiler-plan.md, Verified facts).
+;;   * NO local symbol may shadow a symbol from the core namespace.
 ;;
 ;; new-toc crutches used here (build crutch, not design constraints):
-;;   * ONE forward declaration, used only for genuine mutual recursion:
-;;     the expression parsers form one mutually recursive group. parse-expr
-;;     is forward-declared ((def parse-expr) before its defn); every other
-;;     group member is ordered to reference only parse-expr (declared) or
-;;     earlier definitions. Self-recursion and one-way call chains need no
-;;     declaration — recursive workers are defined before their wrappers.
+;;   * ONE forward declaration for genuine mutual recursion: parse-node
+;;     and skip-expr are mutually recursive (parse-node calls skip-expr
+;;     to advance past child expressions; skip-expr calls parse-node for
+;;     nested structures). parse-node is forward-declared.
 ;;   * A cond branch that is a BARE CALL to a token reader is wrapped in a
-;;     let (the read-run let-wrap crutch) to avoid a new-toc codegen bug
-;;     (dangling VAR) — see read-symbol.
-;;   * The AST ctors carry no `!` annotations (removed in item 5) because
-;;     new-toc mis-applies them during value construction. The grouping
-;;     ctors below likewise carry no `!` annotations.
+;;     let (the read-run let-wrap crutch).
 
 (add-ns ast (module "intrp-ast.toc"))
+
+;; --- ParserState -----------------------------------------------------
 
 (deftype ParserState [input values]
   ! input String
   )
+
+;; --- ParserResults ---------------------------------------------------
 
 (deftype ParserResults
   (ParserFail [])
@@ -50,125 +45,84 @@
   (ParserIgnore [state])
   (ParserError [msg state]))
 
-;; vect-concat: a ++ b (append every element of b to a). Defined before the
-;; grouping deftypes because their flat-map impls call it.
-(defn vect-concat [a b]
-  (reduce b a vect-conj))
-
-;; --- Grouping types (item 6b) ----------------------------------------
+;; --- Token groupings -------------------------------------------------
 ;;
-;; Every positionally-meaningful grouping in the parser is a deftype ctor
-;; with named fields, accessed via .field getters. Per the style doc's Data
-;; section, each implements map / flat-map (and recurse where structurally
-;; recursive) so it can be sequenced and traversed. No `!` annotations
-;; (new-toc mis-applies them on multi-field ctors during value
-;; construction). map applies f to every field and rebuilds; flat-map
-;; applies f to every field and concatenates the resulting sequences;
-;; recurse (structurally recursive types only) applies f to the recursive
-;; vector fields only, leaving leaf fields (e.g. the threaded state) alone.
+;; Each implements map / flat-map per docs/toccata-style.md. No `!`
+;; annotations (new-toc mis-applies them on multi-field ctors).
 
-;; Token: a lexical token's raw text and the state after consuming it.
 (deftype Token [text state]
   (map [v f]
     (Token (f (.text v)) (f (.state v))))
   (flat-map [v f]
-    (vect-concat (f (.text v)) (f (.state v)))))
+    (ast/vect-concat (f (.text v)) (f (.state v)))))
 
-;; FullSymbol: a symbol with an optional ns/ prefix, plus the remaining
-;; state.
 (deftype FullSymbol [ns name state]
   (map [v f]
     (FullSymbol (f (.ns v)) (f (.name v)) (f (.state v))))
   (flat-map [v f]
-    (vect-concat (vect-concat (f (.ns v)) (f (.name v))) (f (.state v)))))
+    (ast/vect-concat (ast/vect-concat (f (.ns v)) (f (.name v)))
+                     (f (.state v)))))
 
-;; TypeExpr: a type expression's raw text and the remaining state.
 (deftype TypeExpr [text state]
   (map [v f]
     (TypeExpr (f (.text v)) (f (.state v))))
   (flat-map [v f]
-    (vect-concat (f (.text v)) (f (.state v)))))
+    (ast/vect-concat (f (.text v)) (f (.state v)))))
 
-;; ParamList: a parsed [p1 p2 ...] parameter list and the remaining state.
 (deftype ParamList [params state]
   (map [v f]
     (ParamList (map (.params v) f) (f (.state v))))
   (flat-map [v f]
-    (vect-concat (flat-map (.params v) f) (f (.state v)))))
+    (ast/vect-concat (flat-map (.params v) f) (f (.state v)))))
 
-;; TypeConstraintPair: a parsed `!` type constraint and the remaining state.
 (deftype TypeConstraintPair [tc state]
   (map [v f]
     (TypeConstraintPair (f (.tc v)) (f (.state v))))
   (flat-map [v f]
-    (vect-concat (f (.tc v)) (f (.state v)))))
+    (ast/vect-concat (f (.tc v)) (f (.state v)))))
 
-;; LetBinding: one let binding (name + initializer expr).
-(deftype LetBinding [name expr]
-  (map [v f]
-    (LetBinding (f (.name v)) (f (.expr v))))
-  (flat-map [v f]
-    (vect-concat (f (.name v)) (f (.expr v)))))
-
-;; HashPair: one hash-map pair (key expr + value expr).
-(deftype HashPair [key value]
-  (map [v f]
-    (HashPair (f (.key v)) (f (.value v))))
-  (flat-map [v f]
-    (vect-concat (f (.key v)) (f (.value v)))))
-
-;; LetBindings: the parsed let bindings and the state after the closing ].
-(deftype LetBindings [bindings state]
-  (map [v f]
-    (LetBindings (map (.bindings v) f) (f (.state v))))
-  (flat-map [v f]
-    (vect-concat (flat-map (.bindings v) f) (f (.state v))))
-  (recurse [v f]
-    (LetBindings (map (.bindings v) f) (.state v))))
-
-;; HashPairs: the parsed hash-map pairs and the state after the closing }.
-(deftype HashPairs [pairs state]
-  (map [v f]
-    (HashPairs (map (.pairs v) f) (f (.state v))))
-  (flat-map [v f]
-    (vect-concat (flat-map (.pairs v) f) (f (.state v))))
-  (recurse [v f]
-    (HashPairs (map (.pairs v) f) (.state v))))
-
-;; Body: a parsed fn/defn/main body — the leading type constraints, the body
-;; exprs, and the state after the closing ).
-(deftype Body [constraints exprs state]
-  (map [v f]
-    (Body (map (.constraints v) f) (map (.exprs v) f) (f (.state v))))
-  (flat-map [v f]
-    (vect-concat (vect-concat (flat-map (.constraints v) f)
-                               (flat-map (.exprs v) f))
-                 (f (.state v))))
-  (recurse [v f]
-    (Body (map (.constraints v) f) (map (.exprs v) f) (.state v))))
-
-;; TopLevelEntry: a name -> TopLevel map entry (the parse value of a
-;; top-level def/defn/main).
 (deftype TopLevelEntry [name value]
   (map [v f]
     (TopLevelEntry (f (.name v)) (f (.value v))))
   (flat-map [v f]
-    (vect-concat (f (.name v)) (f (.value v)))))
+    (ast/vect-concat (f (.name v)) (f (.value v)))))
+
+;; Collection result groupings: the collected child states/nodes + the
+;; state after the closing delimiter.
+
+(deftype CollectResult [states state]
+  (map [v f]
+    (CollectResult (map (.states v) f) (f (.state v))))
+  (flat-map [v f]
+    (ast/vect-concat (flat-map (.states v) f) (f (.state v)))))
+
+(deftype BodyResult [states state]
+  (map [v f]
+    (BodyResult (map (.states v) f) (f (.state v))))
+  (flat-map [v f]
+    (ast/vect-concat (flat-map (.states v) f) (f (.state v)))))
+
+(deftype LetBindingsResult [bindings state]
+  (map [v f]
+    (LetBindingsResult (map (.bindings v) f) (f (.state v))))
+  (flat-map [v f]
+    (ast/vect-concat (flat-map (.bindings v) f) (f (.state v)))))
+
+(deftype HashPairsResult [pairs state]
+  (map [v f]
+    (HashPairsResult (map (.pairs v) f) (f (.state v))))
+  (flat-map [v f]
+    (ast/vect-concat (flat-map (.pairs v) f) (f (.state v)))))
 
 ;; --- State helpers ---------------------------------------------------
 
-;; make-state: build a ParserState with the given input, file name, and
-;; starting line number.
 (defn make-state [input file line]
   (ParserState input {"file" file, "line" line}))
 
-;; state-line: the current line number from the state's values map.
 (defn state-line [state]
   (extract (get (.values state) "line")))
 
 ;; --- Character predicates --------------------------------------------
-;; Each returns Some (truthy) if the one-char string matches, None
-;; otherwise. char-code maps the first char to its integer code (0-255).
 
 (defn is-digit [c]
   (let [n (char-code c)]
@@ -182,7 +136,6 @@
         (and (<= 97 n)
              (<= n 122)))))
 
-;; A symbol starts with an alpha or one of . _ < > = + - * /
 (defn symbol-start? [c]
   (or (is-alpha c)
       (str= c ".")
@@ -195,7 +148,6 @@
       (str= c "*")
       (str= c "/")))
 
-;; A symbol continues with an alpha, a digit, or one of . _ < > = + - * ? !
 (defn symbol-continue? [c]
   (or (is-alpha c)
       (is-digit c)
@@ -210,25 +162,18 @@
       (str= c "?")
       (str= c "!")))
 
-;; A number token is a run of digits and dots (token-level; full numeric
-;; validation is deferred to the AST-building pass in item 5).
 (defn float-char? [c]
   (or (is-digit c)
       (str= c ".")))
 
 ;; --- Token helpers ---------------------------------------------------
 
-;; peek-char: the first character of the input as a one-char string, or
-;; "" if the input is exhausted. Does not consume.
 (defn peek-char [state]
   (let [input (.input state)]
     (cond (str= input "")
           ""
           (subs input 0 1))))
 
-;; take-char: consume one character, returning the new state. Bumps the
-;; line counter when the consumed char is a newline. A no-op on empty
-;; input.
 (defn take-char [state]
   (let [input (.input state)
         c (subs input 0 1)
@@ -240,9 +185,6 @@
     (ParserState rest-input
                  (assoc (.values state) "line" new-line))))
 
-;; skip-comment: state is positioned just after a ';'. Consume through
-;; the end of the line, stopping at (but not consuming) the newline or
-;; end of input. Self-recursive.
 (defn skip-comment [state]
   (let [c (peek-char state)]
     (cond (str= c "")
@@ -251,8 +193,6 @@
           state
           (skip-comment (take-char state)))))
 
-;; skip-whitespace: consume runs of whitespace (space, tab, newline, CR)
-;; and ';' comments, returning the new state. Self-recursive.
 (defn skip-whitespace [state]
   (let [c (peek-char state)]
     (cond (str= c "")
@@ -269,8 +209,6 @@
           (skip-whitespace (take-char state))
           state)))
 
-;; run-length: the number of leading characters of s that satisfy pred.
-;; Each step is an O(1) subs view, so the scan is O(n). Self-recursive.
 (defn run-length [s pred]
   (let [c (subs s 0 1)]
     (cond (str= c "")
@@ -279,9 +217,6 @@
           (+ 1 (run-length (subs s 1 (count s)) pred))
           0)))
 
-;; read-run: read the maximal run of characters (from the state's input)
-;; that satisfy pred. Returns a Token [run-text new-state]. The run never
-;; spans a newline for the token types used here, so the line is unchanged.
 (defn read-run [state pred]
   (let [input (.input state)
         len (run-length input pred)
@@ -289,12 +224,8 @@
         rest-input (subs input len (count input))]
     (Token run (ParserState rest-input (.values state)))))
 
-;; --- Token readers (return a Token) ----------------------------------
+;; --- Token readers ---------------------------------------------------
 
-;; read-string-content: state is just after the opening quote. Consume
-;; until an unescaped closing quote, stopping AT the quote (not
-;; consuming it) or at end of input. A backslash skips the next char so
-;; an escaped quote does not end the string. Self-recursive.
 (defn read-string-content [state]
   (let [c (peek-char state)]
     (cond (str= c "")
@@ -305,10 +236,6 @@
           state
           (read-string-content (take-char state)))))
 
-;; read-string: a double-quoted string. Returns a Token [content new-state]
-;; where content is the raw text between the quotes (escape *processing* is
-;; deferred to the AST-building pass). new-state is positioned just after
-;; the closing quote.
 (defn read-string [state]
   (let [c (peek-char state)]
     (cond (str= c "")
@@ -323,14 +250,7 @@
             (Token content end-state))
           (Token "" state))))
 
-;; read-symbol: a symbol whose first char satisfies symbol-start?.
-;;
-;; Build crutch (new-toc codegen bug, verified scratch/e1.toc / e2.toc /
-;; q18.toc): a cond branch that is a BARE CALL to a token reader makes
-;; new-toc emit a dangling VAR when the caller extracts the result's fields
-;; and rebuilds them into a deftype-wrapped value (crash: strictArgs /
-;; unhandled tag VAR / double free). Wrapping the call in a let inside the
-;; branch avoids it. The new compiler is not bound by this.
+;; (cond-branch let-wrap crutch: see original read-symbol)
 (defn read-symbol [state]
   (let [c (peek-char state)]
     (cond (str= c "")
@@ -340,7 +260,6 @@
             tok)
           (Token "" state))))
 
-;; read-int: a run of digits. (cond-branch let-wrap crutch: see read-symbol)
 (defn read-int [state]
   (let [c (peek-char state)]
     (cond (str= c "")
@@ -350,8 +269,6 @@
             tok)
           (Token "" state))))
 
-;; read-float: a run of digits and dots (token-level; see float-char?).
-;; (cond-branch let-wrap crutch: see read-symbol)
 (defn read-float [state]
   (let [c (peek-char state)]
     (cond (str= c "")
@@ -361,610 +278,19 @@
             tok)
           (Token "" state))))
 
-;; --- Helpers ----------------------------------------------------------
+;; --- Helpers ---------------------------------------------------------
 
-;; result-kind: tag a ParserResults (instance? is unsupported under new-toc,
-;; so dispatch on a protocol tag instead).
 (defp result-kind [r])
 (extend-type ParserMatch (result-kind [_] 0))
 (extend-type ParserIgnore (result-kind [_] 1))
 (extend-type ParserError (result-kind [_] 2))
 (extend-type ParserFail (result-kind [_] 3))
 
-;; expr-kind: tag an Expression ctor (threading step dispatch).
-(defp expr-kind [e])
-(extend-type ast/Call (expr-kind [_] 0))
-(extend-type ast/Symbol (expr-kind [_] 1))
-(extend-type ast/FieldGetter (expr-kind [_] 2))
-
-;; make-loc: a Location from the state's file/line bookkeeping.
 (defn make-loc [state]
   (let [file (extract (get (.values state) "file"))]
     (ast/Location file (state-line state))))
 
-;; read-full-symbol: a symbol with an optional `ns/` prefix.
-;; Returns a FullSymbol [ns name new-state].
-(defn read-full-symbol [state]
-  (let [tok (read-symbol state)
-        fst (.text tok)
-        s2 (.state tok)
-        c (peek-char s2)]
-    (cond (str= c "/")
-          (let [after-slash (take-char s2)
-                name-tok (read-symbol after-slash)]
-            (FullSymbol fst (.text name-tok) (.state name-tok)))
-          (FullSymbol "" fst s2))))
-
-;; read-type-expr: a type expression (a symbol, or a `[symbol]` vector type)
-;; as raw text. Returns a TypeExpr [type-text new-state]. Phase 1: eval
-;; skips TypeConstraints, so the exact text is not significant; a `[T]`
-;; yields `T` (no string concatenation).
-(defn read-type-expr [state]
-  (let [s (skip-whitespace state)
-        c (peek-char s)]
-    (cond (str= c "[")
-          (let [s2 (skip-whitespace (take-char s))
-                inner (read-symbol s2)
-                s3 (skip-whitespace (.state inner))
-                s4 (take-char s3)]
-            (TypeExpr (.text inner) s4))
-
-          (let [nm (read-symbol s)]
-            (TypeExpr (.text nm) (.state nm))))))
-
-;; contains-dot: Some 1 iff s contains a '.' (decides IntegerLit vs
-;; FloatLit for a number token); None otherwise.
-(defn contains-dot [s]
-  (cond
-    (str= s "")
-    None
-    (str= (subs s 0 1) ".")
-    (Some 1)
-    (contains-dot (subs s 1 (count s)))))
-
-;; text-to-int: a run of digits -> Integer. The new core has no str-to-int,
-;; so fold the digits with core arithmetic: acc = acc*10 + digit. (I60 is a
-;; 60-bit int; phase-1 literals are small, so overflow is not a concern.)
-;; text-to-int-acc is self-recursive (defined first so text-to-int can call
-;; it without a forward declaration).
-(defn text-to-int-acc [s acc]
-  (cond
-    (str= s "")
-    acc
-    (let [d (- (char-code (subs s 0 1)) 48)]
-      (text-to-int-acc (subs s 1 (count s))
-                       (+ (* 10 acc) d)))))
-
-(defn text-to-int [s]
-  (text-to-int-acc s 0))
-
-;; --- Desugarings (workers before wrappers; one-way chains + self-recursion need no declaration) ---
-
-(defn fold-vec-acc [exprs acc loc]
-  (cond
-    (= (count exprs) 0)
-    acc
-    (let [e (extract (first exprs))]
-      (fold-vec-acc (rest exprs)
-                       (ast/Call (ast/Symbol "" "vect-conj" loc) [acc e])
-                       loc))))
-
-;; fold-vec: [e1 e2 ...] ->
-;;   (vect-conj (vect-conj (vect-conj empty-vector e1) e2) ...)
-(defn fold-vec [exprs loc]
-  (fold-vec-acc exprs (ast/Symbol "" "empty-vector" loc) loc))
-
-(defn hash-fold-acc [pairs acc loc]
-  (cond
-    (= (count pairs) 0)
-    acc
-    (let [kv (extract (first pairs))
-          k (.key kv)
-          hv (.value kv)]
-      (hash-fold-acc (rest pairs)
-                     (ast/Call (ast/Symbol "" "assoc" loc)
-                               [acc k hv])
-                     loc))))
-
-;; hash-fold: [HashPair ...] -> (assoc (assoc emptyBMI k1 v1) ...)
-(defn hash-fold [pairs loc]
-  (hash-fold-acc pairs (ast/Symbol "" "emptyBMI" loc) loc))
-
-;; cond-inner: [e] -> e (the trailing else); [t v ...] -> (cond t v (inner ...))
-(defn cond-inner [r loc]
-  (cond (= (count r) 1)
-        (extract (first r))
-
-        (let [t (extract (first r))
-              r1 (rest r)
-              v (extract (first r1))]
-          (ast/Call (ast/Symbol "" "cond" loc)
-                    [t v (cond-inner (rest r1) loc)]))))
-
-(defn cond-desugar-rec [exprs loc]
-  (let [t (extract (first exprs))
-        r1 (rest exprs)
-        v (extract (first r1))
-        r2 (rest r1)]
-    (ast/Call (ast/Symbol "" "cond" loc) [t v (cond-inner r2 loc)])))
-
-;; cond-desugar: [t1 v1 ... tN vN e] ->
-;;   (cond t1 v1 (cond t2 v2 (... (cond tN vN e))))
-(defn cond-desugar [exprs loc]
-  (cond-desugar-rec exprs loc))
-
-(defn and-or-desugar-rec [exprs loc op-name]
-  (cond (= (count exprs) 1)
-        (extract (first exprs))
-
-        (let [a (extract (first exprs))]
-          (ast/Call (ast/Symbol "" op-name loc)
-                    [a (and-or-desugar-rec (rest exprs) loc op-name)]))))
-
-;; and-or-desugar: [a1 ... aN] -> (and a1 (and a2 ... aN)); single -> the arg.
-(defn and-or-desugar [exprs loc op-name]
-  (and-or-desugar-rec exprs loc op-name))
-
-;; str-println-desugar: [e1 ...] -> (str* (vect-conj ... e1 ...))
-(defn str-println-desugar [exprs loc fn-name]
-  (ast/Call (ast/Symbol "" fn-name loc) [(fold-vec exprs loc)]))
-
-;; thread-step: apply one threading step to the threaded value.
-;;   Call (f a b)  -> (f <threaded> a b)
-;;   Symbol g      -> (g <threaded>)
-;;   Symbol .f     -> (.f <threaded>)  (FieldGetter operator)
-;;   other         -> (<step> <threaded>)
-(defn thread-step [step threaded loc]
-  (let [k (expr-kind step)]
-    (cond
-      (= k 0)
-      (let [op (.operator step)]
-        (ast/Call op (vect-concat [threaded] (.operands step)) loc))
-
-      (= k 1)
-      (let [nm (.name step)]
-        (cond (str= (subs nm 0 1) ".")
-              (ast/Call (ast/FieldGetter (subs nm 1 (count nm)) loc) [threaded])
-
-              (ast/Call step [threaded])))
-      (ast/Call step [threaded]))))
-
-(defn threading-rec [steps threaded loc]
-  (cond
-    (= (count steps) 0)
-    threaded
-    (let [step (extract (first steps))]
-      (threading-rec (rest steps) (thread-step step threaded loc) loc))))
-
-;; threading: (-> x s1 ... sN) -> (sN (... (s1 x)))
-(defn threading [initial steps loc]
-  (threading-rec steps initial loc))
-
-(defn let-desugar-rec [pairs body-vec loc]
-  (cond (= (count pairs) 1)
-    (let [pair (extract (first pairs))
-          nm (.name pair)
-          ex (.expr pair)]
-      (ast/Call (ast/Fn "" [nm] body-vec loc) [ex]))
-
-    (let [pair (extract (first pairs))
-          nm (.name pair)
-          ex (.expr pair)
-          inner (let-desugar-rec (rest pairs) body-vec loc)]
-      (ast/Call (ast/Fn "" [nm] [inner] loc) [ex]))))
-
-;; let-desugar: [LetBinding ...] + body-vec ->
-;;   (Call (Fn "" [b1] [rest1]) e1) where the innermost Fn body is body-vec.
-(defn let-desugar [pairs body-vec loc]
-  (let-desugar-rec pairs body-vec loc))
-
-;; --- Inner readers (no mutual recursion) ------------------------------
-
-;; read-param-list: a `[ p1 p2 ... ]` parameter list. state is just after
-;; the `[`. Returns a ParamList [params new-state] where new-state is after
-;; the `]`. read-param-list-acc is self-recursive (defined first so
-;; read-param-list can call it without a forward declaration).
-(defn read-param-list-acc [state acc]
-  (let [s (skip-whitespace state)
-       c (peek-char s)]
-    (cond (str= c "]")
-          (ParamList acc (take-char s))
-
-          (let [nm (read-symbol s)]
-            (read-param-list-acc (.state nm) (vect-conj acc (.text nm)))))))
-
-(defn read-param-list [state]
-  (read-param-list-acc state empty-vector))
-
-;; parse-type-constraint: state at `!`. Returns a
-;; TypeConstraintPair [TypeConstraint new-state].
-(defn parse-type-constraint [state]
-  (let [s (skip-whitespace (take-char state))
-        nm (read-symbol s)
-        sym (.text nm)
-        te (read-type-expr (skip-whitespace (.state nm)))]
-    (TypeConstraintPair (ast/TypeConstraint sym (.text te)) (.state te))))
-
-;; --- Leaf expression parsers (no return edge to parse-expr) -----------
-
-;; parse-number: a run of digits/dots -> IntegerLit (no dot) or FloatLit.
-;;   * IntegerLit.value is a REAL Integer, folded from the digits at parse
-;;     time (text-to-int) — matches the settled AST (`! value Integer`).
-;;   * FloatLit.value is the SOURCE TEXT (String) for now: the new runtime
-;;     cannot yet materialize a Float (F60 is a 60-bit payload — no full
-;;     double; the core has no Float str-vect / arithmetic / str-to-float).
-;;     Converting text -> Float is deferred until the runtime's float
-;;     representation is settled (see plan, Verified facts). Lossless: the
-;;     full literal text is preserved.
-(defn parse-number [state]
-  (let [r (read-float state)
-        text (.text r)
-        s2 (.state r)
-        loc (make-loc s2)]
-    (cond (contains-dot text)
-          (ParserMatch (ast/FloatLit text loc) s2)
-
-          (let [n (text-to-int text)]
-            (ParserMatch (ast/IntegerLit n loc) s2)))))
-
-;; parse-string-lit: state at the opening `"`.
-(defn parse-string-lit [state]
-  (let [r (read-string state)
-        content (.text r)
-        s2 (.state r)]
-    (ParserMatch (ast/StringLit content (make-loc s2)) s2)))
-
-;; parse-quoted-sym: state just after the `'`. `'sym` -> StringLit "sym".
-(defn parse-quoted-sym [state]
-  (let [r (read-symbol state)
-        text (.text r)
-        s2 (.state r) ]
-    (ParserMatch (ast/StringLit text (make-loc s2)) s2)))
-
-;; parse-symbol: state at the symbol start. -> Symbol [ns name loc].
-(defn parse-symbol [state]
-  (let [r (read-full-symbol state)]
-    (ParserMatch (ast/Symbol (.ns r) (.name r) (make-loc (.state r)))
-                 (.state r))))
-
-;; --- Mutually recursive group (the ONE forward declaration) ----
-
-;; parse-expr is the group hub: parse-call, the dispatchers, the
-;; special forms, and the body/arg readers all call it, and it
-;; calls back into them. It is forward-declared here; every other
-;; member below references only parse-expr (declared) or earlier
-;; definitions. Self-recursion needs no declaration.
-(def parse-expr)
-
-(defn parse-expr-list-acc [state delim acc]
-  (let [s (skip-whitespace state)
-       c (peek-char s)]
-    (cond (str= c delim)
-          (ParserMatch acc (take-char s))
-
-          (str= c "")
-          (ParserError "unexpected end of input" s)
-
-          (let [r (parse-expr s)
-                k (result-kind r)]
-            (cond (= k 2)
-                  r
-
-                  (parse-expr-list-acc (.state r) delim (vect-conj acc (.value r))))))))
-
-;; parse-expr-list: expressions until `delim` (consumed).
-;; Returns ParserMatch [[exprs] state-after-delim] or ParserError.
-(defn parse-expr-list [state delim]
-  (parse-expr-list-acc state delim empty-vector))
-
-(defn parse-body-acc [state tcs acc]
-  (let [s (skip-whitespace state)
-        c (peek-char s)]
-    (cond (str= c ")")
-          (Body tcs acc (take-char s))
-
-          (str= c "!")
-          (let [tc (parse-type-constraint s)]
-            (parse-body-acc (.state tc) (vect-conj tcs (.tc tc)) acc))
-
-          (let [r (parse-expr s)]
-            (parse-body-acc (.state r) tcs (vect-conj acc (.value r)))))))
-
-;; parse-body: leading `!` markers + expressions until `)` (consumed).
-;; Returns a Body [constraints body-exprs state-after-')'].
-(defn parse-body [state]
-  (parse-body-acc state empty-vector empty-vector))
-
-(defn read-let-bindings-acc [state acc]
-  (let [s (skip-whitespace state)
-        c (peek-char s)]
-    (cond (str= c "]")
-      (LetBindings acc (take-char s))
-
-      (let [nm (read-symbol s)
-            name (.text nm)
-            er (parse-expr (skip-whitespace (.state nm)))]
-        (read-let-bindings-acc (.state er)
-                               (vect-conj acc (LetBinding name (.value er))))))))
-
-;; read-let-bindings: the let bindings `[ b1 e1 ... bn en ]`. state is just
-;; after the `[`. Returns a LetBindings [bindings new-state] where bindings
-;; is a vector of LetBinding and new-state is after the `]`.
-(defn read-let-bindings [state]
-  (read-let-bindings-acc state empty-vector))
-
-(defn read-hash-pairs-acc [state acc]
-  (let [s (skip-whitespace state)
-        c (peek-char s)]
-    (cond (str= c "}")
-      (HashPairs acc (take-char s))
-
-      (let [kr (parse-expr s)
-            k (.value kr)
-            vr (parse-expr (.state kr))]
-        (read-hash-pairs-acc (.state vr)
-                             (vect-conj acc (HashPair k (.value vr))))))))
-
-;; read-hash-pairs: the hash-map body `{ k1 v1 ... }`. state is just after
-;; the `{`. Returns a HashPairs [pairs new-state] where pairs is a vector of
-;; HashPair and new-state is after the `}`.
-(defn read-hash-pairs [state]
-  (read-hash-pairs-acc state empty-vector))
-
-(defn parse-threading-steps-acc [state acc]
-  (let [s (skip-whitespace state)
-        c (peek-char s)]
-    (cond (str= c ")")
-          (ParserMatch acc (take-char s))
-
-          (str= c "")
-          (ParserError "unexpected end of input in threading" s)
-
-          (let [r (parse-expr s)
-                k (result-kind r)]
-            (cond (= k 2)
-                  r
-
-                  (parse-threading-steps-acc (.state r)
-                                             (vect-conj acc (.value r))))))))
-
-;; parse-threading-steps: the threading steps until `)` (consumed).
-;; Returns ParserMatch [steps state-after-')'] or ParserError.
-(defn parse-threading-steps [state]
-  (parse-threading-steps-acc state empty-vector))
-
-;; parse-call-args: state after the operator. Parses the operands until `)`
-;; and builds a Call.
-(defn parse-call-args [state op]
-  (let [args (parse-expr-list state ")")
-        k (result-kind args)]
-    (cond (= k 2)
-          args
-
-          (ParserMatch (ast/Call op (.value args)) (.state args)))))
-
-;; parse-vector: state at `[`. `[a b c]` -> vect-conj fold over empty-vector.
-(defn parse-vector [state]
-  (let [s (skip-whitespace (take-char state))
-        exprs (parse-expr-list s "]")
-        k (result-kind exprs)]
-    (cond (= k 2)
-          exprs
-
-          (ParserMatch (fold-vec (.value exprs) (make-loc (.state exprs)))
-                       (.state exprs)))))
-
-;; parse-hash: state at `{`. `{k v ...}` -> assoc fold over emptyBMI.
-(defn parse-hash [state]
-  (let [s (skip-whitespace (take-char state))
-        pairs (read-hash-pairs s)]
-    (ParserMatch (hash-fold (.pairs pairs) (make-loc (.state pairs)))
-                 (.state pairs))))
-
-;; parse-cond: state after `cond`. `(cond t1 v1 ... tN vN e)` -> right-nested
-;; core `cond` calls.
-(defn parse-cond [state]
-  (let [exprs (parse-expr-list state ")")
-        k (result-kind exprs)]
-    (cond (= k 2)
-          exprs
-
-          (ParserMatch (cond-desugar (.value exprs) (make-loc (.state exprs)))
-                       (.state exprs)))))
-
-(defn parse-and-or [state op-name]
-  (let [exprs (parse-expr-list state ")")
-        k (result-kind exprs)]
-    (cond (= k 2)
-          exprs
-
-          (ParserMatch (and-or-desugar (.value exprs)
-                                       (make-loc (.state exprs)) op-name)
-                       (.state exprs)))))
-
-;; parse-and / parse-or: right-nested binary core `and`/`or` calls.
-(defn parse-and [state]
-  (parse-and-or state "and"))
-
-(defn parse-or [state]
-  (parse-and-or state "or"))
-
-(defn parse-str-println [state fn-name]
-  (let [exprs (parse-expr-list state ")")
-        k (result-kind exprs)]
-    (cond (= k 2)
-          exprs
-
-          (ParserMatch (str-println-desugar (.value exprs)
-                                            (make-loc (.state exprs))
-                                            fn-name)
-                       (.state exprs)))))
-
-;; parse-str / parse-println: `str*`/`println*` over a vect-conj fold.
-(defn parse-str [state]
-  (parse-str-println state "str*"))
-
-(defn parse-println [state]
-  (parse-str-println state "println*"))
-
-;; parse-threading: state after `->`. `(-> x s1 ... sN)` -> nested Calls.
-;; `(-> x)` (zero steps) is a parse error.
-(defn parse-threading [state]
-  (let [initial-res (parse-expr state)
-        k (result-kind initial-res)]
-    (cond (= k 2)
-      initial-res
-
-      (let [initial (.value initial-res)
-            s2 (.state initial-res)
-            steps (parse-threading-steps s2)
-            sk (result-kind steps)]
-        (cond
-          (= sk 0)
-          (cond
-            (= (count (.value steps)) 0)
-            (ParserError "threading with zero steps" (.state steps))
-            (ParserMatch (threading initial (.value steps)
-                                    (make-loc (.state steps)))
-                         (.state steps)))
-          steps)))))
-
-;; dispatch-special / dispatch-special-2: special-form keyword dispatch for
-;; parse-call. Split into two 4-level chains because new-toc rejects 8+ levels
-;; of NESTED `cond` (7 is the limit; flat multi-pair conds are fine).
-(defn dispatch-special-2 [ns name s2]
-  (cond
-    (str= name "or") (parse-or s2)
-    (str= name "str") (parse-str s2)
-    (str= name "println") (parse-println s2)
-    (str= name "->") (parse-threading s2)
-    (let [op (ast/Symbol ns name (make-loc s2))]
-      (parse-call-args s2 op))))
-
-;; parse-fn-body: state at the param-list `[`. Reads the params and the body
-;; (leading `!` markers + expressions), building a Fn.
-(defn parse-fn-body [state name]
-  (let [s (skip-whitespace (take-char state))
-        params (read-param-list s)
-        body (parse-body (.state params))
-        body-vec (vect-concat (.constraints body) (.exprs body))
-        s3 (.state body)]
-    (ParserMatch (ast/Fn name (.params params) body-vec (make-loc s3))
-                 s3)))
-
-;; parse-fn: state after `fn`. Named (`fn name [...] ...`) or anonymous
-;; (`fn [...] ...`).
-(defn parse-fn [state]
-  (let [s (skip-whitespace state)
-        c (peek-char s)]
-    (cond (str= c "[")
-          (parse-fn-body s "")
-
-          (let [nm (read-symbol s)]
-            (parse-fn-body (skip-whitespace (.state nm)) (.text nm))))))
-
-;; parse-let: state after `let`. `(let [b1 e1 ...] body...)` -> nested
-;; immediate anonymous-fn applications.
-(defn parse-let [state]
-  (let [s (skip-whitespace state)
-        s2 (skip-whitespace (take-char s))
-        bindings (read-let-bindings s2)
-        body (parse-body (.state bindings))
-        inner-body (vect-concat (.constraints body) (.exprs body))
-        s4 (.state body)]
-    (ParserMatch (let-desugar (.bindings bindings) inner-body
-                              (make-loc s4))
-                 s4)))
-
-(defn dispatch-special [ns name s2]
-  (cond
-    (str= name "fn") (parse-fn s2)
-    (str= name "let") (parse-let s2)
-    (str= name "cond") (parse-cond s2)
-    (str= name "and") (parse-and s2)
-    (dispatch-special-2 ns name s2)))
-
-;; parse-call: state at `(`. Reads the operator; if it is a special-form
-;; symbol, dispatches to that form's parser; otherwise parses the operands
-;; and builds a Call.
-(defn parse-call [state]
-  (let [s (skip-whitespace (take-char state))
-        c (peek-char s)]
-    (cond (str= c "")
-      (ParserError "unexpected end of input in call" s)
-
-      (str= c ")")
-      (ParserError "empty call" s)
-
-      (symbol-start? c)
-      (let [sym (read-full-symbol s)]
-        (dispatch-special (.ns sym) (.name sym) (.state sym)))
-
-      (let [op-res (parse-expr s)
-            k (result-kind op-res)]
-        (cond (= k 2)
-              op-res
-
-              (parse-call-args (.state op-res) (.value op-res)))))))
-
-;; parse-expr: dispatch on the first non-whitespace character.
-(defn parse-expr [state]
-  (let [s (skip-whitespace state)]
-    (let [c (peek-char s)]
-      (cond (str= c "")
-            (ParserError "unexpected end of input" s)
-
-            (str= c "(")
-            (parse-call s)
-
-            (str= c "[")
-            (parse-vector s)
-
-            (str= c "{")
-            (parse-hash s)
-
-            (str= c "\"")
-            (parse-string-lit s)
-
-            (str= c "'")
-            (parse-quoted-sym (take-char s))
-
-            (is-digit c)
-            (parse-number s)
-
-            (symbol-start? c)
-            (parse-symbol s)
-
-            (ParserError "unexpected character" s)))))
-
-;; --- Top-level forms + program map -----------------------------------
-;;
-;; parse-top-level dispatches on the first token of a top-level form and
-;; builds the settled TopLevel node. parse-program loops until EOF,
-;; accumulating the name -> TopLevel map (the settled parse output — a
-;; hash map, not a list).
-;;
-;;   def  name value -> Definition [name value loc]      (entry under name)
-;;   defn name [p] b -> Definition [name (Fn name [p] b) loc]
-;;   main [p] b      -> Main [parameter-list body loc]    (entry under "main")
-;;   (def name)      -> ignored (new-toc forward-ref crutch; no map entry)
-;;   inline          -> parse error (phase-1 user-inline-C rejection)
-;;   deftype/defp/extend-type/add-ns/match/|/defmacro -> parse error
-;;   comments        -> skipped (skip-whitespace)
-;;
-;; Every function below calls only earlier-defined helpers (parse-expr,
-;; parse-fn-body, read-param-list, parse-body, read-symbol) or itself, so
-;; no new forward declaration is needed (the file keeps its ONE for
-;; parse-expr).
-
-;; sub-to-str: copy a SubString (or String) to a fresh full String
-;; (StringBuffer). strSha1 includes the value's TYPE, so a SubString key and
-;; a String key with the same content hash differently — a hash map's keys
-;; must be a single type. The parse keys the name -> TopLevel map by full
-;; Strings (the `main` entry is the String literal "main"), so the parsed
-;; def/defn names (SubStrings, `subs` views of the input) are copied to full
-;; Strings here. Consumes its input (the `subs` view). (Interpreter-side
-;; source may use inline C.)
+;; sub-to-str: copy a SubString (or String) to a fresh full String.
 (defn sub-to-str [s]
   (inline String "
     char *buf;
@@ -988,83 +314,539 @@
     result = termVal((Term)out);
   "))
 
+(defn read-full-symbol [state]
+  (let [tok (read-symbol state)
+        fst (.text tok)
+        s2 (.state tok)
+        c (peek-char s2)]
+    (cond (str= c "/")
+          (let [after-slash (take-char s2)
+                name-tok (read-symbol after-slash)]
+            (FullSymbol fst (.text name-tok) (.state name-tok)))
+          (FullSymbol "" fst s2))))
+
+(defn read-type-expr [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "[")
+          (let [s2 (skip-whitespace (take-char s))
+                inner (read-symbol s2)
+                s3 (skip-whitespace (.state inner))
+                s4 (take-char s3)]
+            (TypeExpr (.text inner) s4))
+          (let [nm (read-symbol s)]
+            (TypeExpr (.text nm) (.state nm))))))
+
+(defn contains-dot [s]
+  (cond
+    (str= s "")
+    None
+    (str= (subs s 0 1) ".")
+    (Some 1)
+    (contains-dot (subs s 1 (count s)))))
+
+(defn text-to-int-acc [s acc]
+  (cond
+    (str= s "")
+    acc
+    (let [d (- (char-code (subs s 0 1)) 48)]
+      (text-to-int-acc (subs s 1 (count s))
+                       (+ (* 10 acc) d)))))
+
+(defn text-to-int [s]
+  (text-to-int-acc s 0))
+
+;; --- Skip functions (advance state past an expression) ---------------
+;;
+;; skip-expr consumes one expression without building an AST node. It is
+;; used by parse-node to advance past child expressions and note their
+;; start states. Mutually recursive with parse-node (forward-declared).
+
+(def parse-node)
+(def skip-expr)
+
+;; skip-until: skip expressions until `delim` (consumed). Returns the
+;; state after the delimiter. Self-recursive.
+(defn skip-until [state delim]
+  (let [s (skip-whitespace state)
+        input (.input s)]
+    (cond (str= input "")
+          s
+          (str-prefix? input delim)
+          (take-char s)
+          (let [s2 (skip-expr s)]
+            (skip-until s2 delim)))))
+
+;; skip-tc: skip a `!` type constraint. state is at the `!`.
+(defn skip-tc [state]
+  (let [s (skip-whitespace (take-char state))
+        nm (read-symbol s)
+        s2 (skip-whitespace (.state nm))]
+    (let [te (read-type-expr s2)]
+      (.state te))))
+
+;; skip-body: skip a fn/defn/main body (leading `!` markers + expressions)
+;; until `)` (consumed). Returns the state after `)`.
+(defn skip-body [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c ")")
+          (take-char s)
+          (str= c "!")
+          (let [s2 (skip-tc s)]
+            (skip-body s2))
+          (let [s2 (skip-expr s)]
+            (skip-body s2)))))
+
+;; skip-let-bindings: skip let bindings `[ b1 e1 ... ]` (consumed).
+;; state is just after the `[`. Returns the state after `]`.
+(defn skip-let-bindings [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "]")
+          (take-char s)
+          (let [nm (read-symbol s)
+                s2 (skip-expr (skip-whitespace (.state nm)))]
+            (skip-let-bindings s2)))))
+
+;; skip-hash-pairs: skip hash pairs `{ k1 v1 ... }` (consumed).
+;; state is just after the `{`. Returns the state after `}`.
+(defn skip-hash-pairs [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "}")
+          (take-char s)
+          (let [s2 (skip-expr s)
+                s3 (skip-expr s2)]
+            (skip-hash-pairs s3)))))
+
+;; skip-expr: consume one expression without building an AST node.
+;; Returns the state after the expression.
+(defn skip-expr [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "")
+          s
+          (str= c "(")
+          (let [s2 (skip-whitespace (take-char s))
+                c2 (peek-char s2)]
+            (cond (str= c2 ")")
+                  (take-char s2)
+                  (str= c2 "")
+                  s2
+                  (let [s3 (skip-expr s2)]
+                    (skip-until s3 ")"))))
+          (str= c "[")
+          (let [s2 (skip-whitespace (take-char s))
+                c2 (peek-char s2)]
+            (cond (str= c2 "]")
+                  (take-char s2)
+                  (str= c2 "")
+                  s2
+                  (let [s3 (skip-expr s2)]
+                    (skip-until s3 "]"))))
+          (str= c "{")
+          (let [s2 (skip-whitespace (take-char s))
+                c2 (peek-char s2)]
+            (cond (str= c2 "}")
+                  (take-char s2)
+                  (str= c2 "")
+                  s2
+                  (let [s3 (skip-expr s2)
+                        s4 (skip-expr s3)]
+                    (skip-hash-pairs s4))))
+          (str= c "\"")
+          (.state (read-string s))
+          (str= c "'")
+          (.state (read-symbol (take-char s)))
+          (is-digit c)
+          (.state (read-float s))
+          (symbol-start? c)
+          (.state (read-full-symbol s))
+          ;; invalid char: consume it and retry (total, never fails)
+          (skip-expr (take-char s)))))
+
+;; parse-type-constraint: state at `!`. Returns a
+;; TypeConstraintPair [TypeConstraint new-state].
+(defn parse-type-constraint [state]
+  (let [s (skip-whitespace (take-char state))
+        nm (read-symbol s)
+        sym (.text nm)
+        te (read-type-expr (skip-whitespace (.state nm)))]
+    (TypeConstraintPair (ast/TypeConstraint sym (.text te)) (.state te))))
+
+;; --- Collection helpers ----------------------------------------------
+;;
+;; Collect child states (and type-constraint nodes) until a delimiter.
+;; Return a result grouping with the collected states + the state after
+;; the delimiter.
+
+;; collect-until: collect expression states until `delim` (consumed).
+(defn collect-until-acc [state delim acc]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c delim)
+          (CollectResult acc (take-char s))
+          (str= c "")
+          (CollectResult acc s)
+          (let [child-state s
+                s2 (skip-expr s)]
+            (collect-until-acc s2 delim (vect-conj acc child-state))))))
+
+(defn collect-until [state delim]
+  (collect-until-acc state delim empty-vector))
+
+;; collect-body-states: collect body states (expr states + TC nodes)
+;; until `)` (consumed). Returns a BodyResult.
+(defn collect-body-states-acc [state acc]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c ")")
+          (BodyResult acc (take-char s))
+          (str= c "!")
+          (let [tc-pair (parse-type-constraint s)]
+            (collect-body-states-acc (.state tc-pair)
+                                     (vect-conj acc (.tc tc-pair))))
+          (str= c "")
+          (BodyResult acc s)
+          (let [child-state s
+                s2 (skip-expr s)]
+            (collect-body-states-acc s2 (vect-conj acc child-state))))))
+
+(defn collect-body-states [state]
+  (collect-body-states-acc state empty-vector))
+
+;; collect-let-bindings: collect let bindings until `]` (consumed).
+;; Returns a LetBindingsResult.
+(defn collect-let-bindings-acc [state acc]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "]")
+          (LetBindingsResult acc (take-char s))
+          (str= c "")
+          (LetBindingsResult acc s)
+          (let [nm (read-symbol s)
+                name (.text nm)
+                s2 (skip-whitespace (.state nm))
+                child-state s2
+                s3 (skip-expr s2)]
+            (collect-let-bindings-acc s3
+                                      (vect-conj acc
+                                                 (ast/LetBinding name child-state)))))))
+
+(defn collect-let-bindings [state]
+  (collect-let-bindings-acc state empty-vector))
+
+;; collect-hash-pairs: collect hash pairs until `}` (consumed).
+;; Returns a HashPairsResult.
+(defn collect-hash-pairs-acc [state acc]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "}")
+          (HashPairsResult acc (take-char s))
+          (str= c "")
+          (HashPairsResult acc s)
+          (let [key-state s
+                s2 (skip-expr s)
+                val-state (skip-whitespace s2)
+                s3 (skip-expr val-state)]
+            (collect-hash-pairs-acc s3
+                                    (vect-conj acc
+                                               (ast/HashPair key-state val-state)))))))
+
+(defn collect-hash-pairs [state]
+  (collect-hash-pairs-acc state empty-vector))
+
+;; --- Leaf expression parsers (return a node, no child states) --------
+
+(defn parse-string-lit-node [state]
+  (let [r (read-string state)
+        content (.text r)
+        s2 (.state r)]
+    (ast/StringLit content (make-loc s2))))
+
+(defn parse-quoted-sym-node [state]
+  (let [r (read-symbol (take-char state))
+        text (.text r)
+        s2 (.state r)]
+    (ast/StringLit text (make-loc s2))))
+
+(defn parse-number-node [state]
+  (let [r (read-float state)
+        text (.text r)
+        s2 (.state r)
+        loc (make-loc s2)]
+    (cond (contains-dot text)
+          (ast/FloatLit text loc)
+          (let [n (text-to-int text)]
+            (ast/IntegerLit n loc)))))
+
+(defn parse-symbol-node [state]
+  (let [r (read-full-symbol state)]
+    (ast/Symbol (.ns r) (.name r) (make-loc (.state r)))))
+
+;; read-param-list: a `[ p1 p2 ... ]` parameter list. state is just after
+;; the `[`. Returns a ParamList [params new-state].
+(defn read-param-list-acc [state acc]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "]")
+          (ParamList acc (take-char s))
+          (let [nm (read-symbol s)]
+            (read-param-list-acc (.state nm) (vect-conj acc (.text nm)))))))
+
+(defn read-param-list [state]
+  (read-param-list-acc state empty-vector))
+
+;; --- Special form parsers (return a Syntax node with child states) ---
+;;
+;; Each reads the form's structure (delimiters, names) and notes the
+;; child states (positions of sub-expressions). The unfold machinery
+;; later unfolds the child states into sub-expression nodes.
+
+;; parse-fn-node: state after `fn`. Named or anonymous.
+;; Returns an Expression/Fn node with body states.
+(defn parse-fn-node [state name]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "[")
+          (let [s2 (skip-whitespace (take-char s))
+                params (read-param-list s2)
+                s3 (.state params)
+                body-res (collect-body-states s3)
+                s4 (.state body-res)]
+            (ast/Fn name (.params params) (.states body-res) (make-loc s4)))
+          (let [nm (read-symbol s)
+                fn-name (.text nm)
+                s2 (skip-whitespace (.state nm))]
+            (let [s3 (skip-whitespace (take-char s2))
+                  params (read-param-list s3)
+                  s4 (.state params)
+                  body-res (collect-body-states s4)
+                  s5 (.state body-res)]
+              (ast/Fn fn-name (.params params) (.states body-res) (make-loc s5)))))))
+
+;; parse-let-node: state after `let`.
+;; Returns a Syntax/Let node with binding expr states + body states.
+(defn parse-let-node [state]
+  (let [s (skip-whitespace state)
+        s2 (skip-whitespace (take-char s))
+        bindings-res (collect-let-bindings s2)
+        s3 (.state bindings-res)
+        body-res (collect-body-states s3)
+        s4 (.state body-res)]
+    (ast/Let (.bindings bindings-res) (.states body-res) (make-loc s4))))
+
+;; parse-cond-node: state after `cond`.
+;; Returns a Syntax/Cond node with expr states.
+(defn parse-cond-node [state]
+  (let [res (collect-until state ")")]
+    (ast/Cond (.states res) (make-loc (.state res)))))
+
+;; parse-and-node / parse-or-node: state after `and`/`or`.
+;; Returns a Syntax/And or Syntax/Or node with expr states.
+(defn parse-and-node [state]
+  (let [res (collect-until state ")")]
+    (ast/And (.states res) (make-loc (.state res)))))
+
+(defn parse-or-node [state]
+  (let [res (collect-until state ")")]
+    (ast/Or (.states res) (make-loc (.state res)))))
+
+;; parse-str-node / parse-println-node: state after `str`/`println`.
+;; Returns a Syntax/Str or Syntax/Println node with expr states.
+(defn parse-str-node [state]
+  (let [res (collect-until state ")")]
+    (ast/Str (.states res) (make-loc (.state res)))))
+
+(defn parse-println-node [state]
+  (let [res (collect-until state ")")]
+    (ast/Println (.states res) (make-loc (.state res)))))
+
+;; parse-threading-node: state after `->`.
+;; Returns a Syntax/Threading node with initial state + step states.
+(defn parse-threading-node [state]
+  (let [s (skip-whitespace state)
+        initial-state s
+        s2 (skip-expr s)
+        steps-res (collect-until s2 ")")]
+    (ast/Threading initial-state (.states steps-res) (make-loc (.state steps-res)))))
+
+;; parse-vector-node: state at `[`.
+;; Returns a Syntax/VectorLit node with element states.
+(defn parse-vector-node [state]
+  (let [s (skip-whitespace (take-char state))
+        res (collect-until s "]")]
+    (ast/VectorLit (.states res) (make-loc (.state res)))))
+
+;; parse-hash-node: state at `{`.
+;; Returns a Syntax/HashLit node with pair states.
+(defn parse-hash-node [state]
+  (let [s (skip-whitespace (take-char state))
+        res (collect-hash-pairs s)]
+    (ast/HashLit (.pairs res) (make-loc (.state res)))))
+
+;; --- parse-node (the ana) --------------------------------------------
+;;
+;; parse-node reads ONE level of an expression, emitting a Syntax node
+;; with child states. The unfold machinery recurses into the child states
+;; via the recurse protocol.
+;;
+;; For leaf expressions (symbol, number, string), parse-node returns the
+;; Expression ctor directly (no child states).
+;;
+;; For compound expressions (call, vector, hash, special forms), parse-node
+;; notes the child states and returns the appropriate Syntax/Expression
+;; node. The child states are unfolded by the recurse protocol.
+
+(defn dispatch-special-node [ns name op-state s2]
+  (cond (str= name "fn") (parse-fn-node s2 name)
+        (str= name "let") (parse-let-node s2)
+        (str= name "cond") (parse-cond-node s2)
+        (str= name "and") (parse-and-node s2)
+        (str= name "or") (parse-or-node s2)
+        (str= name "str") (parse-str-node s2)
+        (str= name "println") (parse-println-node s2)
+        (str= name "->") (parse-threading-node s2)
+        (let [res (collect-until s2 ")")]
+          (ast/Call op-state (.states res)))))
+
+(defn parse-call-node [state]
+  (let [s (skip-whitespace (take-char state))
+        c (peek-char s)]
+    (cond (str= c "")
+          (ast/Symbol "" "" (make-loc s))
+          (str= c ")")
+          (ast/Symbol "" "" (make-loc s))
+          (symbol-start? c)
+          (let [op-state s
+                sym (read-full-symbol s)
+                ns (.ns sym)
+                name (.name sym)
+                s2 (.state sym)]
+            (dispatch-special-node ns name op-state s2))
+          (let [op-state s
+                s2 (skip-expr s)
+                res (collect-until s2 ")")]
+            (ast/Call op-state (.states res))))))
+
+(defn parse-node [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "")
+          (ast/Symbol "" "" (make-loc s))
+          (str= c "(")
+          (parse-call-node s)
+          (str= c "[")
+          (parse-vector-node s)
+          (str= c "{")
+          (parse-hash-node s)
+          (str= c "\"")
+          (parse-string-lit-node s)
+          (str= c "'")
+          (parse-quoted-sym-node s)
+          (is-digit c)
+          (parse-number-node s)
+          (symbol-start? c)
+          (parse-symbol-node s)
+          (ast/Symbol "" "" (make-loc s)))))
+
+;; --- unfold-expr ------------------------------------------------------
+;;
+;; The ana: unfold a state into a Syntax tree using parse-node.
+
+(defn unfold-expr [state]
+  (unfold state parse-node))
+
+;; --- Top-level forms + program map -----------------------------------
+;;
+;; parse-top-level dispatches on the first token of a top-level form and
+;; builds the settled TopLevel node. parse-program loops until EOF,
+;; accumulating the name -> TopLevel map.
+;;
+;; The top-level parser is NOT part of the unfold machinery. It reads the
+;; form keyword and name, notes the value/body states, skips the form,
+;; and tracks the state after the form. The value/body is parsed by
+;; unfolding the noted states.
+
 ;; parse-top-def-value-expr: state at the value (a non-`)` position).
-;; Parses the value, then consumes the closing `)`. Returns
-;; ParserMatch [TopLevelEntry state-after-`)`] or ParserError. (The
-;; let-with-cond is the cond's ELSE, not a non-else clause — the latter
-;; triggers new-toc's "malformed cond"; see the plan's Verified facts.)
+;; Notes the value state, skips the value, consumes `)`. Returns
+;; ParserMatch [TopLevelEntry state-after-`)`] or ParserError.
 (defn parse-top-def-value-expr [name name-loc state]
-  (let [vr (parse-expr state)
-        k (result-kind vr)]
-    (cond (= k 2)
-      vr
-      (let [s2 (skip-whitespace (.state vr))
-            c2 (peek-char s2)]
-        (cond (str= c2 ")")
-          (ParserMatch (TopLevelEntry name (ast/Definition name (.value vr) name-loc))
-                       (take-char s2))
-          (ParserError "expected ) after def value" s2))))))
+  (let [s (skip-whitespace state)
+        val-state s
+        s2 (skip-expr s)
+        s3 (skip-whitespace s2)
+        c2 (peek-char s3)]
+    (cond (str= c2 ")")
+          (let [val (unfold-expr val-state)]
+            (ParserMatch (TopLevelEntry name
+                                        (ast/Definition name val name-loc))
+                         (take-char s3)))
+          (ParserError "expected ) after def value" s3))))
 
 ;; parse-top-def-value: state at the value position (or at `)` for a bare
-;; def). Builds the Definition (consuming the closing `)`), or ignores a
-;; bare `(def name)`. Returns ParserMatch [TopLevelEntry state], ParserIgnore
-;; (bare def), or ParserError.
+;; def). Builds the Definition, or ignores a bare `(def name)`.
 (defn parse-top-def-value [name name-loc state]
   (let [s (skip-whitespace state)
         c (peek-char s)]
     (cond (str= c ")")
-      (ParserIgnore (take-char s))
-      (parse-top-def-value-expr name name-loc s))))
+          (ParserIgnore (take-char s))
+          (parse-top-def-value-expr name name-loc s))))
 
-;; parse-top-def: state just after `def`. Reads the name (copied to a full
-;; String for the map key), then the value.
+;; parse-top-def: state just after `def`.
 (defn parse-top-def [state]
   (let [s (skip-whitespace state)
         c (peek-char s)]
     (cond (symbol-start? c)
-      (let [nm (read-symbol s)
-            name (sub-to-str (.text nm))]
-        (parse-top-def-value name (make-loc (.state nm)) (.state nm)))
-      (ParserError "expected a name after def" s))))
+          (let [nm (read-symbol s)
+                name (sub-to-str (.text nm))]
+            (parse-top-def-value name (make-loc (.state nm)) (.state nm)))
+          (ParserError "expected a name after def" s))))
 
-;; parse-top-defn: state just after `defn`. Reads the name, the param list,
-;; and the body, building Definition [name (Fn name [p] body) loc]. The Fn
-;; name field is the call-time self-binding for recursion.
+;; parse-top-defn: state just after `defn`.
 (defn parse-top-defn [state]
   (let [s (skip-whitespace state)
         c (peek-char s)]
     (cond (symbol-start? c)
-      (let [nm (read-symbol s)
-            name (sub-to-str (.text nm))
-            s2 (skip-whitespace (.state nm))]
-        (cond (str= (peek-char s2) "[")
-          (let [fr (parse-fn-body s2 name)]
-            (cond (= (result-kind fr) 2)
-              fr
-              (ParserMatch (TopLevelEntry name (ast/Definition name (.value fr)
-                                                 (make-loc (.state nm))))
-                           (.state fr))))
-          (ParserError "expected a parameter list after defn name" s2)))
-      (ParserError "expected a name after defn" s))))
+          (let [nm (read-symbol s)
+                name (sub-to-str (.text nm))
+                s2 (skip-whitespace (.state nm))]
+            (cond (str= (peek-char s2) "[")
+                  (let [s3 (skip-whitespace (take-char s2))
+                        params (read-param-list s3)
+                        s4 (.state params)
+                        body-res (collect-body-states s4)
+                        s5 (.state body-res)
+                        body (vect-map (.states body-res) unfold-expr)]
+                    (ParserMatch (TopLevelEntry name
+                                                (ast/Definition name
+                                                                (ast/Fn name
+                                                                         (.params params)
+                                                                         body
+                                                                         (make-loc s5))
+                                                                (make-loc (.state nm))))
+                                 s5))
+                  (ParserError "expected a parameter list after defn name" s2)))
+          (ParserError "expected a name after defn" s))))
 
-;; parse-top-main: state just after `main`. Reads `[params]` and the body
-;; (leading `!` markers + expressions), building Main [params body loc].
+;; parse-top-main: state just after `main`.
 (defn parse-top-main [state]
   (let [s (skip-whitespace state)
         c (peek-char s)]
     (cond (str= c "[")
-      (let [params (read-param-list (take-char s))
-            p-vec (.params params)
-            s2 (.state params)
-            body (parse-body s2)
-            body-vec (vect-concat (.constraints body) (.exprs body))
-            s3 (.state body)]
-        (ParserMatch (TopLevelEntry "main" (ast/Main p-vec body-vec (make-loc s3)))
-                     s3))
-      (ParserError "expected a parameter list after main" s))))
+          (let [params (read-param-list (take-char s))
+                p-vec (.params params)
+                s2 (.state params)
+                body-res (collect-body-states s2)
+                s3 (.state body-res)
+                body (vect-map (.states body-res) unfold-expr)]
+            (ParserMatch (TopLevelEntry "main"
+                                        (ast/Main p-vec body (make-loc s3)))
+                         s3))
+          (ParserError "expected a parameter list after main" s))))
 
-;; parse-top-level-args: state just after the top-level keyword. Dispatches
-;; on the keyword to the form's parser (or a phase-1 parse error).
+;; parse-top-level-args: dispatch on the keyword.
 (defn parse-top-level-args [name s2]
   (cond (str= name "def") (parse-top-def s2)
         (str= name "defn") (parse-top-defn s2)
@@ -1086,49 +868,42 @@
         (ParserError "unexpected top-level form" s2)))
 
 ;; parse-top-level-form: state just after the `(` of a top-level form.
-;; Reads the keyword and dispatches. Returns the keyword's parse result.
 (defn parse-top-level-form [state]
   (let [s (skip-whitespace state)
         c (peek-char s)]
     (cond (symbol-start? c)
-      (let [nm (read-symbol s)
-            name (.text nm)
-            s2 (skip-whitespace (.state nm))]
-        (parse-top-level-args name s2))
-      (ParserError "unexpected top-level form" s))))
+          (let [nm (read-symbol s)
+                name (.text nm)
+                s2 (skip-whitespace (.state nm))]
+            (parse-top-level-args name s2))
+          (ParserError "unexpected top-level form" s))))
 
-;; parse-top-level: parse one top-level form. Toccata top-levels are prefix
-;; forms: (def ...), (defn ...), (main ...). Returns ParserMatch
-;; [TopLevelEntry state], ParserIgnore (bare def), or ParserError.
+;; parse-top-level: parse one top-level form.
 (defn parse-top-level [state]
   (let [s (skip-whitespace state)
         c (peek-char s)]
     (cond (str= c "(")
-      (parse-top-level-form (take-char s))
-      (str= c "|")
-      (ParserError "superposition (|) is not supported in phase 1" s)
-      (ParserError "unexpected character at top level" s))))
+          (parse-top-level-form (take-char s))
+          (str= c "|")
+          (ParserError "superposition (|) is not supported in phase 1" s)
+          (ParserError "unexpected character at top level" s))))
 
-;; parse-program-acc: parse top-level forms until EOF, accumulating the
-;; name -> TopLevel map. Self-recursive.
+;; parse-program-acc: parse top-level forms until EOF.
 (defn parse-program-acc [state m]
   (let [s (skip-whitespace state)
         c (peek-char s)]
     (cond (str= c "")
-      (ParserMatch m s)
+          (ParserMatch m s)
+          (let [r (parse-top-level s)
+                k (result-kind r)]
+            (cond (= k 2)
+                  r
+                  (= k 1)
+                  (parse-program-acc (.state r) m)
+                  (let [entry (.value r)]
+                    (parse-program-acc (.state r)
+                                       (assoc m (.name entry) (.value entry)))))))))
 
-      (let [r (parse-top-level s)
-            k (result-kind r)]
-        (cond (= k 2)
-          r
-
-          (= k 1)
-          (parse-program-acc (.state r) m)
-
-          (let [entry (.value r)]
-            (parse-program-acc (.state r) (assoc m (.name entry) (.value entry)))))))))
-
-;; parse-program: parse a whole file (the state's input) into the
-;; name -> TopLevel map. Returns ParserMatch [map state] or ParserError.
+;; parse-program: parse a whole file into the name -> TopLevel map.
 (defn parse-program [state]
   (parse-program-acc state emptyBMI))
