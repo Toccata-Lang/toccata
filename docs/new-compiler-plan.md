@@ -367,6 +367,12 @@ each form's rule arrives with its phase.
   `../`, no redundant `./scratch/`-style prefixes. Verified via
   `interpreter/xns-probe.toc` (passes with same-directory bare paths;
   the earlier `scratch/` copy with `../` paths failed).
+- **Hash-map literals work in expression position under new-toc**
+  (2026-08-28): `{"k" v, "k2" v2}` compiles and runs — `,` is
+  whitespace. Cleaner than nested `assoc` over `emptyBMI` (cf.
+  `make-state` in `interpreter/intrp-rdr.toc`). The phase-1
+  restriction on hash literals is an *interpreted-program* scope
+  decision, not a new-toc limitation.
 
 ## Settled (continued)
 
