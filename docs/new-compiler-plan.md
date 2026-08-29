@@ -170,6 +170,14 @@ each form's rule arrives with its phase.
   alternative), `ParserError [msg state]` (definitive, with message).
   Alternatives: try each sub-parser on the same state; first
   `Match`/`Ignore` wins, else aggregate the best `Error`.
+  **SUPERSEDED for alternatives (2026-08-29, owner) — see the next bullet.**
+- **Parser alternatives are superpositions, not `or` tries (2026-08-29,
+  owner)**: instead of sequential or-style alternatives, parse alternatives
+  with a superposed expression `(| a b ...)` in which a failing branch
+  produces `( | )` (the empty superposition), terminating that branch. The
+  "first `Match`/`Ignore` wins" rule above is superseded. For now, ignore
+  the possibility that a string is ambiguous: assume at most one AST is
+  possible from any string — the surviving branch is the parse result.
 - Error format: parse functions produce messages only; the driver formats
   `file:line: message` from the failing state's `values` bookkeeping
   (matching the current compiler's `Error at file: N; 'msg'` style).
@@ -185,7 +193,13 @@ each form's rule arrives with its phase.
   forward declarations).
 - EBNF / grammar tooling: a special interpreter that reads the parser
   source file and extracts structure (later, optional — not a runtime
-  feature).
+  feature). `interpreter/intrp-ebnf.toc` is kept as its reference (owner,
+  2026-08-29); it references the removed combinator machinery and does not
+  compile against the current parser.
+- **Note (2026-08-29): attempt implementing the reader with the core's
+  `unfold` recursion scheme** — generating an AST value from a string
+  (recursion schemes are a key Toccata feature; see the style doc's Data
+  section).
 - Dropped: `ParserCombinator` deftype as engine, `defp parse` evaluator
   protocol, `Recur` + rule registry, `Apply` combinator, `location`
   combinator, str-vect-based EBNF.
@@ -423,6 +437,52 @@ each form's rule arrives with its phase.
   zero leaks. Run from the repo root: build with `./new-toc
   interpreter/rdr-top.toc` + the awk `#line` step + `clang ... new.c
   runtime3.c graph.c rdr-top.c`, then `./rdr-top`.
+- **`( | )` is UNREADABLE under new-toc** (2026-08-29, item 6b probe):
+  the embedded reader's `read-super` rule (vendored
+  `reader.git@081d8ef` `reader.toc:940`) runs `(map elems .constraint)`
+  over the alts vector, so an empty superposition aborts the reader:
+  `Insufficient values for 'arg0' ... Needed 1, got 0`. The reader
+  source is compiled INTO the new-toc binary (generated C in
+  `new-toc.c` carries `#line` refs to the vendored path), so fixing it
+  means editing the vendored dependency + rebuilding new-toc (the
+  `new-toc` target depends on the `toccata` binary — owner territory).
+  Codegen already has an empty-alts fallback: the
+  `superposition-ast` CodeGen in `codegen.toc` emits `var = NUL;` when
+  `(first alts)` is None (the reader never reaches that path).
+  `(| 1)` / `(| 1 2)` etc. read and compile fine.
+- **Superpositions with ≥1 element work at runtime** (2026-08-29,
+  item 6b probe, `scratch/sup-probe.toc`): `(| 1)` compiles to the bare
+  value (no SUP node); `(| a b)` compiles to a SUP linked list
+  (`var = a; var = makePair(SUP, lab, b, var);`). They flow through
+  `cond`/`fn`/`let`/`str` correctly; zero leaks, zero remaining nodes.
+- **A NUL branch is ERASED when the superposition is applied**
+  (2026-08-29, item 6b probe, `scratch/sup-nul.toc`):
+  `(| (empty-sup) 5)` evaluates to `5`, where `empty-sup` is inline C
+  `result = NUL;` (NUL = 0x03, the eraser tag). So an inline-C NUL
+  value is a workable stand-in for the unreadable `( | )` failing
+  branch — the eraser kills its duplicated workflow when the
+  superposed value is used.
+- **Total failure erases the WHOLE downstream workflow** (2026-08-29,
+  item 6b probe, `scratch/sup-nul2.toc`): applying an all-NUL
+  superposition (every branch failed) silently erases the redex chain —
+  side effects after the application point are lost, the final result
+  is a garbage partial value, `bad result SUP pair` prints to stderr,
+  exit code 0. There is no ParserError-like value to carry
+  `msg`/`state`. Consequence: the settled error behavior (parse
+  functions return `ParserError [msg state]`, the driver formats
+  `file:line: message` and aborts; `rdr-top.toc`'s inline-error and
+  out-of-scope-form checks read `.msg`/`.state`) is NOT expressible
+  with pure superposition alternatives. Owner must decide how error
+  messages flow (e.g. failing branches print to stderr as a side
+  effect before dying, and how the driver detects total failure).
+- **`unfold`/`recurse` work over a user deftype with a vector of child
+  sub-nodes** (2026-08-29, item 6b probe, `scratch/unfold-probe.toc`):
+  `(deftype Node [label children] (recurse [v f] (Node (.label v)
+  (map (.children v) f))) ...)` + `(unfold 2 f)` builds a tree with
+  zero leaks / zero remaining nodes. The `recurse` impl must pass ONLY
+  the recursive fields to `f` — passing a leaf field (e.g. an Integer
+  label) re-unfolds it forever and exhausts the term buffer
+  (`Error: Not enough space to allocate pair`).
 
 ## Settled (continued)
 
@@ -634,6 +694,26 @@ unilaterally.
     loops to EOF building the name → TopLevel map (keyed by full Strings —
     see `sub-to-str`). Driver `interpreter/rdr-top.toc`: 19 tests +
     inline-error + 7 out-of-scope forms all pass, zero leaks.
+
+- [ ] **6b. `interpreter/intrp-rdr.toc`: style rewrite (docs/toccata-style.md)**
+  - Rewrite the parser to the settled style: every positionally-meaningful
+    grouping becomes a deftype ctor with named fields, accessed via `.field`
+    getters — no positional vectors, no `elt0`/`elt1`/`elt2`. Implement
+    `map`/`flat-map` (and `recurse` where structurally recursive) on the
+    grouping types per the style doc's Data section.
+  - The rewrite attempts the reader built on the core's `unfold` recursion
+    scheme (an AST value generated from a string), with parser alternatives
+    as superpositions — `(| ...)` with `( | )` as the failing branch (Parser
+    section, 2026-08-29). **If the unfold/superposition approach becomes too
+    complicated, STOP and report to the owner** (the owner will help sort it
+    out) — do not silently fall back to the old mechanism.
+  - All settled behavior (parse results, desugarings, error messages, the
+    name -> TopLevel map) stays identical. Update the drivers
+    (`rdr-exprs.toc`, `rdr-top.toc`) where they touch the changed shapes —
+    including `rdr-top.toc`'s `check-oos` positional `[source msg]` pairs.
+  - Done when: the file compiles clean under new-toc (`*** Loaded`, no error
+    lines); no positional vector grouping remains in `interpreter/*.toc`;
+    both drivers pass with zero leaks (the 19-test map check unchanged).
 
 - [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment — STOP
     POINT**
