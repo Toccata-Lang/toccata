@@ -373,6 +373,56 @@ each form's rule arrives with its phase.
   `make-state` in `interpreter/intrp-rdr.toc`). The phase-1
   restriction on hash literals is an *interpreted-program* scope
   decision, not a new-toc limitation.
+- **Toccata top-levels are PREFIX forms** (2026-08-28, item 6): a
+  top-level form is `(def ...)`, `(defn ...)`, `(main ...)` — it starts
+  with `(` and the keyword is the first token *inside*. `parse-top-level`
+  takes the `(`, reads the keyword, and dispatches (`parse-top-level-form`
+  → `parse-top-level-args`). The value of a `def` is a general expression
+  followed by a closing `)` that `parse-top-def-value-expr` consumes;
+  `defn`/`main` bodies end in the `)` consumed by `parse-body`.
+- **new-toc "malformed 'cond' expression" quirk** (2026-08-28, item 6):
+  a `cond` whose **non-else clause** is a `let` that contains a nested
+  `cond` is rejected ("malformed 'cond' expression"). The same shape as
+  the cond's **else** is fine (cf. `parse-threading`). Fix: extract the
+  `let`+`cond` into a helper function so the clause is a plain call
+  (done for `parse-top-def` → `parse-top-def-value` / `-expr`, and
+  `parse-top-level` → `parse-top-level-form` / `-args`).
+- **`strSha1` includes the value's TYPE** (2026-08-28, item 6):
+  `runtime3.c` `strSha1` does `Sha1Update(&arg0->type, 8)` before the
+  bytes, so a `SubString` and a `String` with the same content hash
+  **differently**. Consequence: a hash map's keys must be a single type,
+  or `get` misses. The parse keys the name → TopLevel map by **full
+  Strings**: `sub-to-str` (inline C in `interpreter/intrp-rdr.toc`) copies
+  each parsed def/defn name (a `subs` SubString view) to a fresh
+  `StringBuffer`; the `main` key is the String literal `"main"`. This
+  keeps the map mergeable with the core-symbol env (item 7), whose keys
+  are String literals. (Verified probe: a SubString-keyed entry is found
+  by a SubString lookup but NOT a same-content String lookup.)
+- **`sub-to-str` is CONSUMING; `elt0`/`first` increments the ref count**
+  (2026-08-28, item 6): `sub-to-str` `dec_and_free`s its input. This is
+  safe because `elt0` (`(extract (first v))`) creates a new reference, so
+  the extracted SubString and its `[run state]` pair each hold a ref —
+  consuming one leaves the pair's ref valid (no double-free; zero leaks).
+  A **non-consuming** copy leaked (the original SubString, still held by
+  the pair, was never freed — malloc diff 33). Also: new-runtime
+  `dec_and_free(Term, int)` takes a `Term`, not a `Value*` (cast
+  `(Term)p`).
+- **Map ops for the parse output** (2026-08-28, item 6): `count` IS
+  implemented for the map node types (use `(count m)` for the entry
+  count); `keys` is **NOT** ("No implementation of 'keys' found for type
+  HashMap (11)"). `get`/`assoc` work. To test a `get` result's
+  Some/None-ness, a local `(defp maybe-kind [m])` + `extend-type None`
+  / `Some` works (instance? is unsupported).
+- **Item-6 driver: `interpreter/rdr-top.toc`** (2026-08-28): parses the
+  19 suitable tests (item 3) through `parse-program` and checks each map
+  has exactly the expected entries (entry count via `count` + every
+  expected name present via `get`); checks a top-level `inline` is a
+  parse error with `file:line: msg`; checks the 7 out-of-scope forms
+  (`deftype`/`defp`/`extend-type`/`add-ns`/`match`/`defmacro`/`|`) are
+  parse errors. Reads files via an inline-C `slurp`. All 27 checks pass,
+  zero leaks. Run from the repo root: build with `./new-toc
+  interpreter/rdr-top.toc` + the awk `#line` step + `clang ... new.c
+  runtime3.c graph.c rdr-top.c`, then `./rdr-top`.
 
 ## Settled (continued)
 
@@ -568,7 +618,7 @@ unilaterally.
     `(= sk 2)` (ParserError) instead of `(= sk 0)` (ParserMatch) — on
     success it returned the raw steps vector as the parse value.
 
-- [ ] **6. `interpreter/intrp-rdr.toc`: parser — top-level + map output**
+- [x] **6. `interpreter/intrp-rdr.toc`: parser — top-level + map output**
   - Top-level rule: `def`/`defn` → map entry under the name; `main` →
     `"main"` entry; top-level `inline` → parse error; comments
     skipped. Output: name → AST map. Out-of-scope forms (`deftype`,
@@ -577,6 +627,13 @@ unilaterally.
   - Done when: every suitable test from item 3 parses to a map with
     the expected entries; a program with top-level `inline` fails with
     a clear `file:line` error.
+  - As-built (2026-08-28): top-levels are prefix forms — `parse-top-level`
+    takes `(`, reads the keyword, dispatches (`parse-top-level-form` /
+    `-args`). `parse-top-def`/`-defn`/`-main` build the `Definition` /
+    `Main` nodes; a bare `(def name)` is ignored (no entry). `parse-program`
+    loops to EOF building the name → TopLevel map (keyed by full Strings —
+    see `sub-to-str`). Driver `interpreter/rdr-top.toc`: 19 tests +
+    inline-error + 7 out-of-scope forms all pass, zero leaks.
 
 - [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment — STOP
     POINT**

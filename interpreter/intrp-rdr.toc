@@ -848,3 +848,201 @@
             (parse-symbol s)
 
             (ParserError "unexpected character" s)))))
+
+;; --- Item 6: top-level forms + program map ----------------------------
+;;
+;; parse-top-level dispatches on the first token of a top-level form and
+;; builds the settled TopLevel node. parse-program loops until EOF,
+;; accumulating the name -> TopLevel map (the settled parse output — a
+;; hash map, not a list).
+;;
+;;   def  name value -> Definition [name value loc]      (entry under name)
+;;   defn name [p] b -> Definition [name (Fn name [p] b) loc]
+;;   main [p] b      -> Main [parameter-list body loc]    (entry under "main")
+;;   (def name)      -> ignored (new-toc forward-ref crutch; no map entry)
+;;   inline          -> parse error (phase-1 user-inline-C rejection)
+;;   deftype/defp/extend-type/add-ns/match/|/defmacro -> parse error
+;;   comments        -> skipped (skip-whitespace)
+;;
+;; Every function below calls only earlier-defined helpers (parse-expr,
+;; parse-fn-body, read-param-list, parse-body, read-symbol) or itself, so
+;; no new forward declaration is needed (the file keeps its ONE for
+;; parse-expr).
+
+;; sub-to-str: copy a SubString (or String) to a fresh full String
+;; (StringBuffer). strSha1 includes the value's TYPE, so a SubString key and
+;; a String key with the same content hash differently — a hash map's keys
+;; must be a single type. The parse keys the name -> TopLevel map by full
+;; Strings (the `main` entry is the String literal "main"), so the parsed
+;; def/defn names (SubStrings, `subs` views of the input) are copied to full
+;; Strings here. Consumes its input (the `subs` view). (Interpreter-side
+;; source may use inline C.)
+(defn sub-to-str [s]
+  (inline String "
+    char *buf;
+    int64_t len;
+    if (((Value *)s_1)->type == SubStringType) {
+      ReifiedVal *ss = (ReifiedVal *)s_1;
+      String *parent = (String *)ss->impls[0];
+      long start = getI60(ss->impls[1]);
+      buf = &parent->buffer[start];
+      len = getI60(ss->impls[2]);
+    } else {
+      String *strVal = (String *)s_1;
+      buf = strVal->buffer;
+      len = strVal->len;
+    }
+    String *out = malloc_string(len + 1);
+    memcpy(out->buffer, buf, len);
+    out->len = len;
+    out->buffer[len] = 0;
+    dec_and_free((Term)s_1, 1);
+    result = termVal((Term)out);
+  "))
+
+;; parse-top-def-value-expr: state at the value (a non-`)` position).
+;; Parses the value, then consumes the closing `)`. Returns
+;; ParserMatch [Definition state-after-`)`] or ParserError. (The let-with-
+;; cond is the cond's ELSE, not a non-else clause — the latter triggers
+;; new-toc's "malformed cond"; see the plan's Verified facts.)
+(defn parse-top-def-value-expr [name name-loc state]
+  (let [vr (parse-expr state)
+        k (result-kind vr)]
+    (cond (= k 2)
+      vr
+      (let [s2 (skip-whitespace (.state vr))
+            c2 (peek-char s2)]
+        (cond (str= c2 ")")
+          (ParserMatch [name (ast/Definition name (.value vr) name-loc)]
+                       (take-char s2))
+          (ParserError "expected ) after def value" s2))))))
+
+;; parse-top-def-value: state at the value position (or at `)` for a bare
+;; def). Builds the Definition (consuming the closing `)`), or ignores a
+;; bare `(def name)`. Returns ParserMatch [Definition state], ParserIgnore
+;; (bare def), or ParserError.
+(defn parse-top-def-value [name name-loc state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c ")")
+      (ParserIgnore (take-char s))
+      (parse-top-def-value-expr name name-loc s))))
+
+;; parse-top-def: state just after `def`. Reads the name (copied to a full
+;; String for the map key), then the value.
+(defn parse-top-def [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (symbol-start? c)
+      (let [nm (read-symbol s)
+            name (sub-to-str (elt0 nm))]
+        (parse-top-def-value name (make-loc (elt1 nm)) (elt1 nm)))
+      (ParserError "expected a name after def" s))))
+
+;; parse-top-defn: state just after `defn`. Reads the name, the param list,
+;; and the body, building Definition [name (Fn name [p] body) loc]. The Fn
+;; name field is the call-time self-binding for recursion.
+(defn parse-top-defn [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (symbol-start? c)
+      (let [nm (read-symbol s)
+            name (sub-to-str (elt0 nm))
+            s2 (skip-whitespace (elt1 nm))]
+        (cond (str= (peek-char s2) "[")
+          (let [fr (parse-fn-body s2 name)]
+            (cond (= (result-kind fr) 2)
+              fr
+              (ParserMatch [name (ast/Definition name (.value fr)
+                                                 (make-loc (elt1 nm)))]
+                           (.state fr))))
+          (ParserError "expected a parameter list after defn name" s2)))
+      (ParserError "expected a name after defn" s))))
+
+;; parse-top-main: state just after `main`. Reads `[params]` and the body
+;; (leading `!` markers + expressions), building Main [params body loc].
+(defn parse-top-main [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "[")
+      (let [params (read-param-list (take-char s))
+            p-vec (elt0 params)
+            s2 (elt1 params)
+            body (parse-body s2)
+            body-vec (vect-concat (elt0 body) (elt1 body))
+            s3 (elt2 body)]
+        (ParserMatch ["main" (ast/Main p-vec body-vec (make-loc s3))]
+                     s3))
+      (ParserError "expected a parameter list after main" s))))
+
+;; parse-top-level-args: state just after the top-level keyword. Dispatches
+;; on the keyword to the form's parser (or a phase-1 parse error).
+(defn parse-top-level-args [name s2]
+  (cond (str= name "def") (parse-top-def s2)
+        (str= name "defn") (parse-top-defn s2)
+        (str= name "main") (parse-top-main s2)
+        (str= name "inline")
+        (ParserError "top-level inline is not supported in phase 1" s2)
+        (str= name "deftype")
+        (ParserError "deftype is not supported in phase 1" s2)
+        (str= name "defp")
+        (ParserError "defp is not supported in phase 1" s2)
+        (str= name "extend-type")
+        (ParserError "extend-type is not supported in phase 1" s2)
+        (str= name "add-ns")
+        (ParserError "add-ns is not supported in phase 1" s2)
+        (str= name "match")
+        (ParserError "match is not supported in phase 1" s2)
+        (str= name "defmacro")
+        (ParserError "defmacro is not supported in phase 1" s2)
+        (ParserError "unexpected top-level form" s2)))
+
+;; parse-top-level-form: state just after the `(` of a top-level form.
+;; Reads the keyword and dispatches. Returns the keyword's parse result.
+(defn parse-top-level-form [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (symbol-start? c)
+      (let [nm (read-symbol s)
+            name (elt0 nm)
+            s2 (skip-whitespace (elt1 nm))]
+        (parse-top-level-args name s2))
+      (ParserError "unexpected top-level form" s))))
+
+;; parse-top-level: parse one top-level form. Toccata top-levels are prefix
+;; forms: (def ...), (defn ...), (main ...). Returns ParserMatch [[name
+;; top-level-value] state], ParserIgnore (bare def), or ParserError.
+(defn parse-top-level [state]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "(")
+      (parse-top-level-form (take-char s))
+      (str= c "|")
+      (ParserError "superposition (|) is not supported in phase 1" s)
+      (ParserError "unexpected character at top level" s))))
+
+;; parse-program-acc: parse top-level forms until EOF, accumulating the
+;; name -> TopLevel map. Self-recursive.
+(defn parse-program-acc [state m]
+  (let [s (skip-whitespace state)
+        c (peek-char s)]
+    (cond (str= c "")
+      (ParserMatch m s)
+
+      (let [r (parse-top-level s)
+            k (result-kind r)]
+        (cond (= k 2)
+          r
+
+          (= k 1)
+          (parse-program-acc (.state r) m)
+
+          (let [entry (.value r)
+                name (elt0 entry)
+                val (elt1 entry)]
+            (parse-program-acc (.state r) (assoc m name val))))))))
+
+;; parse-program: parse a whole file (the state's input) into the
+;; name -> TopLevel map. Returns ParserMatch [map state] or ParserError.
+(defn parse-program [state]
+  (parse-program-acc state emptyBMI))
