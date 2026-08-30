@@ -206,6 +206,10 @@ each form's rule arrives with its phase.
   `unfold` recursion scheme** — generating an AST value from a string
   (recursion schemes are a key Toccata feature; see the style doc's Data
   section).
+- **Note (2026-08-29): empty-input checks are pervasive** — nearly every
+  parse/skip/collect function tests whether the remaining input is empty
+  (`(str= input "")`) before dispatching. That is a performance hit; find a
+  way to eliminate as many of these checks as possible.
 - Dropped: `ParserCombinator` deftype as engine, `defp parse` evaluator
   protocol, `Recur` + rule registry, `Apply` combinator, `location`
   combinator, str-vect-based EBNF.
@@ -543,6 +547,10 @@ each form's rule arrives with its phase.
   pass), which the loop must not guess. Owner decision: drop the unfold
   approach (as was done for superposition-alternatives) or specify the
   state-carrying node design.
+- **SUB/SUP end-of-program error ⇒ wrong arity (2026-08-30)**: when a
+  program ends with a SUB or SUP error, that probably means a function is
+  being called with the wrong number of arguments somewhere. Especially
+  when no superpositions are used.
 
 ## Settled (continued)
 
