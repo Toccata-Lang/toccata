@@ -1573,6 +1573,10 @@ Term strCmp(Term sT, Term tgtT, int success) {
     matched = (cmpResult == 0) && (len0 == len1);
     break;
 
+  // NOTE: the return value semantics of STR_LT and STR_GT need to be
+  // examined more thoroughly. On a match the post-switch path returns one
+  // of the two arguments inside the Some (per the `start == 0` keep-rule
+  // below), and which argument callers should expect is not yet settled.
   case STR_GT:
     matched = (cmpResult > 0) || ((cmpResult == 0) && (len0 > len1));
     break;
@@ -1590,10 +1594,18 @@ Term strCmp(Term sT, Term tgtT, int success) {
     break;
 
   case STR_PREFIX:
-    // Succeeds iff one string is a prefix of the other: cmpResult is the
-    // strncmp over the shorter length, so 0 means the shorter matches.
-    matched = (cmpResult == 0);
-    break;
+    // Succeeds iff the first string is a prefix of the second: len is the
+    // shorter length, so with len0 <= len1, cmpResult == 0 means the first
+    // matches the start of the second. On a match, always return the first
+    // string inside the Some (consuming the second), regardless of which
+    // argument is owned. Early return: the post-switch paths are not used.
+    if ((cmpResult == 0) && (len0 <= len1)) {
+      dec_and_free(tgtT, 1);
+      return(some(sT));
+    }
+    dec_and_free(sT, 1);
+    dec_and_free(tgtT, 1);
+    return(nothing());
 
   default:
     BOOM("Invalid success criteria for strCmp");
