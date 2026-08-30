@@ -30,6 +30,7 @@ builds the code.
 
 * `cond` takes flat (test value) pairs and must end with a default expression
   that catches the case where every test fails: `(cond t1 v1 t2 v2 ... e)`.
+  Separate each (test value) clause pair with an empty line.
 
 * `let` takes multiple bindings in one form: `(let [b1 e1 b2 e2 ...] body)` —
   sequential binding semantics: later initializers see earlier bindings.
