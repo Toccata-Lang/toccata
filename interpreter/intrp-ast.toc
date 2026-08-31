@@ -1,30 +1,18 @@
-;; intrp-ast.toc — AST shapes + desugar pass.
+;; intrp-ast.toc — AST shapes.
 ;;
 ;; The Expression deftype holds the 8 shared ctors (Symbol, IntegerLit,
 ;; FloatLit, StringLit, Call, Fn, FieldGetter, TypeConstraint) plus the
-;; eval-only ctors (Superposition, Match, BlockComment, Inline). The
-;; Syntax deftype reuses the 8 shared ctors via bare references and adds
-;; 9 syntactic ctors (Let, Cond, And, Or, Str, Println, Threading,
-;; VectorLit, HashLit).
+;; eval-only ctors (Superposition, Match, BlockComment, Inline).
 ;;
-;; Three-pass nanopass structure:
-;;   1. Parse (ana/unfold): unfold state parse-node -> Syntax tree.
-;;   2. Desugar (transCata/fold): fold tree desugar-node -> Expression tree.
-;;   3. Eval: settled protocol over the 8 Expression ctors.
-;;
-;; The 8 shared ctors are identity under desugar-node (they are already
-;; Expression ctors). The 9 syntactic ctors are desugared (Let -> nested
-;; Fn-apps, Cond -> nested cond calls, etc.).
+;; The parser (intrp-rdr.toc) is a single-pass recursive descent that
+;; produces desugared Expression trees directly — there is no Syntax
+;; tree and no separate desugar pass.
 ;;
 ;; This file is a LIBRARY (no main).
 
 ;; --- Locations + module types ----------------------------------------
 
-(deftype Dummy [key value test])
-
 (deftype Location [file line]
-  ;; annotations removed (item 5): new-toc mis-applies `!` annotations on
-  ;; multi-field ctors during value construction.
   (str-vect [l]
     [file ": " (str line)]))
 
@@ -44,39 +32,26 @@
 (defn vect-concat [a b]
   (reduce b a vect-conj))
 
-;; --- desugar-node protocol -------------------------------------------
-;;
-;; Transforms a Syntax node into an Expression. The default is identity
-;; (for the 8 shared ctors). The 9 syntactic ctors have inline impls.
-
-(defp desugar-node [v] v)
-
 ;; --- body-elem protocol (mixed body vectors) -------------------------
 ;;
-;; Fn/Let/Main body vectors hold a mix of TypeConstraint nodes (parsed
-;; directly, not states) and expression states (to be unfolded). The
-;; recurse impls use body-elem to apply g to states but leave TC nodes
-;; unchanged. The defp must precede the Expression deftype (the Fn ctor's
-;; recurse impl references it); the extend-type follows the deftype.
+;; Fn/Main body vectors hold a mix of TypeConstraint nodes and expression
+;; nodes. The recurse impls use body-elem to apply g to expressions but
+;; leave TypeConstraint nodes unchanged. The defp must precede the
+;; Expression deftype (the Fn ctor's recurse impl references it); the
+;; TypeConstraint impl is inline in the deftype.
 
 (defp body-elem [e g] (g e))
 
-;; --- expr-kind protocol (threading step dispatch) ---------------------
-
-(defp expr-kind [e])
-
 ;; --- Expression deftype ----------------------------------------------
 ;;
-;; The 8 shared ctors get recurse impls (for the ana/unfold and the
-;; fold/desugar). The desugar-node impl is the identity default.
-;; No `!` annotations (item 5).
+;; No `!` annotations (item 5): new-toc mis-applies them on multi-field
+;; ctors during value construction.
 
 (deftype Expression
     (Symbol [ns sym-name loc]
       (str-vect [v]
                 (flat-map ["(Symbol " ns "/" sym-name " " loc ")"]
                           str-vect))
-      (expr-kind [_] 1)
       (recurse [v g]
         v))
     (IntegerLit [value loc]
@@ -101,7 +76,6 @@
       (str-vect [v]
                 (flat-map ["(Call " operator "\n" operands ")"]
                           str-vect))
-      (expr-kind [_] 0)
       (recurse [v g]
         (Call (g (.operator v))
               (vect-map (.operands v) g))))
@@ -131,7 +105,6 @@
       (str-vect [v]
                 (flat-map ["(FieldGetter " field-name " " loc ")"]
                           str-vect))
-      (expr-kind [_] 2)
       (recurse [v g]
         v))
     (Match [expr cases default-case]
@@ -149,213 +122,7 @@
                 (flat-map ["(Inline " type-expr " " c-code " " loc ")"]
                           str-vect))))
 
-;; --- Desugar helpers --------------------------------------------------
-;;
-;; Transform Syntax nodes (with desugared children) into Expression nodes.
-;; Workers before wrappers; one-way chains + self-recursion need no
-;; forward declaration.
-
-;; fold-vec: [e1 e2 ...] ->
-;;   (vect-conj (vect-conj (vect-conj empty-vector e1) e2) ...)
-(defn fold-vec [exprs loc]
-  (reduce exprs (Symbol "" "empty-vector" loc)
-          (fn [acc e]
-            (Call (Symbol "" "vect-conj" loc) [acc e]))))
-
-;; hash-fold: [HashPair ...] -> (assoc (assoc emptyBMI k1 v1) ...)
-(defn hash-fold [pairs loc]
-  (reduce pairs (Symbol "" "emptyBMI" loc)
-          (fn [acc kv]
-            (Call (Symbol "" "assoc" loc) [acc (.key kv) (.value kv)]))))
-
-;; cond-desugar: [Clause t1 v1 ... Clause tN vN] + e ->
-;;   (cond t1 v1 (cond t2 v2 (... (cond tN vN e))))
-(defn cond-desugar [clauses else loc]
-  (reduce (reverse clauses) else
-          (fn [acc c]
-            (Call (Symbol "" "cond" loc) [(.test c) (.value c) acc]))))
-
-;; and-or-desugar: [a1 ... aN] -> (and a1 (and a2 ... aN)); single -> the arg.
-(defn and-or-desugar [exprs loc op-name]
-  (reduce (reverse (butlast exprs)) (extract (last exprs))
-          (fn [acc x]
-            (Call (Symbol "" op-name loc) [x acc]))))
-
-;; str-println-desugar: [e1 ...] -> (str* (vect-conj ... e1 ...))
-(defn str-println-desugar [exprs loc fn-name]
-  (Call (Symbol "" fn-name loc) [(fold-vec exprs loc)]))
-
-;; thread-step: apply one threading step to the threaded value.
-;;   Call (f a b)  -> (f <threaded> a b)
-;;   Symbol g      -> (g <threaded>)
-;;   Symbol .f     -> (.f <threaded>)  (FieldGetter operator)
-;;   other         -> (<step> <threaded>)
-(defn thread-step [step threaded loc]
-  (let [k (expr-kind step)]
-    (cond
-      (= k 0)
-      (let [op (.operator step)]
-        (Call op (vect-concat [threaded] (.operands step)) loc))
-
-      (= k 1)
-      (let [nm (.name step)]
-        (cond (str= (subs nm 0 1) ".")
-              (Call (FieldGetter (subs nm 1 (count nm)) loc) [threaded])
-              (Call step [threaded])))
-      (Call step [threaded]))))
-
-;; threading: (-> x s1 ... sN) -> (sN (... (s1 x)))
-(defn threading [initial steps loc]
-  (reduce steps initial
-          (fn [threaded step]
-            (thread-step step threaded loc))))
-
-;; let-desugar: [LetBinding ...] + body-vec ->
-;;   (Call (Fn "" [b1] [rest1]) e1) where the innermost Fn body is body-vec.
-(defn let-desugar [pairs body-vec loc]
-  (let [ln (extract (last pairs))
-        innermost (Call (Fn "" [(.name ln)] body-vec loc) [(.expr ln)])]
-    (reduce (reverse (butlast pairs)) innermost
-            (fn [acc pair]
-              (Call (Fn "" [(.name pair)] [acc] loc) [(.expr pair)])))))
-
-;; --- Grouping ctors ---------------------------------------------------
-;;
-;; LetBinding and HashPair are used by the Let and HashLit Syntax ctors.
-;; Each gets a recurse impl so the ana/unfold can thread through them.
-;; No `!` annotations (item 5).
-
-(deftype LetBinding [name expr]
-  (str-vect [v]
-            (flat-map ["(LetBinding " name " " expr ")"]
-                      str-vect))
-  (recurse [v g]
-    (LetBinding (.name v) (g (.expr v)))))
-
-(deftype HashPair [key value]
-  (str-vect [v]
-            (flat-map ["(HashPair " key " " value ")"]
-                      str-vect))
-  (recurse [v g]
-    (HashPair (g (.key v)) (g (.value v)))))
-
-(deftype Clause [test value]
-  (str-vect [v]
-            (flat-map ["(Clause " test " " value ")"]
-                      str-vect))
-  (recurse [v g]
-    (Clause (g (.test v)) (g (.value v)))))
-
-;; --- Syntax deftype ---------------------------------------------------
-;;
-;; 8 bare references to the shared Expression ctors + 9 syntactic ctors.
-;; The syntactic ctors carry inline recurse + desugar-node impls.
-;; No `!` annotations (item 5).
-
-(deftype Syntax
-    Symbol
-    IntegerLit
-    FloatLit
-    StringLit
-    Call
-    Fn
-    FieldGetter
-    TypeConstraint
-    (Let [bindings body loc]
-      (str-vect [v]
-                (flat-map ["(Let " bindings " " body " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (Let (vect-map (.bindings v)
-                       (fn [b] (LetBinding (.name b) (g (.expr b)))))
-             (vect-map (.body v) (fn [e] (body-elem e g)))
-             (.loc v)))
-      (desugar-node [v]
-        (let-desugar (.bindings v) (.body v) (.loc v))))
-    (Cond [clauses else loc]
-      (str-vect [v]
-                (flat-map ["(Cond " clauses " " else " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (Cond (vect-map (.clauses v)
-                        (fn [c] (Clause (g (.test c)) (g (.value c)))))
-              (g (.else v))
-              (.loc v)))
-      (desugar-node [v]
-        (cond-desugar (.clauses v) (.else v) (.loc v))))
-    (And [exprs loc]
-      (str-vect [v]
-                (flat-map ["(And " exprs " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (And (vect-map (.exprs v) g) (.loc v)))
-      (desugar-node [v]
-        (and-or-desugar (.exprs v) (.loc v) "and")))
-    (Or [exprs loc]
-      (str-vect [v]
-                (flat-map ["(Or " exprs " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (Or (vect-map (.exprs v) g) (.loc v)))
-      (desugar-node [v]
-        (and-or-desugar (.exprs v) (.loc v) "or")))
-    (Str [exprs loc]
-      (str-vect [v]
-                (flat-map ["(Str " exprs " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (Str (vect-map (.exprs v) g) (.loc v)))
-      (desugar-node [v]
-        (str-println-desugar (.exprs v) (.loc v) "str*")))
-    (Println [exprs loc]
-      (str-vect [v]
-                (flat-map ["(Println " exprs " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (Println (vect-map (.exprs v) g) (.loc v)))
-      (desugar-node [v]
-        (str-println-desugar (.exprs v) (.loc v) "println*")))
-    (Threading [initial steps loc]
-      (str-vect [v]
-                (flat-map ["(Threading " initial " " steps " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (Threading (g (.initial v))
-                   (vect-map (.steps v) g)
-                   (.loc v)))
-      (desugar-node [v]
-        (threading (.initial v) (.steps v) (.loc v))))
-    (VectorLit [exprs loc]
-      (str-vect [v]
-                (flat-map ["(VectorLit " exprs " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (VectorLit (vect-map (.exprs v) g) (.loc v)))
-      (desugar-node [v]
-        (fold-vec (.exprs v) (.loc v))))
-    (HashLit [pairs loc]
-      (str-vect [v]
-                (flat-map ["(HashLit " pairs " " loc ")"]
-                          str-vect))
-      (recurse [v g]
-        (HashLit (vect-map (.pairs v)
-                           (fn [p] (HashPair (g (.key p)) (g (.value p)))))
-                 (.loc v)))
-      (desugar-node [v]
-        (hash-fold (.pairs v) (.loc v)))))
-
-;; --- desugar function -------------------------------------------------
-;;
-;; The desugar pass: fold the Syntax tree with desugar-node, producing an
-;; Expression tree.
-
-(defn desugar [tree]
-  (fold tree desugar-node))
-
 ;; --- TopLevel deftype -------------------------------------------------
-;;
-;; Definition and Main get recurse impls (their value/body fields hold
-;; Syntax nodes pre-desugar, Expression nodes post-desugar).
 
 (deftype TopLevel
     (Definition [name value loc]
