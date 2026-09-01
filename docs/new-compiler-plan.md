@@ -202,10 +202,10 @@ each form's rule arrives with its phase.
   feature). `interpreter/intrp-ebnf.toc` is kept as its reference (owner,
   2026-08-29); it references the removed combinator machinery and does not
   compile against the current parser.
-- **Note (2026-08-29): attempt implementing the reader with the core's
-  `unfold` recursion scheme** — generating an AST value from a string
-  (recursion schemes are a key Toccata feature; see the style doc's Data
-  section).
+- **Note (2026-08-29): the `unfold`-based reader was attempted and DROPPED
+  (owner, 2026-09-01)** — generating an AST value from a string via the core's
+  `unfold` recursion scheme is not expressible over the settled AST (see the
+  Verified-facts entry); the parser stays direct recursive descent.
 - **Note (2026-08-29): empty-input checks are pervasive** — nearly every
   parse/skip/collect function tests whether the remaining input is empty
   (`(str= input "")`) before dispatching. That is a performance hit; find a
@@ -507,7 +507,7 @@ each form's rule arrives with its phase.
   `interpreter/intrp-rdr.toc`. (Distinct from the item-6 "let containing a
   nested cond" malformed-cond quirk.)
 - **Item 6b as-built (2026-08-29): the concrete style rewrite is DONE and
-  verified; the `unfold` sub-part is an OPEN design gap (owner decision).**
+  verified; the `unfold` sub-part is DROPPED (owner, 2026-09-01).**
   `interpreter/intrp-rdr.toc` now has 11 grouping deftypes with named
   fields + `.field` access (no positional vectors, no `elt0`/`elt1`/`elt2`):
   `Token [text state]`, `FullSymbol [ns name state]`, `TypeExpr [text
@@ -544,9 +544,9 @@ each form's rule arrives with its phase.
   AST node hands `f` sub-Expressions that a parse function cannot consume.
   Making `unfold` drive the parse would require a new state-carrying
   parse-node type (a redesign of the settled AST / a second materialize
-  pass), which the loop must not guess. Owner decision: drop the unfold
-  approach (as was done for superposition-alternatives) or specify the
-  state-carrying node design.
+  pass), which the loop must not guess. **Owner decision (2026-09-01):
+  dropped** — the parser stays direct recursive descent (as was done for
+  superposition-alternatives).
 - **SUB/SUP end-of-program error ⇒ wrong arity (2026-08-30)**: when a
   program ends with a SUB or SUP error, that probably means a function is
   being called with the wrong number of arguments somewhere. Especially
@@ -763,19 +763,19 @@ unilaterally.
     see `sub-to-str`). Driver `interpreter/rdr-top.toc`: 19 tests +
     inline-error + 7 out-of-scope forms all pass, zero leaks.
 
-- [ ] **6b. `interpreter/intrp-rdr.toc`: style rewrite (docs/toccata-style.md)**
+- [x] **6b. `interpreter/intrp-rdr.toc`: style rewrite (docs/toccata-style.md)**
   - Rewrite the parser to the settled style: every positionally-meaningful
     grouping becomes a deftype ctor with named fields, accessed via `.field`
     getters — no positional vectors, no `elt0`/`elt1`/`elt2`. Implement
     `map`/`flat-map` (and `recurse` where structurally recursive) on the
     grouping types per the style doc's Data section.
-  - The rewrite attempts the reader built on the core's `unfold` recursion
-    scheme (an AST value generated from a string — Parser section note,
-    2026-08-29). Parser alternatives are sequential `or`-style tries (first
-    `Match`/`Ignore` wins, else aggregate the best `Error`) — the
-    superposition-alternatives approach is **dropped for this rewrite**
-    (owner, 2026-08-29), paused pending further owner thought (see the
-    Parser section bullet).
+  - The `unfold`-based reader sub-part is **DROPPED** (owner, 2026-09-01) —
+    not expressible over the settled AST (see the Verified-facts entry); the
+    parser stays the direct recursive-descent one. Parser alternatives are
+    sequential `or`-style tries (first `Match`/`Ignore` wins, else aggregate
+    the best `Error`) — the superposition-alternatives approach is
+    **dropped for this rewrite** (owner, 2026-08-29), paused pending further
+    owner thought (see the Parser section bullet).
   - All settled behavior (parse results, desugarings, error messages, the
     name -> TopLevel map) stays identical. Update the drivers
     (`rdr-exprs.toc`, `rdr-top.toc`) where they touch the changed shapes —
