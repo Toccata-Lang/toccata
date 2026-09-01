@@ -449,22 +449,36 @@
   (let [k (expr-kind step)]
     (cond
       (= k 0)
-      (let [op (.operator step)]
-        (ast/Call op (ast/vect-concat [threaded] (.operands step))))
+      (ast/Call (.operator step)
+                (ast/vect-concat [threaded] (.operands step)))
 
       (= k 1)
-      (let [nm (.sym-name step)
-            op (cond (str= (subs nm 0 1) ".")
-                     (ast/FieldGetter (subs nm 1 (count nm)) loc)
-                     step)]
-        (ast/Call op [threaded]))
+      (let [nm (.sym-name step)]
+        (ast/Call (cond (str= (subs nm 0 1) ".")
+                        (ast/FieldGetter (subs nm 1 (count nm)) loc)
+                        step)
+                  [threaded]))
       (ast/Call step [threaded]))))
 
+;; threading-acc: fold the steps left-to-right, threading `loc` as a
+;; plain parameter (not a closure capture).
+(defn threading-acc [steps loc acc]
+  (cond (= (count steps) 0)
+        acc
+        (let [stp (extract (first steps))]
+          (threading-acc (rest steps) loc
+                         (thread-step stp acc loc)))))
+
 ;; threading: (-> x s1 ... sN) -> (sN (... (s1 x)))
+;;
+;; Explicit recursion, NOT reduce: thread-step resolves `loc` only in its
+;; dot-branch and erases it in the others, so a reduce closure capturing
+;; `loc` would resolve it on some iterations and erase it on others — a
+;; pattern the lazy machine mishandles, leaving a SUP in the result (see
+;; regression-tests/closure-capture-sup.toc). Passing `loc` as a plain
+;; parameter through the recursion avoids the closure capture entirely.
 (defn threading [initial steps loc]
-  (reduce steps initial
-          (fn [threaded step]
-            (thread-step step threaded loc))))
+  (threading-acc steps loc initial))
 
 ;; let-desugar: [LetBinding ...] + body-vec ->
 ;;   (Call (Fn "" [b1] [rest1]) e1) where the innermost Fn body is
