@@ -917,7 +917,7 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
     `rdr-top.toc`'s `deftype` OosCase removed (5 OOS forms left; 25
     checks pass).
 
-- [ ] **6e. `interpreter/intrp-rdr.toc`: reader — `extend-type`**
+- [x] **6e. `interpreter/intrp-rdr.toc`: reader — `extend-type`**
   - Parse `(extend-type T (proto [params] body) ...)` → `TopLevel.ExtendType
     [type-name methods]`. Nail down the method shape (likely `Fn` nodes:
     name = protocol, params, body). The AST ctor already exists.
