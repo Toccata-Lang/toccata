@@ -91,8 +91,6 @@
             (flat-map ["(Clause " test " " value ")"]
                       str-vect)))
 
-(deftype TopLevelEntry [name value])
-
 ;; --- State helpers ---------------------------------------------------
 
 (defn make-state [input file line]
@@ -260,32 +258,6 @@
 (defn make-loc [state]
   (ast/Location (extract (get (.values state) "file"))
                 (state-line state)))
-
-;; sub-to-str: copy a SubString (or String) to a fresh full String.
-;; CONSUMING: it frees its input; the caller must hold a separate
-;; reference (elt0/first create one).
-(defn sub-to-str [s]
-  (inline String "
-    char *buf;
-    int64_t len;
-    if (((Value *)s_1)->type == SubStringType) {
-      ReifiedVal *ss = (ReifiedVal *)s_1;
-      String *parent = (String *)ss->impls[0];
-      long start = getI60(ss->impls[1]);
-      buf = &parent->buffer[start];
-      len = getI60(ss->impls[2]);
-    } else {
-      String *strVal = (String *)s_1;
-      buf = strVal->buffer;
-      len = strVal->len;
-    }
-    String *out = malloc_string(len + 1);
-    memcpy(out->buffer, buf, len);
-    out->len = len;
-    out->buffer[len] = 0;
-    dec_and_free((Term)s_1, 1);
-    result = termVal((Term)out);
-  "))
 
 (defn read-full-symbol [state]
   (let [tok (read-symbol state)
@@ -743,21 +715,19 @@
 
           (parse-expr (take-char s)))))
 
-;; --- Top-level forms + program map -----------------------------------
+;; --- Top-level forms + program vector --------------------------------
 ;;
 ;; parse-top-level dispatches on the first token of a top-level form
 ;; and builds the settled TopLevel node. parse-program loops until EOF,
-;; accumulating the name -> TopLevel map.
+;; accumulating a [TopLevel] vector in source order.
 
 ;; parse-top-def-value-expr: state at the value (a non-`)` position).
-;; Returns ParserMatch [TopLevelEntry state-after-`)`] or ParserError.
+;; Returns ParserMatch [Definition state-after-`)`] or ParserError.
 (defn parse-top-def-value-expr [name name-loc state]
   (let [p (parse-expr state)
         s3 (skip-whitespace (.state p))]
     (cond (str-prefix? ")" (.input s3))
-          (ParserMatch (TopLevelEntry name
-                                      (ast/Definition name (.value p)
-                                                      name-loc))
+          (ParserMatch (ast/Definition name (.value p) name-loc)
                        (take-char s3))
 
           (ParserError "expected ) after def value" s3))))
@@ -776,7 +746,7 @@
   (let [s (skip-whitespace state)]
     (cond (symbol-start? (.input s))
           (let [nm (read-symbol s)]
-            (parse-top-def-value (sub-to-str (.text nm))
+            (parse-top-def-value (.text nm)
                                  (make-loc (.state nm))
                                  (.state nm)))
 
@@ -787,7 +757,7 @@
   (let [s (skip-whitespace state)]
     (cond (symbol-start? (.input s))
           (let [nm (read-symbol s)
-                name (sub-to-str (.text nm))
+                name (.text nm)
                 s2 (skip-whitespace (.state nm))]
             (cond (str-prefix? "[" (.input s2))
                   (let [params (read-param-list
@@ -797,9 +767,8 @@
                         fn-val (ast/Fn name (.params params)
                                        (.exprs body) (make-loc s5))]
                     (ParserMatch
-                     (TopLevelEntry name
-                                    (ast/Definition name fn-val
-                                                    (make-loc (.state nm))))
+                     (ast/Definition name fn-val
+                                     (make-loc (.state nm)))
                      s5))
 
                   (ParserError "expected a parameter list after defn name"
@@ -814,7 +783,7 @@
   (let [s (skip-whitespace state)]
     (cond (symbol-start? (.input s))
           (let [nm (read-symbol s)
-                name (sub-to-str (.text nm))
+                name (.text nm)
                 s2 (skip-whitespace (.state nm))]
             (cond (str-prefix? "[" (.input s2))
                   (let [params (read-param-list
@@ -822,9 +791,7 @@
                         body (parse-body (.state params))
                         s5 (.state body)]
                     (ParserMatch
-                     (TopLevelEntry name
-                                    (ast/Defp name (.params params)
-                                              (.exprs body)))
+                     (ast/Defp name (.params params) (.exprs body))
                      s5))
 
                   (ParserError "expected a parameter list after defp name"
@@ -933,29 +900,29 @@
 ;; parse-top-deftype-body: state after the type name. Single-ctor form
 ;; `[fields] <impls>...)` — one ctor named the type; multi-ctor form
 ;; `<ctor-list>)` — ctor definitions and bare existing-ctor names.
-;; Returns ParserMatch [TopLevelEntry state-after].
+;; Returns ParserMatch [DefType state-after].
 (defn parse-top-deftype-body [name state]
   (let [s (skip-whitespace state)]
     (cond (str-prefix? "[" (.input s))
       (let [fields (read-param-list (skip-whitespace (take-char s)))
             impls (parse-impls (.state fields))
             ctor (ast/Constructor name (.params fields) (.exprs impls))]
-        (ParserMatch (TopLevelEntry name (ast/DefType name [ctor]))
+        (ParserMatch (ast/DefType name [ctor])
                      (.state impls)))
 
       (let [ctors (parse-ctor-list-acc s empty-vector)]
-        (ParserMatch (TopLevelEntry name (ast/DefType name (.exprs ctors)))
+        (ParserMatch (ast/DefType name (.exprs ctors))
                      (.state ctors))))))
 
 ;; parse-top-deftype: state just after `deftype`. The form dispatch
 ;; lives in parse-top-deftype-body (a let+cond clause shape new-toc
 ;; rejects as a malformed cond — see the plan's verified facts).
-;; Returns ParserMatch [TopLevelEntry state-after] or ParserError.
+;; Returns ParserMatch [DefType state-after] or ParserError.
 (defn parse-top-deftype [state]
   (let [s (skip-whitespace state)]
     (cond (symbol-start? (.input s))
       (let [nm (read-symbol s)]
-        (parse-top-deftype-body (sub-to-str (.text nm)) (.state nm)))
+        (parse-top-deftype-body (.text nm) (.state nm)))
 
       (ParserError "expected a type name after deftype" s))))
 
@@ -967,10 +934,9 @@
   (let [s (skip-whitespace state)]
     (cond (symbol-start? (.input s))
       (let [nm (read-symbol s)
-            name (sub-to-str (.text nm))
+            name (.text nm)
             methods (parse-impls (.state nm))]
-        (ParserMatch (TopLevelEntry name
-                                    (ast/ExtendType name (.exprs methods)))
+        (ParserMatch (ast/ExtendType name (.exprs methods))
                      (.state methods)))
 
       (ParserError "expected a type name after extend-type" s))))
@@ -982,10 +948,9 @@
           (let [params (read-param-list (take-char s))
                 body (parse-body (.state params))
                 s3 (.state body)]
-            (ParserMatch (TopLevelEntry "main"
-                                        (ast/Main (.params params)
-                                                  (.exprs body)
-                                                  (make-loc s3)))
+            (ParserMatch (ast/Main (.params params)
+                                   (.exprs body)
+                                   (make-loc s3))
                          s3))
 
           (ParserError "expected a parameter list after main" s))))
@@ -1040,11 +1005,12 @@
 
           (ParserError "unexpected character at top level" s))))
 
-;; parse-program-acc: parse top-level forms until EOF.
-(defn parse-program-acc [state m]
+;; parse-program-acc: parse top-level forms until EOF, accumulating the
+;; [TopLevel] vector in source order.
+(defn parse-program-acc [state v]
   (let [s (skip-whitespace state)]
     (cond (str= (.input s) "")
-          (ParserMatch m s)
+          (ParserMatch v s)
 
           (let [r (parse-top-level s)
                 k (result-kind r)]
@@ -1052,13 +1018,13 @@
                   r
 
                   (= k 1)
-                  (parse-program-acc (.state r) m)
+                  (parse-program-acc (.state r) v)
 
-                  (let [entry (.value r)]
+                  (let [node (.value r)]
                     (parse-program-acc (.state r)
-                                       (assoc m (.name entry)
-                                              (.value entry)))))))))
+                                       (vect-conj v node)))))))))
 
-;; parse-program: parse a whole file into the name -> TopLevel map.
+;; parse-program: parse a whole file into a [TopLevel] vector in source
+;; order.
 (defn parse-program [state]
-  (parse-program-acc state {}))
+  (parse-program-acc state empty-vector))

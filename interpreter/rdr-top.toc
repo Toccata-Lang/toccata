@@ -1,14 +1,13 @@
 ;; interpreter/rdr-top.toc — item-6 verification driver.
 ;;
 ;; Parses the 19 suitable regression tests (item 3) through
-;; intrp-rdr.toc's parse-program and checks each yields a name -> TopLevel
-;; map with EXACTLY the expected entries (entry count matches AND every
-;; expected name is present). Also checks that a top-level `inline` is a
-;; parse error carrying a file:line message.
+;; intrp-rdr.toc's parse-program and checks each yields a [TopLevel]
+;; vector with EXACTLY the expected entries (entry count matches AND
+;; every expected name is present). Top-level `inline` is now parsed
+;; (item 6f) — its shape checks live in interpreter/rdr-inline.toc.
 ;;
-;; Expected output: 19 "OK" lines (one per test) + 1 "OK inline-error"
-;; line. Any "FAIL" line indicates a problem. Run from the repo root:
-;;   ./rdr-top
+;; Expected output: 19 "OK" lines (one per test). Any "FAIL" line
+;; indicates a problem. Run from the repo root: ./rdr-top
 ;;
 ;; The driver is interpreter-side tooling, so it may use inline C (the
 ;; slurp whole-file read). Interpreted programs may not.
@@ -52,22 +51,43 @@
   (flat-map [v f]
     (ast/vect-concat (f (.source v)) (f (.msg v)))))
 
-;; map-count: number of entries in a hash map (count is implemented for the
-;; map node types; keys is NOT — verified probe).
-(defn map-count [m]
-  (count m))
+;; top-name: the name of a TopLevel node (Main is nameless — its name is
+;; the implicit "main"; AddNs uses its namespace; Inline is nameless).
+;; The parse records names as SubString views of the source; str= compares
+;; by content, so the String-literal expected names match directly.
+(defp top-name [v])
+(extend-type ast/Definition (top-name [v] (.name v)))
+(extend-type ast/Defp (top-name [v] (.name v)))
+(extend-type ast/Main (top-name [_] "main"))
+(extend-type ast/DefType (top-name [v] (.type-name v)))
+(extend-type ast/ExtendType (top-name [v] (.type-name v)))
+(extend-type ast/AddNs (top-name [v] (.namespace v)))
+(extend-type ast/Inline (top-name [_] ""))
 
-;; count-present-acc: how many names in the vector are present in the map.
-;; Self-recursive. The parse keys the map by full Strings (see sub-to-str in
-;; intrp-rdr.toc), so the String-literal expected names are used directly.
-(defn count-present-acc [names m acc]
+;; find-by-name: the first node in the [TopLevel] vector whose name
+;; matches, or None. Self-recursive.
+(defn find-by-name-acc [v name]
+  (cond (= (count v) 0)
+    None
+    (let [e (extract (first v))
+          match (maybe-kind (str= (top-name e) name))]
+      (cond (= match 1)
+        (Some e)
+        (find-by-name-acc (rest v) name)))))
+
+(defn find-by-name [v name]
+  (find-by-name-acc v name))
+
+;; count-found-acc: how many names in the vector are present in the
+;; parsed [TopLevel] vector. Self-recursive.
+(defn count-found-acc [names v acc]
   (cond (= (count names) 0)
     acc
     (let [nm (extract (first names))
-          mk (maybe-kind (get m nm))]
+          mk (maybe-kind (find-by-name v nm))]
       (cond (= mk 1)
-        (count-present-acc (rest names) m (+ acc 1))
-        (count-present-acc (rest names) m acc)))))
+        (count-found-acc (rest names) v (+ acc 1))
+        (count-found-acc (rest names) v acc)))))
 
 ;; print-all-acc: print every string in the vector, threading the pr*
 ;; counts into the accumulator so the lazy machine keeps every side effect
@@ -78,8 +98,8 @@
     (let [s (extract (first strs))]
       (print-all-acc (+ acc (pr* s)) (rest strs)))))
 
-;; check-test: slurp + parse one test file; verify the map has exactly the
-;; expected entries. Prints one status line. Returns the threaded acc.
+;; check-test: slurp + parse one test file; verify the vector has exactly
+;; the expected entries. Prints one status line. Returns the threaded acc.
 (defn check-test [acc file expected-count expected-names]
   (let [src (slurp file)
         r (rdr/parse-program (rdr/make-state src file 1))
@@ -91,37 +111,17 @@
         (print-all-acc acc
                        ["FAIL(parse) " file ":" (number-str line) ": " msg "\n"]))
 
-      (let [m (.value r)
-            mc (map-count m)
-            pc (count-present-acc expected-names m 0)
+      (let [v (.value r)
+            vc (count v)
+            fc (count-found-acc expected-names v 0)
             total (count expected-names)
-            ok (maybe-kind (and (= mc expected-count) (= pc total)))]
+            ok (maybe-kind (and (= vc expected-count) (= fc total)))]
         (cond (= ok 1)
-          (print-all-acc acc ["OK " file " entries=" (number-str mc) "\n"])
+          (print-all-acc acc ["OK " file " entries=" (number-str vc) "\n"])
           (print-all-acc acc
-                         ["FAIL " file " entries=" (number-str mc)
+                         ["FAIL " file " entries=" (number-str vc)
                           " expected=" (number-str expected-count)
-                          " present=" (number-str pc) "/" (number-str total) "\n"]))))))
-
-;; check-inline: a program with a top-level `inline` must be a parse error
-;; whose file:line:msg is exactly the inline line. Returns the threaded acc.
-(defn check-inline [acc]
-  (let [src "(def a 1)\n(inline \"int x;\")\n(main [_] (pr* \"hi\"))\n"
-        r (rdr/parse-program (rdr/make-state src "inline-test.toc" 1))
-        k (rdr/result-kind r)]
-    (cond (= k 2)
-      (let [st (.state r)
-            line (rdr/state-line st)
-            msg (.msg r)
-            fs (extract (get (.values st) "file"))
-            ok (maybe-kind (and (str= fs "inline-test.toc")
-                                (= line 2)
-                                (str= msg "top-level inline is not supported in phase 1")))]
-        (cond (= ok 1)
-          (print-all-acc acc ["OK inline-error: " fs ":" (number-str line) ": " msg "\n"])
-          (print-all-acc acc ["FAIL inline-error got: " fs ":" (number-str line) ": " msg "\n"])))
-      (print-all-acc acc
-                     ["FAIL inline-error: expected parse error, got kind " (number-str k) "\n"]))))
+                          " found=" (number-str fc) "/" (number-str total) "\n"]))))))
 
 ;; check-oos: each out-of-scope top-level form must be a parse error with the
 ;; expected message. Self-recursive over a vector of OosCase.
@@ -177,6 +177,5 @@
                         ["f" "main"])
         r19 (check-test r18 "regression-tests/test-or-comment.toc" 3
                         ["f1" "f2" "main"])
-        r20 (check-inline r19)
-        r21 (check-oos r20)]
-    r21))
+        r20 (check-oos r19)]
+    r20))

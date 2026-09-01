@@ -2,7 +2,7 @@
 ;;
 ;; Parses the 5 hvm-core.toc deftypes (Maybe, Leaf, GetSentinelVal,
 ;; String, List — verbatim source) through intrp-rdr.toc's
-;; parse-program and checks each yields a name -> TopLevel map with
+;; parse-program and checks each yields a [TopLevel] vector with
 ;; exactly one entry — a TopLevel.DefType whose Constructor list
 ;; matches the expected fingerprint (ctor names, field lists, impl
 ;; names/params, body shapes).
@@ -21,14 +21,43 @@
 (extend-type None (maybe-kind [_] 0))
 (extend-type Some (maybe-kind [_] 1))
 
-;; top-kind: tag a TopLevel value (the map's values are the TopLevel
-;; union; field getters need a concrete ctor, so the deftype-* protocols
-;; below are guarded by this tag).
+;; top-kind: tag a TopLevel value (the vector's elements are the
+;; TopLevel union; field getters need a concrete ctor, so the deftype-*
+;; protocols below are guarded by this tag).
 (defp top-kind [v])
 (extend-type ast/Definition (top-kind [_] 0))
 (extend-type ast/Defp (top-kind [_] 1))
 (extend-type ast/Main (top-kind [_] 2))
 (extend-type ast/DefType (top-kind [_] 3))
+(extend-type ast/ExtendType (top-kind [_] 4))
+(extend-type ast/AddNs (top-kind [_] 5))
+(extend-type ast/Inline (top-kind [_] 6))
+
+;; top-name: the name of a TopLevel node (Main is nameless — its name is
+;; the implicit "main"; AddNs uses its namespace; Inline is nameless).
+;; Used by find-by-name.
+(defp top-name [v])
+(extend-type ast/Definition (top-name [v] (.name v)))
+(extend-type ast/Defp (top-name [v] (.name v)))
+(extend-type ast/Main (top-name [_] "main"))
+(extend-type ast/DefType (top-name [v] (.type-name v)))
+(extend-type ast/ExtendType (top-name [v] (.type-name v)))
+(extend-type ast/AddNs (top-name [v] (.namespace v)))
+(extend-type ast/Inline (top-name [_] ""))
+
+;; find-by-name: the first node in the [TopLevel] vector whose name
+;; matches, or None. Self-recursive.
+(defn find-by-name-acc [v name]
+  (cond (= (count v) 0)
+    None
+    (let [e (extract (first v))
+          match (maybe-kind (str= (top-name e) name))]
+      (cond (= match 1)
+        (Some e)
+        (find-by-name-acc (rest v) name)))))
+
+(defn find-by-name [v name]
+  (find-by-name-acc v name))
 
 ;; deftype-*: extract a DefType's fields (receiver statically DefType).
 (defp deftype-name [v])
@@ -155,9 +184,9 @@
     (let [s (extract (first strs))]
       (print-all-acc (+ acc (pr* s)) (rest strs)))))
 
-;; check-deftype: parse one deftype source; verify the map has exactly
-;; one entry — a DefType with the expected name and ctor fingerprint.
-;; Prints one status line. Returns the threaded acc.
+;; check-deftype: parse one deftype source; verify the vector has
+;; exactly one entry — a DefType with the expected name and ctor
+;; fingerprint. Prints one status line. Returns the threaded acc.
 (defn check-deftype [acc src name expected]
   (let [r (rdr/parse-program (rdr/make-state src "deftype-test.toc" 1))
         k (rdr/result-kind r)]
@@ -168,23 +197,23 @@
         (print-all-acc acc
                        ["FAIL(parse) " name ":" (number-str line) ": " msg "\n"]))
 
-      (let [m (.value r)
-            e (get m name)
+      (let [v (.value r)
+            e (find-by-name v name)
             ek (maybe-kind e)]
         (cond (= ek 0)
-          (print-all-acc acc ["FAIL " name ": no map entry\n"])
+          (print-all-acc acc ["FAIL " name ": no entry\n"])
 
-          (let [v (extract e)
-                tk (top-kind v)]
+          (let [entry (extract e)
+                tk (top-kind entry)]
             (cond (= tk 3)
-              (let [nm (deftype-name v)
-                    fp (deftype-fingerprint v)]
-                (cond (and (= (count m) 1)
+              (let [nm (deftype-name entry)
+                    fp (deftype-fingerprint entry)]
+                (cond (and (= (count v) 1)
                            (str= nm name)
                            (str= fp expected))
                   (print-all-acc acc ["OK " name " " fp "\n"])
                   (print-all-acc acc
-                                 ["FAIL " name " entries=" (number-str (count m))
+                                 ["FAIL " name " entries=" (number-str (count v))
                                   " got: " fp " want: " expected "\n"])))
 
               (print-all-acc acc

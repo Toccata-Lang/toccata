@@ -94,6 +94,15 @@ rdr-extend-type: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc int
 	$(CC) $(CFLAGS) -o rdr-extend-type $(TOC_FLAGS) $(LDFLAGS) rdr-extend-type.c new.c runtime3.c graph.c
 	./rdr-extend-type
 
+.PHONY: rdr-inline
+rdr-inline: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter/rdr-inline.toc hvm-core.toc
+	./new-toc interpreter/rdr-inline.toc > rdr-inline.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "rdr-inline.c"; next; } { print; }' rdr-inline.tmp > rdr-inline.c
+	clang-format -i rdr-inline.c
+	rm rdr-inline.tmp
+	$(CC) $(CFLAGS) -o rdr-inline $(TOC_FLAGS) $(LDFLAGS) rdr-inline.c new.c runtime3.c graph.c
+	./rdr-inline
+
 .PHONY: rdr-top
 rdr-top: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter/rdr-top.toc hvm-core.toc
 	./new-toc interpreter/rdr-top.toc > rdr-top.tmp
