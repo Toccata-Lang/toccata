@@ -57,6 +57,34 @@ intrp: intrp.c
 	$(CC) $(CFLAGS) -o $* $(TOC_FLAGS) $(LDFLAGS) $*.c
 	./intrp
 
+# Reader drivers
+.PHONY: rdr-exprs
+rdr-exprs: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter/rdr-exprs.toc hvm-core.toc
+	./new-toc interpreter/rdr-exprs.toc > rdr-exprs.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "rdr-exprs.c"; next; } { print; }' rdr-exprs.tmp > rdr-exprs.c
+	clang-format -i rdr-exprs.c
+	rm rdr-exprs.tmp
+	$(CC) $(CFLAGS) -o rdr-exprs $(TOC_FLAGS) $(LDFLAGS) rdr-exprs.c new.c runtime3.c graph.c
+	./rdr-exprs
+
+.PHONY: rdr-defp
+rdr-defp: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter/rdr-defp.toc hvm-core.toc
+	./new-toc interpreter/rdr-defp.toc > rdr-defp.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "rdr-defp.c"; next; } { print; }' rdr-defp.tmp > rdr-defp.c
+	clang-format -i rdr-defp.c
+	rm rdr-defp.tmp
+	$(CC) $(CFLAGS) -o rdr-defp $(TOC_FLAGS) $(LDFLAGS) rdr-defp.c new.c runtime3.c graph.c
+	./rdr-defp
+
+.PHONY: rdr-top
+rdr-top: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter/rdr-top.toc hvm-core.toc
+	./new-toc interpreter/rdr-top.toc > rdr-top.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "rdr-top.c"; next; } { print; }' rdr-top.tmp > rdr-top.c
+	clang-format -i rdr-top.c
+	rm rdr-top.tmp
+	$(CC) $(CFLAGS) -o rdr-top $(TOC_FLAGS) $(LDFLAGS) rdr-top.c new.c runtime3.c graph.c
+	./rdr-top
+
 # Sidequest
 sidequest.c: new-toc sidequest.toc hvm-core.toc new.h
 	./new-toc sidequest.toc > sidequest.tmp

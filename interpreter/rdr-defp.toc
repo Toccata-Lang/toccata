@@ -1,0 +1,142 @@
+;; interpreter/rdr-defp.toc — item-6c verification driver.
+;;
+;; Parses defp forms through intrp-rdr.toc's parse-program and checks
+;; each yields a name -> TopLevel map with exactly one entry, a
+;; TopLevel.Defp with the expected fields:
+;;   1. bare:                  (defp foo [x y])
+;;   2. comment + !returns:    (defp bar [x y] ;; ... !returns Maybe )
+;;   3. !returns + body:       (defp baz [x] !returns String (f x))
+;;   4. special-symbol name:   (defp = [x y] !returns Maybe )
+;;
+;; Expected output: 4 "OK" lines (one per sample). Any "FAIL" line
+;; indicates a problem. Run from the repo root: ./rdr-defp
+;;
+;; The driver is interpreter-side tooling; interpreted programs may not
+;; use these constructs.
+
+(add-ns ast (module "intrp-ast.toc"))
+(add-ns rdr (module "intrp-rdr.toc"))
+
+;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
+(defp maybe-kind [m])
+(extend-type None (maybe-kind [_] 0))
+(extend-type Some (maybe-kind [_] 1))
+
+;; top-kind: tag a TopLevel value (the map's values are the TopLevel
+;; union; field getters need a concrete ctor, so the defp-* protocols
+;; below are guarded by this tag).
+(defp top-kind [v])
+(extend-type ast/Definition (top-kind [_] 0))
+(extend-type ast/Defp (top-kind [_] 1))
+(extend-type ast/Main (top-kind [_] 2))
+(extend-type ast/DefType (top-kind [_] 3))
+(extend-type ast/ExtendType (top-kind [_] 4))
+(extend-type ast/AddNs (top-kind [_] 5))
+
+;; defp-*: extract a Defp's fields (receiver statically Defp).
+(defp defp-name [v])
+(extend-type ast/Defp (defp-name [v] (.name v)))
+
+(defp defp-params [v])
+(extend-type ast/Defp (defp-params [v] (.parameter-list v)))
+
+(defp defp-body [v])
+(extend-type ast/Defp (defp-body [v] (.body v)))
+
+;; elem-kind: tag a Defp body element.
+(defp elem-kind [e])
+(extend-type ast/TypeConstraint (elem-kind [_] 1))
+(extend-type ast/Call (elem-kind [_] 2))
+
+;; tc-*: extract a TypeConstraint's fields.
+(defp tc-symbol [e])
+(extend-type ast/TypeConstraint (tc-symbol [e] (.symbol e)))
+
+(defp tc-type [e])
+(extend-type ast/TypeConstraint (tc-type [e] (.type-expr e)))
+
+;; call-op-name: a Call's operator name (the samples' operators are
+;; plain Symbols).
+(defn call-op-name [e]
+  (.sym-name (.operator e)))
+
+;; elem-fingerprint: one body element -> a fingerprint string.
+;;   TypeConstraint -> "tc <symbol> <type-expr>"
+;;   Call           -> "call <op-name> (<operand-count>)"
+(defn elem-fingerprint [e]
+  (let [k (elem-kind e)]
+    (cond (= k 1)
+      (str* ["tc " (tc-symbol e) " " (tc-type e)])
+
+      (str* ["call " (call-op-name e) " ("
+             (number-str (count (.operands e))) ")"]))))
+
+;; body-fingerprint: a Defp body vector -> one fingerprint string
+;; (elements in order, no separators).
+(defn body-fingerprint [body]
+  (str* (map body elem-fingerprint)))
+
+;; print-all-acc: print every string in the vector, threading the pr*
+;; counts into the accumulator so the lazy machine keeps every side
+;; effect (a dropped count would skip earlier prints). Self-recursive.
+(defn print-all-acc [acc strs]
+  (cond (= (count strs) 0)
+    acc
+    (let [s (extract (first strs))]
+      (print-all-acc (+ acc (pr* s)) (rest strs)))))
+
+;; check-defp: parse one defp source; verify the map has exactly one
+;; entry — a Defp with the expected name, params vector, and body
+;; fingerprint. Prints one status line. Returns the threaded acc.
+(defn check-defp [acc src name expected-params expected-body]
+  (let [r (rdr/parse-program (rdr/make-state src "defp-test.toc" 1))
+        k (rdr/result-kind r)]
+    (cond (= k 2)
+      (let [st (.state r)
+            line (rdr/state-line st)
+            msg (.msg r)]
+        (print-all-acc acc
+                       ["FAIL(parse) " name ":" (number-str line) ": " msg "\n"]))
+
+      (let [m (.value r)
+            e (get m name)
+            ek (maybe-kind e)]
+        (cond (= ek 0)
+          (print-all-acc acc ["FAIL " name ": no map entry\n"])
+
+          (let [v (extract e)
+                tk (top-kind v)]
+            (cond (= tk 1)
+              (let [nm (defp-name v)
+                    pf (str* (str-vect (defp-params v)))
+                    bf (body-fingerprint (defp-body v))]
+                (cond (and (= (count m) 1)
+                           (str= nm name)
+                           (str= pf expected-params)
+                           (str= bf expected-body))
+                  (print-all-acc acc
+                                 ["OK " name " params=" pf " body=" bf "\n"])
+                  (print-all-acc acc
+                                 ["FAIL " name " entries=" (number-str (count m))
+                                  " name=" nm " params=" pf " body=" bf
+                                  " want-params=" expected-params
+                                  " want-body=" expected-body "\n"])))
+
+              (print-all-acc acc
+                             ["FAIL " name ": entry is not a Defp (kind "
+                              (number-str tk) ")\n"]))))))))
+
+(main [_]
+  (let [r1 (check-defp 0
+             "(defp foo [x y])"
+             "foo" "[x y]" "")
+        r2 (check-defp r1
+             "(defp bar [x y]\n    ;; Compare two values for equality\n  !returns Maybe\n  )"
+             "bar" "[x y]" "tc returns Maybe")
+        r3 (check-defp r2
+             "(defp baz [x]\n  !returns String\n  (default-type-name x))"
+             "baz" "[x]" "tc returns Stringcall default-type-name (1)")
+        r4 (check-defp r3
+             "(defp = [x y]\n  !returns Maybe\n  )"
+             "=" "[x y]" "tc returns Maybe")]
+    r4))

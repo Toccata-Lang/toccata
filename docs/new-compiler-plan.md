@@ -9,27 +9,64 @@ A new Toccata compiler, written in Toccata and built by `new-toc`, that emits
 C for the new runtime (`new.c` / `runtime3.c`). The current compiler source
 (`compiler.toc`, `base.toc`, `typer.toc`, `codegen.toc`) is ignored — it is
 entangled with agents/promises, git-dependency, and a type system the new
-runtime doesn't have. `codegen.toc` is kept as a *reference* for phase 3.
+runtime doesn't have. `codegen.toc` is kept as a *reference* for phase 4.
 
 `hvm-core.toc` / `runtime3.*` may be extended as needed; decide when we get
 there.
 
 ## Phase plan
 
-1. **Concrete interpreter** — runs pure-Toccata programs (scope below).
-   AST from `interpreter/intrp-ast.toc`; parser = direct
-   recursive-descent functions in `interpreter/intrp-rdr.toc` (the
+1. **Reader** — a parser that fully reads `hvm-core.toc` (the whole core:
+   `defn`, `def`, `defp`, `deftype`, `extend-type`, top-level `inline`, plus
+   the expression forms). AST from `interpreter/intrp-ast.toc`; parser =
+   direct recursive-descent functions in `interpreter/intrp-rdr.toc` (the
    file's original combinator grammar was the reference; it has been
-   replaced).
-2. **Abstract interpreter** — the same evaluator over abstract values
+   replaced). Ends with `parse-program` reading `hvm-core.toc` to a complete
+   name → TopLevel map with zero parse errors.
+2. **Concrete interpreter** — runs pure-Toccata programs (scope below) over
+   the phase-1 reader's AST.
+3. **Abstract interpreter** — the same evaluator over abstract values
    (types/properties) = the type checker. Operations are designed as
    dispatch points (protocols) from day 1 so this is an extension, not a
    rewrite.
-3. **Code generation** — AST → C for the new runtime, borrowing heavily from
+4. **Code generation** — AST → C for the new runtime, borrowing heavily from
    `codegen.toc`. Validated against the interpreter (differential testing on
    the pure subset) and the type checker.
 
-## Phase 1 scope (settled)
+## Phase 1 scope (settled) — reader
+
+Goal: `parse-program` reads `hvm-core.toc` **in full** — every top-level
+form, zero parse errors — into a complete name → TopLevel map. This is the
+phase's acceptance bar (checklist item 6g).
+
+Top-level forms the reader must produce (hvm-core.toc usage in parens):
+
+- `defn` (108), `def` (5) — already done (items 4–6)
+- `defp` (58) — bare `(defp name [params])` and with `!`/`!returns`
+  annotations + an optional body → `TopLevel.Defp`
+- `deftype` (5) — multi-ctor and single-ctor forms, with ctor protocol
+  impls; the ctor list may also name an existing compiler-defined type
+  (the bare `StringBuffer` in `deftype String ...`) → `TopLevel.DefType`
+  (+ `Constructor` nodes)
+- `extend-type` (16) — `(extend-type T (proto [params] body) ...)` →
+  `TopLevel.ExtendType`
+- top-level `inline` (2) — global C declaration blocks, nameless →
+  `TopLevel.Inline`
+
+Expression forms: everything the current reader already handles (literals,
+calls, `fn`, `let`, `cond`, `and`, `or`, `str`, `println`, `->`, `!`
+annotations, vectors, hash maps, field getters, quoted syms; expression-level
+`inline` currently parses as a plain `Call` — see item 6f for the
+Call-vs-`Inline`-node decision).
+
+Still parse errors (none appear in hvm-core.toc): `match`, `defmacro`,
+`add-ns`, top-level `|` superposition.
+
+Acceptance: checklist item 6g — `parse-program` on `hvm-core.toc` returns a
+`ParserMatch` (not `ParserError`) with all 194 top-level forms accounted for
+(108 `defn`, 5 `def`, 58 `defp`, 5 `deftype`, 16 `extend-type`, 2 inline).
+
+## Phase 2 scope (settled) — concrete interpreter
 
 Single-file programs:
 
@@ -39,9 +76,11 @@ Single-file programs:
 - protocols and deftypes **from the core only** (Integer, String, Vector,
   Maybe, HashMap, ...)
 
-Deferred: user `deftype` / `extend-type` / `defp`, user inline C, `match`,
-superposition, `add-ns` / multi-module, hash sets (`hash-set` not in the new
-core), `defmacro`.
+Deferred (interpretation): user `deftype` / `extend-type` / `defp`, user
+inline C, `match`, superposition, `add-ns` / multi-module, hash sets
+(`hash-set` not in the new core), `defmacro`. (The reader *parses* the
+core's `defp` / `deftype` / `extend-type` in phase 1; the interpreter does
+not *interpret* user ones.)
 
 Interpreter design (settled):
 
@@ -74,7 +113,8 @@ Acceptance:
   flagged — bare `(def)` declare + arity-flexible (left-associative)
   calls; both pending owner decision. Full audit + 25-symbol initial-env
   list: `intrp-tests/README.md`.**
-- `interpreter-tests/` (20 negative type-error tests) belongs to phase 2.
+- `interpreter-tests/` (20 negative type-error tests) belongs to phase 3
+  (the abstract interpreter / type checker).
 
 ## AST (settled — 8 points)
 
@@ -98,7 +138,7 @@ annotations are ignored by the compiler).
 | `TopLevel.Main` | `[parameter-list body loc]` | separate constructor (special form) |
 | `TopLevel.Definition` | `[name value loc]` | `def` = fundamental top-level binding |
 | `TopLevel.Inline` | bare name → `Expression/Inline` | ctor names are globally unique, so `TopLevel` reuses the `Expression` ctor via a bare reference (verified working); `TopLevel`'s `BlockComment` is likewise a bare reference to `Expression/BlockComment` |
-| `TopLevel.DefType` / `Defp` / `ExtendType` / `AddNs` / `BlockComment` | kept | unused in phase 1 |
+| `TopLevel.DefType` / `Defp` / `ExtendType` / `AddNs` / `BlockComment` | kept | `DefType` / `Defp` / `ExtendType` are produced by the phase-1 reader (items 6c–6e); `AddNs` / `BlockComment` unused in phase 1 |
 | `Constructor` / `Module` | kept | auxiliaries for later phases |
 
 Dropped: `BodyExpressions` (bodies are `[Expression]` vectors).
@@ -143,9 +183,11 @@ Parser-owned desugarings:
 Constraints: single arity, 0–9 params; `FieldGetter` calls take exactly one
 operand; `(-> x)` with zero steps is a parse error.
 
-Out-of-scope forms (`deftype`, `defp`, `extend-type`, `add-ns`, `match`,
-`|`, `defmacro`) are parse errors in phase 1 — no parse-and-reject rules;
-each form's rule arrives with its phase.
+Reader-scope forms: `defp`, `deftype`, `extend-type`, and top-level
+`inline` are parsed in phase 1 (items 6c–6f) so the reader can read
+`hvm-core.toc`. Still parse errors (none appear in hvm-core.toc): `add-ns`,
+`match`, `|` (top-level superposition), `defmacro` — no parse-and-reject
+rules; each form's rule arrives with its phase.
 
 ## Parser (settled so far)
 
@@ -551,6 +593,23 @@ each form's rule arrives with its phase.
   program ends with a SUB or SUP error, that probably means a function is
   being called with the wrong number of arguments somewhere. Especially
   when no superpositions are used.
+- **Field access on a union-typed deftype value: tag + per-ctor protocols
+  (2026-09-01, item 6c)**: a `.field` getter on a value statically typed
+  as a multi-ctor deftype (e.g. `TopLevel` from a map `get`) is unsafe —
+  several ctors can carry the same field name (`Definition` and `Defp`
+  both have `name`), and new-toc resolves getters by name lookup over
+  already-defined types. The working pattern (cf. `result-kind` /
+  `val-kind`): a local tag protocol extended per ctor (`top-kind`), then
+  per-ctor extraction protocols whose impls see the receiver statically
+  typed as the concrete ctor (`defp-name`/`defp-params`/`defp-body` over
+  `ast/Defp`). Guard the extraction calls behind the tag check so a
+  wrong-ctor value prints a FAIL instead of aborting the protocol.
+- **`str*` fingerprints for shape checks (2026-09-01, item 6c)**:
+  `(str* vec)` over a vector of `str-vect` implementors concatenates them
+  into one String; `(str* [])` is `""` (`to-str`/`vect-reduce` handle the
+  empty case). Vector's `str-vect` prints `[a b]` (space-interposed). Use
+  for expected-shape assertions in drivers (cf. `body-fingerprint` /
+  `elem-fingerprint` in `interpreter/rdr-defp.toc`).
 
 ## Settled (continued)
 
@@ -562,13 +621,13 @@ each form's rule arrives with its phase.
   importing file's directory); co-location also keeps the module
   cache's raw-path-string keys identical across the graph (see the
   `../` verified fact).
-- **Phase 1 is strictly single-file.** `add-ns` of local modules is the
-  **first step of phase 2**; the 6 blocked differential tests
+- **Phases 1–2 are strictly single-file.** `add-ns` of local modules is
+  deferred to a later phase; the 6 blocked differential tests
   (integer-regressions, string-regressions, vector-regressions,
   test-threading, test-closures, test-inline-namespaced-sym) come in with
-  it. Phase 1 uses exactly one namespace; the namespace *structure*
-  exists from the start (see the Environment bullet below) and is
-  populated in phase 2.
+  it. The interpreter (phase 2) uses exactly one namespace; the namespace
+  *structure* exists from the start (see the Environment bullet below) and
+  is populated when `add-ns` lands.
 - **`eval-call` has two target kinds**: a user closure (AST body —
   interpreted) or a primitive (a `REF`: core defn / defp dispatcher /
   native). **How primitives are represented in the environment and called
@@ -584,20 +643,20 @@ each form's rule arrives with its phase.
   anonymous; call-time self-binding), `params` `[String]`, `body`
   `[Expression]` (leading `TypeConstraint`s skipped by eval), `env` =
   captured environment (persistent sharing).
-- **Environment** — namespace structure included from the start (phase 2's
-  `add-ns` populates it; adding the shape later would be a pain):
-  `(deftype Env [current-ns namespaces])` — `current-ns` String (phase 1:
-  always `""`), `namespaces` String → (String → value). Phase 1: one ns
+- **Environment** — namespace structure included from the start (`add-ns`,
+  a later phase, populates it; adding the shape later would be a pain):
+  `(deftype Env [current-ns namespaces])` — `current-ns` String (phase 2:
+  always `""`), `namespaces` String → (String → value). Phase 2: one ns
   (`""`) with core bindings + all top-level defs. Closure captures the
   whole Env. Call-time env = captured env with the current ns's map
   extended by param bindings + self-binding. Anticipated resolution
-  (confirmed in phase 2): unqualified → current ns, fallback to global
-  `""` on miss (core stays reachable everywhere, as in compiled code);
-  qualified `ns/name` → `namespaces[ns]` exactly. Parser produces the
-  `ns` field on `Symbol` from day one.
+  (confirmed when `add-ns` lands): unqualified → current ns, fallback to
+  global `""` on miss (core stays reachable everywhere, as in compiled
+  code); qualified `ns/name` → `namespaces[ns]` exactly. Parser produces
+  the `ns` field on `Symbol` from day one.
 - **`eval` dispatch**: `(defp eval [expr env])` — protocol over the
   Expression constructors (receiver = the Expression, first arg), one
-  `extend-type` impl per constructor. Phase 2's abstract interpreter
+  `extend-type` impl per constructor. Phase 3's abstract interpreter
   mirrors this with its own protocol over the same constructors.
   Constructor set eval must handle (the actual `Expression` constructors
   the phase-1 parser produces): `Symbol [ns name loc]` (the symbol ref),
@@ -611,10 +670,12 @@ each form's rule arrives with its phase.
   in cond-expr-1 to a plain String) — eval never sees a symbol literal.
 - **Parse output: a hash map of name → AST value** (not a list).
   Top-level `defn`/`def` → entry under the name; `main` → entry under
-  `"main"`; top-level `inline` → **parse error** (no name to enter the
-  map — enforces the phase-1 user-inline-C rejection at parse time);
-  comments skipped.
-- **Top-levels are LAZY, no memoization (phase 1)**: a top-level name
+  `"main"`; `defp` / `deftype` / `extend-type` → entry under the name;
+  top-level `inline` is nameless (its map representation is decided in
+  checklist item 6f); comments skipped. The reader (phase 1) parses all of
+  these to read hvm-core.toc; the interpreter (phase 2) interprets only
+  `defn`/`def`/`main` and treats the rest as data.
+- **Top-levels are LAZY, no memoization (phase 2)**: a top-level name
   binds to its AST (wrapped in a marker deftype so lookup can tell
   "top-level def — evaluate it" from "already a value — return it"
   without dispatching on raw values); the AST is evaluated on first use
@@ -630,9 +691,9 @@ each form's rule arrives with its phase.
   tests still validate core behavior on the 20 clean candidates.)
 - **Whole-file read: inline-C function named `slurp`** (in
   `interpreter/intrp.toc`).
-- **Error reporting (phase 1)**: `file:line: message` to stderr + abort
+- **Error reporting (phase 2)**: `file:line: message` to stderr + abort
   (non-zero exit), uniform across parse/structural/runtime errors; no
-  Maybe-threading through eval; no backtraces. (Phase 2's typechecker
+  Maybe-threading through eval; no backtraces. (Phase 3's typechecker
   gets its own collected-error mechanism.)
 - **Makefile**: repurpose the `intrp` target — `intrp.c:
   interpreter/intrp.toc interpreter/intrp-ast.toc
@@ -655,26 +716,24 @@ each form's rule arrives with its phase.
   20 differential candidates + `intrp-tests` reference (the audit
   produces the list); grow when a test hits an unbound core symbol.
 
-## Phase-1 design status
+## Phase-2 design status
 
 Complete except two deferred pieces that settle together at the
-**checklist item 7 stop point** (joint decision with the owner — the
-loop stops there rather than guessing): the **primitive representation**
-(how core REFs are represented in the environment and called — likely an
-`apply`-like core function) and the **top-level-def marker shape** (the
-wrapper that lets symbol lookup tell "top-level def — evaluate" from
-"value — return" without dispatching on raw values).
+**phase-1 → phase-2 boundary** (the phase-2 checklist's first item, 7, is a
+STOP POINT — a joint decision with the owner; the loop stops there rather
+than guessing): the **primitive representation** (how core REFs are
+represented in the environment and called — likely an `apply`-like core
+function) and the **top-level-def marker shape** (the wrapper that lets
+symbol lookup tell "top-level def — evaluate" from "value — return" without
+dispatching on raw values).
 
-## Phase 1 implementation checklist (Ralph loop)
+## Phase 1 implementation checklist (Ralph loop) — reader
 
 Protocol: work top to bottom, one item per session. Check an item off
 only when its "done when" holds, then commit. Context for every item:
-this file (the settled design above) + AGENTS.md. The interpreter's own
-source may use inline C freely; *interpreted programs* may not. Never
-touch the `toccata` Makefile target. **Item 7 is a STOP POINT** — the
-primitive representation is a joint decision (owner + agent); when the
-loop reaches it, stop and report the state. Do not choose a design
-unilaterally.
+this file (the settled design above) + AGENTS.md. The reader's own source
+may use inline C freely. Never touch the `toccata` Makefile target. Phase 1
+ends at item 6g: a reader that fully reads `hvm-core.toc`.
 
 - [x] **1. Core: `strCmp` prefix mode**
   - `runtime3.h`: add `#define STR_PREFIX 4` alongside `STR_EQ`/`STR_LT`
@@ -703,7 +762,7 @@ unilaterally.
     reference — see verified facts).
 
 - [x] **3. Test audit**
-  - Line-by-line audit of the 51 regression tests against the phase-1
+  - Line-by-line audit of the 51 regression tests against the phase-2 (concrete interpreter)
     scope; record the suitable list (expect the ~20 clean candidates
     from the rough audit above) and the union of core symbols they
     reference (feeds item 7's initial env). Flag any candidate that
@@ -784,6 +843,75 @@ unilaterally.
     lines); no positional vector grouping remains in `interpreter/*.toc`;
     both drivers pass with zero leaks (the 19-test map check unchanged).
 
+- [x] **6c. `interpreter/intrp-rdr.toc`: reader — `defp`**
+  - Parse `(defp name [params])` (bare protocol declaration, empty body)
+    and `(defp name [params] !annos body)` (with `!`/`!returns`
+    annotations and an optional body expression) → `TopLevel.Defp
+    [name parameter-list body]`. The AST ctor already exists.
+  - Done when: a scratch driver parses a bare defp, a defp with
+    `!returns`, and a defp with a body to the expected `Defp` shapes
+    (field access + `println*`), zero leaks.
+  - As-built (2026-09-01): `parse-top-defp` reuses `read-param-list` +
+    `parse-body` (leading `!` constraints + optional body until `)`);
+    `parse-top-level-args` dispatches `defp` → `parse-top-defp`.
+    Driver `interpreter/rdr-defp.toc` (4 samples: bare, comment +
+    `!returns`, `!returns` + body, special-symbol name `=`) — all pass,
+    zero leaks; `rdr-defp` Makefile target follows the `rdr-top`
+    pattern. `rdr-top.toc`'s `defp` OosCase removed (6 OOS forms left).
+
+- [ ] **6d. `interpreter/intrp-rdr.toc`: reader — `deftype`**
+  - Parse both deftype forms → `TopLevel.DefType [type-name constructors]`
+    with `Constructor [name field-list implementations]` nodes:
+    multi-ctor `(deftype T (C1 [f...]) (C2 [f...] (impl ...)))` and
+    single-ctor `(deftype Ctor [f...] (impl ...))`. The ctor list may also
+    name an existing compiler-defined type (the bare `StringBuffer` in
+    `deftype String StringBuffer (SubString ...)`) — record it as a
+    name-only constructor entry; no special handling. Ctor protocol impls
+    are named fns.
+  - Done when: a scratch driver parses the 5 hvm-core deftypes (Maybe,
+    Leaf, GetSentinelVal, String, List) to the expected `DefType` /
+    `Constructor` shapes, zero leaks.
+
+- [ ] **6e. `interpreter/intrp-rdr.toc`: reader — `extend-type`**
+  - Parse `(extend-type T (proto [params] body) ...)` → `TopLevel.ExtendType
+    [type-name methods]`. Nail down the method shape (likely `Fn` nodes:
+    name = protocol, params, body). The AST ctor already exists.
+  - Done when: a scratch driver parses the `None`/`Some` extend-type blocks
+    (and one with a `let`/`->` body) to the expected shape, zero leaks.
+
+- [ ] **6f. `interpreter/intrp-rdr.toc`: reader — top-level + expression
+    `inline`**
+  - Top-level `inline` (the 2 global C declaration blocks in hvm-core.toc):
+    parse `(inline "...")` and `(inline TypeName "...")` → `TopLevel.Inline`
+    (the `Expression/Inline [type-expr c-code loc]` node). Decide its
+    parse-output representation — it has no name, so it can't be a keyed map
+    entry (a separate nameless list, or a synthetic key).
+  - Expression-level `inline` (69 in hvm-core.toc) currently parses as a
+    plain `Call` with operator `inline`. Decide whether to keep that or
+    lower to `Expression.Inline` nodes (faithful, but the interpreter
+    treats core inline as native primitives either way).
+  - Done when: a scratch driver parses a top-level inline block and an
+    expression inline to the chosen shapes; the parse output accommodates
+    nameless top-levels, zero leaks.
+
+- [ ] **6g. Reader acceptance: fully read `hvm-core.toc`**
+  - A driver runs `parse-program` over `hvm-core.toc` and produces a
+    complete name → TopLevel map with **zero parse errors**. Every top-level
+    form is accounted for: 108 `defn`, 5 `def`, 58 `defp`, 5 `deftype`,
+    16 `extend-type`, 2 top-level `inline` (194 total).
+  - Done when: `parse-program` on `hvm-core.toc` returns a `ParserMatch`
+    (not `ParserError`), the map has the expected entry count, and a
+    spot-check of one `defp`, one `deftype`, one `extend-type`, and one
+    `inline` shows the correct shapes. Zero leaks.
+
+## Phase 2 implementation checklist (Ralph loop) — concrete interpreter
+
+Items 7–13 are the former phase-1 interpreter work, moved here unchanged.
+Same protocol as phase 1. **Item 7 is a STOP POINT** — the primitive
+representation + top-level-def marker shape are joint decisions (owner +
+agent) made at the phase-1 → phase-2 boundary; when the loop reaches it,
+stop and report the state. Do not choose a design unilaterally.
+
 - [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment — STOP
     POINT**
   - `(deftype Closure [name params body env])`,
@@ -855,4 +983,5 @@ unilaterally.
     checked.
   - Done when: all items checked.
 
-Phases 2–3: to be specified when we get there.
+Phases 3–4 (abstract interpreter, code generation): to be specified when we
+get there.
