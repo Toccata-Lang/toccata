@@ -852,9 +852,10 @@
 
       (ParserError "expected a protocol impl name" s))))
 
-;; parse-ctor-impls-acc: parse a ctor's protocol impls until the
-;; closing `)` (consumed). Returns ParsedList [fns state-after-`)`].
-(defn parse-ctor-impls-acc [state acc]
+;; parse-impls-acc: parse protocol impls (named fns) until the closing
+;; `)` (consumed). Shared by deftype ctor impls and extend-type methods.
+;; Returns ParsedList [fns state-after-`)`].
+(defn parse-impls-acc [state acc]
   (let [s (skip-whitespace state)
         input (.input s)]
     (cond (str-prefix? ")" input)
@@ -865,12 +866,12 @@
 
       (str-prefix? "(" input)
       (let [p (parse-impl s)]
-        (parse-ctor-impls-acc (.state p) (vect-conj acc (.value p))))
+        (parse-impls-acc (.state p) (vect-conj acc (.value p))))
 
-      (ParserError "expected a protocol impl in ctor" s))))
+      (ParserError "expected a protocol impl" s))))
 
-(defn parse-ctor-impls [state]
-  (parse-ctor-impls-acc state empty-vector))
+(defn parse-impls [state]
+  (parse-impls-acc state empty-vector))
 
 ;; parse-ctor-body: state after the ctor name. Either `[fields]` +
 ;; impls, or impls only (no field list -> no fields). Returns
@@ -879,11 +880,11 @@
   (let [s (skip-whitespace state)]
     (cond (str-prefix? "[" (.input s))
       (let [fields (read-param-list (skip-whitespace (take-char s)))
-            impls (parse-ctor-impls (.state fields))]
+            impls (parse-impls (.state fields))]
         (ParserMatch (ast/Constructor name (.params fields) (.exprs impls))
                      (.state impls)))
 
-      (let [impls (parse-ctor-impls s)]
+      (let [impls (parse-impls s)]
         (ParserMatch (ast/Constructor name empty-vector (.exprs impls))
                      (.state impls))))))
 
@@ -937,7 +938,7 @@
   (let [s (skip-whitespace state)]
     (cond (str-prefix? "[" (.input s))
       (let [fields (read-param-list (skip-whitespace (take-char s)))
-            impls (parse-ctor-impls (.state fields))
+            impls (parse-impls (.state fields))
             ctor (ast/Constructor name (.params fields) (.exprs impls))]
         (ParserMatch (TopLevelEntry name (ast/DefType name [ctor]))
                      (.state impls)))
@@ -957,6 +958,22 @@
         (parse-top-deftype-body (sub-to-str (.text nm)) (.state nm)))
 
       (ParserError "expected a type name after deftype" s))))
+
+;; parse-top-extend-type: state just after `extend-type`.
+;; `(extend-type T (proto [params] body) ...)` — the methods are named
+;; fns, parsed by the same parse-impls collector as ctor impls, and
+;; recorded as Fn nodes (name = protocol, params, body).
+(defn parse-top-extend-type [state]
+  (let [s (skip-whitespace state)]
+    (cond (symbol-start? (.input s))
+      (let [nm (read-symbol s)
+            name (sub-to-str (.text nm))
+            methods (parse-impls (.state nm))]
+        (ParserMatch (TopLevelEntry name
+                                    (ast/ExtendType name (.exprs methods)))
+                     (.state methods)))
+
+      (ParserError "expected a type name after extend-type" s))))
 
 ;; parse-top-main: state just after `main`.
 (defn parse-top-main [state]
@@ -988,8 +1005,7 @@
 
         (str= name "defp") (parse-top-defp s2)
 
-        (str= name "extend-type")
-        (ParserError "extend-type is not supported in phase 1" s2)
+        (str= name "extend-type") (parse-top-extend-type s2)
 
         (str= name "add-ns")
         (ParserError "add-ns is not supported in phase 1" s2)

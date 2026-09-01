@@ -1,0 +1,251 @@
+;; interpreter/rdr-extend-type.toc — item-6e verification driver.
+;;
+;; Parses extend-type forms through intrp-rdr.toc's parse-program and
+;; checks each yields a name -> TopLevel map with exactly one entry, a
+;; TopLevel.ExtendType with the expected type name and a methods vector
+;; of Fn nodes (name = protocol, params, body):
+;;   1. the hvm-core None block (8 methods, plain bodies)
+;;   2. the hvm-core Some block (10 methods, a -> body)
+;;   3. a let-body method (desugars to an Fn-operator Call)
+;;
+;; Expected output: 3 "OK" lines (one per sample). Any "FAIL" line
+;; indicates a problem. Run from the repo root: ./rdr-extend-type
+;;
+;; The driver is interpreter-side tooling; interpreted programs may not
+;; use these constructs.
+
+(add-ns ast (module "intrp-ast.toc"))
+(add-ns rdr (module "intrp-rdr.toc"))
+
+;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
+(defp maybe-kind [m])
+(extend-type None (maybe-kind [_] 0))
+(extend-type Some (maybe-kind [_] 1))
+
+;; top-kind: tag a TopLevel value (the map's values are the TopLevel
+;; union; field getters need a concrete ctor, so the ext-* protocols
+;; below are guarded by this tag).
+(defp top-kind [v])
+(extend-type ast/Definition (top-kind [_] 0))
+(extend-type ast/Defp (top-kind [_] 1))
+(extend-type ast/Main (top-kind [_] 2))
+(extend-type ast/DefType (top-kind [_] 3))
+(extend-type ast/ExtendType (top-kind [_] 4))
+(extend-type ast/AddNs (top-kind [_] 5))
+
+;; ext-*: extract an ExtendType's fields (receiver statically ExtendType).
+(defp ext-type-name [v])
+(extend-type ast/ExtendType (ext-type-name [v] (.type-name v)))
+
+(defp ext-methods [v])
+(extend-type ast/ExtendType (ext-methods [v] (.methods v)))
+
+;; fn-*: extract a method Fn's fields (receiver statically Fn).
+(defp fn-name [v])
+(extend-type ast/Fn (fn-name [v] (.name v)))
+
+(defp fn-params [v])
+(extend-type ast/Fn (fn-params [v] (.parameter-list v)))
+
+(defp fn-body [v])
+(extend-type ast/Fn (fn-body [v] (.body v)))
+
+;; elem-kind: tag a method-body element.
+(defp elem-kind [e])
+(extend-type ast/TypeConstraint (elem-kind [_] 1))
+(extend-type ast/Call (elem-kind [_] 2))
+(extend-type ast/Symbol (elem-kind [_] 3))
+(extend-type ast/StringLit (elem-kind [_] 4))
+(extend-type ast/IntegerLit (elem-kind [_] 5))
+(extend-type ast/FieldGetter (elem-kind [_] 6))
+
+;; op-kind: tag a Call's operator.
+(defp op-kind [e])
+(extend-type ast/Symbol (op-kind [_] 1))
+(extend-type ast/Fn (op-kind [_] 2))
+(extend-type ast/FieldGetter (op-kind [_] 3))
+
+;; Field extraction (receiver statically typed per ctor).
+(defp tc-symbol [e])
+(extend-type ast/TypeConstraint (tc-symbol [e] (.symbol e)))
+
+(defp tc-type [e])
+(extend-type ast/TypeConstraint (tc-type [e] (.type-expr e)))
+
+(defp call-op [e])
+(extend-type ast/Call (call-op [e] (.operator e)))
+
+(defp call-operands [e])
+(extend-type ast/Call (call-operands [e] (.operands e)))
+
+(defp sym-ns [e])
+(extend-type ast/Symbol (sym-ns [e] (.ns e)))
+
+(defp sym-name [e])
+(extend-type ast/Symbol (sym-name [e] (.sym-name e)))
+
+(defp str-val [e])
+(extend-type ast/StringLit (str-val [e] (.value e)))
+
+(defp int-val [e])
+(extend-type ast/IntegerLit (int-val [e] (.value e)))
+
+(defp get-name [e])
+(extend-type ast/FieldGetter (get-name [e] (.field-name e)))
+
+;; op-fingerprint: a Call operator -> a short string.
+;;   Symbol      -> its name
+;;   Fn          -> "fn"
+;;   FieldGetter -> "." + field name
+(defn op-fingerprint [e]
+  (let [k (op-kind e)]
+    (cond (= k 1)
+      (sym-name e)
+
+      (= k 2)
+      "fn"
+
+      (str* [". " (get-name e)]))))
+
+;; elem-fingerprint: one body element -> a fingerprint string.
+;;   TypeConstraint -> "tc <symbol> <type>"
+;;   Call           -> "c <op> (<operand-count>)"
+;;   Symbol         -> "s <ns>/<name>"
+;;   StringLit      -> "S <value>"
+;;   IntegerLit     -> "i <value>"
+;;   FieldGetter    -> "g <name>"
+(defn elem-fingerprint [e]
+  (let [k (elem-kind e)]
+    (cond (= k 1)
+      (str* ["tc " (tc-symbol e) " " (tc-type e)])
+
+      (= k 2)
+      (str* ["c " (op-fingerprint (call-op e)) " ("
+             (number-str (count (call-operands e))) ")"])
+
+      (= k 3)
+      (str* ["s " (sym-ns e) "/" (sym-name e)])
+
+      (= k 4)
+      (str* ["S " (str-val e)])
+
+      (= k 5)
+      (str* ["i " (int-val e)])
+
+      (str* ["g " (get-name e)]))))
+
+;; method-fingerprint: one method Fn ->
+;; "m <name> <params><body elements>".
+(defn method-fingerprint [m]
+  (str* ["m " (fn-name m) " " (str* (str-vect (fn-params m))) " "
+         (str* (map (fn-body m) elem-fingerprint))]))
+
+;; methods-fingerprint: the methods vector -> one fingerprint string
+;; (methods in order, no separators).
+(defn methods-fingerprint [methods]
+  (str* (map methods method-fingerprint)))
+
+;; print-all-acc: print every string in the vector, threading the pr*
+;; counts into the accumulator so the lazy machine keeps every side
+;; effect (a dropped count would skip earlier prints). Self-recursive.
+(defn print-all-acc [acc strs]
+  (cond (= (count strs) 0)
+    acc
+    (let [s (extract (first strs))]
+      (print-all-acc (+ acc (pr* s)) (rest strs)))))
+
+;; check-extend: parse one extend-type source; verify the map has
+;; exactly one entry — an ExtendType with the expected type name and
+;; methods fingerprint. Prints one status line. Returns the threaded
+;; acc.
+(defn check-extend [acc src name expected-methods]
+  (let [r (rdr/parse-program (rdr/make-state src "extend-test.toc" 1))
+        k (rdr/result-kind r)]
+    (cond (= k 2)
+      (let [st (.state r)
+            line (rdr/state-line st)
+            msg (.msg r)]
+        (print-all-acc acc
+                       ["FAIL(parse) " name ":" (number-str line) ": " msg "\n"]))
+
+      (let [m (.value r)
+            e (get m name)
+            ek (maybe-kind e)]
+        (cond (= ek 0)
+          (print-all-acc acc ["FAIL " name ": no map entry\n"])
+
+          (let [v (extract e)
+                tk (top-kind v)]
+            (cond (= tk 4)
+              (let [nm (ext-type-name v)
+                    mf (methods-fingerprint (ext-methods v))]
+                (cond (and (= (count m) 1)
+                           (str= nm name)
+                           (str= mf expected-methods))
+                  (print-all-acc acc
+                                 ["OK " name " methods=" mf "\n"])
+                  (print-all-acc acc
+                                 ["FAIL " name " entries=" (number-str (count m))
+                                  " name=" nm " methods=" mf
+                                  " want-methods=" expected-methods "\n"])))
+
+              (print-all-acc acc
+                             ["FAIL " name ": entry is not an ExtendType (kind "
+                              (number-str tk) ")\n"]))))))))
+
+(main [_]
+  (let [r1 (check-extend 0
+            "(extend-type None
+  (str-vect [_]
+    [\"None\"])
+  (= [x y]
+    (= (type-num x) (type-num y)))
+  (recurse [v f]
+    v)
+  (either [v cont]
+    cont)
+  (cond [v x cont]
+        cont)
+  (and [x _]
+    x)
+  (or [_ y]
+    y)
+  (map [x f]
+    x))"
+            "None"
+            "m str-vect [_] c vect-conj (2)m = [x y] c = (2)m recurse [v f] s /vm either [v cont] s /contm cond [v x cont] s /contm and [x _] s /xm or [_ y] s /ym map [x f] s /x")
+        r2 (check-extend r1
+            "(extend-type Some
+  (str-vect [s]
+    (-> [\"(Some \"]
+        (comp (str-vect (.x s)))
+        (vect-conj \")\")))
+  (= [x y]
+    (and (= (type-num x) (type-num y))
+         (= (.x x) (.x y))))
+  (extract [v]
+    (.x v))
+  (recurse [v f]
+    (Some (f (.x v))))
+  (either [v _]
+    (.x v))
+  (cond [v clause _]
+        clause)
+  (and [_ y]
+    y)
+  (or [q _]
+    q)
+  (map [v f]
+    (Some (f (.x v))))
+  (flat-map [v f]
+    (f (.x v))))"
+            "Some"
+            "m str-vect [s] c vect-conj (2)m = [x y] c and (2)m extract [v] c .x (1)m recurse [v f] c Some (1)m either [v _] c .x (1)m cond [v clause _] s /clausem and [_ y] s /ym or [q _] s /qm map [v f] c Some (1)m flat-map [v f] c f (1)")
+        r3 (check-extend r2
+            "(extend-type Foo
+  (bar [x y]
+    (let [z (+ x y)]
+      z)))"
+            "Foo"
+            "m bar [x y] c fn (1)")]
+    r3))

@@ -621,6 +621,14 @@ rules; each form's rule arrives with its phase.
   extract the inner cond into a helper (`parse-ctor-body`,
   `parse-top-deftype-body`) so the outer clause is a plain call.
 
+- **A direct `(.field v)` call parses as a `Call` with a `Symbol`
+  operator named `".field"` — NOT a `FieldGetter` operator** (2026-09-01,
+  item 6e): `parse-call` reads `.field` via `read-full-symbol` and
+  `dispatch-special` falls through to the plain-Call branch.
+  `FieldGetter` operators arise ONLY from `->` threading steps (the
+  `Symbol .f` thread-step branch). Phase-2 eval must therefore resolve a
+  leading-dot Symbol operator as a field getter.
+
 - **Item-6d driver: `interpreter/rdr-deftype.toc`** (2026-09-01):
   parses the 5 hvm-core.toc deftypes (Maybe, Leaf, String,
   GetSentinelVal, List) verbatim through `parse-program` and checks
@@ -915,6 +923,18 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
     name = protocol, params, body). The AST ctor already exists.
   - Done when: a scratch driver parses the `None`/`Some` extend-type blocks
     (and one with a `let`/`->` body) to the expected shape, zero leaks.
+  - As-built (2026-09-01): method shape = `Fn` nodes (name = protocol,
+    params, body) — parsed by `parse-impl` / `parse-impls` (renamed from
+    `parse-ctor-impls`; now shared by deftype ctor impls and extend-type
+    methods). `parse-top-extend-type` reads the type name + method list;
+    the entry is keyed under the type name in the map. Driver
+    `interpreter/rdr-extend-type.toc` (the hvm-core `None` block — 8
+    methods — the `Some` block — 10 methods incl. a `->` body — and a
+    synthetic `let`-body method; checked by type name + methods
+    fingerprint: per-method name/params/body-elem fingerprints) — all 3
+    OK, zero leaks; the `rdr-extend-type` Makefile target follows the
+    `rdr-top` pattern. `rdr-top.toc`'s `extend-type` OosCase removed
+    (4 OOS forms left; 24 checks pass).
 
 - [ ] **6f. `interpreter/intrp-rdr.toc`: reader — top-level + expression
     `inline` + vector parse output**
