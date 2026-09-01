@@ -258,6 +258,13 @@ rules; each form's rule arrives with its phase.
 
 ## Verified facts (2026-08-26)
 
+- **When `new-toc` does not compile successfully, you MUST check its
+  stderr to see whether an error was reported** (e.g. `*** Undefined
+  symbol: ... at <file>: <line>`) rather than assuming the failure is
+  spurious. If an error is reported, the abort is correct — the bug is
+  in the source being compiled, not in the compiler. The `*** Loading
+  ...`, `*** Loaded ...`, and `*** declare ...` lines are normal
+  progress output, not errors.
 - `interpreter/intrp-ast.toc` parses/typechecks clean under `new-toc`
   (aborts only on missing `main`, as a library file would).
   `interpreter/intrp-rdr.toc` compiles clean with zero leak.
@@ -640,6 +647,27 @@ rules; each form's rule arrives with its phase.
   WITH its `[`/`]` — the first driver draft added extra brackets and
   printed `[[x]]`.
 
+- **new-toc non-deterministic module symbol loss (2026-09-01, item 6f)**:
+  with `parse-program`'s defn LAST in `intrp-rdr.toc` (the natural
+  order), new-toc drops `parse-program` from the module's symbol table
+  in ~90% of builds — the importing driver fails with `Undefined symbol:
+  'rdr/parse-program'` (or whichever symbol the driver references last).
+  The SAME file sometimes compiles clean, so it is a race inside new-toc,
+  not a source error (bisection over the file's contents changed the
+  failure rate but never eliminated it). Workaround (applied, verified):
+  forward-declare `parse-program-acc` and put `parse-program`'s defn
+  BEFORE `parse-program-acc`'s — 0 undefined-symbol failures in 40+ builds.
+  Transient no-message segfaults still occur in ~30% of builds of the
+  same file — retry (existing rule).
+- **Driver-probe gotchas (2026-09-01, item 6f)**: (a) `pr*` on a VECTOR
+  of strings aborts silently (SIGABRT, no output) — `pr*` takes one
+  string; use `(str* [...])` to build it. (b) `str-vect` is NOT
+  implemented on the `TopLevel` ctors (only the `Expression` ctors) —
+  drivers fingerprint TopLevel values with the `top-kind` tag + per-ctor
+  extraction, never `str-vect`. (c) scratch binaries must be built with
+  `-DCHECK_MEM_LEAK=1` (the Makefile targets do) — without it, lazy
+  evaluation hits `BOOM("Make this threadsafe")` in `eraseLazy` (new.c).
+
 ## Settled (continued)
 
 - **Interpreter work lives in `interpreter/`** (2026-08-28): all
@@ -936,7 +964,7 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
     `rdr-top` pattern. `rdr-top.toc`'s `extend-type` OosCase removed
     (4 OOS forms left; 24 checks pass).
 
-- [ ] **6f. `interpreter/intrp-rdr.toc`: reader — top-level + expression
+- [x] **6f. `interpreter/intrp-rdr.toc`: reader — top-level + expression
     `inline` + vector parse output**
   - Top-level `inline` (the 2 global C declaration blocks in hvm-core.toc):
     parse `(inline "...")` and `(inline TypeName "...")` → `TopLevel.Inline`
@@ -965,6 +993,26 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
     expression inline to the settled shapes; `parse-program` returns the
     vector; all three existing drivers pass (reworked to vector lookups),
     zero leaks.
+  - As-built (2026-09-01): `parse-inline` (+ `parse-inline-typed` /
+    `parse-inline-code`) parses `(inline <type-expr> "<c-code>")` /
+    `(inline "<c-code>")` → `ast/Inline [type-expr c-code loc]` (type-expr
+    = `None` or `Some` of one ordinary expression; the c-code is the
+    `read-string` SubString view); shared by the top-level form
+    (`parse-top-level-args`) and the expression level (`dispatch-special`
+    `inline` branch) — the `TopLevel.Inline` entry is the bare reference
+    to `Expression/Inline`. Vector output: `parse-program` returns the
+    `[TopLevel]` vector in source order (`parse-program-acc` accumulator);
+    the `TopLevelEntry` wrapper and `sub-to-str` keying are removed from
+    the parser. Build crutch: `parse-program` precedes
+    `parse-program-acc` in the file (new-toc symbol-loss race — see
+    Verified facts). Drivers: `rdr-top` (23 OK), `rdr-defp` (4 OK),
+    `rdr-deftype` (5 OK), `rdr-extend-type` (3 OK) all reworked to vector
+    lookups (`top-kind` tag + find-by-name) and passing; new
+    `interpreter/rdr-inline.toc` (5 samples: top-level nameless/typed,
+    `def`-bound nameless/typed, and a mixed `def`/`inline`/`defn` file —
+    checked by `top-kind` + per-ctor fingerprint) — all OK, zero leaks,
+    0 remaining nodes; the `rdr-inline` Makefile target follows the
+    `rdr-top` pattern.
 
 - [ ] **6g. Reader acceptance: fully read `hvm-core.toc`**
   - A driver runs `parse-program` over `hvm-core.toc` and produces a

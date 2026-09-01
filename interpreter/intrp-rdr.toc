@@ -259,6 +259,7 @@
   (ast/Location (extract (get (.values state) "file"))
                 (state-line state)))
 
+
 (defn read-full-symbol [state]
   (let [tok (read-symbol state)
         fst (.text tok)
@@ -457,6 +458,46 @@
 ;; compiler will resolve mutual recursion itself).
 
 (def parse-expr)
+
+;; parse-inline-code: state at the C code string (or just after the
+;; type expression). `te` = None or Some of the type expression.
+;; Returns ParserMatch [Inline state-after-`)`].
+(defn parse-inline-code [te state]
+  (let [s (skip-whitespace state)
+        r (read-string s)
+        text (.text r)
+        s2 (.state r)
+        s3 (skip-whitespace s2)]
+    (cond (str= text "")
+      (ParserError "expected a C code string in inline" s)
+
+      (str-prefix? ")" (.input s3))
+      (ParserMatch (ast/Inline te text (make-loc s2))
+                   (take-char s3))
+
+      (ParserError "expected ) after inline C code" s3))))
+
+;; parse-inline-typed: state at the type expression (one ordinary
+;; expression; a bare type name in all hvm-core uses).
+(defn parse-inline-typed [state]
+  (let [te (parse-expr state)
+        tk (result-kind te)]
+    (cond (= tk 2)
+      te
+
+      (parse-inline-code (Some (.value te)) (.state te)))))
+
+;; parse-inline: state just after the `inline` keyword.
+;; `(inline <type-expr> "<c-code>")` or `(inline "<c-code>")` ->
+;; ParserMatch [Inline state-after-`)`]. Shared by the top-level form
+;; and the expression level (the Inline node is the same ctor —
+;; TopLevel.Inline is a bare reference to Expression/Inline).
+(defn parse-inline [state]
+  (let [s (skip-whitespace state)]
+    (cond (str-prefix? "\"" (.input s))
+      (parse-inline-code None s)
+
+      (parse-inline-typed s))))
 
 ;; collect-until: parse expressions until `delim` (consumed). Returns
 ;; ParsedList [exprs state-after-delimiter].
@@ -659,6 +700,7 @@
         (str= name "or") (parse-or state)
         (str= name "str") (parse-str state)
         (str= name "println") (parse-println state)
+        (str= name "inline") (parse-inline state)
         (str= name "->") (parse-threading state)
         (let [res (collect-until state ")")]
           (ParserMatch (ast/Call (ast/Symbol ns name (make-loc state))
@@ -963,8 +1005,7 @@
 
         (str= name "main") (parse-top-main s2)
 
-        (str= name "inline")
-        (ParserError "top-level inline is not supported in phase 1" s2)
+        (str= name "inline") (parse-inline s2)
 
         (str= name "deftype") (parse-top-deftype s2)
 
@@ -1005,6 +1046,24 @@
 
           (ParserError "unexpected character at top level" s))))
 
+;; parse-program-acc is forward-declared: parse-program references it
+;; before its defn (build crutch — the new compiler will resolve mutual
+;; recursion itself).
+;;
+;; Build crutch (ordering): parse-program must precede parse-program-acc
+;; in the file. With the natural order (acc first, parse-program last),
+;; new-toc non-deterministically drops parse-program from the module's
+;; symbol table — the importing driver then fails with "Undefined
+;; symbol: 'rdr/parse-program'" (~90% of builds; the same file sometimes
+;; compiles clean, so it is a race, not a source error). The swapped
+;; order has not failed in 40+ builds. See the plan's Verified facts.
+(def parse-program-acc)
+
+;; parse-program: parse a whole file into a [TopLevel] vector in source
+;; order.
+(defn parse-program [state]
+  (parse-program-acc state empty-vector))
+
 ;; parse-program-acc: parse top-level forms until EOF, accumulating the
 ;; [TopLevel] vector in source order.
 (defn parse-program-acc [state v]
@@ -1023,8 +1082,3 @@
                   (let [node (.value r)]
                     (parse-program-acc (.state r)
                                        (vect-conj v node)))))))))
-
-;; parse-program: parse a whole file into a [TopLevel] vector in source
-;; order.
-(defn parse-program [state]
-  (parse-program-acc state empty-vector))
