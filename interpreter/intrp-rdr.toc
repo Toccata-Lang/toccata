@@ -46,7 +46,6 @@
 ;; --- ParserResults ---------------------------------------------------
 
 (deftype ParserResults
-  (ParserFail [])
   (ParserMatch [value state])
   (ParserIgnore [state])
   (ParserError [msg state]))
@@ -56,13 +55,6 @@
 ;; Multi-value returns, each with named fields, accessed via getters.
 ;; Each implements map / flat-map per docs/toccata-style.md. No `!`
 ;; annotations (new-toc mis-applies them on multi-field ctors).
-
-;; Parsed: a parsed expression value + the state after it.
-(deftype Parsed [value state]
-  (map [v f]
-    (Parsed (f (.value v)) (f (.state v))))
-  (flat-map [v f]
-    (ast/vect-concat (f (.value v)) (f (.state v)))))
 
 ;; ParsedList: a vector of parsed expressions + the state after the
 ;; closing delimiter (or EOF).
@@ -319,7 +311,6 @@
 (extend-type ParserMatch (result-kind [_] 0))
 (extend-type ParserIgnore (result-kind [_] 1))
 (extend-type ParserError (result-kind [_] 2))
-(extend-type ParserFail (result-kind [_] 3))
 
 (defn make-loc [state]
   (let [file (extract (get (.values state) "file"))]
@@ -494,19 +485,19 @@
 
 ;; --- Leaf expression parsers -----------------------------------------
 ;;
-;; Each returns Parsed [Expression state-after].
+;; Each returns ParserMatch [Expression state-after].
 
 (defn parse-string-lit [state]
   (let [r (read-string state)
         content (.text r)
         s2 (.state r)]
-    (Parsed (ast/StringLit content (make-loc s2)) s2)))
+    (ParserMatch (ast/StringLit content (make-loc s2)) s2)))
 
 (defn parse-quoted-sym [state]
   (let [r (read-symbol (take-char state))
         text (.text r)
         s2 (.state r)]
-    (Parsed (ast/StringLit text (make-loc s2)) s2)))
+    (ParserMatch (ast/StringLit text (make-loc s2)) s2)))
 
 (defn parse-number [state]
   (let [r (read-float state)
@@ -514,13 +505,13 @@
         s2 (.state r)
         loc (make-loc s2)]
     (cond (contains-dot text)
-          (Parsed (ast/FloatLit text loc) s2)
+          (ParserMatch (ast/FloatLit text loc) s2)
           (let [n (text-to-int text)]
-            (Parsed (ast/IntegerLit n loc) s2)))))
+            (ParserMatch (ast/IntegerLit n loc) s2)))))
 
 (defn parse-symbol [state]
   (let [r (read-full-symbol state)]
-    (Parsed (ast/Symbol (.ns r) (.nom r) (make-loc (.state r)))
+    (ParserMatch (ast/Symbol (.ns r) (.nom r) (make-loc (.state r)))
             (.state r))))
 
 ;; read-param-list: a `[ p1 p2 ... ]` parameter list. state is just
@@ -537,14 +528,14 @@
 (defn read-param-list [state]
   (read-param-list-acc state empty-vector))
 
-;; parse-type-constraint: state at `!`. Returns Parsed [TypeConstraint
+;; parse-type-constraint: state at `!`. Returns ParserMatch [TypeConstraint
 ;; state-after].
 (defn parse-type-constraint [state]
   (let [s (skip-whitespace (take-char state))
         nm (read-symbol s)
         sym (.text nm)
         te (read-type-expr (skip-whitespace (.state nm)))]
-    (Parsed (ast/TypeConstraint sym (.text te)) (.state te))))
+    (ParserMatch (ast/TypeConstraint sym (.text te)) (.state te))))
 
 ;; --- Collection helpers ----------------------------------------------
 ;;
@@ -646,7 +637,7 @@
 
 ;; --- Special form parsers --------------------------------------------
 ;;
-;; Each takes the state just after the form keyword and returns Parsed
+;; Each takes the state just after the form keyword and returns ParserMatch
 ;; [desugared-Expression state-after].
 
 ;; parse-fn-params: state at the `[` of a fn parameter list.
@@ -659,10 +650,10 @@
                 s3 (.state params)
                 body (parse-body s3)
                 s4 (.state body)]
-            (Parsed (ast/Fn name (.params params) (.exprs body)
+            (ParserMatch (ast/Fn name (.params params) (.exprs body)
                             (make-loc s4))
                     s4))
-          (Parsed (ast/Symbol "" "" (make-loc s)) s))))
+          (ParserMatch (ast/Symbol "" "" (make-loc s)) s))))
 
 ;; parse-fn: state just after `fn`. Named or anonymous.
 (defn parse-fn [state]
@@ -676,7 +667,7 @@
                 fn-name (.text nm)]
             (parse-fn-params fn-name (skip-whitespace (.state nm))))
 
-          (Parsed (ast/Symbol "" "" (make-loc s)) s))))
+          (ParserMatch (ast/Symbol "" "" (make-loc s)) s))))
 
 ;; parse-let: state just after `let`.
 (defn parse-let [state]
@@ -685,7 +676,7 @@
         bindings (collect-let-bindings s2)
         body (parse-body (.state bindings))
         s4 (.state body)]
-    (Parsed (let-desugar (.bindings bindings) (.exprs body)
+    (ParserMatch (let-desugar (.bindings bindings) (.exprs body)
                         (make-loc s4))
             s4)))
 
@@ -708,29 +699,29 @@
         loc (make-loc (.state res))
         clauses (cond-pair-acc exprs empty-vector)
         else (extract (last exprs))]
-    (Parsed (cond-desugar clauses else loc) (.state res))))
+    (ParserMatch (cond-desugar clauses else loc) (.state res))))
 
 ;; parse-and / parse-or: state just after `and`/`or`.
 (defn parse-and [state]
   (let [res (collect-until state ")")]
-    (Parsed (and-or-desugar (.exprs res) (make-loc (.state res)) "and")
+    (ParserMatch (and-or-desugar (.exprs res) (make-loc (.state res)) "and")
             (.state res))))
 
 (defn parse-or [state]
   (let [res (collect-until state ")")]
-    (Parsed (and-or-desugar (.exprs res) (make-loc (.state res)) "or")
+    (ParserMatch (and-or-desugar (.exprs res) (make-loc (.state res)) "or")
             (.state res))))
 
 ;; parse-str / parse-println: state just after `str`/`println`.
 (defn parse-str [state]
   (let [res (collect-until state ")")]
-    (Parsed (str-println-desugar (.exprs res) (make-loc (.state res))
+    (ParserMatch (str-println-desugar (.exprs res) (make-loc (.state res))
                                  "str*")
             (.state res))))
 
 (defn parse-println [state]
   (let [res (collect-until state ")")]
-    (Parsed (str-println-desugar (.exprs res) (make-loc (.state res))
+    (ParserMatch (str-println-desugar (.exprs res) (make-loc (.state res))
                                     "println*")
             (.state res))))
 
@@ -739,7 +730,7 @@
   (let [s (skip-whitespace state)
         p (parse-expr s)
         steps (collect-until (.state p) ")")]
-    (Parsed (threading (.value p) (.exprs steps)
+    (ParserMatch (threading (.value p) (.exprs steps)
                        (make-loc (.state steps)))
             (.state steps))))
 
@@ -747,14 +738,14 @@
 (defn parse-vector [state]
   (let [s (skip-whitespace (take-char state))
         res (collect-until s "]")]
-    (Parsed (fold-vec (.exprs res) (make-loc (.state res)))
+    (ParserMatch (fold-vec (.exprs res) (make-loc (.state res)))
             (.state res))))
 
 ;; parse-hash: state at the `{`.
 (defn parse-hash [state]
   (let [s (skip-whitespace (take-char state))
         res (collect-hash-pairs s)]
-    (Parsed (hash-fold (.pairs res) (make-loc (.state res)))
+    (ParserMatch (hash-fold (.pairs res) (make-loc (.state res)))
             (.state res))))
 
 ;; dispatch-special: state just after a special-form keyword.
@@ -768,7 +759,7 @@
         (str= name "println") (parse-println state)
         (str= name "->") (parse-threading state)
         (let [res (collect-until state ")")]
-          (Parsed (ast/Call (ast/Symbol ns name (make-loc state))
+          (ParserMatch (ast/Call (ast/Symbol ns name (make-loc state))
                             (.exprs res))
                   (.state res)))))
 
@@ -777,10 +768,10 @@
   (let [s (skip-whitespace (take-char state))
         input (.input s)]
     (cond (str= input "")
-          (Parsed (ast/Symbol "" "" (make-loc s)) s)
+          (ParserMatch (ast/Symbol "" "" (make-loc s)) s)
 
           (str-prefix? ")" input)
-          (Parsed (ast/Symbol "" "" (make-loc s)) (take-char s))
+          (ParserMatch (ast/Symbol "" "" (make-loc s)) (take-char s))
 
           (symbol-start? input)
           (let [sym (read-full-symbol s)
@@ -791,16 +782,16 @@
 
           (let [op (parse-expr s)
                 res (collect-until (.state op) ")")]
-            (Parsed (ast/Call (.value op) (.exprs res))
+            (ParserMatch (ast/Call (.value op) (.exprs res))
                     (.state res))))))
 
-;; parse-expr: parse one expression. Returns Parsed [Expression
+;; parse-expr: parse one expression. Returns ParserMatch [Expression
 ;; state-after]. Total: malformed input yields a placeholder Symbol.
 (defn parse-expr [state]
   (let [s (skip-whitespace state)
         input (.input s)]
     (cond (str= input "")
-          (Parsed (ast/Symbol "" "" (make-loc s)) s)
+          (ParserMatch (ast/Symbol "" "" (make-loc s)) s)
 
           (str-prefix? "(" input)
           (parse-call s)
