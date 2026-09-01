@@ -1,0 +1,210 @@
+;; interpreter/rdr-deftype.toc — item-6d verification driver.
+;;
+;; Parses the 5 hvm-core.toc deftypes (Maybe, Leaf, GetSentinelVal,
+;; String, List — verbatim source) through intrp-rdr.toc's
+;; parse-program and checks each yields a name -> TopLevel map with
+;; exactly one entry — a TopLevel.DefType whose Constructor list
+;; matches the expected fingerprint (ctor names, field lists, impl
+;; names/params, body shapes).
+;;
+;; Expected output: 5 "OK" lines (one per deftype). Any "FAIL" line
+;; indicates a problem. Run from the repo root: ./rdr-deftype
+;;
+;; The driver is interpreter-side tooling; interpreted programs may not
+;; use these constructs.
+
+(add-ns ast (module "intrp-ast.toc"))
+(add-ns rdr (module "intrp-rdr.toc"))
+
+;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
+(defp maybe-kind [m])
+(extend-type None (maybe-kind [_] 0))
+(extend-type Some (maybe-kind [_] 1))
+
+;; top-kind: tag a TopLevel value (the map's values are the TopLevel
+;; union; field getters need a concrete ctor, so the deftype-* protocols
+;; below are guarded by this tag).
+(defp top-kind [v])
+(extend-type ast/Definition (top-kind [_] 0))
+(extend-type ast/Defp (top-kind [_] 1))
+(extend-type ast/Main (top-kind [_] 2))
+(extend-type ast/DefType (top-kind [_] 3))
+
+;; deftype-*: extract a DefType's fields (receiver statically DefType).
+(defp deftype-name [v])
+(extend-type ast/DefType (deftype-name [v] (.type-name v)))
+
+(defp deftype-ctors [v])
+(extend-type ast/DefType (deftype-ctors [v] (.constructors v)))
+
+;; ctor-*: extract a Constructor's fields.
+(defp ctor-name [v])
+(extend-type ast/Constructor (ctor-name [v] (.name v)))
+
+(defp ctor-fields [v])
+(extend-type ast/Constructor (ctor-fields [v] (.field-list v)))
+
+(defp ctor-impls [v])
+(extend-type ast/Constructor (ctor-impls [v] (.implementations v)))
+
+;; elem-kind: tag an Expression (an impl body element).
+(defp elem-kind [e])
+(extend-type ast/TypeConstraint (elem-kind [_] 1))
+(extend-type ast/Call (elem-kind [_] 2))
+(extend-type ast/Symbol (elem-kind [_] 3))
+(extend-type ast/IntegerLit (elem-kind [_] 4))
+(extend-type ast/FloatLit (elem-kind [_] 5))
+(extend-type ast/StringLit (elem-kind [_] 6))
+(extend-type ast/FieldGetter (elem-kind [_] 7))
+(extend-type ast/Fn (elem-kind [_] 8))
+
+;; tc-*: extract a TypeConstraint's fields.
+(defp tc-symbol [e])
+(extend-type ast/TypeConstraint (tc-symbol [e] (.symbol e)))
+
+(defp tc-type [e])
+(extend-type ast/TypeConstraint (tc-type [e] (.type-expr e)))
+
+;; sym-nom / get-name: a Symbol's name / a FieldGetter's field name.
+(defp sym-nom [e])
+(extend-type ast/Symbol (sym-nom [e] (.sym-name e)))
+
+(defp get-name [e])
+(extend-type ast/FieldGetter (get-name [e] (.field-name e)))
+
+;; op-kind: tag a Call's operator.
+(defp op-kind [op])
+(extend-type ast/Symbol (op-kind [_] 0))
+(extend-type ast/FieldGetter (op-kind [_] 1))
+(extend-type ast/Fn (op-kind [_] 2))
+
+;; op-name: a Call operator's printable name.
+(defn op-name [op]
+  (let [k (op-kind op)]
+    (cond (= k 0)
+      (sym-nom op)
+
+      (= k 1)
+      (str* ["." (get-name op)])
+
+      "fn")))
+
+;; elem-fingerprint: one body element -> a fingerprint string.
+;;   TypeConstraint -> "tc <symbol> <type-expr>"
+;;   Call           -> "call <op> (<operand-count>)"
+;;   Symbol         -> "sym <name>"
+;;   IntegerLit     -> "int <value>"
+;;   FloatLit       -> "flt <text>"
+;;   StringLit      -> "str <value>"
+;;   FieldGetter    -> "get .<name>"
+;;   Fn             -> "fn"
+(defn elem-fingerprint [e]
+  (let [k (elem-kind e)]
+    (cond (= k 1)
+      (str* ["tc " (tc-symbol e) " " (tc-type e)])
+
+      (= k 2)
+      (str* ["call " (op-name (.operator e)) " ("
+             (number-str (count (.operands e))) ")"])
+
+      (= k 3)
+      (str* ["sym " (sym-nom e)])
+
+      (= k 4)
+      (str* ["int " (number-str (.value e))])
+
+      (= k 5)
+      (str* ["flt " (.value e)])
+
+      (= k 6)
+      (str* ["str " (.value e)])
+
+      (= k 7)
+      (str* ["get ." (get-name e)])
+
+      "fn")))
+
+;; body-fingerprint: a body vector -> one fingerprint string (elements
+;; in order, no separators).
+(defn body-fingerprint [body]
+  (str* (map body elem-fingerprint)))
+
+;; impl-fingerprint: one impl Fn -> "<name> [<params>] <body-fp>".
+;; (str* (str-vect v)) prints the vector with its own brackets.
+(defn impl-fingerprint [f]
+  (str* [(.name f) " " (str* (str-vect (.parameter-list f))) " "
+         (body-fingerprint (.body f))]))
+
+;; ctor-fingerprint: one Constructor ->
+;; "ctor <name> [<fields>] (<impl-fp> ...)".
+(defn ctor-fingerprint [c]
+  (str* ["ctor " (ctor-name c) " "
+         (str* (str-vect (ctor-fields c)))
+         " (" (str* (map (ctor-impls c) impl-fingerprint)) ")"]))
+
+;; deftype-fingerprint: a DefType -> its ctors' fingerprints.
+(defn deftype-fingerprint [v]
+  (str* (map (deftype-ctors v) ctor-fingerprint)))
+
+;; print-all-acc: print every string in the vector, threading the pr*
+;; counts into the accumulator so the lazy machine keeps every side
+;; effect (a dropped count would skip earlier prints). Self-recursive.
+(defn print-all-acc [acc strs]
+  (cond (= (count strs) 0)
+    acc
+    (let [s (extract (first strs))]
+      (print-all-acc (+ acc (pr* s)) (rest strs)))))
+
+;; check-deftype: parse one deftype source; verify the map has exactly
+;; one entry — a DefType with the expected name and ctor fingerprint.
+;; Prints one status line. Returns the threaded acc.
+(defn check-deftype [acc src name expected]
+  (let [r (rdr/parse-program (rdr/make-state src "deftype-test.toc" 1))
+        k (rdr/result-kind r)]
+    (cond (= k 2)
+      (let [st (.state r)
+            line (rdr/state-line st)
+            msg (.msg r)]
+        (print-all-acc acc
+                       ["FAIL(parse) " name ":" (number-str line) ": " msg "\n"]))
+
+      (let [m (.value r)
+            e (get m name)
+            ek (maybe-kind e)]
+        (cond (= ek 0)
+          (print-all-acc acc ["FAIL " name ": no map entry\n"])
+
+          (let [v (extract e)
+                tk (top-kind v)]
+            (cond (= tk 3)
+              (let [nm (deftype-name v)
+                    fp (deftype-fingerprint v)]
+                (cond (and (= (count m) 1)
+                           (str= nm name)
+                           (str= fp expected))
+                  (print-all-acc acc ["OK " name " " fp "\n"])
+                  (print-all-acc acc
+                                 ["FAIL " name " entries=" (number-str (count m))
+                                  " got: " fp " want: " expected "\n"])))
+
+              (print-all-acc acc
+                             ["FAIL " name ": entry is not a DefType (kind "
+                              (number-str tk) ")\n"]))))))))
+
+(main [_]
+  (let [r1 (check-deftype 0
+             "(deftype Maybe\n  (None)\n  (Some [x]))"
+             "Maybe" "ctor None [] ()ctor Some [x] ()")
+        r2 (check-deftype r1
+             "(deftype Leaf [])"
+             "Leaf" "ctor Leaf [] ()")
+        r3 (check-deftype r2
+             "(deftype String\n    StringBuffer\n    (SubString [s start len]\n      ;; ! start WholeInt\n      ;; ! len WholeInt\n\n      (str-vect [s] [s])\n      (count [_] len)\n\n      (subs [s new-start new-len]\n            (let [final-len (min new-len (- len new-start))]\n              (cond (<= final-len 0)\n                    \"\"\n                    (SubString s (+ start new-start) final-len)))))"
+             "String" "ctor StringBuffer [] ()ctor SubString [s start len] (str-vect [s] call vect-conj (2)count [_] sym lensubs [s new-start new-len] call fn (1))")
+        r4 (check-deftype r3
+             "(deftype GetSentinelVal []\n    (= [x y] (= (type-num x) (type-num y))))"
+             "GetSentinelVal" "ctor GetSentinelVal [] (= [x y] call = (2))")
+        r5 (check-deftype r4
+             "(deftype List\n    (EndOfList\n      (recurse [l f]\n               l)\n      ;; (first [l]\n      ;;        nothing)\n      ;; (rest [l]\n      ;;       l)\n      (count [l]\n             0))\n\n    (Cons [head tail len]\n      ;; ! tail (any-of Cons EndOfList)\n      ;; ! len Integer\n\n      (recurse [_ f]\n               (Cons head (f tail) len))\n      ;; (first [l]\n      ;;        (Some (.head l)))\n      ;; (rest [l]\n      ;;       (.tail l))\n      (count [l]\n             (.len l))))"
+             "List" "ctor EndOfList [] (recurse [l f] sym lcount [l] int 0)ctor Cons [head tail len] (recurse [_ f] call Cons (3)count [l] call .len (1))")]
+    r5))

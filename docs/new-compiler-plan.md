@@ -611,6 +611,27 @@ rules; each form's rule arrives with its phase.
   for expected-shape assertions in drivers (cf. `body-fingerprint` /
   `elem-fingerprint` in `interpreter/rdr-defp.toc`).
 
+- **malformed-cond quirk refined (2026-09-01, item 6d)**: the
+  "let containing a nested cond" trigger (item-6 entry) fires when the
+  nested cond's clauses are BOTH lets — `parse-ctor`'s
+  `(cond (symbol-start? ...) (let [...] (cond (str-prefix? ...) (let ...)
+  (let ...))) ...)` was rejected at the OUTER cond's line; the same
+  outer shape with a plain-call inner else (`parse-top-defn`,
+  `parse-top-defp`, `parse-impl`) compiles fine. Workaround (applied):
+  extract the inner cond into a helper (`parse-ctor-body`,
+  `parse-top-deftype-body`) so the outer clause is a plain call.
+
+- **Item-6d driver: `interpreter/rdr-deftype.toc`** (2026-09-01):
+  parses the 5 hvm-core.toc deftypes (Maybe, Leaf, String,
+  GetSentinelVal, List) verbatim through `parse-program` and checks
+  each map by ctor/field/impl fingerprint (`ctor-fingerprint` /
+  `impl-fingerprint` — tag protocols + guarded per-ctor extraction,
+  same pattern as `rdr-defp.toc`); 5 OK lines, zero leaks, 0 remaining
+  nodes. `rdr-deftype` Makefile target (same pattern as `rdr-top`).
+  Fingerprint gotcha: `(str* (str-vect v))` already prints the vector
+  WITH its `[`/`]` — the first driver draft added extra brackets and
+  printed `[[x]]`.
+
 ## Settled (continued)
 
 - **Interpreter work lives in `interpreter/`** (2026-08-28): all
@@ -859,7 +880,7 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
     zero leaks; `rdr-defp` Makefile target follows the `rdr-top`
     pattern. `rdr-top.toc`'s `defp` OosCase removed (6 OOS forms left).
 
-- [ ] **6d. `interpreter/intrp-rdr.toc`: reader — `deftype`**
+- [x] **6d. `interpreter/intrp-rdr.toc`: reader — `deftype`**
   - Parse both deftype forms → `TopLevel.DefType [type-name constructors]`
     with `Constructor [name field-list implementations]` nodes:
     multi-ctor `(deftype T (C1 [f...]) (C2 [f...] (impl ...)))` and
@@ -871,6 +892,20 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
   - Done when: a scratch driver parses the 5 hvm-core deftypes (Maybe,
     Leaf, GetSentinelVal, String, List) to the expected `DefType` /
     `Constructor` shapes, zero leaks.
+  - As-built (2026-09-01): `parse-top-deftype` (+ `parse-top-deftype-body`)
+    handles both forms; `parse-ctor` (+ `parse-ctor-body`) parses
+    `(Ctor [fields] <impls>)` / `(Ctor <impls>)` (no field list → no
+    fields); `parse-ctor-list-acc` takes ctor definitions and bare
+    existing-ctor names (name-only `Constructor`); `parse-impl` /
+    `parse-ctor-impls` parse the named-fn impls. The `-body` helpers
+    exist because new-toc rejects the let+cond clause shape inline
+    (refined malformed-cond fact below). Driver
+    `interpreter/rdr-deftype.toc` (the 5 hvm-core deftypes verbatim —
+    Maybe, Leaf, String, GetSentinelVal, List — checked by
+    ctor/field/impl fingerprint) — all 5 OK, zero leaks; the
+    `rdr-deftype` Makefile target follows the `rdr-top` pattern.
+    `rdr-top.toc`'s `deftype` OosCase removed (5 OOS forms left; 25
+    checks pass).
 
 - [ ] **6e. `interpreter/intrp-rdr.toc`: reader — `extend-type`**
   - Parse `(extend-type T (proto [params] body) ...)` → `TopLevel.ExtendType

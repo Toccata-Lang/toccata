@@ -76,6 +76,15 @@ rdr-defp: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interprete
 	$(CC) $(CFLAGS) -o rdr-defp $(TOC_FLAGS) $(LDFLAGS) rdr-defp.c new.c runtime3.c graph.c
 	./rdr-defp
 
+.PHONY: rdr-deftype
+rdr-deftype: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter/rdr-deftype.toc hvm-core.toc
+	./new-toc interpreter/rdr-deftype.toc > rdr-deftype.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "rdr-deftype.c"; next; } { print; }' rdr-deftype.tmp > rdr-deftype.c
+	clang-format -i rdr-deftype.c
+	rm rdr-deftype.tmp
+	$(CC) $(CFLAGS) -o rdr-deftype $(TOC_FLAGS) $(LDFLAGS) rdr-deftype.c new.c runtime3.c graph.c
+	./rdr-deftype
+
 .PHONY: rdr-top
 rdr-top: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter/rdr-top.toc hvm-core.toc
 	./new-toc interpreter/rdr-top.toc > rdr-top.tmp

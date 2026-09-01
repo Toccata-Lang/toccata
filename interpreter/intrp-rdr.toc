@@ -832,6 +832,132 @@
 
           (ParserError "expected a name after defp" s))))
 
+;; parse-impl: state at the `(` of a ctor protocol impl — a named fn
+;; `(name [params] body...)`. Returns ParserMatch [Fn state-after-`)`]
+;; or ParserError.
+(defn parse-impl [state]
+  (let [s (skip-whitespace (take-char state))
+        input (.input s)]
+    (cond (symbol-start? input)
+      (let [nm (read-symbol s)
+            s2 (skip-whitespace (.state nm))]
+        (cond (str-prefix? "[" (.input s2))
+          (let [params (read-param-list (skip-whitespace (take-char s2)))
+                body (parse-body (.state params))]
+            (ParserMatch (ast/Fn (.text nm) (.params params)
+                                 (.exprs body) (make-loc (.state body)))
+                         (.state body)))
+
+          (ParserError "expected a parameter list after impl name" s2)))
+
+      (ParserError "expected a protocol impl name" s))))
+
+;; parse-ctor-impls-acc: parse a ctor's protocol impls until the
+;; closing `)` (consumed). Returns ParsedList [fns state-after-`)`].
+(defn parse-ctor-impls-acc [state acc]
+  (let [s (skip-whitespace state)
+        input (.input s)]
+    (cond (str-prefix? ")" input)
+      (ParsedList acc (take-char s))
+
+      (str= input "")
+      (ParsedList acc s)
+
+      (str-prefix? "(" input)
+      (let [p (parse-impl s)]
+        (parse-ctor-impls-acc (.state p) (vect-conj acc (.value p))))
+
+      (ParserError "expected a protocol impl in ctor" s))))
+
+(defn parse-ctor-impls [state]
+  (parse-ctor-impls-acc state empty-vector))
+
+;; parse-ctor-body: state after the ctor name. Either `[fields]` +
+;; impls, or impls only (no field list -> no fields). Returns
+;; ParserMatch [Constructor state-after-`)`].
+(defn parse-ctor-body [name state]
+  (let [s (skip-whitespace state)]
+    (cond (str-prefix? "[" (.input s))
+      (let [fields (read-param-list (skip-whitespace (take-char s)))
+            impls (parse-ctor-impls (.state fields))]
+        (ParserMatch (ast/Constructor name (.params fields) (.exprs impls))
+                     (.state impls)))
+
+      (let [impls (parse-ctor-impls s)]
+        (ParserMatch (ast/Constructor name empty-vector (.exprs impls))
+                     (.state impls))))))
+
+;; parse-ctor: state at the `(` of a ctor definition —
+;; `(CtorName [fields] <impls>...)` or `(CtorName <impls>...)`. The
+;; field-list/impls branch lives in parse-ctor-body (a let+cond clause
+;; shape new-toc rejects as a malformed cond — see the plan's verified
+;; facts). Returns ParserMatch [Constructor state-after-`)`] or
+;; ParserError.
+(defn parse-ctor [state]
+  (let [s (skip-whitespace (take-char state))
+        input (.input s)]
+    (cond (symbol-start? input)
+      (let [nm (read-symbol s)]
+        (parse-ctor-body (.text nm) (.state nm)))
+
+      (ParserError "expected a constructor name" s))))
+
+;; parse-ctor-list-acc: parse the ctor list of a multi-ctor deftype
+;; until the closing `)` (consumed). Each entry is a ctor definition
+;; `(...)` or a bare symbol naming an existing ctor (recorded as a
+;; name-only Constructor). Returns ParsedList [ctors state-after-`)`].
+(defn parse-ctor-list-acc [state acc]
+  (let [s (skip-whitespace state)
+        input (.input s)]
+    (cond (str-prefix? ")" input)
+      (ParsedList acc (take-char s))
+
+      (str= input "")
+      (ParsedList acc s)
+
+      (str-prefix? "(" input)
+      (let [p (parse-ctor s)]
+        (parse-ctor-list-acc (.state p) (vect-conj acc (.value p))))
+
+      (symbol-start? input)
+      (let [nm (read-symbol s)]
+        (parse-ctor-list-acc (.state nm)
+                             (vect-conj acc
+                                        (ast/Constructor (.text nm)
+                                                         empty-vector
+                                                         empty-vector))))
+
+      (ParserError "expected a constructor in deftype" s))))
+
+;; parse-top-deftype-body: state after the type name. Single-ctor form
+;; `[fields] <impls>...)` — one ctor named the type; multi-ctor form
+;; `<ctor-list>)` — ctor definitions and bare existing-ctor names.
+;; Returns ParserMatch [TopLevelEntry state-after].
+(defn parse-top-deftype-body [name state]
+  (let [s (skip-whitespace state)]
+    (cond (str-prefix? "[" (.input s))
+      (let [fields (read-param-list (skip-whitespace (take-char s)))
+            impls (parse-ctor-impls (.state fields))
+            ctor (ast/Constructor name (.params fields) (.exprs impls))]
+        (ParserMatch (TopLevelEntry name (ast/DefType name [ctor]))
+                     (.state impls)))
+
+      (let [ctors (parse-ctor-list-acc s empty-vector)]
+        (ParserMatch (TopLevelEntry name (ast/DefType name (.exprs ctors)))
+                     (.state ctors))))))
+
+;; parse-top-deftype: state just after `deftype`. The form dispatch
+;; lives in parse-top-deftype-body (a let+cond clause shape new-toc
+;; rejects as a malformed cond — see the plan's verified facts).
+;; Returns ParserMatch [TopLevelEntry state-after] or ParserError.
+(defn parse-top-deftype [state]
+  (let [s (skip-whitespace state)]
+    (cond (symbol-start? (.input s))
+      (let [nm (read-symbol s)]
+        (parse-top-deftype-body (sub-to-str (.text nm)) (.state nm)))
+
+      (ParserError "expected a type name after deftype" s))))
+
 ;; parse-top-main: state just after `main`.
 (defn parse-top-main [state]
   (let [s (skip-whitespace state)]
@@ -858,8 +984,7 @@
         (str= name "inline")
         (ParserError "top-level inline is not supported in phase 1" s2)
 
-        (str= name "deftype")
-        (ParserError "deftype is not supported in phase 1" s2)
+        (str= name "deftype") (parse-top-deftype s2)
 
         (str= name "defp") (parse-top-defp s2)
 
