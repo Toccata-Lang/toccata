@@ -22,7 +22,7 @@ there.
    direct recursive-descent functions in `interpreter/intrp-rdr.toc` (the
    file's original combinator grammar was the reference; it has been
    replaced). Ends with `parse-program` reading `hvm-core.toc` to a complete
-   name → TopLevel map with zero parse errors.
+   vector of TopLevel values (source order) with zero parse errors.
 2. **Concrete interpreter** — runs pure-Toccata programs (scope below) over
    the phase-1 reader's AST.
 3. **Abstract interpreter** — the same evaluator over abstract values
@@ -36,8 +36,8 @@ there.
 ## Phase 1 scope (settled) — reader
 
 Goal: `parse-program` reads `hvm-core.toc` **in full** — every top-level
-form, zero parse errors — into a complete name → TopLevel map. This is the
-phase's acceptance bar (checklist item 6g).
+form, zero parse errors — into a complete vector of TopLevel values
+(source order). This is the phase's acceptance bar (checklist item 6g).
 
 Top-level forms the reader must produce (hvm-core.toc usage in parens):
 
@@ -689,11 +689,13 @@ rules; each form's rule arrives with its phase.
   desugared to `Call`s (see desugarings). **Quoted symbols `'sym` desugar
   to `StringLit` at parse time** (verified: new-toc compiles `'yeppers`
   in cond-expr-1 to a plain String) — eval never sees a symbol literal.
-- **Parse output: a hash map of name → AST value** (not a list).
-  Top-level `defn`/`def` → entry under the name; `main` → entry under
-  `"main"`; `defp` / `deftype` / `extend-type` → entry under the name;
-  top-level `inline` is nameless (its map representation is decided in
-  checklist item 6f); comments skipped. The reader (phase 1) parses all of
+- **Parse output: a vector of TopLevel values, source order** (2026-09-01,
+  owner — supersedes the earlier "hash map of name → AST value" shape).
+  `parse-program` returns a plain `[TopLevel]` vector; the name → value map
+  is extracted in a later stage, not by the parser. Top-level `defn`/`def`
+  → `Definition`; `main` → `Main`; `defp` / `deftype` / `extend-type` →
+  their ctors; top-level `inline` → `TopLevel.Inline` (nameless — no key
+  needed in a vector); comments skipped. The reader (phase 1) parses all of
   these to read hvm-core.toc; the interpreter (phase 2) interprets only
   `defn`/`def`/`main` and treats the rest as data.
 - **Top-levels are LAZY, no memoization (phase 2)**: a top-level name
@@ -915,27 +917,42 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
     (and one with a `let`/`->` body) to the expected shape, zero leaks.
 
 - [ ] **6f. `interpreter/intrp-rdr.toc`: reader — top-level + expression
-    `inline`**
+    `inline` + vector parse output**
   - Top-level `inline` (the 2 global C declaration blocks in hvm-core.toc):
     parse `(inline "...")` and `(inline TypeName "...")` → `TopLevel.Inline`
-    (the `Expression/Inline [type-expr c-code loc]` node). Decide its
-    parse-output representation — it has no name, so it can't be a keyed map
-    entry (a separate nameless list, or a synthetic key).
-  - Expression-level `inline` (69 in hvm-core.toc) currently parses as a
-    plain `Call` with operator `inline`. Decide whether to keep that or
-    lower to `Expression.Inline` nodes (faithful, but the interpreter
-    treats core inline as native primitives either way).
+    (the `Expression/Inline [type-expr c-code loc]` node, via the bare
+    reference — the dedicated-ctor decision is superseded, see below); a
+    nameless entry in the vector, no key needed.
+  - **Dedicated `TopLevel.Inline` ctor — SUPERSEDED (2026-09-01, owner)**:
+    a dedicated `TopLevel.Inline` constructor was decided earlier today,
+    but it cannot coexist with `Expression.Inline` under new-toc's global
+    ctor-name uniqueness (verified fact); the bare reference to
+    `Expression/Inline` stands. Top-level vs. expression inline is told
+    apart by position (top of the program vector), not by node type.
+  - Expression-level `inline` (69 in hvm-core.toc) **lowers to
+    `Expression.Inline` nodes** (decided 2026-09-01, owner) — not a plain
+    `Call` with operator `inline`. `type-expr` = `Some` of one ordinary
+    expression (a bare type name in all hvm-core uses) or `None` when
+    absent.
+  - **Parse output is a plain `[TopLevel]` vector in source order**
+    (decided 2026-09-01, owner) — `parse-program` no longer builds the
+    name → TopLevel map; the map is extracted in a later stage. Ripples:
+    the `sub-to-str` keying leaves the parser; the three drivers
+    (`rdr-top.toc`, `rdr-defp.toc`, `rdr-deftype.toc`) rework their map
+    checks (count + `get` by name) into vector checks (count + find-by-name
+    via the `top-kind` tag + per-ctor extraction).
   - Done when: a scratch driver parses a top-level inline block and an
-    expression inline to the chosen shapes; the parse output accommodates
-    nameless top-levels, zero leaks.
+    expression inline to the settled shapes; `parse-program` returns the
+    vector; all three existing drivers pass (reworked to vector lookups),
+    zero leaks.
 
 - [ ] **6g. Reader acceptance: fully read `hvm-core.toc`**
   - A driver runs `parse-program` over `hvm-core.toc` and produces a
-    complete name → TopLevel map with **zero parse errors**. Every top-level
-    form is accounted for: 108 `defn`, 5 `def`, 58 `defp`, 5 `deftype`,
-    16 `extend-type`, 2 top-level `inline` (194 total).
+    complete vector of TopLevel values with **zero parse errors**. Every
+    top-level form is accounted for: 108 `defn`, 5 `def`, 58 `defp`,
+    5 `deftype`, 16 `extend-type`, 2 top-level `inline` (194 total).
   - Done when: `parse-program` on `hvm-core.toc` returns a `ParserMatch`
-    (not `ParserError`), the map has the expected entry count, and a
+    (not `ParserError`), the vector has the expected count (194), and a
     spot-check of one `defp`, one `deftype`, one `extend-type`, and one
     `inline` shows the correct shapes. Zero leaks.
 
