@@ -143,7 +143,7 @@
       (str= c "?")
       (str= c "!")))
 
-(defn float-char? [c]
+(defn number-char? [c]
   (or (is-digit c)
       (str= c ".")))
 
@@ -151,14 +151,12 @@
 
 (defn take-char [state]
   (let [input (.input state)
-        c (subs input 0 1)
-        rest-input (subs input 1 (count input))
         line (state-line state)
-        new-line (cond (str= c "\n")
+        new-line (cond (str= (subs input 0 1) "\n")
                        (+ line 1)
 
                        line)]
-    (ParserState rest-input
+    (ParserState (subs input 1 (count input))
                  (assoc (.values state) "line" new-line))))
 
 (defn skip-comment [state]
@@ -197,10 +195,10 @@
 
 (defn read-run [state pred]
   (let [input (.input state)
-        len (run-length input pred)
-        run (subs input 0 len)
-        rest-input (subs input len (count input))]
-    (Token run (ParserState rest-input (.values state)))))
+        len (run-length input pred)]
+    (Token (subs input 0 len)
+           (ParserState (subs input len (count input))
+                        (.values state)))))
 
 ;; --- Token readers ---------------------------------------------------
 
@@ -226,10 +224,9 @@
           (let [after-open (take-char state)
                 at-close (read-string-content after-open)
                 content-len (- (count (.input after-open))
-                               (count (.input at-close)))
-                content (subs (.input after-open) 0 content-len)
-                end-state (take-char at-close)]
-            (Token content end-state))
+                               (count (.input at-close)))]
+            (Token (subs (.input after-open) 0 content-len)
+                   (take-char at-close)))
 
           (Token "" state))))
 
@@ -239,30 +236,17 @@
           (Token "" state)
 
           (symbol-start? input)
-          (let [tok (read-run state symbol-continue?)]
-            tok)
+          (read-run state symbol-continue?)
 
           (Token "" state))))
 
-(defn read-int [state]
+(defn read-number [state]
   (let [input (.input state)]
     (cond (str= input "")
           (Token "" state)
 
           (is-digit input)
-          (let [tok (read-run state is-digit)]
-            tok)
-
-          (Token "" state))))
-
-(defn read-float [state]
-  (let [input (.input state)]
-    (cond (str= input "")
-          (Token "" state)
-
-          (is-digit input)
-          (let [tok (read-run state float-char?)]
-            tok)
+          (read-run state number-char?)
 
           (Token "" state))))
 
@@ -274,8 +258,8 @@
 (extend-type ParserError (result-kind [_] 2))
 
 (defn make-loc [state]
-  (let [file (extract (get (.values state) "file"))]
-    (ast/Location file (state-line state))))
+  (ast/Location (extract (get (.values state) "file"))
+                (state-line state)))
 
 ;; sub-to-str: copy a SubString (or String) to a fresh full String.
 ;; CONSUMING: it frees its input; the caller must hold a separate
@@ -312,8 +296,7 @@
           (FullSymbol "" fst s2)
 
           (str-prefix? "/" input)
-          (let [after-slash (take-char s2)
-                name-tok (read-symbol after-slash)]
+          (let [name-tok (read-symbol (take-char s2))]
             (FullSymbol fst (.text name-tok) (.state name-tok)))
 
           (FullSymbol "" fst s2))))
@@ -322,33 +305,28 @@
   (let [s (skip-whitespace state)
         input (.input s)]
     (cond (str-prefix? "[" input)
-          (let [s2 (skip-whitespace (take-char s))
-                inner (read-symbol s2)
-                s3 (skip-whitespace (.state inner))
-                s4 (take-char s3)]
-            (TypeExpr (.text inner) s4))
+          (let [inner (read-symbol (skip-whitespace (take-char s)))]
+            (TypeExpr (.text inner)
+                      (take-char (skip-whitespace (.state inner)))))
 
           (let [nm (read-symbol s)]
             (TypeExpr (.text nm) (.state nm))))))
 
 (defn contains-dot [s]
-  (cond
-    (str= s "")
-    None
+  (cond (str= s "")
+        None
 
-    (str= (subs s 0 1) ".")
-    (Some 1)
+        (str= (subs s 0 1) ".")
+        (Some 1)
 
-    (contains-dot (subs s 1 (count s)))))
+        (contains-dot (subs s 1 (count s)))))
 
 (defn text-to-int-acc [s acc]
-  (cond
-    (str= s "")
-    acc
+  (cond (str= s "")
+        acc
 
-    (let [d (- (char-code (subs s 0 1)) 48)]
-      (text-to-int-acc (subs s 1 (count s))
-                       (+ (* 10 acc) d)))))
+        (text-to-int-acc (subs s 1 (count s))
+                         (+ (* 10 acc) (- (char-code (subs s 0 1)) 48)))))
 
 (defn text-to-int [s]
   (text-to-int-acc s 0))
@@ -390,33 +368,26 @@
 (defn str-println-desugar [exprs loc fn-name]
   (ast/Call (ast/Symbol "" fn-name loc) [(fold-vec exprs loc)]))
 
-;; expr-kind: tag a parsed expression for threading-step dispatch.
-(defp expr-kind [e])
-(extend-type ast/Call (expr-kind [_] 0))
-(extend-type ast/Symbol (expr-kind [_] 1))
-(extend-type ast/FieldGetter (expr-kind [_] 2))
-
 ;; thread-step: apply one threading step to the threaded value.
+;; Protocol over the Expression constructors (receiver = the step, first
+;; arg) — dispatches on the step's type directly.
 ;;   Call (f a b)  -> (f <threaded> a b)
 ;;   Symbol g      -> (g <threaded>)
 ;;   Symbol .f     -> (.f <threaded>)  (FieldGetter operator)
-;;   other         -> (<step> <threaded>)
-(defn thread-step [step threaded loc]
-  (let [k (expr-kind step)]
-    (cond
-      (= k 0)
-      (ast/Call (.operator step)
-                (ast/vect-concat [threaded] (.operands step)))
+;;   FieldGetter f -> (f <threaded>)
+(defp thread-step [step threaded loc])
+(extend-type ast/Call (thread-step [step threaded loc]
+  (ast/Call (.operator step)
+            (ast/vect-concat [threaded] (.operands step)))))
+(extend-type ast/Symbol (thread-step [step threaded loc]
+  (let [nm (.sym-name step)]
+    (ast/Call (cond (str= (subs nm 0 1) ".")
+                    (ast/FieldGetter (subs nm 1 (count nm)) loc)
 
-      (= k 1)
-      (let [nm (.sym-name step)]
-        (ast/Call (cond (str= (subs nm 0 1) ".")
-                        (ast/FieldGetter (subs nm 1 (count nm)) loc)
-
-                        step)
-                  [threaded]))
-
-      (ast/Call step [threaded]))))
+                    step)
+              [threaded]))))
+(extend-type ast/FieldGetter (thread-step [step threaded loc]
+  (ast/Call step [threaded])))
 
 ;; threading-acc: fold the steps left-to-right, threading `loc` as a
 ;; plain parameter (not a closure capture).
@@ -424,9 +395,8 @@
   (cond (= (count steps) 0)
         acc
 
-        (let [stp (extract (first steps))]
-          (threading-acc (rest steps) loc
-                         (thread-step stp acc loc)))))
+        (threading-acc (rest steps) loc
+                       (thread-step (extract (first steps)) acc loc))))
 
 ;; threading: (-> x s1 ... sN) -> (sN (... (s1 x)))
 ;;
@@ -443,10 +413,10 @@
 ;;   (Call (Fn "" [b1] [rest1]) e1) where the innermost Fn body is
 ;;   body-vec.
 (defn let-desugar [pairs body-vec loc]
-  (let [ln (extract (last pairs))
-        innermost (ast/Call (ast/Fn "" [(.name ln)] body-vec loc)
-                            [(.expr ln)])]
-    (reduce (reverse (butlast pairs)) innermost
+  (let [ln (extract (last pairs))]
+    (reduce (reverse (butlast pairs))
+            (ast/Call (ast/Fn "" [(.name ln)] body-vec loc)
+                      [(.expr ln)])
             (fn [acc pair]
               (ast/Call (ast/Fn "" [(.name pair)] [acc] loc)
                         [(.expr pair)])))))
@@ -457,26 +427,23 @@
 
 (defn parse-string-lit [state]
   (let [r (read-string state)
-        content (.text r)
         s2 (.state r)]
-    (ParserMatch (ast/StringLit content (make-loc s2)) s2)))
+    (ParserMatch (ast/StringLit (.text r) (make-loc s2)) s2)))
 
 (defn parse-quoted-sym [state]
   (let [r (read-symbol (take-char state))
-        text (.text r)
         s2 (.state r)]
-    (ParserMatch (ast/StringLit text (make-loc s2)) s2)))
+    (ParserMatch (ast/StringLit (.text r) (make-loc s2)) s2)))
 
 (defn parse-number [state]
-  (let [r (read-float state)
+  (let [r (read-number state)
         text (.text r)
         s2 (.state r)
         loc (make-loc s2)]
     (cond (contains-dot text)
           (ParserMatch (ast/FloatLit text loc) s2)
 
-          (let [n (text-to-int text)]
-            (ParserMatch (ast/IntegerLit n loc) s2)))))
+          (ParserMatch (ast/IntegerLit (text-to-int text) loc) s2))))
 
 (defn parse-symbol [state]
   (let [r (read-full-symbol state)]
@@ -491,6 +458,9 @@
     (cond (str-prefix? "]" input)
           (ParamList acc (take-char s))
 
+          (str= input "")
+          (ParamList acc s)
+
           (let [nm (read-symbol s)]
             (read-param-list-acc (.state nm)
                                  (vect-conj acc (.text nm)))))))
@@ -501,11 +471,9 @@
 ;; parse-type-constraint: state at `!`. Returns ParserMatch [TypeConstraint
 ;; state-after].
 (defn parse-type-constraint [state]
-  (let [s (skip-whitespace (take-char state))
-        nm (read-symbol s)
-        sym (.text nm)
+  (let [nm (read-symbol (skip-whitespace (take-char state)))
         te (read-type-expr (skip-whitespace (.state nm)))]
-    (ParserMatch (ast/TypeConstraint sym (.text te)) (.state te))))
+    (ParserMatch (ast/TypeConstraint (.text nm) (.text te)) (.state te))))
 
 ;; --- Collection helpers ----------------------------------------------
 ;;
@@ -573,12 +541,10 @@
           (LetBindings acc s)
 
           (let [nm (read-symbol s)
-                name (.text nm)
-                s2 (skip-whitespace (.state nm))
-                p (parse-expr s2)]
+                p (parse-expr (skip-whitespace (.state nm)))]
             (collect-let-bindings-acc (.state p)
                                       (vect-conj acc
-                                                 (LetBinding name
+                                                 (LetBinding (.text nm)
                                                              (.value p))))))))
 
 (defn collect-let-bindings [state]
@@ -615,10 +581,8 @@
   (let [s (skip-whitespace state)
         input (.input s)]
     (cond (str-prefix? "[" input)
-          (let [s2 (skip-whitespace (take-char s))
-                params (read-param-list s2)
-                s3 (.state params)
-                body (parse-body s3)
+          (let [params (read-param-list (skip-whitespace (take-char s)))
+                body (parse-body (.state params))
                 s4 (.state body)]
             (ParserMatch (ast/Fn name (.params params) (.exprs body)
                             (make-loc s4))
@@ -634,17 +598,15 @@
           (parse-fn-params "" s)
 
           (symbol-start? input)
-          (let [nm (read-symbol s)
-                fn-name (.text nm)]
-            (parse-fn-params fn-name (skip-whitespace (.state nm))))
+          (let [nm (read-symbol s)]
+            (parse-fn-params (.text nm) (skip-whitespace (.state nm))))
 
           (ParserMatch (ast/Symbol "" "" (make-loc s)) s))))
 
 ;; parse-let: state just after `let`.
 (defn parse-let [state]
-  (let [s (skip-whitespace state)
-        s2 (skip-whitespace (take-char s))
-        bindings (collect-let-bindings s2)
+  (let [bindings (collect-let-bindings
+                  (skip-whitespace (take-char (skip-whitespace state))))
         body (parse-body (.state bindings))
         s4 (.state body)]
     (ParserMatch (let-desugar (.bindings bindings) (.exprs body)
@@ -658,20 +620,19 @@
   (cond (= (count exprs) 1)
         acc
 
-        (let [t (extract (first exprs))
-              r1 (rest exprs)
-              v (extract (first r1))]
+        (let [r1 (rest exprs)]
           (cond-pair-acc (rest r1)
-                         (vect-conj acc (Clause t v))))))
+                         (vect-conj acc (Clause (extract (first exprs))
+                                                (extract (first r1))))))))
 
 ;; parse-cond: state just after `cond`.
 (defn parse-cond [state]
   (let [res (collect-until state ")")
-        exprs (.exprs res)
-        loc (make-loc (.state res))
-        clauses (cond-pair-acc exprs empty-vector)
-        else (extract (last exprs))]
-    (ParserMatch (cond-desugar clauses else loc) (.state res))))
+        exprs (.exprs res)]
+    (ParserMatch (cond-desugar (cond-pair-acc exprs empty-vector)
+                               (extract (last exprs))
+                               (make-loc (.state res)))
+            (.state res))))
 
 ;; parse-and / parse-or: state just after `and`/`or`.
 (defn parse-and [state]
@@ -699,8 +660,7 @@
 
 ;; parse-threading: state just after `->`.
 (defn parse-threading [state]
-  (let [s (skip-whitespace state)
-        p (parse-expr s)
+  (let [p (parse-expr (skip-whitespace state))
         steps (collect-until (.state p) ")")]
     (ParserMatch (threading (.value p) (.exprs steps)
                        (make-loc (.state steps)))
@@ -708,15 +668,13 @@
 
 ;; parse-vector: state at the `[`.
 (defn parse-vector [state]
-  (let [s (skip-whitespace (take-char state))
-        res (collect-until s "]")]
+  (let [res (collect-until (skip-whitespace (take-char state)) "]")]
     (ParserMatch (fold-vec (.exprs res) (make-loc (.state res)))
             (.state res))))
 
 ;; parse-hash: state at the `{`.
 (defn parse-hash [state]
-  (let [s (skip-whitespace (take-char state))
-        res (collect-hash-pairs s)]
+  (let [res (collect-hash-pairs (skip-whitespace (take-char state)))]
     (ParserMatch (hash-fold (.pairs res) (make-loc (.state res)))
             (.state res))))
 
@@ -746,11 +704,8 @@
           (ParserMatch (ast/Symbol "" "" (make-loc s)) (take-char s))
 
           (symbol-start? input)
-          (let [sym (read-full-symbol s)
-                ns (.ns sym)
-                name (.nom sym)
-                s2 (.state sym)]
-            (dispatch-special ns name s2))
+          (let [sym (read-full-symbol s)]
+            (dispatch-special (.ns sym) (.nom sym) (.state sym)))
 
           (let [op (parse-expr s)
                 res (collect-until (.state op) ")")]
@@ -798,51 +753,46 @@
 ;; Returns ParserMatch [TopLevelEntry state-after-`)`] or ParserError.
 (defn parse-top-def-value-expr [name name-loc state]
   (let [p (parse-expr state)
-        s3 (skip-whitespace (.state p))
-        in3 (.input s3)]
-    (cond (str-prefix? ")" in3)
-          (let [val (.value p)]
-            (ParserMatch (TopLevelEntry name
-                                        (ast/Definition name val name-loc))
-                         (take-char s3)))
+        s3 (skip-whitespace (.state p))]
+    (cond (str-prefix? ")" (.input s3))
+          (ParserMatch (TopLevelEntry name
+                                      (ast/Definition name (.value p)
+                                                      name-loc))
+                       (take-char s3))
 
           (ParserError "expected ) after def value" s3))))
 
 ;; parse-top-def-value: state at the value position (or at `)` for a
 ;; bare def). Builds the Definition, or ignores a bare `(def name)`.
 (defn parse-top-def-value [name name-loc state]
-  (let [s (skip-whitespace state)
-        input (.input s)]
-    (cond (str-prefix? ")" input)
+  (let [s (skip-whitespace state)]
+    (cond (str-prefix? ")" (.input s))
           (ParserIgnore (take-char s))
 
           (parse-top-def-value-expr name name-loc s))))
 
 ;; parse-top-def: state just after `def`.
 (defn parse-top-def [state]
-  (let [s (skip-whitespace state)
-        input (.input s)]
-    (cond (symbol-start? input)
-          (let [nm (read-symbol s)
-                name (sub-to-str (.text nm))]
-            (parse-top-def-value name (make-loc (.state nm))
+  (let [s (skip-whitespace state)]
+    (cond (symbol-start? (.input s))
+          (let [nm (read-symbol s)]
+            (parse-top-def-value (sub-to-str (.text nm))
+                                 (make-loc (.state nm))
                                  (.state nm)))
 
           (ParserError "expected a name after def" s))))
 
 ;; parse-top-defn: state just after `defn`.
 (defn parse-top-defn [state]
-  (let [s (skip-whitespace state)
-        input (.input s)]
-    (cond (symbol-start? input)
+  (let [s (skip-whitespace state)]
+    (cond (symbol-start? (.input s))
           (let [nm (read-symbol s)
                 name (sub-to-str (.text nm))
                 s2 (skip-whitespace (.state nm))]
             (cond (str-prefix? "[" (.input s2))
-                  (let [s3 (skip-whitespace (take-char s2))
-                        params (read-param-list s3)
-                        s4 (.state params)
-                        body (parse-body s4)
+                  (let [params (read-param-list
+                                (skip-whitespace (take-char s2)))
+                        body (parse-body (.state params))
                         s5 (.state body)
                         fn-val (ast/Fn name (.params params)
                                        (.exprs body) (make-loc s5))]
@@ -859,16 +809,14 @@
 
 ;; parse-top-main: state just after `main`.
 (defn parse-top-main [state]
-  (let [s (skip-whitespace state)
-        input (.input s)]
-    (cond (str-prefix? "[" input)
+  (let [s (skip-whitespace state)]
+    (cond (str-prefix? "[" (.input s))
           (let [params (read-param-list (take-char s))
-                p-vec (.params params)
-                s2 (.state params)
-                body (parse-body s2)
+                body (parse-body (.state params))
                 s3 (.state body)]
             (ParserMatch (TopLevelEntry "main"
-                                        (ast/Main p-vec (.exprs body)
+                                        (ast/Main (.params params)
+                                                  (.exprs body)
                                                   (make-loc s3)))
                          s3))
 
@@ -907,13 +855,11 @@
 
 ;; parse-top-level-form: state just after the `(` of a top-level form.
 (defn parse-top-level-form [state]
-  (let [s (skip-whitespace state)
-        input (.input s)]
-    (cond (symbol-start? input)
-          (let [nm (read-symbol s)
-                name (.text nm)
-                s2 (skip-whitespace (.state nm))]
-            (parse-top-level-args name s2))
+  (let [s (skip-whitespace state)]
+    (cond (symbol-start? (.input s))
+          (let [nm (read-symbol s)]
+            (parse-top-level-args (.text nm)
+                                  (skip-whitespace (.state nm))))
 
           (ParserError "unexpected top-level form" s))))
 
@@ -931,9 +877,8 @@
 
 ;; parse-program-acc: parse top-level forms until EOF.
 (defn parse-program-acc [state m]
-  (let [s (skip-whitespace state)
-        input (.input s)]
-    (cond (str= input "")
+  (let [s (skip-whitespace state)]
+    (cond (str= (.input s) "")
           (ParserMatch m s)
 
           (let [r (parse-top-level s)
@@ -951,4 +896,4 @@
 
 ;; parse-program: parse a whole file into the name -> TopLevel map.
 (defn parse-program [state]
-  (parse-program-acc state emptyBMI))
+  (parse-program-acc state {}))

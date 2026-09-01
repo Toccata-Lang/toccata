@@ -44,6 +44,8 @@ builds the code.
   commas between pairs are whitespace. The literal desugars to core calls, as
   `[...]` does.
 
+* Never use `emptyBMI` directly — write the `{}` literal for an empty hash map.
+
 * There are no forward declarations. Named `defn`s may be mutually recursive —
   the compiler parses the whole source before code generation and resolves
   concrete call targets itself.
