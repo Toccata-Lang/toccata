@@ -30,10 +30,15 @@ builds the code.
 
 * `cond` takes flat (test value) pairs and must end with a default expression
   that catches the case where every test fails: `(cond t1 v1 t2 v2 ... e)`.
-  Separate each (test value) clause pair with an empty line.
+  Separate each (test value) clause pair with an empty line. Exception: if
+  every clause fits on a single line and the test halves are all about the
+  same length, keep them on consecutive lines with no blank lines between.
 
 * `let` takes multiple bindings in one form: `(let [b1 e1 b2 e2 ...] body)` —
   sequential binding semantics: later initializers see earlier bindings.
+  Bind a name only if its value is used more than once in the rest of the
+  `let`; otherwise write the value inline. Exception: bind a very long value
+  expression even when used once, if inlining it would be awkward.
 
 * Hash-map literals are available in expression position: `{"k" v, "k2" v2}` —
   commas between pairs are whitespace. The literal desugars to core calls, as
