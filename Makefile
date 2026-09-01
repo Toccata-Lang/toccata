@@ -112,6 +112,15 @@ rdr-top: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter
 	$(CC) $(CFLAGS) -o rdr-top $(TOC_FLAGS) $(LDFLAGS) rdr-top.c new.c runtime3.c graph.c
 	./rdr-top
 
+.PHONY: rdr-hvmcore
+rdr-hvmcore: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpreter/rdr-hvmcore.toc hvm-core.toc
+	./new-toc interpreter/rdr-hvmcore.toc > rdr-hvmcore.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "rdr-hvmcore.c"; next; } { print; }' rdr-hvmcore.tmp > rdr-hvmcore.c
+	clang-format -i rdr-hvmcore.c
+	rm rdr-hvmcore.tmp
+	$(CC) $(CFLAGS) -o rdr-hvmcore $(TOC_FLAGS) $(LDFLAGS) rdr-hvmcore.c new.c runtime3.c graph.c
+	./rdr-hvmcore
+
 # Sidequest
 sidequest.c: new-toc sidequest.toc hvm-core.toc new.h
 	./new-toc sidequest.toc > sidequest.tmp

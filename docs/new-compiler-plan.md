@@ -667,6 +667,51 @@ rules; each form's rule arrives with its phase.
   extraction, never `str-vect`. (c) scratch binaries must be built with
   `-DCHECK_MEM_LEAK=1` (the Makefile targets do) — without it, lazy
   evaluation hits `BOOM("Make this threadsafe")` in `eraseLazy` (new.c).
+- **`symbol-start?` was missing `*` (2026-09-01, item 6g)**: the parser's
+  `symbol-start?` (interpreter/intrp-rdr.toc) handled `. _ < > = + - /` but
+  NOT `*`, so `(defn * [x y] ...)` (hvm-core.toc:330) failed with
+  `expected a name after defn` — and any `*` in expression position was
+  silently dropped (the `parse-expr` unknown-char fallback). `symbol-continue?`
+  already included `*` (and `?`/`!`); only the start set was incomplete.
+  Added `(str-prefix? "*" s)` to `symbol-start?`. hvm-core.toc's operator
+  names are `+ - * < <= =`; only `*` was missing. With the fix, `parse-program`
+  reads hvm-core.toc with zero parse errors.
+- **malformed-cond: a `let` in a NON-ELSE clause is rejected (2026-09-01,
+  item 6g)**: the `malformed 'cond' expression` trigger is broader than the
+  documented "let containing a nested cond" — a `let` in a NON-ELSE clause
+  (even with NO nested cond) is rejected. E.g. `(cond (= k 2) (let [...] (print
+  ...)) <else>)` fails at the let's line. Fix: extract the let into a helper
+  `defn` so the clause is a plain call (this is why the parse-error handling in
+  the drivers lives in a `defn`, e.g. `parse-error-line`, not inline in a cond
+  clause). A `let` in the ELSE clause is fine.
+- **A `reduce` closure capturing a FREE VARIABLE leaks (2026-09-01, item 6g)**:
+  a `reduce` whose closure captures a free variable (e.g. `cls` in
+  `count-class`) leaks term pairs on the lazy machine — over hvm-core.toc
+  (194 nodes) a single such reduce exhausts the 1MB term buffer (`Error: Not
+  enough space to allocate pair`), and 7 of them leave ~11k leaked pairs +
+  `bad result SUP pair`. A reduce with a LITERAL (no free-variable capture) is
+  clean, as are reduces that only call a protocol dispatch (`top-kind`) with no
+  capture. Fix: explicit recursion passing the value as a plain parameter — the
+  same workaround as `intrp-rdr.toc`'s `threading-acc` (cf. the threading
+  verified fact). `rdr-hvmcore.toc`'s `count-class` uses `count-class-acc`
+  (explicit recursion, `cls` as a param). Verified with a staged probe: trivial
+  reduce clean, `top-kind`-dispatch reduce clean, `node-class`+literal clean,
+  `node-class`+variable-capture crashes.
+- **Item-6g driver: `interpreter/rdr-hvmcore.toc` (2026-09-01)**: the reader
+  acceptance driver. `slurp`s hvm-core.toc (inline-C whole-file read, same as
+  `rdr-top.toc`), runs `parse-program`, and checks: the result is a
+  ParserMatch; the `[TopLevel]` vector has 194 nodes; the per-form counts are
+  108 defn / 5 def / 58 defp / 5 deftype / 16 extend-type / 2 top-level inline
+  / 0 other; and a spot-check of one defp (`type-name [x]`), one deftype
+  (`Maybe`: `None` + `Some [x]`), one extend-type (`None`: 8 methods), and one
+  top-level inline (first node, c-code prefix `\n#define _XOPEN_SOURCE 600`).
+  The defn/def split is by the `Definition`'s value shape (Fn → defn, Inline →
+  def — all 5 hvm-core `def`s bind an inline). `node-class` tags each TopLevel
+  (tag protocols `top-kind`/`expr-kind` + per-ctor extraction, the item-6c
+  pattern). All checks OK, zero leaks, 0 remaining nodes. The `rdr-hvmcore`
+  Makefile target follows the `rdr-top` pattern. The parse-error branch and the
+  success path are separate `defn`s (`run-parse`/`run-success`) to keep `let`s
+  out of non-else cond clauses (see the malformed-cond fact above).
 
 ## Settled (continued)
 
@@ -1014,7 +1059,7 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
     0 remaining nodes; the `rdr-inline` Makefile target follows the
     `rdr-top` pattern.
 
-- [ ] **6g. Reader acceptance: fully read `hvm-core.toc`**
+- [x] **6g. Reader acceptance: fully read `hvm-core.toc`**
   - A driver runs `parse-program` over `hvm-core.toc` and produces a
     complete vector of TopLevel values with **zero parse errors**. Every
     top-level form is accounted for: 108 `defn`, 5 `def`, 58 `defp`,
@@ -1023,6 +1068,19 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
     (not `ParserError`), the vector has the expected count (194), and a
     spot-check of one `defp`, one `deftype`, one `extend-type`, and one
     `inline` shows the correct shapes. Zero leaks.
+  - As-built (2026-09-01): driver `interpreter/rdr-hvmcore.toc` (the
+    `rdr-hvmcore` Makefile target follows the `rdr-top` pattern). Two parser
+    fixes were required to reach zero parse errors / zero leaks (both recorded
+    in Verified facts): (1) `symbol-start?` was missing `*` — `(defn * [x y]`)
+    failed with `expected a name after defn`; added `*` to the start set. (2)
+    the acceptance driver's `count-class` originally used a `reduce` whose
+    closure captured the free variable `cls` — that leaks term pairs on the
+    lazy machine (buffer exhaustion over hvm-core.toc); rewritten as explicit
+    recursion (`count-class-acc`) passing `cls` as a plain parameter. Result:
+    `parse-program` returns a ParserMatch, 194 nodes, per-form counts
+    108/5/58/5/16/2/0, all four spot-checks OK, zero leaks, 0 remaining nodes.
+    The existing drivers (`rdr-exprs`/`rdr-top`/`rdr-defp`/`rdr-deftype`/
+    `rdr-extend-type`/`rdr-inline`) still pass (the `*` change is additive).
 
 ## Phase 2 implementation checklist (Ralph loop) — concrete interpreter
 
