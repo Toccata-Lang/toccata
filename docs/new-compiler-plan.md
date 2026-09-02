@@ -757,6 +757,73 @@ rules; each form's rule arrives with its phase.
   HashCollisionNode, Vector, HashMap, Opaque; NO Function/Float).
   `extend-type <sym>` resolves via `b/get-type-info` (typer.toc
   extend-ast pre-check) → current ns's `.types`, then core ns's.
+- **Item-7a static verification of the three edits (2026-09-02)** —
+  verified against the sources; the `make new-toc` rebuild +
+  `scratch/func-dispatch.toc` run are the owner's step (item 7a
+  protocol): (1) `c/ReifiedConstraint` field order is `[type-number
+  type-symbol field-consts fields path sym]` (constraints.toc:570,
+  pinned sha 2f1dce1); its asserts accept `{}`/`empty-list`/
+  `c/no-symbol`; `(c/type-num <ReifiedConstraint>)` returns
+  `.type-number` (the `extend-type ReifiedConstraint Constraint` impl).
+  (2) The extend-ast pre-check's singleton test passes a fieldless
+  ReifiedConstraint: `(get type-c .static/.min/.max)` all miss → the
+  defaults (`c/no-int`, `int-min`, `int-max`) make every clause true
+  (typer.toc:1096–1116). (3) The typer records an extend-type impl as
+  `(b/ProtoArity (c/type-num type-info) ...)` (typer.toc:1133–1148), so
+  `extend-type Function` lands the impl under `.impls[c/FunctionType]`
+  — exactly the key the new REF branch looks up. (4) User deftype type
+  numbers start at `c/TypeCount` = 45 (runtime3.h:196; base.toc:33
+  `(def type-counter (int-generator c/TypeCount))`), so `FunctionType`
+  (4) can never collide with a user type. (5) The OLD runtime header
+  core.h:103 also defines `FunctionType` = 4 — the new-toc binary links
+  `core.c` (includes core.h), so `c/FunctionType`'s inline C compiles in
+  the compiler too; `FunctionType` already appears 1591× in the current
+  new-toc.c.
+- **Dispatcher C shape AFTER the item-7a edits (2026-09-02)** —
+  supersedes the pre-edit shape fact above for rebuilt new-toc: per defp,
+  `strictArgs([file line receiver])` → `swap(termLoc(args), (Term)dispVal)`
+  (moves the receiver into the args slot for EVERY receiver kind) →
+  `if (termTag(dispVal) == I60) { Integer impl → default impl → BOOM
+  "for integers" } else if (F60) { default impl → BOOM "for floats" }
+  else if (REF) { Function impl → default impl → BOOM "for Function" }
+  else { switch(dispVal->type) { <case per impl, excluding 0 / IntegerType
+  / FunctionType> default: { default impl → BOOM "for type %s" } } }`.
+  "Default impl" = the defp body registered under `UnknownType`. The impl
+  receives the receiver as its first arg; the trailing dispatcher args
+  (line, file) are ignored by the impl (same as the pre-edit I60 path).
+  Emitted by `emit-proto` + helpers `proto-impl-c` / `proto-boom-c` /
+  `proto-branch-c` (codegen.toc, before `emit-proto`).
+- **Old-compiler (toccata binary) source facts for compiler-source edits
+  (2026-09-02, item 7a)**: (1) `reduce` is a protocol with signature
+  `(reduce coll init f)` (core.toc:470 List, 1773 Vector) — the existing
+  `emit-proto` threads `(reduce [] f)` via `->`. (2) `either` is a
+  SPECIAL FORM in the old compiler (`ast/either-ast`, toccata.toc:5657):
+  `(either x y)` = extract x if not nothing, else y; works inside
+  closures. (3) `get-in` (core.toc:2250) is an ordinary fn — a variable
+  may sit in the path vector: `(get-in ptype [.impls impl-key])`. (4)
+  `.field` in argument position is a first-class field-getter tag;
+  `(get x .field)` = has-field + extract (Associative get, toccata.toc
+  6597) — this is how the typer's singleton test probes constraints for
+  optional fields.
+- **`scratch/str-prefix.toc` and `env-test.toc` are NOT in the repo
+  (2026-09-02)**: `scratch/str-prefix.toc` (item 1's verification
+  program) was DELETED (not moved) in a5b3c7b "Move work to
+  interpreter directory" — item 12 must recreate it (its content is in
+  git: `git show 1367f7b:scratch/str-prefix.toc`). `env-test.toc` (the
+  `type-num` REF repro) was ad hoc and never committed; its check
+  (`(type-num pr*)` → 4) is folded into `scratch/func-dispatch.toc`.
+- **Item-7a scratch driver: `scratch/func-dispatch.toc` (2026-09-02)**:
+  `defp disp [x]` with `!returns Integer` + body `(99)` + `(extend-type
+  Function (disp [f] (42)))`; `main` checks, in order: `(type-num pr*)`
+  → 4, `(disp pr*)` (REF → Function impl) → 42, `(disp 1)` (I60 →
+  default) → 99, `(disp 1.5)` (F60 → default) → 99, `(disp (Some 1))`
+  (VAL of unlisted type → default) → 99. Side effects threaded through
+  the continuation chain with `+` (lazy-machine crutch, the
+  str-prefix.toc pattern). Build recipe is in the file header (new-toc +
+  awk `#line` + clang with `-DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1`,
+  link `new.c runtime3.c graph.c`). PENDING the owner's `make new-toc`
+  rebuild — it cannot pass under the current new-toc binary (`extend-
+  type Function` fails to resolve: "No type named 'Function'").
 
 ## Settled (continued)
 

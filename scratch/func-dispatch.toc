@@ -1,0 +1,60 @@
+;; Item 7a verification: Function type + REF/F60 protocol dispatch.
+;;
+;; Requires the REBUILT new-toc (make new-toc): the base.toc (Function in the
+;; core type table) and codegen.toc (dispatcher I60/F60/REF branches) edits
+;; only take effect after the rebuild. The hvm-core.toc type-num fix takes
+;; effect on any new-toc compile.
+;;
+;; Build (from the repo root, same pattern as the reader drivers):
+;;   ./new-toc scratch/func-dispatch.toc > func-dispatch.tmp
+;;   awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "func-dispatch.c"; next; } { print; }' func-dispatch.tmp > func-dispatch.c
+;;   rm func-dispatch.tmp
+;;   clang -g -march=native -I. -DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1 -lm -lpthread -latomic -o func-dispatch func-dispatch.c new.c runtime3.c graph.c
+;;   ./func-dispatch
+;;
+;; Expected output (five labeled lines; labels may interleave with values on
+;; the lazy machine — sort both sides when diffing):
+;;   type-num REF:     4
+;;   REF receiver:     42
+;;   I60 receiver:     99
+;;   F60 receiver:     99
+;;   VAL receiver:     99
+;;
+;; Ordering crutch (current-compiler, not a design constraint): the machine
+;; is lazy, so every pr* result is combined with + and threaded through the
+;; continuation chain; the final result depends on all of them.
+
+(defp disp [x]
+  !returns Integer
+  (99))
+
+(extend-type Function
+  (disp [f]
+    (42)))
+
+(defn show [label v cont]
+  (let [a (pr* label)]
+    (let [b (pr* (str* (conj (str-vect v) "\n")))]
+      (cont (+ a b)))))
+
+(defn check [label v cont]
+  (let [a (pr* label)]
+    (let [r (disp v)]
+      (let [b (pr* (str* (conj (str-vect r) "\n")))]
+        (cont (+ a b))))))
+
+(main [_]
+  (show "type-num REF:  " (type-num pr*)
+    (fn [p0]
+      (+ p0
+      (check "REF receiver:  " pr*
+        (fn [p1]
+          (+ p1
+          (check "I60 receiver:  " 1
+            (fn [p2]
+              (+ p2
+              (check "F60 receiver:  " 1.5
+                (fn [p3]
+                  (+ p3
+                  (check "VAL receiver:  " (Some 1)
+                    (fn [p4] p4)))))))))))))

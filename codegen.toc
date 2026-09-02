@@ -898,6 +898,23 @@
   (gen-code [ast]
     (se/state-error ast)))
 
+(defn proto-impl-c [ptype impl-key]
+  (map (get-in ptype [.impls impl-key])
+       (fn [impl-arity]
+         ["pushRedex(args, " (.var impl-arity) ");\n"])))
+
+(defn proto-boom-c [ptype what]
+  ["fprintf(stderr, \"No implementation of '" (.fn-name ptype) "' found for "
+   what " called from %.*s: %ld\\n\", (int)fileStr->len, fileStr->buffer, "
+   "getI60(arityArgs.args[1]));\n"
+   "BOOM(\"Dispatch failed\");\n"])
+
+(defn proto-branch-c [ptype impl-keys boom-what]
+  (reduce impl-keys
+          (proto-boom-c ptype boom-what)
+          (fn [fallback impl-key]
+            (either (proto-impl-c ptype impl-key) fallback))))
+
 (defn emit-proto [ptype]
   (assert (instance? ast/prototype-ast ptype))
 
@@ -914,26 +931,25 @@
                       "    Value *dispVal = (Value *)arityArgs.args[2];\n"
                       "    swap(termLoc(args), (Term)dispVal);\n"
                       "    if (termTag((Term)dispVal) == I60) {\n"
-                      (either (map (get-in ptype [.impls c/IntegerType])
-                                   (fn [impl-arity]
-                                     ["pushRedex(args, " (.var impl-arity) ");\n"]))
-                              ["fprintf(stderr, \"No implementation of '" (.fn-name ptype)
-                               "' found for integers called from %.*s: %ld\\n\", (int)fileStr->len,"
-                               " fileStr->buffer, getI60(arityArgs.args[1]));\n"
-                               "BOOM(\"Dispatch failed\");\n"])
-                      "} else {\n"
-                      "switch(dispVal->type) {\n"
+                      (proto-branch-c ptype [c/IntegerType c/UnknownType] "integers")
+                      "    } else if (termTag((Term)dispVal) == F60) {\n"
+                      (proto-branch-c ptype [c/UnknownType] "floats")
+                      "    } else if (termTag((Term)dispVal) == REF) {\n"
+                      (proto-branch-c ptype [c/FunctionType c/UnknownType] "Function")
+                      "    } else {\n"
+                      "      switch(dispVal->type) {\n"
                       (-> (.impls ptype)
                           seq
                           (reduce [] (fn [cases [type-num impl-arity]]
                                        (cond (or (= 0 type-num)
-                                                 (= c/IntegerType type-num))
+                                                 (= c/IntegerType type-num)
+                                                 (= c/FunctionType type-num))
                                              cases
 
                                              [cases
                                               "case " (str type-num) ":\n"
                                               "pushRedex(args, " (.var impl-arity) ");\nbreak;\n"]))))
-                      "default: {\n"
+                      "      default: {\n"
                       (either (map (get-in ptype [.impls c/UnknownType])
                                    (fn [def-arity]
                                      ["pushRedex(args, " (.var def-arity) ");\n"]))
@@ -941,7 +957,12 @@
                                "' found for type %s (%ld) called from %.*s: %ld\\n\", typeName(dispVal->type), "
                                "dispVal->type, (int)fileStr->len, fileStr->buffer, getI60(arityArgs.args[1]));\n"
                                "BOOM(\"Dispatch failed\");\n"])
-                      "}\n}\n}\n}\nreturn;\n}\n"
+                      "      }\n"
+                      "    }\n"
+                      "  }\n"
+                      "  }\n"
+                      "  return;\n"
+                      "}\n"
                       "Term " (.var ptype) " = newRef(" c-fn ");\n"]))))
 
 (defn emit-protos [code-context]
