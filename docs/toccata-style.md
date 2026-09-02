@@ -128,6 +128,13 @@ builds the code.
   plain `defn` whose body is the `(inline ...)` expression (cf. `type-name`
   calling `default-type-name` in `hvm-core.toc`).
 
+* A `defp` with a body provides a **default implementation** — the body runs
+  for receiver types with no specific `extend-type` impl (the dispatcher's
+  `default` case); a `defp` without a body aborts on an unimplemented
+  receiver. Currently only VAL receivers reach the default: I60 receivers
+  hit an Integer-only branch, and F60/REF receivers are not handled at all
+  (see `docs/implementation-notes.md` §5).
+
 ## Evaluation
 
 Evaluation is data-dependent workflows, not sequential execution. A function

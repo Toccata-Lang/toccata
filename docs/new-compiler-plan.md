@@ -129,7 +129,7 @@ annotations are ignored by the compiler).
 | `Expression.IntegerLit` | `[value loc]` | |
 | `Expression.FloatLit` | `[value loc]` | |
 | `Expression.StringLit` | `[value loc]` | |
-| `Expression.Call` | `[operator operands]` | |
+| `Expression.Call` | `[operator operands loc]` | `loc` added 2026-09-02 (owner) — call site for the `not callable` / arity errors; the parser records the line at the opening paren |
 | `Expression.Fn` | `[name parameter-list body loc]` | name = self-recursion binding; `loc` added |
 | `Expression.FieldGetter` | `[field-name loc]` | used as `Call` operator; name sans dot |
 | `Expression.Inline` | `[type-expr c-code loc]` | type-expr = `Maybe` of `Expression` (uninterpreted tree); `!` annotations commented out — annotations over `String`/`Location`-kind types break the bare reference from `TopLevel` (see verified facts) |
@@ -712,6 +712,51 @@ rules; each form's rule arrives with its phase.
   Makefile target follows the `rdr-top` pattern. The parse-error branch and the
   success path are separate `defn`s (`run-parse`/`run-success`) to keep `let`s
   out of non-else cond clauses (see the malformed-cond fact above).
+- **The generated protocol dispatcher's shape** (2026-09-02, item 7a):
+  `emit-proto` (codegen.toc:900) emits per defp: `strictArgs([file line
+  receiver])` → `if (termTag(dispVal) == I60) { <Integer impl, else BOOM
+  "found for integers"> } else { switch(dispVal->type) { <case per impl>
+  default: <UnknownType impl, else BOOM "found for type %s"> } }`. A
+  **defp with a body** registers the body under `UnknownType` and the
+  `default:` case calls it (verified: the `type-name` dispatcher's
+  default → the defp body, `glbltype_name9`). The I60 branch does NOT
+  fall through to the default (BOOMs "for integers" even when a body
+  exists). There is **no F60 branch** — a Float receiver falls into the
+  switch and dereferences the float's bits as a `Value*` → garbage type
+  → BOOM. A **REF receiver** reads the function pointer as a `Value*` →
+  garbage → BOOM. Dispatch failures print `file:line` ("called from
+  %.*s: %ld") but the message is the dispatcher's fixed text.
+- **`type-num` BOOMs on REFs** (2026-09-02): hvm-core.toc:86
+  `case REF: BOOM("too tire")` — repro `env-test.toc` (`(type-num pr*)`)
+  → `too tire at m.c:131`. Fix settled in item 7a (REF → `FunctionType`
+  4, `dec_and_free` per the ref contract).
+- **`FunctionType` (4) is free in the new runtime** (2026-09-02):
+  defined at runtime3.h:159, unused in runtime3.c/new.c/hvm-core.toc.
+  Precedent: the old core has a reified `Fn` Type checking
+  `checkInstance(FunctionType, ...)` (core.toc:264) and the typer types
+  defn globals `'Fn` (typer.toc:404, 739).
+- **`dec_and_free` on a REF is a no-op** (2026-09-02): falls to
+  `default:` → `pushRedex(ERA, pv)`; `interactions[ERA][REF] = nop`.
+  Safe to call for ref-contract consistency.
+- **`vectGet` duplicates; DUP is safe on VAL/REF/VAR** (2026-09-02):
+  `vectGet` uses `dupeVal` (refcount-safe extraction for `intrp-call`'
+  C body); `interactions[DUP]` → `dupLeaf` (VAL/REF) / `negVar` (VAR),
+  so a value may be used twice in Toccata source.
+- **The new-toc build pipeline** (2026-09-02): the `toccata` target
+  builds the OLD compiler binary; the `new-toc` target runs
+  `./toccata compiler.toc` (the new compiler's sources:
+  compiler/base/typer/codegen.toc) and compiles the generated C with
+  `core.c` (old runtime). New-toc-source edits need only `make new-toc`;
+  the old binary sees new symbols as data. `c/` in the compiler sources
+  = the constraints git-dependency (pinned sha 2f1dce1; has
+  `FunctionType` at line 117, verified in the pinned commit).
+- **Core-module type-table seeding** (2026-09-02): `b/new-module`
+  (base.toc:193) builds the core SymTable's types from
+  `c/core-type-constraints` (constraints.toc:3235 — Integer,
+  StringBuffer, FnArity, BitmapIndexedNode, ArrayNode,
+  HashCollisionNode, Vector, HashMap, Opaque; NO Function/Float).
+  `extend-type <sym>` resolves via `b/get-type-info` (typer.toc
+  extend-ast pre-check) → current ns's `.types`, then core ns's.
 
 ## Settled (continued)
 
@@ -732,14 +777,15 @@ rules; each form's rule arrives with its phase.
   is populated when `add-ns` lands.
 - **`eval-call` has two target kinds**: a user closure (AST body —
   interpreted) or a primitive (a `REF`: core defn / defp dispatcher /
-  native). **How primitives are represented in the environment and called
-  is DEFERRED** (owner will decide when implementing; likely an `apply`-
-  like core function — cf. status.md `test-apply-constructor`: the `apply`
-  protocol exists but has no fn-value implementation). Verified: a call
-  whose operator is a local value compiles to a generic apply
-  (`pushRedex(args, <local-fn-value>)`), so source-level calls of function
-  values work; the open problem is dynamic arity + safe
-  closure-vs-REF discrimination.
+  native). **Settled (2026-09-02, grilling)**: the env holds the raw
+  REFs (initial env = compile-time literal hash map of core symbols);
+  a primitive is called by the interpreter's inline-C `intrp-call [f
+  ops]` (vector-based: APP chain + `VAR` at `portLoc(2)` +
+  `pushRedex` — the generated-C call pattern); no core `apply`
+  extension. Discrimination is by real protocols — `resolve` (lookup)
+  and `interpret` (call target) — enabled by making `Function` a
+  first-class compiler type (checklist item 7a); see Phase-2 design
+  status.
 - **Closure deftype** (`interpreter/intrp-eval.toc`):
   `(deftype Closure [name params body env])` — `name` String (`""` if
   anonymous; call-time self-binding), `params` `[String]`, `body`
@@ -788,8 +834,13 @@ rules; each form's rule arrives with its phase.
   `main` runs); cycles → infinite loop at first use; each use re-evaluates
   (pure def values unaffected — all 20 differential candidates are pure;
   side-effecting def values repeat per use — documented sharp edge).
-  The marker's exact shape is settled together with the deferred
-  primitive representation.
+  **Marker settled (2026-09-02)**: `(deftype TopDef [name ast])` —
+  `name` String (error messages), `ast` = the def's value Expression;
+  no `!` annotations; map/flat-map/recurse impls per the style doc
+  (`recurse` over `ast` only). Env binding: `Definition` → name →
+  `TopDef`; `Main` → set aside (the driver calls it); `Defp` /
+  `DefType` / `ExtendType` / `Inline` / `BlockComment` → skipped
+  (top-level `inline` is ignored, not bound).
 - **The interpreter is the semantics reference.** new-toc's behavior is
   not a design constraint — it is only the build crutch. (Differential
   tests still validate core behavior on the 20 clean candidates.)
@@ -822,14 +873,38 @@ rules; each form's rule arrives with its phase.
 
 ## Phase-2 design status
 
-Complete except two deferred pieces that settle together at the
-**phase-1 → phase-2 boundary** (the phase-2 checklist's first item, 7, is a
-STOP POINT — a joint decision with the owner; the loop stops there rather
-than guessing): the **primitive representation** (how core REFs are
-represented in the environment and called — likely an `apply`-like core
-function) and the **top-level-def marker shape** (the wrapper that lets
-symbol lookup tell "top-level def — evaluate" from "value — return" without
-dispatching on raw values).
+Complete (2026-09-02, grilling session). The two pieces deferred to the
+phase-1 → phase-2 boundary are settled:
+
+- **Primitive representation**: the env holds the raw core REFs — the
+  initial env is a compile-time literal hash map of the item-3 25
+  symbols → the core symbols as values. A primitive is called by a
+  single vector-based inline-C `intrp-call [f ops]` in the interpreter
+  source (`count` + `vectGet` + APP chain + `VAR` at `portLoc(2, app)`
+  + `pushRedex` — exactly the generated-C call pattern, so interpreter
+  calls behave like compiled calls). No core `apply` extension; the
+  core's `apply` protocol stays unimplemented.
+- **Top-level-def marker + discrimination**: `(deftype TopDef [name
+  ast])`. Discrimination is by **real protocols** (defp + extend-type),
+  enabled by making `Function` a first-class compiler type (item 7a):
+  - `resolve [v env]` — defp **with a default body = identity** (`v`);
+    one impl: `extend-type TopDef` → `(eval (.ast v) env)`. REFs,
+    immediates, Closures, and every other value fall through to the
+    default — no identity-impl enumeration (a defp's body registers
+    under `UnknownType`; the dispatcher's `default:` case calls it).
+  - `interpret [f ops env loc]` — defp **with a default body = the
+    clean `file:line: not callable` abort** (`loc` = the `Call`'s loc,
+    passed by `eval-call`); impls: `extend-type Function` →
+    `(intrp-call f ops)` (item 7); `extend-type Closure` → bind
+    params + self, eval body (item 8 — needs `eval`).
+  No startup type-ID computation (that belonged to the rejected
+  type-num-cond alternative) — the dispatcher switches on type
+  internally.
+- **Structural loading rules** (owner, 2026-09-02): top-level `inline`
+  expressions are ignored (not bound); a `defn` whose body is inline C
+  is a structural error unless it appears in the core namespace and its
+  name is found in the initial env (phase 2: vacuous — the core is
+  compiled in, not loaded; the rule stands for later phases).
 
 ## Phase 1 implementation checklist (Ralph loop) — reader
 
@@ -1085,29 +1160,114 @@ ends at item 6g: a reader that fully reads `hvm-core.toc`.
 ## Phase 2 implementation checklist (Ralph loop) — concrete interpreter
 
 Items 7–13 are the former phase-1 interpreter work, moved here unchanged.
-Same protocol as phase 1. **Item 7 is a STOP POINT** — the primitive
-representation + top-level-def marker shape are joint decisions (owner +
-agent) made at the phase-1 → phase-2 boundary; when the loop reaches it,
-stop and report the state. Do not choose a design unilaterally.
+Same protocol as phase 1. The item-7 design (primitive representation +
+top-level-def marker + discrimination) was settled with the owner
+2026-09-02 (grilling) — see Phase-2 design status. **Item 7a is a
+prerequisite** (compiler changes, agent edits + owner build); item 7
+depends on it.
 
-- [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment — STOP
-    POINT**
+- [ ] **7a. Compiler prerequisite: `Function` type + REF/F60 protocol
+    dispatch (agent edits, owner builds + verifies)**
+  The interpreter's discrimination protocols dispatch over REFs (core
+  symbols) and immediates; the generated dispatcher cannot do that
+  today (see the dispatcher-shape verified fact). Three source edits,
+  then the owner runs `make new-toc` and verifies — the agent stops
+  after the edits.
+  - **hvm-core.toc — `type-num` (lines 74–89)**: replace
+    `case REF: BOOM(\"too tire\");` with
+    `case REF: result = newI60(FunctionType); dec_and_free(x_1, 1); break;`
+    (`FunctionType` = 4, runtime3.h:159, unused in the new runtime;
+    `dec_and_free` on a REF is ERA→nop). `type-num` becomes total over
+    strict args: I60→1, F60→19, REF→4, VAL→its type id. Acceptance:
+    `env-test.toc` (`(type-num pr*)`) prints `4` instead of
+    `too tire at m.c:131`.
+  - **base.toc — `new-module` (~line 193)**: register `Function` in the
+    core module's type table so `extend-type Function` resolves
+    (resolution path: typer extend-ast pre-check → `b/get-type-info` →
+    current ns's `.types`, then core ns's, seeded from
+    `c/core-type-constraints`):
+    `(assoc c/core-type-constraints (c/tag 'Function)
+           (c/ReifiedConstraint c/FunctionType (c/tag 'Function) {} {}
+                                empty-list c/no-symbol))`
+    (field order per `create-type`, typer.toc:1567; `c/FunctionType`
+    verified present in the pinned constraints sha 2f1dce1). The
+    constraints git-dependency itself is untouched.
+  - **codegen.toc — `emit-proto` (~lines 900–940)**:
+    - I60 branch: Integer impl → **else default impl** → else BOOM
+      "for integers" (currently: no fall-through to the default).
+    - **New F60 branch**: default impl → else BOOM "for floats" (no
+      impl lookup — Float is not a registered type). Today a Float
+      receiver dereferences the float's bits as a `Value*` → garbage →
+      BOOM.
+    - **New REF branch**: Function impl (`.impls[c/FunctionType]`) →
+      else default impl → else BOOM "for Function".
+    - Switch-case reduce: exclude `c/FunctionType` alongside 0 and
+      `c/IntegerType` (a VAL of type 4 cannot exist; the impl is
+      handled by the REF branch).
+    - "Default impl" = the defp's body registered under `UnknownType`
+      (the dispatcher's `default:` case already calls it when present).
+  - **Build + verify (owner)**: `make new-toc` (the old `toccata`
+    binary is unchanged — new symbols are data to it). Verify with a
+    scratch program: a defp-with-body + `extend-type Function`, called
+    over a REF receiver (Function impl), an I60 receiver (fall-through
+    to default), an F60 receiver (fall-through to default), and a
+    VAL-of-unlisted-type receiver (default); plus `env-test.toc`.
+  - Done when: the owner has built new-toc and the verification
+    program passes.
+
+- [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment**
+  Design settled 2026-09-02 (grilling) — see Phase-2 design status.
   - `(deftype Closure [name params body env])`,
-    `(deftype Env [current-ns namespaces])`, initial env built from
-    item 3's core-symbol list. The **primitive representation** (how
-    core REFs are represented in the env and called) and the
-    top-level-def marker shape are decided HERE, jointly, when the
-    loop stops at this item — do not guess a design.
-  - Done when: the representation + marker are settled with the owner,
-    the file compiles, and a scratch harness builds the initial env,
-    extends it, and looks up values correctly.
+    `(deftype Env [current-ns namespaces])`,
+    `(deftype TopDef [name ast])` — no `!` annotations; map/flat-map/
+    recurse impls per the style doc (`TopDef.recurse` over `ast` only).
+  - Initial env: a compile-time literal hash map of the item-3 25
+    symbols → the core symbols as values (raw REFs).
+  - `intrp-call [f ops]` — inline-C vector-based apply (`count` +
+    `vectGet` + APP chain + `VAR` at `portLoc(2, app)` + `pushRedex`).
+    [Open implementation detail: the zero-operand case — no candidate
+    calls a zero-arg fn; decide at implementation (clean error vs.
+    probe the generated zero-arg pattern).]
+  - **AST/parser delta**: add `loc` to `Expression.Call`
+    (`intrp-ast.toc` + `parse-call` in `intrp-rdr.toc` + `Call`'s
+    `str-vect`) — the call site for the `not callable` / arity errors
+    (settled 2026-09-02, owner).
+  - **Env extension**: `env-bind [env name value]` (one `assoc` into
+    the current-ns map) + `env-bind-all [env pairs]` (explicit
+    recursion over a flat `[k1 v1 k2 v2 ...]` vector — no `reduce`,
+    the free-variable-capture leak); the `interpret` Closure impl
+    walks `params`/`ops` in lockstep to build the pairs, appends
+    `[name closure]` when `name ≠ ""` (settled 2026-09-02, owner).
+  - **Protocol split** (settled 2026-09-02, owner): item 7 ships
+    `resolve [v env]` (default body = identity only) +
+    `interpret [f ops env loc]` (default body = the `file:line:
+    not callable` abort + the `Function` impl → `(intrp-call f ops)`).
+    The `TopDef` `resolve` impl and the `Closure` `interpret` impl
+    both need `eval` — they land in item 8 (extend-type blocks added
+    to the existing defps). `loc` flows from `eval-call`'s `Call` loc;
+    `resolve` stays `[v env]` (its only error path is a dispatch
+    failure, which carries its own file:line).
+  - **Harness** (scratch driver): (1) initial env builds — 25
+    entries, count + spot lookups; (2) `env-bind` a value → lookup
+    returns it (I60 fall-through to `resolve`'s default); (3) lookup a
+    core symbol → returns the REF (REF fall-through); (4) `interpret`
+    a core REF with ops (e.g. `+` over `[1 2]`) → `3` (Function impl +
+    `intrp-call`); (5) separate sub-run: `interpret` an Integer →
+    clean `file:line: not callable` abort, non-zero exit.
+  - Done when: the file compiles under the rebuilt new-toc and the
+    harness checks 1–5 pass, zero leaks.
 
 - [ ] **8. `interpreter/intrp-eval.toc`: interpreter — eval**
   - `(defp eval [expr env])` over `String`, `IntegerLit`, `FloatLit`,
     `StringLit`, `Call`, `Fn`, `FieldGetter`, `TypeConstraint` (skip).
-    `eval-call`: closure → interpret (param bindings + self-binding);
-    primitive → native call (the item-7 mechanism). Errors:
-    `file:line: message` + abort.
+    `eval-call`: `(interpret op ops env (.loc call))` — the dispatch
+    does the rest. Errors: `file:line: message` + abort.
+  - Also adds the item-7-deferred impls: `extend-type TopDef` for
+    `resolve` → `(eval (.ast v) env)`; `extend-type Closure` for
+    `interpret` → arity check (operand count vs param count →
+    `file:line: wrong number of args` at the `Call` loc),
+    `env-bind-all` over the param/ops pairs + self-binding, then eval
+    the body (skipping leading `TypeConstraint`s).
   - Done when: a scratch program with defn recursion, fn/closures,
     let, cond/and/or/either, vectors, hash maps, threading, string/int
     ops interprets with hand-verified output.

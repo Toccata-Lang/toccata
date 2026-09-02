@@ -114,16 +114,38 @@ The chain is logically intact after the swap — nothing is dropped here.
 args = strictArgs(ref, args, 3, &arityArgs);   // [fileStr, line, dispVal]
 if (arityArgs.count == 3) {
   swap(termLoc(args), (Term)dispVal);          // receiver back in front of remaining args
-  if (termTag(dispVal) == I60) { ...integer impl or BOOM... }
+  if (termTag(dispVal) == I60) { ...integer impl or BOOM "for integers"... }
   else switch (dispVal->type) {
     case <typeNum>: pushRedex(args, <implArity>); break;
-    default: BOOM("No implementation of 'X' found for type Y ... file:line");
+    default: <default impl — the defp's body — or BOOM "found for type Y">;
   }
 }
 ```
 
 The impl function receives `[receiver, ...method-args]` — the full original
 arg list.
+
+**Default implementations** [observed]: a `defp` *with a body* registers that
+body as the impl for the `default:` case — verified in generated code: the
+`type-name` dispatcher's default pushes the defp's body fn
+(check-bad-incRef.c:18819). A `defp` without a body BOOMs in the default
+case ("No implementation of 'X' found for type Y ... file:line").
+
+**Immediate/REF receiver hazards** [read, 2026-09-02 — new-compiler-plan
+item 7]:
+
+- The I60 branch checks only `.impls[IntegerType]` — it does NOT fall
+  through to a default body. A protocol with a body but no Integer impl
+  still BOOMs "found for integers" on an I60 receiver.
+- There is no F60 branch: a Float receiver falls into
+  `switch(dispVal->type)`, which dereferences the float's bits as a
+  `Value*` → garbage type → BOOM. Dispatch over Float receivers is broken
+  in every protocol today.
+- A REF receiver hits the same dereference (a function pointer read as a
+  `Value*`) → garbage type → BOOM or misdispatch.
+- The planned Function-type work (new-compiler-plan.md, phase-2 item 7)
+  adds a REF branch (and an F60 branch) parallel to the I60 one, with
+  fall-through to the default impl.
 
 **Pitfall:** the protocol's param list must match the call-site arity.
 Codegen does not check this. A 5-arg call against a 3-param protocol
@@ -367,3 +389,35 @@ These exist in core.c but NOT in runtime3.c:
 | `ListType` | Not defined — no switch cases for it |
 | `HashedValue` struct | No hash caching — compute hashes fresh |
 | `new_num` / `new_i24` | Use `newI60(x)` instead |
+
+## 15. REF values and type identification [read]
+
+Verified 2026-09-02 while settling the interpreter's primitive
+representation (new-compiler-plan.md, phase-2 item 7).
+
+- **Every core symbol is a REF term.** defns, defp dispatchers, and
+  constructors — including zero-arg ones (`None` compiles to a REF that
+  interacts `APP(APP(I60(0), I60(<typeId>)), args)` with `construct`) — are
+  `newRef(fnPtr)` globals; a bare symbol in source *is* that REF (observed
+  in generated C, e.g. test12.c:150-156). `construct` is a global REF
+  (runtime3.c:3083) that builds a typed `Value` from the arg chain.
+- **REFs print by name** — generated C carries a `refNames` table
+  (`{fnPtr, "name"}` pairs), so `pr*` on a core symbol prints its name.
+- **`type-num` aborts on REFs** (hvm-core.toc:74; `case REF:
+  BOOM("too tire")` at :86). Repro: `env-test.toc` (`(type-num pr*)`)
+  prints `too tire`. I60 → `IntegerType`, F60 → `FloatType`, VAL → its
+  type field; the strict-args wrapper forces non-ready args first.
+- **`FunctionType` (4)** is defined in runtime3.h:159 but unused in the
+  new runtime. Precedent: the old core has a reified `Fn` Type that checks
+  it (core.toc:264), and the new-toc typer types defn globals as `'Fn`
+  (typer.toc:404, 739).
+- **`dec_and_free` on a REF is safe**: it falls to the `default:` case →
+  `pushRedex(ERA, pv)`, and `interactions[ERA][REF] = nop`.
+- **`appVal` (APP on a VAL) BOOMs** with "Invalid APP VAL pair" unless the
+  VAL is `TermType` (6) — a wrapped LAM, i.e. a local fn value (the
+  `case LAM` wrap in `strictArgs`, new.c). Calling any other non-function
+  value is a machine crash, not a clean error; APP on I60/F60 is `badrdx`
+  (interaction-table default).
+- **DUP works on values**: `interactions[DUP]` is `dupLeaf` for
+  VAL/REF/I60 and `negVar` for VAR — the compiler DUPs a source value that
+  is used more than once.
