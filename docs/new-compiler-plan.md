@@ -1233,7 +1233,7 @@ top-level-def marker + discrimination) was settled with the owner
 prerequisite** (compiler changes, agent edits + owner build); item 7
 depends on it.
 
-- [ ] **7a. Compiler prerequisite: `Function` type + REF/F60 protocol
+- [x] **7a. Compiler prerequisite: `Function` type + REF/F60 protocol
     dispatch (agent edits, owner builds + verifies)**
   The interpreter's discrimination protocols dispatch over REFs (core
   symbols) and immediates; the generated dispatcher cannot do that
@@ -1281,6 +1281,18 @@ depends on it.
     VAL-of-unlisted-type receiver (default); plus `env-test.toc`.
   - Done when: the owner has built new-toc and the verification
     program passes.
+  - As-built (2026-09-02): the owner rebuilt new-toc (commit dc1eaae).
+    `scratch/func-dispatch.toc` does NOT yet pass: it fails in the
+    TYPER with `Conflicting assertions (571)` (the call-site bottom in
+    typer.toc), which reproduces with a trivial user `defn` whose body
+    is a bare Integer literal (e.g. `(defn f [x] (99))`) — no
+    Function / extend-type involvement; string/vector literal bodies
+    are fine. Owner ruling: a latent new-toc typer bug, not a 7a
+    regression — 7a checked off. Also noted: the dc1eaae commit
+    message claims the `base.toc` Function-registration edit, but the
+    diff does not touch `base.toc` — `extend-type Function` will still
+    fail ("No type named 'Function'") until that edit lands and
+    new-toc is rebuilt. Probe files left in `scratch/7a-probe*`.
 
 - [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment**
   Design settled 2026-09-02 (grilling) — see Phase-2 design status.
