@@ -932,6 +932,21 @@ rules; each form's rule arrives with its phase.
   rdr-extend-type 3, rdr-inline 5, rdr-hvmcore 5 OK; zero leaks) — the
   drivers fingerprint via tag protocols + field extraction, not Call's
   str-vect, so the loc delta does not change their output.
+- **Item 7 verified under the OFFICIAL new-toc (2026-09-03)**: the owner
+  rebuilt new-toc (binary timestamp 2026-09-03 07:32; the 2026-09-02 19:37
+  build predated the `proto-branch-c` fix). The rebuilt binary contains the
+  fix — `scratch/i7-harness.toc` checks 1–4 pass (`OK check-1 count=24
+  sp+=1 sppr*=1` / `OK check-2 bound=42` / `OK check-3 ref-type=4` /
+  `OK check-4 plus=3`; zero leaks, 0 remaining nodes, exit 0) and
+  `scratch/i7-not-callable.toc` aborts `i7-not-callable.toc:5: not
+  callable`, exit 134. The throwaway `scratch/new-toc-fb` is no longer
+  needed for item 7 (left in `scratch/`). Two build-behavior notes:
+  (a) a new-toc build of a program **with** `main` exits **0** on success
+  (the "exit code is always 134" fact applies to library files without
+  main); (b) blank lines in new-toc's stderr are normal — when checking
+  for error lines, filter `^\*\*\* ` AND blank lines, or a blank line
+  masquerades as an "error message" and stops a transient-crash retry
+  loop early.
 
 ## Settled (continued)
 
@@ -1421,7 +1436,7 @@ operator position first — a latent typer bug, see Verified facts.**
     Function` resolves via the dependency. Probe files left in
     `scratch/7a-probe*`.
 
-- [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment**
+- [x] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment**
   Design settled 2026-09-02 (grilling) — see Phase-2 design status.
   - `(deftype Closure [name params body env])`,
     `(deftype Env [current-ns namespaces])`,
