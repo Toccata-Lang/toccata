@@ -821,9 +821,117 @@ rules; each form's rule arrives with its phase.
   the continuation chain with `+` (lazy-machine crutch, the
   str-prefix.toc pattern). Build recipe is in the file header (new-toc +
   awk `#line` + clang with `-DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1`,
-  link `new.c runtime3.c graph.c`). PENDING the owner's `make new-toc`
-  rebuild — it cannot pass under the current new-toc binary (`extend-
-  type Function` fails to resolve: "No type named 'Function'").
+  link `new.c runtime3.c graph.c`). **Status (2026-09-02)**: the
+  `extend-type Function` blocker is GONE — the owner rebuilt new-toc
+  (dc1eaae) and fixed the constraints git-dependency (Function in
+  `core-type-constraints`), so a minimal `extend-type Function` probe
+  compiles clean under the current binary (`scratch/ext-fn-probe.toc`
+  — exit 0, no error lines). The file itself still fails — in the
+  TYPER, on its own `(99)` / `(42)` self-expr integer-literal bodies
+  (`Conflicting assertions (571)` — the gap-4 latent typer bug); with
+  those rewritten to bare literals it is the item-7a verification
+  program again.
+- **Runtime field access is generic and index-based (2026-09-02,
+  gap 2)**: `accessFieldFn` (runtime3.c:3085) reads
+  `value->impls[fldIdx]` given a field index — the runtime has no
+  name→index table; compiled code gets the index from the typer. The
+  concrete interpreter resolves (type, field-name) → index with a
+  hand-rolled literal table keyed by runtime type id (`SomeType 43`,
+  `NoneType 42`, `SubStringType 44` — runtime3.h:193–195), and the
+  read is inline C that reuses the `accessField` REF with the exact
+  generated-C pattern (codegen.toc:336–340). The receiver's type id
+  comes from `type-num` (total after item 7a: I60→1, F60→19, REF→4,
+  VAL→type id).
+- **A call whose target is an Integer or String is invalid; new-toc's
+  typer misreports it (2026-09-02, gap 4)**: Integer and String values
+  can never be called as functions — `(99)` is a zero-argument call
+  with the integer 99 as the target, totally invalid. In source the
+  only way to write an Integer/String target is a literal in operator
+  position. new-toc's typer produces no "not callable" error for it —
+  it aborts with `Conflicting assertions (571)` (the call-site bottom,
+  typer.toc:571). Verified with `(defn f [x] (98))` /
+  `(defn f [x] (99))` (repros: `scratch/7a-probe-2cd5e2.toc`,
+  `7a-probe-e7a389.toc`, `7a-probe1–3.toc`); symbol-target call bodies
+  (`(str "hi")`, `(vector 1 2)`) and bare literal bodies are fine.
+  Avoidance rule for new-toc-compiled source (items 7–8): never put
+  an Integer or String in operator position. The concrete interpreter
+  implements the semantics cleanly — `interpret`'s default body
+  aborts `file:line: not callable`. The typer fix (a proper
+  "not callable" type error) is owner territory (new-toc rebuild).
+- **proto-branch-c dispatch bug in the item-7a codegen edit — found,
+  fixed, owner rebuild pending (2026-09-03, item 7)**: the generated
+  defp dispatcher's I60 / REF branches pushed the default body even
+  when a specific impl was registered — harness check 4 (`interpret`
+  a core REF) aborted `file:line: not callable` instead of calling the
+  Function impl. Diagnosis: the generated C's symbol table names the
+  ProtoArity globals `"<fn> <type-num>"` — `"interpret 4"` (the
+  Function impl, recorded under type 4 = FunctionType) existed but was
+  unreferenced by the dispatcher, while every branch pushed
+  `"interpret 0"` (the body, type 0 = UnknownType). The typer recorded
+  the impl correctly (`.impls[4]`); the bug was `proto-branch-c`
+  (codegen.toc): its reduce was LAST-key-wins —
+  `(reduce impl-keys boom (fn [fb key] (either (impl-c key) fb)))` —
+  so the last key (UnknownType) overwrote the earlier specific impl.
+  Fix (applied): reduce over `(reverse impl-keys)` — the specific keys
+  are visited last and overwrite the default / BOOM fallback, giving
+  the settled first-found-wins branch order. Verified end-to-end with a
+  THROWAWAY compiler `scratch/new-toc-fb` (built from the existing
+  `./toccata` binary — not rebuilt — via the Makefile new-toc recipe:
+  `./toccata compiler.toc` + the `maybe((FnArity`→`maybe((Vector` sed
+  + the awk `#line` step + `clang -march=native -I. -lm
+  -DWAIT_FOR_LINGERING=1 -std=c99 core.c <gen>.c -lpthread -latomic`):
+  the REF branch now pushes the Function impl; harness checks 1–5 pass,
+  zero leaks. Blast radius: the REF-branch bug is observable (the
+  interpreter's `interpret` is the first defp with a Function impl +
+  body); the I60-branch bug is currently MASKED — the only core defp
+  with an Integer impl + body is `type-name`, and its body
+  (`default-type-name`) special-cases I60 → `"Integer"`, the same
+  result as the Integer impl (probe `scratch/i7-typename-probe.toc`
+  prints `Integer` under both binaries). The official new-toc (the
+  2026-09-02 19:37 build) does NOT contain the fix — the owner must
+  run `make new-toc` before item 7's harness passes under the official
+  binary.
+- **Item 7 as-built (2026-09-03)**: `interpreter/intrp-eval.toc`
+  (library, no main): `Closure [name params body env]` / `Env
+  [current-ns namespaces]` / `TopDef [name ast]` deftypes — no `!`
+  annotations, `recurse` per the style doc, no map/flat-map (the style
+  doc now says they need not be implemented); `initial-ns-map` = a
+  compile-time literal hash of the item-3 symbols → the core symbols
+  as values (24 entries — the audit README's `Total: 25` is a
+  miscount, its tables list 24 distinct symbols: 15 direct + 9
+  desugar targets); `initial-env` = `(Env "" {"" initial-ns-map})`;
+  `intrp-call [f ops]` inline C (args are `f_1` / `ops_2`; `arrayFor`
+  is defined in runtime3.c but NOT declared in a header — the inline
+  C extern-declares it; VAL elements are incRef'd for the APP chain,
+  I60/F60/REF used directly; zero-operand call = clean abort — the
+  item's open detail, decided clean-error); `env-bind` / `env-bind-all`
+  (explicit recursion over the flat `[k1 v1 ...]` vector, no reduce —
+  the free-variable-capture leak) / `env-lookup`; `resolve [v env]`
+  (default body = identity); `interpret [f ops env loc]` (default body
+  = `interpret-not-callable` — inline C in a plain defn, since a
+  protocol impl may not contain an inline C body — aborting
+  `file:line: not callable`; `extend-type Function` → `(intrp-call f
+  ops)`). `test-loc [file line]` helper: the scratch harness cannot
+  import `ast` directly without double-compiling intrp-ast.toc under a
+  second raw path spelling, so it builds Locations through it. Harness:
+  `scratch/i7-harness.toc` (checks 1–4) + `scratch/i7-not-callable.toc`
+  (check 5, a separate program because it aborts). The harness imports
+  via `(add-ns eval (module "../interpreter/intrp-eval.toc"))` — the
+  `../` is SAFE here: intrp-eval.toc appears under exactly one spelling
+  in the harness module graph (intrp-ast.toc loads exactly once); the
+  `../` hazard is double-spelling the same file. Verified under
+  scratch/new-toc-fb: checks 1–4 print `OK check-1 count=24 sp+=1
+  sppr*=1` / `OK check-2 bound=42` / `OK check-3 ref-type=4` /
+  `OK check-4 plus=3`, zero leaks, 0 remaining nodes, exit 0; check 5
+  aborts `i7-not-callable.toc:5: not callable`, exit 134. The
+  Call-loc delta (`Expression.Call [operator operands loc]` —
+  intrp-ast.toc str-vect + recurse; `parse-call` captures `call-loc`
+  at the opening paren and threads it through `dispatch-special`; all
+  desugar helpers pass loc) is verified: all seven reader drivers pass
+  (rdr-exprs clean; rdr-top 23, rdr-defp 4, rdr-deftype 5,
+  rdr-extend-type 3, rdr-inline 5, rdr-hvmcore 5 OK; zero leaks) — the
+  drivers fingerprint via tag protocols + field extraction, not Call's
+  str-vect, so the loc delta does not change their output.
 
 ## Settled (continued)
 
@@ -876,7 +984,8 @@ rules; each form's rule arrives with its phase.
   Constructor set eval must handle (the actual `Expression` constructors
   the phase-1 parser produces): `Symbol [ns name loc]` (the symbol ref),
   `IntegerLit`, `FloatLit`, `StringLit`, `Call`, `Fn`, `FieldGetter`,
-  `TypeConstraint` (skip).
+  `TypeConstraint` (skip), `Inline` (eval-time error — see the
+  Inline-handling bullet above).
   **Never produced**: `Superposition`, `Match`, `BlockComment`
   (out-of-scope forms — parse errors). There are no And/Or/Cond/IntCond/
   VectorLit/HashLit/Threading constructors in the AST — those forms are
@@ -967,11 +1076,22 @@ phase-1 → phase-2 boundary are settled:
   No startup type-ID computation (that belonged to the rejected
   type-num-cond alternative) — the dispatcher switches on type
   internally.
-- **Structural loading rules** (owner, 2026-09-02): top-level `inline`
-  expressions are ignored (not bound); a `defn` whose body is inline C
-  is a structural error unless it appears in the core namespace and its
-  name is found in the initial env (phase 2: vacuous — the core is
-  compiled in, not loaded; the rule stands for later phases).
+- **Inline handling** (owner, 2026-09-02 — supersedes the earlier
+  "structural loading rules"): top-level `inline` expressions are
+  ignored (not bound — they never reach eval). Every other `Inline`
+  node — a `def` value, a `defn` body, or nested anywhere in an
+  interpreted expression — is an **eval-time error**: one
+  `extend-type Inline` impl on `eval` aborts `file:line: inline C is
+  not interpreted`. No load-time scan — the eval backstop alone
+  enforces the rule (a never-used inline def never fires; lazy-
+  consistent). The interpreter never reads the core namespace (the
+  env is pre-seeded with the core REFs), so there is no core-ns /
+  symbol-table exception.
+- **Field getters — future design (owner, deferred; not phase 2)**:
+  field getters (symbols starting with `.`) are protocol functions,
+  automatically created at first appearance or when a deftype names a
+  never-before-seen field. Where the proto dispatcher lives is
+  undecided.
 
 ## Phase 1 implementation checklist (Ralph loop) — reader
 
@@ -1231,7 +1351,9 @@ Same protocol as phase 1. The item-7 design (primitive representation +
 top-level-def marker + discrimination) was settled with the owner
 2026-09-02 (grilling) — see Phase-2 design status. **Item 7a is a
 prerequisite** (compiler changes, agent edits + owner build); item 7
-depends on it.
+depends on it. **Hazard (items 7–8): if new-toc aborts with
+`Conflicting assertions (571)`, check for an Integer or String in
+operator position first — a latent typer bug, see Verified facts.**
 
 - [x] **7a. Compiler prerequisite: `Function` type + REF/F60 protocol
     dispatch (agent edits, owner builds + verifies)**
@@ -1288,11 +1410,16 @@ depends on it.
     is a bare Integer literal (e.g. `(defn f [x] (99))`) — no
     Function / extend-type involvement; string/vector literal bodies
     are fine. Owner ruling: a latent new-toc typer bug, not a 7a
-    regression — 7a checked off. Also noted: the dc1eaae commit
+    regression — 7a checked off (the bug is characterized in the
+    gap-4 Verified-facts entry: a call whose target is an Integer or
+    String is invalid; the typer aborts instead of producing a
+    "not callable" error). Also noted: the dc1eaae commit
     message claims the `base.toc` Function-registration edit, but the
-    diff does not touch `base.toc` — `extend-type Function` will still
-    fail ("No type named 'Function'") until that edit lands and
-    new-toc is rebuilt. Probe files left in `scratch/7a-probe*`.
+    diff does not touch `base.toc`. **Resolved (2026-09-02, owner)**:
+    the constraints git-dependency was fixed so that the `base.toc`
+    Function-registration edit is no longer needed — `extend-type
+    Function` resolves via the dependency. Probe files left in
+    `scratch/7a-probe*`.
 
 - [ ] **7. `interpreter/intrp-eval.toc`: interpreter — data + environment**
   Design settled 2026-09-02 (grilling) — see Phase-2 design status.
@@ -1335,12 +1462,39 @@ depends on it.
     clean `file:line: not callable` abort, non-zero exit.
   - Done when: the file compiles under the rebuilt new-toc and the
     harness checks 1–5 pass, zero leaks.
+  - As-built (2026-09-03): `interpreter/intrp-eval.toc` + the
+    Call-loc delta are written and verified (see the Verified-facts
+    entry): the harness checks 1–5 pass, zero leaks — but under the
+    THROWAWAY fixed compiler `scratch/new-toc-fb`, because verification
+    exposed a dispatch bug in the item-7a codegen edit (`proto-branch-c`
+    last-key-wins reduce — the default body shadowed the Function impl
+    in the REF branch). The fix is applied to `codegen.toc` (reduce
+    over the reversed keys). **PENDING the owner's `make new-toc`
+    rebuild**; then rerun `scratch/i7-harness.toc` +
+    `scratch/i7-not-callable.toc` under the official binary (recipes in
+    their headers) and check the box.
 
 - [ ] **8. `interpreter/intrp-eval.toc`: interpreter — eval**
   - `(defp eval [expr env])` over `String`, `IntegerLit`, `FloatLit`,
-    `StringLit`, `Call`, `Fn`, `FieldGetter`, `TypeConstraint` (skip).
+    `StringLit`, `Call`, `Fn`, `FieldGetter`, `TypeConstraint` (skip),
+    `Inline` (error — abort `file:line: inline C is not interpreted`).
     `eval-call`: `(interpret op ops env (.loc call))` — the dispatch
     does the rest. Errors: `file:line: message` + abort.
+  - **Field access** (settled 2026-09-02, grilling): `eval-call`
+    intercepts two shapes — a `FieldGetter` operator (from `->`
+    threading) and a `Symbol` operator whose name starts with `.`
+    (a direct `(.f v)` call — the item-6e verified fact) — and routes
+    both to one field-read path: eval the single operand →
+    `(type-num v)` → look up a literal `{type-id {field-name idx}}`
+    table → inline C reusing the runtime's `accessField` REF with the
+    generated-C pattern (`makePair(APP, 0, v, SUB)` →
+    `makePair(APP, 0, newI60(idx), …)` → `pushRedex`). Table seed:
+    `43 {"x" 0}` (`Some.x` — test13); grow on demand when a test hits
+    a new field (same policy as the initial-env symbol list). Table
+    miss (unknown type or field; non-VAL receivers map to 1/19/4 via
+    `type-num` and have no entry) → clean `file:line: …` abort. The
+    parser stays frozen (phase 1) — the interception lives in
+    `eval-call`, not the reader.
   - Also adds the item-7-deferred impls: `extend-type TopDef` for
     `resolve` → `(eval (.ast v) env)`; `extend-type Closure` for
     `interpret` → arity check (operand count vs param count →
@@ -1348,8 +1502,10 @@ depends on it.
     `env-bind-all` over the param/ops pairs + self-binding, then eval
     the body (skipping leading `TypeConstraint`s).
   - Done when: a scratch program with defn recursion, fn/closures,
-    let, cond/and/or/either, vectors, hash maps, threading, string/int
-    ops interprets with hand-verified output.
+    let, cond/and/or/either, vectors, hash maps, threading, field
+    access (`.x` over `Some`), string/int ops interprets with
+    hand-verified output, and a def with an inline-C value aborts
+    with the clean eval-time error.
 
 - [ ] **9. `interpreter/intrp.toc`: driver + Makefile**
   - `main`: argv element 1 = file (missing → usage + abort); `slurp`

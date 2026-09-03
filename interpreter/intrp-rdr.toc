@@ -314,14 +314,14 @@
 (defn fold-vec [exprs loc]
   (reduce exprs (ast/Symbol "" "empty-vector" loc)
           (fn [acc e]
-            (ast/Call (ast/Symbol "" "vect-conj" loc) [acc e]))))
+            (ast/Call (ast/Symbol "" "vect-conj" loc) [acc e] loc))))
 
 ;; hash-fold: [HashPair ...] -> (assoc (assoc emptyBMI k1 v1) ...)
 (defn hash-fold [pairs loc]
   (reduce pairs (ast/Symbol "" "emptyBMI" loc)
           (fn [acc kv]
             (ast/Call (ast/Symbol "" "assoc" loc)
-                      [acc (.key kv) (.value kv)]))))
+                      [acc (.key kv) (.value kv)] loc))))
 
 ;; cond-desugar: [Clause t1 v1 ... Clause tN vN] + e ->
 ;;   (cond t1 v1 (cond t2 v2 (... (cond tN vN e))))
@@ -329,18 +329,18 @@
   (reduce (reverse clauses) else
           (fn [acc c]
             (ast/Call (ast/Symbol "" "cond" loc)
-                      [(.test c) (.value c) acc]))))
+                      [(.test c) (.value c) acc] loc))))
 
 ;; and-or-desugar: [a1 ... aN] -> (and a1 (and a2 ... aN)); single -> the
 ;; arg.
 (defn and-or-desugar [exprs loc op-name]
   (reduce (reverse (butlast exprs)) (extract (last exprs))
           (fn [acc x]
-            (ast/Call (ast/Symbol "" op-name loc) [x acc]))))
+            (ast/Call (ast/Symbol "" op-name loc) [x acc] loc))))
 
 ;; str-println-desugar: [e1 ...] -> (str* (vect-conj ... e1 ...))
 (defn str-println-desugar [exprs loc fn-name]
-  (ast/Call (ast/Symbol "" fn-name loc) [(fold-vec exprs loc)]))
+  (ast/Call (ast/Symbol "" fn-name loc) [(fold-vec exprs loc)] loc))
 
 ;; thread-step: apply one threading step to the threaded value.
 ;; Protocol over the Expression constructors (receiver = the step, first
@@ -352,16 +352,18 @@
 (defp thread-step [step threaded loc])
 (extend-type ast/Call (thread-step [step threaded loc]
   (ast/Call (.operator step)
-            (ast/vect-concat [threaded] (.operands step)))))
+            (ast/vect-concat [threaded] (.operands step))
+            loc)))
 (extend-type ast/Symbol (thread-step [step threaded loc]
   (let [nm (.sym-name step)]
     (ast/Call (cond (str= (subs nm 0 1) ".")
                     (ast/FieldGetter (subs nm 1 (count nm)) loc)
 
                     step)
-              [threaded]))))
+              [threaded]
+              loc))))
 (extend-type ast/FieldGetter (thread-step [step threaded loc]
-  (ast/Call step [threaded])))
+  (ast/Call step [threaded] loc)))
 
 ;; threading-acc: fold the steps left-to-right, threading `loc` as a
 ;; plain parameter (not a closure capture).
@@ -390,10 +392,12 @@
   (let [ln (extract (last pairs))]
     (reduce (reverse (butlast pairs))
             (ast/Call (ast/Fn "" [(.name ln)] body-vec loc)
-                      [(.expr ln)])
+                      [(.expr ln)]
+                      loc)
             (fn [acc pair]
               (ast/Call (ast/Fn "" [(.name pair)] [acc] loc)
-                        [(.expr pair)])))))
+                        [(.expr pair)]
+                        loc)))))
 
 ;; --- Leaf expression parsers -----------------------------------------
 ;;
@@ -693,7 +697,7 @@
             (.state res))))
 
 ;; dispatch-special: state just after a special-form keyword.
-(defn dispatch-special [ns name state]
+(defn dispatch-special [ns name state call-loc]
   (cond (str= name "fn") (parse-fn state)
         (str= name "let") (parse-let state)
         (str= name "cond") (parse-cond state)
@@ -705,12 +709,14 @@
         (str= name "->") (parse-threading state)
         (let [res (collect-until state ")")]
           (ParserMatch (ast/Call (ast/Symbol ns name (make-loc state))
-                            (.exprs res))
+                            (.exprs res)
+                            call-loc)
                   (.state res)))))
 
 ;; parse-call: state at the `(`.
 (defn parse-call [state]
-  (let [s (skip-whitespace (take-char state))
+  (let [call-loc (make-loc state)
+        s (skip-whitespace (take-char state))
         input (.input s)]
     (cond (str= input "")
           (ParserMatch (ast/Symbol "" "" (make-loc s)) s)
@@ -720,11 +726,11 @@
 
           (symbol-start? input)
           (let [sym (read-full-symbol s)]
-            (dispatch-special (.ns sym) (.nom sym) (.state sym)))
+            (dispatch-special (.ns sym) (.nom sym) (.state sym) call-loc))
 
           (let [op (parse-expr s)
                 res (collect-until (.state op) ")")]
-            (ParserMatch (ast/Call (.value op) (.exprs res))
+            (ParserMatch (ast/Call (.value op) (.exprs res) call-loc)
                     (.state res))))))
 
 ;; parse-expr: parse one expression. Returns ParserMatch [Expression

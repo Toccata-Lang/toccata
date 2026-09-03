@@ -1,0 +1,86 @@
+;; scratch/i7-harness.toc — item-7 harness (checks 1-4).
+;;
+;; Verifies the intrp-eval.toc data + environment:
+;;   1. initial env builds — 24 entries, count + spot lookups.
+;;   2. env-bind a value -> lookup returns it (I60 fall-through to
+;;      resolve's default).
+;;   3. lookup a core symbol -> returns the REF (REF fall-through).
+;;   4. interpret a core REF with ops (+ over [1 2]) -> 3 (Function impl
+;;      + intrp-call).
+;;
+;; Check 5 (interpret an Integer -> clean "file:line: not callable"
+;; abort, non-zero exit) is a separate program: scratch/i7-not-callable.toc.
+;;
+;; The lazy machine only runs side effects the final result depends on,
+;; so each check threads its pr* count into the accumulator and main's
+;; result depends on all of them.
+;;
+;; Build (from the repo root):
+;;   ./new-toc scratch/i7-harness.toc > i7-harness.tmp
+;;   awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "i7-harness.c"; next; } { print; }' i7-harness.tmp > i7-harness.c
+;;   rm i7-harness.tmp
+;;   clang -g -march=native -I. -DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1 -lm -lpthread -latomic -o i7-harness i7-harness.c new.c runtime3.c graph.c
+;;   ./i7-harness
+;;
+;; Expected (sorted):
+;;   OK check-1 count=24 sp+=1 sppr*=1
+;;   OK check-2 bound=42
+;;   OK check-3 ref-type=4
+;;   OK check-4 plus=3
+
+(add-ns eval (module "../interpreter/intrp-eval.toc"))
+
+;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
+(defp maybe-kind [m])
+(extend-type None (maybe-kind [_] 0))
+(extend-type Some (maybe-kind [_] 1))
+
+;; A call location for the interpret checks.
+(def loc (eval/test-loc "i7-harness.toc" 7))
+
+;; check-1: initial env builds — 24 entries, count + spot lookups.
+(defn check-1 [acc]
+  (let [env eval/initial-env
+        ns-map (extract (get (.namespaces env) (.current-ns env)))
+        c (count ns-map)
+        sp1 (maybe-kind (eval/env-lookup env "+"))
+        sp2 (maybe-kind (eval/env-lookup env "pr*"))
+        ok (maybe-kind (and (= c 24)
+                            (and (= sp1 1) (= sp2 1))))]
+    (+ acc (pr* (str* [(cond (= ok 1) "OK" "FAIL") " check-1 count="
+                       (number-str c) " sp+=" (number-str sp1)
+                       " sppr*=" (number-str sp2) "\n"])))))
+
+;; check-2: env-bind a value -> lookup returns it (I60 fall-through to
+;; resolve's default).
+(defn check-2 [acc]
+  (let [env (eval/env-bind eval/initial-env "x" 42)
+        v (eval/resolve (extract (eval/env-lookup env "x")) env)
+        ok (maybe-kind (= v 42))]
+    (+ acc (pr* (str* [(cond (= ok 1) "OK" "FAIL") " check-2 bound="
+                       (number-str v) "\n"])))))
+
+;; check-3: lookup a core symbol -> returns the REF (REF fall-through).
+(defn check-3 [acc]
+  (let [v (eval/resolve (extract (eval/env-lookup eval/initial-env "+"))
+                        eval/initial-env)
+        tn (type-num v)
+        ok (maybe-kind (= tn 4))]
+    (+ acc (pr* (str* [(cond (= ok 1) "OK" "FAIL") " check-3 ref-type="
+                       (number-str tn) "\n"])))))
+
+;; check-4: interpret a core REF with ops (+ over [1 2]) -> 3 (Function
+;; impl + intrp-call).
+(defn check-4 [acc]
+  (let [f (extract (eval/env-lookup eval/initial-env "+"))
+        r (eval/interpret f [1 2] eval/initial-env loc)
+        ok (maybe-kind (= r 3))]
+    (+ acc (pr* (str* [(cond (= ok 1) "OK" "FAIL") " check-4 plus="
+                       (number-str r) "\n"])))))
+
+(main [_]
+  (let [r1 (check-1 0)
+        r2 (check-2 r1)
+        r3 (check-3 r2)
+        r4 (check-4 r3)]
+    r4))

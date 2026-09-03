@@ -76,11 +76,10 @@ builds the code.
 
 * Grouping deftypes are meant to be sequenced and traversed via protocol
   implementations:
-  - Define `map` and `flat-map` for a grouping deftype to sequence
-    operations that produce or consume it.
-  - For structurally recursive types, also implement `recurse` — this
-    enables the core's recursion schemes (`fold`, `unfold`) over the
-    structure.
+  - For structurally recursive types, implement `recurse` — this enables
+    the core's recursion schemes (`fold`, `unfold`) over the structure.
+
+  `map` and `flat-map` do not need to be implemented.
 
   Recursion schemes are a key feature of Toccata. Few, if any, are
   implemented at present, and using them may cause node leaks; short-term

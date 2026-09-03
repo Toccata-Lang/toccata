@@ -1,0 +1,185 @@
+;; intrp-eval.toc — phase-2 concrete interpreter: data + environment.
+;;
+;; This file is a LIBRARY (no main). It defines the interpreter's value
+;; types (Closure, Env, TopDef), the initial environment (the core
+;; symbols from the item-3 audit), the primitive-call mechanism
+;; (intrp-call), the environment extension (env-bind / env-bind-all /
+;; env-lookup), and the discrimination protocols (resolve / interpret).
+;;
+;; Item 7 ships:
+;;   * resolve [v env] — default body = identity (v). REFs, immediates,
+;;     Closures, and every other value fall through. The TopDef impl
+;;     (which needs eval) lands in item 8.
+;;   * interpret [f ops env loc] — default body = the clean
+;;     "file:line: not callable" abort (for non-Function targets); the
+;;     Function impl calls intrp-call. The Closure impl (which needs
+;;     eval) lands in item 8.
+;;
+;; The verification harness is scratch/i7-harness.toc (checks 1-4) and
+;; scratch/i7-not-callable.toc (check 5).
+
+(add-ns ast (module "intrp-ast.toc"))
+
+;; test-loc [file line]: a Location for the verification harness. The
+;; harness lives in scratch/ and cannot import ast directly without
+;; double-compiling intrp-ast.toc (a different raw path string than the
+;; one intrp-eval.toc uses — see the plan's verified facts), so it builds
+;; Locations through this helper.
+(defn test-loc [file line]
+  (ast/Location file line))
+
+;; --- Value types -----------------------------------------------------
+;;
+;; No `!` annotations (new-toc mis-applies them on multi-field ctors).
+;; `recurse` is implemented for the structurally-recursive types (per
+;; docs/toccata-style.md); map / flat-map are not needed.
+
+(deftype Closure [name params body env]
+  (recurse [v g]
+    (Closure (.name v)
+             (.params v)
+             (vect-map (.body v) (fn [e] (ast/body-elem e g)))
+             (.env v))))
+
+(deftype Env [current-ns namespaces])
+
+(deftype TopDef [name ast]
+  (recurse [v g]
+    (TopDef (.name v) (g (.ast v)))))
+
+;; --- Primitive call --------------------------------------------------
+;;
+;; intrp-call [f ops]: apply the core function `f` (a REF) to the operand
+;; vector `ops` (source order). Builds the generated-C APP chain
+;; (APP(ops[0], APP(ops[1], ... APP(ops[n-1], SUB)))) with a VAR at the
+;; innermost APP's port 2 (the result location), then pushRedex — exactly
+;; the generated-C call pattern, so interpreter calls behave like
+;; compiled calls.
+;;
+;; Element extraction: a VAL element is incRef'd so the APP chain owns a
+;; reference (the vector's own reference is released when the vector is
+;; freed below); I60 / F60 / REF elements are not refcounted and are used
+;; directly. (vectGet / dupeVal abort on REF operands, so we extract
+;; directly from the vector storage.)
+;;
+;; Zero-operand calls are a clean error (no phase-2 candidate calls a
+;; zero-arg core fn).
+
+(defn intrp-call [f ops]
+  (inline "
+    {
+      // arrayFor is defined in runtime3.c but not declared in a header.
+      extern Term *arrayFor(Vector *v, unsigned index);
+      Vector *ops = (Vector *)ops_2;
+      int n = ops->count;
+      if (n == 0) {
+        fprintf(stderr, \"intrp-call: zero-operand call is not supported\\n\");
+        abort();
+      }
+      Term *arr = arrayFor(ops, n - 1);
+      Term elem = arr[(n - 1) & 0x1f];
+      if (termTag(elem) == VAL) elem = incRef(elem, 1);
+      Term innermost = makePair(APP, 0, elem, SUB);
+      result = newTerm(VAR, 0, portLoc(2, innermost));
+      Term chain = innermost;
+      for (int i = n - 2; i >= 0; i--) {
+        Term *a = arrayFor(ops, i);
+        Term e = a[i & 0x1f];
+        if (termTag(e) == VAL) e = incRef(e, 1);
+        chain = makePair(APP, 0, e, chain);
+      }
+      pushRedex(chain, f_1);
+      dec_and_free((Term)ops, 1);
+      dec_and_free(f_1, 1);
+    }
+  "))
+
+;; --- Environment extension -------------------------------------------
+
+;; env-bind [env name value]: bind `name` to `value` in the current ns.
+(defn env-bind [env name value]
+  (let [ns-map (extract (get (.namespaces env) (.current-ns env)))]
+    (Env (.current-ns env)
+         (assoc (.namespaces env) (.current-ns env)
+                (assoc ns-map name value)))))
+
+;; env-bind-all [env pairs]: bind a flat [k1 v1 k2 v2 ...] vector.
+;; Explicit recursion, NOT reduce (the free-variable-capture leak).
+(defn env-bind-all [env pairs]
+  (cond (= (count pairs) 0)
+    env
+
+    (let [k (extract (first pairs))
+          r (rest pairs)
+          v (extract (first r))]
+      (env-bind-all (env-bind env k v) (rest r)))))
+
+;; env-lookup [env name]: the value bound to `name` in the current ns
+;; (a Maybe).
+(defn env-lookup [env name]
+  (let [ns-map (extract (get (.namespaces env) (.current-ns env)))]
+    (get ns-map name)))
+
+;; --- Initial environment ---------------------------------------------
+;;
+;; The core symbols from the item-3 audit (intrp-tests/README.md) as raw
+;; REFs / values. (The audit's "Total: 25" is a miscount — its table
+;; lists 24 distinct symbols.)
+
+(def initial-ns-map
+  {"+" +
+   "<" <
+   "=" =
+   "None" None
+   "Some" Some
+   "abort" abort
+   "dec" dec
+   "first" first
+   "get" get
+   "inc" inc
+   "int-=" int-=
+   "map" map
+   "number-str" number-str
+   "pr*" pr*
+   "either" either
+   "and" and
+   "or" or
+   "cond" cond
+   "empty-vector" empty-vector
+   "vect-conj" vect-conj
+   "emptyBMI" emptyBMI
+   "assoc" assoc
+   "str*" str*
+   "println*" println*})
+
+(def initial-env
+  (Env "" {"" initial-ns-map}))
+
+;; --- Discrimination protocols ----------------------------------------
+
+;; resolve [v env]: resolve a value to its runtime value. Default body =
+;; identity (v) — REFs, immediates, Closures, and every other value fall
+;; through. The TopDef impl (eval the AST) lands in item 8.
+(defp resolve [v env] v)
+
+;; interpret-not-callable [file line]: the clean "file:line: not
+;; callable" abort (inline C in a plain defn — a protocol impl may not
+;; contain an inline C body).
+(defn interpret-not-callable [file line]
+  (inline "
+    {
+      String *f = (String *)file_1;
+      i64 l = getI60(line_2);
+      fprintf(stderr, \"%.*s:%lld: not callable\\n\", (int)f->len, f->buffer, (long long)l);
+      abort();
+    }
+  "))
+
+;; interpret [f ops env loc]: call a target. Default body = the clean
+;; "file:line: not callable" abort (for non-Function targets). The
+;; Function impl calls intrp-call. The Closure impl lands in item 8.
+(defp interpret [f ops env loc]
+  (interpret-not-callable (.file loc) (.line loc)))
+
+(extend-type Function
+  (interpret [f ops env loc] (intrp-call f ops)))
