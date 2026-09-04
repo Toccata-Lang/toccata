@@ -343,7 +343,8 @@ Curated for this project; the source of truth is the compiler plan.
   transient — retry up to 5 times total. If a run prints an error
   message before aborting, it is a real error — stop retrying, fix it.
 - Compile check for library files: `./new-toc <file> > /dev/null` —
-  exit code is always 134 (abort), useless; pass = `*** Loaded <file>`
+  exit code is unreliable (134 in one clean load, 0 in another —
+  2026-09-04, item 3); pass = `*** Loaded <file>`
   in stderr with no other error lines. `'main' function is missing or
   malformed` + `Could not find implementation of 'Container/map' for
   type 'Agent' ... at core: 1453` are baseline noise in the abort path
@@ -363,6 +364,12 @@ Curated for this project; the source of truth is the compiler plan.
   (verified): forward-declare the accumulator fn and order the two
   defns so the public entry is NOT last (the `parse-program` /
   `parse-program-acc` pattern).
+- A `scratch/` probe cannot `add-ns` a module in `interpreter/` —
+  add-ns paths resolve against the importing file's directory and
+  `../` is forbidden, so `scratch/` probes are limited to
+  self-contained sources. A throwaway probe that must import an
+  interpreter module is created in `interpreter/` temporarily and
+  deleted before the commit (2026-09-04, item 3).
 - A program ending with a SUB or SUP error probably means a function
   called with the wrong number of arguments.
 
@@ -412,6 +419,18 @@ Curated for this project; the source of truth is the compiler plan.
   String; `(str* [n])` renders an Integer (via `number-str`). `pr*`
   takes ONE string — `pr*` on a vector aborts silently; build the
   string with `(str* [...])` first.
+- `escape-chars` (hvm-core.toc:652) escapes `\` `"` `\n` `\r` `\f`
+  `\b` `\t` to two-char sequences — exactly a Toccata string-literal
+  body; the emitter uses it (`render-literal`) to splice grammar
+  strings into generated source (2026-09-04, item 3).
+- `type-name` over a deftype ctor value returns the BARE ctor name
+  (e.g. `"All"` — no namespace prefix); the emitter's default abort
+  message uses it (2026-09-04, item 3).
+- A defp default body runs at runtime for a VAL receiver with no
+  `extend-type` impl — verified with an `abort` default body: called
+  through `Rule` delegation on a `Rule(All [...])` value, the `All`
+  hit the default, printed the message, exited 134 (2026-09-04,
+  item 3).
 - `str-append` (hvm-core.toc:608) appends IN PLACE into the dest's
   buffer — the dest must be a pre-allocated StringBuffer with enough
   capacity (the hand-written rdr pre-allocates its acc). Appending to
@@ -516,6 +535,19 @@ generated code)**
   original was kept (it is live new-toc syntax — see the fact above),
   with the `defn` after `expression` as in the original.
 
+- Item 3 (2026-09-04): `emit-pred`'s `Rule` impl delegates to the
+  child verbatim, so an `Any` containing a Rule alt emits a NESTED
+  `(or (or ...) ...)` — `symbol-start` / `rest-of-symbol` embed
+  `alpha`'s `(or <lower> <upper>)` as their first alt. The driver
+  builds the expected strings from parts (`want-alpha` spliced into
+  `want-symbol-start` / `want-rest-of-symbol`) so the nesting stays
+  consistent by construction. All six predicate fingerprints + the
+  `emit-module` v1 fingerprint matched exactly; the driver is
+  deterministic across a rerun and a full rebuild (exit 0, malloc
+  diff 0, remaining nodes 0). `emit-module` v1 emits the add-ns
+  header line + one `(defn <name>-char [c] <pred>)` line per rule;
+  `entry` is accepted but unused until the item-4 main template.
+
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
   never committed from there) carries a local 3-ctor result deftype
@@ -587,7 +619,7 @@ inline C freely. Generated code follows `docs/toccata-style.md`.
     in this file. If it leaks, the site-(a)/(b)/(c) templates are
     re-opened before task 4.
 
-- [ ] **3. Emitter skeleton + char-level emission**
+- [x] **3. Emitter skeleton + char-level emission**
   `interpreter/intrp-emit.toc` (library): `add-ns` of the grammar
   module; `EmitCtx [rule prefix]` (no `!` annotations); `emit-pred`
   protocol — impls for `CharRange` (LO/HI evaluated at emit time via

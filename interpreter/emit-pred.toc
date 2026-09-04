@@ -1,0 +1,77 @@
+;; interpreter/emit-pred.toc — item-3 verification driver.
+;;
+;; Emits the char-level predicates for six grammar combinators via
+;; intrp-emit.toc's emit-pred and asserts the EXACT expected source
+;; lines (fingerprint via str* over the emitted vector, the
+;; body-fingerprint convention from rdr-defp.toc). Also checks
+;; emit-module v1 over the four char-level Rules.
+;;
+;; Expected output: 7 "OK" lines (one per check). Any "FAIL" line
+;; indicates a problem. Run from the repo root: ./emit-pred
+;;
+;; The driver is interpreter-side tooling; interpreted programs may
+;; not use these constructs.
+
+(add-ns grammar (module "intrp-grammar.toc"))
+(add-ns emit (module "intrp-emit.toc"))
+
+;; The exact expected predicate source lines (ctor-table shapes).
+;; Rule alts delegate, so symbol-start / rest-of-symbol embed the
+;; alpha predicate as a nested (or ...).
+(def want-digits
+  "(and (<= 48 (char-code c)) (<= (char-code c) 57))")
+(def want-upper-case
+  "(and (<= 65 (char-code c)) (<= (char-code c) 90))")
+(def want-lower-case
+  "(and (<= 97 (char-code c)) (<= (char-code c) 122))")
+(def want-alpha
+  (str* ["(or " want-lower-case " " want-upper-case ")"]))
+(def want-symbol-start
+  (str* ["(or " want-alpha
+         " (str= c \".\") (str= c \"_\") (str= c \"<\") (str= c \">\")"
+         " (str= c \"=\") (str= c \"+\") (str= c \"-\") (str= c \"*\")"
+         " (str= c \"/\"))"]))
+(def want-rest-of-symbol
+  (str* ["(or " want-alpha " " want-digits
+         " (str= c \".\") (str= c \"_\") (str= c \"<\") (str= c \">\")"
+         " (str= c \"=\") (str= c \"+\") (str= c \"-\") (str= c \"*\")"
+         " (str= c \"?\") (str= c \"!\"))"]))
+
+;; emit-module v1 fingerprint: header + one <name>-char defn line per
+;; rule (str* over the emitted vector — no separators).
+(def want-module
+  (str* ["(add-ns rdr (module \"intrp-rdr.toc\"))"
+         "(defn digits-char [c] " want-digits ")"
+         "(defn alpha-char [c] " want-alpha ")"
+         "(defn symbol-start-char [c] " want-symbol-start ")"
+         "(defn rest-of-symbol-char [c] " want-rest-of-symbol ")"]))
+
+;; print-all-acc: print every string in the vector, threading the pr*
+;; counts into the accumulator so the lazy machine keeps every side
+;; effect (a dropped count would skip earlier prints). Self-recursive.
+(defn print-all-acc [acc strs]
+  (cond (= (count strs) 0)
+    acc
+    (print-all-acc (+ acc (pr* (extract (first strs)))) (rest strs))))
+
+;; check: compare a got string with its expected source; print one
+;; status line. Returns the threaded acc.
+(defn check [acc name got want]
+  (cond (str= got want)
+    (print-all-acc acc ["OK " name "\n"])
+    (print-all-acc acc ["FAIL " name "\ngot:  " got "\nwant: " want "\n"])))
+
+(main [_]
+  (let [ctx (emit/EmitCtx "" "")
+        r1 (check 0 "digits" (emit/emit-pred grammar/digits ctx) want-digits)
+        r2 (check r1 "upper-case" (emit/emit-pred grammar/upper-case ctx) want-upper-case)
+        r3 (check r2 "lower-case" (emit/emit-pred grammar/lower-case ctx) want-lower-case)
+        r4 (check r3 "alpha" (emit/emit-pred grammar/alpha ctx) want-alpha)
+        r5 (check r4 "symbol-start" (emit/emit-pred grammar/symbol-start ctx) want-symbol-start)
+        r6 (check r5 "rest-of-symbol" (emit/emit-pred grammar/rest-of-symbol ctx) want-rest-of-symbol)
+        r7 (check r6 "emit-module"
+             (str* (emit/emit-module [grammar/digits grammar/alpha
+                                      grammar/symbol-start grammar/rest-of-symbol]
+                                     "expression"))
+             want-module)]
+    r7))

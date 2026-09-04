@@ -121,6 +121,16 @@ rdr-hvmcore: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpr
 	$(CC) $(CFLAGS) -o rdr-hvmcore $(TOC_FLAGS) $(LDFLAGS) rdr-hvmcore.c new.c runtime3.c graph.c
 	./rdr-hvmcore
 
+# Parser-generator drivers (docs/parser-generator-plan.md)
+.PHONY: emit-pred
+emit-pred: new-toc interpreter/intrp-grammar.toc interpreter/intrp-emit.toc interpreter/emit-pred.toc hvm-core.toc
+	./new-toc interpreter/emit-pred.toc > emit-pred.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "emit-pred.c"; next; } { print; }' emit-pred.tmp > emit-pred.c
+	clang-format -i emit-pred.c
+	rm emit-pred.tmp
+	$(CC) $(CFLAGS) -o emit-pred $(TOC_FLAGS) $(LDFLAGS) emit-pred.c new.c runtime3.c graph.c
+	./emit-pred
+
 # Sidequest
 sidequest.c: new-toc sidequest.toc hvm-core.toc new.h
 	./new-toc sidequest.toc > sidequest.tmp

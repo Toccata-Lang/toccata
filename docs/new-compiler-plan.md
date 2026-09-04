@@ -971,6 +971,23 @@ rules; each form's rule arrives with its phase.
   acc). Appending to a static string literal (e.g.
   `(str-append "" "x")`) overflows the global buffer — segfault
   (ASan: global-buffer-overflow in strncat).
+- **defp default body runtime-verified (2026-09-04, parser-gen
+  item 3)**: a `defp` WITH a body runs that body at runtime for a VAL
+  receiver with no `extend-type` impl — a default body of
+  `(abort <message>)` fired when the protocol was called on a value
+  whose ctor had no impl (message printed, exit 134). Confirms the
+  "only VAL receivers reach the default" note above.
+- **`new-toc` exit code on a clean library load is not stable
+  (2026-09-04, parser-gen item 3)**: the same clean load exited 134
+  in one run and 0 in another — the `*** Loaded <file>` stderr line
+  (with no other error lines) is the only criterion; the "exit code
+  is always 134" note above is not universal.
+- **`escape-chars` (2026-09-04, parser-gen item 3)**:
+  `escape-chars` (hvm-core.toc:652) escapes `\` `"` `\n` `\r` `\f`
+  `\b` `\t` to two-char sequences — exactly a Toccata string-literal
+  body; usable by any source-emitting tool to splice runtime strings
+  into generated `.toc` source. `type-name` over a deftype ctor value
+  returns the BARE ctor name (no namespace prefix).
 
 ## Settled (continued)
 

@@ -1,0 +1,92 @@
+;; interpreter/intrp-emit.toc — the parser emitter (library, no main).
+;;
+;; Takes the parser-combinator grammar data (intrp-grammar.toc) and
+;; emits a recursive-descent parser module in Toccata source for it
+;; (docs/parser-generator-plan.md).
+;;
+;; Item 3: skeleton + char-level emission — EmitCtx, the emit-pred
+;; protocol (char-level ctors only; the default body aborts, and the
+;; abort IS the char-level classification), and emit-module v1
+;; (module header + the char-level rules' predicates).
+;;
+;; The rdr module is add-ns'd for shared helpers (later items use
+;; e.g. vect-concat); the module path spelling must stay identical
+;; across the graph.
+
+(add-ns grammar (module "intrp-grammar.toc"))
+(add-ns rdr (module "intrp-rdr.toc"))
+
+;; Context threaded through every emit call:
+;;   rule   — name of the rule currently being emitted ("" at top
+;;            level); a Recur node renders as a call to this name.
+;;   prefix — name prefix for generated helpers (the enclosing rule
+;;            or helper name + "-").
+(deftype EmitCtx [rule prefix])
+
+;; render-literal: a string as the body of a Toccata string literal
+;; (escape-chars handles quote, backslash, and the control chars).
+(defn render-literal [s]
+  (str* ["\"" (escape-chars s) "\""]))
+
+;; emit-pred: source of a single-char predicate expression over char
+;; string `c`. Implemented ONLY for char-level ctors (CharRange,
+;; NotChar, bare String, char-level Any, and Rule/Many delegating per
+;; the ctor table); the default body aborts with a message naming the
+;; ctor — calling it on a general parser is an emitter bug, and the
+;; abort IS the char-level classification (no yes/no tag needed).
+(defp emit-pred [pc ctx]
+  (abort (str* ["emit-pred: not char-level: " (type-name pc)])))
+
+;; pred-alts: the emit-pred of each alt, joined with single spaces
+;; (no trailing space). Explicit acc recursion — a reduce whose
+;; closure captured ctx would hit the reduce-capture leak.
+(defn pred-alts-acc [acc alts ctx]
+  (cond (= (count alts) 0)
+    acc
+    (pred-alts-acc (str* [acc " " (emit-pred (extract (first alts)) ctx)])
+                   (rest alts) ctx)))
+
+(defn pred-alts [alts ctx]
+  (cond (= (count alts) 0)
+    ""
+    (pred-alts-acc (emit-pred (extract (first alts)) ctx) (rest alts) ctx)))
+
+(extend-type grammar/CharRange (emit-pred [v ctx]
+  (str* ["(and (<= " (number-str (char-code (.lower v)))
+         " (char-code c)) (<= (char-code c) "
+         (number-str (char-code (.upper v))) "))"])))
+
+(extend-type grammar/NotChar (emit-pred [v ctx]
+  (str* ["(not (str= c " (render-literal (.char v)) "))"])))
+
+(extend-type String (emit-pred [v ctx]
+  (str* ["(str= c " (render-literal v) ")"])))
+
+(extend-type grammar/Any (emit-pred [v ctx]
+  (str* ["(or " (pred-alts (.parsers v) ctx) ")"])))
+
+;; Rule and Many delegate to their child (ctor table).
+(extend-type grammar/Rule (emit-pred [v ctx]
+  (emit-pred (.parser v) ctx)))
+
+(extend-type grammar/Many (emit-pred [v ctx]
+  (emit-pred (.parser v) ctx)))
+
+;; emit-rules-acc: one `<name>-char` predicate defn line per rule,
+;; appended to the header lines.
+(defn emit-rules-acc [acc rules ctx]
+  (cond (= (count rules) 0)
+    acc
+    (let [r (extract (first rules))]
+      (emit-rules-acc
+        (vect-conj acc
+                   (str* ["(defn " (.name r) "-char [c] " (emit-pred r ctx) ")"]))
+        (rest rules) ctx))))
+
+;; emit-module v1: module header (add-ns of the helper layer) + one
+;; `<name>-char` predicate defn per char-level rule. Every rule must
+;; be char-level — emit-pred aborts otherwise. `entry` is unused in
+;; v1 (the main template lands with item 4). -> [String]
+(defn emit-module [rules entry]
+  (let [ctx (EmitCtx "" "")]
+    (emit-rules-acc ["(add-ns rdr (module \"intrp-rdr.toc\"))"] rules ctx)))
