@@ -1,22 +1,27 @@
-;; intrp-eval.toc — phase-2 concrete interpreter: data + environment.
+;; intrp-eval.toc — phase-2 concrete interpreter.
 ;;
 ;; This file is a LIBRARY (no main). It defines the interpreter's value
 ;; types (Closure, Env, TopDef), the initial environment (the core
 ;; symbols from the item-3 audit), the primitive-call mechanism
 ;; (intrp-call), the environment extension (env-bind / env-bind-all /
-;; env-lookup), and the discrimination protocols (resolve / interpret).
+;; env-lookup), the discrimination protocols (resolve / interpret), and
+;; the evaluator (eval + the top-level binding / main driver core).
 ;;
-;; Item 7 ships:
 ;;   * resolve [v env] — default body = identity (v). REFs, immediates,
-;;     Closures, and every other value fall through. The TopDef impl
-;;     (which needs eval) lands in item 8.
+;;     Closures, and every other value fall through; the TopDef impl
+;;     evals the def's AST.
 ;;   * interpret [f ops env loc] — default body = the clean
 ;;     "file:line: not callable" abort (for non-Function targets); the
-;;     Function impl calls intrp-call. The Closure impl (which needs
-;;     eval) lands in item 8.
+;;     Function impl calls intrp-call; the Closure impl binds params +
+;;     self and evals the body.
+;;   * eval [expr env] — a defp over the Expression constructors, one
+;;     extend-type impl per ctor the parser produces.
 ;;
-;; The verification harness is scratch/i7-harness.toc (checks 1-4) and
-;; scratch/i7-not-callable.toc (check 5).
+;; Verification harnesses: intrp-tests/i7-harness.toc (checks 1-4) and
+;; intrp-tests/i7-not-callable.toc (check 5) for the item-7 surface;
+;; intrp-tests/i8-harness.toc (interprets a program file) for item 8 —
+;; run it on intrp-tests/i8-prog.toc (the success program) and
+;; intrp-tests/i8-inline.toc (the clean inline-C eval-time abort).
 
 (add-ns ast (module "intrp-ast.toc"))
 
@@ -46,6 +51,42 @@
 (deftype TopDef [name ast]
   (recurse [v g]
     (TopDef (.name v) (g (.ast v)))))
+
+;; NsBox [m]: wraps one namespace's symbol->value map. The Env's
+;; `namespaces` map is String -> NsBox (NOT String -> raw map): re-assoc'ing
+;; the current ns on every env-bind would otherwise make the core's assoc
+;; value-unchanged check do a DEEP `=` of the two ns-maps (bmiCopyAssoc:
+;; `(= currVal v)`). The core map `=` (hvm-core.toc) is broken for real
+;; maps -- it `hash-vec`s the map into `[k v]` pairs and `flat-map`s the
+;; keys/values, but String and REF (Function) have no `flat-map` impl, and
+;; the pair vectors abort in `dupeVal` on REF elements. So a deep `=` of an
+;; ns-map (whose values are core REFs) always crashes. NsBox's cheap `=`
+;; (below) makes the outer re-assoc O(1) instead. The inner map is still a
+;; raw map; only the OUTER namespaces map's values are boxed.
+(deftype NsBox [m])
+
+;; --- Equality for env value types ------------------------------------
+;;
+;; The core hash map's `assoc` compares the EXISTING value against the new
+;; value with `=` when the key already exists (bmiCopyAssoc: `(= currVal
+;; v)`). The env re-binds existing keys — the self-binding re-binds a defn
+;; name from its TopDef to the live Closure — so `=` is dispatched on these
+;; value types. Without an impl, the dispatch aborts ("No implementation of
+;; '=' found for type TopDef"). These types are compared by identity; for
+;; the env's purposes they are never "equal" to a distinct value, so the
+;; impl returns None (the map then clones with the new value — always safe).
+
+(extend-type TopDef
+  (= [x y] None))
+
+(extend-type Closure
+  (= [x y] None))
+
+(extend-type Env
+  (= [x y] None))
+
+(extend-type NsBox
+  (= [x y] None))
 
 ;; --- Primitive call --------------------------------------------------
 ;;
@@ -96,12 +137,47 @@
 
 ;; --- Environment extension -------------------------------------------
 
-;; env-bind [env name value]: bind `name` to `value` in the current ns.
+;; name-to-str [s]: CONSUMING copy of a name to a fresh String.
+;; The env map's keys are Strings (the initial core map is keyed by
+;; String literals), and strSha1 includes the value's TYPE — a
+;; SubString and a String with the same content hash differently, so a
+;; get with a SubString key against String keys misses. Every name that
+;; enters or leaves the env (parser names are SubString views) is
+;; normalized here. Consuming is safe: the name arrives from a field
+;; access / extract, which incRef'd it, so the AST node keeps its own
+;; reference.
+(defn name-to-str [s]
+  (inline String "
+    char *buf;
+    int64_t len;
+    if (((Value *)s_1)->type == SubStringType) {
+      ReifiedVal *ss = (ReifiedVal *)s_1;
+      String *parent = (String *)ss->impls[0];
+      long start = getI60(ss->impls[1]);
+      buf = &parent->buffer[start];
+      len = getI60(ss->impls[2]);
+    } else {
+      String *strVal = (String *)s_1;
+      buf = strVal->buffer;
+      len = strVal->len;
+    }
+    String *out = malloc_string(len + 1);
+    memcpy(out->buffer, buf, len);
+    out->len = len;
+    out->buffer[len] = 0;
+    dec_and_free((Term)s_1, 1);
+    result = termVal((Term)out);
+  "))
+
+;; env-bind [env name value]: bind `name` to `value` in the current ns
+;; (the name is normalized to a String — see name-to-str).
 (defn env-bind [env name value]
-  (let [ns-map (extract (get (.namespaces env) (.current-ns env)))]
+  (let [box (extract (get (.namespaces env) (.current-ns env)))
+        ns-map (.m box)
+        nm (name-to-str name)]
     (Env (.current-ns env)
          (assoc (.namespaces env) (.current-ns env)
-                (assoc ns-map name value)))))
+                (NsBox (assoc ns-map nm value))))))
 
 ;; env-bind-all [env pairs]: bind a flat [k1 v1 k2 v2 ...] vector.
 ;; Explicit recursion, NOT reduce (the free-variable-capture leak).
@@ -117,8 +193,8 @@
 ;; env-lookup [env name]: the value bound to `name` in the current ns
 ;; (a Maybe).
 (defn env-lookup [env name]
-  (let [ns-map (extract (get (.namespaces env) (.current-ns env)))]
-    (get ns-map name)))
+  (let [box (extract (get (.namespaces env) (.current-ns env)))]
+    (get (.m box) name)))
 
 ;; --- Initial environment ---------------------------------------------
 ;;
@@ -150,16 +226,19 @@
    "emptyBMI" emptyBMI
    "assoc" assoc
    "str*" str*
-   "println*" println*})
+   "println*" println*
+   ;; item-8 harness needs these (the initial env grows on demand):
+   "*" *
+   "extract" extract})
 
 (def initial-env
-  (Env "" {"" initial-ns-map}))
+  (Env "" {"" (NsBox initial-ns-map)}))
 
 ;; --- Discrimination protocols ----------------------------------------
 
 ;; resolve [v env]: resolve a value to its runtime value. Default body =
 ;; identity (v) — REFs, immediates, Closures, and every other value fall
-;; through. The TopDef impl (eval the AST) lands in item 8.
+;; through. The TopDef impl (eval the AST) is below, after eval.
 (defp resolve [v env] v)
 
 ;; interpret-not-callable [file line]: the clean "file:line: not
@@ -177,9 +256,506 @@
 
 ;; interpret [f ops env loc]: call a target. Default body = the clean
 ;; "file:line: not callable" abort (for non-Function targets). The
-;; Function impl calls intrp-call. The Closure impl lands in item 8.
+;; Function impl calls intrp-call. The Closure impl is below, after eval.
 (defp interpret [f ops env loc]
   (interpret-not-callable (.file loc) (.line loc)))
 
 (extend-type Function
   (interpret [f ops env loc] (intrp-call f ops)))
+
+;; --- Item 8: eval -----------------------------------------------------
+;;
+;; eval [expr env]: evaluate an Expression to a runtime value. A defp
+;; over the Expression constructors (receiver = the Expression, first
+;; arg), one extend-type impl per ctor the parser produces. The default
+;; body aborts (unreachable for parser-produced expressions — the parser
+;; never emits Superposition / Match / BlockComment).
+;;
+;; Mutual recursion (resolved by the compiler after a full parse):
+;;   eval(Symbol) -> resolve -> [TopDef impl] -> eval
+;;   eval(Call)   -> interpret -> [Closure impl] -> eval-body -> eval
+;; The defp is defined before the helpers (see the eval defp section).
+;;
+;; Lazy-machine note: a body is a vector of expressions where all but the
+;; last exist for their side effects. The compiler forces non-final body
+;; statements via the runtime `discard` REF (verified: scratch/i8-body-
+;; test.toc). eval-exprs mirrors this: it force-discards each non-final
+;; value so its side effects run, and returns the final value.
+
+;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
+(defp maybe-kind [m])
+(extend-type None (maybe-kind [_] 0))
+(extend-type Some (maybe-kind [_] 1))
+
+;; op-field [op]: the field name if `op` is a field-access operator
+;; (a FieldGetter, or a Symbol whose name starts with "."), else None.
+;; Dispatched directly per ctor — each impl sees the concrete ctor, so
+;; the field access is bare (a .field on the Expression union would be
+;; unsafe). Default body = None (every other ctor is a normal operator).
+(defp op-field [op] None)
+(extend-type ast/FieldGetter (op-field [v] (Some (.field-name v))))
+(extend-type ast/Symbol
+  (op-field [v]
+    (let [nm (.sym-name v)]
+      (cond (= (maybe-kind (str-prefix? "." nm)) 1)
+            (Some (subs nm 1 (count nm)))
+
+            None))))
+
+;; flow-kind [op]: classify a call operator for the lazy flow-control
+;; handlers (below). 0 = normal (eager) operator; 1 = cond; 2 = either;
+;; 3 = and; 4 = or. Only a Symbol named one of the four flow-control
+;; protocols matches (the reader's cond/and/or desugaring emits bare
+;; symbols); every other operator is a normal eager call. A FieldGetter
+;; is a field-access operator (handled before flow-kind), so it is 0.
+(defp flow-kind [op] 0)
+(extend-type ast/Symbol
+  (flow-kind [v]
+    (let [nm (.sym-name v)]
+      (cond (= nm "cond") 1
+            (= nm "either") 2
+            (= nm "and") 3
+            (= nm "or") 4
+            0))))
+(extend-type ast/FieldGetter (flow-kind [_] 0))
+
+;; skip-constraint [e]: None if `e` is a leading TypeConstraint (drop
+;; it), else (Some e) (stop dropping). Dispatched directly per ctor.
+(defp skip-constraint [e] (Some e))
+(extend-type ast/TypeConstraint (skip-constraint [_] None))
+
+;; --- Error helpers (file:line: message + abort) -----------------------
+
+;; err-loc-c [file line msg]: abort "file:line: msg".
+(defn err-loc-c [file line msg]
+  (inline "
+    {
+      String *f = (String *)file_1;
+      i64 l = getI60(line_2);
+      String *m = (String *)msg_3;
+      fprintf(stderr, \"%.*s:%lld: %.*s\\n\",
+              (int)f->len, f->buffer, (long long)l,
+              (int)m->len, m->buffer);
+      abort();
+    }
+  "))
+
+;; err-loc [loc msg]: abort at the Location.
+(defn err-loc [loc msg]
+  (err-loc-c (.file loc) (.line loc) msg))
+
+(defn undefined-symbol-err [loc name]
+  (err-loc loc (str* ["undefined symbol: " name])))
+
+(defn eval-inline-err [loc]
+  (err-loc loc "inline C is not interpreted"))
+
+(defn wrong-arity-err [loc name n-params n-ops]
+  (err-loc loc (str* ["wrong number of args for " name
+                      ": expected " (number-str n-params)
+                      ", got " (number-str n-ops)])))
+
+(defn field-miss-err [loc field-name tid]
+  (err-loc loc (str* ["no field '" field-name "' on type "
+                      (number-str tid)])))
+
+(defn field-arity-err [loc field-name]
+  (err-loc loc (str* ["field '" field-name "' takes exactly one operand"])))
+
+(defn empty-body-err [loc]
+  (err-loc loc "empty body"))
+
+;; eval-unsupported-err: the eval defp's default body (an unhandled
+;; ctor — unreachable for parser-produced expressions).
+(defn eval-unsupported-err []
+  (inline "
+    {
+      fprintf(stderr, \"eval: unsupported expression\\n\");
+      abort();
+    }
+  "))
+
+;; eval-typeconstraint-err: a TypeConstraint in expression position is a
+;; structural error (the body walker skips the leading ones).
+(defn eval-typeconstraint-err []
+  (inline "
+    {
+      fprintf(stderr, \"eval: type constraint in expression position\\n\");
+      abort();
+    }
+  "))
+
+;; --- eval defp --------------------------------------------------------
+;;
+;; Defined BEFORE the eval helpers below: the helpers call eval, and the
+;; per-ctor impls (after the helpers) call the helpers. new-toc resolves
+;; references in source order, so this order needs no forward declaration.
+;; (A `(def eval)` forward declaration + a later `(defp eval ...)` is
+;; BROKEN under new-toc — the defp never binds the declared global; the
+;; generated C dupeArgs the NULL and aborts "bad incRef value: (nil)" at
+;; runtime. Verified: scratch/i8-defp-fwd.toc vs i8-defp-fwd2.toc.)
+
+(defp eval [expr env]
+  (eval-unsupported-err))
+
+;; --- Force / field-read (inline C) ------------------------------------
+
+;; force-discard [v]: force `v` (run its side effects) and discard the
+;; result — the compiled-body pattern (pushRedex to the runtime `discard`
+;; REF). Used to force non-final body expressions.
+(defn force-discard [v]
+  (inline "
+    {
+      Term v = v_1;
+      if (termTag(v) == VAL) v = incRef(v, 1);
+      pushRedex(makePair(APP, 0, v, ERA), discard);
+      dec_and_free(v_1, 1);
+    }
+  "))
+
+;; field-read [v idx]: read field `idx` of the VAL `v` — reuses the
+;; runtime's accessField REF with the generated-C pattern (the receiver
+;; is guaranteed a VAL by the field-table lookup).
+(defn field-read [v idx]
+  (inline "
+    {
+      Term v = v_1;
+      int idx = getI60(idx_2);
+      if (termTag(v) == VAL) v = incRef(v, 1);
+      // The VAR must point at the INNERMOST APP's result location (port 2
+      // of `v SUB`) — the same pattern as intrp-call / the generated-C
+      // field access. Build the innermost APP, take the VAR, THEN extend
+      // the chain with the index: the redex stores its result at the
+      // innermost location, so a VAR taken after the extension would point
+      // at the (never-written) outer location.
+      Term app = makePair(APP, 0, v, SUB);
+      Term var = newTerm(VAR, 0, portLoc(2, app));
+      app = makePair(APP, 0, newI60(idx), app);
+      result = var;
+      pushRedex(app, accessField);
+      dec_and_free(v_1, 1);
+    }
+  "))
+
+;; field-table: {type-id {field-name idx}}. Seed: Some.x (type 43,
+;; index 0 — test13). Grow on demand when a test hits a new field (same
+;; policy as the initial-env symbol list).
+(def field-table {43 {"x" 0}})
+
+;; --- eval helpers -----------------------------------------------------
+
+;; eval-symbol [v env]: v is statically a Symbol. Look up the name in
+;; the current ns; resolve the bound value (a TopDef evals its AST; a
+;; REF / Closure / immediate falls through to identity). The name is
+;; normalized to a String (the env keys are Strings — see name-to-str).
+(defn eval-symbol [v env]
+  (let [nm (name-to-str (.sym-name v))
+        loc (.loc v)
+        mv (env-lookup env nm)]
+    (cond (= (maybe-kind mv) 1)
+          (resolve (extract mv) env)
+
+          (undefined-symbol-err loc nm))))
+
+;; field-access [field-name ops loc env]: read `.field-name` from the
+;; single operand of a field-access call. The field name is normalized
+;; to a String (the field-table keys are Strings — see name-to-str).
+(defn field-access [field-name ops loc env]
+  (cond (= (count ops) 1)
+        (let [fname (name-to-str field-name)
+              v (eval (extract (first ops)) env)
+              tid (type-num v)
+              mv (get field-table tid)]
+          (cond (= (maybe-kind mv) 1)
+                (let [inner (extract mv)
+                      idx-mv (get inner fname)]
+                  (cond (= (maybe-kind idx-mv) 1)
+                        (field-read v (extract idx-mv))
+
+                        (field-miss-err loc fname tid)))
+
+                (field-miss-err loc fname tid)))
+
+        (field-arity-err loc field-name)))
+
+;; eval-ops-acc: eval each operand, collecting into a vector
+;; (left-to-right). Explicit recursion, NOT reduce — a reduce closure
+;; capturing `env` (a free variable) leaks term pairs on the lazy
+;; machine.
+(defn eval-ops-acc [ops env acc]
+  (cond (= (count ops) 0)
+        acc
+
+        (let [v (eval (extract (first ops)) env)]
+          (eval-ops-acc (rest ops) env (vect-conj acc v)))))
+
+(defn eval-ops [ops env]
+  (eval-ops-acc ops env empty-vector))
+
+;; --- Flow-control (lazy) handlers ------------------------------------
+;;
+;; The reference codegen passes every call arg as an unevaluated APP
+;; chain and lets the runtime force them as needed (a C fn via
+;; strictArgs; a protocol forces only its receiver, then dispatches, and
+;; the impl forces the rest only if it returns them). The eval instead
+;; forces every arg eagerly (eval-ops), which breaks the four flow-control
+;; protocols: their else/second branch is force-evaluated even when the
+;; test selects the other branch (e.g. cond's recursive else -> infinite
+;; descent). These handlers mirror the runtime's lazy dispatch: force the
+;; test, then force only the selected branch. Every other protocol forces
+;; all its args anyway, so eager eval is correct for them.
+;;
+;; ops are the call's operand AST expressions (source order); each is
+;; eval'd on demand.
+
+;; eval-cond [ops env loc]: (cond test clause else) — force the test;
+;; Some -> clause, None -> else.
+(defn eval-cond [ops env loc]
+  (let [test (eval (extract (first ops)) env)]
+    (cond (= (maybe-kind test) 1)
+          (eval (extract (first (rest ops))) env)
+
+          (= (maybe-kind test) 0)
+          (eval (extract (first (rest (rest ops)))) env)
+
+          (err-loc loc "cond: test is not a Maybe"))))
+
+;; eval-either [ops env loc]: (either test-clause else) — force the test;
+;; Some -> its value, None -> else.
+(defn eval-either [ops env loc]
+  (let [test (eval (extract (first ops)) env)]
+    (cond (= (maybe-kind test) 1)
+          (extract test)
+
+          (= (maybe-kind test) 0)
+          (eval (extract (first (rest ops))) env)
+
+          (err-loc loc "either: test is not a Maybe"))))
+
+;; eval-and [ops env loc]: (and x y) — force x; Some -> y, None -> x.
+(defn eval-and [ops env loc]
+  (let [x (eval (extract (first ops)) env)]
+    (cond (= (maybe-kind x) 1)
+          (eval (extract (first (rest ops))) env)
+
+          (= (maybe-kind x) 0)
+          x
+
+          (err-loc loc "and: first arg is not a Maybe"))))
+
+;; eval-or [ops env loc]: (or x y) — force x; Some -> x, None -> y.
+(defn eval-or [ops env loc]
+  (let [x (eval (extract (first ops)) env)]
+    (cond (= (maybe-kind x) 1)
+          x
+
+          (= (maybe-kind x) 0)
+          (eval (extract (first (rest ops))) env)
+
+          (err-loc loc "or: first arg is not a Maybe"))))
+
+;; eval-call-normal [op-expr ops loc env]: eval the operator to a value,
+;; eval the operands, and interpret the call (the dispatch does the rest).
+(defn eval-call-normal [op-expr ops loc env]
+  (let [op (eval op-expr env)
+        ops-vals (eval-ops ops env)]
+    (interpret op ops-vals env loc)))
+
+;; eval-call [call env]: call dispatch — intercept field-access operators
+;; (a FieldGetter from -> threading, or a direct (.f v) call), else a
+;; normal call.
+(defn eval-call [call env]
+  (let [op-expr (.operator call)
+        ops (.operands call)
+        loc (.loc call)
+        fld (op-field op-expr)
+        fk (flow-kind op-expr)]
+    (cond (= (maybe-kind fld) 1)
+          (field-access (extract fld) ops loc env)
+
+          (= fk 1)
+          (eval-cond ops env loc)
+
+          (= fk 2)
+          (eval-either ops env loc)
+
+          (= fk 3)
+          (eval-and ops env loc)
+
+          (= fk 4)
+          (eval-or ops env loc)
+
+          (eval-call-normal op-expr ops loc env))))
+
+;; skip-constraints: drop leading TypeConstraint nodes from a body vector
+;; (the "skip" for TypeConstraint — they carry no runtime value).
+(defn skip-constraints [body]
+  (cond (= (count body) 0)
+        body
+
+        (= (maybe-kind (skip-constraint (extract (first body)))) 0)
+        (skip-constraints (rest body))
+
+        body))
+
+;; eval-exprs [exprs env loc]: eval each expression; force the non-final
+;; ones (side effects) via force-discard; return the final value.
+(defn eval-exprs [exprs env loc]
+  (cond (= (count exprs) 0)
+        (empty-body-err loc)
+
+        (let [e (extract (first exprs))
+              r (rest exprs)]
+          (cond (= (count r) 0)
+                (eval e env)
+
+                (let [v (eval e env)]
+                  (force-discard v)
+                  (eval-exprs r env loc))))))
+
+;; eval-body [body env loc]: skip leading TypeConstraints, eval the rest.
+(defn eval-body [body env loc]
+  (eval-exprs (skip-constraints body) env loc))
+
+;; --- eval per-ctor impls ----------------------------------------------
+;; (after the helpers, so the impls' references to eval-symbol / eval-call
+;; resolve.)
+
+(extend-type ast/IntegerLit (eval [v env] (.value v)))
+
+(extend-type ast/FloatLit (eval [v env] (.value v)))
+
+(extend-type ast/StringLit (eval [v env] (.value v)))
+
+(extend-type ast/Symbol (eval [v env] (eval-symbol v env)))
+
+(extend-type ast/Call (eval [v env] (eval-call v env)))
+
+(extend-type ast/Fn (eval [v env]
+  (Closure (.name v) (.parameter-list v) (.body v) env)))
+
+(extend-type ast/FieldGetter (eval [v env]
+  (err-loc (.loc v) "field getter in expression position")))
+
+(extend-type ast/TypeConstraint (eval [v env]
+  (eval-typeconstraint-err)))
+
+(extend-type ast/Inline (eval [v env] (eval-inline-err (.loc v))))
+
+;; --- resolve / interpret impls that need eval -------------------------
+
+;; resolve TopDef: eval the def's AST in the current env (a top-level def
+;; is lazy — it is evaluated on first use).
+(extend-type TopDef (resolve [v env] (eval (.ast v) env)))
+
+;; bind-pairs-acc: params + ops -> a flat [k1 v1 k2 v2 ...] vector.
+(defn bind-pairs-acc [params ops acc]
+  (cond (= (count params) 0)
+        acc
+
+        (let [k (extract (first params))
+              v (extract (first ops))]
+          (bind-pairs-acc (rest params) (rest ops)
+                          (vect-conj (vect-conj acc k) v)))))
+
+(defn bind-pairs [params ops]
+  (bind-pairs-acc params ops empty-vector))
+
+;; interpret-closure [f ops env loc]: arity check, bind params + self,
+;; eval the body (skipping leading TypeConstraints). The base env is the
+;; Closure's CAPTURED env (.env f — where the fn was created), NOT the
+;; caller's env: free variables (e.g. make-adder's k in (fn [x] (+ x k)))
+;; live in the captured env. The caller's env (the `env` param) is unused.
+(defn interpret-closure [f ops env loc]
+  (let [params (.params f)
+        name (.name f)
+        n-params (count params)
+        n-ops (count ops)]
+    (cond (= n-params n-ops)
+          (let [env2 (env-bind-all (.env f) (bind-pairs params ops))
+                env3 (cond (str= name "")
+                           env2
+
+                           (env-bind env2 name f))]
+            (eval-body (.body f) env3 loc))
+
+          (wrong-arity-err loc name n-params n-ops))))
+
+;; interpret Closure: call a user closure.
+(extend-type Closure (interpret [f ops env loc]
+  (interpret-closure f ops env loc)))
+
+;; --- Top-level binding + main (interpreter driver core) ---------------
+;;
+;; The parse output is a [TopLevel] vector (source order). The interpreter
+;; binds each Definition's name to a TopDef (lazy — eval'd on first use),
+;; skips the other forms (phase 2 interprets only defn / def / main), and
+;; evals the Main body. This is the driver core; item 9's intrp.toc
+;; orchestrates slurp + parse + these.
+
+;; bind-toplevel [tl env]: fold one TopLevel into the env. Default body
+;; = env unchanged (Defp / DefType / ExtendType / AddNs / Inline /
+;; BlockComment / Main are skipped — not bound in phase 2). The
+;; Definition impl binds the name to a TopDef (lazy — eval'd on first
+;; use); the receiver is statically a Definition, so the field access
+;; is bare.
+(defp bind-toplevel [tl env] env)
+(extend-type ast/Definition
+  (bind-toplevel [tl env]
+    (env-bind env (.name tl) (TopDef (.name tl) (.value tl)))))
+
+;; find-main-one [tl]: (Some tl) if tl is a Main, else None.
+(defp find-main-one [tl] None)
+(extend-type ast/Main (find-main-one [tl] (Some tl)))
+
+;; main-params / main-body / main-loc: a Main's parameter list / body /
+;; location (per-ctor extraction — a bare .field on the TopLevel union
+;; is unsafe).
+(defp main-params [v])
+(extend-type ast/Main (main-params [v] (.parameter-list v)))
+
+(defp main-body [v])
+(extend-type ast/Main (main-body [v] (.body v)))
+
+(defp main-loc [v])
+(extend-type ast/Main (main-loc [v] (.loc v)))
+
+;; bind-toplevels-acc: walk the [TopLevel] vector, folding each node
+;; through bind-toplevel. Explicit recursion (no reduce — the
+;; free-variable capture of `env` would leak).
+(defn bind-toplevels-acc [env toplevels]
+  (cond (= (count toplevels) 0)
+        env
+
+        (bind-toplevels-acc (bind-toplevel (extract (first toplevels)) env)
+                            (rest toplevels))))
+
+(defn bind-toplevels [env toplevels]
+  (bind-toplevels-acc env toplevels))
+
+;; find-main-acc: the first Main node, or None.
+(defn find-main-acc [toplevels]
+  (cond (= (count toplevels) 0)
+        None
+
+        (let [n (extract (first toplevels))
+              m (find-main-one n)]
+          (cond (= (maybe-kind m) 1)
+                m
+
+                (find-main-acc (rest toplevels))))))
+
+(defn find-main [toplevels]
+  (find-main-acc toplevels))
+
+;; eval-main [main-node env argv]: eval the Main body (skipping leading
+;; TypeConstraints). The common shape is (main [argv] ...) — the single
+;; parameter is bound to the argv vector. (A zero-parameter main is eval'd
+;; as-is.)
+(defn eval-main [main-node env argv]
+  (let [params (main-params main-node)]
+    (cond (= (count params) 1)
+          (let [env2 (env-bind env (extract (first params)) argv)]
+            (eval-body (main-body main-node) env2 (main-loc main-node)))
+
+          (eval-body (main-body main-node) env (main-loc main-node))))))

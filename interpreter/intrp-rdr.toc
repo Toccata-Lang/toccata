@@ -201,33 +201,84 @@
 
 ;; --- Token readers ---------------------------------------------------
 
-(defn read-string-content [state]
+;; String reading (with escape unescaping).
+;;
+;; A string literal's content is walked from just after the opening
+;; quote to the closing quote. Escape sequences are unescaped to their
+;; single characters — the built-in reader's set: \n \t \b \r \f \" \\
+;; (an unknown escape is a parse error). The unescaped content is
+;; accumulated into a pre-allocated StringBuffer (str-append is an
+;; amortized-O(1) strncat; never repeated str concatenation).
+;;
+;; Unterminated string (EOF before the closing quote) is accepted with
+;; the content so far (the pre-existing lenient behavior).
+
+;; free-str [s]: consume a String reference (the invalid-escape error
+;; path drops its accumulator).
+(defn free-str [s]
+  (inline "
+    {
+      dec_and_free((Term)s_1, 1);
+      result = newI60(0);
+    }
+  "))
+
+;; string-esc-err [acc state]: drop the accumulator, return the
+;; invalid-escape ParserError at `state` (at the escape char).
+(defn string-esc-err [acc state]
+  (free-str acc)
+  (ParserError "invalid escape sequence in string" state))
+
+(def parse-string-content)
+
+;; parse-string-esc [state acc]: state is at the char AFTER the
+;; backslash. Maps the escape char and continues the content walk.
+(defn parse-string-esc [state acc]
+  (let [s1 (take-char state)
+        c (subs (.input s1) 0 1)]
+    (cond (str= c "")
+          (ParserMatch (str-append acc "\\") s1)
+
+          (str= c "n")
+          (parse-string-content (take-char s1) (str-append acc "\n"))
+
+          (str= c "t")
+          (parse-string-content (take-char s1) (str-append acc "\t"))
+
+          (str= c "b")
+          (parse-string-content (take-char s1) (str-append acc "\b"))
+
+          (str= c "r")
+          (parse-string-content (take-char s1) (str-append acc "\r"))
+
+          (str= c "f")
+          (parse-string-content (take-char s1) (str-append acc "\f"))
+
+          (str= c "\"")
+          (parse-string-content (take-char s1) (str-append acc "\""))
+
+          (str= c "\\")
+          (parse-string-content (take-char s1) (str-append acc "\\"))
+
+          (string-esc-err acc s1))))
+
+;; parse-string-content [state acc]: state is just after the opening
+;; quote; acc is a pre-allocated StringBuffer (>= the content length).
+;; Returns ParserMatch [unescaped-string state-at-closing-quote] or
+;; ParserError (invalid escape, state at the escape char).
+(defn parse-string-content [state acc]
   (let [input (.input state)]
     (cond (str= input "")
-          state
+          (ParserMatch acc state)
+
+          (str-prefix? "\"" input)
+          (ParserMatch acc state)
 
           (str-prefix? "\\" input)
-          (read-string-content (take-char (take-char state)))
+          (parse-string-esc state acc)
 
-          (str-prefix? "\"" input)
-          state
-
-          (read-string-content (take-char state)))))
-
-(defn read-string [state]
-  (let [input (.input state)]
-    (cond (str= input "")
-          (Token "" state)
-
-          (str-prefix? "\"" input)
-          (let [after-open (take-char state)
-                at-close (read-string-content after-open)
-                content-len (- (count (.input after-open))
-                               (count (.input at-close)))]
-            (Token (subs (.input after-open) 0 content-len)
-                   (take-char at-close)))
-
-          (Token "" state))))
+          (parse-string-content (take-char state)
+                                (str-append acc (subs input 0 1))))))
 
 (defn read-symbol [state]
   (let [input (.input state)]
@@ -403,10 +454,23 @@
 ;;
 ;; Each returns ParserMatch [Expression state-after].
 
+;; parse-string-lit: state at the opening quote (the parse-expr
+;; dispatch guards on `"). Returns ParserMatch [StringLit
+;; state-after-closing-quote] or ParserError (invalid escape).
 (defn parse-string-lit [state]
-  (let [r (read-string state)
-        s2 (.state r)]
-    (ParserMatch (ast/StringLit (.text r) (make-loc s2)) s2)))
+  (let [input (.input state)]
+    (cond (str-prefix? "\"" input)
+          (let [after-open (take-char state)
+                r (parse-string-content after-open
+                                        (str-malloc (count (.input after-open))))]
+            (cond (= (result-kind r) 2)
+                  r
+
+                  (let [s2 (.state r)]
+                    (ParserMatch (ast/StringLit (.value r) (make-loc s2))
+                                 (take-char s2)))))
+
+          (ParserMatch (ast/StringLit "" (make-loc state)) state))))
 
 (defn parse-quoted-sym [state]
   (let [r (read-symbol (take-char state))
@@ -469,18 +533,27 @@
 ;; Returns ParserMatch [Inline state-after-`)`].
 (defn parse-inline-code [te state]
   (let [s (skip-whitespace state)
-        r (read-string s)
-        text (.text r)
-        s2 (.state r)
-        s3 (skip-whitespace s2)]
-    (cond (str= text "")
-      (ParserError "expected a C code string in inline" s)
+        input (.input s)]
+    (cond (str-prefix? "\"" input)
+          (let [after-open (take-char s)
+                r (parse-string-content after-open
+                                        (str-malloc (count (.input after-open))))]
+            (cond (= (result-kind r) 2)
+                  r
 
-      (str-prefix? ")" (.input s3))
-      (ParserMatch (ast/Inline te text (make-loc s2))
-                   (take-char s3))
+                  (let [text (.value r)
+                        s2 (take-char (.state r))
+                        s3 (skip-whitespace s2)]
+                    (cond (str= text "")
+                          (ParserError "expected a C code string in inline" s)
 
-      (ParserError "expected ) after inline C code" s3))))
+                          (str-prefix? ")" (.input s3))
+                          (ParserMatch (ast/Inline te text (make-loc s2))
+                                       (take-char s3))
+
+                          (ParserError "expected ) after inline C code" s3)))))
+
+          (ParserError "expected a C code string in inline" s))))
 
 ;; parse-inline-typed: state at the type expression (one ordinary
 ;; expression; a bare type name in all hvm-core uses).

@@ -887,7 +887,7 @@ rules; each form's rule arrives with its phase.
   ops)`). `test-loc [file line]` helper: the scratch harness cannot
   import `ast` directly without double-compiling intrp-ast.toc under a
   second raw path spelling, so it builds Locations through it. Harness:
-  `scratch/i7-harness.toc` (checks 1–4) + `scratch/i7-not-callable.toc`
+  `intrp-tests/i7-harness.toc` (checks 1–4) + `intrp-tests/i7-not-callable.toc`
   (check 5, a separate program because it aborts). The harness imports
   via `(add-ns eval (module "../interpreter/intrp-eval.toc"))` — the
   `../` is SAFE here: intrp-eval.toc appears under exactly one spelling
@@ -908,10 +908,10 @@ rules; each form's rule arrives with its phase.
 - **Item 7 verified under the OFFICIAL new-toc (2026-09-03)**: the owner
   rebuilt new-toc (binary timestamp 2026-09-03 07:32; the 2026-09-02 19:37
   build predated the `proto-branch-c` fix). The rebuilt binary contains the
-  fix — `scratch/i7-harness.toc` checks 1–4 pass (`OK check-1 count=24
+  fix — `intrp-tests/i7-harness.toc` checks 1–4 pass (`OK check-1 count=24
   sp+=1 sppr*=1` / `OK check-2 bound=42` / `OK check-3 ref-type=4` /
   `OK check-4 plus=3`; zero leaks, 0 remaining nodes, exit 0) and
-  `scratch/i7-not-callable.toc` aborts `i7-not-callable.toc:5: not
+  `intrp-tests/i7-not-callable.toc` aborts `i7-not-callable.toc:5: not
   callable`, exit 134. The throwaway `scratch/new-toc-fb` is no longer
   needed for item 7 (left in `scratch/`). Two build-behavior notes:
   (a) a new-toc build of a program **with** `main` exits **0** on success
@@ -1212,11 +1212,11 @@ operator position first — a latent typer bug, see Verified facts.**
     last-key-wins reduce — the default body shadowed the Function impl
     in the REF branch). The fix is applied to `codegen.toc` (reduce
     over the reversed keys). **PENDING the owner's `make new-toc`
-    rebuild**; then rerun `scratch/i7-harness.toc` +
-    `scratch/i7-not-callable.toc` under the official binary (recipes in
+    rebuild**; then rerun `intrp-tests/i7-harness.toc` +
+    `intrp-tests/i7-not-callable.toc` under the official binary (recipes in
     their headers) and check the box.
 
-- [ ] **8. `interpreter/intrp-eval.toc`: interpreter — eval**
+- [x] **8. `interpreter/intrp-eval.toc`: interpreter — eval**
   - `(defp eval [expr env])` over `String`, `IntegerLit`, `FloatLit`,
     `StringLit`, `Call`, `Fn`, `FieldGetter`, `TypeConstraint` (skip),
     `Inline` (error — abort `file:line: inline C is not interpreted`).
@@ -1243,11 +1243,21 @@ operator position first — a latent typer bug, see Verified facts.**
     `file:line: wrong number of args` at the `Call` loc),
     `env-bind-all` over the param/ops pairs + self-binding, then eval
     the body (skipping leading `TypeConstraint`s).
-  - Done when: a scratch program with defn recursion, fn/closures,
-    let, cond/and/or/either, vectors, hash maps, threading, field
-    access (`.x` over `Some`), string/int ops interprets with
-    hand-verified output, and a def with an inline-C value aborts
-    with the clean eval-time error.
+  - Done when: a program with defn recursion, fn/closures, let,
+    cond/and/or/either, vectors, hash maps, threading, field access
+    (`.x` over `Some`), string/int ops interprets with hand-verified
+    output, and a def with an inline-C value aborts with the clean
+    eval-time error.
+  - As-built (2026-09-03): `eval` + the lazy flow-control handlers
+    (cond/either/and/or) + the field-read path + the item-7-deferred
+    `TopDef`/`Closure` impls are in `interpreter/intrp-eval.toc`.
+    Verified by `intrp-tests/i8-harness.toc` (slurp → parse → bind →
+    find-main → eval-main) run on `intrp-tests/i8-prog.toc` (12
+    hand-verified lines — fact-5=120, adder=15, let=15, and=42,
+    or=99, either=7, vec=1, map=1, map-miss=999, thread=1, field=8,
+    str=hello; zero leaks, 0 remaining nodes, exit 0) and
+    `intrp-tests/i8-inline.toc` (a def with an inline-C value aborts
+    `i8-inline.toc:11: inline C is not interpreted`, exit 134).
 
 - [ ] **9. `interpreter/intrp.toc`: driver + Makefile**
   - `main`: argv element 1 = file (missing → usage + abort); `slurp`

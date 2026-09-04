@@ -1,0 +1,117 @@
+;; intrp-tests/i8-harness.toc — item-8 harness (eval end-to-end).
+;;
+;; Interprets a program file (argv[1]) through the concrete interpreter:
+;;   slurp -> rdr/parse-program -> eval/bind-toplevels -> eval/find-main
+;;   -> eval/eval-main. The program's pr*/println* side effects are the
+;;   output; the harness prints nothing on success.
+;;
+;; The program file is INTERPRETED (not compiled), so it may reference
+;; only the initial-env core symbols (see intrp-eval.toc) plus its own
+;; defn / fn / let / control-flow. The harness itself is compiled by
+;; new-toc and may use the full core.
+;;
+;; Companion programs (in this directory):
+;;   i8-prog.toc    — the success program (defn recursion, closures, let,
+;;                    cond/and/or/either, vectors, hash maps, threading,
+;;                    field access, string/int ops).
+;;   i8-inline.toc  — a def with an inline-C value (the clean eval-time
+;;                    "inline C is not interpreted" abort; run separately
+;;                    because it aborts).
+;;
+;; Build (from the repo root):
+;;   ./new-toc intrp-tests/i8-harness.toc > i8-harness.tmp
+;;   awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "i8-harness.c"; next; } { print; }' i8-harness.tmp > i8-harness.c
+;;   rm i8-harness.tmp
+;;   clang -g -march=native -I. -DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1 -lm -lpthread -latomic -o i8-harness i8-harness.c new.c runtime3.c graph.c
+;;   ./i8-harness intrp-tests/i8-prog.toc
+;;
+;; Expected (i8-prog.toc's output, before the runtime stats lines):
+;;   fact-5=120
+;;   adder=15
+;;   let=15
+;;   and=42
+;;   or=99
+;;   either=7
+;;   vec=1
+;;   map=1
+;;   map-miss=999
+;;   thread=1
+;;   field=8
+;;   str=hello
+
+(add-ns rdr (module "../interpreter/intrp-rdr.toc"))
+(add-ns eval (module "../interpreter/intrp-eval.toc"))
+
+;; slurp: whole-file read -> String (inline C).
+(defn slurp [path]
+  ! path String
+  (inline String "
+    String *p = (String *)path_1;
+    FILE *fd = fopen(p->buffer, \"rb\");
+    dec_and_free((Term)p, 1);
+    if (fd == NULL) {
+      fprintf(stderr, \"slurp: cannot open file\\n\");
+      abort();
+    }
+    fseek(fd, 0, SEEK_END);
+    long len = ftell(fd);
+    fseek(fd, 0, SEEK_SET);
+    String *s = malloc_string(len + 1);
+    if (len > 0) fread(s->buffer, 1, len, fd);
+    s->len = len;
+    s->buffer[len] = 0;
+    fclose(fd);
+    result = termVal((Term)s);
+  "))
+
+;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
+(defp maybe-kind [m])
+(extend-type None (maybe-kind [_] 0))
+(extend-type Some (maybe-kind [_] 1))
+
+;; Per-ctor extraction over the rdr/ParserResults union (a bare .field on
+;; the union is unsafe — new-toc resolves getters by name lookup; `state`
+;; is shared by several ctors). Each impl sees the concrete ctor, so the
+;; field access is bare. The callers guard on result-kind, so the wrong
+;; ctor never reaches an impl.
+(defp parse-value [r])
+(extend-type rdr/ParserMatch (parse-value [v] (.value v)))
+
+(defp parse-msg [r])
+(extend-type rdr/ParserError (parse-msg [v] (.msg v)))
+
+(defp parse-state [r])
+(extend-type rdr/ParserError (parse-state [v] (.state v)))
+
+;; parse-fail [file r]: r is a ParserError -> "file:line: msg" + abort.
+(defn parse-fail [file r]
+  (let [line (rdr/state-line (parse-state r))]
+    (eval/err-loc-c file line (parse-msg r))))
+
+;; no-main [file]: the program has no main -> abort.
+(defn no-main [file]
+  (eval/err-loc-c file 0 "no main"))
+
+;; run-match [file r argv]: r is a ParserMatch -> bind, find main, eval.
+(defn run-match [file r argv]
+  (let [toplevels (parse-value r)
+        env (eval/bind-toplevels eval/initial-env toplevels)
+        m (eval/find-main toplevels)]
+    (cond (= (maybe-kind m) 0)
+          (no-main file)
+
+          (eval/eval-main (extract m) env argv))))
+
+;; run-prog [file argv]: parse + interpret the program file.
+(defn run-prog [file argv]
+  (let [src (slurp file)
+        r (rdr/parse-program (rdr/make-state src file 1))
+        k (rdr/result-kind r)]
+    (cond (= k 2)
+          (parse-fail file r)
+
+          (run-match file r argv))))
+
+(main [argv]
+  (let [file (extract (get argv 1))]
+    (run-prog file argv)))
