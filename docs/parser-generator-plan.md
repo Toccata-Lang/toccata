@@ -326,6 +326,14 @@ Curated for this project; the source of truth is the compiler plan.
   symbol-loss race in broader form), and `new-toc.c` is MISSING from
   disk (only `new-toc.c~`) — new-toc cannot be rebuilt from the
   Makefile.
+- RUNTIME TOOLCHAIN RESTORED (2026-09-04, item 2a): the RUNTIME
+  TOOLCHAIN BROKEN fact above is SUPERSEDED — fresh `new-toc` builds
+  compile and run clean against the current runtime sources (a
+  trivial program and a 2000-iteration probe: exit 0, malloc diff 0,
+  remaining nodes 0, deterministic across reruns and a rebuild).
+  Driver-based verification (items 2a–8) is unblocked. The
+  `new-toc.c`-missing / non-determinism caveats in that fact still
+  stand.
 - Always capture and read new-toc's stderr on a failed build (never
   `2>/dev/null`): `Undefined symbol: 'x' at file: N`, `Error at file:
   N; msg` point directly at the problem. `*** Loading/Loaded/declare`
@@ -404,6 +412,12 @@ Curated for this project; the source of truth is the compiler plan.
   String; `(str* [n])` renders an Integer (via `number-str`). `pr*`
   takes ONE string — `pr*` on a vector aborts silently; build the
   string with `(str* [...])` first.
+- `str-append` (hvm-core.toc:608) appends IN PLACE into the dest's
+  buffer — the dest must be a pre-allocated StringBuffer with enough
+  capacity (the hand-written rdr pre-allocates its acc). Appending to
+  a static string literal (e.g. `(str-append "" "x")`) overflows the
+  global buffer — segfault (ASan: global-buffer-overflow in strncat)
+  (2026-09-04, item 2a).
 - `vect-concat` is user-defined (in `interpreter/intrp-rdr.toc`,
   defined BEFORE the grouping deftypes), not core.
 
@@ -453,6 +467,14 @@ generated code)**
   machine skip earlier side effects — thread side-effect results
   through a strict combination (e.g. `+`) into the result chain.
   `fn` literals with underscore params miscompile — use named params.
+- `inline` C bodies must set `result = <Term>` — codegen emits the
+  body inside a `void` fn and appends the `move(portLoc(2, args),
+  result)` itself; a `return` in the body is a clang error ("void
+  function should not return a value"). The `(inline TypeExpr "...")`
+  annotation does NOT change the generated C fn signature. `inline` is
+  not allowed in a `cond` CLAUSE ("'inline' expressions not allowed
+  here" — defn-body position is fine). Fn args are visible in the C as
+  `<arg>_1`, `<arg>_2`, ... (1-based) (2026-09-04, item 2a).
 
 **Modules**
 
@@ -494,6 +516,28 @@ generated code)**
   original was kept (it is live new-toc syntax — see the fact above),
   with the `defn` after `expression` as in the original.
 
+- Item 2a (2026-09-04): the closure-capture probe PASSED — the
+  site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
+  never committed from there) carries a local 3-ctor result deftype
+  (`PMatch [value state]` / `PIgnore [state]` / `PErr [msg state]`),
+  the settled `parse-then` / `parse-or` kit verbatim, and a site-(b)
+  acc-recursion (`many-digit` over a one-char `digit` parser) that
+  rebuilds BOTH capturing continuations on every iteration — the
+  `parse-then` fn captures `acc`, the `parse-or` else-fn captures
+  `acc` and the state — with `acc` growing one element per iteration.
+  Run over 2000 chars of input (2000 iterations — ~10x the ~194-node
+  mark where the reduce-capture leak exhausted the 1MB term buffer):
+  exit 0, malloc diff 0, remaining nodes 0, ~598k ITRS; deterministic
+  across reruns and a full rebuild. The reduce-capture leak does NOT
+  apply to this shape: the continuations are plain `fn` literals
+  rebuilt per iteration, and the accumulator is threaded as a plain
+  `defn` parameter — the same distinction as the documented
+  reduce-vs-acc-recursion fix. The site-(a)/(b)/(c) kit templates
+  stand; task 4 is unblocked. Probe hazards hit (now facts above):
+  `inline` not allowed in a `cond` clause; the inline body must set
+  `result` (a `return` breaks the void fn); `str-append` to a static
+  string literal overflows the global buffer.
+
 ## Ralph loop — task list
 
 Protocol: work top to bottom, one item per session; check an item off
@@ -527,7 +571,7 @@ inline C freely. Generated code follows `docs/toccata-style.md`.
     error lines (transient-crash retry rule applies), and the
     top-level `intrp-rdr.toc` is deleted.
 
-- [ ] **2a. Closure-capture probe (gates the kit templates)**
+- [x] **2a. Closure-capture probe (gates the kit templates)**
   Scratch driver (never committed from `scratch/`; built manually
   with the `rdr-top` recipe — no Makefile target): a
   self-contained mini-module mirroring the generated `Many` slow

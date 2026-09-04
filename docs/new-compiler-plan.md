@@ -946,6 +946,31 @@ rules; each form's rule arrives with its phase.
   `Undefined symbol: '<name>'` — 100% reproducible, not the symbol-loss
   race. This makes def↔defn reference cycles expressible (declare
   first, define in either order after).
+- **Runtime toolchain restored (2026-09-04, parser-gen item 2a)**:
+  the RUNTIME TOOLCHAIN BROKEN fact above is SUPERSEDED — a fresh
+  `new-toc` build of a trivial program (`(main [_] 0)`) compiles and
+  runs clean against the current `new.c` / `runtime3.c` / `graph.c`
+  (exit 0, malloc diff 0, remaining nodes 0), as does a 2000-
+  iteration driver; deterministic across reruns and a rebuild. The
+  owner restored a consistent runtime/new-toc pair. Driver builds/runs
+  are unblocked. The `new-toc.c`-missing / binary non-determinism
+  caveats in that fact still stand.
+- **`inline` C body convention (2026-09-04, parser-gen item 2a)**:
+  the inline body must set `result = <Term>` — codegen emits the body
+  inside a `void` fn and appends `move(portLoc(2, args), result);`
+  itself; a `return` in the inline body is a clang error ("void
+  function should not return a value"). The `(inline TypeExpr "...")`
+  type annotation does NOT change the generated C fn signature.
+  `inline` is not allowed in a `cond` CLAUSE ("'inline' expressions
+  not allowed here" — defn-body position is fine). Fn args are
+  visible in the C as `<arg>_1`, `<arg>_2`, ... (1-based).
+- **`str-append` requires a pre-allocated StringBuffer dest
+  (2026-09-04, parser-gen item 2a)**: `str-append` (hvm-core.toc:608)
+  `strncat`s into the dest's buffer IN PLACE — the dest must have
+  enough allocated capacity (the hand-written rdr pre-allocates its
+  acc). Appending to a static string literal (e.g.
+  `(str-append "" "x")`) overflows the global buffer — segfault
+  (ASan: global-buffer-overflow in strncat).
 
 ## Settled (continued)
 
