@@ -1820,7 +1820,6 @@ int64_t strSha1(Value *arg0) {
     Sha1Context context;
 
     Sha1Initialise(&context);
-    Sha1Update(&context, (void *)&arg0->type, 8);
     Sha1Update(&context, buffer, len);
     Sha1Finalise(&context, (SHA1_HASH *)&shaVal);
 
