@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# ralph.sh — run the pi agent in a Ralph loop using prompt.md
+# ralph.sh — run the pi agent in a Ralph loop
+#
+# Usage: ./ralph.sh [prompt-file]   (default: prompt.md)
+#
 # Each iteration is a fresh, stateless pi session; progress is carried
-# by git history and the checklist in docs/new-compiler-plan.md
-# ("Phase 1 implementation checklist (Ralph loop)").
+# by git history and the checklist named by the prompt file's plan
+# (prompt.md → docs/new-compiler-plan.md "Phase 1 implementation
+# checklist (Ralph loop)"; prompt-parser-gen.md →
+# docs/parser-generator-plan.md "Ralph loop — task list").
 #
 # Sentinels (grepped from the final assistant message):
 #   ALL ITEMS COMPLETE   → exit 0 (checklist finished)
-#   STOP POINT REACHED   → exit 3 (item 7 — owner decides the primitive
-#                           representation + top-level-def marker)
+#   STOP POINT REACHED   → exit 3 (owner-decision item — see the
+#                           prompt's plan)
 #   STUCK: <reason>      → exit 1 (blocked — owner input needed)
 #   (no sentinel)        → next iteration; rc != 0 is retried
 #   max iterations       → exit 2
@@ -18,8 +23,11 @@
 cd /home/jim/toccata || exit 1
 set -o pipefail
 
-MAX_ITER=36   # 12 checklist items; ~3 runs of headroom each (big items
-               # — parser, eval, differential tests — span multiple runs)
+PROMPT="${1:-prompt.md}"
+
+MAX_ITER=36   # headroom for the prompt's checklist: ~3 runs per item
+               # (big items — parser, eval, differential tests — span
+               # multiple runs)
 
 # jq filter: one line per process event; thinking blocks are never emitted
 PROCESS='
@@ -39,7 +47,7 @@ PROCESS='
 for i in $(seq 1 "$MAX_ITER"); do
   echo "=== Ralph iteration $i ==="
   out=$(
-    pi --mode json -p @prompt.md \
+    pi --mode json -p "@$PROMPT" \
       | tee >(jq -r "$PROCESS" >&2) \
       | jq -s -r '
           [ .[] | select(.type == "message_end" and .message.role == "assistant") ]
