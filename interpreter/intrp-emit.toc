@@ -6,15 +6,20 @@
 ;;
 ;; Item 3: skeleton + char-level emission — EmitCtx, the emit-pred
 ;; protocol (char-level ctors only; the default body aborts, and the
-;; abort IS the char-level classification), and emit-module v1
-;; (module header + the char-level rules' predicates).
+;; abort IS the char-level classification).
 ;;
-;; The rdr module is add-ns'd for shared helpers (later items use
-;; e.g. vect-concat); the module path spelling must stay identical
+;; Item 4: leaf body ctors + end-to-end pipeline — emit-body (the
+;; leaf ctors), emit-ref, emit-fn, and emit-module (the full
+;; generated module: header + kit + one parser defn per Rule + the
+;; parse-seq loop + main template).
+;;
+;; The rdr module is add-ns'd for shared helpers (vect-concat lives
+;; in the ast layer); the module path spellings must stay identical
 ;; across the graph.
 
 (add-ns grammar (module "intrp-grammar.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
+(add-ns ast (module "intrp-ast.toc"))
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -23,10 +28,49 @@
 ;;            or helper name + "-").
 (deftype EmitCtx [rule prefix])
 
-;; render-literal: a string as the body of a Toccata string literal
-;; (escape-chars handles quote, backslash, and the control chars).
+;; escape-char: one char string -> its escaped 1- or 2-char form
+;; (quote, backslash, and the control chars).
+(defn escape-char [c]
+  (cond (str= c "\\")
+    "\\\\"
+
+    (str= c "\"")
+    "\\\""
+
+    (str= c "\n")
+    "\\n"
+
+    (str= c "\r")
+    "\\r"
+
+    (str= c "\t")
+    "\\t"
+
+    (str= c "\f")
+    "\\f"
+
+    (str= c "\b")
+    "\\b"
+
+    c))
+
+;; escape-str-acc: the escaped form of each char, collected in order
+;; (explicit acc recursion, not a reduce — the reduce-capture leak).
+(defn escape-str-acc [acc s]
+  (cond (= (count s) 0)
+    acc
+
+    (escape-str-acc (vect-conj acc (escape-char (extract (first s))))
+                    (rest s))))
+
+;; escape-str: a string's body as the contents of a Toccata string
+;; literal (quote, backslash, and the control chars escaped).
+(defn escape-str [s]
+  (to-str (escape-str-acc [] s)))
+
+;; render-literal: a string as a Toccata string literal.
 (defn render-literal [s]
-  (str* ["\"" (escape-chars s) "\""]))
+  (to-str ["\"" (escape-str s) "\""]))
 
 ;; emit-pred: source of a single-char predicate expression over char
 ;; string `c`. Implemented ONLY for char-level ctors (CharRange,
@@ -35,7 +79,7 @@
 ;; ctor — calling it on a general parser is an emitter bug, and the
 ;; abort IS the char-level classification (no yes/no tag needed).
 (defp emit-pred [pc ctx]
-  (abort (str* ["emit-pred: not char-level: " (type-name pc)])))
+  (abort (to-str ["emit-pred: not char-level: " (type-name pc)])))
 
 ;; pred-alts: the emit-pred of each alt, joined with single spaces
 ;; (no trailing space). Explicit acc recursion — a reduce whose
@@ -43,7 +87,7 @@
 (defn pred-alts-acc [acc alts ctx]
   (cond (= (count alts) 0)
     acc
-    (pred-alts-acc (str* [acc " " (emit-pred (extract (first alts)) ctx)])
+    (pred-alts-acc (to-str [acc " " (emit-pred (extract (first alts)) ctx)])
                    (rest alts) ctx)))
 
 (defn pred-alts [alts ctx]
@@ -52,18 +96,18 @@
     (pred-alts-acc (emit-pred (extract (first alts)) ctx) (rest alts) ctx)))
 
 (extend-type grammar/CharRange (emit-pred [v ctx]
-  (str* ["(and (<= " (number-str (char-code (.lower v)))
+  (to-str ["(and (<= " (number-str (char-code (.lower v)))
          " (char-code c)) (<= (char-code c) "
          (number-str (char-code (.upper v))) "))"])))
 
 (extend-type grammar/NotChar (emit-pred [v ctx]
-  (str* ["(not (str= c " (render-literal (.char v)) "))"])))
+  (to-str ["(not (str= c " (render-literal (.char v)) "))"])))
 
 (extend-type String (emit-pred [v ctx]
-  (str* ["(str= c " (render-literal v) ")"])))
+  (to-str ["(str= c " (render-literal v) ")"])))
 
 (extend-type grammar/Any (emit-pred [v ctx]
-  (str* ["(or " (pred-alts (.parsers v) ctx) ")"])))
+  (to-str ["(or " (pred-alts (.parsers v) ctx) ")"])))
 
 ;; Rule and Many delegate to their child (ctor table).
 (extend-type grammar/Rule (emit-pred [v ctx]
@@ -72,21 +116,171 @@
 (extend-type grammar/Many (emit-pred [v ctx]
   (emit-pred (.parser v) ctx)))
 
-;; emit-rules-acc: one `<name>-char` predicate defn line per rule,
-;; appended to the header lines.
-(defn emit-rules-acc [acc rules ctx]
+;; --- Item 4: leaf body ctors + end-to-end pipeline ------------------
+;;
+;; Generated code references the helper layer with the rdr/ prefix —
+;; a bare name resolving through an imported namespace crashes
+;; new-toc's codegen (verified 2026-09-04, item 4).
+
+;; emit-body: source lines for an expression which, given the
+;; let-bound symbol `state`, yields a ParserResults. Item 4: the leaf
+;; ctors (CharRange, NotChar, bare String, AlwaysSucceed, Error); the
+;; default body aborts with a message naming the ctor. -> [String]
+(defp emit-body [pc ctx]
+  (abort (to-str ["emit-body: not implemented for: " (type-name pc)])))
+
+;; one-char-body [pred-line]: the one-char parser body (ctor table):
+;; let over input/c, cond over end-of-input / pred / unexpected char.
+;; The defn's closing paren is appended by wrap-defn.
+(defn one-char-body [pred-line]
+  ["(let [input (.input state)"
+   "      c (subs input 0 1)]"
+   "  (cond (str= c \"\")"
+   "    (rdr/ParserError \"unexpected end of input\" state)"
+   pred-line
+   "    (rdr/ParserMatch c (rdr/take-char state))"
+   "    (rdr/ParserError \"unexpected character\" state)))"])
+
+(extend-type grammar/CharRange (emit-body [v ctx]
+  (one-char-body (to-str ["    " (emit-pred v ctx)]))))
+
+(extend-type grammar/NotChar (emit-body [v ctx]
+  (one-char-body (to-str ["    " (emit-pred v ctx)]))))
+
+;; bare String: let-free (inlinable in a cond clause) — the ctor
+;; table's str-prefix? shape.
+(extend-type String (emit-body [v ctx]
+  ["(cond (rdr/str-prefix? " (render-literal v) " (.input state))"
+   "  (rdr/ParserMatch " (render-literal v) " (rdr/take-char state))"
+   (to-str ["  (rdr/ParserError \"expected " (render-literal v) "\" state))"])]))
+
+;; render-value: a grammar value as generated source — Strings as
+;; escaped literals, everything else via to-str.
+(defn render-value [v]
+  (cond (str= (type-name v) "String")
+    (render-literal v)
+
+    (to-str [v])))
+
+(extend-type grammar/AlwaysSucceed (emit-body [v ctx]
+  [(to-str ["(rdr/ParserMatch " (render-value (.value v)) " state)"])]))
+
+(extend-type grammar/Error (emit-body [v ctx]
+  [(to-str ["(rdr/ParserError " (render-literal (.msg v)) " state)"])]))
+
+;; emit-ref: how to reference this parser in call position. Rule ->
+;; its name (the Rule's defn is emitted at module level); anonymous
+;; combinators are never referenced directly (the parent lifts them
+;; via emit-fn first) — the default aborts. -> String
+(defp emit-ref [pc ctx]
+  (abort (to-str ["emit-ref: not a Rule: " (type-name pc)])))
+
+(extend-type grammar/Rule (emit-ref [v ctx]
+  (.name v)))
+
+;; wrap-defn-acc: indent the body lines two spaces under the defn
+;; line; the last line gains the defn's closing paren.
+(defn wrap-defn-acc [acc lines]
+  (cond (= (count lines) 0)
+    acc
+
+    (let [l (extract (first lines))]
+      (cond (= (count (rest lines)) 0)
+        (vect-conj acc (to-str ["  " l ")"]))
+
+        (wrap-defn-acc (vect-conj acc (to-str ["  " l])) (rest lines))))))
+
+;; defn-line [name]: the defn's opening line. Built in its own defn —
+;; the str* inline in a vector argument crashes new-toc's parser
+;; (verified 2026-09-04, item 4 — see Inherited verified facts).
+(defn defn-line [name]
+  (to-str ["(defn " name " [state]"]))
+
+;; wrap-defn [name lines]: (defn <name> [state] <indented body>).
+(defn wrap-defn [name lines]
+  (wrap-defn-acc [(defn-line name)] lines))
+
+;; emit-fn: lift any combinator to a named parser fn (plain defn, no
+;; protocol); the helper's prefix is its name + "-". -> [String]
+(defn emit-fn [pc name ctx]
+  (wrap-defn name
+             (emit-body pc (EmitCtx (.rule ctx) (to-str [name "-"])))))
+
+;; emit-header: module header lines — the add-ns of the helper layer,
+;; the parse-then/parse-or kit (Result discrimination, settled in
+;; task 1), the ParserError field-access protocols (bare .field on
+;; the union is unsafe — new-toc resolves getters by name lookup),
+;; and the parse-error-line def.
+(defn emit-header []
+  [";; gen-rdr.toc - GENERATED by interpreter/intrp-emit.toc (do not edit)."
+   ""
+   "(add-ns rdr (module \"intrp-rdr.toc\"))"
+   ""
+   "(defp parse-then [r f])"
+   "(extend-type rdr/ParserMatch (parse-then [r f] (f (.value r) (.state r))))"
+   "(extend-type rdr/ParserIgnore (parse-then [r f] r))"
+   "(extend-type rdr/ParserError (parse-then [r f] r))"
+   ""
+   "(defp parse-or [r else-f])"
+   "(extend-type rdr/ParserMatch (parse-or [r e] r))"
+   "(extend-type rdr/ParserIgnore (parse-or [r e] r))"
+   "(extend-type rdr/ParserError (parse-or [r e] (e r)))"
+   ""
+   "(defp parse-error-msg [r])"
+   "(extend-type rdr/ParserError (parse-error-msg [v] (.msg v)))"
+   ""
+   "(defp parse-error-state [r])"
+   "(extend-type rdr/ParserError (parse-error-state [v] (.state v)))"
+   ""
+   ""
+   "(defn parse-error-line [file line msg]"
+   "  (exit 1 (to-str [file \":\" (number-str line) \":\" msg])))"])
+
+;; emit-rules-acc: one parser defn per Rule (a char-level body -> the
+;; one-char parser defn), separated by blank lines.
+(defn emit-rules-acc [acc rules]
   (cond (= (count rules) 0)
     acc
-    (let [r (extract (first rules))]
-      (emit-rules-acc
-        (vect-conj acc
-                   (str* ["(defn " (.name r) "-char [c] " (emit-pred r ctx) ")"]))
-        (rest rules) ctx))))
 
-;; emit-module v1: module header (add-ns of the helper layer) + one
-;; `<name>-char` predicate defn per char-level rule. Every rule must
-;; be char-level — emit-pred aborts otherwise. `entry` is unused in
-;; v1 (the main template lands with item 4). -> [String]
+    (let [r (extract (first rules))
+          d (wrap-defn (.name r)
+                       (emit-body (.parser r)
+                                  (EmitCtx (.name r)
+                                           (to-str [(.name r) "-"]))))]
+      (cond (= (count acc) 0)
+        (emit-rules-acc d (rest rules))
+
+        (emit-rules-acc (ast/vect-concat acc [""] d) (rest rules))))))
+
+;; emit-main: the parse-seq loop + main template lines. parse-seq
+;; skips whitespace, runs the entry rule, prints one result line per
+;; match (the pr* count threaded through + keeps every print), and on
+;; a ParserError prints file:line: msg and exits non-zero.
+(defn emit-main [entry]
+  ["(defn parse-seq [file state acc]"
+   "  (let [s (rdr/skip-whitespace state)]"
+   "    (cond (str= (.input s) \"\")"
+   "      (rdr/ParserMatch acc s)"
+   (to-str ["      (parse-or (parse-then (" entry " s)"])
+   "                            (fn [v s2]"
+   "                              (parse-seq file (rdr/skip-whitespace s2)"
+   "                                          (+ acc (pr* (to-str [v \"\\n\"]))))))"
+   "                (fn [e] (parse-error-line file"
+   "                                          (rdr/state-line (parse-error-state e))"
+   "                                          (parse-error-msg e)))))))"
+   ""
+   "(main [argv]"
+   "  (let [file (extract (get argv 1))]"
+   "    (parse-seq file (rdr/make-state (slurp file) file 1) 0)))"])
+
+;; emit-module: the full generated module — header, one parser defn
+;; per Rule, the parse-seq loop + main template (the entry rule name
+;; spliced into the loop). -> [String]
 (defn emit-module [rules entry]
-  (let [ctx (EmitCtx "" "")]
-    (emit-rules-acc ["(add-ns rdr (module \"intrp-rdr.toc\"))"] rules ctx)))
+  (ast/vect-concat
+    (ast/vect-concat
+      (ast/vect-concat
+        (ast/vect-concat (emit-header) [""])
+        (emit-rules-acc [] rules))
+      [""])
+    (emit-main entry)))

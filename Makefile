@@ -131,6 +131,16 @@ emit-pred: new-toc interpreter/intrp-grammar.toc interpreter/intrp-emit.toc inte
 	$(CC) $(CFLAGS) -o emit-pred $(TOC_FLAGS) $(LDFLAGS) emit-pred.c new.c runtime3.c graph.c
 	./emit-pred
 
+# Generated parser module (interpreter/gen-rdr.toc is written by the
+# emit-pred driver — a build artifact, never committed).
+.PHONY: gen-rdr
+gen-rdr: emit-pred new-toc interpreter/intrp-rdr.toc hvm-core.toc
+	./new-toc interpreter/gen-rdr.toc > gen-rdr.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "gen-rdr.c"; next; } { print; }' gen-rdr.tmp > gen-rdr.c
+	clang-format -i gen-rdr.c
+	rm gen-rdr.tmp
+	$(CC) $(CFLAGS) -o gen-rdr $(TOC_FLAGS) $(LDFLAGS) gen-rdr.c new.c runtime3.c graph.c
+
 # Sidequest
 sidequest.c: new-toc sidequest.toc hvm-core.toc new.h
 	./new-toc sidequest.toc > sidequest.tmp

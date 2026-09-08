@@ -574,8 +574,9 @@ generated code)**
 
 Protocol: work top to bottom, one item per session; check an item off
 only when its "done when" holds, then commit. Context for every item:
-this file + AGENTS.md. The emitter / grammar / driver sources may use
-inline C freely. Generated code follows `docs/toccata-style.md`.
+this file + AGENTS.md. Generated code follows `docs/toccata-style.md`.
+Note: NEVER generate inline code. When needed, ask the user to provide
+a solution.
 
 - [x] **1. Owner decision: result-discrimination pattern (+ emitter
     classification ruling)**
