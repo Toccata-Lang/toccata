@@ -108,6 +108,11 @@ builds the code.
 * `char-code` gives the first char's integer code (0–255); `char` is the
   inverse.
 
+* Do not call `str*` directly on a vector — it is for `str` to use under the
+  covers. To create a string from a vector of values, use `to-str`.
+
+* Do not use `escape-chars`.
+
 * Keep a hash map's keys a single type — a `get` with a differently-typed key
   will miss.
 
