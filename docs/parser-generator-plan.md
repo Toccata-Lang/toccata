@@ -638,7 +638,7 @@ a solution.
   - Done when: the driver prints OK for all six predicates with exact
     expected output, zero leaks, 0 remaining nodes, exit 0.
 
-- [ ] **4. Leaf body ctors + end-to-end pipeline**
+- [x] **4. Leaf body ctors + end-to-end pipeline**
   `emit-body` impls: `CharRange` (one-char parser), `NotChar`, bare
   `String` (let-free via `str-prefix?`), `AlwaysSucceed`, `Error`;
   `emit-ref` (Rule → name; default aborts); `emit-fn` (defn wrapper,
