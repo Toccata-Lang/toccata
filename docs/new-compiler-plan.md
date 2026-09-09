@@ -988,6 +988,51 @@ rules; each form's rule arrives with its phase.
   body; usable by any source-emitting tool to splice runtime strings
   into generated `.toc` source. `type-name` over a deftype ctor value
   returns the BARE ctor name (no namespace prefix).
+- **Bare `(def name)` forward decl fixes the symbol-loss race, and
+  the runtime binding is verified (2026-09-09, parser-gen item 6)**:
+  with `emit-module` as the last defn of `intrp-emit.toc`, the
+  symbol-loss race became DETERMINISTIC (10/10 builds: `Undefined
+  symbol: 'emit/emit-module'`). A bare `(def emit-module)` placed at
+  the TOP of the file (separated from the defn) prints `*** declare
+  emit-module` and makes the build deterministic. A bare def placed
+  IMMEDIATELY before the same-named defn (no forms between) prints no
+  declare line and does not register. Runtime binding verified with a
+  probe: `(def f)` + later `(defn f [x] (+ x 1))` + `(f 41)` → 42
+  (declared global and defn binding are the same global) — resolves
+  the "runtime binding UNVERIFIED" caveat on the forward-decl fact
+  above for same-file def + defn.
+- **let-wrapping-cond miscompiles (2026-09-09, parser-gen item 6)**:
+  a defn body shaped `(let [n ...] (cond t (let ...) (let ...)))` — a
+  let wrapping a cond whose clauses are both lets — LOADS CLEAN under
+  new-toc but miscompiles: the program aborts at runtime with `bad
+  incRef value: (nil)` even when the function is NEVER CALLED (the
+  crash fires at module load / registration). Fix: inline the
+  let-bound value so the cond is the defn body directly (the inverse
+  shape — let INSIDE cond clauses, as in `all_body-acc` — is safe).
+  This is the runtime face of the documented "a let containing a
+  nested cond whose clauses are both lets" load-time quirk.
+- **first/rest iteration over a bare string walks it CHAR BY CHAR
+  (2026-09-09, parser-gen item 6)**: a helper that iterates a
+  collection arg via `count` / `first` / `rest` (e.g. an
+  append-accumulator) given a bare STRING arg yields one-char-string
+  elements (later rendered by `to-str` as space-joined characters).
+  The collection arg must be a vector — wrap with `(conj [] s)`. Also
+  verified: `(vect-conj [l] xs)` appends `xs` as ONE nested element;
+  splice a recursive vector result with the append-accumulator
+  instead (a nested vector in an emitted-lines vector renders under
+  `to-str` with stray `[` brackets).
+- **RUNTIME TOOLCHAIN BROKEN AGAIN (2026-09-09, parser-gen item 6)**:
+  after a machine reboot, the `new-toc` binary (2026-09-05 20:40)
+  crashes (exit 134, NO error message) on ALL non-trivial inputs —
+  0/30+ on `interpreter/intrp-grammar.toc` (which loaded clean earlier
+  the same session), also `intrp-rdr.toc` and the emitter; trivial
+  programs (`(main [_] 0)`, 50 flat defns, a single simple deftype)
+  still compile. Rebuilding is BLOCKED: `make -B new-toc` triggers a
+  `toccata` rebuild whose link fails (`undefined reference to
+  emptyBMI`). The owner must restore/rebuild the toolchain. Earlier
+  the same session the same binary built the parser-gen drivers
+  intermittently (retry loops of 5–12 attempts; the symbol-loss race
+  and truncated-C link failures were the failure modes).
 
 ## Settled (continued)
 

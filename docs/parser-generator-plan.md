@@ -363,7 +363,44 @@ Curated for this project; the source of truth is the compiler plan.
   sometimes compiles clean → a race, not a source error. Workaround
   (verified): forward-declare the accumulator fn and order the two
   defns so the public entry is NOT last (the `parse-program` /
-  `parse-program-acc` pattern).
+  `parse-program-acc` pattern). UPDATE (2026-09-09, item 6): the race
+  became DETERMINISTIC (10/10) for `intrp-emit.toc` (last defn
+  `emit-module`); a bare `(def emit-module)` at the TOP of the file
+  (separated from the defn) prints `*** declare emit-module` and
+  fixes it. A bare def IMMEDIATELY before the same-named defn prints
+  no declare line and does not register. Runtime binding verified:
+  probe `(def f)` + `(defn f [x] (+ x 1))` + `(f 41)` → 42 — declared
+  global and defn binding are the same global (resolves the
+  "runtime binding UNVERIFIED" caveat on the forward-decl fact
+  above).
+- let-wrapping-cond miscompiles (2026-09-09, item 6): a defn body
+  shaped `(let [n ...] (cond t (let ...) (let ...)))` — a let
+  wrapping a cond whose clauses are both lets — LOADS CLEAN but the
+  program aborts at runtime with `bad incRef value: (nil)` even when
+  the function is NEVER CALLED (crash at module load/registration).
+  Fix: inline the let-bound value so the cond is the defn body
+  directly (let INSIDE cond clauses is safe — `all_body-acc`).
+- first/rest iteration over a bare string walks it CHAR BY CHAR
+  (2026-09-09, item 6): a helper iterating a collection arg via
+  `count`/`first`/`rest` (e.g. `append-acc`) given a bare STRING arg
+  yields one-char-string elements (`to-str` renders them space-
+  joined). The collection arg must be a vector — `(conj [] s)`. Also:
+  `(vect-conj [l] xs)` appends `xs` as ONE nested element; splice a
+  recursive vector result with `append-acc` (a nested vector in an
+  emitted-lines vector renders under `to-str` with stray `[`
+  brackets).
+- RUNTIME TOOLCHAIN BROKEN AGAIN (2026-09-09, item 6): SUPERSEDES the
+  RUNTIME TOOLCHAIN RESTORED fact — after a machine reboot, the
+  `new-toc` binary (2026-09-05 20:40) crashes (exit 134, NO error
+  message) on ALL non-trivial inputs: 0/30+ on
+  `interpreter/intrp-grammar.toc` (loaded clean earlier the same
+  session), also `intrp-rdr.toc` and the emitter; trivial programs
+  (`(main [_] 0)`, 50 flat defns, a single simple deftype) still
+  compile. Rebuild BLOCKED: `make -B new-toc` triggers a `toccata`
+  rebuild whose link fails (`undefined reference to emptyBMI`).
+  Owner must restore/rebuild the toolchain. Earlier the same session
+  the same binary built the drivers intermittently (retry loops of
+  5–12 attempts).
 - A `scratch/` probe cannot `add-ns` a module in `interpreter/` —
   add-ns paths resolve against the importing file's directory and
   `../` is forbidden, so `scratch/` probes are limited to
@@ -547,6 +584,38 @@ generated code)**
   diff 0, remaining nodes 0). `emit-module` v1 emits the add-ns
   header line + one `(defn <name>-char [c] <pred>)` line per rule;
   `entry` is accepted but unused until the item-4 main template.
+
+- Item 6 (2026-09-09, IN PROGRESS — verification pending toolchain
+  restoration): the Any (parser-level) emission is CODE-COMPLETE in
+  `interpreter/intrp-emit.toc` — `any-body-acc` (site-(a) nested
+  parse-or; last alt bare; `(count ps)` inlined at both use sites per
+  the let-wrapping-cond hazard), `any-body`, the `Any` `emit-body` /
+  `walk-children` impls, the `child-ref` `sv` parameter (All/Ignore
+  thread `s<i>`; Any calls every alt over the defn's `state`),
+  `append-to-last` (flattened with `append-acc`), the `emit-module`
+  forward declaration (symbol-loss race fix), and the main-template
+  fix: `parse-seq` accumulates the OUTPUT STRING in `acc` (pure
+  dataflow — the per-line `pr*` counts threaded through `+` were
+  skipped by the lazy machine on the error path: `exit` cut the
+  result chain before the `+` was forced, dropping earlier prints);
+  `main` prints the accumulated lines on success, and
+  `parse-error-line` splices them into the exit message on error.
+  The driver (`emit-pred.toc`) gained the `an-any` synthetic grammar
+  (Any of a named Rule, an anonymous All, and a bare String — each
+  alt wins once on the `a / 42 / xy` sample, line 4 `5` is the
+  failure case) + the `emit-module-an` exact-fingerprint check (9
+  checks total) + the `gen-sample.toc` write. Verification state:
+  the last SUCCESSFUL driver run (before the two structural fixes
+  below) showed 8/9 OK — `emit-module-an` failed with the char-walk
+  + nested-vector artifacts; both bugs are FIXED in source (the
+  `append-acc` bare-string char-walk in `any-body-acc`'s fn line, the
+  `append-to-last` nesting) but the rebuild, the `make gen-rdr`
+  build, and the sample-file run are PENDING the toolchain
+  restoration (see the BROKEN AGAIN fact above). Next run: `make
+  emit-pred` (expect 9 OK), `make gen-rdr`, `./gen-rdr
+  interpreter/gen-sample.toc` (expect `a` / `42` / `xy` lines then
+  `gen-sample.toc:4: expected "xy"`, exit 1, zero leaks), then check
+  the box.
 
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,

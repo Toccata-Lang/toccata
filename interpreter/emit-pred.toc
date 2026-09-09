@@ -1,4 +1,4 @@
-;; interpreter/emit-pred.toc — item-3/4 verification driver.
+;; interpreter/emit-pred.toc — item-3/4/6 verification driver.
 ;;
 ;; Emits the char-level predicates for six grammar combinators via
 ;; intrp-emit.toc's emit-pred and asserts the EXACT expected source
@@ -8,12 +8,14 @@
 ;; ((Rule "digit" (CharRange "0" "9"))) via emit-module, asserts its
 ;; exact fingerprint, then emits the full generated module for the
 ;; item-5 synthetic All/Ignore grammar (ig-all / ig-ignore), asserts
-;; its exact fingerprint, and writes it to interpreter/gen-rdr.toc
-;; (a build artifact — never committed; built by `make gen-rdr`)
-;; plus the sample input to interpreter/gen-sample.toc (also a build
-;; artifact; run: ./gen-rdr interpreter/gen-sample.toc).
+;; its exact fingerprint, then emits the full generated module for
+;; the item-6 synthetic Any grammar (an-any), asserts its exact
+;; fingerprint, and writes it to interpreter/gen-rdr.toc (a build
+;; artifact — never committed; built by `make gen-rdr`) plus the
+;; sample input to interpreter/gen-sample.toc (also a build artifact;
+;; run: ./gen-rdr interpreter/gen-sample.toc).
 ;;
-;; Expected output: 8 "OK" lines (one per check). Any "FAIL" line
+;; Expected output: 9 "OK" lines (one per check). Any "FAIL" line
 ;; indicates a problem. Run from the repo root: ./emit-pred
 ;;
 ;; The driver is interpreter-side tooling; interpreted programs may
@@ -81,8 +83,8 @@
          "(defp parse-error-state [r])"
          "(extend-type rdr/ParserError (parse-error-state [v] (.state v)))"
          ""
-         "(defn parse-error-line [file line msg]"
-         "  (exit 1 (to-str [file \":\" (number-str line) \":\" msg])))"]))
+         "(defn parse-error-line [file out line msg]"
+         "  (exit 1 (to-str [out file \":\" (number-str line) \":\" msg])))"]))
 
 (def want-main
   (to-str ["(defn parse-seq [file state acc]"
@@ -92,14 +94,15 @@
          "      (parse-or (parse-then (digit s)"
          "                            (fn [v s2]"
          "                              (parse-seq file (rdr/skip-whitespace s2)"
-         "                                          (+ acc (pr* (to-str [v \"\\n\"]))))))"
-         "                (fn [e] (parse-error-line file"
+         "                                          (to-str [acc (to-str [v \"\\n\"])]))))"
+         "                (fn [e] (parse-error-line file acc"
          "                                          (rdr/state-line (parse-error-state e))"
          "                                          (parse-error-msg e)))))))"
          ""
          "(main [argv]"
          "  (let [file (extract (get argv 1))]"
-         "    (parse-seq file (rdr/make-state (slurp file) file 1) 0)))"]))
+         "    (parse-then (parse-seq file (rdr/make-state (slurp file) file 1) \"\")"
+         "                (fn [out s] (pr* out)))))"]))
 
 (def want-module
   (to-str [want-header "" want-digit-defn "" want-main]))
@@ -200,14 +203,15 @@
          "      (parse-or (parse-then (ig-all s)"
          "                            (fn [v s2]"
          "                              (parse-seq file (rdr/skip-whitespace s2)"
-         "                                          (+ acc (pr* (to-str [v \"\\n\"]))))))"
-         "                (fn [e] (parse-error-line file"
+         "                                          (to-str [acc (to-str [v \"\\n\"])]))))"
+         "                (fn [e] (parse-error-line file acc"
          "                                          (rdr/state-line (parse-error-state e))"
          "                                          (parse-error-msg e)))))))"
          ""
          "(main [argv]"
          "  (let [file (extract (get argv 1))]"
-         "    (parse-seq file (rdr/make-state (slurp file) file 1) 0)))"]))
+         "    (parse-then (parse-seq file (rdr/make-state (slurp file) file 1) \"\")"
+         "                (fn [out s] (pr* out)))))"]))
 
 (def want-ig-module
   (to-str [want-header ""
@@ -219,6 +223,100 @@
            want-ig-ignore-0-defn ""
            want-ig-ignore-defn ""
            want-ig-main]))
+
+;; --- Item 6: Any (parser-level) -------------------------------------
+;;
+;; The synthetic grammar: an-any is an Any of a named Rule alt
+;; (an-alpha), an anonymous All alt (lifted to an-any-1, its two
+;; CharRange children to an-any-1-0 / an-any-1-1), and a bare String
+;; alt ("xy" — inlined let-free as the LAST alt, so the last Error
+;; falls out for free). The sample file (a / 42 / xy / 5) has each
+;; alt win once, then a failure line: "5" defeats an-alpha (not
+;; a-z), an-any-1 (one digit, then EOF), and "xy" (no prefix) — the
+;; error is the last alt's `expected "xy"` at line 4.
+
+(def an-alpha (grammar/Rule "an-alpha" (grammar/CharRange "a" "z")))
+(def an-any
+  (grammar/Rule "an-any"
+                (grammar/Any [an-alpha
+                              (grammar/All [(grammar/CharRange "0" "9")
+                                            (grammar/CharRange "0" "9")])
+                              "xy"])))
+
+(def want-an-alpha-defn
+  (to-str ["(defn an-alpha [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      (and (<= 97 (char-code c)) (<= (char-code c) 122))"
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-an-any-1-0-defn
+  (to-str ["(defn an-any-1-0 [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      (and (<= 48 (char-code c)) (<= (char-code c) 57))"
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-an-any-1-1-defn
+  (to-str ["(defn an-any-1-1 [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      (and (<= 48 (char-code c)) (<= (char-code c) 57))"
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-an-any-1-defn
+  (to-str ["(defn an-any-1 [state]"
+         "  (parse-then (an-any-1-0 state)"
+         "              (fn [v0 s1]"
+         "                (parse-then (an-any-1-1 s1)"
+         "                            (fn [v1 s2]"
+         "                              (rdr/ParserMatch [v0 v1] s2))))))"]))
+
+(def want-an-any-defn
+  (to-str ["(defn an-any [state]"
+         "  (parse-or (an-alpha state)"
+         "            (fn [e1]"
+         "              (parse-or (an-any-1 state)"
+         "                        (fn [e2]"
+         "                          (cond (str-prefix? \"xy\" (.input state))"
+         "                                (rdr/ParserMatch \"xy\" (rdr/take-char state))"
+         "                                (rdr/ParserError \"expected \\\"xy\\\"\" state))))))"]))
+
+(def want-an-main
+  (to-str ["(defn parse-seq [file state acc]"
+         "  (let [s (rdr/skip-whitespace state)]"
+         "    (cond (str= (.input s) \"\")"
+         "      (rdr/ParserMatch acc s)"
+         "      (parse-or (parse-then (an-any s)"
+         "                            (fn [v s2]"
+         "                              (parse-seq file (rdr/skip-whitespace s2)"
+         "                                          (to-str [acc (to-str [v \"\\n\"])]))))"
+         "                (fn [e] (parse-error-line file acc"
+         "                                          (rdr/state-line (parse-error-state e))"
+         "                                          (parse-error-msg e)))))))"
+         ""
+         "(main [argv]"
+         "  (let [file (extract (get argv 1))]"
+         "    (parse-then (parse-seq file (rdr/make-state (slurp file) file 1) \"\")"
+         "                (fn [out s] (pr* out)))))"]))
+
+(def want-an-module
+  (to-str [want-header ""
+           want-an-alpha-defn ""
+           want-an-any-1-0-defn ""
+           want-an-any-1-1-defn ""
+           want-an-any-1-defn ""
+           want-an-any-defn ""
+           want-an-main]))
 
 ;; write-file [path content]: write the string to the file (inline
 ;; C). The driver runs from the repo root; gen-rdr.toc is a build
@@ -270,13 +368,16 @@
         ig-lines (emit/emit-module [ig-alpha ig-all ig-ignore] "ig-all")
         ig-got (to-str ig-lines)
         r8 (check r7 "emit-module-ig" ig-got want-ig-module)
-        r9 (cond (str= ig-got want-ig-module)
-              (+ r8 (write-file "interpreter/gen-rdr.toc"
-                                (to-str (interpose ig-lines "\n"))))
+        an-lines (emit/emit-module [an-alpha an-any] "an-any")
+        an-got (to-str an-lines)
+        r9 (check r8 "emit-module-an" an-got want-an-module)
+        r10 (cond (str= an-got want-an-module)
+               (+ r9 (write-file "interpreter/gen-rdr.toc"
+                                 (to-str (interpose an-lines "\n"))))
 
-              r8)
-        r10 (cond (str= ig-got want-ig-module)
-               (+ r9 (write-file "interpreter/gen-sample.toc" "bxay\nbaxy"))
+               r9)
+        r11 (cond (str= an-got want-an-module)
+               (+ r10 (write-file "interpreter/gen-sample.toc" "a\n42\nxy\n5"))
 
-               r9)]
-    r10))
+               r10)]
+    r11))

@@ -19,9 +19,21 @@
 ;; the lifted helper name), and the lifted helper emission (walk-
 ;; children / child-lifted? / emit-helpers: each anonymous child
 ;; combinator gets a defn, sub-helpers first).
+;;
+;; Item 6: Any (parser-level) — the emit-body impl (the site-(a)
+;; nested parse-or template; anonymous alts lifted to N-i helpers;
+;; char-level Any via emit-pred unchanged), Any in walk-children,
+;; and the main-template fix: parse-seq accumulates the OUTPUT STRING
+;; in acc (pure dataflow — per-line pr* counts dropped by the error
+;; path's exit were skipped by the lazy machine), printed once by
+;; main on success or spliced into the exit message on error.
 
 (add-ns grammar (module "intrp-grammar.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
+
+;; Forward declaration of the public entry — see the defn at the
+;; bottom of the file.
+(def emit-module)
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -252,22 +264,23 @@
    (to-str ["      (rdr/ParserMatch " lit " (rdr/take-char " sv "))"])
    (to-str ["      (rdr/ParserError \"expected " (escape-str lit) "\" " sv "))"])])
 
-;; child-ref [pc i ctx]: the lines of the call expression for the
+;; child-ref [pc i sv ctx]: the lines of the call expression for the
 ;; child combinator at index i under the current node (ctx's prefix
-;; is the node name + "-"). String -> the let-free body inlined
+;; is the node name + "-"); sv is the state variable the call is
+;; made over (All/Ignore thread s<i>; Any calls every alt over the
+;; defn's `state` param). String -> the let-free body inlined
 ;; (let-free, inlinable everywhere); Rule -> the single (name sv)
 ;; line; the default (every anonymous combinator) -> the single
-;; (prefix+i sv) line.
+;; (prefix+i sv) line. The helper NAME still uses i.
 ;; -> [String]
-(defp child-ref [pc i ctx]
-  [(to-str ["(" (to-str [(.prefix ctx) (number-str i)]) " "
-     (state-var i) ")"])])
+(defp child-ref [pc i sv ctx]
+  [(to-str ["(" (to-str [(.prefix ctx) (number-str i)]) " " sv ")"])])
 
-(extend-type String (child-ref [v i ctx]
-  (string-body-lines (render-literal v) (state-var i))))
+(extend-type String (child-ref [v i sv ctx]
+  (string-body-lines (render-literal v) sv)))
 
-(extend-type grammar/Rule (child-ref [v i ctx]
-  [(to-str ["(" (.name v) " " (state-var i) ")"])]))
+(extend-type grammar/Rule (child-ref [v i sv ctx]
+  [(to-str ["(" (.name v) " " sv ")"])]))
 
 ;; ref-cont-acc [acc lines b]: the ref's continuation lines, each
 ;; prefixed with the alignment indent b.
@@ -306,7 +319,7 @@
                         ;; defn's own close.
                         (closes (+ 1 (* 2 (count ps))))]))
 
-    (let [ref (child-ref (extract (get ps i)) i ctx)
+    (let [ref (child-ref (extract (get ps i)) i (state-var i) ctx)
           b (spaces (* 14 i))
           b12 (spaces (+ (* 14 i) 12))]
       (all-body-acc
@@ -334,7 +347,7 @@
 ;; over parse-then with identity as the else-fn; the fn captures
 ;; nothing.
 (defn ignore-body [p ctx]
-  (let [ref (child-ref p 0 ctx)]
+  (let [ref (child-ref p 0 "state" ctx)]
     (conj
      (append-acc
       (append-acc
@@ -356,6 +369,8 @@
 (extend-type grammar/All (walk-children [v] (.parsers v)))
 
 (extend-type grammar/Ignore (walk-children [v] [(.parser v)]))
+
+(extend-type grammar/Any (walk-children [v] (.parsers v)))
 
 ;; child-lifted? [pc]: Some iff the child gets a lifted helper defn
 ;; (every anonymous combinator); Rule -> None (referenced by name;
@@ -392,11 +407,71 @@
 
         (emit-helpers acc ps (+ i 1) prefix ctx)))))
 
+;; append-to-last [lines suffix]: the lines with suffix appended to
+;; the last line (explicit acc recursion; the recursive result is
+;; FLATTENED in with append-acc — vect-conj would nest it as one
+;; element, and to-str renders a nested vector with brackets).
+(defn append-to-last [lines suffix]
+  (cond (= (count lines) 0)
+    lines
+
+    (let [l (extract (first lines))]
+      (cond (= (count (rest lines)) 0)
+        [(to-str [l suffix])]
+
+        (append-acc [l] (append-to-last (rest lines) suffix))))))
+
+;; any-body-acc [acc ps i ctx]: the nested parse-or chain (site-(a)
+;; template) rendered outside-in. Every alt is called over the
+;; defn's `state` param (no threading). At alt i (i < N-1) the step
+;; emits the (parse-or line, the ref's continuation lines aligned 10
+;; columns in, the (fn [e(i+1)] line, and descends 12 columns. The
+;; last alt is emitted BARE (the last Error falls out for free); its
+;; last line gains the 2-per-level closing parens (fn + parse-or).
+;; (count ps) is inlined at both use sites — a let wrapping this cond
+;; (both clauses lets) is a new-toc hazard: it loads clean but
+;; miscompiles and crashes at runtime (bad incRef value: (nil),
+;; 2026-09-09, item 6).
+(defn any-body-acc [acc ps i ctx]
+  (cond (= i (- (count ps) 1))
+    (let [ref (child-ref (extract (get ps i)) i "state" ctx)
+          b (spaces (* 12 i))]
+      (append-acc
+       acc
+       (append-to-last
+        (append-acc
+         (conj [] (to-str [b (extract (first ref))]))
+         (ref-cont-acc [] (rest ref) b))
+        (closes (* 2 (- (count ps) 1))))))
+
+    (let [ref (child-ref (extract (get ps i)) i "state" ctx)
+          b (spaces (* 12 i))
+          b10 (spaces (+ (* 12 i) 10))]
+      (any-body-acc
+       (append-acc
+        (append-acc
+         (conj acc (to-str [b "(parse-or " (extract (first ref))]))
+         (ref-cont-acc [] (rest ref) b10))
+        ;; a vector — append-acc iterates its collection arg with
+        ;; first/rest; a bare string arg is walked CHAR BY CHAR.
+        (conj [] (to-str [b10 "(fn [e" (number-str (+ i 1)) "]"]))
+       ps (+ i 1) ctx))))
+
+;; any-body [ps ctx]: the Any body — the nested parse-or over the
+;; alts' call expressions (site-(a) template).
+(defn any-body [ps ctx]
+  (any-body-acc [] ps 0 ctx))
+
+(extend-type grammar/Any (emit-body [v ctx]
+  (any-body (.parsers v) ctx)))
+
 ;; emit-header: module header lines — the add-ns of the helper layer,
 ;; the parse-then/parse-or kit (Result discrimination, settled in
 ;; task 1), the ParserError field-access protocols (bare .field on
 ;; the union is unsafe — new-toc resolves getters by name lookup),
-;; and the parse-error-line def.
+;; and the parse-error-line def (out = the accumulated result lines
+;; of the expressions parsed before the error — spliced into the
+;; exit message so they are printed before the error line).
 (defn emit-header []
   [";; gen-rdr.toc - GENERATED by interpreter/intrp-emit.toc (do not edit)."
    ""
@@ -419,8 +494,8 @@
    "(extend-type rdr/ParserError (parse-error-state [v] (.state v)))"
    ""
    ""
-   "(defn parse-error-line [file line msg]"
-   "  (exit 1 (to-str [file \":\" (number-str line) \":\" msg])))"])
+   "(defn parse-error-line [file out line msg]"
+   "  (exit 1 (to-str [out file \":\" (number-str line) \":\" msg])))"])
 
 ;; emit-rules-acc [acc rules]: one block per Rule — the lifted
 ;; helpers (sub-helpers first), a blank line, then the parser defn
@@ -443,9 +518,13 @@
             (emit-rules-acc (append-acc acc d) (rest rules))))))
 
 ;; emit-main: the parse-seq loop + main template lines. parse-seq
-;; skips whitespace, runs the entry rule, prints one result line per
-;; match (the pr* count threaded through + keeps every print), and on
-;; a ParserError prints file:line: msg and exits non-zero.
+;; skips whitespace, runs the entry rule, and accumulates one result
+;; line per match in the acc STRING (pure dataflow — a per-line pr*
+;; count threaded through + was skipped by the lazy machine on the
+;; error path: exit cut the result chain before the + was forced,
+;; dropping the earlier prints). On a ParserError it splices the
+;; accumulated lines into the exit message (file:line: msg) and exits
+;; non-zero; main prints the accumulated lines on success.
 (defn emit-main [entry]
   ["(defn parse-seq [file state acc]"
    "  (let [s (rdr/skip-whitespace state)]"
@@ -454,18 +533,25 @@
    (to-str ["      (parse-or (parse-then (" entry " s)"])
    "                            (fn [v s2]"
    "                              (parse-seq file (rdr/skip-whitespace s2)"
-   "                                          (+ acc (pr* (to-str [v \"\\n\"]))))))"
-   "                (fn [e] (parse-error-line file"
+   "                                          (to-str [acc (to-str [v \"\\n\"])]))))"
+   "                (fn [e] (parse-error-line file acc"
    "                                          (rdr/state-line (parse-error-state e))"
    "                                          (parse-error-msg e)))))))"
    ""
    "(main [argv]"
    "  (let [file (extract (get argv 1))]"
-   "    (parse-seq file (rdr/make-state (slurp file) file 1) 0)))"])
+   "    (parse-then (parse-seq file (rdr/make-state (slurp file) file 1) \"\")"
+   "                (fn [out s] (pr* out)))))"])
 
 ;; emit-module: the full generated module — header, one parser defn
 ;; per Rule, the parse-seq loop + main template (the entry rule name
 ;; spliced into the loop). -> [String]
+;;
+;; Forward-declared: emit-module is the file's LAST defn, and
+;; new-toc's symbol-loss race drops a module's last defn from the
+;; symbol table (the importer then fails Undefined symbol). The bare
+;; (def) keeps the symbol registered (the parse-program /
+;; parse-program-acc pattern).
 (defn emit-module [rules entry]
   (append-acc
    (-> (emit-header)
