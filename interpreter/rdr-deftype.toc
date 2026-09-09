@@ -16,23 +16,6 @@
 (add-ns ast (module "intrp-ast.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
 
-;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
-(defp maybe-kind [m])
-(extend-type None (maybe-kind [_] 0))
-(extend-type Some (maybe-kind [_] 1))
-
-;; top-kind: tag a TopLevel value (the vector's elements are the
-;; TopLevel union; field getters need a concrete ctor, so the deftype-*
-;; protocols below are guarded by this tag).
-(defp top-kind [v])
-(extend-type ast/Definition (top-kind [_] 0))
-(extend-type ast/Defp (top-kind [_] 1))
-(extend-type ast/Main (top-kind [_] 2))
-(extend-type ast/DefType (top-kind [_] 3))
-(extend-type ast/ExtendType (top-kind [_] 4))
-(extend-type ast/AddNs (top-kind [_] 5))
-(extend-type ast/Inline (top-kind [_] 6))
-
 ;; top-name: the name of a TopLevel node (Main is nameless — its name is
 ;; the implicit "main"; AddNs uses its namespace; Inline is nameless).
 ;; Used by find-by-name.
@@ -50,9 +33,8 @@
 (defn find-by-name-acc [v name]
   (cond (= (count v) 0)
     None
-    (let [e (extract (first v))
-          match (maybe-kind (str= (top-name e) name))]
-      (cond (= match 1)
+    (let [e (extract (first v))]
+      (cond (str= (top-name e) name)
         (Some e)
         (find-by-name-acc (rest v) name)))))
 
@@ -76,17 +58,6 @@
 (defp ctor-impls [v])
 (extend-type ast/Constructor (ctor-impls [v] (.implementations v)))
 
-;; elem-kind: tag an Expression (an impl body element).
-(defp elem-kind [e])
-(extend-type ast/TypeConstraint (elem-kind [_] 1))
-(extend-type ast/Call (elem-kind [_] 2))
-(extend-type ast/Symbol (elem-kind [_] 3))
-(extend-type ast/IntegerLit (elem-kind [_] 4))
-(extend-type ast/FloatLit (elem-kind [_] 5))
-(extend-type ast/StringLit (elem-kind [_] 6))
-(extend-type ast/FieldGetter (elem-kind [_] 7))
-(extend-type ast/Fn (elem-kind [_] 8))
-
 ;; tc-*: extract a TypeConstraint's fields.
 (defp tc-symbol [e])
 (extend-type ast/TypeConstraint (tc-symbol [e] (.symbol e)))
@@ -101,22 +72,13 @@
 (defp get-name [e])
 (extend-type ast/FieldGetter (get-name [e] (.field-name e)))
 
-;; op-kind: tag a Call's operator.
-(defp op-kind [op])
-(extend-type ast/Symbol (op-kind [_] 0))
-(extend-type ast/FieldGetter (op-kind [_] 1))
-(extend-type ast/Fn (op-kind [_] 2))
-
 ;; op-name: a Call operator's printable name.
-(defn op-name [op]
-  (let [k (op-kind op)]
-    (cond (= k 0)
-      (sym-nom op)
-
-      (= k 1)
-      (str* ["." (get-name op)])
-
-      "fn")))
+;;   Symbol      -> its name
+;;   FieldGetter -> "." + field name
+;;   Fn          -> "fn"
+(defp op-name [op] "fn")
+(extend-type ast/Symbol (op-name [op] (sym-nom op)))
+(extend-type ast/FieldGetter (op-name [op] (str* ["." (get-name op)])))
 
 ;; elem-fingerprint: one body element -> a fingerprint string.
 ;;   TypeConstraint -> "tc <symbol> <type-expr>"
@@ -127,31 +89,24 @@
 ;;   StringLit      -> "str <value>"
 ;;   FieldGetter    -> "get .<name>"
 ;;   Fn             -> "fn"
+(defp elem-fp [e] "fn")
+(extend-type ast/TypeConstraint
+  (elem-fp [e]
+    (str* ["tc " (tc-symbol e) " " (tc-type e)])))
+(extend-type ast/Call
+  (elem-fp [e]
+    (str* ["call " (op-name (.operator e)) " ("
+           (number-str (count (.operands e))) ")"])))
+(extend-type ast/Symbol (elem-fp [e] (str* ["sym " (sym-nom e)])))
+(extend-type ast/IntegerLit (elem-fp [e] (str* ["int " (number-str (.value e))])))
+(extend-type ast/FloatLit (elem-fp [e] (str* ["flt " (.value e)])))
+(extend-type ast/StringLit (elem-fp [e] (str* ["str " (.value e)])))
+(extend-type ast/FieldGetter (elem-fp [e] (str* ["get ." (get-name e)])))
+
+;; elem-fingerprint: plain-function wrapper around elem-fp so map can
+;; take it as its function value.
 (defn elem-fingerprint [e]
-  (let [k (elem-kind e)]
-    (cond (= k 1)
-      (str* ["tc " (tc-symbol e) " " (tc-type e)])
-
-      (= k 2)
-      (str* ["call " (op-name (.operator e)) " ("
-             (number-str (count (.operands e))) ")"])
-
-      (= k 3)
-      (str* ["sym " (sym-nom e)])
-
-      (= k 4)
-      (str* ["int " (number-str (.value e))])
-
-      (= k 5)
-      (str* ["flt " (.value e)])
-
-      (= k 6)
-      (str* ["str " (.value e)])
-
-      (= k 7)
-      (str* ["get ." (get-name e)])
-
-      "fn")))
+  (elem-fp e))
 
 ;; body-fingerprint: a body vector -> one fingerprint string (elements
 ;; in order, no separators).
@@ -184,41 +139,41 @@
     (let [s (extract (first strs))]
       (print-all-acc (+ acc (pr* s)) (rest strs)))))
 
+;; check-deftype-entry: entry is a TopLevel found by name; the DefType
+;; impl verifies the fingerprint, the default impl prints FAIL.
+;; Threaded acc.
+(defp check-deftype-entry [entry v name expected acc]
+  (print-all-acc acc ["FAIL " name ": entry is not a DefType\n"]))
+(extend-type ast/DefType
+  (check-deftype-entry [entry v name expected acc]
+    (let [nm (deftype-name entry)
+          fp (deftype-fingerprint entry)]
+      (cond (and (= (count v) 1)
+                 (str= nm name)
+                 (str= fp expected))
+        (print-all-acc acc ["OK " name " " fp "\n"])
+        (print-all-acc acc
+                       ["FAIL " name " entries=" (number-str (count v))
+                        " got: " fp " want: " expected "\n"])))))
+
 ;; check-deftype: parse one deftype source; verify the vector has
 ;; exactly one entry — a DefType with the expected name and ctor
 ;; fingerprint. Prints one status line. Returns the threaded acc.
 (defn check-deftype [acc src name expected]
-  (let [r (rdr/parse-program (rdr/make-state src "deftype-test.toc" 1))
-        k (rdr/result-kind r)]
-    (cond (= k 2)
-      (let [st (.state r)
-            line (rdr/state-line st)
-            msg (.msg r)]
-        (print-all-acc acc
-                       ["FAIL(parse) " name ":" (number-str line) ": " msg "\n"]))
+  (let [r (rdr/parse-program (rdr/make-state src "deftype-test.toc" 1))]
+    (rdr/check-error r
+                     (let [st (.state r)
+                           line (rdr/state-line st)
+                           msg (.msg r)]
+                       (print-all-acc acc
+                                      ["FAIL(parse) " name ":" (number-str line) ": " msg "\n"]))
 
-      (let [v (.value r)
-            e (find-by-name v name)
-            ek (maybe-kind e)]
-        (cond (= ek 0)
-          (print-all-acc acc ["FAIL " name ": no entry\n"])
+                     (let [v (.value r)
+                           e (find-by-name v name)]
+                       (cond e
+                         (check-deftype-entry (extract e) v name expected acc)
 
-          (let [entry (extract e)
-                tk (top-kind entry)]
-            (cond (= tk 3)
-              (let [nm (deftype-name entry)
-                    fp (deftype-fingerprint entry)]
-                (cond (and (= (count v) 1)
-                           (str= nm name)
-                           (str= fp expected))
-                  (print-all-acc acc ["OK " name " " fp "\n"])
-                  (print-all-acc acc
-                                 ["FAIL " name " entries=" (number-str (count v))
-                                  " got: " fp " want: " expected "\n"])))
-
-              (print-all-acc acc
-                             ["FAIL " name ": entry is not a DefType (kind "
-                              (number-str tk) ")\n"]))))))))
+                         (print-all-acc acc ["FAIL " name ": no entry\n"]))))))
 
 (main [_]
   (let [r1 (check-deftype 0

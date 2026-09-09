@@ -15,33 +15,6 @@
 (add-ns ast (module "intrp-ast.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
 
-;; slurp: whole-file read -> String (inline C).
-(defn slurp [path]
-  ! path String
-  (inline String "
-    String *p = (String *)path_1;
-    FILE *fd = fopen(p->buffer, \"rb\");
-    dec_and_free((Term)p, 1);
-    if (fd == NULL) {
-      fprintf(stderr, \"slurp: cannot open file\\n\");
-      abort();
-    }
-    fseek(fd, 0, SEEK_END);
-    long len = ftell(fd);
-    fseek(fd, 0, SEEK_SET);
-    String *s = malloc_string(len + 1);
-    if (len > 0) fread(s->buffer, 1, len, fd);
-    s->len = len;
-    s->buffer[len] = 0;
-    fclose(fd);
-    result = termVal((Term)s);
-  "))
-
-;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
-(defp maybe-kind [m])
-(extend-type None (maybe-kind [_] 0))
-(extend-type Some (maybe-kind [_] 1))
-
 ;; OosCase: one out-of-scope-form check case (source + expected error msg).
 ;; Item 6b: the positional [source msg] pairs became a named-field grouping
 ;; ctor with map / flat-map per docs/toccata-style.md.
@@ -49,7 +22,7 @@
   (map [v f]
     (OosCase (f (.source v)) (f (.msg v))))
   (flat-map [v f]
-    (ast/vect-concat (f (.source v)) (f (.msg v)))))
+    (comp (f (.source v)) (f (.msg v)))))
 
 ;; top-name: the name of a TopLevel node (Main is nameless — its name is
 ;; the implicit "main"; AddNs uses its namespace; Inline is nameless).
@@ -69,9 +42,8 @@
 (defn find-by-name-acc [v name]
   (cond (= (count v) 0)
     None
-    (let [e (extract (first v))
-          match (maybe-kind (str= (top-name e) name))]
-      (cond (= match 1)
+    (let [e (extract (first v))]
+      (cond (str= (top-name e) name)
         (Some e)
         (find-by-name-acc (rest v) name)))))
 
@@ -83,9 +55,8 @@
 (defn count-found-acc [names v acc]
   (cond (= (count names) 0)
     acc
-    (let [nm (extract (first names))
-          mk (maybe-kind (find-by-name v nm))]
-      (cond (= mk 1)
+    (let [nm (extract (first names))]
+      (cond (find-by-name v nm)
         (count-found-acc (rest names) v (+ acc 1))
         (count-found-acc (rest names) v acc)))))
 
@@ -102,26 +73,25 @@
 ;; the expected entries. Prints one status line. Returns the threaded acc.
 (defn check-test [acc file expected-count expected-names]
   (let [src (slurp file)
-        r (rdr/parse-program (rdr/make-state src file 1))
-        k (rdr/result-kind r)]
-    (cond (= k 2)
-      (let [st (.state r)
-            line (rdr/state-line st)
-            msg (.msg r)]
-        (print-all-acc acc
-                       ["FAIL(parse) " file ":" (number-str line) ": " msg "\n"]))
+        r (rdr/parse-program (rdr/make-state src file 1))]
+    (rdr/check-error r
+                     (let [st (.state r)
+                           line (rdr/state-line st)
+                           msg (.msg r)]
+                       (print-all-acc acc
+                                      ["FAIL(parse) " file ":" (number-str line) ": " msg "\n"]))
 
-      (let [v (.value r)
-            vc (count v)
-            fc (count-found-acc expected-names v 0)
-            total (count expected-names)
-            ok (maybe-kind (and (= vc expected-count) (= fc total)))]
-        (cond (= ok 1)
-          (print-all-acc acc ["OK " file " entries=" (number-str vc) "\n"])
-          (print-all-acc acc
-                         ["FAIL " file " entries=" (number-str vc)
-                          " expected=" (number-str expected-count)
-                          " found=" (number-str fc) "/" (number-str total) "\n"]))))))
+                     (let [v (.value r)
+                           vc (count v)
+                           fc (count-found-acc expected-names v 0)
+                           total (count expected-names)
+                           ok (and (= vc expected-count) (= fc total))]
+                       (cond ok
+                         (print-all-acc acc ["OK " file " entries=" (number-str vc) "\n"])
+                         (print-all-acc acc
+                                        ["FAIL " file " entries=" (number-str vc)
+                                         " expected=" (number-str expected-count)
+                                         " found=" (number-str fc) "/" (number-str total) "\n"]))))))
 
 ;; check-oos: each out-of-scope top-level form must be a parse error with the
 ;; expected message. Self-recursive over a vector of OosCase.
@@ -130,15 +100,14 @@
     acc
     (let [c (extract (first cases))
           src (.source c)
-          r (rdr/parse-program (rdr/make-state src "oos.toc" 1))
-          k (rdr/result-kind r)]
-      (cond (= k 2)
-        (let [got (.msg r)
-              ok (maybe-kind (str= got (.msg c)))]
-          (cond (= ok 1)
-            (check-oos-acc (print-all-acc acc ["OK oos: " (.msg c) "\n"]) (rest cases))
-            (check-oos-acc (print-all-acc acc ["FAIL oos got: " got " want: " (.msg c) "\n"]) (rest cases))))
-        (check-oos-acc (print-all-acc acc ["FAIL oos: not a parse error (kind " (number-str k) ")\n"]) (rest cases))))))
+          r (rdr/parse-program (rdr/make-state src "oos.toc" 1))]
+      (rdr/check-error r
+                       (let [got (.msg r)
+                             ok (str= got (.msg c))]
+                         (cond ok
+                           (check-oos-acc (print-all-acc acc ["OK oos: " (.msg c) "\n"]) (rest cases))
+                           (check-oos-acc (print-all-acc acc ["FAIL oos got: " got " want: " (.msg c) "\n"]) (rest cases))))
+                       (check-oos-acc (print-all-acc acc ["FAIL oos: not a parse error\n"]) (rest cases))))))
 
 (defn check-oos [acc]
   (check-oos-acc acc

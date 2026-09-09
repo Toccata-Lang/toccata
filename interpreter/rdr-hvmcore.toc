@@ -19,45 +19,6 @@
 (add-ns ast (module "intrp-ast.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
 
-;; slurp: whole-file read -> String (inline C).
-(defn slurp [path]
-  ! path String
-  (inline String "
-    String *p = (String *)path_1;
-    FILE *fd = fopen(p->buffer, \"rb\");
-    dec_and_free((Term)p, 1);
-    if (fd == NULL) {
-      fprintf(stderr, \"slurp: cannot open file\\n\");
-      abort();
-    }
-    fseek(fd, 0, SEEK_END);
-    long len = ftell(fd);
-    fseek(fd, 0, SEEK_SET);
-    String *s = malloc_string(len + 1);
-    if (len > 0) fread(s->buffer, 1, len, fd);
-    s->len = len;
-    s->buffer[len] = 0;
-    fclose(fd);
-    result = termVal((Term)s);
-  "))
-
-;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
-(defp maybe-kind [m])
-(extend-type None (maybe-kind [_] 0))
-(extend-type Some (maybe-kind [_] 1))
-
-;; top-kind: tag a TopLevel value (the vector's elements are the
-;; TopLevel union; field getters need a concrete ctor, so the per-ctor
-;; extraction protocols below are guarded by this tag).
-(defp top-kind [v])
-(extend-type ast/Definition (top-kind [_] 0))
-(extend-type ast/Defp (top-kind [_] 1))
-(extend-type ast/Main (top-kind [_] 2))
-(extend-type ast/DefType (top-kind [_] 3))
-(extend-type ast/ExtendType (top-kind [_] 4))
-(extend-type ast/AddNs (top-kind [_] 5))
-(extend-type ast/Inline (top-kind [_] 6))
-
 ;; top-name: the name of a TopLevel node (Main is nameless — its name is
 ;; the implicit "main"; AddNs uses its namespace; Inline is nameless).
 ;; Used by find-by-name.
@@ -75,20 +36,13 @@
 (defn find-by-name-acc [v name]
   (cond (= (count v) 0)
     None
-    (let [e (extract (first v))
-          match (maybe-kind (str= (top-name e) name))]
-      (cond (= match 1)
+    (let [e (extract (first v))]
+      (cond (str= (top-name e) name)
         (Some e)
         (find-by-name-acc (rest v) name)))))
 
 (defn find-by-name [v name]
   (find-by-name-acc v name))
-
-;; expr-kind: tag an Expression (a Definition's value) — distinguishes
-;; defn (Fn value) from def (Inline value) from other.
-(defp expr-kind [e])
-(extend-type ast/Inline (expr-kind [_] 0))
-(extend-type ast/Fn (expr-kind [_] 1))
 
 ;; def-value: a Definition's value (receiver statically Definition).
 (defp def-value [v])
@@ -96,13 +50,9 @@
 
 ;; def-value-class: a Definition's value -> 0 (Fn: defn), 1 (Inline:
 ;; def), 6 (other).
-(defn def-value-class [val]
-  (let [ek (expr-kind val)]
-    (cond (= ek 1)
-      0
-      (= ek 0)
-      1
-      6)))
+(defp def-value-class [val] 6)
+(extend-type ast/Fn (def-value-class [_] 0))
+(extend-type ast/Inline (def-value-class [_] 1))
 
 ;; node-class: a TopLevel node -> a form tag:
 ;;   0 defn (Definition, Fn value)
@@ -112,24 +62,12 @@
 ;;   4 extend-type
 ;;   5 top-level inline
 ;;   6 other (Main, AddNs, Definition with another value)
-(defn node-class [v]
-  (let [k (top-kind v)]
-    (cond (= k 0)
-      (def-value-class (def-value v))
-
-      (= k 1)
-      2
-
-      (= k 3)
-      3
-
-      (= k 4)
-      4
-
-      (= k 6)
-      5
-
-      6)))
+(defp node-class [v] 6)
+(extend-type ast/Definition (node-class [v] (def-value-class (def-value v))))
+(extend-type ast/Defp (node-class [_] 2))
+(extend-type ast/DefType (node-class [_] 3))
+(extend-type ast/ExtendType (node-class [_] 4))
+(extend-type ast/Inline (node-class [_] 5))
 
 ;; count-class-acc: how many nodes in the vector carry the given form
 ;; tag. Explicit recursion, NOT reduce: a reduce closure capturing the
@@ -160,7 +98,7 @@
          " other=" (number-str c-other)]))
 
 ;; --- Spot-check field extraction (receiver statically the concrete
-;; --- ctor, guarded by the top-kind tag at the call site).
+;; --- ctor; the check-*-entry dispatch defps below guard the type).
 
 ;; defp-*: a Defp's fields.
 (defp defp-name [v])
@@ -245,18 +183,19 @@
       (print-all-acc acc ["OK spot-defp: defp type-name [x]\n"])
       (print-all-acc acc ["FAIL spot-defp: got " fp "\n"]))))
 
+;; check-defp-entry: entry is a TopLevel found by name; the Defp impl
+;; runs the status check, the default impl prints FAIL. Threaded acc.
+(defp check-defp-entry [n acc]
+  (print-all-acc acc ["FAIL spot-defp: not a Defp\n"]))
+(extend-type ast/Defp (check-defp-entry [n acc] (defp-status acc n)))
+
 ;; check-defp: spot-check the defp named "type-name" -> threaded acc.
 (defn check-defp [acc v]
-  (let [m (find-by-name v "type-name")
-        mk (maybe-kind m)]
-    (cond (= mk 0)
-      (print-all-acc acc ["FAIL spot-defp: type-name not found\n"])
-      (let [n (extract m)
-            k (top-kind n)]
-        (cond (= k 1)
-          (defp-status acc n)
-          (print-all-acc acc
-                         ["FAIL spot-defp: kind=" (number-str k) "\n"]))))))
+  (let [m (find-by-name v "type-name")]
+    (cond m
+      (check-defp-entry (extract m) acc)
+
+      (print-all-acc acc ["FAIL spot-defp: type-name not found\n"]))))
 
 ;; deftype-status: n is known to be a DefType; print a status line.
 (defn deftype-status [acc n]
@@ -265,18 +204,20 @@
       (print-all-acc acc ["OK spot-deftype: deftype Maybe (None, Some [x])\n"])
       (print-all-acc acc ["FAIL spot-deftype: got " fp "\n"]))))
 
+;; check-deftype-entry: entry is a TopLevel found by name; the DefType
+;; impl runs the status check, the default impl prints FAIL.
+;; Threaded acc.
+(defp check-deftype-entry [n acc]
+  (print-all-acc acc ["FAIL spot-deftype: not a DefType\n"]))
+(extend-type ast/DefType (check-deftype-entry [n acc] (deftype-status acc n)))
+
 ;; check-deftype: spot-check the deftype named "Maybe" -> threaded acc.
 (defn check-deftype [acc v]
-  (let [m (find-by-name v "Maybe")
-        mk (maybe-kind m)]
-    (cond (= mk 0)
-      (print-all-acc acc ["FAIL spot-deftype: Maybe not found\n"])
-      (let [n (extract m)
-            k (top-kind n)]
-        (cond (= k 3)
-          (deftype-status acc n)
-          (print-all-acc acc
-                         ["FAIL spot-deftype: kind=" (number-str k) "\n"]))))))
+  (let [m (find-by-name v "Maybe")]
+    (cond m
+      (check-deftype-entry (extract m) acc)
+
+      (print-all-acc acc ["FAIL spot-deftype: Maybe not found\n"]))))
 
 ;; ext-status: n is known to be an ExtendType; print a status line.
 (defn ext-status [acc n]
@@ -285,42 +226,45 @@
       (print-all-acc acc ["OK spot-extend-type: extend-type None (8 methods)\n"])
       (print-all-acc acc ["FAIL spot-extend-type: got " fp "\n"]))))
 
+;; check-extend-entry: entry is a TopLevel found by name; the
+;; ExtendType impl runs the status check, the default impl prints
+;; FAIL. Threaded acc.
+(defp check-extend-entry [n acc]
+  (print-all-acc acc ["FAIL spot-extend-type: not an ExtendType\n"]))
+(extend-type ast/ExtendType
+  (check-extend-entry [n acc] (ext-status acc n)))
+
 ;; check-extend-type: spot-check the extend-type named "None" ->
 ;; threaded acc.
 (defn check-extend-type [acc v]
-  (let [m (find-by-name v "None")
-        mk (maybe-kind m)]
-    (cond (= mk 0)
-      (print-all-acc acc ["FAIL spot-extend-type: None not found\n"])
-      (let [n (extract m)
-            k (top-kind n)]
-        (cond (= k 4)
-          (ext-status acc n)
-          (print-all-acc acc
-                         ["FAIL spot-extend-type: kind=" (number-str k) "\n"]))))))
+  (let [m (find-by-name v "None")]
+    (cond m
+      (check-extend-entry (extract m) acc)
+
+      (print-all-acc acc ["FAIL spot-extend-type: None not found\n"]))))
 
 ;; inline-status: n is known to be an Inline; print a status line.
 (defn inline-status [acc n]
-  (let [code (inline-code n)
-        pk (maybe-kind (str-prefix? "\n#define _XOPEN_SOURCE 600" code))]
-    (cond (= pk 1)
+  (let [code (inline-code n)]
+    (cond (str-prefix? "\n#define _XOPEN_SOURCE 600" code)
       (print-all-acc acc ["OK spot-inline: first node is Inline (c-code prefix matches)\n"])
       (print-all-acc acc ["FAIL spot-inline: c-code prefix mismatch\n"]))))
+
+;; check-inline-entry: the first node; the Inline impl runs the status
+;; check, the default impl prints FAIL. Threaded acc.
+(defp check-inline-entry [n acc]
+  (print-all-acc acc ["FAIL spot-inline: first node is not an Inline\n"]))
+(extend-type ast/Inline (check-inline-entry [n acc] (inline-status acc n)))
 
 ;; check-inline: spot-check the first node is a top-level inline ->
 ;; threaded acc.
 (defn check-inline [acc v]
-  (let [n (extract (first v))
-        k (top-kind n)]
-    (cond (= k 6)
-      (inline-status acc n)
-      (print-all-acc acc
-                     ["FAIL spot-inline: first node kind=" (number-str k) "\n"]))))
+  (check-inline-entry (extract (first v)) acc))
 
 ;; final-status: the overall verdict from the counts fingerprint.
 (defn final-status [fp]
-  (cond (str= fp "total=194 defn=108 def=5 defp=58 deftype=5 extend-type=16 inline=2 other=0")
-    "OK hvm-core.toc: 194 nodes, all per-form counts match\n"
+  (cond (str= fp "total=197 defn=111 def=5 defp=58 deftype=5 extend-type=16 inline=2 other=0")
+    "OK hvm-core.toc: 197 nodes, all per-form counts match\n"
     (str* ["FAIL hvm-core.toc: " fp "\n"])))
 
 ;; run-success: r is a ParserMatch; print the count line, run the four
@@ -355,12 +299,11 @@
 ;; run-parse: parse src; on a ParserError print the file:line message,
 ;; on a ParserMatch run the checks. Returns the threaded acc.
 (defn run-parse [acc src]
-  (let [r (rdr/parse-program (rdr/make-state src "hvm-core.toc" 1))
-        k (rdr/result-kind r)]
-    (cond (= k 2)
-      (print-all-acc acc [(parse-error-line r)])
+  (let [r (rdr/parse-program (rdr/make-state src "hvm-core.toc" 1))]
+    (rdr/check-error r
+                     (print-all-acc acc [(parse-error-line r)])
 
-      (run-success acc r))))
+                     (run-success acc r))))
 
 (main [_]
   (let [src (slurp "hvm-core.toc")]

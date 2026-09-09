@@ -6,10 +6,14 @@
 ;; body-fingerprint convention from rdr-defp.toc). Then emits the
 ;; full generated module for a synthetic one-rule grammar
 ;; ((Rule "digit" (CharRange "0" "9"))) via emit-module, asserts its
-;; exact fingerprint, and writes it to interpreter/gen-rdr.toc (a
-;; build artifact — never committed; built by `make gen-rdr`).
+;; exact fingerprint, then emits the full generated module for the
+;; item-5 synthetic All/Ignore grammar (ig-all / ig-ignore), asserts
+;; its exact fingerprint, and writes it to interpreter/gen-rdr.toc
+;; (a build artifact — never committed; built by `make gen-rdr`)
+;; plus the sample input to interpreter/gen-sample.toc (also a build
+;; artifact; run: ./gen-rdr interpreter/gen-sample.toc).
 ;;
-;; Expected output: 7 "OK" lines (one per check). Any "FAIL" line
+;; Expected output: 8 "OK" lines (one per check). Any "FAIL" line
 ;; indicates a problem. Run from the repo root: ./emit-pred
 ;;
 ;; The driver is interpreter-side tooling; interpreted programs may
@@ -100,6 +104,122 @@
 (def want-module
   (to-str [want-header "" want-digit-defn "" want-main]))
 
+;; --- Item 5: All + Ignore -------------------------------------------
+;;
+;; The synthetic grammar: ig-all is an All of a named Rule child
+;; (ig-alpha), a bare String child ("x"), and an anonymous All child
+;; (lifted to ig-all-2, its CharRange child lifted to ig-all-2-0);
+;; ig-ignore is an Ignore of an anonymous All (lifted to ig-ignore-0,
+;; its CharRange child to ig-ignore-0-0). The lifted helpers are
+;; emitted BEFORE the Rule defn that calls them (use-after-
+;; definition).
+
+(def ig-lower (grammar/CharRange "a" "f"))
+(def ig-alpha (grammar/Rule "ig-alpha" (grammar/CharRange "a" "z")))
+(def ig-all
+  (grammar/Rule "ig-all"
+                (grammar/All [ig-alpha "x" (grammar/All [ig-lower "y"])])))
+(def ig-ignore
+  (grammar/Rule "ig-ignore"
+                (grammar/Ignore (grammar/All [ig-lower "z"]))))
+
+(def want-ig-alpha-defn
+  (to-str ["(defn ig-alpha [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      (and (<= 97 (char-code c)) (<= (char-code c) 122))"
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-ig-all-2-0-defn
+  (to-str ["(defn ig-all-2-0 [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      (and (<= 97 (char-code c)) (<= (char-code c) 102))"
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-ig-all-2-defn
+  (to-str ["(defn ig-all-2 [state]"
+         "  (parse-then (ig-all-2-0 state)"
+         "              (fn [v0 s1]"
+         "                (parse-then (cond (str-prefix? \"y\" (.input s1))"
+         "                                  (rdr/ParserMatch \"y\" (rdr/take-char s1))"
+         "                                  (rdr/ParserError \"expected \\\"y\\\"\" s1))"
+         "                            (fn [v1 s2]"
+         "                              (rdr/ParserMatch [v0 v1] s2))))))"]))
+
+(def want-ig-all-defn
+  (to-str ["(defn ig-all [state]"
+         "  (parse-then (ig-alpha state)"
+         "              (fn [v0 s1]"
+         "                (parse-then (cond (str-prefix? \"x\" (.input s1))"
+         "                                  (rdr/ParserMatch \"x\" (rdr/take-char s1))"
+         "                                  (rdr/ParserError \"expected \\\"x\\\"\" s1))"
+         "                            (fn [v1 s2]"
+         "                              (parse-then (ig-all-2 s2)"
+         "                                          (fn [v2 s3]"
+         "                                            (rdr/ParserMatch [v0 v1 v2] s3))))))))"]))
+
+(def want-ig-ignore-0-0-defn
+  (to-str ["(defn ig-ignore-0-0 [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      (and (<= 97 (char-code c)) (<= (char-code c) 102))"
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-ig-ignore-0-defn
+  (to-str ["(defn ig-ignore-0 [state]"
+         "  (parse-then (ig-ignore-0-0 state)"
+         "              (fn [v0 s1]"
+         "                (parse-then (cond (str-prefix? \"z\" (.input s1))"
+         "                                  (rdr/ParserMatch \"z\" (rdr/take-char s1))"
+         "                                  (rdr/ParserError \"expected \\\"z\\\"\" s1))"
+         "                            (fn [v1 s2]"
+         "                              (rdr/ParserMatch [v0 v1] s2))))))"]))
+
+(def want-ig-ignore-defn
+  (to-str ["(defn ig-ignore [state]"
+         "  (parse-or (parse-then (ig-ignore-0 state)"
+         "                        (fn [v s2]"
+         "                          (rdr/ParserIgnore s2)))"
+         "            identity))"]))
+
+(def want-ig-main
+  (to-str ["(defn parse-seq [file state acc]"
+         "  (let [s (rdr/skip-whitespace state)]"
+         "    (cond (str= (.input s) \"\")"
+         "      (rdr/ParserMatch acc s)"
+         "      (parse-or (parse-then (ig-all s)"
+         "                            (fn [v s2]"
+         "                              (parse-seq file (rdr/skip-whitespace s2)"
+         "                                          (+ acc (pr* (to-str [v \"\\n\"]))))))"
+         "                (fn [e] (parse-error-line file"
+         "                                          (rdr/state-line (parse-error-state e))"
+         "                                          (parse-error-msg e)))))))"
+         ""
+         "(main [argv]"
+         "  (let [file (extract (get argv 1))]"
+         "    (parse-seq file (rdr/make-state (slurp file) file 1) 0)))"]))
+
+(def want-ig-module
+  (to-str [want-header ""
+           want-ig-alpha-defn ""
+           want-ig-all-2-0-defn ""
+           want-ig-all-2-defn ""
+           want-ig-all-defn ""
+           want-ig-ignore-0-0-defn ""
+           want-ig-ignore-0-defn ""
+           want-ig-ignore-defn ""
+           want-ig-main]))
+
 ;; write-file [path content]: write the string to the file (inline
 ;; C). The driver runs from the repo root; gen-rdr.toc is a build
 ;; artifact written by this driver.
@@ -147,9 +267,16 @@
         lines (emit/emit-module [rule] "digit")
         got (to-str lines)
         r7 (check r6 "emit-module" got want-module)
-        r8 (cond (str= got want-module)
-              (+ r7 (write-file "interpreter/gen-rdr.toc"
-                                (to-str (interpose lines "\n"))))
+        ig-lines (emit/emit-module [ig-alpha ig-all ig-ignore] "ig-all")
+        ig-got (to-str ig-lines)
+        r8 (check r7 "emit-module-ig" ig-got want-ig-module)
+        r9 (cond (str= ig-got want-ig-module)
+              (+ r8 (write-file "interpreter/gen-rdr.toc"
+                                (to-str (interpose ig-lines "\n"))))
 
-              r7)]
-    r8))
+              r8)
+        r10 (cond (str= ig-got want-ig-module)
+               (+ r9 (write-file "interpreter/gen-sample.toc" "bxay\nbaxy"))
+
+               r9)]
+    r10))

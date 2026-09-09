@@ -20,31 +20,6 @@
 (add-ns ast (module "intrp-ast.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
 
-;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
-(defp maybe-kind [m])
-(extend-type None (maybe-kind [_] 0))
-(extend-type Some (maybe-kind [_] 1))
-
-;; top-kind: tag a TopLevel value (the vector's elements are the
-;; TopLevel union; field getters need a concrete ctor, so the inline-*
-;; and def-* protocols below are guarded by this tag).
-(defp top-kind [v])
-(extend-type ast/Definition (top-kind [_] 0))
-(extend-type ast/Defp (top-kind [_] 1))
-(extend-type ast/Main (top-kind [_] 2))
-(extend-type ast/DefType (top-kind [_] 3))
-(extend-type ast/ExtendType (top-kind [_] 4))
-(extend-type ast/AddNs (top-kind [_] 5))
-(extend-type ast/Inline (top-kind [_] 6))
-
-;; expr-kind: tag an Expression (a Definition value / a type-expr
-;; payload).
-(defp expr-kind [e])
-(extend-type ast/Inline (expr-kind [_] 0))
-(extend-type ast/Symbol (expr-kind [_] 1))
-(extend-type ast/Fn (expr-kind [_] 2))
-(extend-type ast/IntegerLit (expr-kind [_] 3))
-
 ;; inline-*: extract an Inline's fields (receiver statically Inline).
 (defp inline-te [v])
 (extend-type ast/Inline (inline-te [v] (.type-expr v)))
@@ -60,42 +35,42 @@
 (defp sym-name [e])
 (extend-type ast/Symbol (sym-name [e] (.sym-name e)))
 
+;; te-fp-of: a type-expr payload (Expression) -> "sym <name>" for a
+;; Symbol, else "?".
+(defp te-fp-of [e] "?")
+(extend-type ast/Symbol (te-fp-of [e] (str* ["sym " (sym-name e)])))
+
 ;; te-fingerprint: an Inline's type-expr -> "None" or "sym <name>".
 (defn te-fingerprint [te]
-  (let [k (maybe-kind te)]
-    (cond (= k 0)
-      "None"
+  (cond te
+    (te-fp-of (extract te))
 
-      (let [e (extract te)
-            ek (expr-kind e)]
-        (cond (= ek 1)
-          (str* ["sym " (sym-name e)])
-
-          "?")))))
+    "None"))
 
 ;; inline-fingerprint: an Inline node -> "inline <te> <c-code>".
 (defn inline-fingerprint [v]
   (str* ["inline " (te-fingerprint (inline-te v)) " " (inline-code v)]))
 
-;; node-fingerprint: one TopLevel node -> a fingerprint string.
+;; node-fp: one TopLevel node -> a fingerprint string.
 ;;   Inline     -> "inline <te> <c-code>"
 ;;   Definition -> "def inline ..." if the value is an Inline, else
 ;;                 "def v"
-;;   other      -> "k<kind>"
+;;   other      -> "k"
+(defp node-fp [v] "k")
+(extend-type ast/Inline (node-fp [v] (inline-fingerprint v)))
+;; def-value-fp: a Definition's value -> "def <inline-fp>" if the value
+;; is an Inline, else "def v".
+(defp def-value-fp [val] "def v")
+(extend-type ast/Inline (def-value-fp [val] (str* ["def " (inline-fingerprint val)])))
+
+(extend-type ast/Definition
+  (node-fp [v]
+    (def-value-fp (def-value v))))
+
+;; node-fingerprint: plain-function wrapper around node-fp so map can
+;; take it as its function value.
 (defn node-fingerprint [v]
-  (let [k (top-kind v)]
-    (cond (= k 6)
-      (inline-fingerprint v)
-
-      (= k 0)
-      (let [val (def-value v)
-            ek (expr-kind val)]
-        (cond (= ek 0)
-          (str* ["def " (inline-fingerprint val)])
-
-          "def v"))
-
-      (str* ["k" (number-str k)]))))
+  (node-fp v))
 
 ;; vec-fingerprint: the [TopLevel] vector -> one fingerprint string
 ;; (nodes in source order, no separators).
@@ -114,22 +89,21 @@
 ;; check: parse one source; verify the vector's fingerprint matches the
 ;; expected one. Prints one status line. Returns the threaded acc.
 (defn check [acc src expected]
-  (let [r (rdr/parse-program (rdr/make-state src "inline-test.toc" 1))
-        k (rdr/result-kind r)]
-    (cond (= k 2)
-      (let [st (.state r)
-            line (rdr/state-line st)
-            msg (.msg r)]
-        (print-all-acc acc
-                       ["FAIL(parse) line " (number-str line) ": " msg "\n"]))
+  (let [r (rdr/parse-program (rdr/make-state src "inline-test.toc" 1))]
+    (rdr/check-error r
+                     (let [st (.state r)
+                           line (rdr/state-line st)
+                           msg (.msg r)]
+                       (print-all-acc acc
+                                      ["FAIL(parse) line " (number-str line) ": " msg "\n"]))
 
-      (let [v (.value r)
-            fp (vec-fingerprint v)]
-        (cond (str= fp expected)
-          (print-all-acc acc ["OK " fp "\n"])
+                     (let [v (.value r)
+                           fp (vec-fingerprint v)]
+                       (cond (str= fp expected)
+                         (print-all-acc acc ["OK " fp "\n"])
 
-          (print-all-acc acc
-                         ["FAIL got: " fp " want: " expected "\n"]))))))
+                         (print-all-acc acc
+                                        ["FAIL got: " fp " want: " expected "\n"]))))))
 
 (main [_]
   (let [r1 (check 0

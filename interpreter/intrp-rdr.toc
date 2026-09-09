@@ -279,10 +279,22 @@
 
 ;; --- Helpers ---------------------------------------------------------
 
-(defp result-kind [r])
-(extend-type ParserMatch (result-kind [_] 0))
-(extend-type ParserIgnore (result-kind [_] 1))
-(extend-type ParserError (result-kind [_] 2))
+(defp is-error [v result]
+  result)
+
+(defp check-error [r on-error on-ok]
+  on-ok)
+
+(extend-type ParserError
+  (is-error [v _]
+    v)
+  (check-error [r on-error _]
+    on-error))
+
+
+;; result-ignore [r]: (Some r) if r is a ParserIgnore, else None.
+(defp result-ignore [r] None)
+(extend-type ParserIgnore (result-ignore [r] (Some r)))
 
 (defn make-loc [state]
   (ast/Location (extract (get (.values state) "file"))
@@ -380,7 +392,7 @@
 (defp thread-step [step threaded loc])
 (extend-type ast/Call (thread-step [step threaded loc]
   (ast/Call (.operator step)
-            (ast/vect-concat [threaded] (.operands step))
+            (comp [threaded] (.operands step))
             loc)))
 (extend-type ast/Symbol (thread-step [step threaded loc]
   (let [nm (.sym-name step)]
@@ -440,12 +452,10 @@
           (let [after-open (take-char state)
                 r (parse-string-content after-open
                                         (str-malloc (count (.input after-open))))]
-            (cond (= (result-kind r) 2)
-                  r
-
-                  (let [s2 (.state r)]
-                    (ParserMatch (ast/StringLit (.value r) (make-loc s2))
-                                 (take-char s2)))))
+            (is-error r
+                      (let [s2 (.state r)]
+                        (ParserMatch (ast/StringLit (.value r) (make-loc s2))
+                                     (take-char s2)))))
 
           (ParserMatch (ast/StringLit "" (make-loc state)) state))))
 
@@ -515,32 +525,27 @@
           (let [after-open (take-char s)
                 r (parse-string-content after-open
                                         (str-malloc (count (.input after-open))))]
-            (cond (= (result-kind r) 2)
-                  r
+            (is-error r
+                      (let [text (.value r)
+                            s2 (take-char (.state r))
+                            s3 (skip-whitespace s2)]
+                        (cond (str= text "")
+                              (ParserError "expected a C code string in inline" s)
 
-                  (let [text (.value r)
-                        s2 (take-char (.state r))
-                        s3 (skip-whitespace s2)]
-                    (cond (str= text "")
-                          (ParserError "expected a C code string in inline" s)
+                              (str-prefix? ")" (.input s3))
+                              (ParserMatch (ast/Inline te text (make-loc s2))
+                                           (take-char s3))
 
-                          (str-prefix? ")" (.input s3))
-                          (ParserMatch (ast/Inline te text (make-loc s2))
-                                       (take-char s3))
-
-                          (ParserError "expected ) after inline C code" s3)))))
+                              (ParserError "expected ) after inline C code" s3)))))
 
           (ParserError "expected a C code string in inline" s))))
 
 ;; parse-inline-typed: state at the type expression (one ordinary
 ;; expression; a bare type name in all hvm-core uses).
 (defn parse-inline-typed [state]
-  (let [te (parse-expr state)
-        tk (result-kind te)]
-    (cond (= tk 2)
-      te
-
-      (parse-inline-code (Some (.value te)) (.state te)))))
+  (let [te (parse-expr state)]
+    (is-error te
+              (parse-inline-code (Some (.value te)) (.state te)))))
 
 ;; parse-inline: state just after the `inline` keyword.
 ;; `(inline <type-expr> "<c-code>")` or `(inline "<c-code>")` ->
@@ -565,13 +570,10 @@
           (str-prefix? delim input)
           (ParserMatch (ParsedList acc (take-char s)) (take-char s))
 
-          (let [p (parse-expr s)
-                pk (result-kind p)]
-            (cond (= pk 2)
-                  p
-
-                  (collect-until-acc (.state p) delim
-                                     (vect-conj acc (.value p))))))))
+          (let [p (parse-expr s)]
+            (is-error p
+                      (collect-until-acc (.state p) delim
+                                         (vect-conj acc (.value p))))))))
 
 (defn collect-until [state delim]
   (collect-until-acc state delim empty-vector))
@@ -593,13 +595,10 @@
           (str= input "")
           (ParserMatch (ParsedList acc s) s)
 
-          (let [p (parse-expr s)
-                pk (result-kind p)]
-            (cond (= pk 2)
-                  p
-
-                  (parse-body-acc (.state p)
-                                  (vect-conj acc (.value p))))))))
+          (let [p (parse-expr s)]
+            (is-error p
+                      (parse-body-acc (.state p)
+                                      (vect-conj acc (.value p))))))))
 
 (defn parse-body [state]
   (parse-body-acc state empty-vector))
@@ -617,15 +616,12 @@
           (ParserMatch (LetBindings acc s) s)
 
           (let [nm (read-symbol s)
-                p (parse-expr (skip-whitespace (.state nm)))
-                pk (result-kind p)]
-            (cond (= pk 2)
-                  p
-
-                  (collect-let-bindings-acc (.state p)
-                                            (vect-conj acc
-                                                       (LetBinding (.text nm)
-                                                                   (.value p)))))))))
+                p (parse-expr (skip-whitespace (.state nm)))]
+            (is-error p
+                      (collect-let-bindings-acc (.state p)
+                                                                  (vect-conj acc
+                                                                             (LetBinding (.text nm)
+                                                                                         (.value p)))))))))
 
 (defn collect-let-bindings [state]
   (collect-let-bindings-acc state empty-vector))
@@ -641,20 +637,14 @@
           (str= input "")
           (ParserMatch (HashPairs acc s) s)
 
-          (let [pk (parse-expr s)
-                pkk (result-kind pk)]
-            (cond (= pkk 2)
-                  pk
-
-                  (let [pv (parse-expr (.state pk))
-                        pvk (result-kind pv)]
-                    (cond (= pvk 2)
-                          pv
-
-                          (collect-hash-pairs-acc (.state pv)
-                                                  (vect-conj acc
-                                                             (HashPair (.value pk)
-                                                                       (.value pv)))))))))))
+          (let [pk (parse-expr s)]
+            (is-error pk
+                      (let [pv (parse-expr (.state pk))]
+                        (is-error pv
+                                  (collect-hash-pairs-acc (.state pv)
+                                                          (vect-conj acc
+                                                                     (HashPair (.value pk)
+                                                                               (.value pv)))))))))))
 
 (defn collect-hash-pairs [state]
   (collect-hash-pairs-acc state empty-vector))
@@ -670,17 +660,14 @@
         input (.input s)]
     (cond (str-prefix? "[" input)
           (let [params (read-param-list (skip-whitespace (take-char s)))
-                body (parse-body (.state params))
-                bk (result-kind body)]
-            (cond (= bk 2)
-                  body
-
-                  (let [bv (.value body)
-                        s4 (.state body)]
-                    (ParserMatch (ast/Fn name (.params params)
-                                         (.exprs bv)
-                                         (make-loc s4))
-                            s4))))
+                body (parse-body (.state params))]
+            (is-error body
+                      (let [bv (.value body)
+                                              s4 (.state body)]
+                                          (ParserMatch (ast/Fn name (.params params)
+                                                               (.exprs bv)
+                                                               (make-loc s4))
+                                                  s4))))
 
           (ParserMatch (ast/Symbol "" "" (make-loc s)) s))))
 
@@ -700,23 +687,17 @@
 ;; parse-let: state just after `let`.
 (defn parse-let [state]
   (let [bindings (collect-let-bindings
-                  (skip-whitespace (take-char (skip-whitespace state))))
-        bk (result-kind bindings)]
-    (cond (= bk 2)
-          bindings
-
-          (let [body (parse-body (.state bindings))
-                bodyk (result-kind body)]
-            (cond (= bodyk 2)
-                  body
-
-                  (let [bv (.value body)
-                        lb (.value bindings)
-                        s4 (.state body)]
-                    (ParserMatch (let-desugar (.bindings lb)
-                                              (.exprs bv)
-                                              (make-loc s4))
-                            s4)))))))
+                  (skip-whitespace (take-char (skip-whitespace state))))]
+    (is-error bindings
+              (let [body (parse-body (.state bindings))]
+                (is-error body
+                          (let [bv (.value body)
+                                lb (.value bindings)
+                                s4 (.state body)]
+                            (ParserMatch (let-desugar (.bindings lb)
+                                                      (.exprs bv)
+                                                      (make-loc s4))
+                                         s4)))))))
 
 ;; cond-pair-acc: pair a flat [t1 v1 ... tN vN e] expression vector
 ;; into [Clause t1 v1 ... Clause tN vN], stopping when the trailing
@@ -732,100 +713,73 @@
 
 ;; parse-cond: state just after `cond`.
 (defn parse-cond [state]
-  (let [res (collect-until state ")")
-        rk (result-kind res)]
-    (cond (= rk 2)
-          res
-
-          (let [pl (.value res)
-                exprs (.exprs pl)]
-            (ParserMatch (cond-desugar (cond-pair-acc exprs empty-vector)
-                                       (extract (last exprs))
-                                       (make-loc (.state pl)))
-                    (.state pl))))))
+  (let [res (collect-until state ")")]
+    (is-error res
+              (let [pl (.value res)
+                              exprs (.exprs pl)]
+                          (ParserMatch (cond-desugar (cond-pair-acc exprs empty-vector)
+                                                     (extract (last exprs))
+                                                     (make-loc (.state pl)))
+                                  (.state pl))))))
 
 ;; parse-and / parse-or: state just after `and`/`or`.
 (defn parse-and [state]
-  (let [res (collect-until state ")")
-        rk (result-kind res)]
-    (cond (= rk 2)
-          res
-
-          (let [pl (.value res)]
-            (ParserMatch (and-or-desugar (.exprs pl) (make-loc (.state pl)) "and")
-                    (.state pl))))))
+  (let [res (collect-until state ")")]
+    (is-error res
+              (let [pl (.value res)]
+                          (ParserMatch (and-or-desugar (.exprs pl) (make-loc (.state pl)) "and")
+                                  (.state pl))))))
 
 (defn parse-or [state]
-  (let [res (collect-until state ")")
-        rk (result-kind res)]
-    (cond (= rk 2)
-          res
-
-          (let [pl (.value res)]
-            (ParserMatch (and-or-desugar (.exprs pl) (make-loc (.state pl)) "or")
-                    (.state pl))))))
+  (let [res (collect-until state ")")]
+    (is-error res
+              (let [pl (.value res)]
+                          (ParserMatch (and-or-desugar (.exprs pl) (make-loc (.state pl)) "or")
+                                  (.state pl))))))
 
 ;; parse-str / parse-println: state just after `str`/`println`.
 (defn parse-str [state]
-  (let [res (collect-until state ")")
-        rk (result-kind res)]
-    (cond (= rk 2)
-          res
-
-          (let [pl (.value res)]
-            (ParserMatch (str-println-desugar (.exprs pl) (make-loc (.state pl))
-                                         "str*")
-                    (.state pl))))))
+  (let [res (collect-until state ")")]
+    (is-error res
+              (let [pl (.value res)]
+                          (ParserMatch (str-println-desugar (.exprs pl) (make-loc (.state pl))
+                                                       "str*")
+                                  (.state pl))))))
 
 (defn parse-println [state]
-  (let [res (collect-until state ")")
-        rk (result-kind res)]
-    (cond (= rk 2)
-          res
-
-          (let [pl (.value res)]
-            (ParserMatch (str-println-desugar (.exprs pl) (make-loc (.state pl))
-                                         "println*")
-                    (.state pl))))))
+  (let [res (collect-until state ")")]
+    (is-error res
+              (let [pl (.value res)]
+                          (ParserMatch (str-println-desugar (.exprs pl) (make-loc (.state pl))
+                                                       "println*")
+                                  (.state pl))))))
 
 ;; parse-threading: state just after `->`.
 (defn parse-threading [state]
-  (let [p (parse-expr (skip-whitespace state))
-        pk (result-kind p)]
-    (cond (= pk 2)
-          p
-
-          (let [steps (collect-until (.state p) ")")
-                sk (result-kind steps)]
-            (cond (= sk 2)
-                  steps
-
-                  (let [pl (.value steps)]
-                    (ParserMatch (threading (.value p) (.exprs pl)
-                                            (make-loc (.state pl)))
-                                 (.state pl))))))))
+  (let [p (parse-expr (skip-whitespace state))]
+    (is-error p
+              (let [steps (collect-until (.state p) ")")]
+                (is-error steps
+                          (let [pl (.value steps)]
+                            (ParserMatch (threading (.value p) (.exprs pl)
+                                                    (make-loc (.state pl)))
+                                         (.state pl))))))))
 
 ;; parse-vector: state at the `[`.
 (defn parse-vector [state]
-  (let [res (collect-until (skip-whitespace (take-char state)) "]")
-        rk (result-kind res)]
-    (cond (= rk 2)
-          res
-
-          (let [pl (.value res)]
-            (ParserMatch (fold-vec (.exprs pl) (make-loc (.state pl)))
-                    (.state pl))))))
+  (let [res (collect-until (skip-whitespace (take-char state)) "]")]
+    (is-error res
+              (let [pl (.value res)]
+                          (ParserMatch (fold-vec (.exprs pl) (make-loc (.state pl)))
+                                  (.state pl))))))
 
 ;; parse-hash: state at the `{`.
 (defn parse-hash [state]
-  (let [res (collect-hash-pairs (skip-whitespace (take-char state)))
-        rk (result-kind res)]
-    (cond (= rk 2)
-          res
-
-          (let [pl (.value res)]
-            (ParserMatch (hash-fold (.pairs pl) (make-loc (.state pl)))
-                    (.state pl))))))
+  (let [res (collect-hash-pairs (skip-whitespace (take-char state)))]
+    (is-error res
+              (let [pl (.value res)]
+                          (ParserMatch (hash-fold (.pairs pl) (make-loc (.state pl)))
+                                  (.state pl))))))
 
 ;; dispatch-special: state just after a special-form keyword.
 (defn dispatch-special [ns name state call-loc]
@@ -838,16 +792,13 @@
         (str= name "println") (parse-println state)
         (str= name "inline") (parse-inline state)
         (str= name "->") (parse-threading state)
-        (let [res (collect-until state ")")
-              rk (result-kind res)]
-          (cond (= rk 2)
-                res
-
-                (let [pl (.value res)]
-                  (ParserMatch (ast/Call (ast/Symbol ns name (make-loc state))
-                                    (.exprs pl)
-                                    call-loc)
-                        (.state pl)))))))
+        (let [res (collect-until state ")")]
+          (is-error res
+                    (let [pl (.value res)]
+                                      (ParserMatch (ast/Call (ast/Symbol ns name (make-loc state))
+                                                        (.exprs pl)
+                                                        call-loc)
+                                            (.state pl)))))))
 
 ;; parse-call: state at the `(`.
 (defn parse-call [state]
@@ -864,19 +815,13 @@
           (let [sym (read-full-symbol s)]
             (dispatch-special (.ns sym) (.nom sym) (.state sym) call-loc))
 
-          (let [op (parse-expr s)
-                ok (result-kind op)]
-            (cond (= ok 2)
-                  op
-
-                  (let [res (collect-until (.state op) ")")
-                        rk (result-kind res)]
-                    (cond (= rk 2)
-                          res
-
-                          (let [pl (.value res)]
-                            (ParserMatch (ast/Call (.value op) (.exprs pl) call-loc)
-                                    (.state pl))))))))))
+          (let [op (parse-expr s)]
+            (is-error op
+                      (let [res (collect-until (.state op) ")")]
+                        (is-error res
+                                  (let [pl (.value res)]
+                                    (ParserMatch (ast/Call (.value op) (.exprs pl) call-loc)
+                                                 (.state pl))))))))))
 
 ;; parse-expr: parse one expression. Returns ParserMatch [Expression
 ;; state-after]. Total: malformed input yields a placeholder Symbol.
@@ -918,17 +863,14 @@
 ;; parse-top-def-value-expr: state at the value (a non-`)` position).
 ;; Returns ParserMatch [Definition state-after-`)`] or ParserError.
 (defn parse-top-def-value-expr [name name-loc state]
-  (let [p (parse-expr state)
-        pk (result-kind p)]
-    (cond (= pk 2)
-          p
+  (let [p (parse-expr state)]
+    (is-error p
+              (let [s3 (skip-whitespace (.state p))]
+                          (cond (str-prefix? ")" (.input s3))
+                                (ParserMatch (ast/Definition name (.value p) name-loc)
+                                             (take-char s3))
 
-          (let [s3 (skip-whitespace (.state p))]
-            (cond (str-prefix? ")" (.input s3))
-                  (ParserMatch (ast/Definition name (.value p) name-loc)
-                               (take-char s3))
-
-                  (ParserError "expected ) after def value" s3))))))
+                                (ParserError "expected ) after def value" s3))))))
 
 ;; parse-top-def-value: state at the value position (or at `)` for a
 ;; bare def). Builds the Definition, or ignores a bare `(def name)`.
@@ -960,20 +902,17 @@
             (cond (str-prefix? "[" (.input s2))
                   (let [params (read-param-list
                                 (skip-whitespace (take-char s2)))
-                        body (parse-body (.state params))
-                        bk (result-kind body)]
-                    (cond (= bk 2)
-                          body
-
-                          (let [bv (.value body)
-                                s5 (.state body)
-                                fn-val (ast/Fn name (.params params)
-                                               (.exprs bv)
-                                               (make-loc s5))]
-                            (ParserMatch
-                             (ast/Definition name fn-val
-                                             (make-loc (.state nm)))
-                             s5))))
+                        body (parse-body (.state params))]
+                    (is-error body
+                              (let [bv (.value body)
+                                                              s5 (.state body)
+                                                              fn-val (ast/Fn name (.params params)
+                                                                             (.exprs bv)
+                                                                             (make-loc s5))]
+                                                          (ParserMatch
+                                                           (ast/Definition name fn-val
+                                                                           (make-loc (.state nm)))
+                                                           s5))))
 
                   (ParserError "expected a parameter list after defn name"
                                s2)))
@@ -992,17 +931,14 @@
             (cond (str-prefix? "[" (.input s2))
                   (let [params (read-param-list
                                 (skip-whitespace (take-char s2)))
-                        body (parse-body (.state params))
-                        bk (result-kind body)]
-                    (cond (= bk 2)
-                          body
-
-                          (let [bv (.value body)
-                                s5 (.state body)]
-                            (ParserMatch
-                             (ast/Defp name (.params params)
-                                       (.exprs bv))
-                             s5))))
+                        body (parse-body (.state params))]
+                    (is-error body
+                              (let [bv (.value body)
+                                                              s5 (.state body)]
+                                                          (ParserMatch
+                                                           (ast/Defp name (.params params)
+                                                                     (.exprs bv))
+                                                           s5))))
 
                   (ParserError "expected a parameter list after defp name"
                                s2)))
@@ -1020,15 +956,12 @@
             s2 (skip-whitespace (.state nm))]
         (cond (str-prefix? "[" (.input s2))
           (let [params (read-param-list (skip-whitespace (take-char s2)))
-                body (parse-body (.state params))
-                bk (result-kind body)]
-            (cond (= bk 2)
-              body
-
-              (let [bv (.value body)]
-                (ParserMatch (ast/Fn (.text nm) (.params params)
-                                     (.exprs bv) (make-loc (.state body)))
-                             (.state body)))))
+                body (parse-body (.state params))]
+            (is-error body
+                      (let [bv (.value body)]
+                                      (ParserMatch (ast/Fn (.text nm) (.params params)
+                                                           (.exprs bv) (make-loc (.state body)))
+                                                   (.state body)))))
 
           (ParserError "expected a parameter list after impl name" s2)))
 
@@ -1041,51 +974,42 @@
   (let [s (skip-whitespace state)
         input (.input s)]
     (cond (str-prefix? ")" input)
-      (ParserMatch (ParsedList acc (take-char s)) (take-char s))
+          (ParserMatch (ParsedList acc (take-char s)) (take-char s))
 
-      (str= input "")
-      (ParserMatch (ParsedList acc s) s)
+          (str= input "")
+          (ParserMatch (ParsedList acc s) s)
 
-      (str-prefix? "(" input)
-      (let [p (parse-impl s)
-            pk (result-kind p)]
-        (cond (= pk 2)
-          p
+          (str-prefix? "(" input)
+          (let [p (parse-impl s)]
+            (is-error p
+                      (parse-impls-acc (.state p) (vect-conj acc (.value p)))))
 
-          (parse-impls-acc (.state p) (vect-conj acc (.value p)))))
-
-      (ParserError "expected a protocol impl" s))))
+          (ParserError "expected a protocol impl" s))))
 
 (defn parse-impls [state]
   (parse-impls-acc state empty-vector))
 
 ;; parse-ctor-fields: state at the `[` of a ctor field list. Reads the
 ;; fields, parses the impls, and builds the Constructor. Split from
-;; parse-ctor-body so each branch's result-kind check is a plain function
+;; parse-ctor-body so each branch's is-error check is a plain function
 ;; body (a both-lets cond with nested conds is a malformed-cond hazard —
 ;; see the plan's verified facts).
 (defn parse-ctor-fields [name s]
   (let [fields (read-param-list (skip-whitespace (take-char s)))
-        impls (parse-impls (.state fields))
-        ik (result-kind impls)]
-    (cond (= ik 2)
-      impls
-
-      (let [iv (.value impls)]
-        (ParserMatch (ast/Constructor name (.params fields) (.exprs iv))
-                     (.state impls))))))
+        impls (parse-impls (.state fields))]
+    (is-error impls
+              (let [iv (.value impls)]
+                      (ParserMatch (ast/Constructor name (.params fields) (.exprs iv))
+                                   (.state impls))))))
 
 ;; parse-ctor-impls: state at the impls (no field list). Parses the impls
 ;; and builds a fieldless Constructor.
 (defn parse-ctor-impls [name s]
-  (let [impls (parse-impls s)
-        ik (result-kind impls)]
-    (cond (= ik 2)
-      impls
-
-      (let [iv (.value impls)]
-        (ParserMatch (ast/Constructor name empty-vector (.exprs iv))
-                     (.state impls))))))
+  (let [impls (parse-impls s)]
+    (is-error impls
+              (let [iv (.value impls)]
+                      (ParserMatch (ast/Constructor name empty-vector (.exprs iv))
+                                   (.state impls))))))
 
 ;; parse-ctor-body: state after the ctor name. Either `[fields]` +
 ;; impls, or impls only (no field list -> no fields). Returns
@@ -1120,57 +1044,48 @@
   (let [s (skip-whitespace state)
         input (.input s)]
     (cond (str-prefix? ")" input)
-      (ParserMatch (ParsedList acc (take-char s)) (take-char s))
+          (ParserMatch (ParsedList acc (take-char s)) (take-char s))
 
-      (str= input "")
-      (ParserMatch (ParsedList acc s) s)
+          (str= input "")
+          (ParserMatch (ParsedList acc s) s)
 
-      (str-prefix? "(" input)
-      (let [p (parse-ctor s)
-            pk (result-kind p)]
-        (cond (= pk 2)
-          p
+          (str-prefix? "(" input)
+          (let [p (parse-ctor s)]
+            (is-error p
+                      (parse-ctor-list-acc (.state p) (vect-conj acc (.value p)))))
 
-          (parse-ctor-list-acc (.state p) (vect-conj acc (.value p)))))
+          (symbol-start? input)
+          (let [nm (read-symbol s)]
+            (parse-ctor-list-acc (.state nm)
+                                 (vect-conj acc
+                                            (ast/Constructor (.text nm)
+                                                             empty-vector
+                                                             empty-vector))))
 
-      (symbol-start? input)
-      (let [nm (read-symbol s)]
-        (parse-ctor-list-acc (.state nm)
-                             (vect-conj acc
-                                        (ast/Constructor (.text nm)
-                                                         empty-vector
-                                                         empty-vector))))
-
-      (ParserError "expected a constructor in deftype" s))))
+          (ParserError "expected a constructor in deftype" s))))
 
 ;; parse-deftype-fields: single-ctor form `[fields] <impls>`. Reads the
 ;; fields, parses the impls, and builds the one-ctor DefType. Split from
-;; parse-top-deftype-body so each branch's result-kind check is a plain
+;; parse-top-deftype-body so each branch's is-error check is a plain
 ;; function body (a both-lets cond with nested conds is a malformed-cond
 ;; hazard — see the plan's verified facts).
 (defn parse-deftype-fields [name s]
   (let [fields (read-param-list (skip-whitespace (take-char s)))
-        impls (parse-impls (.state fields))
-        ik (result-kind impls)]
-    (cond (= ik 2)
-      impls
-
-      (let [iv (.value impls)
-            ctor (ast/Constructor name (.params fields) (.exprs iv))]
-        (ParserMatch (ast/DefType name [ctor])
-                     (.state impls))))))
+        impls (parse-impls (.state fields))]
+    (is-error impls
+              (let [iv (.value impls)
+                          ctor (ast/Constructor name (.params fields) (.exprs iv))]
+                      (ParserMatch (ast/DefType name [ctor])
+                                   (.state impls))))))
 
 ;; parse-deftype-ctors: multi-ctor form `<ctor-list>)`. Parses the ctor
 ;; list and builds the DefType.
 (defn parse-deftype-ctors [name s]
-  (let [ctors (parse-ctor-list-acc s empty-vector)
-        ck (result-kind ctors)]
-    (cond (= ck 2)
-      ctors
-
-      (let [cv (.value ctors)]
-        (ParserMatch (ast/DefType name (.exprs cv))
-                     (.state ctors))))))
+  (let [ctors (parse-ctor-list-acc s empty-vector)]
+    (is-error ctors
+              (let [cv (.value ctors)]
+                      (ParserMatch (ast/DefType name (.exprs cv))
+                                   (.state ctors))))))
 
 ;; parse-top-deftype-body: state after the type name. Single-ctor form
 ;; `[fields] <impls>...)` — one ctor named the type; multi-ctor form
@@ -1204,14 +1119,11 @@
     (cond (symbol-start? (.input s))
       (let [nm (read-symbol s)
             name (.text nm)
-            methods (parse-impls (.state nm))
-            mk (result-kind methods)]
-        (cond (= mk 2)
-          methods
-
-          (let [mv (.value methods)]
-            (ParserMatch (ast/ExtendType name (.exprs mv))
-                         (.state methods)))))
+            methods (parse-impls (.state nm))]
+        (is-error methods
+                  (let [mv (.value methods)]
+                              (ParserMatch (ast/ExtendType name (.exprs mv))
+                                           (.state methods)))))
 
       (ParserError "expected a type name after extend-type" s))))
 
@@ -1220,17 +1132,14 @@
   (let [s (skip-whitespace state)]
     (cond (str-prefix? "[" (.input s))
           (let [params (read-param-list (take-char s))
-                body (parse-body (.state params))
-                bk (result-kind body)]
-            (cond (= bk 2)
-                  body
-
-                  (let [bv (.value body)
-                        s3 (.state body)]
-                    (ParserMatch (ast/Main (.params params)
-                                           (.exprs bv)
-                                           (make-loc s3))
-                                 s3))))
+                body (parse-body (.state params))]
+            (is-error body
+                      (let [bv (.value body)
+                            s3 (.state body)]
+                        (ParserMatch (ast/Main (.params params)
+                                               (.exprs bv)
+                                               (make-loc s3))
+                                     s3))))
 
           (ParserError "expected a parameter list after main" s))))
 
@@ -1309,13 +1218,11 @@
           (ParserMatch v s)
 
           (let [r (parse-top-level s)
-                k (result-kind r)]
-            (cond (= k 2)
-                  r
+                is-ign (result-ignore r)]
+            (is-error r
+                      (cond is-ign
+                            (parse-program-acc (.state r) v)
 
-                  (= k 1)
-                  (parse-program-acc (.state r) v)
-
-                  (let [node (.value r)]
-                    (parse-program-acc (.state r)
-                                       (vect-conj v node)))))))))
+                            (let [node (.value r)]
+                              (parse-program-acc (.state r)
+                                                 (vect-conj v node)))))))))

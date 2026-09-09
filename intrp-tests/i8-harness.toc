@@ -42,37 +42,10 @@
 (add-ns rdr (module "../interpreter/intrp-rdr.toc"))
 (add-ns eval (module "../interpreter/intrp-eval.toc"))
 
-;; slurp: whole-file read -> String (inline C).
-(defn slurp [path]
-  ! path String
-  (inline String "
-    String *p = (String *)path_1;
-    FILE *fd = fopen(p->buffer, \"rb\");
-    dec_and_free((Term)p, 1);
-    if (fd == NULL) {
-      fprintf(stderr, \"slurp: cannot open file\\n\");
-      abort();
-    }
-    fseek(fd, 0, SEEK_END);
-    long len = ftell(fd);
-    fseek(fd, 0, SEEK_SET);
-    String *s = malloc_string(len + 1);
-    if (len > 0) fread(s->buffer, 1, len, fd);
-    s->len = len;
-    s->buffer[len] = 0;
-    fclose(fd);
-    result = termVal((Term)s);
-  "))
-
-;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
-(defp maybe-kind [m])
-(extend-type None (maybe-kind [_] 0))
-(extend-type Some (maybe-kind [_] 1))
-
 ;; Per-ctor extraction over the rdr/ParserResults union (a bare .field on
 ;; the union is unsafe — new-toc resolves getters by name lookup; `state`
 ;; is shared by several ctors). Each impl sees the concrete ctor, so the
-;; field access is bare. The callers guard on result-kind, so the wrong
+;; field access is bare. The callers guard on rdr/check-error, so the wrong
 ;; ctor never reaches an impl.
 (defp parse-value [r])
 (extend-type rdr/ParserMatch (parse-value [v] (.value v)))
@@ -97,20 +70,19 @@
   (let [toplevels (parse-value r)
         env (eval/bind-toplevels eval/initial-env toplevels)
         m (eval/find-main toplevels)]
-    (cond (= (maybe-kind m) 0)
-          (no-main file)
+    (cond m
+          (eval/eval-main (extract m) env argv)
 
-          (eval/eval-main (extract m) env argv))))
+          (no-main file))))
 
 ;; run-prog [file argv]: parse + interpret the program file.
 (defn run-prog [file argv]
   (let [src (slurp file)
-        r (rdr/parse-program (rdr/make-state src file 1))
-        k (rdr/result-kind r)]
-    (cond (= k 2)
-          (parse-fail file r)
+        r (rdr/parse-program (rdr/make-state src file 1))]
+    (rdr/check-error r
+                     (parse-fail file r)
 
-          (run-match file r argv))))
+                     (run-match file r argv))))
 
 (main [argv]
   (let [file (extract (get argv 1))]

@@ -13,13 +13,15 @@
 ;; generated module: header + kit + one parser defn per Rule + the
 ;; parse-seq loop + main template).
 ;;
-;; The rdr module is add-ns'd for shared helpers (vect-concat lives
-;; in the ast layer); the module path spellings must stay identical
-;; across the graph.
+;; Item 5: All + Ignore — the emit-body impls (the site-(c)
+;; templates), the child-ref protocol (call-position expressions:
+;; Rule -> name, bare String -> inlined let-free body, anonymous ->
+;; the lifted helper name), and the lifted helper emission (walk-
+;; children / child-lifted? / emit-helpers: each anonymous child
+;; combinator gets a defn, sub-helpers first).
 
 (add-ns grammar (module "intrp-grammar.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
-(add-ns ast (module "intrp-ast.toc"))
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -150,9 +152,9 @@
 ;; bare String: let-free (inlinable in a cond clause) — the ctor
 ;; table's str-prefix? shape.
 (extend-type String (emit-body [v ctx]
-  ["(cond (rdr/str-prefix? " (render-literal v) " (.input state))"
+  ["(cond (str-prefix? " (render-literal v) " (.input state))"
    "  (rdr/ParserMatch " (render-literal v) " (rdr/take-char state))"
-   (to-str ["  (rdr/ParserError \"expected " (render-literal v) "\" state))"])]))
+   (to-str ["  (rdr/ParserError \"expected " (escape-str (render-literal v)) "\" state))"])]))
 
 ;; render-value: a grammar value as generated source — Strings as
 ;; escaped literals, everything else via to-str.
@@ -206,6 +208,190 @@
   (wrap-defn name
              (emit-body pc (EmitCtx (.rule ctx) (to-str [name "-"])))))
 
+;; --- Item 5: All + Ignore -------------------------------------------
+
+;; state-var [i]: the state variable for child i of an All / Ignore
+;; body — "state" (the defn's param) for the first child, "s<i>"
+;; thereafter.
+(defn state-var [i]
+  (cond (= i 0)
+    "state"
+
+    (to-str ["s" (number-str i)])))
+
+;; spaces-acc [acc n]: a string of n spaces.
+(defn spaces-acc [acc n]
+  (cond (= n 0)
+    acc
+
+    (spaces-acc (to-str [acc " "]) (- n 1))))
+
+;; spaces [n]: a string of n spaces.
+(defn spaces [n]
+  (spaces-acc "" n))
+
+;; closes-acc [acc n]: a string of n closing parens.
+(defn closes-acc [acc n]
+  (cond (= n 0)
+    acc
+
+    (closes-acc (to-str [acc ")"]) (- n 1))))
+
+;; closes [n]: a string of n closing parens.
+(defn closes [n]
+  (closes-acc "" n))
+
+;; string-body-lines [lit sv]: the let-free bare-String body (ctor
+;; table) over the state variable sv, unindented — the caller places
+;; the lines.
+;; The continuation lines carry their own 6-column prefix — the
+;; caller aligns line 1's cond under the ref, and the template wants
+;; lines 2-3 six columns right of the cond.
+(defn string-body-lines [lit sv]
+  [(to-str ["(cond (str-prefix? " lit " (.input " sv "))"])
+   (to-str ["      (rdr/ParserMatch " lit " (rdr/take-char " sv "))"])
+   (to-str ["      (rdr/ParserError \"expected " (escape-str lit) "\" " sv "))"])])
+
+;; child-ref [pc i ctx]: the lines of the call expression for the
+;; child combinator at index i under the current node (ctx's prefix
+;; is the node name + "-"). String -> the let-free body inlined
+;; (let-free, inlinable everywhere); Rule -> the single (name sv)
+;; line; the default (every anonymous combinator) -> the single
+;; (prefix+i sv) line.
+;; -> [String]
+(defp child-ref [pc i ctx]
+  [(to-str ["(" (to-str [(.prefix ctx) (number-str i)]) " "
+     (state-var i) ")"])])
+
+(extend-type String (child-ref [v i ctx]
+  (string-body-lines (render-literal v) (state-var i))))
+
+(extend-type grammar/Rule (child-ref [v i ctx]
+  [(to-str ["(" (.name v) " " (state-var i) ")"])]))
+
+;; ref-cont-acc [acc lines b]: the ref's continuation lines, each
+;; prefixed with the alignment indent b.
+(defn ref-cont-acc [acc lines b]
+  (cond (= (count lines) 0)
+    acc
+
+    (ref-cont-acc (vect-conj acc (to-str [b (extract (first lines))]))
+                  (rest lines)
+                  b)))
+
+;; append-acc [acc xs]: the lines of xs appended after acc's lines
+;; (explicit acc recursion — the generic Vector comp path is broken
+;; under new-toc: comp-vect's (reduce (cons v vs) ...) passes a raw
+;; Term as the collection, crashing the reduce dispatch).
+(defn append-acc [acc xs]
+  (cond (= (count xs) 0)
+    acc
+
+    (append-acc (vect-conj acc (extract (first xs))) (rest xs))))
+
+;; all-body-acc [acc ps i vs ctx]: the nested parse-then chain
+;; (site-(c) template) rendered outside-in. At child i the step
+;; emits the (parse-then line, the ref's continuation lines aligned
+;; 12 columns in, the (fn [vi s(i+1)] line, and descends 14 columns;
+;; vs is the value variables joined so far. The last step emits the
+;; ParserMatch value line with the 2-per-level closing parens.
+(defn all-body-acc [acc ps i vs ctx]
+  (cond (= i (count ps))
+    (vect-conj acc
+               (to-str [(spaces (* 14 (count ps)))
+                        "(rdr/ParserMatch [" vs "] "
+                        (state-var (count ps))
+                        ;; 2 per level (fn + parse-then) + 1 for the
+                        ;; outermost parse-then; wrap-defn adds the
+                        ;; defn's own close.
+                        (closes (+ 1 (* 2 (count ps))))]))
+
+    (let [ref (child-ref (extract (get ps i)) i ctx)
+          b (spaces (* 14 i))
+          b12 (spaces (+ (* 14 i) 12))]
+      (all-body-acc
+       (conj
+        (append-acc
+         (conj acc (to-str [b "(parse-then " (extract (first ref))]))
+         (ref-cont-acc [] (rest ref) b12))
+        (to-str [b12 "(fn [v" (number-str i) " " (state-var (+ i 1)) "]"]))
+        ps
+        (+ i 1)
+        (cond (str= vs "")
+          (to-str ["v" (number-str i)])
+          (to-str [vs " v" (number-str i)]))
+        ctx))))
+
+;; all-body [ps ctx]: the All body — the nested parse-then over the
+;; children's call expressions (site-(c) template).
+(defn all-body [ps ctx]
+  (all-body-acc [] ps 0 "" ctx))
+
+(extend-type grammar/All (emit-body [v ctx]
+  (all-body (.parsers v) ctx)))
+
+;; ignore-body [p ctx]: the Ignore body (site-(c) shape) — parse-or
+;; over parse-then with identity as the else-fn; the fn captures
+;; nothing.
+(defn ignore-body [p ctx]
+  (let [ref (child-ref p 0 ctx)]
+    (conj
+     (append-acc
+      (append-acc
+       [(to-str ["(parse-or (parse-then " (extract (first ref))])]
+        (ref-cont-acc [] (rest ref) (spaces 22)))
+      [(to-str [(spaces 22) "(fn [v s2]"])
+        (to-str [(spaces 24) "(rdr/ParserIgnore s2)))"])])
+     (to-str [(spaces 10) "identity)"]))))
+
+(extend-type grammar/Ignore (emit-body [v ctx]
+  (ignore-body (.parser v) ctx)))
+
+;; walk-children [pc]: the child parsers of pc that may need lifting —
+;; All -> its parsers; Ignore -> its single child; Rule, String, and
+;; the leaf ctors -> [].
+(defp walk-children [pc]
+  [])
+
+(extend-type grammar/All (walk-children [v] (.parsers v)))
+
+(extend-type grammar/Ignore (walk-children [v] [(.parser v)]))
+
+;; child-lifted? [pc]: Some iff the child gets a lifted helper defn
+;; (every anonymous combinator); Rule -> None (referenced by name;
+;; its defn is emitted with the rule list); bare String -> None
+;; (inlined let-free).
+(defp child-lifted? [pc]
+  (Some pc))
+
+(extend-type grammar/Rule (child-lifted? [v] None))
+
+(extend-type String (child-lifted? [v] None))
+
+;; emit-helpers [acc ps i prefix ctx]: the lifted helper defn blocks
+;; for the children ps[i..] (sub-helpers first, post-order): each
+;; lifted child gets the helpers of its own children, then its defn
+;; (emit-fn, name = prefix + i, its prefix = name + "-"); the
+;; use-after-definition order (a defn body referencing a later
+;; top-level symbol fails Undefined symbol) is what puts the
+;; sub-helpers first.
+(defn emit-helpers [acc ps i prefix ctx]
+  (cond (= i (count ps))
+    acc
+
+    (let [c (extract (get ps i))]
+      (cond (child-lifted? c)
+        (let [name (to-str [prefix (number-str i)])]
+          (emit-helpers
+           (append-acc
+            (append-acc acc
+                        (emit-helpers [] (walk-children c) 0
+                                      (to-str [name "-"]) ctx))
+            (emit-fn c name ctx))
+           ps (+ i 1) prefix ctx))
+
+        (emit-helpers acc ps (+ i 1) prefix ctx)))))
+
 ;; emit-header: module header lines — the add-ns of the helper layer,
 ;; the parse-then/parse-or kit (Result discrimination, settled in
 ;; task 1), the ParserError field-access protocols (bare .field on
@@ -236,21 +422,25 @@
    "(defn parse-error-line [file line msg]"
    "  (exit 1 (to-str [file \":\" (number-str line) \":\" msg])))"])
 
-;; emit-rules-acc: one parser defn per Rule (a char-level body -> the
-;; one-char parser defn), separated by blank lines.
+;; emit-rules-acc [acc rules]: one block per Rule — the lifted
+;; helpers (sub-helpers first), a blank line, then the parser defn
+;; (use-after-definition: a defn body referencing a later top-level
+;; symbol fails Undefined symbol); blocks separated by blank lines.
 (defn emit-rules-acc [acc rules]
   (cond (= (count rules) 0)
     acc
 
     (let [r (extract (first rules))
-          d (wrap-defn (.name r)
-                       (emit-body (.parser r)
-                                  (EmitCtx (.name r)
-                                           (to-str [(.name r) "-"]))))]
-      (cond (= (count acc) 0)
-        (emit-rules-acc d (rest rules))
+          ctx (EmitCtx (.name r)
+                       (to-str [(.name r) "-"]))
+          d (append-acc
+             (emit-helpers [] (walk-children (.parser r)) 0
+                           (to-str [(.name r) "-"]) ctx)
+             (wrap-defn (.name r) (emit-body (.parser r) ctx)))]
+      (cond (empty? acc)
+            (emit-rules-acc d (rest rules))
 
-        (emit-rules-acc (ast/vect-concat acc [""] d) (rest rules))))))
+            (emit-rules-acc (append-acc acc d) (rest rules))))))
 
 ;; emit-main: the parse-seq loop + main template lines. parse-seq
 ;; skips whitespace, runs the entry rule, prints one result line per
@@ -277,10 +467,7 @@
 ;; per Rule, the parse-seq loop + main template (the entry rule name
 ;; spliced into the loop). -> [String]
 (defn emit-module [rules entry]
-  (ast/vect-concat
-    (ast/vect-concat
-      (ast/vect-concat
-        (ast/vect-concat (emit-header) [""])
-        (emit-rules-acc [] rules))
-      [""])
-    (emit-main entry)))
+  (append-acc
+   (-> (emit-header)
+       (emit-rules-acc rules))
+   (emit-main entry)))

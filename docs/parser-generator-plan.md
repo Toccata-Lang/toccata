@@ -656,7 +656,7 @@ a solution.
     match lines / `file:line: msg` error lines by hand-verification;
     zero leaks, 0 remaining nodes.
 
-- [ ] **5. `All` + `Ignore`**
+- [x] **5. `All` + `Ignore`**
   `emit-body` impls: `All` (nested `parse-then` per the site-(c)
   template, state threaded through the continuation params, result =
   vector of sub-values), `Ignore` (site-(c) shape: `parse-or` over

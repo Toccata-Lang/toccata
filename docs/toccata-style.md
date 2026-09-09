@@ -34,6 +34,10 @@ builds the code.
   every clause fits on a single line and the test halves are all about the
   same length, keep them on consecutive lines with no blank lines between.
 
+* Never test the negation: `(cond (not v) A B)` is wrong — write
+  `(cond v B A)`. Test the value directly and put the truthy branch
+  first.
+
 * `let` takes multiple bindings in one form: `(let [b1 e1 b2 e2 ...] body)` —
   sequential binding semantics: later initializers see earlier bindings.
   Bind a name only if its value is used more than once in the rest of the
@@ -49,6 +53,12 @@ builds the code.
 * There are no forward declarations. Named `defn`s may be mutually recursive —
   the compiler parses the whole source before code generation and resolves
   concrete call targets itself.
+
+* Threading is supported: `(-> e1 e2 ...)` threads the value of each
+  expression into the first argument spot of the next expression. If the
+  first expression is a bare symbol, its value is taken. If any successive
+  expression is a bare symbol, it is assumed to be a function of one
+  argument and the previous value becomes that argument.
 
 ## Naming
 
@@ -102,6 +112,9 @@ builds the code.
   `butlast` are implemented for Vector; `last` returns `Some element` like
   `first`, `butlast` returns a Vector (empty for a single-element vector).
 
+* To concatenate 2 vectors, use `comp`. To add an item to the end of a
+  vector, use `conj`.
+
 * `subs` is 3-arg: `(subs s start len)`. The rest of a string is
   `(subs s 1 (count s))`. `count` is O(1) for SubString and StringBuffer.
 
@@ -121,11 +134,14 @@ builds the code.
 
 ## Dispatch
 
-* There is no `instance?` — dispatch is via protocols. To branch on which ctor
-  of a deftype a value carries, use a `match` expression (not yet
-  implemented). Until then, the stopgap is a tag protocol extended per ctor —
-  it aborts if called on a type it isn't extended for, so only use it on
-  values known to be one of your own ctors.
+* There is no `instance?` — dispatch is via protocols. To branch on which
+  ctor of a deftype a value carries, use a `match` expression (not yet
+  implemented): `(match v Type1 expr1 Type2 expr2 ...)`. Until then, the
+  stopgap is a `defp` with one `extend-type` impl per ctor, each impl's body
+  being that branch's expression. The call passes `v` as the first argument
+  to the protocol dispatcher, followed by any values the branch expressions
+  close over. The dispatcher aborts on a type with no impl, so only call it
+  on values known to be one of the extended ctors.
 
 * A protocol implementation may not contain an inline C body. When the
   implementation needs C, the protocol impl makes an immediate call to a

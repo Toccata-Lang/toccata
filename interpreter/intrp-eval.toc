@@ -282,11 +282,6 @@
 ;; test.toc). eval-exprs mirrors this: it force-discards each non-final
 ;; value so its side effects run, and returns the final value.
 
-;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
-(defp maybe-kind [m])
-(extend-type None (maybe-kind [_] 0))
-(extend-type Some (maybe-kind [_] 1))
-
 ;; op-field [op]: the field name if `op` is a field-access operator
 ;; (a FieldGetter, or a Symbol whose name starts with "."), else None.
 ;; Dispatched directly per ctor — each impl sees the concrete ctor, so
@@ -297,27 +292,10 @@
 (extend-type ast/Symbol
   (op-field [v]
     (let [nm (.sym-name v)]
-      (cond (= (maybe-kind (str-prefix? "." nm)) 1)
+      (cond (str-prefix? "." nm)
             (Some (subs nm 1 (count nm)))
 
             None))))
-
-;; flow-kind [op]: classify a call operator for the lazy flow-control
-;; handlers (below). 0 = normal (eager) operator; 1 = cond; 2 = either;
-;; 3 = and; 4 = or. Only a Symbol named one of the four flow-control
-;; protocols matches (the reader's cond/and/or desugaring emits bare
-;; symbols); every other operator is a normal eager call. A FieldGetter
-;; is a field-access operator (handled before flow-kind), so it is 0.
-(defp flow-kind [op] 0)
-(extend-type ast/Symbol
-  (flow-kind [v]
-    (let [nm (.sym-name v)]
-      (cond (= nm "cond") 1
-            (= nm "either") 2
-            (= nm "and") 3
-            (= nm "or") 4
-            0))))
-(extend-type ast/FieldGetter (flow-kind [_] 0))
 
 ;; skip-constraint [e]: None if `e` is a leading TypeConstraint (drop
 ;; it), else (Some e) (stop dropping). Dispatched directly per ctor.
@@ -452,7 +430,7 @@
   (let [nm (name-to-str (.sym-name v))
         loc (.loc v)
         mv (env-lookup env nm)]
-    (cond (= (maybe-kind mv) 1)
+    (cond mv
           (resolve (extract mv) env)
 
           (undefined-symbol-err loc nm))))
@@ -466,10 +444,10 @@
               v (eval (extract (first ops)) env)
               tid (type-num v)
               mv (get field-table tid)]
-          (cond (= (maybe-kind mv) 1)
+          (cond mv
                 (let [inner (extract mv)
                       idx-mv (get inner fname)]
-                  (cond (= (maybe-kind idx-mv) 1)
+                  (cond idx-mv
                         (field-read v (extract idx-mv))
 
                         (field-miss-err loc fname tid)))
@@ -512,47 +490,35 @@
 ;; Some -> clause, None -> else.
 (defn eval-cond [ops env loc]
   (let [test (eval (extract (first ops)) env)]
-    (cond (= (maybe-kind test) 1)
+    (cond test
           (eval (extract (first (rest ops))) env)
 
-          (= (maybe-kind test) 0)
-          (eval (extract (first (rest (rest ops)))) env)
-
-          (err-loc loc "cond: test is not a Maybe"))))
+          (eval (extract (first (rest (rest ops)))) env))))
 
 ;; eval-either [ops env loc]: (either test-clause else) — force the test;
 ;; Some -> its value, None -> else.
 (defn eval-either [ops env loc]
   (let [test (eval (extract (first ops)) env)]
-    (cond (= (maybe-kind test) 1)
+    (cond test
           (extract test)
 
-          (= (maybe-kind test) 0)
-          (eval (extract (first (rest ops))) env)
-
-          (err-loc loc "either: test is not a Maybe"))))
+          (eval (extract (first (rest ops))) env))))
 
 ;; eval-and [ops env loc]: (and x y) — force x; Some -> y, None -> x.
 (defn eval-and [ops env loc]
   (let [x (eval (extract (first ops)) env)]
-    (cond (= (maybe-kind x) 1)
+    (cond x
           (eval (extract (first (rest ops))) env)
 
-          (= (maybe-kind x) 0)
-          x
-
-          (err-loc loc "and: first arg is not a Maybe"))))
+          x)))
 
 ;; eval-or [ops env loc]: (or x y) — force x; Some -> x, None -> y.
 (defn eval-or [ops env loc]
   (let [x (eval (extract (first ops)) env)]
-    (cond (= (maybe-kind x) 1)
+    (cond x
           x
 
-          (= (maybe-kind x) 0)
-          (eval (extract (first (rest ops))) env)
-
-          (err-loc loc "or: first arg is not a Maybe"))))
+          (eval (extract (first (rest ops))) env))))
 
 ;; eval-call-normal [op-expr ops loc env]: eval the operator to a value,
 ;; eval the operands, and interpret the call (the dispatch does the rest).
@@ -561,29 +527,45 @@
         ops-vals (eval-ops ops env)]
     (interpret op ops-vals env loc)))
 
+;; flow-call [op-expr ops loc env]: if op-expr is a Symbol named one of
+;; the four flow-control protocols, run that lazy handler and return
+;; (Some result); else None. The reader's cond/and/or desugaring emits
+;; bare symbols; every other operator is a normal eager call (the
+;; default body). A FieldGetter is a field-access operator (handled
+;; before flow-call), so it is None.
+(defp flow-call [op-expr ops loc env] None)
+(extend-type ast/Symbol
+  (flow-call [op-expr ops loc env]
+    (let [nm (.sym-name op-expr)]
+      (cond (= nm "cond")
+            (Some (eval-cond ops env loc))
+
+            (= nm "either")
+            (Some (eval-either ops env loc))
+
+            (= nm "and")
+            (Some (eval-and ops env loc))
+
+            (= nm "or")
+            (Some (eval-or ops env loc))
+
+            None))))
+
 ;; eval-call [call env]: call dispatch — intercept field-access operators
-;; (a FieldGetter from -> threading, or a direct (.f v) call), else a
+;; (a FieldGetter from -> threading, or a direct (.f v) call) and
+;; flow-control operators (bare cond/either/and/or symbols), else a
 ;; normal call.
 (defn eval-call [call env]
   (let [op-expr (.operator call)
         ops (.operands call)
         loc (.loc call)
         fld (op-field op-expr)
-        fk (flow-kind op-expr)]
-    (cond (= (maybe-kind fld) 1)
+        fc (flow-call op-expr ops loc env)]
+    (cond fld
           (field-access (extract fld) ops loc env)
 
-          (= fk 1)
-          (eval-cond ops env loc)
-
-          (= fk 2)
-          (eval-either ops env loc)
-
-          (= fk 3)
-          (eval-and ops env loc)
-
-          (= fk 4)
-          (eval-or ops env loc)
+          fc
+          (extract fc)
 
           (eval-call-normal op-expr ops loc env))))
 
@@ -593,7 +575,7 @@
   (cond (= (count body) 0)
         body
 
-        (= (maybe-kind (skip-constraint (extract (first body)))) 0)
+        (skip-constraint (extract (first body)))
         (skip-constraints (rest body))
 
         body))
@@ -740,7 +722,7 @@
 
         (let [n (extract (first toplevels))
               m (find-main-one n)]
-          (cond (= (maybe-kind m) 1)
+          (cond m
                 m
 
                 (find-main-acc (rest toplevels))))))

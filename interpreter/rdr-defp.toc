@@ -17,23 +17,6 @@
 (add-ns ast (module "intrp-ast.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
 
-;; maybe-kind: tag a Maybe (instance? is unsupported under new-toc).
-(defp maybe-kind [m])
-(extend-type None (maybe-kind [_] 0))
-(extend-type Some (maybe-kind [_] 1))
-
-;; top-kind: tag a TopLevel value (the vector's elements are the
-;; TopLevel union; field getters need a concrete ctor, so the defp-*
-;; protocols below are guarded by this tag).
-(defp top-kind [v])
-(extend-type ast/Definition (top-kind [_] 0))
-(extend-type ast/Defp (top-kind [_] 1))
-(extend-type ast/Main (top-kind [_] 2))
-(extend-type ast/DefType (top-kind [_] 3))
-(extend-type ast/ExtendType (top-kind [_] 4))
-(extend-type ast/AddNs (top-kind [_] 5))
-(extend-type ast/Inline (top-kind [_] 6))
-
 ;; top-name: the name of a TopLevel node (Main is nameless — its name is
 ;; the implicit "main"; AddNs uses its namespace). Used by find-by-name.
 (defp top-name [v])
@@ -50,9 +33,8 @@
 (defn find-by-name-acc [v name]
   (cond (= (count v) 0)
     None
-    (let [e (extract (first v))
-          match (maybe-kind (str= (top-name e) name))]
-      (cond (= match 1)
+    (let [e (extract (first v))]
+      (cond (str= (top-name e) name)
         (Some e)
         (find-by-name-acc (rest v) name)))))
 
@@ -69,11 +51,6 @@
 (defp defp-body [v])
 (extend-type ast/Defp (defp-body [v] (.body v)))
 
-;; elem-kind: tag a Defp body element.
-(defp elem-kind [e])
-(extend-type ast/TypeConstraint (elem-kind [_] 1))
-(extend-type ast/Call (elem-kind [_] 2))
-
 ;; tc-*: extract a TypeConstraint's fields.
 (defp tc-symbol [e])
 (extend-type ast/TypeConstraint (tc-symbol [e] (.symbol e)))
@@ -86,16 +63,20 @@
 (defn call-op-name [e]
   (.sym-name (.operator e)))
 
-;; elem-fingerprint: one body element -> a fingerprint string.
+;; elem-fp: one body element -> a fingerprint string.
 ;;   TypeConstraint -> "tc <symbol> <type-expr>"
 ;;   Call           -> "call <op-name> (<operand-count>)"
-(defn elem-fingerprint [e]
-  (let [k (elem-kind e)]
-    (cond (= k 1)
-      (str* ["tc " (tc-symbol e) " " (tc-type e)])
+(defp elem-fp [e]
+  (str* ["call " (call-op-name e) " ("
+         (number-str (count (.operands e))) ")"]))
+(extend-type ast/TypeConstraint
+  (elem-fp [e]
+    (str* ["tc " (tc-symbol e) " " (tc-type e)])))
 
-      (str* ["call " (call-op-name e) " ("
-             (number-str (count (.operands e))) ")"]))))
+;; elem-fingerprint: plain-function wrapper around elem-fp so map can
+;; take it as its function value.
+(defn elem-fingerprint [e]
+  (elem-fp e))
 
 ;; body-fingerprint: a Defp body vector -> one fingerprint string
 ;; (elements in order, no separators).
@@ -111,46 +92,45 @@
     (let [s (extract (first strs))]
       (print-all-acc (+ acc (pr* s)) (rest strs)))))
 
+;; check-defp-entry: entry is a TopLevel found by name; the Defp impl
+;; verifies the fingerprint, the default impl prints FAIL. Threaded acc.
+(defp check-defp-entry [entry v name expected-params expected-body acc]
+  (print-all-acc acc ["FAIL " name ": entry is not a Defp\n"]))
+(extend-type ast/Defp
+  (check-defp-entry [entry v name expected-params expected-body acc]
+    (let [nm (defp-name entry)
+          pf (str* (str-vect (defp-params entry)))
+          bf (body-fingerprint (defp-body entry))]
+      (cond (and (= (count v) 1)
+                 (str= nm name)
+                 (str= pf expected-params)
+                 (str= bf expected-body))
+        (print-all-acc acc
+                       ["OK " name " params=" pf " body=" bf "\n"])
+        (print-all-acc acc
+                       ["FAIL " name " entries=" (number-str (count v))
+                        " name=" nm " params=" pf " body=" bf
+                        " want-params=" expected-params
+                        " want-body=" expected-body "\n"])))))
+
 ;; check-defp: parse one defp source; verify the vector has exactly one
 ;; entry — a Defp with the expected name, params vector, and body
 ;; fingerprint. Prints one status line. Returns the threaded acc.
 (defn check-defp [acc src name expected-params expected-body]
-  (let [r (rdr/parse-program (rdr/make-state src "defp-test.toc" 1))
-        k (rdr/result-kind r)]
-    (cond (= k 2)
-      (let [st (.state r)
-            line (rdr/state-line st)
-            msg (.msg r)]
-        (print-all-acc acc
-                       ["FAIL(parse) " name ":" (number-str line) ": " msg "\n"]))
+  (let [r (rdr/parse-program (rdr/make-state src "defp-test.toc" 1))]
+    (rdr/check-error r
+                     (let [st (.state r)
+                           line (rdr/state-line st)
+                           msg (.msg r)]
+                       (print-all-acc acc
+                                      ["FAIL(parse) " name ":" (number-str line) ": " msg "\n"]))
 
-      (let [v (.value r)
-            e (find-by-name v name)
-            ek (maybe-kind e)]
-        (cond (= ek 0)
-          (print-all-acc acc ["FAIL " name ": no entry\n"])
+                     (let [v (.value r)
+                           e (find-by-name v name)]
+                       (cond e
+                         (check-defp-entry (extract e) v name expected-params expected-body acc)
 
-          (let [entry (extract e)
-                tk (top-kind entry)]
-            (cond (= tk 1)
-              (let [nm (defp-name entry)
-                    pf (str* (str-vect (defp-params entry)))
-                    bf (body-fingerprint (defp-body entry))]
-                (cond (and (= (count v) 1)
-                           (str= nm name)
-                           (str= pf expected-params)
-                           (str= bf expected-body))
-                  (print-all-acc acc
-                                 ["OK " name " params=" pf " body=" bf "\n"])
-                  (print-all-acc acc
-                                 ["FAIL " name " entries=" (number-str (count v))
-                                  " name=" nm " params=" pf " body=" bf
-                                  " want-params=" expected-params
-                                  " want-body=" expected-body "\n"])))
-
-              (print-all-acc acc
-                             ["FAIL " name ": entry is not a Defp (kind "
-                              (number-str tk) ")\n"]))))))))
+                         (print-all-acc acc ["FAIL " name ": no entry\n"]))))))
 
 (main [_]
   (let [r1 (check-defp 0
