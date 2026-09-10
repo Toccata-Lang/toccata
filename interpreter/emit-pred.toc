@@ -14,14 +14,16 @@
 ;; synthetic Many grammar (mn-alpha / mn-run / mn-entry), asserts its
 ;; exact fingerprint, then emits the full generated module for the
 ;; item-7b synthetic Many fast-path grammar (fn-alpha / fn-digits /
-;; fn-word / fn-entry), asserts its exact fingerprint, and writes it
-;; to interpreter/gen-rdr.toc (a build artifact — never committed;
-;; built by `make gen-rdr`) plus the sample inputs to
+;; fn-word / fn-entry), asserts its exact fingerprint, then emits the
+;; full generated module for the item-7c self-recursive S-expression
+;; grammar (rc-symbol-ish / rc-entry), asserts its exact fingerprint,
+;; and writes it to interpreter/gen-rdr.toc (a build artifact — never
+;; committed; built by `make gen-rdr`) plus the sample inputs to
 ;; interpreter/gen-sample.toc (the failure case; run: ./gen-rdr
 ;; interpreter/gen-sample.toc) and interpreter/gen-sample-ok.toc (the
 ;; success case; run: ./gen-rdr interpreter/gen-sample-ok.toc).
 ;;
-;; Expected output: 11 "OK" lines (one per check). Any "FAIL" line
+;; Expected output: 12 "OK" lines (one per check). Any "FAIL" line
 ;; indicates a problem. Run from the repo root: ./emit-pred
 ;;
 ;; The driver is interpreter-side tooling; interpreted programs may
@@ -623,6 +625,113 @@
            want-fn-entry-defn ""
            want-fn-main]))
 
+;; --- Item 7c: Recur + self-recursion ------------------------------
+;;
+;; The mini S-expression grammar: rc-entry is an Any of rc-symbol-ish
+;; (a single a-z char) and an anonymous All (lifted to rc-entry-1)
+;; of "(", a Many of (Recur rc-entry) (parser-level child -> SLOW
+;; path: the loop defn rc-entry-1-1; the Recur is referenced by the
+;; enclosing rule name — never lifted), and ")". The Recur's f field
+;; is grammar/sub-expression (data the emitter ignores).
+;;
+;; gen-sample.toc (a / (def(ghi)) / (abc): the first two lines parse
+;; — the nested line to its vector-of-text value; the third is
+;; unterminated -> file:line: expected ")", exit 1 (the loop
+;; terminates on the non-matching / missing ")").
+;; gen-sample-ok.toc (a / (def(ghi)) / ((x))): every line parses
+;; (the third exercises deeper nesting) -> exit 0.
+
+;; rc-symbol-ish is a SINGLE-char rule (non-empty): the entry and the
+;; Many (Recur) loop child must never match zero-length, or the loop
+;; spins on the unconsumed state until the term buffer exhausts (the
+;; hand-written rdr's parse-expr is total for the same reason — its
+;; last clause takes a char and retries; the real grammar's symbol
+;; rule is non-empty too: symbol-start + rest).
+(def rc-symbol-ish
+  (grammar/Rule "rc-symbol-ish" (grammar/CharRange "a" "z")))
+(def rc-entry
+  (grammar/Rule "rc-entry"
+                (grammar/Any [rc-symbol-ish
+                              (grammar/All ["("
+                                            (grammar/Many
+                                             (grammar/Recur
+                                              grammar/sub-expression))
+                                            ")"])])))
+
+(def want-rc-symbol-ish-defn
+  (to-str ["(defn rc-symbol-ish [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      " want-lower-case
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-rc-entry-1-1-defn
+  (to-str ["(defn rc-entry-1-1 [state acc]"
+         "  (parse-or (parse-then (rc-entry state)"
+         "                        (fn [v s2]"
+         "                          (rc-entry-1-1 s2 (vect-conj acc v))))"
+         "            (fn [e]"
+         "              (rdr/ParserMatch acc state))))"]))
+
+(def want-rc-entry-1-defn
+  (to-str ["(defn rc-entry-1 [state]"
+         "  (parse-then (cond (str-prefix? \"(\" (.input state))"
+         "                    (rdr/ParserMatch \"(\" (rdr/take-char state))"
+         "                    (rdr/ParserError \"expected \\\"(\\\"\" state))"
+         "              (fn [v0 s1]"
+         "                (parse-then (rc-entry-1-1 s1 empty-vector)"
+         "                            (fn [v1 s2]"
+         "                              (parse-then (cond (str-prefix? \")\" (.input s2))"
+         "                                                (rdr/ParserMatch \")\" (rdr/take-char s2))"
+         "                                                (rdr/ParserError \"expected \\\")\\\"\" s2))"
+         "                                          (fn [v2 s3]"
+         "                                            (rdr/ParserMatch [v0 v1 v2] s3))))))))"]))
+
+(def want-rc-entry-defn
+  (to-str ["(defn rc-entry [state]"
+         "  (parse-or (rc-symbol-ish state)"
+         "            (fn [e1]"
+         "              (rc-entry-1 state))))"]))
+
+(def want-rc-main
+  (to-str ["(defn parse-seq [file state acc]"
+         "  (let [s (rdr/skip-whitespace state)]"
+         "    (cond (str= (.input s) \"\")"
+         "      (rdr/ParserMatch acc s)"
+         "      (parse-or (parse-then (rc-entry s)"
+         "                            (fn [v s2]"
+         "                              (parse-seq file (rdr/skip-whitespace s2)"
+         "                                          (to-str [acc (to-str [v \"\\n\"])]))))"
+         "                (fn [e] (parse-error-line file acc"
+         "                                          (rdr/state-line (parse-error-state e))"
+         "                                          (parse-error-msg e)))))))"
+         ""
+         "(main [argv]"
+         "  (let [file (extract (get argv 1))]"
+         "    (parse-then (parse-seq file (rdr/make-state (slurp file) file 1) \"\")"
+         "                (fn [out s] (pr* out)))))"]))
+
+;; The module carries a (def rc-entry) forward declaration after the
+;; header (emit-module emits one for every rule whose subtree
+;; contains a Recur): the loop helper rc-entry-1-1 (emitted before
+;; the rule defn) calls rc-entry, and a defn body referencing a
+;; later top-level symbol fails Undefined symbol — self-recursion
+;; DOES need the crutch (the plan's "self-recursion needs none" note
+;; is superseded; see the as-built note).
+(def want-rc-decl "(def rc-entry)")
+
+(def want-rc-module
+  (to-str [want-header ""
+           want-rc-decl ""
+           want-rc-symbol-ish-defn ""
+           want-rc-entry-1-1-defn ""
+           want-rc-entry-1-defn ""
+           want-rc-entry-defn ""
+           want-rc-main]))
+
 ;; write-file [path content]: write the string to the file (inline
 ;; C). The driver runs from the repo root; gen-rdr.toc is a build
 ;; artifact written by this driver.
@@ -682,17 +791,20 @@
         fn-lines (emit/emit-module [fn-alpha fn-digits fn-word fn-entry] "fn-entry")
         fn-got (to-str fn-lines)
         r11 (check r10 "emit-module-fn" fn-got want-fn-module)
-        r12 (cond (str= fn-got want-fn-module)
-               (+ r11 (write-file "interpreter/gen-rdr.toc"
-                                  (to-str (interpose fn-lines "\n"))))
-
-               r11)
-        r13 (cond (str= fn-got want-fn-module)
-               (+ r12 (write-file "interpreter/gen-sample.toc" "123abc45!\n*"))
+        rc-lines (emit/emit-module [rc-symbol-ish rc-entry] "rc-entry")
+        rc-got (to-str rc-lines)
+        r12 (check r11 "emit-module-rc" rc-got want-rc-module)
+        r13 (cond (str= rc-got want-rc-module)
+               (+ r12 (write-file "interpreter/gen-rdr.toc"
+                                  (to-str (interpose rc-lines "\n"))))
 
                r12)
-        r14 (cond (str= fn-got want-fn-module)
-               (+ r13 (write-file "interpreter/gen-sample-ok.toc" "123abc45!\n!"))
+        r14 (cond (str= rc-got want-rc-module)
+               (+ r13 (write-file "interpreter/gen-sample.toc" "a\n(def(ghi))\n(abc"))
 
-               r13)]
-    r14))
+               r13)
+        r15 (cond (str= rc-got want-rc-module)
+               (+ r14 (write-file "interpreter/gen-sample-ok.toc" "a\n(def(ghi))\n((x))"))
+
+               r14)]
+    r15))

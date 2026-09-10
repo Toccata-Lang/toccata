@@ -510,6 +510,24 @@ Curated for this project; the source of truth is the compiler plan.
   deleted before the commit (2026-09-04, item 3).
 - A program ending with a SUB or SUP error probably means a function
   called with the wrong number of arguments.
+- A wrong-type field access / mis-threaded call can make a driver a
+  SILENT NO-OP (2026-09-10, item 7c): a `->` threading bug in
+  `emit-module` — threading `(rule-decls rules)` between
+  `(emit-header)` and `(emit-rules-acc rules)` passed the header's
+  LINES vector as `rule-decls`' `rules` argument (its signature is
+  `[rules]`, not `[acc rules]` — the `->` into `emit-rules-acc` was
+  fine because its first param IS the acc) — made `rule-decls-acc`
+  run `(.parser ...)` over plain
+  String lines. No load error, no crash: the compiled driver ran,
+  exited 0, printed NOTHING (not even the first check line), ITRS
+  ~10.5k (vs ~2.5M for a working run), malloc diff 0, deterministic
+  3/3. The wrong-type `.parser` access produced an error value that
+  silently killed the enclosing `let` result chain, and the lazy
+  machine never forced the `pr*` side effects. Debug hint: a driver
+  that suddenly prints nothing with exit 0, diff 0, and ITRS dropped
+  to ~10k has a silent error value in its `let` chain (wrong-type
+  field access, mis-threaded call) — not a toolchain crash; bisect
+  with a small probe that calls the suspect function directly.
 
 **Language / core API (new core, as used by generated + emitter code)**
 
@@ -526,6 +544,40 @@ Curated for this project; the source of truth is the compiler plan.
   define `expression`, then define the `defn`. Runtime binding of the
   declared global is UNVERIFIED (no driver can run — see the
   toolchain fact below).
+- Self-recursion through a LIFTED HELPER needs the `(def name)`
+  crutch after all (2026-09-10, item 7c): the generated-module
+  template note "self-recursion needs none under new-toc" holds only
+  when the recursive call sits in the rule's OWN defn (a defn calling
+  itself). When the `Recur` lands in a lifted helper defn (the `Many`
+  loop defn `<rule>-1-1`, emitted BEFORE the rule defn per use-after-
+  definition), the helper's call to the rule name is a CROSS-DEFN
+  forward reference and fails `Undefined symbol: '<rule>'` at load
+  (deterministic). The emitter now emits a bare `(def <rule>)` after
+  the module header for every rule whose subtree contains a `Recur`
+  (`contains-recur?` / `rule-decls`); the bare def is separated from
+  the rule defn by the other rule blocks (immediately-before does not
+  register — the fact above). Verified: the generated rc module
+  loads, builds, and parses nested input with the crutch.
+- A zero-length-capable parser in a LOOP POSITION spins the term
+  buffer (2026-09-10, item 7c): the site-(b) `Many` loop and the
+  generated `parse-seq` terminate on `ParserError`; if the loop CHILD
+  (or the entry rule) can `ParserMatch` WITHOUT consuming input (a
+  `Many` fast-path `read-run` over a non-matching prefix returns a
+  zero-length run), the loop retries on the same state forever and
+  dies with `Error: Not enough space to allocate pair.
+  buffEnd=1048576, buffSize=1048576 at new.c:264` (the 1MB term
+  buffer). The hand-written rdr's `parse-expr` is TOTAL for exactly
+  this reason (its last clause takes a char and retries; it never
+  matches empty). The item-7c synthetic grammar's first `symbol-ish`
+  (a `Many` of a `CharRange`) hit this; the fix was a non-empty
+  `symbol-ish` (a single-char rule — the real grammar's `symbol` is
+  non-empty too: `symbol-start` + rest). WARNING for item 8: the
+  real grammar's `expression` has `int-literal` (`Many digits` —
+  zero-length-capable) as its FIRST Any alt; as generated,
+  `expression` would match empty on non-digit input and `parse-seq`
+  would spin. Item 8 must address this (non-empty number shape in the
+  grammar data, or a consumption guard) — the plan does not settle
+  it; treat as an item-8 design question, not a 7c gap.
 - No `instance?` — dispatch is via protocols (defp + extend-type). A
   defp WITH a body registers the body under `UnknownType` (the
   dispatcher's default case); a defp without a body aborts on an
@@ -902,6 +954,60 @@ generated code)**
   always the toolchain — an unbalanced-paren source error crashed
   new-toc silently 5/5 this run (see the fact above).
 
+- Item 7c (2026-09-10): `Recur` + self-recursion is CODE-COMPLETE
+  and VERIFIED in `interpreter/intrp-emit.toc` — the `Recur`
+  `emit-body` impl (a call to `(.rule ctx)` over `state`; the `f`
+  field is data the emitter ignores), the child-position treatment
+  (`Recur` `child-ref` impl → `(rule-name sv)` — referenced by the
+  enclosing rule name like `Rule`; `Recur` `child-lifted?` impl →
+  `None`, never lifted — no trivial wrapper defn), `contains-recur?`
+  / `contains-recur-any` / `contains-recur-any-acc` (a plain defn
+  over `type-name`, the `alt-char-level?` dispatch style;
+  `contains-recur?` forward-declared at the top — mutually recursive
+  with `contains-recur-any-acc`), `rule-decls-acc` / `rule-decls`
+  (a `(def <name>)` line for every rule whose subtree contains a
+  `Recur`), and the `emit-module` final form (header + rule-decls +
+  one parser defn per Rule + main template; the header + decls are
+  joined in a LET — a nested `append-acc` as a direct call argument
+  is the codegen hazard; the pre-7c `->` threading into
+  `emit-rules-acc` was fine because its first param IS the acc, but
+  threading into `rule-decls [rules]` was the silent-no-op bug — see
+  the fact above). Consequence: the generated module carries a
+  `(def <rule>)` forward declaration after the header for every
+  self-recursive rule — the template note "self-recursion needs
+  none" is REFUTED for the lifted-helper shape (see the fact above).
+  The driver gains the rc mini S-expression grammar (`rc-symbol-ish`
+  = Rule over CharRange a-z — a SINGLE char, non-empty: the entry
+  and the Many-loop child must never match zero-length or the loop
+  spins the term buffer — the first version, a `Many` of the
+  CharRange, matched empty and spun to `new.c:264`; the real
+  grammar's `symbol` is non-empty too; WARNING for item 8: the real
+  `expression`'s first alt `int-literal` = `Many digits` is
+  zero-length-capable — see the fact), `rc-entry` = Rule over Any
+  [rc-symbol-ish, All ["(" (Many (Recur grammar/sub-expression))
+  ")"]] (the `f` field is the grammar's `sub-expression` defn —
+  data the emitter ignores), the `want-rc-*` exact-fingerprint
+  checks (12 total), and the rc module + samples are what get written
+  to `gen-rdr.toc` / `gen-sample.toc` (failure: `a` / `(def(ghi))` /
+  `(abc`) / `gen-sample-ok.toc` (success: `a` / `(def(ghi))` /
+  `((x))`). Verification (2026-09-10): `make emit-pred` 12/12 OK,
+  deterministic 3/3, remaining nodes 0 (the driver leaks 53 = the 45
+  HEAD baseline measured in the same window + 8 from the rc path —
+  the leak baseline drifts with machine state; the leak half is held
+  to the generated module's success path, as in 7a/7b); the generated
+  module loads (with the `(def rc-entry)` crutch), builds, and
+  compiles; the SUCCESS path prints `a` / `[( [d e f [( [g h i] )]]
+  )]` / `[( [[( [x] )]] )]`, exit 0, malloc diff 0, remaining 0,
+  deterministic 2/2 (nested input to the correct vector-of-text
+  values — `to-str` renders strings bare and vectors bracketed, space-
+  joined); the FAILURE path prints `a` / `[( [d e f [( [g h i] )]]
+  )]` / `interpreter/gen-sample.toc:3:expected ")"`, exit 1 (the
+  unterminated `(abc` line: the Many loop stops at EOF, then the
+  missing `)` errors — the loop terminates on non-matching input). New
+  facts recorded: the self-recursion crutch (refutes the template
+  note), the silent-no-op wrong-type-field-access hazard, the
+  zero-length-match term-buffer spin (with the item-8 warning).
+
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
   never committed from there) carries a local 3-ctor result deftype
@@ -1062,7 +1168,7 @@ a solution.
     where each fast-path run is ONE string and the slow path yields a
     vector of child values; zero leaks, 0 remaining nodes.
 
-- [ ] **7c. `Recur` + self-recursive end-to-end (item 7 done-when)**
+- [x] **7c. `Recur` + self-recursive end-to-end (item 7 done-when)**
   `emit-body` impl for `Recur` (a call to `(.rule ctx)` —
   self-recursion only; the `f` field is ignored). `emit-module`
   final form confirmed: explicit rule vector, every Rule → parser

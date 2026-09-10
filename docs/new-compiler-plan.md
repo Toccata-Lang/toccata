@@ -1089,6 +1089,27 @@ rules; each form's rule arrives with its phase.
   the same window to confirm the toolchain itself is up — this run
   the HEAD driver compiled 3/3 clean while the edited file aborted
   5/5, isolating the source as the cause.
+- **A wrong-type field access can make a program a SILENT NO-OP
+  (2026-09-10, parser-gen item 7c)**: `(.parser ...)` run over plain
+  String values (caused by a `->` threading bug that passed a lines
+  vector where a rules vector was expected) produced no load error and
+  no crash — the compiled driver ran, exited 0, printed NOTHING, ITRS
+  ~10.5k (vs ~2.5M working), malloc diff 0, deterministic 3/3. The
+  wrong-type access yields an error value that silently kills the
+  enclosing `let` result chain; the lazy machine never forces the
+  `pr*` side effects. Debug hint: a driver that suddenly prints
+  nothing with exit 0 / diff 0 / ITRS ~10k has a silent error value
+  in its `let` chain — bisect with a small probe calling the suspect
+  function directly.
+- **A helper defn that calls a LATER rule defn needs the `(def name)`
+  crutch (2026-09-10, parser-gen item 7c)**: refines the forward-
+  declaration fact — a defn calling ITSELF needs no declaration, but
+  when a recursive reference lands in a helper defn emitted before
+  the rule defn it calls (the generated-parser loop-defn shape), the
+  cross-defn forward reference fails `Undefined symbol: '<rule>'` at
+  load (deterministic). A bare `(def <rule>)` separated from the defn
+  by other top-level forms fixes it (immediately-before does not
+  register — the existing fact).
 
 ## Settled (continued)
 

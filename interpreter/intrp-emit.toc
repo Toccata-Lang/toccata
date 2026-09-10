@@ -46,6 +46,12 @@
 ;; flipped-receiver protocol stays the Many fast/slow
 ;; classification). The Many child-ref is path-aware: fast path ->
 ;; (name sv), loop path -> (name sv empty-vector).
+;;
+;; Item 7c: Recur + self-recursion — the emit-body impl for Recur
+;; (a call to the enclosing rule name, (.rule ctx); the f field is
+;; data the emitter ignores), and the child-position treatment:
+;; Recur is referenced by the rule name in call position (like Rule)
+;; — never lifted, no helper defn.
 
 (add-ns grammar (module "intrp-grammar.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
@@ -57,6 +63,7 @@
 (def any-body-acc)
 (def lifted-child-block)
 (def all-alts-char-level?)
+(def contains-recur?)
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -310,6 +317,11 @@
 (extend-type grammar/Rule (child-ref [v i sv ctx]
   [(to-str ["(" (.name v) " " sv ")"])]))
 
+;; Recur is referenced by the enclosing rule name (the rule's defn is
+;; emitted at module level) — the same treatment as Rule (item 7c).
+(extend-type grammar/Recur (child-ref [v i sv ctx]
+  [(to-str ["(" (.rule ctx) " " sv ")"])]))
+
 ;; ref-cont-acc [acc lines b]: the ref's continuation lines, each
 ;; prefixed with the alignment indent b.
 (defn ref-cont-acc [acc lines b]
@@ -433,6 +445,10 @@
   (Some pc))
 
 (extend-type grammar/Rule (child-lifted? [v] None))
+
+;; Recur is referenced by the enclosing rule name (item 7c) — never
+;; lifted, like Rule.
+(extend-type grammar/Recur (child-lifted? [v] None))
 
 (extend-type String (child-lifted? [v] None))
 
@@ -632,6 +648,84 @@
   (last-line
    (emit-many (.parser v)
               (EmitCtx (.rule ctx) (to-str [(.prefix ctx) "0-"]))))))
+
+;; --- Item 7c: Recur + self-recursion -------------------------------
+
+;; contains-recur-any-acc [alts]: Some iff any alt's subtree contains
+;; a Recur (acc recursion — the reduce-capture leak).
+(defn contains-recur-any-acc [alts]
+  (cond (= (count alts) 0)
+    None
+
+    (let [r (contains-recur? (extract (first alts)))]
+      (cond r
+        r
+
+        (contains-recur-any-acc (rest alts))))))
+
+;; contains-recur-any [alts]: Some iff any alt's subtree contains a
+;; Recur.
+(defn contains-recur-any [alts]
+  (contains-recur-any-acc alts))
+
+;; contains-recur? [pc]: Some iff pc's subtree contains a Recur
+;; (self-recursion). A plain defn over type-name (the same dispatch
+;; style as alt-char-level?). Needed by emit-module: a rule whose
+;; subtree contains a Recur gets a (def name) forward declaration
+;; before its helper defns — the loop helper (emitted before the
+;; rule defn) calls the rule name, and a defn body referencing a
+;; later top-level symbol fails Undefined symbol (the bare def must
+;; be separated from the defn — immediately before it does not
+;; register; see Inherited verified facts).
+(defn contains-recur? [pc]
+  (cond (str= (type-name pc) "Recur")
+    (Some pc)
+
+    (str= (type-name pc) "All")
+    (contains-recur-any (.parsers pc))
+
+    (str= (type-name pc) "Any")
+    (contains-recur-any (.parsers pc))
+
+    (str= (type-name pc) "Many")
+    (contains-recur? (.parser pc))
+
+    (str= (type-name pc) "Ignore")
+    (contains-recur? (.parser pc))
+
+    (str= (type-name pc) "Rule")
+    (contains-recur? (.parser pc))
+
+    None))
+
+;; rule-decls-acc [acc rules]: the (def <name>) forward-declaration
+;; lines for the rules whose subtree contains a Recur (item 7c).
+(defn rule-decls-acc [acc rules]
+  (cond (= (count rules) 0)
+    acc
+
+    (let [r (extract (first rules))]
+      (cond (contains-recur? (.parser r))
+        (rule-decls-acc
+         (append-acc acc [(to-str ["(def " (.name r) ")"])])
+         (rest rules))
+
+        (rule-decls-acc acc (rest rules))))))
+
+;; rule-decls [rules]: the forward-declaration lines.
+(defn rule-decls [rules]
+  (rule-decls-acc [] rules))
+
+;; Recur: a call to the enclosing rule name (.rule ctx) — self-
+;; recursion only; the f field (a defn in the grammar file) is data
+;; the emitter ignores. A Recur targeting a rule other than the
+;; enclosing one is unsupported (the 67a1125 grammar has only self-
+;; recursion). In child position Recur is referenced by the rule
+;; name via child-ref (never lifted — child-lifted? None), so this
+;; body is for a Recur in defn-body position (a rule whose parser is
+;; a Recur directly, or a lifted position the lifting rule reaches).
+(extend-type grammar/Recur (emit-body [v ctx]
+  [(to-str ["(" (.rule ctx) " state)"])]))
 
 ;; emit-helpers [acc ps i prefix ctx]: the lifted helper defn blocks
 ;; for the children ps[i..] (sub-helpers first, post-order): each
@@ -842,17 +936,20 @@
    "    (parse-then (parse-seq file (rdr/make-state (slurp file) file 1) \"\")"
    "                (fn [out s] (pr* out)))))"])
 
-;; emit-module: the full generated module — header, one parser defn
-;; per Rule, the parse-seq loop + main template (the entry rule name
-;; spliced into the loop). -> [String]
+;; emit-module: the full generated module — header, the (def name)
+;; forward declarations for the self-recursive rules (item 7c), one
+;; parser defn per Rule, the parse-seq loop + main template (the
+;; entry rule name spliced into the loop). -> [String]
 ;;
 ;; Forward-declared: emit-module is the file's LAST defn, and
 ;; new-toc's symbol-loss race drops a module's last defn from the
 ;; symbol table (the importer then fails Undefined symbol). The bare
 ;; (def) keeps the symbol registered (the parse-program /
 ;; parse-program-acc pattern).
+;;
+;; The header + decls are joined in a LET (the let-bound value is
+;; safe to pass — a nested append-acc as a direct call argument is
+;; the codegen miscompile hazard).
 (defn emit-module [rules entry]
-  (append-acc
-   (-> (emit-header)
-       (emit-rules-acc rules))
-   (emit-main entry)))
+  (let [hdr (append-acc (emit-header) (rule-decls rules))]
+    (append-acc (emit-rules-acc hdr rules) (emit-main entry))))
