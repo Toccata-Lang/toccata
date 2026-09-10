@@ -437,6 +437,27 @@ Curated for this project; the source of truth is the compiler plan.
   small files still build. Machine memory was healthy (43GB
   available). The degradation appears to be a machine-state issue,
   not a source issue (the pristine committed driver fails too).
+  UPDATE (2026-09-09, item 6, third degradation): the same 19:10
+  binary opened another window this evening (trivial programs, both
+  libraries, and the pre-item-6 driver all clean — 5/5) and the
+  crash set then EXPANDED over ~30 min: the `-` / `+` single-char
+  literals in the driver's Any-alt position went from building to
+  deterministic silent aborts (13/13, 8/8), and by the end even the
+  known-good pre-item-6 driver segfaulted intermittently (1/8) while
+  the new driver crashed 15/15. Memory healthy (43GB). The crash set
+  drifts with machine state — a content combination that builds at
+  one moment may crash ten minutes later; verify in a healthy window
+  and do not chase content workarounds against a drifting crash set.
+- Single-char `-` / `+` string literals crash new-toc codegen
+  (2026-09-09, item 6): in `emit-pred.toc`, the grammar-data alt
+  `(grammar/Any [... "-"])` (and likewise `"+"`) crashes new-toc's
+  codegen with a silent abort (no error message) — deterministic
+  while observed (13/13, 8/8). Every other single char tested at the
+  same position builds (`x 9 ! * ( ) = < > , : ? @ $ % # _`); `/` is
+  flaky (1 segfault in 3). The SAME literals inside the item-5
+  fingerprint strings build fine, so the trigger is
+  position/context-specific, not the char in general. Workaround:
+  the synthetic sample uses `!`.
 - A `scratch/` probe cannot `add-ns` a module in `interpreter/` —
   add-ns paths resolve against the importing file's directory and
   `../` is forbidden, so `scratch/` probes are limited to
@@ -642,16 +663,18 @@ generated code)**
   `parse-error-line` splices them into the exit message on error.
   The driver (`emit-pred.toc`) carries the `an-any` synthetic grammar
   (Any of a named Rule `an-alpha`, an anonymous All (lifted to
-  `an-any-1`), and a bare String alt `"-"` — the literal is a SINGLE
-  char outside a-z0-9: alts are tried in order over the defn's
-  `state`, so a literal starting with an a-z/digit char is eaten
+  `an-any-1`), and a bare String alt `"!"` — the literal is a SINGLE
+  char outside a-z0-9, and NOT `-` or `+` (those literals in this
+  position crash new-toc's codegen — see the fact above): alts are
+  tried in order over the defn's `state`, so a literal starting with
+  an a-z/digit char is eaten
   char-by-char by the earlier alts — the original `"xy"` sample
   printed `x` and `y` (an-alpha wins) and the String alt NEVER fired,
   violating the done-when's "each alternative wins at least once" —
   and `take-char` consumes exactly one char, so a longer literal
   would leave a re-parsed remainder), the `emit-module-an`
   exact-fingerprint check (9 checks total), and the `gen-sample.toc`
-  write (`a / 42 / - / 5`). Verification state: with the toolchain
+  write (`a / 42 / ! / 5`). Verification state: with the toolchain
   UP earlier this session (new-toc 2026-09-09 19:10), `make
   emit-pred` showed 9/9 OK (zero malloc diff, 0 remaining nodes) and
   `make gen-rdr` built; `./gen-rdr interpreter/gen-sample.toc` on the
@@ -661,13 +684,20 @@ generated code)**
   the `"-"` sample fix above). The `want-an-any-defn` fingerprint
   also gained a 7th closing paren on the last line (the old 6 was
   wrong: ParserError + cond + fn + parse-or + fn + parse-or + defn).
-  The `"-"` sample change is UNVERIFIED — the toolchain degraded
-  again mid-session (see the BROKEN AGAIN fact's second update): all
-  non-trivial files crash (15/15). Next run: `make emit-pred` (expect
-  9 OK), `make gen-rdr`, `./gen-rdr interpreter/gen-sample.toc`
-  (expect `a` / `[4 2]` / `-` lines then
-  `gen-sample.toc:4:expected "-"`, exit 1, zero leaks), then check
-  the box and commit.
+  The single-char sample change is UNVERIFIED — the toolchain
+  degraded again mid-session (see the BROKEN AGAIN fact's third
+  update): the driver crashed 15/15 (silent abort, no error
+  message). Also found and fixed this run: the committed driver had
+  a MISSING `)` on the `an-any` def (the unverified `"-"` edit
+  dropped it — `Error at emit-pred.toc: 253; Missing ")"`); the fix
+  is verified (the parse error is gone; the subsequent crashes are
+  the toolchain, not the source). The sample char is now `!` (was
+  `-`): `-` and `+` in the Any-alt position crash new-toc's codegen
+  deterministically (see the fact above), `!` builds. Next run (in a
+  healthy toolchain window): `make emit-pred` (expect 9 OK), `make
+  gen-rdr`, `./gen-rdr interpreter/gen-sample.toc` (expect `a` /
+  `[4 2]` / `!` lines then `gen-sample.toc:4:expected "!"`, exit 1,
+  zero leaks), then check the box and commit.
 
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,

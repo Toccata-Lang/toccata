@@ -1033,6 +1033,29 @@ rules; each form's rule arrives with its phase.
   the same session the same binary built the parser-gen drivers
   intermittently (retry loops of 5–12 attempts; the symbol-loss race
   and truncated-C link failures were the failure modes).
+  UPDATE (2026-09-09, parser-gen item 6, third degradation): the
+  restored 19:10 binary opened another window this evening (trivial
+  programs, both parser-gen libraries, and the pre-item-6 driver all
+  clean — 5/5) and the crash set then EXPANDED over ~30 min: the
+  `-` / `+` single-char literals in the driver's Any-alt position
+  went from building to deterministic silent aborts (13/13, 8/8),
+  and by the end even the known-good pre-item-6 driver segfaulted
+  intermittently (1/8) while the new driver crashed 15/15. Memory
+  healthy (43GB). The crash set drifts with machine state — a
+  content combination that builds at one moment may crash ten
+  minutes later; verify in a healthy window and do not chase content
+  workarounds against a drifting crash set.
+- **Single-char `-` / `+` string literals crash new-toc codegen
+  (2026-09-09, parser-gen item 6)**: in `interpreter/emit-pred.toc`,
+  the grammar-data alt `(grammar/Any [... "-"])` (and likewise
+  `"+"`) crashes new-toc's codegen with a silent abort (no error
+  message) — deterministic while observed (13/13, 8/8). Every other
+  single char tested at the same position builds (`x 9 ! * ( ) = < >
+  , : ? @ $ % # _`); `/` is flaky (1 segfault in 3). The SAME
+  literals inside other string constants in the same file build
+  fine, so the trigger is position/context-specific, not the char in
+  general. The crash set also drifts with machine state (see the
+  BROKEN AGAIN fact above) — re-verify before relying on this.
 
 ## Settled (continued)
 
