@@ -459,7 +459,26 @@ Curated for this project; the source of truth is the compiler plan.
   (the 19 baseline + 11 from the mn emission path), and the generated
   module builds and parses correctly (see the Item 7a note). The
   leak/remaining-nodes half of the 7a done-when is PENDING a healthy
-  window; the functional half is verified.
+  window; the functional half is verified. UPDATE (2026-09-10, item
+  7b): the LEAK baseline has DRIFTED again within the same window —
+  the pristine HEAD driver now leaks 30 (was 19 in the 7a run; the
+  7b driver leaks 45 = the 30 baseline + 15 from the fn emission
+  path), while everything functional still works (11/11 OK,
+  deterministic; the generated module's success path is diff 0 /
+  remaining 0). The baseline drifts with machine state; attribute
+  driver-side leaks to the baseline by measuring HEAD in the same
+  window, and hold the leak half of a done-when to the generated
+  module's success path until a healthy window.
+- A 5/5 silent-abort is NOT always the toolchain (2026-09-10, item
+  7b): an UNBALANCED-PAREN source error in `emit-pred.toc` (a
+  fingerprint def one `)` short) crashed new-toc with a silent abort
+  5/5 — no error message — while the SAME class of error elsewhere
+  in the same session printed `Error at file: N; Missing ")"`. The
+  retry rule (silent crash = transient) can send a run chasing a
+  healthy window for a source bug. Before blaming the toolchain on a
+  5/5 silent abort: check the file's paren balance (strings
+  excluded) and compile a known-good file (e.g. `git stash` + HEAD
+  driver) in the same window to confirm the toolchain itself is up.
 - Single-char `-` / `+` string literals crash new-toc codegen
   (2026-09-09, item 6): in `emit-pred.toc`, the grammar-data alt
   `(grammar/Any [... "-"])` (and likewise `"+"`) crashes new-toc's
@@ -826,6 +845,63 @@ generated code)**
   containing-`to-str`-over-a-let-bound load crash (use `conj` for the
   1-element vector instead).
 
+- Item 7b (2026-09-10): the `Many` fast path is CODE-COMPLETE and
+  VERIFIED in `interpreter/intrp-emit.toc` — `many-run-defn` (the
+  `<name>-char` set-predicate defn from the child's `emit-pred` +
+  the `read-run` wrapper with the `Token` → `ParserMatch` wrap; the
+  wrapper's last line ends with FOUR closes after the final `t`
+  — `.state`, `ParserMatch`, `let`, defn — the ctor-table shape),
+  `many-run-path` (the defns + the call expression `(<name> state)`
+  as the last line), `many-loop-path` (the item-7a default body
+  extracted so the `Any` impl can fall through to it), the `emit-`
+  `many` impls (CharRange / NotChar / bare String → run path; `Any`
+  → run path over the combined `(or ...)` pred when ALL alts are
+  char-level, loop path when mixed — no abort at a legitimate mixed
+  site; Rule / Many delegate per the ctor table; the default body
+  stays the loop path), and `alt-char-level?` / `all-alts-
+  char-level?` (the alt-level char queries — a plain `defn` over
+  `type-name`, the same dispatch style as `lifted-child-block`'s
+  Many check; the flipped-receiver protocol stays the Many fast/slow
+  classification; `all-alts-char-level?` is forward-declared at the
+  top of the file — it and `alt-char-level?` are mutually
+  recursive). The `Many` `child-ref` impl moved to the item-7b
+  section and is now PATH-AWARE: fast path → `(<name> <sv>)`, loop
+  path → `(<name> <sv> empty-vector)` (it needs `alt-char-level?`,
+  defined later than the item-5 section). Consequence: a `Many` of
+  a char-level Rule is now FAST (the Rule delegates) — the item-7a
+  mn fingerprints for `mn-run-0` / `mn-entry-0` changed from loop
+  defns to the fast-path shape (the `-char` defn is named after the
+  Many's helper name: `mn-run-0-char`, not `mn-run-char`), and the
+  mn module is now the fingerprint check only. The driver gains the
+  fn synthetic grammar (`fn-alpha` = Rule over CharRange a-z;
+  `fn-digits` = Rule over Many of a CharRange — fast; `fn-word` =
+  Rule over Many of the char-level Rule — fast via delegation;
+  `fn-entry` = All of [fn-digits, fn-word, Many of the mixed Any
+  fn-mix (fn-alpha alt + anonymous All alt — SLOW: lifted to
+  fn-entry-2-0, the All to fn-entry-2-0-1, its CharRange to
+  fn-entry-2-0-1-0, loop defn fn-entry-2), bare String "!"]), the
+  `want-fn-*` exact-fingerprint checks (11 total), and the fn
+  module + samples are what get written to `gen-rdr.toc` /
+  `gen-sample.toc` (failure: `123abc45!` / `*`) / `gen-sample-
+  ok.toc` (success: `123abc45!` / `!`). Verification (2026-09-10,
+  the fourth-degradation window — see the BROKEN AGAIN fact's fifth
+  update): `make emit-pred` prints 11/11 OK, deterministic 3/3
+  reruns, remaining nodes 0; the driver leaks 45 = the 30 HEAD
+  baseline (drifted from 19) + 15 from the fn emission path — the
+  leak half is PENDING a healthy window as in 7a. The generated
+  module loads (`*** Loaded`), builds, and compiles; the SUCCESS
+  path (`123abc45!` / `!`) prints `[123 abc [[4] [5]] !]` then
+  `[  [] !]` (the two zero-length fast runs render as empty
+  strings), exit 0, malloc diff 0, remaining nodes 0; the FAILURE
+  path (`123abc45!` / `*`) prints `[123 abc [[4] [5]] !]` then
+  `interpreter/gen-sample.toc:2:expected "!"`, exit 1 — each fast-
+  path run is ONE string (`123`, `abc`), the slow loop yields a
+  vector of child values (`[[4] [5]]` — each child value is the
+  All's one-element vector), and the loop terminates on the
+  non-matching `*`. New fact recorded: a 5/5 silent-abort is NOT
+  always the toolchain — an unbalanced-paren source error crashed
+  new-toc silently 5/5 this run (see the fact above).
+
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
   never committed from there) carries a local 3-ctor result deftype
@@ -970,7 +1046,7 @@ a solution.
     child-values, with the loop terminating on non-matching input;
     zero leaks, 0 remaining nodes.
 
-- [ ] **7b. `Many` fast path (char-level `emit-many` impls)**
+- [x] **7b. `Many` fast path (char-level `emit-many` impls)**
   The run-path impls for the char-level ctors (`CharRange`,
   `NotChar`, bare `String`, `Any`, and `Rule`/`Many` delegating per
   the ctor table): emit the `<name>-char` set-predicate defn from the

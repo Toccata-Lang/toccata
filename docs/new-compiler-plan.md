@@ -1075,6 +1075,20 @@ rules; each form's rule arrives with its phase.
   the LSan report is the harness baseline alone (compare against a
   trivial control — `(main [_] (exit 1 "x"))` leaks 16 bytes / 2
   allocations from the same normalize frames).
+- **A 5/5 silent-abort is NOT always the toolchain (2026-09-10,
+  parser-gen item 7b)**: an UNBALANCED-PAREN source error in
+  `interpreter/emit-pred.toc` (a fingerprint `def` one `)` short)
+  crashed `new-toc` with a silent abort (exit 134, no error message)
+  5/5, while the SAME class of error elsewhere in the same session
+  printed `Error at file: N; Missing ")"`. The documented retry rule
+  (silent crash = transient, retry 5x) can send a run chasing a
+  healthy toolchain window for what is actually a source bug. Before
+  blaming the toolchain on a 5/5 silent abort: (1) check the file's
+  paren balance with string literals excluded, and (2) compile a
+  known-good file (e.g. `git stash` + the pristine HEAD driver) in
+  the same window to confirm the toolchain itself is up — this run
+  the HEAD driver compiled 3/3 clean while the edited file aborted
+  5/5, isolating the source as the cause.
 
 ## Settled (continued)
 

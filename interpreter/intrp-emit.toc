@@ -30,13 +30,22 @@
 ;;
 ;; Item 7a: Many slow path — the emit-many protocol (flipped
 ;; receiver: the receiver is the CHILD combinator; the default body
-;; is the loop path, the char-level ctors get the run-path impls in
-;; item 7b), the site-(b) acc-recursion loop defn, the emit-body
-;; impl for Many (the call expression only — the defn comes from
-;; emit-many), the Many child-ref (the call with empty-vector),
-;; Many in walk-children, and the lifted-child-block dispatch (a
-;; lifted Many child is the loop defn, every other lifted child the
-;; plain defn).
+;; is the loop path), the site-(b) acc-recursion loop defn, the
+;; emit-body impl for Many (the call expression only — the defn
+;; comes from emit-many), the Many child-ref, Many in walk-children,
+;; and the lifted-child-block dispatch (a lifted Many child is the
+;; loop defn, every other lifted child the plain defn).
+;;
+;; Item 7b: Many fast path — the char-level emit-many impls
+;; (CharRange, NotChar, bare String, Any classifying its alts, and
+;; Rule/Many delegating per the ctor table): the <name>-char
+;; set-predicate defn from the child's emit-pred + the read-run
+;; wrapper (the Token -> ParserMatch wrap), and the call expression
+;; (<name> state). alt-char-level? / all-alts-char-level? are the
+;; alt-level char queries (a plain defn over type-name — the
+;; flipped-receiver protocol stays the Many fast/slow
+;; classification). The Many child-ref is path-aware: fast path ->
+;; (name sv), loop path -> (name sv empty-vector).
 
 (add-ns grammar (module "intrp-grammar.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
@@ -47,6 +56,7 @@
 (def emit-module)
 (def any-body-acc)
 (def lifted-child-block)
+(def all-alts-char-level?)
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -300,12 +310,6 @@
 (extend-type grammar/Rule (child-ref [v i sv ctx]
   [(to-str ["(" (.name v) " " sv ")"])]))
 
-;; Many: the loop defn's call with the empty acc (the loop defn is
-;; the lifted helper at prefix+i, emitted by emit-many).
-(extend-type grammar/Many (child-ref [v i sv ctx]
-  [(to-str ["(" (to-str [(.prefix ctx) (number-str i)]) " " sv
-            " empty-vector)"])]))
-
 ;; ref-cont-acc [acc lines b]: the ref's continuation lines, each
 ;; prefixed with the alignment indent b.
 (defn ref-cont-acc [acc lines b]
@@ -498,20 +502,131 @@
 
     []))
 
+;; alt-char-level? [pc]: Some iff pc classifies a single character
+;; (CharRange, NotChar, bare String, Any of all-char-level alts, and
+;; Rule/Many delegating to their child per the ctor table); None
+;; otherwise. A plain defn over type-name (the same dispatch style as
+;; lifted-child-block's Many check): the flipped-receiver emit-many
+;; protocol is the Many fast/slow classification (impls ARE the
+;; branches); this is the alt-level query the Any impl needs to
+;; classify its alts, and the Many child-ref impl needs to pick the
+;; call shape (item 7b).
+(defn alt-char-level? [pc]
+  (cond (str= (type-name pc) "CharRange")
+    (Some pc)
+
+    (str= (type-name pc) "NotChar")
+    (Some pc)
+
+    (str= (type-name pc) "String")
+    (Some pc)
+
+    (str= (type-name pc) "Any")
+    (all-alts-char-level? (.parsers pc))
+
+    (str= (type-name pc) "Rule")
+    (alt-char-level? (.parser pc))
+
+    (str= (type-name pc) "Many")
+    (alt-char-level? (.parser pc))
+
+    None))
+
+;; all-alts-char-level? [alts]: Some iff every alt is char-level
+;; (acc recursion — the reduce-capture leak). Forward-declared at the
+;; top of the file: it and alt-char-level? are mutually recursive.
+(defn all-alts-char-level? [alts]
+  (cond (= (count alts) 0)
+    (Some alts)
+
+    (let [r (alt-char-level? (extract (first alts)))]
+      (cond r
+        (all-alts-char-level? (rest alts))
+
+        None))))
+
+;; many-run-defn [name pred-line]: the fast-path defns (ctor table)
+;; for a Many named name over a char-level child: the set-predicate
+;; defn <name>-char over char string c, and the read-run wrapper
+;; (the Token -> ParserMatch wrap — the run's text is ONE string,
+;; the settled maximal-run convention).
+(defn many-run-defn [name pred-line]
+  (append-acc
+   [(to-str ["(defn " name "-char [c] " pred-line ")"])]
+   (wrap-defn
+    name
+    [(to-str ["(let [t (rdr/read-run state " name "-char)]"])
+     ;; the let close goes on the last line; wrap-defn adds the
+     ;; defn's own close (4 closes after the final t, ctor table).
+     (to-str ["  (rdr/ParserMatch (.text t) (.state t)))"])])))
+
+;; many-run-path [child name ctx]: the emit-many run path (item 7b):
+;; the fast-path defns from the child's emit-pred + the call
+;; expression (the last line — emit-body / lifted-child-block /
+;; emit-rule-block take or drop it as they do for the loop path).
+(defn many-run-path [child name ctx]
+  (append-acc
+   (many-run-defn name (emit-pred child ctx))
+   (conj [] (to-str ["(" name " state)"]))))
+
+;; many-loop-path [child name ctx]: the emit-many loop path (the
+;; default body, item 7a): the lifted child helpers (if the child is
+;; anonymous), the site-(b) acc-recursion loop defn (acc-recursion,
+;; not a reduce), and the call expression.
+(defn many-loop-path [child name ctx]
+  (append-acc
+   (append-acc (many-child-defns child name ctx)
+               (many-loop-defn name child ctx))
+   (conj [] (to-str ["(" name " state empty-vector)"]))))
+
 ;; emit-many: Many helper emission by FLIPPED RECEIVER (task-1
 ;; ruling — no yes/no tag protocol; the impl IS the path): the
-;; receiver is the CHILD combinator. The DEFAULT body is the loop
-;; path (item 7a): the lifted child helpers (if the child is
-;; anonymous), the site-(b) acc-recursion loop defn (acc-recursion,
-;; not a reduce), and the call expression. The char-level ctors get
-;; the run-path impl (item 7b). ctx's prefix is the Many's own
-;; prefix (the loop name + "-"). -> [String]
+;; receiver is the CHILD combinator. The char-level ctors get the
+;; run path (item 7b): the <name>-char set-predicate defn from the
+;; child's emit-pred + the read-run wrapper, and the call expression
+;; (<name> state). Any classifies its alts: ALL char-level -> the
+;; run path over the combined (or ...) pred; a mixed Any -> the loop
+;; path (no abort at a legitimate mixed site — the emit-pred default
+;; abort stays the emitter-bug signal at the other sites). Rule and
+;; Many delegate to their child (ctor table). The DEFAULT body is
+;; the loop path. ctx's prefix is the Many's own prefix (the helper
+;; name + "-"). -> [String]
 (defp emit-many [child ctx]
-  (let [name (prefix-name (.prefix ctx))]
-    (append-acc
-     (append-acc (many-child-defns child name ctx)
-                 (many-loop-defn name child ctx))
-     (conj [] (to-str ["(" name " state empty-vector)"])))))
+  (many-loop-path child (prefix-name (.prefix ctx)) ctx))
+
+(extend-type grammar/CharRange (emit-many [v ctx]
+  (many-run-path v (prefix-name (.prefix ctx)) ctx)))
+
+(extend-type grammar/NotChar (emit-many [v ctx]
+  (many-run-path v (prefix-name (.prefix ctx)) ctx)))
+
+(extend-type String (emit-many [v ctx]
+  (many-run-path v (prefix-name (.prefix ctx)) ctx)))
+
+(extend-type grammar/Any (emit-many [v ctx]
+  (cond (all-alts-char-level? (.parsers v))
+    (many-run-path v (prefix-name (.prefix ctx)) ctx)
+
+    (many-loop-path v (prefix-name (.prefix ctx)) ctx))))
+
+;; Rule and Many delegate to their child (ctor table).
+(extend-type grammar/Rule (emit-many [v ctx]
+  (emit-many (.parser v) ctx)))
+
+(extend-type grammar/Many (emit-many [v ctx]
+  (emit-many (.parser v) ctx)))
+
+;; Many child-ref (item 7b, moved here from the item-5 section — it
+;; needs alt-char-level?): the call expression for the Many at index
+;; i under the current node (the helper at prefix+i, emitted by
+;; emit-many): fast path -> (name sv); loop path -> (name sv
+;; empty-vector).
+(extend-type grammar/Many (child-ref [v i sv ctx]
+  (cond (alt-char-level? (.parser v))
+    [(to-str ["(" (to-str [(.prefix ctx) (number-str i)]) " " sv ")"])]
+
+    [(to-str ["(" (to-str [(.prefix ctx) (number-str i)]) " " sv
+              " empty-vector)"])])))
 
 (extend-type grammar/Many (emit-body [v ctx]
   (last-line
@@ -539,10 +654,11 @@
 
 ;; lifted-child-block [c name ctx]: the defn block lines for the
 ;; lifted child combinator c named name (sub-helpers first, use-
-;; after-definition): a Many is the site-(b) loop defn (emit-many,
-;; the call expression dropped — the call goes in the parent body
-;; via child-ref / emit-body); every other anonymous combinator is
-;; the sub-helpers + the plain defn (emit-fn).
+;; after-definition): a Many is its emit-many defn block (the
+;; fast-path defns or the site-(b) loop defn, by the child's
+;; classification — the call expression dropped, it goes in the
+;; parent body via child-ref / emit-body); every other anonymous
+;; combinator is the sub-helpers + the plain defn (emit-fn).
 ;;
 ;; Forward-declared at the top of the file: it and emit-helpers are
 ;; mutually recursive (the sub-helpers of a non-Many lifted child
@@ -668,9 +784,11 @@
 ;; emit-rule-block [r]: the emitted lines for one Rule — the lifted
 ;; helper defn blocks (sub-helpers first, use-after-definition),
 ;; then the parser defn. A Many parser is the exception to the
-;; inlining: its body is a call to the module-level loop defn, so
-;; the Many gets the loop defn named <rule>-0 (the rule's parser
-;; position is index 0) and the rule defn is the one-arg wrapper.
+;; inlining: its body is a call to the module-level helper defn, so
+;; the Many gets its emit-many defn block named <rule>-0 (the
+;; fast-path defns or the loop defn, by the child's classification —
+;; the rule's parser position is index 0) and the rule defn is the
+;; one-arg wrapper.
 (defn emit-rule-block [r]
   (let [p (.parser r)
         ctx (EmitCtx (.name r)

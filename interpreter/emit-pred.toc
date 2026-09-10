@@ -1,4 +1,4 @@
-;; interpreter/emit-pred.toc — item-3/4/6 verification driver.
+;; interpreter/emit-pred.toc — item-3/4/5/6/7a/7b verification driver.
 ;;
 ;; Emits the char-level predicates for six grammar combinators via
 ;; intrp-emit.toc's emit-pred and asserts the EXACT expected source
@@ -12,14 +12,16 @@
 ;; the item-6 synthetic Any grammar (an-any), asserts its exact
 ;; fingerprint, then emits the full generated module for the item-7a
 ;; synthetic Many grammar (mn-alpha / mn-run / mn-entry), asserts its
-;; exact fingerprint, and writes it to interpreter/gen-rdr.toc (a
-;; build artifact — never committed; built by `make gen-rdr`) plus
-;; the sample inputs to interpreter/gen-sample.toc (the failure case;
-;; run: ./gen-rdr interpreter/gen-sample.toc) and
-;; interpreter/gen-sample-ok.toc (the success case; run: ./gen-rdr
-;; interpreter/gen-sample-ok.toc).
+;; exact fingerprint, then emits the full generated module for the
+;; item-7b synthetic Many fast-path grammar (fn-alpha / fn-digits /
+;; fn-word / fn-entry), asserts its exact fingerprint, and writes it
+;; to interpreter/gen-rdr.toc (a build artifact — never committed;
+;; built by `make gen-rdr`) plus the sample inputs to
+;; interpreter/gen-sample.toc (the failure case; run: ./gen-rdr
+;; interpreter/gen-sample.toc) and interpreter/gen-sample-ok.toc (the
+;; success case; run: ./gen-rdr interpreter/gen-sample-ok.toc).
 ;;
-;; Expected output: 10 "OK" lines (one per check). Any "FAIL" line
+;; Expected output: 11 "OK" lines (one per check). Any "FAIL" line
 ;; indicates a problem. Run from the repo root: ./emit-pred
 ;;
 ;; The driver is interpreter-side tooling; interpreted programs may
@@ -336,22 +338,21 @@
 ;; --- Item 7a: Many slow path ---------------------------------------
 ;;
 ;; The synthetic grammar: mn-entry is an All of a Many of the named
-;; Rule mn-alpha (loop defn mn-entry-0), a Many of the anonymous All
-;; mn-pair (loop defn mn-entry-1, its child lifted to mn-entry-1-0,
-;; its two CharRange children to mn-entry-1-0-0 / mn-entry-1-0-1),
-;; and a bare String ("!"); mn-run is a Rule whose parser is a Many
-;; of mn-alpha (loop defn mn-run-0, the rule defn the one-arg
-;; wrapper; not called by the entry). Every sample line ends with
-;; "!": a Many matches zero or more, so a top-level Many would win
-;; with an empty vector on the failure line and the parse-seq loop
-;; would spin on the unconsumed input. The loops terminate on the
-;; non-matching input: mn-entry-0 stops at "0", mn-entry-1 at "!".
+;; Rule mn-alpha (char-level via the Rule delegation -> FAST path:
+;; the set-predicate defn mn-entry-0-char + the read-run wrapper
+;; mn-entry-0), a Many of the anonymous All mn-pair (loop defn
+;; mn-entry-1, its child lifted to mn-entry-1-0, its two CharRange
+;; children to mn-entry-1-0-0 / mn-entry-1-0-1), and a bare String
+;; ("!"); mn-run is a Rule whose parser is a Many of mn-alpha (fast
+;; path: mn-run-char + mn-run-0, the rule defn the one-arg wrapper;
+;; not called by the entry). Every sample line ends with "!": a Many
+;; matches zero or more, so a top-level Many would win with an empty
+;; vector on the failure line and the parse-seq loop would spin on
+;; the unconsumed input. The loop terminates on the non-matching
+;; input: mn-entry-1 stops at "!".
 ;;
-;; gen-sample.toc (abc0a1b! / x): the first line parses to the
-;; vector of child values; the second defeats the "!" literal ->
-;; file:line: expected "!", exit 1. gen-sample-ok.toc (abc0a1b! / !):
-;; every line parses (the second exercises the zero-length Many
-;; match) -> exit 0.
+;; (The mn module is the fingerprint check only — the module written
+;; to gen-rdr.toc is the item-7b fn module below.)
 
 (def mn-alpha (grammar/Rule "mn-alpha" (grammar/CharRange "a" "z")))
 (def mn-run
@@ -374,25 +375,25 @@
          "      (rdr/ParserMatch c (rdr/take-char state))"
          "      (rdr/ParserError \"unexpected character\" state))))"]))
 
+(def want-mn-run-0-char-defn
+  (to-str ["(defn mn-run-0-char [c] " want-lower-case ")"]))
+
 (def want-mn-run-0-defn
-  (to-str ["(defn mn-run-0 [state acc]"
-         "  (parse-or (parse-then (mn-alpha state)"
-         "                        (fn [v s2]"
-         "                          (mn-run-0 s2 (vect-conj acc v))))"
-         "            (fn [e]"
-         "              (rdr/ParserMatch acc state))))"]))
+  (to-str ["(defn mn-run-0 [state]"
+         "  (let [t (rdr/read-run state mn-run-0-char)]"
+         "    (rdr/ParserMatch (.text t) (.state t))))"]))
 
 (def want-mn-run-defn
   (to-str ["(defn mn-run [state]"
-         "  (mn-run-0 state empty-vector))"]))
+         "  (mn-run-0 state))"]))
+
+(def want-mn-entry-0-char-defn
+  (to-str ["(defn mn-entry-0-char [c] " want-lower-case ")"]))
 
 (def want-mn-entry-0-defn
-  (to-str ["(defn mn-entry-0 [state acc]"
-         "  (parse-or (parse-then (mn-alpha state)"
-         "                        (fn [v s2]"
-         "                          (mn-entry-0 s2 (vect-conj acc v))))"
-         "            (fn [e]"
-         "              (rdr/ParserMatch acc state))))"]))
+  (to-str ["(defn mn-entry-0 [state]"
+         "  (let [t (rdr/read-run state mn-entry-0-char)]"
+         "    (rdr/ParserMatch (.text t) (.state t))))"]))
 
 (def want-mn-entry-1-0-0-defn
   (to-str ["(defn mn-entry-1-0-0 [state]"
@@ -432,7 +433,7 @@
 
 (def want-mn-entry-defn
   (to-str ["(defn mn-entry [state]"
-         "  (parse-then (mn-entry-0 state empty-vector)"
+         "  (parse-then (mn-entry-0 state)"
          "              (fn [v0 s1]"
          "                (parse-then (mn-entry-1 s1 empty-vector)"
          "                            (fn [v1 s2]"
@@ -463,8 +464,10 @@
 (def want-mn-module
   (to-str [want-header ""
            want-mn-alpha-defn ""
+           want-mn-run-0-char-defn ""
            want-mn-run-0-defn ""
            want-mn-run-defn ""
+           want-mn-entry-0-char-defn ""
            want-mn-entry-0-defn ""
            want-mn-entry-1-0-0-defn ""
            want-mn-entry-1-0-1-defn ""
@@ -472,6 +475,153 @@
            want-mn-entry-1-defn ""
            want-mn-entry-defn ""
            want-mn-main]))
+
+;; --- Item 7b: Many fast path ---------------------------------------
+;;
+;; The synthetic grammar: fn-digits is a Rule over a Many of a
+;; CharRange (fast path: the set-predicate defn fn-digits-char + the
+;; read-run wrapper fn-digits-0, the rule defn the one-arg wrapper);
+;; fn-word is a Rule over a Many of the char-level Rule fn-alpha
+;; (fast path via the Rule delegation); fn-entry is an All of
+;; fn-digits, fn-word, a Many of the mixed Any fn-mix (fn-alpha alt
+;; + anonymous All alt — parser-level, so the SLOW path: the Any
+;; lifted to fn-entry-2-0, the All to fn-entry-2-0-1, its CharRange
+;; to fn-entry-2-0-1-0, the loop defn fn-entry-2), and a bare String
+;; ("!").
+;;
+;; gen-sample.toc (123abc45! / *): the first line parses to the
+;; vector of child values — the two fast runs are ONE string each
+;; ("123", "abc") and the slow loop yields a vector of child values
+;; ([4 5]); the second defeats the "!" literal -> file:line:
+;; expected "!", exit 1. gen-sample-ok.toc (123abc45! / !): every
+;; line parses (the second exercises the zero-length fast runs and
+;; the zero-length loop) -> exit 0.
+
+(def fn-alpha (grammar/Rule "fn-alpha" (grammar/CharRange "a" "z")))
+(def fn-digits
+  (grammar/Rule "fn-digits" (grammar/Many (grammar/CharRange "0" "9"))))
+(def fn-word (grammar/Rule "fn-word" (grammar/Many fn-alpha)))
+(def fn-mix
+  (grammar/Any [fn-alpha
+                (grammar/All [(grammar/CharRange "0" "9")])]))
+(def fn-entry
+  (grammar/Rule "fn-entry"
+                (grammar/All [fn-digits
+                              fn-word
+                              (grammar/Many fn-mix)
+                              "!"])))
+
+(def want-fn-alpha-defn
+  (to-str ["(defn fn-alpha [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      " want-lower-case
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-fn-digits-char-defn
+  (to-str ["(defn fn-digits-0-char [c] " want-digits ")"]))
+
+(def want-fn-digits-0-defn
+  (to-str ["(defn fn-digits-0 [state]"
+         "  (let [t (rdr/read-run state fn-digits-0-char)]"
+         "    (rdr/ParserMatch (.text t) (.state t))))"]))
+
+(def want-fn-digits-defn
+  (to-str ["(defn fn-digits [state]"
+         "  (fn-digits-0 state))"]))
+
+(def want-fn-word-char-defn
+  (to-str ["(defn fn-word-0-char [c] " want-lower-case ")"]))
+
+(def want-fn-word-0-defn
+  (to-str ["(defn fn-word-0 [state]"
+         "  (let [t (rdr/read-run state fn-word-0-char)]"
+         "    (rdr/ParserMatch (.text t) (.state t))))"]))
+
+(def want-fn-word-defn
+  (to-str ["(defn fn-word [state]"
+         "  (fn-word-0 state))"]))
+
+(def want-fn-entry-2-0-1-0-defn
+  (to-str ["(defn fn-entry-2-0-1-0 [state]"
+         "  (let [input (.input state)"
+         "        c (subs input 0 1)]"
+         "    (cond (str= c \"\")"
+         "      (rdr/ParserError \"unexpected end of input\" state)"
+         "      " want-digits
+         "      (rdr/ParserMatch c (rdr/take-char state))"
+         "      (rdr/ParserError \"unexpected character\" state))))"]))
+
+(def want-fn-entry-2-0-1-defn
+  (to-str ["(defn fn-entry-2-0-1 [state]"
+         "  (parse-then (fn-entry-2-0-1-0 state)"
+         "              (fn [v0 s1]"
+         "                (rdr/ParserMatch [v0] s1))))"]))
+
+(def want-fn-entry-2-0-defn
+  (to-str ["(defn fn-entry-2-0 [state]"
+         "  (parse-or (fn-alpha state)"
+         "            (fn [e1]"
+         "              (fn-entry-2-0-1 state))))"]))
+
+(def want-fn-entry-2-defn
+  (to-str ["(defn fn-entry-2 [state acc]"
+         "  (parse-or (parse-then (fn-entry-2-0 state)"
+         "                        (fn [v s2]"
+         "                          (fn-entry-2 s2 (vect-conj acc v))))"
+         "            (fn [e]"
+         "              (rdr/ParserMatch acc state))))"]))
+
+(def want-fn-entry-defn
+  (to-str ["(defn fn-entry [state]"
+         "  (parse-then (fn-digits state)"
+         "              (fn [v0 s1]"
+         "                (parse-then (fn-word s1)"
+         "                            (fn [v1 s2]"
+         "                              (parse-then (fn-entry-2 s2 empty-vector)"
+         "                                          (fn [v2 s3]"
+         "                                            (parse-then (cond (str-prefix? \"!\" (.input s3))"
+         "                                                              (rdr/ParserMatch \"!\" (rdr/take-char s3))"
+         "                                                              (rdr/ParserError \"expected \\\"!\\\"\" s3))"
+         "                                                        (fn [v3 s4]"
+         "                                                          (rdr/ParserMatch [v0 v1 v2 v3] s4))))))))))"]))
+
+(def want-fn-main
+  (to-str ["(defn parse-seq [file state acc]"
+         "  (let [s (rdr/skip-whitespace state)]"
+         "    (cond (str= (.input s) \"\")"
+         "      (rdr/ParserMatch acc s)"
+         "      (parse-or (parse-then (fn-entry s)"
+         "                            (fn [v s2]"
+         "                              (parse-seq file (rdr/skip-whitespace s2)"
+         "                                          (to-str [acc (to-str [v \"\\n\"])]))))"
+         "                (fn [e] (parse-error-line file acc"
+         "                                          (rdr/state-line (parse-error-state e))"
+         "                                          (parse-error-msg e)))))))"
+         ""
+         "(main [argv]"
+         "  (let [file (extract (get argv 1))]"
+         "    (parse-then (parse-seq file (rdr/make-state (slurp file) file 1) \"\")"
+         "                (fn [out s] (pr* out)))))"]))
+
+(def want-fn-module
+  (to-str [want-header ""
+           want-fn-alpha-defn ""
+           want-fn-digits-char-defn ""
+           want-fn-digits-0-defn ""
+           want-fn-digits-defn ""
+           want-fn-word-char-defn ""
+           want-fn-word-0-defn ""
+           want-fn-word-defn ""
+           want-fn-entry-2-0-1-0-defn ""
+           want-fn-entry-2-0-1-defn ""
+           want-fn-entry-2-0-defn ""
+           want-fn-entry-2-defn ""
+           want-fn-entry-defn ""
+           want-fn-main]))
 
 ;; write-file [path content]: write the string to the file (inline
 ;; C). The driver runs from the repo root; gen-rdr.toc is a build
@@ -529,17 +679,20 @@
         mn-lines (emit/emit-module [mn-alpha mn-run mn-entry] "mn-entry")
         mn-got (to-str mn-lines)
         r10 (check r9 "emit-module-mn" mn-got want-mn-module)
-        r11 (cond (str= mn-got want-mn-module)
-               (+ r10 (write-file "interpreter/gen-rdr.toc"
-                                  (to-str (interpose mn-lines "\n"))))
-
-               r10)
-        r12 (cond (str= mn-got want-mn-module)
-               (+ r11 (write-file "interpreter/gen-sample.toc" "abc0a1b!\nx"))
+        fn-lines (emit/emit-module [fn-alpha fn-digits fn-word fn-entry] "fn-entry")
+        fn-got (to-str fn-lines)
+        r11 (check r10 "emit-module-fn" fn-got want-fn-module)
+        r12 (cond (str= fn-got want-fn-module)
+               (+ r11 (write-file "interpreter/gen-rdr.toc"
+                                  (to-str (interpose fn-lines "\n"))))
 
                r11)
-        r13 (cond (str= mn-got want-mn-module)
-               (+ r12 (write-file "interpreter/gen-sample-ok.toc" "abc0a1b!\n!"))
+        r13 (cond (str= fn-got want-fn-module)
+               (+ r12 (write-file "interpreter/gen-sample.toc" "123abc45!\n*"))
 
-               r12)]
-    r13))
+               r12)
+        r14 (cond (str= fn-got want-fn-module)
+               (+ r13 (write-file "interpreter/gen-sample-ok.toc" "123abc45!\n!"))
+
+               r13)]
+    r14))
