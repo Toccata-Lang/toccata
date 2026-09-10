@@ -468,7 +468,15 @@ Curated for this project; the source of truth is the compiler plan.
   remaining 0). The baseline drifts with machine state; attribute
   driver-side leaks to the baseline by measuring HEAD in the same
   window, and hold the leak half of a done-when to the generated
-  module's success path until a healthy window.
+  module's success path until a healthy window. UPDATE (2026-09-10,
+  item-8 investigation): a healthy window opened that morning on the
+  same 19:10 binary — trivial programs, both libraries, the HEAD
+  driver (12/12 OK, ITRS 2.48M, remaining 0; it leaks 53 = the
+  drifted baseline), the rc gen module, and several small probe
+  modules all built 3/3. The item-8 content crashes (the full
+  real-grammar module; the ≥2-inlined-cond parse-or shape) were
+  DETERMINISTIC in that window and are content triggers, not drift —
+  see the two new codegen-crash facts below.
 - A 5/5 silent-abort is NOT always the toolchain (2026-09-10, item
   7b): an UNBALANCED-PAREN source error in `emit-pred.toc` (a
   fingerprint def one `)` short) crashed new-toc with a silent abort
@@ -629,6 +637,40 @@ Curated for this project; the source of truth is the compiler plan.
   (2026-09-04, item 2a).
 - `vect-concat` is user-defined (in `interpreter/intrp-rdr.toc`,
   defined BEFORE the grouping deftypes), not core.
+
+**new-toc codegen crashes (item-8 investigation, 2026-09-10)**
+
+- Two or more INLINED bare-String conds in a `parse-or` (Any /
+  site-(a)) position crash new-toc codegen (2026-09-10, item-8
+  investigation): a defn shaped like the generated Any emission —
+  nested `(parse-or <alt> (fn [eN] ...))` — builds clean with at most
+  ONE inlined bare-String cond (a `(cond (str-prefix? L ...) ...)`
+  body, in any position: first, middle, or last/bare) plus defn-call
+  alts, but crashes (silent abort exit 134, truncated C output with
+  NO `mainFn`, sometimes exit 0 with the same truncated C) with TWO
+  or more inlined conds — deterministic 3/3 for every ordering
+  tested (2 inlined + 1 call in all three orders; 3 inlined; 4/6/8/
+  10/11 inlined). The SAME inlined conds in a `parse-then` (All /
+  site-(c)) position build clean (the rc module's `rc-entry-1` has
+  two). The real grammar's `symbol-start` (1 call + 10 inlined) and
+  `rest-of-symbol` (2 calls + 11 inlined) therefore CANNOT build as
+  emitted — the settled Lifting rule ("Bare `String` bodies are
+  let-free and inline everywhere") conflicts with this. A 13-alt
+  flat `(or ...)` char PREDICATE defn builds fine (the crash is the
+  parse-or position, not the alt count or the predicate size). The
+  full emitted real-grammar module and a symbol-rules-only
+  sub-module both crash 5/5+ for this reason. Owner decision needed:
+  lift bare-String alts to helper defns in the Any emission
+  (template change), or a toolchain fix.
+- A defn referencing an UNDEFINED top-level symbol crashes new-toc
+  codegen silently (2026-09-10, item-8 investigation): a parse-seq
+  whose entry call named a symbol with no defn anywhere in the file
+  crashed new-toc (silent abort, truncated C, 3/3+) with NO
+  `Undefined symbol` error — the documented `Undefined symbol`
+  failure is for symbols defined LATER in the file; a symbol defined
+  NOWHERE crashes instead. When bisecting a silent codegen crash,
+  check that every referenced top-level symbol has a defn (my own
+  probe modules hit this twice while extracting sub-modules).
 
 **deftype / annotations**
 
@@ -1007,6 +1049,50 @@ generated code)**
   facts recorded: the self-recursion crutch (refutes the template
   note), the silent-no-op wrong-type-field-access hazard, the
   zero-length-match term-buffer spin (with the item-8 warning).
+
+- Item 8 (2026-09-10, INVESTIGATION ONLY — box left unchecked,
+  STUCK): the real grammar cannot produce the item-8 corpus as
+  written; two design gaps + one toolchain blocker, all verified
+  this run. (1) ZERO-LENGTH COMMIT: `expression`'s first alt
+  `int-literal` (Rule name `integer`, a `Many digits` fast path) can
+  match EMPTY — `read-run` (intrp-rdr.toc:195) returns a zero-length
+  `Token` on a non-matching prefix, so `integer` is
+  `(ParserMatch "" state)` on any non-digit input — and `parse-or`
+  commits a Match without trying the next alt. Runtime-proven with a
+  throwaway module carrying the generated `digits`/`integer` defns
+  verbatim + the generated parse-seq (entry `integer`): input `abc`
+  and `123.45` both die with `Error: Not enough space to allocate
+  pair. buffEnd=1048576, buffSize=1048576 at new.c:264` (the 7c
+  spin); input `123` prints `123`, exit 0, diff 0, remaining 0. In
+  the real module `expression` therefore matches empty on every
+  non-digit-leading input and `parse-seq` spins — every corpus case
+  (symbols, strings, calls, malformed lines) is unparseable. The
+  plan anticipated this ("item 8 must address it (non-empty number
+  shape in the grammar data, or a consumption guard) — the plan does
+  not settle it"). (2) DEAD FLOAT: `float-literal` is unreachable in
+  the real `expression` — `integer` is tried FIRST: digit-leading
+  input commits non-empty (`123.45` splits into `123` + `.45`, and
+  the `.45` remainder spins per (1)); dot-leading input commits the
+  EMPTY integer match. The float rule itself works when reachable:
+  the same generated `float` defns with entry `float` parse `.45` to
+  `[ . 45]`, exit 0, diff 0. The corpus's "floats (incl. multi-digit
+  both sides)" is impossible with the current grammar data; the fix
+  is a grammar-DATA reorder (float before int in the `expression`
+  Any) that the plan does not cover anywhere — and even float-first
+  leaves gap (1) breaking all non-numeric input, so BOTH fixes are
+  needed. (3) CODEGEN CRASH: the full emitted real-grammar module
+  (18 KB, 10 rules) and a symbol-rules-only sub-module both crash
+  new-toc codegen deterministically (truncated C, silent abort or
+  exit 0 — 11+ attempts across several windows); the trigger is
+  isolated in the two new facts above (≥2 inlined bare-String conds
+  in a parse-or position — `symbol-start` / `rest-of-symbol`).
+  Owner decisions needed: the zero-length fix (data vs guard, and
+  the value-shape consequence — a non-empty `All [digit (Many
+  digits)]` int renders `[4 [2]]` for `42`), the float reorder (data
+  edit to the owner's actively-edited `intrp-grammar.toc`, which has
+  uncommitted owner changes), and the inlined-cond codegen crash
+  (lift bare-String alts to helper defns — a site-(a) template
+  change — or a toolchain fix).
 
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,

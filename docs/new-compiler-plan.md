@@ -1110,6 +1110,34 @@ rules; each form's rule arrives with its phase.
   load (deterministic). A bare `(def <rule>)` separated from the defn
   by other top-level forms fixes it (immediately-before does not
   register — the existing fact).
+- **Two or more inlined bare-String conds in a `parse-or` position
+  crash codegen (2026-09-10, parser-gen item-8 investigation)**: a
+  defn of nested `(parse-or <alt> (fn [eN] ...))` (the
+  recursive-descent "ordered alternatives" shape) builds clean with
+  at most ONE inlined `(cond (str-prefix? L (.input state)) (ParserMatch
+  L (take-char state)) (ParserError ... state))` alt (any position)
+  plus defn-call alts, but with TWO or more inlined conds it crashes
+  new-toc with a silent abort (exit 134, no message) or exit 0 with
+  TRUNCATED C output (no `mainFn`; link then fails with undefined
+  `mainFn`/`freeGlobals`/`normGlobals`) — deterministic 3/3 for
+  every ordering tested (2 inlined + 1 call in all three orders; 3
+  inlined; 4/6/8/10/11 inlined). The same inlined conds in a
+  `parse-then` (sequencing) position build clean, and a 13-alt flat
+  `(or ...)` predicate defn builds clean — the trigger is the
+  parse-or/else-fn-closure position with ≥2 inlined conds, not alt
+  count or predicate size. (Hit while generating a
+  recursive-descent parser: the grammar's 11- and 13-alternative
+  symbol rules cannot build as emitted.)
+- **A reference to a symbol defined NOWHERE crashes codegen silently
+  (2026-09-10, parser-gen item-8 investigation)**: a defn body
+  calling a top-level symbol that has no defn anywhere in the module
+  (not even later in the file) crashes new-toc with a silent abort /
+  truncated C and NO `Undefined symbol` error — the documented
+  `Undefined symbol: '<name>'` diagnostic is only for symbols defined
+  LATER in the file. When bisecting a silent codegen crash, verify
+  every referenced top-level symbol has a defn (sub-module
+  extraction probes hit this twice: the copied loop still named the
+  full module's entry rule).
 
 ## Settled (continued)
 
