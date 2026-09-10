@@ -458,6 +458,19 @@ Curated for this project; the source of truth is the compiler plan.
   fingerprint strings build fine, so the trigger is
   position/context-specific, not the char in general. Workaround:
   the synthetic sample uses `!`.
+- `exit` path skips the harness epilogue; ASan is not a leak oracle
+  (2026-09-09, item 6): the Toccata `exit` builtin calls C `exit()`,
+  so the malloc/remaining-node stats (printed only in the epilogue's
+  `freeAll`/`freeGlobals`) are structurally unavailable on an exit
+  path — the canonical zero-leak check needs a clean return. Under
+  `-fsanitize=address` even a trivial `(main [_] 0)` "leaks" 16–32
+  bytes of harness baseline and loses its stdout buffer (the epilogue
+  dies mid-`freeGlobals`). Verified pattern for exit-path binaries:
+  success path → assert malloc diff 0 + remaining nodes 0; error
+  path → assert output + non-zero exit, and use an ASan build only
+  to confirm no heap errors and LSan = harness baseline alone (a
+  trivial `(main [_] (exit 1 "x"))` control leaks 16 bytes / 2
+  allocations from the same normalize frames).
 - A `scratch/` probe cannot `add-ns` a module in `interpreter/` —
   add-ns paths resolve against the importing file's directory and
   `../` is forbidden, so `scratch/` probes are limited to
@@ -642,8 +655,8 @@ generated code)**
   header line + one `(defn <name>-char [c] <pred>)` line per rule;
   `entry` is accepted but unused until the item-4 main template.
 
-- Item 6 (2026-09-09, IN PROGRESS — re-verification pending
-  toolchain restoration): the Any (parser-level) emission is
+- Item 6 (2026-09-09, VERIFIED 2026-09-09 evening): the Any
+  (parser-level) emission is
   CODE-COMPLETE in `interpreter/intrp-emit.toc` — `any-body-acc`
   (site-(a) nested parse-or; last alt bare; `(count ps)` inlined at
   both use sites per the let-wrapping-cond hazard; the two branches
@@ -693,11 +706,27 @@ generated code)**
   is verified (the parse error is gone; the subsequent crashes are
   the toolchain, not the source). The sample char is now `!` (was
   `-`): `-` and `+` in the Any-alt position crash new-toc's codegen
-  deterministically (see the fact above), `!` builds. Next run (in a
-  healthy toolchain window): `make emit-pred` (expect 9 OK), `make
-  gen-rdr`, `./gen-rdr interpreter/gen-sample.toc` (expect `a` /
-  `[4 2]` / `!` lines then `gen-sample.toc:4:expected "!"`, exit 1,
-  zero leaks), then check the box and commit.
+  deterministically (see the fact above), `!` builds. FINAL
+  VERIFICATION (2026-09-09 ~20:35, healthy window of the 19:10
+  binary): the previous fix was INCOMPLETE — the `an-any` def was
+  still missing the `Any` vector's closing `]` (new-toc: `Error at
+  interpreter/emit-pred.toc: 255; Missing "]"` — a real parse error,
+  fixed by adding the bracket; the def now balances 6/6 parens, 2/2
+  brackets). With the fix: `make emit-pred` built on the 2nd attempt
+  (1st attempt after the fix segfaulted post-load with no message —
+  the usual transient) and printed 9/9 OK (digits, upper-case,
+  lower-case, alpha, symbol-start, rest-of-symbol, emit-module,
+  emit-module-ig, emit-module-an), malloc diff 0, remaining nodes 0,
+  exit 0. `make gen-rdr` built clean; `./gen-rdr
+  interpreter/gen-sample.toc` (a / 42 / ! / 5) printed `a` /
+  `[4 2]` / `!` / `interpreter/gen-sample.toc:4:expected "!"`, exit
+  1 — each alternative won once (an-alpha, the lifted anonymous All
+  an-any-1, the bare String alt) and the failure case yielded the
+  expected error. Zero leaks: the success path (a / 42 / !) exits 0
+  with malloc diff 0 and remaining nodes 0; the error path exits via
+  C `exit(1)`, which skips the harness epilogue, so the canonical
+  stats are unavailable there — an ASan build shows no heap errors
+  and only the harness-baseline LSan leaks (see the new fact above).
 
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
@@ -818,7 +847,7 @@ a solution.
     `All`) generates a module that builds and parses a sample file
     with hand-verified output; zero leaks.
 
-- [ ] **6. `Any` (parser-level)**
+- [x] **6. `Any` (parser-level)**
   `emit-body` impl: nested `parse-or` per the site-(a) template;
   anonymous alts lifted to `N-i` helpers; the char-level `Any`
   behavior (via `emit-pred`) unchanged.

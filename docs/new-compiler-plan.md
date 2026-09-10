@@ -1056,6 +1056,25 @@ rules; each form's rule arrives with its phase.
   fine, so the trigger is position/context-specific, not the char in
   general. The crash set also drifts with machine state (see the
   BROKEN AGAIN fact above) — re-verify before relying on this.
+- **`exit` path skips the harness epilogue; ASan is not a leak oracle
+  (2026-09-09, parser-gen item 6)**: the Toccata `exit` builtin calls
+  C `exit()`, so the harness epilogue (`freeAll` / `freeGlobals` — the
+  only place the malloc counts and remaining-node count are printed)
+  never runs: on an exit path the canonical zero-leak stats are
+  structurally unavailable, and the live graph at exit is never
+  freed. LeakSanitizer cannot substitute: under
+  `-fsanitize=address` even a trivial `(main [_] 0)` "leaks" 16–32
+  bytes of harness/global baseline, loses its stdout buffer, and its
+  epilogue dies mid-`freeGlobals` (exit 1) — the ASan interceptors
+  interfere with the runtime. Verified pattern for exit-path
+  binaries: (1) run a SUCCESS path and assert malloc diff 0 +
+  remaining nodes 0 (the epilogue frees the whole graph, so diff 0
+  also proves every startup allocation is freed); (2) run the ERROR
+  path and assert the expected output + non-zero exit, and use an
+  ASan build only to confirm NO heap errors (overflow/UAF) and that
+  the LSan report is the harness baseline alone (compare against a
+  trivial control — `(main [_] (exit 1 "x"))` leaks 16 bytes / 2
+  allocations from the same normalize frames).
 
 ## Settled (continued)
 
