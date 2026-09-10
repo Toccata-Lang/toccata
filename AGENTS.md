@@ -23,5 +23,6 @@ If you are told to create a file, then only create it. Do not try to execute it 
 
 * new-toc diagnostics rules:
   * Always capture and read new-toc's stderr — it often points directly at the problem (e.g. `Undefined symbol: 'x' at file: N`, `Error at file: N; msg`). Never discard it (`2>/dev/null`) when a build fails.
+  * Shell capture trap (owner-confirmed bogus-test incident, 2026-09-10): `out=$(cmd > /dev/null 2>&1)` sends stderr to /dev/null TOO (redirections apply left-to-right), so `$out` is always empty — grepping it "proves" nothing and misdiagnoses clean runs as silent crashes. Capture stderr to a file (`cmd > /dev/null 2>/tmp/err.txt`) or pipe it straight into the grep; before drawing ANY conclusion from a capture loop, verify the captured output is non-empty (e.g. print its line count once). Corollary: for new-toc LIBRARY loads (no main), exit 134 is a NORMAL clean-load exit code (the missing-main abort path) — the sole pass/fail signal is the `*** Loaded <file>` line in actually-captured stderr, never the exit code, never an empty capture.
   * If new-toc segfaults/aborts WITHOUT printing an error message, the crash is transient — retry up to 5 times total.
   * If a retry prints an error message and then aborts, stop retrying and fix the error.

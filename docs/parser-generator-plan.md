@@ -1092,7 +1092,30 @@ generated code)**
   edit to the owner's actively-edited `intrp-grammar.toc`, which has
   uncommitted owner changes), and the inlined-cond codegen crash
   (lift bare-String alts to helper defns — a site-(a) template
-  change — or a toolchain fix).
+  change — or a toolchain fix). UPDATE (2026-09-10): the owner
+  resolved (1) and (2) as grammar-DATA edits in `intrp-grammar.toc`.
+  (1) `int-literal` is now `(Rule "integer" (All [digits (Many
+  digits)]))` — non-empty, so the zero-length commit is gone; the
+  value-shape consequence stands (an int renders as
+  `[<first-digit> [<rest...>]]` — `42` → `[4 [2]]`, `7` → `[7 []]`;
+  corpus expectations must use this shape). (2) `float-literal` was
+  REMOVED from `expression`'s alts — the rule def remains in the
+  file but is unreferenced and will not be emitted; floats are out
+  of scope for the item-8 corpus for now (the reorder option was
+  rejected in favor of dropping floats). Also in the same edit:
+  `whitespace` is now `(Many linear-whitespace)` (`Any ["," " "
+  "\t"]`) — a comma is whitespace (owner-intentional). Blocker (3)
+  (the inlined-cond codegen crash) remains open. Load verification
+  PASSED (2026-09-10, re-run after a bogus 'blocked' call): 10/10
+  runs print `*** Loaded interpreter/intrp-grammar.toc` followed
+  only by the two baseline-noise lines (the missing-main abort
+  path; exit 134 is a normal clean-load exit for library files).
+  The earlier 'degraded toolchain window' claim was a BOGUS TEST —
+  a shell redirection bug (`out=$(cmd > /dev/null 2>&1)` sends
+  stderr to /dev/null too, so the captured output was always empty
+  and every run 'failed' the grep); the file was loading clean all
+  along. The capture rule is now recorded in AGENTS.md's
+  diagnostics rules.
 
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
@@ -1270,10 +1293,14 @@ a solution.
   `interpreter/intrp-grammar.toc`: `expression`, `symbol`,
   `symbol-start`, `rest-of-symbol`, `alpha`, `upper-case`,
   `lower-case`, `digits`, `int-literal` (Rule name `"integer"`),
-  `float-literal`, `double-quoted-string`, `escaped-char`. Generate
+  `double-quoted-string`, `escaped-char` (`float-literal` is no
+  longer reachable — dropped from `expression`'s alts; see the
+  item-8 note). Generate
   `interpreter/gen-rdr.toc`, build. Corpus: a driver-held pair of
-  files (input lines / expected result lines) covering: ints, floats
-  (incl. multi-digit both sides), strings with each escape
+  files (input lines / expected result lines) covering: ints (value
+  shape `[<first-digit> [<rest...>]]` — e.g. `42` → `[4 [2]]`,
+  `7` → `[7 []]`; floats OUT — see the item-8 note), strings with
+  each escape
   (`\\` `\"` `\n` `\r` `\t`), symbols incl. operator names (`+`, `*`,
   `->`, `!x`), nested calls, empty input, and malformed lines
   (unterminated string, bare `)`, trailing garbage after a complete
