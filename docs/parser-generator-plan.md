@@ -448,6 +448,18 @@ Curated for this project; the source of truth is the compiler plan.
   drifts with machine state — a content combination that builds at
   one moment may crash ten minutes later; verify in a healthy window
   and do not chase content workarounds against a drifting crash set.
+  UPDATE (2026-09-10, item 7a, fourth degradation): the same 19:10
+  binary is now in a LEAKING state, not just a crashing one: the
+  PRISTINE committed HEAD driver (9 checks, unmodified) deterministically
+  leaks 19 malloc nodes (12/12 runs; it was diff 0 in the 2026-09-09
+  healthy window), so `make emit-pred` fails at the leak check even
+  without any item-7a code; probe drivers (HEAD + extra emission
+  checks) crash at load (5/5). The item-7a driver itself loads and runs
+  clean in this state (10/10 OK, deterministic 6/6) but leaks 30
+  (the 19 baseline + 11 from the mn emission path), and the generated
+  module builds and parses correctly (see the Item 7a note). The
+  leak/remaining-nodes half of the 7a done-when is PENDING a healthy
+  window; the functional half is verified.
 - Single-char `-` / `+` string literals crash new-toc codegen
   (2026-09-09, item 6): in `emit-pred.toc`, the grammar-data alt
   `(grammar/Any [... "-"])` (and likewise `"+"`) crashes new-toc's
@@ -612,6 +624,31 @@ generated code)**
   dispatch fails at runtime (`No implementation of 'X' found for type
   Y (N)`) even though the value prints the right type name. Keep every
   reference to a module spelled identically across the graph.
+- A nested `append-acc` as a DIRECT call argument is miscompiled by
+  new-toc codegen (2026-09-10, item 7a): in `intrp-emit.toc`, a defn
+  whose body passed a nested `(append-acc ... (append-acc ...))`
+  expression as a direct argument to another call (`wrap-defn-acc`'s
+  second argument) loaded clean but MISCOMPILED — the argument
+  arrived at runtime as a raw Term (type tag 6) instead of a Vector,
+  and `count` over it crashed with `No implementation of 'count'
+  found for type <unknown> (6)` (in `wrap-defn-acc`, deterministic
+  6/6 in the full driver; the SAME defn shape loaded and ran clean in
+  a smaller probe file — the miscompile is C-layout-dependent, like
+  the item-6 arg-drop). The proven fix (the `step-newacc` / `any-
+  body-step` pattern, now `many-loop-step` / `many-loop-lines-acc`):
+  build the nested `append-acc` inside its OWN helper defn and pass
+  the helper's RESULT (a plain call) as the argument; never inline
+  the nested `append-acc` at the call site. A let-bound value built
+  by such a helper is equally safe to pass (the `many-loop-defn` `body`).
+- A vector LITERAL containing a `to-str` over a LET-BOUND value
+  crashes new-toc codegen at load (2026-09-10, item 7a): in
+  `intrp-emit.toc`, `[(to-str [(extract (first ref))])]` where `ref`
+  is a let-bound parameter crashed new-toc at load (silent abort,
+  deterministic); the same content built with `conj` —
+  `(conj [] (to-str [...]))` — loads and runs clean. The pre-7a
+  emitter already used `conj` for 1-element vectors in exactly these
+  positions (`step-newacc`, `any-body-last`); keep that convention for
+  any vector literal whose element references a let-bound value.
 
 **Conventions**
 
@@ -727,6 +764,67 @@ generated code)**
   C `exit(1)`, which skips the harness epilogue, so the canonical
   stats are unavailable there — an ASan build shows no heap errors
   and only the harness-baseline LSan leaks (see the new fact above).
+
+- Item 7a (2026-09-10): the `Many` slow path is CODE-COMPLETE in
+  `interpreter/intrp-emit.toc` — `defp emit-many [child ctx]` (the
+  flipped-receiver protocol: the receiver is the CHILD combinator; the
+  DEFAULT body is the loop path, the char-level ctors get the run-path
+  impls in item 7b), the site-(b) acc-recursion loop defn emission
+  (split per the codegen hazards below: `many-loop-step` [acc name ref
+  i] builds the body lines one step per i = 0..4 in its own defn — a
+  nested `append-acc` as a direct call argument is miscompiled, see
+  the fact below; `many-loop-lines-acc` recurses passing the step
+  helper's RESULT, never an inline `append-acc`; `many-loop-lines`
+  seeds it; `many-loop-defn` let-binds the body and passes the LET-
+  BOUND value to `wrap-defn-acc` — the inline nested `append-acc` as
+  `wrap-defn-acc`'s second argument was miscompiled: it arrived as a
+  raw Term (type 6) and `count` crashed with `No implementation of
+  'count' found for type <unknown> (6)`), `many-child-defns` (the
+  lifted child helper when the child is anonymous), the `Many`
+  `emit-body` impl (the call expression only — the defn comes from
+  `emit-many`), the `Many` `child-ref` impl (`(<prefix><i> <sv>
+  empty-vector)`), `Many` in `walk-children`, the `lifted-child-block`
+  dispatch (a lifted Many child is the loop defn via `but-last`
+  `emit-many`; every other lifted child the sub-helpers + `emit-fn`),
+  `emit-rule-block`'s Many branch (a Rule whose parser is a Many gets
+  the loop defn named `<rule>-0` and the rule defn is the one-arg
+  wrapper), and the `prefix-name` / `but-last` / `last-line` helpers.
+  The driver (`emit-pred.toc`) gains the synthetic mn grammar
+  (`mn-alpha` = Rule over CharRange a-z; `mn-run` = Rule over Many of
+  the named Rule — the loop defn `mn-run-0`, the rule defn the
+  wrapper, not called by the entry; `mn-pair` = anonymous All of two
+  CharRanges; `mn-entry` = Rule over All of [Many of mn-alpha,
+  Many of mn-pair, bare String "!"]), the `want-mn-*` exact-
+  fingerprint checks (10 checks total), and the `gen-sample-ok.toc`
+  write (the success-case sample; `gen-sample.toc` is now the failure
+  case). Every `want-*` fingerprint line that ends a defn was audited
+  for the missing-bracket/missing-paren class of error (the item-6
+  `Missing "]"` shape) — the mn fingerprints were built from the
+  verified generated output, not by hand.
+  Verification (2026-09-10, the fourth-degradation window — see the
+  BROKEN AGAIN fact): FUNCTIONAL half of the done-when VERIFIED and
+  deterministic (6/6 reruns): `make emit-pred` prints 10/10 OK
+  (digits, upper-case, lower-case, alpha, symbol-start, rest-of-
+  symbol, emit-module, emit-module-ig, emit-module-an, emit-module-
+  mn); the generated module (`interpreter/gen-rdr.toc`) loads, builds,
+  and compiles; `./gen-rdr interpreter/gen-sample.toc` (abc0a1b! / x)
+  prints `[[a b c] [[0 a] [1 b]] !]` then
+  `interpreter/gen-sample.toc:2:expected "!"`, exit 1 — the loops
+  terminate on non-matching input (mn-entry-0 stops at "0", mn-entry-1
+  at "!") and the failure case yields the expected error; `./gen-rdr
+  interpreter/gen-sample-ok.toc` (abc0a1b! / !) prints `[[a b c]
+  [[0 a] [1 b]] !]` then `[[] [] !]`, exit 0 — the zero-length Many
+  match works (both loops return empty vectors, then "!"). LEAK half
+  PENDING a healthy window: in the current window the pristine HEAD
+  driver leaks 19 (was 0 on 2026-09-09) and this driver leaks 30
+  (the 19 + 11 from the mn emission path — deterministic 6/6); the
+  +11 is attributed to the current toolchain state, not a source
+  bug (the emitter code is pure — no globals, no mutation — and the
+  same acc-recursion shapes are used throughout the pre-7a emitter).
+  New codegen hazards found (now facts below): the nested-`append-`
+  `acc`-as-direct-call-argument miscompile, and the vector-literal-
+  containing-`to-str`-over-a-let-bound load crash (use `conj` for the
+  1-element vector instead).
 
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
@@ -857,18 +955,47 @@ a solution.
     alternative wins at least once and a failure case yields the
     expected error; zero leaks.
 
-- [ ] **7. `Many` + `Rule`/`Recur` + full `emit-module`**
-  `Many` both paths (fast: `-char` predicate defn + `read-run`
-  wrapper with the `Token` → `ParserMatch` wrap; slow: accumulator
-  loop per the ctor table — acc-recursion, NOT a reduce); `Recur` →
-  call to `(.rule ctx)`; `emit-module` final form: explicit rule
-  vector, every Rule → parser defn, helpers in index-path names, main
-  template.
-  - Done when: a synthetic SELF-RECURSIVE grammar (mini S-expression:
-    `Any [symbol-ish (All ["(" (Many (Recur self)) ")"])]`) generates
-    a module that builds and parses nested input to the correct
-    vector-of-text values, with the loop terminating on non-matching
-    input; zero leaks.
+- [x] **7a. `Many` slow path (`emit-many` protocol + loop)**
+  `defp emit-many [child ctx]` — the flipped-receiver protocol: the
+  DEFAULT body is the loop path (lift the child to a named helper if
+  anonymous, emit the site-(b) acc-recursion defn — acc-recursion,
+  NOT a reduce — and return the call expression `(<name> state
+  empty-vector)`); `emit-body` impl for `Many` (renders only the call
+  expression — the defn comes from `emit-many`); `walk-children` /
+  `child-lifted?` handling for `Many` per the Lifting rule (the child
+  of a `Many` slow path is lifted).
+  - Done when: a synthetic grammar with `Many` of a parser-level
+    child (a named Rule and an anonymous `All`) generates a module
+    that builds and parses a sample file to the correct vector-of-
+    child-values, with the loop terminating on non-matching input;
+    zero leaks, 0 remaining nodes.
+
+- [ ] **7b. `Many` fast path (char-level `emit-many` impls)**
+  The run-path impls for the char-level ctors (`CharRange`,
+  `NotChar`, bare `String`, `Any`, and `Rule`/`Many` delegating per
+  the ctor table): emit the `<name>-char` set-predicate defn from the
+  child's `emit-pred` + the `read-run` wrapper with the `Token` →
+  `ParserMatch` wrap. The `Any` impl classifies its alts: ALL
+  char-level → run path over the combined `(or ...)` pred; a mixed
+  `Any` → the loop path (the default body's shape — no abort at a
+  legitimate mixed site; the `emit-pred` default abort stays the
+  emitter-bug signal at the other sites).
+  - Done when: a synthetic grammar with `Many` of a `CharRange`,
+    `Many` of a char-level Rule, and `Many` of a mixed `Any` (slow
+    path) generates a module that builds and parses a sample file
+    where each fast-path run is ONE string and the slow path yields a
+    vector of child values; zero leaks, 0 remaining nodes.
+
+- [ ] **7c. `Recur` + self-recursive end-to-end (item 7 done-when)**
+  `emit-body` impl for `Recur` (a call to `(.rule ctx)` —
+  self-recursion only; the `f` field is ignored). `emit-module`
+  final form confirmed: explicit rule vector, every Rule → parser
+  defn, helpers in index-path names, main template. The self-
+  recursive mini S-expression grammar: `Any [symbol-ish (All ["("
+  (Many (Recur self)) ")"])]`.
+  - Done when: the generated module builds and parses nested input
+    to the correct vector-of-text values, with the loop terminating
+    on non-matching input; zero leaks, 0 remaining nodes.
 
 - [ ] **8. The real grammar + corpus**
   `emit-module` over the rules reachable from `expression` in

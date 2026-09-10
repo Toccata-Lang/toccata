@@ -27,6 +27,16 @@
 ;; in acc (pure dataflow — per-line pr* counts dropped by the error
 ;; path's exit were skipped by the lazy machine), printed once by
 ;; main on success or spliced into the exit message on error.
+;;
+;; Item 7a: Many slow path — the emit-many protocol (flipped
+;; receiver: the receiver is the CHILD combinator; the default body
+;; is the loop path, the char-level ctors get the run-path impls in
+;; item 7b), the site-(b) acc-recursion loop defn, the emit-body
+;; impl for Many (the call expression only — the defn comes from
+;; emit-many), the Many child-ref (the call with empty-vector),
+;; Many in walk-children, and the lifted-child-block dispatch (a
+;; lifted Many child is the loop defn, every other lifted child the
+;; plain defn).
 
 (add-ns grammar (module "intrp-grammar.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
@@ -36,6 +46,7 @@
 ;; any-body-acc, defined after it).
 (def emit-module)
 (def any-body-acc)
+(def lifted-child-block)
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -255,6 +266,11 @@
 (defn closes [n]
   (closes-acc "" n))
 
+;; prefix-name [prefix]: the helper name from its prefix (the prefix
+;; is the name + "-").
+(defn prefix-name [prefix]
+  (subs prefix 0 (- (count prefix) 1)))
+
 ;; string-body-lines [lit sv]: the let-free bare-String body (ctor
 ;; table) over the state variable sv, unindented — the caller places
 ;; the lines.
@@ -284,6 +300,12 @@
 (extend-type grammar/Rule (child-ref [v i sv ctx]
   [(to-str ["(" (.name v) " " sv ")"])]))
 
+;; Many: the loop defn's call with the empty acc (the loop defn is
+;; the lifted helper at prefix+i, emitted by emit-many).
+(extend-type grammar/Many (child-ref [v i sv ctx]
+  [(to-str ["(" (to-str [(.prefix ctx) (number-str i)]) " " sv
+            " empty-vector)"])]))
+
 ;; ref-cont-acc [acc lines b]: the ref's continuation lines, each
 ;; prefixed with the alignment indent b.
 (defn ref-cont-acc [acc lines b]
@@ -303,6 +325,29 @@
     acc
 
     (append-acc (vect-conj acc (extract (first xs))) (rest xs))))
+
+;; but-last [lines]: the lines with the last dropped (explicit acc
+;; recursion).
+(defn but-last [lines]
+  (cond (= (count lines) 0)
+    []
+
+    (let [r (rest lines)]
+      (cond (= (count r) 0)
+        []
+
+        (append-acc [(extract (first lines))] (but-last r))))))
+
+;; last-line [lines]: the last line, alone.
+(defn last-line [lines]
+  (cond (= (count lines) 0)
+    []
+
+    (let [r (rest lines)]
+      (cond (= (count r) 0)
+        lines
+
+        (last-line r)))))
 
 ;; all-body-acc [acc ps i vs ctx]: the nested parse-then chain
 ;; (site-(c) template) rendered outside-in. At child i the step
@@ -374,6 +419,8 @@
 
 (extend-type grammar/Any (walk-children [v] (.parsers v)))
 
+(extend-type grammar/Many (walk-children [v] [(.parser v)]))
+
 ;; child-lifted? [pc]: Some iff the child gets a lifted helper defn
 ;; (every anonymous combinator); Rule -> None (referenced by name;
 ;; its defn is emitted with the rule list); bare String -> None
@@ -385,13 +432,98 @@
 
 (extend-type String (child-lifted? [v] None))
 
+;; many-loop-step [acc name ref i]: the lines added at step i of the
+;; loop body (i = 0..4): the (parse-then line + the ref's
+;; continuation lines aligned 22 columns in, the (fn [v s2] line, the
+;; acc-recursion line, the (fn [e] line, the ParserMatch line. (The
+;; append-acc construction lives here, not in the recursion - a
+;; nested append-acc as a direct call argument is the any-body-step
+;; codegen hazard.)
+(defn many-loop-step [acc name ref i]
+  (cond (= i 0)
+    (append-acc
+     acc
+     (append-acc
+      (conj [] (to-str ["(parse-or (parse-then " (extract (first ref))]))
+      (ref-cont-acc [] (rest ref) (spaces 22))))
+
+    (= i 1)
+    (append-acc acc [(to-str [(spaces 22) "(fn [v s2]"])])
+
+    (= i 2)
+    (append-acc acc
+                [(to-str [(spaces 24) (to-str ["(" name " s2 (vect-conj acc v))))"])])])
+
+    (= i 3)
+    (append-acc acc [(to-str [(spaces 10) "(fn [e]"])])
+
+    (append-acc acc [(to-str [(spaces 12) "(rdr/ParserMatch acc state)))"])])))
+
+;; many-loop-lines-acc [acc name ref i]: the loop body's lines, one
+;; step per recursive call (i = 0..4; the first argument is the
+;; step helper's result, not an inline append-acc).
+(defn many-loop-lines-acc [acc name ref i]
+  (cond (= i 5)
+    acc
+
+    (many-loop-lines-acc (many-loop-step acc name ref i) name ref (+ i 1))))
+
+;; many-loop-lines [name ref]: the loop body's lines.
+(defn many-loop-lines [name ref]
+  (many-loop-lines-acc [] name ref 0))
+
+;; many-loop-defn [name child ctx]: the site-(b) acc-recursion loop
+;; defn for the Many named name (ctx's prefix is name + "-"): parse-
+;; or over parse-then - a child match recurses with the extended
+;; acc, a child error returns the acc. The child is referenced at
+;; index 0 over `state` (child-ref: Rule -> name, bare String -> the
+;; inlined let-free body, anonymous -> the lifted helper name). The
+;; body lines come from many-loop-lines (a let-bound value - the
+;; nested append-acc built inline here was miscompiled by new-toc:
+;; wrap-defn-acc's second argument arrived as a raw Term).
+(defn many-loop-defn [name child ctx]
+  (let [ref (child-ref child 0 "state" ctx)
+        body (many-loop-lines name ref)]
+    (wrap-defn-acc
+     [(to-str ["(defn " name " [state acc]"])]
+     body)))
+
+;; many-child-defns [child name ctx]: the lifted child helper defn
+;; lines for the Many named name (the child, at index 0 under it) —
+;; [] when the child is not lifted (Rule: the loop defn references
+;; it by name; bare String: inlined let-free).
+(defn many-child-defns [child name ctx]
+  (cond (child-lifted? child)
+    (lifted-child-block child (to-str [name "-0"]) ctx)
+
+    []))
+
+;; emit-many: Many helper emission by FLIPPED RECEIVER (task-1
+;; ruling — no yes/no tag protocol; the impl IS the path): the
+;; receiver is the CHILD combinator. The DEFAULT body is the loop
+;; path (item 7a): the lifted child helpers (if the child is
+;; anonymous), the site-(b) acc-recursion loop defn (acc-recursion,
+;; not a reduce), and the call expression. The char-level ctors get
+;; the run-path impl (item 7b). ctx's prefix is the Many's own
+;; prefix (the loop name + "-"). -> [String]
+(defp emit-many [child ctx]
+  (let [name (prefix-name (.prefix ctx))]
+    (append-acc
+     (append-acc (many-child-defns child name ctx)
+                 (many-loop-defn name child ctx))
+     (conj [] (to-str ["(" name " state empty-vector)"])))))
+
+(extend-type grammar/Many (emit-body [v ctx]
+  (last-line
+   (emit-many (.parser v)
+              (EmitCtx (.rule ctx) (to-str [(.prefix ctx) "0-"]))))))
+
 ;; emit-helpers [acc ps i prefix ctx]: the lifted helper defn blocks
 ;; for the children ps[i..] (sub-helpers first, post-order): each
-;; lifted child gets the helpers of its own children, then its defn
-;; (emit-fn, name = prefix + i, its prefix = name + "-"); the
-;; use-after-definition order (a defn body referencing a later
-;; top-level symbol fails Undefined symbol) is what puts the
-;; sub-helpers first.
+;; lifted child gets its defn block (lifted-child-block, name =
+;; prefix + i, its prefix = name + "-"); the use-after-definition
+;; order (a defn body referencing a later top-level symbol fails
+;; Undefined symbol) is what puts the sub-helpers first.
 (defn emit-helpers [acc ps i prefix ctx]
   (cond (= i (count ps))
     acc
@@ -400,14 +532,30 @@
       (cond (child-lifted? c)
         (let [name (to-str [prefix (number-str i)])]
           (emit-helpers
-           (append-acc
-            (append-acc acc
-                        (emit-helpers [] (walk-children c) 0
-                                      (to-str [name "-"]) ctx))
-            (emit-fn c name ctx))
+           (append-acc acc (lifted-child-block c name ctx))
            ps (+ i 1) prefix ctx))
 
         (emit-helpers acc ps (+ i 1) prefix ctx)))))
+
+;; lifted-child-block [c name ctx]: the defn block lines for the
+;; lifted child combinator c named name (sub-helpers first, use-
+;; after-definition): a Many is the site-(b) loop defn (emit-many,
+;; the call expression dropped — the call goes in the parent body
+;; via child-ref / emit-body); every other anonymous combinator is
+;; the sub-helpers + the plain defn (emit-fn).
+;;
+;; Forward-declared at the top of the file: it and emit-helpers are
+;; mutually recursive (the sub-helpers of a non-Many lifted child
+;; are emitted by emit-helpers).
+(defn lifted-child-block [c name ctx]
+  (cond (str= (type-name c) "Many")
+    (but-last
+     (emit-many (.parser c)
+                (EmitCtx (.rule ctx) (to-str [name "-"]))))
+
+    (append-acc
+     (emit-helpers [] (walk-children c) 0 (to-str [name "-"]) ctx)
+     (emit-fn c name ctx))))
 
 ;; append-to-last [lines suffix]: the lines with suffix appended to
 ;; the last line (explicit acc recursion; the recursive result is
@@ -517,21 +665,34 @@
    "(defn parse-error-line [file out line msg]"
    "  (exit 1 (to-str [out file \":\" (number-str line) \":\" msg])))"])
 
-;; emit-rules-acc [acc rules]: one block per Rule — the lifted
-;; helpers (sub-helpers first), a blank line, then the parser defn
-;; (use-after-definition: a defn body referencing a later top-level
-;; symbol fails Undefined symbol); blocks separated by blank lines.
+;; emit-rule-block [r]: the emitted lines for one Rule — the lifted
+;; helper defn blocks (sub-helpers first, use-after-definition),
+;; then the parser defn. A Many parser is the exception to the
+;; inlining: its body is a call to the module-level loop defn, so
+;; the Many gets the loop defn named <rule>-0 (the rule's parser
+;; position is index 0) and the rule defn is the one-arg wrapper.
+(defn emit-rule-block [r]
+  (let [p (.parser r)
+        ctx (EmitCtx (.name r)
+                     (to-str [(.name r) "-"]))]
+    (cond (str= (type-name p) "Many")
+          (append-acc
+           (but-last
+            (emit-many (.parser p)
+                       (EmitCtx (.name r) (to-str [(.name r) "-0-"]))))
+           (wrap-defn (.name r) (emit-body p ctx)))
+
+          (append-acc
+           (emit-helpers [] (walk-children p) 0
+                         (to-str [(.name r) "-"]) ctx)
+           (wrap-defn (.name r) (emit-body p ctx))))))
+
+;; emit-rules-acc [acc rules]: one block per Rule (emit-rule-block).
 (defn emit-rules-acc [acc rules]
   (cond (= (count rules) 0)
     acc
 
-    (let [r (extract (first rules))
-          ctx (EmitCtx (.name r)
-                       (to-str [(.name r) "-"]))
-          d (append-acc
-             (emit-helpers [] (walk-children (.parser r)) 0
-                           (to-str [(.name r) "-"]) ctx)
-             (wrap-defn (.name r) (emit-body (.parser r) ctx)))]
+    (let [d (emit-rule-block (extract (first rules)))]
       (cond (empty? acc)
             (emit-rules-acc d (rest rules))
 
