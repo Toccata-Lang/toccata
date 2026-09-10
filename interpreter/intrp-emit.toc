@@ -651,66 +651,25 @@
 
 ;; --- Item 7c: Recur + self-recursion -------------------------------
 
-;; contains-recur-any-acc [alts]: Some iff any alt's subtree contains
-;; a Recur (acc recursion — the reduce-capture leak).
-(defn contains-recur-any-acc [alts]
-  (cond (= (count alts) 0)
-    None
-
-    (let [r (contains-recur? (extract (first alts)))]
-      (cond r
-        r
-
-        (contains-recur-any-acc (rest alts))))))
-
-;; contains-recur-any [alts]: Some iff any alt's subtree contains a
-;; Recur.
-(defn contains-recur-any [alts]
-  (contains-recur-any-acc alts))
-
-;; contains-recur? [pc]: Some iff pc's subtree contains a Recur
-;; (self-recursion). A plain defn over type-name (the same dispatch
-;; style as alt-char-level?). Needed by emit-module: a rule whose
-;; subtree contains a Recur gets a (def name) forward declaration
-;; before its helper defns — the loop helper (emitted before the
-;; rule defn) calls the rule name, and a defn body referencing a
-;; later top-level symbol fails Undefined symbol (the bare def must
-;; be separated from the defn — immediately before it does not
-;; register; see Inherited verified facts).
-(defn contains-recur? [pc]
-  (cond (str= (type-name pc) "Recur")
-    (Some pc)
-
-    (str= (type-name pc) "All")
-    (contains-recur-any (.parsers pc))
-
-    (str= (type-name pc) "Any")
-    (contains-recur-any (.parsers pc))
-
-    (str= (type-name pc) "Many")
-    (contains-recur? (.parser pc))
-
-    (str= (type-name pc) "Ignore")
-    (contains-recur? (.parser pc))
-
-    (str= (type-name pc) "Rule")
-    (contains-recur? (.parser pc))
-
-    None))
-
 ;; rule-decls-acc [acc rules]: the (def <name>) forward-declaration
-;; lines for the rules whose subtree contains a Recur (item 7c).
+;; line for EVERY rule (item 8): the compiler is single-pass — a
+;; defn body referencing a later top-level symbol fails Undefined
+;; symbol, and the defn order (rule-vector order, entry first) leaves
+;; most rules forward-referenced (expression references every other
+;; rule). A bare (def name) before the (defn name ...) is the item-7c
+;; forward-declaration idiom (originally for the Recur cycle only);
+;; the bare def must be separated from the defn — immediately before
+;; it does not register (see Inherited verified facts). Declaring
+;; every rule is uniform and makes the module robust to rule-vector
+;; order.
 (defn rule-decls-acc [acc rules]
   (cond (= (count rules) 0)
     acc
 
-    (let [r (extract (first rules))]
-      (cond (contains-recur? (.parser r))
-        (rule-decls-acc
-         (append-acc acc [(to-str ["(def " (.name r) ")"])])
-         (rest rules))
-
-        (rule-decls-acc acc (rest rules))))))
+    (rule-decls-acc
+     (append-acc acc
+                 [(to-str ["(def " (.name (extract (first rules))) ")"])])
+     (rest rules))))
 
 ;; rule-decls [rules]: the forward-declaration lines.
 (defn rule-decls [rules]
@@ -781,12 +740,126 @@
 
         (append-acc [l] (append-to-last (rest lines) suffix))))))
 
-;; any-body-last [acc ps i ctx]: the LAST alt — its call + continuation
-;; lines, then the closes for every parse-or level. (A let in a
-;; non-else cond clause is a malformed-cond hazard — the branches are
-;; helper defns so the cond clauses are plain calls.)
-(defn any-body-last [acc ps i ctx]
-  (let [ref (child-ref (extract (get ps i)) i "state" ctx)
+;; --- Item 8: grouped-literal site-(a) (owner decision 2026-09-10) ---
+;;
+;; Two or more INLINED bare-String conds in a parse-or (site-(a))
+;; position crash new-toc codegen (the item-8 blocker-3 fact). The
+;; owner's ruling: ALL bare-String alts of an Any are grouped into
+;; ONE inlined cond — a flat (or ...) of str-prefix? tests matching
+;; (subs (.input state) 0 1) — placed at the FIRST String alt's
+;; position (single-char literals are mutually exclusive, so their
+;; relative order never mattered; in this grammar the group always
+;; lands last or alone). One inlined cond in parse-or position is
+;; the verified-building shape (probe-combined, 2026-09-10).
+
+;; string-lits-acc [acc ps i]: the rendered literals of every String
+;; alt of ps, in order.
+(defn string-lits-acc [acc ps i]
+  (cond (= i (count ps))
+    acc
+
+    (cond (str= (type-name (extract (get ps i))) "String")
+      (string-lits-acc (vect-conj acc (render-literal (extract (get ps i))))
+                       ps (+ i 1))
+
+      (string-lits-acc acc ps (+ i 1)))))
+
+;; group-result-lines [sv]: the grouped cond's three result lines —
+;; the value is (subs (.input sv) 0 1), the message the general
+;; "unexpected character". take-char / ParserError align under the
+;; subs arg (the one-char parser style). The ParserError line ends
+;; with TWO extra closes (ParserMatch + cond — the string-body-
+;; lines convention): the subs value leaves ParserMatch open across
+;; the take-char line (one close only), so without them the group's
+;; lines are not self-balanced. Built
+;; with conj (a vector literal containing a to-str over a let-bound
+;; value crashes new-toc at load — the item-7a fact).
+(defn group-result-lines [sv]
+  (vect-conj
+   (vect-conj
+    (conj [] (to-str ["      (rdr/ParserMatch (subs (.input " sv ") 0 1)"]))
+    (to-str ["                       (rdr/take-char " sv ")"]))
+   (to-str ["                       (rdr/ParserError \"unexpected character\" " sv ")))"])))
+
+;; group-cond-tail [acc lits i sv]: the or's continuation lines —
+;; one per remaining literal, the LAST gaining the or's close — then
+;; the three result lines. The 6-column prefix is the
+;; string-body-lines convention; the caller places the lines.
+(defn group-cond-tail [acc lits i sv]
+  (cond (= i (count lits))
+    (append-acc acc (group-result-lines sv))
+
+    (= i (- (count lits) 1))
+    (append-acc
+     (vect-conj acc
+                (to-str ["      (str-prefix? " (extract (get lits i))
+                           " (.input " sv ")))"]))
+     (group-result-lines sv))
+
+    (group-cond-tail (vect-conj acc
+                                (to-str ["      (str-prefix? "
+                                           (extract (get lits i))
+                                           " (.input " sv "))"]))
+                     lits (+ i 1) sv)))
+
+;; group-cond-lines [lits sv]: the grouped single-char literal cond
+;; (line 1 unindented, continuation lines 6-column-prefixed — the
+;; string-body-lines convention; the caller aligns line 1's cond
+;; under the ref). The lines are SELF-BALANCED (the string-body-
+;; lines convention: the final line closes the cond) so the group
+;; works in any parse-or slot. One literal: no (or ...) at all.
+(defn group-cond-lines [lits sv]
+  (cond (= (count lits) 1)
+    (group-cond-tail
+     (conj [] (to-str ["(cond (str-prefix? " (extract (first lits))
+                            " (.input " sv "))"]))
+     lits 1 sv)
+
+    (group-cond-tail
+     (conj [] (to-str ["(cond (or (str-prefix? " (extract (first lits))
+                              " (.input " sv "))"]))
+     lits 1 sv)))
+
+;; refs-conj-child [acc c i ctx]: the acc with the child-ref lines
+;; conjed. (Lives in its own defn — a protocol call nested in a
+;; vect-conj at the call-argument position is the codegen arg-
+;; miscompile: the value arrives as a raw Term (type 6), 2026-09-10,
+;; item 8; the step-newacc / many-loop-step pattern.)
+(defn refs-conj-child [acc c i ctx]
+  (vect-conj acc (child-ref c i "state" ctx)))
+
+;; refs-conj-group [acc lits]: the acc with the grouped cond's lines
+;; conjed (same codegen hazard — the call in the argument position
+;; moves into its own defn).
+(defn refs-conj-group [acc lits]
+  (vect-conj acc (group-cond-lines lits "state")))
+
+;; any-body-refs-acc [acc ps i lits group-done ctx]: the rendered
+;; refs — one line-vector per NON-String alt (child-ref over the
+;; defn's `state`, the ORIGINAL ps index kept for the helper names);
+;; the grouped cond's lines take the FIRST String alt's slot, the
+;; rest are dropped. group-done (Some/None) tracks the slot.
+(defn any-body-refs-acc [acc ps i lits group-done ctx]
+  (cond (= i (count ps))
+    acc
+
+    (let [c (extract (get ps i))]
+      (cond (str= (type-name c) "String")
+        (cond group-done
+          (any-body-refs-acc acc ps (+ i 1) lits group-done ctx)
+
+          (any-body-refs-acc (refs-conj-group acc lits)
+                             ps (+ i 1) lits (Some None) ctx))
+
+        (any-body-refs-acc (refs-conj-child acc c i ctx)
+                           ps (+ i 1) lits group-done ctx)))))
+
+;; any-body-last [acc refs i ctx]: the LAST rendered alt — its call +
+;; continuation lines, then the closes for every parse-or level. (A
+;; let in a non-else cond clause is a malformed-cond hazard — the
+;; branches are helper defns so the cond clauses are plain calls.)
+(defn any-body-last [acc refs i ctx]
+  (let [ref (extract (get refs i))
         b (spaces (* 12 i))]
     (append-acc
      acc
@@ -794,15 +867,15 @@
       (append-acc
        (conj [] (to-str [b (extract (first ref))]))
        (ref-cont-acc [] (rest ref) b))
-      (closes (* 2 (- (count ps) 1)))))))
+      (closes (* 2 (- (count refs) 1)))))))
 
-;; step-newacc [acc ps i ctx]: the acc lines after emitting alt i —
+;; step-newacc [acc refs i ctx]: the acc lines after emitting alt i —
 ;; the parse-or line, the ref's continuation lines, the else-fn open
 ;; line. (Lives in its own defn — inlined in any-body-step, new-toc's
 ;; codegen drops the else-fn line: the 2nd arg of the outer
 ;; append-acc is emitted 1-arg, deterministic, 2026-09-09, item 6.)
-(defn step-newacc [acc ps i ctx]
-  (let [ref (child-ref (extract (get ps i)) i "state" ctx)
+(defn step-newacc [acc refs i ctx]
+  (let [ref (extract (get refs i))
         b (spaces (* 12 i))
         b10 (spaces (+ (* 12 i) 10))]
     (append-acc
@@ -811,34 +884,43 @@
       (ref-cont-acc [] (rest ref) b10))
      (conj [] (to-str [b10 "(fn [e" (number-str (+ i 1)) "]"])))))
 
-;; any-body-step [acc ps i ctx]: a non-last alt — the parse-or +
+;; any-body-step [acc refs i ctx]: a non-last alt — the parse-or +
 ;; else-fn open, then the recursive step.
-(defn any-body-step [acc ps i ctx]
-  (any-body-acc (step-newacc acc ps i ctx) ps (+ i 1) ctx))
+(defn any-body-step [acc refs i ctx]
+  (any-body-acc (step-newacc acc refs i ctx) refs (+ i 1) ctx))
 
-;; any-body-acc [acc ps i ctx]: the nested parse-or chain (site-(a)
-;; template) rendered outside-in. Every alt is called over the
-;; defn's `state` param (no threading). At alt i (i < N-1) the step
-;; emits the (parse-or line, the ref's continuation lines aligned 10
-;; columns in, the (fn [e(i+1)] line, and descends 12 columns. The
-;; last alt is emitted BARE (the last Error falls out for free); its
-;; last line gains the 2-per-level closing parens (fn + parse-or).
-;; (count ps) is inlined at both use sites — a let wrapping this cond
-;; (both clauses lets) is a new-toc hazard: it loads clean but
-;; miscompiles and crashes at runtime (bad incRef value: (nil),
-;; 2026-09-09, item 6). The branches are helper defns (any-body-last
-;; / any-body-step) — a let directly in a non-else cond clause is
-;; rejected as a malformed cond.
-(defn any-body-acc [acc ps i ctx]
-  (cond (= i (- (count ps) 1))
-    (any-body-last acc ps i ctx)
+;; any-body-acc [acc refs i ctx]: the nested parse-or chain (site-(a)
+;; template) rendered outside-in over the rendered refs. Every alt is
+;; called over the defn's `state` param (no threading). At alt i
+;; (i < N-1) the step emits the (parse-or line, the ref's
+;; continuation lines aligned 10 columns in, the (fn [e(i+1)] line,
+;; and descends 12 columns. The last alt is emitted BARE (the last
+;; Error falls out for free); its last line gains the 2-per-level
+;; closing parens (fn + parse-or). (count refs) is inlined at both
+;; use sites — a let wrapping this cond (both clauses lets) is a
+;; new-toc hazard: it loads clean but miscompiles and crashes at
+;; runtime (bad incRef value: (nil), 2026-09-09, item 6). The
+;; branches are helper defns (any-body-last / any-body-step) — a let
+;; directly in a non-else cond clause is rejected as a malformed
+;; cond.
+(defn any-body-acc [acc refs i ctx]
+  (cond (= i (- (count refs) 1))
+    (any-body-last acc refs i ctx)
 
-    (any-body-step acc ps i ctx)))
+    (any-body-step acc refs i ctx)))
 
 ;; any-body [ps ctx]: the Any body — the nested parse-or over the
-;; alts' call expressions (site-(a) template).
+;; rendered refs (site-(a) template, grouped-literal form): the
+;; bare-String alts collapse into the single grouped cond at the
+;; first String alt's slot; an all-String Any is the bare grouped
+;; cond (no parse-or at all).
 (defn any-body [ps ctx]
-  (any-body-acc [] ps 0 ctx))
+  (let [lits (string-lits-acc [] ps 0)
+        refs (any-body-refs-acc [] ps 0 lits None ctx)]
+    (cond (= (count refs) 0)
+      (group-cond-lines lits "state")
+
+      (any-body-acc [] refs 0 ctx))))
 
 (extend-type grammar/Any (emit-body [v ctx]
   (any-body (.parsers v) ctx)))

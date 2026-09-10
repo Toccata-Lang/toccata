@@ -1115,7 +1115,44 @@ generated code)**
   stderr to /dev/null too, so the captured output was always empty
   and every run 'failed' the grep); the file was loading clean all
   along. The capture rule is now recorded in AGENTS.md's
-  diagnostics rules.
+  diagnostics rules. UPDATE 2 (2026-09-10, implementation): blocker
+  (3) is RESOLVED by the grouped-literal site-(a) form (owner
+  decision 2026-09-10): ALL bare-String alts of an Any collapse into
+  ONE inlined cond (a flat (or ...) of str-prefix? tests) at the
+  FIRST String alt's slot — one inlined cond in parse-or position is
+  the verified-building shape (the crash was ≥2 inlined bare-String
+  conds). Implementation found and fixed two emitter bugs the
+  driver's an-any check (1 String alt) could not see: (a)
+  any-body-refs-acc passed bare `Some` (a fielded ctor, not a value)
+  as the group-done marker — it arrived as a Function at runtime
+  (No implementation of 'cond' found for Function); fixed to
+  `(Some None)`. (b) group-result-lines left the grouped cond
+  UNCLOSED in the ≥2-literal case (the three result lines netted +1:
+  the subs value leaves ParserMatch open across the take-char line,
+  which carries one close only) — the ParserError line now ends with
+  three closes (itself + ParserMatch + cond), making the group's
+  lines self-balanced in any parse-or slot. Driver extended to 13
+  checks (12 + emit-module-real: the full real-grammar module
+  fingerprint, 196 lines); on a match it writes
+  interpreter/gen-rdr.toc (the real module) plus the item-8 corpus
+  files: gen-corpus.toc / -want.toc (the success case — 17 lines:
+  ints, strings with each escape, symbols incl. operator names,
+  nested calls), gen-corpus-bad{1,2,3}.toc / -want.toc (the failure
+  cases: unterminated string, bare ")", trailing garbage after a
+  complete expression — each a separate input because the generated
+  main exits at the first error), and gen-corpus-empty.toc (the
+  empty-input case; must print nothing). `make gen-corpus` runs the
+  built gen-rdr over the corpus and diffs. VALUE-SHAPE DEVIATION:
+  the plan predicted `[4 [2]]` for `42` (the slow-path Many shape),
+  but the fast-path Many (read-run) returns a SINGLE string for the
+  whole run, so `42` renders `[4 2]` and `7` renders `[7 ]` — the
+  corpus expectations use the actual shape. STATUS: driver 13/13
+  OK, remaining 0; the real-module build + corpus run are pending a
+  healthy window (the crash-set drift: in the current window even a
+  minimal 26-line grouped-cond probe fails 3/3 with the PEG reader's
+  'malformed cond' misparse, while the same full module built 3/3
+  earlier in the session — verify in a healthy window, per the
+  blocker-3 note).
 
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
@@ -1288,24 +1325,29 @@ a solution.
     to the correct vector-of-text values, with the loop terminating
     on non-matching input; zero leaks, 0 remaining nodes.
 
-- [ ] **8. The real grammar + corpus**
+- [ ] **8. The real grammar + corpus** (IN PROGRESS — see the
+  item-8 note, UPDATE 2)
   `emit-module` over the rules reachable from `expression` in
   `interpreter/intrp-grammar.toc`: `expression`, `symbol`,
-  `symbol-start`, `rest-of-symbol`, `alpha`, `upper-case`,
-  `lower-case`, `digits`, `int-literal` (Rule name `"integer"`),
-  `double-quoted-string`, `escaped-char` (`float-literal` is no
-  longer reachable — dropped from `expression`'s alts; see the
-  item-8 note). Generate
-  `interpreter/gen-rdr.toc`, build. Corpus: a driver-held pair of
-  files (input lines / expected result lines) covering: ints (value
-  shape `[<first-digit> [<rest...>]]` — e.g. `42` → `[4 [2]]`,
-  `7` → `[7 []]`; floats OUT — see the item-8 note), strings with
-  each escape
+  `symbol-start`, `rest-of-symbol`, `alpha`, `digits`, `int-literal`
+  (Rule name `"integer"`), `double-quoted-string`, `escaped-char`
+  (`float-literal` is no longer reachable — dropped from
+  `expression`'s alts; `upper-case` / `lower-case` are bare
+  CharRange data, not Rules — the emitter lifts them anonymously
+  under `alpha` as `alpha-0` / `alpha-1`). Generate
+  `interpreter/gen-rdr.toc`, build. Corpus: driver-held input /
+  expected-output file pairs covering: ints (AS-BUILT value shape
+  `[<first-digit> <rest-as-one-string>]` — the fast-path Many
+  returns one string per run: `42` → `[4 2]`, `7` → `[7 ]`; the
+  plan's `[4 [2]]` prediction was the slow-path shape — see the
+  item-8 note; floats OUT), strings with each escape
   (`\\` `\"` `\n` `\r` `\t`), symbols incl. operator names (`+`, `*`,
   `->`, `!x`), nested calls, empty input, and malformed lines
   (unterminated string, bare `)`, trailing garbage after a complete
-  expression). The `gen-rdr` binary runs over the corpus input and the
-  output is diffed against the expected file.
+  expression — each a separate input file because the generated
+  main exits at the first error). `make gen-corpus` runs the
+  `gen-rdr` binary over the corpus and diffs the output against the
+  expected files.
   - Done when: every corpus case matches, zero leaks, 0 remaining
     nodes.
 

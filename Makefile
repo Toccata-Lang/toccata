@@ -144,6 +144,23 @@ gen-rdr: emit-pred new-toc interpreter/intrp-rdr.toc hvm-core.toc
 	rm gen-rdr.tmp
 	$(CC) $(CFLAGS) -o gen-rdr $(TOC_FLAGS) $(LDFLAGS) gen-rdr.c new.c runtime3.c graph.c
 
+# Item-8 corpus (docs/parser-generator-plan.md): run the generated
+# parser over the driver-written corpus files and diff the output
+# against the -want files. The failure cases exit 1 (the `!` inverts);
+# the empty case must print nothing.
+.PHONY: gen-corpus
+gen-corpus: gen-rdr
+	./gen-rdr interpreter/gen-corpus.toc > scratch/gen-corpus-got.txt
+	diff -u interpreter/gen-corpus-want.toc scratch/gen-corpus-got.txt
+	! ./gen-rdr interpreter/gen-corpus-bad1.toc > scratch/gen-corpus-bad1-got.txt
+	diff -u interpreter/gen-corpus-bad1-want.toc scratch/gen-corpus-bad1-got.txt
+	! ./gen-rdr interpreter/gen-corpus-bad2.toc > scratch/gen-corpus-bad2-got.txt
+	diff -u interpreter/gen-corpus-bad2-want.toc scratch/gen-corpus-bad2-got.txt
+	! ./gen-rdr interpreter/gen-corpus-bad3.toc > scratch/gen-corpus-bad3-got.txt
+	diff -u interpreter/gen-corpus-bad3-want.toc scratch/gen-corpus-bad3-got.txt
+	./gen-rdr interpreter/gen-corpus-empty.toc > scratch/gen-corpus-empty-got.txt
+	test ! -s scratch/gen-corpus-empty-got.txt
+
 # Sidequest
 sidequest.c: new-toc sidequest.toc hvm-core.toc new.h
 	./new-toc sidequest.toc > sidequest.tmp
