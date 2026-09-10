@@ -11,6 +11,12 @@ If you are told to create a file, then only create it. Do not try to execute it 
 
 * Never make the toccata target! That is for me to do when needed.
 
+* **NEVER touch `toccata.c` or `core.c`.** Do not edit them, do not compile them
+  standalone (no `clang -c core.c`, no `clang -c toccata.c`, no object files,
+  no `nm` on them), do not delete, move, or regenerate them, and do not include
+  them in any probe or experiment. Full stop. No exceptions, no "just to check"
+  invocations. If a task seems to require it, stop and ask the owner.
+
 * Before writing or editing any `.toc` file, read docs/toccata-style.md and follow it.
 
 * No local symbol may shadow a symbol from the core namespace — new-toc codegen emits colliding C identifiers (see docs/new-compiler-plan.md, Verified facts).

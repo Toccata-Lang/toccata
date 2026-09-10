@@ -21,6 +21,9 @@ REG_TESTS = test1 test2 test3 test4 test5 test6 test7 test8 test9 test10 test11 
 	test-threading test-or-comment hash-map-regressions closure-capture-sup
 TEST_SOURCES = new.c runtime3.c graph.c
 
+toccata: toccata.c runtime.c core.c
+	clang -g -lpthread -latomic toccata.c core.c -o toccata
+
 new-toc: compiler.toc base.toc typer.toc codegen.toc toccata
 	./toccata compiler.toc > new-toc.tmp
 	sed -i 's/maybe((FnArity/maybe((Vector/' new-toc.tmp
