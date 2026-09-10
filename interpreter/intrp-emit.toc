@@ -31,9 +31,11 @@
 (add-ns grammar (module "intrp-grammar.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
 
-;; Forward declaration of the public entry — see the defn at the
-;; bottom of the file.
+;; Forward declarations of the public entry (see the defn at the
+;; bottom of the file) and the Any recursion (any-body-step calls
+;; any-body-acc, defined after it).
 (def emit-module)
+(def any-body-acc)
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -421,6 +423,41 @@
 
         (append-acc [l] (append-to-last (rest lines) suffix))))))
 
+;; any-body-last [acc ps i ctx]: the LAST alt — its call + continuation
+;; lines, then the closes for every parse-or level. (A let in a
+;; non-else cond clause is a malformed-cond hazard — the branches are
+;; helper defns so the cond clauses are plain calls.)
+(defn any-body-last [acc ps i ctx]
+  (let [ref (child-ref (extract (get ps i)) i "state" ctx)
+        b (spaces (* 12 i))]
+    (append-acc
+     acc
+     (append-to-last
+      (append-acc
+       (conj [] (to-str [b (extract (first ref))]))
+       (ref-cont-acc [] (rest ref) b))
+      (closes (* 2 (- (count ps) 1)))))))
+
+;; step-newacc [acc ps i ctx]: the acc lines after emitting alt i —
+;; the parse-or line, the ref's continuation lines, the else-fn open
+;; line. (Lives in its own defn — inlined in any-body-step, new-toc's
+;; codegen drops the else-fn line: the 2nd arg of the outer
+;; append-acc is emitted 1-arg, deterministic, 2026-09-09, item 6.)
+(defn step-newacc [acc ps i ctx]
+  (let [ref (child-ref (extract (get ps i)) i "state" ctx)
+        b (spaces (* 12 i))
+        b10 (spaces (+ (* 12 i) 10))]
+    (append-acc
+     (append-acc
+      (conj acc (to-str [b "(parse-or " (extract (first ref))]))
+      (ref-cont-acc [] (rest ref) b10))
+     (conj [] (to-str [b10 "(fn [e" (number-str (+ i 1)) "]"])))))
+
+;; any-body-step [acc ps i ctx]: a non-last alt — the parse-or +
+;; else-fn open, then the recursive step.
+(defn any-body-step [acc ps i ctx]
+  (any-body-acc (step-newacc acc ps i ctx) ps (+ i 1) ctx))
+
 ;; any-body-acc [acc ps i ctx]: the nested parse-or chain (site-(a)
 ;; template) rendered outside-in. Every alt is called over the
 ;; defn's `state` param (no threading). At alt i (i < N-1) the step
@@ -431,31 +468,14 @@
 ;; (count ps) is inlined at both use sites — a let wrapping this cond
 ;; (both clauses lets) is a new-toc hazard: it loads clean but
 ;; miscompiles and crashes at runtime (bad incRef value: (nil),
-;; 2026-09-09, item 6).
+;; 2026-09-09, item 6). The branches are helper defns (any-body-last
+;; / any-body-step) — a let directly in a non-else cond clause is
+;; rejected as a malformed cond.
 (defn any-body-acc [acc ps i ctx]
   (cond (= i (- (count ps) 1))
-    (let [ref (child-ref (extract (get ps i)) i "state" ctx)
-          b (spaces (* 12 i))]
-      (append-acc
-       acc
-       (append-to-last
-        (append-acc
-         (conj [] (to-str [b (extract (first ref))]))
-         (ref-cont-acc [] (rest ref) b))
-        (closes (* 2 (- (count ps) 1))))))
+    (any-body-last acc ps i ctx)
 
-    (let [ref (child-ref (extract (get ps i)) i "state" ctx)
-          b (spaces (* 12 i))
-          b10 (spaces (+ (* 12 i) 10))]
-      (any-body-acc
-       (append-acc
-        (append-acc
-         (conj acc (to-str [b "(parse-or " (extract (first ref))]))
-         (ref-cont-acc [] (rest ref) b10))
-        ;; a vector — append-acc iterates its collection arg with
-        ;; first/rest; a bare string arg is walked CHAR BY CHAR.
-        (conj [] (to-str [b10 "(fn [e" (number-str (+ i 1)) "]"]))
-       ps (+ i 1) ctx))))
+    (any-body-step acc ps i ctx)))
 
 ;; any-body [ps ctx]: the Any body — the nested parse-or over the
 ;; alts' call expressions (site-(a) template).

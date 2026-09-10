@@ -380,6 +380,35 @@ Curated for this project; the source of truth is the compiler plan.
   the function is NEVER CALLED (crash at module load/registration).
   Fix: inline the let-bound value so the cond is the defn body
   directly (let INSIDE cond clauses is safe — `all_body-acc`).
+  Related: a let directly in a NON-ELSE cond clause is REJECTED at
+  load as a malformed cond — the branches must be plain calls (helper
+  defns), as in `any-body-acc`.
+- new-toc codegen drops a call arg (2026-09-09, item 6): in
+  `any-body-step` (let of 3 bindings incl. a protocol call; body a
+  4-arg call whose 1st arg is a nested 2-arg `append-acc`), the 2nd
+  arg of the OUTER `append-acc` (the else-fn line) is DROPPED — the
+  call is emitted 1-arg and the let binding erased to `ERA` in the
+  generated C; deterministic (4/4+). The arg is dropped whether
+  inline, let-bound, or a helper call in arg position. Workaround
+  (verified): move the whole let + appends into a separate defn
+  (`step-newacc`); `any-body-step` is then a single 4-arg call and
+  builds clean. A scratch probe with a call-expression in that arg
+  position CRASHES new-toc's codegen (abort, no message, truncated C
+  output) — the same fragility. NOTE: many smaller probes with
+  similar shapes build clean, so the trigger is not yet isolated;
+  treat nested-append arg positions in large modules as suspect.
+- `pr*` side-effect lines inside a defn BODY miscompile (2026-09-09,
+  item 6): debug `pr*` calls added to a defn body (outside the
+  result position) change the generated code's behavior — the driver
+  miscompiled until every such line was removed. Debug by a separate
+  driver file, not by sprinkling `pr*` into library defns.
+- Any alts are tried IN ORDER over the defn's `state` (2026-09-09,
+  item 6): a bare-String alt's literal must start with a char no
+  earlier alt matches, or the earlier alts eat it char-by-char (the
+  `"xy"` alt after `an-alpha` never fired — `x` and `y` each won via
+  `an-alpha`); and since the String body's `take-char` consumes
+  exactly one char, the literal must be a SINGLE char or the
+  remainder is re-parsed as the next expression.
 - first/rest iteration over a bare string walks it CHAR BY CHAR
   (2026-09-09, item 6): a helper iterating a collection arg via
   `count`/`first`/`rest` (e.g. `append-acc`) given a bare STRING arg
@@ -400,7 +429,14 @@ Curated for this project; the source of truth is the compiler plan.
   rebuild whose link fails (`undefined reference to emptyBMI`).
   Owner must restore/rebuild the toolchain. Earlier the same session
   the same binary built the drivers intermittently (retry loops of
-  5–12 attempts).
+  5–12 attempts). UPDATE (2026-09-09, item 6, second degradation):
+  the restored binary (2026-09-09 19:10) worked for a window (full
+  `emit-pred` 9/9 OK + `gen-rdr` build + sample run) then degraded
+  MID-SESSION: all non-trivial files crash again (`intrp-grammar.toc`
+  15/15, `emit-pred.toc` 15/15, no error message), while trivial and
+  small files still build. Machine memory was healthy (43GB
+  available). The degradation appears to be a machine-state issue,
+  not a source issue (the pristine committed driver fails too).
 - A `scratch/` probe cannot `add-ns` a module in `interpreter/` —
   add-ns paths resolve against the importing file's directory and
   `../` is forbidden, so `scratch/` probes are limited to
@@ -585,37 +621,53 @@ generated code)**
   header line + one `(defn <name>-char [c] <pred>)` line per rule;
   `entry` is accepted but unused until the item-4 main template.
 
-- Item 6 (2026-09-09, IN PROGRESS — verification pending toolchain
-  restoration): the Any (parser-level) emission is CODE-COMPLETE in
-  `interpreter/intrp-emit.toc` — `any-body-acc` (site-(a) nested
-  parse-or; last alt bare; `(count ps)` inlined at both use sites per
-  the let-wrapping-cond hazard), `any-body`, the `Any` `emit-body` /
+- Item 6 (2026-09-09, IN PROGRESS — re-verification pending
+  toolchain restoration): the Any (parser-level) emission is
+  CODE-COMPLETE in `interpreter/intrp-emit.toc` — `any-body-acc`
+  (site-(a) nested parse-or; last alt bare; `(count ps)` inlined at
+  both use sites per the let-wrapping-cond hazard; the two branches
+  are helper defns `any-body-last` / `any-body-step` — a let directly
+  in a non-else cond clause is rejected as a malformed cond),
+  `step-newacc` (the step's new-acc lines in their own defn — see the
+  codegen arg-drop fact below), `any-body`, the `Any` `emit-body` /
   `walk-children` impls, the `child-ref` `sv` parameter (All/Ignore
   thread `s<i>`; Any calls every alt over the defn's `state`),
   `append-to-last` (flattened with `append-acc`), the `emit-module`
-  forward declaration (symbol-loss race fix), and the main-template
-  fix: `parse-seq` accumulates the OUTPUT STRING in `acc` (pure
-  dataflow — the per-line `pr*` counts threaded through `+` were
-  skipped by the lazy machine on the error path: `exit` cut the
-  result chain before the `+` was forced, dropping earlier prints);
-  `main` prints the accumulated lines on success, and
+  + `any-body-acc` forward declarations (symbol-loss race fix), and
+  the main-template fix: `parse-seq` accumulates the OUTPUT STRING in
+  `acc` (pure dataflow — the per-line `pr*` counts threaded through
+  `+` were skipped by the lazy machine on the error path: `exit` cut
+  the result chain before the `+` was forced, dropping earlier
+  prints); `main` prints the accumulated lines on success, and
   `parse-error-line` splices them into the exit message on error.
-  The driver (`emit-pred.toc`) gained the `an-any` synthetic grammar
-  (Any of a named Rule, an anonymous All, and a bare String — each
-  alt wins once on the `a / 42 / xy` sample, line 4 `5` is the
-  failure case) + the `emit-module-an` exact-fingerprint check (9
-  checks total) + the `gen-sample.toc` write. Verification state:
-  the last SUCCESSFUL driver run (before the two structural fixes
-  below) showed 8/9 OK — `emit-module-an` failed with the char-walk
-  + nested-vector artifacts; both bugs are FIXED in source (the
-  `append-acc` bare-string char-walk in `any-body-acc`'s fn line, the
-  `append-to-last` nesting) but the rebuild, the `make gen-rdr`
-  build, and the sample-file run are PENDING the toolchain
-  restoration (see the BROKEN AGAIN fact above). Next run: `make
-  emit-pred` (expect 9 OK), `make gen-rdr`, `./gen-rdr
-  interpreter/gen-sample.toc` (expect `a` / `42` / `xy` lines then
-  `gen-sample.toc:4: expected "xy"`, exit 1, zero leaks), then check
-  the box.
+  The driver (`emit-pred.toc`) carries the `an-any` synthetic grammar
+  (Any of a named Rule `an-alpha`, an anonymous All (lifted to
+  `an-any-1`), and a bare String alt `"-"` — the literal is a SINGLE
+  char outside a-z0-9: alts are tried in order over the defn's
+  `state`, so a literal starting with an a-z/digit char is eaten
+  char-by-char by the earlier alts — the original `"xy"` sample
+  printed `x` and `y` (an-alpha wins) and the String alt NEVER fired,
+  violating the done-when's "each alternative wins at least once" —
+  and `take-char` consumes exactly one char, so a longer literal
+  would leave a re-parsed remainder), the `emit-module-an`
+  exact-fingerprint check (9 checks total), and the `gen-sample.toc`
+  write (`a / 42 / - / 5`). Verification state: with the toolchain
+  UP earlier this session (new-toc 2026-09-09 19:10), `make
+  emit-pred` showed 9/9 OK (zero malloc diff, 0 remaining nodes) and
+  `make gen-rdr` built; `./gen-rdr interpreter/gen-sample.toc` on the
+  OLD `"xy"` sample printed `a` / `[4 2]` / `x` / `y` /
+  `interpreter/gen-sample.toc:4:expected "xy"`, exit 1, zero leaks
+  (consistent with the generated code — and the exposure that led to
+  the `"-"` sample fix above). The `want-an-any-defn` fingerprint
+  also gained a 7th closing paren on the last line (the old 6 was
+  wrong: ParserError + cond + fn + parse-or + fn + parse-or + defn).
+  The `"-"` sample change is UNVERIFIED — the toolchain degraded
+  again mid-session (see the BROKEN AGAIN fact's second update): all
+  non-trivial files crash (15/15). Next run: `make emit-pred` (expect
+  9 OK), `make gen-rdr`, `./gen-rdr interpreter/gen-sample.toc`
+  (expect `a` / `[4 2]` / `-` lines then
+  `gen-sample.toc:4:expected "-"`, exit 1, zero leaks), then check
+  the box and commit.
 
 - Item 2a (2026-09-04): the closure-capture probe PASSED — the
   site-(b) shape is clean. The scratch driver (`scratch/probe-2a.toc`,
