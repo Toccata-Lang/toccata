@@ -1,0 +1,67 @@
+
+(add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
+                            "system.toc"
+                            :sha "30b346e"))
+(add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
+                            "file-io.toc"
+                            :sha "36fa952"))
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "e8eba87"))
+(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
+                           "recursive-descent.toc"
+                           :sha "d61aa1e"))
+(add-ns rdr (module "ast-rdr.toc"))
+(add-ns b (module "base.toc"))
+
+(def lf "\n")
+(def lflf "\n\n")
+
+(def _ (print-err 'creating-parser))
+(def t1 (sys/clock_gettime))
+
+(def parse-forms
+  (rd/parser
+   (apply-to (fn [x]
+               x)
+             (grmr/none-or-more rdr/read-top-level-item))))
+
+(def _ (print-err 'parser-created (div (sys/time-delta t1 (sys/clock_gettime))
+                                       1000)))
+
+(defn compile-module [file-name root-dir proj-dir module-index]
+  ;; kick off a thread to load and check the module
+  (b/status "Loading" file-name)
+
+  ;; try to open file for reading
+  (either (map (fio/file-in file-name)
+               (fn [file-in]
+                 ;; if opened, parse and type check it
+                 (let [parse-result (parse-forms {'file-pos 0}
+                                                 (lazy-list file-in))]
+                   (cond (instance? rd/ParserError parse-result)
+                         (do
+                           (b/status (.msg parse-result))
+                           (b/wait-for-err-out)
+                           (abort))
+                         
+                         (do
+                           (println (vec (.value parse-result)))
+                           (b/status "Forms" (count (.value parse-result)))
+                           (b/status "Loaded" file-name))))))
+
+          ;; or tell everyone it couldn't be
+          (do
+            (send b/err-out (fn [_]
+                              (print-err "Could not find/open " file-name)
+                              (abort)))
+            (b/wait-for-err-out))))
+
+(main [[_ & params]]
+      (map (and (= 1 (count params))
+                (first params))
+           (fn [file-name]
+             (compile-module file-name b/toccata-dir b/toccata-dir
+                             1)))
+
+  (b/wait-for-err-out))

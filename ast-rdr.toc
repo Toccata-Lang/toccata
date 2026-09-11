@@ -1,0 +1,418 @@
+
+;; This file specifies the syntax of Toccata
+;; It also contains the code to turn a Toccata program from a string
+;; to an AST
+
+;; Components to build the grammar out of
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "e8eba87"))
+(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
+                           "recursive-descent.toc"
+                           :sha "d61aa1e"))
+
+(defn jsonize [kind start children end]
+  (str "{\"kind\": \"" kind "\", \"start\": " start
+       ", \"end\": " end ",\n\"children\": " children "}\n"))
+
+(defn min [x y]
+  (either (< x y)
+          y))
+
+(defprotocol Counter
+  (count-chars [v]))
+
+(extend-type String
+  Counter
+  (count-chars [s]
+    (count s)))
+
+(extend-type Vector
+  Counter
+  (count-chars [v]
+    (reduce v 0 (fn [cnt v]
+                  (+ cnt (count-chars v))))))
+
+(deftype ignore [rule]
+  Stringable
+  (string-list [_]
+    (flat-map (list "(ignore " rule ")")
+              string-list))
+
+  Container
+  (wrap [_ x]
+    (grmr/parser-always x))
+
+  (apply [xf xs]
+    (grmr/parser-apply xf xs))
+
+  (map [_ f]
+    (ignore (f rule)))
+
+  (map [_ f embed]
+    (map (f rule) ignore))
+
+  Parser
+  (rd/collapse-branches [r]
+    (let [[rule rule-map] (.rule r)]
+      [(ignore rule) rule-map]))
+
+  (rd/parse [r state]
+    (let [result (rd/parse (.rule r) state)]
+      (cond (instance? rd/ParserMatch result)
+            (either (map (get-in state [.values 'file-pos])
+                         (fn [val]
+                           ;; (println 'file-pos val 'value (count-chars (.value result))
+                           ;;          (.value result))
+                           (rd/ParserIgnore (assoc-in (.state result) [.values 'file-pos]
+                                                      (+ (count-chars (.value result)) val)))))
+                    (rd/ParserError (str "No value for key 'file-pos' found.")
+                                    (.state result)))
+
+            result))))
+
+;; Like 'ignore', but for sub-parsers that ALREADY advance 'file-pos' themselves
+;; (e.g. read-sub-expr). 'ignore' would re-advance by (count-chars value), which
+;; for a JSON-string value double-counts. 'drop-node' discards the value and keeps the
+;; inner parser's own file-pos advancement untouched.
+(deftype drop-node [rule]
+  Stringable
+  (string-list [_]
+    (flat-map (list "(drop-node " rule ")")
+              string-list))
+
+  Container
+  (wrap [_ x]
+    (grmr/parser-always x))
+
+  (apply [xf xs]
+    (grmr/parser-apply xf xs))
+
+  (map [_ f]
+    (drop-node (f rule)))
+
+  (map [_ f embed]
+    (map (f rule) drop-node))
+
+  Parser
+  (rd/collapse-branches [r]
+    (let [[rule rule-map] (.rule r)]
+      [(drop-node rule) rule-map]))
+
+  (rd/parse [r state]
+    (let [result (rd/parse (.rule r) state)]
+      (cond (instance? rd/ParserMatch result)
+            (rd/ParserIgnore (.state result))
+
+            result))))
+
+(def not-eol
+  (grmr/rule "not-eol"
+             (grmr/not-char "\n")))
+
+(def linear-whitespace
+  (grmr/rule "linear-whitespace"
+             (grmr/any "," " " "\t")))
+
+(def newline
+  (grmr/rule "newline"
+             (grmr/string-terminal "\n")))
+
+(def whitespace
+  (grmr/rule "whitespace"
+             (grmr/any (grmr/all (grmr/one-or-more ";")
+                                 (grmr/none-or-more not-eol)
+                                 newline)
+                       linear-whitespace
+                       "\r"
+                       newline)))
+
+(def ignore-whitespace (ignore (grmr/none-or-more whitespace)))
+
+;; Whitespace that does NOT include ';' comments. Used at the top level so that
+;; comments can be captured as nodes rather than silently skipped.
+(def plain-whitespace
+  (grmr/rule "plain-whitespace"
+             (grmr/any linear-whitespace
+                       "\r"
+                       newline)))
+
+(def ignore-plain-whitespace (ignore (grmr/none-or-more plain-whitespace)))
+
+(def read-block-comment
+  (grmr/rule "block-comment"
+             (apply-to jsonize
+                       (grmr/always "comment")
+                       (grmr/get-value 'file-pos)
+                       (grmr/always "[]")
+                       (ignore (grmr/one-or-more
+                                (grmr/all
+                                 (grmr/none-or-more linear-whitespace)
+                                 (grmr/one-or-more ";")
+                                 (grmr/none-or-more not-eol)
+                                 newline)))
+                       (grmr/get-value 'file-pos))))
+
+(def read-open-paren
+  (grmr/rule "open-paren"
+             (ignore (grmr/all ignore-whitespace "("))))
+
+(def read-close-paren
+  (grmr/rule "close-paren"
+             (grmr/any (ignore (grmr/all ignore-whitespace ")"))
+                       (grmr/error "Missing \")\"."))))
+
+(def read-open-bracket
+  (grmr/rule "open-bracket"
+             (ignore (grmr/all ignore-whitespace "["))))
+
+(def read-close-bracket
+  (grmr/rule "close-bracket"
+             (grmr/any (ignore (grmr/all ignore-whitespace "]"))
+                       (grmr/error "Missing \"]\"."))))
+
+(def read-open-brace
+  (grmr/rule "open-bracket"
+             (ignore (grmr/all ignore-whitespace "["))))
+
+(def read-close-brace
+  (grmr/rule "close-bracket"
+             (grmr/any (ignore (grmr/all ignore-whitespace "]"))
+                       (grmr/error "Missing \"}\"."))))
+
+(def symbol-start
+  (grmr/rule "symbol-start"
+               (grmr/any grmr/alpha (grmr/one-of "._<>=+-*/"))))
+
+(def symbol-punct
+  (grmr/rule "symbol-punct"
+               (grmr/one-of "._<>=+-*?!")))
+
+(def symbol-char
+  (grmr/rule "symbol-char"
+               (grmr/any grmr/alpha grmr/digit symbol-punct)))
+
+(def rest-of-symbol
+  (grmr/rule "rest-of-symbol"
+               (grmr/none-or-more symbol-char)))
+
+(def read-symbol
+  (grmr/rule "tagged-symbol"
+             (grmr/any
+              (apply-to jsonize
+                        (grmr/always "symbol")
+                        (grmr/get-value 'file-pos)
+                        (grmr/always "[]")
+                        (ignore symbol-start)
+                        (ignore rest-of-symbol)
+                        (grmr/get-value 'file-pos))
+              (apply-to jsonize
+                        (grmr/always "symbol")
+                        (grmr/get-value 'file-pos)
+                        (grmr/always "[]")
+                        (ignore "|")
+                        (grmr/get-value 'file-pos))
+              "_FILE_"
+              "_LINE_")))
+
+(def read-string-newline
+  (grmr/rule "newline"
+             (apply-to (fn [& _] "\n")
+                       (grmr/all "\\" "n"))))
+
+(def read-string-tab
+  (grmr/rule "tab"
+             (apply-to (fn [& _] "\t")
+                       (grmr/all "\\" "t"))))
+
+(def read-string-backspace
+  (grmr/rule "backspace"
+             (apply-to (fn [& _] "\b")
+                       (grmr/all "\\" "b"))))
+
+(def read-string-return
+  (grmr/rule "return"
+             (apply-to (fn [& _] "\r")
+                       (grmr/all "\\" "r"))))
+
+(def read-string-formfeed
+  (grmr/rule "formfeed"
+             (apply-to (fn [& _] "\f")
+                       (grmr/all "\\" "f"))))
+
+(def read-string-doublequote
+  (grmr/rule "doublequote"
+             (apply-to (fn [& _] "\"")
+                       (grmr/all "\\" "\""))))
+
+(def read-string-backslash
+  (grmr/rule "backslash"
+             (apply-to (fn [& _] "\\")
+                       (grmr/all "\\" "\\"))))
+
+(defn string-frag-len [s]
+  (assert (instance? String s))
+  (inline C Integer "
+    char *str = NULL;
+    int64_t strLen;
+    if (s_0->type == StringBufferType) {
+      str = ((String *)s_0)->buffer;
+      strLen = ((String *)s_0)->len;
+    } else if (s_0->type == SubStringType) {
+      str = ((SubString *)s_0)->buffer;
+      strLen = ((SubString *)s_0)->len;
+    }
+    int64_t len;
+    for (len = 0; len < strLen && str[len] != 34 && str[len] != 92;)
+       len++;
+    dec_and_free(s_0, 1);
+    return(integerValue(len));
+"))
+
+(def read-string-fragment
+  (grmr/rule "read-string-fragment"
+             (grmr/term-fn (fn [text]
+                             (string-frag-len text)))))
+
+(def read-string-literal
+  (grmr/rule "string"
+             (grmr/any (apply-to jsonize
+                                 (grmr/always "string")
+                                 (grmr/get-value 'file-pos)
+                                 (ignore "\"")
+                                 (ignore (grmr/none-or-more
+                                          (grmr/any read-string-fragment
+                                                    read-string-backslash
+                                                    read-string-doublequote
+                                                    read-string-tab
+                                                    read-string-backspace
+                                                    read-string-return
+                                                    read-string-formfeed
+                                                    read-string-newline)))
+                                 (ignore "\"")
+                                 (grmr/always "[]")
+                                 (grmr/get-value 'file-pos))
+                       (apply-to jsonize
+                                 (grmr/always "string")
+                                 (grmr/get-value 'file-pos)
+                                 (ignore "'")
+                                 (drop-node read-symbol)
+                                 (grmr/always "[]")
+                                 (grmr/get-value 'file-pos)))))
+
+(def read-integer-literal
+  (grmr/rule "number"
+             (apply-to jsonize
+                       (grmr/always "integer")
+                       (grmr/get-value 'file-pos)
+                       (ignore (grmr/all (apply-to (fn [dash?]
+                                                     (either dash? ""))
+                                                   (grmr/optional "-"))
+                                         (grmr/one-or-more grmr/digit)))
+                       (grmr/always "[]")
+                       (grmr/get-value 'file-pos))))
+
+(def read-sub-expr
+  (grmr/recurse "expr"))
+
+(def read-call
+  (grmr/rule "call"
+             (apply-to jsonize
+                       (grmr/always "expr")
+                       (grmr/get-value 'file-pos)
+                       read-open-paren
+                       (grmr/one-or-more read-sub-expr)
+                       read-close-paren
+                       (grmr/get-value 'file-pos))))
+
+(def read-vector
+  (grmr/rule "vector"
+             (apply-to jsonize
+                       (grmr/always "vect")
+                       (grmr/get-value 'file-pos)
+                       read-open-bracket
+                       (grmr/none-or-more read-sub-expr)
+                       read-close-bracket
+                       (grmr/get-value 'file-pos))))
+
+(def read-hash-map
+  (grmr/rule "hash-map"
+             (apply-to jsonize
+                       (grmr/always "hash-map")
+                       (grmr/get-value 'file-pos)
+                       (ignore "{")
+                       (grmr/none-or-more read-sub-expr)
+                       (ignore "}")
+                       (grmr/get-value 'file-pos))))
+
+;; Like read-expr but does NOT consume trailing whitespace, and does not itself
+;; match an annotation (an annotation's type is never itself an annotation).
+;; Used for the type in an annotation (!returns ...) so the annotation's span
+;; ends exactly at the type rather than swallowing the following whitespace.
+(def read-expr-tight
+  (grmr/rule "expr-tight"
+             (apply-to (fn [x] x)
+                       ignore-plain-whitespace
+                       (grmr/any read-integer-literal
+                                 read-string-literal
+                                 read-symbol
+                                 read-vector
+                                 read-hash-map
+                                 read-call
+                                 read-block-comment))))
+
+(def read-assert
+  (grmr/rule "assert"
+             (apply-to jsonize 
+                       (grmr/always "expr")
+                       (grmr/get-value 'file-pos)
+                       (ignore "!")
+                       (ignore (grmr/one-or-more linear-whitespace))
+                       (drop-node read-symbol)
+                       (ignore (grmr/one-or-more linear-whitespace))
+                       (drop-node read-expr-tight)
+                       (grmr/always "[]")
+                       (grmr/get-value 'file-pos))))
+
+(def read-assert-result
+  (grmr/rule "assert-result"
+             (apply-to jsonize
+                       (grmr/always "expr")
+                       (grmr/get-value 'file-pos)
+                       (ignore "!returns")
+                       (ignore (grmr/one-or-more linear-whitespace))
+                       (drop-node read-expr-tight)
+                       (grmr/always "[]")
+                       (grmr/get-value 'file-pos))))
+
+;; The set of sub-expression parsers, shared by read-expr.
+(def read-expr-body
+  (grmr/any read-integer-literal
+            read-string-literal
+            read-symbol
+            read-vector
+            read-hash-map
+            read-assert
+            read-assert-result
+            read-call
+            read-block-comment))
+
+(def read-expr
+  (grmr/rule read-sub-expr
+             (apply-to (fn [x]
+                         ;; (println x)
+                         x)
+                       ignore-plain-whitespace
+                       read-expr-body
+                       ignore-plain-whitespace)))
+
+;; A top-level item: skip plain (non-comment) whitespace, then read either a
+;; comment (captured as a first-class node) or a form. Plain whitespace is
+;; skipped first so that a comment's span starts at its first ';' rather than
+;; at any preceding blank lines.
+(def read-top-level-item
+  (grmr/rule "top-level-item"
+             (apply-to (fn [x] x)
+                       ignore-plain-whitespace
+                       (grmr/any read-block-comment
+                                 read-expr))))

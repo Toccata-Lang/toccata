@@ -31,6 +31,13 @@ new-toc: compiler.toc base.toc typer.toc codegen.toc toccata
 	clang-format -i new-toc.c
 	$(CC) -march=native -I. -lm  -DWAIT_FOR_LINGERING=1 -o new-toc -std=c99 core.c new-toc.c $(LDFLAGS)
 
+ast-json: ast-json.toc ast-rdr.toc base.toc toccata
+	./toccata ast-json.toc > ast-json.tmp
+	sed -i 's/maybe((FnArity/maybe((Vector/' ast-json.tmp
+	awk '/^#$$/ { printf "#line %d \"%s\"\n", NR+1, "ast-json.c"; next; } { print; }' ast-json.tmp > ast-json.c
+	clang-format -i ast-json.c
+	$(CC) -march=native -I. -lm  -DWAIT_FOR_LINGERING=1 -o ast-json -std=c99 core.c ast-json.c $(LDFLAGS)
+
 # Generate C files from .toc files using pattern rules
 regression-tests/%.c: new-toc regression-tests/%.toc regression-tests/regression-tester.toc hvm-core.toc
 	./new-toc regression-tests/$*.toc > regression-tests/$*.tmp
