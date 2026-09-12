@@ -134,7 +134,7 @@ Conventions used in the checklist below:
       children from `6.3` on are garbage. Items 1.1/2.x must use paths
       outside node 6's corrupted subtree (e.g. `2.3`) until the dump is
       fixed.
-- [ ] **0.7 `check` subcommand.** Runs `./new-toc` on the file, prints
+- [x] **0.7 `check` subcommand.** Runs `./new-toc` on the file, prints
       stderr, exits `1` on `error`, `0` otherwise.
       *Verify:* `./T check F` exits 0; `./T check tests/bad.toc` exits 1
       and the printed output contains the `*** Error` line.

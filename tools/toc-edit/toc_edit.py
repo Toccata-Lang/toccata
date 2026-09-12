@@ -138,6 +138,16 @@ def resolve_path(ast, path):
     return node
 
 
+def cmd_check(args):
+    """`check`: run new-toc on the file, print its stderr, exit 1 on
+    'error', 0 otherwise (see docs/toc-edit-spec.md, Failure handling).
+    """
+    _code, _stdout, stderr = run_new_toc(args.file)
+    if stderr:
+        sys.stderr.write(stderr)
+    sys.exit(1 if classify(stderr) == "error" else 0)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="toc_edit.py",
@@ -147,7 +157,7 @@ def build_parser():
 
     p = sub.add_parser("check")
     p.add_argument("file")
-    p.set_defaults(func=not_implemented)
+    p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("show")
     p.add_argument("file")
