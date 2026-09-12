@@ -261,7 +261,7 @@ Conventions used in the checklist below:
       the expected exit code stated.
       *Verify:* run each of the six example commands exactly as written;
       each produces the exit code stated in the example.
-- [ ] **4.3 Final pass.** Exec bit set; nothing outside
+- [x] **4.3 Final pass.** Exec bit set; nothing outside
       `tools/toc-edit/` added or modified; no Makefile references; no
       `toccata.c`/`core.c` involvement.
       *Verify:* `git status --porcelain` shows changes only under
