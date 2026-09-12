@@ -109,7 +109,7 @@ Conventions used in the checklist below:
       file untouched) rather than a silently accepted broken file;
       extend the allowlist in that case. Implemented and re-verified;
       item 2.5b is unblocked.
-- [ ] **0.6 `resolve_path(ast, path)`.** Dot-separated integer indices
+- [x] **0.6 `resolve_path(ast, path)`.** Dot-separated integer indices
       into `children`. Bad path → distinct error naming the deepest
       existing prefix.
       *Verify:* one-liner on `run_ast_json(F)`: `'0'` resolves to the
@@ -117,6 +117,23 @@ Conventions used in the checklist below:
       node whose span text matches the expected source slice; `'0.5'` (or
       any too-long index) raises the distinct error mentioning the
       deepest prefix.
+      **Schema-drift bug found (2026-09-12, item 0.6 run) — reported, not
+      worked around:** `ast-json` output does NOT match the spec's contract
+      when a comment is immediately followed by a nested `expr` inside the
+      same form (e.g. `(defn f [x] ;; c \n (+ x 1))`, or any form where the
+      token after an in-form comment opens a sub-form). The comment node
+      vanishes, the nested expr's span becomes the comment's span (its
+      children are the comment's characters as 1-char "symbols"/"integers"),
+      and every enclosing span is truncated at the comment. `new-toc`
+      accepts every such file cleanly (parser is fine) — the bug is in the
+      ast-json dump C code (compiler work). In-form comments that are NOT
+      followed by a nested expr dump correctly (trailing comment, comment
+      before a symbol, comment inside a `vect`). **Consequence for later
+      items:** fixture node `6` (`defn nested`, comment before its body
+      expr) has a corrupted subtree — its span is truncated and its
+      children from `6.3` on are garbage. Items 1.1/2.x must use paths
+      outside node 6's corrupted subtree (e.g. `2.3`) until the dump is
+      fixed.
 - [ ] **0.7 `check` subcommand.** Runs `./new-toc` on the file, prints
       stderr, exits `1` on `error`, `0` otherwise.
       *Verify:* `./T check F` exits 0; `./T check tests/bad.toc` exits 1

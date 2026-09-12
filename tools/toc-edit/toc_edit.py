@@ -108,6 +108,36 @@ def classify(stderr):
     return "clean"
 
 
+def resolve_path(ast, path):
+    """Resolve a dot-separated integer path to an AST node.
+
+    Path '0' is top-level node 0; '42.3' is child 3 of top-level node 42
+    (see docs/toc-edit-spec.md, CLI). Raises TocEditError — a distinct
+    error naming the deepest existing prefix — for a non-integer segment
+    or an out-of-range index.
+    """
+    container = ast
+    prefix = ""
+    node = None
+    for part in str(path).split("."):
+        if not (part.isascii() and part.isdigit()):
+            raise TocEditError(
+                f"bad path {path!r}: segment {part!r} is not a non-negative "
+                f"integer (deepest existing prefix: {prefix or '<top level>'})"
+            )
+        idx = int(part)
+        if idx >= len(container):
+            raise TocEditError(
+                f"bad path {path!r}: index {idx} out of range "
+                f"({len(container)} children); "
+                f"deepest existing prefix: {prefix or '<top level>'}"
+            )
+        node = container[idx]
+        prefix = part if not prefix else prefix + "." + part
+        container = node["children"]
+    return node
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="toc_edit.py",
