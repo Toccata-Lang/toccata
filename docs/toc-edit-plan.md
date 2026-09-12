@@ -241,7 +241,7 @@ Conventions used in the checklist below:
       *Verify:* on a copy of `F`: write a node's own span text to a
       snippet file, `replace` with it, exit 0, copy byte-identical
       (sha256).
-- [ ] **3.4 No TTY dependence.** Every subcommand works with stdin closed.
+- [x] **3.4 No TTY dependence.** Every subcommand works with stdin closed.
       *Verify:* run one invocation of each of the six subcommands with
       `</dev/null`; all behave identically to interactive runs (same
       exit codes as in items 0.7/1.1/1.2/2.4).
