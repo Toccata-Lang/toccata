@@ -237,7 +237,7 @@ Conventions used in the checklist below:
       remains; `show` the preceding sibling (a comment); second `delete`
       on that comment's path exits 0; final bytes equal the expected
       slice; `check` exits 0.
-- [ ] **3.3 Idempotence.** Replacing a node with its own text is a no-op.
+- [x] **3.3 Idempotence.** Replacing a node with its own text is a no-op.
       *Verify:* on a copy of `F`: write a node's own span text to a
       snippet file, `replace` with it, exit 0, copy byte-identical
       (sha256).
