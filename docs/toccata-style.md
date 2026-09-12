@@ -11,6 +11,15 @@ builds the code.
 * Top-level forms are prefix forms: `(keyword ...)` with the keyword as the
   first token inside the form.
 
+* Comments start with `;;` and run to the end of the line. An embedded
+  comment (inside a form) is treated as whitespace and ignored — it does not
+  appear in the AST. A top-level comment block is recognized as a first-class
+  node and appears in the AST dump as a `comment` node.
+
+* Source files are pure ASCII. Multi-byte UTF-8 characters are disallowed —
+  the toolchain does not account for them (the AST dumper's byte spans are
+  corrupted from the first such character to the end of the file).
+
 * `deftype` has two forms:
   - *Single-ctor:* `(deftype Name [f1 f2 ...] <protocol impls>)` — one
     constructor, named the same as the type.

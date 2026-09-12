@@ -133,7 +133,11 @@ Conventions used in the checklist below:
       expr) has a corrupted subtree — its span is truncated and its
       children from `6.3` on are garbage. Items 1.1/2.x must use paths
       outside node 6's corrupted subtree (e.g. `2.3`) until the dump is
-      fixed.
+      fixed. **Resolved:** the dump has been fixed — embedded comments are
+      now treated as whitespace and ignored, and top-level comment blocks
+      are recognized (see `docs/toccata-style.md`). Node 6's subtree and
+      everything after it dump correct spans; the path restriction no
+      longer applies.
 - [x] **0.7 `check` subcommand.** Runs `./new-toc` on the file, prints
       stderr, exits `1` on `error`, `0` otherwise.
       *Verify:* `./T check F` exits 0; `./T check tests/bad.toc` exits 1
@@ -170,7 +174,8 @@ Conventions used in the checklist below:
       items (2.x, 3.x) must target only nodes 0–5** (e.g. 2.5b deletes
       node 2 `defn square`, used by node 4; 3.2 uses node 1's header
       comment + node 2). Anything at index ≥ 6 is unusable until the
-      ast-json dump is fixed.
+      ast-json dump is fixed. **Resolved:** same fix — all nodes now dump
+      correct spans; the nodes 0–5 restriction no longer applies.
 
 ### Phase 2 — mutation with validate-then-write
 
