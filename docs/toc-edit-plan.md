@@ -197,7 +197,7 @@ Conventions used in the checklist below:
       *Verify:* one-liner with a fake attempt fn: always-`silent` →
       exactly 5 calls, result `unverified`; `silent, silent, error` →
       exactly 3 calls, result `error`; `clean` on first call → 1 call.
-- [ ] **2.4 `replace` end-to-end.** Splices the snippet file's bytes at
+- [x] **2.4 `replace` end-to-end.** Splices the snippet file's bytes at
       the target's `[start, end)` and wires it through `apply_edit` + the
       retry loop: success → 0; rejection → 3; all-silent → 4 with a loud
       "edit UNVERIFIED" message and no rename.
