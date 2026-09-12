@@ -19,6 +19,36 @@ If you are told to create a file, then only create it. Do not try to execute it 
 
 * Before writing or editing any `.toc` file, read docs/toccata-style.md and follow it.
 
+* Structural edits to `.toc` files are made with the structural editing tool
+  (`tools/toc-edit/toc_edit.py`, run from the repo root; copy-paste examples in
+  `tools/toc-edit/README.md`) — not by hand-editing node text. It performs
+  whole-node span surgery (untouched bytes stay untouched) and is
+  validate-then-write: the candidate is run through `new-toc` and the original
+  is atomically replaced only on success, so editing in place is safe and the
+  original is never clobbered. Workflow:
+  1. `check <file>` first — work only on a file that passes (exit 0).
+  2. Find the target: `line <file> <n>` gives the innermost node on a line;
+     `show <file> <path>` prints a node's path, kind, span, verbatim text, and
+     child paths. Verify the shown text is what you expect before editing.
+  3. Edit with `insert` (splice a snippet at the node's start with `--before`
+     or its end with `--after`), `replace` (splice over the node's span), or
+     `delete` (remove the node's span). Snippet text goes in a file passed via
+     `--from-file`.
+  4. There is no in-form token editing: to change part of a form, `replace`
+     the whole node with a snippet containing the full new text.
+  5. `delete` leaves a preceding header comment behind (comments are
+     position-anchored, never attached to forms). `show` the preceding sibling;
+     if it describes the deleted form, delete it as a second explicit edit.
+  6. `check <file>` after the edit.
+  Exit codes: 0 success; 1 `check` failed; 3 edit rejected — original
+  untouched, the failed candidate saved as `<name>.rejected` beside it,
+  `new-toc`'s stderr printed (read it — it says why); 4 unverified — `new-toc`
+  crashed silently after 5 attempts, file NOT modified, re-run the edit.
+  If a node's shown text doesn't match its span (or spans look wrong in any
+  way), suspect the `ast-json` dump first — stop and report it, don't work
+  around it. Files must be pure ASCII (docs/toccata-style.md): multi-byte
+  UTF-8 characters corrupt the dump's byte spans from that character to EOF.
+
 * No local symbol may shadow a symbol from the core namespace — new-toc codegen emits colliding C identifiers (see docs/new-compiler-plan.md, Verified facts).
 
 * new-toc diagnostics rules:
