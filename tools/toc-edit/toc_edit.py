@@ -295,9 +295,10 @@ def retry_silent(apply, max_attempts=5):
 
 
 def _splice_and_apply(file, path, new_bytes):
-    """Mutation path for `replace` (plan item 2.4): resolve `path` in the
-    file's AST, splice `new_bytes` at the target's [start, end), and run
-    the candidate through apply_edit + retry_silent. Returns the retry
+    """Shared mutation path (plan items 2.4–2.5): resolve `path` in the
+    file's AST, splice `new_bytes` at the target's [start, end) — the
+    snippet's bytes for `replace`, b"" for `delete` — and run the
+    candidate through apply_edit + retry_silent. Returns the retry
     result: ('ok', None), ('error', stderr), or ('unverified', stderr).
     """
     ast = run_ast_json(file)
@@ -316,6 +317,29 @@ def cmd_replace(args):
     """
     snippet = Path(args.from_file).read_bytes()
     verdict, stderr = _splice_and_apply(args.file, args.path, snippet)
+    if verdict == "ok":
+        sys.exit(0)
+    if verdict == "unverified":
+        sys.stderr.write(
+            "toc_edit: WARNING: edit UNVERIFIED — new-toc aborted with no "
+            "output after 5 attempts; the file was NOT modified\n"
+        )
+        sys.exit(4)
+    # 'error': apply_edit already printed new-toc's stderr and saved the
+    # .rejected candidate; the original is untouched.
+    sys.exit(3)
+
+
+def cmd_delete(args):
+    """`delete`: remove the target node's [start, end) (docs/toc-edit-spec.md,
+    Scope (c)); validate-then-write via apply_edit + the silent-crash
+    retry loop. Deleting a form does NOT delete any comment above it —
+    an orphaned header comment must be deleted as a second, explicit
+    edit (docs/toc-edit-spec.md, Semantics). Exit 0 on success, 3 on
+    rejection (original untouched, `.rejected` saved, new-toc stderr
+    printed), 4 on all-silent (edit UNVERIFIED, no rename).
+    """
+    verdict, stderr = _splice_and_apply(args.file, args.path, b"")
     if verdict == "ok":
         sys.exit(0)
     if verdict == "unverified":
@@ -377,7 +401,7 @@ def build_parser():
     p = sub.add_parser("delete")
     p.add_argument("file")
     p.add_argument("path")
-    p.set_defaults(func=not_implemented)
+    p.set_defaults(func=cmd_delete)
 
     return parser
 

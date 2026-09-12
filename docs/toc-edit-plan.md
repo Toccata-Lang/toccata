@@ -209,7 +209,7 @@ Conventions used in the checklist below:
       `.rejected` present, `*** Error` line printed; (c) one-liner that
       monkeypatches the module's `run_new_toc` to always return
       `silent` → exit 4, "UNVERIFIED" printed, original byte-identical.
-- [ ] **2.5 `delete` end-to-end.** Removes the target's `[start, end)`,
+- [x] **2.5 `delete` end-to-end.** Removes the target's `[start, end)`,
       wired through `apply_edit` + retry.
       *Verify:* on a copy of `F`: (a) delete a form preceded by a header
       comment → exit 0, result equals `src[:start] + src[end:]`
