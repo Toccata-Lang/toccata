@@ -231,7 +231,7 @@ Conventions used in the checklist below:
       *Verify:* one-liner per subcommand: sha256 of the prefix before the
       edit point and the suffix after it are identical before/after the
       edit.
-- [ ] **3.2 Orphaned-comment end-to-end.** Delete a form, then delete its
+- [x] **3.2 Orphaned-comment end-to-end.** Delete a form, then delete its
       now-orphaned header comment as a second explicit edit.
       *Verify:* on a copy of `F`: first `delete` exits 0 and the comment
       remains; `show` the preceding sibling (a comment); second `delete`
