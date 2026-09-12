@@ -162,6 +162,65 @@ def cmd_show(args):
         )
 
 
+def _line_range(raw, n):
+    """Byte range [start, end) of 1-based line n in the source bytes.
+
+    end is one past the line's newline (or the file end). Raises
+    TocEditError for out-of-range lines.
+    """
+    if n < 1:
+        raise TocEditError(f"line {n} is out of range (lines are 1-based)")
+    start = 0
+    for i in range(1, n):
+        start = raw.find(b"\n", start)
+        if start < 0:
+            raise TocEditError(f"line {n} is out of range (file has {i} lines)")
+        start += 1
+    end = raw.find(b"\n", start)
+    return start, (len(raw) if end < 0 else end + 1)
+
+
+def _innermost_on_line(ast, lo, hi):
+    """The innermost node containing a byte of [lo, hi): (path, node), or
+    None if the line is entirely unowned whitespace. Deepest node wins;
+    ties break to the earliest node in the line.
+    """
+    best = None  # ((depth, -start), path, node)
+
+    def walk(nodes, pre):
+        nonlocal best
+        for i, node in enumerate(nodes):
+            path = f"{pre}.{i}" if pre else str(i)
+            s, e = node["start"], node["end"]
+            if s < hi and e > lo:
+                key = (path.count(".") + 1, -s)
+                if best is None or key > best[0]:
+                    best = (key, path, node)
+            walk(node["children"], path)
+
+    walk(ast, "")
+    return None if best is None else (best[1], best[2])
+
+
+def cmd_line(args):
+    """`line`: find the innermost node whose span contains the line (1-based)
+    and print its path, kind, span, and text (see docs/toc-edit-spec.md,
+    Scope (b)). Clean error for out-of-range lines or lines in unowned
+    whitespace.
+    """
+    ast = run_ast_json(args.file)  # clean error for a missing file
+    raw = Path(args.file).read_bytes()
+    lo, hi = _line_range(raw, args.n)
+    hit = _innermost_on_line(ast, lo, hi)
+    if hit is None:
+        raise TocEditError(f"line {args.n} is in unowned whitespace")
+    path, node = hit
+    print(f"path: {path}")
+    print(f"kind: {node['kind']}")
+    print(f"span: [{node['start']}, {node['end']})")
+    print(f"text: {_node_text(raw, node)}")
+
+
 def cmd_check(args):
     """`check`: run new-toc on the file, print its stderr, exit 1 on
     'error', 0 otherwise (see docs/toc-edit-spec.md, Failure handling).
@@ -190,8 +249,8 @@ def build_parser():
 
     p = sub.add_parser("line")
     p.add_argument("file")
-    p.add_argument("n")
-    p.set_defaults(func=not_implemented)
+    p.add_argument("n", type=int)
+    p.set_defaults(func=cmd_line)
 
     p = sub.add_parser("insert")
     p.add_argument("file")

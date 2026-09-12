@@ -149,7 +149,7 @@ Conventions used in the checklist below:
       slice of the fixture) matches the printed text, and one line per
       child with a path that round-trips: feeding each printed child path
       back to `show` prints the same span.
-- [ ] **1.2 `line` subcommand.** Finds the innermost node whose span
+- [x] **1.2 `line` subcommand.** Finds the innermost node whose span
       contains the byte offset of line `n` (1-based, from source bytes);
       prints path, kind, span, text. Clean error (nonzero exit, message,
       no traceback) for out-of-range lines or lines in unowned
@@ -157,6 +157,20 @@ Conventions used in the checklist below:
       *Verify:* `./T line F <line-inside-nested-form>` prints the inner
       node (path longer than the top-level one at that line);
       `./T line F 9999` and `./T line F <blank-line>` both fail cleanly.
+      Note (2026-09-12, item 1.2 run) — **widens the 0.6 schema-drift
+      finding:** the corruption is NOT confined to node 6's subtree. Every
+      node at or after top-level index 6 has a span that does not match
+      the file bytes (node 6's end is truncated at the in-form comment;
+      top-level nodes 7–14 have spans pointing into the middle of other
+      forms — e.g. dump node 10.2 `string [700,707)` is actually
+      `\n\n(def ` in the file). Nodes 0–5 dump correctly. `line` itself is
+      correct per spec (innermost node containing a byte of the line;
+      verified on line 10 → `2.3.0`, line 14 → `4.2.0`, blank line 11 and
+      line 9999 fail cleanly, byte slices match). **Consequence: all later
+      items (2.x, 3.x) must target only nodes 0–5** (e.g. 2.5b deletes
+      node 2 `defn square`, used by node 4; 3.2 uses node 1's header
+      comment + node 2). Anything at index ≥ 6 is unusable until the
+      ast-json dump is fixed.
 
 ### Phase 2 — mutation with validate-then-write
 
