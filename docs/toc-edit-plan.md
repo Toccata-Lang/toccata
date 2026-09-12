@@ -255,7 +255,7 @@ Conventions used in the checklist below:
       `grep -i "orphan" README.md` (warning mentions showing the
       preceding sibling and a second edit); the table lists 0, 1, 3, 4
       with the spec's meanings (`.rejected` for 3, unverified for 4).
-- [ ] **4.2 README: usage examples.** One example per subcommand
+- [x] **4.2 README: usage examples.** One example per subcommand
       (check/show/line/insert/replace/delete); every example must be
       copy-paste runnable from the repo root against a copy of `F`, with
       the expected exit code stated.

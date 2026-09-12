@@ -28,6 +28,60 @@ preceding sibling first, and if it is a comment describing the deleted
 form, delete it as a second edit. In `hvm-core.toc` those comments are
 long and load-bearing — an orphaned one is easy to miss.
 
+## Usage examples
+
+All examples run from the repo root. Mutating examples work on a copy of
+the test fixture (`F` = `tools/toc-edit/tests/fixture.toc`), never on the
+fixture itself. Each states its expected exit code.
+
+**check** — validate a file (exit 0):
+
+```sh
+./tools/toc-edit/toc_edit.py check tools/toc-edit/tests/fixture.toc
+echo $?   # 0
+```
+
+**show** — print a node by path (exit 0):
+
+```sh
+./tools/toc-edit/toc_edit.py show tools/toc-edit/tests/fixture.toc 2
+echo $?   # 0
+```
+
+**line** — find the innermost node on a 1-based line (exit 0):
+
+```sh
+./tools/toc-edit/toc_edit.py line tools/toc-edit/tests/fixture.toc 10
+echo $?   # 0
+```
+
+**insert** — splice a snippet file at a node's start (exit 0):
+
+```sh
+cp tools/toc-edit/tests/fixture.toc /tmp/f.toc
+printf '(def inserted 99)\n' > /tmp/snippet.toc
+./tools/toc-edit/toc_edit.py insert /tmp/f.toc 2 --before --from-file /tmp/snippet.toc
+echo $?   # 0
+```
+
+**replace** — splice a snippet file at a node's span (exit 0):
+
+```sh
+cp tools/toc-edit/tests/fixture.toc /tmp/f.toc
+printf '(defn square [x] (* x x))' > /tmp/snippet.toc
+./tools/toc-edit/toc_edit.py replace /tmp/f.toc 2 --from-file /tmp/snippet.toc
+echo $?   # 0
+```
+
+**delete** — remove a node (exit 0; remember: its header comment, if
+any, survives and needs a second explicit `delete`):
+
+```sh
+cp tools/toc-edit/tests/fixture.toc /tmp/f.toc
+./tools/toc-edit/toc_edit.py delete /tmp/f.toc 4
+echo $?   # 0
+```
+
 ## Exit codes
 
 | Code | Meaning |
