@@ -248,7 +248,7 @@ Conventions used in the checklist below:
 
 ### Phase 4 — README and finish
 
-- [ ] **4.1 README: required content.** `tools/toc-edit/README.md` with
+- [x] **4.1 README: required content.** `tools/toc-edit/README.md` with
       the schema-drift line, the orphaned-comment `delete` warning, and
       the exit-code table.
       *Verify:* `grep -F "suspect the AST dump schema first" README.md`;
