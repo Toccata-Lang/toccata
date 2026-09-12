@@ -55,7 +55,7 @@ Conventions used in the checklist below:
       `./T insert F 0 --before --after` both fail with a usage error
       (argparse exit 2, no traceback); `./T replace F 0` (no --from-file)
       fails the same way.
-- [ ] **0.3 Test fixtures.** First read `docs/toccata-style.md` (project
+- [x] **0.3 Test fixtures.** First read `docs/toccata-style.md` (project
       rule for `.toc` files). Create `tools/toc-edit/tests/fixture.toc`
       covering: a top-level comment, a comment inside a form, nested
       exprs, a vector, a hash map, a string, a multi-line form, a form
@@ -67,6 +67,16 @@ Conventions used in the checklist below:
       `./new-toc F 2>&1 >/dev/null` contains `*** Loaded` and no
       `*** Error` line; `./new-toc tools/toc-edit/tests/bad.toc
       2>&1 >/dev/null` contains an `*** Error` line.
+      Note (verified 2026-09-12): `bad.toc` is a `cond` with no
+      default — that produces the `*** Error at <file>: <line>; <msg>`
+      format. But other rejections use other formats: an undefined
+      symbol prints `*** Undefined symbol: ... at <file>: <n>` (no
+      `*** Error`), a type clash prints `***  Conflicting assertions
+      ...`. Item 0.5's `classify` as specified (matches only
+      `*** Error`) will classify those as `clean` — a design gap that
+      breaks item 2.5b (delete the used `defn` → exit 3, whose stderr
+      is `*** Undefined symbol`). Item 0.5 must report this gap
+      (STUCK) rather than guess a broader match.
 - [ ] **0.4 `run_ast_json(file)`.** Returns the parsed JSON AST (top-level
       list). Non-JSON output or a missing `ast-json` binary → clear error
       message, no traceback.
