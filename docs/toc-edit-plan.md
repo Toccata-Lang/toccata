@@ -226,7 +226,7 @@ Conventions used in the checklist below:
 
 ### Phase 3 — cross-cutting verification
 
-- [ ] **3.1 Untouched-byte guarantee.** For each of replace/delete/insert,
+- [x] **3.1 Untouched-byte guarantee.** For each of replace/delete/insert,
       confirm only the target span changed.
       *Verify:* one-liner per subcommand: sha256 of the prefix before the
       edit point and the suffix after it are identical before/after the
