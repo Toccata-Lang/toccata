@@ -191,7 +191,7 @@ Conventions used in the checklist below:
       exists and its contents equal the candidate bytes; a second
       rejection overwrites the `.rejected` file; the captured stderr
       contains the `*** Error` line.
-- [ ] **2.3 Silent-crash retry loop.** A pure function taking an
+- [x] **2.3 Silent-crash retry loop.** A pure function taking an
       attempt function: up to 5 attempts; an attempt returning `error`
       stops immediately (normal rejection); all-silent → `unverified`.
       *Verify:* one-liner with a fake attempt fn: always-`silent` →

@@ -270,6 +270,30 @@ def apply_edit(file, new_bytes):
     return (verdict, stderr)
 
 
+def retry_silent(apply, max_attempts=5):
+    """Retry loop for silent new-toc crashes (plan item 2.3).
+
+    Pure function of an attempt function: `apply()` is called up to
+    `max_attempts` (5) times and must return an apply_edit-style result
+    `(verdict, stderr)`. An attempt returning 'error' (a normal
+    rejection) or 'ok' stops immediately and its result is returned
+    unchanged. If every attempt returns 'silent' (new-toc aborted with
+    no stderr output), the result is ('unverified', stderr) with the
+    last attempt's stderr — the edit is unverified (docs/toc-edit-spec.md,
+    Failure handling: exit 4, loud message, no rename). Per the new-toc
+    diagnostics rules, a retry that produces an error message is a
+    normal rejection, not retried further.
+    """
+    result = apply()
+    attempts = 1
+    while result[0] == "silent" and attempts < max_attempts:
+        result = apply()
+        attempts += 1
+    if result[0] == "silent":
+        return ("unverified", result[1])
+    return result
+
+
 def cmd_check(args):
     """`check`: run new-toc on the file, print its stderr, exit 1 on
     'error', 0 otherwise (see docs/toc-edit-spec.md, Failure handling).
