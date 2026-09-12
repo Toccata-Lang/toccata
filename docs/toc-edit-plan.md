@@ -141,7 +141,7 @@ Conventions used in the checklist below:
 
 ### Phase 1 — read-only navigation
 
-- [ ] **1.1 `show` subcommand.** Prints the node's path, kind, span
+- [x] **1.1 `show` subcommand.** Prints the node's path, kind, span
       `[start, end)`, verbatim text `file[start:end]`, and its children
       with their paths.
       *Verify:* `./T show F <path-to-nested-expr>` prints that path, the

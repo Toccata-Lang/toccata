@@ -138,6 +138,30 @@ def resolve_path(ast, path):
     return node
 
 
+def _node_text(raw, node):
+    """The node's verbatim source text: file[start:end] (byte slice)."""
+    return raw[node["start"]:node["end"]].decode("utf-8", errors="replace")
+
+
+def cmd_show(args):
+    """`show`: print a node's path, kind, span [start, end), verbatim text
+    file[start:end], and its children with their paths (see
+    docs/toc-edit-spec.md, Scope (b)).
+    """
+    ast = run_ast_json(args.file)
+    node = resolve_path(ast, args.path)
+    raw = Path(args.file).read_bytes()
+    print(f"path: {args.path}")
+    print(f"kind: {node['kind']}")
+    print(f"span: [{node['start']}, {node['end']})")
+    print(f"text: {_node_text(raw, node)}")
+    for i, child in enumerate(node["children"]):
+        print(
+            f"  {args.path}.{i} {child['kind']} "
+            f"[{child['start']}, {child['end']})"
+        )
+
+
 def cmd_check(args):
     """`check`: run new-toc on the file, print its stderr, exit 1 on
     'error', 0 otherwise (see docs/toc-edit-spec.md, Failure handling).
@@ -162,7 +186,7 @@ def build_parser():
     p = sub.add_parser("show")
     p.add_argument("file")
     p.add_argument("path")
-    p.set_defaults(func=not_implemented)
+    p.set_defaults(func=cmd_show)
 
     p = sub.add_parser("line")
     p.add_argument("file")
@@ -196,7 +220,11 @@ def main():
     args = parser.parse_args()
     if args.command == "insert" and args.before == args.after:
         parser.error("insert requires exactly one of --before/--after")
-    args.func(args)
+    try:
+        args.func(args)
+    except TocEditError as e:
+        print(f"toc_edit: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
