@@ -77,7 +77,7 @@ Conventions used in the checklist below:
       breaks item 2.5b (delete the used `defn` → exit 3, whose stderr
       is `*** Undefined symbol`). Item 0.5 must report this gap
       (STUCK) rather than guess a broader match.
-- [ ] **0.4 `run_ast_json(file)`.** Returns the parsed JSON AST (top-level
+- [x] **0.4 `run_ast_json(file)`.** Returns the parsed JSON AST (top-level
       list). Non-JSON output or a missing `ast-json` binary → clear error
       message, no traceback.
       *Verify:* one-liner: `run_ast_json(F)` returns a list; recursive

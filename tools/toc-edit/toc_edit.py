@@ -2,12 +2,49 @@
 """toc_edit: structural editor for Toccata .toc files (see docs/toc-edit-spec.md)."""
 
 import argparse
+import json
+import subprocess
 import sys
+from pathlib import Path
+
+# The repo root is two levels above tools/toc-edit/; the ast-json and
+# new-toc binaries live there (see docs/toc-edit-spec.md).
+REPO_ROOT = Path(__file__).resolve().parents[2]
+AST_JSON = REPO_ROOT / "ast-json"
+
+
+class TocEditError(Exception):
+    """A clean, user-facing error (printed by main; never a traceback)."""
 
 
 def not_implemented(args):
     print("not implemented")
     sys.exit(2)
+
+
+def run_ast_json(file):
+    """Run `ast-json <file>` and return the parsed JSON AST (a top-level list).
+
+    Raises TocEditError (clear message, no traceback) if the ast-json
+    binary is missing, fails, or emits non-JSON output.
+    """
+    if not AST_JSON.is_file():
+        raise TocEditError(f"ast-json binary not found at {AST_JSON}")
+    proc = subprocess.run([str(AST_JSON), str(file)], capture_output=True, text=True)
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or "(no output)"
+        raise TocEditError(
+            f"ast-json failed on {file} (exit {proc.returncode}): {detail}"
+        )
+    try:
+        ast = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        raise TocEditError(f"ast-json produced non-JSON output for {file}: {e}")
+    if not isinstance(ast, list):
+        raise TocEditError(
+            f"ast-json produced a non-array top level for {file}: {type(ast).__name__}"
+        )
+    return ast
 
 
 def build_parser():
