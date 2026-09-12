@@ -174,7 +174,7 @@ Conventions used in the checklist below:
 
 ### Phase 2 — mutation with validate-then-write
 
-- [ ] **2.1 `apply_edit(file, new_bytes)` success path.** Writes
+- [x] **2.1 `apply_edit(file, new_bytes)` success path.** Writes
       `new_bytes` to a temp file **in the same directory as the original**
       (so the rename is atomic), runs `new-toc` on it, and on `clean`
       atomically renames over the original.

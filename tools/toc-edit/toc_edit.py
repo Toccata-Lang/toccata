@@ -3,8 +3,10 @@
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # The repo root is two levels above tools/toc-edit/; the ast-json and
@@ -219,6 +221,39 @@ def cmd_line(args):
     print(f"kind: {node['kind']}")
     print(f"span: [{node['start']}, {node['end']})")
     print(f"text: {_node_text(raw, node)}")
+
+
+def apply_edit(file, new_bytes):
+    """Validate-then-write (docs/toc-edit-spec.md, Failure handling).
+
+    Writes new_bytes to a temp file in the SAME directory as `file` (so
+    the rename over the original is atomic), runs new-toc on the temp,
+    and on 'clean' atomically renames it over the original. The original
+    is never clobbered by a rejected or unverified edit.
+
+    Returns ('ok', None) on success. On 'error' or 'silent' the temp
+    file is removed, the original is untouched, and (verdict, stderr)
+    is returned for the caller (rejection handling: plan item 2.2; retry
+    loop: item 2.3). stderr is returned in full, never discarded.
+    """
+    path = Path(file).resolve()
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=path.parent
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(new_bytes)
+        _code, _stdout, stderr = run_new_toc(tmp)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    verdict = classify(stderr)
+    if verdict == "clean":
+        os.replace(tmp, path)
+        return ("ok", None)
+    tmp.unlink()
+    return (verdict, stderr)
 
 
 def cmd_check(args):
