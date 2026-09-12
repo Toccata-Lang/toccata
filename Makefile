@@ -139,7 +139,13 @@ emit-pred: new-toc interpreter/intrp-grammar.toc interpreter/intrp-emit.toc inte
 	clang-format -i emit-pred.c
 	rm emit-pred.tmp
 	$(CC) $(CFLAGS) -o emit-pred $(TOC_FLAGS) $(LDFLAGS) emit-pred.c new.c runtime3.c graph.c
+	mkdir -p scratch/emit-got
 	./emit-pred
+	@for n in digits upper-case lower-case alpha symbol-start rest-of-symbol \
+		module module-ig module-an module-mn module-fn module-rc; do \
+		diff -u interpreter/emit-want/$$n.txt scratch/emit-got/$$n.txt || exit 1; \
+	done
+	diff -u interpreter/emit-want/module-real.txt interpreter/gen-rdr.toc
 
 # Generated parser module (interpreter/gen-rdr.toc is written by the
 # emit-pred driver — a build artifact, never committed).
@@ -152,9 +158,9 @@ gen-rdr: emit-pred new-toc interpreter/intrp-rdr.toc hvm-core.toc
 	$(CC) $(CFLAGS) -o gen-rdr $(TOC_FLAGS) $(LDFLAGS) gen-rdr.c new.c runtime3.c graph.c
 
 # Item-8 corpus (docs/parser-generator-plan.md): run the generated
-# parser over the driver-written corpus files and diff the output
-# against the -want files. The failure cases exit 1 (the `!` inverts);
-# the empty case must print nothing.
+# parser over the committed corpus files and diff the output against
+# the -want files. The failure cases exit 1 (the `!` inverts); the
+# empty case must print nothing.
 .PHONY: gen-corpus
 gen-corpus: gen-rdr
 	./gen-rdr interpreter/gen-corpus.toc > scratch/gen-corpus-got.txt
