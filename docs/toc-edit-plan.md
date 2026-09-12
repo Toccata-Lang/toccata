@@ -94,12 +94,21 @@ Conventions used in the checklist below:
       `classify('*** Loaded x') == 'clean'`; `classify('') == 'silent'`;
       `run_new_toc(F)` → `classify(stderr) == 'clean'`;
       `run_new_toc('tests/bad.toc')` → `'error'`.
-      Note (2026-09-12, item 0.5 run): implemented exactly as specified
-      and reported STUCK per the 0.3 note — `classify` matches only
-      `*** Error`, so other rejection formats (`*** Undefined symbol`,
-      `***  Conflicting assertions`) classify as `clean`. This breaks
-      item 2.5b (delete the used `defn` → expected exit 3). Owner
-      decision needed before 2.5b; do not widen the match unilaterally.
+      Note (2026-09-12, item 0.5 run): the original spec (match only
+      `*** Error`) left other rejection formats (`*** Undefined symbol`,
+      `***  Conflicting assertions`) classifying as `clean`, which would
+      break item 2.5b. First widening attempt (any `*** ` line except
+      `*** Loaded`) failed verification: a clean load prints 8 `*** ` line
+      formats, not just `*** Loaded` (boilerplate plus `*** 'main'
+      function is missing or malformed` and a core `Could not find
+      implementation ... at core: 1453` warning). **Owner decision
+      (2026-09-12):** fail closed — `classify` returns `error` if stderr
+      contains any `*** ` line NOT in the known-clean set (the observed
+      clean boilerplate), `silent` if stderr is empty, else `clean`.
+      A future new core info line will cause a false rejection (exit 3,
+      file untouched) rather than a silently accepted broken file;
+      extend the allowlist in that case. Implemented and re-verified;
+      item 2.5b is unblocked.
 - [ ] **0.6 `resolve_path(ast, path)`.** Dot-separated integer indices
       into `children`. Bad path → distinct error naming the deepest
       existing prefix.

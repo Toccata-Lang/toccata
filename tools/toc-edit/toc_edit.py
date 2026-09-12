@@ -61,17 +61,47 @@ def run_new_toc(file):
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def classify(stderr):
-    """Classify new-toc stderr: 'error' if it contains an `*** Error` line,
-    'silent' if stderr is empty, else 'clean'. Pure function.
+# Known-clean `*** ` lines that a clean new-toc load prints (observed
+# 2026-09-12; see docs/toc-edit-plan.md item 0.5). Anything else that
+# starts with `*** ` is treated as a rejection (fail closed).
+_CLEAN_EXACT_LINES = {
+    "*** creating-parser",
+    # Printed on every clean library load (no `main`).
+    "*** 'main' function is missing or malformed",
+    # Pre-existing core warning, printed on every clean load.
+    "*** Could not find implementation of 'Container/map' for type 'Agent' "
+    "with 2 arguments at core: 1453",
+}
+_CLEAN_LINE_PREFIXES = (
+    "*** parser-created ",
+    "*** time-for-core ",
+    "*** Loading ",
+    "*** Loaded ",
+)
 
-    Known gap (plan item 0.3 note, flagged STUCK at 0.5): new-toc has
-    other rejection formats (`*** Undefined symbol: ...`,
-    `***  Conflicting assertions ...`) that this classifier reports as
-    'clean'. Do not widen the match without an owner decision — item
-    2.5b depends on it.
+
+def _is_clean_stderr_line(line):
+    return line in _CLEAN_EXACT_LINES or line.startswith(_CLEAN_LINE_PREFIXES)
+
+
+def classify(stderr):
+    """Classify new-toc stderr: 'error' if it contains any `*** ` line not
+    in the known-clean set, 'silent' if stderr is empty, else 'clean'.
+    Pure function.
+
+    Owner decision (2026-09-12, resolves the 0.5 STUCK note): fail closed
+    — a clean load prints only the boilerplate in _CLEAN_EXACT_LINES /
+    _CLEAN_LINE_PREFIXES, so any other `*** ` line (`*** Error`,
+    `*** Undefined symbol`, `***  Conflicting assertions`, or any future
+    format) is a rejection. A future new core info line will cause a
+    false rejection (exit 3, file untouched, `.rejected` saved) rather
+    than a silently accepted broken file; extend the allowlist then.
+    This makes item 2.5b (delete a used `defn` → exit 3) work.
     """
-    if any("*** Error" in line for line in stderr.splitlines()):
+    if any(
+        line.startswith("*** ") and not _is_clean_stderr_line(line)
+        for line in stderr.splitlines()
+    ):
         return "error"
     if stderr == "":
         return "silent"
