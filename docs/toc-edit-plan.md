@@ -47,7 +47,7 @@ Conventions used in the checklist below:
       from argparse usage errors by the message).
       *Verify:* `ls -l` shows the exec bit; `./T` prints usage and exits
       nonzero; `./T check` prints `not implemented` and exits 2.
-- [ ] **0.2 CLI argument validation.** Enforce: `insert` requires exactly
+- [x] **0.2 CLI argument validation.** Enforce: `insert` requires exactly
       one of `--before`/`--after`; `insert` and `replace` require
       `--from-file`; `show`/`line`/`delete` take exactly their positional
       args.

@@ -78,6 +78,10 @@ builds the code.
 
 ## Data
 
+* A `'symbol` expression — the old Toccata's symbol literal — is just a
+  shorthand for a string literal in the new Toccata. There is no separate
+  Symbol type: `'foo` is the string `"foo"`.
+
 * A vector is a homogeneous sequence — never a record. Grouping related
   values whose meaning is determined by position (including same-typed groups
   like `[start end]`) is done only with a deftype ctor with appropriately
