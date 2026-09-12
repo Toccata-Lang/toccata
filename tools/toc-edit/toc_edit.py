@@ -223,6 +223,14 @@ def cmd_line(args):
     print(f"text: {_node_text(raw, node)}")
 
 
+def _rejected_path(path):
+    """The `.rejected` name beside the original: hvm-core.toc ->
+    hvm-core.rejected (docs/toc-edit-spec.md, Failure handling)."""
+    if path.suffix == ".toc":
+        return path.with_suffix(".rejected")
+    return path.with_name(path.name + ".rejected")
+
+
 def apply_edit(file, new_bytes):
     """Validate-then-write (docs/toc-edit-spec.md, Failure handling).
 
@@ -231,10 +239,13 @@ def apply_edit(file, new_bytes):
     and on 'clean' atomically renames it over the original. The original
     is never clobbered by a rejected or unverified edit.
 
-    Returns ('ok', None) on success. On 'error' or 'silent' the temp
-    file is removed, the original is untouched, and (verdict, stderr)
-    is returned for the caller (rejection handling: plan item 2.2; retry
-    loop: item 2.3). stderr is returned in full, never discarded.
+    Returns ('ok', None) on success. On 'error' (rejection) the candidate
+    is saved as `<name>.rejected` beside the original (overwriting any
+    earlier one), new-toc's stderr is printed to the tool's stderr (not
+    saved to a file), and ('error', stderr) is returned; the original is
+    untouched. On 'silent' the temp file is removed, the original is
+    untouched, and ('silent', stderr) is returned for the retry loop
+    (plan item 2.3). stderr is returned in full, never discarded.
     """
     path = Path(file).resolve()
     fd, tmp_name = tempfile.mkstemp(
@@ -253,6 +264,9 @@ def apply_edit(file, new_bytes):
         os.replace(tmp, path)
         return ("ok", None)
     tmp.unlink()
+    if verdict == "error":
+        _rejected_path(path).write_bytes(new_bytes)
+        sys.stderr.write(stderr)
     return (verdict, stderr)
 
 

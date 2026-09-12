@@ -181,7 +181,7 @@ Conventions used in the checklist below:
       *Verify:* one-liner on a copy of `F`: `apply_edit` with the
       identical bytes returns success; the copy is byte-identical
       (sha256 before/after); no `.rejected` file appears.
-- [ ] **2.2 Rejection path.** On `error`: save the candidate as
+- [x] **2.2 Rejection path.** On `error`: save the candidate as
       `<name>.rejected` beside the original (overwriting any earlier
       one), print `new-toc`'s stderr to the tool's stderr (do not save
       it), return the rejection result, original untouched.
