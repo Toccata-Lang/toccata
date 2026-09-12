@@ -11,6 +11,7 @@ from pathlib import Path
 # new-toc binaries live there (see docs/toc-edit-spec.md).
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AST_JSON = REPO_ROOT / "ast-json"
+NEW_TOC = REPO_ROOT / "new-toc"
 
 
 class TocEditError(Exception):
@@ -45,6 +46,36 @@ def run_ast_json(file):
             f"ast-json produced a non-array top level for {file}: {type(ast).__name__}"
         )
     return ast
+
+
+def run_new_toc(file):
+    """Run `new-toc <file>`; return (exit code, stdout, full stderr).
+
+    stderr is captured in full and never discarded. The exit code is NOT
+    the pass/fail signal (a clean library load with no `main` exits 134);
+    classify the stderr instead (see classify).
+    """
+    if not NEW_TOC.is_file():
+        raise TocEditError(f"new-toc binary not found at {NEW_TOC}")
+    proc = subprocess.run([str(NEW_TOC), str(file)], capture_output=True, text=True)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def classify(stderr):
+    """Classify new-toc stderr: 'error' if it contains an `*** Error` line,
+    'silent' if stderr is empty, else 'clean'. Pure function.
+
+    Known gap (plan item 0.3 note, flagged STUCK at 0.5): new-toc has
+    other rejection formats (`*** Undefined symbol: ...`,
+    `***  Conflicting assertions ...`) that this classifier reports as
+    'clean'. Do not widen the match without an owner decision — item
+    2.5b depends on it.
+    """
+    if any("*** Error" in line for line in stderr.splitlines()):
+        return "error"
+    if stderr == "":
+        return "silent"
+    return "clean"
 
 
 def build_parser():

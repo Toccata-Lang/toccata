@@ -86,7 +86,7 @@ Conventions used in the checklist below:
       `src[start:end]` equals the fixture's first comment text (spot-check
       against the file's bytes); `run_ast_json('/nonexistent.toc')`
       produces a clean error, not a traceback.
-- [ ] **0.5 `run_new_toc(file)` + `classify(stderr)`.** `run_new_toc`
+- [x] **0.5 `run_new_toc(file)` + `classify(stderr)`.** `run_new_toc`
       returns (exit code, stdout, full stderr — never discarded).
       `classify` is a pure function: `error` if stderr contains an
       `*** Error` line, `silent` if stderr is empty, else `clean`.
@@ -94,6 +94,12 @@ Conventions used in the checklist below:
       `classify('*** Loaded x') == 'clean'`; `classify('') == 'silent'`;
       `run_new_toc(F)` → `classify(stderr) == 'clean'`;
       `run_new_toc('tests/bad.toc')` → `'error'`.
+      Note (2026-09-12, item 0.5 run): implemented exactly as specified
+      and reported STUCK per the 0.3 note — `classify` matches only
+      `*** Error`, so other rejection formats (`*** Undefined symbol`,
+      `***  Conflicting assertions`) classify as `clean`. This breaks
+      item 2.5b (delete the used `defn` → expected exit 3). Owner
+      decision needed before 2.5b; do not widen the match unilaterally.
 - [ ] **0.6 `resolve_path(ast, path)`.** Dot-separated integer indices
       into `children`. Bad path → distinct error naming the deepest
       existing prefix.
