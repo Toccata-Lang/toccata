@@ -216,7 +216,7 @@ Conventions used in the checklist below:
       byte-for-byte, the header comment survives (orphaned), `./T check`
       exits 0; (b) delete the `defn` that another top-level form uses →
       exit 3, original byte-identical, `.rejected` present.
-- [ ] **2.6 `insert` end-to-end.** Splices the snippet at the target's
+- [x] **2.6 `insert` end-to-end.** Splices the snippet at the target's
       `start` (`--before`) or `end` (`--after`), wired through
       `apply_edit` + retry.
       *Verify:* on copies of `F`: `--before` yields `src[:start] +

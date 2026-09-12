@@ -340,6 +340,15 @@ def cmd_delete(args):
     printed), 4 on all-silent (edit UNVERIFIED, no rename).
     """
     verdict, stderr = _splice_and_apply(args.file, args.path, b"")
+    _finish_mutation(verdict, stderr)
+
+
+def _finish_mutation(verdict, stderr):
+    """Shared exit-code mapping for the mutating subcommands (plan items
+    2.4–2.6): 0 on ok, 4 on unverified (loud message, no rename), 3 on
+    error (apply_edit already printed new-toc's stderr and saved the
+    .rejected candidate; the original is untouched).
+    """
     if verdict == "ok":
         sys.exit(0)
     if verdict == "unverified":
@@ -348,9 +357,23 @@ def cmd_delete(args):
             "output after 5 attempts; the file was NOT modified\n"
         )
         sys.exit(4)
-    # 'error': apply_edit already printed new-toc's stderr and saved the
-    # .rejected candidate; the original is untouched.
     sys.exit(3)
+
+
+def cmd_insert(args):
+    """`insert`: splice the snippet file's bytes at the target node's
+    `start` (--before) or `end` (--after) (docs/toc-edit-spec.md, Scope
+    (c)); validate-then-write via apply_edit + the silent-crash retry
+    loop. Exit 0 on success, 3 on rejection, 4 on all-silent.
+    """
+    snippet = Path(args.from_file).read_bytes()
+    ast = run_ast_json(args.file)
+    node = resolve_path(ast, args.path)
+    raw = Path(args.file).read_bytes()
+    at = node["start"] if args.before else node["end"]
+    new_bytes = raw[:at] + snippet + raw[at:]
+    verdict, stderr = retry_silent(lambda: apply_edit(args.file, new_bytes))
+    _finish_mutation(verdict, stderr)
 
 
 def cmd_check(args):
@@ -390,7 +413,7 @@ def build_parser():
     p.add_argument("--before", action="store_true")
     p.add_argument("--after", action="store_true")
     p.add_argument("--from-file", required=True)
-    p.set_defaults(func=not_implemented)
+    p.set_defaults(func=cmd_insert)
 
     p = sub.add_parser("replace")
     p.add_argument("file")
