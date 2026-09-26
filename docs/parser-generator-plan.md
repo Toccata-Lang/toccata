@@ -631,6 +631,19 @@ Curated for this project; the source of truth is the compiler plan.
   deleted before the commit (2026-09-04, item 3).
 - A program ending with a SUB or SUP error probably means a function
   called with the wrong number of arguments.
+- A passing `make emit-pred` gate does NOT certify the core
+  Vector `map` / `str-vect` / `flat-map` paths (2026-09-26, item
+  10 second run): the v1 driver and the emitter use NONE of them
+  (grep 0 in both files — the v1 emitter builds lines with
+  `to-str` and `reduce` only), so the gate can pass 13/13 while
+  those core paths silently abort in the same window (observed:
+  `(pr* (str-vect "hello"))` 3/3 and a 2-child-`Any` fold — which
+  needs the core Vector `map` via the `Any` `recurse` impl —
+  `Incomplete result at runtime3.c:3396` 3/3, while the gate and
+  a 1-node fold probe ran clean minutes apart). For the fold-
+  based v2 items (10–16) the health gate must be extended with a
+  fold probe (e.g. `(pr* (map ["a" "b"] identity))` printing
+  `[a b]` clean) before any fold result is trusted.
 - A wrong-type field access / mis-threaded call can make a driver a
   SILENT NO-OP (2026-09-10, item 7c): a `->` threading bug in
   `emit-module` — threading `(rule-decls rules)` between
@@ -938,7 +951,39 @@ generated code)**
   `<kind> <char-level|not-char-level>` per node — `pr*` takes one
   string and returns I60 0, threadable through `+`); verify the
   done-when (4 classifications + `make emit-pred` 13/13 + zero
-  leaks).
+  leaks). UPDATE (2026-09-26, second run): the committed state
+  FAILED the run-start gate with a REAL source error, not a window
+  crash — two use-before-definition bugs the first run's flaky
+  loads had masked: `ir-any` referenced `ir-any-dispatch` (defined
+  later) and `h` referenced `h-dispatch` (defined later) —
+  deterministic `Undefined symbol` at load. Fixed by reordering
+  (dispatcher defn before its one-line caller — strict use-after-
+  definition, the existing fact). After the fix: the library loads
+  clean and `make emit-pred` passes ALL 13 diffs byte-identical
+  (exit 0, malloc diff 0, remaining 0 — re-verified twice). The
+  4-node classification probe is BLOCKED by a window degradation
+  that opened mid-run: the core Vector `map` / `str-vect` /
+  `flat-map` paths silently abort in this window — minimal probes
+  `(pr* (str-vect "hello"))` 3/3 and `(pr* (map ["a" "b"]
+  identity))` 1/1 silent-abort with NO grammar or emitter
+  involvement, and the 2-child-`Any` fold (which needs the core
+  Vector `map` via the `Any` `recurse` impl) aborts with
+  `Incomplete result at runtime3.c:3396` — 3/3 for the full
+  4-node probe (plus 3/3 earlier for the digits+alpha pair and
+  3/3 for a bare 2-child-`Any` fold through `identity`). The
+  previous run verified the SAME 2-child-`Any` fold clean on the
+  same committed source, so this is window state, not a source
+  regression. The `make emit-pred` gate does NOT exercise `map` /
+  `str-vect` / `flat-map` (the v1 driver uses none of them — grep
+  0), so a passing gate does not certify the fold path — see the
+  new fact. The digits classification IS verified this run: the
+  1-node probe (`emit/analyze grammar/digits`) printed `Rule
+  char-level`, exit 0, malloc diff 0, remaining 0, 3/3. Box stays
+  UNCHECKED. NEXT RUN: re-run the gate AND a fold health probe
+  (`(pr* (map ["a" "b"] identity))` must print `[a b]` clean)
+  before trusting any fold result; then the 4-node classification
+  probe (digits already verified — `alpha` / `symbol-start` /
+  `expression` remain) + `make emit-pred` 13/13 + zero leaks.
 
 - Rewrite decision (2026-09-26): the owner judged the v1 emitter
   horrible — its explicit-recursion / `-acc` threading shape exists
