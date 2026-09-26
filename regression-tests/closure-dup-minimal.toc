@@ -1,0 +1,34 @@
+;; Minimal repro of the closure-capture-sup leak without vect-reduce.
+;;
+;; g is used twice, so codegen dupes it -> dupLam shares the body under
+;; one SUP(lb). The body has a DUP over acc (used in both int-cond
+;; branches). Both copies are applied with DIFFERENT isdot args, so the
+;; shared body is forced once under the live SUP(lb); the isdot=0 branch
+;; forces acc -> body DUP(0) meets SUP(lb) -> dupSup EXPAND -> unbalanced
+;; SUP(lb) -> leak.
+;;
+;; If both calls used the same isdot, the stray SUP(lb) would be
+;; eraSup-erased (the [1 1] / [2 2] case) and no leak.
+;;
+;; Result (see docs/closure-capture-sup-leak.md sections 9 and 9.1): the
+;; trigger (EXPAND) repros only when the closure-dup and body-DUP labels
+;; differ (codegen assigns both label 0 here, so a label hack on the
+;; generated C is needed); the leak itself does NOT repro -- the spawned
+;; SUP finds a cleanup path instead of stranding. The unrolled
+;; vect-reduce variant was attempted and set aside: it hits separate
+;; codegen bugs (nested-same-closure-codegen.toc, plus an unforced-result
+;; failure with the let-binding workaround).
+
+(deftype Box [v])
+
+(defn f [V]
+  (let [g (fn [acc isdot]
+            (int-cond isdot
+                      acc
+                      (Box (+ (.v V) (.v acc)))))]
+    (g (Box 0) 1)
+    (g (Box 0) 0)))
+
+(main [_]
+      (f (Box 42))
+      0)
